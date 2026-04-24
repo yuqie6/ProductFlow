@@ -62,7 +62,7 @@ ProductFlow/
     spec/
 ```
 
-`.trellis/spec/`、`.trellis/workflow.md` 和 `.trellis/scripts/` 是项目开发规范和任务工具，保留在仓库中便于贡献者理解约定；`.trellis/tasks/` 是本地任务历史和运行上下文，不应公开跟踪。
+`.trellis/spec/`、`.trellis/workflow.md` 和 `.trellis/scripts/` 是项目开发规范和任务工具，保留在仓库中便于贡献者理解约定；`.trellis/tasks/` 和 `.trellis/workspace/` 是本地任务/开发者运行上下文，不应公开跟踪。
 
 ## 快速开始：本地自托管开发
 
@@ -203,5 +203,5 @@ just release-dry-run     # 生成本机发布快照但不切换服务
 - License：MIT，见 `LICENSE`。
 - 贡献指南：见 `CONTRIBUTING.md`。
 - 安全报告：见 `SECURITY.md`。
-- 不要提交 `.env`、`web/.env`、本地 storage、构建产物、缓存、日志或 `.trellis/tasks/`。
+- 不要提交 `.env`、`web/.env`、本地 storage、构建产物、缓存、日志或 `.trellis/tasks/` / `.trellis/workspace/`。
 - 真实 provider API key 只应放在本地环境变量或私有部署配置中，不应写入 issue、PR 或文档示例。

@@ -42,7 +42,7 @@ backend/backend/storage-dev/
 .trellis/cache/
 .trellis/.runtime/
 .trellis/runtime/
-.trellis/workspace/*/
+.trellis/workspace/
 .trellis/tasks/
 .trellis/**/*.tmp
 .trellis/**/*.new

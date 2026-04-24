@@ -8,7 +8,7 @@
 2. 阅读 `docs/PRD.md` 和 `docs/ARCHITECTURE.md`，理解当前功能边界。
 3. 如果要改后端，参考 `.trellis/spec/backend/`。
 4. 如果要改前端，参考 `.trellis/spec/frontend/`。
-5. 不要提交 `.env`、`web/.env`、storage、缓存、构建产物、日志或 `.trellis/tasks/`。
+5. 不要提交 `.env`、`web/.env`、storage、缓存、构建产物、日志或 `.trellis/tasks/` / `.trellis/workspace/`。
 
 ## 本地开发
 
@@ -65,4 +65,4 @@ just web-build
 
 ## Trellis 目录说明
 
-仓库保留 `.trellis/spec/`、`.trellis/workflow.md` 和 `.trellis/scripts/` 作为开发规范和任务工具。`.trellis/tasks/` 属于本地任务历史，不应提交。
+仓库保留 `.trellis/spec/`、`.trellis/workflow.md` 和 `.trellis/scripts/` 作为开发规范和任务工具。`.trellis/tasks/` 和 `.trellis/workspace/` 属于本地任务/开发者记录，不应提交。
