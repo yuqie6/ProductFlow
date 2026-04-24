@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from base64 import b64encode
-from datetime import UTC, datetime
 from typing import Literal
 
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session, selectinload
 
+from productflow_backend.application.time import now_utc
 from productflow_backend.domain.enums import ImageSessionAssetKind, SourceAssetKind
 from productflow_backend.infrastructure.db.models import (
     ImageSession,
@@ -23,9 +23,6 @@ ATTACH_TARGET = Literal["reference", "main_source"]
 DEFAULT_SESSION_TITLE = "未命名会话"
 DEFAULT_ASSISTANT_MESSAGE = "已基于当前对话继续生成一张新图，你可以继续补充修改要求。"
 
-
-def now_utc() -> datetime:
-    return datetime.now(UTC)
 
 
 def _image_session_query():

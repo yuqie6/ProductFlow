@@ -13,6 +13,7 @@ Key files:
 
 - `backend/src/productflow_backend/application/use_cases.py`
 - `backend/src/productflow_backend/application/image_sessions.py`
+- `backend/src/productflow_backend/presentation/errors.py`
 - `backend/src/productflow_backend/presentation/routes/products.py`
 - `backend/src/productflow_backend/presentation/routes/image_sessions.py`
 - `backend/src/productflow_backend/presentation/routes/settings.py`
@@ -37,16 +38,20 @@ Routes catch these `ValueError`s and convert them to `HTTPException`.
 
 ## Route-Level Mapping
 
-Resource route modules use a small `_raise_http_error(...)` helper. Current product and image-session routes share the
-same convention:
+Resource route modules import the shared `presentation/errors.py::raise_value_error_as_http(...)` helper. Do not
+redefine this mapping in each route file:
 
 ```python
-def _raise_http_error(exc: ValueError) -> None:
-    detail = str(exc)
-    if detail.endswith("不存在"):
-        raise HTTPException(status_code=404, detail=detail) from exc
-    raise HTTPException(status_code=400, detail=detail) from exc
+try:
+    product = get_product_detail(session, product_id)
+except ValueError as exc:
+    raise_value_error_as_http(exc)
 ```
+
+The helper preserves the route-boundary contract:
+
+- messages ending with `"不存在"` -> `404`.
+- other expected business `ValueError`s -> `400`.
 
 Examples:
 
@@ -54,10 +59,11 @@ Examples:
   `update_copy_set(...)`, `create_poster_job(...)`, and other use cases.
 - `presentation/routes/image_sessions.py` catches `ValueError` around session CRUD, reference image upload/delete,
   generation, and attach-to-product actions.
+- `presentation/routes/product_workflows.py` catches `ValueError` around workflow graph edits and run kickoff.
 - `presentation/routes/jobs.py` maps missing jobs to 404 directly.
 
 When adding new use cases, keep expected business failures as `ValueError` in application code and map them at the route
-boundary. Do not import FastAPI `HTTPException` into application modules.
+boundary with the shared helper. Do not import FastAPI `HTTPException` into application modules.
 
 ---
 

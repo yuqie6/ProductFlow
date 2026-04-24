@@ -45,6 +45,7 @@ web/
         ├── ProductListPage.tsx
         ├── ProductCreatePage.tsx
         ├── ProductDetailPage.tsx
+        ├── product-detail/              # page-local product workflow constants/types/utils/components
         ├── ImageChatPage.tsx
         └── SettingsPage.tsx
 ```
@@ -86,8 +87,10 @@ Use `web/src/components/` for reusable presentational components with small prop
 - `TopNav.tsx`
 - `StatusPill.tsx`
 
-If a component is only used inside one page and tightly coupled to that page's state, keeping it in the page file is
-consistent with current code (`ConfigField` inside `SettingsPage.tsx` is an example).
+If a component is only used inside one page and tightly coupled to that page's state, keep it either in the page file or
+in a page-local directory. `ProductDetailPage.tsx` uses `web/src/pages/product-detail/` for workflow canvas constants,
+draft/config utilities, image mapping helpers, and page-local components; do not move those to global `components/`
+until another page actually reuses them.
 
 ---
 
@@ -97,6 +100,8 @@ consistent with current code (`ConfigField` inside `SettingsPage.tsx` is an exam
 - `web/src/lib/types.ts` contains DTO interfaces and string union types mirroring backend Pydantic responses and enums.
 - `web/src/lib/format.ts` contains pure formatting helpers such as `formatDateTime`, `formatShortDate`, `formatPrice`,
   and `jobIsRunning`.
+- `web/src/lib/image-downloads.ts` contains reusable image URL, filename sanitization, timestamp suffix, and extension
+  helpers. Page-specific mapping from product/poster records to downloadable images should stay page-local.
 
 Do not scatter raw `fetch(...)` calls or duplicate DTO interfaces inside pages.
 

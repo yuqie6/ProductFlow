@@ -17,6 +17,7 @@ from productflow_backend.application.product_workflows import (
 )
 from productflow_backend.infrastructure.queue import enqueue_workflow_run
 from productflow_backend.presentation.deps import get_session, require_admin
+from productflow_backend.presentation.errors import raise_value_error_as_http
 from productflow_backend.presentation.schemas.product_workflows import (
     CreateWorkflowEdgeRequest,
     CreateWorkflowNodeRequest,
@@ -31,19 +32,12 @@ from productflow_backend.presentation.upload_validation import read_validated_im
 router = APIRouter(prefix="/api", tags=["product-workflows"], dependencies=[Depends(require_admin)])
 
 
-def _raise_http_error(exc: ValueError) -> None:
-    detail = str(exc)
-    if detail.endswith("不存在"):
-        raise HTTPException(status_code=404, detail=detail) from exc
-    raise HTTPException(status_code=400, detail=detail) from exc
-
-
 @router.get("/products/{product_id}/workflow", response_model=ProductWorkflowResponse)
 def get_product_workflow_endpoint(product_id: str, session: Session = Depends(get_session)) -> ProductWorkflowResponse:
     try:
         workflow = get_or_create_product_workflow(session, product_id)
     except ValueError as exc:
-        _raise_http_error(exc)
+        raise_value_error_as_http(exc)
     return serialize_product_workflow(workflow)
 
 
@@ -68,7 +62,7 @@ def create_workflow_node_endpoint(
             config_json=payload.config_json,
         )
     except ValueError as exc:
-        _raise_http_error(exc)
+        raise_value_error_as_http(exc)
     return serialize_product_workflow(workflow)
 
 
@@ -88,7 +82,7 @@ def update_workflow_node_endpoint(
             config_json=payload.config_json,
         )
     except ValueError as exc:
-        _raise_http_error(exc)
+        raise_value_error_as_http(exc)
     return serialize_product_workflow(workflow)
 
 
@@ -108,7 +102,7 @@ def update_workflow_copy_set_endpoint(
             cta=payload.cta,
         )
     except ValueError as exc:
-        _raise_http_error(exc)
+        raise_value_error_as_http(exc)
     return serialize_product_workflow(workflow)
 
 
@@ -132,7 +126,7 @@ async def upload_workflow_node_image_endpoint(
             label=label,
         )
     except ValueError as exc:
-        _raise_http_error(exc)
+        raise_value_error_as_http(exc)
     return serialize_product_workflow(workflow)
 
 
@@ -156,7 +150,7 @@ def create_workflow_edge_endpoint(
             target_handle=payload.target_handle,
         )
     except ValueError as exc:
-        _raise_http_error(exc)
+        raise_value_error_as_http(exc)
     return serialize_product_workflow(workflow)
 
 
@@ -165,7 +159,7 @@ def delete_workflow_edge_endpoint(edge_id: str, session: Session = Depends(get_s
     try:
         workflow = delete_workflow_edge(session, edge_id=edge_id)
     except ValueError as exc:
-        _raise_http_error(exc)
+        raise_value_error_as_http(exc)
     return serialize_product_workflow(workflow)
 
 
@@ -174,7 +168,7 @@ def delete_workflow_node_endpoint(node_id: str, session: Session = Depends(get_s
     try:
         workflow = delete_workflow_node(session, node_id=node_id)
     except ValueError as exc:
-        _raise_http_error(exc)
+        raise_value_error_as_http(exc)
     return serialize_product_workflow(workflow)
 
 
@@ -191,7 +185,7 @@ def run_product_workflow_endpoint(
             start_node_id=payload.start_node_id if payload else None,
         )
     except ValueError as exc:
-        _raise_http_error(exc)
+        raise_value_error_as_http(exc)
     response = serialize_product_workflow(kickoff.workflow)
     if kickoff.created:
         try:

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -18,6 +17,7 @@ from productflow_backend.application.contracts import (
     ProductInput,
     ReferenceImageInput,
 )
+from productflow_backend.application.time import now_utc
 from productflow_backend.config import get_runtime_settings
 from productflow_backend.domain.enums import (
     CopyStatus,
@@ -44,10 +44,6 @@ from productflow_backend.infrastructure.image.factory import get_image_provider
 from productflow_backend.infrastructure.poster.renderer import PosterRenderer
 from productflow_backend.infrastructure.storage import LocalStorage
 from productflow_backend.infrastructure.text.factory import get_text_provider
-
-
-def now_utc() -> datetime:
-    return datetime.now(UTC)
 
 
 @dataclass(frozen=True, slots=True)

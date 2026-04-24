@@ -18,6 +18,7 @@ from productflow_backend.application.image_sessions import (
 from productflow_backend.infrastructure.db.models import ImageSessionAsset
 from productflow_backend.infrastructure.storage import ImageVariantName, LocalStorage
 from productflow_backend.presentation.deps import get_session, require_admin
+from productflow_backend.presentation.errors import raise_value_error_as_http
 from productflow_backend.presentation.image_variants import build_variant_filename
 from productflow_backend.presentation.schemas.image_sessions import (
     AttachImageSessionAssetRequest,
@@ -38,13 +39,6 @@ from productflow_backend.presentation.upload_validation import (
 router = APIRouter(prefix="/api", tags=["image-sessions"], dependencies=[Depends(require_admin)])
 
 
-def _raise_http_error(exc: ValueError) -> None:
-    detail = str(exc)
-    if detail.endswith("不存在"):
-        raise HTTPException(status_code=404, detail=detail) from exc
-    raise HTTPException(status_code=400, detail=detail) from exc
-
-
 @router.get("/image-sessions", response_model=ImageSessionListResponse)
 def list_image_sessions_endpoint(
     product_id: str | None = Query(default=None),
@@ -62,7 +56,7 @@ def create_image_session_endpoint(
     try:
         image_session = create_image_session(session, product_id=payload.product_id, title=payload.title)
     except ValueError as exc:
-        _raise_http_error(exc)
+        raise_value_error_as_http(exc)
     return serialize_image_session_detail(image_session)
 
 
@@ -74,7 +68,7 @@ def get_image_session_detail_endpoint(
     try:
         image_session = get_image_session_detail(session, image_session_id)
     except ValueError as exc:
-        _raise_http_error(exc)
+        raise_value_error_as_http(exc)
     return serialize_image_session_detail(image_session)
 
 
@@ -87,7 +81,7 @@ def update_image_session_endpoint(
     try:
         image_session = update_image_session(session, image_session_id=image_session_id, title=payload.title)
     except ValueError as exc:
-        _raise_http_error(exc)
+        raise_value_error_as_http(exc)
     return serialize_image_session_detail(image_session)
 
 
@@ -99,7 +93,7 @@ def delete_image_session_endpoint(
     try:
         delete_image_session(session, image_session_id=image_session_id)
     except ValueError as exc:
-        _raise_http_error(exc)
+        raise_value_error_as_http(exc)
 
 
 @router.post("/image-sessions/{image_session_id}/reference-images", response_model=ImageSessionDetailResponse)
@@ -126,7 +120,7 @@ async def upload_image_session_reference_images_endpoint(
             reference_image_uploads=payloads,
         )
     except ValueError as exc:
-        _raise_http_error(exc)
+        raise_value_error_as_http(exc)
     return serialize_image_session_detail(image_session)
 
 
@@ -146,7 +140,7 @@ def delete_image_session_reference_image_endpoint(
             asset_id=asset_id,
         )
     except ValueError as exc:
-        _raise_http_error(exc)
+        raise_value_error_as_http(exc)
     return serialize_image_session_detail(image_session)
 
 
@@ -164,7 +158,7 @@ def generate_image_session_round_endpoint(
             size=payload.size,
         )
     except ValueError as exc:
-        _raise_http_error(exc)
+        raise_value_error_as_http(exc)
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return serialize_image_session_detail(image_session)
@@ -189,7 +183,7 @@ def attach_image_session_asset_to_product_endpoint(
             product_id=payload.product_id,
         )
     except ValueError as exc:
-        _raise_http_error(exc)
+        raise_value_error_as_http(exc)
     message = "已加入商品参考图" if payload.target == "reference" else "已设为商品主图"
     return ProductWritebackResponse(product_id=product.id, message=message)
 

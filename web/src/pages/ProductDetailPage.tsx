@@ -4,7 +4,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
   CircleDot,
-  Download,
   FileText,
   GitBranch,
   Image as ImageIcon,
@@ -25,394 +24,45 @@ import { TopNav } from "../components/TopNav";
 import { api, ApiError } from "../lib/api";
 import { formatDateTime, formatPrice } from "../lib/format";
 import type {
-  PosterVariant,
   ProductDetail,
   ProductWorkflow,
-  SourceAsset,
   WorkflowNode,
   WorkflowNodeType,
 } from "../lib/types";
-
-const NODE_WIDTH = 248;
-const NODE_HANDLE_Y = 56;
-const NODE_MIN_X = 24;
-const NODE_MIN_Y = 24;
-
-type CanvasPoint = {
-  x: number;
-  y: number;
-};
-
-type NodeDragState = {
-  nodeId: string;
-  pointerId: number;
-  offsetX: number;
-  offsetY: number;
-  currentX: number;
-  currentY: number;
-};
-
-type ConnectionDragState = {
-  sourceNodeId: string;
-  pointerId: number;
-  from: CanvasPoint;
-  to: CanvasPoint;
-};
-
-type NodeConfigDraft = {
-  title: string;
-  productName: string;
-  category: string;
-  price: string;
-  sourceNote: string;
-  instruction: string;
-  role: string;
-  label: string;
-  tone: string;
-  channel: string;
-  size: string;
-  copyTitle: string;
-  copySellingPoints: string;
-  copyPosterHeadline: string;
-  copyCta: string;
-};
-
-const NODE_LABELS: Record<WorkflowNodeType, string> = {
-  product_context: "商品",
-  reference_image: "参考图",
-  copy_generation: "文案",
-  image_generation: "生图",
-};
-
-const NODE_STATUS_LABELS: Record<WorkflowNode["status"], string> = {
-  idle: "未运行",
-  queued: "排队中",
-  running: "运行中",
-  succeeded: "成功",
-  failed: "失败",
-};
-
-const ADD_NODE_OPTIONS: Array<{ type: WorkflowNodeType; label: string }> = [
-  { type: "reference_image", label: "参考图" },
-  { type: "copy_generation", label: "文案" },
-  { type: "image_generation", label: "生图" },
-];
-
-const MIN_INSPECTOR_WIDTH = 280;
-const MAX_INSPECTOR_WIDTH = 560;
-const MIN_BOTTOM_PANEL_HEIGHT = 150;
-const MAX_BOTTOM_PANEL_HEIGHT = 380;
-const MIN_ZOOM = 0.5;
-const MAX_ZOOM = 1.6;
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
-function readStoredNumber(key: string, fallback: number): number {
-  if (typeof window === "undefined") {
-    return fallback;
-  }
-  const raw = window.localStorage.getItem(key);
-  if (!raw) {
-    return fallback;
-  }
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-type DownloadableImage = {
-  previewUrl: string;
-  downloadUrl: string;
-  filename: string;
-  alt: string;
-};
-
-function getSourceImageAsset(product: ProductDetail): SourceAsset | null {
-  return (
-    product.source_assets.find((asset) => asset.kind === "original_image") ??
-    null
-  );
-}
-
-function sanitizeFilenamePart(
-  value: string | null | undefined,
-  fallback: string,
-): string {
-  const cleaned = (value ?? fallback)
-    .trim()
-    .replace(/[\u0000-\u001f\u007f]+/g, "")
-    .replace(/[\\/:*?"<>|]+/g, "-")
-    .replace(/\s+/g, "-")
-    .replace(/\.+/g, ".")
-    .replace(/^-+|-+$/g, "");
-  return (cleaned && cleaned !== "." && cleaned !== ".." ? cleaned : fallback)
-    .slice(0, 80)
-    .replace(/\.+$/g, "");
-}
-
-function toImageUrl(...paths: Array<string | null | undefined>): string {
-  const path = paths.find((item) => typeof item === "string" && item.trim());
-  return api.toApiUrl(path ?? "/");
-}
-
-function getExtensionFromMime(mimeType: string | null | undefined): string {
-  if (mimeType === "image/jpeg") {
-    return ".jpg";
-  }
-  if (mimeType === "image/webp") {
-    return ".webp";
-  }
-  return ".png";
-}
-
-function getExtensionFromFilename(
-  filename: string | null | undefined,
-  mimeType?: string | null,
-): string {
-  const match = filename?.match(/\.[a-z0-9]+$/i);
-  return match ? match[0].toLowerCase() : getExtensionFromMime(mimeType);
-}
-
-function compactDateTime(value: string): string {
-  return value.replace(/[^0-9]/g, "").slice(0, 14) || "image";
-}
-
-function buildSourceImageDownload(
-  product: ProductDetail,
-  asset: SourceAsset,
-  label: string,
-  previewUrl?: string,
-): DownloadableImage {
-  const productName = sanitizeFilenamePart(product.name, "商品");
-  const imageLabel = sanitizeFilenamePart(label, "图片");
-  const extension = getExtensionFromFilename(
-    asset.original_filename,
-    asset.mime_type,
-  );
-  return {
-    previewUrl: toImageUrl(previewUrl, asset.preview_url, asset.download_url),
-    downloadUrl: toImageUrl(asset.download_url, asset.preview_url),
-    filename: `${productName}-${imageLabel}-${compactDateTime(asset.created_at)}${extension}`,
-    alt: `${product.name} ${label}`,
-  };
-}
-
-function buildPosterDownload(
-  productName: string,
-  poster: PosterVariant,
-  previewUrl?: string,
-): DownloadableImage {
-  const productLabel = sanitizeFilenamePart(productName, "商品");
-  const posterLabel = poster.kind === "main_image" ? "主图" : "海报";
-  const extension = getExtensionFromMime(poster.mime_type);
-  return {
-    previewUrl: toImageUrl(previewUrl, poster.preview_url, poster.download_url),
-    downloadUrl: toImageUrl(poster.download_url, poster.preview_url),
-    filename: `${productLabel}-${posterLabel}-${compactDateTime(poster.created_at)}${extension}`,
-    alt: `${productName} ${posterLabel}`,
-  };
-}
-
-function getSourceImageDownload(
-  product: ProductDetail,
-): DownloadableImage | null {
-  const sourceAsset = getSourceImageAsset(product);
-  return sourceAsset
-    ? buildSourceImageDownload(product, sourceAsset, "主图")
-    : null;
-}
-
-function outputStringArray(node: WorkflowNode, key: string): string[] {
-  const value = node.output_json?.[key] ?? node.config_json[key];
-  if (typeof value === "string") {
-    return [value];
-  }
-  if (Array.isArray(value)) {
-    return value.filter((item): item is string => typeof item === "string");
-  }
-  return [];
-}
-
-function getNodeImageDownload(
-  node: WorkflowNode,
-  product: ProductDetail,
-  posters: PosterVariant[],
-): DownloadableImage | null {
-  if (node.node_type === "product_context") {
-    return getSourceImageDownload(product);
-  }
-  if (node.node_type === "reference_image") {
-    const ids = outputStringArray(node, "source_asset_ids");
-    const asset = ids
-      .map((id) =>
-        product.source_assets.find((item: SourceAsset) => item.id === id),
-      )
-      .find((item): item is SourceAsset => Boolean(item));
-    return asset
-      ? buildSourceImageDownload(
-          product,
-          asset,
-          node.title || "参考图",
-          asset.thumbnail_url,
-        )
-      : null;
-  }
-  if (node.node_type === "image_generation") {
-    const ids = outputStringArray(node, "poster_variant_ids");
-    const poster = ids
-      .map((id) => posters.find((item) => item.id === id))
-      .find((item): item is PosterVariant => Boolean(item));
-    return poster
-      ? buildPosterDownload(product.name, poster, poster.thumbnail_url)
-      : null;
-  }
-  return null;
-}
-
-function configString(
-  node: WorkflowNode | null,
-  key: string,
-  fallback = "",
-): string {
-  const value = node?.config_json[key];
-  return typeof value === "string" ? value : fallback;
-}
-
-function draftFromNode(
-  node: WorkflowNode | null,
-  product?: ProductDetail | null,
-): NodeConfigDraft {
-  const copySetId = node?.output_json
-    ? outputText(node.output_json, "copy_set_id")
-    : null;
-  const copySet = copySetId
-    ? product?.copy_sets.find((item) => item.id === copySetId)
-    : null;
-  const outputSellingPoints = node
-    ? outputStringArray(node, "selling_points")
-    : [];
-  return {
-    title: node?.title ?? "",
-    productName: configString(node, "name", product?.name ?? ""),
-    category: configString(node, "category", product?.category ?? ""),
-    price: configString(node, "price", product?.price ?? ""),
-    sourceNote: configString(node, "source_note", product?.source_note ?? ""),
-    instruction: configString(node, "instruction"),
-    role: configString(node, "role", "reference"),
-    label: configString(node, "label"),
-    tone: configString(node, "tone", "转化清晰"),
-    channel: configString(node, "channel", "商品主图"),
-    size: configString(node, "size", "1024x1024"),
-    copyTitle:
-      copySet?.title ??
-      (node?.output_json ? (outputText(node.output_json, "title") ?? "") : ""),
-    copySellingPoints: (copySet?.selling_points ?? outputSellingPoints).join(
-      "\n",
-    ),
-    copyPosterHeadline:
-      copySet?.poster_headline ??
-      (node?.output_json
-        ? (outputText(node.output_json, "poster_headline") ?? "")
-        : ""),
-    copyCta:
-      copySet?.cta ??
-      (node?.output_json ? (outputText(node.output_json, "cta") ?? "") : ""),
-  };
-}
-
-function nodeConfigFromDraft(
-  node: WorkflowNode,
-  draft: NodeConfigDraft,
-): Record<string, unknown> {
-  const base = { ...node.config_json };
-  if (node.node_type === "product_context") {
-    return {
-      ...base,
-      name: draft.productName,
-      category: draft.category,
-      price: draft.price,
-      source_note: draft.sourceNote,
-    };
-  }
-  if (node.node_type === "reference_image") {
-    return { ...base, role: draft.role, label: draft.label };
-  }
-  if (node.node_type === "copy_generation") {
-    return {
-      ...base,
-      instruction: draft.instruction,
-      tone: draft.tone,
-      channel: draft.channel,
-    };
-  }
-  if (node.node_type === "image_generation") {
-    return {
-      ...base,
-      instruction: draft.instruction,
-      size: draft.size,
-    };
-  }
-  return base;
-}
-
-function defaultConfigForType(type: WorkflowNodeType): Record<string, unknown> {
-  if (type === "reference_image") {
-    return { role: "reference", label: "参考图" };
-  }
-  if (type === "copy_generation") {
-    return { instruction: "生成商品文案", tone: "清晰可信", channel: "商品图" };
-  }
-  if (type === "image_generation") {
-    return {
-      instruction: "生成商品图",
-      size: "1024x1024",
-    };
-  }
-  return {};
-}
-
-function defaultTitleForType(type: WorkflowNodeType, index: number): string {
-  return {
-    product_context: `商品 ${index}`,
-    reference_image: `参考图 ${index}`,
-    copy_generation: `文案 ${index}`,
-    image_generation: `生图 ${index}`,
-  }[type];
-}
-
-function statusClass(status: WorkflowNode["status"]): string {
-  return {
-    idle: "border-zinc-200 bg-white text-zinc-500",
-    queued: "border-amber-200 bg-amber-50 text-amber-700",
-    running: "border-blue-200 bg-blue-50 text-blue-700",
-    succeeded: "border-emerald-200 bg-emerald-50 text-emerald-700",
-    failed: "border-red-200 bg-red-50 text-red-700",
-  }[status];
-}
-
-function nodeIdleSummary(node: WorkflowNode): string {
-  if (node.node_type === "product_context") {
-    return "商品资料";
-  }
-  if (node.node_type === "reference_image") {
-    return "参考图";
-  }
-  if (node.node_type === "copy_generation") {
-    return "文案";
-  }
-  return "可直接生成图片";
-}
-
-function hasActiveWorkflow(workflow: ProductWorkflow | undefined | null): boolean {
-  if (!workflow) {
-    return false;
-  }
-  return (
-    workflow.runs.some((run) => run.status === "running") ||
-    workflow.nodes.some((node) => node.status === "queued" || node.status === "running")
-  );
-}
+import {
+  ADD_NODE_OPTIONS,
+  MAX_BOTTOM_PANEL_HEIGHT,
+  MAX_INSPECTOR_WIDTH,
+  MAX_ZOOM,
+  MIN_BOTTOM_PANEL_HEIGHT,
+  MIN_INSPECTOR_WIDTH,
+  MIN_ZOOM,
+  NODE_HANDLE_Y,
+  NODE_LABELS,
+  NODE_MIN_X,
+  NODE_MIN_Y,
+  NODE_STATUS_LABELS,
+  NODE_WIDTH,
+} from "./product-detail/constants";
+import { DownloadLink, PosterThumb } from "./product-detail/ImageDownloadComponents";
+import { NodeOutputPreview } from "./product-detail/NodeOutputPreview";
+import { getNodeImageDownload, getSourceImageDownload } from "./product-detail/imageDownloads";
+import type { CanvasPoint, ConnectionDragState, NodeConfigDraft, NodeDragState } from "./product-detail/types";
+import {
+  clamp,
+  hasActiveWorkflow,
+  nodeIdleSummary,
+  outputText,
+  readStoredNumber,
+  statusClass,
+} from "./product-detail/utils";
+import {
+  defaultConfigForType,
+  defaultTitleForType,
+  draftFromNode,
+  nodeConfigFromDraft,
+} from "./product-detail/workflowConfig";
+import type { DownloadableImage } from "../lib/image-downloads";
 
 export function ProductDetailPage() {
   const { productId = "" } = useParams();
@@ -2080,132 +1730,5 @@ function TextArea({
         className="w-full resize-none rounded-md border border-zinc-200 px-3 py-2 text-xs leading-relaxed outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900"
       />
     </label>
-  );
-}
-
-function outputCount(output: Record<string, unknown>, key: string): number {
-  const value = output[key];
-  if (Array.isArray(value)) {
-    return value.filter((item) => typeof item === "string" && item.length > 0)
-      .length;
-  }
-  return typeof value === "string" && value.length > 0 ? 1 : 0;
-}
-
-function outputText(
-  output: Record<string, unknown>,
-  key: string,
-): string | null {
-  const value = output[key];
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function NodeOutputPreview({ output }: { output: Record<string, unknown> }) {
-  const copyReady = Boolean(outputText(output, "copy_set_id"));
-  const posterCount = outputCount(output, "poster_variant_ids");
-  const filledCount = outputCount(output, "filled_source_asset_ids");
-  const imageCount = Math.max(
-    outputCount(output, "source_asset_ids"),
-    outputCount(output, "image_asset_ids"),
-  );
-  const targetCount =
-    typeof output.target_count === "number" ? output.target_count : null;
-  const size = outputText(output, "size");
-  const facts = [
-    copyReady ? "文案 已生成" : null,
-    posterCount ? `图片 ${posterCount}` : null,
-    filledCount
-      ? `参考图 ${filledCount}`
-      : imageCount
-        ? `参考图 ${imageCount}`
-        : null,
-    targetCount ? `槽位 ${targetCount}` : null,
-    size,
-  ].filter((item): item is string => Boolean(item));
-
-  return (
-    <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
-      <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
-        输出
-      </div>
-      {typeof output.summary === "string" ? (
-        <div className="mb-2 text-xs text-zinc-700">{output.summary}</div>
-      ) : null}
-      {facts.length ? (
-        <div className="flex flex-wrap gap-1.5">
-          {facts.map((item) => (
-            <span
-              key={item}
-              className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[10px] text-zinc-500"
-            >
-              {item}
-            </span>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function DownloadLink({
-  image,
-  variant = "button",
-}: {
-  image: DownloadableImage;
-  variant?: "button" | "overlay";
-}) {
-  const className =
-    variant === "overlay"
-      ? "absolute bottom-2 right-2 inline-flex items-center rounded bg-white/95 px-2 py-1 text-[10px] font-medium text-zinc-700 shadow-sm ring-1 ring-zinc-200 hover:bg-white"
-      : "inline-flex items-center rounded border border-zinc-200 bg-white px-2 py-1 text-[10px] font-medium text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50";
-  return (
-    <a
-      data-node-action
-      href={image.downloadUrl}
-      download={image.filename}
-      onClick={(event) => event.stopPropagation()}
-      target="_blank"
-      rel="noreferrer"
-      className={className}
-      title={`下载 ${image.filename}`}
-      aria-label={`下载 ${image.filename}`}
-    >
-      <Download size={11} className="mr-1" /> 下载
-    </a>
-  );
-}
-
-function PosterThumb({
-  poster,
-  productName,
-}: {
-  poster: PosterVariant;
-  productName: string;
-}) {
-  const image = buildPosterDownload(productName, poster, poster.thumbnail_url);
-  return (
-    <div className="group overflow-hidden rounded-md border border-zinc-200 bg-white">
-      <a
-        href={api.toApiUrl(poster.preview_url)}
-        target="_blank"
-        rel="noreferrer"
-        className="block"
-      >
-        <div className="aspect-square bg-zinc-100">
-          <img
-            src={image.previewUrl}
-            alt={image.alt}
-            className="h-full w-full object-cover transition-transform group-hover:scale-[1.02]"
-          />
-        </div>
-      </a>
-      <div className="flex items-center justify-between gap-2 border-t border-zinc-100 px-2 py-1 text-[10px] text-zinc-500">
-        <span className="min-w-0 truncate">
-          {poster.kind === "main_image" ? "主图" : "促销"} ·{" "}
-          {formatDateTime(poster.created_at)}
-        </span>
-        <DownloadLink image={image} />
-      </div>
-    </div>
   );
 }

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections import defaultdict, deque
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -10,8 +10,10 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from productflow_backend.application import product_workflow_graph
 from productflow_backend.application.contracts import PosterGenerationInput, ProductInput, ReferenceImageInput
-from productflow_backend.application.use_cases import now_utc, update_copy_set
+from productflow_backend.application.time import now_utc
+from productflow_backend.application.use_cases import update_copy_set
 from productflow_backend.config import get_runtime_settings, normalize_image_size
 from productflow_backend.domain.enums import (
     CopyStatus,
@@ -40,9 +42,6 @@ from productflow_backend.infrastructure.poster.renderer import PosterRenderer
 from productflow_backend.infrastructure.storage import LocalStorage
 from productflow_backend.infrastructure.text.factory import get_text_provider
 
-DEFAULT_WORKFLOW_TITLE = "商品创意工作流"
-DEFAULT_IMAGE_SIZE = "1024x1024"
-
 logger = logging.getLogger(__name__)
 
 
@@ -53,154 +52,47 @@ class WorkflowRunKickoff:
     created: bool
 
 
-def _workflow_query():
-    return select(ProductWorkflow).options(
-        selectinload(ProductWorkflow.product).selectinload(Product.source_assets),
-        selectinload(ProductWorkflow.product).selectinload(Product.creative_briefs),
-        selectinload(ProductWorkflow.product).selectinload(Product.copy_sets),
-        selectinload(ProductWorkflow.product).selectinload(Product.poster_variants),
-        selectinload(ProductWorkflow.product).selectinload(Product.confirmed_copy_set),
-        selectinload(ProductWorkflow.nodes),
-        selectinload(ProductWorkflow.edges),
-        selectinload(ProductWorkflow.runs).selectinload(WorkflowRun.node_runs),
-    )
-
-
-def _get_product_or_raise(session: Session, product_id: str) -> Product:
-    product = session.scalar(
-        select(Product)
-        .options(
-            selectinload(Product.source_assets),
-            selectinload(Product.creative_briefs),
-            selectinload(Product.copy_sets),
-            selectinload(Product.poster_variants),
-            selectinload(Product.confirmed_copy_set),
-        )
-        .where(Product.id == product_id)
-    )
-    if product is None:
-        raise ValueError("商品不存在")
-    return product
-
-
-def _get_workflow_or_raise(session: Session, workflow_id: str) -> ProductWorkflow:
-    workflow = session.scalar(_workflow_query().where(ProductWorkflow.id == workflow_id))
-    if workflow is None:
-        raise ValueError("工作流不存在")
-    return workflow
-
-
-def _get_active_workflow(session: Session, product_id: str) -> ProductWorkflow | None:
-    return session.scalar(
-        _workflow_query().where(ProductWorkflow.product_id == product_id, ProductWorkflow.active.is_(True))
-    )
-
-
-def _get_node_or_raise(session: Session, node_id: str) -> WorkflowNode:
-    node = session.get(WorkflowNode, node_id)
-    if node is None:
-        raise ValueError("工作流节点不存在")
-    return node
-
-
-def _get_edge_or_raise(session: Session, edge_id: str) -> WorkflowEdge:
-    edge = session.get(WorkflowEdge, edge_id)
-    if edge is None:
-        raise ValueError("工作流连线不存在")
-    return edge
-
-
-def _default_node_specs(product: Product) -> list[dict[str, Any]]:
-    return [
-        {
-            "key": "context",
-            "node_type": WorkflowNodeType.PRODUCT_CONTEXT,
-            "title": "商品",
-            "position_x": 40,
-            "position_y": 120,
-            "config_json": {},
-        },
-        {
-            "key": "copy",
-            "node_type": WorkflowNodeType.COPY_GENERATION,
-            "title": "文案",
-            "position_x": 320,
-            "position_y": 80,
-            "config_json": {"instruction": f"围绕 {product.name} 生成一版适合商品图的文案"},
-        },
-        {
-            "key": "image",
-            "node_type": WorkflowNodeType.IMAGE_GENERATION,
-            "title": "生图",
-            "position_x": 620,
-            "position_y": 100,
-            "config_json": {
-                "instruction": "结合商品和文案生成商品图",
-                "size": DEFAULT_IMAGE_SIZE,
-            },
-        },
-        {
-            "key": "reference",
-            "node_type": WorkflowNodeType.REFERENCE_IMAGE,
-            "title": "参考图",
-            "position_x": 920,
-            "position_y": 120,
-            "config_json": {"role": "reference", "label": "可选参考图"},
-        },
-    ]
-
-
-def _default_edges(nodes_by_key: dict[str, WorkflowNode], workflow_id: str) -> list[WorkflowEdge]:
-    pairs = [
-        ("context", "copy"),
-        ("context", "image"),
-        ("copy", "image"),
-    ]
-    return [
-        WorkflowEdge(
-            workflow_id=workflow_id,
-            source_node_id=nodes_by_key[source].id,
-            target_node_id=nodes_by_key[target].id,
-            source_handle="output",
-            target_handle="input",
-        )
-        for source, target in pairs
-    ]
-
-
 def get_or_create_product_workflow(session: Session, product_id: str) -> ProductWorkflow:
-    existing = _get_active_workflow(session, product_id)
+    existing = product_workflow_graph.get_active_workflow(session, product_id)
     if existing is not None:
         if _normalize_product_context_singleton(session, existing):
             session.commit()
             session.expire_all()
-            return _get_active_workflow(session, product_id) or _get_workflow_or_raise(session, existing.id)
+            return product_workflow_graph.get_active_workflow(
+                session, product_id
+            ) or product_workflow_graph.get_workflow_or_raise(session, existing.id)
         return existing
 
-    product = _get_product_or_raise(session, product_id)
-    workflow = ProductWorkflow(product_id=product.id, title=DEFAULT_WORKFLOW_TITLE, active=True)
+    product = product_workflow_graph.get_product_or_raise(session, product_id)
+    workflow = ProductWorkflow(
+        product_id=product.id,
+        title=product_workflow_graph.DEFAULT_WORKFLOW_TITLE,
+        active=True,
+    )
     session.add(workflow)
     session.flush()
 
     nodes_by_key: dict[str, WorkflowNode] = {}
-    for spec in _default_node_specs(product):
+    for spec in product_workflow_graph.default_node_specs(product):
         key = str(spec.pop("key"))
         node = WorkflowNode(workflow_id=workflow.id, **spec)
         session.add(node)
         nodes_by_key[key] = node
     session.flush()
-    for edge in _default_edges(nodes_by_key, workflow.id):
+    for edge in product_workflow_graph.default_edges(nodes_by_key, workflow.id):
         session.add(edge)
     try:
         session.commit()
     except IntegrityError:
         session.rollback()
-        existing = _get_active_workflow(session, product_id)
+        existing = product_workflow_graph.get_active_workflow(session, product_id)
         if existing is not None:
             return existing
         raise
     session.expire_all()
-    return _get_active_workflow(session, product_id) or _get_workflow_or_raise(session, workflow.id)
+    return product_workflow_graph.get_active_workflow(
+        session, product_id
+    ) or product_workflow_graph.get_workflow_or_raise(session, workflow.id)
 
 
 def create_workflow_node(
@@ -221,7 +113,7 @@ def create_workflow_node(
     node = WorkflowNode(
         workflow_id=workflow.id,
         node_type=node_type,
-        title=title.strip() or _default_title_for_type(node_type),
+        title=title.strip() or product_workflow_graph.default_title_for_type(node_type),
         position_x=position_x,
         position_y=position_y,
         config_json=config_json or {},
@@ -230,7 +122,7 @@ def create_workflow_node(
     workflow.updated_at = now_utc()
     session.commit()
     session.expire_all()
-    return _get_workflow_or_raise(session, workflow.id)
+    return product_workflow_graph.get_workflow_or_raise(session, workflow.id)
 
 
 def update_workflow_node(
@@ -242,9 +134,9 @@ def update_workflow_node(
     position_y: int | None,
     config_json: dict[str, Any] | None,
 ) -> ProductWorkflow:
-    node = _get_node_or_raise(session, node_id)
+    node = product_workflow_graph.get_node_or_raise(session, node_id)
     if title is not None:
-        node.title = title.strip() or _default_title_for_type(node.node_type)
+        node.title = title.strip() or product_workflow_graph.default_title_for_type(node.node_type)
     if position_x is not None:
         node.position_x = position_x
     if position_y is not None:
@@ -254,7 +146,7 @@ def update_workflow_node(
     node.workflow.updated_at = now_utc()
     session.commit()
     session.expire_all()
-    return _get_workflow_or_raise(session, node.workflow_id)
+    return product_workflow_graph.get_workflow_or_raise(session, node.workflow_id)
 
 
 def update_workflow_copy_set(
@@ -266,11 +158,11 @@ def update_workflow_copy_set(
     poster_headline: str | None,
     cta: str | None,
 ) -> ProductWorkflow:
-    node = _get_node_or_raise(session, node_id)
+    node = product_workflow_graph.get_node_or_raise(session, node_id)
     if node.node_type != WorkflowNodeType.COPY_GENERATION:
         raise ValueError("只有文案节点可以编辑文案")
     workflow_id = node.workflow_id
-    workflow = _get_workflow_or_raise(session, workflow_id)
+    workflow = product_workflow_graph.get_workflow_or_raise(session, workflow_id)
     copy_set_id = (node.output_json or {}).get("copy_set_id")
     if not isinstance(copy_set_id, str) or not copy_set_id:
         raise ValueError("文案节点还没有生成文案")
@@ -287,7 +179,7 @@ def update_workflow_copy_set(
         poster_headline=poster_headline,
         cta=cta,
     )
-    node = _get_node_or_raise(session, node_id)
+    node = product_workflow_graph.get_node_or_raise(session, node_id)
     output = dict(node.output_json or {})
     output.update(
         {
@@ -306,7 +198,7 @@ def update_workflow_copy_set(
     node.workflow.product.updated_at = now_utc()
     session.commit()
     session.expire_all()
-    return _get_workflow_or_raise(session, workflow_id)
+    return product_workflow_graph.get_workflow_or_raise(session, workflow_id)
 
 
 def upload_workflow_node_image(
@@ -321,10 +213,10 @@ def upload_workflow_node_image(
     storage: LocalStorage | None = None,
 ) -> ProductWorkflow:
     """把上传图存为商品参考图，并绑定到参考图节点输出。"""
-    node = _get_node_or_raise(session, node_id)
+    node = product_workflow_graph.get_node_or_raise(session, node_id)
     if node.node_type != WorkflowNodeType.REFERENCE_IMAGE:
         raise ValueError("只有参考图节点可以上传图片")
-    workflow = _get_workflow_or_raise(session, node.workflow_id)
+    workflow = product_workflow_graph.get_workflow_or_raise(session, node.workflow_id)
     storage = storage or LocalStorage()
     relative_path = storage.save_reference_upload(workflow.product_id, filename, image_bytes)
     asset = SourceAsset(
@@ -360,7 +252,7 @@ def upload_workflow_node_image(
     workflow.product.updated_at = now_utc()
     session.commit()
     session.expire_all()
-    return _get_workflow_or_raise(session, workflow.id)
+    return product_workflow_graph.get_workflow_or_raise(session, workflow.id)
 
 
 def create_workflow_edge(
@@ -389,30 +281,30 @@ def create_workflow_edge(
     workflow.updated_at = now_utc()
     session.flush()
     session.expire(workflow, ["nodes", "edges"])
-    refreshed = _get_workflow_or_raise(session, workflow.id)
+    refreshed = product_workflow_graph.get_workflow_or_raise(session, workflow.id)
     try:
-        _topological_nodes(refreshed)
+        product_workflow_graph.topological_nodes(refreshed)
     except ValueError:
         session.rollback()
         raise
     session.commit()
     session.expire_all()
-    return _get_workflow_or_raise(session, workflow.id)
+    return product_workflow_graph.get_workflow_or_raise(session, workflow.id)
 
 
 def delete_workflow_edge(session: Session, *, edge_id: str) -> ProductWorkflow:
-    edge = _get_edge_or_raise(session, edge_id)
+    edge = product_workflow_graph.get_edge_or_raise(session, edge_id)
     workflow_id = edge.workflow_id
     edge.workflow.updated_at = now_utc()
     session.delete(edge)
     session.commit()
     session.expire_all()
-    return _get_workflow_or_raise(session, workflow_id)
+    return product_workflow_graph.get_workflow_or_raise(session, workflow_id)
 
 
 def delete_workflow_node(session: Session, *, node_id: str) -> ProductWorkflow:
-    node = _get_node_or_raise(session, node_id)
-    workflow = _get_workflow_or_raise(session, node.workflow_id)
+    node = product_workflow_graph.get_node_or_raise(session, node_id)
+    workflow = product_workflow_graph.get_workflow_or_raise(session, node.workflow_id)
     if _active_workflow_run(workflow) is not None or node.status in {
         WorkflowNodeStatus.QUEUED,
         WorkflowNodeStatus.RUNNING,
@@ -431,7 +323,7 @@ def delete_workflow_node(session: Session, *, node_id: str) -> ProductWorkflow:
     session.delete(node)
     session.commit()
     session.expire_all()
-    return _get_workflow_or_raise(session, workflow_id)
+    return product_workflow_graph.get_workflow_or_raise(session, workflow_id)
 
 
 def _active_workflow_run(workflow: ProductWorkflow) -> WorkflowRun | None:
@@ -456,7 +348,7 @@ def start_product_workflow_run(
     if active_run is not None:
         return WorkflowRunKickoff(workflow=workflow, run_id=active_run.id, created=False)
 
-    ordered_nodes = _topological_nodes(workflow)
+    ordered_nodes = product_workflow_graph.topological_nodes(workflow)
     node_ids_to_run = _node_ids_to_run(session, workflow, start_node_id)
     if not node_ids_to_run:
         raise ValueError("工作流没有可运行节点")
@@ -488,13 +380,17 @@ def start_product_workflow_run(
         session.commit()
     except IntegrityError:
         session.rollback()
-        workflow = _get_workflow_or_raise(session, workflow.id)
+        workflow = product_workflow_graph.get_workflow_or_raise(session, workflow.id)
         active_run = _active_workflow_run(workflow)
         if active_run is not None:
             return WorkflowRunKickoff(workflow=workflow, run_id=active_run.id, created=False)
         raise
     session.expire_all()
-    return WorkflowRunKickoff(workflow=_get_workflow_or_raise(session, workflow.id), run_id=run.id, created=True)
+    return WorkflowRunKickoff(
+        workflow=product_workflow_graph.get_workflow_or_raise(session, workflow.id),
+        run_id=run.id,
+        created=True,
+    )
 
 
 def run_product_workflow(
@@ -507,7 +403,7 @@ def run_product_workflow(
     if kickoff.created:
         execute_product_workflow_run(kickoff.run_id)
         session.expire_all()
-        return _get_workflow_or_raise(session, kickoff.workflow.id)
+        return product_workflow_graph.get_workflow_or_raise(session, kickoff.workflow.id)
     return kickoff.workflow
 
 
@@ -546,8 +442,8 @@ def _execute_product_workflow_run(session: Session, *, run_id: str) -> None:
         return
     if run.status != WorkflowRunStatus.RUNNING:
         return
-    workflow = _get_workflow_or_raise(session, run.workflow_id)
-    ordered_nodes = _topological_nodes(workflow)
+    workflow = product_workflow_graph.get_workflow_or_raise(session, run.workflow_id)
+    ordered_nodes = product_workflow_graph.topological_nodes(workflow)
     run_node_ids = {node_run.node_id for node_run in run.node_runs}
     node_runs_by_node_id = {node_run.node_id: node_run for node_run in run.node_runs}
     if any(node_run.status == WorkflowNodeStatus.RUNNING for node_run in run.node_runs):
@@ -556,7 +452,7 @@ def _execute_product_workflow_run(session: Session, *, run_id: str) -> None:
     for ordered_node in ordered_nodes:
         if ordered_node.id not in run_node_ids:
             continue
-        node = _get_node_or_raise(session, ordered_node.id)
+        node = product_workflow_graph.get_node_or_raise(session, ordered_node.id)
         node_run = node_runs_by_node_id.get(node.id)
         if node_run is None:
             continue
@@ -567,7 +463,7 @@ def _execute_product_workflow_run(session: Session, *, run_id: str) -> None:
             continue
         if not _claim_workflow_node_run(session, node_run_id=node_run.id, node_id=node.id):
             return
-        node = _get_node_or_raise(session, ordered_node.id)
+        node = product_workflow_graph.get_node_or_raise(session, ordered_node.id)
         node_run = session.get(WorkflowNodeRun, node_run.id)
         if node_run is None:
             return
@@ -655,7 +551,7 @@ def _mark_workflow_run_failed(
         return
     now = now_utc()
     if failed_node_id is not None:
-        failed_node = _get_node_or_raise(session, failed_node_id)
+        failed_node = product_workflow_graph.get_node_or_raise(session, failed_node_id)
         failed_node.status = WorkflowNodeStatus.FAILED
         failed_node.failure_reason = reason
         failed_node.last_run_at = now
@@ -678,44 +574,6 @@ def _mark_workflow_run_failed(
     persisted_run.finished_at = now
     persisted_run.workflow.updated_at = now
     session.commit()
-
-
-def _default_title_for_type(node_type: WorkflowNodeType) -> str:
-    return {
-        WorkflowNodeType.PRODUCT_CONTEXT: "商品",
-        WorkflowNodeType.REFERENCE_IMAGE: "参考图",
-        WorkflowNodeType.COPY_GENERATION: "文案",
-        WorkflowNodeType.IMAGE_GENERATION: "生图",
-    }[node_type]
-
-
-def _topological_nodes(workflow: ProductWorkflow) -> list[WorkflowNode]:
-    nodes = {node.id: node for node in workflow.nodes}
-    incoming_count = {node_id: 0 for node_id in nodes}
-    outgoing: dict[str, list[str]] = defaultdict(list)
-    for edge in workflow.edges:
-        if edge.source_node_id not in nodes or edge.target_node_id not in nodes:
-            raise ValueError("工作流连线引用了不存在的节点")
-        outgoing[edge.source_node_id].append(edge.target_node_id)
-        incoming_count[edge.target_node_id] += 1
-
-    queue = deque(
-        sorted(
-            [node_id for node_id, count in incoming_count.items() if count == 0],
-            key=lambda item: nodes[item].position_x,
-        )
-    )
-    ordered: list[WorkflowNode] = []
-    while queue:
-        node_id = queue.popleft()
-        ordered.append(nodes[node_id])
-        for target_id in outgoing[node_id]:
-            incoming_count[target_id] -= 1
-            if incoming_count[target_id] == 0:
-                queue.append(target_id)
-    if len(ordered) != len(nodes):
-        raise ValueError("工作流不能包含循环依赖")
-    return ordered
 
 
 def _node_ids_to_run(session: Session, workflow: ProductWorkflow, start_node_id: str | None) -> set[str]:
@@ -845,7 +703,7 @@ def _should_execute_missing_upstream(source_node: WorkflowNode, target_node: Wor
 
 
 def _execute_node(session: Session, *, workflow_id: str, node: WorkflowNode) -> dict[str, Any]:
-    workflow = _get_workflow_or_raise(session, workflow_id)
+    workflow = product_workflow_graph.get_workflow_or_raise(session, workflow_id)
     product = workflow.product
     if node.node_type == WorkflowNodeType.PRODUCT_CONTEXT:
         return _execute_product_context(product, node)
@@ -1503,4 +1361,4 @@ def _instruction_with_upstream_text(instruction: str | None, incoming_context: _
 
 
 def latest_workflow_runs(workflow: ProductWorkflow, limit: int = 10) -> list[WorkflowRun]:
-    return sorted(workflow.runs, key=lambda item: item.started_at, reverse=True)[:limit]
+    return product_workflow_graph.latest_workflow_runs(workflow, limit=limit)

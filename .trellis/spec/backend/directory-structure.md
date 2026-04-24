@@ -39,6 +39,7 @@ backend/
 │   ├── presentation/
 │   │   ├── api.py                       # FastAPI app factory, middleware, router registration
 │   │   ├── deps.py                      # FastAPI dependencies, including auth/session dependency
+│   │   ├── errors.py                    # shared route-boundary business error to HTTP mapping
 │   │   ├── image_variants.py            # shared image download/variant URL and filename helpers
 │   │   ├── upload_validation.py         # upload size/MIME/pixel validation
 │   │   ├── routes/                      # APIRouter modules by resource
@@ -90,6 +91,10 @@ Put workflow rules and orchestration in `backend/src/productflow_backend/applica
   trimming title text, attaching generated assets back to products, and deleting session storage.
 - `application/contracts.py` contains Pydantic contracts shared with providers/renderers, such as
   `ProductInput`, `CreativeBriefPayload`, `CopyPayload`, and `PosterGenerationInput`.
+- `application/time.py` is the shared application timestamp helper for timezone-aware UTC values.
+- `application/product_workflow_graph.py` owns product workflow graph loading, default graph templates, lookup helpers,
+  topological ordering, and latest-run ordering. Keep these graph/query concerns out of
+  `application/product_workflows.py`, which owns mutations and execution orchestration.
 
 This layer receives a SQLAlchemy `Session` from callers. It is allowed to call infrastructure adapters such as
 `LocalStorage`, provider factories, and `PosterRenderer`, but FastAPI-specific types should not leak into it.
@@ -140,6 +145,8 @@ and the runtime config definitions in `config.py`, then update tests and fronten
   and routers in one place.
 - Product route shape: `backend/src/productflow_backend/presentation/routes/products.py` accepts FastAPI inputs,
   delegates to `application/use_cases.py`, and serializes with `presentation/schemas/products.py`.
+- Business error mapping: route modules import `raise_value_error_as_http(...)` from
+  `presentation/errors.py` instead of redefining `ValueError -> HTTPException` logic locally.
 - Continuous image sessions: `backend/src/productflow_backend/presentation/routes/image_sessions.py` delegates to
   `application/image_sessions.py`, which delegates provider-specific chat generation to
   `infrastructure/image/chat_service.py`, and keeps download handling in the route.
