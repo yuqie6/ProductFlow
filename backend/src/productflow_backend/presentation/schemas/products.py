@@ -89,6 +89,9 @@ class ProductSummaryResponse(BaseModel):
     latest_copy_status: CopyStatus | None = None
     latest_poster_at: datetime | None = None
     source_image_filename: str | None = None
+    source_image_download_url: str | None = None
+    source_image_preview_url: str | None = None
+    source_image_thumbnail_url: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -196,6 +199,7 @@ def serialize_product_summary(product: Product) -> ProductSummaryResponse:
     latest_copy = max(product.copy_sets, key=lambda item: item.created_at, default=None)
     latest_poster = max(product.poster_variants, key=lambda item: item.created_at, default=None)
     source = next((item for item in product.source_assets if item.kind == SourceAssetKind.ORIGINAL_IMAGE), None)
+    source_urls = build_image_urls(f"/api/source-assets/{source.id}/download") if source else {}
     return ProductSummaryResponse(
         id=product.id,
         name=product.name,
@@ -205,6 +209,9 @@ def serialize_product_summary(product: Product) -> ProductSummaryResponse:
         latest_copy_status=latest_copy.status if latest_copy else None,
         latest_poster_at=latest_poster.created_at if latest_poster else None,
         source_image_filename=source.original_filename if source else None,
+        source_image_download_url=source_urls.get("download_url"),
+        source_image_preview_url=source_urls.get("preview_url"),
+        source_image_thumbnail_url=source_urls.get("thumbnail_url"),
         created_at=product.created_at,
         updated_at=product.updated_at,
     )

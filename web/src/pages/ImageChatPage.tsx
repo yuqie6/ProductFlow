@@ -82,7 +82,7 @@ export function ImageChatPage() {
 
   const productsQuery = useQuery({
     queryKey: ["products"],
-    queryFn: api.listProducts,
+    queryFn: () => api.listProducts({ page_size: 100 }),
     enabled: !isProductMode,
   });
 

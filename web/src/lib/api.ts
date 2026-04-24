@@ -75,8 +75,10 @@ export const api = {
   destroySession(): Promise<{ ok: boolean }> {
     return request("/api/auth/session", { method: "DELETE" });
   },
-  listProducts(): Promise<ProductListResponse> {
-    return request("/api/products?page=1&page_size=100");
+  listProducts(input?: { page?: number; page_size?: number }): Promise<ProductListResponse> {
+    const page = input?.page ?? 1;
+    const pageSize = input?.page_size ?? 20;
+    return request(`/api/products?page=${encodeURIComponent(page)}&page_size=${encodeURIComponent(pageSize)}`);
   },
   getProduct(productId: string): Promise<ProductDetail> {
     return request(`/api/products/${productId}`);

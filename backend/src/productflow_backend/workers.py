@@ -8,12 +8,14 @@ import dramatiq
 from productflow_backend.application.product_workflows import execute_product_workflow_run
 from productflow_backend.application.use_cases import execute_copy_job, execute_poster_job
 from productflow_backend.config import get_runtime_settings
+from productflow_backend.infrastructure.logging import cleanup_old_logs, configure_logging
 from productflow_backend.infrastructure.queue import (
     get_broker,
     recover_unfinished_jobs,
     recover_unfinished_workflow_runs,
 )
 
+configure_logging()
 get_broker()
 
 
@@ -42,5 +44,6 @@ def _running_under_dramatiq_cli() -> bool:
 
 
 if _running_under_dramatiq_cli():
+    cleanup_old_logs()
     recover_unfinished_jobs(reset_stale_running=True)
     recover_unfinished_workflow_runs(reset_stale_running=True)

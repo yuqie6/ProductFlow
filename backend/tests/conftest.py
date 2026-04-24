@@ -20,6 +20,7 @@ def configured_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path}")
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/9")
     monkeypatch.setenv("STORAGE_ROOT", str(storage_root))
+    monkeypatch.setenv("LOG_DIR", str(tmp_path / "logs"))
     monkeypatch.setenv("TEXT_PROVIDER_KIND", "mock")
     monkeypatch.setenv("IMAGE_PROVIDER_KIND", "mock")
     monkeypatch.setenv("POSTER_GENERATION_MODE", "template")

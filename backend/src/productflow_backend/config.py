@@ -15,6 +15,8 @@ from sqlalchemy.exc import SQLAlchemyError
 ConfigInputType = Literal["text", "password", "number", "boolean", "select", "textarea"]
 IMAGE_SIZE_PATTERN = re.compile(r"^\d+x\d+$")
 IMAGE_SIZE_CONFIG_KEYS = {"image_main_image_size", "image_promo_poster_size"}
+BACKEND_DIR = Path(__file__).resolve().parents[2]
+DEFAULT_LOG_DIR = BACKEND_DIR / "storage" / "logs"
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +63,12 @@ class Settings(BaseSettings):
     database_url: str
     redis_url: str
     storage_root: Path = Path("./backend/storage")
+
+    log_dir: Path = DEFAULT_LOG_DIR
+    log_level: str = "INFO"
+    log_max_bytes: int = 10 * 1024 * 1024
+    log_backup_count: int = 5
+    log_retention_days: int = 14
 
     text_provider_kind: str = "mock"
     text_api_key: str | None = None

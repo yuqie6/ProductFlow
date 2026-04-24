@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from productflow_backend.config import get_settings
+from productflow_backend.infrastructure.logging import cleanup_old_logs, configure_logging
 from productflow_backend.infrastructure.queue import recover_unfinished_jobs, recover_unfinished_workflow_runs
 from productflow_backend.presentation.routes.auth import router as auth_router
 from productflow_backend.presentation.routes.image_sessions import router as image_sessions_router
@@ -20,9 +21,11 @@ from productflow_backend.presentation.routes.settings import router as settings_
 def create_app() -> FastAPI:
     """创建 FastAPI 应用，注册中间件和路由。"""
     settings = get_settings()
+    configure_logging(settings)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        cleanup_old_logs(settings)
         recover_unfinished_jobs()
         recover_unfinished_workflow_runs()
         yield

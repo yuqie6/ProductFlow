@@ -104,6 +104,9 @@ export interface ProductSummary {
   latest_copy_status: CopyStatus | null;
   latest_poster_at: string | null;
   source_image_filename: string | null;
+  source_image_download_url: string | null;
+  source_image_preview_url: string | null;
+  source_image_thumbnail_url: string | null;
   created_at: string;
   updated_at: string;
 }

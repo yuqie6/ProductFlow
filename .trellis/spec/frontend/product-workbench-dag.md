@@ -57,8 +57,9 @@
   after success. Show `ApiError.detail` when active jobs/runs block deletion.
 - `reference_image` nodes use `uploadWorkflowNodeImage(...)` for manual uploads and can also be filled by upstream
   `image_generation` nodes.
-- `image_generation` output count is represented by downstream graph slots: one generated image per connected downstream
-  `reference_image` node. Do not expose candidate count as the primary UX.
+- `image_generation` output count is represented by downstream graph slots when slots exist: one generated image per
+  connected downstream `reference_image` node. With no downstream slots, the image node still generates one downloadable
+  poster; show downstream reference slots as optional rather than required.
 - Any node with an image asset/output should render a compact preview directly on the node card.
 - Any user-visible product/workbench image preview should provide an explicit `下载` action. Do not rely on browser
   right-click as the only way to retrieve product images.
@@ -86,11 +87,14 @@
 - Deleting a product during active jobs/runs -> show backend detail; do not locally remove it until the API succeeds.
 - Unsupported node config fields stay in `config_json` and are not force-cast to narrower frontend-only types.
 - Image URLs from workflow-created source assets and poster artifacts still go through `api.toApiUrl(...)`.
-- If the backend returns `连接参考图节点`, show that concise error instead of a long explanation.
+- Direct image runs without downstream reference slots should be shown as normal succeeded image output. If an older backend
+  or stale run returns `连接参考图节点`, show that concise error instead of a long explanation.
 
 ### 5. Good/Base/Bad Cases
 
 - Good: selecting a node updates the inspector without navigating away from the product detail page.
+- Good: an image-generation node with no downstream reference slot still shows a generated image preview/download on the
+  image node after run.
 - Good: an image-generation node connected to two downstream reference slots visibly fills both slot nodes after run.
 - Base: adding a copy/image/reference branch creates a node, then connects it with an edge through API helpers.
 - Base: after a copy node run succeeds, editing the generated copy updates the inspector draft from product `copy_sets`
@@ -201,3 +205,55 @@ const dragBusy = updateNodePositionMutation.isPending;
 
 Use persisted workflow activity to control duplicate runs and polling, while keeping layout dragging independent from
 provider execution.
+
+## Scenario: Autosaved direct image workbench
+
+### 1. Scope / Trigger
+- Trigger: ProductDetail workbench changes for image-node execution, autosave, panel sizing, or canvas zoom.
+
+### 2. Signatures
+- `api.listProducts({ page, page_size })` drives paginated product lists and returns thumbnail URLs.
+- `api.runProductWorkflow(productId, { start_node_id })` may target an image node whose only required upstream is product
+  context.
+- Local UI persistence keys: `productflow.workflow.zoom`, `productflow.workflow.inspectorWidth`, and
+  `productflow.workflow.bottomPanelHeight`.
+
+### 3. Contracts
+- The add-node toolbar must not expose `product_context`; one product context exists per active workflow.
+- Node draft edits debounce-save through `updateWorkflowNode(...)`; run-all and run-selected must flush the selected draft
+  before calling `runProductWorkflow(...)`.
+- Image-node inspector copy should say downstream reference slots are optional. Node cards should show status/summary/image
+  preview, not raw coordinates.
+- Canvas zoom transforms visual coordinates, but pointer hit-testing and drag persistence must convert client coordinates back
+  into unscaled workflow coordinates.
+- Canvas zoom controls must be a floating overlay anchored inside the canvas viewport (not a toolbar item in the scrollable
+  canvas content), and must avoid the inspector and bottom-panel resize handles.
+
+### 4. Validation & Error Matrix
+- Autosave error -> show local `ApiError.detail`, keep user draft visible, and allow explicit retry/save.
+- Run clicked while selected draft is dirty -> save first; if save fails, do not run stale config.
+- Zoomed canvas drag -> persisted `position_x` / `position_y` are unscaled workflow coordinates.
+
+### 5. Good/Base/Bad Cases
+- Good: edit image instruction, immediately click run, and backend receives the new instruction.
+- Base: resize inspector/bottom panels, refresh, and see the same local dimensions.
+- Base: scroll the canvas content and the zoom controls stay visually anchored over the canvas viewport.
+- Bad: showing a disabled or warning state that implies a downstream reference slot is required for image generation.
+- Bad: placing zoom controls in the top toolbar or scrollable canvas flow so they move with workflow content.
+
+### 6. Tests Required
+- `just web-build` for DTO/type compatibility.
+- Backend API tests for direct image-node run and singleton product context, because frontend relies on those contracts.
+
+### 7. Wrong vs Correct
+#### Wrong
+
+```tsx
+onClick={() => runWorkflowMutation.mutate(selectedNode.id)}
+```
+
+#### Correct
+
+```tsx
+onClick={() => void handleRunWorkflow(selectedNode.id)} // flushes selected draft first
+```

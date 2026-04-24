@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import os
 import time
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
@@ -648,6 +650,21 @@ def test_product_workflow_dag_runs_and_persists_artifacts(configured_env: Path) 
         },
     )
     assert upstream_edge.status_code == 201
+    default_reference_node = next(
+        node
+        for node in workflow["nodes"]
+        if node["node_type"] == "reference_image" and node["title"] == "参考图"
+    )
+    default_target_edge = client.post(
+        f"/api/products/{product_id}/workflow/edges",
+        json={
+            "source_node_id": image_node["id"],
+            "target_node_id": default_reference_node["id"],
+            "source_handle": "output",
+            "target_handle": "input",
+        },
+    )
+    assert default_target_edge.status_code == 201
     second_target = client.post(
         f"/api/products/{product_id}/workflow/nodes",
         json={
@@ -791,17 +808,18 @@ def test_product_workflow_dag_runs_and_persists_artifacts(configured_env: Path) 
         },
     )
     assert copy_to_isolated.status_code == 201
-    failed_run = client.post(
+    direct_run = client.post(
         f"/api/products/{product_id}/workflow/run",
         json={"start_node_id": isolated_image_node["id"]},
     )
-    assert failed_run.status_code == 200
-    failed_payload = _wait_for_workflow_run(client, product_id, status="failed")
-    assert failed_payload["runs"][0]["status"] == "failed"
-    assert failed_payload["runs"][0]["failure_reason"] == "连接参考图节点"
-    failed_node = next(node for node in failed_payload["nodes"] if node["id"] == isolated_image_node["id"])
-    assert failed_node["status"] == "failed"
-    assert failed_node["failure_reason"] == "连接参考图节点"
+    assert direct_run.status_code == 200
+    direct_payload = _wait_for_workflow_run(client, product_id, status="succeeded")
+    assert direct_payload["runs"][0]["status"] == "succeeded"
+    direct_node = next(node for node in direct_payload["nodes"] if node["id"] == isolated_image_node["id"])
+    assert direct_node["status"] == "succeeded"
+    assert direct_node["output_json"]["poster_variant_ids"]
+    assert direct_node["output_json"]["target_count"] == 0
+    assert direct_node["output_json"]["filled_source_asset_ids"] == []
 
     session = get_session_factory()()
     try:
@@ -809,6 +827,98 @@ def test_product_workflow_dag_runs_and_persists_artifacts(configured_env: Path) 
     finally:
         session.close()
 
+
+
+def test_product_workflow_singleton_context_and_direct_image_run(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post(
+        "/api/products",
+        data={"name": "直跑台灯"},
+        files={"image": ("lamp.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+
+    list_response = client.get("/api/products?page=1&page_size=1")
+    assert list_response.status_code == 200
+    listed = list_response.json()
+    assert listed["total"] == 1
+    summary = listed["items"][0]
+    assert summary["source_image_filename"] == "lamp.png"
+    assert summary["source_image_thumbnail_url"].endswith("variant=thumbnail")
+
+    workflow_response = client.get(f"/api/products/{product_id}/workflow")
+    assert workflow_response.status_code == 200
+    workflow = workflow_response.json()
+    context_node = next(node for node in workflow["nodes"] if node["node_type"] == "product_context")
+    image_node = next(node for node in workflow["nodes"] if node["node_type"] == "image_generation")
+
+    duplicate_context = client.post(
+        f"/api/products/{product_id}/workflow/nodes",
+        json={
+            "node_type": "product_context",
+            "title": "重复商品",
+            "position_x": 120,
+            "position_y": 120,
+            "config_json": {},
+        },
+    )
+    assert duplicate_context.status_code == 400
+    assert duplicate_context.json()["detail"] == "商品资料节点已存在"
+
+    session = get_session_factory()()
+    try:
+        persisted_workflow = session.scalar(sa.select(ProductWorkflow).where(ProductWorkflow.product_id == product_id))
+        assert persisted_workflow is not None
+        duplicate_node = WorkflowNode(
+            workflow_id=persisted_workflow.id,
+            node_type=WorkflowNodeType.PRODUCT_CONTEXT,
+            title="历史重复商品",
+            position_x=180,
+            position_y=140,
+            config_json={},
+        )
+        session.add(duplicate_node)
+        session.commit()
+    finally:
+        session.close()
+
+    normalized_response = client.get(f"/api/products/{product_id}/workflow")
+    assert normalized_response.status_code == 200
+    normalized_workflow = normalized_response.json()
+    assert [node["node_type"] for node in normalized_workflow["nodes"]].count("product_context") == 1
+
+    removable_nodes = [
+        node for node in normalized_workflow["nodes"] if node["node_type"] in {"copy_generation", "reference_image"}
+    ]
+    for removable in removable_nodes:
+        deleted = client.delete(f"/api/workflow-nodes/{removable['id']}")
+        assert deleted.status_code == 200
+
+    patched_image = client.patch(
+        f"/api/workflow-nodes/{image_node['id']}",
+        json={"config_json": {"instruction": "只根据商品资料生成干净主图", "size": "1024x1024"}},
+    )
+    assert patched_image.status_code == 200
+
+    run_response = client.post(
+        f"/api/products/{product_id}/workflow/run",
+        json={"start_node_id": image_node["id"]},
+    )
+    assert run_response.status_code == 200
+    payload = _wait_for_workflow_run(client, product_id, status="succeeded")
+    assert [node["node_type"] for node in payload["nodes"]] == ["product_context", "image_generation"]
+    image_output = next(node for node in payload["nodes"] if node["id"] == image_node["id"])["output_json"]
+    assert image_output["copy_set_id"]
+    assert image_output["poster_variant_ids"]
+    assert image_output["target_count"] == 0
+    assert image_output["filled_reference_node_ids"] == []
+    assert next(node for node in payload["nodes"] if node["id"] == context_node["id"])["node_type"] == "product_context"
 
 def test_single_node_workflow_run_reuses_succeeded_upstream_outputs(configured_env: Path) -> None:
     from productflow_backend.presentation.api import create_app
@@ -830,6 +940,16 @@ def test_single_node_workflow_run_reuses_succeeded_upstream_outputs(configured_e
     workflow = initial_workflow.json()
     upstream_image_node = next(node for node in workflow["nodes"] if node["node_type"] == "image_generation")
     upstream_reference_node = next(node for node in workflow["nodes"] if node["node_type"] == "reference_image")
+    upstream_slot_edge = client.post(
+        f"/api/products/{product_id}/workflow/edges",
+        json={
+            "source_node_id": upstream_image_node["id"],
+            "target_node_id": upstream_reference_node["id"],
+            "source_handle": "output",
+            "target_handle": "input",
+        },
+    )
+    assert upstream_slot_edge.status_code == 201
 
     first_run = client.post(f"/api/products/{product_id}/workflow/run", json={})
     assert first_run.status_code == 200
@@ -1843,6 +1963,176 @@ def test_duplicate_active_copy_job_reuses_existing_job(db_session, configured_en
     assert first_result.job.id == second_result.job.id
     assert first_result.created is True
     assert second_result.created is False
+
+
+def test_default_log_dir_uses_backend_storage_when_running_from_backend(
+    configured_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.config import get_settings
+    from productflow_backend.infrastructure.logging import get_log_file_path
+
+    backend_dir = Path(__file__).resolve().parents[1]
+    monkeypatch.delenv("LOG_DIR", raising=False)
+    monkeypatch.chdir(backend_dir)
+    get_settings.cache_clear()
+
+    settings = get_settings()
+
+    assert settings.log_dir == backend_dir / "storage" / "logs"
+    assert get_log_file_path(settings) == backend_dir / "storage" / "logs" / "productflow.log"
+
+
+def test_log_cleanup_deletes_expired_persistent_logs(
+    configured_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from productflow_backend.config import get_settings
+    from productflow_backend.infrastructure.logging import cleanup_old_logs
+
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    old_log = log_dir / "old.log"
+    fresh_log = log_dir / "fresh.log"
+    old_log.write_text("old", encoding="utf-8")
+    fresh_log.write_text("fresh", encoding="utf-8")
+    old_timestamp = time.time() - 3 * 24 * 60 * 60
+    old_log.touch()
+    fresh_log.touch()
+    os.utime(old_log, (old_timestamp, old_timestamp))
+    monkeypatch.setenv("LOG_DIR", str(log_dir))
+    monkeypatch.setenv("LOG_RETENTION_DAYS", "1")
+    get_settings.cache_clear()
+
+    deleted = cleanup_old_logs(get_settings())
+
+    assert deleted == 1
+    assert not old_log.exists()
+    assert fresh_log.exists()
+
+
+def test_configure_logging_keeps_single_stdout_handler_and_log_dir_override(
+    configured_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from productflow_backend.config import get_settings
+    from productflow_backend.infrastructure.logging import configure_logging, get_log_file_path
+
+    log_dir = tmp_path / "stdout-logs"
+    monkeypatch.setenv("LOG_DIR", str(log_dir))
+    monkeypatch.setenv("LOG_LEVEL", "INFO")
+    get_settings.cache_clear()
+    settings = get_settings()
+
+    root_logger = logging.getLogger()
+    original_handlers = list(root_logger.handlers)
+    original_level = root_logger.level
+    original_propagate = root_logger.propagate
+
+    try:
+        root_logger.handlers = []
+        configure_logging(settings)
+        configure_logging(settings)
+
+        logging.getLogger("productflow_backend.tests.stdout").info("stdout and file visible line")
+        for handler in root_logger.handlers:
+            handler.flush()
+
+        productflow_stream_handlers = [
+            handler for handler in root_logger.handlers if getattr(handler, "_productflow_stream_handler", False)
+        ]
+        productflow_file_handlers = [
+            handler for handler in root_logger.handlers if getattr(handler, "_productflow_file_handler", False)
+        ]
+        captured = capsys.readouterr()
+        log_text = get_log_file_path(settings).read_text(encoding="utf-8")
+
+        assert get_log_file_path(settings).parent == log_dir
+        assert len(productflow_stream_handlers) == 1
+        assert len(productflow_file_handlers) == 1
+        assert "stdout and file visible line" in captured.out
+        assert log_text.count("stdout and file visible line") == 1
+    finally:
+        for handler in list(root_logger.handlers):
+            root_logger.removeHandler(handler)
+            handler.close()
+        root_logger.handlers = original_handlers
+        root_logger.setLevel(original_level)
+        root_logger.propagate = original_propagate
+
+
+def test_configure_logging_mirrors_uvicorn_lifecycle_and_access_logs(
+    configured_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from productflow_backend.config import get_settings
+    from productflow_backend.infrastructure.logging import configure_logging, get_log_file_path
+
+    log_dir = tmp_path / "uvicorn-logs"
+    monkeypatch.setenv("LOG_DIR", str(log_dir))
+    monkeypatch.setenv("LOG_LEVEL", "INFO")
+    get_settings.cache_clear()
+    settings = get_settings()
+
+    root_logger = logging.getLogger()
+    uvicorn_logger = logging.getLogger("uvicorn")
+    error_logger = logging.getLogger("uvicorn.error")
+    access_logger = logging.getLogger("uvicorn.access")
+    loggers = (root_logger, uvicorn_logger, error_logger, access_logger)
+    original_state = {
+        logger.name: (list(logger.handlers), logger.level, logger.propagate)
+        for logger in loggers
+    }
+
+    try:
+        uvicorn_logger.propagate = False
+        error_logger.propagate = True
+        access_logger.propagate = False
+
+        configure_logging(settings)
+        configure_logging(settings)
+
+        logging.getLogger("productflow_backend.tests.logging").info("application persistent line")
+        error_logger.info("Started server process [12345]")
+        error_logger.info("Application startup complete.")
+        access_logger.info('%s - "%s %s HTTP/%s" %d', "127.0.0.1:29282", "GET", "/healthz", "1.1", 200)
+        for logger in loggers:
+            for handler in logger.handlers:
+                handler.flush()
+
+        log_text = get_log_file_path(settings).read_text(encoding="utf-8")
+
+        assert log_text.count("application persistent line") == 1
+        assert log_text.count("Started server process [12345]") == 1
+        assert log_text.count("Application startup complete.") == 1
+        assert log_text.count('127.0.0.1:29282 - "GET /healthz HTTP/1.1" 200 OK') == 1
+        productflow_file_handlers = [
+            handler
+            for logger in (root_logger, error_logger, access_logger)
+            for handler in logger.handlers
+            if getattr(handler, "_productflow_file_handler", False)
+        ]
+        assert len({id(handler) for handler in productflow_file_handlers}) == 1
+        assert not any(
+            getattr(handler, "_productflow_stream_handler", False)
+            for logger in (error_logger, access_logger)
+            for handler in logger.handlers
+        )
+    finally:
+        for logger in loggers:
+            saved_handlers, saved_level, saved_propagate = original_state[logger.name]
+            for handler in list(logger.handlers):
+                if handler not in saved_handlers:
+                    logger.removeHandler(handler)
+                    handler.close()
+            logger.handlers = saved_handlers
+            logger.setLevel(saved_level)
+            logger.propagate = saved_propagate
+
 
 
 def test_recover_unfinished_jobs_requeues_queued_jobs(

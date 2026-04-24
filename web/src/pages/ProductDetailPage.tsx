@@ -15,6 +15,8 @@ import {
   Save,
   Settings2,
   Trash2,
+  ZoomIn,
+  ZoomOut,
   Upload,
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -91,11 +93,33 @@ const NODE_STATUS_LABELS: Record<WorkflowNode["status"], string> = {
 };
 
 const ADD_NODE_OPTIONS: Array<{ type: WorkflowNodeType; label: string }> = [
-  { type: "product_context", label: "商品" },
   { type: "reference_image", label: "参考图" },
   { type: "copy_generation", label: "文案" },
   { type: "image_generation", label: "生图" },
 ];
+
+const MIN_INSPECTOR_WIDTH = 280;
+const MAX_INSPECTOR_WIDTH = 560;
+const MIN_BOTTOM_PANEL_HEIGHT = 150;
+const MAX_BOTTOM_PANEL_HEIGHT = 380;
+const MIN_ZOOM = 0.5;
+const MAX_ZOOM = 1.6;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function readStoredNumber(key: string, fallback: number): number {
+  if (typeof window === "undefined") {
+    return fallback;
+  }
+  const raw = window.localStorage.getItem(key);
+  if (!raw) {
+    return fallback;
+  }
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
 
 type DownloadableImage = {
   previewUrl: string;
@@ -377,7 +401,7 @@ function nodeIdleSummary(node: WorkflowNode): string {
   if (node.node_type === "copy_generation") {
     return "文案";
   }
-  return "连接参考图";
+  return "可直接生成图片";
 }
 
 function hasActiveWorkflow(workflow: ProductWorkflow | undefined | null): boolean {
@@ -398,6 +422,8 @@ export function ProductDetailPage() {
   const nodeDragRafRef = useRef<number | null>(null);
   const pendingNodeDragRef = useRef<CanvasPoint | null>(null);
   const wasWorkflowActiveRef = useRef(false);
+  const draftVersionRef = useRef(0);
+  const previousDraftNodeIdRef = useRef<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [nodeDrag, setNodeDrag] = useState<NodeDragState | null>(null);
   const [optimisticNodePositions, setOptimisticNodePositions] = useState<
@@ -407,6 +433,19 @@ export function ProductDetailPage() {
     useState<ConnectionDragState | null>(null);
   const [draft, setDraft] = useState<NodeConfigDraft>(() =>
     draftFromNode(null),
+  );
+  const [draftDirty, setDraftDirty] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "failed">("idle");
+  const [zoom, setZoom] = useState(() => clamp(readStoredNumber("productflow.workflow.zoom", 1), MIN_ZOOM, MAX_ZOOM));
+  const [inspectorWidth, setInspectorWidth] = useState(() =>
+    clamp(readStoredNumber("productflow.workflow.inspectorWidth", 360), MIN_INSPECTOR_WIDTH, MAX_INSPECTOR_WIDTH),
+  );
+  const [bottomPanelHeight, setBottomPanelHeight] = useState(() =>
+    clamp(
+      readStoredNumber("productflow.workflow.bottomPanelHeight", 224),
+      MIN_BOTTOM_PANEL_HEIGHT,
+      MAX_BOTTOM_PANEL_HEIGHT,
+    ),
   );
   const [error, setError] = useState("");
 
@@ -450,8 +489,17 @@ export function ProductDetailPage() {
   }, [selectedNodeId, workflow]);
 
   useEffect(() => {
+    const selectedId = selectedNode?.id ?? null;
+    const selectedChanged = previousDraftNodeIdRef.current !== selectedId;
+    previousDraftNodeIdRef.current = selectedId;
+    if (draftDirty && !selectedChanged) {
+      return;
+    }
     setDraft(draftFromNode(selectedNode, productQuery.data));
+    setDraftDirty(false);
+    setSaveStatus("idle");
   }, [
+    draftDirty,
     productQuery.data,
     selectedNode?.id,
     selectedNode?.last_run_at,
@@ -491,8 +539,8 @@ export function ProductDetailPage() {
       return { x: clientX, y: clientY };
     }
     return {
-      x: clientX - rect.left,
-      y: clientY - rect.top,
+      x: (clientX - rect.left) / zoom,
+      y: (clientY - rect.top) / zoom,
     };
   };
 
@@ -515,6 +563,19 @@ export function ProductDetailPage() {
   const getInputHandlePoint = (node: WorkflowNode): CanvasPoint => {
     const position = getRenderedNodePosition(node);
     return { x: position.x, y: position.y + NODE_HANDLE_Y };
+  };
+
+  const handleDraftChange = (nextDraft: NodeConfigDraft) => {
+    draftVersionRef.current += 1;
+    setDraft(nextDraft);
+    setDraftDirty(true);
+    setSaveStatus("idle");
+  };
+
+  const updateZoom = (nextZoom: number) => {
+    const normalized = clamp(Math.round(nextZoom * 100) / 100, MIN_ZOOM, MAX_ZOOM);
+    setZoom(normalized);
+    window.localStorage.setItem("productflow.workflow.zoom", String(normalized));
   };
 
   const runWorkflowMutation = useMutation({
@@ -581,12 +642,13 @@ export function ProductDetailPage() {
       api.updateWorkflowNode(node.id, {
         title: draft.title,
         config_json: nodeConfigFromDraft(node, draft),
-      }),
+    }),
     onSuccess: (nextWorkflow) => {
       setError("");
       queryClient.setQueryData(["product-workflow", productId], nextWorkflow);
     },
     onError: (mutationError) => {
+      setSaveStatus("failed");
       setError(
         mutationError instanceof ApiError
           ? mutationError.detail
@@ -605,13 +667,14 @@ export function ProductDetailPage() {
           .filter(Boolean),
         poster_headline: draft.copyPosterHeadline,
         cta: draft.copyCta,
-      }),
+    }),
     onSuccess: async (nextWorkflow) => {
       setError("");
       queryClient.setQueryData(["product-workflow", productId], nextWorkflow);
       await refreshProductArtifacts();
     },
     onError: (mutationError) => {
+      setSaveStatus("failed");
       setError(
         mutationError instanceof ApiError
           ? mutationError.detail
@@ -779,6 +842,92 @@ export function ProductDetailPage() {
     },
   });
 
+  const selectedCopyHasOutput = Boolean(
+    selectedNode?.node_type === "copy_generation" &&
+      selectedNode.output_json &&
+      outputText(selectedNode.output_json, "copy_set_id"),
+  );
+
+  const flushSelectedDraft = async () => {
+    if (!selectedNode || !draftDirty) {
+      return;
+    }
+    const saveVersion = draftVersionRef.current;
+    setSaveStatus("saving");
+    await updateNodeConfigMutation.mutateAsync(selectedNode);
+    if (selectedCopyHasOutput) {
+      const sellingPoints = draft.copySellingPoints
+        .split("\n")
+        .map((item) => item.trim())
+        .filter(Boolean);
+      if (draft.copyTitle.trim() && draft.copyPosterHeadline.trim() && draft.copyCta.trim() && sellingPoints.length) {
+        await updateNodeCopyMutation.mutateAsync(selectedNode);
+      }
+    }
+    if (draftVersionRef.current === saveVersion) {
+      setDraftDirty(false);
+      setSaveStatus("saved");
+    } else {
+      setSaveStatus("idle");
+    }
+  };
+
+  useEffect(() => {
+    if (!selectedNode || !draftDirty || workflowActive) {
+      return;
+    }
+    setSaveStatus("saving");
+    const timer = window.setTimeout(() => {
+      void flushSelectedDraft();
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [draft, draftDirty, selectedNode?.id, workflowActive]);
+
+  const handleRunWorkflow = async (startNodeId?: string) => {
+    try {
+      if (!startNodeId || startNodeId === selectedNode?.id) {
+        await flushSelectedDraft();
+      }
+      await runWorkflowMutation.mutateAsync(startNodeId);
+    } catch {
+      // Mutations already surface ApiError.detail in local error state.
+    }
+  };
+
+  const startInspectorResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = inspectorWidth;
+    const onMove = (moveEvent: PointerEvent) => {
+      const next = clamp(startWidth + startX - moveEvent.clientX, MIN_INSPECTOR_WIDTH, MAX_INSPECTOR_WIDTH);
+      setInspectorWidth(next);
+      window.localStorage.setItem("productflow.workflow.inspectorWidth", String(next));
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
+  const startBottomResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startY = event.clientY;
+    const startHeight = bottomPanelHeight;
+    const onMove = (moveEvent: PointerEvent) => {
+      const next = clamp(startHeight + startY - moveEvent.clientY, MIN_BOTTOM_PANEL_HEIGHT, MAX_BOTTOM_PANEL_HEIGHT);
+      setBottomPanelHeight(next);
+      window.localStorage.setItem("productflow.workflow.bottomPanelHeight", String(next));
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
   const layoutMutationBusy =
     createNodeMutation.isPending ||
     updateNodeConfigMutation.isPending ||
@@ -810,13 +959,14 @@ export function ProductDetailPage() {
     event.currentTarget.setPointerCapture(event.pointerId);
     const point = getCanvasPoint(event.clientX, event.clientY);
     setSelectedNodeId(node.id);
+    const renderedPosition = getRenderedNodePosition(node);
     setNodeDrag({
       nodeId: node.id,
       pointerId: event.pointerId,
-      offsetX: point.x - node.position_x,
-      offsetY: point.y - node.position_y,
-      currentX: node.position_x,
-      currentY: node.position_y,
+      offsetX: point.x - renderedPosition.x,
+      offsetY: point.y - renderedPosition.y,
+      currentX: renderedPosition.x,
+      currentY: renderedPosition.y,
     });
   };
 
@@ -1005,7 +1155,7 @@ export function ProductDetailPage() {
                 {product.name}
               </div>
               <div className="text-[11px] text-zinc-500">
-                节点 · {workflow?.nodes.length ?? 0}
+                节点 · {workflow?.nodes.length ?? 0} · 缩放 {Math.round(zoom * 100)}%
               </div>
             </div>
           </div>
@@ -1023,7 +1173,7 @@ export function ProductDetailPage() {
             ))}
             <button
               type="button"
-              onClick={() => runWorkflowMutation.mutate(undefined)}
+              onClick={() => void handleRunWorkflow(undefined)}
               disabled={runBusy || !workflow}
               className="inline-flex items-center rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
             >
@@ -1045,18 +1195,20 @@ export function ProductDetailPage() {
 
         <div className="relative flex min-h-0 flex-1 overflow-hidden">
           <div className="absolute inset-0 bg-[radial-gradient(#d4d4d8_1px,transparent_1px)] [background-size:18px_18px]" />
-          <section className="relative z-10 min-w-0 flex-1 overflow-auto p-6">
-            {workflowQuery.isLoading ? (
-              <div className="flex h-full items-center justify-center text-zinc-400">
-                <Loader2 size={24} className="animate-spin" />
-              </div>
-            ) : workflow ? (
-              <div
-                ref={canvasRef}
-                className="relative"
-                style={{ width: canvasWidth, height: canvasHeight }}
-              >
-                <svg className="pointer-events-none absolute inset-0 h-full w-full">
+          <section className="relative z-10 min-w-0 flex-1 overflow-hidden">
+            <div className="h-full overflow-auto p-6">
+              {workflowQuery.isLoading ? (
+                <div className="flex h-full items-center justify-center text-zinc-400">
+                  <Loader2 size={24} className="animate-spin" />
+                </div>
+              ) : workflow ? (
+                <div className="relative" style={{ width: canvasWidth * zoom, height: canvasHeight * zoom }}>
+                  <div
+                    ref={canvasRef}
+                    className="relative origin-top-left"
+                    style={{ width: canvasWidth, height: canvasHeight, transform: `scale(${zoom})` }}
+                  >
+                    <svg className="pointer-events-none absolute inset-0 h-full w-full">
                   {workflow.edges.map((edge) => {
                     const source = workflow.nodes.find(
                       (node) => node.id === edge.source_node_id,
@@ -1089,8 +1241,8 @@ export function ProductDetailPage() {
                       strokeWidth="2"
                     />
                   ) : null}
-                </svg>
-                {workflow.edges.map((edge) => {
+                    </svg>
+                    {workflow.edges.map((edge) => {
                   const source = workflow.nodes.find(
                     (node) => node.id === edge.source_node_id,
                   );
@@ -1120,37 +1272,77 @@ export function ProductDetailPage() {
                     </button>
                   );
                 })}
-                {workflow.nodes.map((node) => (
-                  <WorkflowNodeCard
-                    key={node.id}
-                    node={node}
-                    position={getRenderedNodePosition(node)}
-                    image={getNodeImageDownload(node, product, posters)}
-                    selected={node.id === selectedNode?.id}
-                    onSelect={() => setSelectedNodeId(node.id)}
-                    onStartDrag={(event) => startNodeDrag(node, event)}
-                    onMoveDrag={moveNodeDrag}
-                    onEndDrag={endNodeDrag}
-                    onStartConnection={(event) =>
-                      startConnectionDrag(node, event)
-                    }
-                    onMoveConnection={moveConnectionDrag}
-                    onEndConnection={endConnectionDrag}
-                    onRun={() => runWorkflowMutation.mutate(node.id)}
-                    onDelete={() => handleDeleteNode(node)}
-                    busy={structureBusy}
-                    runBusy={runBusy}
-                  />
-                ))}
+                    {workflow.nodes.map((node) => (
+                      <WorkflowNodeCard
+                        key={node.id}
+                        node={node}
+                        position={getRenderedNodePosition(node)}
+                        image={getNodeImageDownload(node, product, posters)}
+                        selected={node.id === selectedNode?.id}
+                        onSelect={() => setSelectedNodeId(node.id)}
+                        onStartDrag={(event) => startNodeDrag(node, event)}
+                        onMoveDrag={moveNodeDrag}
+                        onEndDrag={endNodeDrag}
+                        onStartConnection={(event) =>
+                          startConnectionDrag(node, event)
+                        }
+                        onMoveConnection={moveConnectionDrag}
+                        onEndConnection={endConnectionDrag}
+                        onRun={() => void handleRunWorkflow(node.id)}
+                        onDelete={() => handleDeleteNode(node)}
+                        busy={structureBusy}
+                        runBusy={runBusy}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex h-full items-center justify-center text-xs text-zinc-500">
+                  工作流加载失败
+                </div>
+              )}
+            </div>
+
+            <div className="pointer-events-none absolute bottom-4 left-4 z-30">
+              <div className="pointer-events-auto flex items-center gap-1 rounded-lg border border-zinc-200 bg-white/90 p-1 shadow-sm backdrop-blur">
+              <button
+                type="button"
+                onClick={() => updateZoom(zoom - 0.1)}
+                className="inline-flex items-center rounded px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-50"
+                aria-label="缩小画布"
+              >
+                <ZoomOut size={13} />
+              </button>
+              <button
+                type="button"
+                onClick={() => updateZoom(1)}
+                className="rounded px-2 py-1 text-xs tabular-nums text-zinc-600 hover:bg-zinc-50"
+                aria-label="重置画布缩放"
+              >
+                {Math.round(zoom * 100)}%
+              </button>
+              <button
+                type="button"
+                onClick={() => updateZoom(zoom + 0.1)}
+                className="inline-flex items-center rounded px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-50"
+                aria-label="放大画布"
+              >
+                <ZoomIn size={13} />
+              </button>
               </div>
-            ) : (
-              <div className="flex h-full items-center justify-center text-xs text-zinc-500">
-                工作流加载失败
-              </div>
-            )}
+            </div>
           </section>
 
-          <aside className="relative z-20 flex w-[360px] shrink-0 flex-col border-l border-zinc-200 bg-white/95 shadow-[-8px_0_24px_-20px_rgba(0,0,0,0.35)] backdrop-blur">
+          <aside
+            className="relative z-20 flex shrink-0 flex-col border-l border-zinc-200 bg-white/95 shadow-[-8px_0_24px_-20px_rgba(0,0,0,0.35)] backdrop-blur"
+            style={{ width: inspectorWidth }}
+          >
+            <div
+              role="separator"
+              aria-label="调整节点栏宽度"
+              onPointerDown={startInspectorResize}
+              className="absolute left-[-4px] top-0 h-full w-2 cursor-col-resize hover:bg-zinc-300/50"
+            />
             <div className="flex h-12 shrink-0 items-center border-b border-zinc-200 px-4">
               <Settings2 size={14} className="mr-2 text-zinc-400" />
               <span className="text-[11px] font-semibold uppercase tracking-widest text-zinc-500">
@@ -1165,10 +1357,11 @@ export function ProductDetailPage() {
                   workflow={workflow}
                   node={selectedNode}
                   draft={draft}
-                  onDraftChange={setDraft}
-                  onSave={() => updateNodeConfigMutation.mutate(selectedNode)}
-                  onSaveCopy={() => updateNodeCopyMutation.mutate(selectedNode)}
-                  onRun={() => runWorkflowMutation.mutate(selectedNode.id)}
+                  onDraftChange={handleDraftChange}
+                  onSave={() => void flushSelectedDraft()}
+                  onSaveCopy={() => void flushSelectedDraft()}
+                  onRun={() => void handleRunWorkflow(selectedNode.id)}
+                  saveStatus={saveStatus}
                   onUploadImage={(file) => uploadNodeImageMutation.mutate(file)}
                   onDelete={() => handleDeleteNode(selectedNode)}
                   busy={structureBusy}
@@ -1183,7 +1376,16 @@ export function ProductDetailPage() {
           </aside>
         </div>
 
-        <div className="z-20 grid max-h-56 shrink-0 grid-cols-[1fr_420px] border-t border-zinc-200 bg-white">
+        <div
+          className="relative z-20 grid shrink-0 grid-cols-[1fr_420px] border-t border-zinc-200 bg-white"
+          style={{ height: bottomPanelHeight }}
+        >
+          <div
+            role="separator"
+            aria-label="调整底部面板高度"
+            onPointerDown={startBottomResize}
+            className="absolute top-[-4px] left-0 z-30 h-2 w-full cursor-row-resize hover:bg-zinc-300/50"
+          />
           <section className="min-w-0 overflow-y-auto p-4">
             <div className="mb-3 flex items-center justify-between">
               <div className="flex items-center text-[11px] font-semibold uppercase tracking-widest text-zinc-500">
@@ -1376,9 +1578,7 @@ function WorkflowNodeCard({
         </div>
       </div>
       <div className="mt-3 flex items-center justify-between text-[10px] text-zinc-400">
-        <span className="font-mono">
-          {position.x}, {position.y}
-        </span>
+        <span>{node.last_run_at ? `最近 ${formatDateTime(node.last_run_at)}` : NODE_LABELS[node.node_type]}</span>
         <div className="flex items-center gap-1.5">
           <button
             type="button"
@@ -1423,6 +1623,7 @@ function InspectorPanel({
   onDelete,
   busy,
   runBusy,
+  saveStatus,
 }: {
   product: ProductDetail;
   sourceImage: DownloadableImage | null;
@@ -1437,6 +1638,7 @@ function InspectorPanel({
   onDelete: () => void;
   busy: boolean;
   runBusy: boolean;
+  saveStatus: "idle" | "saving" | "saved" | "failed";
 }) {
   const incomingEdges =
     workflow?.edges.filter((edge) => edge.target_node_id === node.id) ?? [];
@@ -1467,7 +1669,7 @@ function InspectorPanel({
           {NODE_LABELS[node.node_type]}
         </div>
         <div className="mt-1 text-xs text-zinc-500">
-          状态：{NODE_STATUS_LABELS[node.status]}
+          状态：{NODE_STATUS_LABELS[node.status]} · {saveStatus === "saving" ? "保存中" : saveStatus === "saved" ? "已保存" : saveStatus === "failed" ? "保存失败" : "自动保存"}
         </div>
       </div>
 
@@ -1522,7 +1724,7 @@ function InspectorPanel({
           连接
         </div>
         <div className="text-xs leading-relaxed text-zinc-500">
-          上游 {incomingEdges.length} · 拖拽连接
+          上游 {incomingEdges.length} · 拖拽连接 · 生图可不接参考图直接产出图片
         </div>
       </div>
 
@@ -1834,7 +2036,7 @@ function ImageGenerationInspector({
   return (
     <div className="space-y-3">
       <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
-        上游 {incomingCount} · 参考图 {downstreamReferenceCount || "未连接"}
+        上游 {incomingCount} · 下游参考图 {downstreamReferenceCount || "可选"}
       </div>
       <TextArea
         label="生图"

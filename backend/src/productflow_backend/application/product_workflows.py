@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,6 +42,8 @@ from productflow_backend.infrastructure.text.factory import get_text_provider
 
 DEFAULT_WORKFLOW_TITLE = "商品创意工作流"
 DEFAULT_IMAGE_SIZE = "1024x1024"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,7 +145,7 @@ def _default_node_specs(product: Product) -> list[dict[str, Any]]:
             "title": "参考图",
             "position_x": 920,
             "position_y": 120,
-            "config_json": {"role": "reference", "label": "参考图"},
+            "config_json": {"role": "reference", "label": "可选参考图"},
         },
     ]
 
@@ -152,7 +155,6 @@ def _default_edges(nodes_by_key: dict[str, WorkflowNode], workflow_id: str) -> l
         ("context", "copy"),
         ("context", "image"),
         ("copy", "image"),
-        ("image", "reference"),
     ]
     return [
         WorkflowEdge(
@@ -169,6 +171,10 @@ def _default_edges(nodes_by_key: dict[str, WorkflowNode], workflow_id: str) -> l
 def get_or_create_product_workflow(session: Session, product_id: str) -> ProductWorkflow:
     existing = _get_active_workflow(session, product_id)
     if existing is not None:
+        if _normalize_product_context_singleton(session, existing):
+            session.commit()
+            session.expire_all()
+            return _get_active_workflow(session, product_id) or _get_workflow_or_raise(session, existing.id)
         return existing
 
     product = _get_product_or_raise(session, product_id)
@@ -208,6 +214,10 @@ def create_workflow_node(
     config_json: dict[str, Any] | None,
 ) -> ProductWorkflow:
     workflow = get_or_create_product_workflow(session, product_id)
+    if node_type == WorkflowNodeType.PRODUCT_CONTEXT and any(
+        node.node_type == WorkflowNodeType.PRODUCT_CONTEXT for node in workflow.nodes
+    ):
+        raise ValueError("商品资料节点已存在")
     node = WorkflowNode(
         workflow_id=workflow.id,
         node_type=node_type,
@@ -452,6 +462,12 @@ def start_product_workflow_run(
         raise ValueError("工作流没有可运行节点")
 
     run = WorkflowRun(workflow_id=workflow.id, status=WorkflowRunStatus.RUNNING)
+    logger.info(
+        "创建商品工作流运行: product_id=%s workflow_id=%s start_node_id=%s",
+        product_id,
+        workflow.id,
+        start_node_id,
+    )
     session.add(run)
     session.flush()
     for node in ordered_nodes:
@@ -556,6 +572,12 @@ def _execute_product_workflow_run(session: Session, *, run_id: str) -> None:
         if node_run is None:
             return
         try:
+            logger.info(
+                "开始执行工作流节点: run_id=%s node_id=%s node_type=%s",
+                run_id,
+                node.id,
+                node.node_type.value,
+            )
             output = _execute_node(session, workflow_id=workflow.id, node=node)
         except Exception as exc:  # noqa: BLE001
             session.rollback()
@@ -580,6 +602,7 @@ def _execute_product_workflow_run(session: Session, *, run_id: str) -> None:
         node_run.finished_at = now_utc()
         workflow.updated_at = now_utc()
         session.commit()
+        logger.info("工作流节点执行成功: run_id=%s node_id=%s", run_id, node.id)
 
     persisted_run = session.scalar(
         select(WorkflowRun).options(selectinload(WorkflowRun.node_runs)).where(WorkflowRun.id == run_id)
@@ -592,6 +615,7 @@ def _execute_product_workflow_run(session: Session, *, run_id: str) -> None:
     ):
         persisted_run.status = WorkflowRunStatus.SUCCEEDED
         persisted_run.finished_at = now_utc()
+        logger.info("工作流运行成功: run_id=%s workflow_id=%s", run_id, persisted_run.workflow_id)
     session.commit()
 
 
@@ -648,6 +672,7 @@ def _mark_workflow_run_failed(
             node_run.status = WorkflowNodeStatus.FAILED
             node_run.failure_reason = "上游节点失败"
             node_run.finished_at = now
+    logger.warning("工作流运行失败: run_id=%s failed_node_id=%s reason=%s", run_id, failed_node_id, reason)
     persisted_run.status = WorkflowRunStatus.FAILED
     persisted_run.failure_reason = reason
     persisted_run.finished_at = now
@@ -937,7 +962,7 @@ def _execute_image_generation(session: Session, *, workflow: ProductWorkflow, no
     copy_set_id = _optional_config_text(node.config_json, "copy_set_id") or incoming_context.copy_set_id
     copy_set = session.get(CopySet, copy_set_id) if copy_set_id else product.confirmed_copy_set
     if copy_set is None or copy_set.product_id != product.id:
-        raise ValueError("图片生成节点缺少可用文案")
+        copy_set = _create_context_copy_set(session, product=product, product_context=product_context, node=node)
 
     source = _find_source_asset(product)
     if source is None:
@@ -945,8 +970,6 @@ def _execute_image_generation(session: Session, *, workflow: ProductWorkflow, no
 
     storage = LocalStorage()
     downstream_reference_nodes = _downstream_reference_nodes(workflow, node.id)
-    if not downstream_reference_nodes:
-        raise ValueError("连接参考图节点")
 
     reference_assets = _reference_assets_for_image_generation(
         session,
@@ -981,7 +1004,8 @@ def _execute_image_generation(session: Session, *, workflow: ProductWorkflow, no
     settings = get_runtime_settings()
     renderer = PosterRenderer()
     kind = _poster_kind_from_config(node.config_json)
-    for target_index, target_node in enumerate(downstream_reference_nodes, start=1):
+    generation_targets = downstream_reference_nodes or [None]
+    for target_index, target_node in enumerate(generation_targets, start=1):
         if settings.poster_generation_mode == "generated":
             image_provider = get_image_provider()
             generated_image, image_model = image_provider.generate_poster_image(render_input, kind)
@@ -1016,20 +1040,21 @@ def _execute_image_generation(session: Session, *, workflow: ProductWorkflow, no
         session.flush()
         poster_ids.append(poster.id)
 
-        filename = f"reference-{target_index}{infer_extension(mime_type)}"
-        reference_path = storage.save_reference_upload(product.id, filename, content)
-        asset = SourceAsset(
-            product_id=product.id,
-            kind=SourceAssetKind.REFERENCE_IMAGE,
-            original_filename=filename,
-            mime_type=mime_type,
-            storage_path=reference_path,
-        )
-        session.add(asset)
-        session.flush()
-        filled_source_asset_ids.append(asset.id)
-        filled_reference_node_ids.append(target_node.id)
-        _fill_reference_node(target_node, asset)
+        if target_node is not None:
+            filename = f"reference-{target_index}{infer_extension(mime_type)}"
+            reference_path = storage.save_reference_upload(product.id, filename, content)
+            asset = SourceAsset(
+                product_id=product.id,
+                kind=SourceAssetKind.REFERENCE_IMAGE,
+                original_filename=filename,
+                mime_type=mime_type,
+                storage_path=reference_path,
+            )
+            session.add(asset)
+            session.flush()
+            filled_source_asset_ids.append(asset.id)
+            filled_reference_node_ids.append(target_node.id)
+            _fill_reference_node(target_node, asset)
     product.updated_at = now_utc()
     return {
         "copy_set_id": copy_set.id,
@@ -1040,8 +1065,120 @@ def _execute_image_generation(session: Session, *, workflow: ProductWorkflow, no
         "target_count": len(downstream_reference_nodes),
         "size": _image_size_from_config(node.config_json),
         "instruction": _optional_config_text(node.config_json, "instruction"),
-        "summary": f"已填充 {len(filled_reference_node_ids)} 个参考图",
+        "summary": (
+            f"已填充 {len(filled_reference_node_ids)} 个参考图"
+            if filled_reference_node_ids
+            else f"已生成 {len(poster_ids)} 张图片"
+        ),
     }
+
+
+def _normalize_product_context_singleton(session: Session, workflow: ProductWorkflow) -> bool:
+    product_nodes = sorted(
+        [node for node in workflow.nodes if node.node_type == WorkflowNodeType.PRODUCT_CONTEXT],
+        key=lambda item: (item.created_at, item.position_x, item.position_y),
+    )
+    changed = False
+    if not product_nodes:
+        context = WorkflowNode(
+            workflow_id=workflow.id,
+            node_type=WorkflowNodeType.PRODUCT_CONTEXT,
+            title="商品",
+            position_x=40,
+            position_y=120,
+            config_json={},
+        )
+        session.add(context)
+        session.flush()
+        product_nodes = [context]
+        changed = True
+    keeper = product_nodes[0]
+    duplicate_ids = {node.id for node in product_nodes[1:]}
+    if duplicate_ids:
+        session.execute(
+            delete(WorkflowEdge).where(
+                (WorkflowEdge.workflow_id == workflow.id)
+                & (
+                    WorkflowEdge.source_node_id.in_(duplicate_ids)
+                    | WorkflowEdge.target_node_id.in_(duplicate_ids)
+                )
+            )
+        )
+        session.execute(delete(WorkflowNodeRun).where(WorkflowNodeRun.node_id.in_(duplicate_ids)))
+        for duplicate in product_nodes[1:]:
+            session.delete(duplicate)
+        changed = True
+    non_context_targets = {
+        node.id
+        for node in workflow.nodes
+        if node.node_type in {WorkflowNodeType.COPY_GENERATION, WorkflowNodeType.IMAGE_GENERATION}
+        and node.id not in duplicate_ids
+    }
+    existing_targets = {
+        edge.target_node_id
+        for edge in workflow.edges
+        if edge.source_node_id == keeper.id and edge.target_node_id in non_context_targets
+    }
+    for target_id in sorted(non_context_targets - existing_targets):
+        session.add(
+            WorkflowEdge(
+                workflow_id=workflow.id,
+                source_node_id=keeper.id,
+                target_node_id=target_id,
+                source_handle="output",
+                target_handle="input",
+            )
+        )
+        changed = True
+    if changed:
+        workflow.updated_at = now_utc()
+    return changed
+
+
+def _create_context_copy_set(
+    session: Session,
+    *,
+    product: Product,
+    product_context: dict[str, str | None],
+    node: WorkflowNode,
+) -> CopySet:
+    instruction = _optional_config_text(node.config_json, "instruction")
+    product_name = product_context["name"] or product.name
+    source_note = product_context["source_note"]
+    selling_points = [
+        item
+        for item in [
+            source_note,
+            product_context["category"],
+            instruction,
+        ]
+        if item
+    ][:3]
+    while len(selling_points) < 3:
+        selling_points.append(f"突出{product_name}的商品质感")
+    headline = instruction or f"{product_name} 商品图"
+    title = f"{product_name} 商品图文案"
+    cta = "立即了解"
+    copy_set = CopySet(
+        product_id=product.id,
+        creative_brief_id=None,
+        status=CopyStatus.DRAFT,
+        title=title,
+        selling_points=selling_points,
+        poster_headline=headline[:500],
+        cta=cta,
+        model_title=title,
+        model_selling_points=selling_points,
+        model_poster_headline=headline[:500],
+        model_cta=cta,
+        provider_name="workflow_context",
+        model_name="product_context",
+        prompt_version="v1",
+    )
+    session.add(copy_set)
+    session.flush()
+    product.updated_at = now_utc()
+    return copy_set
 
 
 def _find_source_asset(product: Product) -> SourceAsset | None:
