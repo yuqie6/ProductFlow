@@ -1,0 +1,159 @@
+# Backend Directory Structure
+
+> Actual backend organization for ProductFlow.
+
+---
+
+## Overview
+
+The backend is a Python 3.12 FastAPI application under `backend/src/productflow_backend/`.
+It follows the four-layer structure already described in `AGENTS.md` and `docs/ARCHITECTURE.md`:
+
+- `presentation/` owns FastAPI routing, request dependencies, upload validation, and Pydantic response/request schemas.
+- `application/` owns workflow use cases and cross-infrastructure orchestration.
+- `domain/` owns shared enum values and small domain concepts.
+- `infrastructure/` owns database, local storage, queues, provider implementations, and poster rendering.
+
+`backend/src/productflow_backend/main.py` intentionally stays tiny and only exposes `app = create_app()` from
+`presentation/api.py`.
+
+---
+
+## Directory Layout
+
+```text
+backend/
+├── pyproject.toml                       # Python 3.12, pytest, Ruff, dependencies
+├── alembic/
+│   ├── env.py                           # Reads Settings.database_url and Base.metadata
+│   └── versions/                        # Manual Alembic revisions, e.g. 20260424_0006_add_app_settings.py
+├── src/productflow_backend/
+│   ├── main.py                          # ASGI app entrypoint
+│   ├── config.py                        # env settings + runtime database overrides
+│   ├── workers.py                       # Dramatiq actors
+│   ├── domain/enums.py                  # enum values shared by DB/API/frontend
+│   ├── application/
+│   │   ├── contracts.py                 # Pydantic contracts between use cases and providers/renderers
+│   │   ├── use_cases.py                 # product/copy/poster workflow use cases
+│   │   └── image_sessions.py            # continuous image-session use cases
+│   ├── presentation/
+│   │   ├── api.py                       # FastAPI app factory, middleware, router registration
+│   │   ├── deps.py                      # FastAPI dependencies, including auth/session dependency
+│   │   ├── image_variants.py            # shared image download/variant URL and filename helpers
+│   │   ├── upload_validation.py         # upload size/MIME/pixel validation
+│   │   ├── routes/                      # APIRouter modules by resource
+│   │   └── schemas/                     # Pydantic DTOs and serializer helpers
+│   └── infrastructure/
+│       ├── db/models.py                 # SQLAlchemy typed declarative models
+│       ├── db/session.py                # engine/session factory dependencies
+│       ├── storage.py                   # LocalStorage and image variants
+│       ├── queue.py                     # Dramatiq broker and enqueue helpers
+│       ├── text/                        # text provider interfaces/factories/implementations
+│       ├── image/                       # image provider interfaces/factories/implementations
+│       └── poster/renderer.py           # Pillow template poster renderer
+└── tests/
+    ├── conftest.py                      # sqlite test settings and DB fixtures
+    └── test_workflow.py                 # workflow, API, migration, provider regression tests
+```
+
+---
+
+## Layer Responsibilities
+
+### Presentation layer
+
+Put HTTP concerns in `backend/src/productflow_backend/presentation/`:
+
+- App assembly and middleware belong in `presentation/api.py`.
+- Authentication/session dependencies belong in `presentation/deps.py` and `presentation/routes/auth.py`.
+- Resource routes are grouped under `presentation/routes/`, for example:
+  - `presentation/routes/products.py` handles `/api/products`, copy sets, posters, and source-asset downloads.
+  - `presentation/routes/image_sessions.py` handles `/api/image-sessions` and session asset downloads.
+  - `presentation/routes/settings.py` handles `/api/settings` runtime configuration.
+- Request/response models and serializer functions live in `presentation/schemas/`, for example
+  `presentation/schemas/products.py` and `presentation/schemas/image_sessions.py`.
+- Cross-schema validators belong in `presentation/schemas/validators.py`; image download URL/filename helpers belong in
+  `presentation/image_variants.py`.
+- Upload validation stays in `presentation/upload_validation.py` because it raises HTTP status-specific exceptions.
+
+Do not put provider calls, storage writes, or workflow state transitions directly in route handlers. Existing routes call
+application functions such as `create_product(...)`, `generate_image_session_round(...)`, or `create_copy_job(...)` and
+then serialize the returned model.
+
+### Application layer
+
+Put workflow rules and orchestration in `backend/src/productflow_backend/application/`:
+
+- `application/use_cases.py` owns the core product flow:
+  product creation, reference images, copy jobs, poster jobs, retry state, and history reads.
+- `application/image_sessions.py` owns continuous image-session behavior, including building provider context,
+  trimming title text, attaching generated assets back to products, and deleting session storage.
+- `application/contracts.py` contains Pydantic contracts shared with providers/renderers, such as
+  `ProductInput`, `CreativeBriefPayload`, `CopyPayload`, and `PosterGenerationInput`.
+
+This layer receives a SQLAlchemy `Session` from callers. It is allowed to call infrastructure adapters such as
+`LocalStorage`, provider factories, and `PosterRenderer`, but FastAPI-specific types should not leak into it.
+
+### Domain layer
+
+`backend/src/productflow_backend/domain/enums.py` is the shared home for enum values such as `ProductWorkflowState`,
+`SourceAssetKind`, `CopyStatus`, `JobKind`, `JobStatus`, `PosterKind`, and `ImageSessionAssetKind`. The same string
+values are mirrored in `web/src/lib/types.ts`, so enum changes are cross-layer changes.
+
+### Infrastructure layer
+
+Put adapter code under `backend/src/productflow_backend/infrastructure/`:
+
+- Database models/session setup: `infrastructure/db/models.py`, `infrastructure/db/session.py`.
+- Local file storage and image variants: `infrastructure/storage.py`.
+- Queue setup and enqueue helpers: `infrastructure/queue.py`.
+- Provider interfaces and factories: `infrastructure/text/base.py`, `infrastructure/text/factory.py`,
+  `infrastructure/image/base.py`, `infrastructure/image/factory.py`.
+- Provider implementations stay behind those factories, for example `text/openai_provider.py`,
+  `text/mock_provider.py`, `image/responses_provider.py`, and `image/mock_provider.py`.
+- Continuous image chat generation is adapted in `infrastructure/image/chat_service.py`, which is called by
+  `application/image_sessions.py` rather than directly from route handlers.
+
+Provider-specific code must not leak into routes. If a new provider is added, extend the relevant infrastructure factory
+and the runtime config definitions in `config.py`, then update tests and frontend settings types.
+
+---
+
+## Naming Conventions
+
+- Python modules and functions use `snake_case`.
+- Most product/image-session/settings route handler names end with `_endpoint`, e.g. `create_product_endpoint` and
+  `generate_image_session_round_endpoint`; `presentation/routes/auth.py` and `presentation/routes/jobs.py` keep shorter
+  names such as `create_session` and `get_job_detail`.
+- Internal helper functions are prefixed with `_`, e.g. `_raise_http_error`, `_get_product_or_raise`,
+  `_load_database_values`.
+- Pydantic response/request classes use descriptive `PascalCase` names ending in `Response` or `Request`, for example
+  `ProductDetailResponse`, `ConfigUpdateRequest`, and `GenerateImageSessionRoundRequest`.
+- SQLAlchemy models use singular `PascalCase` class names and plural table names, e.g. `Product` -> `products`,
+  `SourceAsset` -> `source_assets`.
+
+---
+
+## Examples to Copy
+
+- App creation: `backend/src/productflow_backend/presentation/api.py` registers CORS, session middleware, `/healthz`,
+  and routers in one place.
+- Product route shape: `backend/src/productflow_backend/presentation/routes/products.py` accepts FastAPI inputs,
+  delegates to `application/use_cases.py`, and serializes with `presentation/schemas/products.py`.
+- Continuous image sessions: `backend/src/productflow_backend/presentation/routes/image_sessions.py` delegates to
+  `application/image_sessions.py`, which delegates provider-specific chat generation to
+  `infrastructure/image/chat_service.py`, and keeps download handling in the route.
+- Provider selection: `backend/src/productflow_backend/infrastructure/text/factory.py` and
+  `backend/src/productflow_backend/infrastructure/image/factory.py` choose implementations from runtime settings.
+- Tests: `backend/tests/test_workflow.py` covers API endpoints, use cases, provider behavior, migrations, and regression
+  cases in one workflow-oriented file.
+
+---
+
+## Avoid
+
+- Adding new route modules without including them in `presentation/api.py`.
+- Duplicating frontend-facing DTO shapes outside `presentation/schemas/`.
+- Importing OpenAI, Pillow renderer details, Redis/Dramatiq, or storage path manipulation directly from route modules.
+- Changing enum string values without updating SQLAlchemy models/migrations, Pydantic schemas/tests, and
+  `web/src/lib/types.ts`.

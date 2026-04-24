@@ -1,0 +1,2074 @@
+from __future__ import annotations
+
+import time
+from datetime import UTC, datetime, timedelta
+from io import BytesIO
+from pathlib import Path
+
+import pytest
+import sqlalchemy as sa
+from alembic.config import Config
+from fastapi.testclient import TestClient
+from PIL import Image
+from pydantic import ValidationError
+
+from alembic import command
+from productflow_backend.application.contracts import (
+    CopyPayload,
+    CreativeBriefPayload,
+    PosterGenerationInput,
+    ProductInput,
+    ReferenceImageInput,
+)
+from productflow_backend.application.use_cases import (
+    add_reference_images,
+    confirm_copy_set,
+    create_copy_job,
+    create_poster_job,
+    create_product,
+    delete_product,
+    execute_copy_job,
+    execute_poster_job,
+    get_product_detail,
+)
+from productflow_backend.config import get_runtime_settings, get_settings
+from productflow_backend.domain.enums import (
+    CopyStatus,
+    ImageSessionAssetKind,
+    JobKind,
+    JobStatus,
+    PosterKind,
+    SourceAssetKind,
+    WorkflowNodeStatus,
+    WorkflowNodeType,
+    WorkflowRunStatus,
+)
+from productflow_backend.infrastructure.db.models import (
+    AppSetting,
+    CopySet,
+    ImageSession,
+    ImageSessionAsset,
+    JobRun,
+    PosterVariant,
+    ProductWorkflow,
+    SourceAsset,
+    WorkflowNode,
+    WorkflowNodeRun,
+    WorkflowRun,
+)
+from productflow_backend.infrastructure.db.session import get_session_factory
+from productflow_backend.infrastructure.image.responses_provider import OpenAIResponsesImageProvider
+from productflow_backend.infrastructure.queue import recover_unfinished_jobs, recover_unfinished_workflow_runs
+
+
+def _make_demo_image_bytes() -> bytes:
+    return _make_demo_image_bytes_with_size(800, 800)
+
+
+def _make_demo_image_bytes_with_size(width: int, height: int) -> bytes:
+    image = Image.new("RGB", (width, height), (240, 240, 240))
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _make_demo_image_data_url() -> str:
+    import base64
+
+    encoded = base64.b64encode(_make_demo_image_bytes()).decode("utf-8")
+    return f"data:image/png;base64,{encoded}"
+
+
+def _read_image_size(image_bytes: bytes) -> tuple[int, int]:
+    with Image.open(BytesIO(image_bytes)) as image:
+        return image.size
+
+
+def _login(client: TestClient) -> None:
+    login = client.post("/api/auth/session", json={"admin_key": "super-secret-admin-key"})
+    assert login.status_code == 200
+
+
+def _wait_for_workflow_run(
+    client: TestClient,
+    product_id: str,
+    *,
+    status: str | None = None,
+    timeout: float = 5.0,
+) -> dict:
+    deadline = time.monotonic() + timeout
+    last_payload: dict | None = None
+    while time.monotonic() < deadline:
+        response = client.get(f"/api/products/{product_id}/workflow")
+        assert response.status_code == 200
+        last_payload = response.json()
+        latest_run = last_payload["runs"][0] if last_payload["runs"] else None
+        if latest_run and (status is None or latest_run["status"] == status):
+            return last_payload
+        time.sleep(0.05)
+    assert last_payload is not None
+    raise AssertionError(f"workflow run did not reach {status or 'any status'}: {last_payload['runs'][:1]}")
+
+
+@pytest.fixture(autouse=True)
+def _execute_workflow_queue_inline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep API workflow tests deterministic while production delivery goes through Dramatiq."""
+
+    from productflow_backend.application.product_workflows import execute_product_workflow_run
+
+    monkeypatch.setattr(
+        "productflow_backend.presentation.routes.product_workflows.enqueue_workflow_run",
+        execute_product_workflow_run,
+    )
+
+
+def test_auth_session_required(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+
+    unauthorized = client.get("/api/products")
+    assert unauthorized.status_code == 401
+
+    _login(client)
+
+    authorized = client.get("/api/products")
+    assert authorized.status_code == 200
+    assert authorized.json()["items"] == []
+
+
+def test_settings_api_persists_database_overrides(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    initial = client.get("/api/settings")
+    assert initial.status_code == 200
+    initial_items = {item["key"]: item for item in initial.json()["items"]}
+    assert initial_items["image_provider_kind"]["value"] == "mock"
+    assert initial_items["image_provider_kind"]["source"] == "env_default"
+
+    updated = client.patch(
+        "/api/settings",
+        json={
+            "values": {
+                "image_provider_kind": "openai_responses",
+                "image_api_key": "database-image-key",
+                "image_generate_model": "gpt-5.4-mini",
+                "job_retry_delay_ms": 2500,
+            }
+        },
+    )
+    assert updated.status_code == 200
+    updated_items = {item["key"]: item for item in updated.json()["items"]}
+    assert updated_items["image_provider_kind"]["value"] == "openai_responses"
+    assert updated_items["image_provider_kind"]["source"] == "database"
+    assert updated_items["image_api_key"]["value"] == ""
+    assert updated_items["image_api_key"]["has_value"] is True
+    assert get_runtime_settings().image_provider_kind == "openai_responses"
+    assert get_runtime_settings().image_api_key == "database-image-key"
+    assert get_runtime_settings().job_retry_delay_ms == 2500
+
+    session = get_session_factory()()
+    try:
+        assert session.get(AppSetting, "image_provider_kind").value == "openai_responses"
+    finally:
+        session.close()
+
+    reset = client.patch("/api/settings", json={"reset_keys": ["image_provider_kind"]})
+    assert reset.status_code == 200
+    reset_items = {item["key"]: item for item in reset.json()["items"]}
+    assert reset_items["image_provider_kind"]["value"] == "mock"
+    assert reset_items["image_provider_kind"]["source"] == "env_default"
+
+
+def test_settings_api_rejects_invalid_effective_config(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    response = client.patch(
+        "/api/settings",
+        json={"values": {"image_main_image_size": "2048x2048", "image_allowed_sizes": "1024x1024"}},
+    )
+
+    assert response.status_code == 400
+    assert "主图尺寸" in response.json()["detail"]
+
+
+def test_settings_api_rejects_malformed_image_sizes_before_persist(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    response = client.patch(
+        "/api/settings",
+        json={
+            "values": {
+                "image_main_image_size": "foo",
+                "image_promo_poster_size": "foo",
+                "image_allowed_sizes": "foo",
+            }
+        },
+    )
+
+    assert response.status_code == 400
+    assert "宽x高" in response.json()["detail"]
+
+    session = get_session_factory()()
+    try:
+        assert session.get(AppSetting, "image_main_image_size") is None
+        assert session.get(AppSetting, "image_promo_poster_size") is None
+        assert session.get(AppSetting, "image_allowed_sizes") is None
+    finally:
+        session.close()
+
+
+def test_settings_api_normalizes_custom_image_sizes_for_generation(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    updated = client.patch(
+        "/api/settings",
+        json={
+            "values": {
+                "image_main_image_size": "512X512",
+                "image_promo_poster_size": "1024x768",
+                "image_allowed_sizes": "512X512, 1024x768,512x512",
+            }
+        },
+    )
+    assert updated.status_code == 200
+    updated_items = {item["key"]: item for item in updated.json()["items"]}
+    assert updated_items["image_main_image_size"]["value"] == "512x512"
+    assert updated_items["image_allowed_sizes"]["value"] == "512x512,1024x768"
+
+    created = client.post("/api/image-sessions", json={"title": "自定义尺寸"})
+    assert created.status_code == 201
+    session_id = created.json()["id"]
+
+    generated = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={"prompt": "生成一张自定义尺寸商品图", "size": "512x512"},
+    )
+
+    assert generated.status_code == 200
+    assert generated.json()["rounds"][-1]["size"] == "512x512"
+
+
+def test_sqlalchemy_enum_columns_use_database_values() -> None:
+    assert SourceAsset.__table__.c.kind.type.enums == [member.value for member in SourceAssetKind]
+    assert ImageSessionAsset.__table__.c.kind.type.enums == [member.value for member in ImageSessionAssetKind]
+    assert CopySet.__table__.c.status.type.enums == [member.value for member in CopyStatus]
+    assert PosterVariant.__table__.c.kind.type.enums == [member.value for member in PosterKind]
+    assert JobRun.__table__.c.kind.type.enums == [member.value for member in JobKind]
+    assert JobRun.__table__.c.status.type.enums == [member.value for member in JobStatus]
+    assert JobRun.__table__.c.target_poster_kind.type.enums == [member.value for member in PosterKind]
+    assert WorkflowNode.__table__.c.node_type.type.enums == [member.value for member in WorkflowNodeType]
+    assert WorkflowNode.__table__.c.status.type.enums == [member.value for member in WorkflowNodeStatus]
+    assert WorkflowRun.__table__.c.status.type.enums == [member.value for member in WorkflowRunStatus]
+
+
+def test_ai_payload_normalizes_scalar_text_lists_without_swallowing_malformed_values() -> None:
+    brief = CreativeBriefPayload.model_validate(
+        {
+            "positioning": ["摄影入门工具", "桌面拍摄辅助"],
+            "audience": ["摄影入门用户", "小红书图文内容创作者"],
+            "selling_angles": ["上手快", "构图稳", "出片自然"],
+            "taboo_phrases": [],
+            "poster_style_hint": ["干净明亮", "真实生活感"],
+        }
+    )
+    copy = CopyPayload.model_validate(
+        {
+            "title": ["手机摄影支架", "新手也能拍得稳"],
+            "selling_points": ["上手快", "构图稳", "出片自然"],
+            "poster_headline": ["新手拍照", "画面更稳"],
+            "cta": ["马上试试", "轻松出片"],
+        }
+    )
+
+    assert brief.positioning == "摄影入门工具、桌面拍摄辅助"
+    assert brief.audience == "摄影入门用户、小红书图文内容创作者"
+    assert brief.poster_style_hint == "干净明亮、真实生活感"
+    assert copy.title == "手机摄影支架、新手也能拍得稳"
+    assert copy.poster_headline == "新手拍照、画面更稳"
+    assert copy.cta == "马上试试、轻松出片"
+
+    for bad_value in ([], ["摄影入门用户", ""], [{"label": "摄影入门用户"}]):
+        with pytest.raises(ValidationError):
+            CreativeBriefPayload.model_validate(
+                {
+                    "positioning": "摄影入门工具",
+                    "audience": bad_value,
+                    "selling_angles": ["上手快", "构图稳", "出片自然"],
+                    "taboo_phrases": [],
+                    "poster_style_hint": "干净明亮",
+                }
+            )
+        with pytest.raises(ValidationError):
+            CopyPayload.model_validate(
+                {
+                    "title": bad_value,
+                    "selling_points": ["上手快", "构图稳", "出片自然"],
+                    "poster_headline": "新手拍照更稳",
+                    "cta": "马上试试",
+                }
+            )
+
+
+def test_copy_job_persists_normalized_provider_scalar_lists(
+    db_session, configured_env: Path, monkeypatch
+) -> None:
+    class ListAudienceTextProvider:
+        provider_name = "list-audience"
+        prompt_version = "test-v1"
+
+        def generate_brief(self, product: ProductInput) -> tuple[CreativeBriefPayload, str]:
+            return (
+                CreativeBriefPayload.model_validate(
+                    {
+                        "positioning": f"{product.name} 的入门场景",
+                        "audience": ["摄影入门用户", "小红书图文内容创作者"],
+                        "selling_angles": ["上手快", "构图稳", "出片自然"],
+                        "taboo_phrases": [],
+                        "poster_style_hint": "干净明亮",
+                    }
+                ),
+                "list-audience-brief",
+            )
+
+        def generate_copy(
+            self,
+            product: ProductInput,
+            brief: CreativeBriefPayload,
+            instruction: str | None = None,
+            reference_images: list[ReferenceImageInput] | None = None,
+        ) -> tuple[CopyPayload, str]:
+            return (
+                CopyPayload.model_validate(
+                    {
+                        "title": [product.name, "入门也能拍得稳"],
+                        "selling_points": [
+                            f"适合{brief.audience}",
+                            "构图辅助更直观",
+                            "轻松提升日常出片效率",
+                        ],
+                        "poster_headline": ["新手拍照", "画面更稳"],
+                        "cta": ["立即提升", "出片率"],
+                    }
+                ),
+                "list-audience-copy",
+            )
+
+    monkeypatch.setattr(
+        "productflow_backend.application.use_cases.get_text_provider",
+        lambda: ListAudienceTextProvider(),
+    )
+
+    product = create_product(
+        db_session,
+        name="手机摄影支架",
+        category="数码配件",
+        price=None,
+        source_note=None,
+        image_bytes=_make_demo_image_bytes(),
+        filename="tripod.png",
+        content_type="image/png",
+    )
+
+    copy_job = create_copy_job(db_session, product_id=product.id).job
+    assert execute_copy_job(copy_job.id) is False
+
+    db_session.expire_all()
+    product_after_copy = get_product_detail(db_session, product.id)
+    assert product_after_copy.creative_briefs[0].payload["audience"] == "摄影入门用户、小红书图文内容创作者"
+    assert product_after_copy.copy_sets[0].title == "手机摄影支架、入门也能拍得稳"
+    assert product_after_copy.copy_sets[0].poster_headline == "新手拍照、画面更稳"
+    assert product_after_copy.copy_sets[0].cta == "立即提升、出片率"
+    assert "摄影入门用户、小红书图文内容创作者" in product_after_copy.copy_sets[0].selling_points[0]
+
+
+def test_end_to_end_copy_and_poster_workflow(db_session, configured_env: Path) -> None:
+    product = create_product(
+        db_session,
+        name="防滑菜板",
+        category="家居百货",
+        price="29.90",
+        source_note=None,
+        image_bytes=_make_demo_image_bytes(),
+        filename="product.png",
+        content_type="image/png",
+    )
+
+    copy_job = create_copy_job(db_session, product_id=product.id).job
+    execute_copy_job(copy_job.id)
+
+    db_session.expire_all()
+    product_after_copy = get_product_detail(db_session, product.id)
+    assert len(product_after_copy.copy_sets) == 1
+    copy_set = product_after_copy.copy_sets[0]
+    assert "防滑菜板" in copy_set.title
+
+    confirm_copy_set(db_session, copy_set_id=copy_set.id)
+    poster_job = create_poster_job(db_session, product_id=product.id).job
+    execute_poster_job(poster_job.id)
+
+    db_session.expire_all()
+    product_after_poster = get_product_detail(db_session, product.id)
+    assert product_after_poster.confirmed_copy_set is not None
+    assert len(product_after_poster.poster_variants) == 2
+
+    poster_paths = [Path(configured_env) / poster.storage_path for poster in product_after_poster.poster_variants]
+    assert all(path.exists() for path in poster_paths)
+
+
+def test_product_create_persists_source_note_for_ai_context(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    response = client.post(
+        "/api/products",
+        data={
+            "name": "露营保温杯",
+            "category": "户外",
+            "price": "79.00",
+            "source_note": "316 不锈钢，主打长效保温和车载杯架适配。",
+        },
+        files={"image": ("cup.png", _make_demo_image_bytes(), "image/png")},
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["source_note"] == "316 不锈钢，主打长效保温和车载杯架适配。"
+
+    minimal = client.post(
+        "/api/products",
+        data={"name": "极简商品壳"},
+        files={"image": ("minimal.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert minimal.status_code == 201
+    minimal_payload = minimal.json()
+    assert minimal_payload["category"] is None
+    assert minimal_payload["price"] is None
+    assert minimal_payload["source_note"] is None
+
+
+def test_product_workflow_copy_run_normalizes_provider_scalar_lists(configured_env: Path, monkeypatch) -> None:
+    class ListAudienceTextProvider:
+        provider_name = "list-audience"
+        prompt_version = "test-v1"
+
+        def generate_brief(self, product: ProductInput) -> tuple[CreativeBriefPayload, str]:
+            return (
+                CreativeBriefPayload.model_validate(
+                    {
+                        "positioning": f"{product.name} 的内容创作场景",
+                        "audience": ["摄影入门用户", "小红书图文内容创作者"],
+                        "selling_angles": ["上手快", "画面稳", "适合图文内容"],
+                        "taboo_phrases": [],
+                        "poster_style_hint": "清爽真实",
+                    }
+                ),
+                "list-audience-brief",
+            )
+
+        def generate_copy(
+            self,
+            product: ProductInput,
+            brief: CreativeBriefPayload,
+            instruction: str | None = None,
+            reference_images: list[ReferenceImageInput] | None = None,
+        ) -> tuple[CopyPayload, str]:
+            return (
+                CopyPayload.model_validate(
+                    {
+                        "title": [product.name, "新手拍摄更稳"],
+                        "selling_points": [
+                            f"适合{brief.audience}",
+                            "手机拍摄角度更稳定",
+                            "日常图文内容更好出片",
+                        ],
+                        "poster_headline": ["新手也能", "拍出稳定画面"],
+                        "cta": ["马上", "试试"],
+                    }
+                ),
+                "list-audience-copy",
+            )
+
+    monkeypatch.setattr(
+        "productflow_backend.application.product_workflows.get_text_provider",
+        lambda: ListAudienceTextProvider(),
+    )
+
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post(
+        "/api/products",
+        data={"name": "手机摄影支架"},
+        files={"image": ("tripod.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+
+    run_response = client.post(f"/api/products/{product_id}/workflow/run", json={})
+    assert run_response.status_code == 200
+    assert run_response.json()["runs"][0]["status"] == "running"
+    workflow_payload = _wait_for_workflow_run(client, product_id, status="succeeded")
+    copy_node = next(node for node in workflow_payload["nodes"] if node["node_type"] == "copy_generation")
+    assert copy_node["output_json"]["title"] == "手机摄影支架、新手拍摄更稳"
+    assert copy_node["output_json"]["poster_headline"] == "新手也能、拍出稳定画面"
+    assert copy_node["output_json"]["cta"] == "马上、试试"
+    assert "摄影入门用户、小红书图文内容创作者" in " ".join(copy_node["output_json"]["selling_points"])
+
+    product_response = client.get(f"/api/products/{product_id}")
+    assert product_response.status_code == 200
+    latest_brief = product_response.json()["latest_brief"]
+    assert latest_brief["payload"]["audience"] == "摄影入门用户、小红书图文内容创作者"
+
+
+def test_product_workflow_dag_runs_and_persists_artifacts(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post(
+        "/api/products",
+        data={"name": "多功能收纳架"},
+        files={"image": ("rack.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+
+    workflow_response = client.get(f"/api/products/{product_id}/workflow")
+    assert workflow_response.status_code == 200
+    workflow = workflow_response.json()
+    assert len(workflow["nodes"]) >= 4
+    assert len(workflow["edges"]) >= 3
+    assert {node["node_type"] for node in workflow["nodes"]} == {
+        "product_context",
+        "reference_image",
+        "copy_generation",
+        "image_generation",
+    }
+
+    context_node = next(node for node in workflow["nodes"] if node["node_type"] == "product_context")
+    updated_context = client.patch(
+        f"/api/workflow-nodes/{context_node['id']}",
+        json={
+            "position_x": 96,
+            "position_y": 144,
+            "config_json": {
+                "name": "多功能收纳架",
+                "category": "家居",
+                "price": "49.90",
+                "source_note": "免打孔安装，适合厨房和浴室，强调承重和整洁。",
+            }
+        },
+    )
+    assert updated_context.status_code == 200
+    moved_context = next(node for node in updated_context.json()["nodes"] if node["id"] == context_node["id"])
+    assert moved_context["position_x"] == 96
+    assert moved_context["position_y"] == 144
+
+    manual_reference = client.post(
+        f"/api/products/{product_id}/workflow/nodes",
+        json={
+            "node_type": "reference_image",
+            "title": "风格参考",
+            "position_x": 320,
+            "position_y": 260,
+            "config_json": {"role": "style", "label": "厨房风格"},
+        },
+    )
+    assert manual_reference.status_code == 201
+    upload_node = next(
+        node
+        for node in manual_reference.json()["nodes"]
+        if node["node_type"] == "reference_image" and node["title"] == "风格参考"
+    )
+    uploaded = client.post(
+        f"/api/workflow-nodes/{upload_node['id']}/image",
+        data={"role": "style", "label": "厨房风格图"},
+        files={"image": ("style.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert uploaded.status_code == 200
+    uploaded_node = next(node for node in uploaded.json()["nodes"] if node["id"] == upload_node["id"])
+    assert uploaded_node["output_json"]["source_asset_ids"]
+
+    copy_node = next(node for node in workflow["nodes"] if node["node_type"] == "copy_generation")
+    updated = client.patch(
+        f"/api/workflow-nodes/{copy_node['id']}",
+        json={"config_json": {"instruction": "突出免打孔和厨房整洁场景"}},
+    )
+    assert updated.status_code == 200
+    reference_to_copy = client.post(
+        f"/api/products/{product_id}/workflow/edges",
+        json={
+            "source_node_id": upload_node["id"],
+            "target_node_id": copy_node["id"],
+            "source_handle": "output",
+            "target_handle": "input",
+        },
+    )
+    assert reference_to_copy.status_code == 201
+    image_node = next(node for node in workflow["nodes"] if node["node_type"] == "image_generation")
+    updated_image = client.patch(
+        f"/api/workflow-nodes/{image_node['id']}",
+        json={"config_json": {"instruction": "沿用上游文案和参考图，生成主图", "size": "1024x1024"}},
+    )
+    assert updated_image.status_code == 200
+
+    upstream_edge = client.post(
+        f"/api/products/{product_id}/workflow/edges",
+        json={
+            "source_node_id": upload_node["id"],
+            "target_node_id": image_node["id"],
+            "source_handle": "output",
+            "target_handle": "input",
+        },
+    )
+    assert upstream_edge.status_code == 201
+    second_target = client.post(
+        f"/api/products/{product_id}/workflow/nodes",
+        json={
+            "node_type": "reference_image",
+            "title": "参考图 2",
+            "position_x": 1160,
+            "position_y": 240,
+            "config_json": {"role": "reference", "label": "参考图 2"},
+        },
+    )
+    assert second_target.status_code == 201
+    second_target_node = next(node for node in second_target.json()["nodes"] if node["title"] == "参考图 2")
+    second_target_edge = client.post(
+        f"/api/products/{product_id}/workflow/edges",
+        json={
+            "source_node_id": image_node["id"],
+            "target_node_id": second_target_node["id"],
+            "source_handle": "output",
+            "target_handle": "input",
+        },
+    )
+    assert second_target_edge.status_code == 201
+    duplicate_target_edge = client.post(
+        f"/api/products/{product_id}/workflow/edges",
+        json={
+            "source_node_id": image_node["id"],
+            "target_node_id": second_target_node["id"],
+            "source_handle": "output",
+            "target_handle": "input",
+        },
+    )
+    assert duplicate_target_edge.status_code == 201
+    workflow_before_run = duplicate_target_edge.json()
+
+    run_response = client.post(f"/api/products/{product_id}/workflow/run", json={})
+    assert run_response.status_code == 200
+    assert run_response.json()["runs"][0]["status"] == "running"
+    run_payload = _wait_for_workflow_run(client, product_id, status="succeeded")
+    assert run_payload["runs"][0]["status"] == "succeeded"
+    assert all(node["status"] == "succeeded" for node in run_payload["nodes"])
+    copy_output = next(node for node in run_payload["nodes"] if node["node_type"] == "copy_generation")["output_json"]
+    assert copy_output["copy_set_id"]
+    assert "免打孔" in " ".join(copy_output["selling_points"])
+    assert "厨房风格图" in " ".join(copy_output["selling_points"])
+    edited_copy = client.patch(
+        f"/api/workflow-nodes/{copy_node['id']}/copy",
+        json={
+            "title": "厨房免打孔收纳架",
+            "selling_points": ["免打孔安装", "厨房台面更整洁", "承重稳定"],
+            "poster_headline": "厨房整洁一步到位",
+            "cta": "立即整理厨房",
+        },
+    )
+    assert edited_copy.status_code == 200
+    edited_copy_node = next(node for node in edited_copy.json()["nodes"] if node["id"] == copy_node["id"])
+    assert edited_copy_node["output_json"]["title"] == "厨房免打孔收纳架"
+    assert edited_copy_node["output_json"]["poster_headline"] == "厨房整洁一步到位"
+    rerun_image = client.post(
+        f"/api/products/{product_id}/workflow/run",
+        json={"start_node_id": image_node["id"]},
+    )
+    assert rerun_image.status_code == 200
+    rerun_payload = _wait_for_workflow_run(client, product_id, status="succeeded")
+    assert rerun_payload["runs"][0]["status"] == "succeeded"
+    rerun_copy_output = next(node for node in rerun_payload["nodes"] if node["id"] == copy_node["id"])["output_json"]
+    rerun_image_output = next(node for node in rerun_payload["nodes"] if node["id"] == image_node["id"])["output_json"]
+    assert rerun_copy_output["copy_set_id"] == copy_output["copy_set_id"]
+    assert rerun_copy_output["poster_headline"] == "厨房整洁一步到位"
+    assert rerun_image_output["copy_set_id"] == copy_output["copy_set_id"]
+    image_output = next(node for node in run_payload["nodes"] if node["node_type"] == "image_generation")["output_json"]
+    assert len(image_output["poster_variant_ids"]) == 2
+    assert image_output["target_count"] == 2
+    assert len(image_output["filled_source_asset_ids"]) == 2
+    assert len(image_output["filled_reference_node_ids"]) == 2
+    assert image_output["size"] == "1024x1024"
+    assert image_output["image_asset_ids"]
+    filled_nodes = [
+        node for node in run_payload["nodes"] if node["id"] in set(image_output["filled_reference_node_ids"])
+    ]
+    assert all(node["output_json"]["source_asset_ids"] for node in filled_nodes)
+
+    product_after = client.get(f"/api/products/{product_id}")
+    assert product_after.status_code == 200
+    product_payload = product_after.json()
+    assert any(copy_set["id"] == copy_output["copy_set_id"] for copy_set in product_payload["copy_sets"])
+    assert len(product_payload["poster_variants"]) == 4
+    reference_assets = [asset for asset in product_payload["source_assets"] if asset["kind"] == "reference_image"]
+    assert len(reference_assets) == 5
+
+    rejected_cycle = client.post(
+        f"/api/products/{product_id}/workflow/edges",
+        json={
+            "source_node_id": image_node["id"],
+            "target_node_id": copy_node["id"],
+            "source_handle": "output",
+            "target_handle": "input",
+        },
+    )
+    assert rejected_cycle.status_code == 400
+    assert "循环依赖" in rejected_cycle.json()["detail"]
+    refreshed = client.get(f"/api/products/{product_id}/workflow")
+    assert refreshed.status_code == 200
+    assert len(refreshed.json()["edges"]) == len(workflow_before_run["edges"])
+
+    edge_to_delete = refreshed.json()["edges"][0]
+    deleted_edge = client.delete(f"/api/workflow-edges/{edge_to_delete['id']}")
+    assert deleted_edge.status_code == 200
+    deleted_payload = deleted_edge.json()
+    assert len(deleted_payload["edges"]) == len(workflow_before_run["edges"]) - 1
+    assert edge_to_delete["id"] not in {edge["id"] for edge in deleted_payload["edges"]}
+
+    isolated_image = client.post(
+        f"/api/products/{product_id}/workflow/nodes",
+        json={
+            "node_type": "image_generation",
+            "title": "未连接生图",
+            "position_x": 620,
+            "position_y": 420,
+            "config_json": {"instruction": "生成但不落槽", "size": "1024x1024"},
+        },
+    )
+    assert isolated_image.status_code == 201
+    isolated_image_node = next(node for node in isolated_image.json()["nodes"] if node["title"] == "未连接生图")
+    context_to_isolated = client.post(
+        f"/api/products/{product_id}/workflow/edges",
+        json={
+            "source_node_id": context_node["id"],
+            "target_node_id": isolated_image_node["id"],
+            "source_handle": "output",
+            "target_handle": "input",
+        },
+    )
+    assert context_to_isolated.status_code == 201
+    copy_to_isolated = client.post(
+        f"/api/products/{product_id}/workflow/edges",
+        json={
+            "source_node_id": copy_node["id"],
+            "target_node_id": isolated_image_node["id"],
+            "source_handle": "output",
+            "target_handle": "input",
+        },
+    )
+    assert copy_to_isolated.status_code == 201
+    failed_run = client.post(
+        f"/api/products/{product_id}/workflow/run",
+        json={"start_node_id": isolated_image_node["id"]},
+    )
+    assert failed_run.status_code == 200
+    failed_payload = _wait_for_workflow_run(client, product_id, status="failed")
+    assert failed_payload["runs"][0]["status"] == "failed"
+    assert failed_payload["runs"][0]["failure_reason"] == "连接参考图节点"
+    failed_node = next(node for node in failed_payload["nodes"] if node["id"] == isolated_image_node["id"])
+    assert failed_node["status"] == "failed"
+    assert failed_node["failure_reason"] == "连接参考图节点"
+
+    session = get_session_factory()()
+    try:
+        assert session.query(ProductWorkflow).filter_by(product_id=product_id).count() == 1
+    finally:
+        session.close()
+
+
+def test_single_node_workflow_run_reuses_succeeded_upstream_outputs(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post(
+        "/api/products",
+        data={"name": "露营杯"},
+        files={"image": ("cup.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+
+    initial_workflow = client.get(f"/api/products/{product_id}/workflow")
+    assert initial_workflow.status_code == 200
+    workflow = initial_workflow.json()
+    upstream_image_node = next(node for node in workflow["nodes"] if node["node_type"] == "image_generation")
+    upstream_reference_node = next(node for node in workflow["nodes"] if node["node_type"] == "reference_image")
+
+    first_run = client.post(f"/api/products/{product_id}/workflow/run", json={})
+    assert first_run.status_code == 200
+    first_payload = _wait_for_workflow_run(client, product_id, status="succeeded")
+    assert first_payload["runs"][0]["status"] == "succeeded"
+    succeeded_image_node = next(node for node in first_payload["nodes"] if node["id"] == upstream_image_node["id"])
+    succeeded_reference_node = next(
+        node for node in first_payload["nodes"] if node["id"] == upstream_reference_node["id"]
+    )
+    upstream_poster_ids = succeeded_image_node["output_json"]["poster_variant_ids"]
+    upstream_reference_asset_ids = succeeded_reference_node["output_json"]["source_asset_ids"]
+    assert upstream_poster_ids
+    assert upstream_reference_asset_ids
+
+    downstream_image = client.post(
+        f"/api/products/{product_id}/workflow/nodes",
+        json={
+            "node_type": "image_generation",
+            "title": "下游生图",
+            "position_x": 900,
+            "position_y": 360,
+            "config_json": {"instruction": "沿用上游图片继续生成", "size": "1024x1024"},
+        },
+    )
+    assert downstream_image.status_code == 201
+    downstream_image_node = next(node for node in downstream_image.json()["nodes"] if node["title"] == "下游生图")
+    downstream_reference = client.post(
+        f"/api/products/{product_id}/workflow/nodes",
+        json={
+            "node_type": "reference_image",
+            "title": "下游参考图",
+            "position_x": 1180,
+            "position_y": 360,
+            "config_json": {"role": "reference", "label": "下游参考图"},
+        },
+    )
+    assert downstream_reference.status_code == 201
+    downstream_reference_node = next(
+        node for node in downstream_reference.json()["nodes"] if node["title"] == "下游参考图"
+    )
+    upstream_edge = client.post(
+        f"/api/products/{product_id}/workflow/edges",
+        json={
+            "source_node_id": upstream_image_node["id"],
+            "target_node_id": downstream_image_node["id"],
+            "source_handle": "output",
+            "target_handle": "input",
+        },
+    )
+    assert upstream_edge.status_code == 201
+    target_edge = client.post(
+        f"/api/products/{product_id}/workflow/edges",
+        json={
+            "source_node_id": downstream_image_node["id"],
+            "target_node_id": downstream_reference_node["id"],
+            "source_handle": "output",
+            "target_handle": "input",
+        },
+    )
+    assert target_edge.status_code == 201
+
+    product_before = client.get(f"/api/products/{product_id}")
+    assert product_before.status_code == 200
+    copy_count_before = len(product_before.json()["copy_sets"])
+    poster_count_before = len(product_before.json()["poster_variants"])
+    source_asset_count_before = len(product_before.json()["source_assets"])
+
+    single_run = client.post(
+        f"/api/products/{product_id}/workflow/run",
+        json={"start_node_id": downstream_image_node["id"]},
+    )
+    assert single_run.status_code == 200
+    single_payload = _wait_for_workflow_run(client, product_id, status="succeeded")
+    assert single_payload["runs"][0]["status"] == "succeeded"
+    assert [node_run["node_id"] for node_run in single_payload["runs"][0]["node_runs"]] == [downstream_image_node["id"]]
+
+    unchanged_upstream_image = next(node for node in single_payload["nodes"] if node["id"] == upstream_image_node["id"])
+    unchanged_reference = next(node for node in single_payload["nodes"] if node["id"] == upstream_reference_node["id"])
+    downstream_after = next(node for node in single_payload["nodes"] if node["id"] == downstream_image_node["id"])
+    assert unchanged_upstream_image["output_json"]["poster_variant_ids"] == upstream_poster_ids
+    assert unchanged_reference["output_json"]["source_asset_ids"] == upstream_reference_asset_ids
+    assert downstream_after["output_json"]["copy_set_id"] == unchanged_upstream_image["output_json"]["copy_set_id"]
+    assert len(downstream_after["output_json"]["poster_variant_ids"]) == 1
+
+    product_after = client.get(f"/api/products/{product_id}")
+    assert product_after.status_code == 200
+    assert len(product_after.json()["copy_sets"]) == copy_count_before
+    assert len(product_after.json()["poster_variants"]) == poster_count_before + 1
+    assert len(product_after.json()["source_assets"]) == source_asset_count_before + 1
+
+
+def test_workflow_run_kickoff_prevents_duplicate_active_runs(db_session, configured_env: Path) -> None:
+    from productflow_backend.application.product_workflows import delete_workflow_node, start_product_workflow_run
+
+    product = create_product(
+        db_session,
+        name="防重复运行商品",
+        category=None,
+        price=None,
+        source_note=None,
+        image_bytes=_make_demo_image_bytes(),
+        filename="product.png",
+        content_type="image/png",
+    )
+
+    first = start_product_workflow_run(db_session, product_id=product.id)
+    second = start_product_workflow_run(db_session, product_id=product.id)
+
+    assert first.created is True
+    assert second.created is False
+    assert second.run_id == first.run_id
+    assert [run.id for run in second.workflow.runs if run.status == WorkflowRunStatus.RUNNING] == [first.run_id]
+
+    protected_node = first.workflow.nodes[0]
+    with pytest.raises(ValueError, match="运行中，稍后删除"):
+        delete_workflow_node(db_session, node_id=protected_node.id)
+    with pytest.raises(ValueError, match="商品工作流运行中，稍后删除"):
+        delete_product(db_session, product_id=product.id)
+
+    db_session.add(WorkflowRun(workflow_id=first.workflow.id, status=WorkflowRunStatus.RUNNING))
+    with pytest.raises(sa.exc.IntegrityError):
+        db_session.commit()
+    db_session.rollback()
+
+
+def test_workflow_run_endpoint_enqueues_durable_actor_and_reuses_active_run(
+    configured_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    sent_run_ids: list[str] = []
+    monkeypatch.setattr(
+        "productflow_backend.presentation.routes.product_workflows.enqueue_workflow_run",
+        lambda run_id: sent_run_ids.append(run_id),
+    )
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post(
+        "/api/products",
+        data={"name": "队列工作流商品"},
+        files={"image": ("workflow.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+
+    first = client.post(f"/api/products/{product_id}/workflow/run", json={})
+    assert first.status_code == 200
+    first_run_id = first.json()["runs"][0]["id"]
+    assert first.json()["runs"][0]["status"] == "running"
+    assert sent_run_ids == [first_run_id]
+
+    second = client.post(f"/api/products/{product_id}/workflow/run", json={})
+    assert second.status_code == 200
+    assert second.json()["runs"][0]["id"] == first_run_id
+    assert sent_run_ids == [first_run_id]
+
+
+def test_workflow_run_enqueue_failure_marks_run_failed(
+    configured_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    def fail_enqueue(_: str) -> None:
+        raise RuntimeError("redis unavailable")
+
+    monkeypatch.setattr("productflow_backend.presentation.routes.product_workflows.enqueue_workflow_run", fail_enqueue)
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post(
+        "/api/products",
+        data={"name": "入队失败商品"},
+        files={"image": ("workflow.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+
+    response = client.post(f"/api/products/{product_id}/workflow/run", json={})
+    assert response.status_code == 503
+    assert response.json()["detail"] == "任务队列暂不可用，请稍后重试"
+
+    workflow = client.get(f"/api/products/{product_id}/workflow")
+    assert workflow.status_code == 200
+    payload = workflow.json()
+    assert payload["runs"][0]["status"] == "failed"
+    assert payload["runs"][0]["failure_reason"] == "任务队列暂不可用，请稍后重试"
+    assert all(node["status"] not in {"queued", "running"} for node in payload["nodes"])
+
+
+def test_recover_unfinished_workflow_runs_requeues_queued_runs(
+    db_session,
+    configured_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.application.product_workflows import start_product_workflow_run
+
+    product = create_product(
+        db_session,
+        name="恢复队列工作流",
+        category=None,
+        price=None,
+        source_note=None,
+        image_bytes=_make_demo_image_bytes(),
+        filename="workflow.png",
+        content_type="image/png",
+    )
+    kickoff = start_product_workflow_run(db_session, product_id=product.id)
+    sent_run_ids: list[str] = []
+    monkeypatch.setattr(
+        "productflow_backend.infrastructure.queue.enqueue_workflow_run",
+        lambda run_id: sent_run_ids.append(run_id),
+    )
+
+    summary = recover_unfinished_workflow_runs()
+
+    assert summary.queued_runs == 1
+    assert summary.stale_running_runs == 0
+    assert summary.enqueued_runs == 1
+    assert sent_run_ids == [kickoff.run_id]
+
+
+def test_recover_unfinished_workflow_runs_resets_stale_running_node_runs(
+    db_session,
+    configured_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.application.product_workflows import start_product_workflow_run
+
+    product = create_product(
+        db_session,
+        name="恢复执行中工作流",
+        category=None,
+        price=None,
+        source_note=None,
+        image_bytes=_make_demo_image_bytes(),
+        filename="workflow.png",
+        content_type="image/png",
+    )
+    kickoff = start_product_workflow_run(db_session, product_id=product.id)
+    node_run = db_session.query(WorkflowNodeRun).filter_by(workflow_run_id=kickoff.run_id).first()
+    assert node_run is not None
+    node = db_session.get(WorkflowNode, node_run.node_id)
+    assert node is not None
+    node_run.status = WorkflowNodeStatus.RUNNING
+    node_run.started_at = datetime.now(UTC) - timedelta(hours=2)
+    node.status = WorkflowNodeStatus.RUNNING
+    db_session.commit()
+
+    sent_run_ids: list[str] = []
+    monkeypatch.setattr(
+        "productflow_backend.infrastructure.queue.enqueue_workflow_run",
+        lambda run_id: sent_run_ids.append(run_id),
+    )
+
+    summary = recover_unfinished_workflow_runs(reset_stale_running=True, stale_running_after=timedelta(minutes=30))
+    db_session.refresh(node_run)
+    db_session.refresh(node)
+
+    assert summary.queued_runs == 0
+    assert summary.stale_running_runs == 1
+    assert summary.enqueued_runs == 1
+    assert sent_run_ids == [kickoff.run_id]
+    assert node_run.status == WorkflowNodeStatus.QUEUED
+    assert node.status == WorkflowNodeStatus.QUEUED
+
+
+def test_duplicate_workflow_messages_noop_for_terminal_or_running_runs(
+    db_session,
+    configured_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.application.product_workflows import (
+        execute_product_workflow_run,
+        start_product_workflow_run,
+    )
+
+    monkeypatch.setattr(
+        "productflow_backend.application.product_workflows._execute_node",
+        lambda *args, **kwargs: pytest.fail("duplicate message must not execute providers"),
+    )
+
+    product = create_product(
+        db_session,
+        name="重复消息工作流",
+        category=None,
+        price=None,
+        source_note=None,
+        image_bytes=_make_demo_image_bytes(),
+        filename="workflow.png",
+        content_type="image/png",
+    )
+    terminal = start_product_workflow_run(db_session, product_id=product.id)
+    terminal_run = db_session.get(WorkflowRun, terminal.run_id)
+    assert terminal_run is not None
+    terminal_run.status = WorkflowRunStatus.SUCCEEDED
+    terminal_run.finished_at = datetime.now(UTC)
+    db_session.commit()
+
+    execute_product_workflow_run(terminal.run_id)
+    db_session.refresh(terminal_run)
+    assert terminal_run.status == WorkflowRunStatus.SUCCEEDED
+
+    product_two = create_product(
+        db_session,
+        name="执行中重复消息工作流",
+        category=None,
+        price=None,
+        source_note=None,
+        image_bytes=_make_demo_image_bytes(),
+        filename="workflow-two.png",
+        content_type="image/png",
+    )
+    running = start_product_workflow_run(db_session, product_id=product_two.id)
+    running_node_run = db_session.query(WorkflowNodeRun).filter_by(workflow_run_id=running.run_id).first()
+    assert running_node_run is not None
+    running_node_run.status = WorkflowNodeStatus.RUNNING
+    running_node_run.started_at = datetime.now(UTC)
+    db_session.commit()
+
+    execute_product_workflow_run(running.run_id)
+    db_session.refresh(running_node_run)
+    assert running_node_run.status == WorkflowNodeStatus.RUNNING
+
+
+def test_workflow_node_can_be_deleted_with_connected_edges(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post(
+        "/api/products",
+        data={"name": "可删节点商品"},
+        files={"image": ("node.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+    workflow_response = client.get(f"/api/products/{product_id}/workflow")
+    assert workflow_response.status_code == 200
+    workflow = workflow_response.json()
+    copy_node = next(node for node in workflow["nodes"] if node["node_type"] == "copy_generation")
+    connected_edge_ids = {
+        edge["id"]
+        for edge in workflow["edges"]
+        if edge["source_node_id"] == copy_node["id"] or edge["target_node_id"] == copy_node["id"]
+    }
+    assert connected_edge_ids
+
+    deleted = client.delete(f"/api/workflow-nodes/{copy_node['id']}")
+    assert deleted.status_code == 200
+    deleted_payload = deleted.json()
+    assert copy_node["id"] not in {node["id"] for node in deleted_payload["nodes"]}
+    assert all(
+        edge["source_node_id"] != copy_node["id"] and edge["target_node_id"] != copy_node["id"]
+        for edge in deleted_payload["edges"]
+    )
+    assert connected_edge_ids.isdisjoint({edge["id"] for edge in deleted_payload["edges"]})
+
+    refreshed = client.get(f"/api/products/{product_id}/workflow")
+    assert refreshed.status_code == 200
+    assert copy_node["id"] not in {node["id"] for node in refreshed.json()["nodes"]}
+
+
+def test_product_can_be_deleted_from_api(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post(
+        "/api/products",
+        data={"name": "待删除商品"},
+        files={"image": ("delete.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+    product_root = configured_env / "products" / product_id
+    assert product_root.exists()
+    run = client.post(f"/api/products/{product_id}/workflow/run", json={})
+    assert run.status_code == 200
+    completed = _wait_for_workflow_run(client, product_id, status="succeeded")
+    assert completed["runs"][0]["node_runs"]
+    product_with_artifacts = client.get(f"/api/products/{product_id}")
+    assert product_with_artifacts.status_code == 200
+    assert product_with_artifacts.json()["copy_sets"]
+    assert product_with_artifacts.json()["poster_variants"]
+
+    deleted = client.delete(f"/api/products/{product_id}")
+    assert deleted.status_code == 204
+    assert deleted.content == b""
+
+    listed = client.get("/api/products")
+    assert listed.status_code == 200
+    assert product_id not in {item["id"] for item in listed.json()["items"]}
+    missing = client.get(f"/api/products/{product_id}")
+    assert missing.status_code == 404
+    assert not product_root.exists()
+
+
+def test_single_reference_run_reruns_upstream_when_target_slot_missing_artifact(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post(
+        "/api/products",
+        data={"name": "桌面灯"},
+        files={"image": ("lamp.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+
+    workflow_response = client.get(f"/api/products/{product_id}/workflow")
+    assert workflow_response.status_code == 200
+    workflow = workflow_response.json()
+    image_node = next(node for node in workflow["nodes"] if node["node_type"] == "image_generation")
+
+    first_run = client.post(f"/api/products/{product_id}/workflow/run", json={})
+    assert first_run.status_code == 200
+    assert _wait_for_workflow_run(client, product_id, status="succeeded")["runs"][0]["status"] == "succeeded"
+
+    new_reference = client.post(
+        f"/api/products/{product_id}/workflow/nodes",
+        json={
+            "node_type": "reference_image",
+            "title": "新增参考图",
+            "position_x": 1180,
+            "position_y": 380,
+            "config_json": {"role": "reference", "label": "新增参考图"},
+        },
+    )
+    assert new_reference.status_code == 201
+    new_reference_node = next(node for node in new_reference.json()["nodes"] if node["title"] == "新增参考图")
+    connected = client.post(
+        f"/api/products/{product_id}/workflow/edges",
+        json={
+            "source_node_id": image_node["id"],
+            "target_node_id": new_reference_node["id"],
+            "source_handle": "output",
+            "target_handle": "input",
+        },
+    )
+    assert connected.status_code == 201
+
+    product_before = client.get(f"/api/products/{product_id}")
+    assert product_before.status_code == 200
+    copy_count_before = len(product_before.json()["copy_sets"])
+
+    slot_run = client.post(
+        f"/api/products/{product_id}/workflow/run",
+        json={"start_node_id": new_reference_node["id"]},
+    )
+    assert slot_run.status_code == 200
+    payload = _wait_for_workflow_run(client, product_id, status="succeeded")
+    assert payload["runs"][0]["status"] == "succeeded"
+    assert [node_run["node_id"] for node_run in payload["runs"][0]["node_runs"]] == [
+        image_node["id"],
+        new_reference_node["id"],
+    ]
+    filled_reference = next(node for node in payload["nodes"] if node["id"] == new_reference_node["id"])
+    rerun_image = next(node for node in payload["nodes"] if node["id"] == image_node["id"])
+    assert filled_reference["output_json"]["source_asset_ids"]
+    assert new_reference_node["id"] in rerun_image["output_json"]["filled_reference_node_ids"]
+
+    product_after = client.get(f"/api/products/{product_id}")
+    assert product_after.status_code == 200
+    assert len(product_after.json()["copy_sets"]) == copy_count_before
+
+
+def test_reference_images_can_be_attached_to_product(db_session, configured_env: Path) -> None:
+    product = create_product(
+        db_session,
+        name="陶瓷马克杯",
+        category="家居",
+        price="39.00",
+        source_note=None,
+        image_bytes=_make_demo_image_bytes(),
+        filename="mug.png",
+        content_type="image/png",
+    )
+
+    updated = add_reference_images(
+        db_session,
+        product_id=product.id,
+        reference_image_uploads=[
+            (_make_demo_image_bytes(), "sample-1.png", "image/png"),
+            (_make_demo_image_bytes(), "sample-2.png", "image/png"),
+        ],
+    )
+
+    reference_assets = [asset for asset in updated.source_assets if asset.kind == SourceAssetKind.REFERENCE_IMAGE]
+    assert len(reference_assets) == 2
+    assert all((Path(configured_env) / asset.storage_path).exists() for asset in reference_assets)
+
+
+def test_product_reference_image_can_be_deleted(configured_env: Path, db_session) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post(
+        "/api/products",
+        data={"name": "香薰蜡烛", "category": "家居", "price": "49.00"},
+        files=[
+            ("image", ("main.png", _make_demo_image_bytes(), "image/png")),
+            ("reference_images", ("ref.png", _make_demo_image_bytes(), "image/png")),
+        ],
+    )
+    assert created.status_code == 201
+    payload = created.json()
+    original_asset = next(asset for asset in payload["source_assets"] if asset["kind"] == "original_image")
+    reference_asset = next(asset for asset in payload["source_assets"] if asset["kind"] == "reference_image")
+
+    db_session.expire_all()
+    persisted_reference = db_session.get(SourceAsset, reference_asset["id"])
+    assert persisted_reference is not None
+    reference_path = Path(configured_env) / persisted_reference.storage_path
+    assert reference_path.exists()
+
+    deleted = client.delete(f"/api/source-assets/{reference_asset['id']}")
+    assert deleted.status_code == 200
+    assert all(asset["id"] != reference_asset["id"] for asset in deleted.json()["source_assets"])
+
+    db_session.expire_all()
+    assert db_session.get(SourceAsset, reference_asset["id"]) is None
+    assert not reference_path.exists()
+
+    rejected = client.delete(f"/api/source-assets/{original_asset['id']}")
+    assert rejected.status_code == 400
+    assert "只能删除商品参考图" in rejected.json()["detail"]
+
+
+def test_image_session_rounds_support_same_conversation(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+
+    _login(client)
+
+    created = client.post("/api/image-sessions", json={"title": "护手霜连续生图"})
+    assert created.status_code == 201
+    session_id = created.json()["id"]
+
+    first = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={
+            "prompt": "做一张奶油质感的护手霜广告图，柔光，白底，产品居中",
+            "size": "1024x1024",
+        },
+    )
+    assert first.status_code == 200
+    first_payload = first.json()
+    assert len(first_payload["rounds"]) == 1
+    assert first_payload["rounds"][0]["generated_asset"]["download_url"].startswith("/api/image-session-assets/")
+    assert first_payload["rounds"][0]["generated_asset"]["preview_url"].endswith("variant=preview")
+    assert first_payload["rounds"][0]["generated_asset"]["thumbnail_url"].endswith("variant=thumbnail")
+    thumbnail = client.get(first_payload["rounds"][0]["generated_asset"]["thumbnail_url"])
+    assert thumbnail.status_code == 200
+    assert max(_read_image_size(thumbnail.content)) <= 320
+
+    upload = client.post(
+        f"/api/image-sessions/{session_id}/reference-images",
+        files={"reference_images": ("sample.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert upload.status_code == 200
+    upload_payload = upload.json()
+    assert any(asset["kind"] == "reference_upload" for asset in upload_payload["assets"])
+
+    second = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={
+            "prompt": "保持同样产品和光线，把背景改成浴室台面，增加一点水珠",
+            "size": "1024x1024",
+        },
+    )
+    assert second.status_code == 200
+    second_payload = second.json()
+    assert len(second_payload["rounds"]) == 2
+    assert second_payload["rounds"][-1]["provider_name"] == "mock"
+    assert second_payload["rounds"][-1]["assistant_message"].startswith("已基于当前对话继续生成")
+
+
+def test_image_session_reference_image_can_be_deleted(configured_env: Path, db_session) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post("/api/image-sessions", json={"title": "参考图删除"})
+    assert created.status_code == 201
+    session_id = created.json()["id"]
+    upload = client.post(
+        f"/api/image-sessions/{session_id}/reference-images",
+        files={"reference_images": ("sample.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert upload.status_code == 200
+    reference_asset = next(asset for asset in upload.json()["assets"] if asset["kind"] == "reference_upload")
+
+    db_session.expire_all()
+    persisted_asset = db_session.get(ImageSessionAsset, reference_asset["id"])
+    assert persisted_asset is not None
+    reference_path = Path(configured_env) / persisted_asset.storage_path
+    assert reference_path.exists()
+
+    deleted = client.delete(f"/api/image-sessions/{session_id}/reference-images/{reference_asset['id']}")
+    assert deleted.status_code == 200
+    assert all(asset["id"] != reference_asset["id"] for asset in deleted.json()["assets"])
+
+    db_session.expire_all()
+    assert db_session.get(ImageSessionAsset, reference_asset["id"]) is None
+    assert not reference_path.exists()
+
+
+def test_image_session_can_be_deleted_with_files(configured_env: Path, db_session) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post("/api/image-sessions", json={"title": "整会话删除"})
+    assert created.status_code == 201
+    session_id = created.json()["id"]
+    upload = client.post(
+        f"/api/image-sessions/{session_id}/reference-images",
+        files={"reference_images": ("sample.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert upload.status_code == 200
+    generated = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={"prompt": "做一张白底商品图", "size": "1024x1024"},
+    )
+    assert generated.status_code == 200
+
+    db_session.expire_all()
+    asset_paths = [
+        Path(configured_env) / asset.storage_path
+        for asset in db_session.query(ImageSessionAsset).filter(ImageSessionAsset.session_id == session_id).all()
+    ]
+    assert asset_paths
+    assert all(path.exists() for path in asset_paths)
+    session_root = Path(configured_env) / "image_sessions" / session_id
+    assert session_root.exists()
+
+    deleted = client.delete(f"/api/image-sessions/{session_id}")
+    assert deleted.status_code == 204
+
+    listed = client.get("/api/image-sessions")
+    assert listed.status_code == 200
+    assert all(item["id"] != session_id for item in listed.json()["items"])
+
+    db_session.expire_all()
+    assert db_session.get(ImageSession, session_id) is None
+    assert all(not path.exists() for path in asset_paths)
+    assert not session_root.exists()
+
+
+def test_image_session_result_can_write_back_to_product(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    create_product_response = client.post(
+        "/api/products",
+        data={"name": "护手霜", "category": "个护", "price": "59.00"},
+        files={"image": ("cream.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert create_product_response.status_code == 201
+    product_id = create_product_response.json()["id"]
+
+    created = client.post("/api/image-sessions", json={"product_id": product_id})
+    assert created.status_code == 201
+    session_id = created.json()["id"]
+
+    generated = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={"prompt": "做一张高级浴室台面护手霜广告图", "size": "1024x1024"},
+    )
+    assert generated.status_code == 200
+    generated_payload = generated.json()
+    generated_asset_id = generated_payload["rounds"][-1]["generated_asset"]["id"]
+
+    attach_reference = client.post(
+        f"/api/image-sessions/{session_id}/assets/{generated_asset_id}/attach-to-product",
+        json={"target": "reference"},
+    )
+    assert attach_reference.status_code == 200
+    assert attach_reference.json()["message"] == "已加入商品参考图"
+
+    product_after_reference = client.get(f"/api/products/{product_id}")
+    assert product_after_reference.status_code == 200
+    reference_assets = [
+        asset for asset in product_after_reference.json()["source_assets"] if asset["kind"] == "reference_image"
+    ]
+    assert len(reference_assets) >= 1
+
+    attach_main = client.post(
+        f"/api/image-sessions/{session_id}/assets/{generated_asset_id}/attach-to-product",
+        json={"target": "main_source"},
+    )
+    assert attach_main.status_code == 200
+    assert attach_main.json()["message"] == "已设为商品主图"
+
+    product_after_main = client.get(f"/api/products/{product_id}")
+    assert product_after_main.status_code == 200
+    original_assets = [
+        asset for asset in product_after_main.json()["source_assets"] if asset["kind"] == "original_image"
+    ]
+    all_reference_assets = [
+        asset for asset in product_after_main.json()["source_assets"] if asset["kind"] == "reference_image"
+    ]
+    assert len(original_assets) == 1
+    assert len(all_reference_assets) >= 2
+
+
+def test_product_asset_variant_urls_serve_preview_and_thumbnail(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    create_product_response = client.post(
+        "/api/products",
+        data={"name": "大尺寸主图样例", "category": "个护", "price": "99.00"},
+        files={"image": ("large.png", _make_demo_image_bytes_with_size(2400, 1800), "image/png")},
+    )
+    assert create_product_response.status_code == 201
+    source_asset = next(
+        asset for asset in create_product_response.json()["source_assets"] if asset["kind"] == "original_image"
+    )
+
+    assert source_asset["download_url"].startswith("/api/source-assets/")
+    assert source_asset["preview_url"].endswith("variant=preview")
+    assert source_asset["thumbnail_url"].endswith("variant=thumbnail")
+
+    preview = client.get(source_asset["preview_url"])
+    assert preview.status_code == 200
+    assert preview.headers["content-type"].startswith("image/")
+    assert max(_read_image_size(preview.content)) <= 1600
+
+    thumbnail = client.get(source_asset["thumbnail_url"])
+    assert thumbnail.status_code == 200
+    assert thumbnail.headers["content-type"].startswith("image/")
+    assert max(_read_image_size(thumbnail.content)) <= 320
+
+
+def test_image_session_openai_responses_persists_previous_response_context(
+    configured_env: Path,
+    monkeypatch,
+) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    monkeypatch.setenv("IMAGE_PROVIDER_KIND", "openai_responses")
+    monkeypatch.setenv("IMAGE_BASE_URL", "https://example.test/v1")
+    monkeypatch.setenv("IMAGE_API_KEY", "demo-api-key")
+    monkeypatch.setenv("IMAGE_GENERATE_MODEL", "gpt-5.4")
+    get_settings.cache_clear()
+
+    calls: list[dict] = []
+    client_kwargs: list[dict] = []
+    encoded_result = _make_demo_image_data_url().split(",", maxsplit=1)[1]
+
+    class DummyImageGenerationCall:
+        type = "image_generation_call"
+
+        def __init__(self, index: int) -> None:
+            self.id = f"ig_{index}"
+            self.result = encoded_result
+            self.revised_prompt = f"revised prompt {index}"
+
+        def model_dump(self, *, mode: str, exclude_none: bool) -> dict[str, str]:
+            return {
+                "id": self.id,
+                "type": self.type,
+                "status": "completed",
+                "revised_prompt": self.revised_prompt,
+                "result": self.result,
+            }
+
+    class DummyResponse:
+        def __init__(self, index: int) -> None:
+            self.id = f"resp_{index}"
+            self.output = [DummyImageGenerationCall(index)]
+
+        def model_dump(self, *, mode: str, exclude_none: bool) -> dict:
+            return {
+                "id": self.id,
+                "output": [output.model_dump(mode=mode, exclude_none=exclude_none) for output in self.output],
+            }
+
+    class DummyResponses:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            return DummyResponse(len(calls))
+
+    class DummyOpenAI:
+        def __init__(self, **kwargs) -> None:
+            client_kwargs.append(kwargs)
+            self.responses = DummyResponses()
+
+    monkeypatch.setattr("productflow_backend.infrastructure.image.responses_provider.OpenAI", DummyOpenAI)
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post("/api/image-sessions", json={"title": "Responses 连续生图"})
+    assert created.status_code == 201
+    session_id = created.json()["id"]
+
+    upload = client.post(
+        f"/api/image-sessions/{session_id}/reference-images",
+        files={"reference_images": ("sample.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert upload.status_code == 200
+
+    first = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={"prompt": "生成日漫风商品场景", "size": "1024x1024"},
+    )
+    assert first.status_code == 200
+    first_round = first.json()["rounds"][-1]
+    assert first_round["provider_name"] == "openai-responses"
+    assert first_round["provider_response_id"] == "resp_1"
+    assert first_round["previous_response_id"] is None
+    assert first_round["image_generation_call_id"] == "ig_1"
+
+    second = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={"prompt": "保持主体，把背景改成晴天街角", "size": "1024x1024"},
+    )
+    assert second.status_code == 200
+    second_round = second.json()["rounds"][-1]
+    assert second_round["provider_response_id"] == "resp_2"
+    assert second_round["previous_response_id"] == "resp_1"
+    assert second_round["image_generation_call_id"] == "ig_2"
+
+    assert client_kwargs[0] == {"api_key": "demo-api-key", "base_url": "https://example.test/v1"}
+    assert calls[0]["model"] == "gpt-5.4"
+    assert calls[0]["tools"] == [{"type": "image_generation", "size": "1024x1024"}]
+    assert "previous_response_id" not in calls[0]
+    assert calls[1]["previous_response_id"] == "resp_1"
+    assert calls[1]["tools"] == [{"type": "image_generation", "size": "1024x1024"}]
+    first_content = calls[0]["input"][0]["content"]
+    assert first_content[0]["type"] == "input_text"
+    assert any(
+        item["type"] == "input_image" and item["image_url"].startswith("data:image/png;base64,")
+        for item in first_content
+    )
+    assert "/images/generations" not in str(calls)
+    assert "/images/edits" not in str(calls)
+
+
+def test_openai_responses_poster_provider_uses_image_generation_tool(
+    configured_env: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("IMAGE_BASE_URL", "https://example.test/v1")
+    monkeypatch.setenv("IMAGE_API_KEY", "demo-api-key")
+    monkeypatch.setenv("IMAGE_GENERATE_MODEL", "gpt-5.4")
+    get_settings.cache_clear()
+
+    calls: list[dict] = []
+    encoded_result = _make_demo_image_data_url().split(",", maxsplit=1)[1]
+
+    class DummyImageGenerationCall:
+        type = "image_generation_call"
+        id = "ig_poster"
+        result = encoded_result
+
+        def model_dump(self, *, mode: str, exclude_none: bool) -> dict[str, str]:
+            return {"id": self.id, "type": self.type, "result": self.result}
+
+    class DummyResponse:
+        id = "resp_poster"
+        output = [DummyImageGenerationCall()]
+
+        def model_dump(self, *, mode: str, exclude_none: bool) -> dict:
+            return {"id": self.id, "output": [self.output[0].model_dump(mode=mode, exclude_none=exclude_none)]}
+
+    class DummyResponses:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            return DummyResponse()
+
+    class DummyOpenAI:
+        def __init__(self, **kwargs) -> None:
+            self.responses = DummyResponses()
+
+    monkeypatch.setattr("productflow_backend.infrastructure.image.responses_provider.OpenAI", DummyOpenAI)
+
+    source_path = configured_env / "provider-source.png"
+    reference_path = configured_env / "provider-reference.png"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_bytes(_make_demo_image_bytes())
+    reference_path.write_bytes(_make_demo_image_bytes())
+
+    provider = OpenAIResponsesImageProvider()
+    generated_image, model_name = provider.generate_poster_image(
+        poster=PosterGenerationInput(
+            product_name="测试商品",
+            category="测试类目",
+            price="9.90",
+            source_note="防水牛津布，适合通勤和短途出差。",
+            instruction="背景更干净，强调收纳空间。",
+            title="测试标题",
+            selling_points=["卖点1", "卖点2", "卖点3"],
+            poster_headline="测试海报标题",
+            cta="立即购买",
+            source_image=source_path,
+            reference_images=[
+                ReferenceImageInput(
+                    path=reference_path,
+                    mime_type="image/png",
+                    filename="reference.png",
+                )
+            ],
+        ),
+        kind=PosterKind.MAIN_IMAGE,
+    )
+
+    assert generated_image.mime_type == "image/png"
+    assert model_name == "gpt-5.4"
+    payload = calls[0]
+    assert payload["model"] == "gpt-5.4"
+    assert payload["tools"] == [{"type": "image_generation", "size": "1024x1024"}]
+    content = payload["input"][0]["content"]
+    assert content[0]["type"] == "input_text"
+    prompt_text = content[0]["text"]
+    assert "商品描述/补充说明：防水牛津布，适合通勤和短途出差。" in prompt_text
+    assert "本轮图片要求：背景更干净，强调收纳空间。" in prompt_text
+    assert len([item for item in content if item["type"] == "input_image"]) == 2
+    assert "/images/generations" not in str(payload)
+    assert "/images/edits" not in str(payload)
+
+
+def test_generated_poster_mode_uses_image_provider(
+    db_session,
+    configured_env: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("POSTER_GENERATION_MODE", "generated")
+    monkeypatch.setenv("IMAGE_PROVIDER_KIND", "mock")
+    get_settings.cache_clear()
+
+    product = create_product(
+        db_session,
+        name="便携榨汁杯",
+        category="小家电",
+        price="89.00",
+        source_note=None,
+        image_bytes=_make_demo_image_bytes(),
+        filename="juicer.png",
+        content_type="image/png",
+        reference_image_uploads=[
+            (_make_demo_image_bytes(), "ref-1.png", "image/png"),
+            (_make_demo_image_bytes(), "ref-2.png", "image/png"),
+        ],
+    )
+
+    copy_job = create_copy_job(db_session, product_id=product.id).job
+    execute_copy_job(copy_job.id)
+    db_session.expire_all()
+
+    product_after_copy = get_product_detail(db_session, product.id)
+    copy_set = product_after_copy.copy_sets[0]
+    confirm_copy_set(db_session, copy_set_id=copy_set.id)
+
+    poster_job = create_poster_job(db_session, product_id=product.id).job
+    execute_poster_job(poster_job.id)
+    db_session.expire_all()
+
+    product_after_poster = get_product_detail(db_session, product.id)
+    assert len(product_after_poster.poster_variants) == 2
+    assert all("mock:mock-generated-r3" in poster.template_name for poster in product_after_poster.poster_variants)
+
+
+def test_duplicate_active_copy_job_reuses_existing_job(db_session, configured_env: Path) -> None:
+    product = create_product(
+        db_session,
+        name="收纳盒",
+        category="家居",
+        price="19.90",
+        source_note=None,
+        image_bytes=_make_demo_image_bytes(),
+        filename="box.png",
+        content_type="image/png",
+    )
+
+    first_result = create_copy_job(db_session, product_id=product.id)
+    second_result = create_copy_job(db_session, product_id=product.id)
+
+    assert first_result.job.id == second_result.job.id
+    assert first_result.created is True
+    assert second_result.created is False
+
+
+def test_recover_unfinished_jobs_requeues_queued_jobs(
+    db_session,
+    configured_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    product = create_product(
+        db_session,
+        name="收纳盒",
+        category="家居",
+        price="19.90",
+        source_note=None,
+        image_bytes=_make_demo_image_bytes(),
+        filename="box.png",
+        content_type="image/png",
+    )
+    job = create_copy_job(db_session, product_id=product.id).job
+    sent: list[tuple[str, JobKind]] = []
+
+    monkeypatch.setattr(
+        "productflow_backend.infrastructure.queue._send_job_to_queue",
+        lambda job_id, kind: sent.append((job_id, kind)),
+    )
+
+    summary = recover_unfinished_jobs()
+
+    assert summary.queued_jobs == 1
+    assert summary.stale_running_jobs == 0
+    assert summary.enqueued_jobs == 1
+    assert sent == [(job.id, JobKind.COPY_GENERATION)]
+
+
+def test_recover_unfinished_jobs_resets_stale_running_jobs(
+    db_session,
+    configured_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    product = create_product(
+        db_session,
+        name="收纳盒",
+        category="家居",
+        price="19.90",
+        source_note=None,
+        image_bytes=_make_demo_image_bytes(),
+        filename="box.png",
+        content_type="image/png",
+    )
+    job = create_copy_job(db_session, product_id=product.id).job
+    job.status = JobStatus.RUNNING
+    job.started_at = datetime.now(UTC) - timedelta(hours=2)
+    db_session.commit()
+    sent: list[tuple[str, JobKind]] = []
+
+    monkeypatch.setattr(
+        "productflow_backend.infrastructure.queue._send_job_to_queue",
+        lambda job_id, kind: sent.append((job_id, kind)),
+    )
+
+    summary = recover_unfinished_jobs(reset_stale_running=True, stale_running_after=timedelta(minutes=30))
+    db_session.refresh(job)
+
+    assert summary.queued_jobs == 0
+    assert summary.stale_running_jobs == 1
+    assert summary.enqueued_jobs == 1
+    assert sent == [(job.id, JobKind.COPY_GENERATION)]
+    assert job.status == JobStatus.QUEUED
+    assert job.started_at is None
+
+
+def test_product_create_rejects_invalid_price_and_invalid_image(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    invalid_price = client.post(
+        "/api/products",
+        data={"name": "护手霜", "category": "个护", "price": "abc"},
+        files={"image": ("cream.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert invalid_price.status_code == 400
+
+    invalid_image = client.post(
+        "/api/products",
+        data={"name": "护手霜", "category": "个护", "price": "59.00"},
+        files={"image": ("cream.png", b"not an image", "image/png")},
+    )
+    assert invalid_image.status_code == 400
+
+
+def test_image_generation_rejects_disallowed_size(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post("/api/image-sessions", json={"title": "尺寸校验"})
+    assert created.status_code == 201
+    rejected = client.post(
+        f"/api/image-sessions/{created.json()['id']}/generate",
+        json={"prompt": "生成一张图", "size": "99999x99999"},
+    )
+    assert rejected.status_code == 422
+
+
+def test_legacy_image_chat_route_is_removed(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    response = client.post(
+        "/api/image-chat/generate",
+        json={"prompt": "做一张白底商品图", "size": "1024x1024"},
+    )
+    assert response.status_code == 404
+
+
+def test_alembic_upgrade_head_supports_sqlite(tmp_path: Path, monkeypatch) -> None:
+    database_path = tmp_path / "alembic.db"
+    storage_root = tmp_path / "storage"
+    monkeypatch.setenv("ADMIN_ACCESS_KEY", "super-secret-admin-key")
+    monkeypatch.setenv("SESSION_SECRET", "super-secret-session-key-123")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path}")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/9")
+    monkeypatch.setenv("STORAGE_ROOT", str(storage_root))
+    get_settings.cache_clear()
+
+    backend_dir = Path(__file__).resolve().parents[1]
+    config = Config(str(backend_dir / "alembic.ini"))
+    config.set_main_option("script_location", str(backend_dir / "alembic"))
+    command.upgrade(config, "head")
+
+    assert database_path.exists()
+    get_settings.cache_clear()
+
+
+def test_alembic_upgrade_removes_legacy_workflow_nodes(tmp_path: Path, monkeypatch) -> None:
+    database_path = tmp_path / "legacy-workflow.db"
+    storage_root = tmp_path / "storage"
+    monkeypatch.setenv("ADMIN_ACCESS_KEY", "super-secret-admin-key")
+    monkeypatch.setenv("SESSION_SECRET", "super-secret-session-key-123")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path}")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/9")
+    monkeypatch.setenv("STORAGE_ROOT", str(storage_root))
+    get_settings.cache_clear()
+
+    backend_dir = Path(__file__).resolve().parents[1]
+    config = Config(str(backend_dir / "alembic.ini"))
+    config.set_main_option("script_location", str(backend_dir / "alembic"))
+    command.upgrade(config, "20260424_0009")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    now = "2026-04-24 00:00:00"
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                "INSERT INTO products (id, name, created_at, updated_at) "
+                "VALUES ('product-1', '旧工作流商品', :now, :now)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO product_workflows (id, product_id, title, active, created_at, updated_at) "
+                "VALUES ('workflow-1', 'product-1', '旧工作流', 1, :now, :now)"
+            ),
+            {"now": now},
+        )
+        for node_id, node_type in (
+            ("context-1", "product_context"),
+            ("copy-1", "copy_generation"),
+            ("legacy-text-1", "legacy_text"),
+            ("image-1", "image_generation"),
+            ("legacy-result-1", "legacy_result"),
+            ("slot-1", "image_upload"),
+        ):
+            connection.execute(
+                sa.text(
+                    "INSERT INTO workflow_nodes "
+                    "(id, workflow_id, node_type, title, position_x, position_y, config_json, status, "
+                    "created_at, updated_at) "
+                    "VALUES (:id, 'workflow-1', :node_type, :id, 0, 0, '{}', 'idle', :now, :now)"
+                ),
+                {"id": node_id, "node_type": node_type, "now": now},
+            )
+        connection.execute(
+            sa.text(
+                "INSERT INTO workflow_edges "
+                "(id, workflow_id, source_node_id, target_node_id, source_handle, target_handle, created_at) "
+                "VALUES "
+                "('edge-old-target', 'workflow-1', 'copy-1', 'legacy-text-1', 'output', 'input', :now), "
+                "('edge-old-source', 'workflow-1', 'legacy-result-1', 'image-1', 'output', 'input', :now), "
+                "('edge-supported', 'workflow-1', 'context-1', 'copy-1', 'output', 'input', :now)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO workflow_runs (id, workflow_id, status, started_at) "
+                "VALUES ('run-1', 'workflow-1', 'running', :now)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO workflow_node_runs (id, workflow_run_id, node_id, status, started_at) "
+                "VALUES "
+                "('node-run-old', 'run-1', 'legacy-text-1', 'succeeded', :now), "
+                "('node-run-supported', 'run-1', 'copy-1', 'succeeded', :now)"
+            ),
+            {"now": now},
+        )
+
+    command.upgrade(config, "head")
+
+    with engine.connect() as connection:
+        node_types = connection.execute(sa.text("SELECT node_type FROM workflow_nodes ORDER BY id")).scalars().all()
+        edge_ids = connection.execute(sa.text("SELECT id FROM workflow_edges ORDER BY id")).scalars().all()
+        node_run_ids = connection.execute(sa.text("SELECT id FROM workflow_node_runs ORDER BY id")).scalars().all()
+
+    assert node_types == ["product_context", "copy_generation", "image_generation", "reference_image"]
+    assert edge_ids == ["edge-supported"]
+    assert node_run_ids == ["node-run-supported"]
+    get_settings.cache_clear()

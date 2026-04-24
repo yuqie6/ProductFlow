@@ -1,0 +1,36 @@
+services:
+  productflow-postgres:
+    image: postgres:16
+    container_name: productflow-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: productflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: productflow
+    ports:
+      - "${POSTGRES_HOST_PORT:-15432}:5432"
+    volumes:
+      - productflow-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U productflow -d productflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  productflow-redis:
+    image: redis:7
+    container_name: productflow-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_HOST_PORT:-16379}:6379"
+    volumes:
+      - productflow-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  productflow-postgres-data:
+  productflow-redis-data:

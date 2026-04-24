@@ -1,0 +1,402 @@
+# Backend Product Workflow DAG Guidelines
+
+> Executable contracts for the ProductFlow-native product workbench DAG.
+
+## Scenario: Product workflow DAG persistence and execution
+
+### 1. Scope / Trigger
+
+- Trigger: any change to product workbench DAG persistence, node execution, run history, or artifact write-back.
+- This is a cross-layer and database-backed feature: SQLAlchemy models, Alembic migrations, Pydantic schemas, API routes,
+  frontend DTOs, and workflow tests must stay in sync.
+
+### 2. Signatures
+
+- Tables:
+  - `product_workflows(product_id, title, active)` with one active workflow per product.
+  - `workflow_nodes(workflow_id, node_type, title, position_x, position_y, config_json, status, output_json, failure_reason)`.
+  - `workflow_edges(workflow_id, source_node_id, target_node_id, source_handle, target_handle)`.
+  - `workflow_runs(workflow_id, status, started_at, finished_at, failure_reason)`.
+  - `workflow_node_runs(workflow_run_id, node_id, status, output_json, copy_set_id, poster_variant_id, image_session_asset_id)`.
+- APIs:
+  - `GET /api/products/{product_id}/workflow`
+  - `POST /api/products/{product_id}/workflow/nodes`
+  - `PATCH /api/workflow-nodes/{node_id}`
+  - `PATCH /api/workflow-nodes/{node_id}/copy`
+  - `POST /api/workflow-nodes/{node_id}/image`
+  - `POST /api/products/{product_id}/workflow/edges`
+  - `DELETE /api/workflow-edges/{edge_id}`
+  - `POST /api/products/{product_id}/workflow/run`
+- Provider contracts:
+  - `TextProvider.generate_copy(product, brief, instruction=None, reference_images=None)` receives connected
+    `ReferenceImageInput` values with `path`, `mime_type`, `filename`, `role`, and `label`.
+
+### 3. Contracts
+
+- Supported product node types are exactly mirrored in frontend types:
+  `product_context`, `reference_image`, `copy_generation`, `image_generation`.
+- Legacy PostgreSQL databases may already have older enum values. Forward migrations must safely add `reference_image`
+  and migrate old image-slot rows to it; fresh databases should create only the supported simplified node values.
+- Node status values are `idle`, `queued`, `running`, `succeeded`, `failed`; run status values are
+  `running`, `succeeded`, `failed`.
+- `reference_image` nodes are user-visible `参考图` slots. They can be manually uploaded into through
+  `POST /api/workflow-nodes/{node_id}/image` or filled by upstream `image_generation` nodes.
+- `reference_image` nodes store image material as first-class `source_assets` rows and expose `source_asset_ids` /
+  `image_asset_ids` in workflow output JSON for downstream image nodes.
+- `copy_generation` nodes must collect connected upstream `reference_image` slots and pass their asset paths plus
+  role/label metadata to the text provider. Text-only providers should include concise reference metadata in the prompt;
+  multimodal-capable providers may also attach image payloads/paths.
+- A generated `copy_generation` output is editable through `PATCH /api/workflow-nodes/{node_id}/copy`. The endpoint
+  updates the underlying `CopySet` using the same validation semantics as normal copy editing, then rewrites the node
+  output summary fields so downstream image nodes read the edited copy through the existing `copy_set_id`.
+- Manually edited copy node outputs should be treated as the selected copy for downstream runs. Re-running a downstream
+  image node must not silently replace that edited `CopySet` with a fresh generated copy before image generation.
+- `image_generation` nodes collect incoming edge context, including upstream copy text, reference-image outputs, and
+  upstream generated poster/image outputs.
+- Image-generation count is driven by graph structure: an `image_generation` node connected to N downstream
+  `reference_image` slots generates N images and fills those slots. If no downstream reference slot is connected, execution
+  fails with the concise user-facing reason `连接参考图节点`.
+- Count downstream `reference_image` slots by unique target node id, not by raw edge count. Duplicate edges from the same
+  `image_generation` node to the same `reference_image` slot must not multiply generated images or overwrite the slot
+  multiple times in one run.
+- `image_generation` node config may override provider size with `size`; application contracts must carry this as
+  `PosterGenerationInput.image_size` and providers should prefer it over global runtime defaults.
+- Generated images should still be persisted as first-class `poster_variants` for history and as `source_assets` on the
+  downstream `reference_image` slots. Keep only workflow-boundary summaries and IDs in `output_json`.
+- `product_context` node config may override/fill `name`, `category`, `price`, and `source_note`; downstream
+  `ProductInput.source_note` and `PosterGenerationInput.source_note` must use that effective node context and propagate it
+  to text and image providers.
+
+### 4. Validation & Error Matrix
+
+- Missing product/workflow/node/edge -> `ValueError("...不存在")`, mapped to HTTP `404`.
+- Edge source/target outside the product workflow -> `400` with a user-readable validation detail.
+- Self-edge -> `400`.
+- Cyclic graph -> `400` and no edge persisted.
+- Image generation without product source image or usable copy -> `400`/failed node output, depending execution boundary.
+- Image generation without downstream `reference_image` targets -> failed node output with `连接参考图节点`; do not silently
+  mark the node succeeded.
+
+### 5. Good/Base/Bad Cases
+
+- Good: run default DAG `product_context -> copy_generation -> image_generation -> reference_image`; it produces one draft
+  `CopySet`, one `PosterVariant`, fills the connected `reference_image` node, and writes run history.
+- Good: connect an uploaded style `reference_image` into a `copy_generation` node; the generated copy reflects the
+  reference label/role and the provider receives explicit `ReferenceImageInput` metadata.
+- Good: edit a copy node's generated title/selling points/headline/CTA; the persisted `CopySet` and node output update
+  together, and the downstream image node keeps referencing the same edited `copy_set_id`.
+- Good: connect one uploaded `reference_image` into `image_generation`, then connect the image node to two downstream
+  `reference_image` slots; one run creates two generated images and fills both slots.
+- Base: if duplicate edges accidentally connect one image node to the same downstream `reference_image` slot, one run still
+  generates one image for that unique slot, not one image per duplicate edge.
+- Base: run from a selected node; the executor runs the selected node and only missing/invalid required dependencies.
+  Previously succeeded upstream nodes with valid first-class artifacts are read as context, not re-run.
+- Bad: add an edge from an image node back to a copy node; the cycle validator rejects it before commit.
+
+### 6. Tests Required
+
+- Enum storage test includes workflow node/run enums and asserts database values equal enum `.value` strings.
+- API regression creates a product with only name + image, loads the workflow, updates `product_context` node config with
+  `source_note`/category/price, runs the DAG, and asserts the effective node context reaches `CopySet`, generated image
+  input, node output, and run history.
+- API regression for node-first canvas creates/uses a `reference_image` node, uploads an image, connects it to
+  `image_generation`, connects image generation to multiple downstream `reference_image` slots, runs the workflow, and
+  asserts generated poster IDs, filled source asset IDs, size, and slot output are persisted.
+- API/provider regression connects a `reference_image` node into `copy_generation` and asserts the reference label/role
+  reaches generated copy/provider input.
+- API regression edits a generated copy node through `PATCH /api/workflow-nodes/{node_id}/copy` and asserts both the
+  persisted `CopySet` and node output summary fields are updated.
+- API regression for selected-node runs first creates successful upstream outputs, then runs a downstream node and asserts
+  upstream node runs/artifacts are not duplicated when reusable outputs exist.
+- API regression for selected reference-slot runs connects an already successful image node to a new empty
+  `reference_image` slot and asserts only the necessary image node plus target slot run; copy generation must not re-run.
+- Alembic head upgrade must pass on SQLite after adding workflow tables.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+node.output_json = {"copy": copy_payload.model_dump()}
+```
+
+This hides the artifact in opaque JSON only; later history cannot reliably reuse it.
+
+#### Correct
+
+```python
+session.add(copy_set)
+session.flush()
+node.output_json = {"copy_set_id": copy_set.id, "summary": copy_set.poster_headline}
+```
+
+Persist the first-class artifact, then keep only workflow-boundary references and summaries in JSON.
+
+#### Wrong
+
+```python
+posters = [poster for poster in workflow.product.poster_variants if poster.id in poster_ids]
+```
+
+During one DAG run, relationship collections can be stale after an upstream node has just created new artifacts.
+
+#### Correct
+
+```python
+posters = session.scalars(select(PosterVariant).where(PosterVariant.id.in_(poster_ids))).all()
+```
+
+For downstream nodes, query first-class artifacts by ID so same-run outputs are visible.
+
+#### Wrong
+
+```python
+execution_nodes = ancestors(start_node) | {start_node}
+```
+
+This makes every selected-node run regenerate upstream copy/images even when the user only wants to refresh one downstream
+node, wasting provider calls and replacing previously accepted artifacts.
+
+#### Correct
+
+```python
+execution_nodes = missing_required_dependencies(start_node) | {start_node}
+```
+
+For selected-node runs, treat successful upstream nodes with valid `CopySet`, `PosterVariant`, or `SourceAsset` records as
+read-only context. Re-run an upstream dependency only when the target cannot be satisfied from existing first-class
+artifacts, such as a newly connected empty `reference_image` slot that needs its upstream image node to fill it.
+
+## Scenario: AI provider scalar payload normalization
+
+### 1. Scope / Trigger
+
+- Trigger: any change to AI text provider payload parsing for creative briefs, generated copy, or workflow copy-node
+  execution.
+- This is a cross-layer contract because provider JSON is parsed into application contracts, persisted into
+  `creative_briefs` / `copy_sets`, emitted through workflow node `output_json`, and consumed by frontend typed DTOs.
+
+### 2. Signatures
+
+- Application contracts:
+  - `CreativeBriefPayload(positioning: str, audience: str, selling_angles: list[str], taboo_phrases: list[str], poster_style_hint: str)`.
+  - `CopyPayload(title: str, selling_points: list[str], poster_headline: str, cta: str)`.
+- Text provider methods:
+  - `TextProvider.generate_brief(product: ProductInput) -> tuple[CreativeBriefPayload, str]`.
+  - `TextProvider.generate_copy(product: ProductInput, brief: CreativeBriefPayload, instruction: str | None = None, reference_images: list[ReferenceImageInput] | None = None) -> tuple[CopyPayload, str]`.
+- Persistence/API boundary:
+  - `CreativeBrief.payload` and workflow `latest_brief.payload` must expose scalar brief fields as strings.
+  - `CopySet.title`, `CopySet.poster_headline`, `CopySet.cta`, and copy-node output summaries must expose scalar copy
+    fields as strings.
+
+### 3. Contracts
+
+- AI providers may occasionally return a pure text array for a scalar short-text field. The application contract boundary
+  may normalize only these scalar fields by joining items with `、`:
+  - `CreativeBriefPayload.positioning`
+  - `CreativeBriefPayload.audience`
+  - `CreativeBriefPayload.poster_style_hint`
+  - `CopyPayload.title`
+  - `CopyPayload.poster_headline`
+  - `CopyPayload.cta`
+- Fields whose contract is already a list must remain lists and must not be flattened:
+  - `CreativeBriefPayload.selling_angles`
+  - `CreativeBriefPayload.taboo_phrases`
+  - `CopyPayload.selling_points`
+- Normalization belongs in the application contract layer, before persistence and workflow output construction. Do not
+  make frontend DTOs accept `string | string[]` for these fields.
+
+### 4. Validation & Error Matrix
+
+- Scalar field is a normal string -> accepted unchanged.
+- Scalar field is a non-empty list of non-empty strings -> normalized to a single string joined by `、`.
+- Scalar field is an empty list -> Pydantic `ValidationError`; do not silently store an empty string.
+- Scalar field list contains an empty/blank string -> Pydantic `ValidationError`.
+- Scalar field list contains an object, number, boolean, or `null` -> Pydantic `ValidationError`; do not coerce with
+  `str(...)`.
+- List-contract field is not a list or violates min/max length -> Pydantic `ValidationError`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: provider returns `{"audience": ["摄影入门用户", "图文内容创作者"]}`; persisted and API-visible payload uses
+  `"摄影入门用户、图文内容创作者"`.
+- Good: provider returns `{"title": ["轻巧入门", "随拍即出片"]}`; `CopySet.title` and copy-node output use
+  `"轻巧入门、随拍即出片"`.
+- Base: provider returns scalar strings for all scalar fields; values pass through unchanged.
+- Bad: provider returns `{"audience": []}` or `{"audience": [{"name": "摄影入门用户"}]}`; validation fails instead of
+  inventing a display string.
+
+### 6. Tests Required
+
+- Contract regression directly validates `CreativeBriefPayload` and `CopyPayload` with scalar text arrays and malformed
+  arrays; assert good arrays are joined with `、` and bad arrays raise `ValidationError`.
+- Normal copy-job regression monkeypatches the text provider to return scalar arrays and asserts the persisted
+  `CreativeBrief.payload` and `CopySet` fields are strings.
+- Product workflow DAG regression runs `POST /api/products/{product_id}/workflow/run` with provider scalar arrays and
+  asserts copy-node `output_json` and product `latest_brief.payload` expose normalized strings.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+payload = response_json
+if isinstance(payload["audience"], list):
+    payload["audience"] = str(payload["audience"])
+```
+
+This leaks Python/JSON list formatting into persisted copy and hides malformed provider output.
+
+#### Correct
+
+```python
+CreativeBriefPayload.model_validate(response_json)
+```
+
+Keep normalization and malformed-shape rejection inside the application contract validators so all provider entrypoints,
+jobs, and workflow runs share the same behavior.
+
+## Scenario: Async workflow runs and deletion safety
+
+### 1. Scope / Trigger
+
+- Trigger: any change to workflow run kickoff/execution, active-run locking, workflow node deletion, or product deletion
+  while workflow/job state may still be active.
+- This is a cross-layer and database-backed contract because it spans API responses, background execution, run/node status
+  persistence, database uniqueness, frontend polling, and storage cleanup.
+
+### 2. Signatures
+
+- APIs:
+  - `POST /api/products/{product_id}/workflow/run` returns `ProductWorkflowResponse` after creating or reusing an active
+    `workflow_runs` row; it must not wait for provider execution to finish.
+  - `DELETE /api/workflow-nodes/{node_id}` returns `ProductWorkflowResponse` after deleting the node and connected edges.
+  - `DELETE /api/products/{product_id}` returns `204 No Content` after deleting the product and related persisted data.
+- Application entrypoints:
+  - `start_product_workflow_run(session, product_id, start_node_id=None) -> WorkflowRunKickoff`.
+  - `execute_product_workflow_run(run_id) -> None`.
+  - `delete_workflow_node(session, node_id) -> ProductWorkflow`.
+  - `delete_product(session, product_id) -> str`.
+- Database:
+  - `workflow_runs` must enforce at most one `status = 'running'` row per `workflow_id`, using a partial unique index
+    such as `uq_workflow_runs_one_running_per_workflow`.
+
+### 3. Contracts
+
+- Run kickoff is a durable two-step contract:
+  1. create/reuse a persisted `running` run plus `queued` node runs and immediately return the refreshed workflow;
+  2. enqueue that `workflow_run_id` through Dramatiq/Redis with `enqueue_workflow_run(...)`;
+  3. the `run_product_workflow_run` actor executes the selected nodes in a background execution boundary that opens its
+     own database session.
+- `workflow_runs` is the authoritative state for workflow execution. Redis/Dramatiq messages are recoverable delivery
+  attempts; do not use in-process executors or Web-process memory as the source of truth.
+- API startup must call workflow run recovery for active runs with no node currently running, so a run committed before a
+  Redis send or process restart is sent again.
+- Worker startup may reset stale `workflow_node_runs.status = 'running'` rows back to `queued` before re-enqueueing their
+  parent run. Do not reset recent running nodes on API startup because another worker may still be executing them.
+- Duplicate kickoff for the same active workflow must return the existing active workflow/run state or be caught by the
+  database uniqueness guard and converted back into `created=False`; it must not silently create duplicate provider calls.
+- Duplicate Redis messages must be idempotent:
+  - terminal workflow runs (`succeeded` / `failed`) are no-ops;
+  - runs that already have a non-stale `running` node run are no-ops;
+  - claiming a queued node run must be an atomic conditional update so two workers cannot execute the same provider call.
+- Background execution must persist every decisive transition: node run `queued -> running -> succeeded/failed`, node
+  status, workflow run `succeeded/failed`, output JSON, artifact IDs, `failure_reason`, and `finished_at`.
+- Any exception inside or around the background execution boundary must mark the run `failed`; do not leave a stale
+  `running` row that causes indefinite frontend polling.
+- Node deletion must remove connected incoming/outgoing edges and existing `workflow_node_runs` for that node before
+  returning the refreshed workflow.
+- Product deletion must refuse active jobs or active workflow runs, then rely on ORM/database cascade for related rows and
+  perform best-effort storage tree cleanup after the database delete commits.
+
+### 4. Validation & Error Matrix
+
+- Missing product/workflow/node -> `404`.
+- Starting a run while one is already active -> return existing active workflow state; do not create a second active run.
+- Concurrent duplicate active-run insert hits the partial unique index -> rollback, reload existing active run, return it.
+- Redis enqueue failure after the run has been created -> mark the run `failed`, release the active-run uniqueness guard,
+  and return `503` with `任务队列暂不可用，请稍后重试`.
+- Duplicate Redis message for terminal run -> no-op and do not call providers.
+- Duplicate Redis message while another worker owns a non-stale running node -> no-op and do not call providers.
+- Delete a node while its workflow has an active run, or while the node is `queued` / `running` -> `400` with
+  `运行中，稍后删除`.
+- Delete a product while any related job is `queued` / `running` -> `400` with `商品任务运行中，稍后删除`.
+- Delete a product while any related workflow run is `running` -> `400` with `商品工作流运行中，稍后删除`.
+- Missing storage files during product deletion -> ignore for storage cleanup; the database deletion remains authoritative.
+
+### 5. Good/Base/Bad Cases
+
+- Good: `POST /workflow/run` returns quickly with `runs[0].status == "running"` and queued node statuses; polling later
+  observes success/failure written by `execute_product_workflow_run`.
+- Good: two concurrent run requests for the same workflow result in one active run and one provider execution path.
+- Good: deleting a workflow node removes that node plus connected edges, and a refreshed workflow response contains no
+  broken edge references.
+- Base: deleting a product with completed workflow history cascades workflow rows and then best-effort removes
+  `storage/products/{product_id}`.
+- Bad: leaving run execution inside the request handler blocks the frontend and hides intermediate committed status.
+- Bad: checking active runs only in application code without a database uniqueness guard allows races in concurrent or
+  multi-process deployments.
+
+### 6. Tests Required
+
+- API regression for run kickoff asserts the initial response is `running` / `queued`, then waits/polls until the
+  background execution writes terminal status and artifacts.
+- Duplicate active-run regression asserts a second kickoff returns/reuses the same active run and that direct duplicate
+  database insertion violates the unique active-run guard.
+- Failure-path regression should force execution failure and assert stale `running` runs are marked `failed`.
+- Durable delivery regressions should assert kickoff sends a Dramatiq workflow message, enqueue failure returns `503` and
+  leaves no stranded active run, startup recovery requeues queued workflow runs, stale running node runs are reset only on
+  worker recovery, and duplicate messages no-op for terminal/currently-running runs.
+- Node deletion regression asserts connected edges and node runs are removed and active-run deletion is rejected.
+- Product deletion regression asserts completed products are deleted, direct detail fetch returns `404`, and active
+  jobs/runs block deletion with the expected concise error.
+- Alembic upgrade must create the active-run unique index and first close historical duplicate running rows if present.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+workflow = run_product_workflow(session, product_id=product_id)
+return serialize_product_workflow(workflow)
+```
+
+This keeps provider execution inside the HTTP request; the frontend sees a long pending mutation and cannot observe
+intermediate node status until the request finishes.
+
+#### Correct
+
+```python
+kickoff = start_product_workflow_run(session, product_id=product_id)
+if kickoff.created:
+    enqueue_workflow_run(kickoff.run_id)
+return serialize_product_workflow(kickoff.workflow)
+```
+
+Persist the run state first, return quickly, and let the frontend poll the persisted workflow state.
+
+#### Wrong
+
+```python
+if _active_workflow_run(workflow):
+    return workflow
+session.add(WorkflowRun(workflow_id=workflow.id, status=WorkflowRunStatus.RUNNING))
+session.commit()
+```
+
+The application-level check can race with another request before commit.
+
+#### Correct
+
+```python
+Index(
+    "uq_workflow_runs_one_running_per_workflow",
+    "workflow_id",
+    unique=True,
+    postgresql_where=text("status = 'running'"),
+    sqlite_where=text("status = 'running'"),
+)
+```
+
+Keep the application check for normal control flow, but enforce the invariant in the database and handle `IntegrityError`
+by reloading the existing active run.
