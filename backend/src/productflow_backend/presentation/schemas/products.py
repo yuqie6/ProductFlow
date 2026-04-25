@@ -29,6 +29,7 @@ class SourceAssetResponse(BaseModel):
     kind: SourceAssetKind
     original_filename: str
     mime_type: str
+    source_poster_variant_id: str | None = None
     download_url: str
     preview_url: str
     thumbnail_url: str
@@ -140,6 +141,7 @@ def serialize_source_asset(asset: SourceAsset) -> SourceAssetResponse:
         kind=asset.kind,
         original_filename=asset.original_filename,
         mime_type=asset.mime_type,
+        source_poster_variant_id=asset.source_poster_variant_id,
         **urls,
         created_at=asset.created_at,
     )

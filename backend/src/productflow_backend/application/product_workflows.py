@@ -247,6 +247,7 @@ def upload_workflow_node_image(
     if label is not None:
         config["label"] = label.strip() or filename
     config["source_asset_ids"] = [asset.id]
+    config.pop("source_poster_variant_id", None)
     node.config_json = config
     node.output_json = _image_asset_output(
         [asset],
@@ -257,6 +258,71 @@ def upload_workflow_node_image(
     node.status = WorkflowNodeStatus.SUCCEEDED
     node.failure_reason = None
     node.last_run_at = now_utc()
+    workflow.updated_at = now_utc()
+    workflow.product.updated_at = now_utc()
+    session.commit()
+    session.expire_all()
+    return product_workflow_graph.get_workflow_or_raise(session, workflow.id)
+
+
+def bind_workflow_node_image(
+    session: Session,
+    *,
+    node_id: str,
+    source_asset_id: str | None = None,
+    poster_variant_id: str | None = None,
+    storage: LocalStorage | None = None,
+) -> ProductWorkflow:
+    """把已有商品图片绑定到参考图节点。
+
+    SourceAsset 直接复用已有行；PosterVariant 优先复用同一次工作流生成时已经填充的 SourceAsset，
+    找不到时再把海报文件复制成新的 reference SourceAsset。
+    """
+    if bool(source_asset_id) == bool(poster_variant_id):
+        raise ValueError("请选择一张图片")
+
+    node = product_workflow_graph.get_node_or_raise(session, node_id)
+    if node.node_type != WorkflowNodeType.REFERENCE_IMAGE:
+        raise ValueError("只有参考图节点可以填充图片")
+    workflow = product_workflow_graph.get_workflow_or_raise(session, node.workflow_id)
+
+    source_poster_variant_id: str | None = None
+    if source_asset_id:
+        asset = session.get(SourceAsset, source_asset_id)
+        if asset is None or asset.product_id != workflow.product_id:
+            raise ValueError("源图不存在")
+        if asset.kind != SourceAssetKind.REFERENCE_IMAGE:
+            raise ValueError("只能绑定参考图素材")
+        if asset.source_poster_variant_id:
+            poster = session.get(PosterVariant, asset.source_poster_variant_id)
+            if poster is not None and poster.product_id == workflow.product_id:
+                source_poster_variant_id = poster.id
+    else:
+        poster = session.get(PosterVariant, poster_variant_id)
+        if poster is None or poster.product_id != workflow.product_id:
+            raise ValueError("海报不存在")
+        source_poster_variant_id = poster.id
+        asset = _source_asset_for_poster_variant(session, workflow=workflow, poster_variant_id=poster.id)
+        if asset is None:
+            storage = storage or LocalStorage()
+            try:
+                content = storage.resolve(poster.storage_path).read_bytes()
+            except (OSError, ValueError) as exc:
+                raise ValueError("海报文件不存在") from exc
+            filename = f"poster-{poster.id}{infer_extension(poster.mime_type)}"
+            reference_path = storage.save_reference_upload(workflow.product_id, filename, content)
+            asset = SourceAsset(
+                product_id=workflow.product_id,
+                kind=SourceAssetKind.REFERENCE_IMAGE,
+                original_filename=filename,
+                mime_type=poster.mime_type,
+                storage_path=reference_path,
+                source_poster_variant_id=poster.id,
+            )
+            session.add(asset)
+            session.flush()
+
+    _fill_reference_node(node, asset, source_poster_variant_id=source_poster_variant_id)
     workflow.updated_at = now_utc()
     workflow.product.updated_at = now_utc()
     session.commit()
@@ -946,12 +1012,13 @@ def _execute_image_generation(session: Session, *, workflow: ProductWorkflow, no
             original_filename=filename,
             mime_type=mime_type,
             storage_path=reference_path,
+            source_poster_variant_id=poster.id,
         )
         session.add(asset)
         session.flush()
         filled_source_asset_ids.append(asset.id)
         filled_reference_node_ids.append(target_node.id)
-        _fill_reference_node(target_node, asset)
+        _fill_reference_node(target_node, asset, source_poster_variant_id=poster.id)
     product.updated_at = now_utc()
     return {
         "copy_set_id": copy_set.id,
@@ -1478,11 +1545,92 @@ def _downstream_reference_nodes(workflow: ProductWorkflow, node_id: str) -> list
     ]
 
 
-def _fill_reference_node(node: WorkflowNode, asset: SourceAsset) -> None:
+def _source_asset_for_poster_variant(
+    session: Session,
+    *,
+    workflow: ProductWorkflow,
+    poster_variant_id: str,
+) -> SourceAsset | None:
+    """Find the reference SourceAsset that was created alongside a workflow poster."""
+    asset = session.scalar(
+        select(SourceAsset)
+        .where(
+            SourceAsset.product_id == workflow.product_id,
+            SourceAsset.kind == SourceAssetKind.REFERENCE_IMAGE,
+            SourceAsset.source_poster_variant_id == poster_variant_id,
+        )
+        .order_by(SourceAsset.created_at.desc())
+    )
+    if asset is not None:
+        return asset
+
+    for node in workflow.nodes:
+        if node.node_type != WorkflowNodeType.IMAGE_GENERATION:
+            continue
+        output = node.output_json or {}
+        raw_poster_ids = output.get("generated_poster_variant_ids")
+        raw_source_asset_ids = output.get("filled_source_asset_ids")
+        poster_ids = (
+            [item for item in raw_poster_ids if isinstance(item, str)] if isinstance(raw_poster_ids, list) else []
+        )
+        source_asset_ids = (
+            [item for item in raw_source_asset_ids if isinstance(item, str)]
+            if isinstance(raw_source_asset_ids, list)
+            else []
+        )
+        for poster_id, source_asset_id in zip(poster_ids, source_asset_ids, strict=False):
+            if poster_id != poster_variant_id:
+                continue
+            asset = session.get(SourceAsset, source_asset_id)
+            if (
+                asset is not None
+                and asset.product_id == workflow.product_id
+                and asset.kind == SourceAssetKind.REFERENCE_IMAGE
+            ):
+                asset.source_poster_variant_id = poster_variant_id
+                session.flush()
+                return asset
+    for node in workflow.nodes:
+        if node.node_type != WorkflowNodeType.REFERENCE_IMAGE:
+            continue
+        output = node.output_json or {}
+        if output.get("source_poster_variant_id") != poster_variant_id:
+            continue
+        raw_source_asset_ids = output.get("source_asset_ids")
+        source_asset_ids = (
+            [item for item in raw_source_asset_ids if isinstance(item, str)]
+            if isinstance(raw_source_asset_ids, list)
+            else []
+        )
+        source_asset_id = source_asset_ids[0] if source_asset_ids else None
+        if source_asset_id is None:
+            continue
+        asset = session.get(SourceAsset, source_asset_id)
+        if (
+            asset is not None
+            and asset.product_id == workflow.product_id
+            and asset.kind == SourceAssetKind.REFERENCE_IMAGE
+        ):
+            asset.source_poster_variant_id = poster_variant_id
+            session.flush()
+            return asset
+    return None
+
+
+def _fill_reference_node(
+    node: WorkflowNode,
+    asset: SourceAsset,
+    *,
+    source_poster_variant_id: str | None = None,
+) -> None:
     config = dict(node.config_json or {})
     config["source_asset_ids"] = [asset.id]
     config.setdefault("role", "reference")
     config.setdefault("label", node.title)
+    if source_poster_variant_id:
+        config["source_poster_variant_id"] = source_poster_variant_id
+    else:
+        config.pop("source_poster_variant_id", None)
     node.config_json = config
     node.output_json = _image_asset_output(
         [asset],
@@ -1490,6 +1638,8 @@ def _fill_reference_node(node: WorkflowNode, asset: SourceAsset) -> None:
         role=_optional_config_text(config, "role"),
         label=_optional_config_text(config, "label"),
     )
+    if source_poster_variant_id:
+        node.output_json["source_poster_variant_id"] = source_poster_variant_id
     node.status = WorkflowNodeStatus.SUCCEEDED
     node.failure_reason = None
     node.last_run_at = now_utc()

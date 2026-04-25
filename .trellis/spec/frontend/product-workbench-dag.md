@@ -17,6 +17,7 @@
   - `updateWorkflowNode(nodeId, input)`
   - `updateWorkflowNodeCopy(nodeId, input)`
   - `uploadWorkflowNodeImage(nodeId, input)`
+  - `bindWorkflowNodeImage(nodeId, { source_asset_id? , poster_variant_id? })`
   - `createWorkflowEdge(productId, input)`
   - `deleteWorkflowEdge(edgeId)`
   - `runProductWorkflow(productId, input?)`
@@ -77,9 +78,29 @@
 - A selected `copy_generation` node with a generated `copy_set_id` must show concise editable fields for title, selling
   points, poster headline, and CTA. Saving calls `updateWorkflowNodeCopy(...)`, refreshes workflow/product artifacts, and
   does not expose the raw `copy_set_id`.
-- Node output previews should be productized summaries only. Do not render raw `output_json` keys, artifact IDs, or prompt /
-  instruction text directly in the inspector; show concise chips such as generated copy, image count, filled reference slot
-  count, and size.
+- Node output details should stay productized and minimal. Do not render raw `output_json` keys, artifact IDs, prompt /
+  instruction text, generated-summary prose, or technical fact-chip piles in the normal inspector; keep failure reasons
+  visible and expose successful artifacts through their productized surfaces (node thumbnails, editable copy fields, and
+  the Images tab).
+- ProductDetail uses one right sidebar for Details, Runs, and Images. The small rail selects the active tab; clicking a
+  workflow node must select it and switch the sidebar to Details. Workflow completion must refresh artifacts silently and
+  must not auto-switch the active tab.
+- The Images tab may aggregate `PosterVariant` and `SourceAsset` records, but it must de-duplicate generated images that
+  appear as both a persisted poster and a filled reference source asset from the same `image_generation` output.
+- In the Images tab, thumbnail primary click opens a large in-app preview/lightbox using preview/full URLs; it must not
+  navigate to, download, or expose the compressed thumbnail as the primary action. Explicit `下载` controls still use
+  original/download URLs.
+- When the selected node is `reference_image`, Images tab cards expose a concise fill action. SourceAsset-backed cards
+  call `bindWorkflowNodeImage(..., { source_asset_id })` so no duplicate upload is created. PosterVariant-backed cards
+  should pass the already paired filled SourceAsset id when workflow output exposes one, otherwise call
+  `bindWorkflowNodeImage(..., { poster_variant_id })` so the backend can materialize a reference SourceAsset.
+- Images tab de-duplication should read every durable poster-to-SourceAsset mapping available: generated image-node
+  `generated_poster_variant_ids` / `filled_source_asset_ids`, filled reference-node `source_poster_variant_id`, and
+  SourceAsset `source_poster_variant_id`. Do not rely only on currently filled reference nodes; old materialized poster
+  SourceAssets remain implementation artifacts and must stay hidden when their source PosterVariant is already shown. The
+  backend materialized poster filename convention `poster-{poster_variant_id}.*` is only a legacy fallback when an older
+  API payload lacks the explicit SourceAsset field; do not apply it when `source_poster_variant_id` is present and null, or
+  user-uploaded reference images with the same filename would be over-filtered.
 - Image download links should use `download_url` when available and fall back to preview URLs only when needed. Always pass
   backend URLs through `api.toApiUrl(...)`, use short visible copy such as `下载`, stop propagation inside node cards, and
   sanitize generated filenames so product names cannot introduce path separators or control characters.
@@ -107,7 +128,7 @@
 - Good: an image-generation node connected to two downstream reference slots visibly fills both slot nodes after run.
 - Base: adding a copy/image/reference branch creates a node, then connects it with an edge through API helpers.
 - Base: after a copy node run succeeds, editing the generated copy updates the inspector draft from product `copy_sets`
-  plus node output, and the normal output preview stays a short summary/chip list.
+  plus node output, without showing raw output summaries or artifact IDs in the normal inspector.
 - Base: uploading an image in a `reference_image` inspector refreshes the workflow query and keeps the node output visible
   after a page reload.
 - Base: after dragging a node and releasing the pointer, the rendered node stays at the dropped position while the
@@ -122,6 +143,9 @@
 - Base: visible product images, filled reference-slot images, and image-history thumbnails each expose a concise `下载`
   action that does not select/drag the node or open the preview modal as a side effect. Image-generation nodes do not expose
   generated-image downloads directly.
+- Base: with a reference-image node selected, filling from a SourceAsset updates the workflow cache to the chosen
+  `source_asset_id`; filling from a PosterVariant either reuses its paired SourceAsset id or relies on the backend
+  materialization endpoint.
 - Bad: keeping workflow nodes in local-only state; refresh would lose the DAG and break run history.
 - Bad: treating `runProductWorkflow` pending as `busy` for all canvas interactions; long provider calls would make drag
   and layout feel frozen.
@@ -138,6 +162,8 @@
   server workflow position.
 - Download-link regressions should cover URL construction through `api.toApiUrl(...)`, filename sanitization, and event
   propagation isolation inside node cards.
+- Images-tab regressions should cover preview/lightbox primary click, explicit download action, gallery de-duplication, and
+  reference-node fill cache refresh for both `source_asset_id` and `poster_variant_id` inputs.
 
 ### 7. Wrong vs Correct
 
@@ -227,22 +253,21 @@ provider execution.
 - `api.listProducts({ page, page_size })` drives paginated product lists and returns thumbnail URLs.
 - `api.runProductWorkflow(productId, { start_node_id })` may target an image node whose only required upstream is product
   context.
-- Local UI persistence keys: `productflow.workflow.zoom`, `productflow.workflow.inspectorWidth`,
-  `productflow.workflow.bottomPanelHeight`, and `productflow.workflow.bottomPanelImageRatio`.
+- Local UI persistence keys: `productflow.workflow.zoom` and `productflow.workflow.inspectorWidth`.
 
 ### 3. Contracts
 - The add-node toolbar must not expose `product_context`; one product context exists per active workflow.
 - Node draft edits debounce-save through `updateWorkflowNode(...)`; run-all and run-selected must flush the selected draft
   before calling `runProductWorkflow(...)`.
-- Image-node inspector copy should say at least one downstream reference slot is required, and generated images will appear
-  on those target slots. Node cards should show status/summary, not raw coordinates or image previews for
-  `image_generation` nodes.
+- Image-node inspector copy should only show the downstream reference-slot requirement when no slot is connected; do not
+  show internal graph counts such as upstream-node totals. Node cards should show status and any failure reason, not
+  generated-summary prose, raw coordinates, or image previews for `image_generation` nodes.
 - Canvas zoom transforms visual coordinates, but pointer hit-testing and drag persistence must convert client coordinates back
   into unscaled workflow coordinates.
 - Canvas zoom controls must be a floating overlay anchored inside the canvas viewport (not a toolbar item in the scrollable
-  canvas content), and must avoid the inspector and bottom-panel resize handles.
-- The bottom panel keeps two independent resize affordances: overall height and the run-history/artifact split ratio.
-  The image/artifact side must have a non-trivial default/minimum width so replaced reference assets remain discoverable.
+  canvas content), and must avoid the right-sidebar resize handle and tool rail.
+- Run history and downloadable images live in the right sidebar, not in a persistent bottom panel, so the canvas keeps its
+  vertical working space.
 
 ### 4. Validation & Error Matrix
 - Autosave error -> show local `ApiError.detail`, keep user draft visible, and allow explicit retry/save.
@@ -251,7 +276,7 @@ provider execution.
 
 ### 5. Good/Base/Bad Cases
 - Good: edit image instruction, immediately click run, and backend receives the new instruction.
-- Base: resize inspector/bottom panels, refresh, and see the same local dimensions.
+- Base: resize the right sidebar, refresh, and see the same local width.
 - Base: scroll the canvas content and the zoom controls stay visually anchored over the canvas viewport.
 - Bad: showing generated image preview/download on an `image_generation` node instead of on linked reference slots.
 - Bad: placing zoom controls in the top toolbar or scrollable canvas flow so they move with workflow content.

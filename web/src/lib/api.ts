@@ -266,6 +266,15 @@ export const api = {
       body: formData,
     });
   },
+  bindWorkflowNodeImage(
+    nodeId: string,
+    input: { source_asset_id?: string; poster_variant_id?: string },
+  ): Promise<ProductWorkflow> {
+    return request(`/api/workflow-nodes/${nodeId}/image-source`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
   createWorkflowEdge(
     productId: string,
     input: { source_node_id: string; target_node_id: string; source_handle?: string; target_handle?: string },

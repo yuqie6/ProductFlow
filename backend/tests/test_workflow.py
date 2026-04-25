@@ -1016,6 +1016,203 @@ def test_reference_workflow_node_upload_replaces_current_image(configured_env: P
     assert {first_asset_id, second_asset_id}.issubset(reference_asset_ids)
 
 
+def test_reference_workflow_node_can_bind_existing_source_or_poster_image(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post(
+        "/api/products",
+        data={"name": "桌面灯架"},
+        files={"image": ("lamp-stand.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+
+    session = get_session_factory()()
+    try:
+        copy_job = create_copy_job(session, product_id=product_id).job
+        execute_copy_job(copy_job.id)
+        session.expire_all()
+        product = get_product_detail(session, product_id)
+        confirm_copy_set(session, copy_set_id=product.copy_sets[0].id)
+        poster_job = create_poster_job(session, product_id=product_id).job
+        execute_poster_job(poster_job.id)
+        session.expire_all()
+        poster_id = get_product_detail(session, product_id).poster_variants[0].id
+    finally:
+        session.close()
+
+    workflow_response = client.get(f"/api/products/{product_id}/workflow")
+    assert workflow_response.status_code == 200
+    reference_node = next(node for node in workflow_response.json()["nodes"] if node["node_type"] == "reference_image")
+
+    bound_poster = client.post(
+        f"/api/workflow-nodes/{reference_node['id']}/image-source",
+        json={"poster_variant_id": poster_id},
+    )
+    assert bound_poster.status_code == 200
+    poster_bound_node = next(node for node in bound_poster.json()["nodes"] if node["id"] == reference_node["id"])
+    materialized_asset_id = poster_bound_node["output_json"]["source_asset_ids"][0]
+    assert poster_bound_node["config_json"]["source_asset_ids"] == [materialized_asset_id]
+    assert poster_bound_node["config_json"]["source_poster_variant_id"] == poster_id
+    assert poster_bound_node["output_json"]["source_poster_variant_id"] == poster_id
+
+    product_after_poster = client.get(f"/api/products/{product_id}")
+    assert product_after_poster.status_code == 200
+    reference_assets_after_poster = [
+        asset for asset in product_after_poster.json()["source_assets"] if asset["kind"] == "reference_image"
+    ]
+    materialized_asset = next(asset for asset in reference_assets_after_poster if asset["id"] == materialized_asset_id)
+    assert materialized_asset["original_filename"] == f"poster-{poster_id}.png"
+    assert materialized_asset["source_poster_variant_id"] == poster_id
+    reference_asset_ids_after_poster = [asset["id"] for asset in reference_assets_after_poster]
+    assert materialized_asset_id in reference_asset_ids_after_poster
+
+    conflicting_upload = client.post(
+        f"/api/products/{product_id}/reference-images",
+        files={"reference_images": (f"poster-{poster_id}.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert conflicting_upload.status_code == 200
+    conflicting_asset = next(
+        asset
+        for asset in conflicting_upload.json()["source_assets"]
+        if asset["kind"] == "reference_image" and asset["id"] != materialized_asset_id
+    )
+    assert conflicting_asset["original_filename"] == f"poster-{poster_id}.png"
+    assert conflicting_asset["source_poster_variant_id"] is None
+
+    rebound_to_user_upload = client.post(
+        f"/api/workflow-nodes/{reference_node['id']}/image-source",
+        json={"source_asset_id": conflicting_asset["id"]},
+    )
+    assert rebound_to_user_upload.status_code == 200
+    user_upload_bound_node = next(
+        node for node in rebound_to_user_upload.json()["nodes"] if node["id"] == reference_node["id"]
+    )
+    assert user_upload_bound_node["output_json"]["source_asset_ids"] == [conflicting_asset["id"]]
+    assert "source_poster_variant_id" not in user_upload_bound_node["output_json"]
+
+    product_after_conflicting_upload = client.get(f"/api/products/{product_id}")
+    assert product_after_conflicting_upload.status_code == 200
+    reference_asset_ids_after_conflicting_upload = [
+        asset["id"]
+        for asset in product_after_conflicting_upload.json()["source_assets"]
+        if asset["kind"] == "reference_image"
+    ]
+    assert sorted(reference_asset_ids_after_conflicting_upload) == sorted(
+        [*reference_asset_ids_after_poster, conflicting_asset["id"]]
+    )
+
+    second_reference = client.post(
+        f"/api/products/{product_id}/workflow/nodes",
+        json={
+            "node_type": "reference_image",
+            "title": "复用参考图",
+            "position_x": 720,
+            "position_y": 320,
+            "config_json": {"role": "reference", "label": "复用参考图"},
+        },
+    )
+    assert second_reference.status_code == 201
+    second_reference_node = next(node for node in second_reference.json()["nodes"] if node["title"] == "复用参考图")
+
+    bound_source = client.post(
+        f"/api/workflow-nodes/{second_reference_node['id']}/image-source",
+        json={"source_asset_id": materialized_asset_id},
+    )
+    assert bound_source.status_code == 200
+    source_bound_node = next(node for node in bound_source.json()["nodes"] if node["id"] == second_reference_node["id"])
+    assert source_bound_node["output_json"]["source_asset_ids"] == [materialized_asset_id]
+    assert source_bound_node["config_json"]["source_asset_ids"] == [materialized_asset_id]
+    assert source_bound_node["config_json"]["source_poster_variant_id"] == poster_id
+    assert source_bound_node["output_json"]["source_poster_variant_id"] == poster_id
+
+    product_after_source = client.get(f"/api/products/{product_id}")
+    assert product_after_source.status_code == 200
+    reference_asset_ids_after_source = [
+        asset["id"] for asset in product_after_source.json()["source_assets"] if asset["kind"] == "reference_image"
+    ]
+    assert sorted(reference_asset_ids_after_source) == sorted(reference_asset_ids_after_conflicting_upload)
+
+    third_reference = client.post(
+        f"/api/products/{product_id}/workflow/nodes",
+        json={
+            "node_type": "reference_image",
+            "title": "复用海报",
+            "position_x": 980,
+            "position_y": 320,
+            "config_json": {"role": "reference", "label": "复用海报"},
+        },
+    )
+    assert third_reference.status_code == 201
+    third_reference_node = next(node for node in third_reference.json()["nodes"] if node["title"] == "复用海报")
+
+    rebound_poster = client.post(
+        f"/api/workflow-nodes/{third_reference_node['id']}/image-source",
+        json={"poster_variant_id": poster_id},
+    )
+    assert rebound_poster.status_code == 200
+    rebound_node = next(node for node in rebound_poster.json()["nodes"] if node["id"] == third_reference_node["id"])
+    assert rebound_node["output_json"]["source_asset_ids"] == [materialized_asset_id]
+    assert rebound_node["output_json"]["source_poster_variant_id"] == poster_id
+
+    product_after_rebound = client.get(f"/api/products/{product_id}")
+    assert product_after_rebound.status_code == 200
+    reference_asset_ids_after_rebound = [
+        asset["id"] for asset in product_after_rebound.json()["source_assets"] if asset["kind"] == "reference_image"
+    ]
+    assert sorted(reference_asset_ids_after_rebound) == sorted(reference_asset_ids_after_conflicting_upload)
+
+
+def test_reference_workflow_node_bind_poster_reports_missing_file_as_bad_request(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post(
+        "/api/products",
+        data={"name": "文件缺失海报"},
+        files={"image": ("missing-poster.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+
+    session = get_session_factory()()
+    try:
+        copy_job = create_copy_job(session, product_id=product_id).job
+        execute_copy_job(copy_job.id)
+        session.expire_all()
+        product = get_product_detail(session, product_id)
+        confirm_copy_set(session, copy_set_id=product.copy_sets[0].id)
+        poster_job = create_poster_job(session, product_id=product_id).job
+        execute_poster_job(poster_job.id)
+        session.expire_all()
+        poster_id = get_product_detail(session, product_id).poster_variants[0].id
+        poster = session.get(PosterVariant, poster_id)
+        assert poster is not None
+        poster.storage_path = f"products/{product_id}/missing-poster-file.png"
+        session.commit()
+    finally:
+        session.close()
+
+    workflow_response = client.get(f"/api/products/{product_id}/workflow")
+    assert workflow_response.status_code == 200
+    reference_node = next(node for node in workflow_response.json()["nodes"] if node["node_type"] == "reference_image")
+
+    response = client.post(
+        f"/api/workflow-nodes/{reference_node['id']}/image-source",
+        json={"poster_variant_id": poster_id},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "海报文件不存在"
+
+
 def test_image_generation_fill_replaces_reference_node_current_image(configured_env: Path) -> None:
     from productflow_backend.presentation.api import create_app
 

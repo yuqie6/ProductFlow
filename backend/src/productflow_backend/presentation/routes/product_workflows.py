@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from sqlalchemy.orm import Session
 
 from productflow_backend.application.product_workflows import (
+    bind_workflow_node_image,
     create_workflow_edge,
     create_workflow_node,
     delete_workflow_edge,
@@ -19,6 +20,7 @@ from productflow_backend.infrastructure.queue import enqueue_workflow_run
 from productflow_backend.presentation.deps import get_session, require_admin
 from productflow_backend.presentation.errors import raise_value_error_as_http
 from productflow_backend.presentation.schemas.product_workflows import (
+    BindWorkflowNodeImageRequest,
     CreateWorkflowEdgeRequest,
     CreateWorkflowNodeRequest,
     ProductWorkflowResponse,
@@ -124,6 +126,24 @@ async def upload_workflow_node_image_endpoint(
             content_type=validated.mime_type,
             role=role,
             label=label,
+        )
+    except ValueError as exc:
+        raise_value_error_as_http(exc)
+    return serialize_product_workflow(workflow)
+
+
+@router.post("/workflow-nodes/{node_id}/image-source", response_model=ProductWorkflowResponse)
+def bind_workflow_node_image_endpoint(
+    node_id: str,
+    payload: BindWorkflowNodeImageRequest,
+    session: Session = Depends(get_session),
+) -> ProductWorkflowResponse:
+    try:
+        workflow = bind_workflow_node_image(
+            session,
+            node_id=node_id,
+            source_asset_id=payload.source_asset_id,
+            poster_variant_id=payload.poster_variant_id,
         )
     except ValueError as exc:
         raise_value_error_as_http(exc)

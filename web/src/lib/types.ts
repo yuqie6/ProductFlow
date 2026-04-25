@@ -22,6 +22,7 @@ export interface SourceAsset {
   kind: SourceAssetKind;
   original_filename: string;
   mime_type: string;
+  source_poster_variant_id?: string | null;
   download_url: string;
   preview_url: string;
   thumbnail_url: string;

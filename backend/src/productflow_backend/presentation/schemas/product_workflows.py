@@ -100,6 +100,11 @@ class UpdateWorkflowCopySetRequest(BaseModel):
     cta: str | None = Field(default=None, min_length=1, max_length=300)
 
 
+class BindWorkflowNodeImageRequest(BaseModel):
+    source_asset_id: str | None = None
+    poster_variant_id: str | None = None
+
+
 class CreateWorkflowEdgeRequest(BaseModel):
     source_node_id: str
     target_node_id: str

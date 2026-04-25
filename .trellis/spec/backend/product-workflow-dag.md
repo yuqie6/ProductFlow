@@ -24,6 +24,7 @@
   - `PATCH /api/workflow-nodes/{node_id}`
   - `PATCH /api/workflow-nodes/{node_id}/copy`
   - `POST /api/workflow-nodes/{node_id}/image`
+  - `POST /api/workflow-nodes/{node_id}/image-source`
   - `POST /api/products/{product_id}/workflow/edges`
   - `DELETE /api/workflow-edges/{edge_id}`
   - `POST /api/products/{product_id}/workflow/run`
@@ -40,11 +41,22 @@
 - Node status values are `idle`, `queued`, `running`, `succeeded`, `failed`; run status values are
   `running`, `succeeded`, `failed`.
 - `reference_image` nodes are user-visible `参考图` slots. They can be manually uploaded into through
-  `POST /api/workflow-nodes/{node_id}/image` or filled by upstream `image_generation` nodes.
+  `POST /api/workflow-nodes/{node_id}/image`, filled from an existing product image through
+  `POST /api/workflow-nodes/{node_id}/image-source`, or filled by upstream `image_generation` nodes.
 - Each `reference_image` node is a single current-image slot. Manual upload and upstream `image_generation` fill must
   replace that node's current `config_json.source_asset_ids`, `output_json.source_asset_ids`, `output_json.image_asset_ids`,
   and `output_json.images` with the new single asset. Do not delete the old `source_assets` row; it remains product history
   and can still be downloaded from artifact views.
+- `POST /api/workflow-nodes/{node_id}/image-source` accepts exactly one of `source_asset_id` or `poster_variant_id`.
+  SourceAsset-backed requests directly bind the existing same-product `reference_image` SourceAsset without creating a
+  duplicate upload. If that SourceAsset has `source_poster_variant_id`, preserve that poster-source metadata in the filled
+  reference node output. PosterVariant-backed requests first look for a same-product `reference_image` SourceAsset whose
+  `source_poster_variant_id` matches the poster, then fall back to workflow output pairings from
+  `generated_poster_variant_ids` / `filled_source_asset_ids`; if none exists, copy/materialize the poster file into a new
+  `reference_image` SourceAsset named `poster-{poster_variant_id}.*` with `source_poster_variant_id` set, then bind it.
+  The filename convention is legacy compatibility only; current de-duplication should use explicit
+  `source_poster_variant_id` so a user-uploaded reference image with the same filename is not hidden or rebound as a poster
+  copy.
 - `reference_image` nodes store image material as first-class `source_assets` rows and expose `source_asset_ids` /
   `image_asset_ids` in workflow output JSON for downstream image nodes.
 - `copy_generation` nodes must collect connected upstream `reference_image` slots and pass their asset paths plus
@@ -89,6 +101,10 @@
 ### 4. Validation & Error Matrix
 
 - Missing product/workflow/node/edge -> `ValueError("...不存在")`, mapped to HTTP `404`.
+- Existing-image fill without exactly one `source_asset_id` / `poster_variant_id` -> `400`.
+- Existing-image fill on a non-`reference_image` node -> `400`.
+- Existing-image fill with a source asset or poster outside the workflow product -> `404`.
+- Poster fill when the backing file is missing or storage resolution fails -> `400` with `海报文件不存在`.
 - Edge source/target outside the product workflow -> `400` with a user-readable validation detail.
 - Self-edge -> `400`.
 - Cyclic graph -> `400` and no edge persisted.
@@ -114,6 +130,12 @@
   `reference_image` slots; one run creates two generated images and fills both slots.
 - Base: if duplicate edges accidentally connect one image node to the same downstream `reference_image` slot, one run still
   generates one image for that unique slot, not one image per duplicate edge.
+- Base: choosing an existing SourceAsset for a different reference slot reuses the same `source_asset_id` and does not add
+  another `source_assets` row.
+- Base: choosing a product poster not backed by a workflow-filled SourceAsset materializes one new reference SourceAsset and
+  updates only the selected reference node's current slot. Reusing the same poster again should reuse that materialized
+  SourceAsset via the SourceAsset's `source_poster_variant_id`, even after the original reference node has been filled with
+  another image.
 - Base: run from a selected node; the executor runs the selected node and only missing/invalid required dependencies.
   Previously succeeded upstream nodes with valid first-class artifacts are read as context, not re-run.
 - Bad: add an edge from an image node back to a copy node; the cycle validator rejects it before commit.
@@ -136,6 +158,8 @@
 - API regression uploads twice to the same `reference_image` node and asserts the node exposes only the second asset while
   both old and new `source_assets` remain on the product. Another regression fills an already populated reference node from
   an upstream `image_generation` node and asserts the same single-slot replacement behavior.
+- API regression binds a reference node from an existing `source_asset_id` and asserts no duplicate SourceAsset is created;
+  another regression binds from a `poster_variant_id` and asserts the poster materializes or maps to a reference SourceAsset.
 - API/provider regression connects a `reference_image` node into `copy_generation` and asserts the reference label/role
   reaches generated copy/provider input.
 - API regression edits a generated copy node through `PATCH /api/workflow-nodes/{node_id}/copy` and asserts both the

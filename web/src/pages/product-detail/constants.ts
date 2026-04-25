@@ -33,7 +33,5 @@ export const ADD_NODE_OPTIONS: Array<{ type: WorkflowNodeType; label: string }> 
 
 export const MIN_INSPECTOR_WIDTH = 280;
 export const MAX_INSPECTOR_WIDTH = 560;
-export const MIN_BOTTOM_PANEL_HEIGHT = 150;
-export const MAX_BOTTOM_PANEL_HEIGHT = 380;
 export const MIN_ZOOM = 0.5;
 export const MAX_ZOOM = 1.6;

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent } from "react";
+import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
@@ -20,6 +20,7 @@ import {
   ZoomIn,
   ZoomOut,
   Upload,
+  X,
   XCircle,
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -29,8 +30,10 @@ import { TopNav } from "../components/TopNav";
 import { api, ApiError } from "../lib/api";
 import { formatDateTime, formatPrice } from "../lib/format";
 import type {
+  PosterVariant,
   ProductDetail,
   ProductWorkflow,
+  SourceAsset,
   WorkflowNode,
   WorkflowRunStatus,
   WorkflowNodeType,
@@ -42,10 +45,8 @@ import {
   CANVAS_NODE_PADDING_X,
   CANVAS_NODE_PADDING_Y,
   CANVAS_VIEWPORT_PADDING,
-  MAX_BOTTOM_PANEL_HEIGHT,
   MAX_INSPECTOR_WIDTH,
   MAX_ZOOM,
-  MIN_BOTTOM_PANEL_HEIGHT,
   MIN_INSPECTOR_WIDTH,
   MIN_ZOOM,
   NODE_HANDLE_Y,
@@ -56,7 +57,10 @@ import {
   NODE_WIDTH,
 } from "./product-detail/constants";
 import { DownloadLink, PosterThumb, SourceAssetThumb } from "./product-detail/ImageDownloadComponents";
-import { NodeOutputPreview } from "./product-detail/NodeOutputPreview";
+import {
+  buildPosterSourceAssetMap,
+  getVisibleReferenceAssets,
+} from "./product-detail/galleryImages";
 import { getNodeImageDownload, getSourceImageDownload } from "./product-detail/imageDownloads";
 import type {
   CanvasPoint,
@@ -68,7 +72,7 @@ import type {
 import {
   clamp,
   hasActiveWorkflow,
-  nodeIdleSummary,
+  outputStringArray,
   outputText,
   readStoredNumber,
   statusClass,
@@ -82,6 +86,7 @@ import {
 import type { DownloadableImage } from "../lib/image-downloads";
 
 type SaveStatus = "idle" | "saving" | "saved" | "failed";
+type SidebarTab = "details" | "runs" | "images";
 
 const RUN_STATUS_LABELS: Record<WorkflowRunStatus, string> = {
   running: "运行中",
@@ -117,9 +122,6 @@ const SAVE_STATUS_CLASS_NAMES: Record<SaveStatus, string> = {
 
 const IMAGE_PREVIEW_SURFACE_CLASS_NAME =
   "bg-[linear-gradient(135deg,#fafafa_25%,#f4f4f5_25%,#f4f4f5_50%,#fafafa_50%,#fafafa_75%,#f4f4f5_75%,#f4f4f5_100%)] bg-[length:16px_16px]";
-const BOTTOM_IMAGE_RATIO_STORAGE_KEY = "productflow.workflow.bottomPanelImageRatio";
-const MIN_BOTTOM_IMAGE_RATIO = 0.28;
-const MAX_BOTTOM_IMAGE_RATIO = 0.55;
 
 function isPanePanBlockedTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
@@ -157,6 +159,7 @@ export function ProductDetailPage() {
   const draftVersionRef = useRef(0);
   const previousDraftNodeIdRef = useRef<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarTab>("details");
   const [nodeDrag, setNodeDrag] = useState<NodeDragState | null>(null);
   const [optimisticNodePositions, setOptimisticNodePositions] = useState<
     Record<string, CanvasPoint>
@@ -173,19 +176,8 @@ export function ProductDetailPage() {
   const [inspectorWidth, setInspectorWidth] = useState(() =>
     clamp(readStoredNumber("productflow.workflow.inspectorWidth", 360), MIN_INSPECTOR_WIDTH, MAX_INSPECTOR_WIDTH),
   );
-  const [bottomPanelHeight, setBottomPanelHeight] = useState(() =>
-    clamp(
-      readStoredNumber("productflow.workflow.bottomPanelHeight", 224),
-      MIN_BOTTOM_PANEL_HEIGHT,
-      MAX_BOTTOM_PANEL_HEIGHT,
-    ),
-  );
-  const [bottomImageRatio, setBottomImageRatio] = useState(() =>
-    clamp(
-      readStoredNumber(BOTTOM_IMAGE_RATIO_STORAGE_KEY, 0.38),
-      MIN_BOTTOM_IMAGE_RATIO,
-      MAX_BOTTOM_IMAGE_RATIO,
-    ),
+  const [previewImage, setPreviewImage] = useState<DownloadableImage | null>(
+    null,
   );
   const [error, setError] = useState("");
 
@@ -254,6 +246,19 @@ export function ProductDetailPage() {
       restoreBodyUserSelect();
     };
   }, []);
+
+  useEffect(() => {
+    if (!previewImage) {
+      return;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setPreviewImage(null);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [previewImage]);
 
   const disableBodyUserSelect = () => {
     if (previousBodyUserSelectRef.current === null) {
@@ -328,6 +333,11 @@ export function ProductDetailPage() {
     setSaveStatus("idle");
   };
 
+  const selectNodeForDetails = (nodeId: string) => {
+    setSelectedNodeId(nodeId);
+    setActiveSidebarTab("details");
+  };
+
   const updateZoom = (nextZoom: number) => {
     const normalized = clamp(Math.round(nextZoom * 100) / 100, MIN_ZOOM, MAX_ZOOM);
     setZoom(normalized);
@@ -383,6 +393,7 @@ export function ProductDetailPage() {
           new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
       )[0];
       setSelectedNodeId(newest?.id ?? null);
+      setActiveSidebarTab("details");
     },
     onError: (mutationError) => {
       setError(
@@ -573,6 +584,27 @@ export function ProductDetailPage() {
     },
   });
 
+  const bindNodeImageMutation = useMutation({
+    mutationFn: (input: { source_asset_id?: string; poster_variant_id?: string }) => {
+      if (!selectedNode || selectedNode.node_type !== "reference_image") {
+        throw new Error("请选择参考图节点");
+      }
+      return api.bindWorkflowNodeImage(selectedNode.id, input);
+    },
+    onSuccess: async (nextWorkflow) => {
+      setError("");
+      queryClient.setQueryData(["product-workflow", productId], nextWorkflow);
+      await refreshProductArtifacts();
+    },
+    onError: (mutationError) => {
+      setError(
+        mutationError instanceof ApiError
+          ? mutationError.detail
+          : "填充参考图失败",
+      );
+    },
+  });
+
   const selectedCopyHasOutput = Boolean(
     selectedNode?.node_type === "copy_generation" &&
       selectedNode.output_json &&
@@ -646,57 +678,6 @@ export function ProductDetailPage() {
     window.addEventListener("pointercancel", onUp);
   };
 
-  const startBottomResize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    disableBodyUserSelect();
-    const startY = event.clientY;
-    const startHeight = bottomPanelHeight;
-    const onMove = (moveEvent: PointerEvent) => {
-      const next = clamp(startHeight + startY - moveEvent.clientY, MIN_BOTTOM_PANEL_HEIGHT, MAX_BOTTOM_PANEL_HEIGHT);
-      setBottomPanelHeight(next);
-      window.localStorage.setItem("productflow.workflow.bottomPanelHeight", String(next));
-    };
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onUp);
-      restoreBodyUserSelect();
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onUp);
-  };
-
-  const startBottomSplitResize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    disableBodyUserSelect();
-    const panelWidth = event.currentTarget.parentElement?.getBoundingClientRect().width ?? 0;
-    if (!panelWidth) {
-      restoreBodyUserSelect();
-      return;
-    }
-    const startX = event.clientX;
-    const startRatio = bottomImageRatio;
-    const onMove = (moveEvent: PointerEvent) => {
-      const next = clamp(
-        startRatio - (moveEvent.clientX - startX) / panelWidth,
-        MIN_BOTTOM_IMAGE_RATIO,
-        MAX_BOTTOM_IMAGE_RATIO,
-      );
-      setBottomImageRatio(next);
-      window.localStorage.setItem(BOTTOM_IMAGE_RATIO_STORAGE_KEY, String(next));
-    };
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onUp);
-      restoreBodyUserSelect();
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onUp);
-  };
-
   const layoutMutationBusy =
     createNodeMutation.isPending ||
     updateNodeConfigMutation.isPending ||
@@ -704,6 +685,7 @@ export function ProductDetailPage() {
     deleteEdgeMutation.isPending ||
     deleteNodeMutation.isPending ||
     uploadNodeImageMutation.isPending ||
+    bindNodeImageMutation.isPending ||
     updateNodeCopyMutation.isPending;
   const structureBusy = layoutMutationBusy || workflowActive;
   const runBusy = runWorkflowMutation.isPending || workflowActive;
@@ -789,6 +771,7 @@ export function ProductDetailPage() {
     disableBodyUserSelect();
     const point = getCanvasPoint(event.clientX, event.clientY);
     setSelectedNodeId(node.id);
+    setActiveSidebarTab("details");
     const renderedPosition = getRenderedNodePosition(node);
     setNodeDrag({
       nodeId: node.id,
@@ -912,6 +895,7 @@ export function ProductDetailPage() {
     event.currentTarget.setPointerCapture(event.pointerId);
     const from = getOutputHandlePoint(node);
     setSelectedNodeId(node.id);
+    setActiveSidebarTab("details");
     setConnectionDrag({
       sourceNodeId: node.id,
       pointerId: event.pointerId,
@@ -1001,10 +985,20 @@ export function ProductDetailPage() {
     connectionDrag ? connectionDrag.to.y + CANVAS_NODE_PADDING_Y : 0,
   );
   const posters = historyQuery.data?.poster_variants ?? product.poster_variants;
-  const referenceAssets = [...product.source_assets]
-    .filter((asset) => asset.kind === "reference_image")
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  const posterSourceAssetIds = buildPosterSourceAssetMap({
+    product,
+    workflow,
+    posters,
+  });
+  const referenceAssets = getVisibleReferenceAssets({
+    product,
+    posterSourceAssetIds,
+    posters,
+  });
   const artifactCount = posters.length + referenceAssets.length;
+  const selectedReferenceNode =
+    selectedNode?.node_type === "reference_image" ? selectedNode : null;
+  const fillReferenceBusy = bindNodeImageMutation.isPending;
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-white text-sm text-zinc-900">
@@ -1152,7 +1146,7 @@ export function ProductDetailPage() {
                         image={getNodeImageDownload(node, product)}
                         selected={node.id === selectedNode?.id}
                         dragging={nodeDrag?.nodeId === node.id}
-                        onSelect={() => setSelectedNodeId(node.id)}
+                        onSelect={() => selectNodeForDetails(node.id)}
                         onStartDrag={(event) => startNodeDrag(node, event)}
                         onMoveDrag={moveNodeDrag}
                         onEndDrag={endNodeDrag}
@@ -1207,166 +1201,340 @@ export function ProductDetailPage() {
             </div>
           </section>
 
-          <aside
-            className="relative z-20 flex shrink-0 flex-col border-l border-zinc-200 bg-white/95 shadow-[-8px_0_24px_-20px_rgba(0,0,0,0.35)] backdrop-blur"
-            style={{ width: inspectorWidth }}
-          >
-            <div
-              role="separator"
-              aria-label="调整节点栏宽度"
-              onPointerDown={startInspectorResize}
-              className="absolute left-[-4px] top-0 h-full w-2 cursor-col-resize hover:bg-zinc-300/50"
-            />
-            <div className="flex h-12 shrink-0 items-center border-b border-zinc-200 px-4">
-              <Settings2 size={14} className="mr-2 text-zinc-400" />
-              <span className="text-[11px] font-semibold uppercase tracking-widest text-zinc-500">
-                节点
-              </span>
+          <div className="relative z-20 flex shrink-0 border-l border-zinc-200 bg-white/95 shadow-[-8px_0_24px_-20px_rgba(0,0,0,0.35)] backdrop-blur">
+            <div data-canvas-control className="flex w-14 shrink-0 flex-col items-center gap-2 border-r border-zinc-200 bg-zinc-50/80 px-1.5 py-3">
+              <SidebarTabButton
+                active={activeSidebarTab === "details"}
+                label="详情"
+                title="Details"
+                icon={<Settings2 size={15} />}
+                onClick={() => setActiveSidebarTab("details")}
+              />
+              <SidebarTabButton
+                active={activeSidebarTab === "runs"}
+                label="运行"
+                title="Runs"
+                icon={<CircleDot size={15} />}
+                onClick={() => setActiveSidebarTab("runs")}
+              />
+              <SidebarTabButton
+                active={activeSidebarTab === "images"}
+                label="图片"
+                title="Images"
+                icon={<ImageIcon size={15} />}
+                onClick={() => setActiveSidebarTab("images")}
+              />
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto p-4">
-              {selectedNode ? (
-                <InspectorPanel
-                  product={product}
-                  sourceImage={sourceImage}
-                  workflow={workflow}
-                  node={selectedNode}
-                  draft={draft}
-                  onDraftChange={handleDraftChange}
-                  onSave={() => void flushSelectedDraft()}
-                  onSaveCopy={() => void flushSelectedDraft()}
-                  onRun={() => void handleRunWorkflow(selectedNode.id)}
-                  saveStatus={saveStatus}
-                  onUploadImage={(file) => uploadNodeImageMutation.mutate(file)}
-                  onDelete={() => handleDeleteNode(selectedNode)}
-                  busy={structureBusy}
-                  runBusy={runBusy}
-                />
-              ) : (
-                <div className="text-xs text-zinc-500">
-                  选择一个画布节点后编辑配置。
-                </div>
-              )}
-            </div>
-          </aside>
-        </div>
-
-        <div
-          className="relative z-20 grid shrink-0 border-t border-zinc-200 bg-white/95 shadow-[0_-10px_30px_-26px_rgba(0,0,0,0.45)] backdrop-blur"
-          style={{
-            height: bottomPanelHeight,
-            gridTemplateColumns: `minmax(320px, ${1 - bottomImageRatio}fr) 10px minmax(300px, ${bottomImageRatio}fr)`,
-          }}
-        >
-          <div
-            role="separator"
-            aria-label="调整底部面板高度"
-            onPointerDown={startBottomResize}
-            className="absolute top-[-4px] left-0 z-30 h-2 w-full cursor-row-resize hover:bg-zinc-300/50"
-          />
-          <section className="min-w-0 overflow-y-auto p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <div>
-                <div className="flex items-center text-[11px] font-semibold uppercase tracking-widest text-zinc-500">
-                  <CircleDot size={13} className="mr-2 text-zinc-400" /> 运行记录
-                </div>
-                <div className="mt-1 text-xs text-zinc-500">
-                  {workflow?.runs.length ? `共 ${workflow.runs.length} 次运行` : "暂无运行历史"}
-                </div>
+            <aside
+              className="relative flex shrink-0 flex-col bg-white/95"
+              style={{ width: inspectorWidth }}
+            >
+              <div
+                role="separator"
+                aria-label="调整右侧栏宽度"
+                onPointerDown={startInspectorResize}
+                className="absolute left-[-4px] top-0 h-full w-2 cursor-col-resize hover:bg-zinc-300/50"
+              />
+              <div className="flex h-12 shrink-0 items-center border-b border-zinc-200 px-4">
+                {activeSidebarTab === "details" ? <Settings2 size={14} className="mr-2 text-zinc-400" /> : null}
+                {activeSidebarTab === "runs" ? <CircleDot size={14} className="mr-2 text-zinc-400" /> : null}
+                {activeSidebarTab === "images" ? <ImageIcon size={14} className="mr-2 text-zinc-400" /> : null}
+                <span className="text-[11px] font-semibold uppercase tracking-widest text-zinc-500">
+                  {activeSidebarTab === "details" ? "详情" : activeSidebarTab === "runs" ? "运行记录" : "图片"}
+                </span>
               </div>
-              {latestRun ? (
-                <div className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-[11px] text-zinc-500">
-                  最近 {formatDateTime(latestRun.started_at)}
-                </div>
-              ) : null}
-            </div>
-            {workflow?.runs.length ? (
-              <div className="space-y-2">
-                {workflow.runs.map((run) => (
-                  <div
-                    key={run.id}
-                    className="rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-xs shadow-sm"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex min-w-0 items-start gap-3">
-                        <span
-                          className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full shadow-md ${RUN_STATUS_DOT_CLASS_NAMES[run.status]}`}
-                        />
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span
-                              className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${RUN_STATUS_CLASS_NAMES[run.status]}`}
-                            >
-                              {RUN_STATUS_LABELS[run.status]}
-                            </span>
-                            <span className="inline-flex items-center text-[11px] text-zinc-500">
-                              <Layers3 size={12} className="mr-1 text-zinc-400" />
-                              节点记录 {run.node_runs.length}
-                            </span>
-                          </div>
-                          {run.failure_reason ? (
-                            <div className="mt-2 line-clamp-2 rounded-lg border border-red-100 bg-red-50 px-2.5 py-1.5 text-red-700">
-                              {run.failure_reason}
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                      <div className="shrink-0 text-right text-[10px] leading-relaxed text-zinc-400">
-                        <div>{formatDateTime(run.started_at)}</div>
-                        {run.finished_at ? <div>完成 {formatDateTime(run.finished_at)}</div> : null}
-                      </div>
+              <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                {activeSidebarTab === "details" ? (
+                  selectedNode ? (
+                    <InspectorPanel
+                      product={product}
+                      sourceImage={sourceImage}
+                      workflow={workflow}
+                      node={selectedNode}
+                      draft={draft}
+                      onDraftChange={handleDraftChange}
+                      onSave={() => void flushSelectedDraft()}
+                      onSaveCopy={() => void flushSelectedDraft()}
+                      onRun={() => void handleRunWorkflow(selectedNode.id)}
+                      saveStatus={saveStatus}
+                      onUploadImage={(file) => uploadNodeImageMutation.mutate(file)}
+                      onDelete={() => handleDeleteNode(selectedNode)}
+                      busy={structureBusy}
+                      runBusy={runBusy}
+                    />
+                  ) : (
+                    <div className="text-xs text-zinc-500">
+                      选择一个画布节点后编辑配置。
                     </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="flex h-[calc(100%-44px)] min-h-[96px] items-center justify-center rounded-xl border border-dashed border-zinc-200 bg-zinc-50/60 px-4 py-6 text-center text-xs text-zinc-500">
-                暂无运行记录
-              </div>
-            )}
-          </section>
-
-          <div
-            role="separator"
-            aria-label="调整运行记录和图片区宽度"
-            onPointerDown={startBottomSplitResize}
-            className="relative cursor-col-resize border-x border-zinc-200 bg-zinc-100/70 hover:bg-zinc-200"
-          >
-            <div className="absolute left-1/2 top-1/2 h-9 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-zinc-300" />
-          </div>
-
-          <section className="overflow-y-auto bg-zinc-50/40 p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <div>
-                <div className="flex items-center text-[11px] font-semibold uppercase tracking-widest text-zinc-500">
-                  <ImageIcon size={13} className="mr-2 text-zinc-400" /> 图片
-                </div>
-                <div className="mt-1 text-xs text-zinc-500">
-                  {artifactCount ? `可下载 ${artifactCount} 张` : "等待生成素材"}
-                </div>
-              </div>
-            </div>
-            {artifactCount ? (
-              <div className="grid grid-cols-3 gap-2">
-                {posters.map((poster) => (
-                  <PosterThumb
-                    key={poster.id}
-                    poster={poster}
-                    productName={product.name}
+                  )
+                ) : null}
+                {activeSidebarTab === "runs" ? <RunsPanel workflow={workflow} latestRun={latestRun} /> : null}
+                {activeSidebarTab === "images" ? (
+                  <ImagesPanel
+                    product={product}
+                    posters={posters}
+                    referenceAssets={referenceAssets}
+                    artifactCount={artifactCount}
+                    selectedReferenceNode={selectedReferenceNode}
+                    posterSourceAssetIds={posterSourceAssetIds}
+                    onPreviewImage={setPreviewImage}
+                    onFillFromSourceAsset={(sourceAssetId) =>
+                      bindNodeImageMutation.mutate({
+                        source_asset_id: sourceAssetId,
+                      })
+                    }
+                    onFillFromPoster={(posterId) =>
+                      bindNodeImageMutation.mutate({
+                        poster_variant_id: posterId,
+                      })
+                    }
+                    fillReferenceBusy={fillReferenceBusy}
                   />
-                ))}
-                {referenceAssets.map((asset) => (
-                  <SourceAssetThumb key={asset.id} asset={asset} product={product} />
-                ))}
+                ) : null}
               </div>
-            ) : (
-              <div className="flex h-[calc(100%-44px)] min-h-[96px] items-center justify-center rounded-xl border border-dashed border-zinc-200 bg-white px-3 py-6 text-center text-xs leading-relaxed text-zinc-500">
-                暂无图片
-              </div>
-            )}
-          </section>
+            </aside>
+          </div>
         </div>
       </main>
+      {previewImage ? (
+        <ImagePreviewModal
+          image={previewImage}
+          onClose={() => setPreviewImage(null)}
+        />
+      ) : null}
     </div>
+  );
+}
+
+function SidebarTabButton({
+  active,
+  label,
+  title,
+  icon,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  title: string;
+  icon: ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      title={title}
+      onClick={onClick}
+      className={`flex w-full flex-col items-center rounded-lg px-1 py-2 text-[10px] font-medium transition-colors ${
+        active
+          ? "bg-zinc-900 text-white shadow-sm"
+          : "text-zinc-500 hover:bg-white hover:text-zinc-900"
+      }`}
+    >
+      {icon}
+      <span className="mt-1 leading-none">{label}</span>
+    </button>
+  );
+}
+
+function RunsPanel({
+  workflow,
+  latestRun,
+}: {
+  workflow: ProductWorkflow | null;
+  latestRun: ProductWorkflow["runs"][number] | null;
+}) {
+  return (
+    <section>
+      <div className="mb-3 flex items-center justify-between">
+        <div className="text-xs text-zinc-500">
+          {workflow?.runs.length ? `共 ${workflow.runs.length} 次运行` : "暂无运行历史"}
+        </div>
+        {latestRun ? (
+          <div className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-[11px] text-zinc-500">
+            最近 {formatDateTime(latestRun.started_at)}
+          </div>
+        ) : null}
+      </div>
+      {workflow?.runs.length ? (
+        <div className="space-y-2">
+          {workflow.runs.map((run) => (
+            <div
+              key={run.id}
+              className="rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-xs shadow-sm"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-start gap-3">
+                  <span
+                    className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full shadow-md ${RUN_STATUS_DOT_CLASS_NAMES[run.status]}`}
+                  />
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${RUN_STATUS_CLASS_NAMES[run.status]}`}
+                      >
+                        {RUN_STATUS_LABELS[run.status]}
+                      </span>
+                      <span className="inline-flex items-center text-[11px] text-zinc-500">
+                        <Layers3 size={12} className="mr-1 text-zinc-400" />
+                        节点记录 {run.node_runs.length}
+                      </span>
+                    </div>
+                    {run.failure_reason ? (
+                      <div className="mt-2 line-clamp-2 rounded-lg border border-red-100 bg-red-50 px-2.5 py-1.5 text-red-700">
+                        {run.failure_reason}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="shrink-0 text-right text-[10px] leading-relaxed text-zinc-400">
+                  <div>{formatDateTime(run.started_at)}</div>
+                  {run.finished_at ? <div>完成 {formatDateTime(run.finished_at)}</div> : null}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="flex min-h-[160px] items-center justify-center rounded-xl border border-dashed border-zinc-200 bg-zinc-50/60 px-4 py-6 text-center text-xs text-zinc-500">
+          暂无运行记录
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ImagePreviewModal({
+  image,
+  onClose,
+}: {
+  image: DownloadableImage;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 p-6"
+      role="dialog"
+      aria-modal="true"
+      aria-label={image.alt}
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-full w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3">
+          <div className="min-w-0 truncate text-sm font-medium text-zinc-800">
+            {image.alt}
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <DownloadLink image={image} />
+            <button
+              type="button"
+              onClick={onClose}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-zinc-200 text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800"
+              aria-label="关闭预览"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+        <div className={`flex min-h-0 flex-1 items-center justify-center p-4 ${IMAGE_PREVIEW_SURFACE_CLASS_NAME}`}>
+          <img
+            src={image.previewUrl}
+            alt={image.alt}
+            className="max-h-[calc(100vh-11rem)] max-w-full object-contain"
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ImagesPanel({
+  product,
+  posters,
+  referenceAssets,
+  artifactCount,
+  selectedReferenceNode,
+  posterSourceAssetIds,
+  onPreviewImage,
+  onFillFromSourceAsset,
+  onFillFromPoster,
+  fillReferenceBusy,
+}: {
+  product: ProductDetail;
+  posters: PosterVariant[];
+  referenceAssets: SourceAsset[];
+  artifactCount: number;
+  selectedReferenceNode: WorkflowNode | null;
+  posterSourceAssetIds: Map<string, string>;
+  onPreviewImage: (image: DownloadableImage) => void;
+  onFillFromSourceAsset: (sourceAssetId: string) => void;
+  onFillFromPoster: (posterId: string) => void;
+  fillReferenceBusy: boolean;
+}) {
+  const canFillReference = Boolean(selectedReferenceNode);
+  return (
+    <section>
+      <div className="mb-3 space-y-1 text-xs text-zinc-500">
+        <div>{artifactCount ? `可下载 ${artifactCount} 张` : "等待生成素材"}</div>
+        {canFillReference ? (
+          <div className="text-blue-600">
+            当前参考图：{selectedReferenceNode?.title || "参考图"}，可点击填充。
+          </div>
+        ) : (
+          <div>选择一个参考图节点后，可把图片填充到该节点。</div>
+        )}
+      </div>
+      {artifactCount ? (
+        <div className="grid grid-cols-2 gap-2">
+          {posters.map((poster) => {
+            const sourceAssetId = posterSourceAssetIds.get(poster.id);
+            return (
+              <PosterThumb
+                key={poster.id}
+                poster={poster}
+                productName={product.name}
+                onPreview={onPreviewImage}
+                onUseAsReference={
+                  canFillReference
+                    ? () => {
+                        if (sourceAssetId) {
+                          onFillFromSourceAsset(sourceAssetId);
+                          return;
+                        }
+                        onFillFromPoster(poster.id);
+                      }
+                    : undefined
+                }
+                useAsReferenceDisabled={!canFillReference}
+                useAsReferenceBusy={fillReferenceBusy}
+              />
+            );
+          })}
+          {referenceAssets.map((asset) => (
+            <SourceAssetThumb
+              key={asset.id}
+              asset={asset}
+              product={product}
+              onPreview={onPreviewImage}
+              onUseAsReference={
+                canFillReference
+                  ? () => onFillFromSourceAsset(asset.id)
+                  : undefined
+              }
+              useAsReferenceDisabled={!canFillReference}
+              useAsReferenceBusy={fillReferenceBusy}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="flex min-h-[160px] items-center justify-center rounded-xl border border-dashed border-zinc-200 bg-zinc-50/60 px-3 py-6 text-center text-xs leading-relaxed text-zinc-500">
+          暂无图片
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1414,11 +1582,6 @@ function WorkflowNodeCard({
     image_generation: ImageIcon,
   }[node.node_type];
   const Icon = icon;
-  const summary = node.failure_reason
-    ? node.failure_reason
-    : typeof node.output_json?.summary === "string"
-      ? node.output_json.summary
-      : nodeIdleSummary(node);
 
   return (
     <div
@@ -1492,9 +1655,11 @@ function WorkflowNodeCard({
             <DownloadLink image={image} variant="overlay" />
           </div>
         ) : null}
-        <div className="line-clamp-2 min-h-[32px] text-xs leading-relaxed text-zinc-500">
-          {summary}
-        </div>
+        {node.failure_reason ? (
+          <div className="line-clamp-2 rounded-lg border border-red-100 bg-red-50 px-2.5 py-1.5 text-xs leading-relaxed text-red-700">
+            {node.failure_reason}
+          </div>
+        ) : null}
       </div>
       <div className="mt-3 flex items-center justify-between text-[10px] text-zinc-400">
         <span>{node.last_run_at ? `最近 ${formatDateTime(node.last_run_at)}` : NODE_LABELS[node.node_type]}</span>
@@ -1566,8 +1731,6 @@ function InspectorPanel({
     image_generation: ImageIcon,
   }[node.node_type];
   const InspectorIcon = icon;
-  const incomingEdges =
-    workflow?.edges.filter((edge) => edge.target_node_id === node.id) ?? [];
   const downstreamReferenceCount =
     node.node_type === "image_generation"
       ? new Set(
@@ -1720,29 +1883,16 @@ function InspectorPanel({
           <ImageGenerationInspector
             draft={draft}
             onDraftChange={onDraftChange}
-            incomingCount={incomingEdges.length}
             downstreamReferenceCount={downstreamReferenceCount}
           />
         ) : null}
       </section>
-
-      <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
-        <div className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-zinc-500">
-          输出
-        </div>
-        {node.failure_reason ? (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs leading-relaxed text-red-700">
-            <AlertCircle size={13} className="mr-1.5 inline" />
-            {node.failure_reason}
-          </div>
-        ) : node.output_json ? (
-          <NodeOutputPreview output={node.output_json} />
-        ) : (
-          <div className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50/80 px-4 py-4 text-center text-xs text-zinc-500">
-            暂无输出
-          </div>
-        )}
-      </section>
+      {node.failure_reason ? (
+        <section className="rounded-2xl border border-red-200 bg-red-50 p-4 text-xs leading-relaxed text-red-700 shadow-sm">
+          <AlertCircle size={13} className="mr-1.5 inline" />
+          {node.failure_reason}
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -2008,21 +2158,19 @@ function CopyNodeInspector({
 function ImageGenerationInspector({
   draft,
   onDraftChange,
-  incomingCount,
   downstreamReferenceCount,
 }: {
   draft: NodeConfigDraft;
   onDraftChange: (draft: NodeConfigDraft) => void;
-  incomingCount: number;
   downstreamReferenceCount: number;
 }) {
   return (
     <div className="space-y-3">
-      <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs leading-5 text-zinc-600">
-        上游 {incomingCount} · 下游参考图 {downstreamReferenceCount || "未连接"}
-        <br />
-        生图卡片只负责触发生成；请至少连到一个参考图卡片，生成结果会显示和下载在参考图卡片上。
-      </div>
+      {downstreamReferenceCount === 0 ? (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+          请先连接一个参考图节点，生成结果会写入该节点。
+        </div>
+      ) : null}
       <TextArea
         label="生图"
         value={draft.instruction}

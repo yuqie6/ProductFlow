@@ -46,19 +46,6 @@ export function statusClass(status: WorkflowNode["status"]): string {
   }[status];
 }
 
-export function nodeIdleSummary(node: WorkflowNode): string {
-  if (node.node_type === "product_context") {
-    return "商品资料";
-  }
-  if (node.node_type === "reference_image") {
-    return "参考图";
-  }
-  if (node.node_type === "copy_generation") {
-    return "文案";
-  }
-  return "可直接生成图片";
-}
-
 export function hasActiveWorkflow(workflow: ProductWorkflow | undefined | null): boolean {
   if (!workflow) {
     return false;
@@ -67,14 +54,6 @@ export function hasActiveWorkflow(workflow: ProductWorkflow | undefined | null):
     workflow.runs.some((run) => run.status === "running") ||
     workflow.nodes.some((node) => node.status === "queued" || node.status === "running")
   );
-}
-
-export function outputCount(output: Record<string, unknown>, key: string): number {
-  const value = output[key];
-  if (Array.isArray(value)) {
-    return value.filter((item) => typeof item === "string" && item.length > 0).length;
-  }
-  return typeof value === "string" && value.length > 0 ? 1 : 0;
 }
 
 export function outputText(
