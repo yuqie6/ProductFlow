@@ -13,6 +13,8 @@ ProductFlow uses three state categories:
 3. URL state: React Router params and navigation.
 
 There is no Redux, Zustand, Jotai, app-wide React context (besides `QueryClientProvider`), or custom event bus.
+The guided onboarding flow is the one current durable browser-local exception: it stores tutorial progress in
+`localStorage` because it is user-assistance state, not server data.
 
 ---
 
@@ -47,6 +49,20 @@ Keep short-lived UI state local to the page that owns the interaction:
 
 Local state should not duplicate server records unless the user is editing a draft. For example, `SettingsPage.tsx` creates
 `drafts` from fetched config so the user can edit before saving; product details themselves remain in TanStack Query.
+
+### Guided onboarding localStorage
+
+`web/src/lib/onboarding.ts` defines the guided-onboarding steps and storage key. `web/src/components/OnboardingGuide.tsx`
+provides the hook, `OnboardingNavButton` entry point, and the product-list-only progress card.
+
+- Use localStorage only for small, non-sensitive, cross-page UI assistance state such as onboarding progress.
+- Do not store admin keys, provider keys, product records, prompts, image URLs, or API responses in localStorage.
+- Dispatch a small browser event after onboarding writes so multiple mounted nav/page cards stay in sync.
+- Only the homepage/product list should render the large onboarding progress card. Operational pages may use the hook for
+  lightweight progress transitions, but must not show onboarding panels that consume product-create, workbench canvas, or
+  image-chat space.
+- Do not persist or derive onboarding route state from a standalone help page. Start/continue/reset affordances live in
+  `OnboardingNavButton` and the product list guide/progress panel.
 
 ---
 

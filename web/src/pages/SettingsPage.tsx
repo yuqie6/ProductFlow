@@ -94,7 +94,7 @@ function ConfigField({ item, value, secretTouched, isResetting, onChange, onRese
             id={item.key}
             value={String(value)}
             onChange={(event) => onChange(event.target.value)}
-            rows={3}
+            rows={item.key.startsWith("prompt_") ? 8 : 3}
             className={`${baseInputClass} resize-y leading-6`}
           />
         ) : item.input_type === "boolean" ? (
@@ -270,6 +270,7 @@ export function SettingsPage() {
               <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">系统配置</h1>
               <p className="mt-1 text-sm text-zinc-500">
                 数据库配置优先生效；未写入数据库的字段继续使用 env/default 值。
+                提示词配置在“提示词”分类，可用占位符见 repo 文档 docs/USER_GUIDE.md。
               </p>
             </div>
             <button

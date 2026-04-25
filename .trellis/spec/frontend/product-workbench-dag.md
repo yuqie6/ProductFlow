@@ -61,9 +61,11 @@
   the UI should treat the returned single `source_asset_ids[0]` / `image_asset_ids[0]` as the node's current image and rely
   on product source-asset/history artifact surfaces for older replaced assets. Do not hide multi-image output only in the
   frontend; the backend contract must replace the node output.
-- `image_generation` output count is represented by downstream graph slots when slots exist: one generated image per
-  connected downstream `reference_image` node. With no downstream slots, the image node still generates one downloadable
-  poster; show downstream reference slots as optional rather than required.
+- `image_generation` is a trigger/config node, not an image-bearing artifact node. It must not render generated-image
+  previews or download links on the image-generation card itself.
+- `image_generation` output count is represented by downstream graph slots: one generated image per connected downstream
+  `reference_image` node. With no downstream slots, backend execution fails with a concise "connect at least one
+  image/reference node" message; the frontend should make that requirement visible in the inspector.
 - Any node with an image asset/output should render a compact preview directly on the node card.
 - Any user-visible product/workbench image preview should provide an explicit `下载` action. Do not rely on browser
   right-click as the only way to retrieve product images.
@@ -91,14 +93,14 @@
 - Deleting a product during active jobs/runs -> show backend detail; do not locally remove it until the API succeeds.
 - Unsupported node config fields stay in `config_json` and are not force-cast to narrower frontend-only types.
 - Image URLs from workflow-created source assets and poster artifacts still go through `api.toApiUrl(...)`.
-- Direct image runs without downstream reference slots should be shown as normal succeeded image output. If an older backend
-  or stale run returns `连接参考图节点`, show that concise error instead of a long explanation.
+- Direct image runs without downstream reference slots should show the backend error near the workflow action/node; do not
+  invent a fallback preview on the image-generation node.
 
 ### 5. Good/Base/Bad Cases
 
 - Good: selecting a node updates the inspector without navigating away from the product detail page.
-- Good: an image-generation node with no downstream reference slot still shows a generated image preview/download on the
-  image node after run.
+- Good: an image-generation node with no downstream reference slot fails clearly and shows no generated image
+  preview/download on the image node.
 - Good: an image-generation node connected to two downstream reference slots visibly fills both slot nodes after run.
 - Base: adding a copy/image/reference branch creates a node, then connects it with an edge through API helpers.
 - Base: after a copy node run succeeds, editing the generated copy updates the inspector draft from product `copy_sets`
@@ -112,8 +114,9 @@
 - Base: deleting a node removes it and its connected edges after the backend response, and a page refresh does not restore
   the node.
 - Base: deleting a product from the product list removes it after API success and a direct detail load returns not found.
-- Base: visible product images, reference-slot images, generated-image node previews, and image-history thumbnails each
-  expose a concise `下载` action that does not select/drag the node or open the preview modal as a side effect.
+- Base: visible product images, filled reference-slot images, and image-history thumbnails each expose a concise `下载`
+  action that does not select/drag the node or open the preview modal as a side effect. Image-generation nodes do not expose
+  generated-image downloads directly.
 - Bad: keeping workflow nodes in local-only state; refresh would lose the DAG and break run history.
 - Bad: treating `runProductWorkflow` pending as `busy` for all canvas interactions; long provider calls would make drag
   and layout feel frozen.
@@ -226,8 +229,9 @@ provider execution.
 - The add-node toolbar must not expose `product_context`; one product context exists per active workflow.
 - Node draft edits debounce-save through `updateWorkflowNode(...)`; run-all and run-selected must flush the selected draft
   before calling `runProductWorkflow(...)`.
-- Image-node inspector copy should say downstream reference slots are optional. Node cards should show status/summary/image
-  preview, not raw coordinates.
+- Image-node inspector copy should say at least one downstream reference slot is required, and generated images will appear
+  on those target slots. Node cards should show status/summary, not raw coordinates or image previews for
+  `image_generation` nodes.
 - Canvas zoom transforms visual coordinates, but pointer hit-testing and drag persistence must convert client coordinates back
   into unscaled workflow coordinates.
 - Canvas zoom controls must be a floating overlay anchored inside the canvas viewport (not a toolbar item in the scrollable
@@ -244,7 +248,7 @@ provider execution.
 - Good: edit image instruction, immediately click run, and backend receives the new instruction.
 - Base: resize inspector/bottom panels, refresh, and see the same local dimensions.
 - Base: scroll the canvas content and the zoom controls stay visually anchored over the canvas viewport.
-- Bad: showing a disabled or warning state that implies a downstream reference slot is required for image generation.
+- Bad: showing generated image preview/download on an `image_generation` node instead of on linked reference slots.
 - Bad: placing zoom controls in the top toolbar or scrollable canvas flow so they move with workflow content.
 
 ### 6. Tests Required

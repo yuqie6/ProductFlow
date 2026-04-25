@@ -103,6 +103,54 @@ If a component starts needing API calls, consider whether it is actually a route
 
 ---
 
+## TopNav Global Navigation Contract
+
+`web/src/components/TopNav.tsx` is the shared authenticated product navigation bar, not just a page title strip.
+
+- Every primary authenticated page should render `TopNav` so the same frequent entries are always available:
+  `商品/工作台`, `连续生图`, and `配置`.
+- The entries link to `/products`, `/image-chat`, and `/settings`; keep route declarations centralized in `web/src/App.tsx`.
+- `TopNav` also exposes the persistent guided-onboarding action through `OnboardingNavButton`. Keep it visually secondary
+  to the centered main nav but large enough to be discoverable.
+- Page components may still pass `breadcrumbs`, `onHome`, and `onLogout`, but should not duplicate these global nav links
+  in a separate header unless that page needs an additional hero call-to-action.
+- `TopNav` may use React Router primitives such as `NavLink` / `useLocation`, but must not fetch session or settings data
+  directly. Session logout remains a page-owned mutation passed in through `onLogout`.
+
+Wrong:
+
+```tsx
+<TopNav breadcrumbs="配置" />
+<button onClick={() => onboarding.start()}>开始引导</button>
+```
+
+Correct:
+
+```tsx
+<TopNav breadcrumbs="配置" onHome={() => navigate("/products")} onLogout={() => logoutMutation.mutate()} />
+```
+
+The shared nav itself exposes the settings/image-chat/product links and the guided-onboarding action; pages only add page-specific actions.
+
+---
+
+## Guided Onboarding Components
+
+`web/src/components/OnboardingGuide.tsx` owns the product-native tutorial UI:
+
+- Store the lightweight progress state in browser localStorage through `web/src/lib/onboarding.ts`; do not persist this
+  user-assistance state in the backend.
+- Do not add a standalone onboarding or documentation route for normal product help. Guided onboarding starts or continues
+  from `OnboardingNavButton`; repo documentation such as `docs/USER_GUIDE.md` remains the reference surface.
+- Show large `OnboardingGuideCard` / progress panels only on the homepage/product list. Operational pages such as
+  product creation, product workbench canvas, and continuous image chat must not render tutorial cards that occupy working
+  space. The nav button may still start/continue/reset onboarding and navigate to the relevant route.
+- The card should always show current step/progress, a next action, and explicit complete/skip/reset controls.
+- Onboarding copy should remain low-jargon and action-oriented: "click this, fill that, expect this result" instead of DAG
+  or provider internals.
+
+---
+
 ## Common Mistakes to Avoid
 
 - Putting server mutations inside shared presentational components.

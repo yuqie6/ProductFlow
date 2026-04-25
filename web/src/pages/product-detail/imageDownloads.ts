@@ -64,7 +64,6 @@ export function getSourceImageDownload(
 export function getNodeImageDownload(
   node: WorkflowNode,
   product: ProductDetail,
-  posters: PosterVariant[],
 ): DownloadableImage | null {
   if (node.node_type === "product_context") {
     return getSourceImageDownload(product);
@@ -83,15 +82,6 @@ export function getNodeImageDownload(
           node.title || "参考图",
           asset.thumbnail_url,
         )
-      : null;
-  }
-  if (node.node_type === "image_generation") {
-    const ids = outputStringArray(node, "poster_variant_ids");
-    const poster = ids
-      .map((id) => posters.find((item) => item.id === id))
-      .find((item): item is PosterVariant => Boolean(item));
-    return poster
-      ? buildPosterDownload(product.name, poster, poster.thumbnail_url)
       : null;
   }
   return null;

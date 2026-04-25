@@ -1039,7 +1039,7 @@ export function ProductDetailPage() {
                         key={node.id}
                         node={node}
                         position={getRenderedNodePosition(node)}
-                        image={getNodeImageDownload(node, product, posters)}
+                        image={getNodeImageDownload(node, product)}
                         selected={node.id === selectedNode?.id}
                         dragging={nodeDrag?.nodeId === node.id}
                         onSelect={() => setSelectedNodeId(node.id)}
@@ -1908,8 +1908,10 @@ function ImageGenerationInspector({
 }) {
   return (
     <div className="space-y-3">
-      <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
-        上游 {incomingCount} · 下游参考图 {downstreamReferenceCount || "可选"}
+      <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs leading-5 text-zinc-600">
+        上游 {incomingCount} · 下游参考图 {downstreamReferenceCount || "未连接"}
+        <br />
+        生图卡片只负责触发生成；请至少连到一个参考图卡片，生成结果会显示和下载在参考图卡片上。
       </div>
       <TextArea
         label="生图"

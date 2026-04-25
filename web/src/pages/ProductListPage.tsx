@@ -5,13 +5,12 @@ import {
   ArrowRight,
   Image as ImageIcon,
   Loader2,
-  MessagesSquare,
   Plus,
-  Settings,
   Trash2,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
+import { OnboardingGuideCard } from "../components/OnboardingGuide";
 import { StatusPill } from "../components/StatusPill";
 import { TopNav } from "../components/TopNav";
 import { api, ApiError } from "../lib/api";
@@ -72,7 +71,10 @@ export function ProductListPage() {
 
   return (
     <div className="flex min-h-screen flex-col bg-zinc-50/50">
-      <TopNav onHome={() => navigate("/products")} onLogout={() => logoutMutation.mutate()} />
+      <TopNav
+        onHome={() => navigate("/products")}
+        onLogout={() => logoutMutation.mutate()}
+      />
 
       <main className="mx-auto flex w-full max-w-6xl flex-1 px-6 py-10">
         <div className="w-full space-y-6">
@@ -94,20 +96,6 @@ export function ProductListPage() {
                   >
                     <Plus size={16} className="mr-1.5" /> 新建商品
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => navigate("/image-chat")}
-                    className="inline-flex items-center rounded-md border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:border-zinc-300 hover:text-zinc-900"
-                  >
-                    <MessagesSquare size={16} className="mr-1.5" /> 连续生图
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => navigate("/settings")}
-                    className="inline-flex items-center rounded-md border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:border-zinc-300 hover:text-zinc-900"
-                  >
-                    <Settings size={16} className="mr-1.5" /> 配置
-                  </button>
                 </div>
               </div>
               <div className="grid grid-cols-3 gap-3 self-end">
@@ -117,6 +105,8 @@ export function ProductListPage() {
               </div>
             </div>
           </section>
+
+          <OnboardingGuideCard page="products" />
 
           <div className="flex items-end justify-between gap-4">
             <div>
