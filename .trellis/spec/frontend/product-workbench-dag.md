@@ -57,6 +57,10 @@
   after success. Show `ApiError.detail` when active jobs/runs block deletion.
 - `reference_image` nodes use `uploadWorkflowNodeImage(...)` for manual uploads and can also be filled by upstream
   `image_generation` nodes.
+- A `reference_image` node is a single current-image slot. When manual upload or upstream `image_generation` fills a slot,
+  the UI should treat the returned single `source_asset_ids[0]` / `image_asset_ids[0]` as the node's current image and rely
+  on product source-asset/history artifact surfaces for older replaced assets. Do not hide multi-image output only in the
+  frontend; the backend contract must replace the node output.
 - `image_generation` output count is represented by downstream graph slots when slots exist: one generated image per
   connected downstream `reference_image` node. With no downstream slots, the image node still generates one downloadable
   poster; show downstream reference slots as optional rather than required.
@@ -215,8 +219,8 @@ provider execution.
 - `api.listProducts({ page, page_size })` drives paginated product lists and returns thumbnail URLs.
 - `api.runProductWorkflow(productId, { start_node_id })` may target an image node whose only required upstream is product
   context.
-- Local UI persistence keys: `productflow.workflow.zoom`, `productflow.workflow.inspectorWidth`, and
-  `productflow.workflow.bottomPanelHeight`.
+- Local UI persistence keys: `productflow.workflow.zoom`, `productflow.workflow.inspectorWidth`,
+  `productflow.workflow.bottomPanelHeight`, and `productflow.workflow.bottomPanelImageRatio`.
 
 ### 3. Contracts
 - The add-node toolbar must not expose `product_context`; one product context exists per active workflow.
@@ -228,6 +232,8 @@ provider execution.
   into unscaled workflow coordinates.
 - Canvas zoom controls must be a floating overlay anchored inside the canvas viewport (not a toolbar item in the scrollable
   canvas content), and must avoid the inspector and bottom-panel resize handles.
+- The bottom panel keeps two independent resize affordances: overall height and the run-history/artifact split ratio.
+  The image/artifact side must have a non-trivial default/minimum width so replaced reference assets remain discoverable.
 
 ### 4. Validation & Error Matrix
 - Autosave error -> show local `ApiError.detail`, keep user draft visible, and allow explicit retry/save.

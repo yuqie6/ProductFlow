@@ -3,8 +3,8 @@ import { Download } from "lucide-react";
 import { api } from "../../lib/api";
 import { formatDateTime } from "../../lib/format";
 import type { DownloadableImage } from "../../lib/image-downloads";
-import type { PosterVariant } from "../../lib/types";
-import { buildPosterDownload } from "./imageDownloads";
+import type { PosterVariant, ProductDetail, SourceAsset } from "../../lib/types";
+import { buildPosterDownload, buildSourceImageDownload } from "./imageDownloads";
 
 export function DownloadLink({
   image,
@@ -62,6 +62,45 @@ export function PosterThumb({
         <span className="min-w-0 truncate">
           {poster.kind === "main_image" ? "主图" : "促销"} ·{" "}
           {formatDateTime(poster.created_at)}
+        </span>
+        <DownloadLink image={image} />
+      </div>
+    </div>
+  );
+}
+
+export function SourceAssetThumb({
+  asset,
+  product,
+}: {
+  asset: SourceAsset;
+  product: ProductDetail;
+}) {
+  const image = buildSourceImageDownload(
+    product,
+    asset,
+    asset.kind === "original_image" ? "主图" : "参考图",
+    asset.thumbnail_url,
+  );
+  return (
+    <div className="group overflow-hidden rounded-md border border-zinc-200 bg-white">
+      <a
+        href={image.previewUrl}
+        target="_blank"
+        rel="noreferrer"
+        className="block"
+      >
+        <div className="flex aspect-square items-center justify-center bg-zinc-100 p-2">
+          <img
+            src={image.previewUrl}
+            alt={image.alt}
+            className="h-full w-full object-contain transition-transform group-hover:scale-[1.02]"
+          />
+        </div>
+      </a>
+      <div className="flex items-center justify-between gap-2 border-t border-zinc-100 px-2 py-1 text-[10px] text-zinc-500">
+        <span className="min-w-0 truncate">
+          参考图 · {formatDateTime(asset.created_at)}
         </span>
         <DownloadLink image={image} />
       </div>

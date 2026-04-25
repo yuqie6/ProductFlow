@@ -1,3 +1,5 @@
+import { CheckCircle2, Image as ImageIcon, Sparkles } from "lucide-react";
+
 import { outputCount, outputText } from "./utils";
 
 export function NodeOutputPreview({ output }: { output: Record<string, unknown> }) {
@@ -24,25 +26,41 @@ export function NodeOutputPreview({ output }: { output: Record<string, unknown> 
   ].filter((item): item is string => Boolean(item));
 
   return (
-    <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
-      <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
-        输出
-      </div>
-      {typeof output.summary === "string" ? (
-        <div className="mb-2 text-xs text-zinc-700">{output.summary}</div>
-      ) : null}
-      {facts.length ? (
-        <div className="flex flex-wrap gap-1.5">
-          {facts.map((item) => (
-            <span
-              key={item}
-              className="rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[10px] text-zinc-500"
-            >
-              {item}
-            </span>
-          ))}
+    <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
+      <div className="flex items-center justify-between border-b border-zinc-100 bg-zinc-50/80 px-3 py-2">
+        <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-widest text-zinc-500">
+          <Sparkles size={13} className="text-zinc-400" />
+          输出摘要
         </div>
-      ) : null}
+        <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
+          <CheckCircle2 size={11} className="mr-1" />
+          已生成
+        </span>
+      </div>
+      <div className="space-y-3 p-3">
+        {typeof output.summary === "string" ? (
+          <div className="rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2 text-xs leading-relaxed text-zinc-700">
+            {output.summary}
+          </div>
+        ) : null}
+        {facts.length ? (
+          <div className="flex flex-wrap gap-1.5">
+            {facts.map((item) => (
+              <span
+                key={item}
+                className="inline-flex items-center rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-[10px] font-medium text-zinc-600 shadow-sm"
+              >
+                <ImageIcon size={11} className="mr-1 text-zinc-400" />
+                {item}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <div className="text-xs text-zinc-500">
+            已有输出，可在相关节点和底部图片区查看可下载素材。
+          </div>
+        )}
+      </div>
     </div>
   );
 }

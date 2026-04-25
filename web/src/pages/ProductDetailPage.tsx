@@ -3,11 +3,14 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
+  CheckCircle2,
   CircleDot,
+  Clock3,
   FileText,
   GitBranch,
   Image as ImageIcon,
   ImagePlus,
+  Layers3,
   Loader2,
   Play,
   Plus,
@@ -17,6 +20,7 @@ import {
   ZoomIn,
   ZoomOut,
   Upload,
+  XCircle,
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 
@@ -27,6 +31,7 @@ import type {
   ProductDetail,
   ProductWorkflow,
   WorkflowNode,
+  WorkflowRunStatus,
   WorkflowNodeType,
 } from "../lib/types";
 import {
@@ -44,7 +49,7 @@ import {
   NODE_STATUS_LABELS,
   NODE_WIDTH,
 } from "./product-detail/constants";
-import { DownloadLink, PosterThumb } from "./product-detail/ImageDownloadComponents";
+import { DownloadLink, PosterThumb, SourceAssetThumb } from "./product-detail/ImageDownloadComponents";
 import { NodeOutputPreview } from "./product-detail/NodeOutputPreview";
 import { getNodeImageDownload, getSourceImageDownload } from "./product-detail/imageDownloads";
 import type { CanvasPoint, ConnectionDragState, NodeConfigDraft, NodeDragState } from "./product-detail/types";
@@ -64,6 +69,46 @@ import {
 } from "./product-detail/workflowConfig";
 import type { DownloadableImage } from "../lib/image-downloads";
 
+type SaveStatus = "idle" | "saving" | "saved" | "failed";
+
+const RUN_STATUS_LABELS: Record<WorkflowRunStatus, string> = {
+  running: "运行中",
+  succeeded: "成功",
+  failed: "失败",
+};
+
+const RUN_STATUS_CLASS_NAMES: Record<WorkflowRunStatus, string> = {
+  running: "border-blue-200 bg-blue-50 text-blue-700",
+  succeeded: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  failed: "border-red-200 bg-red-50 text-red-700",
+};
+
+const RUN_STATUS_DOT_CLASS_NAMES: Record<WorkflowRunStatus, string> = {
+  running: "bg-blue-500 shadow-blue-500/30",
+  succeeded: "bg-emerald-500 shadow-emerald-500/30",
+  failed: "bg-red-500 shadow-red-500/30",
+};
+
+const SAVE_STATUS_LABELS: Record<SaveStatus, string> = {
+  idle: "自动保存",
+  saving: "保存中",
+  saved: "已保存",
+  failed: "保存失败",
+};
+
+const SAVE_STATUS_CLASS_NAMES: Record<SaveStatus, string> = {
+  idle: "border-zinc-200 bg-zinc-50 text-zinc-500",
+  saving: "border-blue-200 bg-blue-50 text-blue-700",
+  saved: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  failed: "border-red-200 bg-red-50 text-red-700",
+};
+
+const IMAGE_PREVIEW_SURFACE_CLASS_NAME =
+  "bg-[linear-gradient(135deg,#fafafa_25%,#f4f4f5_25%,#f4f4f5_50%,#fafafa_50%,#fafafa_75%,#f4f4f5_75%,#f4f4f5_100%)] bg-[length:16px_16px]";
+const BOTTOM_IMAGE_RATIO_STORAGE_KEY = "productflow.workflow.bottomPanelImageRatio";
+const MIN_BOTTOM_IMAGE_RATIO = 0.28;
+const MAX_BOTTOM_IMAGE_RATIO = 0.55;
+
 export function ProductDetailPage() {
   const { productId = "" } = useParams();
   const navigate = useNavigate();
@@ -71,6 +116,7 @@ export function ProductDetailPage() {
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const nodeDragRafRef = useRef<number | null>(null);
   const pendingNodeDragRef = useRef<CanvasPoint | null>(null);
+  const previousBodyUserSelectRef = useRef<string | null>(null);
   const wasWorkflowActiveRef = useRef(false);
   const draftVersionRef = useRef(0);
   const previousDraftNodeIdRef = useRef<string | null>(null);
@@ -85,7 +131,7 @@ export function ProductDetailPage() {
     draftFromNode(null),
   );
   const [draftDirty, setDraftDirty] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "failed">("idle");
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [zoom, setZoom] = useState(() => clamp(readStoredNumber("productflow.workflow.zoom", 1), MIN_ZOOM, MAX_ZOOM));
   const [inspectorWidth, setInspectorWidth] = useState(() =>
     clamp(readStoredNumber("productflow.workflow.inspectorWidth", 360), MIN_INSPECTOR_WIDTH, MAX_INSPECTOR_WIDTH),
@@ -95,6 +141,13 @@ export function ProductDetailPage() {
       readStoredNumber("productflow.workflow.bottomPanelHeight", 224),
       MIN_BOTTOM_PANEL_HEIGHT,
       MAX_BOTTOM_PANEL_HEIGHT,
+    ),
+  );
+  const [bottomImageRatio, setBottomImageRatio] = useState(() =>
+    clamp(
+      readStoredNumber(BOTTOM_IMAGE_RATIO_STORAGE_KEY, 0.38),
+      MIN_BOTTOM_IMAGE_RATIO,
+      MAX_BOTTOM_IMAGE_RATIO,
     ),
   );
   const [error, setError] = useState("");
@@ -161,8 +214,24 @@ export function ProductDetailPage() {
       if (nodeDragRafRef.current !== null) {
         window.cancelAnimationFrame(nodeDragRafRef.current);
       }
+      restoreBodyUserSelect();
     };
   }, []);
+
+  const disableBodyUserSelect = () => {
+    if (previousBodyUserSelectRef.current === null) {
+      previousBodyUserSelectRef.current = document.body.style.userSelect;
+    }
+    document.body.style.userSelect = "none";
+  };
+
+  const restoreBodyUserSelect = () => {
+    if (previousBodyUserSelectRef.current === null) {
+      return;
+    }
+    document.body.style.userSelect = previousBodyUserSelectRef.current;
+    previousBodyUserSelectRef.current = null;
+  };
 
   const refreshProductArtifacts = async () => {
     await queryClient.invalidateQueries({ queryKey: ["product", productId] });
@@ -546,6 +615,7 @@ export function ProductDetailPage() {
 
   const startInspectorResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
+    disableBodyUserSelect();
     const startX = event.clientX;
     const startWidth = inspectorWidth;
     const onMove = (moveEvent: PointerEvent) => {
@@ -556,13 +626,17 @@ export function ProductDetailPage() {
     const onUp = () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      restoreBodyUserSelect();
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
   };
 
   const startBottomResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
+    disableBodyUserSelect();
     const startY = event.clientY;
     const startHeight = bottomPanelHeight;
     const onMove = (moveEvent: PointerEvent) => {
@@ -573,9 +647,42 @@ export function ProductDetailPage() {
     const onUp = () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      restoreBodyUserSelect();
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  };
+
+  const startBottomSplitResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    disableBodyUserSelect();
+    const panelWidth = event.currentTarget.parentElement?.getBoundingClientRect().width ?? 0;
+    if (!panelWidth) {
+      restoreBodyUserSelect();
+      return;
+    }
+    const startX = event.clientX;
+    const startRatio = bottomImageRatio;
+    const onMove = (moveEvent: PointerEvent) => {
+      const next = clamp(
+        startRatio - (moveEvent.clientX - startX) / panelWidth,
+        MIN_BOTTOM_IMAGE_RATIO,
+        MAX_BOTTOM_IMAGE_RATIO,
+      );
+      setBottomImageRatio(next);
+      window.localStorage.setItem(BOTTOM_IMAGE_RATIO_STORAGE_KEY, String(next));
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      restoreBodyUserSelect();
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
   };
 
   const layoutMutationBusy =
@@ -589,7 +696,7 @@ export function ProductDetailPage() {
     updateNodeCopyMutation.isPending;
   const structureBusy = layoutMutationBusy || workflowActive;
   const runBusy = runWorkflowMutation.isPending || workflowActive;
-  const dragBusy = layoutMutationBusy;
+  const dragBusy = updateNodePositionMutation.isPending;
 
   const startNodeDrag = (
     node: WorkflowNode,
@@ -607,6 +714,7 @@ export function ProductDetailPage() {
     }
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
+    disableBodyUserSelect();
     const point = getCanvasPoint(event.clientX, event.clientY);
     setSelectedNodeId(node.id);
     const renderedPosition = getRenderedNodePosition(node);
@@ -647,11 +755,32 @@ export function ProductDetailPage() {
     });
   };
 
+  const cancelNodeDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (nodeDrag && nodeDrag.pointerId !== event.pointerId) {
+      return;
+    }
+    event.preventDefault();
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    restoreBodyUserSelect();
+    pendingNodeDragRef.current = null;
+    if (nodeDragRafRef.current !== null) {
+      window.cancelAnimationFrame(nodeDragRafRef.current);
+      nodeDragRafRef.current = null;
+    }
+    setNodeDrag(null);
+  };
+
   const endNodeDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!nodeDrag || nodeDrag.pointerId !== event.pointerId) {
       return;
     }
     event.preventDefault();
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    restoreBodyUserSelect();
     pendingNodeDragRef.current = null;
     if (nodeDragRafRef.current !== null) {
       window.cancelAnimationFrame(nodeDragRafRef.current);
@@ -791,6 +920,10 @@ export function ProductDetailPage() {
     connectionDrag ? connectionDrag.to.y + 120 : 0,
   );
   const posters = historyQuery.data?.poster_variants ?? product.poster_variants;
+  const referenceAssets = [...product.source_assets]
+    .filter((asset) => asset.kind === "reference_image")
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  const artifactCount = posters.length + referenceAssets.length;
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-white text-sm text-zinc-900">
@@ -929,10 +1062,12 @@ export function ProductDetailPage() {
                         position={getRenderedNodePosition(node)}
                         image={getNodeImageDownload(node, product, posters)}
                         selected={node.id === selectedNode?.id}
+                        dragging={nodeDrag?.nodeId === node.id}
                         onSelect={() => setSelectedNodeId(node.id)}
                         onStartDrag={(event) => startNodeDrag(node, event)}
                         onMoveDrag={moveNodeDrag}
                         onEndDrag={endNodeDrag}
+                        onCancelDrag={cancelNodeDrag}
                         onStartConnection={(event) =>
                           startConnectionDrag(node, event)
                         }
@@ -1027,8 +1162,11 @@ export function ProductDetailPage() {
         </div>
 
         <div
-          className="relative z-20 grid shrink-0 grid-cols-[1fr_420px] border-t border-zinc-200 bg-white"
-          style={{ height: bottomPanelHeight }}
+          className="relative z-20 grid shrink-0 border-t border-zinc-200 bg-white/95 shadow-[0_-10px_30px_-26px_rgba(0,0,0,0.45)] backdrop-blur"
+          style={{
+            height: bottomPanelHeight,
+            gridTemplateColumns: `minmax(320px, ${1 - bottomImageRatio}fr) 10px minmax(300px, ${bottomImageRatio}fr)`,
+          }}
         >
           <div
             role="separator"
@@ -1038,68 +1176,101 @@ export function ProductDetailPage() {
           />
           <section className="min-w-0 overflow-y-auto p-4">
             <div className="mb-3 flex items-center justify-between">
-              <div className="flex items-center text-[11px] font-semibold uppercase tracking-widest text-zinc-500">
-                <CircleDot size={13} className="mr-2" /> 运行记录
+              <div>
+                <div className="flex items-center text-[11px] font-semibold uppercase tracking-widest text-zinc-500">
+                  <CircleDot size={13} className="mr-2 text-zinc-400" /> 运行记录
+                </div>
+                <div className="mt-1 text-xs text-zinc-500">
+                  {workflow?.runs.length ? `共 ${workflow.runs.length} 次运行` : "暂无运行历史"}
+                </div>
               </div>
               {latestRun ? (
-                <div className="text-[11px] text-zinc-400">
-                  最近：{formatDateTime(latestRun.started_at)}
+                <div className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-[11px] text-zinc-500">
+                  最近 {formatDateTime(latestRun.started_at)}
                 </div>
               ) : null}
             </div>
             {workflow?.runs.length ? (
-              <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-2">
                 {workflow.runs.map((run) => (
                   <div
                     key={run.id}
-                    className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs"
+                    className="rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-xs shadow-sm"
                   >
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium text-zinc-700">
-                        {run.status === "succeeded"
-                          ? "成功"
-                          : run.status === "failed"
-                            ? "失败"
-                            : "运行中"}
-                      </span>
-                      <span className="text-[10px] text-zinc-400">
-                        {formatDateTime(run.started_at)}
-                      </span>
-                    </div>
-                    <div className="mt-1 text-zinc-500">
-                      节点记录 {run.node_runs.length} 条
-                    </div>
-                    {run.failure_reason ? (
-                      <div className="mt-1 text-red-600">
-                        {run.failure_reason}
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex min-w-0 items-start gap-3">
+                        <span
+                          className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full shadow-md ${RUN_STATUS_DOT_CLASS_NAMES[run.status]}`}
+                        />
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span
+                              className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${RUN_STATUS_CLASS_NAMES[run.status]}`}
+                            >
+                              {RUN_STATUS_LABELS[run.status]}
+                            </span>
+                            <span className="inline-flex items-center text-[11px] text-zinc-500">
+                              <Layers3 size={12} className="mr-1 text-zinc-400" />
+                              节点记录 {run.node_runs.length}
+                            </span>
+                          </div>
+                          {run.failure_reason ? (
+                            <div className="mt-2 line-clamp-2 rounded-lg border border-red-100 bg-red-50 px-2.5 py-1.5 text-red-700">
+                              {run.failure_reason}
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
-                    ) : null}
+                      <div className="shrink-0 text-right text-[10px] leading-relaxed text-zinc-400">
+                        <div>{formatDateTime(run.started_at)}</div>
+                        {run.finished_at ? <div>完成 {formatDateTime(run.finished_at)}</div> : null}
+                      </div>
+                    </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="rounded-md border border-dashed border-zinc-200 px-4 py-6 text-center text-xs text-zinc-500">
-                暂无记录
+              <div className="flex h-[calc(100%-44px)] min-h-[96px] items-center justify-center rounded-xl border border-dashed border-zinc-200 bg-zinc-50/60 px-4 py-6 text-center text-xs text-zinc-500">
+                暂无运行记录
               </div>
             )}
           </section>
 
-          <section className="overflow-y-auto border-l border-zinc-200 p-4">
-            <div className="mb-3 flex items-center text-[11px] font-semibold uppercase tracking-widest text-zinc-500">
-              <ImageIcon size={13} className="mr-2" /> 图片
+          <div
+            role="separator"
+            aria-label="调整运行记录和图片区宽度"
+            onPointerDown={startBottomSplitResize}
+            className="relative cursor-col-resize border-x border-zinc-200 bg-zinc-100/70 hover:bg-zinc-200"
+          >
+            <div className="absolute left-1/2 top-1/2 h-9 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-zinc-300" />
+          </div>
+
+          <section className="overflow-y-auto bg-zinc-50/40 p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <div className="flex items-center text-[11px] font-semibold uppercase tracking-widest text-zinc-500">
+                  <ImageIcon size={13} className="mr-2 text-zinc-400" /> 图片
+                </div>
+                <div className="mt-1 text-xs text-zinc-500">
+                  {artifactCount ? `可下载 ${artifactCount} 张` : "等待生成素材"}
+                </div>
+              </div>
             </div>
-            {posters.length ? (
+            {artifactCount ? (
               <div className="grid grid-cols-3 gap-2">
-                {posters.slice(0, 9).map((poster) => (
+                {posters.map((poster) => (
                   <PosterThumb
                     key={poster.id}
                     poster={poster}
                     productName={product.name}
                   />
                 ))}
+                {referenceAssets.map((asset) => (
+                  <SourceAssetThumb key={asset.id} asset={asset} product={product} />
+                ))}
               </div>
             ) : (
-              <div className="rounded-md border border-dashed border-zinc-200 px-3 py-6 text-center text-xs text-zinc-500">
+              <div className="flex h-[calc(100%-44px)] min-h-[96px] items-center justify-center rounded-xl border border-dashed border-zinc-200 bg-white px-3 py-6 text-center text-xs leading-relaxed text-zinc-500">
                 暂无图片
               </div>
             )}
@@ -1115,10 +1286,12 @@ function WorkflowNodeCard({
   position,
   image,
   selected,
+  dragging,
   onSelect,
   onStartDrag,
   onMoveDrag,
   onEndDrag,
+  onCancelDrag,
   onStartConnection,
   onMoveConnection,
   onEndConnection,
@@ -1131,10 +1304,12 @@ function WorkflowNodeCard({
   position: CanvasPoint;
   image: DownloadableImage | null;
   selected: boolean;
+  dragging: boolean;
   onSelect: () => void;
   onStartDrag: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onMoveDrag: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onEndDrag: (event: ReactPointerEvent<HTMLDivElement>) => void;
+  onCancelDrag: (event: ReactPointerEvent<HTMLDivElement>) => void;
   onStartConnection: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   onMoveConnection: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   onEndConnection: (event: ReactPointerEvent<HTMLButtonElement>) => void;
@@ -1159,8 +1334,10 @@ function WorkflowNodeCard({
   return (
     <div
       data-workflow-node-id={node.id}
-      className={`absolute w-[248px] touch-none rounded-xl border bg-white p-3 text-left shadow-sm transition-shadow hover:shadow-md ${
-        selected ? "border-zinc-900 ring-2 ring-zinc-900/10" : "border-zinc-200"
+      className={`absolute w-[248px] touch-none select-none rounded-2xl border bg-white p-3 text-left shadow-sm ${
+        dragging ? "cursor-grabbing" : "transition-[border-color,box-shadow] hover:shadow-md"
+      } ${
+        selected ? "border-zinc-900 shadow-lg shadow-zinc-900/5 ring-2 ring-zinc-900/10" : "border-zinc-200"
       }`}
       style={{
         left: 0,
@@ -1170,7 +1347,8 @@ function WorkflowNodeCard({
       onPointerDown={onStartDrag}
       onPointerMove={onMoveDrag}
       onPointerUp={onEndDrag}
-      onPointerCancel={onEndDrag}
+      onPointerCancel={onCancelDrag}
+      onLostPointerCapture={onCancelDrag}
     >
       <button
         type="button"
@@ -1195,7 +1373,7 @@ function WorkflowNodeCard({
       <div onClick={onSelect} className="cursor-grab active:cursor-grabbing">
         <div className="mb-3 flex items-start justify-between gap-2">
           <div className="flex min-w-0 gap-2">
-            <span className="mt-0.5 rounded-md border border-zinc-200 bg-zinc-50 p-1.5 text-zinc-500">
+            <span className="mt-0.5 rounded-lg border border-zinc-200 bg-zinc-50 p-1.5 text-zinc-500">
               <Icon size={14} />
             </span>
             <div className="min-w-0">
@@ -1214,11 +1392,13 @@ function WorkflowNodeCard({
           </span>
         </div>
         {image ? (
-          <div className="relative mb-2 h-24 overflow-hidden rounded-md border border-zinc-100 bg-zinc-100">
+          <div
+            className={`relative mb-2 flex h-28 items-center justify-center overflow-hidden rounded-xl border border-zinc-100 p-2 ${IMAGE_PREVIEW_SURFACE_CLASS_NAME}`}
+          >
             <img
               src={image.previewUrl}
               alt={image.alt}
-              className="h-full w-full object-cover"
+              className="h-full w-full object-contain"
             />
             <DownloadLink image={image} variant="overlay" />
           </div>
@@ -1288,8 +1468,15 @@ function InspectorPanel({
   onDelete: () => void;
   busy: boolean;
   runBusy: boolean;
-  saveStatus: "idle" | "saving" | "saved" | "failed";
+  saveStatus: SaveStatus;
 }) {
+  const icon = {
+    product_context: FileText,
+    reference_image: ImagePlus,
+    copy_generation: FileText,
+    image_generation: ImageIcon,
+  }[node.node_type];
+  const InspectorIcon = icon;
   const incomingEdges =
     workflow?.edges.filter((edge) => edge.target_node_id === node.id) ?? [];
   const downstreamReferenceCount =
@@ -1308,116 +1495,165 @@ function InspectorPanel({
             .map((edge) => edge.target_node_id) ?? [],
         ).size
       : 0;
+  const hasReferenceImage = Boolean(
+    node.node_type === "reference_image" &&
+      Array.isArray(node.output_json?.source_asset_ids) &&
+      node.output_json.source_asset_ids.length,
+  );
 
   return (
-    <div className="space-y-5">
-      <div>
-        <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
-          节点类型
+    <div className="space-y-3">
+      <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+        <div className="flex items-start gap-3">
+          <span className="rounded-xl border border-zinc-200 bg-zinc-50 p-2 text-zinc-500">
+            <InspectorIcon size={16} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-base font-semibold text-zinc-950">
+              {draft.title || node.title}
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+              <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-600">
+                {NODE_LABELS[node.node_type]}
+              </span>
+              <span
+                className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${statusClass(node.status)}`}
+              >
+                {node.status === "running" || node.status === "queued" ? (
+                  <Loader2 size={11} className="mr-1 animate-spin" />
+                ) : node.status === "failed" ? (
+                  <XCircle size={11} className="mr-1" />
+                ) : node.status === "succeeded" ? (
+                  <CheckCircle2 size={11} className="mr-1" />
+                ) : (
+                  <Clock3 size={11} className="mr-1" />
+                )}
+                {NODE_STATUS_LABELS[node.status]}
+              </span>
+              <span
+                className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${SAVE_STATUS_CLASS_NAMES[saveStatus]}`}
+              >
+                {saveStatus === "saving" ? (
+                  <Loader2 size={11} className="mr-1 animate-spin" />
+                ) : saveStatus === "saved" ? (
+                  <CheckCircle2 size={11} className="mr-1" />
+                ) : saveStatus === "failed" ? (
+                  <XCircle size={11} className="mr-1" />
+                ) : null}
+                {SAVE_STATUS_LABELS[saveStatus]}
+              </span>
+            </div>
+            {node.last_run_at ? (
+              <div className="mt-2 text-[11px] text-zinc-400">
+                最近 {formatDateTime(node.last_run_at)}
+              </div>
+            ) : null}
+          </div>
         </div>
-        <div className="text-sm font-semibold text-zinc-900">
-          {NODE_LABELS[node.node_type]}
-        </div>
-        <div className="mt-1 text-xs text-zinc-500">
-          状态：{NODE_STATUS_LABELS[node.status]} · {saveStatus === "saving" ? "保存中" : saveStatus === "saved" ? "已保存" : saveStatus === "failed" ? "保存失败" : "自动保存"}
-        </div>
-      </div>
 
-      <div>
-        <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
-          节点名称
+        <div className="mt-4 grid grid-cols-3 gap-2">
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={busy}
+            className="inline-flex items-center justify-center rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
+          >
+            <Save size={13} className="mr-1.5" /> 保存
+          </button>
+          <button
+            type="button"
+            onClick={onRun}
+            disabled={runBusy}
+            className="inline-flex items-center justify-center rounded-lg bg-zinc-900 px-3 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+          >
+            {runBusy ? (
+              <Loader2 size={13} className="mr-1.5 animate-spin" />
+            ) : (
+              <Play size={13} className="mr-1.5" />
+            )}
+            运行
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            disabled={busy}
+            className="inline-flex items-center justify-center rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+          >
+            <Trash2 size={13} className="mr-1.5" /> 删除
+          </button>
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+        <div className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-zinc-500">
+          配置
+        </div>
+        <label className="mb-3 block">
+          <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
+            节点名称
+          </span>
+          <input
+            value={draft.title}
+            onChange={(event) =>
+              onDraftChange({ ...draft, title: event.target.value })
+            }
+            className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900"
+          />
         </label>
-        <input
-          value={draft.title}
-          onChange={(event) =>
-            onDraftChange({ ...draft, title: event.target.value })
-          }
-          className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900"
-        />
-      </div>
 
-      {node.node_type === "product_context" ? (
-        <ProductContextInspector
-          product={product}
-          sourceImage={sourceImage}
-          draft={draft}
-          onDraftChange={onDraftChange}
-        />
-      ) : null}
-      {node.node_type === "reference_image" ? (
-        <ReferenceImageInspector
-          draft={draft}
-          onDraftChange={onDraftChange}
-          onUploadImage={onUploadImage}
-          busy={busy}
-        />
-      ) : null}
-      {node.node_type === "copy_generation" ? (
-        <CopyNodeInspector
-          node={node}
-          draft={draft}
-          onDraftChange={onDraftChange}
-          onSaveCopy={onSaveCopy}
-          busy={busy}
-        />
-      ) : null}
-      {node.node_type === "image_generation" ? (
-        <ImageGenerationInspector
-          draft={draft}
-          onDraftChange={onDraftChange}
-          incomingCount={incomingEdges.length}
-          downstreamReferenceCount={downstreamReferenceCount}
-        />
-      ) : null}
-      <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
-        <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
-          连接
-        </div>
-        <div className="text-xs leading-relaxed text-zinc-500">
-          上游 {incomingEdges.length} · 拖拽连接 · 生图可不接参考图直接产出图片
-        </div>
-      </div>
+        {node.node_type === "product_context" ? (
+          <ProductContextInspector
+            product={product}
+            sourceImage={sourceImage}
+            draft={draft}
+            onDraftChange={onDraftChange}
+          />
+        ) : null}
+        {node.node_type === "reference_image" ? (
+          <ReferenceImageInspector
+            draft={draft}
+            onDraftChange={onDraftChange}
+            onUploadImage={onUploadImage}
+            busy={busy}
+            hasImage={hasReferenceImage}
+          />
+        ) : null}
+        {node.node_type === "copy_generation" ? (
+          <CopyNodeInspector
+            node={node}
+            draft={draft}
+            onDraftChange={onDraftChange}
+            onSaveCopy={onSaveCopy}
+            busy={busy}
+          />
+        ) : null}
+        {node.node_type === "image_generation" ? (
+          <ImageGenerationInspector
+            draft={draft}
+            onDraftChange={onDraftChange}
+            incomingCount={incomingEdges.length}
+            downstreamReferenceCount={downstreamReferenceCount}
+          />
+        ) : null}
+      </section>
 
-      <div className="grid grid-cols-2 gap-2">
-        <button
-          type="button"
-          onClick={onSave}
-          disabled={busy}
-          className="inline-flex items-center justify-center rounded-md border border-zinc-300 bg-white px-3 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
-        >
-          <Save size={13} className="mr-1.5" /> 保存
-        </button>
-        <button
-          type="button"
-          onClick={onRun}
-          disabled={runBusy}
-          className="inline-flex items-center justify-center rounded-md bg-zinc-900 px-3 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
-        >
-          {runBusy ? (
-            <Loader2 size={13} className="mr-1.5 animate-spin" />
-          ) : (
-            <Play size={13} className="mr-1.5" />
-          )}
-          运行
-        </button>
-      </div>
-      <button
-        type="button"
-        onClick={onDelete}
-        disabled={busy}
-        className="inline-flex w-full items-center justify-center rounded-md border border-red-200 bg-white px-3 py-2 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
-      >
-        <Trash2 size={13} className="mr-1.5" /> 删除节点
-      </button>
-
-      {node.failure_reason ? (
-        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-          {node.failure_reason}
+      <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+        <div className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-zinc-500">
+          输出
         </div>
-      ) : null}
-      {node.output_json ? (
-        <NodeOutputPreview output={node.output_json} />
-      ) : null}
+        {node.failure_reason ? (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs leading-relaxed text-red-700">
+            <AlertCircle size={13} className="mr-1.5 inline" />
+            {node.failure_reason}
+          </div>
+        ) : node.output_json ? (
+          <NodeOutputPreview output={node.output_json} />
+        ) : (
+          <div className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50/80 px-4 py-4 text-center text-xs text-zinc-500">
+            暂无输出
+          </div>
+        )}
+      </section>
     </div>
   );
 }
@@ -1435,17 +1671,21 @@ function ProductContextInspector({
 }) {
   return (
     <div className="space-y-3">
-      <div className="relative aspect-video overflow-hidden rounded-md border border-zinc-200 bg-zinc-100">
+      <div
+        className={`relative flex h-40 items-center justify-center overflow-hidden rounded-xl border border-zinc-200 p-2 ${IMAGE_PREVIEW_SURFACE_CLASS_NAME}`}
+      >
         {sourceImage ? (
           <>
             <img
               src={sourceImage.previewUrl}
               alt={sourceImage.alt}
-              className="h-full w-full object-cover"
+              className="h-full w-full object-contain"
             />
             <DownloadLink image={sourceImage} variant="overlay" />
           </>
-        ) : null}
+        ) : (
+          <div className="text-xs text-zinc-400">暂无商品源图</div>
+        )}
       </div>
       <label className="block">
         <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
@@ -1504,11 +1744,13 @@ function ReferenceImageInspector({
   onDraftChange,
   onUploadImage,
   busy,
+  hasImage,
 }: {
   draft: NodeConfigDraft;
   onDraftChange: (draft: NodeConfigDraft) => void;
   onUploadImage: (file: File) => void;
   busy: boolean;
+  hasImage: boolean;
 }) {
   return (
     <div className="space-y-3">
@@ -1541,7 +1783,7 @@ function ReferenceImageInspector({
         </select>
       </label>
       <label className="flex cursor-pointer items-center justify-center rounded-md border border-dashed border-zinc-300 px-3 py-6 text-xs font-medium text-zinc-600 hover:bg-zinc-50">
-        <Upload size={14} className="mr-2" /> 上传
+        <Upload size={14} className="mr-2" /> {hasImage ? "替换图片" : "上传图片"}
         <input
           type="file"
           accept="image/png,image/jpeg,image/webp"
