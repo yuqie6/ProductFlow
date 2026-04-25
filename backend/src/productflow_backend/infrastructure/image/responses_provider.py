@@ -189,6 +189,7 @@ class OpenAIResponsesImageProvider(ImageProvider):
         self.main_image_size = settings.image_main_image_size
         self.promo_poster_size = settings.image_promo_poster_size
         self.poster_image_template = settings.prompt_poster_image_template
+        self.poster_image_edit_template = settings.prompt_poster_image_edit_template
         self.client = OpenAIResponsesImageClient()
 
     def generate_poster_image(
@@ -250,22 +251,11 @@ class OpenAIResponsesImageProvider(ImageProvider):
         kind: PosterKind,
         size: str,
     ) -> str:
-        if kind == PosterKind.MAIN_IMAGE:
-            kind_requirements = "\n".join(
-                [
-                    "画面要求：1:1 电商主图，主体居中，背景干净，信息明确，可直接用于商品主图。",
-                    "风格要求：白底或浅底，突出商品与卖点角标，整体简洁。",
-                ]
-            )
-        else:
-            kind_requirements = "\n".join(
-                [
-                    "画面要求：3:4 促销海报，层次明显，有强主标题、促销氛围和商品展示区。",
-                    "风格要求：更强视觉冲击，适合活动推广页或投放素材。",
-                ]
-            )
+        copy_mode = poster.copy_prompt_mode == "copy"
+        template = self.poster_image_template if copy_mode else self.poster_image_edit_template
+        kind_requirements = self._build_kind_requirements(kind, copy_mode=copy_mode)
         return render_prompt_template(
-            self.poster_image_template,
+            template,
             {
                 "product_name": poster.product_name,
                 "category": poster.category or "未提供",
@@ -281,4 +271,34 @@ class OpenAIResponsesImageProvider(ImageProvider):
                 "kind_label": "主图" if kind == PosterKind.MAIN_IMAGE else "促销海报",
                 "kind_requirements": kind_requirements,
             },
+        )
+
+    def _build_kind_requirements(self, kind: PosterKind, *, copy_mode: bool) -> str:
+        if copy_mode:
+            if kind == PosterKind.MAIN_IMAGE:
+                return "\n".join(
+                    [
+                        "画面要求：1:1 电商主图，主体居中，背景干净，信息明确，可直接用于商品主图。",
+                        "风格要求：白底或浅底，突出商品与卖点角标，整体简洁。",
+                    ]
+                )
+            return "\n".join(
+                [
+                    "画面要求：3:4 促销海报，层次明显，有强主标题、促销氛围和商品展示区。",
+                    "风格要求：更强视觉冲击，适合活动推广页或投放素材。",
+                ]
+            )
+
+        if kind == PosterKind.MAIN_IMAGE:
+            return "\n".join(
+                [
+                    "画面要求：1:1 商品图片改图，保持主体可信，按本轮要求调整背景、光线、构图或局部细节。",
+                    "风格要求：干净自然，不主动添加卖点角标、主标题、CTA 或价格标签。",
+                ]
+            )
+        return "\n".join(
+            [
+                "画面要求：3:4 商品视觉延展图，保留主体和参考图风格，增强氛围与层次。",
+                "风格要求：适合继续投放/陈列，但不强制出现营销文案、价格、按钮或标题区。",
+            ]
         )

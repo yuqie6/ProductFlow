@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
@@ -91,8 +91,9 @@ class ReferenceImageInput(BaseModel):
 
 
 class PosterGenerationInput(BaseModel):
-    """海报生成入参：聚合商品信息与已确认文案。"""
+    """海报/改图生成入参：聚合商品、可选文案与图片上下文。"""
 
+    copy_prompt_mode: Literal["copy", "image_edit"] = "copy"
     product_name: str
     category: str | None = None
     price: str | None = None

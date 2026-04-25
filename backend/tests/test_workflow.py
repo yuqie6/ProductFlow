@@ -203,6 +203,9 @@ def test_prompt_settings_api_accepts_rejects_and_resets(configured_env: Path) ->
     assert initial_items["prompt_copy_system"]["secret"] is False
     assert initial_items["prompt_copy_system"]["source"] == "env_default"
     assert "淘宝电商文案助手" in initial_items["prompt_copy_system"]["value"]
+    assert initial_items["prompt_poster_image_edit_template"]["category"] == "提示词"
+    assert initial_items["prompt_poster_image_edit_template"]["input_type"] == "textarea"
+    assert "图片改图助手" in initial_items["prompt_poster_image_edit_template"]["value"]
 
     updated = client.patch("/api/settings", json={"values": {"prompt_copy_system": "自定义文案系统提示"}})
     assert updated.status_code == 200
@@ -323,6 +326,10 @@ def test_prompt_settings_reach_provider_prompt_builders(configured_env: Path, mo
                     value="自定义海报 {product_name} / {instruction} / {kind_label} / {selling_points}",
                 ),
                 AppSetting(
+                    key="prompt_poster_image_edit_template",
+                    value="自定义改图 {product_name} / {instruction} / {kind_label} / {size}",
+                ),
+                AppSetting(
                     key="prompt_image_chat_template",
                     value="自定义连续生图 {size} / {history_block} / {prompt}",
                 ),
@@ -390,6 +397,25 @@ def test_prompt_settings_reach_provider_prompt_builders(configured_env: Path, mo
         "1024x1024",
     )
     assert poster_prompt == "自定义海报 测试商品 / 强调轻便 / 主图 / 卖点一；卖点二；卖点三"
+
+    edit_prompt = OpenAIResponsesImageProvider()._build_prompt(
+        PosterGenerationInput(
+            copy_prompt_mode="image_edit",
+            product_name="测试商品",
+            category="类目",
+            price="9.90",
+            source_note="说明",
+            instruction="改成白底，保留主体",
+            title="不应依赖的短标题",
+            selling_points=["不应依赖的卖点一", "不应依赖的卖点二", "不应依赖的卖点三"],
+            poster_headline="不应依赖的主标题",
+            cta="不应依赖的 CTA",
+            source_image=source_path,
+        ),
+        PosterKind.MAIN_IMAGE,
+        "1024x1024",
+    )
+    assert edit_prompt == "自定义改图 测试商品 / 改成白底，保留主体 / 主图 / 1024x1024"
 
     chat_prompt = ImageChatService()._build_prompt(
         "改成白底",
@@ -1677,10 +1703,96 @@ def test_product_context_source_image_reaches_image_generation_context(
         source["label"] == "商品图" and "bag.png" in source["text"]
         for source in image_output["context_sources"]
     )
+    assert image_output["context_summary"]["copy_prompt_mode"] == "copy"
     assert len(captured_inputs) == 1
     provider_input = captured_inputs[0]
+    assert provider_input.copy_prompt_mode == "copy"
     assert len(provider_input.reference_images) == 1
     assert provider_input.reference_images[0].path == provider_input.source_image
+
+
+def test_image_generation_without_copy_link_uses_image_edit_prompt_mode(
+    configured_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.infrastructure.image.base import GeneratedImagePayload
+    from productflow_backend.presentation.api import create_app
+
+    session = get_session_factory()()
+    try:
+        session.add(AppSetting(key="poster_generation_mode", value="generated"))
+        session.commit()
+    finally:
+        session.close()
+
+    captured_inputs: list[PosterGenerationInput] = []
+
+    class CapturingImageProvider:
+        provider_name = "capturing"
+        prompt_version = "capturing-v1"
+
+        def generate_poster_image(
+            self,
+            poster: PosterGenerationInput,
+            kind: PosterKind,
+        ) -> tuple[GeneratedImagePayload, str]:
+            captured_inputs.append(poster)
+            return (
+                GeneratedImagePayload(
+                    kind=kind,
+                    bytes_data=_make_demo_image_bytes(),
+                    mime_type="image/png",
+                    width=800,
+                    height=800,
+                    variant_label=f"capturing-{poster.copy_prompt_mode}",
+                ),
+                "capturing-v1",
+            )
+
+    monkeypatch.setattr(
+        "productflow_backend.application.product_workflows.get_image_provider",
+        CapturingImageProvider,
+    )
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post(
+        "/api/products",
+        data={"name": "露营杯"},
+        files={"image": ("cup.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+
+    workflow_response = client.get(f"/api/products/{product_id}/workflow")
+    assert workflow_response.status_code == 200
+    workflow = workflow_response.json()
+    copy_node = next(node for node in workflow["nodes"] if node["node_type"] == "copy_generation")
+    image_node = next(node for node in workflow["nodes"] if node["node_type"] == "image_generation")
+
+    deleted_copy = client.delete(f"/api/workflow-nodes/{copy_node['id']}")
+    assert deleted_copy.status_code == 200
+    patched_image = client.patch(
+        f"/api/workflow-nodes/{image_node['id']}",
+        json={"config_json": {"instruction": "基于商品图改成暖色露营场景", "size": "1024x1024"}},
+    )
+    assert patched_image.status_code == 200
+
+    selected_run = client.post(
+        f"/api/products/{product_id}/workflow/run",
+        json={"start_node_id": image_node["id"]},
+    )
+    assert selected_run.status_code == 200
+    payload = _wait_for_workflow_run(client, product_id, status="succeeded")
+    image_output = next(node for node in payload["nodes"] if node["id"] == image_node["id"])["output_json"]
+
+    assert image_output["context_summary"]["copy_prompt_mode"] == "image_edit"
+    assert image_output["copy_set_id"]
+    assert len(captured_inputs) == 1
+    assert captured_inputs[0].copy_prompt_mode == "image_edit"
+    assert captured_inputs[0].instruction and "暖色露营场景" in captured_inputs[0].instruction
 
 
 def test_single_node_workflow_run_reuses_succeeded_upstream_outputs(configured_env: Path) -> None:

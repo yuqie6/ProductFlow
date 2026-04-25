@@ -70,6 +70,12 @@
 - `image_generation` nodes collect incoming edge context, including upstream copy text and reference-image outputs. They
   are trigger/config nodes, not image-bearing artifact slots; generated images must be viewed/downloaded from linked
   downstream `reference_image` nodes or normal product artifact history, not from the `image_generation` node card.
+- Image prompt mode is determined by explicit copy linkage, not by whether a fallback `CopySet` exists for persistence.
+  If `image_generation.config_json.copy_set_id` or an upstream `copy_generation.output_json.copy_set_id` points to a
+  same-product `CopySet`, provider input must set `PosterGenerationInput.copy_prompt_mode = "copy"` and use the poster/copy
+  image template. If no explicit copy link exists, create the workflow-local draft `CopySet` as needed for
+  `PosterVariant.copy_set_id`, but set `copy_prompt_mode = "image_edit"` so provider prompts use the no-copy image-edit
+  template and do not require title/selling-points/headline/CTA semantics.
 - A connected upstream `product_context` node contributes the product source image asset to
   `image_generation` image context. Use the node output `source_asset_id` when available and fall back to the product's
   current original source asset so direct selected image-node runs do not require re-running product context only to get
@@ -109,8 +115,9 @@
 - Self-edge -> `400`.
 - Cyclic graph -> `400` and no edge persisted.
 - Image generation without product source image -> `400`/failed node output, depending execution boundary.
-- Image generation without usable upstream/confirmed copy -> create a workflow-local draft `CopySet` from product context and
-  image instruction, then generate the image. Do not fail only because a copy node is absent.
+- Image generation without usable explicit copy link -> create a workflow-local draft `CopySet` from product context and
+  image instruction for artifact linking, then generate the image with `copy_prompt_mode = "image_edit"`. Do not fail only
+  because a copy node is absent, and do not route this no-copy path through the poster/copy prompt template.
 - Image generation without downstream `reference_image` targets -> fail the node/run with a concise message such as
   `请先把生图节点连接到至少一个图片/参考图节点，再运行图片生成`; do not silently place output on the
   `image_generation` node.
@@ -174,7 +181,10 @@
   for image generation.
 - API/provider regression asserts the default `product_context -> image_generation` edge contributes the product source
   image to image-generation context, so `context_summary.reference_image_count` does not report `0` when the product image
-  is connected through the product-context node.
+  is connected through the product-context node, and that copy-linked runs expose `copy_prompt_mode = "copy"`.
+- API/provider regression removes the copy node or otherwise runs an image node with no explicit copy link and asserts the
+  provider receives `PosterGenerationInput.copy_prompt_mode = "image_edit"` while generated artifacts still have a
+  `copy_set_id` for persistence.
 - Alembic head upgrade must pass on SQLite after adding workflow tables.
 
 ### 7. Wrong vs Correct

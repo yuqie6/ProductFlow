@@ -186,6 +186,7 @@ When adding a runtime setting, update all of these together:
   - `prompt_brief_system`
   - `prompt_copy_system`
   - `prompt_poster_image_template`
+  - `prompt_poster_image_edit_template`
   - `prompt_image_chat_template`
 - API surface remains `/api/settings`; prompt fields are normal non-secret `textarea` config items.
 
@@ -195,6 +196,9 @@ When adding a runtime setting, update all of these together:
 - Provider implementations must read prompts through `get_runtime_settings()` or a helper built from it; do not keep the
   only effective prompt copy inside provider methods.
 - Prompt templates may expose documented placeholders, but unknown placeholders should not crash provider calls.
+- `prompt_poster_image_template` is for workflow image-generation runs with an explicit copy input.
+  `prompt_poster_image_edit_template` is for image-edit / image-to-image runs without an explicit copy input, and must not
+  require title/selling-points/headline/CTA placeholders to make sense.
 - Prompt fields are not secrets and may be visible in the settings UI, but rendered prompts and provider payloads must not
   be logged.
 
@@ -209,14 +213,20 @@ When adding a runtime setting, update all of these together:
 
 - Good: operator edits `prompt_copy_system`, saves settings, and the next `OpenAITextProvider.generate_copy(...)` call uses
   the database value.
+- Good: an image-generation node with no copy link uses `prompt_poster_image_edit_template`, so an image-edit run does not
+  inherit hard requirements for poster copy fields.
 - Base: clean database has no prompt rows; providers use default prompt text from `Settings`.
 - Bad: adding a new prompt in `openai_provider.py` without a `Settings` field, UI definition, reset path, and regression
   test.
+- Bad: using `prompt_poster_image_template` for no-copy image edits, which forces title/selling-points/headline/CTA language
+  into a task that should only modify existing imagery.
 
 #### 6. Tests Required
 
 - Settings/API regression that prompt keys are accepted and reset through `/api/settings`.
 - Provider regression that database prompt overrides reach the system/template prompt passed to text/image/chat builders.
+- Workflow/provider regression that copy-linked image nodes use `prompt_poster_image_template` / `copy_prompt_mode="copy"`
+  and no-copy image nodes use `prompt_poster_image_edit_template` / `copy_prompt_mode="image_edit"`.
 - Keep `uv run --directory backend ruff check .`, `just backend-test`, and `just web-build` green after prompt config
   changes.
 

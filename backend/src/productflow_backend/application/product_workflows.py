@@ -926,8 +926,11 @@ def _execute_image_generation(session: Session, *, workflow: ProductWorkflow, no
     if not downstream_reference_nodes:
         raise ValueError("请先把生图节点连接到至少一个图片/参考图节点，再运行图片生成")
 
-    copy_set_id = _optional_config_text(node.config_json, "copy_set_id") or incoming_context.copy_set_id
-    copy_set = session.get(CopySet, copy_set_id) if copy_set_id else product.confirmed_copy_set
+    linked_copy_set_id = _optional_config_text(node.config_json, "copy_set_id") or incoming_context.copy_set_id
+    copy_set = session.get(CopySet, linked_copy_set_id) if linked_copy_set_id else product.confirmed_copy_set
+    has_linked_copy_input = (
+        linked_copy_set_id is not None and copy_set is not None and copy_set.product_id == product.id
+    )
     if copy_set is None or copy_set.product_id != product.id:
         copy_set = _create_context_copy_set(session, product=product, product_context=product_context, node=node)
 
@@ -943,6 +946,7 @@ def _execute_image_generation(session: Session, *, workflow: ProductWorkflow, no
         incoming_context.poster_variant_ids,
     )
     render_input = PosterGenerationInput(
+        copy_prompt_mode="copy" if has_linked_copy_input else "image_edit",
         product_name=product_context["name"] or product.name,
         category=product_context["category"],
         price=product_context["price"],
@@ -1031,6 +1035,7 @@ def _execute_image_generation(session: Session, *, workflow: ProductWorkflow, no
         "context_summary": {
             "product_context": product_context,
             "copy_set_id": copy_set.id,
+            "copy_prompt_mode": render_input.copy_prompt_mode,
             "upstream_text_count": len(incoming_context.text_contexts),
             "reference_image_count": len(incoming_context.image_asset_ids),
             "poster_variant_count": len(incoming_context.poster_variant_ids),
