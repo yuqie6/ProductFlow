@@ -407,6 +407,7 @@ export function ProductDetailPage() {
       node: WorkflowNode;
       position_x: number;
       position_y: number;
+      rollbackWorkflow?: ProductWorkflow;
     }) =>
       api.updateWorkflowNode(input.node.id, {
         position_x: input.position_x,
@@ -420,40 +421,14 @@ export function ProductDetailPage() {
         "product-workflow",
         productId,
       ]);
-      setOptimisticNodePositions((current) => ({
-        ...current,
-        [input.node.id]: { x: input.position_x, y: input.position_y },
-      }));
-      queryClient.setQueryData<ProductWorkflow>(
-        ["product-workflow", productId],
-        (current) => {
-          if (!current) {
-            return current;
-          }
-          return {
-            ...current,
-            nodes: current.nodes.map((node) =>
-              node.id === input.node.id
-                ? {
-                    ...node,
-                    position_x: input.position_x,
-                    position_y: input.position_y,
-                  }
-                : node,
-            ),
-          };
-        },
-      );
-      return { previous };
+      return { previous: input.rollbackWorkflow ?? previous };
     },
-    onSuccess: (nextWorkflow) => {
+    onSuccess: (nextWorkflow, input) => {
       setError("");
       queryClient.setQueryData(["product-workflow", productId], nextWorkflow);
       setOptimisticNodePositions((current) => {
         const next = { ...current };
-        for (const node of nextWorkflow.nodes) {
-          delete next[node.id];
-        }
+        delete next[input.node.id];
         return next;
       });
     },
@@ -688,7 +663,6 @@ export function ProductDetailPage() {
   const layoutMutationBusy =
     createNodeMutation.isPending ||
     updateNodeConfigMutation.isPending ||
-    updateNodePositionMutation.isPending ||
     createEdgeMutation.isPending ||
     deleteEdgeMutation.isPending ||
     deleteNodeMutation.isPending ||
@@ -696,13 +670,12 @@ export function ProductDetailPage() {
     updateNodeCopyMutation.isPending;
   const structureBusy = layoutMutationBusy || workflowActive;
   const runBusy = runWorkflowMutation.isPending || workflowActive;
-  const dragBusy = updateNodePositionMutation.isPending;
 
   const startNodeDrag = (
     node: WorkflowNode,
     event: ReactPointerEvent<HTMLDivElement>,
   ) => {
-    if (dragBusy || event.button !== 0) {
+    if (event.button !== 0) {
       return;
     }
     const actionTarget =
@@ -794,6 +767,10 @@ export function ProductDetailPage() {
       dragged &&
       (dragged.position_x !== finalX || dragged.position_y !== finalY)
     ) {
+      const rollbackWorkflow = queryClient.getQueryData<ProductWorkflow>([
+        "product-workflow",
+        productId,
+      ]);
       setOptimisticNodePositions((current) => ({
         ...current,
         [dragged.id]: { x: finalX, y: finalY },
@@ -818,6 +795,7 @@ export function ProductDetailPage() {
         node: dragged,
         position_x: finalX,
         position_y: finalY,
+        rollbackWorkflow,
       });
     }
     setNodeDrag(null);
