@@ -55,22 +55,32 @@
   output summary fields so downstream image nodes read the edited copy through the existing `copy_set_id`.
 - Manually edited copy node outputs should be treated as the selected copy for downstream runs. Re-running a downstream
   image node must not silently replace that edited `CopySet` with a fresh generated copy before image generation.
-- `image_generation` nodes collect incoming edge context, including upstream copy text, reference-image outputs, and
-  upstream generated poster/image outputs.
-- Image-generation count is driven by graph structure when downstream slots exist: an `image_generation` node connected to N
-  downstream `reference_image` slots generates N images and fills those slots. If no downstream reference slot is connected,
-  the image node still generates one `PosterVariant` and succeeds; `target_count` is `0` and filled reference-slot arrays stay
-  empty.
+- `image_generation` nodes collect incoming edge context, including upstream copy text and reference-image outputs. They
+  are trigger/config nodes, not image-bearing artifact slots; generated images must be viewed/downloaded from linked
+  downstream `reference_image` nodes or normal product artifact history, not from the `image_generation` node card.
+- Image-generation count is driven by graph structure: an `image_generation` node connected to N downstream
+  `reference_image` slots generates N images and fills those slots. If no downstream reference slot is connected, the node
+  must fail with a clear user-facing message asking the user to connect at least one image/reference node before running.
 - Count downstream `reference_image` slots by unique target node id, not by raw edge count. Duplicate edges from the same
   `image_generation` node to the same `reference_image` slot must not multiply generated images or overwrite the slot
   multiple times in one run.
+- When N > 1, provider/render calls for the N target images should be initiated concurrently. Persist the returned
+  `PosterVariant` and downstream `SourceAsset` rows in the owning SQLAlchemy session after provider calls return; do not
+  share one SQLAlchemy `Session` across provider threads.
+- Resolve runtime settings and construct provider/renderer dependencies before starting provider/render worker threads, so
+  those threads do not open SQLAlchemy sessions just to read config while images are being generated.
 - `image_generation` node config may override provider size with `size`; application contracts must carry this as
   `PosterGenerationInput.image_size` and providers should prefer it over global runtime defaults.
 - Generated images should still be persisted as first-class `poster_variants` for history and as `source_assets` on the
-  downstream `reference_image` slots. Keep only workflow-boundary summaries and IDs in `output_json`.
+  downstream `reference_image` slots. Keep only workflow-boundary summaries and internal generated-poster IDs in
+  `image_generation.output_json`; do not expose `poster_variant_ids` there as the preview/download contract.
 - `product_context` node config may override/fill `name`, `category`, `price`, and `source_note`; downstream
   `ProductInput.source_note` and `PosterGenerationInput.source_note` must use that effective node context and propagate it
   to text and image providers.
+- Product context resolution must prefer the latest saved `product_context.config_json` over stale `output_json` from an
+  older run. Direct selected-node runs should not require re-running the product-context node just to see saved edits.
+- Copy/image node outputs may expose compact `context_summary` and `context_sources` for UI/tests. These summaries should
+  name source nodes and concise upstream text/reference metadata, not full rendered provider prompts or provider payloads.
 
 ### 4. Validation & Error Matrix
 
@@ -81,16 +91,17 @@
 - Image generation without product source image -> `400`/failed node output, depending execution boundary.
 - Image generation without usable upstream/confirmed copy -> create a workflow-local draft `CopySet` from product context and
   image instruction, then generate the image. Do not fail only because a copy node is absent.
-- Image generation without downstream `reference_image` targets -> succeeds with one generated `PosterVariant`; do not require
-  users to connect a reference slot just to produce a downloadable image.
+- Image generation without downstream `reference_image` targets -> fail the node/run with a concise message such as
+  `请先把生图节点连接到至少一个图片/参考图节点，再运行图片生成`; do not silently place output on the
+  `image_generation` node.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: run default DAG `product_context -> copy_generation -> image_generation` plus an unconnected optional `reference_image`
-  slot; it produces one draft `CopySet`, one `PosterVariant`, leaves the optional reference slot empty unless connected, and
-  writes run history.
-- Good: delete the copy/reference nodes so only `product_context -> image_generation` remains, then run the image node; it
-  creates a workflow-context draft copy and one `PosterVariant` without requiring downstream slots.
+- Good: run default DAG `product_context -> copy_generation -> image_generation -> reference_image`; it produces one draft
+  `CopySet`, one generated `PosterVariant` history row, fills the downstream reference slot with a `SourceAsset`, and writes
+  run history.
+- Good: delete all downstream reference nodes, then run the image node; it fails before provider generation and tells the
+  user to connect at least one image/reference node.
 - Good: connect an uploaded style `reference_image` into a `copy_generation` node; the generated copy reflects the
   reference label/role and the provider receives explicit `ReferenceImageInput` metadata.
 - Good: edit a copy node's generated title/selling points/headline/CTA; the persisted `CopySet` and node output update
@@ -111,11 +122,13 @@
   input, node output, and run history.
 - API regression rejects creating a second `product_context` node and verifies opening an active workflow normalizes duplicate
   product-context nodes down to one.
-- API regression deletes optional copy/reference nodes and runs an image node directly, asserting a `PosterVariant`,
-  `copy_set_id`, `target_count = 0`, and empty filled-slot arrays are persisted.
+- API regression deletes downstream reference nodes and runs an image node directly, asserting a failed run/node with the
+  clear connect-a-target message and no silent image output on the image node.
 - API regression for node-first canvas creates/uses a `reference_image` node, uploads an image, connects it to
   `image_generation`, connects image generation to multiple downstream `reference_image` slots, runs the workflow, and
   asserts generated poster IDs, filled source asset IDs, size, and slot output are persisted.
+- API regression for multi-target image generation asserts multiple downstream reference slots are filled and provider
+  generation calls are initiated concurrently while database writes remain in the owning session.
 - API regression uploads twice to the same `reference_image` node and asserts the node exposes only the second asset while
   both old and new `source_assets` remain on the product. Another regression fills an already populated reference node from
   an upstream `image_generation` node and asserts the same single-slot replacement behavior.
@@ -127,6 +140,10 @@
   upstream node runs/artifacts are not duplicated when reusable outputs exist.
 - API regression for selected reference-slot runs connects an already successful image node to a new empty
   `reference_image` slot and asserts only the necessary image node plus target slot run; copy generation must not re-run.
+- API regression edits a previously run `product_context` node, then directly runs a downstream node and asserts the
+  downstream output context summary uses the latest saved config rather than stale context output.
+- API regression asserts upstream copy text and reference-image label/role metadata appear in deterministic context sources
+  for image generation.
 - Alembic head upgrade must pass on SQLite after adding workflow tables.
 
 ### 7. Wrong vs Correct
@@ -427,35 +444,37 @@ by reloading the existing active run.
 ### 2. Signatures
 - `POST /api/products/{product_id}/workflow/nodes` rejects `node_type = product_context` when the active workflow already
   has one.
-- `POST /api/products/{product_id}/workflow/run` with `start_node_id` pointing at an `image_generation` node may run with
-  only product context plus image instruction.
-- Image-node output without downstream reference slots contains `poster_variant_ids`, `copy_set_id`, `target_count: 0`,
-  `filled_source_asset_ids: []`, and `filled_reference_node_ids: []`.
+- `POST /api/products/{product_id}/workflow/run` with `start_node_id` pointing at an `image_generation` node requires at
+  least one connected downstream `reference_image` target.
+- Image-node output with downstream targets contains `generated_poster_variant_ids`, `copy_set_id`, `target_count`,
+  `filled_source_asset_ids`, and `filled_reference_node_ids`; it does not expose `poster_variant_ids` as a node-level
+  image carrier.
 
 ### 3. Contracts
 - Each active workflow has exactly one `product_context` node. Runtime opening may normalize older duplicate rows by keeping
   the earliest context node and deleting duplicate context nodes plus their connected edges/node-run rows.
-- Default workflows include one product context, one copy node, one image node, and an optional unconnected reference slot.
-  The default edge set is `product_context -> copy_generation`, `product_context -> image_generation`, and
-  `copy_generation -> image_generation`; there is no default `image_generation -> reference_image` edge.
+- Default workflows include one product context, one copy node, one image node, and one downstream reference slot. The
+  default edge set is `product_context -> copy_generation`, `product_context -> image_generation`,
+  `copy_generation -> image_generation`, and `image_generation -> reference_image`.
 - Image nodes prefer connected/manual/confirmed copy when present. If absent, the backend creates a draft `CopySet` with
   `provider_name = workflow_context` from product context and the image instruction so `PosterVariant.copy_set_id` remains a
   first-class artifact link.
-- Downstream reference slots are optional outputs. When present, one image is generated per unique slot and each slot is
-  filled with a `SourceAsset`; when absent, exactly one image is generated as a `PosterVariant` only.
+- Downstream reference slots are required outputs. One image is generated per unique slot and each slot is filled with a
+  `SourceAsset`; when absent, no provider call is made and the image node fails with the connect-a-target message.
 
 ### 4. Validation & Error Matrix
 - Duplicate product-context creation -> `400` with `商品资料节点已存在`.
 - Missing product source image -> failed image node / `商品缺少原始图片`.
-- Missing copy node, missing upstream copy, and missing downstream reference slot -> still succeeds if product source image
-  exists.
+- Missing copy node or missing upstream copy -> create a workflow-context draft `CopySet` if a downstream target exists.
+- Missing downstream reference slot -> fail before generation with the connect-a-target message.
 - Duplicate downstream edges to the same reference slot -> one generated image for that unique slot.
 
 ### 5. Good/Base/Bad Cases
-- Good: selected image-node run after editing product context and image instruction uses the latest saved draft and returns a
-  downloadable poster.
+- Good: selected image-node run after editing product context and image instruction uses the latest saved draft and fills a
+  connected downstream reference slot.
 - Base: optional copy/reference nodes can be connected and will enrich input/fill slots when present.
-- Bad: reintroducing `连接参考图节点` as a hard failure for an otherwise valid image node.
+- Bad: rendering generated image preview/download on the `image_generation` node itself instead of on filled
+  `reference_image` slots.
 
 ### 6. Tests Required
 - API regression for duplicate product-context rejection.
@@ -469,7 +488,7 @@ by reloading the existing active run.
 if copy_set is None:
     raise ValueError("图片生成节点缺少可用文案")
 if not downstream_reference_nodes:
-    raise ValueError("连接参考图节点")
+    raise ValueError("请先把生图节点连接到至少一个图片/参考图节点，再运行图片生成")
 ```
 
 #### Correct
@@ -477,5 +496,5 @@ if not downstream_reference_nodes:
 ```python
 if copy_set is None:
     copy_set = _create_context_copy_set(session, product=product, product_context=context, node=node)
-targets = downstream_reference_nodes or [None]
+targets = downstream_reference_nodes
 ```

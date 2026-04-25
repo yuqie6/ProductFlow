@@ -111,7 +111,7 @@ def default_node_specs(product: Product) -> list[dict[str, Any]]:
             "title": "参考图",
             "position_x": 920,
             "position_y": 120,
-            "config_json": {"role": "reference", "label": "可选参考图"},
+            "config_json": {"role": "reference", "label": "生成结果槽位"},
         },
     ]
 
@@ -121,6 +121,7 @@ def default_edges(nodes_by_key: dict[str, WorkflowNode], workflow_id: str) -> li
         ("context", "copy"),
         ("context", "image"),
         ("copy", "image"),
+        ("image", "reference"),
     ]
     return [
         WorkflowEdge(

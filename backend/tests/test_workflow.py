@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
@@ -187,6 +188,39 @@ def test_settings_api_persists_database_overrides(configured_env: Path) -> None:
     assert reset_items["image_provider_kind"]["source"] == "env_default"
 
 
+def test_prompt_settings_api_accepts_rejects_and_resets(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    initial = client.get("/api/settings")
+    assert initial.status_code == 200
+    initial_items = {item["key"]: item for item in initial.json()["items"]}
+    assert initial_items["prompt_copy_system"]["category"] == "提示词"
+    assert initial_items["prompt_copy_system"]["input_type"] == "textarea"
+    assert initial_items["prompt_copy_system"]["secret"] is False
+    assert initial_items["prompt_copy_system"]["source"] == "env_default"
+    assert "淘宝电商文案助手" in initial_items["prompt_copy_system"]["value"]
+
+    updated = client.patch("/api/settings", json={"values": {"prompt_copy_system": "自定义文案系统提示"}})
+    assert updated.status_code == 200
+    updated_items = {item["key"]: item for item in updated.json()["items"]}
+    assert updated_items["prompt_copy_system"]["value"] == "自定义文案系统提示"
+    assert updated_items["prompt_copy_system"]["source"] == "database"
+
+    empty = client.patch("/api/settings", json={"values": {"prompt_copy_system": "   "}})
+    assert empty.status_code == 400
+    assert "不能为空" in empty.json()["detail"]
+
+    reset = client.patch("/api/settings", json={"reset_keys": ["prompt_copy_system"]})
+    assert reset.status_code == 200
+    reset_items = {item["key"]: item for item in reset.json()["items"]}
+    assert reset_items["prompt_copy_system"]["source"] == "env_default"
+    assert "淘宝电商文案助手" in reset_items["prompt_copy_system"]["value"]
+
+
 def test_settings_api_rejects_invalid_effective_config(configured_env: Path) -> None:
     from productflow_backend.presentation.api import create_app
 
@@ -266,6 +300,105 @@ def test_settings_api_normalizes_custom_image_sizes_for_generation(configured_en
 
     assert generated.status_code == 200
     assert generated.json()["rounds"][-1]["size"] == "512x512"
+
+
+def test_prompt_settings_reach_provider_prompt_builders(configured_env: Path, monkeypatch) -> None:
+    from productflow_backend.infrastructure.image.chat_service import ImageChatService, ImageChatTurn
+    from productflow_backend.infrastructure.prompts import render_prompt_template
+    from productflow_backend.infrastructure.text.openai_provider import OpenAITextProvider
+
+    assert render_prompt_template(
+        "示例 JSON：{\"title\":\"{title}\"}；未知：{unknown}；坏括号：{",
+        {"title": "主标题"},
+    ) == "示例 JSON：{\"title\":\"主标题\"}；未知：{unknown}；坏括号：{"
+
+    session = get_session_factory()()
+    try:
+        session.add_all(
+            [
+                AppSetting(key="prompt_brief_system", value="自定义商品理解提示"),
+                AppSetting(key="prompt_copy_system", value="自定义文案提示"),
+                AppSetting(
+                    key="prompt_poster_image_template",
+                    value="自定义海报 {product_name} / {instruction} / {kind_label} / {selling_points}",
+                ),
+                AppSetting(
+                    key="prompt_image_chat_template",
+                    value="自定义连续生图 {size} / {history_block} / {prompt}",
+                ),
+            ]
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    text_calls: list[dict] = []
+
+    class DummyTextResponse:
+        def __init__(self, output_text: str) -> None:
+            self.output_text = output_text
+
+    class DummyTextResponses:
+        def create(self, **kwargs):
+            text_calls.append(kwargs)
+            if len(text_calls) == 1:
+                return DummyTextResponse(
+                    '{"positioning":"入门定位","audience":"新手","selling_angles":["稳","快","省"],'
+                    '"taboo_phrases":[],"poster_style_hint":"白底"}'
+                )
+            return DummyTextResponse(
+                '{"title":"标题","selling_points":["稳","快","省"],"poster_headline":"主标题","cta":"立即购买"}'
+            )
+
+    class DummyTextOpenAI:
+        def __init__(self, **kwargs) -> None:
+            self.responses = DummyTextResponses()
+
+    monkeypatch.setattr("productflow_backend.infrastructure.text.openai_provider.OpenAI", DummyTextOpenAI)
+
+    text_provider = OpenAITextProvider()
+    product_input = ProductInput(
+        name="测试商品",
+        category="类目",
+        price="9.90",
+        source_note="说明",
+        image_path="/tmp/a.png",
+    )
+    brief, _ = text_provider.generate_brief(product_input)
+    text_provider.generate_copy(product_input, brief)
+
+    assert text_calls[0]["input"][0]["content"] == "自定义商品理解提示"
+    assert text_calls[1]["input"][0]["content"] == "自定义文案提示"
+
+    source_path = configured_env / "prompt-provider-source.png"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_bytes(_make_demo_image_bytes())
+    poster_prompt = OpenAIResponsesImageProvider()._build_prompt(
+        PosterGenerationInput(
+            product_name="测试商品",
+            category="类目",
+            price="9.90",
+            source_note="说明",
+            instruction="强调轻便",
+            title="短标题",
+            selling_points=["卖点一", "卖点二", "卖点三"],
+            poster_headline="主标题",
+            cta="立即购买",
+            source_image=source_path,
+        ),
+        PosterKind.MAIN_IMAGE,
+        "1024x1024",
+    )
+    assert poster_prompt == "自定义海报 测试商品 / 强调轻便 / 主图 / 卖点一；卖点二；卖点三"
+
+    chat_prompt = ImageChatService()._build_prompt(
+        "改成白底",
+        [ImageChatTurn(role="user", content="先做一个主图")],
+        "1024x1024",
+    )
+    assert "自定义连续生图 1024x1024" in chat_prompt
+    assert "用户：先做一个主图" in chat_prompt
+    assert chat_prompt.endswith("改成白底")
 
 
 def test_sqlalchemy_enum_columns_use_database_values() -> None:
@@ -735,12 +868,16 @@ def test_product_workflow_dag_runs_and_persists_artifacts(configured_env: Path) 
     assert rerun_copy_output["poster_headline"] == "厨房整洁一步到位"
     assert rerun_image_output["copy_set_id"] == copy_output["copy_set_id"]
     image_output = next(node for node in run_payload["nodes"] if node["node_type"] == "image_generation")["output_json"]
-    assert len(image_output["poster_variant_ids"]) == 2
+    assert "poster_variant_ids" not in image_output
+    assert len(image_output["generated_poster_variant_ids"]) == 2
     assert image_output["target_count"] == 2
     assert len(image_output["filled_source_asset_ids"]) == 2
     assert len(image_output["filled_reference_node_ids"]) == 2
     assert image_output["size"] == "1024x1024"
-    assert image_output["image_asset_ids"]
+    context_sources = image_output["context_sources"]
+    assert any(source["label"] == "文案" and "多功能收纳架" in source["text"] for source in context_sources)
+    assert any(source["label"] == "参考图" and "厨房风格图" in source["text"] for source in context_sources)
+    assert image_output["context_summary"]["reference_image_count"] >= 1
     filled_nodes = [
         node for node in run_payload["nodes"] if node["id"] in set(image_output["filled_reference_node_ids"])
     ]
@@ -813,13 +950,12 @@ def test_product_workflow_dag_runs_and_persists_artifacts(configured_env: Path) 
         json={"start_node_id": isolated_image_node["id"]},
     )
     assert direct_run.status_code == 200
-    direct_payload = _wait_for_workflow_run(client, product_id, status="succeeded")
-    assert direct_payload["runs"][0]["status"] == "succeeded"
+    direct_payload = _wait_for_workflow_run(client, product_id, status="failed")
+    assert direct_payload["runs"][0]["status"] == "failed"
+    assert "至少一个图片/参考图节点" in direct_payload["runs"][0]["failure_reason"]
     direct_node = next(node for node in direct_payload["nodes"] if node["id"] == isolated_image_node["id"])
-    assert direct_node["status"] == "succeeded"
-    assert direct_node["output_json"]["poster_variant_ids"]
-    assert direct_node["output_json"]["target_count"] == 0
-    assert direct_node["output_json"]["filled_source_asset_ids"] == []
+    assert direct_node["status"] == "failed"
+    assert "至少一个图片/参考图节点" in direct_node["failure_reason"]
 
     session = get_session_factory()()
     try:
@@ -939,6 +1075,172 @@ def test_image_generation_fill_replaces_reference_node_current_image(configured_
     assert {old_asset_id, new_asset_id}.issubset(reference_asset_ids)
 
 
+def test_image_generation_fills_multiple_targets_with_concurrent_provider_calls(
+    configured_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.infrastructure.image.base import GeneratedImagePayload
+    from productflow_backend.presentation.api import create_app
+
+    session = get_session_factory()()
+    try:
+        session.add(AppSetting(key="poster_generation_mode", value="generated"))
+        session.commit()
+    finally:
+        session.close()
+
+    class CoordinatedImageProvider:
+        provider_name = "coordinated"
+        prompt_version = "coordinated-v1"
+
+        def __init__(self) -> None:
+            self._lock = threading.Lock()
+            self._both_started = threading.Event()
+            self.started = 0
+            self.max_in_flight = 0
+            self._in_flight = 0
+            self.thread_ids: list[int] = []
+
+        def generate_poster_image(
+            self,
+            poster: PosterGenerationInput,
+            kind: PosterKind,
+        ) -> tuple[GeneratedImagePayload, str]:
+            del poster
+            with self._lock:
+                self.thread_ids.append(threading.get_ident())
+                self.started += 1
+                self._in_flight += 1
+                self.max_in_flight = max(self.max_in_flight, self._in_flight)
+                call_index = self.started
+                if self.started >= 2:
+                    self._both_started.set()
+            if not self._both_started.wait(timeout=1.0):
+                raise AssertionError("provider calls were not initiated concurrently")
+            try:
+                return (
+                    GeneratedImagePayload(
+                        kind=kind,
+                        bytes_data=_make_demo_image_bytes(),
+                        mime_type="image/png",
+                        width=800,
+                        height=800,
+                        variant_label=f"coordinated-{call_index}",
+                    ),
+                    "coordinated-v1",
+                )
+            finally:
+                with self._lock:
+                    self._in_flight -= 1
+
+    fake_provider = CoordinatedImageProvider()
+    provider_factory_thread_ids: list[int] = []
+
+    def fake_provider_factory() -> CoordinatedImageProvider:
+        provider_factory_thread_ids.append(threading.get_ident())
+        return fake_provider
+
+    monkeypatch.setattr(
+        "productflow_backend.application.product_workflows.get_image_provider",
+        fake_provider_factory,
+    )
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post(
+        "/api/products",
+        data={"name": "并发生图商品"},
+        files={"image": ("parallel.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+
+    workflow_response = client.get(f"/api/products/{product_id}/workflow")
+    assert workflow_response.status_code == 200
+    workflow = workflow_response.json()
+    image_node = next(node for node in workflow["nodes"] if node["node_type"] == "image_generation")
+    second_target = client.post(
+        f"/api/products/{product_id}/workflow/nodes",
+        json={
+            "node_type": "reference_image",
+            "title": "并发参考图 2",
+            "position_x": 1180,
+            "position_y": 240,
+            "config_json": {"role": "reference", "label": "并发参考图 2"},
+        },
+    )
+    assert second_target.status_code == 201
+    second_target_node = next(node for node in second_target.json()["nodes"] if node["title"] == "并发参考图 2")
+    connected = client.post(
+        f"/api/products/{product_id}/workflow/edges",
+        json={
+            "source_node_id": image_node["id"],
+            "target_node_id": second_target_node["id"],
+            "source_handle": "output",
+            "target_handle": "input",
+        },
+    )
+    assert connected.status_code == 201
+
+    run_response = client.post(f"/api/products/{product_id}/workflow/run", json={})
+    assert run_response.status_code == 200
+    payload = _wait_for_workflow_run(client, product_id, status="succeeded")
+    image_output = next(node for node in payload["nodes"] if node["id"] == image_node["id"])["output_json"]
+    assert len(provider_factory_thread_ids) == 2
+    assert set(provider_factory_thread_ids).isdisjoint(fake_provider.thread_ids)
+    assert fake_provider.started == 2
+    assert fake_provider.max_in_flight == 2
+    assert image_output["target_count"] == 2
+    assert len(image_output["filled_reference_node_ids"]) == 2
+    assert len(image_output["filled_source_asset_ids"]) == 2
+    assert len(image_output["generated_poster_variant_ids"]) == 2
+    assert "poster_variant_ids" not in image_output
+
+
+def test_mock_image_provider_does_not_read_runtime_settings_during_generation(
+    configured_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.infrastructure.image.mock_provider import MockImageProvider
+
+    source_path = configured_env / "mock-thread-safe-source.png"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_bytes(_make_demo_image_bytes())
+    provider = MockImageProvider()
+
+    def fail_runtime_settings_lookup():
+        raise AssertionError("runtime settings should be resolved before provider worker execution")
+
+    monkeypatch.setattr(
+        "productflow_backend.infrastructure.image.mock_provider.get_runtime_settings",
+        fail_runtime_settings_lookup,
+    )
+
+    generated, model = provider.generate_poster_image(
+        PosterGenerationInput(
+            product_name="线程安全测试商品",
+            category="测试类目",
+            price="99",
+            source_note="测试说明",
+            instruction="生成测试图",
+            title="测试标题",
+            selling_points=["卖点一", "卖点二", "卖点三"],
+            poster_headline="测试主标题",
+            cta="立即测试",
+            source_image=source_path,
+            image_size="512x512",
+        ),
+        PosterKind.MAIN_IMAGE,
+    )
+
+    assert model == "mock-image-v1"
+    assert generated.width == 512
+    assert generated.height == 512
+    assert generated.bytes_data
+
+
 def test_product_workflow_singleton_context_and_direct_image_run(configured_env: Path) -> None:
     from productflow_backend.presentation.api import create_app
 
@@ -1021,14 +1323,84 @@ def test_product_workflow_singleton_context_and_direct_image_run(configured_env:
         json={"start_node_id": image_node["id"]},
     )
     assert run_response.status_code == 200
-    payload = _wait_for_workflow_run(client, product_id, status="succeeded")
+    payload = _wait_for_workflow_run(client, product_id, status="failed")
     assert [node["node_type"] for node in payload["nodes"]] == ["product_context", "image_generation"]
-    image_output = next(node for node in payload["nodes"] if node["id"] == image_node["id"])["output_json"]
-    assert image_output["copy_set_id"]
-    assert image_output["poster_variant_ids"]
-    assert image_output["target_count"] == 0
-    assert image_output["filled_reference_node_ids"] == []
+    image_node_after = next(node for node in payload["nodes"] if node["id"] == image_node["id"])
+    assert image_node_after["status"] == "failed"
+    assert "至少一个图片/参考图节点" in image_node_after["failure_reason"]
     assert next(node for node in payload["nodes"] if node["id"] == context_node["id"])["node_type"] == "product_context"
+
+
+def test_direct_downstream_run_uses_latest_saved_product_context(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post(
+        "/api/products",
+        data={"name": "旅行背包"},
+        files={"image": ("bag.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+
+    workflow_response = client.get(f"/api/products/{product_id}/workflow")
+    assert workflow_response.status_code == 200
+    workflow = workflow_response.json()
+    context_node = next(node for node in workflow["nodes"] if node["node_type"] == "product_context")
+    image_node = next(node for node in workflow["nodes"] if node["node_type"] == "image_generation")
+
+    initial_context = client.patch(
+        f"/api/workflow-nodes/{context_node['id']}",
+        json={
+            "config_json": {
+                "name": "旅行背包",
+                "category": "旧类目",
+                "price": "199",
+                "source_note": "旧说明：城市通勤。",
+            }
+        },
+    )
+    assert initial_context.status_code == 200
+    first_run = client.post(f"/api/products/{product_id}/workflow/run", json={})
+    assert first_run.status_code == 200
+    first_payload = _wait_for_workflow_run(client, product_id, status="succeeded")
+    stale_context_output = next(
+        node for node in first_payload["nodes"] if node["id"] == context_node["id"]
+    )["output_json"]
+    assert stale_context_output["source_note"] == "旧说明：城市通勤。"
+
+    latest_context = client.patch(
+        f"/api/workflow-nodes/{context_node['id']}",
+        json={
+            "config_json": {
+                "name": "旅行背包",
+                "category": "户外装备",
+                "price": "249",
+                "source_note": "最新说明：防泼水牛津布，适合短途出差和周末露营。",
+            }
+        },
+    )
+    assert latest_context.status_code == 200
+
+    selected_run = client.post(
+        f"/api/products/{product_id}/workflow/run",
+        json={"start_node_id": image_node["id"]},
+    )
+    assert selected_run.status_code == 200
+    payload = _wait_for_workflow_run(client, product_id, status="succeeded")
+    image_output = next(node for node in payload["nodes"] if node["id"] == image_node["id"])["output_json"]
+
+    assert image_output["context_summary"]["product_context"]["category"] == "户外装备"
+    assert image_output["context_summary"]["product_context"]["price"] == "249"
+    assert (
+        image_output["context_summary"]["product_context"]["source_note"]
+        == "最新说明：防泼水牛津布，适合短途出差和周末露营。"
+    )
+    assert any("最新说明" in source["text"] for source in image_output["context_sources"])
+
 
 def test_single_node_workflow_run_reuses_succeeded_upstream_outputs(configured_env: Path) -> None:
     from productflow_backend.presentation.api import create_app
@@ -1069,7 +1441,7 @@ def test_single_node_workflow_run_reuses_succeeded_upstream_outputs(configured_e
     succeeded_reference_node = next(
         node for node in first_payload["nodes"] if node["id"] == upstream_reference_node["id"]
     )
-    upstream_poster_ids = succeeded_image_node["output_json"]["poster_variant_ids"]
+    upstream_poster_ids = succeeded_image_node["output_json"]["generated_poster_variant_ids"]
     upstream_reference_asset_ids = succeeded_reference_node["output_json"]["source_asset_ids"]
     assert upstream_poster_ids
     assert upstream_reference_asset_ids
@@ -1139,10 +1511,11 @@ def test_single_node_workflow_run_reuses_succeeded_upstream_outputs(configured_e
     unchanged_upstream_image = next(node for node in single_payload["nodes"] if node["id"] == upstream_image_node["id"])
     unchanged_reference = next(node for node in single_payload["nodes"] if node["id"] == upstream_reference_node["id"])
     downstream_after = next(node for node in single_payload["nodes"] if node["id"] == downstream_image_node["id"])
-    assert unchanged_upstream_image["output_json"]["poster_variant_ids"] == upstream_poster_ids
+    assert unchanged_upstream_image["output_json"]["generated_poster_variant_ids"] == upstream_poster_ids
     assert unchanged_reference["output_json"]["source_asset_ids"] == upstream_reference_asset_ids
     assert downstream_after["output_json"]["copy_set_id"] == unchanged_upstream_image["output_json"]["copy_set_id"]
-    assert len(downstream_after["output_json"]["poster_variant_ids"]) == 1
+    assert len(downstream_after["output_json"]["generated_poster_variant_ids"]) == 1
+    assert "poster_variant_ids" not in downstream_after["output_json"]
 
     product_after = client.get(f"/api/products/{product_id}")
     assert product_after.status_code == 200

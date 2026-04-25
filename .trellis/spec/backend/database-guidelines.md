@@ -172,6 +172,69 @@ When adding a runtime setting, update all of these together:
 - API schema/frontend types in `web/src/lib/types.ts` if the value appears in settings UI
 - tests for validation/persistence in `backend/tests/test_workflow.py`
 
+### Scenario: Runtime prompt customization
+
+#### 1. Scope / Trigger
+
+- Trigger: editing system/template prompts used by text providers, image providers, or continuous image chat.
+- This is runtime configuration, not a schema migration: values live in `app_settings` and fall back to `Settings`
+  defaults when no database override exists.
+
+#### 2. Signatures
+
+- Config keys:
+  - `prompt_brief_system`
+  - `prompt_copy_system`
+  - `prompt_poster_image_template`
+  - `prompt_image_chat_template`
+- API surface remains `/api/settings`; prompt fields are normal non-secret `textarea` config items.
+
+#### 3. Contracts
+
+- Prompt keys must be declared as `Settings` fields and listed in `CONFIG_DEFINITIONS`.
+- Provider implementations must read prompts through `get_runtime_settings()` or a helper built from it; do not keep the
+  only effective prompt copy inside provider methods.
+- Prompt templates may expose documented placeholders, but unknown placeholders should not crash provider calls.
+- Prompt fields are not secrets and may be visible in the settings UI, but rendered prompts and provider payloads must not
+  be logged.
+
+#### 4. Validation & Error Matrix
+
+- Missing `app_settings` row -> use env/default/code default prompt.
+- Empty prompt update -> `400`; users should reset the key to return to default instead of saving blank prompts.
+- Unknown config key -> `400` from the settings route.
+- Secret/provider payload included in prompt logs -> bug; remove the log rather than redacting after the fact.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: operator edits `prompt_copy_system`, saves settings, and the next `OpenAITextProvider.generate_copy(...)` call uses
+  the database value.
+- Base: clean database has no prompt rows; providers use default prompt text from `Settings`.
+- Bad: adding a new prompt in `openai_provider.py` without a `Settings` field, UI definition, reset path, and regression
+  test.
+
+#### 6. Tests Required
+
+- Settings/API regression that prompt keys are accepted and reset through `/api/settings`.
+- Provider regression that database prompt overrides reach the system/template prompt passed to text/image/chat builders.
+- Keep `uv run --directory backend ruff check .`, `just backend-test`, and `just web-build` green after prompt config
+  changes.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+system_prompt = "你是固定写死的提示词"
+```
+
+Correct:
+
+```python
+settings = get_runtime_settings()
+system_prompt = settings.prompt_copy_system
+```
+
 ---
 
 ## Naming Conventions

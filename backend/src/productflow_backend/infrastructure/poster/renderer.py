@@ -10,8 +10,7 @@ from productflow_backend.config import get_runtime_settings
 from productflow_backend.domain.enums import PosterKind
 
 
-def _load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    font_path = get_runtime_settings().poster_font_path
+def _load_font(font_path: Path, size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     try:
         return ImageFont.truetype(str(font_path), size=size)
     except OSError:
@@ -63,6 +62,9 @@ def _draw_wrapped_text(
 
 
 class PosterRenderer:
+    def __init__(self, font_path: Path | None = None) -> None:
+        self.font_path = font_path or get_runtime_settings().poster_font_path
+
     def render(self, payload: PosterGenerationInput, kind: PosterKind) -> bytes:
         if kind == PosterKind.MAIN_IMAGE:
             image = self._render_main_image(payload)
@@ -84,9 +86,9 @@ class PosterRenderer:
         product_img = _fit_source_image(payload.source_image, (760, 540))
         canvas.alpha_composite(product_img, (160, 330))
 
-        headline_font = _load_font(58)
-        point_font = _load_font(34)
-        tag_font = _load_font(28)
+        headline_font = _load_font(self.font_path, 58)
+        point_font = _load_font(self.font_path, 34)
+        tag_font = _load_font(self.font_path, 28)
 
         _draw_wrapped_text(
             draw,
@@ -114,9 +116,9 @@ class PosterRenderer:
         draw.rounded_rectangle((70, 460, 1010, 1360), radius=42, fill=(255, 255, 255, 255))
         draw.ellipse((760, 70, 1040, 350), fill=(244, 75, 74, 255))
 
-        title_font = _load_font(74)
-        body_font = _load_font(36)
-        cta_font = _load_font(42)
+        title_font = _load_font(self.font_path, 74)
+        body_font = _load_font(self.font_path, 36)
+        cta_font = _load_font(self.font_path, 42)
 
         _draw_wrapped_text(draw, payload.poster_headline, title_font, (70, 60, 700, 250), (255, 255, 255))
         _draw_wrapped_text(draw, payload.title, body_font, (70, 260, 700, 340), (230, 230, 230))

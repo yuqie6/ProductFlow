@@ -17,6 +17,7 @@ from productflow_backend.infrastructure.image.base import (
     decode_b64_image,
     parse_size,
 )
+from productflow_backend.infrastructure.prompts import render_prompt_template
 
 
 @dataclass(slots=True)
@@ -187,6 +188,7 @@ class OpenAIResponsesImageProvider(ImageProvider):
         self.model = settings.image_generate_model
         self.main_image_size = settings.image_main_image_size
         self.promo_poster_size = settings.image_promo_poster_size
+        self.poster_image_template = settings.prompt_poster_image_template
         self.client = OpenAIResponsesImageClient()
 
     def generate_poster_image(
@@ -248,33 +250,35 @@ class OpenAIResponsesImageProvider(ImageProvider):
         kind: PosterKind,
         size: str,
     ) -> str:
-        common_lines = [
-            "你是中文电商海报生成助手。",
-            "请使用 Responses API 的 image_generation 工具生成图片，并优先继承输入参考图里的商品主体。",
-            "不要出现乱码、无关品牌、水印或大段不可读文字。",
-            f"商品名：{poster.product_name}",
-            f"类目：{poster.category or '未提供'}",
-            f"价格：{poster.price or '未提供'}",
-            f"商品描述/补充说明：{poster.source_note or '未提供'}",
-            f"本轮图片要求：{poster.instruction or '按商品主视觉方向生成'}",
-            f"主标题：{poster.poster_headline}",
-            f"短标题：{poster.title}",
-            f"卖点：{'；'.join(poster.selling_points[:3])}",
-            f"CTA：{poster.cta}",
-            f"尺寸：{size}",
-        ]
         if kind == PosterKind.MAIN_IMAGE:
-            common_lines.extend(
+            kind_requirements = "\n".join(
                 [
                     "画面要求：1:1 电商主图，主体居中，背景干净，信息明确，可直接用于商品主图。",
                     "风格要求：白底或浅底，突出商品与卖点角标，整体简洁。",
                 ]
             )
         else:
-            common_lines.extend(
+            kind_requirements = "\n".join(
                 [
                     "画面要求：3:4 促销海报，层次明显，有强主标题、促销氛围和商品展示区。",
                     "风格要求：更强视觉冲击，适合活动推广页或投放素材。",
                 ]
             )
-        return "\n".join(common_lines)
+        return render_prompt_template(
+            self.poster_image_template,
+            {
+                "product_name": poster.product_name,
+                "category": poster.category or "未提供",
+                "price": poster.price or "未提供",
+                "source_note": poster.source_note or "未提供",
+                "instruction": poster.instruction or "按商品主视觉方向生成",
+                "poster_headline": poster.poster_headline,
+                "title": poster.title,
+                "selling_points": "；".join(poster.selling_points[:3]),
+                "cta": poster.cta,
+                "size": size,
+                "kind": kind.value,
+                "kind_label": "主图" if kind == PosterKind.MAIN_IMAGE else "促销海报",
+                "kind_requirements": kind_requirements,
+            },
+        )

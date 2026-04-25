@@ -15,8 +15,44 @@ from sqlalchemy.exc import SQLAlchemyError
 ConfigInputType = Literal["text", "password", "number", "boolean", "select", "textarea"]
 IMAGE_SIZE_PATTERN = re.compile(r"^\d+x\d+$")
 IMAGE_SIZE_CONFIG_KEYS = {"image_main_image_size", "image_promo_poster_size"}
+PROMPT_CONFIG_KEYS = {
+    "prompt_brief_system",
+    "prompt_copy_system",
+    "prompt_poster_image_template",
+    "prompt_image_chat_template",
+}
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_LOG_DIR = BACKEND_DIR / "storage" / "logs"
+DEFAULT_PROMPT_BRIEF_SYSTEM = (
+    "你是电商商品理解助手。请根据商品名称、类目、价格和用途，"
+    "输出简洁、结构化的中文 JSON。不要输出 markdown。"
+)
+DEFAULT_PROMPT_COPY_SYSTEM = (
+    "你是淘宝电商文案助手。请输出中文 JSON，不输出 markdown，"
+    "语言要口语、直接、可用于主图和促销海报。"
+)
+DEFAULT_PROMPT_POSTER_IMAGE_TEMPLATE = """你是中文电商海报生成助手。
+请使用 Responses API 的 image_generation 工具生成图片，并优先继承输入参考图里的商品主体。
+不要出现乱码、无关品牌、水印或大段不可读文字。
+商品名：{product_name}
+类目：{category}
+价格：{price}
+商品描述/补充说明：{source_note}
+本轮图片要求：{instruction}
+主标题：{poster_headline}
+短标题：{title}
+卖点：{selling_points}
+CTA：{cta}
+尺寸：{size}
+{kind_requirements}"""
+DEFAULT_PROMPT_IMAGE_CHAT_TEMPLATE = """你是一个中文图片生成助手。
+当前任务是同一创作对话中的连续生图，请继承已经确定的主体、风格、构图与材质线索。
+如果本轮用户明确要求改动，就在保留连续性的前提下做调整。
+默认不要在图片中添加可读大段文字、UI 面板、水印或拼贴。
+输出尺寸：{size}。
+{history_block}
+本轮用户要求：{prompt}
+请直接生成图片，不要返回说明文字。"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +123,11 @@ class Settings(BaseSettings):
     poster_generation_mode: str = "template"
 
     poster_font_path: Path = Path("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc")
+
+    prompt_brief_system: str = DEFAULT_PROMPT_BRIEF_SYSTEM
+    prompt_copy_system: str = DEFAULT_PROMPT_COPY_SYSTEM
+    prompt_poster_image_template: str = DEFAULT_PROMPT_POSTER_IMAGE_TEMPLATE
+    prompt_image_chat_template: str = DEFAULT_PROMPT_IMAGE_CHAT_TEMPLATE
 
     upload_max_image_bytes: int = 10 * 1024 * 1024
     upload_max_reference_images: int = 6
@@ -227,6 +268,37 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
         description="模板海报和 mock 图片中用于中文文字渲染的字体文件。",
     ),
     ConfigDefinition(
+        key="prompt_brief_system",
+        label="商品理解系统提示词",
+        category="提示词",
+        input_type="textarea",
+        description="用于商品资料理解，要求模型输出 CreativeBrief JSON。",
+    ),
+    ConfigDefinition(
+        key="prompt_copy_system",
+        label="文案生成系统提示词",
+        category="提示词",
+        input_type="textarea",
+        description="用于主图/海报文案生成，要求模型输出 Copy JSON。",
+    ),
+    ConfigDefinition(
+        key="prompt_poster_image_template",
+        label="海报生图提示词模板",
+        category="提示词",
+        input_type="textarea",
+        description=(
+            "用于 AI 生成主图/海报。可用占位符：product_name、category、price、source_note、instruction、"
+            "title、selling_points、poster_headline、cta、size、kind、kind_label、kind_requirements。"
+        ),
+    ),
+    ConfigDefinition(
+        key="prompt_image_chat_template",
+        label="连续生图提示词模板",
+        category="提示词",
+        input_type="textarea",
+        description="用于连续生图对话。可用占位符：prompt、size、history_block。",
+    ),
+    ConfigDefinition(
         key="upload_max_image_bytes",
         label="单图最大字节数",
         category="海报与上传",
@@ -333,6 +405,8 @@ def normalize_config_value(key: str, value: Any) -> str:
         return ",".join(normalize_image_size_list(value, label=definition.label))
 
     normalized = "" if value is None else str(value).strip()
+    if key in PROMPT_CONFIG_KEYS and not normalized:
+        raise ValueError(f"{definition.label} 不能为空；如需回到默认值请使用恢复默认")
     if definition.input_type == "select":
         allowed_values = {option.value for option in definition.options}
         if normalized not in allowed_values:

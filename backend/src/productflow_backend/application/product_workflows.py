@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -36,7 +37,7 @@ from productflow_backend.infrastructure.db.models import (
     WorkflowRun,
 )
 from productflow_backend.infrastructure.db.session import get_session_factory
-from productflow_backend.infrastructure.image.base import infer_extension
+from productflow_backend.infrastructure.image.base import ImageProvider, infer_extension
 from productflow_backend.infrastructure.image.factory import get_image_provider
 from productflow_backend.infrastructure.poster.renderer import PosterRenderer
 from productflow_backend.infrastructure.storage import LocalStorage
@@ -50,6 +51,16 @@ class WorkflowRunKickoff:
     workflow: ProductWorkflow
     run_id: str
     created: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _GeneratedWorkflowImage:
+    target_index: int
+    content: bytes
+    width: int
+    height: int
+    template_name: str
+    mime_type: str
 
 
 def get_or_create_product_workflow(session: Session, product_id: str) -> ProductWorkflow:
@@ -489,7 +500,10 @@ def _execute_product_workflow_run(session: Session, *, run_id: str) -> None:
         node_run.status = WorkflowNodeStatus.SUCCEEDED
         node_run.output_json = output
         node_run.copy_set_id = output.get("copy_set_id")
-        poster_ids = output.get("poster_variant_ids") if isinstance(output.get("poster_variant_ids"), list) else []
+        if isinstance(output.get("generated_poster_variant_ids"), list):
+            poster_ids = output["generated_poster_variant_ids"]
+        else:
+            poster_ids = output.get("poster_variant_ids") if isinstance(output.get("poster_variant_ids"), list) else []
         node_run.poster_variant_id = poster_ids[0] if poster_ids else output.get("poster_variant_id")
         node_run.image_session_asset_id = output.get("image_session_asset_id")
         node_run.finished_at = now_utc()
@@ -807,6 +821,12 @@ def _execute_copy_generation(session: Session, *, workflow: ProductWorkflow, nod
     product.updated_at = now_utc()
     output = _copy_node_output(copy_set, creative_brief_id=brief.id)
     output["instruction"] = instruction
+    output["context_summary"] = {
+        "product_context": product_context,
+        "reference_image_count": len(reference_images),
+        "upstream_text_count": len(incoming_context.text_contexts),
+    }
+    output["context_sources"] = incoming_context.text_sources[:8]
     return output
 
 
@@ -814,6 +834,10 @@ def _execute_image_generation(session: Session, *, workflow: ProductWorkflow, no
     product = workflow.product
     incoming_context = _collect_incoming_context(workflow, node.id)
     product_context = _effective_product_context(workflow, node.id)
+    downstream_reference_nodes = _downstream_reference_nodes(workflow, node.id)
+    if not downstream_reference_nodes:
+        raise ValueError("请先把生图节点连接到至少一个图片/参考图节点，再运行图片生成")
+
     copy_set_id = _optional_config_text(node.config_json, "copy_set_id") or incoming_context.copy_set_id
     copy_set = session.get(CopySet, copy_set_id) if copy_set_id else product.confirmed_copy_set
     if copy_set is None or copy_set.product_id != product.id:
@@ -824,8 +848,6 @@ def _execute_image_generation(session: Session, *, workflow: ProductWorkflow, no
         raise ValueError("商品缺少原始图片")
 
     storage = LocalStorage()
-    downstream_reference_nodes = _downstream_reference_nodes(workflow, node.id)
-
     reference_assets = _reference_assets_for_image_generation(
         session,
         workflow,
@@ -857,27 +879,26 @@ def _execute_image_generation(session: Session, *, workflow: ProductWorkflow, no
     filled_source_asset_ids: list[str] = []
     filled_reference_node_ids: list[str] = []
     settings = get_runtime_settings()
-    renderer = PosterRenderer()
     kind = _poster_kind_from_config(node.config_json)
-    generation_targets = downstream_reference_nodes or [None]
-    for target_index, target_node in enumerate(generation_targets, start=1):
-        if settings.poster_generation_mode == "generated":
-            image_provider = get_image_provider()
-            generated_image, image_model = image_provider.generate_poster_image(render_input, kind)
-            content = generated_image.bytes_data
-            width = generated_image.width
-            height = generated_image.height
-            template_name = f"workflow:{image_provider.provider_name}:{generated_image.variant_label}:{image_model}"
-            mime_type = generated_image.mime_type
-        else:
-            content = renderer.render(render_input, kind)
-            width = 1080
-            height = 1080 if kind == PosterKind.MAIN_IMAGE else 1440
-            template_name = f"workflow:{'default-main' if kind == PosterKind.MAIN_IMAGE else 'default-promo'}"
-            mime_type = "image/png"
+    image_providers = (
+        [get_image_provider() for _ in downstream_reference_nodes]
+        if settings.poster_generation_mode == "generated"
+        else None
+    )
+    generated_images = _generate_workflow_images_concurrently(
+        render_input=render_input,
+        kind=kind,
+        target_count=len(downstream_reference_nodes),
+        poster_generation_mode=settings.poster_generation_mode,
+        poster_font_path=settings.poster_font_path,
+        image_providers=image_providers,
+    )
+    for generated_image, target_node in zip(generated_images, downstream_reference_nodes, strict=True):
+        content = generated_image.content
+        mime_type = generated_image.mime_type
         relative_path = storage.save_generated_image(
             product.id,
-            f"workflow-{kind.value}-{target_index}",
+            f"workflow-{kind.value}-{generated_image.target_index}",
             content,
             suffix=infer_extension(mime_type),
         )
@@ -885,47 +906,92 @@ def _execute_image_generation(session: Session, *, workflow: ProductWorkflow, no
             product_id=product.id,
             copy_set_id=copy_set.id,
             kind=kind,
-            template_name=template_name,
+            template_name=generated_image.template_name,
             storage_path=relative_path,
             mime_type=mime_type,
-            width=width,
-            height=height,
+            width=generated_image.width,
+            height=generated_image.height,
         )
         session.add(poster)
         session.flush()
         poster_ids.append(poster.id)
 
-        if target_node is not None:
-            filename = f"reference-{target_index}{infer_extension(mime_type)}"
-            reference_path = storage.save_reference_upload(product.id, filename, content)
-            asset = SourceAsset(
-                product_id=product.id,
-                kind=SourceAssetKind.REFERENCE_IMAGE,
-                original_filename=filename,
-                mime_type=mime_type,
-                storage_path=reference_path,
-            )
-            session.add(asset)
-            session.flush()
-            filled_source_asset_ids.append(asset.id)
-            filled_reference_node_ids.append(target_node.id)
-            _fill_reference_node(target_node, asset)
+        filename = f"reference-{generated_image.target_index}{infer_extension(mime_type)}"
+        reference_path = storage.save_reference_upload(product.id, filename, content)
+        asset = SourceAsset(
+            product_id=product.id,
+            kind=SourceAssetKind.REFERENCE_IMAGE,
+            original_filename=filename,
+            mime_type=mime_type,
+            storage_path=reference_path,
+        )
+        session.add(asset)
+        session.flush()
+        filled_source_asset_ids.append(asset.id)
+        filled_reference_node_ids.append(target_node.id)
+        _fill_reference_node(target_node, asset)
     product.updated_at = now_utc()
     return {
         "copy_set_id": copy_set.id,
-        "poster_variant_ids": poster_ids,
-        "image_asset_ids": incoming_context.image_asset_ids,
+        "generated_poster_variant_ids": poster_ids,
         "filled_source_asset_ids": filled_source_asset_ids,
         "filled_reference_node_ids": filled_reference_node_ids,
         "target_count": len(downstream_reference_nodes),
         "size": _image_size_from_config(node.config_json),
         "instruction": _optional_config_text(node.config_json, "instruction"),
-        "summary": (
-            f"已填充 {len(filled_reference_node_ids)} 个参考图"
-            if filled_reference_node_ids
-            else f"已生成 {len(poster_ids)} 张图片"
-        ),
+        "context_summary": {
+            "product_context": product_context,
+            "copy_set_id": copy_set.id,
+            "upstream_text_count": len(incoming_context.text_contexts),
+            "reference_image_count": len(incoming_context.image_asset_ids),
+            "poster_variant_count": len(incoming_context.poster_variant_ids),
+        },
+        "context_sources": incoming_context.text_sources[:8],
+        "summary": f"已填充 {len(filled_reference_node_ids)} 个参考图",
     }
+
+
+def _generate_workflow_images_concurrently(
+    *,
+    render_input: PosterGenerationInput,
+    kind: PosterKind,
+    target_count: int,
+    poster_generation_mode: str,
+    poster_font_path: Path,
+    image_providers: list[ImageProvider] | None,
+) -> list[_GeneratedWorkflowImage]:
+    if target_count <= 0:
+        return []
+
+    def generate_one(target_index: int) -> _GeneratedWorkflowImage:
+        if poster_generation_mode == "generated":
+            if image_providers is None:
+                raise RuntimeError("图片生成供应商未初始化")
+            image_provider = image_providers[target_index - 1]
+            generated_image, image_model = image_provider.generate_poster_image(render_input, kind)
+            return _GeneratedWorkflowImage(
+                target_index=target_index,
+                content=generated_image.bytes_data,
+                width=generated_image.width,
+                height=generated_image.height,
+                template_name=f"workflow:{image_provider.provider_name}:{generated_image.variant_label}:{image_model}",
+                mime_type=generated_image.mime_type,
+            )
+
+        renderer = PosterRenderer(font_path=poster_font_path)
+        return _GeneratedWorkflowImage(
+            target_index=target_index,
+            content=renderer.render(render_input, kind),
+            width=1080,
+            height=1080 if kind == PosterKind.MAIN_IMAGE else 1440,
+            template_name=f"workflow:{'default-main' if kind == PosterKind.MAIN_IMAGE else 'default-promo'}",
+            mime_type="image/png",
+        )
+
+    if target_count == 1:
+        return [generate_one(1)]
+    with ThreadPoolExecutor(max_workers=target_count) as executor:
+        return list(executor.map(generate_one, range(1, target_count + 1)))
 
 
 def _normalize_product_context_singleton(session: Session, workflow: ProductWorkflow) -> bool:
@@ -1065,26 +1131,26 @@ def _effective_product_context(workflow: ProductWorkflow, target_node_id: str) -
         output = node.output_json or {}
         context.update(
             {
-                "name": _output_text(
-                    output,
+                "name": _configured_text(
+                    node.config_json,
                     "name",
-                    fallback=_configured_text(node.config_json, "name", fallback=context["name"]),
+                    fallback=_output_text(output, "name", fallback=context["name"]),
                 )
                 or product.name,
-                "category": _output_text(
-                    output,
+                "category": _configured_text(
+                    node.config_json,
                     "category",
-                    fallback=_configured_text(node.config_json, "category", fallback=context["category"]),
+                    fallback=_output_text(output, "category", fallback=context["category"]),
                 ),
-                "price": _output_text(
-                    output,
+                "price": _configured_text(
+                    node.config_json,
                     "price",
-                    fallback=_configured_text(node.config_json, "price", fallback=context["price"]),
+                    fallback=_output_text(output, "price", fallback=context["price"]),
                 ),
-                "source_note": _output_text(
-                    output,
+                "source_note": _configured_text(
+                    node.config_json,
                     "source_note",
-                    fallback=_configured_text(node.config_json, "source_note", fallback=context["source_note"]),
+                    fallback=_output_text(output, "source_note", fallback=context["source_note"]),
                 ),
             }
         )
@@ -1197,13 +1263,34 @@ class _IncomingContext:
         self.image_asset_ids: list[str] = []
         self.poster_variant_ids: list[str] = []
         self.text_contexts: list[str] = []
+        self.text_sources: list[dict[str, str]] = []
+
+    def append_text(self, *, node: WorkflowNode, label: str, text: str) -> None:
+        normalized = text.strip()
+        if not normalized or normalized in self.text_contexts:
+            return
+        self.text_contexts.append(normalized)
+        self.text_sources.append(
+            {
+                "node_id": node.id,
+                "node_type": node.node_type.value,
+                "node_title": node.title,
+                "label": label,
+                "text": normalized,
+            }
+        )
 
 
 def _collect_incoming_context(workflow: ProductWorkflow, node_id: str) -> _IncomingContext:
     context = _IncomingContext()
-    incoming_sources = [edge.source_node_id for edge in workflow.edges if edge.target_node_id == node_id]
-    candidates = [node for node in workflow.nodes if node.id in incoming_sources and node.output_json]
-    for candidate in sorted(candidates, key=lambda item: item.last_run_at or item.updated_at, reverse=True):
+    ordered_edges = sorted(
+        [edge for edge in workflow.edges if edge.target_node_id == node_id],
+        key=lambda item: (item.created_at, item.id),
+    )
+    incoming_sources = list(dict.fromkeys(edge.source_node_id for edge in ordered_edges))
+    nodes_by_id = {node.id: node for node in workflow.nodes}
+    candidates = [nodes_by_id[source_id] for source_id in incoming_sources if source_id in nodes_by_id]
+    for candidate in candidates:
         output = candidate.output_json or {}
         if context.copy_set_id is None and isinstance(output.get("copy_set_id"), str):
             context.copy_set_id = output["copy_set_id"]
@@ -1219,18 +1306,56 @@ def _collect_incoming_context(workflow: ProductWorkflow, node_id: str) -> _Incom
                 context.poster_variant_ids.extend(item for item in raw_poster_ids if isinstance(item, str))
             elif isinstance(raw_poster_ids, str):
                 context.poster_variant_ids.append(raw_poster_ids)
-        for key in ("text", "name", "source_note", "title", "poster_headline", "cta", "summary"):
-            value = output.get(key)
-            if isinstance(value, str) and value.strip():
-                context.text_contexts.append(value.strip())
-        selling_points = output.get("selling_points")
-        if isinstance(selling_points, list):
-            context.text_contexts.extend(
-                item.strip() for item in selling_points if isinstance(item, str) and item.strip()
+            raw_images = output.get("images")
+            images = raw_images if isinstance(raw_images, list) else []
+            for image in images:
+                if not isinstance(image, dict):
+                    continue
+                label = str(image.get("label") or image.get("filename") or candidate.title)
+                role = str(image.get("role") or "参考图")
+                filename = str(image.get("filename") or "")
+                suffix = f"，文件：{filename}" if filename else ""
+                context.append_text(node=candidate, label="参考图", text=f"参考图：{label}（角色：{role}{suffix}）")
+        if candidate.node_type == WorkflowNodeType.COPY_GENERATION:
+            title = _output_text(output, "title")
+            poster_headline = _output_text(output, "poster_headline")
+            cta = _output_text(output, "cta")
+            selling_points = output.get("selling_points")
+            point_text = ""
+            if isinstance(selling_points, list):
+                point_text = "；".join(
+                    item.strip() for item in selling_points if isinstance(item, str) and item.strip()
+                )
+            copy_parts = [
+                f"标题：{title}" if title else "",
+                f"主标题：{poster_headline}" if poster_headline else "",
+                f"卖点：{point_text}" if point_text else "",
+                f"CTA：{cta}" if cta else "",
+            ]
+            context.append_text(
+                node=candidate,
+                label="文案",
+                text="；".join(part for part in copy_parts if part),
             )
+        elif candidate.node_type == WorkflowNodeType.PRODUCT_CONTEXT:
+            product_context = _product_context_values(workflow.product, candidate)
+            product_parts = [
+                f"商品：{product_context['name']}" if product_context["name"] else "",
+                f"类目：{product_context['category']}" if product_context["category"] else "",
+                f"价格：{product_context['price']}" if product_context["price"] else "",
+                f"描述：{product_context['source_note']}" if product_context["source_note"] else "",
+            ]
+            context.append_text(
+                node=candidate,
+                label="商品资料",
+                text="；".join(part for part in product_parts if part),
+            )
+        else:
+            summary = _output_text(output, "summary")
+            if summary:
+                context.append_text(node=candidate, label="摘要", text=summary)
     context.image_asset_ids = list(dict.fromkeys(context.image_asset_ids))
     context.poster_variant_ids = list(dict.fromkeys(context.poster_variant_ids))
-    context.text_contexts = list(dict.fromkeys(context.text_contexts))
     return context
 
 

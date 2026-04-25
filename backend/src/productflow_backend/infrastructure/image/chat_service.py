@@ -15,6 +15,7 @@ from productflow_backend.infrastructure.image.responses_provider import (
     OpenAIResponsesImageClient,
     ResponsesReferenceImage,
 )
+from productflow_backend.infrastructure.prompts import render_prompt_template
 
 
 @dataclass(slots=True)
@@ -56,6 +57,7 @@ class ImageChatService:
     def __init__(self) -> None:
         settings = get_runtime_settings()
         self.provider_kind = settings.image_provider_kind
+        self.prompt_template = settings.prompt_image_chat_template
 
     def generate(
         self,
@@ -174,27 +176,17 @@ class ImageChatService:
             role = "用户" if turn.role == "user" else "助手"
             history_lines.append(f"{index}. {role}：{turn.content.strip()}")
 
-        instruction_lines = [
-            "你是一个中文图片生成助手。",
-            "当前任务是同一创作对话中的连续生图，请继承已经确定的主体、风格、构图与材质线索。",
-            "如果本轮用户明确要求改动，就在保留连续性的前提下做调整。",
-            "默认不要在图片中添加可读大段文字、UI 面板、水印或拼贴。",
-            f"输出尺寸：{size}。",
-        ]
+        history_block = ""
         if history_lines:
-            instruction_lines.extend(
-                [
-                    "以下是之前对话中已经确认的上下文：",
-                    *history_lines,
-                ]
-            )
-        instruction_lines.extend(
-            [
-                f"本轮用户要求：{prompt.strip()}",
-                "请直接生成图片，不要返回说明文字。",
-            ]
+            history_block = "\n".join(["以下是之前对话中已经确认的上下文：", *history_lines])
+        return render_prompt_template(
+            self.prompt_template,
+            {
+                "prompt": prompt.strip(),
+                "size": size,
+                "history_block": history_block,
+            },
         )
-        return "\n".join(instruction_lines)
 
     def _collect_reference_images(
         self,

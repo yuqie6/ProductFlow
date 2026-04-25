@@ -11,6 +11,7 @@ from productflow_backend.application.contracts import (
     ReferenceImageInput,
 )
 from productflow_backend.config import get_runtime_settings
+from productflow_backend.infrastructure.prompts import text_or_default
 from productflow_backend.infrastructure.text.base import TextProvider
 
 
@@ -26,6 +27,8 @@ class OpenAITextProvider(TextProvider):
         self.client = OpenAI(**client_kwargs)
         self.brief_model = settings.text_brief_model
         self.copy_model = settings.text_copy_model
+        self.brief_system_prompt = settings.prompt_brief_system
+        self.copy_system_prompt = settings.prompt_copy_system
 
     def _read_output_json(self, response) -> dict:
         text = getattr(response, "output_text", "").strip()
@@ -44,10 +47,7 @@ class OpenAITextProvider(TextProvider):
             input=[
                 {
                     "role": "system",
-                    "content": (
-                        "你是电商商品理解助手。请根据商品名称、类目、价格和用途，"
-                        "输出简洁、结构化的中文 JSON。不要输出 markdown。"
-                    ),
+                    "content": text_or_default(self.brief_system_prompt, "请输出简洁、结构化的中文 JSON。"),
                 },
                 {
                     "role": "user",
@@ -86,10 +86,7 @@ class OpenAITextProvider(TextProvider):
             input=[
                 {
                     "role": "system",
-                    "content": (
-                        "你是淘宝电商文案助手。请输出中文 JSON，不要输出 markdown，"
-                        "语言要口语、直接、可用于主图和促销海报。"
-                    ),
+                    "content": text_or_default(self.copy_system_prompt, "请输出中文 JSON，不要输出 markdown。"),
                 },
                 {
                     "role": "user",
