@@ -234,14 +234,11 @@ def upload_workflow_node_image(
         config["role"] = role.strip() or "reference"
     if label is not None:
         config["label"] = label.strip() or filename
-    existing_asset_ids = [item for item in config.get("source_asset_ids", []) if isinstance(item, str)]
-    config["source_asset_ids"] = [*existing_asset_ids, asset.id]
+    config["source_asset_ids"] = [asset.id]
     node.config_json = config
-    assets = list(session.scalars(select(SourceAsset).where(SourceAsset.id.in_(config["source_asset_ids"]))))
-    assets = [item for item in assets if item.product_id == workflow.product_id]
     node.output_json = _image_asset_output(
-        assets,
-        summary=f"已上传 {len(assets)} 张参考图",
+        [asset],
+        summary="已替换参考图",
         role=_optional_config_text(config, "role"),
         label=_optional_config_text(config, "label"),
     )

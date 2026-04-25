@@ -41,6 +41,10 @@
   `running`, `succeeded`, `failed`.
 - `reference_image` nodes are user-visible `参考图` slots. They can be manually uploaded into through
   `POST /api/workflow-nodes/{node_id}/image` or filled by upstream `image_generation` nodes.
+- Each `reference_image` node is a single current-image slot. Manual upload and upstream `image_generation` fill must
+  replace that node's current `config_json.source_asset_ids`, `output_json.source_asset_ids`, `output_json.image_asset_ids`,
+  and `output_json.images` with the new single asset. Do not delete the old `source_assets` row; it remains product history
+  and can still be downloaded from artifact views.
 - `reference_image` nodes store image material as first-class `source_assets` rows and expose `source_asset_ids` /
   `image_asset_ids` in workflow output JSON for downstream image nodes.
 - `copy_generation` nodes must collect connected upstream `reference_image` slots and pass their asset paths plus
@@ -112,6 +116,9 @@
 - API regression for node-first canvas creates/uses a `reference_image` node, uploads an image, connects it to
   `image_generation`, connects image generation to multiple downstream `reference_image` slots, runs the workflow, and
   asserts generated poster IDs, filled source asset IDs, size, and slot output are persisted.
+- API regression uploads twice to the same `reference_image` node and asserts the node exposes only the second asset while
+  both old and new `source_assets` remain on the product. Another regression fills an already populated reference node from
+  an upstream `image_generation` node and asserts the same single-slot replacement behavior.
 - API/provider regression connects a `reference_image` node into `copy_generation` and asserts the reference label/role
   reaches generated copy/provider input.
 - API regression edits a generated copy node through `PATCH /api/workflow-nodes/{node_id}/copy` and asserts both the

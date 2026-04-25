@@ -828,6 +828,116 @@ def test_product_workflow_dag_runs_and_persists_artifacts(configured_env: Path) 
         session.close()
 
 
+def test_reference_workflow_node_upload_replaces_current_image(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post(
+        "/api/products",
+        data={"name": "桌面收纳盒"},
+        files={"image": ("box.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+
+    workflow_response = client.get(f"/api/products/{product_id}/workflow")
+    assert workflow_response.status_code == 200
+    reference_node = next(node for node in workflow_response.json()["nodes"] if node["node_type"] == "reference_image")
+
+    first_upload = client.post(
+        f"/api/workflow-nodes/{reference_node['id']}/image",
+        data={"role": "style", "label": "第一次参考"},
+        files={"image": ("first.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert first_upload.status_code == 200
+    first_node = next(node for node in first_upload.json()["nodes"] if node["id"] == reference_node["id"])
+    first_asset_id = first_node["output_json"]["source_asset_ids"][0]
+    assert first_node["config_json"]["source_asset_ids"] == [first_asset_id]
+    assert first_node["output_json"]["source_asset_ids"] == [first_asset_id]
+
+    second_upload = client.post(
+        f"/api/workflow-nodes/{reference_node['id']}/image",
+        data={"role": "style", "label": "第二次参考"},
+        files={"image": ("second.png", _make_demo_image_bytes_with_size(640, 480), "image/png")},
+    )
+    assert second_upload.status_code == 200
+    second_node = next(node for node in second_upload.json()["nodes"] if node["id"] == reference_node["id"])
+    second_asset_id = second_node["output_json"]["source_asset_ids"][0]
+    assert second_asset_id != first_asset_id
+    assert second_node["config_json"]["source_asset_ids"] == [second_asset_id]
+    assert second_node["output_json"]["source_asset_ids"] == [second_asset_id]
+    assert second_node["output_json"]["image_asset_ids"] == [second_asset_id]
+    assert len(second_node["output_json"]["images"]) == 1
+
+    product_after = client.get(f"/api/products/{product_id}")
+    assert product_after.status_code == 200
+    reference_asset_ids = {
+        asset["id"] for asset in product_after.json()["source_assets"] if asset["kind"] == "reference_image"
+    }
+    assert {first_asset_id, second_asset_id}.issubset(reference_asset_ids)
+
+
+def test_image_generation_fill_replaces_reference_node_current_image(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post(
+        "/api/products",
+        data={"name": "床头灯"},
+        files={"image": ("lamp.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+
+    workflow_response = client.get(f"/api/products/{product_id}/workflow")
+    assert workflow_response.status_code == 200
+    workflow = workflow_response.json()
+    image_node = next(node for node in workflow["nodes"] if node["node_type"] == "image_generation")
+    reference_node = next(node for node in workflow["nodes"] if node["node_type"] == "reference_image")
+
+    upload = client.post(
+        f"/api/workflow-nodes/{reference_node['id']}/image",
+        data={"role": "reference", "label": "旧参考"},
+        files={"image": ("old.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert upload.status_code == 200
+    uploaded_reference = next(node for node in upload.json()["nodes"] if node["id"] == reference_node["id"])
+    old_asset_id = uploaded_reference["output_json"]["source_asset_ids"][0]
+
+    connected = client.post(
+        f"/api/products/{product_id}/workflow/edges",
+        json={
+            "source_node_id": image_node["id"],
+            "target_node_id": reference_node["id"],
+            "source_handle": "output",
+            "target_handle": "input",
+        },
+    )
+    assert connected.status_code == 201
+
+    run_response = client.post(f"/api/products/{product_id}/workflow/run", json={"start_node_id": image_node["id"]})
+    assert run_response.status_code == 200
+    payload = _wait_for_workflow_run(client, product_id, status="succeeded")
+    filled_reference = next(node for node in payload["nodes"] if node["id"] == reference_node["id"])
+    new_asset_id = filled_reference["output_json"]["source_asset_ids"][0]
+    assert new_asset_id != old_asset_id
+    assert filled_reference["config_json"]["source_asset_ids"] == [new_asset_id]
+    assert filled_reference["output_json"]["source_asset_ids"] == [new_asset_id]
+    assert len(filled_reference["output_json"]["images"]) == 1
+
+    product_after = client.get(f"/api/products/{product_id}")
+    assert product_after.status_code == 200
+    reference_asset_ids = {
+        asset["id"] for asset in product_after.json()["source_assets"] if asset["kind"] == "reference_image"
+    }
+    assert {old_asset_id, new_asset_id}.issubset(reference_asset_ids)
+
 
 def test_product_workflow_singleton_context_and_direct_image_run(configured_env: Path) -> None:
     from productflow_backend.presentation.api import create_app
