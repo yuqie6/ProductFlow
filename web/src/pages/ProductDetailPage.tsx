@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent, ReactNode, WheelEvent as ReactWheelEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
@@ -123,6 +123,20 @@ const SAVE_STATUS_CLASS_NAMES: Record<SaveStatus, string> = {
 const IMAGE_PREVIEW_SURFACE_CLASS_NAME =
   "bg-[linear-gradient(135deg,#fafafa_25%,#f4f4f5_25%,#f4f4f5_50%,#fafafa_50%,#fafafa_75%,#f4f4f5_75%,#f4f4f5_100%)] bg-[length:16px_16px]";
 
+const CANVAS_WHEEL_ZOOM_SENSITIVITY = 0.001;
+const CANVAS_ZOOM_PRECISION = 10_000;
+
+interface PlannedWheelView {
+  zoom: number;
+  scrollLeft: number;
+  scrollTop: number;
+}
+
+function buildEdgePath(start: CanvasPoint, end: CanvasPoint): string {
+  const mid = Math.max(50, Math.abs(end.x - start.x) / 2);
+  return `M ${start.x} ${start.y} C ${start.x + mid} ${start.y}, ${end.x - mid} ${end.y}, ${end.x} ${end.y}`;
+}
+
 function isPanePanBlockedTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
     return false;
@@ -146,14 +160,42 @@ function isPanePanBlockedTarget(target: EventTarget | null): boolean {
   );
 }
 
+function isCanvasWheelZoomBlockedTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  return Boolean(
+    target.closest(
+      [
+        "[data-node-action]",
+        "[data-workflow-target-node-id]",
+        "[data-canvas-control]",
+        "button",
+        "a",
+        "input",
+        "textarea",
+        "select",
+        "label",
+        "[role='button']",
+      ].join(","),
+    ),
+  );
+}
+
 export function ProductDetailPage() {
   const { productId = "" } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const canvasScrollRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
-  const nodeDragRafRef = useRef<number | null>(null);
-  const pendingNodeDragRef = useRef<CanvasPoint | null>(null);
+  const plannedWheelViewRef = useRef<PlannedWheelView | null>(null);
+  const nodeDragRef = useRef<NodeDragState | null>(null);
+  const nodeElementRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const edgePathRefs = useRef<Record<string, SVGPathElement | null>>({});
+  const edgeDeleteButtonRefs = useRef<Record<string, HTMLButtonElement | null>>(
+    {},
+  );
+  const nodePositionMutationVersionsRef = useRef<Record<string, number>>({});
   const previousBodyUserSelectRef = useRef<string | null>(null);
   const wasWorkflowActiveRef = useRef(false);
   const draftVersionRef = useRef(0);
@@ -173,6 +215,8 @@ export function ProductDetailPage() {
   const [draftDirty, setDraftDirty] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [zoom, setZoom] = useState(() => clamp(readStoredNumber("productflow.workflow.zoom", 1), MIN_ZOOM, MAX_ZOOM));
+  const zoomRef = useRef(zoom);
+  const [wheelViewRevision, setWheelViewRevision] = useState(0);
   const [inspectorWidth, setInspectorWidth] = useState(() =>
     clamp(readStoredNumber("productflow.workflow.inspectorWidth", 360), MIN_INSPECTOR_WIDTH, MAX_INSPECTOR_WIDTH),
   );
@@ -240,9 +284,6 @@ export function ProductDetailPage() {
 
   useEffect(() => {
     return () => {
-      if (nodeDragRafRef.current !== null) {
-        window.cancelAnimationFrame(nodeDragRafRef.current);
-      }
       restoreBodyUserSelect();
     };
   }, []);
@@ -294,20 +335,55 @@ export function ProductDetailPage() {
     }
   }, [workflowActive]);
 
-  const getCanvasPoint = (clientX: number, clientY: number): CanvasPoint => {
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) {
+  useLayoutEffect(() => {
+    const plannedView = plannedWheelViewRef.current;
+    const scrollElement = canvasScrollRef.current;
+    if (!plannedView || !scrollElement) {
+      return;
+    }
+    if (plannedView.zoom !== zoom) {
+      plannedWheelViewRef.current = null;
+      return;
+    }
+    plannedWheelViewRef.current = null;
+    scrollElement.scrollLeft = plannedView.scrollLeft;
+    scrollElement.scrollTop = plannedView.scrollTop;
+  }, [zoom, wheelViewRevision]);
+
+  const getCanvasPoint = (
+    clientX: number,
+    clientY: number,
+    currentZoom = zoomRef.current,
+    scrollLeftOverride?: number,
+    scrollTopOverride?: number,
+  ): CanvasPoint => {
+    const scrollElement = canvasScrollRef.current;
+    const canvasElement = canvasRef.current;
+    if (!scrollElement || !canvasElement) {
       return { x: clientX, y: clientY };
     }
+    const scrollRect = scrollElement.getBoundingClientRect();
+    const canvasRect = canvasElement.getBoundingClientRect();
+    const canvasOffsetLeft = canvasRect.left - scrollRect.left + scrollElement.scrollLeft;
+    const canvasOffsetTop = canvasRect.top - scrollRect.top + scrollElement.scrollTop;
+    const plannedView = plannedWheelViewRef.current;
+    const plannedViewMatchesZoom = plannedView?.zoom === currentZoom;
+    const scrollLeft =
+      scrollLeftOverride ??
+      (plannedViewMatchesZoom ? plannedView.scrollLeft : scrollElement.scrollLeft);
+    const scrollTop =
+      scrollTopOverride ??
+      (plannedViewMatchesZoom ? plannedView.scrollTop : scrollElement.scrollTop);
     return {
-      x: (clientX - rect.left) / zoom,
-      y: (clientY - rect.top) / zoom,
+      x: (scrollLeft + clientX - scrollRect.left - canvasOffsetLeft) / currentZoom,
+      y: (scrollTop + clientY - scrollRect.top - canvasOffsetTop) / currentZoom,
     };
   };
 
   const getRenderedNodePosition = (node: WorkflowNode): CanvasPoint => {
-    if (nodeDrag?.nodeId === node.id) {
-      return { x: nodeDrag.currentX, y: nodeDrag.currentY };
+    const activeDrag = nodeDragRef.current;
+    if (activeDrag?.nodeId === node.id) {
+      return { x: activeDrag.currentX, y: activeDrag.currentY };
     }
     const optimisticPosition = optimisticNodePositions[node.id];
     if (optimisticPosition) {
@@ -339,9 +415,78 @@ export function ProductDetailPage() {
   };
 
   const updateZoom = (nextZoom: number) => {
-    const normalized = clamp(Math.round(nextZoom * 100) / 100, MIN_ZOOM, MAX_ZOOM);
+    const normalized = clamp(
+      Math.round(nextZoom * CANVAS_ZOOM_PRECISION) / CANVAS_ZOOM_PRECISION,
+      MIN_ZOOM,
+      MAX_ZOOM,
+    );
+    zoomRef.current = normalized;
     setZoom(normalized);
     window.localStorage.setItem("productflow.workflow.zoom", String(normalized));
+    return normalized;
+  };
+
+  const setNodeElementRef = (nodeId: string, element: HTMLDivElement | null) => {
+    if (element) {
+      nodeElementRefs.current[nodeId] = element;
+      return;
+    }
+    delete nodeElementRefs.current[nodeId];
+  };
+
+  const applyNodeElementPosition = (nodeId: string, position: CanvasPoint) => {
+    const element = nodeElementRefs.current[nodeId];
+    if (!element) {
+      return;
+    }
+    element.style.transform = `translate3d(${position.x}px, ${position.y}px, 0)`;
+  };
+
+  const setEdgePathRef = (edgeId: string, element: SVGPathElement | null) => {
+    if (element) {
+      edgePathRefs.current[edgeId] = element;
+      return;
+    }
+    delete edgePathRefs.current[edgeId];
+  };
+
+  const setEdgeDeleteButtonRef = (
+    edgeId: string,
+    element: HTMLButtonElement | null,
+  ) => {
+    if (element) {
+      edgeDeleteButtonRefs.current[edgeId] = element;
+      return;
+    }
+    delete edgeDeleteButtonRefs.current[edgeId];
+  };
+
+  const applyConnectedEdgePositions = (nodeId: string) => {
+    if (!workflow) {
+      return;
+    }
+    for (const edge of workflow.edges) {
+      if (edge.source_node_id !== nodeId && edge.target_node_id !== nodeId) {
+        continue;
+      }
+      const source = workflow.nodes.find(
+        (node) => node.id === edge.source_node_id,
+      );
+      const target = workflow.nodes.find(
+        (node) => node.id === edge.target_node_id,
+      );
+      if (!source || !target) {
+        continue;
+      }
+      const start = getOutputHandlePoint(source);
+      const end = getInputHandlePoint(target);
+      edgePathRefs.current[edge.id]?.setAttribute("d", buildEdgePath(start, end));
+      const deleteButton = edgeDeleteButtonRefs.current[edge.id];
+      if (deleteButton) {
+        deleteButton.style.left = `${(start.x + end.x) / 2}px`;
+        deleteButton.style.top = `${(start.y + end.y) / 2}px`;
+      }
+    }
   };
 
   const runWorkflowMutation = useMutation({
@@ -451,10 +596,12 @@ export function ProductDetailPage() {
   });
 
   const updateNodePositionMutation = useMutation({
+    scope: { id: `product-workflow-node-position-${productId}` },
     mutationFn: (input: {
       node: WorkflowNode;
       position_x: number;
       position_y: number;
+      mutationVersion: number;
       rollbackWorkflow?: ProductWorkflow;
     }) =>
       api.updateWorkflowNode(input.node.id, {
@@ -472,6 +619,9 @@ export function ProductDetailPage() {
       return { previous: input.rollbackWorkflow ?? previous };
     },
     onSuccess: (nextWorkflow, input) => {
+      if (nodePositionMutationVersionsRef.current[input.node.id] !== input.mutationVersion) {
+        return;
+      }
       setError("");
       queryClient.setQueryData(["product-workflow", productId], nextWorkflow);
       setOptimisticNodePositions((current) => {
@@ -481,6 +631,9 @@ export function ProductDetailPage() {
       });
     },
     onError: (mutationError, _input, context) => {
+      if (nodePositionMutationVersionsRef.current[_input.node.id] !== _input.mutationVersion) {
+        return;
+      }
       if (context?.previous) {
         queryClient.setQueryData(
           ["product-workflow", productId],
@@ -694,7 +847,7 @@ export function ProductDetailPage() {
     if (
       event.button !== 0 ||
       event.defaultPrevented ||
-      nodeDrag ||
+      nodeDragRef.current ||
       connectionDrag ||
       isPanePanBlockedTarget(event.target)
     ) {
@@ -727,6 +880,57 @@ export function ProductDetailPage() {
     event.preventDefault();
     scrollElement.scrollLeft = panePan.startScrollLeft - (event.clientX - panePan.startX);
     scrollElement.scrollTop = panePan.startScrollTop - (event.clientY - panePan.startY);
+  };
+
+  const handleCanvasWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+    if (
+      event.defaultPrevented ||
+      nodeDragRef.current ||
+      connectionDrag ||
+      isCanvasWheelZoomBlockedTarget(event.target)
+    ) {
+      return;
+    }
+    const scrollElement = canvasScrollRef.current;
+    if (!scrollElement || !canvasRef.current) {
+      return;
+    }
+    const rawDelta = event.deltaY !== 0 ? event.deltaY : event.deltaX;
+    if (rawDelta === 0) {
+      return;
+    }
+    const wheelDelta =
+      event.deltaMode === 1
+        ? rawDelta * 16
+        : event.deltaMode === 2
+          ? rawDelta * scrollElement.clientHeight
+          : rawDelta;
+    event.preventDefault();
+
+    const plannedView = plannedWheelViewRef.current;
+    const previousZoom = plannedView?.zoom ?? zoomRef.current;
+    const previousScrollLeft = plannedView?.scrollLeft ?? scrollElement.scrollLeft;
+    const previousScrollTop = plannedView?.scrollTop ?? scrollElement.scrollTop;
+    const anchorPoint = getCanvasPoint(
+      event.clientX,
+      event.clientY,
+      previousZoom,
+      previousScrollLeft,
+      previousScrollTop,
+    );
+    const nextZoom = updateZoom(
+      previousZoom * Math.exp(-wheelDelta * CANVAS_WHEEL_ZOOM_SENSITIVITY),
+    );
+    if (nextZoom === previousZoom) {
+      return;
+    }
+
+    plannedWheelViewRef.current = {
+      zoom: nextZoom,
+      scrollLeft: previousScrollLeft + anchorPoint.x * (nextZoom - previousZoom),
+      scrollTop: previousScrollTop + anchorPoint.y * (nextZoom - previousZoom),
+    };
+    setWheelViewRevision((current) => current + 1);
   };
 
   const endPanePan = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -773,45 +977,44 @@ export function ProductDetailPage() {
     setSelectedNodeId(node.id);
     setActiveSidebarTab("details");
     const renderedPosition = getRenderedNodePosition(node);
-    setNodeDrag({
+    const nextDrag = {
       nodeId: node.id,
       pointerId: event.pointerId,
       offsetX: point.x - renderedPosition.x,
       offsetY: point.y - renderedPosition.y,
       currentX: renderedPosition.x,
       currentY: renderedPosition.y,
-    });
+    };
+    nodeDragRef.current = nextDrag;
+    setNodeDrag(nextDrag);
   };
 
   const moveNodeDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!nodeDrag || nodeDrag.pointerId !== event.pointerId) {
+    const activeDrag = nodeDragRef.current;
+    if (!activeDrag || activeDrag.pointerId !== event.pointerId) {
       return;
     }
     event.preventDefault();
     const point = getCanvasPoint(event.clientX, event.clientY);
-    pendingNodeDragRef.current = {
-      x: Math.max(NODE_MIN_X, Math.round(point.x - nodeDrag.offsetX)),
-      y: Math.max(NODE_MIN_Y, Math.round(point.y - nodeDrag.offsetY)),
+    const nextDrag = {
+      ...activeDrag,
+      currentX: Math.max(NODE_MIN_X, point.x - activeDrag.offsetX),
+      currentY: Math.max(NODE_MIN_Y, point.y - activeDrag.offsetY),
     };
-    if (nodeDragRafRef.current !== null) {
-      return;
-    }
-    nodeDragRafRef.current = window.requestAnimationFrame(() => {
-      nodeDragRafRef.current = null;
-      const pending = pendingNodeDragRef.current;
-      if (!pending) {
-        return;
-      }
-      setNodeDrag((current) =>
-        current && current.pointerId === event.pointerId
-          ? { ...current, currentX: pending.x, currentY: pending.y }
-          : current,
-      );
+    nodeDragRef.current = nextDrag;
+    applyNodeElementPosition(nextDrag.nodeId, {
+      x: nextDrag.currentX,
+      y: nextDrag.currentY,
     });
+    applyConnectedEdgePositions(nextDrag.nodeId);
   };
 
   const cancelNodeDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (nodeDrag && nodeDrag.pointerId !== event.pointerId) {
+    const activeDrag = nodeDragRef.current;
+    if (!activeDrag) {
+      return;
+    }
+    if (activeDrag.pointerId !== event.pointerId) {
       return;
     }
     event.preventDefault();
@@ -819,16 +1022,13 @@ export function ProductDetailPage() {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
     restoreBodyUserSelect();
-    pendingNodeDragRef.current = null;
-    if (nodeDragRafRef.current !== null) {
-      window.cancelAnimationFrame(nodeDragRafRef.current);
-      nodeDragRafRef.current = null;
-    }
+    nodeDragRef.current = null;
     setNodeDrag(null);
   };
 
   const endNodeDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!nodeDrag || nodeDrag.pointerId !== event.pointerId) {
+    const activeDrag = nodeDragRef.current;
+    if (!activeDrag || activeDrag.pointerId !== event.pointerId) {
       return;
     }
     event.preventDefault();
@@ -836,15 +1036,10 @@ export function ProductDetailPage() {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
     restoreBodyUserSelect();
-    pendingNodeDragRef.current = null;
-    if (nodeDragRafRef.current !== null) {
-      window.cancelAnimationFrame(nodeDragRafRef.current);
-      nodeDragRafRef.current = null;
-    }
     const point = getCanvasPoint(event.clientX, event.clientY);
-    const finalX = Math.max(NODE_MIN_X, Math.round(point.x - nodeDrag.offsetX));
-    const finalY = Math.max(NODE_MIN_Y, Math.round(point.y - nodeDrag.offsetY));
-    const dragged = workflow?.nodes.find((node) => node.id === nodeDrag.nodeId);
+    const finalX = Math.max(NODE_MIN_X, Math.round(point.x - activeDrag.offsetX));
+    const finalY = Math.max(NODE_MIN_Y, Math.round(point.y - activeDrag.offsetY));
+    const dragged = workflow?.nodes.find((node) => node.id === activeDrag.nodeId);
     if (
       dragged &&
       (dragged.position_x !== finalX || dragged.position_y !== finalY)
@@ -853,6 +1048,15 @@ export function ProductDetailPage() {
         "product-workflow",
         productId,
       ]);
+      const mutationVersion = (nodePositionMutationVersionsRef.current[dragged.id] ?? 0) + 1;
+      nodePositionMutationVersionsRef.current[dragged.id] = mutationVersion;
+      nodeDragRef.current = {
+        ...activeDrag,
+        currentX: finalX,
+        currentY: finalY,
+      };
+      applyNodeElementPosition(dragged.id, { x: finalX, y: finalY });
+      applyConnectedEdgePositions(dragged.id);
       setOptimisticNodePositions((current) => ({
         ...current,
         [dragged.id]: { x: finalX, y: finalY },
@@ -877,9 +1081,11 @@ export function ProductDetailPage() {
         node: dragged,
         position_x: finalX,
         position_y: finalY,
+        mutationVersion,
         rollbackWorkflow,
       });
     }
+    nodeDragRef.current = null;
     setNodeDrag(null);
   };
 
@@ -1062,6 +1268,7 @@ export function ProductDetailPage() {
               onPointerUp={endPanePan}
               onPointerCancel={cancelPanePan}
               onLostPointerCapture={cancelPanePan}
+              onWheel={handleCanvasWheel}
             >
               {workflowQuery.isLoading ? (
                 <div className="flex h-full items-center justify-center text-zinc-400">
@@ -1085,13 +1292,13 @@ export function ProductDetailPage() {
                     if (!source || !target) {
                       return null;
                     }
-                    const { x: x1, y: y1 } = getOutputHandlePoint(source);
-                    const { x: x2, y: y2 } = getInputHandlePoint(target);
-                    const mid = Math.max(50, Math.abs(x2 - x1) / 2);
+                    const start = getOutputHandlePoint(source);
+                    const end = getInputHandlePoint(target);
                     return (
                       <path
                         key={edge.id}
-                        d={`M ${x1} ${y1} C ${x1 + mid} ${y1}, ${x2 - mid} ${y2}, ${x2} ${y2}`}
+                        ref={(element) => setEdgePathRef(edge.id, element)}
+                        d={buildEdgePath(start, end)}
                         fill="none"
                         stroke="#71717a"
                         strokeWidth="1.6"
@@ -1123,6 +1330,7 @@ export function ProductDetailPage() {
                   return (
                     <button
                       key={`${edge.id}-delete`}
+                      ref={(element) => setEdgeDeleteButtonRef(edge.id, element)}
                       type="button"
                       onClick={() => deleteEdgeMutation.mutate(edge.id)}
                       disabled={structureBusy}
@@ -1142,6 +1350,7 @@ export function ProductDetailPage() {
                       <WorkflowNodeCard
                         key={node.id}
                         node={node}
+                        nodeRef={(element) => setNodeElementRef(node.id, element)}
                         position={getRenderedNodePosition(node)}
                         image={getNodeImageDownload(node, product)}
                         selected={node.id === selectedNode?.id}
@@ -1540,6 +1749,7 @@ function ImagesPanel({
 
 function WorkflowNodeCard({
   node,
+  nodeRef,
   position,
   image,
   selected,
@@ -1558,6 +1768,7 @@ function WorkflowNodeCard({
   runBusy,
 }: {
   node: WorkflowNode;
+  nodeRef: (element: HTMLDivElement | null) => void;
   position: CanvasPoint;
   image: DownloadableImage | null;
   selected: boolean;
@@ -1585,6 +1796,7 @@ function WorkflowNodeCard({
 
   return (
     <div
+      ref={nodeRef}
       data-workflow-node-id={node.id}
       className={`absolute w-[248px] touch-none select-none rounded-2xl border bg-white p-3 text-left shadow-sm ${
         dragging ? "cursor-grabbing" : "transition-[border-color,box-shadow] hover:shadow-md"
@@ -1595,6 +1807,7 @@ function WorkflowNodeCard({
         left: 0,
         top: 0,
         transform: `translate3d(${position.x}px, ${position.y}px, 0)`,
+        willChange: dragging ? "transform" : undefined,
       }}
       onPointerDown={onStartDrag}
       onPointerMove={onMoveDrag}

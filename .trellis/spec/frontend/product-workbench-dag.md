@@ -34,12 +34,21 @@
 - Canvas interaction is pointer-first: nodes move by dragging the node body/header and persist via
   `updateWorkflowNode(...)` on pointer release; pointermove should use `transform`/`translate3d` plus RAF-throttled local
   drag state or an equivalent no-layout-thrash approach.
+- Active node drag must visually follow the pointer, not merely the eventual persisted coordinate. Do not round active
+  drag coordinates before rendering, and avoid a React-only RAF throttle if it makes the card trail behind pointer events;
+  round only the final persisted `position_x` / `position_y` values on release.
+- If active node drag bypasses per-pointermove React renders by mutating the node DOM transform directly, connected SVG
+  edge paths and their canvas affordances must be updated through DOM refs or an equivalent lightweight path so edges
+  visually follow the dragged node before pointer release.
 - Empty canvas/background areas may be left-button dragged to pan the scrollable workbench viewport by mutating the
   viewport `scrollLeft` / `scrollTop`. Guard this interaction by target so node drag, edge handles/buttons, node actions,
   zoom controls, uploads, and panel resize handles do not start background panning.
 - Pointer release must not flash the node back to its stale server position. Keep the final drag coordinates in an
   optimistic position layer and update the `['product-workflow', productId]` cache before/while the PATCH is in flight;
   clear the optimistic entry after the server response becomes the authority, or restore the previous cache on error.
+- If the same node is dropped again before an earlier position mutation resolves, protect the latest optimistic position
+  from stale mutation success/error handlers; serialize or version position mutations so older responses cannot overwrite
+  the newest drop and cause a one-frame old-position flash.
 - Edges are created by dragging an output handle to a target handle/node and showing a temporary SVG connection while
   dragging.
 - Edge deletion is a canvas action and must call `deleteWorkflowEdge(edgeId)` before refreshing
@@ -264,6 +273,11 @@ provider execution.
   generated-summary prose, raw coordinates, or image previews for `image_generation` nodes.
 - Canvas zoom transforms visual coordinates, but pointer hit-testing and drag persistence must convert client coordinates back
   into unscaled workflow coordinates.
+- Mouse wheel events inside the canvas viewport should zoom the canvas instead of scrolling the viewport. Use the shared
+  zoom bounds and `productflow.workflow.zoom` persistence, anchor the zoom around the mouse position by adjusting
+  `scrollLeft` / `scrollTop`, and keep controls/forms/buttons from triggering unexpected zoom.
+- If wheel zoom defers scroll anchoring through a planned view/ref, every plan must be applied or cleared even when React
+  coalesces state updates; stale planned scroll offsets must not affect later pointer-to-canvas coordinate conversion.
 - Canvas zoom controls must be a floating overlay anchored inside the canvas viewport (not a toolbar item in the scrollable
   canvas content), and must avoid the right-sidebar resize handle and tool rail.
 - Run history and downloadable images live in the right sidebar, not in a persistent bottom panel, so the canvas keeps its
