@@ -3,6 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import { ImagePlus, Loader2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
+import { ImageDropZone } from "../components/ImageDropZone";
 import { TopNav } from "../components/TopNav";
 import { api, ApiError } from "../lib/api";
 
@@ -47,6 +48,11 @@ export function ProductCreatePage() {
     createProductMutation.mutate();
   };
 
+  const handleImageFiles = (files: File[]) => {
+    setFile(files[0] ?? null);
+    setError("");
+  };
+
   return (
     <div className="flex min-h-screen flex-col bg-zinc-50/50">
       <TopNav onHome={() => navigate("/products")} breadcrumbs="新建商品" />
@@ -61,18 +67,19 @@ export function ProductCreatePage() {
               <label className="mb-2 block text-[11px] font-semibold uppercase tracking-widest text-zinc-500">
                 商品主图 <span className="text-red-500">*</span>
               </label>
-              <label className="flex cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-zinc-300 p-8 text-zinc-500 transition-colors hover:border-zinc-400 hover:bg-zinc-50">
-                <ImagePlus size={24} className="mb-2 text-zinc-400" />
-                <p className="text-sm font-medium text-zinc-700">{previewLabel}</p>
-                <p className="mt-1 text-xs">JPEG/PNG，最大 5MB</p>
-                <input
-                  type="file"
-                  required
-                  accept="image/png,image/jpeg,image/webp"
-                  className="hidden"
-                  onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-                />
-              </label>
+              <ImageDropZone
+                ariaLabel="上传商品主图"
+                className="flex cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-zinc-300 p-8 text-zinc-500 transition-colors hover:border-zinc-400 hover:bg-zinc-50"
+                onFiles={handleImageFiles}
+              >
+                {({ isDragging }) => (
+                  <>
+                    <ImagePlus size={24} className="mb-2 text-zinc-400" />
+                    <p className="text-sm font-medium text-zinc-700">{isDragging ? "松开以上传图片" : previewLabel}</p>
+                    <p className="mt-1 text-xs">JPEG/PNG/WebP，最大 5MB</p>
+                  </>
+                )}
+              </ImageDropZone>
             </div>
 
             <div>

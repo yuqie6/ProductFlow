@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 
+import { ImageDropZone } from "../components/ImageDropZone";
 import { TopNav } from "../components/TopNav";
 import { api, ApiError } from "../lib/api";
 import { formatDateTime } from "../lib/format";
@@ -368,6 +369,13 @@ export function ImageChatPage() {
     deleteProductReferenceMutation.mutate(assetId);
   }
 
+  function handleUploadReferenceFiles(files: File[]) {
+    if (!files.length || !selectedSessionId || uploadReferenceMutation.isPending) {
+      return;
+    }
+    uploadReferenceMutation.mutate(files);
+  }
+
   return (
     <div className="flex min-h-screen flex-col bg-zinc-50/60">
       <TopNav
@@ -570,27 +578,24 @@ export function ImageChatPage() {
 
             <div>
               <div className="mb-2 text-sm font-semibold text-zinc-900">参考图</div>
-              <label className="flex cursor-pointer items-center justify-center rounded-xl border border-dashed border-zinc-300 bg-zinc-50 px-4 py-4 text-sm text-zinc-600 transition-colors hover:border-zinc-400 hover:bg-zinc-100">
-                {uploadReferenceMutation.isPending ? (
-                  <Loader2 size={16} className="mr-2 animate-spin" />
-                ) : (
-                  <ImagePlus size={16} className="mr-2" />
+              <ImageDropZone
+                ariaLabel="上传会话参考图"
+                multiple
+                disabled={!selectedSessionId || uploadReferenceMutation.isPending}
+                className="flex cursor-pointer items-center justify-center rounded-xl border border-dashed border-zinc-300 bg-zinc-50 px-4 py-4 text-sm text-zinc-600 transition-colors hover:border-zinc-400 hover:bg-zinc-100"
+                onFiles={handleUploadReferenceFiles}
+              >
+                {({ isDragging }) => (
+                  <>
+                    {uploadReferenceMutation.isPending ? (
+                      <Loader2 size={16} className="mr-2 animate-spin" />
+                    ) : (
+                      <ImagePlus size={16} className="mr-2" />
+                    )}
+                    {isDragging ? "松开以上传参考图" : "拖拽或点击上传会话参考图"}
+                  </>
                 )}
-                上传会话参考图
-                <input
-                  type="file"
-                  multiple
-                  accept="image/png,image/jpeg,image/webp"
-                  className="hidden"
-                  onChange={(event) => {
-                    const files = Array.from(event.target.files ?? []);
-                    if (files.length && selectedSessionId) {
-                      uploadReferenceMutation.mutate(files);
-                    }
-                    event.currentTarget.value = "";
-                  }}
-                />
-              </label>
+              </ImageDropZone>
               <div className="mt-3 grid grid-cols-3 gap-2">
                 {sessionReferenceAssets.map((asset) => {
                   const deleting = deleteSessionReferenceMutation.isPending && deleteSessionReferenceMutation.variables === asset.id;

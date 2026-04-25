@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 
+import { ImageDropZone } from "../components/ImageDropZone";
 import { TopNav } from "../components/TopNav";
 import { api, ApiError } from "../lib/api";
 import { formatDateTime, formatPrice } from "../lib/format";
@@ -1760,22 +1761,24 @@ function ReferenceImageInspector({
           <option value="product_angle">商品角度</option>
         </select>
       </label>
-      <label className="flex cursor-pointer items-center justify-center rounded-md border border-dashed border-zinc-300 px-3 py-6 text-xs font-medium text-zinc-600 hover:bg-zinc-50">
-        <Upload size={14} className="mr-2" /> {hasImage ? "替换图片" : "上传图片"}
-        <input
-          type="file"
-          accept="image/png,image/jpeg,image/webp"
-          className="hidden"
-          disabled={busy}
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            if (file) {
-              onUploadImage(file);
-            }
-            event.currentTarget.value = "";
-          }}
-        />
-      </label>
+      <ImageDropZone
+        ariaLabel={hasImage ? "替换参考图" : "上传参考图"}
+        disabled={busy}
+        className="flex cursor-pointer items-center justify-center rounded-md border border-dashed border-zinc-300 px-3 py-6 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-50"
+        onFiles={(files) => {
+          const file = files[0];
+          if (file) {
+            onUploadImage(file);
+          }
+        }}
+      >
+        {({ isDragging }) => (
+          <>
+            <Upload size={14} className="mr-2" />
+            {isDragging ? "松开以上传图片" : hasImage ? "拖拽或点击替换图片" : "拖拽或点击上传图片"}
+          </>
+        )}
+      </ImageDropZone>
     </div>
   );
 }

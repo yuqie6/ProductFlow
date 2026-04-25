@@ -80,8 +80,9 @@ Follow the patterns already present:
 - Form submit handlers call `event.preventDefault()` and trigger a mutation, e.g. `ProductCreatePage.tsx` and
   `LoginPage.tsx`.
 - Inputs in settings use `label htmlFor={item.key}` and matching `id={item.key}` in `ConfigField`.
-- File inputs are visually hidden but wrapped in clickable `<label>` blocks in `ProductCreatePage.tsx` and
-  `ImageChatPage.tsx`.
+- Image upload drop zones use the shared `ImageDropZone` component. Pages own the upload mutation and pass an `onFiles`
+  callback; the shared component only handles click, keyboard, drag/drop, `accept`, `multiple`, and disabled/focus states.
+  Use the default single-file mode for product/workflow images and `multiple` for session reference images.
 - Loading states use `Loader2` with `animate-spin`; disabled buttons use `disabled` and reduced opacity.
 - Errors are rendered near the relevant action as text or red alert blocks.
 
