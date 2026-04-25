@@ -58,6 +58,10 @@
 - `image_generation` nodes collect incoming edge context, including upstream copy text and reference-image outputs. They
   are trigger/config nodes, not image-bearing artifact slots; generated images must be viewed/downloaded from linked
   downstream `reference_image` nodes or normal product artifact history, not from the `image_generation` node card.
+- A connected upstream `product_context` node contributes the product source image asset to
+  `image_generation` image context. Use the node output `source_asset_id` when available and fall back to the product's
+  current original source asset so direct selected image-node runs do not require re-running product context only to get
+  image context. Deduplicate with other reference assets before provider/render input construction.
 - Image-generation count is driven by graph structure: an `image_generation` node connected to N downstream
   `reference_image` slots generates N images and fills those slots. If no downstream reference slot is connected, the node
   must fail with a clear user-facing message asking the user to connect at least one image/reference node before running.
@@ -144,6 +148,9 @@
   downstream output context summary uses the latest saved config rather than stale context output.
 - API regression asserts upstream copy text and reference-image label/role metadata appear in deterministic context sources
   for image generation.
+- API/provider regression asserts the default `product_context -> image_generation` edge contributes the product source
+  image to image-generation context, so `context_summary.reference_image_count` does not report `0` when the product image
+  is connected through the product-context node.
 - Alembic head upgrade must pass on SQLite after adding workflow tables.
 
 ### 7. Wrong vs Correct

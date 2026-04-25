@@ -51,6 +51,7 @@ class WorkflowRunKickoff:
     workflow: ProductWorkflow
     run_id: str
     created: bool
+    should_enqueue: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -345,6 +346,16 @@ def _active_workflow_run(workflow: ProductWorkflow) -> WorkflowRun | None:
     )
 
 
+def _workflow_run_should_enqueue(run: WorkflowRun) -> bool:
+    if run.status != WorkflowRunStatus.RUNNING:
+        return False
+    if any(node_run.status == WorkflowNodeStatus.RUNNING for node_run in run.node_runs):
+        return False
+    return any(node_run.status == WorkflowNodeStatus.QUEUED for node_run in run.node_runs) or (
+        bool(run.node_runs) and all(node_run.status == WorkflowNodeStatus.SUCCEEDED for node_run in run.node_runs)
+    )
+
+
 def start_product_workflow_run(
     session: Session,
     *,
@@ -354,7 +365,12 @@ def start_product_workflow_run(
     workflow = get_or_create_product_workflow(session, product_id)
     active_run = _active_workflow_run(workflow)
     if active_run is not None:
-        return WorkflowRunKickoff(workflow=workflow, run_id=active_run.id, created=False)
+        return WorkflowRunKickoff(
+            workflow=workflow,
+            run_id=active_run.id,
+            created=False,
+            should_enqueue=_workflow_run_should_enqueue(active_run),
+        )
 
     ordered_nodes = product_workflow_graph.topological_nodes(workflow)
     node_ids_to_run = _node_ids_to_run(session, workflow, start_node_id)
@@ -391,13 +407,19 @@ def start_product_workflow_run(
         workflow = product_workflow_graph.get_workflow_or_raise(session, workflow.id)
         active_run = _active_workflow_run(workflow)
         if active_run is not None:
-            return WorkflowRunKickoff(workflow=workflow, run_id=active_run.id, created=False)
+            return WorkflowRunKickoff(
+                workflow=workflow,
+                run_id=active_run.id,
+                created=False,
+                should_enqueue=_workflow_run_should_enqueue(active_run),
+            )
         raise
     session.expire_all()
     return WorkflowRunKickoff(
         workflow=product_workflow_graph.get_workflow_or_raise(session, workflow.id),
         run_id=run.id,
         created=True,
+        should_enqueue=True,
     )
 
 
@@ -1338,6 +1360,18 @@ def _collect_incoming_context(workflow: ProductWorkflow, node_id: str) -> _Incom
                 text="；".join(part for part in copy_parts if part),
             )
         elif candidate.node_type == WorkflowNodeType.PRODUCT_CONTEXT:
+            product_source_asset_ids = _source_asset_ids_from_config(output)
+            if not product_source_asset_ids:
+                product_source = _find_source_asset(workflow.product)
+                if product_source is not None:
+                    product_source_asset_ids = [product_source.id]
+            context.image_asset_ids.extend(product_source_asset_ids)
+            product_source_assets = [
+                asset for asset in workflow.product.source_assets if asset.id in product_source_asset_ids
+            ]
+            if product_source_assets:
+                image_labels = "、".join(asset.original_filename or "商品原图" for asset in product_source_assets)
+                context.append_text(node=candidate, label="商品图", text=f"商品图：{image_labels}")
             product_context = _product_context_values(workflow.product, candidate)
             product_parts = [
                 f"商品：{product_context['name']}" if product_context["name"] else "",

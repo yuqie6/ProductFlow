@@ -37,6 +37,11 @@ import type {
 } from "../lib/types";
 import {
   ADD_NODE_OPTIONS,
+  CANVAS_MIN_HEIGHT,
+  CANVAS_MIN_WIDTH,
+  CANVAS_NODE_PADDING_X,
+  CANVAS_NODE_PADDING_Y,
+  CANVAS_VIEWPORT_PADDING,
   MAX_BOTTOM_PANEL_HEIGHT,
   MAX_INSPECTOR_WIDTH,
   MAX_ZOOM,
@@ -53,7 +58,13 @@ import {
 import { DownloadLink, PosterThumb, SourceAssetThumb } from "./product-detail/ImageDownloadComponents";
 import { NodeOutputPreview } from "./product-detail/NodeOutputPreview";
 import { getNodeImageDownload, getSourceImageDownload } from "./product-detail/imageDownloads";
-import type { CanvasPoint, ConnectionDragState, NodeConfigDraft, NodeDragState } from "./product-detail/types";
+import type {
+  CanvasPoint,
+  ConnectionDragState,
+  NodeConfigDraft,
+  NodeDragState,
+  PanePanState,
+} from "./product-detail/types";
 import {
   clamp,
   hasActiveWorkflow,
@@ -110,10 +121,34 @@ const BOTTOM_IMAGE_RATIO_STORAGE_KEY = "productflow.workflow.bottomPanelImageRat
 const MIN_BOTTOM_IMAGE_RATIO = 0.28;
 const MAX_BOTTOM_IMAGE_RATIO = 0.55;
 
+function isPanePanBlockedTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  return Boolean(
+    target.closest(
+      [
+        "[data-workflow-node-id]",
+        "[data-node-action]",
+        "[data-workflow-target-node-id]",
+        "[data-canvas-control]",
+        "button",
+        "a",
+        "input",
+        "textarea",
+        "select",
+        "label",
+        "[role='button']",
+      ].join(","),
+    ),
+  );
+}
+
 export function ProductDetailPage() {
   const { productId = "" } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const canvasScrollRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const nodeDragRafRef = useRef<number | null>(null);
   const pendingNodeDragRef = useRef<CanvasPoint | null>(null);
@@ -128,6 +163,7 @@ export function ProductDetailPage() {
   >({});
   const [connectionDrag, setConnectionDrag] =
     useState<ConnectionDragState | null>(null);
+  const [panePan, setPanePan] = useState<PanePanState | null>(null);
   const [draft, setDraft] = useState<NodeConfigDraft>(() =>
     draftFromNode(null),
   );
@@ -672,6 +708,68 @@ export function ProductDetailPage() {
   const structureBusy = layoutMutationBusy || workflowActive;
   const runBusy = runWorkflowMutation.isPending || workflowActive;
 
+  const startPanePan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (
+      event.button !== 0 ||
+      event.defaultPrevented ||
+      nodeDrag ||
+      connectionDrag ||
+      isPanePanBlockedTarget(event.target)
+    ) {
+      return;
+    }
+    const scrollElement = canvasScrollRef.current;
+    if (!scrollElement) {
+      return;
+    }
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    disableBodyUserSelect();
+    setPanePan({
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startScrollLeft: scrollElement.scrollLeft,
+      startScrollTop: scrollElement.scrollTop,
+    });
+  };
+
+  const movePanePan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!panePan || panePan.pointerId !== event.pointerId) {
+      return;
+    }
+    const scrollElement = canvasScrollRef.current;
+    if (!scrollElement) {
+      return;
+    }
+    event.preventDefault();
+    scrollElement.scrollLeft = panePan.startScrollLeft - (event.clientX - panePan.startX);
+    scrollElement.scrollTop = panePan.startScrollTop - (event.clientY - panePan.startY);
+  };
+
+  const endPanePan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!panePan || panePan.pointerId !== event.pointerId) {
+      return;
+    }
+    event.preventDefault();
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    restoreBodyUserSelect();
+    setPanePan(null);
+  };
+
+  const cancelPanePan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (panePan && panePan.pointerId !== event.pointerId) {
+      return;
+    }
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    restoreBodyUserSelect();
+    setPanePan(null);
+  };
+
   const startNodeDrag = (
     node: WorkflowNode,
     event: ReactPointerEvent<HTMLDivElement>,
@@ -884,19 +982,23 @@ export function ProductDetailPage() {
   const product = productQuery.data;
   const sourceImage = getSourceImageDownload(product);
   const latestRun = workflow?.runs[0] ?? null;
+  const canvasViewportWidth = canvasScrollRef.current?.clientWidth ?? 0;
+  const canvasViewportHeight = canvasScrollRef.current?.clientHeight ?? 0;
   const canvasWidth = Math.max(
-    1480,
+    CANVAS_MIN_WIDTH,
+    canvasViewportWidth / zoom + CANVAS_VIEWPORT_PADDING,
     ...(workflow?.nodes.map(
-      (node) => getRenderedNodePosition(node).x + 360,
-    ) ?? [1480]),
-    connectionDrag ? connectionDrag.to.x + 120 : 0,
+      (node) => getRenderedNodePosition(node).x + CANVAS_NODE_PADDING_X,
+    ) ?? [CANVAS_MIN_WIDTH]),
+    connectionDrag ? connectionDrag.to.x + CANVAS_NODE_PADDING_X : 0,
   );
   const canvasHeight = Math.max(
-    820,
+    CANVAS_MIN_HEIGHT,
+    canvasViewportHeight / zoom + CANVAS_VIEWPORT_PADDING,
     ...(workflow?.nodes.map(
-      (node) => getRenderedNodePosition(node).y + 220,
-    ) ?? [820]),
-    connectionDrag ? connectionDrag.to.y + 120 : 0,
+      (node) => getRenderedNodePosition(node).y + CANVAS_NODE_PADDING_Y,
+    ) ?? [CANVAS_MIN_HEIGHT]),
+    connectionDrag ? connectionDrag.to.y + CANVAS_NODE_PADDING_Y : 0,
   );
   const posters = historyQuery.data?.poster_variants ?? product.poster_variants;
   const referenceAssets = [...product.source_assets]
@@ -958,7 +1060,15 @@ export function ProductDetailPage() {
         <div className="relative flex min-h-0 flex-1 overflow-hidden">
           <div className="absolute inset-0 bg-[radial-gradient(#d4d4d8_1px,transparent_1px)] [background-size:18px_18px]" />
           <section className="relative z-10 min-w-0 flex-1 overflow-hidden">
-            <div className="h-full overflow-auto p-6">
+            <div
+              ref={canvasScrollRef}
+              className={`h-full overflow-auto p-6 ${panePan ? "cursor-grabbing" : "cursor-grab"}`}
+              onPointerDown={startPanePan}
+              onPointerMove={movePanePan}
+              onPointerUp={endPanePan}
+              onPointerCancel={cancelPanePan}
+              onLostPointerCapture={cancelPanePan}
+            >
               {workflowQuery.isLoading ? (
                 <div className="flex h-full items-center justify-center text-zinc-400">
                   <Loader2 size={24} className="animate-spin" />
@@ -1067,7 +1177,7 @@ export function ProductDetailPage() {
               )}
             </div>
 
-            <div className="pointer-events-none absolute bottom-4 left-4 z-30">
+            <div data-canvas-control className="pointer-events-none absolute bottom-4 left-4 z-30">
               <div className="pointer-events-auto flex items-center gap-1 rounded-lg border border-zinc-200 bg-white/90 p-1 shadow-sm backdrop-blur">
               <button
                 type="button"

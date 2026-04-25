@@ -187,7 +187,7 @@ def run_product_workflow_endpoint(
     except ValueError as exc:
         raise_value_error_as_http(exc)
     response = serialize_product_workflow(kickoff.workflow)
-    if kickoff.created:
+    if kickoff.should_enqueue:
         try:
             enqueue_workflow_run(kickoff.run_id)
         except Exception as exc:

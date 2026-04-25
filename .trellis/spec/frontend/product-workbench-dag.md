@@ -33,6 +33,9 @@
 - Canvas interaction is pointer-first: nodes move by dragging the node body/header and persist via
   `updateWorkflowNode(...)` on pointer release; pointermove should use `transform`/`translate3d` plus RAF-throttled local
   drag state or an equivalent no-layout-thrash approach.
+- Empty canvas/background areas may be left-button dragged to pan the scrollable workbench viewport by mutating the
+  viewport `scrollLeft` / `scrollTop`. Guard this interaction by target so node drag, edge handles/buttons, node actions,
+  zoom controls, uploads, and panel resize handles do not start background panning.
 - Pointer release must not flash the node back to its stale server position. Keep the final drag coordinates in an
   optimistic position layer and update the `['product-workflow', productId]` cache before/while the PATCH is in flight;
   clear the optimistic entry after the server response becomes the authority, or restore the previous cache on error.
@@ -109,6 +112,8 @@
   after a page reload.
 - Base: after dragging a node and releasing the pointer, the rendered node stays at the dropped position while the
   position mutation is pending; it must not briefly render the old `position_x` / `position_y`.
+- Base: dragging an empty canvas/background area pans the viewport, while dragging a node still persists node coordinates
+  and clicking edge/delete/run/upload/zoom controls does not move the viewport.
 - Base: while a workflow run is active, users can still drag nodes to reorganize the canvas, but cannot start duplicate
   runs or make unsafe structural changes.
 - Base: deleting a node removes it and its connected edges after the backend response, and a page refresh does not restore

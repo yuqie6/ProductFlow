@@ -1402,6 +1402,90 @@ def test_direct_downstream_run_uses_latest_saved_product_context(configured_env:
     assert any("最新说明" in source["text"] for source in image_output["context_sources"])
 
 
+def test_product_context_source_image_reaches_image_generation_context(
+    configured_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.infrastructure.image.base import GeneratedImagePayload
+    from productflow_backend.presentation.api import create_app
+
+    session = get_session_factory()()
+    try:
+        session.add(AppSetting(key="poster_generation_mode", value="generated"))
+        session.commit()
+    finally:
+        session.close()
+
+    captured_inputs: list[PosterGenerationInput] = []
+
+    class CapturingImageProvider:
+        provider_name = "capturing"
+        prompt_version = "capturing-v1"
+
+        def generate_poster_image(
+            self,
+            poster: PosterGenerationInput,
+            kind: PosterKind,
+        ) -> tuple[GeneratedImagePayload, str]:
+            captured_inputs.append(poster)
+            return (
+                GeneratedImagePayload(
+                    kind=kind,
+                    bytes_data=_make_demo_image_bytes(),
+                    mime_type="image/png",
+                    width=800,
+                    height=800,
+                    variant_label=f"capturing-r{len(poster.reference_images)}",
+                ),
+                "capturing-v1",
+            )
+
+    monkeypatch.setattr(
+        "productflow_backend.application.product_workflows.get_image_provider",
+        CapturingImageProvider,
+    )
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post(
+        "/api/products",
+        data={"name": "旅行背包"},
+        files={"image": ("bag.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+
+    workflow_response = client.get(f"/api/products/{product_id}/workflow")
+    assert workflow_response.status_code == 200
+    workflow = workflow_response.json()
+    context_node = next(node for node in workflow["nodes"] if node["node_type"] == "product_context")
+    image_node = next(node for node in workflow["nodes"] if node["node_type"] == "image_generation")
+    assert any(
+        edge["source_node_id"] == context_node["id"] and edge["target_node_id"] == image_node["id"]
+        for edge in workflow["edges"]
+    )
+
+    selected_run = client.post(
+        f"/api/products/{product_id}/workflow/run",
+        json={"start_node_id": image_node["id"]},
+    )
+    assert selected_run.status_code == 200
+    payload = _wait_for_workflow_run(client, product_id, status="succeeded")
+    image_output = next(node for node in payload["nodes"] if node["id"] == image_node["id"])["output_json"]
+
+    assert image_output["context_summary"]["reference_image_count"] == 1
+    assert any(
+        source["label"] == "商品图" and "bag.png" in source["text"]
+        for source in image_output["context_sources"]
+    )
+    assert len(captured_inputs) == 1
+    provider_input = captured_inputs[0]
+    assert len(provider_input.reference_images) == 1
+    assert provider_input.reference_images[0].path == provider_input.source_image
+
+
 def test_single_node_workflow_run_reuses_succeeded_upstream_outputs(configured_env: Path) -> None:
     from productflow_backend.presentation.api import create_app
 
@@ -1542,7 +1626,9 @@ def test_workflow_run_kickoff_prevents_duplicate_active_runs(db_session, configu
     second = start_product_workflow_run(db_session, product_id=product.id)
 
     assert first.created is True
+    assert first.should_enqueue is True
     assert second.created is False
+    assert second.should_enqueue is True
     assert second.run_id == first.run_id
     assert [run.id for run in second.workflow.runs if run.status == WorkflowRunStatus.RUNNING] == [first.run_id]
 
@@ -1591,7 +1677,21 @@ def test_workflow_run_endpoint_enqueues_durable_actor_and_reuses_active_run(
     second = client.post(f"/api/products/{product_id}/workflow/run", json={})
     assert second.status_code == 200
     assert second.json()["runs"][0]["id"] == first_run_id
-    assert sent_run_ids == [first_run_id]
+    assert sent_run_ids == [first_run_id, first_run_id]
+
+    session = get_session_factory()()
+    try:
+        node_run = session.query(WorkflowNodeRun).filter_by(workflow_run_id=first_run_id).first()
+        assert node_run is not None
+        node_run.status = WorkflowNodeStatus.RUNNING
+        session.commit()
+    finally:
+        session.close()
+
+    third = client.post(f"/api/products/{product_id}/workflow/run", json={})
+    assert third.status_code == 200
+    assert third.json()["runs"][0]["id"] == first_run_id
+    assert sent_run_ids == [first_run_id, first_run_id]
 
 
 def test_workflow_run_enqueue_failure_marks_run_failed(

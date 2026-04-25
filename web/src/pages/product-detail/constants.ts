@@ -4,6 +4,11 @@ export const NODE_WIDTH = 248;
 export const NODE_HANDLE_Y = 56;
 export const NODE_MIN_X = 24;
 export const NODE_MIN_Y = 24;
+export const CANVAS_MIN_WIDTH = 1800;
+export const CANVAS_MIN_HEIGHT = 1080;
+export const CANVAS_NODE_PADDING_X = 720;
+export const CANVAS_NODE_PADDING_Y = 480;
+export const CANVAS_VIEWPORT_PADDING = 520;
 
 export const NODE_LABELS: Record<WorkflowNodeType, string> = {
   product_context: "商品",

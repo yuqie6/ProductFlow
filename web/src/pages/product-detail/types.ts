@@ -19,6 +19,14 @@ export type ConnectionDragState = {
   to: CanvasPoint;
 };
 
+export type PanePanState = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  startScrollLeft: number;
+  startScrollTop: number;
+};
+
 export type NodeConfigDraft = {
   title: string;
   productName: string;
