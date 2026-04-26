@@ -138,6 +138,8 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
+不要在该命令后追加服务名；追加服务名只会启动指定服务。完整自托管栈应一次启动全部服务。
+
 Compose 默认启动：
 
 - PostgreSQL：服务名 `productflow-postgres`，Compose volume `productflow-postgres-data`，宿主机端口 `${POSTGRES_HOST_PORT:-15432}`。
@@ -249,9 +251,9 @@ cp web/.env.example web/.env
 
 `.env.dev.example` 使用开发端口、Redis DB 1 和 `backend/storage-dev`，数据库名与默认 `docker-compose.yml` 保持一致；使用单独的开发数据库时，先在 PostgreSQL 中创建对应数据库，再调整 `.env.dev` 的 `DATABASE_URL`。本地开发的 storage 与生产 Compose 隔离：`just backend-run` / `just backend-worker` 及对应原始命令会读取 `.env.dev` 中的 `STORAGE_ROOT=./backend/storage-dev`，不要通过 `source .env` 或把生产 `STORAGE_HOST_PATH` 导入 shell 来启动开发进程。
 
-### 3. 启动依赖服务
+### 3. 仅启动开发依赖
 
-仅启动数据库和 Redis 供本机开发进程使用时，启动依赖服务：
+本地热重载开发只用 Compose 启动 PostgreSQL 和 Redis；API、worker 和 Web 由下一步的本机命令启动。完整自托管栈使用上文的 `docker compose up -d --build`。
 
 ```bash
 docker compose up -d productflow-postgres productflow-redis
