@@ -32,6 +32,7 @@ backend/
 │   ├── config.py                        # env settings + runtime database overrides
 │   ├── workers.py                       # Dramatiq actors
 │   ├── domain/enums.py                  # enum values shared by DB/API/frontend
+│   ├── domain/errors.py                 # typed business errors shared by application and presentation mapping
 │   ├── application/
 │   │   ├── contracts.py                 # Pydantic contracts between use cases and providers/renderers
 │   │   ├── use_cases.py                 # product/copy/poster workflow use cases
@@ -104,6 +105,10 @@ This layer receives a SQLAlchemy `Session` from callers. It is allowed to call i
 `backend/src/productflow_backend/domain/enums.py` is the shared home for enum values such as `ProductWorkflowState`,
 `SourceAssetKind`, `CopyStatus`, `JobKind`, `JobStatus`, `PosterKind`, and `ImageSessionAssetKind`. The same string
 values are mirrored in `web/src/lib/types.ts`, so enum changes are cross-layer changes.
+
+`backend/src/productflow_backend/domain/errors.py` is the shared home for typed business errors such as `BusinessError`,
+`BusinessValidationError`, and `NotFoundError`. Application use cases may raise these errors, while HTTP status conversion
+still belongs in `presentation/errors.py`.
 
 ### Infrastructure layer
 

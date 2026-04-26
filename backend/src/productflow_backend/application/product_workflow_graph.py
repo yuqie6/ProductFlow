@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.domain.enums import WorkflowNodeType
+from productflow_backend.domain.errors import BusinessValidationError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     Product,
     ProductWorkflow,
@@ -45,14 +46,14 @@ def get_product_or_raise(session: Session, product_id: str) -> Product:
         .where(Product.id == product_id)
     )
     if product is None:
-        raise ValueError("商品不存在")
+        raise NotFoundError("商品不存在")
     return product
 
 
 def get_workflow_or_raise(session: Session, workflow_id: str) -> ProductWorkflow:
     workflow = session.scalar(workflow_query().where(ProductWorkflow.id == workflow_id))
     if workflow is None:
-        raise ValueError("工作流不存在")
+        raise NotFoundError("工作流不存在")
     return workflow
 
 
@@ -65,14 +66,14 @@ def get_active_workflow(session: Session, product_id: str) -> ProductWorkflow | 
 def get_node_or_raise(session: Session, node_id: str) -> WorkflowNode:
     node = session.get(WorkflowNode, node_id)
     if node is None:
-        raise ValueError("工作流节点不存在")
+        raise NotFoundError("工作流节点不存在")
     return node
 
 
 def get_edge_or_raise(session: Session, edge_id: str) -> WorkflowEdge:
     edge = session.get(WorkflowEdge, edge_id)
     if edge is None:
-        raise ValueError("工作流连线不存在")
+        raise NotFoundError("工作流连线不存在")
     return edge
 
 
@@ -150,7 +151,7 @@ def topological_nodes(workflow: ProductWorkflow) -> list[WorkflowNode]:
     outgoing: dict[str, list[str]] = {node_id: [] for node_id in nodes}
     for edge in workflow.edges:
         if edge.source_node_id not in nodes or edge.target_node_id not in nodes:
-            raise ValueError("工作流连线引用了不存在的节点")
+            raise BusinessValidationError("工作流连线引用了不存在的节点")
         outgoing[edge.source_node_id].append(edge.target_node_id)
         incoming_count[edge.target_node_id] += 1
 

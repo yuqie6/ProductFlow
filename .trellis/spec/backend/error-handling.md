@@ -24,15 +24,39 @@ Key files:
 
 ## Business Errors
 
-Application use cases raise `ValueError` for expected business failures:
+Application use cases raise typed business errors for expected failures where the HTTP status is part of the business
+semantics. Keep the error classes below the presentation layer and map them to HTTP only at the route boundary.
 
-- Missing records: `_get_product_or_raise(...)` raises `ValueError("商品不存在")` in `application/use_cases.py`.
+Key class home:
+
+- `backend/src/productflow_backend/domain/errors.py`
+
+Current typed errors:
+
+- `BusinessError`: base class for expected user-facing failures, defaults to `400`.
+- `BusinessValidationError`: explicit `400` for valid HTTP requests that are invalid for the current workflow state or
+  selected resource.
+- `NotFoundError`: explicit `404` for missing domain/application resources.
+
+Typed business errors intentionally subclass `ValueError` during the migration so existing route catches continue to
+work, but new code should choose the typed class instead of relying on message suffixes.
+
+Use typed errors for newly touched expected failures:
+
+- Missing records: `_get_product_or_raise(...)` raises `NotFoundError("商品不存在")` in `application/use_cases.py`.
+- Missing workflow/session resources such as products, workflows, nodes, edges, image sessions, source assets, copy sets,
+  poster variants, and jobs should use `NotFoundError`.
+- Explicit workflow validation such as the missing poster file case raises `BusinessValidationError("海报文件不存在")`
+  so it remains a `400` without a string-content exception in typed mapping.
+- Workflow graph integrity or selection problems that were legacy `400`s, such as an edge referencing a node outside the
+  loaded graph, should use `BusinessValidationError` rather than `NotFoundError`.
+
+Legacy application use cases may still raise `ValueError` for expected business failures while migration is incremental:
+
 - Invalid edits or state transitions: helpers such as `_normalize_required_text(...)`, `_normalize_price(...)`, and
   copy/poster use cases raise `ValueError` with user-facing messages.
-- Image-session failures such as missing sessions/assets are raised from `application/image_sessions.py` with messages
-  like `"连续生图会话不存在"` and `"会话参考图不存在"`.
 
-Routes catch these `ValueError`s and convert them to `HTTPException`.
+Routes catch these typed errors through the existing `ValueError` boundary and convert them to `HTTPException`.
 
 ---
 
@@ -50,8 +74,10 @@ except ValueError as exc:
 
 The helper preserves the route-boundary contract:
 
-- messages ending with `"不存在"` -> `404`.
-- other expected business `ValueError`s -> `400`.
+- `BusinessError` subclasses map by explicit `status_code`, not by Chinese message content.
+- legacy `ValueError("海报文件不存在")` remains `400` for compatibility.
+- legacy `ValueError` messages ending with `"不存在"` remain `404` for compatibility.
+- other expected legacy business `ValueError`s remain `400`.
 
 Examples:
 
@@ -62,8 +88,70 @@ Examples:
 - `presentation/routes/product_workflows.py` catches `ValueError` around workflow graph edits and run kickoff.
 - `presentation/routes/jobs.py` maps missing jobs to 404 directly.
 
-When adding new use cases, keep expected business failures as `ValueError` in application code and map them at the route
-boundary with the shared helper. Do not import FastAPI `HTTPException` into application modules.
+When adding or touching use cases, prefer `BusinessValidationError` / `NotFoundError` over raw `ValueError` for expected
+business failures. Keep using the shared presentation helper at the route boundary. Do not import FastAPI
+`HTTPException` into application modules.
+
+### Scenario: Typed business errors at the route boundary
+
+#### 1. Scope / Trigger
+
+- Trigger: adding or touching expected application/business failures that routes convert into API errors.
+- Applies to `application/` use cases, `domain/errors.py`, and `presentation/errors.py`.
+
+#### 2. Signatures
+
+- `BusinessError(message: str)` -> default `status_code = 400`.
+- `BusinessValidationError(message: str)` -> `status_code = 400`.
+- `NotFoundError(message: str)` -> `status_code = 404`.
+- `presentation.errors.raise_value_error_as_http(exc: ValueError) -> NoReturn`.
+
+#### 3. Contracts
+
+- API response shape remains FastAPI standard `{"detail": "<message>"}`.
+- `detail` is `str(exc)` / the Chinese user-facing message.
+- Typed error subclasses may carry status semantics internally, but routes must not add frontend-visible `code` fields
+  unless a future cross-layer task updates frontend handling.
+
+#### 4. Validation & Error Matrix
+
+- `NotFoundError("商品不存在")` -> `404`, `{"detail": "商品不存在"}`.
+- `BusinessValidationError("海报文件不存在")` -> `400`, `{"detail": "海报文件不存在"}`.
+- `BusinessValidationError("工作流连线引用了不存在的节点")` -> `400`,
+  `{"detail": "工作流连线引用了不存在的节点"}`.
+- `BusinessError("请选择一张图片")` -> `400`, `{"detail": "请选择一张图片"}`.
+- Legacy `ValueError("旧资源不存在")` -> `404` while migration is incomplete.
+- Legacy `ValueError("海报文件不存在")` -> `400` for backward compatibility.
+- Legacy `ValueError("普通业务错误")` -> `400`.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: `_get_product_or_raise(...)` raises `NotFoundError("商品不存在")`.
+- Base: existing normalization helpers may still raise `ValueError("价格格式不正确")` and map to `400`.
+- Bad: adding a new `if detail.endswith(...)` or exact Chinese string branch for newly converted typed errors.
+
+#### 6. Tests Required
+
+- Unit test `raise_value_error_as_http(NotFoundError("资源已移除"))` returns `404` even without an `"不存在"` suffix.
+- Unit test generic `BusinessError` returns `400`.
+- Unit or route test poster-file missing remains `400` with detail `"海报文件不存在"`.
+- Unit test legacy `ValueError` fallback preserves old `404` / `400` behavior.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+if detail.endswith("不存在"):
+    raise HTTPException(status_code=404, detail=detail)
+```
+
+Correct:
+
+```python
+if product is None:
+    raise NotFoundError("商品不存在")
+```
 
 ---
 
@@ -140,3 +228,5 @@ plain and user-readable; do not return stack traces or provider secrets.
 - Returning raw exception strings that may include API keys, paths outside storage root, or provider request bodies.
 - Changing Chinese user-facing `detail` text without checking frontend pages that display it directly.
 - Treating all `ValueError`s as 500s; existing route helpers intentionally map them to 400/404.
+- Adding new string-suffix status checks for converted business errors; add or reuse a typed `BusinessError` subclass
+  instead.

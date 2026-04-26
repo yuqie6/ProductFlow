@@ -28,6 +28,7 @@ from productflow_backend.domain.enums import (
     SourceAssetKind,
     WorkflowRunStatus,
 )
+from productflow_backend.domain.errors import NotFoundError
 from productflow_backend.infrastructure.db.models import (
     CopySet,
     CreativeBrief,
@@ -104,7 +105,7 @@ def _product_query():
 def _get_product_or_raise(session: Session, product_id: str) -> Product:
     product = session.scalar(_product_query().where(Product.id == product_id))
     if product is None:
-        raise ValueError("商品不存在")
+        raise NotFoundError("商品不存在")
     return product
 
 
@@ -112,14 +113,14 @@ def _get_copy_set_or_raise(session: Session, copy_set_id: str) -> CopySet:
     stmt = select(CopySet).options(selectinload(CopySet.product)).where(CopySet.id == copy_set_id)
     copy_set = session.scalar(stmt)
     if copy_set is None:
-        raise ValueError("文案不存在")
+        raise NotFoundError("文案不存在")
     return copy_set
 
 
 def _get_poster_or_raise(session: Session, poster_id: str) -> PosterVariant:
     poster = session.get(PosterVariant, poster_id)
     if poster is None:
-        raise ValueError("海报不存在")
+        raise NotFoundError("海报不存在")
     return poster
 
 
@@ -218,7 +219,7 @@ def delete_reference_image(
 ) -> Product:
     asset = session.get(SourceAsset, asset_id)
     if asset is None:
-        raise ValueError("商品参考图不存在")
+        raise NotFoundError("商品参考图不存在")
     if asset.kind != SourceAssetKind.REFERENCE_IMAGE:
         raise ValueError("只能删除商品参考图")
 
@@ -393,7 +394,7 @@ def create_regenerate_poster_job(session: Session, *, poster_id: str) -> JobCrea
 def get_job(session: Session, job_id: str) -> JobRun:
     job = session.get(JobRun, job_id)
     if job is None:
-        raise ValueError("任务不存在")
+        raise NotFoundError("任务不存在")
     return job
 
 

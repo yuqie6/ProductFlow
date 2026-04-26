@@ -24,6 +24,7 @@ from productflow_backend.domain.enums import (
     WorkflowNodeType,
     WorkflowRunStatus,
 )
+from productflow_backend.domain.errors import BusinessValidationError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     CopySet,
     CreativeBrief,
@@ -181,7 +182,7 @@ def update_workflow_copy_set(
 
     copy_set = session.get(CopySet, copy_set_id)
     if copy_set is None or copy_set.product_id != workflow.product_id:
-        raise ValueError("文案版本不存在")
+        raise NotFoundError("文案版本不存在")
 
     copy_set = update_copy_set(
         session,
@@ -290,7 +291,7 @@ def bind_workflow_node_image(
     if source_asset_id:
         asset = session.get(SourceAsset, source_asset_id)
         if asset is None or asset.product_id != workflow.product_id:
-            raise ValueError("源图不存在")
+            raise NotFoundError("源图不存在")
         if asset.kind != SourceAssetKind.REFERENCE_IMAGE:
             raise ValueError("只能绑定参考图素材")
         if asset.source_poster_variant_id:
@@ -300,7 +301,7 @@ def bind_workflow_node_image(
     else:
         poster = session.get(PosterVariant, poster_variant_id)
         if poster is None or poster.product_id != workflow.product_id:
-            raise ValueError("海报不存在")
+            raise NotFoundError("海报不存在")
         source_poster_variant_id = poster.id
         asset = _source_asset_for_poster_variant(session, workflow=workflow, poster_variant_id=poster.id)
         if asset is None:
@@ -308,7 +309,7 @@ def bind_workflow_node_image(
             try:
                 content = storage.resolve(poster.storage_path).read_bytes()
             except (OSError, ValueError) as exc:
-                raise ValueError("海报文件不存在") from exc
+                raise BusinessValidationError("海报文件不存在") from exc
             filename = f"poster-{poster.id}{infer_extension(poster.mime_type)}"
             reference_path = storage.save_reference_upload(workflow.product_id, filename, content)
             asset = SourceAsset(
@@ -680,7 +681,7 @@ def _node_ids_to_run(session: Session, workflow: ProductWorkflow, start_node_id:
         return {node.id for node in workflow.nodes}
     nodes_by_id = {node.id: node for node in workflow.nodes}
     if start_node_id not in nodes_by_id:
-        raise ValueError("工作流节点不属于当前商品")
+        raise BusinessValidationError("工作流节点不属于当前商品")
     incoming: dict[str, list[str]] = defaultdict(list)
     for edge in workflow.edges:
         incoming[edge.target_node_id].append(edge.source_node_id)
@@ -692,7 +693,7 @@ def _node_ids_to_run(session: Session, workflow: ProductWorkflow, start_node_id:
             source_node = nodes_by_id.get(source_id)
             target_node = nodes_by_id[node_id]
             if source_node is None:
-                raise ValueError("工作流连线引用了不存在的节点")
+                raise BusinessValidationError("工作流连线引用了不存在的节点")
             if _node_has_reusable_output(session, workflow, source_node, target_node=target_node):
                 continue
             if not _should_execute_missing_upstream(source_node, target_node):

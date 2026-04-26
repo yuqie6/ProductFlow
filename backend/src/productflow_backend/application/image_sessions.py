@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.enums import ImageSessionAssetKind, SourceAssetKind
+from productflow_backend.domain.errors import NotFoundError
 from productflow_backend.infrastructure.db.models import (
     ImageSession,
     ImageSessionAsset,
@@ -40,7 +41,7 @@ def _image_session_query():
 def _get_image_session_or_raise(session: Session, image_session_id: str) -> ImageSession:
     image_session = session.scalar(_image_session_query().where(ImageSession.id == image_session_id))
     if image_session is None:
-        raise ValueError("连续生图会话不存在")
+        raise NotFoundError("连续生图会话不存在")
     return image_session
 
 
@@ -49,7 +50,7 @@ def _get_product_or_raise(session: Session, product_id: str) -> Product:
         select(Product).options(selectinload(Product.source_assets)).where(Product.id == product_id)
     )
     if product is None:
-        raise ValueError("商品不存在")
+        raise NotFoundError("商品不存在")
     return product
 
 
@@ -227,7 +228,7 @@ def delete_image_session_reference_image(
     image_session = _get_image_session_or_raise(session, image_session_id)
     asset = next((item for item in image_session.assets if item.id == asset_id), None)
     if asset is None:
-        raise ValueError("会话参考图不存在")
+        raise NotFoundError("会话参考图不存在")
     if asset.kind != ImageSessionAssetKind.REFERENCE_UPLOAD:
         raise ValueError("只能删除会话参考图")
 
@@ -314,7 +315,7 @@ def attach_image_session_asset_to_product(
     image_session = _get_image_session_or_raise(session, image_session_id)
     asset = next((item for item in image_session.assets if item.id == asset_id), None)
     if asset is None:
-        raise ValueError("会话图片不存在")
+        raise NotFoundError("会话图片不存在")
     if asset.kind != ImageSessionAssetKind.GENERATED_IMAGE:
         raise ValueError("只有生成结果可以写回商品")
 
