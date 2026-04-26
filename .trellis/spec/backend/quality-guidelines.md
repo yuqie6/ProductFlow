@@ -112,10 +112,11 @@ Do not duplicate these checks in multiple pages/routes.
 
 ### Preserve workflow-level tests
 
-`backend/tests/test_workflow.py` is the main regression suite. It covers:
+`backend/tests/test_*.py` is the backend regression suite and is split by behavior area. It covers:
 
 - Auth/session behavior.
 - Settings API persistence and validation.
+- Typed business error and legacy `ValueError` HTTP mapping.
 - SQLAlchemy enum value storage.
 - End-to-end product/copy/poster workflow.
 - Reference image upload/deletion.
@@ -124,7 +125,8 @@ Do not duplicate these checks in multiple pages/routes.
 - OpenAI Responses image provider parsing behavior.
 
 When changing product, copy, poster, settings, upload, image-session, provider, or migration behavior, add or update tests
-in this workflow style.
+in the matching topic file. Keep cross-cutting builders and polling/login helpers in `backend/tests/helpers.py` rather
+than reintroducing a giant all-purpose test module.
 
 ### Keep storage safe
 

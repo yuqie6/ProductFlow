@@ -14,7 +14,7 @@ and SQLite in tests. The main database files are:
 - `backend/alembic/env.py`
 - `backend/alembic/versions/*.py`
 - `backend/tests/conftest.py`
-- `backend/tests/test_workflow.py`
+- `backend/tests/test_migrations_database_constraints.py`
 
 The runtime `Settings.database_url` comes from environment variables; common business/runtime settings can be overridden
 through the `app_settings` table and loaded by `get_runtime_settings()` in `backend/src/productflow_backend/config.py`.
@@ -50,7 +50,8 @@ records such as `SourceAsset`, `CreativeBrief`, and `PosterVariant`.
 ### Enum storage
 
 SQLAlchemy enum columns use `enum_value_column(...)` so database values are the enum `.value` strings, not Python enum
-member names. This is explicitly tested in `backend/tests/test_workflow.py::test_sqlalchemy_enum_columns_use_database_values`.
+member names. This is explicitly tested in
+`backend/tests/test_migrations_database_constraints.py::test_sqlalchemy_enum_columns_use_database_values`.
 
 ```python
 def enum_value_column(enum_cls: type) -> SqlEnum:
@@ -144,8 +145,8 @@ Migration conventions already present:
 - Avoid migrations that work only on PostgreSQL unless the SQLite test path is intentionally excluded and documented.
 
 Run migrations with `just backend-migrate` for dev and `just backend-migrate-prod` for production env-only settings.
-Tests include an Alembic upgrade regression in `backend/tests/test_workflow.py`, so schema changes should keep that test
-path green.
+Tests include Alembic upgrade regressions in `backend/tests/test_migrations_database_constraints.py`, so schema changes
+should keep that test path green.
 
 ---
 
@@ -170,7 +171,7 @@ When adding a runtime setting, update all of these together:
 - `Settings` field in `config.py`
 - `CONFIG_DEFINITIONS` / validation helpers in `config.py`
 - API schema/frontend types in `web/src/lib/types.ts` if the value appears in settings UI
-- tests for validation/persistence in `backend/tests/test_workflow.py`
+- tests for validation/persistence in `backend/tests/test_auth_settings_runtime_config.py`
 
 ### Scenario: Runtime prompt customization
 

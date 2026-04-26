@@ -19,7 +19,9 @@ Current observability files and mechanisms:
 - `backend/src/productflow_backend/application/use_cases.py` updates `JobRun.status`, `failure_reason`, `attempts`,
   `started_at`, and `finished_at`.
 - `backend/src/productflow_backend/presentation/routes/jobs.py` exposes persisted job state through `/api/jobs/{job_id}`.
-- `backend/tests/test_workflow.py` asserts job failure/retry and API behavior through database state and HTTP responses.
+- `backend/tests/test_queue_recovery.py`, `backend/tests/test_product_workflow_queue_recovery.py`, and
+  `backend/tests/test_logging_behavior.py` assert job/workflow retry, recovery, and logging behavior through durable state,
+  filesystem state, and HTTP responses.
 
 Because this project uses a small standard-library logging setup, do not invent a separate framework in random modules. If
 logging is needed, add it deliberately and consistently through `logging.getLogger(__name__)`.
@@ -45,7 +47,7 @@ For product copy/poster jobs, durable state is preferred over log-only state:
 - `JobRun.failure_reason` stores the user/operator-visible failure reason.
 - `JobRun.attempts` and retry timestamps are used by the worker flow.
 
-This is why tests in `backend/tests/test_workflow.py` verify job records rather than scraping logs.
+This is why queue/recovery tests verify job records rather than scraping logs.
 
 ---
 
@@ -91,7 +93,7 @@ strict as API responses.
 
 For regressions, prefer assertions on durable state and HTTP responses instead of log assertions:
 
-- API response status/detail through `fastapi.testclient.TestClient` in `backend/tests/test_workflow.py`.
+- API response status/detail through `fastapi.testclient.TestClient` in the relevant `backend/tests/test_*.py` topic file.
 - Database rows through `get_session_factory()` and SQLAlchemy models.
 - Storage files under the test `tmp_path` configured in `backend/tests/conftest.py`.
 - Alembic migration success through `alembic.command.upgrade(...)` tests.

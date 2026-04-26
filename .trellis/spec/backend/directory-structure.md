@@ -55,7 +55,17 @@ backend/
 │       └── poster/renderer.py           # Pillow template poster renderer
 └── tests/
     ├── conftest.py                      # sqlite test settings and DB fixtures
-    └── test_workflow.py                 # workflow, API, migration, provider regression tests
+    ├── helpers.py                       # shared pytest/image/client helpers
+    ├── test_auth_settings_runtime_config.py
+    ├── test_error_handling.py
+    ├── test_product_crud_jobs.py
+    ├── test_product_workflow_*.py
+    ├── test_image_sessions.py
+    ├── test_storage_upload_validation.py
+    ├── test_provider_payloads.py
+    ├── test_queue_recovery.py
+    ├── test_logging_behavior.py
+    └── test_migrations_database_constraints.py
 ```
 
 ---
@@ -170,8 +180,10 @@ and the runtime config definitions in `config.py`, then update tests and fronten
   `infrastructure/image/chat_service.py`, and keeps download handling in the route.
 - Provider selection: `backend/src/productflow_backend/infrastructure/text/factory.py` and
   `backend/src/productflow_backend/infrastructure/image/factory.py` choose implementations from runtime settings.
-- Tests: `backend/tests/test_workflow.py` covers API endpoints, use cases, provider behavior, migrations, and regression
-  cases in one workflow-oriented file.
+- Tests: `backend/tests/test_*.py` are split by behavior area. Keep shared image/client/workflow helpers in
+  `backend/tests/helpers.py`, and put regressions near their owning theme: auth/settings/runtime config, error handling,
+  product CRUD and jobs, product workflow DAG/mutations/queue recovery, image sessions, storage/upload validation,
+  provider payloads, queue/logging behavior, and migrations/database constraints.
 
 ---
 
