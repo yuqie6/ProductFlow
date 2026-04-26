@@ -1,11 +1,10 @@
 services:
   productflow-postgres:
     image: postgres:16
-    container_name: productflow-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: productflow
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: productflow
     ports:
       - "${POSTGRES_HOST_PORT:-15432}:5432"
@@ -19,8 +18,8 @@ services:
 
   productflow-redis:
     image: redis:7
-    container_name: productflow-redis
     restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "${REDIS_HOST_PORT:-16379}:6379"
     volumes:
@@ -31,6 +30,136 @@ services:
       timeout: 5s
       retries: 20
 
+  productflow-backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      APP_HOST: 0.0.0.0
+      APP_PORT: 29280
+      BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://localhost:29281,http://127.0.0.1:29281}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      ADMIN_ACCESS_KEY: ${ADMIN_ACCESS_KEY:?set ADMIN_ACCESS_KEY in .env}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      DATABASE_URL: postgresql+psycopg://productflow:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@productflow-postgres:5432/productflow
+      REDIS_URL: redis://productflow-redis:6379/0
+      STORAGE_ROOT: /app/storage
+      LOG_DIR: /app/storage/logs
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_MAX_BYTES: ${LOG_MAX_BYTES:-10485760}
+      LOG_BACKUP_COUNT: ${LOG_BACKUP_COUNT:-5}
+      LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-14}
+      TEXT_PROVIDER_KIND: ${TEXT_PROVIDER_KIND:-mock}
+      TEXT_API_KEY: ${TEXT_API_KEY:-}
+      TEXT_BASE_URL: ${TEXT_BASE_URL:-}
+      TEXT_BRIEF_MODEL: ${TEXT_BRIEF_MODEL:-gpt-4o}
+      TEXT_COPY_MODEL: ${TEXT_COPY_MODEL:-gpt-4o}
+      IMAGE_PROVIDER_KIND: ${IMAGE_PROVIDER_KIND:-mock}
+      IMAGE_API_KEY: ${IMAGE_API_KEY:-}
+      IMAGE_BASE_URL: ${IMAGE_BASE_URL:-}
+      IMAGE_GENERATE_MODEL: ${IMAGE_GENERATE_MODEL:-gpt-5.4}
+      IMAGE_MAIN_IMAGE_SIZE: ${IMAGE_MAIN_IMAGE_SIZE:-1024x1024}
+      IMAGE_PROMO_POSTER_SIZE: ${IMAGE_PROMO_POSTER_SIZE:-1024x1536}
+      IMAGE_ALLOWED_SIZES: ${IMAGE_ALLOWED_SIZES:-1024x1024,1024x1536,1536x1024}
+      POSTER_GENERATION_MODE: ${POSTER_GENERATION_MODE:-template}
+      POSTER_FONT_PATH: /usr/share/fonts/truetype/wqy/wqy-zenhei.ttc
+      UPLOAD_MAX_IMAGE_BYTES: ${UPLOAD_MAX_IMAGE_BYTES:-10485760}
+      UPLOAD_MAX_REFERENCE_IMAGES: ${UPLOAD_MAX_REFERENCE_IMAGES:-6}
+      UPLOAD_MAX_PIXELS: ${UPLOAD_MAX_PIXELS:-16000000}
+      UPLOAD_ALLOWED_IMAGE_MIME_TYPES: ${UPLOAD_ALLOWED_IMAGE_MIME_TYPES:-image/png,image/jpeg,image/webp}
+      JOB_MAX_ATTEMPTS: ${JOB_MAX_ATTEMPTS:-3}
+      JOB_RETRY_DELAY_MS: ${JOB_RETRY_DELAY_MS:-10000}
+    command: >-
+      sh -c "alembic upgrade head && uvicorn productflow_backend.main:app --host 0.0.0.0 --port 29280"
+    ports:
+      - "${APP_HOST_PORT:-29280}:29280"
+    volumes:
+      # STORAGE_HOST_PATH is host-only. Leave it unset to use the productflow-storage named volume,
+      # or set it to an existing production directory such as /home/cot/ProductFlow-release/shared/storage.
+      - ${STORAGE_HOST_PATH:-productflow-storage}:/app/storage
+    depends_on:
+      productflow-postgres:
+        condition: service_healthy
+      productflow-redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import json, urllib.request; data=json.load(urllib.request.urlopen('http://127.0.0.1:29280/healthz', timeout=3)); raise SystemExit(0 if data.get('status') == 'ok' else 1)\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  productflow-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      ADMIN_ACCESS_KEY: ${ADMIN_ACCESS_KEY:?set ADMIN_ACCESS_KEY in .env}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      DATABASE_URL: postgresql+psycopg://productflow:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@productflow-postgres:5432/productflow
+      REDIS_URL: redis://productflow-redis:6379/0
+      STORAGE_ROOT: /app/storage
+      LOG_DIR: /app/storage/logs
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_MAX_BYTES: ${LOG_MAX_BYTES:-10485760}
+      LOG_BACKUP_COUNT: ${LOG_BACKUP_COUNT:-5}
+      LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-14}
+      TEXT_PROVIDER_KIND: ${TEXT_PROVIDER_KIND:-mock}
+      TEXT_API_KEY: ${TEXT_API_KEY:-}
+      TEXT_BASE_URL: ${TEXT_BASE_URL:-}
+      TEXT_BRIEF_MODEL: ${TEXT_BRIEF_MODEL:-gpt-4o}
+      TEXT_COPY_MODEL: ${TEXT_COPY_MODEL:-gpt-4o}
+      IMAGE_PROVIDER_KIND: ${IMAGE_PROVIDER_KIND:-mock}
+      IMAGE_API_KEY: ${IMAGE_API_KEY:-}
+      IMAGE_BASE_URL: ${IMAGE_BASE_URL:-}
+      IMAGE_GENERATE_MODEL: ${IMAGE_GENERATE_MODEL:-gpt-5.4}
+      IMAGE_MAIN_IMAGE_SIZE: ${IMAGE_MAIN_IMAGE_SIZE:-1024x1024}
+      IMAGE_PROMO_POSTER_SIZE: ${IMAGE_PROMO_POSTER_SIZE:-1024x1536}
+      IMAGE_ALLOWED_SIZES: ${IMAGE_ALLOWED_SIZES:-1024x1024,1024x1536,1536x1024}
+      POSTER_GENERATION_MODE: ${POSTER_GENERATION_MODE:-template}
+      POSTER_FONT_PATH: /usr/share/fonts/truetype/wqy/wqy-zenhei.ttc
+      UPLOAD_MAX_IMAGE_BYTES: ${UPLOAD_MAX_IMAGE_BYTES:-10485760}
+      UPLOAD_MAX_REFERENCE_IMAGES: ${UPLOAD_MAX_REFERENCE_IMAGES:-6}
+      UPLOAD_MAX_PIXELS: ${UPLOAD_MAX_PIXELS:-16000000}
+      UPLOAD_ALLOWED_IMAGE_MIME_TYPES: ${UPLOAD_ALLOWED_IMAGE_MIME_TYPES:-image/png,image/jpeg,image/webp}
+      JOB_MAX_ATTEMPTS: ${JOB_MAX_ATTEMPTS:-3}
+      JOB_RETRY_DELAY_MS: ${JOB_RETRY_DELAY_MS:-10000}
+    command: ["dramatiq", "--processes", "2", "--threads", "4", "productflow_backend.workers"]
+    volumes:
+      # Keep this source identical to productflow-backend so API and worker see the same files at /app/storage.
+      - ${STORAGE_HOST_PATH:-productflow-storage}:/app/storage
+    depends_on:
+      productflow-backend:
+        condition: service_healthy
+
+  productflow-web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+      args:
+        VITE_API_BASE_URL: ""
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-29281}:80"
+    depends_on:
+      productflow-backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz | grep -q ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
 volumes:
   productflow-postgres-data:
   productflow-redis-data:
+  productflow-storage:

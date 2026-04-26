@@ -19,6 +19,7 @@
 - 提示词配置：商品理解、文案、工作台生图和连续生图模板可在设置页覆盖。
 - 初版产品品牌资产、README 展示图和 Web favicon/metadata。
 - 设置页管理 provider、模型、上传限制、任务重试等业务配置。
+- Docker Compose 一键自托管路径：`docker compose up -d --build` 可启动 PostgreSQL、Redis、后端 API、Dramatiq worker 和 Web 静态站点；`just release` 已切到 Compose 生产更新和健康检查链路。
 - 基础开源文件、MIT License、贡献/安全说明、issue/PR 模板。
 
 ## 近期优先级
@@ -27,8 +28,7 @@
 
 - 补充更完整的本地部署截图和 troubleshooting。
 - 增加一键 seed/demo 数据脚本。
-- 增加可选 Dockerfile / compose app 服务示例。
-- 让 release 脚本和自托管部署文档更通用，减少本机路径假设。
+- 继续打磨 Compose 自托管 troubleshooting、端口冲突说明、storage 迁移提示和升级/回滚示例。
 
 ### 2. 测试与质量
 

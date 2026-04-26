@@ -15,7 +15,11 @@ React/Vite web
     -> same database, queue, storage and providers
 ```
 
-开发环境由根目录 `justfile` 和 `docker-compose.yml` 驱动。`docker compose up -d` 只启动 PostgreSQL 和 Redis；API、worker、前端分别由 `just backend-run`、`just backend-worker`、`just web-dev` 启动。
+默认自托管路径由根目录 `docker-compose.yml` 驱动。`docker compose up -d --build` 会构建并启动 PostgreSQL、Redis、FastAPI 后端、Dramatiq worker 和 nginx-served Web 静态站点；API/worker 在容器内通过 `productflow-postgres:5432` 与 `productflow-redis:6379` 连接依赖，并共享挂载到容器 `/app/storage` 的持久化 storage。未设置 `STORAGE_HOST_PATH` 时，storage 使用 Docker named volume `productflow-storage`；迁移旧 systemd 生产环境时，可以设置 host-only 变量 `STORAGE_HOST_PATH=/home/cot/ProductFlow-release/shared/storage` 将既有宿主机 storage 目录 bind-mount 到 `/app/storage`，容器运行时仍保持 `STORAGE_ROOT=/app/storage`。后端容器启动时先执行 Alembic 迁移，再启动 `uvicorn`。
+
+生产更新入口是 `just release`，底层调用 `scripts/release.sh` 执行 Compose 配置校验、停止 legacy user-level systemd 服务（`productflow-backend.service`、`productflow-worker.service`、`productflow-web.service`，用于释放旧发布占用的 29280/29281 端口）、`docker compose up -d --build --remove-orphans` 和 HTTP health checks。`just release-dry-run` 只做配置校验与计划输出，不停止旧服务、不构建、不启动容器。普通更新不会删除 Docker volumes。
+
+本地热重载开发仍由根目录 `justfile` 驱动：可以只启动 `productflow-postgres` 与 `productflow-redis`，API、worker、前端分别由 `just backend-run`、`just backend-worker`、`just web-dev` 启动。开发环境使用 `.env.dev` 中的 `STORAGE_ROOT=./backend/storage-dev`，与生产 Compose storage 隔离；不要通过 shell-sourcing 生产 `.env` 来启动本地开发进程。
 
 ## 2. 后端分层
 
@@ -152,7 +156,7 @@ Secret 类配置在 API 响应中不回显已有值。
 
 ## 9. 文件存储与下载
 
-本地文件由 `infrastructure/storage.py` 中的 `LocalStorage` 管理。它把相对路径约束在配置的 `STORAGE_ROOT` 下，并拒绝绝对路径或路径穿越。
+本地文件由 `infrastructure/storage.py` 中的 `LocalStorage` 管理。它把相对路径约束在配置的 `STORAGE_ROOT` 下，并拒绝绝对路径或路径穿越。生产 Compose 容器内的 `STORAGE_ROOT` 固定为 `/app/storage`；`STORAGE_HOST_PATH` 只控制宿主机 bind mount 来源，不应传入应用逻辑替代 `STORAGE_ROOT`。
 
 用户可下载的文件通过受控路由读取，例如：
 

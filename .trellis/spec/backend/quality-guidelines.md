@@ -26,47 +26,158 @@ just backend-worker
 
 Use the root `justfile` where possible so local env loading and ports match the project.
 
-### Scenario: Keep release snapshots and open-source examples clean
+### Scenario: Production-style Docker Compose self-host runtime
+
+#### 1. Scope / Trigger
+
+- Trigger: editing `docker-compose.yml`, Dockerfiles, example env files, or README/docs for the self-hosted runtime.
+- Applies to the full Compose stack: PostgreSQL, Redis, FastAPI API, Dramatiq worker, built Web static server, and shared storage.
+
+#### 2. Signatures
+
+- One-click start: `docker compose up -d --build`.
+- Manual migration path: `docker compose run --rm productflow-backend alembic upgrade head`.
+- Direct API health: `GET /healthz` returns `{"status":"ok"}`.
+- Web proxy smoke path: `GET /api/healthz` through nginx proxies to backend `GET /healthz`.
+
+#### 3. Contracts
+
+- `productflow-backend` and `productflow-worker` must use Compose service names for runtime dependencies:
+  - `DATABASE_URL=postgresql+psycopg://productflow:<password>@productflow-postgres:5432/productflow`
+  - `REDIS_URL=redis://productflow-redis:6379/0`
+- Container storage must use a shared in-container path `STORAGE_ROOT=/app/storage`.
+- `STORAGE_HOST_PATH` is host-only Compose interpolation for production bind mounts. When unset, `/app/storage` is backed
+  by the named volume `productflow-storage`; when set, it may point at an existing host directory such as
+  `/home/cot/ProductFlow-release/shared/storage` for old systemd production storage reuse.
+- Local hot-reload development must stay isolated on `.env.dev` / `STORAGE_ROOT=./backend/storage-dev`; do not depend on
+  shell-sourcing production `.env` for development commands.
+- Web self-host runtime must serve Vite build output as static files and proxy same-origin `/api/*` to the backend service.
+- Runtime must not require host `uv`, `pnpm`, or `just`; those tools are only for local development.
+
+#### 4. Validation & Error Matrix
+
+- Missing `POSTGRES_PASSWORD` in `.env` -> Compose config/start should fail before launching Postgres.
+- Postgres/Redis unhealthy -> backend must wait via `depends_on.condition: service_healthy`.
+- Migration failure -> backend container must fail before serving API traffic.
+- Backend unhealthy -> worker and web must wait for backend health before starting.
+- Web `/api/*` not proxied -> same-origin frontend API calls fail even if static files load.
+- Old systemd production files disappear after migration -> check whether `STORAGE_HOST_PATH` was set to the existing host
+  storage directory before Compose created/used a fresh named volume.
+- `STORAGE_HOST_PATH` leaks into container application config or replaces `STORAGE_ROOT` -> fix Compose env wiring; the app
+  should still see `STORAGE_ROOT=/app/storage`.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: `docker compose up -d --build` starts all five services, API health is OK, and web `/api/healthz` returns backend health.
+- Good: `STORAGE_HOST_PATH=/home/cot/ProductFlow-release/shared/storage docker compose up -d --build` bind-mounts old
+  production files while API/worker still run with `STORAGE_ROOT=/app/storage`.
+- Base: local development starts only `productflow-postgres` and `productflow-redis`, while host `just` commands run API/worker/web.
+- Bad: `DATABASE_URL` points at `localhost` from inside containers; that targets the app container itself, not Postgres.
+- Bad: setting container `STORAGE_ROOT=/home/cot/ProductFlow-release/shared/storage`; that host path does not exist inside
+  the container and bypasses the stable `/app/storage` contract.
+- Bad: using Vite dev server or host `pnpm` as the documented production-style self-host web runtime.
+
+#### 6. Tests Required
+
+- Run `docker compose config --quiet` after Compose/env edits.
+- For storage-related Compose changes, render config with `STORAGE_HOST_PATH` both unset and set; assert backend/worker
+  mount `/app/storage`, keep `STORAGE_ROOT=/app/storage`, and do not expose `STORAGE_HOST_PATH` in container env.
+- Build container images with `docker compose build productflow-backend productflow-web` or a full `docker compose up -d --build` smoke.
+- Smoke a disposable or safe project with direct API health, web health, and web `/api/healthz` proxy checks when practical.
+- Keep normal backend/frontend gates green when Dockerfiles or docs depend on package commands: backend tests/ruff and frontend lint/test/build.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+
+```yaml
+DATABASE_URL: postgresql+psycopg://productflow:password@localhost:15432/productflow
+```
+
+Correct:
+
+```yaml
+DATABASE_URL: postgresql+psycopg://productflow:${POSTGRES_PASSWORD}@productflow-postgres:5432/productflow
+```
+
+Wrong:
+
+```yaml
+environment:
+  STORAGE_ROOT: /home/cot/ProductFlow-release/shared/storage
+volumes:
+  - productflow-storage:/app/storage
+```
+
+Correct:
+
+```yaml
+environment:
+  STORAGE_ROOT: /app/storage
+volumes:
+  - ${STORAGE_HOST_PATH:-productflow-storage}:/app/storage
+```
+
+### Scenario: Keep Compose release and open-source examples clean
 
 #### 1. Scope / Trigger
 
 - Trigger: editing repository release helpers, example env files, or ignore rules that affect what can be published.
-- Applies to `scripts/release.sh`, `.env.example`, `.env.dev.example`, `web/.env.example`, `.gitignore`, and
-  `.trellis/.gitignore`.
+- Applies to `scripts/release.sh`, `justfile`, `docker-compose.yml`, `.env.example`, `.env.dev.example`,
+  `web/.env.example`, `.gitignore`, and `.trellis/.gitignore`.
 
 #### 2. Signatures
 
-- `scripts/release.sh` is an optional single-host snapshot helper.
-- Supported overrides include `RELEASE_ROOT`, `BACKEND_PYTHON`, `APP_PORT`, and `WEB_PORT`.
-- The default `RELEASE_ROOT` must stay repository-relative (currently `.release/`), not a developer-specific absolute path.
+- `just release` / `scripts/release.sh` is the single-host Docker Compose production update helper.
+- `just release-dry-run` sets `DRY_RUN=1` and must not stop legacy services, build images, start containers, switch
+  symlinks, or delete volumes.
+- The actual release path validates Compose config, stops legacy user-level systemd services when present, runs
+  `docker compose up -d --build --remove-orphans`, and performs HTTP health checks.
+- Legacy services are `productflow-backend.service`, `productflow-worker.service`, and `productflow-web.service`.
+- Supported override: `LEGACY_SYSTEMD_ACTION=skip` skips the legacy service stop step after the operator has handled port
+  ownership manually.
 
 #### 3. Contracts
 
 - Example env files must contain placeholders or mock-provider defaults only; never commit real secrets or private hostnames.
-- Release snapshots must exclude runtime data, generated storage, local env files, per-developer Trellis state, caches, and
-  release output directories.
+- Local env backups such as `.env.bak-*` must stay ignored; they may contain copied production secrets and must not be
+  inspected, tracked, or included in open-source release hygiene diffs.
+- Release/update helpers must not delete Docker volumes; `docker compose down -v` is only a documented manual reset.
+- Dry-run must remain non-switching and non-service-starting while still validating `docker compose config --quiet` and
+  showing the real command sequence.
+- Release helpers must not shell-source `.env`; use Docker Compose's env parsing for service configuration and read only
+  the specific local values needed for health-check URLs without executing the file.
+- Compose release must gracefully tolerate missing or inactive legacy systemd services but should try to stop them before
+  binding the production ports.
 - Keep `.trellis/spec/`, `.trellis/workflow.md`, and `.trellis/scripts/` source-controlled; keep `.trellis/tasks/` and
   `.trellis/workspace/` out of public tracking.
 
 #### 4. Validation & Error Matrix
 
 - Real token/private key in a tracked or newly added file -> remove it and rotate the secret before publishing.
-- Default release path references `/home/<user>` or another private absolute path -> replace it with a repo-relative or
-  documented override path.
+- Untracked `.env.bak-*` appears in `git status` -> add/verify ignore coverage without reading or modifying the backup
+  file content.
+- `just release-dry-run` starts/stops services or builds images -> fix immediately; dry-run is for safe planning.
+- `just release` fails because old systemd services still occupy 29280/29281 -> ensure the helper stops legacy services or
+  clearly reports the port-binding failure.
 - `.trellis/tasks/` appears in `git ls-files` -> remove it from the index without deleting the local task context.
 
 #### 5. Good/Base/Bad Cases
 
-- Good: `RELEASE_ROOT` defaults to `.release/`, `.release/` is ignored, and tar excludes `.release`, storage, env, and
-  Trellis runtime state.
+- Good: `just release-dry-run` validates Compose config and prints the planned `docker compose up -d --build --remove-orphans` flow without side effects.
+- Good: `just release` stops legacy services, recreates Compose services, passes backend and web `/api/healthz` checks, and leaves volumes intact.
 - Base: `.env.dev.example` uses local service ports and mock providers while allowing contributors to opt into real
   providers by setting their own untracked env file.
-- Bad: A release helper copies `backend/storage/`, `.env`, `.trellis/tasks/`, or a developer-specific path into the
-  publishable artifact.
+- Bad: release script creates tar snapshots, flips a `.release/current` symlink, or restarts `productflow-*.service` after
+  Compose has become the production runtime.
 
 #### 6. Tests Required
 
 - Run `bash -n scripts/release.sh` after shell helper edits.
+- Run `just release-dry-run` or at minimum `DRY_RUN=1 bash scripts/release.sh` after release helper edits.
+- Run `docker compose config --quiet` after Compose/env edits.
+- For full release validation when practical, run `just release` and smoke backend `/healthz`, web `/healthz`, and web
+  `/api/healthz`.
 - Run `git diff --check` and `git diff --cached --check` before committing release hygiene changes.
 - Run a high-confidence secret pattern scan over tracked and newly added files, excluding lockfiles if needed for noise.
 - Confirm referenced files and `just` commands exist when README or docs are updated.
@@ -76,14 +187,14 @@ Use the root `justfile` where possible so local env loading and ports match the 
 Wrong:
 
 ```bash
-RELEASE_ROOT="${RELEASE_ROOT:-/absolute/local/ProductFlow-release}"
+systemctl --user restart productflow-backend.service productflow-worker.service productflow-web.service
 ```
 
 Correct:
 
 ```bash
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RELEASE_ROOT="${RELEASE_ROOT:-$repo_root/.release}"
+systemctl --user stop productflow-backend.service productflow-worker.service productflow-web.service || true
+docker compose up -d --build --remove-orphans
 ```
 
 ---
