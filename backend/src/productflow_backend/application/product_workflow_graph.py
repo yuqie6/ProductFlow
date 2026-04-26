@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from collections import deque
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.domain.enums import WorkflowNodeType
-from productflow_backend.domain.errors import BusinessValidationError, NotFoundError
+from productflow_backend.domain.errors import NotFoundError
+from productflow_backend.domain.workflow_rules import WorkflowRuleEdge, WorkflowRuleNode, topological_node_ids
 from productflow_backend.infrastructure.db.models import (
     Product,
     ProductWorkflow,
@@ -147,31 +147,22 @@ def default_title_for_type(node_type: WorkflowNodeType) -> str:
 
 def topological_nodes(workflow: ProductWorkflow) -> list[WorkflowNode]:
     nodes = {node.id: node for node in workflow.nodes}
-    incoming_count = {node_id: 0 for node_id in nodes}
-    outgoing: dict[str, list[str]] = {node_id: [] for node_id in nodes}
-    for edge in workflow.edges:
-        if edge.source_node_id not in nodes or edge.target_node_id not in nodes:
-            raise BusinessValidationError("工作流连线引用了不存在的节点")
-        outgoing[edge.source_node_id].append(edge.target_node_id)
-        incoming_count[edge.target_node_id] += 1
-
-    queue = deque(
-        sorted(
-            [node_id for node_id, count in incoming_count.items() if count == 0],
-            key=lambda item: nodes[item].position_x,
-        )
+    ordered_ids = topological_node_ids(
+        [
+            WorkflowRuleNode(
+                id=node.id,
+                node_type=node.node_type,
+                position_x=node.position_x,
+                config_json=node.config_json,
+            )
+            for node in workflow.nodes
+        ],
+        [
+            WorkflowRuleEdge(source_node_id=edge.source_node_id, target_node_id=edge.target_node_id)
+            for edge in workflow.edges
+        ],
     )
-    ordered: list[WorkflowNode] = []
-    while queue:
-        node_id = queue.popleft()
-        ordered.append(nodes[node_id])
-        for target_id in outgoing[node_id]:
-            incoming_count[target_id] -= 1
-            if incoming_count[target_id] == 0:
-                queue.append(target_id)
-    if len(ordered) != len(nodes):
-        raise ValueError("工作流不能包含循环依赖")
-    return ordered
+    return [nodes[node_id] for node_id in ordered_ids]
 
 
 def latest_workflow_runs(workflow: ProductWorkflow, limit: int = 10) -> list[WorkflowRun]:

@@ -29,6 +29,10 @@ from productflow_backend.application.product_workflow_context import (
     _reference_image_inputs_for_copy,
     _source_asset_ids_from_config,
 )
+from productflow_backend.application.product_workflow_dependencies import (
+    WorkflowExecutionDependencies,
+    default_workflow_execution_dependencies,
+)
 from productflow_backend.application.product_workflow_execution import (
     WorkflowRunKickoff,
     _active_workflow_run,
@@ -118,11 +122,13 @@ __all__ = [
     "_valid_source_asset_ids",
     "_workflow_run_should_enqueue",
     "WorkflowRunKickoff",
+    "WorkflowExecutionDependencies",
     "bind_workflow_node_image",
     "create_workflow_edge",
     "create_workflow_node",
     "delete_workflow_edge",
     "delete_workflow_node",
+    "default_workflow_execution_dependencies",
     "execute_product_workflow_run",
     "get_image_provider",
     "get_or_create_product_workflow",

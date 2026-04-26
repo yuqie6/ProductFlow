@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from productflow_backend.application import product_workflow_graph
 from productflow_backend.application.contracts import PosterGenerationInput, ProductInput, ReferenceImageInput
@@ -35,7 +34,13 @@ from productflow_backend.application.product_workflow_context import (
     _reference_image_inputs_for_copy,
     _source_asset_ids_from_config,
 )
+from productflow_backend.application.product_workflow_dependencies import (
+    PosterRendererFactory,
+    WorkflowExecutionDependencies,
+    default_workflow_execution_dependencies,
+)
 from productflow_backend.application.product_workflow_mutations import get_or_create_product_workflow
+from productflow_backend.application.product_workflow_query import WorkflowQueryService
 from productflow_backend.application.time import now_utc
 from productflow_backend.config import get_runtime_settings
 from productflow_backend.domain.enums import (
@@ -47,6 +52,12 @@ from productflow_backend.domain.enums import (
     WorkflowRunStatus,
 )
 from productflow_backend.domain.errors import BusinessValidationError
+from productflow_backend.domain.workflow_rules import (
+    WorkflowRuleEdge,
+    WorkflowRuleNode,
+    selected_node_execution_plan,
+    should_execute_missing_upstream,
+)
 from productflow_backend.infrastructure.db.models import (
     CopySet,
     CreativeBrief,
@@ -60,7 +71,6 @@ from productflow_backend.infrastructure.db.models import (
 )
 from productflow_backend.infrastructure.db.session import get_session_factory
 from productflow_backend.infrastructure.image.base import ImageProvider, infer_extension
-from productflow_backend.infrastructure.poster.renderer import PosterRenderer
 from productflow_backend.infrastructure.storage import LocalStorage
 
 logger = logging.getLogger(__name__)
@@ -191,21 +201,26 @@ def run_product_workflow(
     *,
     product_id: str,
     start_node_id: str | None = None,
+    dependencies: WorkflowExecutionDependencies | None = None,
 ) -> ProductWorkflow:
     kickoff = start_product_workflow_run(session, product_id=product_id, start_node_id=start_node_id)
     if kickoff.created:
-        execute_product_workflow_run(kickoff.run_id)
+        execute_product_workflow_run(kickoff.run_id, dependencies=dependencies)
         session.expire_all()
         return product_workflow_graph.get_workflow_or_raise(session, kickoff.workflow.id)
     return kickoff.workflow
 
 
-def execute_product_workflow_run(run_id: str) -> None:
+def execute_product_workflow_run(
+    run_id: str,
+    *,
+    dependencies: WorkflowExecutionDependencies | None = None,
+) -> None:
     session_factory = get_session_factory()
     session = session_factory()
     try:
         try:
-            _execute_product_workflow_run(session, run_id=run_id)
+            _execute_product_workflow_run(session, run_id=run_id, dependencies=dependencies)
         except Exception as exc:  # noqa: BLE001
             session.rollback()
             _mark_workflow_run_failed(
@@ -229,13 +244,19 @@ def mark_workflow_run_enqueue_failed(session: Session, *, run_id: str, reason: s
     )
 
 
-def _execute_product_workflow_run(session: Session, *, run_id: str) -> None:
+def _execute_product_workflow_run(
+    session: Session,
+    *,
+    run_id: str,
+    dependencies: WorkflowExecutionDependencies | None = None,
+) -> None:
+    queries = WorkflowQueryService(session)
     run = session.get(WorkflowRun, run_id)
     if run is None:
         return
     if run.status != WorkflowRunStatus.RUNNING:
         return
-    workflow = product_workflow_graph.get_workflow_or_raise(session, run.workflow_id)
+    workflow = queries.get_workflow_or_raise(run.workflow_id)
     ordered_nodes = product_workflow_graph.topological_nodes(workflow)
     run_node_ids = {node_run.node_id for node_run in run.node_runs}
     node_runs_by_node_id = {node_run.node_id: node_run for node_run in run.node_runs}
@@ -245,7 +266,7 @@ def _execute_product_workflow_run(session: Session, *, run_id: str) -> None:
     for ordered_node in ordered_nodes:
         if ordered_node.id not in run_node_ids:
             continue
-        node = product_workflow_graph.get_node_or_raise(session, ordered_node.id)
+        node = queries.get_node_or_raise(ordered_node.id)
         node_run = node_runs_by_node_id.get(node.id)
         if node_run is None:
             continue
@@ -256,7 +277,7 @@ def _execute_product_workflow_run(session: Session, *, run_id: str) -> None:
             continue
         if not _claim_workflow_node_run(session, node_run_id=node_run.id, node_id=node.id):
             return
-        node = product_workflow_graph.get_node_or_raise(session, ordered_node.id)
+        node = queries.get_node_or_raise(ordered_node.id)
         node_run = session.get(WorkflowNodeRun, node_run.id)
         if node_run is None:
             return
@@ -267,7 +288,10 @@ def _execute_product_workflow_run(session: Session, *, run_id: str) -> None:
                 node.id,
                 node.node_type.value,
             )
-            output = _get_execute_node()(session, workflow_id=workflow.id, node=node)
+            if dependencies is None:
+                output = _get_execute_node()(session, workflow_id=workflow.id, node=node)
+            else:
+                output = _execute_node(session, workflow_id=workflow.id, node=node, dependencies=dependencies)
         except Exception as exc:  # noqa: BLE001
             session.rollback()
             _mark_workflow_run_failed(
@@ -296,9 +320,7 @@ def _execute_product_workflow_run(session: Session, *, run_id: str) -> None:
         session.commit()
         logger.info("工作流节点执行成功: run_id=%s node_id=%s", run_id, node.id)
 
-    persisted_run = session.scalar(
-        select(WorkflowRun).options(selectinload(WorkflowRun.node_runs)).where(WorkflowRun.id == run_id)
-    )
+    persisted_run = queries.workflow_run_with_node_runs(run_id)
     if (
         persisted_run is not None
         and persisted_run.status == WorkflowRunStatus.RUNNING
@@ -375,33 +397,36 @@ def _mark_workflow_run_failed(
 def _node_ids_to_run(session: Session, workflow: ProductWorkflow, start_node_id: str | None) -> set[str]:
     if start_node_id is None:
         return {node.id for node in workflow.nodes}
+    rule_nodes = [
+        WorkflowRuleNode(
+            id=node.id,
+            node_type=node.node_type,
+            position_x=node.position_x,
+            config_json=node.config_json,
+        )
+        for node in workflow.nodes
+    ]
+    rule_edges = [
+        WorkflowRuleEdge(source_node_id=edge.source_node_id, target_node_id=edge.target_node_id)
+        for edge in workflow.edges
+    ]
     nodes_by_id = {node.id: node for node in workflow.nodes}
     if start_node_id not in nodes_by_id:
         raise BusinessValidationError("工作流节点不属于当前商品")
-    incoming: dict[str, list[str]] = defaultdict(list)
+    reusable_edges: set[tuple[str, str]] = set()
     for edge in workflow.edges:
-        incoming[edge.target_node_id].append(edge.source_node_id)
-
-    selected: set[str] = set()
-
-    def include_missing_required_upstream(node_id: str) -> None:
-        for source_id in incoming[node_id]:
-            source_node = nodes_by_id.get(source_id)
-            target_node = nodes_by_id[node_id]
-            if source_node is None:
-                raise BusinessValidationError("工作流连线引用了不存在的节点")
-            if _node_has_reusable_output(session, workflow, source_node, target_node=target_node):
-                continue
-            if not _should_execute_missing_upstream(source_node, target_node):
-                continue
-            if source_id in selected:
-                continue
-            include_missing_required_upstream(source_id)
-            selected.add(source_id)
-
-    include_missing_required_upstream(start_node_id)
-    selected.add(start_node_id)
-    return selected
+        source_node = nodes_by_id.get(edge.source_node_id)
+        target_node = nodes_by_id.get(edge.target_node_id)
+        if source_node is None or target_node is None:
+            raise BusinessValidationError("工作流连线引用了不存在的节点")
+        if _node_has_reusable_output(session, workflow, source_node, target_node=target_node):
+            reusable_edges.add((edge.source_node_id, edge.target_node_id))
+    return selected_node_execution_plan(
+        nodes=rule_nodes,
+        edges=rule_edges,
+        start_node_id=start_node_id,
+        reusable_edges=reusable_edges,
+    )
 
 
 def _node_has_reusable_output(
@@ -411,6 +436,7 @@ def _node_has_reusable_output(
     *,
     target_node: WorkflowNode | None = None,
 ) -> bool:
+    queries = WorkflowQueryService(session)
     if node.node_type == WorkflowNodeType.PRODUCT_CONTEXT:
         return True
     if node.status != WorkflowNodeStatus.SUCCEEDED:
@@ -422,8 +448,7 @@ def _node_has_reusable_output(
         copy_set_id = output.get("copy_set_id")
         if not isinstance(copy_set_id, str):
             return False
-        copy_set = session.get(CopySet, copy_set_id)
-        return copy_set is not None and copy_set.product_id == workflow.product_id
+        return queries.copy_set_for_product(copy_set_id, workflow.product_id) is not None
     if node.node_type == WorkflowNodeType.IMAGE_GENERATION:
         if target_node is not None and target_node.node_type == WorkflowNodeType.REFERENCE_IMAGE:
             return _image_generation_filled_reference_target(
@@ -440,7 +465,7 @@ def _node_has_reusable_output(
         has_source_assets = _valid_source_asset_ids(session, workflow.product_id, source_asset_ids)
         has_posters = False
         if isinstance(poster_ids, list):
-            posters = session.scalars(select(PosterVariant).where(PosterVariant.id.in_(poster_ids))).all()
+            posters = queries.posters_by_ids(poster_ids)
             has_posters = any(poster.product_id == workflow.product_id for poster in posters)
         return has_source_assets or has_posters
     return False
@@ -480,35 +505,44 @@ def _node_has_valid_reference_assets(session: Session, product_id: str, node: Wo
 
 
 def _valid_source_asset_ids(session: Session, product_id: str, asset_ids: list[str]) -> bool:
-    if not asset_ids:
-        return False
-    assets = session.scalars(select(SourceAsset).where(SourceAsset.id.in_(asset_ids))).all()
-    return any(asset.product_id == product_id for asset in assets)
+    return WorkflowQueryService(session).has_any_source_asset_for_product(product_id, asset_ids)
 
 
 def _should_execute_missing_upstream(source_node: WorkflowNode, target_node: WorkflowNode) -> bool:
-    if source_node.node_type == WorkflowNodeType.PRODUCT_CONTEXT:
-        return False
-    if source_node.node_type == WorkflowNodeType.REFERENCE_IMAGE:
-        return bool(_source_asset_ids_from_config(source_node.config_json or {}))
-    if source_node.node_type == WorkflowNodeType.COPY_GENERATION:
-        return target_node.node_type in {WorkflowNodeType.COPY_GENERATION, WorkflowNodeType.IMAGE_GENERATION}
-    if source_node.node_type == WorkflowNodeType.IMAGE_GENERATION:
-        return target_node.node_type in {WorkflowNodeType.REFERENCE_IMAGE, WorkflowNodeType.IMAGE_GENERATION}
-    return False
+    return should_execute_missing_upstream(
+        WorkflowRuleNode(
+            id=source_node.id,
+            node_type=source_node.node_type,
+            position_x=source_node.position_x,
+            config_json=source_node.config_json,
+        ),
+        WorkflowRuleNode(
+            id=target_node.id,
+            node_type=target_node.node_type,
+            position_x=target_node.position_x,
+            config_json=target_node.config_json,
+        ),
+    )
 
 
-def _execute_node(session: Session, *, workflow_id: str, node: WorkflowNode) -> dict[str, Any]:
+def _execute_node(
+    session: Session,
+    *,
+    workflow_id: str,
+    node: WorkflowNode,
+    dependencies: WorkflowExecutionDependencies | None = None,
+) -> dict[str, Any]:
     workflow = product_workflow_graph.get_workflow_or_raise(session, workflow_id)
     product = workflow.product
+    dependencies = dependencies or default_workflow_execution_dependencies()
     if node.node_type == WorkflowNodeType.PRODUCT_CONTEXT:
         return _execute_product_context(product, node)
     if node.node_type == WorkflowNodeType.REFERENCE_IMAGE:
         return _execute_reference_image(session, workflow=workflow, node=node)
     if node.node_type == WorkflowNodeType.COPY_GENERATION:
-        return _execute_copy_generation(session, workflow=workflow, node=node)
+        return _execute_copy_generation(session, workflow=workflow, node=node, dependencies=dependencies)
     if node.node_type == WorkflowNodeType.IMAGE_GENERATION:
-        return _execute_image_generation(session, workflow=workflow, node=node)
+        return _execute_image_generation(session, workflow=workflow, node=node, dependencies=dependencies)
     raise ValueError("工作流节点类型不支持")
 
 
@@ -528,7 +562,7 @@ def _execute_product_context(product: Product, node: WorkflowNode) -> dict[str, 
 
 def _execute_reference_image(session: Session, *, workflow: ProductWorkflow, node: WorkflowNode) -> dict[str, Any]:
     asset_ids = _source_asset_ids_from_config(node.config_json)
-    assets = list(session.scalars(select(SourceAsset).where(SourceAsset.id.in_(asset_ids)))) if asset_ids else []
+    assets = WorkflowQueryService(session).source_assets_by_ids(asset_ids)
     assets = [asset for asset in assets if asset.product_id == workflow.product_id]
     if not assets:
         return _image_asset_output([], summary="参考图为空")
@@ -540,7 +574,14 @@ def _execute_reference_image(session: Session, *, workflow: ProductWorkflow, nod
     )
 
 
-def _execute_copy_generation(session: Session, *, workflow: ProductWorkflow, node: WorkflowNode) -> dict[str, Any]:
+def _execute_copy_generation(
+    session: Session,
+    *,
+    workflow: ProductWorkflow,
+    node: WorkflowNode,
+    dependencies: WorkflowExecutionDependencies | None = None,
+) -> dict[str, Any]:
+    dependencies = dependencies or default_workflow_execution_dependencies()
     product = workflow.product
     product_context = _effective_product_context(workflow, node.id)
     existing_output = node.output_json or {}
@@ -567,7 +608,7 @@ def _execute_copy_generation(session: Session, *, workflow: ProductWorkflow, nod
         _optional_config_text(node.config_json, "instruction"),
         incoming_context,
     )
-    provider = get_text_provider()
+    provider = dependencies.text_provider()
     brief_payload, brief_model = provider.generate_brief(product_input)
     brief = CreativeBrief(
         product_id=product.id,
@@ -615,7 +656,14 @@ def _execute_copy_generation(session: Session, *, workflow: ProductWorkflow, nod
     return output
 
 
-def _execute_image_generation(session: Session, *, workflow: ProductWorkflow, node: WorkflowNode) -> dict[str, Any]:
+def _execute_image_generation(
+    session: Session,
+    *,
+    workflow: ProductWorkflow,
+    node: WorkflowNode,
+    dependencies: WorkflowExecutionDependencies | None = None,
+) -> dict[str, Any]:
+    dependencies = dependencies or default_workflow_execution_dependencies()
     product = workflow.product
     incoming_context = _collect_incoming_context(workflow, node.id)
     product_context = _effective_product_context(workflow, node.id)
@@ -670,7 +718,7 @@ def _execute_image_generation(session: Session, *, workflow: ProductWorkflow, no
     settings = get_runtime_settings()
     kind = _poster_kind_from_config(node.config_json)
     image_providers = (
-        [get_image_provider() for _ in downstream_reference_nodes]
+        [dependencies.image_provider() for _ in downstream_reference_nodes]
         if settings.poster_generation_mode == "generated"
         else None
     )
@@ -681,6 +729,7 @@ def _execute_image_generation(session: Session, *, workflow: ProductWorkflow, no
         poster_generation_mode=settings.poster_generation_mode,
         poster_font_path=settings.poster_font_path,
         image_providers=image_providers,
+        renderer_factory=dependencies.poster_renderer,
     )
     for generated_image, target_node in zip(generated_images, downstream_reference_nodes, strict=True):
         content = generated_image.content
@@ -750,9 +799,12 @@ def _generate_workflow_images_concurrently(
     poster_generation_mode: str,
     poster_font_path: Path,
     image_providers: list[ImageProvider] | None,
+    renderer_factory: PosterRendererFactory | None = None,
 ) -> list[_GeneratedWorkflowImage]:
     if target_count <= 0:
         return []
+    dependencies = default_workflow_execution_dependencies()
+    renderer_factory = renderer_factory or dependencies.poster_renderer
 
     def generate_one(target_index: int) -> _GeneratedWorkflowImage:
         if poster_generation_mode == "generated":
@@ -769,7 +821,7 @@ def _generate_workflow_images_concurrently(
                 mime_type=generated_image.mime_type,
             )
 
-        renderer = PosterRenderer(font_path=poster_font_path)
+        renderer = renderer_factory(poster_font_path)
         return _GeneratedWorkflowImage(
             target_index=target_index,
             content=renderer.render(render_input, kind),

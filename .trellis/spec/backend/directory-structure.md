@@ -113,6 +113,12 @@ Put workflow rules and orchestration in `backend/src/productflow_backend/applica
     upload/bind reference images, edit generated copy, and normalize the product-context singleton.
   - `application/product_workflow_execution.py` owns workflow run kickoff/execution, node-run claiming, failure
     transitions, selected-node planning, and provider/render orchestration.
+  - `application/product_workflow_query.py` is the narrow workflow query-service trial for execution/reuse hot paths
+    such as run reloads, node/edge lookups, source-asset existence checks, and first-class artifact lookup. Do not broaden
+    this into whole-project repository conversion without a dedicated architecture task.
+  - `application/product_workflow_dependencies.py` owns explicit workflow execution dependency seams for text/image
+    provider resolution and poster renderer construction, while the default resolvers continue to route through the
+    `product_workflows.py` facade for monkeypatch compatibility.
   - `application/product_workflow_context.py` owns product/incoming context collection, config parsing, upstream text
     assembly, reference input collection, and downstream reference target discovery.
   - `application/product_workflow_artifacts.py` owns workflow artifact summaries and materialization helpers such as
@@ -132,6 +138,11 @@ values are mirrored in `web/src/lib/types.ts`, so enum changes are cross-layer c
 `backend/src/productflow_backend/domain/errors.py` is the shared home for typed business errors such as `BusinessError`,
 `BusinessValidationError`, and `NotFoundError`. Application use cases may raise these errors, while HTTP status conversion
 still belongs in `presentation/errors.py`.
+
+`backend/src/productflow_backend/domain/workflow_rules.py` owns DB-free workflow graph business rules such as topological
+ordering, selected-node execution planning, and missing-upstream decisions. Application modules adapt ORM rows into the
+small domain rule shapes before applying those rules; SQLAlchemy artifact existence checks stay in application/query
+services.
 
 ### Infrastructure layer
 

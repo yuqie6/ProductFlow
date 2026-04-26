@@ -145,6 +145,9 @@
   another image.
 - Base: run from a selected node; the executor runs the selected node and only missing/invalid required dependencies.
   Previously succeeded upstream nodes with valid first-class artifacts are read as context, not re-run.
+- Base: selected-node execution planning is a DB-free domain rule fed by an application/query-layer reusable-edge
+  decision. The domain rule decides which missing upstream node types are required; the query layer decides whether an
+  existing `CopySet`, `PosterVariant`, or `SourceAsset` actually belongs to the workflow product.
 - Bad: add an edge from an image node back to a copy node; the cycle validator rejects it before commit.
 
 ### 6. Tests Required
@@ -175,6 +178,8 @@
   upstream node runs/artifacts are not duplicated when reusable outputs exist.
 - API regression for selected reference-slot runs connects an already successful image node to a new empty
   `reference_image` slot and asserts only the necessary image node plus target slot run; copy generation must not re-run.
+- Unit regression for workflow domain rules covers selected-node planning / missing-upstream decisions without creating a
+  SQLAlchemy session.
 - API regression edits a previously run `product_context` node, then directly runs a downstream node and asserts the
   downstream output context summary uses the latest saved config rather than stale context output.
 - API regression asserts upstream copy text and reference-image label/role metadata appear in deterministic context sources

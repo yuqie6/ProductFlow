@@ -100,6 +100,53 @@ Existing provider selection is centralized in:
 Routes and use cases call provider interfaces/factories, not concrete SDK classes directly. If adding providers, update the
 factory, config definitions, tests, and settings UI types together.
 
+Workflow execution has an additional explicit dependency seam in
+`application/product_workflow_dependencies.py`. Default workflow execution dependencies must resolve providers through the
+`application/product_workflows.py` facade so existing route/worker behavior and legacy monkeypatch tests remain compatible,
+while focused tests may pass a `WorkflowExecutionDependencies` instance directly.
+
+#### Scenario: Workflow execution dependency seams
+
+##### 1. Scope / Trigger
+- Trigger: editing workflow execution provider or renderer construction.
+
+##### 2. Signatures
+- `WorkflowExecutionDependencies(text_provider_resolver, image_provider_resolver, poster_renderer_factory)`.
+- `run_product_workflow(..., dependencies=None)`, `execute_product_workflow_run(..., dependencies=None)`, and internal
+  `_execute_node(..., dependencies=None)` accept this seam without changing API/worker call sites.
+
+##### 3. Contracts
+- `None` uses default facade-routed resolvers.
+- Facade exports such as `product_workflows.get_text_provider` / `get_image_provider` remain monkeypatch-compatible.
+- Custom dependencies may be passed by focused tests or future composition code; they must return provider interface
+  instances, not concrete SDK payloads.
+
+##### 4. Validation & Error Matrix
+- Resolver/provider failure -> existing workflow failure handling persists the run/node failure reason.
+- Missing image provider for generated mode -> remains a runtime execution failure, not a schema/API change.
+
+##### 5. Good/Base/Bad Cases
+- Good: a focused test injects fake providers through `WorkflowExecutionDependencies`.
+- Base: existing tests monkeypatch `product_workflows.get_image_provider` and still affect default workflow execution.
+- Bad: workflow execution imports a concrete provider SDK class or bypasses the facade default resolver.
+
+##### 6. Tests Required
+- Keep provider/workflow regression tests passing after resolver changes.
+- Add a focused injection test when changing resolver behavior itself.
+
+##### 7. Wrong vs Correct
+Wrong:
+
+```python
+provider = OpenAIResponsesImageProvider()
+```
+
+Correct:
+
+```python
+provider = dependencies.image_provider()
+```
+
 ### Validate inputs at the correct boundary
 
 - FastAPI `Query` constraints are used for list pagination in `presentation/routes/products.py`.
@@ -127,6 +174,10 @@ Do not duplicate these checks in multiple pages/routes.
 When changing product, copy, poster, settings, upload, image-session, provider, or migration behavior, add or update tests
 in the matching topic file. Keep cross-cutting builders and polling/login helpers in `backend/tests/helpers.py` rather
 than reintroducing a giant all-purpose test module.
+
+When extracting workflow graph business rules, add at least one DB-free unit test for the domain rule in addition to any
+API/integration regression. The application/query layer should own SQLAlchemy artifact existence checks; the domain rule
+should own pure graph decisions.
 
 ### Keep storage safe
 
