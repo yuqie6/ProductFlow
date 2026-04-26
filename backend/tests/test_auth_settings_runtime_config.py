@@ -250,7 +250,7 @@ def test_settings_api_normalizes_custom_image_sizes_for_generation(configured_en
         json={"prompt": "生成一张自定义尺寸商品图", "size": "512x512"},
     )
 
-    assert generated.status_code == 200
+    assert generated.status_code == 202
     assert generated.json()["rounds"][-1]["size"] == "512x512"
 
 

@@ -242,6 +242,22 @@ export interface ImageSessionRound {
   created_at: string;
 }
 
+export interface ImageSessionGenerationTask {
+  id: string;
+  session_id: string;
+  status: JobStatus;
+  prompt: string;
+  size: string;
+  base_asset_id: string | null;
+  selected_reference_asset_ids: string[];
+  generation_count: number;
+  failure_reason: string | null;
+  result_generation_group_id: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
 export interface ImageSessionSummary {
   id: string;
   product_id: string | null;
@@ -258,6 +274,7 @@ export interface ImageSessionDetail {
   title: string;
   assets: ImageSessionAsset[];
   rounds: ImageSessionRound[];
+  generation_tasks: ImageSessionGenerationTask[];
   created_at: string;
   updated_at: string;
 }

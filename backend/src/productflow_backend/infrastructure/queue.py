@@ -12,7 +12,13 @@ from sqlalchemy.orm import selectinload
 
 from productflow_backend.config import get_settings
 from productflow_backend.domain.enums import JobKind, JobStatus, WorkflowNodeStatus, WorkflowRunStatus
-from productflow_backend.infrastructure.db.models import JobRun, WorkflowNode, WorkflowRun, utcnow
+from productflow_backend.infrastructure.db.models import (
+    ImageSessionGenerationTask,
+    JobRun,
+    WorkflowNode,
+    WorkflowRun,
+    utcnow,
+)
 from productflow_backend.infrastructure.db.session import get_session_factory
 
 logger = logging.getLogger(__name__)
@@ -44,6 +50,15 @@ class WorkflowRunRecoverySummary:
     enqueued_runs: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class ImageSessionGenerationTaskRecoverySummary:
+    """启动恢复结果：把连续生图 durable 任务补回队列。"""
+
+    queued_tasks: int = 0
+    stale_running_tasks: int = 0
+    enqueued_tasks: int = 0
+
+
 @lru_cache(maxsize=1)
 def get_broker() -> RedisBroker:
     """初始化 Dramatiq Redis Broker（单例）。"""
@@ -72,6 +87,13 @@ def enqueue_workflow_run(run_id: str) -> None:
 
     get_broker()
     run_product_workflow_run.send(run_id)
+
+
+def enqueue_image_session_generation_task(task_id: str) -> None:
+    from productflow_backend.workers import run_image_session_generation_task
+
+    get_broker()
+    run_image_session_generation_task.send(task_id)
 
 
 def _send_job_to_queue(job_id: str, kind: JobKind) -> None:
@@ -241,4 +263,70 @@ def recover_unfinished_workflow_runs(
         queued_runs=queued_runs,
         stale_running_runs=stale_running_runs,
         enqueued_runs=enqueued_runs,
+    )
+
+
+def recover_unfinished_image_session_generation_tasks(
+    *,
+    reset_stale_running: bool = False,
+    stale_running_after: timedelta = DEFAULT_STALE_RUNNING_AFTER,
+) -> ImageSessionGenerationTaskRecoverySummary:
+    """恢复 queued / stale running 的连续生图任务，Redis 只作为可补发 delivery。"""
+
+    cutoff = utcnow() - stale_running_after
+    session = get_session_factory()()
+    task_ids_to_enqueue: list[str] = []
+    queued_tasks = 0
+    stale_running_tasks = 0
+
+    try:
+        statement = select(ImageSessionGenerationTask).where(
+            ImageSessionGenerationTask.is_retryable.is_(True),
+            or_(
+                ImageSessionGenerationTask.status == JobStatus.QUEUED,
+                (
+                    (ImageSessionGenerationTask.status == JobStatus.RUNNING)
+                    & (ImageSessionGenerationTask.started_at <= cutoff)
+                )
+                if reset_stale_running
+                else False,
+            ),
+        )
+        tasks = list(session.scalars(statement).all())
+        for task in tasks:
+            if task.status == JobStatus.RUNNING:
+                task.status = JobStatus.QUEUED
+                task.started_at = None
+                stale_running_tasks += 1
+            else:
+                queued_tasks += 1
+            task_ids_to_enqueue.append(task.id)
+        if stale_running_tasks:
+            session.commit()
+    except Exception:
+        session.rollback()
+        logger.exception("恢复滞留连续生图任务时读取数据库失败")
+        return ImageSessionGenerationTaskRecoverySummary()
+    finally:
+        session.close()
+
+    enqueued_tasks = 0
+    for task_id in task_ids_to_enqueue:
+        try:
+            enqueue_image_session_generation_task(task_id)
+            enqueued_tasks += 1
+        except Exception:
+            logger.exception("恢复滞留连续生图任务入队失败: task_id=%s", task_id)
+
+    if task_ids_to_enqueue:
+        logger.info(
+            "已恢复滞留连续生图任务: queued=%s stale_running=%s enqueued=%s",
+            queued_tasks,
+            stale_running_tasks,
+            enqueued_tasks,
+        )
+    return ImageSessionGenerationTaskRecoverySummary(
+        queued_tasks=queued_tasks,
+        stale_running_tasks=stale_running_tasks,
+        enqueued_tasks=enqueued_tasks,
     )

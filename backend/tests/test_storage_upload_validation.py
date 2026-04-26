@@ -85,5 +85,5 @@ def test_image_generation_calibrates_oversized_size(configured_env: Path) -> Non
         f"/api/image-sessions/{created.json()['id']}/generate",
         json={"prompt": "生成一张图", "size": "99999x99999"},
     )
-    assert generated.status_code == 200
+    assert generated.status_code == 202
     assert generated.json()["rounds"][-1]["size"] == "3840x3840"

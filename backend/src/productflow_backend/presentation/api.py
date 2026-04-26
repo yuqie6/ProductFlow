@@ -9,7 +9,11 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from productflow_backend.config import get_settings
 from productflow_backend.infrastructure.logging import cleanup_old_logs, configure_logging
-from productflow_backend.infrastructure.queue import recover_unfinished_jobs, recover_unfinished_workflow_runs
+from productflow_backend.infrastructure.queue import (
+    recover_unfinished_image_session_generation_tasks,
+    recover_unfinished_jobs,
+    recover_unfinished_workflow_runs,
+)
 from productflow_backend.presentation.routes.auth import router as auth_router
 from productflow_backend.presentation.routes.image_sessions import router as image_sessions_router
 from productflow_backend.presentation.routes.jobs import router as jobs_router
@@ -28,6 +32,7 @@ def create_app() -> FastAPI:
         cleanup_old_logs(settings)
         recover_unfinished_jobs()
         recover_unfinished_workflow_runs()
+        recover_unfinished_image_session_generation_tasks()
         yield
 
     app = FastAPI(title="ProductFlow API", version="0.1.0", lifespan=lifespan)

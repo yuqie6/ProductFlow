@@ -561,7 +561,7 @@ def test_image_session_openai_responses_uses_explicit_branch_context(
         f"/api/image-sessions/{session_id}/generate",
         json={"prompt": "生成日漫风商品场景", "size": "1024x1024"},
     )
-    assert first.status_code == 200
+    assert first.status_code == 202
     first_round = first.json()["rounds"][-1]
     assert first_round["provider_name"] == "openai-responses"
     assert first_round["provider_response_id"] == "resp_1"
@@ -573,7 +573,7 @@ def test_image_session_openai_responses_uses_explicit_branch_context(
         f"/api/image-sessions/{session_id}/generate",
         json={"prompt": "保持主体，把背景改成晴天街角", "size": "1024x1024"},
     )
-    assert second.status_code == 200
+    assert second.status_code == 202
     second_round = second.json()["rounds"][-1]
     assert second_round["provider_response_id"] == "resp_2"
     assert second_round["previous_response_id"] is None
@@ -588,7 +588,7 @@ def test_image_session_openai_responses_uses_explicit_branch_context(
             "selected_reference_asset_ids": [reference_id],
         },
     )
-    assert branched.status_code == 200
+    assert branched.status_code == 202
     branched_round = branched.json()["rounds"][-1]
     assert branched_round["provider_response_id"] == "resp_3"
     assert branched_round["previous_response_id"] is None

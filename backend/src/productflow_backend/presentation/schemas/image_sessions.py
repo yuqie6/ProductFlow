@@ -5,8 +5,13 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from productflow_backend.domain.enums import ImageSessionAssetKind
-from productflow_backend.infrastructure.db.models import ImageSession, ImageSessionAsset, ImageSessionRound
+from productflow_backend.domain.enums import ImageSessionAssetKind, JobStatus
+from productflow_backend.infrastructure.db.models import (
+    ImageSession,
+    ImageSessionAsset,
+    ImageSessionGenerationTask,
+    ImageSessionRound,
+)
 from productflow_backend.presentation.image_variants import build_image_urls
 from productflow_backend.presentation.schemas.validators import validate_image_generation_size
 
@@ -42,6 +47,22 @@ class ImageSessionRoundResponse(BaseModel):
     created_at: datetime
 
 
+class ImageSessionGenerationTaskResponse(BaseModel):
+    id: str
+    session_id: str
+    status: JobStatus
+    prompt: str
+    size: str
+    base_asset_id: str | None = None
+    selected_reference_asset_ids: list[str] = Field(default_factory=list)
+    generation_count: int
+    failure_reason: str | None = None
+    result_generation_group_id: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
 class ImageSessionSummaryResponse(BaseModel):
     id: str
     product_id: str | None = None
@@ -58,6 +79,7 @@ class ImageSessionDetailResponse(BaseModel):
     title: str
     assets: list[ImageSessionAssetResponse]
     rounds: list[ImageSessionRoundResponse]
+    generation_tasks: list[ImageSessionGenerationTaskResponse] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
@@ -132,6 +154,26 @@ def serialize_image_session_round(round_item: ImageSessionRound) -> ImageSession
     )
 
 
+def serialize_image_session_generation_task(
+    task: ImageSessionGenerationTask,
+) -> ImageSessionGenerationTaskResponse:
+    return ImageSessionGenerationTaskResponse(
+        id=task.id,
+        session_id=task.session_id,
+        status=task.status,
+        prompt=task.prompt,
+        size=task.size,
+        base_asset_id=task.base_asset_id,
+        selected_reference_asset_ids=task.selected_reference_asset_ids or [],
+        generation_count=task.generation_count,
+        failure_reason=task.failure_reason,
+        result_generation_group_id=task.result_generation_group_id,
+        created_at=task.created_at,
+        started_at=task.started_at,
+        finished_at=task.finished_at,
+    )
+
+
 def serialize_image_session_summary(image_session: ImageSession) -> ImageSessionSummaryResponse:
     latest_round = max(image_session.rounds, key=lambda item: item.created_at, default=None)
     return ImageSessionSummaryResponse(
@@ -148,12 +190,14 @@ def serialize_image_session_summary(image_session: ImageSession) -> ImageSession
 def serialize_image_session_detail(image_session: ImageSession) -> ImageSessionDetailResponse:
     rounds = sorted(image_session.rounds, key=lambda item: item.created_at)
     assets = sorted(image_session.assets, key=lambda item: item.created_at, reverse=True)
+    generation_tasks = sorted(image_session.generation_tasks, key=lambda item: item.created_at, reverse=True)
     return ImageSessionDetailResponse(
         id=image_session.id,
         product_id=image_session.product_id,
         title=image_session.title,
         assets=[serialize_image_session_asset(item) for item in assets],
         rounds=[serialize_image_session_round(item) for item in rounds],
+        generation_tasks=[serialize_image_session_generation_task(item) for item in generation_tasks],
         created_at=image_session.created_at,
         updated_at=image_session.updated_at,
     )

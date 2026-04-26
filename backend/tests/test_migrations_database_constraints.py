@@ -21,6 +21,7 @@ from productflow_backend.domain.enums import (
 from productflow_backend.infrastructure.db.models import (
     CopySet,
     ImageSessionAsset,
+    ImageSessionGenerationTask,
     JobRun,
     PosterVariant,
     SourceAsset,
@@ -36,6 +37,7 @@ def test_sqlalchemy_enum_columns_use_database_values() -> None:
     assert PosterVariant.__table__.c.kind.type.enums == [member.value for member in PosterKind]
     assert JobRun.__table__.c.kind.type.enums == [member.value for member in JobKind]
     assert JobRun.__table__.c.status.type.enums == [member.value for member in JobStatus]
+    assert ImageSessionGenerationTask.__table__.c.status.type.enums == [member.value for member in JobStatus]
     assert JobRun.__table__.c.target_poster_kind.type.enums == [member.value for member in PosterKind]
     assert WorkflowNode.__table__.c.node_type.type.enums == [member.value for member in WorkflowNodeType]
     assert WorkflowNode.__table__.c.status.type.enums == [member.value for member in WorkflowNodeStatus]

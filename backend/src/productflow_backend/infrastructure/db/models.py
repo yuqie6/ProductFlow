@@ -436,6 +436,11 @@ class ImageSession(Base, TimestampMixin):
         cascade="all, delete-orphan",
         order_by="ImageSessionRound.created_at",
     )
+    generation_tasks: Mapped[list[ImageSessionGenerationTask]] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="ImageSessionGenerationTask.created_at",
+    )
 
 
 class ImageSessionAsset(Base):
@@ -497,4 +502,41 @@ class ImageSessionRound(Base):
         back_populates="generated_in_round",
         foreign_keys=[generated_asset_id],
     )
+    base_asset: Mapped[ImageSessionAsset | None] = relationship(foreign_keys=[base_asset_id])
+
+
+class ImageSessionGenerationTask(Base):
+    """连续生图 durable 后台任务记录，数据库是 authoritative state。"""
+
+    __tablename__ = "image_session_generation_tasks"
+    __table_args__ = (
+        Index("ix_image_session_generation_tasks_session_id", "session_id"),
+        Index("ix_image_session_generation_tasks_status", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    session_id: Mapped[str] = mapped_column(String(36), ForeignKey("image_sessions.id", ondelete="CASCADE"))
+    status: Mapped[JobStatus] = mapped_column(enum_value_column(JobStatus), default=JobStatus.QUEUED)
+    prompt: Mapped[str] = mapped_column(Text)
+    size: Mapped[str] = mapped_column(String(32))
+    base_asset_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "image_session_assets.id",
+            ondelete="SET NULL",
+            name="fk_image_session_generation_tasks_base_asset_id",
+        ),
+        nullable=True,
+    )
+    selected_reference_asset_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    generation_count: Mapped[int] = mapped_column(Integer, default=1)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result_generation_group_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    is_retryable: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    session: Mapped[ImageSession] = relationship(back_populates="generation_tasks")
     base_asset: Mapped[ImageSessionAsset | None] = relationship(foreign_keys=[base_asset_id])

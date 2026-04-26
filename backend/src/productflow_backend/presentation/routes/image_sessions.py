@@ -4,19 +4,20 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.admission import admit_synchronous_generation
 from productflow_backend.application.image_sessions import (
     add_image_session_reference_images,
     attach_image_session_asset_to_product,
     create_image_session,
+    create_image_session_generation_task,
     delete_image_session,
     delete_image_session_reference_image,
-    generate_image_session_round,
     get_image_session_detail,
     list_image_sessions,
+    mark_image_session_generation_task_enqueue_failed,
     update_image_session,
 )
 from productflow_backend.infrastructure.db.models import ImageSessionAsset
+from productflow_backend.infrastructure.queue import enqueue_image_session_generation_task
 from productflow_backend.infrastructure.storage import ImageVariantName, LocalStorage
 from productflow_backend.presentation.deps import get_session, require_admin
 from productflow_backend.presentation.errors import raise_value_error_as_http
@@ -145,27 +146,42 @@ def delete_image_session_reference_image_endpoint(
     return serialize_image_session_detail(image_session)
 
 
-@router.post("/image-sessions/{image_session_id}/generate", response_model=ImageSessionDetailResponse)
+@router.post(
+    "/image-sessions/{image_session_id}/generate",
+    response_model=ImageSessionDetailResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 def generate_image_session_round_endpoint(
     image_session_id: str,
     payload: GenerateImageSessionRoundRequest,
     session: Session = Depends(get_session),
 ) -> ImageSessionDetailResponse:
     try:
-        with admit_synchronous_generation(session):
-            image_session = generate_image_session_round(
-                session,
-                image_session_id=image_session_id,
-                prompt=payload.prompt,
-                size=payload.size,
-                base_asset_id=payload.base_asset_id,
-                selected_reference_asset_ids=payload.selected_reference_asset_ids,
-                generation_count=payload.generation_count,
-            )
+        result = create_image_session_generation_task(
+            session,
+            image_session_id=image_session_id,
+            prompt=payload.prompt,
+            size=payload.size,
+            base_asset_id=payload.base_asset_id,
+            selected_reference_asset_ids=payload.selected_reference_asset_ids,
+            generation_count=payload.generation_count,
+        )
     except ValueError as exc:
         raise_value_error_as_http(exc)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail="图片生成失败，请稍后重试") from exc
+    try:
+        enqueue_image_session_generation_task(result.task.id)
+    except Exception as exc:  # noqa: BLE001
+        mark_image_session_generation_task_enqueue_failed(
+            session,
+            task_id=result.task.id,
+            reason="任务队列暂不可用，请稍后重试",
+        )
+        raise HTTPException(status_code=503, detail="任务队列暂不可用，请稍后重试") from exc
+    try:
+        session.expire_all()
+        image_session = get_image_session_detail(session, image_session_id)
+    except ValueError as exc:
+        raise_value_error_as_http(exc)
     return serialize_image_session_detail(image_session)
 
 

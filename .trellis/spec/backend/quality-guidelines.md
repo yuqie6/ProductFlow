@@ -382,8 +382,136 @@ Job creation and workers are designed to avoid duplicate active jobs and duplica
 - Product workflow runs follow the same durable-delivery rule with `recover_unfinished_workflow_runs(...)`: the
   `workflow_runs` / `workflow_node_runs` tables are authoritative, Dramatiq is only delivery, and duplicate messages must
   no-op for terminal or currently-running runs.
+- Continuous image-session generation follows the same durable-delivery rule with
+  `image_session_generation_tasks` and `recover_unfinished_image_session_generation_tasks(...)`: `POST
+  /api/image-sessions/{id}/generate` creates a queued DB task and returns `202`; worker execution creates the existing
+  `image_session_rounds` / `image_session_assets` rows on success, and duplicate terminal messages must no-op.
 
 Preserve these semantics when editing job code.
+
+#### Scenario: Durable async continuous image-session generation
+
+##### 1. Scope / Trigger
+
+- Trigger: changing `POST /api/image-sessions/{id}/generate`, image-session generation persistence, queue delivery,
+  worker execution, admission control, or frontend session detail polling for continuous image chat.
+- Continuous image-session generation is a cross-layer async workflow: DB task rows are authoritative, Dramatiq/Redis is
+  delivery only, and the frontend reconstructs queued/running/failed state from `ImageSessionDetail`.
+
+##### 2. Signatures
+
+- API: `POST /api/image-sessions/{image_session_id}/generate` returns `202 Accepted` after validation, durable task
+  creation, and enqueue; it must not wait for an image provider call.
+- DB: `image_session_generation_tasks` stores `session_id`, `prompt`, `size`, `base_asset_id`,
+  `selected_reference_asset_ids`, `generation_count`, `status`, `failure_reason`, `result_generation_group_id`,
+  `attempts`, `is_retryable`, `created_at`, `started_at`, and `finished_at`.
+- Queue: `enqueue_image_session_generation_task(task_id: str)` sends the durable task ID; the worker actor consumes only
+  the ID and reloads state from the database.
+- Recovery: `recover_unfinished_image_session_generation_tasks(reset_stale_running: bool = False, stale_running_after:
+  timedelta = 30 minutes)` re-sends queued tasks and, only for worker startup, may reset stale running tasks to queued.
+- Response DTO: `ImageSessionDetailResponse.generation_tasks` exposes task summaries so route entry/refresh can show
+  active or failed generation work without a separate orchestration endpoint.
+
+##### 3. Contracts
+
+- Task statuses are `queued`, `running`, `succeeded`, and `failed`; queued/running rows count toward
+  `generation_max_concurrent_tasks`.
+- New image-session generation work must call shared admission before creating a queued task. The count must be based on
+  active DB rows, not an in-process slot, because API/worker processes may be replicated.
+- Queue enqueue failure after task creation must mark the task `failed` (or otherwise return a stable `503`) before the
+  route responds; do not strand a queued row that no worker can consume.
+- Worker claim must be atomic at the database boundary: update `queued -> running` with a status condition and no-op when
+  the row is terminal, already running, or already claimed by another worker.
+- On success, create normal `image_session_assets` and `image_session_rounds` rows. Multi-candidate generations still use
+  one `generation_group_id` with one round/asset per candidate.
+- On provider/storage/runtime failure, mark the task `failed` with a generic safe user-facing reason such as
+  `图片生成失败，请稍后重试`; never expose provider exception text, API keys, base URLs, local paths, request bodies, or
+  tracebacks in API responses.
+- The shared public demo workspace stays shared; do not add user/tenant ownership checks as part of this async path unless
+  a separate product requirement introduces isolation.
+
+##### 4. Validation & Error Matrix
+
+- Missing session -> `404`, `连续生图会话不存在`.
+- Invalid `generation_count`, `size`, `base_asset_id`, or selected references -> existing image-session validation errors;
+  do not enqueue a task.
+- Active generation cap reached -> `429`, `当前生成任务较多，请稍后再试`; no new task row should be created for that request.
+- Redis/Dramatiq send failure after DB task creation -> mark task `failed`, then return `503`,
+  `任务队列暂不可用，请稍后重试`.
+- Duplicate Redis message for `succeeded`, `failed`, or `running` task -> no provider call and no new round/asset rows.
+- API restart with queued retryable task -> re-enqueue without changing task semantics.
+- Worker restart with stale running retryable task -> reset to queued, clear stale running timestamps as needed, and
+  re-enqueue.
+
+##### 5. Good/Base/Bad Cases
+
+- Good: user requests 3 candidates; route returns `202` quickly with a queued task, worker later creates 3 generated
+  assets and 3 rounds sharing one `generation_group_id`, then marks the task `succeeded`.
+- Good: browser refreshes during generation; `ImageSessionDetail.generation_tasks` still contains queued/running task
+  state, so the frontend resumes polling and disables duplicate submission.
+- Base: worker receives the same task ID after the task already succeeded; it exits without calling the provider.
+- Bad: route calls `generate_image_session_round(...)` or an image provider directly and holds the HTTP request open.
+- Bad: active generation cap checks a process-local counter or lock; replicated API processes can exceed the public demo
+  cap.
+- Bad: worker claim reads a queued task, mutates the ORM object, and commits without a conditional `WHERE status='queued'`;
+  concurrent duplicate messages may both call the provider.
+
+##### 6. Tests Required
+
+- Route/API test: submit generation returns `202`, persists a queued task, exposes the task in session detail, and does not
+  call the provider synchronously.
+- Enqueue failure test: mocked send failure marks the task failed and returns stable `503`.
+- Worker success test: executing a queued task creates expected assets/rounds and marks the task succeeded with
+  `result_generation_group_id`.
+- Worker failure test: provider exception marks the task failed with a generic reason and does not leak the raw exception.
+- Duplicate/no-op tests: terminal and already-running task messages do not call the provider or create extra rounds.
+- Recovery tests: queued tasks are re-sent; stale running tasks reset only when `reset_stale_running=True`.
+- Admission test: queued/running image-session generation tasks count toward `generation_max_concurrent_tasks`.
+- Frontend gate: update DTO types and run `just web-build` when `ImageSessionDetail` or task status rendering changes.
+
+##### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+# HTTP request waits for provider and uses process-local admission state.
+with admit_synchronous_generation(session):
+    detail = generate_image_session_round(session, image_session_id, request.prompt, storage=storage)
+```
+
+Correct:
+
+```python
+# HTTP request persists durable work, sends delivery message, and returns 202.
+task = create_image_session_generation_task(session, image_session_id, request)
+enqueue_image_session_generation_task(task.id)
+```
+
+Wrong:
+
+```python
+task = session.get(ImageSessionGenerationTask, task_id)
+if task.status == ImageSessionGenerationStatus.QUEUED:
+    task.status = ImageSessionGenerationStatus.RUNNING
+    session.commit()
+    call_provider()
+```
+
+Correct:
+
+```python
+updated = session.execute(
+    update(ImageSessionGenerationTask)
+    .where(
+        ImageSessionGenerationTask.id == task_id,
+        ImageSessionGenerationTask.status == ImageSessionGenerationStatus.QUEUED,
+    )
+    .values(status=ImageSessionGenerationStatus.RUNNING, started_at=now_utc())
+)
+if updated.rowcount != 1:
+    return
+call_provider()
+```
 
 #### Scenario: Recover stranded async jobs after process restart
 

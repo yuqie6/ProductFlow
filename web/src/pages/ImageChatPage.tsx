@@ -27,6 +27,7 @@ import { DEFAULT_IMAGE_SIZE_OPTIONS } from "../lib/imageSizes";
 import { clampGenerationCount, groupImageSessionRounds, pruneSelectedReferenceIds } from "./image-chat/branching";
 import type {
   ImageSessionDetail,
+  ImageSessionGenerationTask,
   ImageSessionListResponse,
   ProductDetail,
   ProductSummary,
@@ -39,12 +40,30 @@ function getSessionReferenceAssets(imageSession: ImageSessionDetail | undefined)
 
 const MAX_BRANCH_CONTEXT_IMAGES = 6;
 
+function isActiveGenerationTask(task: ImageSessionGenerationTask) {
+  return task.status === "queued" || task.status === "running";
+}
+
+function generationTaskLabel(task: ImageSessionGenerationTask) {
+  if (task.status === "queued") {
+    return "排队中";
+  }
+  if (task.status === "running") {
+    return "生成中";
+  }
+  if (task.status === "failed") {
+    return "生成失败";
+  }
+  return "已完成";
+}
+
 export function ImageChatPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { productId } = useParams();
   const isProductMode = Boolean(productId);
   const autoCreateTriggered = useRef(false);
+  const pendingGeneratedRoundCountRef = useRef<number | null>(null);
 
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [selectedGeneratedAssetId, setSelectedGeneratedAssetId] = useState<string | null>(null);
@@ -122,12 +141,21 @@ export function ImageChatPage() {
     queryKey: ["image-session", selectedSessionId],
     queryFn: () => api.getImageSession(selectedSessionId!),
     enabled: Boolean(selectedSessionId),
+    refetchInterval: (query) => {
+      const data = query.state.data as ImageSessionDetail | undefined;
+      return data?.generation_tasks.some(isActiveGenerationTask) ? 1500 : false;
+    },
   });
 
   const imageSession = sessionDetailQuery.data;
   const sessionReferenceAssets = useMemo(() => getSessionReferenceAssets(imageSession), [imageSession]);
   const maxSelectedReferenceCount = branchBaseAssetId ? MAX_BRANCH_CONTEXT_IMAGES - 1 : MAX_BRANCH_CONTEXT_IMAGES;
   const roundGroups = useMemo(() => groupImageSessionRounds(imageSession?.rounds ?? []), [imageSession]);
+  const visibleGenerationTasks = useMemo(
+    () => imageSession?.generation_tasks.filter((task) => task.status !== "succeeded").slice(0, 4) ?? [],
+    [imageSession],
+  );
+  const hasActiveGenerationTask = visibleGenerationTasks.some(isActiveGenerationTask);
 
   useEffect(() => {
     if (!imageSession) {
@@ -139,6 +167,15 @@ export function ImageChatPage() {
     }
     if (branchBaseAssetId && !imageSession.rounds.some((round) => round.generated_asset.id === branchBaseAssetId)) {
       setBranchBaseAssetId(null);
+    }
+    if (
+      pendingGeneratedRoundCountRef.current !== null &&
+      imageSession.rounds.length > pendingGeneratedRoundCountRef.current
+    ) {
+      pendingGeneratedRoundCountRef.current = null;
+      setSelectedGeneratedAssetId(imageSession.rounds.at(-1)?.generated_asset.id ?? null);
+      setSuccessMessage("新候选已生成");
+      setErrorMessage("");
     }
     setSelectedReferenceAssetIds((current) =>
       pruneSelectedReferenceIds(
@@ -279,10 +316,8 @@ export function ImageChatPage() {
     onSuccess: (updated) => {
       queryClient.setQueryData(["image-session", updated.id], updated);
       void queryClient.invalidateQueries({ queryKey: ["image-sessions", productId ?? "standalone"] });
-      const latestAssetId = updated.rounds.at(-1)?.generated_asset.id ?? null;
-      setSelectedGeneratedAssetId(latestAssetId);
       setDraft("");
-      setSuccessMessage(generationCount > 1 ? `已生成 ${generationCount} 张候选` : "新候选已生成");
+      setSuccessMessage(generationCount > 1 ? `已提交生成任务 · ${generationCount} 张候选` : "已提交生成任务");
       setErrorMessage("");
     },
     onError: (error) => {
@@ -328,6 +363,7 @@ export function ImageChatPage() {
     if (!selectedSessionId || !prompt || generateMutation.isPending) {
       return;
     }
+    pendingGeneratedRoundCountRef.current = imageSession?.rounds.length ?? 0;
     generateMutation.mutate({
       prompt,
       size,
@@ -928,6 +964,41 @@ export function ImageChatPage() {
                 )}
               </div>
 
+              {visibleGenerationTasks.length ? (
+                <div className="space-y-2 rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className="text-sm font-semibold text-slate-950">生成任务</div>
+                  {visibleGenerationTasks.map((task) => {
+                    const active = isActiveGenerationTask(task);
+                    return (
+                      <div
+                        key={task.id}
+                        className={`rounded-xl border px-3 py-2 text-sm ${
+                          task.status === "failed"
+                            ? "border-red-200 bg-red-50 text-red-700"
+                            : "border-indigo-100 bg-indigo-50 text-indigo-800"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="inline-flex items-center font-semibold">
+                            {active ? <Loader2 size={13} className="mr-1.5 animate-spin" /> : null}
+                            {generationTaskLabel(task)}
+                          </div>
+                          <span className="text-xs opacity-70">{task.generation_count} 张</span>
+                        </div>
+                        <div className="mt-1 line-clamp-2 text-xs opacity-80">{task.prompt}</div>
+                        {task.status === "failed" ? (
+                          <div className="mt-1 text-xs">{task.failure_reason ?? "图片生成失败，请稍后重试"}</div>
+                        ) : (
+                          <div className="mt-1 text-xs opacity-70">
+                            {task.status === "queued" ? "任务已保存，等待 worker 消费。" : "正在生成，完成后会自动刷新候选图。"}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
+
               {successMessage ? (
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
                   {successMessage}
@@ -943,11 +1014,15 @@ export function ImageChatPage() {
             <button
               type="button"
               onClick={handleGenerate}
-              disabled={!selectedSessionId || !draft.trim() || generateMutation.isPending}
+              disabled={!selectedSessionId || !draft.trim() || generateMutation.isPending || hasActiveGenerationTask}
               className="inline-flex w-full items-center justify-center rounded-2xl bg-indigo-600 px-4 py-3.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition-colors hover:bg-indigo-500 disabled:opacity-60"
             >
-              {generateMutation.isPending ? <Loader2 size={15} className="mr-2 animate-spin" /> : <Sparkles size={15} className="mr-2" />}
-              {generationCount > 1 ? `开始生成 · ${generationCount} 张候选` : "开始生成"}
+              {generateMutation.isPending || hasActiveGenerationTask ? (
+                <Loader2 size={15} className="mr-2 animate-spin" />
+              ) : (
+                <Sparkles size={15} className="mr-2" />
+              )}
+              {hasActiveGenerationTask ? "已有任务生成中" : generationCount > 1 ? `开始生成 · ${generationCount} 张候选` : "开始生成"}
             </button>
           </div>
         </aside>

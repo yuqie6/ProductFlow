@@ -14,6 +14,7 @@ from helpers import (
 from productflow_backend.infrastructure.db.models import (
     ImageSession,
     ImageSessionAsset,
+    ImageSessionGenerationTask,
     ImageSessionRound,
 )
 
@@ -23,6 +24,12 @@ def _execute_workflow_queue_inline_fixture(monkeypatch: pytest.MonkeyPatch) -> N
     """Keep API workflow tests deterministic while production delivery goes through Dramatiq."""
 
     _execute_workflow_queue_inline(monkeypatch)
+    from productflow_backend.application.image_sessions import execute_image_session_generation_task
+
+    monkeypatch.setattr(
+        "productflow_backend.presentation.routes.image_sessions.enqueue_image_session_generation_task",
+        execute_image_session_generation_task,
+    )
 
 
 def test_image_session_rounds_support_same_conversation(configured_env: Path) -> None:
@@ -44,7 +51,7 @@ def test_image_session_rounds_support_same_conversation(configured_env: Path) ->
             "size": "1024x1024",
         },
     )
-    assert first.status_code == 200
+    assert first.status_code == 202
     first_payload = first.json()
     assert len(first_payload["rounds"]) == 1
     assert first_payload["rounds"][0]["generated_asset"]["download_url"].startswith("/api/image-session-assets/")
@@ -69,7 +76,7 @@ def test_image_session_rounds_support_same_conversation(configured_env: Path) ->
             "size": "1024x1024",
         },
     )
-    assert second.status_code == 200
+    assert second.status_code == 202
     second_payload = second.json()
     assert len(second_payload["rounds"]) == 2
     assert second_payload["rounds"][-1]["provider_name"] == "mock"
@@ -77,6 +84,180 @@ def test_image_session_rounds_support_same_conversation(configured_env: Path) ->
     assert second_payload["rounds"][-1]["previous_response_id"] is None
     assert second_payload["rounds"][-1]["base_asset_id"] is None
     assert second_payload["rounds"][-1]["selected_reference_asset_ids"] == []
+
+
+def test_image_session_generate_returns_queued_task_without_waiting_for_provider(
+    configured_env: Path,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    sent: list[str] = []
+    monkeypatch.setattr(
+        "productflow_backend.presentation.routes.image_sessions.enqueue_image_session_generation_task",
+        lambda task_id: sent.append(task_id),
+    )
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post("/api/image-sessions", json={"title": "异步提交"})
+    assert created.status_code == 201
+    response = client.post(
+        f"/api/image-sessions/{created.json()['id']}/generate",
+        json={"prompt": "只创建任务，不等待 provider", "size": "1024x1024"},
+    )
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["rounds"] == []
+    assert len(payload["generation_tasks"]) == 1
+    task = payload["generation_tasks"][0]
+    assert task["status"] == "queued"
+    assert task["prompt"] == "只创建任务，不等待 provider"
+    assert sent == [task["id"]]
+    db_session.expire_all()
+    persisted = db_session.get(ImageSessionGenerationTask, task["id"])
+    assert persisted is not None
+    assert persisted.status == "queued"
+
+
+def test_image_session_generate_enqueue_failure_marks_task_failed(
+    configured_env: Path,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    def fail_enqueue(task_id: str) -> None:
+        raise RuntimeError(f"redis down for {task_id}")
+
+    monkeypatch.setattr(
+        "productflow_backend.presentation.routes.image_sessions.enqueue_image_session_generation_task",
+        fail_enqueue,
+    )
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post("/api/image-sessions", json={"title": "入队失败"})
+    assert created.status_code == 201
+    response = client.post(
+        f"/api/image-sessions/{created.json()['id']}/generate",
+        json={"prompt": "入队失败应落库", "size": "1024x1024"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "任务队列暂不可用，请稍后重试"
+    db_session.expire_all()
+    tasks = db_session.query(ImageSessionGenerationTask).all()
+    assert len(tasks) == 1
+    assert tasks[0].status == "failed"
+    assert tasks[0].failure_reason == "任务队列暂不可用，请稍后重试"
+
+
+def test_image_session_worker_failure_uses_generic_safe_reason(
+    configured_env: Path,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    def fail_generate(*args, **kwargs) -> None:
+        raise RuntimeError("provider raw secret sk-test path=/tmp/provider-traceback")
+
+    monkeypatch.setattr(
+        "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
+        fail_generate,
+    )
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post("/api/image-sessions", json={"title": "provider 失败"})
+    assert created.status_code == 201
+    response = client.post(
+        f"/api/image-sessions/{created.json()['id']}/generate",
+        json={"prompt": "这次 provider 会失败", "size": "1024x1024"},
+    )
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["generation_tasks"][0]["status"] == "failed"
+    assert payload["generation_tasks"][0]["failure_reason"] == "图片生成失败，请稍后重试"
+    assert "sk-test" not in payload["generation_tasks"][0]["failure_reason"]
+    db_session.expire_all()
+    task = db_session.get(ImageSessionGenerationTask, payload["generation_tasks"][0]["id"])
+    assert task is not None
+    assert task.failure_reason == "图片生成失败，请稍后重试"
+
+
+def test_image_session_worker_duplicate_message_noops_terminal_task(
+    configured_env: Path,
+    db_session,
+) -> None:
+    from productflow_backend.application.image_sessions import (
+        create_image_session,
+        create_image_session_generation_task,
+        execute_image_session_generation_task,
+    )
+
+    image_session = create_image_session(db_session, product_id=None, title="重复消息")
+    result = create_image_session_generation_task(
+        db_session,
+        image_session_id=image_session.id,
+        prompt="重复 worker 消息只执行一次",
+        size="1024x1024",
+    )
+
+    execute_image_session_generation_task(result.task.id)
+    execute_image_session_generation_task(result.task.id)
+
+    db_session.expire_all()
+    task = db_session.get(ImageSessionGenerationTask, result.task.id)
+    rounds = db_session.query(ImageSessionRound).filter(ImageSessionRound.session_id == image_session.id).all()
+    assert task is not None
+    assert task.status == "succeeded"
+    assert len(rounds) == 1
+
+
+def test_image_session_worker_duplicate_message_noops_running_task(
+    configured_env: Path,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.application.image_sessions import (
+        create_image_session,
+        create_image_session_generation_task,
+        execute_image_session_generation_task,
+    )
+    from productflow_backend.domain.enums import JobStatus
+
+    image_session = create_image_session(db_session, product_id=None, title="running 重复消息")
+    result = create_image_session_generation_task(
+        db_session,
+        image_session_id=image_session.id,
+        prompt="running 状态不应重复执行",
+        size="1024x1024",
+    )
+    result.task.status = JobStatus.RUNNING
+    db_session.commit()
+    calls: list[object] = []
+    monkeypatch.setattr(
+        "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    execute_image_session_generation_task(result.task.id)
+
+    db_session.expire_all()
+    task = db_session.get(ImageSessionGenerationTask, result.task.id)
+    rounds = db_session.query(ImageSessionRound).filter(ImageSessionRound.session_id == image_session.id).all()
+    assert task is not None
+    assert task.status == "running"
+    assert rounds == []
+    assert calls == []
 
 
 def test_image_session_branch_uses_selected_base_and_references_only(configured_env: Path, db_session) -> None:
@@ -94,14 +275,14 @@ def test_image_session_branch_uses_selected_base_and_references_only(configured_
         f"/api/image-sessions/{session_id}/generate",
         json={"prompt": "第一张基础图", "size": "1024x1024"},
     )
-    assert first.status_code == 200
+    assert first.status_code == 202
     first_asset_id = first.json()["rounds"][-1]["generated_asset"]["id"]
 
     later = client.post(
         f"/api/image-sessions/{session_id}/generate",
         json={"prompt": "后续但不应被自动继承的图", "size": "1024x1024"},
     )
-    assert later.status_code == 200
+    assert later.status_code == 202
 
     upload = client.post(
         f"/api/image-sessions/{session_id}/reference-images",
@@ -124,7 +305,7 @@ def test_image_session_branch_uses_selected_base_and_references_only(configured_
             "generation_count": 1,
         },
     )
-    assert branched.status_code == 200
+    assert branched.status_code == 202
     payload = branched.json()
     branch_round = payload["rounds"][-1]
     assert branch_round["base_asset_id"] == first_asset_id
@@ -170,8 +351,8 @@ def test_image_session_branch_validates_asset_scope_and_kind(configured_env: Pat
         f"/api/image-sessions/{other_session_id}/generate",
         json={"prompt": "其它生成图", "size": "1024x1024"},
     )
-    assert generated.status_code == 200
-    assert other_generated.status_code == 200
+    assert generated.status_code == 202
+    assert other_generated.status_code == 202
     generated_asset_id = generated.json()["rounds"][-1]["generated_asset"]["id"]
     other_generated_asset_id = other_generated.json()["rounds"][-1]["generated_asset"]["id"]
 
@@ -274,7 +455,7 @@ def test_image_session_multi_candidate_generation_persists_one_round_per_candida
         f"/api/image-sessions/{session_id}/generate",
         json={"prompt": "同一提示词出三张候选", "size": "1024x1024", "generation_count": 3},
     )
-    assert generated.status_code == 200
+    assert generated.status_code == 202
     rounds = generated.json()["rounds"]
     assert len(rounds) == 3
     group_ids = {round_item["generation_group_id"] for round_item in rounds}
@@ -311,7 +492,7 @@ def test_image_session_generation_accepts_custom_size_and_rejects_invalid_dimens
         f"/api/image-sessions/{session_id}/generate",
         json={"prompt": "做一张 16:9 展示图", "size": "1280x720"},
     )
-    assert generated.status_code == 200
+    assert generated.status_code == 202
     assert generated.json()["rounds"][-1]["size"] == "1280x720"
 
     zero = client.post(
@@ -325,7 +506,7 @@ def test_image_session_generation_accepts_custom_size_and_rejects_invalid_dimens
         f"/api/image-sessions/{session_id}/generate",
         json={"prompt": "尺寸过大", "size": "5000x5000"},
     )
-    assert oversized.status_code == 200
+    assert oversized.status_code == 202
     assert oversized.json()["rounds"][-1]["size"] == "3840x3840"
 
 
@@ -379,7 +560,7 @@ def test_image_session_can_be_deleted_with_files(configured_env: Path, db_sessio
         f"/api/image-sessions/{session_id}/generate",
         json={"prompt": "做一张白底商品图", "size": "1024x1024"},
     )
-    assert generated.status_code == 200
+    assert generated.status_code == 202
 
     db_session.expire_all()
     asset_paths = [
@@ -426,7 +607,7 @@ def test_image_session_result_can_write_back_to_product(configured_env: Path) ->
         f"/api/image-sessions/{session_id}/generate",
         json={"prompt": "做一张高级浴室台面护手霜广告图", "size": "1024x1024"},
     )
-    assert generated.status_code == 200
+    assert generated.status_code == 202
     generated_payload = generated.json()
     generated_asset_id = generated_payload["rounds"][-1]["generated_asset"]["id"]
 

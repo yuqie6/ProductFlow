@@ -6,7 +6,9 @@ import pytest
 from fastapi.testclient import TestClient
 from helpers import _login, _make_demo_image_bytes
 
+from productflow_backend.application.image_sessions import create_image_session, create_image_session_generation_task
 from productflow_backend.application.use_cases import create_copy_job, create_product
+from productflow_backend.domain.enums import JobStatus
 from productflow_backend.infrastructure.db.models import AppSetting, CopySet
 
 
@@ -144,7 +146,7 @@ def test_generation_cap_does_not_mask_poster_business_validation(
     assert response.json()["detail"] == "请先确认一版文案，再生成海报"
 
 
-def test_generation_cap_rejects_synchronous_image_session_generation(
+def test_generation_cap_rejects_image_session_generation_task_creation(
     configured_env: Path,
     db_session,
 ) -> None:
@@ -170,16 +172,22 @@ def test_generation_cap_rejects_synchronous_image_session_generation(
     assert generated.json()["detail"] == "当前生成任务较多，请稍后再试"
 
 
-def test_synchronous_generation_admission_releases_slot_on_exception(
+def test_active_generation_task_count_includes_image_session_generation_tasks(
     configured_env: Path,
     db_session,
 ) -> None:
-    from productflow_backend.application.admission import active_generation_task_count, admit_synchronous_generation
+    from productflow_backend.application.admission import active_generation_task_count
 
     assert active_generation_task_count(db_session) == 0
-    with pytest.raises(RuntimeError, match="provider failed"):
-        with admit_synchronous_generation(db_session):
-            assert active_generation_task_count(db_session) == 1
-            raise RuntimeError("provider failed")
+    image_session = create_image_session(db_session, product_id=None, title="并发计数")
+    result = create_image_session_generation_task(
+        db_session,
+        image_session_id=image_session.id,
+        prompt="占用连续生图任务",
+        size="1024x1024",
+    )
 
+    assert active_generation_task_count(db_session) == 1
+    result.task.status = JobStatus.SUCCEEDED
+    db_session.commit()
     assert active_generation_task_count(db_session) == 0
