@@ -96,6 +96,19 @@ Put workflow rules and orchestration in `backend/src/productflow_backend/applica
 - `application/product_workflow_graph.py` owns product workflow graph loading, default graph templates, lookup helpers,
   topological ordering, and latest-run ordering. Keep these graph/query concerns out of
   `application/product_workflows.py`, which owns mutations and execution orchestration.
+- Product workflow application logic is split by executable boundary:
+  - `application/product_workflows.py` is the stable facade for route/queue/worker/test imports. Keep existing public
+    use-case names available there while implementations live in cohesive submodules.
+  - `application/product_workflow_mutations.py` owns workflow graph/edit use cases: create/update/delete nodes and edges,
+    upload/bind reference images, edit generated copy, and normalize the product-context singleton.
+  - `application/product_workflow_execution.py` owns workflow run kickoff/execution, node-run claiming, failure
+    transitions, selected-node planning, and provider/render orchestration.
+  - `application/product_workflow_context.py` owns product/incoming context collection, config parsing, upstream text
+    assembly, reference input collection, and downstream reference target discovery.
+  - `application/product_workflow_artifacts.py` owns workflow artifact summaries and materialization helpers such as
+    workflow-local copy sets, reference slot fill, generated image records, and poster-to-reference source lookup.
+  Avoid importing submodules through the facade from inside other submodules except for explicit compatibility shims
+  needed by existing monkeypatch targets; prefer direct submodule imports to prevent circular dependencies.
 
 This layer receives a SQLAlchemy `Session` from callers. It is allowed to call infrastructure adapters such as
 `LocalStorage`, provider factories, and `PosterRenderer`, but FastAPI-specific types should not leak into it.
