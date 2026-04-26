@@ -14,6 +14,7 @@ from helpers import (
 from productflow_backend.infrastructure.db.models import (
     ImageSession,
     ImageSessionAsset,
+    ImageSessionRound,
 )
 
 
@@ -72,7 +73,226 @@ def test_image_session_rounds_support_same_conversation(configured_env: Path) ->
     second_payload = second.json()
     assert len(second_payload["rounds"]) == 2
     assert second_payload["rounds"][-1]["provider_name"] == "mock"
-    assert second_payload["rounds"][-1]["assistant_message"].startswith("已基于当前对话继续生成")
+    assert second_payload["rounds"][-1]["assistant_message"].startswith("已按本轮选择的图片上下文")
+    assert second_payload["rounds"][-1]["previous_response_id"] is None
+    assert second_payload["rounds"][-1]["base_asset_id"] is None
+    assert second_payload["rounds"][-1]["selected_reference_asset_ids"] == []
+
+
+def test_image_session_branch_uses_selected_base_and_references_only(configured_env: Path, db_session) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post("/api/image-sessions", json={"title": "分支测试"})
+    assert created.status_code == 201
+    session_id = created.json()["id"]
+
+    first = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={"prompt": "第一张基础图", "size": "1024x1024"},
+    )
+    assert first.status_code == 200
+    first_asset_id = first.json()["rounds"][-1]["generated_asset"]["id"]
+
+    later = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={"prompt": "后续但不应被自动继承的图", "size": "1024x1024"},
+    )
+    assert later.status_code == 200
+
+    upload = client.post(
+        f"/api/image-sessions/{session_id}/reference-images",
+        files=[
+            ("reference_images", ("ref-a.png", _make_demo_image_bytes(), "image/png")),
+            ("reference_images", ("ref-b.png", _make_demo_image_bytes(), "image/png")),
+        ],
+    )
+    assert upload.status_code == 200
+    reference_ids = [asset["id"] for asset in upload.json()["assets"] if asset["kind"] == "reference_upload"]
+    assert len(reference_ids) == 2
+
+    branched = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={
+            "prompt": "只从第一张和第二张参考图继续",
+            "size": "1024x1024",
+            "base_asset_id": first_asset_id,
+            "selected_reference_asset_ids": [reference_ids[1]],
+            "generation_count": 1,
+        },
+    )
+    assert branched.status_code == 200
+    payload = branched.json()
+    branch_round = payload["rounds"][-1]
+    assert branch_round["base_asset_id"] == first_asset_id
+    assert branch_round["selected_reference_asset_ids"] == [reference_ids[1]]
+    assert branch_round["previous_response_id"] is None
+    assert branch_round["generation_group_id"]
+    assert branch_round["candidate_index"] == 1
+    assert branch_round["candidate_count"] == 1
+
+    db_session.expire_all()
+    persisted = db_session.get(ImageSessionRound, branch_round["id"])
+    assert persisted is not None
+    assert persisted.base_asset_id == first_asset_id
+    assert persisted.selected_reference_asset_ids == [reference_ids[1]]
+    assert persisted.provider_request_json == {
+        "prompt": "只从第一张和第二张参考图继续",
+        "size": "1024x1024",
+        "history_count": 0,
+        "manual_reference_count": 2,
+        "previous_response_id": None,
+    }
+
+
+def test_image_session_branch_validates_asset_scope_and_kind(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post("/api/image-sessions", json={"title": "校验"})
+    other_created = client.post("/api/image-sessions", json={"title": "其它会话"})
+    assert created.status_code == 201
+    assert other_created.status_code == 201
+    session_id = created.json()["id"]
+    other_session_id = other_created.json()["id"]
+
+    generated = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={"prompt": "生成图", "size": "1024x1024"},
+    )
+    other_generated = client.post(
+        f"/api/image-sessions/{other_session_id}/generate",
+        json={"prompt": "其它生成图", "size": "1024x1024"},
+    )
+    assert generated.status_code == 200
+    assert other_generated.status_code == 200
+    generated_asset_id = generated.json()["rounds"][-1]["generated_asset"]["id"]
+    other_generated_asset_id = other_generated.json()["rounds"][-1]["generated_asset"]["id"]
+
+    upload = client.post(
+        f"/api/image-sessions/{session_id}/reference-images",
+        files={"reference_images": ("ref.png", _make_demo_image_bytes(), "image/png")},
+    )
+    other_upload = client.post(
+        f"/api/image-sessions/{other_session_id}/reference-images",
+        files={"reference_images": ("other-ref.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert upload.status_code == 200
+    assert other_upload.status_code == 200
+    reference_asset_id = next(asset["id"] for asset in upload.json()["assets"] if asset["kind"] == "reference_upload")
+    other_reference_asset_id = next(
+        asset["id"] for asset in other_upload.json()["assets"] if asset["kind"] == "reference_upload"
+    )
+
+    base_wrong_session = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={"prompt": "错会话基图", "size": "1024x1024", "base_asset_id": other_generated_asset_id},
+    )
+    assert base_wrong_session.status_code == 404
+    assert base_wrong_session.json()["detail"] == "会话图片不存在"
+
+    base_wrong_kind = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={"prompt": "错类型基图", "size": "1024x1024", "base_asset_id": reference_asset_id},
+    )
+    assert base_wrong_kind.status_code == 400
+    assert base_wrong_kind.json()["detail"] == "只能从会话生成图继续"
+
+    reference_wrong_session = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={
+            "prompt": "错会话参考图",
+            "size": "1024x1024",
+            "selected_reference_asset_ids": [other_reference_asset_id],
+        },
+    )
+    assert reference_wrong_session.status_code == 404
+    assert reference_wrong_session.json()["detail"] == "会话参考图不存在"
+
+    reference_wrong_kind = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={
+            "prompt": "错类型参考图",
+            "size": "1024x1024",
+            "selected_reference_asset_ids": [generated_asset_id],
+        },
+    )
+    assert reference_wrong_kind.status_code == 400
+    assert reference_wrong_kind.json()["detail"] == "只能选择会话参考图参与本轮生成"
+
+    too_many_upload = client.post(
+        f"/api/image-sessions/{session_id}/reference-images",
+        files=[
+            ("reference_images", (f"ref-{index}.png", _make_demo_image_bytes(), "image/png"))
+            for index in range(6)
+        ],
+    )
+    assert too_many_upload.status_code == 200
+    reference_ids = [
+        asset["id"] for asset in too_many_upload.json()["assets"] if asset["kind"] == "reference_upload"
+    ][-6:]
+    too_many = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={
+            "prompt": "上下文太多",
+            "size": "1024x1024",
+            "base_asset_id": generated_asset_id,
+            "selected_reference_asset_ids": reference_ids,
+        },
+    )
+    assert too_many.status_code == 400
+    assert too_many.json()["detail"] == "本轮最多选择 6 张图片上下文（含分支基图）"
+
+    bad_count = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={"prompt": "数量非法", "size": "1024x1024", "generation_count": 5},
+    )
+    assert bad_count.status_code == 422
+
+
+def test_image_session_multi_candidate_generation_persists_one_round_per_candidate(
+    configured_env: Path,
+    db_session,
+) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post("/api/image-sessions", json={"title": "多候选"})
+    assert created.status_code == 201
+    session_id = created.json()["id"]
+
+    generated = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={"prompt": "同一提示词出三张候选", "size": "1024x1024", "generation_count": 3},
+    )
+    assert generated.status_code == 200
+    rounds = generated.json()["rounds"]
+    assert len(rounds) == 3
+    group_ids = {round_item["generation_group_id"] for round_item in rounds}
+    assert len(group_ids) == 1
+    assert [round_item["candidate_index"] for round_item in rounds] == [1, 2, 3]
+    assert all(round_item["candidate_count"] == 3 for round_item in rounds)
+    assert len({round_item["generated_asset"]["id"] for round_item in rounds}) == 3
+
+    db_session.expire_all()
+    persisted_rounds = (
+        db_session.query(ImageSessionRound)
+        .filter(ImageSessionRound.session_id == session_id)
+        .order_by(ImageSessionRound.candidate_index)
+        .all()
+    )
+    assert len(persisted_rounds) == 3
+    assert {round_item.generation_group_id for round_item in persisted_rounds} == group_ids
+    assert [round_item.candidate_index for round_item in persisted_rounds] == [1, 2, 3]
 
 
 def test_image_session_generation_accepts_custom_size_and_rejects_invalid_dimensions(configured_env: Path) -> None:

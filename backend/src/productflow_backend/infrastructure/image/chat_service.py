@@ -121,7 +121,7 @@ class ImageChatService:
         )
         draw.text(
             (72, y + 280),
-            "继续对话时，最近几张生成图和手动上传参考图都会一起传给后端。",
+            "继续分支时，只会传入选择的基图和勾选参考图。",
             fill=(82, 82, 91),
         )
 
@@ -135,6 +135,14 @@ class ImageChatService:
             prompt_version=self.prompt_version,
             size=size,
             generated_at=datetime.now(UTC),
+            previous_response_id=None,
+            provider_request_json={
+                "prompt": prompt,
+                "size": size,
+                "history_count": len(history),
+                "manual_reference_count": len(manual_reference_images),
+                "previous_response_id": None,
+            },
         )
 
     def _generate_openai_responses(
@@ -195,7 +203,7 @@ class ImageChatService:
     ) -> list[ResponsesReferenceImage]:
         references: list[ResponsesReferenceImage] = []
 
-        for data_url in manual_reference_images[:4]:
+        for data_url in manual_reference_images[:6]:
             references.append(self._decode_reference_image(data_url))
 
         history_references: list[ResponsesReferenceImage] = []

@@ -486,7 +486,7 @@ def test_image_generation_without_copy_link_uses_image_edit_prompt_mode(
     assert captured_inputs[0].copy_prompt_mode == "image_edit"
     assert captured_inputs[0].instruction and "暖色露营场景" in captured_inputs[0].instruction
 
-def test_image_session_openai_responses_persists_previous_response_context(
+def test_image_session_openai_responses_uses_explicit_branch_context(
     configured_env: Path,
     monkeypatch,
 ) -> None:
@@ -555,6 +555,7 @@ def test_image_session_openai_responses_persists_previous_response_context(
         files={"reference_images": ("sample.png", _make_demo_image_bytes(), "image/png")},
     )
     assert upload.status_code == 200
+    reference_id = next(asset["id"] for asset in upload.json()["assets"] if asset["kind"] == "reference_upload")
 
     first = client.post(
         f"/api/image-sessions/{session_id}/generate",
@@ -566,6 +567,7 @@ def test_image_session_openai_responses_persists_previous_response_context(
     assert first_round["provider_response_id"] == "resp_1"
     assert first_round["previous_response_id"] is None
     assert first_round["image_generation_call_id"] == "ig_1"
+    first_asset_id = first_round["generated_asset"]["id"]
 
     second = client.post(
         f"/api/image-sessions/{session_id}/generate",
@@ -574,21 +576,39 @@ def test_image_session_openai_responses_persists_previous_response_context(
     assert second.status_code == 200
     second_round = second.json()["rounds"][-1]
     assert second_round["provider_response_id"] == "resp_2"
-    assert second_round["previous_response_id"] == "resp_1"
+    assert second_round["previous_response_id"] is None
     assert second_round["image_generation_call_id"] == "ig_2"
+
+    branched = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={
+            "prompt": "只从第一张和手动选择的参考图继续",
+            "size": "1024x1024",
+            "base_asset_id": first_asset_id,
+            "selected_reference_asset_ids": [reference_id],
+        },
+    )
+    assert branched.status_code == 200
+    branched_round = branched.json()["rounds"][-1]
+    assert branched_round["provider_response_id"] == "resp_3"
+    assert branched_round["previous_response_id"] is None
+    assert branched_round["base_asset_id"] == first_asset_id
+    assert branched_round["selected_reference_asset_ids"] == [reference_id]
 
     assert client_kwargs[0] == {"api_key": "demo-api-key", "base_url": "https://example.test/v1"}
     assert calls[0]["model"] == "gpt-5.4"
     assert calls[0]["tools"] == [{"type": "image_generation", "size": "1024x1024"}]
     assert "previous_response_id" not in calls[0]
-    assert calls[1]["previous_response_id"] == "resp_1"
+    assert "previous_response_id" not in calls[1]
     assert calls[1]["tools"] == [{"type": "image_generation", "size": "1024x1024"}]
-    first_content = calls[0]["input"][0]["content"]
-    assert first_content[0]["type"] == "input_text"
-    assert any(
-        item["type"] == "input_image" and item["image_url"].startswith("data:image/png;base64,")
-        for item in first_content
-    )
+    assert isinstance(calls[0]["input"], str)
+    assert isinstance(calls[1]["input"], str)
+    assert "previous_response_id" not in calls[2]
+    branch_content = calls[2]["input"][0]["content"]
+    assert branch_content[0]["type"] == "input_text"
+    branch_images = [item for item in branch_content if item["type"] == "input_image"]
+    assert len(branch_images) == 2
+    assert all(item["image_url"].startswith("data:image/png;base64,") for item in branch_images)
     assert "/images/generations" not in str(calls)
     assert "/images/edits" not in str(calls)
 

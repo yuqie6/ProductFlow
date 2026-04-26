@@ -112,6 +112,114 @@ separate count query. The route `presentation/routes/products.py::list_products_
 
 Do not reintroduce full-table product loads for list pages.
 
+## Scenario: Continuous image-session branching and multi-candidate rounds
+
+### 1. Scope / Trigger
+
+- Trigger: changing continuous image chat generation, image-session API DTOs, provider context construction, or
+  `image_session_rounds` schema.
+- This is a cross-layer feature: SQLAlchemy rows, Alembic migrations, Pydantic request/response schemas, provider
+  request context, frontend DTOs, and ImageChat UI state must stay in sync.
+
+### 2. Signatures
+
+- DB tables:
+  - `image_session_assets(kind)` stores `reference_upload` and `generated_image` images.
+  - `image_session_rounds(generation_group_id, candidate_index, candidate_count, base_asset_id,
+    selected_reference_asset_ids, generated_asset_id)` stores one generated candidate per row.
+- API request:
+  - `POST /api/image-sessions/{image_session_id}/generate`
+  - body fields: `prompt: string`, `size: WIDTHxHEIGHT`, `base_asset_id?: string | null`,
+    `selected_reference_asset_ids?: string[]`, `generation_count?: int`.
+- API response:
+  - Each round returns `generation_group_id`, `candidate_index`, `candidate_count`, `base_asset_id`,
+    `selected_reference_asset_ids`, and the single `generated_asset`.
+
+### 3. Contracts
+
+- `generation_count` is the MVP batch size and must stay in `1..4` unless product requirements explicitly expand it.
+- One generation request may include at most 6 image context inputs total: the explicit `base_asset_id` counts as one,
+  and each `selected_reference_asset_ids` item counts as one. Reject over-limit requests instead of silently truncating
+  selected references.
+- A multi-candidate generation action creates N `image_session_rounds` rows that share one `generation_group_id`, each with
+  a distinct `generated_asset_id`, `candidate_index` from `1..N`, and `candidate_count=N`.
+- `base_asset_id` must reference a same-session `generated_image`; it is the explicit historical card the user chose with
+  `从这张继续`.
+- `selected_reference_asset_ids` must reference same-session `reference_upload` assets. They are the only session uploads
+  that participate in the next provider request.
+- Card branching must not blindly pass `previous_response_id` or assemble all later history images. Provider context for
+  branching is explicit: selected base image first, then selected references, plus the current prompt/size.
+- Product-scoped continuous sessions may still save results back to the product, but product main/reference images are not
+  implicit generation context for card branching.
+
+### 4. Validation & Error Matrix
+
+- Missing image session -> `404`, `连续生图会话不存在`.
+- `generation_count < 1` or `> 4` -> request validation `422` at the API schema, or application `400` if called directly.
+- `base_asset_id` outside the session -> `404`, `会话图片不存在`.
+- `base_asset_id` points to a reference upload -> `400`, `只能从会话生成图继续`.
+- `selected_reference_asset_ids` contains an asset outside the session -> `404`, `会话参考图不存在`.
+- `selected_reference_asset_ids` contains a generated image -> `400`, `只能选择会话参考图参与本轮生成`.
+- More than 6 total selected context images including the base -> `400`, `本轮最多选择 6 张图片上下文（含分支基图）`.
+- Oversized `size` -> normalize through the shared image-size validator before generation; do not treat custom size as an
+  allowlist lookup.
+
+### 5. Good/Base/Bad Cases
+
+- Good: user clicks a generated card's `从这张继续`, selects two uploaded references, asks for 3 candidates; the API stores
+  three rounds in one group and provider receives exactly the base plus two references.
+- Good: user branches from an old card after newer rounds exist; newer generated images are not included unless the user
+  selects one as the base.
+- Base: user generates the first image with no `base_asset_id` and no references; one standalone candidate round is stored
+  with a generated group id.
+- Base: user uploads session references but leaves them unchecked; they remain assets but do not enter provider context.
+- Bad: using the latest `provider_response_id` for every request, because provider-chain inheritance makes card branching
+  unexpectedly linear.
+- Bad: storing multiple returned images in one JSON blob instead of one round/asset per candidate; the UI cannot continue
+  from an individual candidate reliably.
+
+### 6. Tests Required
+
+- API/backend test for branch from selected generated image: response and persisted row include `base_asset_id`.
+- API/backend test for selected references only: provider request metadata or fake provider call count proves unchecked
+  session references are excluded.
+- API/backend test for no implicit later-history inheritance: branching from an old card after later rounds keeps
+  `previous_response_id is None` and `history_count == 0` in the fake provider request.
+- API/backend test for multi-candidate persistence: N candidates share one `generation_group_id`, have distinct
+  `generated_asset_id` values, and expose `candidate_index` / `candidate_count` in responses.
+- Frontend pure helper tests should cover grouping by `generation_group_id`, generation-count clamping, and reference-id
+  pruning when uploads are deleted.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+previous_response_id = latest_round.provider_response_id
+manual_references = all_session_reference_uploads + recent_generated_images
+```
+
+Correct:
+
+```python
+manual_references = [selected_base_image, *selected_session_references]
+previous_response_id = None
+```
+
+Wrong:
+
+```python
+round.provider_output_json = {"images": [candidate_a, candidate_b]}
+```
+
+Correct:
+
+```python
+round.generation_group_id = group_id
+round.candidate_index = index
+round.generated_asset_id = asset.id
+```
+
 ### Persistence and external side effects
 
 The current pattern commits database changes before performing non-transactional file deletion:

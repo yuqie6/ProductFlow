@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Numeric, String, Text, text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, text
 from sqlalchemy import Enum as SqlEnum
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -434,6 +434,7 @@ class ImageSession(Base, TimestampMixin):
     rounds: Mapped[list[ImageSessionRound]] = relationship(
         back_populates="session",
         cascade="all, delete-orphan",
+        order_by="ImageSessionRound.created_at",
     )
 
 
@@ -449,12 +450,19 @@ class ImageSessionAsset(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     session: Mapped[ImageSession] = relationship(back_populates="assets")
-    generated_in_round: Mapped[ImageSessionRound | None] = relationship(back_populates="generated_asset")
+    generated_in_round: Mapped[ImageSessionRound | None] = relationship(
+        back_populates="generated_asset",
+        foreign_keys="ImageSessionRound.generated_asset_id",
+    )
 
 
 class ImageSessionRound(Base):
     __tablename__ = "image_session_rounds"
-    __table_args__ = (Index("uq_image_session_rounds_generated_asset_id", "generated_asset_id", unique=True),)
+    __table_args__ = (
+        Index("uq_image_session_rounds_generated_asset_id", "generated_asset_id", unique=True),
+        Index("ix_image_session_rounds_generation_group_id", "generation_group_id"),
+        Index("ix_image_session_rounds_base_asset_id", "base_asset_id"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     session_id: Mapped[str] = mapped_column(String(36), ForeignKey("image_sessions.id", ondelete="CASCADE"))
@@ -469,6 +477,15 @@ class ImageSessionRound(Base):
     image_generation_call_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     provider_request_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     provider_output_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    generation_group_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    candidate_index: Mapped[int] = mapped_column(Integer, default=1)
+    candidate_count: Mapped[int] = mapped_column(Integer, default=1)
+    base_asset_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("image_session_assets.id", ondelete="SET NULL", name="fk_image_session_rounds_base_asset_id"),
+        nullable=True,
+    )
+    selected_reference_asset_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     generated_asset_id: Mapped[str] = mapped_column(
         String(36),
         ForeignKey("image_session_assets.id", ondelete="CASCADE"),
@@ -476,4 +493,8 @@ class ImageSessionRound(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     session: Mapped[ImageSession] = relationship(back_populates="rounds")
-    generated_asset: Mapped[ImageSessionAsset] = relationship(back_populates="generated_in_round")
+    generated_asset: Mapped[ImageSessionAsset] = relationship(
+        back_populates="generated_in_round",
+        foreign_keys=[generated_asset_id],
+    )
+    base_asset: Mapped[ImageSessionAsset | None] = relationship(foreign_keys=[base_asset_id])

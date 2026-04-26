@@ -33,6 +33,11 @@ class ImageSessionRoundResponse(BaseModel):
     provider_response_id: str | None = None
     previous_response_id: str | None = None
     image_generation_call_id: str | None = None
+    generation_group_id: str | None = None
+    candidate_index: int = 1
+    candidate_count: int = 1
+    base_asset_id: str | None = None
+    selected_reference_asset_ids: list[str] = Field(default_factory=list)
     generated_asset: ImageSessionAssetResponse
     created_at: datetime
 
@@ -73,6 +78,9 @@ class UpdateImageSessionRequest(BaseModel):
 class GenerateImageSessionRoundRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=4000)
     size: str = Field(default="1024x1024")
+    base_asset_id: str | None = None
+    selected_reference_asset_ids: list[str] = Field(default_factory=list, max_length=6)
+    generation_count: int = Field(default=1, ge=1, le=4)
 
     @field_validator("size")
     @classmethod
@@ -114,6 +122,11 @@ def serialize_image_session_round(round_item: ImageSessionRound) -> ImageSession
         provider_response_id=round_item.provider_response_id,
         previous_response_id=round_item.previous_response_id,
         image_generation_call_id=round_item.image_generation_call_id,
+        generation_group_id=round_item.generation_group_id,
+        candidate_index=round_item.candidate_index,
+        candidate_count=round_item.candidate_count,
+        base_asset_id=round_item.base_asset_id,
+        selected_reference_asset_ids=round_item.selected_reference_asset_ids or [],
         generated_asset=serialize_image_session_asset(round_item.generated_asset),
         created_at=round_item.created_at,
     )
