@@ -672,6 +672,68 @@ export function ProductDetailPage() {
     selectedNode?.node_type === "reference_image" ? selectedNode : null;
   const fillReferenceBusy = bindNodeImageMutation.isPending;
 
+  const renderWorkflowActions = (variant: "panel" | "rail") => {
+    const isRail = variant === "rail";
+    return (
+      <div
+        data-canvas-control
+        className={
+          isRail
+            ? "rounded-xl border border-zinc-200 bg-white/90 p-2 shadow-sm backdrop-blur"
+            : "mb-4 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm"
+        }
+      >
+        {!isRail ? (
+          <div className="mb-3 flex items-center justify-between">
+            <div>
+              <div className="text-[11px] font-semibold uppercase tracking-widest text-zinc-500">工作流操作</div>
+              <div className="mt-1 text-[11px] text-zinc-400">添加节点或运行当前画布。</div>
+            </div>
+          </div>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => void handleRunWorkflow(undefined)}
+          disabled={runBusy || !workflow}
+          className={
+            isRail
+              ? "inline-flex w-full items-center justify-center rounded-lg bg-zinc-900 px-2 py-2 text-[10px] font-medium text-white transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+              : "inline-flex w-full items-center justify-center rounded-lg bg-zinc-900 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+          }
+          title={runBusy ? "工作流运行中" : "运行整个工作流"}
+          aria-label={runBusy ? "工作流运行中" : "运行整个工作流"}
+        >
+          {runBusy ? (
+            <Loader2 size={13} className={isRail ? "animate-spin" : "mr-1.5 animate-spin"} />
+          ) : (
+            <Play size={13} className={isRail ? "" : "mr-1.5"} />
+          )}
+          {isRail ? null : runBusy ? "运行中" : "运行工作流"}
+        </button>
+        <div className={isRail ? "mt-2 flex flex-col gap-1.5" : "mt-3 grid grid-cols-2 gap-2"}>
+          {ADD_NODE_OPTIONS.map((option) => (
+            <button
+              key={option.type}
+              type="button"
+              onClick={() => createNodeMutation.mutate(option.type)}
+              disabled={structureBusy || !workflow}
+              className={
+                isRail
+                  ? "inline-flex items-center justify-center rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-[10px] font-medium text-zinc-700 transition-colors hover:border-zinc-300 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  : "inline-flex items-center justify-center rounded-lg border border-zinc-200 bg-white px-2.5 py-2 text-xs font-medium text-zinc-700 transition-colors hover:border-zinc-300 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+              }
+              title={`添加${option.label}节点`}
+              aria-label={`添加${option.label}节点`}
+            >
+              <Plus size={13} className="mr-1" />
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-white text-sm text-zinc-900">
       {!topChromeCollapsed ? <TopNav onHome={() => navigate("/products")} breadcrumbs={product.name} /> : null}
@@ -686,39 +748,6 @@ export function ProductDetailPage() {
         <div className="relative flex min-h-0 flex-1 overflow-hidden">
           <div className="absolute inset-0 bg-[radial-gradient(#d4d4d8_1px,transparent_1px)] [background-size:18px_18px]" />
           <section className="relative z-10 min-w-0 flex-1 overflow-hidden">
-            <div data-canvas-control className="pointer-events-none absolute left-4 top-4 z-30">
-              <div className="pointer-events-auto flex flex-col gap-2 rounded-xl border border-zinc-200 bg-white/90 p-2 shadow-sm backdrop-blur">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {ADD_NODE_OPTIONS.map((option) => (
-                    <button
-                      key={option.type}
-                      type="button"
-                      onClick={() => createNodeMutation.mutate(option.type)}
-                      disabled={structureBusy || !workflow}
-                      className="inline-flex items-center rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-700 transition-colors hover:border-zinc-300 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
-                      title={`添加${option.label}节点`}
-                    >
-                      <Plus size={13} className="mr-1" />
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => void handleRunWorkflow(undefined)}
-                  disabled={runBusy || !workflow}
-                  className="inline-flex items-center justify-center rounded-lg bg-zinc-900 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
-                  title={runBusy ? "工作流运行中" : "运行整个工作流"}
-                >
-                  {runBusy ? (
-                    <Loader2 size={13} className="mr-1.5 animate-spin" />
-                  ) : (
-                    <Play size={13} className="mr-1.5" />
-                  )}
-                  {runBusy ? "运行中" : "运行工作流"}
-                </button>
-              </div>
-            </div>
             <div data-canvas-control className="pointer-events-none absolute right-4 top-4 z-30">
               <button
                 type="button"
@@ -893,10 +922,13 @@ export function ProductDetailPage() {
                 <ChevronLeft size={14} />
               </button>
             </div>
-            <div data-canvas-control className="absolute right-4 top-16 z-30 flex flex-col gap-2 rounded-xl border border-zinc-200 bg-white/90 p-2 shadow-sm backdrop-blur">
-              <SidebarTabButton active={false} label="详情" title="Details" icon={<Settings2 size={15} />} onClick={() => { setActiveSidebarTab("details"); setSidebarCollapsed(false); }} />
-              <SidebarTabButton active={false} label="运行" title="Runs" icon={<CircleDot size={15} />} onClick={() => { setActiveSidebarTab("runs"); setSidebarCollapsed(false); }} />
-              <SidebarTabButton active={false} label="图片" title="Images" icon={<ImageIcon size={15} />} onClick={() => { setActiveSidebarTab("images"); setSidebarCollapsed(false); }} />
+            <div className="absolute right-4 top-16 z-30 flex flex-col gap-2">
+              {renderWorkflowActions("rail")}
+              <div data-canvas-control className="flex flex-col gap-2 rounded-xl border border-zinc-200 bg-white/90 p-2 shadow-sm backdrop-blur">
+                <SidebarTabButton active={false} label="详情" title="Details" icon={<Settings2 size={15} />} onClick={() => { setActiveSidebarTab("details"); setSidebarCollapsed(false); }} />
+                <SidebarTabButton active={false} label="运行" title="Runs" icon={<CircleDot size={15} />} onClick={() => { setActiveSidebarTab("runs"); setSidebarCollapsed(false); }} />
+                <SidebarTabButton active={false} label="图片" title="Images" icon={<ImageIcon size={15} />} onClick={() => { setActiveSidebarTab("images"); setSidebarCollapsed(false); }} />
+              </div>
             </div>
             </>
           ) : (
@@ -956,6 +988,7 @@ export function ProductDetailPage() {
                 </div>
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                {renderWorkflowActions("panel")}
                 {activeSidebarTab === "details" ? (
                   selectedNode ? (
                     <InspectorPanel
