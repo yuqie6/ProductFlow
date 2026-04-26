@@ -2,8 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Check,
+  Download,
+  History,
   Image as ImageIcon,
   ImagePlus,
+  Layers3,
   Loader2,
   MessagesSquare,
   Pencil,
@@ -11,6 +14,7 @@ import {
   Save,
   Sparkles,
   Trash2,
+  X,
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 
@@ -413,45 +417,49 @@ export function ImageChatPage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-zinc-50/60">
+    <div className="flex h-screen flex-col overflow-hidden bg-slate-100 text-slate-900">
       <TopNav
         breadcrumbs={isProductMode ? `${productQuery.data?.name ?? "商品"} / 连续生图` : "连续生图"}
         onHome={() => navigate(isProductMode && productId ? `/products/${productId}` : "/products")}
         onLogout={() => logoutMutation.mutate()}
       />
 
-      <main className="mx-auto flex w-full max-w-[1500px] flex-1 gap-6 px-6 py-8">
-        <aside className="flex w-80 shrink-0 flex-col gap-4 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-sm font-semibold text-zinc-900">会话列表</div>
-              <div className="mt-1 text-xs text-zinc-500">
-                {isProductMode ? "为同一商品保存不同创意方向。" : "先自由生成，满意后再保存到商品。"}
+      <main className="flex min-h-0 flex-1 overflow-hidden">
+        <aside className="flex w-72 shrink-0 flex-col border-r border-slate-200 bg-white/95">
+          <div className="border-b border-slate-200 px-4 py-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-slate-950">会话列表</div>
+                <div className="mt-1 text-xs text-slate-500">{sessionItems.length} 个方向</div>
               </div>
+              <button
+                type="button"
+                onClick={() => createSessionMutation.mutate()}
+                disabled={createSessionMutation.isPending}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-sm shadow-indigo-500/20 transition-colors hover:bg-indigo-500 disabled:opacity-60"
+                aria-label="新建会话"
+              >
+                {createSessionMutation.isPending ? <Loader2 size={15} className="animate-spin" /> : <Plus size={16} />}
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => createSessionMutation.mutate()}
-              className="inline-flex h-9 items-center rounded-md border border-zinc-200 px-3 text-sm font-medium text-zinc-700 transition-colors hover:border-zinc-300 hover:text-zinc-900"
-            >
-              {createSessionMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-            </button>
           </div>
 
-          <div className="space-y-2 overflow-y-auto">
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
             {sessionsQuery.isLoading ? (
-              <div className="flex justify-center py-12 text-zinc-400">
+              <div className="flex justify-center py-12 text-slate-400">
                 <Loader2 size={18} className="animate-spin" />
               </div>
-            ) : (
+            ) : sessionItems.length ? (
               sessionItems.map((item) => {
                 const active = item.id === selectedSessionId;
                 const deleting = deleteSessionMutation.isPending && deleteSessionMutation.variables === item.id;
                 return (
                   <div
                     key={item.id}
-                    className={`group relative rounded-xl border transition-colors ${
-                      active ? "border-zinc-900 bg-zinc-50" : "border-zinc-200 hover:border-zinc-300 hover:bg-zinc-50"
+                    className={`group relative overflow-hidden rounded-2xl border transition-all ${
+                      active
+                        ? "border-indigo-300 bg-indigo-50 shadow-sm shadow-indigo-100 ring-1 ring-indigo-200/80"
+                        : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
                     }`}
                   >
                     <button
@@ -461,9 +469,9 @@ export function ImageChatPage() {
                         setSuccessMessage("");
                         setErrorMessage("");
                       }}
-                      className="flex w-full items-start gap-3 p-3 pr-10 text-left"
+                      className="flex w-full items-center gap-3 p-2.5 pr-10 text-left"
                     >
-                      <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-zinc-100 text-zinc-400">
+                      <div className="relative flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-slate-100 text-slate-400 ring-1 ring-slate-200">
                         {item.latest_generated_asset ? (
                           <img
                             src={api.toApiUrl(item.latest_generated_asset.thumbnail_url)}
@@ -473,12 +481,19 @@ export function ImageChatPage() {
                             className="h-full w-full object-cover"
                           />
                         ) : (
-                          <MessagesSquare size={16} />
+                          <MessagesSquare size={18} />
                         )}
+                        {active ? <div className="absolute inset-0 ring-2 ring-inset ring-indigo-500/60" /> : null}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <div className="truncate font-medium text-zinc-900">{item.title}</div>
-                        <div className="mt-1 text-xs text-zinc-500">{item.rounds_count} 轮 · {formatDateTime(item.updated_at)}</div>
+                        <div className={`truncate text-sm font-semibold ${active ? "text-indigo-950" : "text-slate-900"}`}>
+                          {item.title}
+                        </div>
+                        <div className="mt-1 flex items-center gap-1.5 text-[11px] text-slate-500">
+                          <History size={11} />
+                          <span>{item.rounds_count} 轮</span>
+                        </div>
+                        <div className="mt-0.5 truncate text-[11px] text-slate-400">{formatDateTime(item.updated_at)}</div>
                       </div>
                     </button>
                     <button
@@ -486,97 +501,177 @@ export function ImageChatPage() {
                       aria-label="删除会话"
                       onClick={() => handleDeleteSession(item.id)}
                       disabled={deleting}
-                      className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-md bg-white/90 text-zinc-400 opacity-100 shadow-sm ring-1 ring-zinc-200 transition-colors hover:text-red-600 disabled:opacity-60 md:opacity-0 md:group-hover:opacity-100"
+                      className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-lg bg-white/95 text-slate-400 opacity-100 shadow-sm ring-1 ring-slate-200 transition-colors hover:text-red-600 disabled:opacity-60 md:opacity-0 md:group-hover:opacity-100"
                     >
                       {deleting ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
                     </button>
                   </div>
                 );
               })
+            ) : (
+              <div className="rounded-2xl border border-dashed border-slate-200 p-5 text-center text-sm text-slate-500">
+                暂无会话
+              </div>
             )}
           </div>
         </aside>
 
-        <section className="grid min-w-0 flex-1 gap-6 xl:grid-cols-[minmax(0,1.25fr)_420px]">
-          <div className="flex min-h-[780px] flex-col rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
-            <div className="mb-4 flex items-center justify-between gap-3">
+        <section className="flex min-w-0 flex-1 flex-col bg-slate-100">
+          <div className="flex min-h-0 flex-1 flex-col p-4 pb-3">
+            <div className="mb-3 flex items-center justify-between gap-3">
               <div>
-                <div className="text-sm font-semibold text-zinc-900">当前结果</div>
-                <div className="mt-1 text-xs text-zinc-500">
-                  {selectedRound ? `${selectedRound.size} · ${formatDateTime(selectedRound.created_at)}` : "先输入需求，生成第一轮。"}
+                <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
+                  <span className="inline-flex h-7 items-center rounded-full bg-white px-3 shadow-sm ring-1 ring-slate-200">
+                    当前结果
+                  </span>
+                  {branchBaseRound ? (
+                    <span className="inline-flex h-7 items-center gap-1 rounded-full bg-indigo-600 px-3 text-white shadow-sm shadow-indigo-500/20">
+                      <Layers3 size={12} /> 分支生成
+                    </span>
+                  ) : null}
                 </div>
+                <h1 className="mt-2 text-xl font-semibold tracking-tight text-slate-950">
+                  {imageSession?.title ?? "连续生图工作台"}
+                </h1>
               </div>
-              {selectedRound ? (
-                <a
-                  href={api.toApiUrl(selectedRound.generated_asset.download_url)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center rounded-md border border-zinc-200 px-3 py-2 text-sm font-medium text-zinc-700 transition-colors hover:border-zinc-300 hover:text-zinc-900"
-                >
-                  <ImageIcon size={14} className="mr-1.5" /> 下载原图
-                </a>
-              ) : null}
+              <div className="flex items-center gap-2">
+                {selectedRound ? (
+                  <>
+                    <span className="hidden rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 shadow-sm md:inline-flex">
+                      {selectedRound.size} · 候选 {selectedRound.candidate_index}/{selectedRound.candidate_count}
+                    </span>
+                    <a
+                      href={api.toApiUrl(selectedRound.generated_asset.download_url)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:border-indigo-200 hover:text-indigo-700"
+                    >
+                      <Download size={15} className="mr-1.5" /> 下载
+                    </a>
+                  </>
+                ) : null}
+              </div>
             </div>
 
-            <div className="flex flex-1 items-center justify-center rounded-2xl border border-dashed border-zinc-200 bg-zinc-50 p-4">
+            <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-sm">
+              <div className="absolute inset-0 bg-[radial-gradient(#cbd5e1_1px,transparent_1px)] [background-size:20px_20px]" />
+              <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between px-5 py-4">
+                {selectedRound ? (
+                  <div className="rounded-full bg-white/90 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm ring-1 ring-slate-200 backdrop-blur">
+                    {formatDateTime(selectedRound.created_at)} · {selectedRound.model_name}
+                  </div>
+                ) : (
+                  <div className="rounded-full bg-white/90 px-3 py-1.5 text-xs font-medium text-slate-500 shadow-sm ring-1 ring-slate-200 backdrop-blur">
+                    等待第一张结果
+                  </div>
+                )}
+                {selectedRound ? (
+                  <button
+                    type="button"
+                    onClick={() => handleContinueFrom(selectedRound.generated_asset.id)}
+                    className={`rounded-full px-3 py-1.5 text-xs font-semibold shadow-sm ring-1 transition-colors backdrop-blur ${
+                      selectedRound.generated_asset.id === branchBaseAssetId
+                        ? "bg-indigo-600 text-white ring-indigo-500"
+                        : "bg-white/90 text-slate-700 ring-slate-200 hover:text-indigo-700"
+                    }`}
+                  >
+                    从当前继续
+                  </button>
+                ) : null}
+              </div>
+
               {selectedRound ? (
-                <img
-                  src={api.toApiUrl(selectedRound.generated_asset.preview_url)}
-                  alt="当前结果"
-                  decoding="async"
-                  className="max-h-[620px] w-full rounded-xl object-contain"
-                />
+                <div className="relative z-0 flex h-full w-full items-center justify-center p-8 pt-16">
+                  <img
+                    src={api.toApiUrl(selectedRound.generated_asset.preview_url)}
+                    alt="当前结果"
+                    decoding="async"
+                    className="max-h-full max-w-full rounded-3xl object-contain shadow-2xl shadow-slate-900/12 ring-1 ring-slate-900/10"
+                  />
+                </div>
               ) : (
-                <div className="flex flex-col items-center gap-3 text-zinc-400">
-                  <Sparkles size={28} />
-                  <div className="text-sm">当前会话还没有结果</div>
+                <div className="relative z-0 flex flex-col items-center gap-4 text-center text-slate-400">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-white shadow-sm ring-1 ring-slate-200">
+                    <Sparkles size={28} />
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold text-slate-600">还没有结果</div>
+                    <div className="mt-1 text-xs text-slate-400">在右侧输入画面描述后开始生成。</div>
+                  </div>
                 </div>
               )}
             </div>
+          </div>
 
-            <div className="mt-4 space-y-3">
-              {roundGroups.map((group) => (
-                <div key={group.id} className="rounded-2xl border border-zinc-200 bg-zinc-50/70 p-3">
-                  <div className="mb-2 flex items-center justify-between gap-3 text-xs text-zinc-500">
-                    <div className="line-clamp-1">
-                      {group.base_asset_id ? "分支候选" : "初始候选"} · {group.rounds.length} 张 · {group.prompt}
+          <div className="h-56 shrink-0 border-t border-slate-200 bg-white/95 px-4 py-3 shadow-[0_-8px_24px_rgba(15,23,42,0.04)]">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-slate-950">历史记录</div>
+                <div className="text-xs text-slate-500">选择候选预览，或指定分支基图。</div>
+              </div>
+              {branchBaseRound ? (
+                <button
+                  type="button"
+                  onClick={() => setBranchBaseAssetId(null)}
+                  className="inline-flex items-center rounded-full border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900"
+                >
+                  <X size={12} className="mr-1" /> 清空基图
+                </button>
+              ) : null}
+            </div>
+
+            {roundGroups.length ? (
+              <div className="flex h-[164px] gap-3 overflow-x-auto pb-1">
+                {roundGroups.map((group) => (
+                  <div key={group.id} className="flex shrink-0 gap-2 rounded-2xl border border-slate-200 bg-slate-50/80 p-2">
+                    <div className="flex w-28 shrink-0 flex-col justify-between rounded-xl bg-white p-2 text-xs text-slate-500 ring-1 ring-slate-200">
+                      <div>
+                        <div className="font-semibold text-slate-800">{group.base_asset_id ? "分支" : "首轮"}</div>
+                        <div className="mt-1">{group.rounds.length} 张</div>
+                      </div>
+                      <div className="line-clamp-3 text-[11px] leading-4 text-slate-400">{group.prompt}</div>
                     </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-5">
                     {group.rounds.map((round) => {
                       const active = round.generated_asset.id === selectedGeneratedAssetId;
                       const asBase = round.generated_asset.id === branchBaseAssetId;
                       return (
                         <div
                           key={round.id}
-                          className={`rounded-xl border p-2 transition-colors ${
-                            active ? "border-zinc-900 bg-white" : "border-zinc-200 bg-white hover:border-zinc-300"
-                          }`}
+                          className={`group/card relative h-36 w-36 shrink-0 overflow-hidden rounded-2xl border bg-white transition-all ${
+                            active ? "border-indigo-400 ring-2 ring-indigo-200" : "border-slate-200 hover:border-slate-300"
+                          } ${asBase ? "shadow-md shadow-indigo-200/70" : "shadow-sm shadow-slate-200/60"}`}
                         >
                           <button
                             type="button"
                             onClick={() => setSelectedGeneratedAssetId(round.generated_asset.id)}
-                            className="block w-full text-left"
+                            className="block h-full w-full text-left"
                           >
                             <img
                               src={api.toApiUrl(round.generated_asset.thumbnail_url)}
                               alt={round.prompt}
                               loading="lazy"
                               decoding="async"
-                              className="h-24 w-full rounded-lg object-cover"
+                              className="h-full w-full object-cover"
                             />
-                            <div className="mt-2 line-clamp-2 text-xs text-zinc-600">{round.prompt}</div>
-                            <div className="mt-1 text-[11px] text-zinc-400">
-                              {round.candidate_count > 1 ? `候选 ${round.candidate_index}/${round.candidate_count}` : round.size}
+                            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/80 via-slate-950/35 to-transparent p-2 pt-8 text-white">
+                              <div className="flex items-center justify-between gap-2 text-[11px] font-medium">
+                                <span>{round.candidate_count > 1 ? `${round.candidate_index}/${round.candidate_count}` : round.size}</span>
+                                {active ? <span className="rounded-full bg-white/20 px-1.5 py-0.5">已选</span> : null}
+                              </div>
                             </div>
                           </button>
+                          {asBase ? (
+                            <div className="absolute left-2 top-2 rounded-full bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white shadow-sm">
+                              基图
+                            </div>
+                          ) : null}
                           <button
                             type="button"
                             onClick={() => handleContinueFrom(round.generated_asset.id)}
-                            className={`mt-2 inline-flex w-full items-center justify-center rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
+                            className={`absolute right-2 top-2 rounded-full px-2 py-1 text-[11px] font-semibold shadow-sm transition-colors ${
                               asBase
-                                ? "bg-zinc-900 text-white"
-                                : "border border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300 hover:text-zinc-900"
+                                ? "bg-indigo-600 text-white"
+                                : "bg-white/95 text-slate-700 opacity-100 ring-1 ring-slate-200 hover:text-indigo-700 md:opacity-0 md:group-hover/card:opacity-100"
                             }`}
                           >
                             从这张继续
@@ -585,22 +680,28 @@ export function ImageChatPage() {
                       );
                     })}
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex h-[164px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-400">
+                生成结果会出现在这里
+              </div>
+            )}
           </div>
+        </section>
 
-          <aside className="flex min-h-[780px] flex-col gap-4 rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm">
-            <div>
-              <div className="mb-2 flex items-center justify-between gap-3">
+        <aside className="flex w-[390px] shrink-0 flex-col border-l border-slate-200 bg-white">
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+            <div className="mb-5">
+              <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
-                  <div className="text-sm font-semibold text-zinc-900">会话设置</div>
-                  <div className="mt-1 text-xs text-zinc-500">管理名称、参考图和本轮生成需求。</div>
+                  <div className="text-sm font-semibold text-slate-950">生成控制台</div>
+                  <div className="mt-1 text-xs text-slate-500">名称、参考图、尺寸与保存。</div>
                 </div>
                 <button
                   type="button"
                   onClick={() => setRenameEnabled((current) => !current)}
-                  className="inline-flex h-8 items-center rounded-md border border-zinc-200 px-2.5 text-xs font-medium text-zinc-600 transition-colors hover:border-zinc-300 hover:text-zinc-900"
+                  className="inline-flex h-8 items-center rounded-lg border border-slate-200 px-2.5 text-xs font-medium text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900"
                 >
                   <Pencil size={12} className="mr-1.5" /> 重命名
                 </button>
@@ -610,13 +711,14 @@ export function ImageChatPage() {
                   value={titleDraft}
                   onChange={(event) => setTitleDraft(event.target.value)}
                   disabled={!renameEnabled || renameSessionMutation.isPending}
-                  className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900 disabled:bg-zinc-50 disabled:text-zinc-500"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100 disabled:bg-slate-50 disabled:text-slate-500"
                 />
                 {renameEnabled ? (
                   <button
                     type="button"
                     onClick={handleRename}
-                    className="inline-flex items-center rounded-md bg-zinc-900 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-800"
+                    className="inline-flex items-center rounded-xl bg-indigo-600 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-indigo-500"
+                    aria-label="保存会话名称"
                   >
                     {renameSessionMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
                   </button>
@@ -624,232 +726,235 @@ export function ImageChatPage() {
               </div>
             </div>
 
-            {isProductMode ? (
-              <ProductContextPanel
-                product={productQuery.data}
-                sourceImage={sourceImage}
-                referenceImages={productReferenceImages}
-                deletingReferenceAssetId={
-                  deleteProductReferenceMutation.isPending ? (deleteProductReferenceMutation.variables ?? null) : null
-                }
-                onDeleteReference={handleDeleteProductReference}
-              />
-            ) : (
-              <StandaloneTargetPanel
-                products={products}
-                targetProductId={targetProductId}
-                onTargetProductChange={setTargetProductId}
-              />
-            )}
+            <div className="space-y-4">
+              {isProductMode ? (
+                <ProductContextPanel
+                  product={productQuery.data}
+                  sourceImage={sourceImage}
+                  referenceImages={productReferenceImages}
+                  deletingReferenceAssetId={
+                    deleteProductReferenceMutation.isPending ? (deleteProductReferenceMutation.variables ?? null) : null
+                  }
+                  onDeleteReference={handleDeleteProductReference}
+                />
+              ) : (
+                <StandaloneTargetPanel
+                  products={products}
+                  targetProductId={targetProductId}
+                  onTargetProductChange={setTargetProductId}
+                />
+              )}
 
-            <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
-              <div className="mb-2 flex items-center justify-between gap-3">
-                <div className="text-sm font-semibold text-zinc-900">分支基图</div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <div className="text-sm font-semibold text-slate-950">分支基图</div>
+                  {branchBaseRound ? (
+                    <button
+                      type="button"
+                      onClick={() => setBranchBaseAssetId(null)}
+                      className="text-xs font-medium text-slate-500 transition-colors hover:text-slate-900"
+                    >
+                      清空
+                    </button>
+                  ) : null}
+                </div>
                 {branchBaseRound ? (
-                  <button
-                    type="button"
-                    onClick={() => setBranchBaseAssetId(null)}
-                    className="text-xs font-medium text-zinc-500 transition-colors hover:text-zinc-900"
-                  >
-                    清空
-                  </button>
+                  <div className="grid grid-cols-[76px_minmax(0,1fr)] gap-3">
+                    <img
+                      src={api.toApiUrl(branchBaseRound.generated_asset.thumbnail_url)}
+                      alt="分支基图"
+                      loading="lazy"
+                      decoding="async"
+                      className="h-20 w-full rounded-xl object-cover ring-1 ring-slate-200"
+                    />
+                    <div className="min-w-0 text-xs leading-5 text-slate-500">
+                      <div className="truncate font-medium text-slate-800">{branchBaseRound.prompt}</div>
+                      <div>{branchBaseRound.size}</div>
+                      <div>本轮从这张继续。</div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-xs leading-5 text-slate-500">未指定基图，将按画面描述和已选参考图生成。</div>
+                )}
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="mb-2 text-sm font-semibold text-slate-950">参考图</div>
+                <ImageDropZone
+                  ariaLabel="上传会话参考图"
+                  multiple
+                  disabled={!selectedSessionId || uploadReferenceMutation.isPending}
+                  className="flex cursor-pointer items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-600 transition-colors hover:border-indigo-300 hover:bg-indigo-50/40"
+                  onFiles={handleUploadReferenceFiles}
+                >
+                  {({ isDragging }) => (
+                    <>
+                      {uploadReferenceMutation.isPending ? (
+                        <Loader2 size={16} className="mr-2 animate-spin" />
+                      ) : (
+                        <ImagePlus size={16} className="mr-2" />
+                      )}
+                      {isDragging ? "松开上传" : "上传参考图"}
+                    </>
+                  )}
+                </ImageDropZone>
+                <div className="mt-2 text-xs leading-5 text-slate-500">
+                  已选 {selectedReferenceAssetIds.length}/{maxSelectedReferenceCount}；勾选的图会进入下一轮。
+                </div>
+                {sessionReferenceAssets.length ? (
+                  <div className="mt-3 grid grid-cols-4 gap-2">
+                    {sessionReferenceAssets.map((asset) => {
+                      const deleting = deleteSessionReferenceMutation.isPending && deleteSessionReferenceMutation.variables === asset.id;
+                      const selected = selectedReferenceAssetIds.includes(asset.id);
+                      const selectionLimitReached = !selected && selectedReferenceAssetIds.length >= maxSelectedReferenceCount;
+                      return (
+                        <div
+                          key={asset.id}
+                          className={`group relative overflow-hidden rounded-xl border bg-slate-50 ${
+                            selected ? "border-indigo-500 ring-2 ring-indigo-100" : "border-slate-200"
+                          }`}
+                        >
+                          <a href={api.toApiUrl(asset.preview_url)} target="_blank" rel="noreferrer" title={asset.original_filename}>
+                            <img
+                              src={api.toApiUrl(asset.thumbnail_url)}
+                              alt={asset.original_filename}
+                              loading="lazy"
+                              decoding="async"
+                              className="h-20 w-full object-cover"
+                            />
+                          </a>
+                          <label className="absolute bottom-1 left-1 inline-flex items-center rounded-md bg-white/95 px-1.5 py-1 text-[11px] font-medium text-slate-700 shadow-sm ring-1 ring-slate-200">
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              disabled={selectionLimitReached}
+                              onChange={(event) => handleReferenceToggle(asset.id, event.target.checked)}
+                              className="mr-1 h-3 w-3 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                            />
+                            使用
+                          </label>
+                          <button
+                            type="button"
+                            aria-label="删除参考图"
+                            onClick={() => handleDeleteSessionReference(asset.id)}
+                            disabled={deleting}
+                            className="absolute right-1 top-1 inline-flex h-7 w-7 items-center justify-center rounded-lg bg-white/90 text-slate-500 opacity-100 shadow-sm ring-1 ring-slate-200 transition-colors hover:text-red-600 disabled:opacity-60 md:opacity-0 md:group-hover:opacity-100"
+                          >
+                            {deleting ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
                 ) : null}
               </div>
-              {branchBaseRound ? (
-                <div className="grid grid-cols-[88px_minmax(0,1fr)] gap-3">
-                  <img
-                    src={api.toApiUrl(branchBaseRound.generated_asset.thumbnail_url)}
-                    alt="分支基图"
-                    loading="lazy"
-                    decoding="async"
-                    className="h-24 w-full rounded-lg object-cover"
-                  />
-                  <div className="min-w-0 text-xs leading-5 text-zinc-500">
-                    <div className="truncate font-medium text-zinc-800">{branchBaseRound.prompt}</div>
-                    <div>{branchBaseRound.size}</div>
-                    <div>本轮只继承这张图和下方勾选参考图。</div>
-                  </div>
-                </div>
-              ) : (
-                <div className="text-xs leading-5 text-zinc-500">
-                  未选择历史基图。本轮将按 prompt 和已勾选参考图生成，不自动继承完整历史。
-                </div>
-              )}
-            </div>
 
-            <div>
-              <div className="mb-2 text-sm font-semibold text-zinc-900">本轮参考图</div>
-              <ImageDropZone
-                ariaLabel="上传会话参考图"
-                multiple
-                disabled={!selectedSessionId || uploadReferenceMutation.isPending}
-                className="flex cursor-pointer items-center justify-center rounded-xl border border-dashed border-zinc-300 bg-zinc-50 px-4 py-4 text-sm text-zinc-600 transition-colors hover:border-zinc-400 hover:bg-zinc-100"
-                onFiles={handleUploadReferenceFiles}
-              >
-                {({ isDragging }) => (
-                  <>
-                    {uploadReferenceMutation.isPending ? (
-                      <Loader2 size={16} className="mr-2 animate-spin" />
-                    ) : (
-                      <ImagePlus size={16} className="mr-2" />
-                    )}
-                    {isDragging ? "松开以上传参考图" : "拖拽或点击上传会话参考图"}
-                  </>
-                )}
-              </ImageDropZone>
-              <div className="mt-2 text-xs leading-5 text-zinc-500">
-                只有勾选的会话参考图会进入下一次生成；上传的新图会在额度内自动勾选。含基图最多 {MAX_BRANCH_CONTEXT_IMAGES} 张上下文图。
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-950" htmlFor="image-chat-prompt">
+                  画面描述
+                </label>
+                <textarea
+                  id="image-chat-prompt"
+                  value={draft}
+                  onChange={(event) => setDraft(event.target.value)}
+                  rows={6}
+                  placeholder={isProductMode ? "描述这一轮要在商品图上调整什么。" : "描述你想生成的画面。"}
+                  className="w-full resize-none rounded-2xl border border-slate-200 px-3 py-3 text-sm leading-6 text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                />
               </div>
-              <div className="mt-3 grid grid-cols-3 gap-2">
-                {sessionReferenceAssets.map((asset) => {
-                  const deleting = deleteSessionReferenceMutation.isPending && deleteSessionReferenceMutation.variables === asset.id;
-                  const selected = selectedReferenceAssetIds.includes(asset.id);
-                  const selectionLimitReached = !selected && selectedReferenceAssetIds.length >= maxSelectedReferenceCount;
-                  return (
-                    <div
-                      key={asset.id}
-                      className={`group relative overflow-hidden rounded-lg border bg-zinc-50 ${
-                        selected ? "border-zinc-900 ring-2 ring-zinc-900/10" : "border-zinc-200"
-                      }`}
-                    >
-                      <a href={api.toApiUrl(asset.preview_url)} target="_blank" rel="noreferrer" title={asset.original_filename}>
-                        <img
-                          src={api.toApiUrl(asset.thumbnail_url)}
-                          alt={asset.original_filename}
-                          loading="lazy"
-                          decoding="async"
-                          className="h-24 w-full object-cover"
-                        />
-                      </a>
-                      <label className="absolute bottom-1 left-1 inline-flex items-center rounded-md bg-white/95 px-1.5 py-1 text-[11px] font-medium text-zinc-700 shadow-sm ring-1 ring-zinc-200">
-                        <input
-                          type="checkbox"
-                          checked={selected}
-                          disabled={selectionLimitReached}
-                          onChange={(event) => handleReferenceToggle(asset.id, event.target.checked)}
-                          className="mr-1 h-3 w-3 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-900"
-                        />
-                        使用
-                      </label>
+
+              <div>
+                <div className="mb-2 text-sm font-semibold text-slate-950">尺寸</div>
+                <ImageSizePicker value={size} presets={sizeOptions} onChange={setSize} />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-slate-950" htmlFor="generation-count">
+                  生成数量
+                </label>
+                <select
+                  id="generation-count"
+                  value={generationCount}
+                  onChange={(event) => setGenerationCount(clampGenerationCount(Number(event.target.value)))}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                >
+                  {[1, 2, 3, 4].map((count) => (
+                    <option key={count} value={count}>
+                      {count} 张候选
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <div className="mb-3 text-sm font-semibold text-slate-950">保存至商品库</div>
+                {selectedRound ? (
+                  <div className="space-y-3">
+                    {!isProductMode ? (
                       <button
                         type="button"
-                        aria-label="删除参考图"
-                        onClick={() => handleDeleteSessionReference(asset.id)}
-                        disabled={deleting}
-                        className="absolute right-1 top-1 inline-flex h-7 w-7 items-center justify-center rounded-md bg-white/90 text-zinc-500 opacity-100 shadow-sm ring-1 ring-zinc-200 transition-colors hover:text-red-600 disabled:opacity-60 md:opacity-0 md:group-hover:opacity-100"
+                        onClick={() => handleAttach("reference")}
+                        disabled={!targetProductId || attachMutation.isPending}
+                        className="inline-flex w-full items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:border-slate-300 hover:text-slate-950 disabled:opacity-60"
                       >
-                        {deleting ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                        {attachMutation.isPending ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Check size={14} className="mr-2" />}
+                        保存为参考图
                       </button>
-                    </div>
-                  );
-                })}
+                    ) : (
+                      <div className="grid gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleAttach("reference")}
+                          disabled={attachMutation.isPending}
+                          className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:border-slate-300 hover:text-slate-950 disabled:opacity-60"
+                        >
+                          {attachMutation.isPending ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Check size={14} className="mr-2" />}
+                          加入参考图
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleAttach("main_source")}
+                          disabled={attachMutation.isPending}
+                          className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:opacity-60"
+                        >
+                          {attachMutation.isPending ? <Loader2 size={14} className="mr-2 animate-spin" /> : <ImageIcon size={14} className="mr-2" />}
+                          设为商品主图
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-sm text-slate-500">生成图片后可保存。</div>
+                )}
               </div>
+
+              {successMessage ? (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                  {successMessage}
+                </div>
+              ) : null}
+              {errorMessage ? (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{errorMessage}</div>
+              ) : null}
             </div>
+          </div>
 
-            <div>
-              <div className="mb-2 text-sm font-semibold text-zinc-900">本轮需求</div>
-              <textarea
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                rows={5}
-                placeholder={isProductMode ? "描述这一轮要在现有商品基础上改什么。" : "描述你想生成什么图。"}
-                className="w-full resize-none rounded-xl border border-zinc-200 px-3 py-3 text-sm leading-6 text-zinc-900 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900"
-              />
-            </div>
-
-            <div>
-              <div className="mb-2 text-sm font-semibold text-zinc-900">尺寸</div>
-              <ImageSizePicker value={size} presets={sizeOptions} onChange={setSize} />
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm font-semibold text-zinc-900" htmlFor="generation-count">
-                生成数量
-              </label>
-              <select
-                id="generation-count"
-                value={generationCount}
-                onChange={(event) => setGenerationCount(clampGenerationCount(Number(event.target.value)))}
-                className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900"
-              >
-                {[1, 2, 3, 4].map((count) => (
-                  <option key={count} value={count}>
-                    {count} 张候选
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {successMessage ? (
-              <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-                {successMessage}
-              </div>
-            ) : null}
-            {errorMessage ? (
-              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{errorMessage}</div>
-            ) : null}
-
+          <div className="sticky bottom-0 border-t border-slate-200 bg-white/95 p-4 shadow-[0_-8px_24px_rgba(15,23,42,0.06)] backdrop-blur">
             <button
               type="button"
               onClick={handleGenerate}
               disabled={!selectedSessionId || !draft.trim() || generateMutation.isPending}
-              className="inline-flex w-full items-center justify-center rounded-xl bg-zinc-900 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-zinc-800 disabled:opacity-60"
+              className="inline-flex w-full items-center justify-center rounded-2xl bg-indigo-600 px-4 py-3.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition-colors hover:bg-indigo-500 disabled:opacity-60"
             >
-              {generateMutation.isPending ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Sparkles size={14} className="mr-2" />}
-              {generationCount > 1 ? `生成 ${generationCount} 张候选` : "生成候选"}
+              {generateMutation.isPending ? <Loader2 size={15} className="mr-2 animate-spin" /> : <Sparkles size={15} className="mr-2" />}
+              {generationCount > 1 ? `开始生成 · ${generationCount} 张候选` : "开始生成"}
             </button>
-
-            <div className="mt-auto rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
-              <div className="mb-3 text-sm font-semibold text-zinc-900">保存到商品</div>
-              {selectedRound ? (
-                <div className="space-y-3">
-                  {!isProductMode ? (
-                    <button
-                      type="button"
-                      onClick={() => handleAttach("reference")}
-                      disabled={!targetProductId || attachMutation.isPending}
-                      className="inline-flex w-full items-center justify-center rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-700 transition-colors hover:border-zinc-300 hover:text-zinc-900 disabled:opacity-60"
-                    >
-                      {attachMutation.isPending ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Check size={14} className="mr-2" />}
-                      保存为所选商品参考图
-                    </button>
-                  ) : (
-                    <div className="grid gap-2 md:grid-cols-2">
-                      <button
-                        type="button"
-                        onClick={() => handleAttach("reference")}
-                        disabled={attachMutation.isPending}
-                        className="inline-flex items-center justify-center rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-medium text-zinc-700 transition-colors hover:border-zinc-300 hover:text-zinc-900 disabled:opacity-60"
-                      >
-                        {attachMutation.isPending ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Check size={14} className="mr-2" />}
-                        加入参考图
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleAttach("main_source")}
-                        disabled={attachMutation.isPending}
-                        className="inline-flex items-center justify-center rounded-md bg-zinc-900 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-800 disabled:opacity-60"
-                      >
-                        {attachMutation.isPending ? <Loader2 size={14} className="mr-2 animate-spin" /> : <ImageIcon size={14} className="mr-2" />}
-                        设为商品主图
-                      </button>
-                    </div>
-                  )}
-                  <p className="text-xs leading-5 text-zinc-500">
-                    {isProductMode
-                      ? "设为商品主图时，旧主图会保留为参考图，方便继续创作和回看。"
-                      : "只有点击保存后，图片才会加入商品素材。"}
-                  </p>
-                </div>
-              ) : (
-                <div className="text-sm text-zinc-500">先生成至少一张图，再决定是否保存到商品。</div>
-              )}
-            </div>
-          </aside>
-        </section>
+          </div>
+        </aside>
       </main>
     </div>
   );
+
 }
 
 function ProductContextPanel({
@@ -866,7 +971,7 @@ function ProductContextPanel({
   onDeleteReference: (assetId: string) => void;
 }) {
   return (
-    <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
       <div className="mb-3 text-sm font-semibold text-zinc-900">商品上下文</div>
       {product ? (
         <>
@@ -935,7 +1040,7 @@ function StandaloneTargetPanel({
   onTargetProductChange: (value: string) => void;
 }) {
   return (
-    <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
       <div className="mb-2 text-sm font-semibold text-zinc-900">目标商品</div>
       <div className="text-xs leading-5 text-zinc-500">先自由生成，满意后再把图片保存到已有商品。</div>
       <select

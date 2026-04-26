@@ -100,9 +100,9 @@ export function InspectorPanel({
 
   return (
     <div className="space-y-3">
-      <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm shadow-slate-200/50">
         <div className="flex items-start gap-3">
-          <span className="rounded-xl border border-zinc-200 bg-zinc-50 p-2 text-zinc-500">
+          <span className="rounded-xl border border-indigo-100 bg-indigo-50 p-2 text-indigo-700">
             <InspectorIcon size={16} />
           </span>
           <div className="min-w-0 flex-1">
@@ -154,7 +154,7 @@ export function InspectorPanel({
               type="button"
               onClick={onRun}
               disabled={runBusy}
-              className="inline-flex items-center justify-center rounded-lg bg-zinc-900 px-3 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+              className="inline-flex items-center justify-center rounded-xl bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
             >
               {runBusy ? (
                 <Loader2 size={13} className="mr-1.5 animate-spin" />
@@ -175,7 +175,7 @@ export function InspectorPanel({
         ) : null}
       </section>
 
-      <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm shadow-slate-200/50">
         <div className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-zinc-500">
           配置
         </div>

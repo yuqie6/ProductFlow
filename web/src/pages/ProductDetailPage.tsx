@@ -678,21 +678,21 @@ export function ProductDetailPage() {
         type="button"
         onClick={() => void handleRunWorkflow(undefined)}
         disabled={runBusy || !workflow}
-        className="flex w-full flex-col items-center rounded-lg bg-zinc-900 px-1 py-2 text-[10px] font-medium text-white transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex w-full flex-col items-center rounded-lg bg-indigo-600 px-1 py-2 text-[10px] font-semibold text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
         title={runBusy ? "工作流运行中" : "运行整个工作流"}
         aria-label={runBusy ? "工作流运行中" : "运行整个工作流"}
       >
         {runBusy ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />}
         <span className="mt-1 leading-none">{runBusy ? "运行中" : "运行"}</span>
       </button>
-      <div className="my-1 h-px w-8 self-center bg-zinc-200" />
+      <div className="my-1 h-px w-8 self-center bg-slate-700/80" />
       {ADD_NODE_OPTIONS.map((option) => (
         <button
           key={option.type}
           type="button"
           onClick={() => createNodeMutation.mutate(option.type)}
           disabled={structureBusy || !workflow}
-          className="flex w-full flex-col items-center rounded-lg border border-transparent px-1 py-2 text-[10px] font-medium text-zinc-500 transition-colors hover:border-zinc-200 hover:bg-white hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex w-full flex-col items-center rounded-lg border border-transparent px-1 py-2 text-[10px] font-medium text-slate-400 transition-colors hover:border-slate-700 hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
           title={`添加${option.label}节点`}
           aria-label={`添加${option.label}节点`}
         >
@@ -700,7 +700,7 @@ export function ProductDetailPage() {
           <span className="mt-1 leading-none">{option.label}</span>
         </button>
       ))}
-      <div className="my-1 h-px w-8 self-center bg-zinc-200" />
+      <div className="my-1 h-px w-8 self-center bg-slate-700/80" />
     </>
   );
 
@@ -708,7 +708,7 @@ export function ProductDetailPage() {
     <div className="flex h-screen flex-col overflow-hidden bg-white text-sm text-zinc-900">
       {!topChromeCollapsed ? <TopNav onHome={() => navigate("/products")} breadcrumbs={product.name} /> : null}
 
-      <main className="flex min-h-0 flex-1 flex-col border-t border-zinc-200 bg-[#f7f7f8]">
+      <main className="flex min-h-0 flex-1 flex-col border-t border-slate-200 bg-slate-50">
         {error ? (
           <div className="z-20 border-b border-red-200 bg-red-50 px-4 py-2 text-xs text-red-700">
             <AlertCircle size={14} className="mr-2 inline" /> {error}
@@ -716,7 +716,8 @@ export function ProductDetailPage() {
         ) : null}
 
         <div className="relative flex min-h-0 flex-1 overflow-hidden">
-          <div className="absolute inset-0 bg-[radial-gradient(#d4d4d8_1px,transparent_1px)] [background-size:18px_18px]" />
+          <div className="absolute inset-0 bg-[radial-gradient(#cbd5e1_1px,transparent_1px)] [background-size:18px_18px]" />
+          <div className="absolute inset-0 bg-gradient-to-br from-white/60 via-transparent to-indigo-50/40" />
           <section className="relative z-10 min-w-0 flex-1 overflow-hidden">
             <div data-canvas-control className="pointer-events-none absolute right-4 top-4 z-30">
               <button
@@ -769,8 +770,8 @@ export function ProductDetailPage() {
                         ref={(element) => setEdgePathRef(edge.id, element)}
                         d={buildEdgePath(start, end)}
                         fill="none"
-                        stroke="#71717a"
-                        strokeWidth="1.6"
+                        stroke="#94a3b8"
+                        strokeWidth="1.7"
                       />
                     );
                   })}
@@ -894,7 +895,7 @@ export function ProductDetailPage() {
             </div>
             <div
               data-canvas-control
-              className="absolute right-4 top-16 z-30 flex w-14 flex-col items-center gap-2 rounded-xl border border-zinc-200 bg-white/90 p-2 shadow-sm backdrop-blur"
+              className="absolute right-4 top-16 z-30 flex w-14 flex-col items-center gap-2 rounded-2xl border border-slate-800 bg-slate-950/95 p-2 shadow-xl shadow-slate-950/20 backdrop-blur"
             >
               {renderWorkflowToolbarButtons()}
               <SidebarTabButton active={false} label="详情" title="Details" icon={<Settings2 size={15} />} onClick={() => { setActiveSidebarTab("details"); setSidebarCollapsed(false); }} />
@@ -903,7 +904,7 @@ export function ProductDetailPage() {
             </div>
             </>
           ) : (
-          <div className="relative z-20 flex shrink-0 border-l border-zinc-200 bg-white/95 shadow-[-8px_0_24px_-20px_rgba(0,0,0,0.35)] backdrop-blur">
+          <div className="relative z-20 flex shrink-0 border-l border-slate-200 bg-white/95 shadow-[-8px_0_24px_-20px_rgba(15,23,42,0.35)] backdrop-blur">
             <div data-canvas-control className="group/sidebar-collapse absolute left-[-28px] top-0 z-30 flex h-full w-7 items-center justify-center">
               <button
                 type="button"
@@ -915,7 +916,7 @@ export function ProductDetailPage() {
                 <ChevronRight size={14} />
               </button>
             </div>
-            <div data-canvas-control className="flex w-14 shrink-0 flex-col items-center gap-2 border-r border-zinc-200 bg-zinc-50/80 px-1.5 py-3">
+            <div data-canvas-control className="flex w-14 shrink-0 flex-col items-center gap-2 border-r border-slate-800 bg-slate-950 px-1.5 py-3">
               {renderWorkflowToolbarButtons()}
               <SidebarTabButton
                 active={activeSidebarTab === "details"}

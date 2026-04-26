@@ -53,7 +53,7 @@ interface ConfigFieldProps {
 
 function ConfigField({ item, value, secretTouched, isResetting, onChange, onReset }: ConfigFieldProps) {
   const baseInputClass =
-    "w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 transition-shadow placeholder:text-zinc-400 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900";
+    "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 transition-shadow placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
 
   const description = item.secret
     ? item.has_value
@@ -62,7 +62,7 @@ function ConfigField({ item, value, secretTouched, isResetting, onChange, onRese
     : item.description;
 
   return (
-    <div className="grid gap-3 border-t border-zinc-100 py-5 first:border-t-0 md:grid-cols-[220px_minmax(0,1fr)]">
+    <div className="grid gap-3 border-t border-slate-100 py-5 first:border-t-0 md:grid-cols-[220px_minmax(0,1fr)]">
       <div>
         <div className="flex flex-wrap items-center gap-2">
           <label htmlFor={item.key} className="text-sm font-medium text-zinc-900">
@@ -253,24 +253,23 @@ export function SettingsPage() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col bg-zinc-50/50">
+    <div className="flex min-h-screen flex-col bg-slate-50">
       <TopNav
         breadcrumbs="配置"
         onHome={() => navigate("/products")}
         onLogout={() => logoutMutation.mutate()}
       />
 
-      <main className="mx-auto flex w-full max-w-5xl flex-1 px-6 py-10">
+      <main className="mx-auto flex w-full max-w-5xl flex-1 px-6 py-8 lg:py-10">
         <div className="w-full">
-          <div className="mb-8 flex flex-col gap-4 border-b border-zinc-200 pb-6 md:flex-row md:items-end md:justify-between">
+          <div className="mb-8 flex flex-col gap-4 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm shadow-slate-200/60 md:flex-row md:items-end md:justify-between">
             <div>
-              <div className="mb-3 inline-flex items-center rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-medium text-zinc-500">
+              <div className="mb-3 inline-flex items-center rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700">
                 <SettingsIcon size={13} className="mr-1.5" /> Runtime Config
               </div>
               <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">系统配置</h1>
-              <p className="mt-1 text-sm text-zinc-500">
+              <p className="mt-1 text-sm text-slate-500">
                 数据库配置优先生效；未写入数据库的字段继续使用 env/default 值。
-                提示词配置在“提示词”分类，可用占位符见 repo 文档 docs/USER_GUIDE.md。
               </p>
             </div>
             <button
@@ -291,12 +290,16 @@ export function SettingsPage() {
               配置加载失败，请确认后端和数据库已启动。
             </div>
           ) : (
-            <form onSubmit={handleSubmit} className="space-y-8">
-              <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white shadow-sm">
-                {groupedItems.map((group, index) => (
-                  <section key={group.category} className={index === 0 ? "" : "border-t border-zinc-200"}>
-                    <div className="bg-zinc-50/70 px-5 py-4">
-                      <h2 className="text-sm font-semibold text-zinc-900">{group.category}</h2>
+            <form onSubmit={handleSubmit} className="space-y-6">
+              <div className="space-y-5">
+                {groupedItems.map((group) => (
+                  <section
+                    key={group.category}
+                    className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm shadow-slate-200/50"
+                  >
+                    <div className="border-b border-slate-100 bg-slate-50/70 px-5 py-4">
+                      <h2 className="text-sm font-semibold text-slate-950">{group.category}</h2>
+                      <p className="mt-1 text-xs text-slate-500">{group.items.length} 项运行时配置</p>
                     </div>
                     <div className="px-5">
                       {group.items.map((item) => (
@@ -343,7 +346,7 @@ export function SettingsPage() {
                   <button
                     type="submit"
                     disabled={saveMutation.isPending}
-                    className="inline-flex items-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-800 disabled:opacity-50"
+                    className="inline-flex items-center rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition-colors hover:bg-indigo-500 disabled:opacity-50"
                   >
                     {saveMutation.isPending ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Save size={14} className="mr-2" />}
                     保存到数据库

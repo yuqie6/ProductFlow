@@ -73,10 +73,10 @@ export function WorkflowNodeCard({
     <div
       ref={nodeRef}
       data-workflow-node-id={node.id}
-      className={`absolute w-[248px] touch-none select-none rounded-2xl border bg-white p-3 text-left shadow-sm ${
+      className={`absolute w-[248px] touch-none select-none rounded-2xl border bg-white/95 p-3 text-left shadow-sm backdrop-blur ${
         dragging ? "cursor-grabbing" : "transition-[border-color,box-shadow] hover:shadow-md"
       } ${
-        selected ? "border-zinc-900 shadow-lg shadow-zinc-900/5 ring-2 ring-zinc-900/10" : "border-zinc-200"
+        selected ? "border-indigo-300 shadow-lg shadow-indigo-950/10 ring-2 ring-indigo-200/70" : "border-slate-200"
       }`}
       style={{
         left: 0,
@@ -95,7 +95,7 @@ export function WorkflowNodeCard({
         data-node-action
         data-workflow-target-node-id={node.id}
         onClick={onSelect}
-        className="absolute left-[-9px] top-[47px] z-20 h-[18px] w-[18px] rounded-full border border-zinc-300 bg-white shadow-sm hover:border-blue-400 hover:ring-4 hover:ring-blue-100"
+        className="absolute left-[-9px] top-[47px] z-20 h-[18px] w-[18px] rounded-full border border-slate-300 bg-white shadow-sm hover:border-indigo-400 hover:ring-4 hover:ring-indigo-100"
         title="输入 handle"
         aria-label={`${node.title} 输入 handle`}
       />
@@ -106,14 +106,14 @@ export function WorkflowNodeCard({
         onPointerMove={onMoveConnection}
         onPointerUp={onEndConnection}
         onPointerCancel={onEndConnection}
-        className="absolute right-[-10px] top-[46px] z-20 h-5 w-5 rounded-full border-2 border-blue-500 bg-white shadow-sm hover:bg-blue-50 hover:ring-4 hover:ring-blue-100"
+        className="absolute right-[-10px] top-[46px] z-20 h-5 w-5 rounded-full border-2 border-indigo-500 bg-white shadow-sm hover:bg-indigo-50 hover:ring-4 hover:ring-indigo-100"
         title="拖拽连接输出"
         aria-label={`${node.title} 输出 handle`}
       />
       <div onClick={onSelect} className="cursor-grab active:cursor-grabbing">
         <div className="mb-3 flex items-start justify-between gap-2">
           <div className="flex min-w-0 gap-2">
-            <span className="mt-0.5 rounded-lg border border-zinc-200 bg-zinc-50 p-1.5 text-zinc-500">
+            <span className="mt-0.5 rounded-xl border border-slate-200 bg-slate-50 p-1.5 text-slate-500">
               <Icon size={14} />
             </span>
             <div className="min-w-0">

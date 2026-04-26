@@ -32,7 +32,9 @@ export function ProductListPage() {
   const total = productsQuery.data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const posterReadyCount = products.filter((product) => product.workflow_state === "poster_ready").length;
-  const copyReadyCount = products.filter((product) => product.workflow_state === "copy_ready").length;
+  const copyReadyCount = products.filter(
+    (product) => product.workflow_state === "copy_ready" || product.workflow_state === "poster_ready",
+  ).length;
 
   useEffect(() => {
     if (productsQuery.data && page > totalPages) {
@@ -70,29 +72,29 @@ export function ProductListPage() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col bg-zinc-50/50">
+    <div className="flex min-h-screen flex-col bg-slate-50">
       <TopNav
         onHome={() => navigate("/products")}
         onLogout={() => logoutMutation.mutate()}
       />
 
-      <main className="mx-auto flex w-full max-w-6xl flex-1 px-6 py-10">
+      <main className="mx-auto flex w-full max-w-6xl flex-1 px-6 py-8 lg:py-10">
         <div className="w-full space-y-6">
-          <section className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm">
-            <div className="grid gap-6 p-6 md:grid-cols-[1.4fr_1fr]">
+          <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm shadow-slate-200/60">
+            <div className="grid gap-8 p-6 md:grid-cols-[1.35fr_1fr] lg:p-7">
               <div>
                 <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-zinc-400">
-                  ProductFlow Desk
+                  ProductFlow Workbench
                 </div>
                 <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">商品创作工作台</h1>
-                <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-500">
-                  从真实商品图开始，整理资料、生成文案与图片；列表直接展示主图缩略图，分页浏览当前商品库。
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
+                  从真实商品开始，整理资料、生成文案与图片。
                 </p>
                 <div className="mt-5 flex flex-wrap items-center gap-3">
                   <button
                     type="button"
                     onClick={() => navigate("/products/new")}
-                    className="inline-flex items-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-800"
+                    className="inline-flex items-center rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition-colors hover:bg-indigo-500"
                   >
                     <Plus size={16} className="mr-1.5" /> 新建商品
                   </button>
@@ -100,15 +102,15 @@ export function ProductListPage() {
               </div>
               <div className="grid grid-cols-3 gap-3 self-end">
                 <MetricCard label="商品总数" value={total} />
-                <MetricCard label="本页文案就绪" value={copyReadyCount} />
-                <MetricCard label="本页图片就绪" value={posterReadyCount} />
+                <MetricCard label="当前页文案就绪" value={copyReadyCount} />
+                <MetricCard label="当前页图片就绪" value={posterReadyCount} />
               </div>
             </div>
           </section>
 
           <OnboardingGuideCard page="products" />
 
-          <div className="flex items-end justify-between gap-4">
+          <div className="flex items-end justify-between gap-4 rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm shadow-slate-200/50">
             <div>
               <h2 className="text-base font-semibold text-zinc-900">商品列表</h2>
               <p className="mt-1 text-sm text-zinc-500">
@@ -133,10 +135,10 @@ export function ProductListPage() {
               商品列表加载失败，请确认后端已启动。
             </div>
           ) : products.length ? (
-            <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
+            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm shadow-slate-200/50">
               <table className="w-full border-collapse text-left text-sm">
                 <thead>
-                  <tr className="border-b border-zinc-200 bg-zinc-50/50">
+                  <tr className="border-b border-slate-200 bg-slate-50/70">
                     <th className="w-[45%] px-5 py-3 font-medium text-zinc-500">商品素材</th>
                     <th className="px-5 py-3 font-medium text-zinc-500">流程状态</th>
                     <th className="px-5 py-3 font-medium text-zinc-500">最后更新</th>
@@ -146,12 +148,18 @@ export function ProductListPage() {
                 <tbody className="divide-y divide-zinc-100">
                   {products.map((product) => {
                     return (
-                      <tr key={product.id} className="group transition-colors hover:bg-zinc-50">
+                      <tr key={product.id} className="group transition-colors hover:bg-indigo-50/30">
                         <td className="px-5 py-4">
                           <div className="flex items-center space-x-3">
                             <ProductThumbnail product={product} />
                             <div className="min-w-0">
-                              <div className="truncate font-medium text-zinc-900">{product.name}</div>
+                              <button
+                                type="button"
+                                onClick={() => navigate(`/products/${product.id}`)}
+                                className="truncate text-left font-medium text-slate-950 transition-colors hover:text-indigo-700"
+                              >
+                                {product.name}
+                              </button>
                               <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-zinc-500">
                                 {product.category ? <span>{product.category}</span> : null}
                                 {product.price ? <span>{formatPrice(product.price)}</span> : null}
@@ -199,7 +207,7 @@ export function ProductListPage() {
               <button
                 type="button"
                 onClick={() => navigate("/products/new")}
-                className="mt-5 inline-flex items-center rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800"
+                className="mt-5 inline-flex items-center rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 hover:bg-indigo-500"
               >
                 <Plus size={16} className="mr-1.5" /> 新建商品
               </button>
@@ -219,9 +227,9 @@ export function ProductListPage() {
 
 function MetricCard({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-3">
-      <div className="text-2xl font-semibold tracking-tight text-zinc-900">{value}</div>
-      <div className="mt-1 text-[11px] font-medium uppercase tracking-wider text-zinc-400">{label}</div>
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+      <div className="text-2xl font-semibold tracking-tight text-slate-950">{value}</div>
+      <div className="mt-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">{label}</div>
     </div>
   );
 }
@@ -232,7 +240,7 @@ function ProductThumbnail({ product }: { product: ProductSummary }) {
   const shouldShowImage = Boolean(thumbUrl) && !failed;
 
   return (
-    <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-zinc-200 bg-zinc-100 text-zinc-400">
+    <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-100 text-slate-400 shadow-sm">
       {shouldShowImage && thumbUrl ? (
         <img
           src={api.toApiUrl(thumbUrl)}
