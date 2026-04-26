@@ -114,7 +114,7 @@ Do not scatter raw `fetch(...)` calls or duplicate DTO interfaces inside pages.
 - Utility files use lower camel-ish names: `api.ts`, `format.ts`, `types.ts`.
 - Helper functions use `camelCase`, for example `getWorkingCopy`, `getSourceImageUrl`, `draftsFromConfig`.
 - API DTO fields intentionally preserve backend `snake_case` names, for example `workflow_state`, `copy_set_id`,
-  `reset_keys`, and `image_allowed_sizes` in `web/src/lib/types.ts`.
+  and `reset_keys` in `web/src/lib/types.ts`; image size presets live in `web/src/lib/imageSizes.ts`, not runtime config.
 
 ---
 

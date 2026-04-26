@@ -15,11 +15,12 @@ import {
 import { useNavigate, useParams } from "react-router-dom";
 
 import { ImageDropZone } from "../components/ImageDropZone";
+import { ImageSizePicker } from "../components/ImageSizePicker";
 import { TopNav } from "../components/TopNav";
 import { api, ApiError } from "../lib/api";
 import { formatDateTime } from "../lib/format";
+import { DEFAULT_IMAGE_SIZE_OPTIONS } from "../lib/imageSizes";
 import type {
-  ConfigResponse,
   ImageSessionDetail,
   ImageSessionListResponse,
   ProductDetail,
@@ -27,29 +28,10 @@ import type {
   SourceAsset,
 } from "../lib/types";
 
-const DEFAULT_SIZE_OPTIONS = [
-  { label: "1:1", value: "1024x1024" },
-  { label: "3:4", value: "1024x1536" },
-  { label: "横图", value: "1536x1024" },
-] as const;
-const SIZE_LABELS = new Map<string, string>(DEFAULT_SIZE_OPTIONS.map((option) => [option.value, option.label]));
-const IMAGE_SIZE_PATTERN = /^\d+x\d+$/;
-
 function getSessionReferenceAssets(imageSession: ImageSessionDetail | undefined) {
   return imageSession?.assets.filter((asset) => asset.kind === "reference_upload") ?? [];
 }
 
-function getAllowedSizeOptions(config: ConfigResponse | undefined) {
-  const rawValue = config?.items.find((item) => item.key === "image_allowed_sizes")?.value;
-  if (typeof rawValue !== "string") {
-    return DEFAULT_SIZE_OPTIONS.map((option) => ({ value: option.value, label: option.label }));
-  }
-  const sizes = rawValue
-    .split(",")
-    .map((sizeValue) => sizeValue.trim().toLowerCase())
-    .filter((sizeValue, index, allSizeValues) => IMAGE_SIZE_PATTERN.test(sizeValue) && allSizeValues.indexOf(sizeValue) === index);
-  return sizes.map((value) => ({ value, label: SIZE_LABELS.get(value) ?? value }));
-}
 
 export function ImageChatPage() {
   const navigate = useNavigate();
@@ -89,19 +71,7 @@ export function ImageChatPage() {
 
   const products = productsQuery.data?.items ?? [];
 
-  const configQuery = useQuery({
-    queryKey: ["config"],
-    queryFn: api.getConfig,
-  });
-  const sizeOptions = useMemo(() => getAllowedSizeOptions(configQuery.data), [configQuery.data]);
-  const sizeConfigReady = !configQuery.isLoading && !configQuery.isError && sizeOptions.length > 0;
-
-  useEffect(() => {
-    if (!sizeOptions.length || sizeOptions.some((option) => option.value === size)) {
-      return;
-    }
-    setSize(sizeOptions[0].value);
-  }, [sizeOptions, size]);
+  const sizeOptions = DEFAULT_IMAGE_SIZE_OPTIONS;
 
   useEffect(() => {
     if (!isProductMode && products.length && !targetProductId) {
@@ -301,15 +271,6 @@ export function ImageChatPage() {
   function handleGenerate() {
     const prompt = draft.trim();
     if (!selectedSessionId || !prompt || generateMutation.isPending) {
-      return;
-    }
-    if (!sizeConfigReady) {
-      const message = configQuery.isError
-        ? "尺寸配置加载失败，请刷新后重试"
-        : sizeOptions.length
-          ? "尺寸配置加载中，请稍后再试"
-          : "当前没有可用生图尺寸，请先在系统配置中设置";
-      setErrorMessage(message);
       return;
     }
     generateMutation.mutate({ prompt, size });
@@ -638,35 +599,7 @@ export function ImageChatPage() {
 
             <div>
               <div className="mb-2 text-sm font-semibold text-zinc-900">尺寸</div>
-              <div className="grid grid-cols-3 gap-2">
-                {sizeOptions.map((option) => {
-                  const active = option.value === size;
-                  return (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => setSize(option.value)}
-                      disabled={!sizeConfigReady}
-                      className={`rounded-md border px-3 py-2 text-sm transition-colors ${
-                        active
-                          ? "border-zinc-900 bg-zinc-900 text-white"
-                          : "border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:text-zinc-900"
-                      }`}
-                    >
-                      {option.label}
-                    </button>
-                  );
-                })}
-              </div>
-              {configQuery.isLoading ? (
-                <div className="mt-2 text-xs text-zinc-500">正在读取系统允许尺寸...</div>
-              ) : null}
-              {configQuery.isError ? (
-                <div className="mt-2 text-xs text-red-600">尺寸配置加载失败，暂不能继续生成。</div>
-              ) : null}
-              {!configQuery.isLoading && !configQuery.isError && !sizeOptions.length ? (
-                <div className="mt-2 text-xs text-red-600">当前没有可用生图尺寸，请先在系统配置中设置。</div>
-              ) : null}
+              <ImageSizePicker value={size} presets={sizeOptions} onChange={setSize} />
             </div>
 
             {successMessage ? (
@@ -681,7 +614,7 @@ export function ImageChatPage() {
             <button
               type="button"
               onClick={handleGenerate}
-              disabled={!selectedSessionId || !draft.trim() || generateMutation.isPending || !sizeConfigReady}
+              disabled={!selectedSessionId || !draft.trim() || generateMutation.isPending}
               className="inline-flex w-full items-center justify-center rounded-xl bg-zinc-900 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-zinc-800 disabled:opacity-60"
             >
               {generateMutation.isPending ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Sparkles size={14} className="mr-2" />}

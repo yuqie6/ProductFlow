@@ -7,14 +7,15 @@ import {
   ImagePlus,
   Loader2,
   Play,
-  Save,
   Trash2,
   Upload,
   XCircle,
 } from "lucide-react";
 
 import { ImageDropZone } from "../../components/ImageDropZone";
+import { ImageSizePicker } from "../../components/ImageSizePicker";
 import type { DownloadableImage } from "../../lib/image-downloads";
+import type { ImageSizeOption } from "../../lib/imageSizes";
 import { formatDateTime, formatPrice } from "../../lib/format";
 import type { ProductDetail, ProductWorkflow, WorkflowNode } from "../../lib/types";
 import { IMAGE_PREVIEW_SURFACE_CLASS_NAME, NODE_LABELS, NODE_STATUS_LABELS } from "./constants";
@@ -43,9 +44,8 @@ interface InspectorPanelProps {
   workflow: ProductWorkflow | null;
   node: WorkflowNode;
   draft: NodeConfigDraft;
+  imageSizeOptions: ImageSizeOption[];
   onDraftChange: (draft: NodeConfigDraft) => void;
-  onSave: () => void;
-  onSaveCopy: () => void;
   onRun: () => void;
   onUploadImage: (file: File) => void;
   onDelete: () => void;
@@ -60,9 +60,8 @@ export function InspectorPanel({
   workflow,
   node,
   draft,
+  imageSizeOptions,
   onDraftChange,
-  onSave,
-  onSaveCopy,
   onRun,
   onUploadImage,
   onDelete,
@@ -149,37 +148,31 @@ export function InspectorPanel({
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-3 gap-2">
-          <button
-            type="button"
-            onClick={onSave}
-            disabled={busy}
-            className="inline-flex items-center justify-center rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
-          >
-            <Save size={13} className="mr-1.5" /> 保存
-          </button>
-          <button
-            type="button"
-            onClick={onRun}
-            disabled={runBusy}
-            className="inline-flex items-center justify-center rounded-lg bg-zinc-900 px-3 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
-          >
-            {runBusy ? (
-              <Loader2 size={13} className="mr-1.5 animate-spin" />
-            ) : (
-              <Play size={13} className="mr-1.5" />
-            )}
-            运行
-          </button>
-          <button
-            type="button"
-            onClick={onDelete}
-            disabled={busy}
-            className="inline-flex items-center justify-center rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
-          >
-            <Trash2 size={13} className="mr-1.5" /> 删除
-          </button>
-        </div>
+        {node.node_type !== "product_context" ? (
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={onRun}
+              disabled={runBusy}
+              className="inline-flex items-center justify-center rounded-lg bg-zinc-900 px-3 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
+            >
+              {runBusy ? (
+                <Loader2 size={13} className="mr-1.5 animate-spin" />
+              ) : (
+                <Play size={13} className="mr-1.5" />
+              )}
+              运行
+            </button>
+            <button
+              type="button"
+              onClick={onDelete}
+              disabled={busy}
+              className="inline-flex items-center justify-center rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+            >
+              <Trash2 size={13} className="mr-1.5" /> 删除
+            </button>
+          </div>
+        ) : null}
       </section>
 
       <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
@@ -221,16 +214,15 @@ export function InspectorPanel({
             node={node}
             draft={draft}
             onDraftChange={onDraftChange}
-            onSaveCopy={onSaveCopy}
-            busy={busy}
           />
         ) : null}
         {node.node_type === "image_generation" ? (
-          <ImageGenerationInspector
-            draft={draft}
-            onDraftChange={onDraftChange}
-            downstreamReferenceCount={downstreamReferenceCount}
-          />
+            <ImageGenerationInspector
+              draft={draft}
+              imageSizeOptions={imageSizeOptions}
+              onDraftChange={onDraftChange}
+              downstreamReferenceCount={downstreamReferenceCount}
+            />
         ) : null}
       </section>
       {node.failure_reason ? (
@@ -393,14 +385,10 @@ function CopyNodeInspector({
   node,
   draft,
   onDraftChange,
-  onSaveCopy,
-  busy,
 }: {
   node: WorkflowNode;
   draft: NodeConfigDraft;
   onDraftChange: (draft: NodeConfigDraft) => void;
-  onSaveCopy: () => void;
-  busy: boolean;
 }) {
   const hasCopy = Boolean(
     node.output_json && outputText(node.output_json, "copy_set_id"),
@@ -487,14 +475,9 @@ function CopyNodeInspector({
               className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900"
             />
           </label>
-          <button
-            type="button"
-            onClick={onSaveCopy}
-            disabled={busy}
-            className="inline-flex w-full items-center justify-center rounded-md bg-zinc-900 px-3 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
-          >
-            <Save size={13} className="mr-1.5" /> 保存文案
-          </button>
+          <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-[11px] leading-5 text-zinc-500">
+            文案编辑会自动保存；运行前也会先同步当前草稿。
+          </div>
         </div>
       ) : null}
     </div>
@@ -503,10 +486,12 @@ function CopyNodeInspector({
 
 function ImageGenerationInspector({
   draft,
+  imageSizeOptions,
   onDraftChange,
   downstreamReferenceCount,
 }: {
   draft: NodeConfigDraft;
+  imageSizeOptions: ImageSizeOption[];
   onDraftChange: (draft: NodeConfigDraft) => void;
   downstreamReferenceCount: number;
 }) {
@@ -522,18 +507,14 @@ function ImageGenerationInspector({
         value={draft.instruction}
         onChange={(value) => onDraftChange({ ...draft, instruction: value })}
       />
-      <label className="block">
-        <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
-          尺寸
-        </span>
-        <input
+      <div>
+        <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-zinc-400">尺寸</div>
+        <ImageSizePicker
           value={draft.size}
-          onChange={(event) =>
-            onDraftChange({ ...draft, size: event.target.value })
-          }
-          className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900"
+          presets={imageSizeOptions}
+          onChange={(size) => onDraftChange({ ...draft, size })}
         />
-      </label>
+      </div>
     </div>
   );
 }

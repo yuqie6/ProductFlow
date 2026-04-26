@@ -66,6 +66,13 @@ export function getFinalNodeDragPosition(point: CanvasPoint, drag: Pick<NodeDrag
   };
 }
 
+export function getNodePositionForViewportCenter(center: CanvasPoint): CanvasPoint {
+  return {
+    x: Math.max(NODE_MIN_X, Math.round(center.x - NODE_WIDTH / 2)),
+    y: Math.max(NODE_MIN_Y, Math.round(center.y - 80)),
+  };
+}
+
 export function buildConnectionDragPath(connectionDrag: ConnectionDragState): string {
   const mid = Math.max(80, Math.abs(connectionDrag.to.x - connectionDrag.from.x) / 2);
   return `M ${connectionDrag.from.x} ${connectionDrag.from.y} C ${connectionDrag.from.x + mid} ${connectionDrag.from.y}, ${connectionDrag.to.x - mid} ${connectionDrag.to.y}, ${connectionDrag.to.x} ${connectionDrag.to.y}`;
@@ -488,6 +495,17 @@ export function useWorkflowCanvas({
     setConnectionDrag(null);
   };
 
+  const getViewportCenterNodePosition = (): CanvasPoint => {
+    const scrollElement = canvasScrollRef.current;
+    const canvasElement = canvasRef.current;
+    if (!scrollElement || !canvasElement) {
+      return { x: 120, y: 120 };
+    }
+    const scrollRect = scrollElement.getBoundingClientRect();
+    const center = getCanvasPoint(scrollRect.left + scrollRect.width / 2, scrollRect.top + scrollRect.height / 2);
+    return getNodePositionForViewportCenter(center);
+  };
+
   const acceptNodePositionMutation = (nodeId: string, mutationVersion: number) =>
     nodePositionMutationVersionsRef.current[nodeId] === mutationVersion;
 
@@ -530,6 +548,7 @@ export function useWorkflowCanvas({
     getOutputHandlePoint,
     getInputHandlePoint,
     getCanvasSize,
+    getViewportCenterNodePosition,
     setNodeElementRef,
     setEdgePathRef,
     setEdgeDeleteButtonRef,

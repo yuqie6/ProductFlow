@@ -103,6 +103,77 @@ If a component starts needing API calls, consider whether it is actually a route
 
 ---
 
+## Scenario: Shared image size picker contract
+
+### 1. Scope / Trigger
+
+- Trigger: editing continuous image chat size controls, workflow `image_generation` inspector controls, runtime
+  built-in preset display behavior, or frontend helpers that parse `WIDTHxHEIGHT`.
+- Goal: keep the visual size picker, custom dimensions, and backend image-size contract aligned across every image
+  generation surface.
+
+### 2. Signatures
+
+- Shared component: `ImageSizePicker({ value, onChange, presets, disabled? })`.
+- Shared helpers live under `web/src/lib/imageSizes.ts`.
+- Page/API boundary values remain normalized `WIDTHxHEIGHT` strings, for example `1024x1024` or `3840x2160`.
+
+### 3. Contracts
+
+- Continuous image chat and workflow image-generation inspector must use the same shared picker instead of duplicating
+  separate button/input implementations.
+- Pages pass built-in preset options into the component; `ImageSizePicker` must not call the API.
+- Runtime config must not drive size preset buttons. A custom value may be valid even when it is not present in the
+  preset list.
+- The picker should preserve and round-trip unknown valid values by switching to custom width/height mode instead of
+  resetting to the first preset.
+- Preset labels should include the human tier/aspect and the exact pixel string so users know what will be submitted.
+
+### 4. Validation & Error Matrix
+
+- Invalid local text such as missing width/height -> keep the custom inputs visible and avoid emitting a malformed size.
+- Existing value not found in presets -> show it as custom dimensions when parseable.
+- Custom inputs with uppercase separators or oversized values -> normalize/calibrate in the shared helper before emitting.
+- Backend rejection still remains authoritative; frontend validation only improves UX.
+
+### 5. Good/Base/Bad Cases
+
+- Good: `3840x2160` from workflow node config opens the inspector with custom dimensions `3840` and `2160`, then submits
+  `3840x2160` unchanged.
+- Base: `1024x1024`, `2048x2048`, and `3840x3840` appear as preset buttons when present in the derived presets.
+- Bad: `ImageChatPage` accepts custom dimensions while `InspectorPanel` still exposes a raw text field.
+- Bad: a custom value is auto-reset because it is not one of the built-in preset buttons.
+
+### 6. Tests Required
+
+- Shared helper tests should cover default presets, custom labels, calibration, and invalid strings.
+- When picker state behavior changes, add or update component-level tests before relying on manual visual review.
+- `just web-build`, `pnpm --dir web lint`, and `pnpm --dir web test:run` remain required for frontend changes.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```tsx
+<input value={draft.size} onChange={(event) => onDraftChange({ ...draft, size: event.target.value })} />
+```
+
+This creates a second workflow-only size UI and bypasses the shared custom/preset behavior.
+
+#### Correct
+
+```tsx
+<ImageSizePicker
+  value={draft.size}
+  onChange={(size) => onDraftChange({ ...draft, size })}
+  presets={imageSizePresets}
+/>
+```
+
+Pages provide data and mutations; the shared picker owns only presentational size selection state.
+
+---
+
 ## TopNav Global Navigation Contract
 
 `web/src/components/TopNav.tsx` is the shared authenticated product navigation bar, not just a page title strip.

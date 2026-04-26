@@ -3,10 +3,13 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
+  ChevronLeft,
+  ChevronRight,
   CircleDot,
-  GitBranch,
   Image as ImageIcon,
   Loader2,
+  Maximize2,
+  Minimize2,
   Play,
   Plus,
   Settings2,
@@ -17,6 +20,7 @@ import { useNavigate, useParams } from "react-router-dom";
 
 import { TopNav } from "../components/TopNav";
 import { api, ApiError } from "../lib/api";
+import { DEFAULT_IMAGE_SIZE_OPTIONS } from "../lib/imageSizes";
 import type {
   ProductWorkflow,
   WorkflowNode,
@@ -74,6 +78,8 @@ export function ProductDetailPage() {
   const previousDraftNodeIdRef = useRef<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarTab>("details");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [topChromeCollapsed, setTopChromeCollapsed] = useState(false);
   const [draft, setDraft] = useState<NodeConfigDraft>(() =>
     draftFromNode(null),
   );
@@ -106,6 +112,7 @@ export function ProductDetailPage() {
     refetchInterval: (query) =>
       hasActiveWorkflow(query.state.data as ProductWorkflow | undefined) ? 1200 : false,
   });
+  const imageSizeOptions = DEFAULT_IMAGE_SIZE_OPTIONS;
 
   const workflow = workflowQuery.data ?? null;
   const workflowActive = hasActiveWorkflow(workflow);
@@ -242,11 +249,12 @@ export function ProductDetailPage() {
       const siblingCount = currentWorkflow.nodes.filter(
         (node) => node.node_type === type,
       ).length;
+      const nextPosition = workflowCanvas.getViewportCenterNodePosition();
       return api.createWorkflowNode(productId, {
         node_type: type,
         title: defaultTitleForType(type, siblingCount + 1),
-        position_x: 120 + (currentWorkflow.nodes.length % 4) * 260,
-        position_y: 120 + Math.floor(currentWorkflow.nodes.length / 4) * 170,
+        position_x: nextPosition.x,
+        position_y: nextPosition.y,
         config_json: defaultConfigForType(type),
       });
     },
@@ -666,49 +674,9 @@ export function ProductDetailPage() {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-white text-sm text-zinc-900">
-      <TopNav onHome={() => navigate("/products")} breadcrumbs={product.name} />
+      {!topChromeCollapsed ? <TopNav onHome={() => navigate("/products")} breadcrumbs={product.name} /> : null}
 
       <main className="flex min-h-0 flex-1 flex-col border-t border-zinc-200 bg-[#f7f7f8]">
-        <div className="z-20 flex h-12 shrink-0 items-center justify-between border-b border-zinc-200 bg-white/85 px-4 backdrop-blur">
-          <div className="flex min-w-0 items-center gap-3">
-            <GitBranch size={16} className="text-zinc-500" />
-            <div className="min-w-0">
-              <div className="truncate text-sm font-semibold">
-                {product.name}
-              </div>
-              <div className="text-[11px] text-zinc-500">
-                节点 · {workflow?.nodes.length ?? 0} · 缩放 {Math.round(zoom * 100)}%
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            {ADD_NODE_OPTIONS.map((option) => (
-              <button
-                key={option.type}
-                type="button"
-                onClick={() => createNodeMutation.mutate(option.type)}
-                disabled={structureBusy || !workflow}
-                className="inline-flex items-center rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-700 hover:border-zinc-300 hover:bg-zinc-50 disabled:opacity-50"
-              >
-                <Plus size={13} className="mr-1" /> {option.label}
-              </button>
-            ))}
-            <button
-              type="button"
-              onClick={() => void handleRunWorkflow(undefined)}
-              disabled={runBusy || !workflow}
-              className="inline-flex items-center rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
-            >
-              {runBusy ? (
-                <Loader2 size={13} className="mr-1 animate-spin" />
-              ) : (
-                <Play size={13} className="mr-1" />
-              )}
-              运行
-            </button>
-          </div>
-        </div>
-
         {error ? (
           <div className="z-20 border-b border-red-200 bg-red-50 px-4 py-2 text-xs text-red-700">
             <AlertCircle size={14} className="mr-2 inline" /> {error}
@@ -718,6 +686,50 @@ export function ProductDetailPage() {
         <div className="relative flex min-h-0 flex-1 overflow-hidden">
           <div className="absolute inset-0 bg-[radial-gradient(#d4d4d8_1px,transparent_1px)] [background-size:18px_18px]" />
           <section className="relative z-10 min-w-0 flex-1 overflow-hidden">
+            <div data-canvas-control className="pointer-events-none absolute left-4 top-4 z-30">
+              <div className="pointer-events-auto flex flex-col gap-2 rounded-xl border border-zinc-200 bg-white/90 p-2 shadow-sm backdrop-blur">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {ADD_NODE_OPTIONS.map((option) => (
+                    <button
+                      key={option.type}
+                      type="button"
+                      onClick={() => createNodeMutation.mutate(option.type)}
+                      disabled={structureBusy || !workflow}
+                      className="inline-flex items-center rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-medium text-zinc-700 transition-colors hover:border-zinc-300 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      title={`添加${option.label}节点`}
+                    >
+                      <Plus size={13} className="mr-1" />
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void handleRunWorkflow(undefined)}
+                  disabled={runBusy || !workflow}
+                  className="inline-flex items-center justify-center rounded-lg bg-zinc-900 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  title={runBusy ? "工作流运行中" : "运行整个工作流"}
+                >
+                  {runBusy ? (
+                    <Loader2 size={13} className="mr-1.5 animate-spin" />
+                  ) : (
+                    <Play size={13} className="mr-1.5" />
+                  )}
+                  {runBusy ? "运行中" : "运行工作流"}
+                </button>
+              </div>
+            </div>
+            <div data-canvas-control className="pointer-events-none absolute right-4 top-4 z-30">
+              <button
+                type="button"
+                onClick={() => setTopChromeCollapsed((collapsed) => !collapsed)}
+                className="pointer-events-auto inline-flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-200 bg-white/90 text-zinc-600 shadow-sm backdrop-blur transition-colors hover:bg-white hover:text-zinc-900"
+                aria-label={topChromeCollapsed ? "还原画布布局" : "最大化画布"}
+                title={topChromeCollapsed ? "还原画布布局" : "最大化画布"}
+              >
+                {topChromeCollapsed ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+              </button>
+            </div>
             <div
               ref={canvasScrollRef}
               className={`h-full overflow-auto p-6 ${panePan ? "cursor-grabbing" : "cursor-grab"}`}
@@ -868,7 +880,38 @@ export function ProductDetailPage() {
             </div>
           </section>
 
+          {sidebarCollapsed ? (
+            <>
+            <div data-canvas-control className="group/sidebar-expand absolute right-0 top-0 z-30 flex h-full w-8 items-center justify-center">
+              <button
+                type="button"
+                onClick={() => setSidebarCollapsed(false)}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200 bg-white/95 text-zinc-500 opacity-0 shadow-sm transition-opacity hover:text-zinc-900 focus:opacity-100 focus:outline-none group-hover/sidebar-expand:opacity-100"
+                aria-label="展开右侧栏"
+                title="展开右侧栏"
+              >
+                <ChevronLeft size={14} />
+              </button>
+            </div>
+            <div data-canvas-control className="absolute right-4 top-16 z-30 flex flex-col gap-2 rounded-xl border border-zinc-200 bg-white/90 p-2 shadow-sm backdrop-blur">
+              <SidebarTabButton active={false} label="详情" title="Details" icon={<Settings2 size={15} />} onClick={() => { setActiveSidebarTab("details"); setSidebarCollapsed(false); }} />
+              <SidebarTabButton active={false} label="运行" title="Runs" icon={<CircleDot size={15} />} onClick={() => { setActiveSidebarTab("runs"); setSidebarCollapsed(false); }} />
+              <SidebarTabButton active={false} label="图片" title="Images" icon={<ImageIcon size={15} />} onClick={() => { setActiveSidebarTab("images"); setSidebarCollapsed(false); }} />
+            </div>
+            </>
+          ) : (
           <div className="relative z-20 flex shrink-0 border-l border-zinc-200 bg-white/95 shadow-[-8px_0_24px_-20px_rgba(0,0,0,0.35)] backdrop-blur">
+            <div data-canvas-control className="group/sidebar-collapse absolute left-[-28px] top-0 z-30 flex h-full w-7 items-center justify-center">
+              <button
+                type="button"
+                onClick={() => setSidebarCollapsed(true)}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200 bg-white/95 text-zinc-500 opacity-0 shadow-sm transition-opacity hover:text-zinc-900 focus:opacity-100 focus:outline-none group-hover/sidebar-collapse:opacity-100"
+                aria-label="折叠右侧栏"
+                title="折叠右侧栏"
+              >
+                <ChevronRight size={14} />
+              </button>
+            </div>
             <div data-canvas-control className="flex w-14 shrink-0 flex-col items-center gap-2 border-r border-zinc-200 bg-zinc-50/80 px-1.5 py-3">
               <SidebarTabButton
                 active={activeSidebarTab === "details"}
@@ -902,13 +945,15 @@ export function ProductDetailPage() {
                 onPointerDown={startInspectorResize}
                 className="absolute left-[-4px] top-0 h-full w-2 cursor-col-resize hover:bg-zinc-300/50"
               />
-              <div className="flex h-12 shrink-0 items-center border-b border-zinc-200 px-4">
+              <div className="flex h-12 shrink-0 items-center justify-between border-b border-zinc-200 px-4">
+                <div className="flex items-center">
                 {activeSidebarTab === "details" ? <Settings2 size={14} className="mr-2 text-zinc-400" /> : null}
                 {activeSidebarTab === "runs" ? <CircleDot size={14} className="mr-2 text-zinc-400" /> : null}
                 {activeSidebarTab === "images" ? <ImageIcon size={14} className="mr-2 text-zinc-400" /> : null}
                 <span className="text-[11px] font-semibold uppercase tracking-widest text-zinc-500">
                   {activeSidebarTab === "details" ? "详情" : activeSidebarTab === "runs" ? "运行记录" : "图片"}
                 </span>
+                </div>
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto p-4">
                 {activeSidebarTab === "details" ? (
@@ -919,9 +964,8 @@ export function ProductDetailPage() {
                       workflow={workflow}
                       node={selectedNode}
                       draft={draft}
+                      imageSizeOptions={imageSizeOptions}
                       onDraftChange={handleDraftChange}
-                      onSave={() => void flushSelectedDraft()}
-                      onSaveCopy={() => void flushSelectedDraft()}
                       onRun={() => void handleRunWorkflow(selectedNode.id)}
                       saveStatus={saveStatus}
                       onUploadImage={(file) => uploadNodeImageMutation.mutate(file)}
@@ -961,6 +1005,7 @@ export function ProductDetailPage() {
               </div>
             </aside>
           </div>
+          )}
         </div>
       </main>
       {previewImage ? (

@@ -85,8 +85,8 @@ Prefer derived values over additional state:
 
 - `ProductDetailPage.tsx` derives source image URL, reference images, working copy, and poster variants from
   `ProductDetail`.
-- `ImageChatPage.tsx` derives allowed image sizes from config, selected round from the selected asset ID, and product
-  source/reference images from product detail.
+- `ImageChatPage.tsx` derives built-in image-size picker presets from `web/src/lib/imageSizes.ts`, selected round from
+  the selected asset ID, and product source/reference images from product detail.
 - `SettingsPage.tsx` derives grouped config items from the fetched config response.
 
 Use `useMemo` where the derivation is non-trivial or passed deeply; otherwise a local helper function is fine.

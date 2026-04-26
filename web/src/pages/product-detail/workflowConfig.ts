@@ -88,7 +88,7 @@ export function defaultConfigForType(type: WorkflowNodeType): Record<string, unk
   }
   if (type === "image_generation") {
     return {
-      instruction: "生成商品图",
+      instruction: "描述你想生成的图片",
       size: "1024x1024",
     };
   }

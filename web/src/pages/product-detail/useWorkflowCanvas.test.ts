@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildConnectionDragPath,
   getFinalNodeDragPosition,
+  getNodePositionForViewportCenter,
   getWheelZoom,
   normalizeWorkflowZoom,
 } from "./useWorkflowCanvas";
@@ -37,6 +38,11 @@ describe("workflow canvas pure helpers", () => {
       x: 24,
       y: 24,
     });
+  });
+
+  it("positions new nodes around the current viewport center", () => {
+    expect(getNodePositionForViewportCenter({ x: 640, y: 360 })).toEqual({ x: 516, y: 280 });
+    expect(getNodePositionForViewportCenter({ x: 60, y: 70 })).toEqual({ x: 24, y: 24 });
   });
 
   it("builds the temporary connection drag path with the wider midpoint rule", () => {

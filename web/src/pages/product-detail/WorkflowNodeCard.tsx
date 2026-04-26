@@ -151,31 +151,33 @@ export function WorkflowNodeCard({
       </div>
       <div className="mt-3 flex items-center justify-between text-[10px] text-zinc-400">
         <span>{node.last_run_at ? `最近 ${formatDateTime(node.last_run_at)}` : NODE_LABELS[node.node_type]}</span>
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            data-node-action
-            onClick={onDelete}
-            disabled={busy}
-            className="inline-flex items-center rounded border border-zinc-200 px-2 py-1 text-[11px] font-medium text-red-500 hover:border-red-300 hover:bg-red-50 disabled:opacity-50"
-          >
-            <Trash2 size={11} className="mr-1" /> 删除
-          </button>
-          <button
-            type="button"
-            data-node-action
-            onClick={onRun}
-            disabled={runBusy}
-            className="inline-flex items-center rounded border border-zinc-200 px-2 py-1 text-[11px] font-medium text-zinc-600 hover:border-zinc-900 hover:text-zinc-900 disabled:opacity-50"
-          >
-            {runBusy ? (
-              <Loader2 size={11} className="mr-1 animate-spin" />
-            ) : (
-              <Play size={11} className="mr-1" />
-            )}
-            运行
-          </button>
-        </div>
+        {node.node_type !== "product_context" ? (
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              data-node-action
+              onClick={onDelete}
+              disabled={busy}
+              className="inline-flex items-center rounded border border-zinc-200 px-2 py-1 text-[11px] font-medium text-red-500 hover:border-red-300 hover:bg-red-50 disabled:opacity-50"
+            >
+              <Trash2 size={11} className="mr-1" /> 删除
+            </button>
+            <button
+              type="button"
+              data-node-action
+              onClick={onRun}
+              disabled={runBusy}
+              className="inline-flex items-center rounded border border-zinc-200 px-2 py-1 text-[11px] font-medium text-zinc-600 hover:border-zinc-900 hover:text-zinc-900 disabled:opacity-50"
+            >
+              {runBusy ? (
+                <Loader2 size={11} className="mr-1 animate-spin" />
+              ) : (
+                <Play size={11} className="mr-1" />
+              )}
+              运行
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );
