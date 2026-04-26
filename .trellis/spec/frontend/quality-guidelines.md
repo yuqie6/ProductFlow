@@ -21,10 +21,85 @@ Common commands:
 just web-install
 just web-dev
 just web-build
+pnpm --dir web lint
+pnpm --dir web test:run
 ```
 
-`just web-build` runs `pnpm --dir web build`, which type-checks app and Vite config before building. There is no frontend
-ESLint or test runner configured today, so TypeScript build is the required frontend quality gate.
+`just web-build` runs `pnpm --dir web build`, which type-checks app and Vite/Vitest config before building. Frontend
+changes should also run the executable quality gate added under `web/package.json`:
+
+- `pnpm --dir web lint` runs ESLint flat config from `web/eslint.config.js` over the Vite/React/TypeScript workspace.
+  The baseline intentionally keeps formatting churn low: React hooks rules are enabled, while exhaustive dependency
+  cleanup is not part of the first gate.
+- `pnpm --dir web test:run` runs deterministic Vitest unit tests from `web/vitest.config.ts`.
+- `pnpm --dir web test` is reserved for local Vitest watch mode.
+
+Prefer pure helper tests for page-local logic before large UI refactors. For ProductDetail workbench changes, add or
+extend tests under `web/src/pages/product-detail/*.test.ts` when touching gallery, download, workflow status, or other
+importable helper behavior. Do not split `ProductDetailPage.tsx` solely to satisfy tests; extract only small pure helpers
+when that keeps runtime behavior unchanged.
+
+## Scenario: Frontend executable quality gate
+
+### 1. Scope / Trigger
+
+- Trigger: any frontend code change under `web/src/`, frontend config change under `web/`, or ProductDetail helper
+  extraction intended to support refactoring.
+- Goal: keep the gate small and deterministic before larger ProductDetail UI splitting.
+
+### 2. Signatures
+
+- `pnpm --dir web lint`
+- `pnpm --dir web test:run`
+- `pnpm --dir web test` for local watch mode only.
+- `just web-build` remains the build/type-check gate and delegates to `pnpm --dir web build`.
+
+### 3. Contracts
+
+- ESLint config lives at `web/eslint.config.js`.
+- Vitest config lives at `web/vitest.config.ts`.
+- Unit tests use `*.test.ts` under `web/src/`; keep them close to the pure helper they cover.
+- `web/tsconfig.node.json` includes frontend tool config files that should be type-checked by `web build`.
+
+### 4. Validation & Error Matrix
+
+- Lint error -> fix code or narrow the rule in `web/eslint.config.js`; do not add inline suppressions unless the
+  exception is intentional and documented near the code.
+- Test failure -> fix the helper or update the assertion when the intended behavior changed.
+- Type/build failure -> fix TypeScript/runtime import boundaries before reporting frontend work complete.
+- Large pre-existing React hook dependency cleanup -> do not mix into unrelated work; keep the initial gate low-noise and
+  schedule stricter rules separately.
+
+### 5. Good/Base/Bad Cases
+
+- Good: add or update a ProductDetail gallery/download/status helper and cover it with a colocated `*.test.ts`.
+- Base: run `pnpm --dir web lint`, `pnpm --dir web test:run`, and `just web-build` before handing off frontend changes.
+- Bad: split `ProductDetailPage.tsx` UI only to make tests importable.
+- Bad: enable broad formatting or hook-dependency rules that require whole-frontend rewrites in an unrelated task.
+
+### 6. Tests Required
+
+- New pure helper -> add Vitest unit coverage for normal and edge cases.
+- ProductDetail helper changes -> prefer colocated tests under `web/src/pages/product-detail/`.
+- DTO/API behavior changes still require `just web-build`; frontend unit tests do not replace backend contract tests.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```bash
+pnpm --dir web test
+```
+
+Using watch mode as the handoff gate can hang automation.
+
+#### Correct
+
+```bash
+pnpm --dir web test:run
+```
+
+Use the deterministic run mode for CI-style verification and keep `test` for local watch mode.
 
 ---
 
@@ -55,7 +130,8 @@ the only public page.
 ### Preserve build-time type safety
 
 Any API contract change should update `web/src/lib/types.ts`, page usage, and backend schemas/tests together. Run
-`just web-build` before finishing frontend work.
+`just web-build` before finishing frontend work. When frontend code changes, also run `pnpm --dir web lint` and
+`pnpm --dir web test:run`.
 
 ### Keep UI feedback explicit
 
@@ -112,6 +188,8 @@ Use `just web-dev` so `.env.dev` and proxy behavior match backend dev commands.
 Before accepting frontend changes, check:
 
 - Does `just web-build` pass?
+- Does `pnpm --dir web lint` pass?
+- Does `pnpm --dir web test:run` pass?
 - Are API methods and DTO types centralized in `web/src/lib/`?
 - Are query keys and invalidations complete for every mutation?
 - Are backend enum/DTO changes mirrored in `web/src/lib/types.ts`?

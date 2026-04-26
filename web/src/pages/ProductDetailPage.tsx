@@ -72,7 +72,6 @@ import type {
 import {
   clamp,
   hasActiveWorkflow,
-  outputStringArray,
   outputText,
   readStoredNumber,
   statusClass,

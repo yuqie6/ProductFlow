@@ -24,7 +24,7 @@ Key files:
 
 ```text
 web/
-├── package.json                     # scripts: dev, build, preview
+├── package.json                     # scripts: dev, build, lint, test, test:run, preview
 ├── tsconfig.json
 ├── tsconfig.app.json                # strict TypeScript for src/
 ├── tsconfig.node.json               # Vite config typing
