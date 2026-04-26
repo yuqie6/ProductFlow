@@ -27,6 +27,8 @@ export type PanePanState = {
   startScrollTop: number;
 };
 
+export type SaveStatus = "idle" | "saving" | "saved" | "failed";
+
 export type NodeConfigDraft = {
   title: string;
   productName: string;

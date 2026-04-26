@@ -3,39 +3,30 @@ import type { PointerEvent as ReactPointerEvent, ReactNode, WheelEvent as ReactW
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
-  CheckCircle2,
   CircleDot,
-  Clock3,
   FileText,
   GitBranch,
   Image as ImageIcon,
   ImagePlus,
-  Layers3,
   Loader2,
   Play,
   Plus,
-  Save,
   Settings2,
   Trash2,
   ZoomIn,
   ZoomOut,
-  Upload,
-  X,
-  XCircle,
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 
-import { ImageDropZone } from "../components/ImageDropZone";
 import { TopNav } from "../components/TopNav";
 import { api, ApiError } from "../lib/api";
-import { formatDateTime, formatPrice } from "../lib/format";
+import { formatDateTime } from "../lib/format";
 import type {
   PosterVariant,
   ProductDetail,
   ProductWorkflow,
   SourceAsset,
   WorkflowNode,
-  WorkflowRunStatus,
   WorkflowNodeType,
 } from "../lib/types";
 import {
@@ -45,6 +36,7 @@ import {
   CANVAS_NODE_PADDING_X,
   CANVAS_NODE_PADDING_Y,
   CANVAS_VIEWPORT_PADDING,
+  IMAGE_PREVIEW_SURFACE_CLASS_NAME,
   MAX_INSPECTOR_WIDTH,
   MAX_ZOOM,
   MIN_INSPECTOR_WIDTH,
@@ -57,6 +49,9 @@ import {
   NODE_WIDTH,
 } from "./product-detail/constants";
 import { DownloadLink, PosterThumb, SourceAssetThumb } from "./product-detail/ImageDownloadComponents";
+import { ImagePreviewModal } from "./product-detail/ImagePreviewModal";
+import { InspectorPanel } from "./product-detail/InspectorPanel";
+import { RunsPanel } from "./product-detail/RunsPanel";
 import {
   buildPosterSourceAssetMap,
   getVisibleReferenceAssets,
@@ -67,6 +62,7 @@ import type {
   ConnectionDragState,
   NodeConfigDraft,
   NodeDragState,
+  SaveStatus,
   PanePanState,
 } from "./product-detail/types";
 import {
@@ -84,43 +80,7 @@ import {
 } from "./product-detail/workflowConfig";
 import type { DownloadableImage } from "../lib/image-downloads";
 
-type SaveStatus = "idle" | "saving" | "saved" | "failed";
 type SidebarTab = "details" | "runs" | "images";
-
-const RUN_STATUS_LABELS: Record<WorkflowRunStatus, string> = {
-  running: "运行中",
-  succeeded: "成功",
-  failed: "失败",
-};
-
-const RUN_STATUS_CLASS_NAMES: Record<WorkflowRunStatus, string> = {
-  running: "border-blue-200 bg-blue-50 text-blue-700",
-  succeeded: "border-emerald-200 bg-emerald-50 text-emerald-700",
-  failed: "border-red-200 bg-red-50 text-red-700",
-};
-
-const RUN_STATUS_DOT_CLASS_NAMES: Record<WorkflowRunStatus, string> = {
-  running: "bg-blue-500 shadow-blue-500/30",
-  succeeded: "bg-emerald-500 shadow-emerald-500/30",
-  failed: "bg-red-500 shadow-red-500/30",
-};
-
-const SAVE_STATUS_LABELS: Record<SaveStatus, string> = {
-  idle: "自动保存",
-  saving: "保存中",
-  saved: "已保存",
-  failed: "保存失败",
-};
-
-const SAVE_STATUS_CLASS_NAMES: Record<SaveStatus, string> = {
-  idle: "border-zinc-200 bg-zinc-50 text-zinc-500",
-  saving: "border-blue-200 bg-blue-50 text-blue-700",
-  saved: "border-emerald-200 bg-emerald-50 text-emerald-700",
-  failed: "border-red-200 bg-red-50 text-red-700",
-};
-
-const IMAGE_PREVIEW_SURFACE_CLASS_NAME =
-  "bg-[linear-gradient(135deg,#fafafa_25%,#f4f4f5_25%,#f4f4f5_50%,#fafafa_50%,#fafafa_75%,#f4f4f5_75%,#f4f4f5_100%)] bg-[length:16px_16px]";
 
 const CANVAS_WHEEL_ZOOM_SENSITIVITY = 0.001;
 const CANVAS_ZOOM_PRECISION = 10_000;
@@ -1545,120 +1505,6 @@ function SidebarTabButton({
   );
 }
 
-function RunsPanel({
-  workflow,
-  latestRun,
-}: {
-  workflow: ProductWorkflow | null;
-  latestRun: ProductWorkflow["runs"][number] | null;
-}) {
-  return (
-    <section>
-      <div className="mb-3 flex items-center justify-between">
-        <div className="text-xs text-zinc-500">
-          {workflow?.runs.length ? `共 ${workflow.runs.length} 次运行` : "暂无运行历史"}
-        </div>
-        {latestRun ? (
-          <div className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-[11px] text-zinc-500">
-            最近 {formatDateTime(latestRun.started_at)}
-          </div>
-        ) : null}
-      </div>
-      {workflow?.runs.length ? (
-        <div className="space-y-2">
-          {workflow.runs.map((run) => (
-            <div
-              key={run.id}
-              className="rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-xs shadow-sm"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex min-w-0 items-start gap-3">
-                  <span
-                    className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full shadow-md ${RUN_STATUS_DOT_CLASS_NAMES[run.status]}`}
-                  />
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span
-                        className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${RUN_STATUS_CLASS_NAMES[run.status]}`}
-                      >
-                        {RUN_STATUS_LABELS[run.status]}
-                      </span>
-                      <span className="inline-flex items-center text-[11px] text-zinc-500">
-                        <Layers3 size={12} className="mr-1 text-zinc-400" />
-                        节点记录 {run.node_runs.length}
-                      </span>
-                    </div>
-                    {run.failure_reason ? (
-                      <div className="mt-2 line-clamp-2 rounded-lg border border-red-100 bg-red-50 px-2.5 py-1.5 text-red-700">
-                        {run.failure_reason}
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-                <div className="shrink-0 text-right text-[10px] leading-relaxed text-zinc-400">
-                  <div>{formatDateTime(run.started_at)}</div>
-                  {run.finished_at ? <div>完成 {formatDateTime(run.finished_at)}</div> : null}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="flex min-h-[160px] items-center justify-center rounded-xl border border-dashed border-zinc-200 bg-zinc-50/60 px-4 py-6 text-center text-xs text-zinc-500">
-          暂无运行记录
-        </div>
-      )}
-    </section>
-  );
-}
-
-function ImagePreviewModal({
-  image,
-  onClose,
-}: {
-  image: DownloadableImage;
-  onClose: () => void;
-}) {
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/70 p-6"
-      role="dialog"
-      aria-modal="true"
-      aria-label={image.alt}
-      onClick={onClose}
-    >
-      <div
-        className="flex max-h-full w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="flex items-center justify-between gap-3 border-b border-zinc-200 px-4 py-3">
-          <div className="min-w-0 truncate text-sm font-medium text-zinc-800">
-            {image.alt}
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <DownloadLink image={image} />
-            <button
-              type="button"
-              onClick={onClose}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-zinc-200 text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800"
-              aria-label="关闭预览"
-            >
-              <X size={16} />
-            </button>
-          </div>
-        </div>
-        <div className={`flex min-h-0 flex-1 items-center justify-center p-4 ${IMAGE_PREVIEW_SURFACE_CLASS_NAME}`}>
-          <img
-            src={image.previewUrl}
-            alt={image.alt}
-            className="max-h-[calc(100vh-11rem)] max-w-full object-contain"
-          />
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function ImagesPanel({
   product,
   posters,
@@ -1902,528 +1748,5 @@ function WorkflowNodeCard({
         </div>
       </div>
     </div>
-  );
-}
-
-function InspectorPanel({
-  product,
-  sourceImage,
-  workflow,
-  node,
-  draft,
-  onDraftChange,
-  onSave,
-  onSaveCopy,
-  onRun,
-  onUploadImage,
-  onDelete,
-  busy,
-  runBusy,
-  saveStatus,
-}: {
-  product: ProductDetail;
-  sourceImage: DownloadableImage | null;
-  workflow: ProductWorkflow | null;
-  node: WorkflowNode;
-  draft: NodeConfigDraft;
-  onDraftChange: (draft: NodeConfigDraft) => void;
-  onSave: () => void;
-  onSaveCopy: () => void;
-  onRun: () => void;
-  onUploadImage: (file: File) => void;
-  onDelete: () => void;
-  busy: boolean;
-  runBusy: boolean;
-  saveStatus: SaveStatus;
-}) {
-  const icon = {
-    product_context: FileText,
-    reference_image: ImagePlus,
-    copy_generation: FileText,
-    image_generation: ImageIcon,
-  }[node.node_type];
-  const InspectorIcon = icon;
-  const downstreamReferenceCount =
-    node.node_type === "image_generation"
-      ? new Set(
-          workflow?.edges
-            .filter((edge) => {
-              if (edge.source_node_id !== node.id) {
-                return false;
-              }
-              const target = workflow.nodes.find(
-                (item) => item.id === edge.target_node_id,
-              );
-              return target?.node_type === "reference_image";
-            })
-            .map((edge) => edge.target_node_id) ?? [],
-        ).size
-      : 0;
-  const hasReferenceImage = Boolean(
-    node.node_type === "reference_image" &&
-      Array.isArray(node.output_json?.source_asset_ids) &&
-      node.output_json.source_asset_ids.length,
-  );
-
-  return (
-    <div className="space-y-3">
-      <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
-        <div className="flex items-start gap-3">
-          <span className="rounded-xl border border-zinc-200 bg-zinc-50 p-2 text-zinc-500">
-            <InspectorIcon size={16} />
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-base font-semibold text-zinc-950">
-              {draft.title || node.title}
-            </div>
-            <div className="mt-1 flex flex-wrap items-center gap-1.5">
-              <span className="rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[10px] font-medium text-zinc-600">
-                {NODE_LABELS[node.node_type]}
-              </span>
-              <span
-                className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${statusClass(node.status)}`}
-              >
-                {node.status === "running" || node.status === "queued" ? (
-                  <Loader2 size={11} className="mr-1 animate-spin" />
-                ) : node.status === "failed" ? (
-                  <XCircle size={11} className="mr-1" />
-                ) : node.status === "succeeded" ? (
-                  <CheckCircle2 size={11} className="mr-1" />
-                ) : (
-                  <Clock3 size={11} className="mr-1" />
-                )}
-                {NODE_STATUS_LABELS[node.status]}
-              </span>
-              <span
-                className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${SAVE_STATUS_CLASS_NAMES[saveStatus]}`}
-              >
-                {saveStatus === "saving" ? (
-                  <Loader2 size={11} className="mr-1 animate-spin" />
-                ) : saveStatus === "saved" ? (
-                  <CheckCircle2 size={11} className="mr-1" />
-                ) : saveStatus === "failed" ? (
-                  <XCircle size={11} className="mr-1" />
-                ) : null}
-                {SAVE_STATUS_LABELS[saveStatus]}
-              </span>
-            </div>
-            {node.last_run_at ? (
-              <div className="mt-2 text-[11px] text-zinc-400">
-                最近 {formatDateTime(node.last_run_at)}
-              </div>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="mt-4 grid grid-cols-3 gap-2">
-          <button
-            type="button"
-            onClick={onSave}
-            disabled={busy}
-            className="inline-flex items-center justify-center rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
-          >
-            <Save size={13} className="mr-1.5" /> 保存
-          </button>
-          <button
-            type="button"
-            onClick={onRun}
-            disabled={runBusy}
-            className="inline-flex items-center justify-center rounded-lg bg-zinc-900 px-3 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
-          >
-            {runBusy ? (
-              <Loader2 size={13} className="mr-1.5 animate-spin" />
-            ) : (
-              <Play size={13} className="mr-1.5" />
-            )}
-            运行
-          </button>
-          <button
-            type="button"
-            onClick={onDelete}
-            disabled={busy}
-            className="inline-flex items-center justify-center rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
-          >
-            <Trash2 size={13} className="mr-1.5" /> 删除
-          </button>
-        </div>
-      </section>
-
-      <section className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
-        <div className="mb-3 text-[10px] font-semibold uppercase tracking-widest text-zinc-500">
-          配置
-        </div>
-        <label className="mb-3 block">
-          <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
-            节点名称
-          </span>
-          <input
-            value={draft.title}
-            onChange={(event) =>
-              onDraftChange({ ...draft, title: event.target.value })
-            }
-            className="w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900"
-          />
-        </label>
-
-        {node.node_type === "product_context" ? (
-          <ProductContextInspector
-            product={product}
-            sourceImage={sourceImage}
-            draft={draft}
-            onDraftChange={onDraftChange}
-          />
-        ) : null}
-        {node.node_type === "reference_image" ? (
-          <ReferenceImageInspector
-            draft={draft}
-            onDraftChange={onDraftChange}
-            onUploadImage={onUploadImage}
-            busy={busy}
-            hasImage={hasReferenceImage}
-          />
-        ) : null}
-        {node.node_type === "copy_generation" ? (
-          <CopyNodeInspector
-            node={node}
-            draft={draft}
-            onDraftChange={onDraftChange}
-            onSaveCopy={onSaveCopy}
-            busy={busy}
-          />
-        ) : null}
-        {node.node_type === "image_generation" ? (
-          <ImageGenerationInspector
-            draft={draft}
-            onDraftChange={onDraftChange}
-            downstreamReferenceCount={downstreamReferenceCount}
-          />
-        ) : null}
-      </section>
-      {node.failure_reason ? (
-        <section className="rounded-2xl border border-red-200 bg-red-50 p-4 text-xs leading-relaxed text-red-700 shadow-sm">
-          <AlertCircle size={13} className="mr-1.5 inline" />
-          {node.failure_reason}
-        </section>
-      ) : null}
-    </div>
-  );
-}
-
-function ProductContextInspector({
-  product,
-  sourceImage,
-  draft,
-  onDraftChange,
-}: {
-  product: ProductDetail;
-  sourceImage: DownloadableImage | null;
-  draft: NodeConfigDraft;
-  onDraftChange: (draft: NodeConfigDraft) => void;
-}) {
-  return (
-    <div className="space-y-3">
-      <div
-        className={`relative flex h-40 items-center justify-center overflow-hidden rounded-xl border border-zinc-200 p-2 ${IMAGE_PREVIEW_SURFACE_CLASS_NAME}`}
-      >
-        {sourceImage ? (
-          <>
-            <img
-              src={sourceImage.previewUrl}
-              alt={sourceImage.alt}
-              className="h-full w-full object-contain"
-            />
-            <DownloadLink image={sourceImage} variant="overlay" />
-          </>
-        ) : (
-          <div className="text-xs text-zinc-400">暂无商品源图</div>
-        )}
-      </div>
-      <label className="block">
-        <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
-          商品名称
-        </span>
-        <input
-          value={draft.productName}
-          onChange={(event) =>
-            onDraftChange({ ...draft, productName: event.target.value })
-          }
-          className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900"
-        />
-      </label>
-      <div className="grid grid-cols-2 gap-2">
-        <label className="block">
-          <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
-            类目
-          </span>
-          <input
-            value={draft.category}
-            onChange={(event) =>
-              onDraftChange({ ...draft, category: event.target.value })
-            }
-            className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900"
-          />
-        </label>
-        <label className="block">
-          <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
-            价格
-          </span>
-          <input
-            value={draft.price}
-            onChange={(event) =>
-              onDraftChange({ ...draft, price: event.target.value })
-            }
-            className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900"
-          />
-        </label>
-      </div>
-      <TextArea
-        label="商品描述"
-        value={draft.sourceNote}
-        onChange={(value) => onDraftChange({ ...draft, sourceNote: value })}
-      />
-      <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-500">
-        原始商品：{product.name}
-        {product.category ? ` · ${product.category}` : ""}
-        {product.price ? ` · ${formatPrice(product.price)}` : ""}
-      </div>
-    </div>
-  );
-}
-
-function ReferenceImageInspector({
-  draft,
-  onDraftChange,
-  onUploadImage,
-  busy,
-  hasImage,
-}: {
-  draft: NodeConfigDraft;
-  onDraftChange: (draft: NodeConfigDraft) => void;
-  onUploadImage: (file: File) => void;
-  busy: boolean;
-  hasImage: boolean;
-}) {
-  return (
-    <div className="space-y-3">
-      <label className="block">
-        <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
-          标签
-        </span>
-        <input
-          value={draft.label}
-          onChange={(event) =>
-            onDraftChange({ ...draft, label: event.target.value })
-          }
-          className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900"
-        />
-      </label>
-      <label className="block">
-        <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
-          角色
-        </span>
-        <select
-          value={draft.role}
-          onChange={(event) =>
-            onDraftChange({ ...draft, role: event.target.value })
-          }
-          className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900"
-        >
-          <option value="reference">参考图</option>
-          <option value="style">风格图</option>
-          <option value="product_angle">商品角度</option>
-        </select>
-      </label>
-      <ImageDropZone
-        ariaLabel={hasImage ? "替换参考图" : "上传参考图"}
-        disabled={busy}
-        className="flex cursor-pointer items-center justify-center rounded-md border border-dashed border-zinc-300 px-3 py-6 text-xs font-medium text-zinc-600 transition-colors hover:bg-zinc-50"
-        onFiles={(files) => {
-          const file = files[0];
-          if (file) {
-            onUploadImage(file);
-          }
-        }}
-      >
-        {({ isDragging }) => (
-          <>
-            <Upload size={14} className="mr-2" />
-            {isDragging ? "松开以上传图片" : hasImage ? "拖拽或点击替换图片" : "拖拽或点击上传图片"}
-          </>
-        )}
-      </ImageDropZone>
-    </div>
-  );
-}
-
-function CopyNodeInspector({
-  node,
-  draft,
-  onDraftChange,
-  onSaveCopy,
-  busy,
-}: {
-  node: WorkflowNode;
-  draft: NodeConfigDraft;
-  onDraftChange: (draft: NodeConfigDraft) => void;
-  onSaveCopy: () => void;
-  busy: boolean;
-}) {
-  const hasCopy = Boolean(
-    node.output_json && outputText(node.output_json, "copy_set_id"),
-  );
-  return (
-    <div className="space-y-3">
-      <TextArea
-        label="文案指令"
-        value={draft.instruction}
-        onChange={(value) => onDraftChange({ ...draft, instruction: value })}
-      />
-      <label className="block">
-        <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
-          语气
-        </span>
-        <input
-          value={draft.tone}
-          onChange={(event) =>
-            onDraftChange({ ...draft, tone: event.target.value })
-          }
-          className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900"
-        />
-      </label>
-      <label className="block">
-        <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
-          渠道
-        </span>
-        <input
-          value={draft.channel}
-          onChange={(event) =>
-            onDraftChange({ ...draft, channel: event.target.value })
-          }
-          className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900"
-        />
-      </label>
-      {hasCopy ? (
-        <div className="space-y-3 rounded-md border border-zinc-200 bg-zinc-50 p-3">
-          <div className="text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
-            编辑文案
-          </div>
-          <label className="block">
-            <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
-              标题
-            </span>
-            <input
-              value={draft.copyTitle}
-              onChange={(event) =>
-                onDraftChange({ ...draft, copyTitle: event.target.value })
-              }
-              className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900"
-            />
-          </label>
-          <TextArea
-            label="卖点"
-            value={draft.copySellingPoints}
-            onChange={(value) =>
-              onDraftChange({ ...draft, copySellingPoints: value })
-            }
-          />
-          <label className="block">
-            <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
-              海报标题
-            </span>
-            <input
-              value={draft.copyPosterHeadline}
-              onChange={(event) =>
-                onDraftChange({
-                  ...draft,
-                  copyPosterHeadline: event.target.value,
-                })
-              }
-              className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900"
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
-              CTA
-            </span>
-            <input
-              value={draft.copyCta}
-              onChange={(event) =>
-                onDraftChange({ ...draft, copyCta: event.target.value })
-              }
-              className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900"
-            />
-          </label>
-          <button
-            type="button"
-            onClick={onSaveCopy}
-            disabled={busy}
-            className="inline-flex w-full items-center justify-center rounded-md bg-zinc-900 px-3 py-2 text-xs font-medium text-white hover:bg-zinc-800 disabled:opacity-50"
-          >
-            <Save size={13} className="mr-1.5" /> 保存文案
-          </button>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function ImageGenerationInspector({
-  draft,
-  onDraftChange,
-  downstreamReferenceCount,
-}: {
-  draft: NodeConfigDraft;
-  onDraftChange: (draft: NodeConfigDraft) => void;
-  downstreamReferenceCount: number;
-}) {
-  return (
-    <div className="space-y-3">
-      {downstreamReferenceCount === 0 ? (
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
-          请先连接一个参考图节点，生成结果会写入该节点。
-        </div>
-      ) : null}
-      <TextArea
-        label="生图"
-        value={draft.instruction}
-        onChange={(value) => onDraftChange({ ...draft, instruction: value })}
-      />
-      <label className="block">
-        <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
-          尺寸
-        </span>
-        <input
-          value={draft.size}
-          onChange={(event) =>
-            onDraftChange({ ...draft, size: event.target.value })
-          }
-          className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900"
-        />
-      </label>
-    </div>
-  );
-}
-
-function TextArea({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label className="block">
-      <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
-        {label}
-      </span>
-      <textarea
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        rows={5}
-        className="w-full resize-none rounded-md border border-zinc-200 px-3 py-2 text-xs leading-relaxed outline-none focus:border-zinc-900 focus:ring-1 focus:ring-zinc-900"
-      />
-    </label>
   );
 }
