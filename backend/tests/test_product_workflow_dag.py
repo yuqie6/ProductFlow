@@ -13,14 +13,20 @@ from helpers import (
 )
 
 from productflow_backend.application.contracts import (
+    CopyPayload,
+    CreativeBriefPayload,
     PosterGenerationInput,
+    ProductInput,
 )
 from productflow_backend.domain.enums import (
+    CopyStatus,
     PosterKind,
     WorkflowNodeType,
 )
 from productflow_backend.infrastructure.db.models import (
     AppSetting,
+    CopySet,
+    Product,
     ProductWorkflow,
     WorkflowNode,
 )
@@ -318,6 +324,50 @@ def test_product_workflow_dag_runs_and_persists_artifacts(configured_env: Path) 
     finally:
         session.close()
 
+
+def test_image_generation_node_normalizes_custom_size_and_rejects_unsafe_dimensions(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post(
+        "/api/products",
+        data={"name": "自定义尺寸商品"},
+        files={"image": ("product.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+
+    workflow_response = client.get(f"/api/products/{product_id}/workflow")
+    assert workflow_response.status_code == 200
+    image_node = next(node for node in workflow_response.json()["nodes"] if node["node_type"] == "image_generation")
+
+    updated = client.patch(
+        f"/api/workflow-nodes/{image_node['id']}",
+        json={"config_json": {"instruction": "生成宽屏商品场景", "size": "3840X2160"}},
+    )
+    assert updated.status_code == 200
+    updated_image_node = next(node for node in updated.json()["nodes"] if node["id"] == image_node["id"])
+    assert updated_image_node["config_json"]["size"] == "3840x2160"
+
+    invalid_zero = client.patch(
+        f"/api/workflow-nodes/{image_node['id']}",
+        json={"config_json": {"instruction": "非法尺寸", "size": "0x2160"}},
+    )
+    assert invalid_zero.status_code == 400
+    assert "宽高必须大于 0" in invalid_zero.json()["detail"]
+
+    oversized = client.patch(
+        f"/api/workflow-nodes/{image_node['id']}",
+        json={"config_json": {"instruction": "过大尺寸", "size": "5000x5000"}},
+    )
+    assert oversized.status_code == 200
+    oversized_image_node = next(node for node in oversized.json()["nodes"] if node["id"] == image_node["id"])
+    assert oversized_image_node["config_json"]["size"] == "3840x3840"
+
+
 def test_product_workflow_singleton_context_and_direct_image_run(configured_env: Path) -> None:
     from productflow_backend.presentation.api import create_app
 
@@ -541,6 +591,11 @@ def test_product_context_source_image_reaches_image_generation_context(
         edge["source_node_id"] == context_node["id"] and edge["target_node_id"] == image_node["id"]
         for edge in workflow["edges"]
     )
+    patched_image = client.patch(
+        f"/api/workflow-nodes/{image_node['id']}",
+        json={"config_json": {"instruction": "生成宽屏商品场景", "size": "3840x2160"}},
+    )
+    assert patched_image.status_code == 200
 
     selected_run = client.post(
         f"/api/products/{product_id}/workflow/run",
@@ -559,6 +614,7 @@ def test_product_context_source_image_reaches_image_generation_context(
     assert len(captured_inputs) == 1
     provider_input = captured_inputs[0]
     assert provider_input.copy_prompt_mode == "copy"
+    assert provider_input.image_size == "3840x2160"
     assert len(provider_input.reference_images) == 1
     assert provider_input.reference_images[0].path == provider_input.source_image
 
@@ -753,3 +809,245 @@ def test_single_reference_run_reruns_upstream_when_target_slot_missing_artifact(
     product_after = client.get(f"/api/products/{product_id}")
     assert product_after.status_code == 200
     assert len(product_after.json()["copy_sets"]) == copy_count_before
+
+def test_image_generation_runs_without_product_context_edge(
+    configured_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.infrastructure.image.base import GeneratedImagePayload
+    from productflow_backend.presentation.api import create_app
+
+    session = get_session_factory()()
+    try:
+        session.add(AppSetting(key="poster_generation_mode", value="generated"))
+        session.commit()
+    finally:
+        session.close()
+
+    captured_inputs: list[PosterGenerationInput] = []
+
+    class CapturingImageProvider:
+        provider_name = "capturing"
+        prompt_version = "capturing-v1"
+
+        def generate_poster_image(
+            self,
+            poster: PosterGenerationInput,
+            kind: PosterKind,
+        ) -> tuple[GeneratedImagePayload, str]:
+            captured_inputs.append(poster)
+            return (
+                GeneratedImagePayload(
+                    kind=kind,
+                    bytes_data=_make_demo_image_bytes(),
+                    mime_type="image/png",
+                    width=800,
+                    height=800,
+                    variant_label="capturing-blank",
+                ),
+                "capturing-v1",
+            )
+
+    monkeypatch.setattr(
+        "productflow_backend.application.product_workflows.get_image_provider",
+        CapturingImageProvider,
+    )
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post(
+        "/api/products",
+        data={"name": "不会隐式注入的商品"},
+        files={"image": ("source.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+    session = get_session_factory()()
+    try:
+        product = session.get(Product, product_id)
+        assert product is not None
+        confirmed_copy = CopySet(
+            product_id=product_id,
+            status=CopyStatus.CONFIRMED,
+            title="不应被空白生图继承的标题",
+            selling_points=["不应继承的卖点一", "不应继承的卖点二", "不应继承的卖点三"],
+            poster_headline="不应被空白生图继承的海报标题",
+            cta="不应继承的 CTA",
+            model_title="不应被空白生图继承的标题",
+            model_selling_points=["不应继承的卖点一", "不应继承的卖点二", "不应继承的卖点三"],
+            model_poster_headline="不应被空白生图继承的海报标题",
+            model_cta="不应继承的 CTA",
+            provider_name="test",
+            model_name="test",
+            prompt_version="test-v1",
+        )
+        session.add(confirmed_copy)
+        session.flush()
+        product.current_confirmed_copy_set_id = confirmed_copy.id
+        session.commit()
+    finally:
+        session.close()
+
+    workflow_response = client.get(f"/api/products/{product_id}/workflow")
+    assert workflow_response.status_code == 200
+
+    blank_image = client.post(
+        f"/api/products/{product_id}/workflow/nodes",
+        json={
+            "node_type": "image_generation",
+            "title": "空白生图",
+            "position_x": 620,
+            "position_y": 420,
+            "config_json": {"instruction": "自由生成一张抽象蓝色渐变图", "size": "1280x720"},
+        },
+    )
+    assert blank_image.status_code == 201
+    image_node = next(node for node in blank_image.json()["nodes"] if node["title"] == "空白生图")
+
+    blank_target = client.post(
+        f"/api/products/{product_id}/workflow/nodes",
+        json={
+            "node_type": "reference_image",
+            "title": "空白结果",
+            "position_x": 920,
+            "position_y": 420,
+            "config_json": {"role": "reference", "label": "空白生成结果"},
+        },
+    )
+    assert blank_target.status_code == 201
+    target_node = next(node for node in blank_target.json()["nodes"] if node["title"] == "空白结果")
+
+    target_edge = client.post(
+        f"/api/products/{product_id}/workflow/edges",
+        json={
+            "source_node_id": image_node["id"],
+            "target_node_id": target_node["id"],
+            "source_handle": "output",
+            "target_handle": "input",
+        },
+    )
+    assert target_edge.status_code == 201
+
+    selected_run = client.post(
+        f"/api/products/{product_id}/workflow/run",
+        json={"start_node_id": image_node["id"]},
+    )
+    assert selected_run.status_code == 200
+    payload = _wait_for_workflow_run(client, product_id, status="succeeded")
+    image_output = next(node for node in payload["nodes"] if node["id"] == image_node["id"])["output_json"]
+
+    assert image_output["context_summary"]["product_context"] == {
+        "name": None,
+        "category": None,
+        "price": None,
+        "source_note": None,
+    }
+    assert image_output["context_summary"]["reference_image_count"] == 0
+    assert not any(source["label"] == "商品资料" for source in image_output["context_sources"])
+    assert len(captured_inputs) == 1
+    provider_input = captured_inputs[0]
+    assert provider_input.product_name == ""
+    assert provider_input.title == "自由创作"
+    assert "不应被空白生图继承" not in provider_input.title
+    assert all("不应继承" not in point for point in provider_input.selling_points)
+    assert provider_input.source_image is None
+    assert provider_input.reference_images == []
+    assert provider_input.image_size == "1280x720"
+
+
+def test_copy_generation_runs_without_product_context_edge(
+    configured_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    captured_products: list[ProductInput] = []
+
+    class CapturingTextProvider:
+        provider_name = "capturing-text"
+        prompt_version = "capturing-text-v1"
+
+        def generate_brief(self, product: ProductInput) -> tuple[CreativeBriefPayload, str]:
+            captured_products.append(product)
+            return (
+                CreativeBriefPayload(
+                    positioning="自由创作定位",
+                    audience="自由创作受众",
+                    selling_angles=["方向一", "方向二", "方向三"],
+                    taboo_phrases=[],
+                    poster_style_hint="自由风格",
+                ),
+                "capturing-brief",
+            )
+
+        def generate_copy(
+            self,
+            product: ProductInput,
+            brief: CreativeBriefPayload,
+            instruction: str | None = None,
+            reference_images: list | None = None,
+        ) -> tuple[CopyPayload, str]:
+            return (
+                CopyPayload(
+                    title=f"{product.name} 标题",
+                    selling_points=["自由卖点一", "自由卖点二", instruction or "自由卖点三"],
+                    poster_headline="自由创作海报标题",
+                    cta="",
+                ),
+                "capturing-copy",
+            )
+
+    monkeypatch.setattr(
+        "productflow_backend.application.product_workflows.get_text_provider",
+        lambda: CapturingTextProvider(),
+    )
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post(
+        "/api/products",
+        data={"name": "不应注入到孤立文案的商品"},
+        files={"image": ("source.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+
+    blank_copy = client.post(
+        f"/api/products/{product_id}/workflow/nodes",
+        json={
+            "node_type": "copy_generation",
+            "title": "空白文案",
+            "position_x": 620,
+            "position_y": 420,
+            "config_json": {"instruction": "写一句不依赖商品资料的抽象标语"},
+        },
+    )
+    assert blank_copy.status_code == 201
+    copy_node = next(node for node in blank_copy.json()["nodes"] if node["title"] == "空白文案")
+
+    selected_run = client.post(
+        f"/api/products/{product_id}/workflow/run",
+        json={"start_node_id": copy_node["id"]},
+    )
+    assert selected_run.status_code == 200
+    payload = _wait_for_workflow_run(client, product_id, status="succeeded")
+    copy_output = next(node for node in payload["nodes"] if node["id"] == copy_node["id"])["output_json"]
+
+    assert captured_products
+    captured_product = captured_products[0]
+    assert captured_product.name == "自由创作"
+    assert captured_product.category is None
+    assert captured_product.price is None
+    assert captured_product.source_note is None
+    assert captured_product.image_path == ""
+    assert copy_output["context_summary"]["product_context"] == {
+        "name": None,
+        "category": None,
+        "price": None,
+        "source_note": None,
+    }
+    assert not any(source["label"] == "商品资料" for source in copy_output["context_sources"])

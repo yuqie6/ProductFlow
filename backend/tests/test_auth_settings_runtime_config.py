@@ -7,7 +7,7 @@ from helpers import (
     _login,
 )
 
-from productflow_backend.config import get_runtime_settings
+from productflow_backend.config import get_runtime_settings, get_settings
 from productflow_backend.infrastructure.db.models import (
     AppSetting,
 )
@@ -92,7 +92,7 @@ def test_prompt_settings_api_accepts_rejects_and_resets(configured_env: Path) ->
     assert "淘宝电商文案助手" in initial_items["prompt_copy_system"]["value"]
     assert initial_items["prompt_poster_image_edit_template"]["category"] == "提示词"
     assert initial_items["prompt_poster_image_edit_template"]["input_type"] == "textarea"
-    assert "图片改图助手" in initial_items["prompt_poster_image_edit_template"]["value"]
+    assert "显式连接的上游上下文" in initial_items["prompt_poster_image_edit_template"]["value"]
 
     updated = client.patch("/api/settings", json={"values": {"prompt_copy_system": "自定义文案系统提示"}})
     assert updated.status_code == 200
@@ -119,7 +119,7 @@ def test_settings_api_rejects_invalid_effective_config(configured_env: Path) -> 
 
     response = client.patch(
         "/api/settings",
-        json={"values": {"image_main_image_size": "2048x2048", "image_allowed_sizes": "1024x1024"}},
+        json={"values": {"image_main_image_size": "0x1024"}},
     )
 
     assert response.status_code == 400
@@ -138,7 +138,6 @@ def test_settings_api_rejects_malformed_image_sizes_before_persist(configured_en
             "values": {
                 "image_main_image_size": "foo",
                 "image_promo_poster_size": "foo",
-                "image_allowed_sizes": "foo",
             }
         },
     )
@@ -150,7 +149,6 @@ def test_settings_api_rejects_malformed_image_sizes_before_persist(configured_en
     try:
         assert session.get(AppSetting, "image_main_image_size") is None
         assert session.get(AppSetting, "image_promo_poster_size") is None
-        assert session.get(AppSetting, "image_allowed_sizes") is None
     finally:
         session.close()
 
@@ -167,14 +165,12 @@ def test_settings_api_normalizes_custom_image_sizes_for_generation(configured_en
             "values": {
                 "image_main_image_size": "512X512",
                 "image_promo_poster_size": "1024x768",
-                "image_allowed_sizes": "512X512, 1024x768,512x512",
             }
         },
     )
     assert updated.status_code == 200
     updated_items = {item["key"]: item for item in updated.json()["items"]}
     assert updated_items["image_main_image_size"]["value"] == "512x512"
-    assert updated_items["image_allowed_sizes"]["value"] == "512x512,1024x768"
 
     created = client.post("/api/image-sessions", json={"title": "自定义尺寸"})
     assert created.status_code == 201
@@ -187,6 +183,18 @@ def test_settings_api_normalizes_custom_image_sizes_for_generation(configured_en
 
     assert generated.status_code == 200
     assert generated.json()["rounds"][-1]["size"] == "512x512"
+
+
+def test_runtime_image_size_env_defaults_are_generation_bounded(configured_env: Path, monkeypatch) -> None:
+    monkeypatch.setenv("IMAGE_MAIN_IMAGE_SIZE", "4000x4000")
+    monkeypatch.setenv("IMAGE_PROMO_POSTER_SIZE", "5000x2500")
+    get_settings.cache_clear()
+
+    settings = get_runtime_settings()
+
+    assert settings.image_main_image_size == "3840x3840"
+    assert settings.image_promo_poster_size == "3840x1920"
+
 
 def test_legacy_image_chat_route_is_removed(configured_env: Path) -> None:
     from productflow_backend.presentation.api import create_app

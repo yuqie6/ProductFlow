@@ -236,11 +236,12 @@ class OpenAIResponsesImageProvider(ImageProvider):
                 )
             )
 
-        add_path(
-            poster.source_image,
-            mime_type=_mime_type_for_path(poster.source_image),
-            filename=poster.source_image.name,
-        )
+        if poster.source_image is not None:
+            add_path(
+                poster.source_image,
+                mime_type=_mime_type_for_path(poster.source_image),
+                filename=poster.source_image.name,
+            )
         for reference in poster.reference_images:
             add_path(reference.path, mime_type=reference.mime_type, filename=reference.filename)
         return references
@@ -253,19 +254,21 @@ class OpenAIResponsesImageProvider(ImageProvider):
     ) -> str:
         copy_mode = poster.copy_prompt_mode == "copy"
         template = self.poster_image_template if copy_mode else self.poster_image_edit_template
-        kind_requirements = self._build_kind_requirements(kind, copy_mode=copy_mode)
+        kind_requirements = self._build_kind_requirements(kind)
+        context_block = self._build_context_block(poster)
         return render_prompt_template(
             template,
             {
                 "product_name": poster.product_name,
-                "category": poster.category or "未提供",
-                "price": poster.price or "未提供",
-                "source_note": poster.source_note or "未提供",
-                "instruction": poster.instruction or "按商品主视觉方向生成",
+                "category": poster.category or "",
+                "price": poster.price or "",
+                "source_note": poster.source_note or "",
+                "instruction": poster.instruction or "自由生成。",
                 "poster_headline": poster.poster_headline,
                 "title": poster.title,
                 "selling_points": "；".join(poster.selling_points[:3]),
                 "cta": poster.cta,
+                "context_block": context_block,
                 "size": size,
                 "kind": kind.value,
                 "kind_label": "主图" if kind == PosterKind.MAIN_IMAGE else "促销海报",
@@ -273,32 +276,34 @@ class OpenAIResponsesImageProvider(ImageProvider):
             },
         )
 
-    def _build_kind_requirements(self, kind: PosterKind, *, copy_mode: bool) -> str:
-        if copy_mode:
-            if kind == PosterKind.MAIN_IMAGE:
-                return "\n".join(
-                    [
-                        "画面要求：1:1 电商主图，主体居中，背景干净，信息明确，可直接用于商品主图。",
-                        "风格要求：白底或浅底，突出商品与卖点角标，整体简洁。",
-                    ]
-                )
-            return "\n".join(
-                [
-                    "画面要求：3:4 促销海报，层次明显，有强主标题、促销氛围和商品展示区。",
-                    "风格要求：更强视觉冲击，适合活动推广页或投放素材。",
-                ]
-            )
-
-        if kind == PosterKind.MAIN_IMAGE:
-            return "\n".join(
-                [
-                    "画面要求：1:1 商品图片改图，保持主体可信，按本轮要求调整背景、光线、构图或局部细节。",
-                    "风格要求：干净自然，不主动添加卖点角标、主标题、CTA 或价格标签。",
-                ]
-            )
-        return "\n".join(
-            [
-                "画面要求：3:4 商品视觉延展图，保留主体和参考图风格，增强氛围与层次。",
-                "风格要求：适合继续投放/陈列，但不强制出现营销文案、价格、按钮或标题区。",
+    def _build_context_block(self, poster: PosterGenerationInput) -> str:
+        lines: list[str] = []
+        if poster.product_name:
+            lines.append(f"- 商品/主体：{poster.product_name}")
+        if poster.category:
+            lines.append(f"- 类目/类型：{poster.category}")
+        if poster.price:
+            lines.append(f"- 价格：{poster.price}")
+        if poster.source_note:
+            lines.append(f"- 补充说明：{poster.source_note}")
+        if poster.copy_prompt_mode == "copy" and (
+            poster.poster_headline or poster.title or poster.selling_points or poster.cta
+        ):
+            copy_parts = [
+                f"标题：{poster.title}" if poster.title else "",
+                f"主标题：{poster.poster_headline}" if poster.poster_headline else "",
+                f"要点：{'；'.join(poster.selling_points[:3])}" if poster.selling_points else "",
+                f"CTA：{poster.cta}" if poster.cta else "",
             ]
-        )
+            lines.append(f"- 文案：{'；'.join(part for part in copy_parts if part)}")
+        if poster.reference_images or poster.source_image is not None:
+            reference_paths = {str(reference.path.resolve()) for reference in poster.reference_images}
+            if poster.source_image is not None:
+                reference_paths.add(str(poster.source_image.resolve()))
+            reference_count = len(reference_paths)
+            lines.append(f"- 参考图片数量：{reference_count}")
+        return "\n".join(lines) if lines else "- 无显式上游上下文。"
+
+    def _build_kind_requirements(self, kind: PosterKind) -> str:
+        kind_label = "主图" if kind == PosterKind.MAIN_IMAGE else "海报/竖图"
+        return f"输出用途：{kind_label}。仅遵循用户要求和上游上下文，不额外添加未要求的文字、品牌、水印或 UI 面板。"

@@ -584,6 +584,7 @@ def _execute_copy_generation(
     dependencies = dependencies or default_workflow_execution_dependencies()
     product = workflow.product
     product_context = _effective_product_context(workflow, node.id)
+    has_product_context = any(value is not None for value in product_context.values())
     existing_output = node.output_json or {}
     existing_copy_set_id = existing_output.get("copy_set_id")
     if existing_output.get("manual_edit") is True and isinstance(existing_copy_set_id, str):
@@ -591,16 +592,14 @@ def _execute_copy_generation(
         if copy_set is not None and copy_set.product_id == product.id:
             return _copy_node_output(copy_set, creative_brief_id=copy_set.creative_brief_id, manual_edit=True)
 
-    source = _find_source_asset(product)
-    if source is None:
-        raise ValueError("商品缺少原始图片")
     storage = LocalStorage()
+    source = _find_source_asset(product) if has_product_context else None
     product_input = ProductInput(
-        name=product_context["name"] or product.name,
+        name=product_context["name"] or "自由创作",
         category=product_context["category"],
         price=product_context["price"],
         source_note=product_context["source_note"],
-        image_path=str(storage.resolve(source.storage_path)),
+        image_path=str(storage.resolve(source.storage_path)) if source is not None else "",
     )
     incoming_context = _collect_incoming_context(workflow, node.id)
     reference_images = _reference_image_inputs_for_copy(session, workflow=workflow, node_id=node.id, storage=storage)
@@ -672,16 +671,12 @@ def _execute_image_generation(
         raise ValueError("请先把生图节点连接到至少一个图片/参考图节点，再运行图片生成")
 
     linked_copy_set_id = _optional_config_text(node.config_json, "copy_set_id") or incoming_context.copy_set_id
-    copy_set = session.get(CopySet, linked_copy_set_id) if linked_copy_set_id else product.confirmed_copy_set
+    copy_set = session.get(CopySet, linked_copy_set_id) if linked_copy_set_id else None
     has_linked_copy_input = (
         linked_copy_set_id is not None and copy_set is not None and copy_set.product_id == product.id
     )
     if copy_set is None or copy_set.product_id != product.id:
         copy_set = _create_context_copy_set(session, product=product, product_context=product_context, node=node)
-
-    source = _find_source_asset(product)
-    if source is None:
-        raise ValueError("商品缺少原始图片")
 
     storage = LocalStorage()
     reference_assets = _reference_assets_for_image_generation(
@@ -692,7 +687,7 @@ def _execute_image_generation(
     )
     render_input = PosterGenerationInput(
         copy_prompt_mode="copy" if has_linked_copy_input else "image_edit",
-        product_name=product_context["name"] or product.name,
+        product_name=product_context["name"] or "",
         category=product_context["category"],
         price=product_context["price"],
         source_note=product_context["source_note"],
@@ -702,7 +697,7 @@ def _execute_image_generation(
         selling_points=copy_set.selling_points,
         poster_headline=copy_set.poster_headline,
         cta=copy_set.cta,
-        source_image=Path(storage.resolve(source.storage_path)),
+        source_image=(Path(storage.resolve(reference_assets[0].storage_path)) if reference_assets else None),
         reference_images=[
             ReferenceImageInput(
                 path=Path(storage.resolve(asset.storage_path)),

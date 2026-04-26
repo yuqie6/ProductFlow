@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, field_validator
 from productflow_backend.domain.enums import ImageSessionAssetKind
 from productflow_backend.infrastructure.db.models import ImageSession, ImageSessionAsset, ImageSessionRound
 from productflow_backend.presentation.image_variants import build_image_urls
-from productflow_backend.presentation.schemas.validators import validate_allowed_image_size
+from productflow_backend.presentation.schemas.validators import validate_image_generation_size
 
 
 class ImageSessionAssetResponse(BaseModel):
@@ -77,7 +77,7 @@ class GenerateImageSessionRoundRequest(BaseModel):
     @field_validator("size")
     @classmethod
     def validate_size(cls, size: str) -> str:
-        return validate_allowed_image_size(size)
+        return validate_image_generation_size(size)
 
 
 class AttachImageSessionAssetRequest(BaseModel):

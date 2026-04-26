@@ -83,8 +83,9 @@ class PosterRenderer:
         draw.rectangle((0, 0, width, 180), fill=(18, 18, 18, 255))
         draw.rectangle((70, 220, 1010, 1010), fill=(255, 255, 255, 255))
 
-        product_img = _fit_source_image(payload.source_image, (760, 540))
-        canvas.alpha_composite(product_img, (160, 330))
+        if payload.source_image is not None:
+            product_img = _fit_source_image(payload.source_image, (760, 540))
+            canvas.alpha_composite(product_img, (160, 330))
 
         headline_font = _load_font(self.font_path, 58)
         point_font = _load_font(self.font_path, 34)
@@ -123,8 +124,9 @@ class PosterRenderer:
         _draw_wrapped_text(draw, payload.poster_headline, title_font, (70, 60, 700, 250), (255, 255, 255))
         _draw_wrapped_text(draw, payload.title, body_font, (70, 260, 700, 340), (230, 230, 230))
 
-        product_img = _fit_source_image(payload.source_image, (700, 640))
-        canvas.alpha_composite(product_img, (190, 560))
+        if payload.source_image is not None:
+            product_img = _fit_source_image(payload.source_image, (700, 640))
+            canvas.alpha_composite(product_img, (190, 560))
 
         base_y = 1130
         for index, point in enumerate(payload.selling_points[:3]):

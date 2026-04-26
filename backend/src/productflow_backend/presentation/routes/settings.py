@@ -14,8 +14,7 @@ from productflow_backend.config import (
     build_settings_with_overrides,
     get_runtime_settings,
     normalize_config_values,
-    normalize_image_size,
-    normalize_image_size_list,
+    normalize_image_generation_size,
 )
 from productflow_backend.infrastructure.db.models import AppSetting
 from productflow_backend.presentation.deps import get_session, require_admin
@@ -44,15 +43,8 @@ def _public_value(value: Any, *, secret: bool) -> str | int | bool | None:
 
 def _validate_runtime_settings(overrides: dict[str, str]) -> None:
     settings = build_settings_with_overrides(overrides)
-    main_size = normalize_image_size(settings.image_main_image_size, label="主图尺寸")
-    promo_poster_size = normalize_image_size(settings.image_promo_poster_size, label="促销海报尺寸")
-    allowed_image_sizes = set(normalize_image_size_list(settings.image_allowed_sizes, label="允许生图尺寸"))
-    if not allowed_image_sizes:
-        raise ValueError("允许生图尺寸不能为空")
-    if main_size not in allowed_image_sizes:
-        raise ValueError("主图尺寸必须包含在允许生图尺寸列表中")
-    if promo_poster_size not in allowed_image_sizes:
-        raise ValueError("促销海报尺寸必须包含在允许生图尺寸列表中")
+    normalize_image_generation_size(settings.image_main_image_size, label="主图尺寸")
+    normalize_image_generation_size(settings.image_promo_poster_size, label="促销海报尺寸")
     if not settings.allowed_image_mime_types:
         raise ValueError("允许图片 MIME 不能为空")
 

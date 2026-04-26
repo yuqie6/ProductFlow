@@ -668,8 +668,9 @@ def test_openai_responses_poster_provider_uses_image_generation_tool(
     content = payload["input"][0]["content"]
     assert content[0]["type"] == "input_text"
     prompt_text = content[0]["text"]
-    assert "商品描述/补充说明：防水牛津布，适合通勤和短途出差。" in prompt_text
-    assert "本轮图片要求：背景更干净，强调收纳空间。" in prompt_text
+    assert "用户要求：背景更干净，强调收纳空间。" in prompt_text
+    assert "- 补充说明：防水牛津布，适合通勤和短途出差。" in prompt_text
+    assert "- 参考图片数量：2" in prompt_text
     assert len([item for item in content if item["type"] == "input_image"]) == 2
     assert "/images/generations" not in str(payload)
     assert "/images/edits" not in str(payload)
@@ -713,3 +714,30 @@ def test_generated_poster_mode_uses_image_provider(
     product_after_poster = get_product_detail(db_session, product.id)
     assert len(product_after_poster.poster_variants) == 2
     assert all("mock:mock-generated-r3" in poster.template_name for poster in product_after_poster.poster_variants)
+
+def test_default_image_prompts_are_low_pollution_context_carriers(configured_env: Path) -> None:
+    from productflow_backend.infrastructure.image.chat_service import ImageChatService
+
+    prompt = OpenAIResponsesImageProvider()._build_prompt(
+        PosterGenerationInput(
+            copy_prompt_mode="image_edit",
+            product_name="",
+            instruction="画一张蓝色抽象渐变",
+            image_size="1280x720",
+            title="不应注入的占位标题",
+            selling_points=["不应注入的占位卖点"],
+            poster_headline="不应注入的占位主标题",
+            cta="不应注入的 CTA",
+        ),
+        PosterKind.MAIN_IMAGE,
+        "1280x720",
+    )
+    chat_prompt = ImageChatService()._build_prompt("画一张蓝色抽象渐变", [], "1280x720")
+
+    forbidden = ["电商海报", "继承输入参考图", "商品主体", "主标题", "卖点", "CTA", "价格标签"]
+    assert all(term not in prompt for term in forbidden)
+    assert all(term not in chat_prompt for term in ["继承已经确定", "主体", "构图与材质"])
+    assert "不应注入" not in prompt
+    assert "画一张蓝色抽象渐变" in prompt
+    assert "无显式上游上下文" in prompt
+    assert "1280x720" in chat_prompt

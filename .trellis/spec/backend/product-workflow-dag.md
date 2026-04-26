@@ -114,7 +114,12 @@
 - Edge source/target outside the product workflow -> `400` with a user-readable validation detail.
 - Self-edge -> `400`.
 - Cyclic graph -> `400` and no edge persisted.
-- Image generation without product source image -> `400`/failed node output, depending execution boundary.
+- Image generation without a connected product context/source image -> blank/free image generation remains valid when the
+  node has at least one downstream `reference_image` target; only explicitly connected missing/broken image references
+  should fail.
+- Copy generation without a connected product context -> run against the user's node instruction/upstream context as
+  free-form copy using a neutral placeholder subject; do not silently fall back to `workflow.product` fields or the
+  product source image.
 - Image generation without usable explicit copy link -> create a workflow-local draft `CopySet` from product context and
   image instruction for artifact linking, then generate the image with `copy_prompt_mode = "image_edit"`. Do not fail only
   because a copy node is absent, and do not route this no-copy path through the poster/copy prompt template.
@@ -510,8 +515,10 @@ by reloading the existing active run.
 
 ### 4. Validation & Error Matrix
 - Duplicate product-context creation -> `400` with `商品资料节点已存在`.
-- Missing product source image -> failed image node / `商品缺少原始图片`.
-- Missing copy node or missing upstream copy -> create a workflow-context draft `CopySet` if a downstream target exists.
+- Missing/unconnected product source image -> image nodes may still run as blank/free generation when they have a
+  downstream reference target and prompt/context; do not fail solely because no product image is connected.
+- Missing copy node or missing upstream copy -> create a workflow-context draft `CopySet` if a downstream target exists;
+  do not reuse `product.confirmed_copy_set` unless a copy node/config explicitly links it into the image node context.
 - Missing downstream reference slot -> fail before generation with the connect-a-target message.
 - Duplicate downstream edges to the same reference slot -> one generated image for that unique slot.
 

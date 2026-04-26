@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from productflow_backend.application.contracts import ReferenceImageInput
-from productflow_backend.config import normalize_image_size
+from productflow_backend.config import normalize_image_generation_size
 from productflow_backend.domain.enums import (
     PosterKind,
     SourceAssetKind,
@@ -37,9 +37,11 @@ def _product_context_values(product: Product, node: WorkflowNode | None = None) 
     }
 
 
+def _empty_product_context() -> dict[str, str | None]:
+    return {"name": None, "category": None, "price": None, "source_note": None}
+
+
 def _effective_product_context(workflow: ProductWorkflow, target_node_id: str) -> dict[str, str | None]:
-    product = workflow.product
-    context = _product_context_values(product)
     incoming_context_nodes = [
         node
         for edge in workflow.edges
@@ -48,35 +50,35 @@ def _effective_product_context(workflow: ProductWorkflow, target_node_id: str) -
         and edge.source_node_id == node.id
         and node.node_type == WorkflowNodeType.PRODUCT_CONTEXT
     ]
-    for node in sorted(incoming_context_nodes, key=lambda item: item.last_run_at or item.updated_at, reverse=True):
-        output = node.output_json or {}
-        context.update(
-            {
-                "name": _configured_text(
-                    node.config_json,
-                    "name",
-                    fallback=_output_text(output, "name", fallback=context["name"]),
-                )
-                or product.name,
-                "category": _configured_text(
-                    node.config_json,
-                    "category",
-                    fallback=_output_text(output, "category", fallback=context["category"]),
-                ),
-                "price": _configured_text(
-                    node.config_json,
-                    "price",
-                    fallback=_output_text(output, "price", fallback=context["price"]),
-                ),
-                "source_note": _configured_text(
-                    node.config_json,
-                    "source_note",
-                    fallback=_output_text(output, "source_note", fallback=context["source_note"]),
-                ),
-            }
-        )
-        break
-    return context
+    if not incoming_context_nodes:
+        return _empty_product_context()
+
+    product = workflow.product
+    fallback_context = _product_context_values(product)
+    node = sorted(incoming_context_nodes, key=lambda item: item.last_run_at or item.updated_at, reverse=True)[0]
+    output = node.output_json or {}
+    return {
+        "name": _configured_text(
+            node.config_json,
+            "name",
+            fallback=_output_text(output, "name", fallback=fallback_context["name"]),
+        ),
+        "category": _configured_text(
+            node.config_json,
+            "category",
+            fallback=_output_text(output, "category", fallback=fallback_context["category"]),
+        ),
+        "price": _configured_text(
+            node.config_json,
+            "price",
+            fallback=_output_text(output, "price", fallback=fallback_context["price"]),
+        ),
+        "source_note": _configured_text(
+            node.config_json,
+            "source_note",
+            fallback=_output_text(output, "source_note", fallback=fallback_context["source_note"]),
+        ),
+    }
 
 
 def _configured_text(config: dict[str, Any], key: str, *, fallback: str | None = None) -> str | None:
@@ -129,7 +131,7 @@ def _image_size_from_config(config: dict[str, Any]) -> str | None:
     raw = config.get("size")
     if raw is None or (isinstance(raw, str) and not raw.strip()):
         return None
-    return normalize_image_size(raw, label="生图尺寸")
+    return normalize_image_generation_size(raw, label="生图尺寸")
 
 
 class _IncomingContext:
@@ -253,8 +255,7 @@ def _reference_assets_for_image_generation(
     incoming_poster_variant_ids: list[str],
 ) -> list[SourceAsset]:
     product = workflow.product
-    source = _find_source_asset(product)
-    assets: list[SourceAsset] = [source] if source else []
+    assets: list[SourceAsset] = []
     if incoming_source_asset_ids:
         fetched = list(session.scalars(select(SourceAsset).where(SourceAsset.id.in_(incoming_source_asset_ids))))
         assets.extend(asset for asset in fetched if asset.product_id == product.id)

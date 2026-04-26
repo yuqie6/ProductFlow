@@ -41,7 +41,7 @@ def _create_context_copy_set(
     node: WorkflowNode,
 ) -> CopySet:
     instruction = _optional_config_text(node.config_json, "instruction")
-    product_name = product_context["name"] or product.name
+    product_name = product_context["name"] or "自由创作"
     source_note = product_context["source_note"]
     selling_points = [
         item
@@ -53,10 +53,10 @@ def _create_context_copy_set(
         if item
     ][:3]
     while len(selling_points) < 3:
-        selling_points.append(f"突出{product_name}的商品质感")
-    headline = instruction or f"{product_name} 商品图"
-    title = f"{product_name} 商品图文案"
-    cta = "立即了解"
+        selling_points.append(instruction or product_name)
+    headline = instruction or product_name
+    title = product_name
+    cta = ""
     copy_set = CopySet(
         product_id=product.id,
         creative_brief_id=None,

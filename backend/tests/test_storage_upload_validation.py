@@ -72,7 +72,7 @@ def test_product_create_rejects_invalid_price_and_invalid_image(configured_env: 
     )
     assert invalid_image.status_code == 400
 
-def test_image_generation_rejects_disallowed_size(configured_env: Path) -> None:
+def test_image_generation_calibrates_oversized_size(configured_env: Path) -> None:
     from productflow_backend.presentation.api import create_app
 
     app = create_app()
@@ -81,8 +81,9 @@ def test_image_generation_rejects_disallowed_size(configured_env: Path) -> None:
 
     created = client.post("/api/image-sessions", json={"title": "尺寸校验"})
     assert created.status_code == 201
-    rejected = client.post(
+    generated = client.post(
         f"/api/image-sessions/{created.json()['id']}/generate",
         json={"prompt": "生成一张图", "size": "99999x99999"},
     )
-    assert rejected.status_code == 422
+    assert generated.status_code == 200
+    assert generated.json()["rounds"][-1]["size"] == "3840x3840"

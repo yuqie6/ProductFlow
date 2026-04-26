@@ -12,7 +12,7 @@ from productflow_backend.application.product_workflow_artifacts import (
     _image_asset_output,
     _source_asset_for_poster_variant,
 )
-from productflow_backend.application.product_workflow_context import _optional_config_text
+from productflow_backend.application.product_workflow_context import _image_size_from_config, _optional_config_text
 from productflow_backend.application.time import now_utc
 from productflow_backend.application.use_cases import update_copy_set
 from productflow_backend.domain.enums import (
@@ -45,6 +45,15 @@ def _active_workflow_run(workflow: ProductWorkflow) -> WorkflowRun | None:
         ),
         None,
     )
+
+
+def _normalize_node_config(node_type: WorkflowNodeType, config_json: dict[str, Any] | None) -> dict[str, Any]:
+    config = dict(config_json or {})
+    if node_type == WorkflowNodeType.IMAGE_GENERATION:
+        normalized_size = _image_size_from_config(config)
+        if normalized_size is not None:
+            config["size"] = normalized_size
+    return config
 
 
 def get_or_create_product_workflow(session: Session, product_id: str) -> ProductWorkflow:
@@ -111,7 +120,7 @@ def create_workflow_node(
         title=title.strip() or product_workflow_graph.default_title_for_type(node_type),
         position_x=position_x,
         position_y=position_y,
-        config_json=config_json or {},
+        config_json=_normalize_node_config(node_type, config_json),
     )
     session.add(node)
     workflow.updated_at = now_utc()
@@ -137,7 +146,7 @@ def update_workflow_node(
     if position_y is not None:
         node.position_y = position_y
     if config_json is not None:
-        node.config_json = config_json
+        node.config_json = _normalize_node_config(node.node_type, config_json)
     node.workflow.updated_at = now_utc()
     session.commit()
     session.expire_all()
@@ -403,7 +412,6 @@ def _normalize_product_context_singleton(session: Session, workflow: ProductWork
         session.flush()
         product_nodes = [context]
         changed = True
-    keeper = product_nodes[0]
     duplicate_ids = {node.id for node in product_nodes[1:]}
     if duplicate_ids:
         session.execute(
@@ -418,28 +426,6 @@ def _normalize_product_context_singleton(session: Session, workflow: ProductWork
         session.execute(delete(WorkflowNodeRun).where(WorkflowNodeRun.node_id.in_(duplicate_ids)))
         for duplicate in product_nodes[1:]:
             session.delete(duplicate)
-        changed = True
-    non_context_targets = {
-        node.id
-        for node in workflow.nodes
-        if node.node_type in {WorkflowNodeType.COPY_GENERATION, WorkflowNodeType.IMAGE_GENERATION}
-        and node.id not in duplicate_ids
-    }
-    existing_targets = {
-        edge.target_node_id
-        for edge in workflow.edges
-        if edge.source_node_id == keeper.id and edge.target_node_id in non_context_targets
-    }
-    for target_id in sorted(non_context_targets - existing_targets):
-        session.add(
-            WorkflowEdge(
-                workflow_id=workflow.id,
-                source_node_id=keeper.id,
-                target_node_id=target_id,
-                source_handle="output",
-                target_handle="input",
-            )
-        )
         changed = True
     if changed:
         workflow.updated_at = now_utc()

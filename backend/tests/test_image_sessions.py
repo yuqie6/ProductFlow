@@ -74,6 +74,41 @@ def test_image_session_rounds_support_same_conversation(configured_env: Path) ->
     assert second_payload["rounds"][-1]["provider_name"] == "mock"
     assert second_payload["rounds"][-1]["assistant_message"].startswith("已基于当前对话继续生成")
 
+
+def test_image_session_generation_accepts_custom_size_and_rejects_invalid_dimensions(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+
+    _login(client)
+
+    created = client.post("/api/image-sessions", json={"title": "自定义尺寸"})
+    assert created.status_code == 201
+    session_id = created.json()["id"]
+
+    generated = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={"prompt": "做一张 16:9 展示图", "size": "1280x720"},
+    )
+    assert generated.status_code == 200
+    assert generated.json()["rounds"][-1]["size"] == "1280x720"
+
+    zero = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={"prompt": "尺寸非法", "size": "0x720"},
+    )
+    assert zero.status_code == 422
+    assert "宽高必须大于 0" in zero.text
+
+    oversized = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={"prompt": "尺寸过大", "size": "5000x5000"},
+    )
+    assert oversized.status_code == 200
+    assert oversized.json()["rounds"][-1]["size"] == "3840x3840"
+
+
 def test_image_session_reference_image_can_be_deleted(configured_env: Path, db_session) -> None:
     from productflow_backend.presentation.api import create_app
 

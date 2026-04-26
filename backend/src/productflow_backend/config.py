@@ -7,13 +7,15 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import Field, ValidationError
+from pydantic import Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 ConfigInputType = Literal["text", "password", "number", "boolean", "select", "textarea"]
 IMAGE_SIZE_PATTERN = re.compile(r"^\d+x\d+$")
+IMAGE_GENERATION_MAX_DIMENSION = 3840
+IMAGE_GENERATION_MAX_PIXELS = 3840 * 3840
 IMAGE_SIZE_CONFIG_KEYS = {"image_main_image_size", "image_promo_poster_size"}
 PROMPT_CONFIG_KEYS = {
     "prompt_brief_system",
@@ -32,36 +34,16 @@ DEFAULT_PROMPT_COPY_SYSTEM = (
     "你是淘宝电商文案助手。请输出中文 JSON，不输出 markdown，"
     "语言要口语、直接、可用于主图和促销海报。"
 )
-DEFAULT_PROMPT_POSTER_IMAGE_TEMPLATE = """你是中文电商海报生成助手。
-请使用 Responses API 的 image_generation 工具生成图片，并优先继承输入参考图里的商品主体。
-不要出现乱码、无关品牌、水印或大段不可读文字。
-商品名：{product_name}
-类目：{category}
-价格：{price}
-商品描述/补充说明：{source_note}
-本轮图片要求：{instruction}
-主标题：{poster_headline}
-短标题：{title}
-卖点：{selling_points}
-CTA：{cta}
-尺寸：{size}
-{kind_requirements}"""
-DEFAULT_PROMPT_POSTER_IMAGE_EDIT_TEMPLATE = """你是中文商品图片改图助手。
-请使用 Responses API 的 image_generation 工具生成图片，并优先继承输入参考图里的商品主体、构图和材质。
-这是基于已有图片继续改图/延展的任务，不要求商品文案字段，也不要主动添加主标题、卖点、CTA 或价格标签。
-不要出现乱码、无关品牌、水印或大段不可读文字。
-商品名：{product_name}
-类目：{category}
-价格：{price}
-商品描述/补充说明：{source_note}
-本轮改图要求：{instruction}
-尺寸：{size}
-{kind_requirements}"""
-DEFAULT_PROMPT_IMAGE_CHAT_TEMPLATE = """你是一个中文图片生成助手。
-当前任务是同一创作对话中的连续生图，请继承已经确定的主体、风格、构图与材质线索。
-如果本轮用户明确要求改动，就在保留连续性的前提下做调整。
-默认不要在图片中添加可读大段文字、UI 面板、水印或拼贴。
-输出尺寸：{size}。
+DEFAULT_PROMPT_POSTER_IMAGE_TEMPLATE = """请根据本轮用户要求与显式连接的上游上下文生成图片。
+用户要求：{instruction}
+输出尺寸：{size}
+上游上下文：
+{context_block}
+{kind_requirements}
+请直接生成图片，不要返回说明文字。"""
+DEFAULT_PROMPT_POSTER_IMAGE_EDIT_TEMPLATE = DEFAULT_PROMPT_POSTER_IMAGE_TEMPLATE
+DEFAULT_PROMPT_IMAGE_CHAT_TEMPLATE = """请根据本轮用户要求生成图片。
+输出尺寸：{size}
 {history_block}
 本轮用户要求：{prompt}
 请直接生成图片，不要返回说明文字。"""
@@ -130,8 +112,6 @@ class Settings(BaseSettings):
     image_generate_model: str = "gpt-5.4"
     image_main_image_size: str = "1024x1024"
     image_promo_poster_size: str = "1024x1536"
-    image_allowed_sizes: str = "1024x1024,1024x1536,1536x1024"
-
     poster_generation_mode: str = "template"
 
     poster_font_path: Path = Path("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc")
@@ -150,13 +130,14 @@ class Settings(BaseSettings):
     job_max_attempts: int = 3
     job_retry_delay_ms: int = 10_000
 
+    @field_validator("image_main_image_size", "image_promo_poster_size")
+    @classmethod
+    def _normalize_image_generation_fallback_size(cls, value: str) -> str:
+        return normalize_image_generation_size(value)
+
     @property
     def cors_origins(self) -> list[str]:
         return [origin.strip() for origin in self.backend_cors_origins.split(",") if origin.strip()]
-
-    @property
-    def allowed_image_sizes(self) -> set[str]:
-        return set(normalize_image_size_list(self.image_allowed_sizes, label="允许生图尺寸"))
 
     @property
     def allowed_image_mime_types(self) -> set[str]:
@@ -246,24 +227,25 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
     ),
     ConfigDefinition(
         key="image_main_image_size",
-        label="主图尺寸",
+        label="主图尺寸（兼容默认）",
         category="图片生成",
         input_type="text",
-        description="例如 1024x1024；需要同时包含在允许尺寸列表中。",
+        description=(
+            "高级/兼容默认值：仅当图片 provider 输入未显式传入 image_size，"
+            "且生成类型为 MAIN_IMAGE 时使用。新工作流生图节点通常会传入明确尺寸，"
+            "请优先使用节点里的尺寸选择器。"
+        ),
     ),
     ConfigDefinition(
         key="image_promo_poster_size",
-        label="促销海报尺寸",
+        label="促销海报尺寸（兼容默认）",
         category="图片生成",
         input_type="text",
-        description="例如 1024x1536；需要同时包含在允许尺寸列表中。",
-    ),
-    ConfigDefinition(
-        key="image_allowed_sizes",
-        label="允许生图尺寸",
-        category="图片生成",
-        input_type="textarea",
-        description="逗号分隔，例如 1024x1024,1024x1536,1536x1024。",
+        description=(
+            "高级/兼容默认值：仅当图片 provider 输入未显式传入 image_size，"
+            "且生成类型为 PROMO_POSTER 时使用。新工作流生图节点通常会传入明确尺寸，"
+            "请优先使用节点里的尺寸选择器。"
+        ),
     ),
     ConfigDefinition(
         key="poster_generation_mode",
@@ -300,8 +282,7 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
         category="提示词",
         input_type="textarea",
         description=(
-            "用于有文案输入的 AI 主图/海报生成。可用占位符：product_name、category、price、source_note、instruction、"
-            "title、selling_points、poster_headline、cta、size、kind、kind_label、kind_requirements。"
+            "用于工作台 AI 生图。可用占位符：instruction、size、context_block、kind、kind_label、kind_requirements。"
         ),
     ),
     ConfigDefinition(
@@ -310,8 +291,7 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
         category="提示词",
         input_type="textarea",
         description=(
-            "用于无文案输入的参考图/生成图改图。可用占位符：product_name、category、price、source_note、"
-            "instruction、size、kind、kind_label、kind_requirements。"
+            "用于工作台参考图/生成图继续生图。可用占位符：instruction、size、context_block、kind、kind_label、kind_requirements。"
         ),
     ),
     ConfigDefinition(
@@ -382,18 +362,18 @@ def normalize_image_size(value: Any, *, label: str = "图片尺寸") -> str:
     return normalized
 
 
-def normalize_image_size_list(value: Any, *, label: str = "允许生图尺寸") -> tuple[str, ...]:
-    normalized_sizes: list[str] = []
-    seen: set[str] = set()
-    for raw_size in str(value or "").split(","):
-        raw_size = raw_size.strip()
-        if not raw_size:
-            continue
-        normalized_size = normalize_image_size(raw_size, label=label)
-        if normalized_size not in seen:
-            normalized_sizes.append(normalized_size)
-            seen.add(normalized_size)
-    return tuple(normalized_sizes)
+def normalize_image_generation_size(value: Any, *, label: str = "图片尺寸") -> str:
+    """校验并校准生图尺寸，包含格式、正数和单边 3840 安全边界。"""
+    normalized = normalize_image_size(value, label=label)
+    width, height = (int(part) for part in normalized.split("x", maxsplit=1))
+    scale = min(1.0, IMAGE_GENERATION_MAX_DIMENSION / width, IMAGE_GENERATION_MAX_DIMENSION / height)
+    resolved_width = min(IMAGE_GENERATION_MAX_DIMENSION, max(1, round(width * scale)))
+    resolved_height = min(IMAGE_GENERATION_MAX_DIMENSION, max(1, round(height * scale)))
+    if resolved_width * resolved_height > IMAGE_GENERATION_MAX_PIXELS:
+        pixel_scale = (IMAGE_GENERATION_MAX_PIXELS / (resolved_width * resolved_height)) ** 0.5
+        resolved_width = max(1, int(resolved_width * pixel_scale))
+        resolved_height = max(1, int(resolved_height * pixel_scale))
+    return f"{resolved_width}x{resolved_height}"
 
 
 def normalize_config_value(key: str, value: Any) -> str:
@@ -423,10 +403,7 @@ def normalize_config_value(key: str, value: Any) -> str:
         return str(normalized_int)
 
     if key in IMAGE_SIZE_CONFIG_KEYS:
-        return normalize_image_size(value, label=definition.label)
-    if key == "image_allowed_sizes":
-        return ",".join(normalize_image_size_list(value, label=definition.label))
-
+        return normalize_image_generation_size(value, label=definition.label)
     normalized = "" if value is None else str(value).strip()
     if key in PROMPT_CONFIG_KEYS and not normalized:
         raise ValueError(f"{definition.label} 不能为空；如需回到默认值请使用恢复默认")

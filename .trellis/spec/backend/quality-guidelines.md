@@ -268,6 +268,81 @@ provider = dependencies.image_provider()
 
 Do not duplicate these checks in multiple pages/routes.
 
+### Scenario: Provider-neutral image generation size contract
+
+#### 1. Scope / Trigger
+
+- Trigger: editing continuous image sessions, workflow `image_generation` node config, runtime image settings, provider image payloads, or frontend image-size controls.
+- Applies to the shared `WIDTHxHEIGHT` image-size contract across `ImageChatPage`, workflow Inspector, API schemas, runtime settings, workflow execution, and image providers.
+
+#### 2. Signatures
+
+- Backend canonical normalizer: `normalize_image_generation_size(value: str) -> str`.
+- Built-in presets are application UI constants; runtime settings no longer expose a user-facing allowed-size preset list.
+- Continuous image API request field: `GenerateImageSessionRoundRequest.size`.
+- Workflow image node config field: `config_json.size` for nodes with `kind == "image_generation"`.
+- Frontend shared picker: `ImageSizePicker` emits normalized lowercase `WIDTHxHEIGHT` strings.
+
+#### 3. Contracts
+
+- Store and pass image size as a provider-neutral lowercase `WIDTHxHEIGHT` string, for example `1024x1024` or `3840x2160`.
+- Preset buttons are built-in ratio/tier shortcuts; they are not derived from runtime config and are not a backend allowlist.
+- Custom dimensions must be validated and calibrated by the backend before provider calls, not only by frontend controls.
+- Continuous image generation and workflow image-generation nodes must use the same backend normalizer so their accepted/rejected sizes do not drift.
+- Provider adapters should receive the normalized string unchanged unless a provider-specific adapter explicitly documents a conversion.
+
+#### 4. Validation & Error Matrix
+
+- Bad syntax such as `1024`, `1024*1024`, or missing dimensions -> request/config validation error.
+- Non-positive dimensions such as `0x1024` or `1024x-1` -> request/config validation error.
+- Dimensions above the project safety bounds -> normalize to a safe calibrated `WIDTHxHEIGHT` before provider dispatch.
+- Uppercase separators/digits such as `3840X2160` -> normalize to lowercase `3840x2160`.
+- Invalid runtime default image dimensions -> settings validation error instead of silently publishing broken provider defaults.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: `3840x2160` entered in the workflow Inspector is saved as `3840x2160` and reaches the image provider as `image_size="3840x2160"`.
+- Base: built-in presets such as `1024x1024`, `2048x2048`, and `3840x3840` render as picker buttons and submit the same canonical string.
+- Bad: continuous image sessions accept custom sizes while workflow nodes only apply a loose string normalizer.
+- Bad: frontend checks dimensions but backend forwards an oversized custom value to the provider.
+
+#### 6. Tests Required
+
+- Continuous image API tests must cover accepted custom dimensions, rejected malformed/non-positive dimensions, and
+  oversized dimensions being stored as calibrated safe output sizes.
+- Workflow DAG/API tests must cover node create/update normalization, invalid config rejection, provider input receiving
+  the configured custom size, and oversized config being persisted as calibrated safe output size.
+- Runtime settings tests must cover invalid default image dimensions when validation behavior changes.
+- Frontend helper/component tests should cover preset parsing, duplicate normalization, and custom-size round-tripping when picker logic changes.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+# Workflow accepts any parseable size while continuous image uses different validation.
+size = normalize_image_size(config_json.get("size", "1024x1024"))
+```
+
+Correct:
+
+```python
+# All image generation entry points share the same safety bounds and canonical form.
+size = normalize_image_generation_size(config_json.get("size", "1024x1024"))
+```
+
+Wrong:
+
+```tsx
+<input value={draft.size} onChange={(event) => onChange({ size: event.target.value })} />
+```
+
+Correct:
+
+```tsx
+<ImageSizePicker value={draft.size} onChange={(size) => onChange({ size })} presets={imageSizePresets} />
+```
+
 ### Preserve workflow-level tests
 
 `backend/tests/test_*.py` is the backend regression suite and is split by behavior area. It covers:
