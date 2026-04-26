@@ -35,6 +35,11 @@ def _login(client: TestClient) -> None:
     assert login.status_code == 200
 
 
+def _unlock_settings(client: TestClient) -> None:
+    unlock = client.post("/api/settings/unlock", json={"token": "super-secret-settings-token"})
+    assert unlock.status_code == 200
+
+
 def _wait_for_workflow_run(
     client: TestClient,
     product_id: str,

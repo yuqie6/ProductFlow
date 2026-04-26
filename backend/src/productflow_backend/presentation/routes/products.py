@@ -158,7 +158,7 @@ def create_copy_job_endpoint(product_id: str, session: Session = Depends(get_ses
         try:
             enqueue_copy_job(job.id)
         except Exception as exc:  # noqa: BLE001
-            mark_job_enqueue_failed(session, job_id=job.id, reason=str(exc))
+            mark_job_enqueue_failed(session, job_id=job.id, reason="任务队列暂不可用，请稍后重试")
             raise HTTPException(status_code=503, detail="任务队列暂不可用，请稍后重试") from exc
     return serialize_job(job)
 
@@ -203,7 +203,7 @@ def create_poster_job_endpoint(product_id: str, session: Session = Depends(get_s
         try:
             enqueue_poster_job(job.id)
         except Exception as exc:  # noqa: BLE001
-            mark_job_enqueue_failed(session, job_id=job.id, reason=str(exc))
+            mark_job_enqueue_failed(session, job_id=job.id, reason="任务队列暂不可用，请稍后重试")
             raise HTTPException(status_code=503, detail="任务队列暂不可用，请稍后重试") from exc
     return serialize_job(job)
 
@@ -219,7 +219,7 @@ def regenerate_poster_endpoint(poster_id: str, session: Session = Depends(get_se
         try:
             enqueue_poster_job(job.id)
         except Exception as exc:  # noqa: BLE001
-            mark_job_enqueue_failed(session, job_id=job.id, reason=str(exc))
+            mark_job_enqueue_failed(session, job_id=job.id, reason="任务队列暂不可用，请稍后重试")
             raise HTTPException(status_code=503, detail="任务队列暂不可用，请稍后重试") from exc
     return serialize_job(job)
 

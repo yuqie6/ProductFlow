@@ -127,6 +127,7 @@ cp .env.example .env
 至少修改以下值：
 
 - `ADMIN_ACCESS_KEY`：登录后台使用的管理员密钥。
+- `SETTINGS_ACCESS_TOKEN`：配置页二次解锁令牌，必须与登录密钥分开。
 - `SESSION_SECRET`：签名 session cookie 的长随机字符串。
 - `POSTGRES_PASSWORD`：PostgreSQL 密码；Compose 会用它拼出容器内的 `DATABASE_URL`。
 
@@ -246,6 +247,7 @@ cp web/.env.example web/.env
 `.env.example` 的 `DATABASE_URL` / `REDIS_URL` 面向 Compose 容器网络；本地热重载开发命令会通过 `.env.dev` 使用宿主机 `localhost:${POSTGRES_HOST_PORT:-15432}` 和 `localhost:${REDIS_HOST_PORT:-16379}`。至少需要把 `.env` / `.env.dev` 中的这些值改成自己的随机值：
 
 - `ADMIN_ACCESS_KEY`：登录后台使用的管理员密钥。
+- `SETTINGS_ACCESS_TOKEN`：配置页二次解锁令牌，必须与登录密钥分开。
 - `SESSION_SECRET`：签名 session cookie 的长随机字符串。
 - `POSTGRES_PASSWORD`：本地 PostgreSQL 密码，同时保持 `.env.dev` 的 `DATABASE_URL` 中密码一致。
 

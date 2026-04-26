@@ -24,6 +24,8 @@ export function LoginPage({ authenticated }: LoginPageProps) {
   const loginMutation = useMutation({
     mutationFn: (adminKey: string) => api.createSession(adminKey),
     onSuccess: async () => {
+      queryClient.removeQueries({ queryKey: ["settings-lock-state"] });
+      queryClient.removeQueries({ queryKey: ["config"] });
       await queryClient.invalidateQueries({ queryKey: ["session"] });
       navigate("/products", { replace: true });
     },

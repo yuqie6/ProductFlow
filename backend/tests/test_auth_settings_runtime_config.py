@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from helpers import (
     _login,
+    _unlock_settings,
 )
 
 from productflow_backend.config import get_runtime_settings, get_settings
@@ -29,18 +30,80 @@ def test_auth_session_required(configured_env: Path) -> None:
     assert authorized.status_code == 200
     assert authorized.json()["items"] == []
 
-def test_settings_api_persists_database_overrides(configured_env: Path) -> None:
+
+def test_settings_api_requires_secondary_unlock(configured_env: Path) -> None:
     from productflow_backend.presentation.api import create_app
 
     app = create_app()
     client = TestClient(app)
     _login(client)
 
+    locked_state = client.get("/api/settings/lock-state")
+    assert locked_state.status_code == 200
+    assert locked_state.json() == {"unlocked": False, "configured": True}
+
+    locked_config = client.get("/api/settings")
+    assert locked_config.status_code == 403
+    assert locked_config.json()["detail"] == "请先解锁系统配置"
+
+    wrong = client.post("/api/settings/unlock", json={"token": "wrong-token"})
+    assert wrong.status_code == 401
+    assert wrong.json()["detail"] == "设置解锁令牌不正确"
+
+    _unlock_settings(client)
+    unlocked_state = client.get("/api/settings/lock-state")
+    assert unlocked_state.status_code == 200
+    assert unlocked_state.json() == {"unlocked": True, "configured": True}
+
+    config = client.get("/api/settings")
+    assert config.status_code == 200
+    payload = config.json()
+    assert "super-secret-settings-token" not in str(payload)
+    assert "super-secret-admin-key" not in str(payload)
+
+    _login(client)
+    relogin_state = client.get("/api/settings/lock-state")
+    assert relogin_state.status_code == 200
+    assert relogin_state.json() == {"unlocked": False, "configured": True}
+
+
+def test_settings_unlock_does_not_bypass_missing_token_after_env_change(
+    configured_env: Path,
+    monkeypatch,
+) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+    _unlock_settings(client)
+
+    monkeypatch.setenv("SETTINGS_ACCESS_TOKEN", "")
+    get_settings.cache_clear()
+
+    lock_state = client.get("/api/settings/lock-state")
+    assert lock_state.status_code == 200
+    assert lock_state.json() == {"unlocked": False, "configured": False}
+
+    config = client.get("/api/settings")
+    assert config.status_code == 503
+    assert config.json()["detail"] == "设置解锁令牌未配置，请联系管理员"
+
+
+def test_settings_api_persists_database_overrides(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+    _unlock_settings(client)
+
     initial = client.get("/api/settings")
     assert initial.status_code == 200
     initial_items = {item["key"]: item for item in initial.json()["items"]}
     assert initial_items["image_provider_kind"]["value"] == "mock"
     assert initial_items["image_provider_kind"]["source"] == "env_default"
+    assert initial_items["generation_max_concurrent_tasks"]["value"] == 3
 
     updated = client.patch(
         "/api/settings",
@@ -50,6 +113,7 @@ def test_settings_api_persists_database_overrides(configured_env: Path) -> None:
                 "image_api_key": "database-image-key",
                 "image_generate_model": "gpt-5.4-mini",
                 "job_retry_delay_ms": 2500,
+                "generation_max_concurrent_tasks": 2,
             }
         },
     )
@@ -62,6 +126,7 @@ def test_settings_api_persists_database_overrides(configured_env: Path) -> None:
     assert get_runtime_settings().image_provider_kind == "openai_responses"
     assert get_runtime_settings().image_api_key == "database-image-key"
     assert get_runtime_settings().job_retry_delay_ms == 2500
+    assert get_runtime_settings().generation_max_concurrent_tasks == 2
 
     session = get_session_factory()()
     try:
@@ -81,6 +146,7 @@ def test_prompt_settings_api_accepts_rejects_and_resets(configured_env: Path) ->
     app = create_app()
     client = TestClient(app)
     _login(client)
+    _unlock_settings(client)
 
     initial = client.get("/api/settings")
     assert initial.status_code == 200
@@ -116,6 +182,7 @@ def test_settings_api_rejects_invalid_effective_config(configured_env: Path) -> 
     app = create_app()
     client = TestClient(app)
     _login(client)
+    _unlock_settings(client)
 
     response = client.patch(
         "/api/settings",
@@ -131,6 +198,7 @@ def test_settings_api_rejects_malformed_image_sizes_before_persist(configured_en
     app = create_app()
     client = TestClient(app)
     _login(client)
+    _unlock_settings(client)
 
     response = client.patch(
         "/api/settings",
@@ -158,6 +226,7 @@ def test_settings_api_normalizes_custom_image_sizes_for_generation(configured_en
     app = create_app()
     client = TestClient(app)
     _login(client)
+    _unlock_settings(client)
 
     updated = client.patch(
         "/api/settings",

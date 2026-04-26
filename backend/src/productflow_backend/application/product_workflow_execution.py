@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from productflow_backend.application import product_workflow_graph
+from productflow_backend.application.admission import ensure_generation_capacity
 from productflow_backend.application.contracts import PosterGenerationInput, ProductInput, ReferenceImageInput
 from productflow_backend.application.product_workflow_artifacts import (
     _copy_node_output,
@@ -150,6 +151,7 @@ def start_product_workflow_run(
     if not node_ids_to_run:
         raise ValueError("工作流没有可运行节点")
 
+    ensure_generation_capacity(session)
     run = WorkflowRun(workflow_id=workflow.id, status=WorkflowRunStatus.RUNNING)
     logger.info(
         "创建商品工作流运行: product_id=%s workflow_id=%s start_node_id=%s",

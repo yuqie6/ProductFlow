@@ -7,7 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import Field, ValidationError, field_validator
+from pydantic import Field, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -88,6 +88,7 @@ class Settings(BaseSettings):
     session_cookie_secure: bool = False
 
     admin_access_key: str = Field(min_length=8)
+    settings_access_token: str | None = None
     session_secret: str = Field(min_length=16)
 
     database_url: str
@@ -129,11 +130,18 @@ class Settings(BaseSettings):
 
     job_max_attempts: int = 3
     job_retry_delay_ms: int = 10_000
+    generation_max_concurrent_tasks: int = Field(default=3, ge=1, le=20)
 
     @field_validator("image_main_image_size", "image_promo_poster_size")
     @classmethod
     def _normalize_image_generation_fallback_size(cls, value: str) -> str:
         return normalize_image_generation_size(value)
+
+    @model_validator(mode="after")
+    def _validate_distinct_settings_token(self) -> Settings:
+        if self.settings_access_token and self.settings_access_token.strip() == self.admin_access_key:
+            raise ValueError("SETTINGS_ACCESS_TOKEN 必须与 ADMIN_ACCESS_KEY 分开设置")
+        return self
 
     @property
     def cors_origins(self) -> list[str]:
@@ -342,6 +350,15 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
         category="任务重试",
         input_type="number",
         minimum=0,
+    ),
+    ConfigDefinition(
+        key="generation_max_concurrent_tasks",
+        label="全局生成并发上限",
+        category="任务重试",
+        input_type="number",
+        description="公网共享体验站的全局资源保护阈值；文案、海报、工作流和连续生图达到上限时会提示稍后重试。",
+        minimum=1,
+        maximum=20,
     ),
 )
 

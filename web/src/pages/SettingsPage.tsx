@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Loader2, RotateCcw, Save, Settings as SettingsIcon } from "lucide-react";
+import { CheckCircle2, Loader2, LockKeyhole, RotateCcw, Save, Settings as SettingsIcon } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { TopNav } from "../components/TopNav";
@@ -152,11 +152,20 @@ export function SettingsPage() {
   const [resettingKey, setResettingKey] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [savedMessage, setSavedMessage] = useState("");
+  const [unlockToken, setUnlockToken] = useState("");
+
+  const lockStateQuery = useQuery({
+    queryKey: ["settings-lock-state"],
+    queryFn: api.getSettingsLockState,
+  });
 
   const configQuery = useQuery({
     queryKey: ["config"],
     queryFn: api.getConfig,
+    enabled: Boolean(lockStateQuery.data?.unlocked),
   });
+
+  const isCheckingLockState = lockStateQuery.isLoading || lockStateQuery.isFetching;
 
   const resetDraftsFromConfig = useCallback((config: ConfigResponse | undefined) => {
     if (!config) {
@@ -169,6 +178,13 @@ export function SettingsPage() {
   useEffect(() => {
     resetDraftsFromConfig(configQuery.data);
   }, [configQuery.data, resetDraftsFromConfig]);
+
+  useEffect(() => {
+    if (configQuery.error instanceof ApiError && configQuery.error.status === 403) {
+      queryClient.setQueryData(["settings-lock-state"], { unlocked: false, configured: true });
+      queryClient.removeQueries({ queryKey: ["config"] });
+    }
+  }, [configQuery.error, queryClient]);
 
   const groupedItems = useMemo(() => {
     const groups: Array<{ category: string; items: ConfigItem[] }> = [];
@@ -202,6 +218,9 @@ export function SettingsPage() {
     onError: (mutationError) => {
       setSavedMessage("");
       if (mutationError instanceof ApiError) {
+        if (mutationError.status === 403) {
+          void queryClient.invalidateQueries({ queryKey: ["settings-lock-state"] });
+        }
         setError(mutationError.detail);
         return;
       }
@@ -222,6 +241,9 @@ export function SettingsPage() {
     },
     onError: (mutationError) => {
       if (mutationError instanceof ApiError) {
+        if (mutationError.status === 403) {
+          void queryClient.invalidateQueries({ queryKey: ["settings-lock-state"] });
+        }
         setError(mutationError.detail);
         return;
       }
@@ -230,9 +252,30 @@ export function SettingsPage() {
     onSettled: () => setResettingKey(null),
   });
 
+  const unlockMutation = useMutation({
+    mutationFn: () => api.unlockSettings(unlockToken),
+    onSuccess: (data) => {
+      queryClient.setQueryData(["settings-lock-state"], data);
+      setUnlockToken("");
+      setError("");
+      setSavedMessage("系统配置已解锁。本次登录会话内可读取和修改运行时配置。");
+      void queryClient.invalidateQueries({ queryKey: ["config"] });
+    },
+    onError: (mutationError) => {
+      setSavedMessage("");
+      if (mutationError instanceof ApiError) {
+        setError(mutationError.detail);
+        return;
+      }
+      setError(mutationError instanceof Error ? mutationError.message : "解锁配置失败");
+    },
+  });
+
   const logoutMutation = useMutation({
     mutationFn: api.destroySession,
     onSuccess: async () => {
+      queryClient.removeQueries({ queryKey: ["settings-lock-state"] });
+      queryClient.removeQueries({ queryKey: ["config"] });
       await queryClient.invalidateQueries({ queryKey: ["session"] });
       navigate("/login", { replace: true });
     },
@@ -243,6 +286,13 @@ export function SettingsPage() {
     setError("");
     setSavedMessage("");
     saveMutation.mutate();
+  };
+
+  const handleUnlock = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setError("");
+    setSavedMessage("");
+    unlockMutation.mutate();
   };
 
   const handleDiscardDrafts = async () => {
@@ -269,7 +319,7 @@ export function SettingsPage() {
               </div>
               <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">系统配置</h1>
               <p className="mt-1 text-sm text-slate-500">
-                数据库配置优先生效；未写入数据库的字段继续使用 env/default 值。
+                公网共享体验站中请勿上传隐私素材；数据库配置优先生效，未写入数据库的字段继续使用 env/default 值。
               </p>
             </div>
             <button
@@ -281,13 +331,73 @@ export function SettingsPage() {
             </button>
           </div>
 
-          {configQuery.isLoading ? (
+          {isCheckingLockState ? (
+            <div className="flex justify-center py-20 text-zinc-400">
+              <Loader2 size={22} className="animate-spin" />
+            </div>
+          ) : lockStateQuery.isError ? (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              配置锁状态加载失败，请确认后端和数据库已启动。
+            </div>
+          ) : !lockStateQuery.data?.configured ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800">
+              设置解锁令牌未配置。请在后端环境变量中设置 SETTINGS_ACCESS_TOKEN 后重启服务，避免公网体验用户修改全局配置。
+            </div>
+          ) : !lockStateQuery.data.unlocked ? (
+            <form
+              onSubmit={handleUnlock}
+              className="mx-auto max-w-xl rounded-2xl border border-slate-200 bg-white p-6 shadow-sm shadow-slate-200/50"
+            >
+              <div className="mb-5 flex items-start gap-3">
+                <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+                  <LockKeyhole size={18} />
+                </span>
+                <div>
+                  <h2 className="text-base font-semibold text-slate-950">需要二次令牌才能查看系统配置</h2>
+                  <p className="mt-1 text-sm leading-6 text-slate-500">
+                    当前站点按公网共享体验站运行。商品和生成记录会被同站体验者共享，但模型、API Key、提示词和并发上限属于全局配置，需要单独授权。
+                  </p>
+                </div>
+              </div>
+              <label htmlFor="settings-token" className="text-sm font-medium text-slate-800">
+                设置解锁令牌
+              </label>
+              <input
+                id="settings-token"
+                type="password"
+                value={unlockToken}
+                onChange={(event) => setUnlockToken(event.target.value)}
+                className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 transition-shadow placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                placeholder="输入 SETTINGS_ACCESS_TOKEN"
+                autoComplete="current-password"
+              />
+              {error ? (
+                <div className="mt-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {error}
+                </div>
+              ) : null}
+              <div className="mt-5 flex justify-end">
+                <button
+                  type="submit"
+                  disabled={unlockMutation.isPending || !unlockToken.trim()}
+                  className="inline-flex items-center rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition-colors hover:bg-indigo-500 disabled:opacity-50"
+                >
+                  {unlockMutation.isPending ? (
+                    <Loader2 size={14} className="mr-2 animate-spin" />
+                  ) : (
+                    <LockKeyhole size={14} className="mr-2" />
+                  )}
+                  解锁配置
+                </button>
+              </div>
+            </form>
+          ) : configQuery.isLoading ? (
             <div className="flex justify-center py-20 text-zinc-400">
               <Loader2 size={22} className="animate-spin" />
             </div>
           ) : configQuery.isError ? (
             <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              配置加载失败，请确认后端和数据库已启动。
+              {configQuery.error instanceof ApiError ? configQuery.error.detail : "配置加载失败，请确认后端和数据库已启动。"}
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-6">

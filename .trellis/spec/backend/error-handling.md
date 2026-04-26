@@ -37,6 +37,7 @@ Current typed errors:
 - `BusinessValidationError`: explicit `400` for valid HTTP requests that are invalid for the current workflow state or
   selected resource.
 - `NotFoundError`: explicit `404` for missing domain/application resources.
+- `ResourceBusyError`: explicit `429` when global provider/worker admission control is at capacity.
 
 Typed business errors intentionally subclass `ValueError` during the migration so existing route catches continue to
 work, but new code should choose the typed class instead of relying on message suffixes.
@@ -194,6 +195,22 @@ Product routes create job records first, then enqueue through `infrastructure/qu
   `execute_copy_job(...)` / `execute_poster_job(...)` to persist failure/retry state.
 
 Keep queue send failures visible to the API caller; do not leave a `QUEUED` job silently unenqueued.
+
+Public-demo resource-consuming entrypoints must run through the shared generation admission check before creating new
+provider/worker work:
+
+- copy jobs
+- poster jobs and poster regeneration
+- workflow run kickoff
+- synchronous image-session generation
+
+For idempotent routes that can return an already-active `JobRun` or `WorkflowRun`, check/reuse the existing active record
+before applying admission control. The cap protects creation of new resource-consuming work; it must not block duplicate
+submissions from seeing the already-created job/run or from re-enqueueing a stranded active workflow run.
+
+When the cap is reached, return the stable FastAPI error shape with status `429` and detail
+`"当前生成任务较多，请稍后再试"`. Do not leak queue, Redis, provider, or filesystem exception strings to users; persist or
+return a generic queue/provider failure detail instead.
 
 ---
 

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import secrets
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -13,6 +14,7 @@ from productflow_backend.config import (
     RUNTIME_CONFIG_KEYS,
     build_settings_with_overrides,
     get_runtime_settings,
+    get_settings,
     normalize_config_values,
     normalize_image_generation_size,
 )
@@ -23,9 +25,23 @@ from productflow_backend.presentation.schemas.settings import (
     ConfigOptionResponse,
     ConfigResponse,
     ConfigUpdateRequest,
+    SettingsLockStateResponse,
+    SettingsUnlockRequest,
 )
 
 router = APIRouter(prefix="/api/settings", tags=["settings"], dependencies=[Depends(require_admin)])
+
+
+def _settings_token_configured() -> bool:
+    token = get_settings().settings_access_token
+    return bool(token and token.strip())
+
+
+def require_settings_unlocked(request: Request) -> None:
+    if not _settings_token_configured():
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="设置解锁令牌未配置，请联系管理员")
+    if not request.session.get("settings_unlocked"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="请先解锁系统配置")
 
 
 def _load_database_values(session: Session) -> dict[str, str]:
@@ -77,12 +93,32 @@ def _serialize_config(session: Session) -> ConfigResponse:
     return ConfigResponse(items=items)
 
 
-@router.get("", response_model=ConfigResponse)
+@router.get("/lock-state", response_model=SettingsLockStateResponse)
+def get_settings_lock_state_endpoint(request: Request) -> SettingsLockStateResponse:
+    configured = _settings_token_configured()
+    return SettingsLockStateResponse(
+        unlocked=configured and bool(request.session.get("settings_unlocked")),
+        configured=configured,
+    )
+
+
+@router.post("/unlock", response_model=SettingsLockStateResponse)
+def unlock_settings_endpoint(payload: SettingsUnlockRequest, request: Request) -> SettingsLockStateResponse:
+    expected_token = (get_settings().settings_access_token or "").strip()
+    if not expected_token:
+        raise HTTPException(status_code=503, detail="设置解锁令牌未配置，请联系管理员")
+    if not secrets.compare_digest(payload.token, expected_token):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="设置解锁令牌不正确")
+    request.session["settings_unlocked"] = True
+    return SettingsLockStateResponse(unlocked=True, configured=True)
+
+
+@router.get("", response_model=ConfigResponse, dependencies=[Depends(require_settings_unlocked)])
 def get_config_endpoint(session: Session = Depends(get_session)) -> ConfigResponse:
     return _serialize_config(session)
 
 
-@router.patch("", response_model=ConfigResponse)
+@router.patch("", response_model=ConfigResponse, dependencies=[Depends(require_settings_unlocked)])
 def update_config_endpoint(
     payload: ConfigUpdateRequest,
     session: Session = Depends(get_session),

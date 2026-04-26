@@ -35,3 +35,12 @@ class ConfigResponse(BaseModel):
 class ConfigUpdateRequest(BaseModel):
     values: dict[str, Any] = Field(default_factory=dict)
     reset_keys: list[str] = Field(default_factory=list)
+
+
+class SettingsLockStateResponse(BaseModel):
+    unlocked: bool
+    configured: bool
+
+
+class SettingsUnlockRequest(BaseModel):
+    token: str = Field(min_length=1)

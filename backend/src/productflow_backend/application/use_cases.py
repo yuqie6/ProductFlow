@@ -12,6 +12,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from productflow_backend.application.admission import ensure_generation_capacity
 from productflow_backend.application.contracts import (
     PosterGenerationInput,
     ProductInput,
@@ -339,6 +340,7 @@ def create_copy_job(session: Session, *, product_id: str) -> JobCreationResult:
     if existing:
         return JobCreationResult(job=existing, created=False)
 
+    ensure_generation_capacity(session)
     job = JobRun(product_id=product_id, kind=JobKind.COPY_GENERATION, status=JobStatus.QUEUED)
     session.add(job)
     try:
@@ -360,13 +362,14 @@ def create_poster_job(
     target_poster_kind: PosterKind | None = None,
 ) -> JobCreationResult:
     product = _get_product_or_raise(session, product_id)
-    if not product.current_confirmed_copy_set_id:
-        raise ValueError("请先确认一版文案，再生成海报")
-
     existing = _get_existing_active_job(session, product_id=product_id, kind=JobKind.POSTER_GENERATION)
     if existing:
         return JobCreationResult(job=existing, created=False)
 
+    if not product.current_confirmed_copy_set_id:
+        raise ValueError("请先确认一版文案，再生成海报")
+
+    ensure_generation_capacity(session)
     job = JobRun(
         product_id=product_id,
         kind=JobKind.POSTER_GENERATION,

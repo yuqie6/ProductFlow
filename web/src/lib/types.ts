@@ -302,3 +302,8 @@ export interface ConfigUpdateRequest {
   values?: Record<string, string | number | boolean | null>;
   reset_keys?: string[];
 }
+
+export interface SettingsLockState {
+  unlocked: boolean;
+  configured: boolean;
+}

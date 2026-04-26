@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
+from productflow_backend.application.admission import admit_synchronous_generation
 from productflow_backend.application.image_sessions import (
     add_image_session_reference_images,
     attach_image_session_asset_to_product,
@@ -151,19 +152,20 @@ def generate_image_session_round_endpoint(
     session: Session = Depends(get_session),
 ) -> ImageSessionDetailResponse:
     try:
-        image_session = generate_image_session_round(
-            session,
-            image_session_id=image_session_id,
-            prompt=payload.prompt,
-            size=payload.size,
-            base_asset_id=payload.base_asset_id,
-            selected_reference_asset_ids=payload.selected_reference_asset_ids,
-            generation_count=payload.generation_count,
-        )
+        with admit_synchronous_generation(session):
+            image_session = generate_image_session_round(
+                session,
+                image_session_id=image_session_id,
+                prompt=payload.prompt,
+                size=payload.size,
+                base_asset_id=payload.base_asset_id,
+                selected_reference_asset_ids=payload.selected_reference_asset_ids,
+                generation_count=payload.generation_count,
+            )
     except ValueError as exc:
         raise_value_error_as_http(exc)
     except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail="图片生成失败，请稍后重试") from exc
     return serialize_image_session_detail(image_session)
 
 

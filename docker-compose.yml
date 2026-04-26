@@ -42,6 +42,7 @@ services:
       BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://localhost:29281,http://127.0.0.1:29281}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
       ADMIN_ACCESS_KEY: ${ADMIN_ACCESS_KEY:?set ADMIN_ACCESS_KEY in .env}
+      SETTINGS_ACCESS_TOKEN: ${SETTINGS_ACCESS_TOKEN:?set SETTINGS_ACCESS_TOKEN in .env}
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
       DATABASE_URL: postgresql+psycopg://productflow:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@productflow-postgres:5432/productflow
       REDIS_URL: redis://productflow-redis:6379/0
@@ -71,6 +72,7 @@ services:
       UPLOAD_ALLOWED_IMAGE_MIME_TYPES: ${UPLOAD_ALLOWED_IMAGE_MIME_TYPES:-image/png,image/jpeg,image/webp}
       JOB_MAX_ATTEMPTS: ${JOB_MAX_ATTEMPTS:-3}
       JOB_RETRY_DELAY_MS: ${JOB_RETRY_DELAY_MS:-10000}
+      GENERATION_MAX_CONCURRENT_TASKS: ${GENERATION_MAX_CONCURRENT_TASKS:-3}
     command: >-
       sh -c "alembic upgrade head && uvicorn productflow_backend.main:app --host 0.0.0.0 --port 29280"
     ports:
@@ -103,6 +105,7 @@ services:
     environment:
       APP_ENV: ${APP_ENV:-production}
       ADMIN_ACCESS_KEY: ${ADMIN_ACCESS_KEY:?set ADMIN_ACCESS_KEY in .env}
+      SETTINGS_ACCESS_TOKEN: ${SETTINGS_ACCESS_TOKEN:?set SETTINGS_ACCESS_TOKEN in .env}
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
       DATABASE_URL: postgresql+psycopg://productflow:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@productflow-postgres:5432/productflow
       REDIS_URL: redis://productflow-redis:6379/0
@@ -132,6 +135,7 @@ services:
       UPLOAD_ALLOWED_IMAGE_MIME_TYPES: ${UPLOAD_ALLOWED_IMAGE_MIME_TYPES:-image/png,image/jpeg,image/webp}
       JOB_MAX_ATTEMPTS: ${JOB_MAX_ATTEMPTS:-3}
       JOB_RETRY_DELAY_MS: ${JOB_RETRY_DELAY_MS:-10000}
+      GENERATION_MAX_CONCURRENT_TASKS: ${GENERATION_MAX_CONCURRENT_TASKS:-3}
     command: ["dramatiq", "--processes", "2", "--threads", "4", "productflow_backend.workers"]
     volumes:
       # Keep this source identical to productflow-backend so API and worker see the same files at /app/storage.

@@ -271,8 +271,9 @@ class AppSetting(Base, TimestampMixin):
 ```
 
 `backend/src/productflow_backend/config.py` keeps infrastructure secrets and bootstrap settings env-only
-(`DATABASE_URL`, `REDIS_URL`, `SESSION_SECRET`, `ADMIN_ACCESS_KEY`) while allowing business settings listed in
-`CONFIG_DEFINITIONS` to be overridden from `app_settings`.
+(`DATABASE_URL`, `REDIS_URL`, `SESSION_SECRET`, `ADMIN_ACCESS_KEY`, `SETTINGS_ACCESS_TOKEN`) while allowing business
+settings listed in `CONFIG_DEFINITIONS` to be overridden from `app_settings`. The settings/config token is a secondary
+unlock secret for `/api/settings`; only a signed-session `settings_unlocked` flag may be persisted, never the token.
 
 When adding a runtime setting, update all of these together:
 
@@ -280,6 +281,9 @@ When adding a runtime setting, update all of these together:
 - `CONFIG_DEFINITIONS` / validation helpers in `config.py`
 - API schema/frontend types in `web/src/lib/types.ts` if the value appears in settings UI
 - tests for validation/persistence in `backend/tests/test_auth_settings_runtime_config.py`
+
+`generation_max_concurrent_tasks` is the public-demo global provider/worker admission cap. It is a runtime setting backed
+by `app_settings` and must gate new resource-consuming entrypoints before they enqueue or synchronously call providers.
 
 ### Scenario: Runtime prompt customization
 

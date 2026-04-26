@@ -17,6 +17,7 @@ def create_session(payload: SessionCreateRequest, request: Request) -> SessionRe
     settings = get_settings()
     if payload.admin_key != settings.admin_access_key:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="管理员密钥不正确")
+    request.session.clear()
     request.session["is_authenticated"] = True
     return SessionResponse()
 

@@ -11,6 +11,7 @@ import type {
   ProductWorkflow,
   ProductWritebackResponse,
   ProductListResponse,
+  SettingsLockState,
   SessionState,
 } from "./types";
 
@@ -91,6 +92,15 @@ export const api = {
   },
   getConfig(): Promise<ConfigResponse> {
     return request("/api/settings");
+  },
+  getSettingsLockState(): Promise<SettingsLockState> {
+    return request("/api/settings/lock-state");
+  },
+  unlockSettings(token: string): Promise<SettingsLockState> {
+    return request("/api/settings/unlock", {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    });
   },
   updateConfig(payload: ConfigUpdateRequest): Promise<ConfigResponse> {
     return request("/api/settings", {

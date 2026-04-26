@@ -32,6 +32,8 @@ Current query key patterns:
 - Image sessions: `['image-sessions', productId ?? 'standalone']` and `['image-session', selectedSessionId]` in
   `ImageChatPage.tsx`.
 - Runtime config: `['config']` in `ImageChatPage.tsx` and `SettingsPage.tsx`.
+- Settings lock state: `['settings-lock-state']` in `SettingsPage.tsx`; fetch full `['config']` only after the secondary
+  settings token unlock succeeds.
 
 When writing mutations, update/invalidate every key that can show stale data.
 
@@ -46,6 +48,8 @@ Keep short-lived UI state local to the page that owns the interaction:
 - `ImageChatPage.tsx` stores selected session/generated asset, prompt draft, image size, rename mode, target product,
   and transient success/error messages.
 - `SettingsPage.tsx` stores config drafts, secret touched flags, reset progress, and save/error messages.
+- `SettingsPage.tsx` stores the transient settings unlock token only in local component state for the submit attempt; do
+  not persist the token in localStorage, query cache, or API responses.
 
 Local state should not duplicate server records unless the user is editing a draft. For example, `SettingsPage.tsx` creates
 `drafts` from fetched config so the user can edit before saving; product details themselves remain in TanStack Query.

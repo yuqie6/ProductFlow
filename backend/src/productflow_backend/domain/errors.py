@@ -23,3 +23,9 @@ class NotFoundError(BusinessError):
     """Requested domain/application resource does not exist."""
 
     status_code: ClassVar[int] = 404
+
+
+class ResourceBusyError(BusinessError):
+    """Global provider/worker resource capacity is currently exhausted."""
+
+    status_code: ClassVar[int] = 429
