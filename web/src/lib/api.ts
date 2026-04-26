@@ -195,7 +195,16 @@ export const api = {
   deleteImageSessionReferenceImage(sessionId: string, assetId: string): Promise<ImageSessionDetail> {
     return request(`/api/image-sessions/${sessionId}/reference-images/${assetId}`, { method: "DELETE" });
   },
-  generateImageSessionRound(sessionId: string, input: { prompt: string; size: string }): Promise<ImageSessionDetail> {
+  generateImageSessionRound(
+    sessionId: string,
+    input: {
+      prompt: string;
+      size: string;
+      base_asset_id?: string | null;
+      selected_reference_asset_ids?: string[];
+      generation_count?: number;
+    },
+  ): Promise<ImageSessionDetail> {
     return request(`/api/image-sessions/${sessionId}/generate`, {
       method: "POST",
       body: JSON.stringify(input),

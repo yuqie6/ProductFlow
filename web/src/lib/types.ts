@@ -233,6 +233,11 @@ export interface ImageSessionRound {
   provider_response_id: string | null;
   previous_response_id: string | null;
   image_generation_call_id: string | null;
+  generation_group_id: string | null;
+  candidate_index: number;
+  candidate_count: number;
+  base_asset_id: string | null;
+  selected_reference_asset_ids: string[];
   generated_asset: ImageSessionAsset;
   created_at: string;
 }

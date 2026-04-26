@@ -20,6 +20,7 @@ import { TopNav } from "../components/TopNav";
 import { api, ApiError } from "../lib/api";
 import { formatDateTime } from "../lib/format";
 import { DEFAULT_IMAGE_SIZE_OPTIONS } from "../lib/imageSizes";
+import { clampGenerationCount, groupImageSessionRounds, pruneSelectedReferenceIds } from "./image-chat/branching";
 import type {
   ImageSessionDetail,
   ImageSessionListResponse,
@@ -32,6 +33,7 @@ function getSessionReferenceAssets(imageSession: ImageSessionDetail | undefined)
   return imageSession?.assets.filter((asset) => asset.kind === "reference_upload") ?? [];
 }
 
+const MAX_BRANCH_CONTEXT_IMAGES = 6;
 
 export function ImageChatPage() {
   const navigate = useNavigate();
@@ -42,6 +44,9 @@ export function ImageChatPage() {
 
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [selectedGeneratedAssetId, setSelectedGeneratedAssetId] = useState<string | null>(null);
+  const [branchBaseAssetId, setBranchBaseAssetId] = useState<string | null>(null);
+  const [selectedReferenceAssetIds, setSelectedReferenceAssetIds] = useState<string[]>([]);
+  const [generationCount, setGenerationCount] = useState(1);
   const [draft, setDraft] = useState("");
   const [size, setSize] = useState("1024x1024");
   const [titleDraft, setTitleDraft] = useState("");
@@ -117,6 +122,8 @@ export function ImageChatPage() {
 
   const imageSession = sessionDetailQuery.data;
   const sessionReferenceAssets = useMemo(() => getSessionReferenceAssets(imageSession), [imageSession]);
+  const maxSelectedReferenceCount = branchBaseAssetId ? MAX_BRANCH_CONTEXT_IMAGES - 1 : MAX_BRANCH_CONTEXT_IMAGES;
+  const roundGroups = useMemo(() => groupImageSessionRounds(imageSession?.rounds ?? []), [imageSession]);
 
   useEffect(() => {
     if (!imageSession) {
@@ -126,7 +133,17 @@ export function ImageChatPage() {
     if (!selectedGeneratedAssetId || !imageSession.rounds.some((round) => round.generated_asset.id === selectedGeneratedAssetId)) {
       setSelectedGeneratedAssetId(imageSession.rounds.at(-1)?.generated_asset.id ?? null);
     }
-  }, [imageSession, selectedGeneratedAssetId]);
+    if (branchBaseAssetId && !imageSession.rounds.some((round) => round.generated_asset.id === branchBaseAssetId)) {
+      setBranchBaseAssetId(null);
+    }
+    setSelectedReferenceAssetIds((current) =>
+      pruneSelectedReferenceIds(
+        current,
+        imageSession.assets.filter((asset) => asset.kind === "reference_upload").map((asset) => asset.id),
+        maxSelectedReferenceCount,
+      ),
+    );
+  }, [branchBaseAssetId, imageSession, maxSelectedReferenceCount, selectedGeneratedAssetId]);
 
   const selectedRound = useMemo(() => {
     if (!imageSession?.rounds.length) {
@@ -136,6 +153,13 @@ export function ImageChatPage() {
       imageSession.rounds.find((round) => round.generated_asset.id === selectedGeneratedAssetId) ?? imageSession.rounds.at(-1) ?? null
     );
   }, [imageSession, selectedGeneratedAssetId]);
+
+  const branchBaseRound = useMemo(() => {
+    if (!imageSession?.rounds.length || !branchBaseAssetId) {
+      return null;
+    }
+    return imageSession.rounds.find((round) => round.generated_asset.id === branchBaseAssetId) ?? null;
+  }, [branchBaseAssetId, imageSession]);
 
   const sourceImage = useMemo(
     () => productQuery.data?.source_assets.find((asset) => asset.kind === "original_image") ?? null,
@@ -172,8 +196,21 @@ export function ImageChatPage() {
   const uploadReferenceMutation = useMutation({
     mutationFn: (files: File[]) => api.addImageSessionReferenceImages(selectedSessionId!, files),
     onSuccess: (updated) => {
+      const previousReferenceIds = new Set(sessionReferenceAssets.map((asset) => asset.id));
+      const uploadedReferenceIds = updated.assets
+        .filter((asset) => asset.kind === "reference_upload" && !previousReferenceIds.has(asset.id))
+        .map((asset) => asset.id);
       queryClient.setQueryData(["image-session", updated.id], updated);
       void queryClient.invalidateQueries({ queryKey: ["image-sessions", productId ?? "standalone"] });
+      if (uploadedReferenceIds.length) {
+        setSelectedReferenceAssetIds((current) =>
+          pruneSelectedReferenceIds(
+            [...current, ...uploadedReferenceIds],
+            updated.assets.filter((asset) => asset.kind === "reference_upload").map((asset) => asset.id),
+            maxSelectedReferenceCount,
+          ),
+        );
+      }
       setSuccessMessage("参考图已上传");
       setErrorMessage("");
     },
@@ -212,6 +249,13 @@ export function ImageChatPage() {
     onSuccess: (updated) => {
       queryClient.setQueryData(["image-session", updated.id], updated);
       void queryClient.invalidateQueries({ queryKey: ["image-sessions", productId ?? "standalone"] });
+      setSelectedReferenceAssetIds((current) =>
+        pruneSelectedReferenceIds(
+          current,
+          updated.assets.filter((asset) => asset.kind === "reference_upload").map((asset) => asset.id),
+          maxSelectedReferenceCount,
+        ),
+      );
       setSuccessMessage("参考图已删除");
       setErrorMessage("");
     },
@@ -221,13 +265,20 @@ export function ImageChatPage() {
   });
 
   const generateMutation = useMutation({
-    mutationFn: (payload: { prompt: string; size: string }) => api.generateImageSessionRound(selectedSessionId!, payload),
+    mutationFn: (payload: {
+      prompt: string;
+      size: string;
+      base_asset_id: string | null;
+      selected_reference_asset_ids: string[];
+      generation_count: number;
+    }) => api.generateImageSessionRound(selectedSessionId!, payload),
     onSuccess: (updated) => {
       queryClient.setQueryData(["image-session", updated.id], updated);
       void queryClient.invalidateQueries({ queryKey: ["image-sessions", productId ?? "standalone"] });
-      setSelectedGeneratedAssetId(updated.rounds.at(-1)?.generated_asset.id ?? null);
+      const latestAssetId = updated.rounds.at(-1)?.generated_asset.id ?? null;
+      setSelectedGeneratedAssetId(latestAssetId);
       setDraft("");
-      setSuccessMessage("新一轮图片已生成");
+      setSuccessMessage(generationCount > 1 ? `已生成 ${generationCount} 张候选` : "新候选已生成");
       setErrorMessage("");
     },
     onError: (error) => {
@@ -273,7 +324,31 @@ export function ImageChatPage() {
     if (!selectedSessionId || !prompt || generateMutation.isPending) {
       return;
     }
-    generateMutation.mutate({ prompt, size });
+    generateMutation.mutate({
+      prompt,
+      size,
+      base_asset_id: branchBaseAssetId,
+      selected_reference_asset_ids: selectedReferenceAssetIds,
+      generation_count: clampGenerationCount(generationCount),
+    });
+  }
+
+  function handleContinueFrom(roundAssetId: string) {
+    setBranchBaseAssetId(roundAssetId);
+    setSelectedGeneratedAssetId(roundAssetId);
+    setSuccessMessage("");
+    setErrorMessage("");
+  }
+
+  function handleReferenceToggle(assetId: string, checked: boolean) {
+    setSelectedReferenceAssetIds((current) => {
+      const next = checked ? [...current, assetId] : current.filter((id) => id !== assetId);
+      return pruneSelectedReferenceIds(
+        next,
+        sessionReferenceAssets.map((asset) => asset.id),
+        maxSelectedReferenceCount,
+      );
+    });
   }
 
   function handleRename() {
@@ -459,29 +534,59 @@ export function ImageChatPage() {
               )}
             </div>
 
-            <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-5">
-              {imageSession?.rounds.map((round) => {
-                const active = round.generated_asset.id === selectedGeneratedAssetId;
-                return (
-                  <button
-                    key={round.id}
-                    type="button"
-                    onClick={() => setSelectedGeneratedAssetId(round.generated_asset.id)}
-                    className={`rounded-xl border p-2 text-left transition-colors ${
-                      active ? "border-zinc-900 bg-zinc-50" : "border-zinc-200 hover:border-zinc-300 hover:bg-zinc-50"
-                    }`}
-                  >
-                    <img
-                      src={api.toApiUrl(round.generated_asset.thumbnail_url)}
-                      alt={round.prompt}
-                      loading="lazy"
-                      decoding="async"
-                      className="h-24 w-full rounded-lg object-cover"
-                    />
-                    <div className="mt-2 line-clamp-2 text-xs text-zinc-600">{round.prompt}</div>
-                  </button>
-                );
-              })}
+            <div className="mt-4 space-y-3">
+              {roundGroups.map((group) => (
+                <div key={group.id} className="rounded-2xl border border-zinc-200 bg-zinc-50/70 p-3">
+                  <div className="mb-2 flex items-center justify-between gap-3 text-xs text-zinc-500">
+                    <div className="line-clamp-1">
+                      {group.base_asset_id ? "分支候选" : "初始候选"} · {group.rounds.length} 张 · {group.prompt}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-5">
+                    {group.rounds.map((round) => {
+                      const active = round.generated_asset.id === selectedGeneratedAssetId;
+                      const asBase = round.generated_asset.id === branchBaseAssetId;
+                      return (
+                        <div
+                          key={round.id}
+                          className={`rounded-xl border p-2 transition-colors ${
+                            active ? "border-zinc-900 bg-white" : "border-zinc-200 bg-white hover:border-zinc-300"
+                          }`}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => setSelectedGeneratedAssetId(round.generated_asset.id)}
+                            className="block w-full text-left"
+                          >
+                            <img
+                              src={api.toApiUrl(round.generated_asset.thumbnail_url)}
+                              alt={round.prompt}
+                              loading="lazy"
+                              decoding="async"
+                              className="h-24 w-full rounded-lg object-cover"
+                            />
+                            <div className="mt-2 line-clamp-2 text-xs text-zinc-600">{round.prompt}</div>
+                            <div className="mt-1 text-[11px] text-zinc-400">
+                              {round.candidate_count > 1 ? `候选 ${round.candidate_index}/${round.candidate_count}` : round.size}
+                            </div>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleContinueFrom(round.generated_asset.id)}
+                            className={`mt-2 inline-flex w-full items-center justify-center rounded-md px-2 py-1.5 text-xs font-medium transition-colors ${
+                              asBase
+                                ? "bg-zinc-900 text-white"
+                                : "border border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300 hover:text-zinc-900"
+                            }`}
+                          >
+                            从这张继续
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
 
@@ -537,8 +642,43 @@ export function ImageChatPage() {
               />
             )}
 
+            <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <div className="text-sm font-semibold text-zinc-900">分支基图</div>
+                {branchBaseRound ? (
+                  <button
+                    type="button"
+                    onClick={() => setBranchBaseAssetId(null)}
+                    className="text-xs font-medium text-zinc-500 transition-colors hover:text-zinc-900"
+                  >
+                    清空
+                  </button>
+                ) : null}
+              </div>
+              {branchBaseRound ? (
+                <div className="grid grid-cols-[88px_minmax(0,1fr)] gap-3">
+                  <img
+                    src={api.toApiUrl(branchBaseRound.generated_asset.thumbnail_url)}
+                    alt="分支基图"
+                    loading="lazy"
+                    decoding="async"
+                    className="h-24 w-full rounded-lg object-cover"
+                  />
+                  <div className="min-w-0 text-xs leading-5 text-zinc-500">
+                    <div className="truncate font-medium text-zinc-800">{branchBaseRound.prompt}</div>
+                    <div>{branchBaseRound.size}</div>
+                    <div>本轮只继承这张图和下方勾选参考图。</div>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-xs leading-5 text-zinc-500">
+                  未选择历史基图。本轮将按 prompt 和已勾选参考图生成，不自动继承完整历史。
+                </div>
+              )}
+            </div>
+
             <div>
-              <div className="mb-2 text-sm font-semibold text-zinc-900">参考图</div>
+              <div className="mb-2 text-sm font-semibold text-zinc-900">本轮参考图</div>
               <ImageDropZone
                 ariaLabel="上传会话参考图"
                 multiple
@@ -557,11 +697,21 @@ export function ImageChatPage() {
                   </>
                 )}
               </ImageDropZone>
+              <div className="mt-2 text-xs leading-5 text-zinc-500">
+                只有勾选的会话参考图会进入下一次生成；上传的新图会在额度内自动勾选。含基图最多 {MAX_BRANCH_CONTEXT_IMAGES} 张上下文图。
+              </div>
               <div className="mt-3 grid grid-cols-3 gap-2">
                 {sessionReferenceAssets.map((asset) => {
                   const deleting = deleteSessionReferenceMutation.isPending && deleteSessionReferenceMutation.variables === asset.id;
+                  const selected = selectedReferenceAssetIds.includes(asset.id);
+                  const selectionLimitReached = !selected && selectedReferenceAssetIds.length >= maxSelectedReferenceCount;
                   return (
-                    <div key={asset.id} className="group relative overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50">
+                    <div
+                      key={asset.id}
+                      className={`group relative overflow-hidden rounded-lg border bg-zinc-50 ${
+                        selected ? "border-zinc-900 ring-2 ring-zinc-900/10" : "border-zinc-200"
+                      }`}
+                    >
                       <a href={api.toApiUrl(asset.preview_url)} target="_blank" rel="noreferrer" title={asset.original_filename}>
                         <img
                           src={api.toApiUrl(asset.thumbnail_url)}
@@ -571,6 +721,16 @@ export function ImageChatPage() {
                           className="h-24 w-full object-cover"
                         />
                       </a>
+                      <label className="absolute bottom-1 left-1 inline-flex items-center rounded-md bg-white/95 px-1.5 py-1 text-[11px] font-medium text-zinc-700 shadow-sm ring-1 ring-zinc-200">
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          disabled={selectionLimitReached}
+                          onChange={(event) => handleReferenceToggle(asset.id, event.target.checked)}
+                          className="mr-1 h-3 w-3 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-900"
+                        />
+                        使用
+                      </label>
                       <button
                         type="button"
                         aria-label="删除参考图"
@@ -602,6 +762,24 @@ export function ImageChatPage() {
               <ImageSizePicker value={size} presets={sizeOptions} onChange={setSize} />
             </div>
 
+            <div>
+              <label className="mb-2 block text-sm font-semibold text-zinc-900" htmlFor="generation-count">
+                生成数量
+              </label>
+              <select
+                id="generation-count"
+                value={generationCount}
+                onChange={(event) => setGenerationCount(clampGenerationCount(Number(event.target.value)))}
+                className="w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900"
+              >
+                {[1, 2, 3, 4].map((count) => (
+                  <option key={count} value={count}>
+                    {count} 张候选
+                  </option>
+                ))}
+              </select>
+            </div>
+
             {successMessage ? (
               <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
                 {successMessage}
@@ -618,7 +796,7 @@ export function ImageChatPage() {
               className="inline-flex w-full items-center justify-center rounded-xl bg-zinc-900 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-zinc-800 disabled:opacity-60"
             >
               {generateMutation.isPending ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Sparkles size={14} className="mr-2" />}
-              继续生成
+              {generationCount > 1 ? `生成 ${generationCount} 张候选` : "生成候选"}
             </button>
 
             <div className="mt-auto rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
@@ -692,7 +870,7 @@ function ProductContextPanel({
       <div className="mb-3 text-sm font-semibold text-zinc-900">商品上下文</div>
       {product ? (
         <>
-          <div className="mb-3 text-xs text-zinc-500">生成时会参考商品主图和已添加的商品参考图。</div>
+          <div className="mb-3 text-xs text-zinc-500">商品图用于回看与保存；连续生图只使用你选择的分支基图和会话参考图。</div>
           <div className="grid grid-cols-[88px_minmax(0,1fr)] gap-3">
             <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
               {sourceImage ? (
