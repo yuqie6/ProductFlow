@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
@@ -26,23 +26,10 @@ import {
   ADD_NODE_OPTIONS,
   CANVAS_MIN_HEIGHT,
   CANVAS_MIN_WIDTH,
-  CANVAS_NODE_PADDING_X,
-  CANVAS_NODE_PADDING_Y,
-  CANVAS_VIEWPORT_PADDING,
   MAX_INSPECTOR_WIDTH,
-  MAX_ZOOM,
   MIN_INSPECTOR_WIDTH,
-  MIN_ZOOM,
-  NODE_HANDLE_Y,
-  NODE_MIN_X,
-  NODE_MIN_Y,
-  NODE_WIDTH,
 } from "./product-detail/constants";
-import {
-  buildEdgePath,
-  isCanvasWheelZoomBlockedTarget,
-  isPanePanBlockedTarget,
-} from "./product-detail/canvasUtils";
+import { buildEdgePath } from "./product-detail/canvasUtils";
 import { ImagePreviewModal } from "./product-detail/ImagePreviewModal";
 import { ImagesPanel } from "./product-detail/ImagesPanel";
 import { InspectorPanel } from "./product-detail/InspectorPanel";
@@ -54,20 +41,8 @@ import {
   getVisibleReferenceAssets,
 } from "./product-detail/galleryImages";
 import { getNodeImageDownload, getSourceImageDownload } from "./product-detail/imageDownloads";
-import type {
-  CanvasPoint,
-  ConnectionDragState,
-  NodeConfigDraft,
-  NodeDragState,
-  SaveStatus,
-  PanePanState,
-} from "./product-detail/types";
-import {
-  clamp,
-  hasActiveWorkflow,
-  outputText,
-  readStoredNumber,
-} from "./product-detail/utils";
+import type { NodeConfigDraft, SaveStatus } from "./product-detail/types";
+import { clamp, hasActiveWorkflow, outputText, readStoredNumber } from "./product-detail/utils";
 import {
   defaultConfigForType,
   defaultTitleForType,
@@ -75,53 +50,35 @@ import {
   nodeConfigFromDraft,
 } from "./product-detail/workflowConfig";
 import type { DownloadableImage } from "../lib/image-downloads";
+import {
+  buildConnectionDragPath,
+  useWorkflowCanvas,
+} from "./product-detail/useWorkflowCanvas";
+import type { NodePositionCommitInput } from "./product-detail/useWorkflowCanvas";
 
 type SidebarTab = "details" | "runs" | "images";
 
-const CANVAS_WHEEL_ZOOM_SENSITIVITY = 0.001;
-const CANVAS_ZOOM_PRECISION = 10_000;
-
-interface PlannedWheelView {
-  zoom: number;
-  scrollLeft: number;
-  scrollTop: number;
-}
+type WorkflowCanvasMutationBridge = {
+  acceptNodePositionMutation: (nodeId: string, mutationVersion: number) => boolean;
+  clearOptimisticNodePosition: (nodeId: string) => void;
+};
 
 export function ProductDetailPage() {
   const { productId = "" } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const canvasScrollRef = useRef<HTMLDivElement | null>(null);
-  const canvasRef = useRef<HTMLDivElement | null>(null);
-  const plannedWheelViewRef = useRef<PlannedWheelView | null>(null);
-  const nodeDragRef = useRef<NodeDragState | null>(null);
-  const nodeElementRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const edgePathRefs = useRef<Record<string, SVGPathElement | null>>({});
-  const edgeDeleteButtonRefs = useRef<Record<string, HTMLButtonElement | null>>(
-    {},
-  );
-  const nodePositionMutationVersionsRef = useRef<Record<string, number>>({});
   const previousBodyUserSelectRef = useRef<string | null>(null);
+  const workflowCanvasRef = useRef<WorkflowCanvasMutationBridge | null>(null);
   const wasWorkflowActiveRef = useRef(false);
   const draftVersionRef = useRef(0);
   const previousDraftNodeIdRef = useRef<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarTab>("details");
-  const [nodeDrag, setNodeDrag] = useState<NodeDragState | null>(null);
-  const [optimisticNodePositions, setOptimisticNodePositions] = useState<
-    Record<string, CanvasPoint>
-  >({});
-  const [connectionDrag, setConnectionDrag] =
-    useState<ConnectionDragState | null>(null);
-  const [panePan, setPanePan] = useState<PanePanState | null>(null);
   const [draft, setDraft] = useState<NodeConfigDraft>(() =>
     draftFromNode(null),
   );
   const [draftDirty, setDraftDirty] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
-  const [zoom, setZoom] = useState(() => clamp(readStoredNumber("productflow.workflow.zoom", 1), MIN_ZOOM, MAX_ZOOM));
-  const zoomRef = useRef(zoom);
-  const [wheelViewRevision, setWheelViewRevision] = useState(0);
   const [inspectorWidth, setInspectorWidth] = useState(() =>
     clamp(readStoredNumber("productflow.workflow.inspectorWidth", 360), MIN_INSPECTOR_WIDTH, MAX_INSPECTOR_WIDTH),
   );
@@ -240,73 +197,6 @@ export function ProductDetailPage() {
     }
   }, [workflowActive]);
 
-  useLayoutEffect(() => {
-    const plannedView = plannedWheelViewRef.current;
-    const scrollElement = canvasScrollRef.current;
-    if (!plannedView || !scrollElement) {
-      return;
-    }
-    if (plannedView.zoom !== zoom) {
-      plannedWheelViewRef.current = null;
-      return;
-    }
-    plannedWheelViewRef.current = null;
-    scrollElement.scrollLeft = plannedView.scrollLeft;
-    scrollElement.scrollTop = plannedView.scrollTop;
-  }, [zoom, wheelViewRevision]);
-
-  const getCanvasPoint = (
-    clientX: number,
-    clientY: number,
-    currentZoom = zoomRef.current,
-    scrollLeftOverride?: number,
-    scrollTopOverride?: number,
-  ): CanvasPoint => {
-    const scrollElement = canvasScrollRef.current;
-    const canvasElement = canvasRef.current;
-    if (!scrollElement || !canvasElement) {
-      return { x: clientX, y: clientY };
-    }
-    const scrollRect = scrollElement.getBoundingClientRect();
-    const canvasRect = canvasElement.getBoundingClientRect();
-    const canvasOffsetLeft = canvasRect.left - scrollRect.left + scrollElement.scrollLeft;
-    const canvasOffsetTop = canvasRect.top - scrollRect.top + scrollElement.scrollTop;
-    const plannedView = plannedWheelViewRef.current;
-    const plannedViewMatchesZoom = plannedView?.zoom === currentZoom;
-    const scrollLeft =
-      scrollLeftOverride ??
-      (plannedViewMatchesZoom ? plannedView.scrollLeft : scrollElement.scrollLeft);
-    const scrollTop =
-      scrollTopOverride ??
-      (plannedViewMatchesZoom ? plannedView.scrollTop : scrollElement.scrollTop);
-    return {
-      x: (scrollLeft + clientX - scrollRect.left - canvasOffsetLeft) / currentZoom,
-      y: (scrollTop + clientY - scrollRect.top - canvasOffsetTop) / currentZoom,
-    };
-  };
-
-  const getRenderedNodePosition = (node: WorkflowNode): CanvasPoint => {
-    const activeDrag = nodeDragRef.current;
-    if (activeDrag?.nodeId === node.id) {
-      return { x: activeDrag.currentX, y: activeDrag.currentY };
-    }
-    const optimisticPosition = optimisticNodePositions[node.id];
-    if (optimisticPosition) {
-      return optimisticPosition;
-    }
-    return { x: node.position_x, y: node.position_y };
-  };
-
-  const getOutputHandlePoint = (node: WorkflowNode): CanvasPoint => {
-    const position = getRenderedNodePosition(node);
-    return { x: position.x + NODE_WIDTH, y: position.y + NODE_HANDLE_Y };
-  };
-
-  const getInputHandlePoint = (node: WorkflowNode): CanvasPoint => {
-    const position = getRenderedNodePosition(node);
-    return { x: position.x, y: position.y + NODE_HANDLE_Y };
-  };
-
   const handleDraftChange = (nextDraft: NodeConfigDraft) => {
     draftVersionRef.current += 1;
     setDraft(nextDraft);
@@ -317,81 +207,6 @@ export function ProductDetailPage() {
   const selectNodeForDetails = (nodeId: string) => {
     setSelectedNodeId(nodeId);
     setActiveSidebarTab("details");
-  };
-
-  const updateZoom = (nextZoom: number) => {
-    const normalized = clamp(
-      Math.round(nextZoom * CANVAS_ZOOM_PRECISION) / CANVAS_ZOOM_PRECISION,
-      MIN_ZOOM,
-      MAX_ZOOM,
-    );
-    zoomRef.current = normalized;
-    setZoom(normalized);
-    window.localStorage.setItem("productflow.workflow.zoom", String(normalized));
-    return normalized;
-  };
-
-  const setNodeElementRef = (nodeId: string, element: HTMLDivElement | null) => {
-    if (element) {
-      nodeElementRefs.current[nodeId] = element;
-      return;
-    }
-    delete nodeElementRefs.current[nodeId];
-  };
-
-  const applyNodeElementPosition = (nodeId: string, position: CanvasPoint) => {
-    const element = nodeElementRefs.current[nodeId];
-    if (!element) {
-      return;
-    }
-    element.style.transform = `translate3d(${position.x}px, ${position.y}px, 0)`;
-  };
-
-  const setEdgePathRef = (edgeId: string, element: SVGPathElement | null) => {
-    if (element) {
-      edgePathRefs.current[edgeId] = element;
-      return;
-    }
-    delete edgePathRefs.current[edgeId];
-  };
-
-  const setEdgeDeleteButtonRef = (
-    edgeId: string,
-    element: HTMLButtonElement | null,
-  ) => {
-    if (element) {
-      edgeDeleteButtonRefs.current[edgeId] = element;
-      return;
-    }
-    delete edgeDeleteButtonRefs.current[edgeId];
-  };
-
-  const applyConnectedEdgePositions = (nodeId: string) => {
-    if (!workflow) {
-      return;
-    }
-    for (const edge of workflow.edges) {
-      if (edge.source_node_id !== nodeId && edge.target_node_id !== nodeId) {
-        continue;
-      }
-      const source = workflow.nodes.find(
-        (node) => node.id === edge.source_node_id,
-      );
-      const target = workflow.nodes.find(
-        (node) => node.id === edge.target_node_id,
-      );
-      if (!source || !target) {
-        continue;
-      }
-      const start = getOutputHandlePoint(source);
-      const end = getInputHandlePoint(target);
-      edgePathRefs.current[edge.id]?.setAttribute("d", buildEdgePath(start, end));
-      const deleteButton = edgeDeleteButtonRefs.current[edge.id];
-      if (deleteButton) {
-        deleteButton.style.left = `${(start.x + end.x) / 2}px`;
-        deleteButton.style.top = `${(start.y + end.y) / 2}px`;
-      }
-    }
   };
 
   const runWorkflowMutation = useMutation({
@@ -524,19 +339,15 @@ export function ProductDetailPage() {
       return { previous: input.rollbackWorkflow ?? previous };
     },
     onSuccess: (nextWorkflow, input) => {
-      if (nodePositionMutationVersionsRef.current[input.node.id] !== input.mutationVersion) {
+      if (!workflowCanvasRef.current?.acceptNodePositionMutation(input.node.id, input.mutationVersion)) {
         return;
       }
       setError("");
       queryClient.setQueryData(["product-workflow", productId], nextWorkflow);
-      setOptimisticNodePositions((current) => {
-        const next = { ...current };
-        delete next[input.node.id];
-        return next;
-      });
+      workflowCanvasRef.current.clearOptimisticNodePosition(input.node.id);
     },
     onError: (mutationError, _input, context) => {
-      if (nodePositionMutationVersionsRef.current[_input.node.id] !== _input.mutationVersion) {
+      if (!workflowCanvasRef.current?.acceptNodePositionMutation(_input.node.id, _input.mutationVersion)) {
         return;
       }
       if (context?.previous) {
@@ -545,11 +356,7 @@ export function ProductDetailPage() {
           context.previous,
         );
       }
-      setOptimisticNodePositions((current) => {
-        const next = { ...current };
-        delete next[_input.node.id];
-        return next;
-      });
+      workflowCanvasRef.current.clearOptimisticNodePosition(_input.node.id);
       setError(
         mutationError instanceof ApiError
           ? mutationError.detail
@@ -747,225 +554,16 @@ export function ProductDetailPage() {
     updateNodeCopyMutation.isPending;
   const structureBusy = layoutMutationBusy || workflowActive;
   const runBusy = runWorkflowMutation.isPending || workflowActive;
-
-  const startPanePan = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (
-      event.button !== 0 ||
-      event.defaultPrevented ||
-      nodeDragRef.current ||
-      connectionDrag ||
-      isPanePanBlockedTarget(event.target)
-    ) {
-      return;
-    }
-    const scrollElement = canvasScrollRef.current;
-    if (!scrollElement) {
-      return;
-    }
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    disableBodyUserSelect();
-    setPanePan({
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      startScrollLeft: scrollElement.scrollLeft,
-      startScrollTop: scrollElement.scrollTop,
-    });
-  };
-
-  const movePanePan = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!panePan || panePan.pointerId !== event.pointerId) {
-      return;
-    }
-    const scrollElement = canvasScrollRef.current;
-    if (!scrollElement) {
-      return;
-    }
-    event.preventDefault();
-    scrollElement.scrollLeft = panePan.startScrollLeft - (event.clientX - panePan.startX);
-    scrollElement.scrollTop = panePan.startScrollTop - (event.clientY - panePan.startY);
-  };
-
-  const handleCanvasWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
-    if (
-      event.defaultPrevented ||
-      nodeDragRef.current ||
-      connectionDrag ||
-      isCanvasWheelZoomBlockedTarget(event.target)
-    ) {
-      return;
-    }
-    const scrollElement = canvasScrollRef.current;
-    if (!scrollElement || !canvasRef.current) {
-      return;
-    }
-    const rawDelta = event.deltaY !== 0 ? event.deltaY : event.deltaX;
-    if (rawDelta === 0) {
-      return;
-    }
-    const wheelDelta =
-      event.deltaMode === 1
-        ? rawDelta * 16
-        : event.deltaMode === 2
-          ? rawDelta * scrollElement.clientHeight
-          : rawDelta;
-    event.preventDefault();
-
-    const plannedView = plannedWheelViewRef.current;
-    const previousZoom = plannedView?.zoom ?? zoomRef.current;
-    const previousScrollLeft = plannedView?.scrollLeft ?? scrollElement.scrollLeft;
-    const previousScrollTop = plannedView?.scrollTop ?? scrollElement.scrollTop;
-    const anchorPoint = getCanvasPoint(
-      event.clientX,
-      event.clientY,
-      previousZoom,
-      previousScrollLeft,
-      previousScrollTop,
-    );
-    const nextZoom = updateZoom(
-      previousZoom * Math.exp(-wheelDelta * CANVAS_WHEEL_ZOOM_SENSITIVITY),
-    );
-    if (nextZoom === previousZoom) {
-      return;
-    }
-
-    plannedWheelViewRef.current = {
-      zoom: nextZoom,
-      scrollLeft: previousScrollLeft + anchorPoint.x * (nextZoom - previousZoom),
-      scrollTop: previousScrollTop + anchorPoint.y * (nextZoom - previousZoom),
-    };
-    setWheelViewRevision((current) => current + 1);
-  };
-
-  const endPanePan = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!panePan || panePan.pointerId !== event.pointerId) {
-      return;
-    }
-    event.preventDefault();
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    restoreBodyUserSelect();
-    setPanePan(null);
-  };
-
-  const cancelPanePan = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (panePan && panePan.pointerId !== event.pointerId) {
-      return;
-    }
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    restoreBodyUserSelect();
-    setPanePan(null);
-  };
-
-  const startNodeDrag = (
-    node: WorkflowNode,
-    event: ReactPointerEvent<HTMLDivElement>,
-  ) => {
-    if (event.button !== 0) {
-      return;
-    }
-    const actionTarget =
-      event.target instanceof HTMLElement
-        ? event.target.closest("[data-node-action]")
-        : null;
-    if (actionTarget) {
-      return;
-    }
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    disableBodyUserSelect();
-    const point = getCanvasPoint(event.clientX, event.clientY);
-    setSelectedNodeId(node.id);
-    setActiveSidebarTab("details");
-    const renderedPosition = getRenderedNodePosition(node);
-    const nextDrag = {
-      nodeId: node.id,
-      pointerId: event.pointerId,
-      offsetX: point.x - renderedPosition.x,
-      offsetY: point.y - renderedPosition.y,
-      currentX: renderedPosition.x,
-      currentY: renderedPosition.y,
-    };
-    nodeDragRef.current = nextDrag;
-    setNodeDrag(nextDrag);
-  };
-
-  const moveNodeDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const activeDrag = nodeDragRef.current;
-    if (!activeDrag || activeDrag.pointerId !== event.pointerId) {
-      return;
-    }
-    event.preventDefault();
-    const point = getCanvasPoint(event.clientX, event.clientY);
-    const nextDrag = {
-      ...activeDrag,
-      currentX: Math.max(NODE_MIN_X, point.x - activeDrag.offsetX),
-      currentY: Math.max(NODE_MIN_Y, point.y - activeDrag.offsetY),
-    };
-    nodeDragRef.current = nextDrag;
-    applyNodeElementPosition(nextDrag.nodeId, {
-      x: nextDrag.currentX,
-      y: nextDrag.currentY,
-    });
-    applyConnectedEdgePositions(nextDrag.nodeId);
-  };
-
-  const cancelNodeDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const activeDrag = nodeDragRef.current;
-    if (!activeDrag) {
-      return;
-    }
-    if (activeDrag.pointerId !== event.pointerId) {
-      return;
-    }
-    event.preventDefault();
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    restoreBodyUserSelect();
-    nodeDragRef.current = null;
-    setNodeDrag(null);
-  };
-
-  const endNodeDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const activeDrag = nodeDragRef.current;
-    if (!activeDrag || activeDrag.pointerId !== event.pointerId) {
-      return;
-    }
-    event.preventDefault();
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    restoreBodyUserSelect();
-    const point = getCanvasPoint(event.clientX, event.clientY);
-    const finalX = Math.max(NODE_MIN_X, Math.round(point.x - activeDrag.offsetX));
-    const finalY = Math.max(NODE_MIN_Y, Math.round(point.y - activeDrag.offsetY));
-    const dragged = workflow?.nodes.find((node) => node.id === activeDrag.nodeId);
-    if (
-      dragged &&
-      (dragged.position_x !== finalX || dragged.position_y !== finalY)
-    ) {
+  const workflowCanvas = useWorkflowCanvas({
+    workflow,
+    zoomStorageKey: "productflow.workflow.zoom",
+    structureBusy,
+    onSelectNode: selectNodeForDetails,
+    onNodePositionCommit: (input: NodePositionCommitInput) => {
       const rollbackWorkflow = queryClient.getQueryData<ProductWorkflow>([
         "product-workflow",
         productId,
       ]);
-      const mutationVersion = (nodePositionMutationVersionsRef.current[dragged.id] ?? 0) + 1;
-      nodePositionMutationVersionsRef.current[dragged.id] = mutationVersion;
-      nodeDragRef.current = {
-        ...activeDrag,
-        currentX: finalX,
-        currentY: finalY,
-      };
-      applyNodeElementPosition(dragged.id, { x: finalX, y: finalY });
-      applyConnectedEdgePositions(dragged.id);
-      setOptimisticNodePositions((current) => ({
-        ...current,
-        [dragged.id]: { x: finalX, y: finalY },
-      }));
       queryClient.setQueryData<ProductWorkflow>(
         ["product-workflow", productId],
         (current) => {
@@ -975,86 +573,53 @@ export function ProductDetailPage() {
           return {
             ...current,
             nodes: current.nodes.map((node) =>
-              node.id === dragged.id
-                ? { ...node, position_x: finalX, position_y: finalY }
+              node.id === input.node.id
+                ? {
+                    ...node,
+                    position_x: input.position_x,
+                    position_y: input.position_y,
+                  }
                 : node,
             ),
           };
         },
       );
       updateNodePositionMutation.mutate({
-        node: dragged,
-        position_x: finalX,
-        position_y: finalY,
-        mutationVersion,
+        ...input,
         rollbackWorkflow,
       });
-    }
-    nodeDragRef.current = null;
-    setNodeDrag(null);
-  };
-
-  const startConnectionDrag = (
-    node: WorkflowNode,
-    event: ReactPointerEvent<HTMLButtonElement>,
-  ) => {
-    if (structureBusy || event.button !== 0) {
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    const from = getOutputHandlePoint(node);
-    setSelectedNodeId(node.id);
-    setActiveSidebarTab("details");
-    setConnectionDrag({
-      sourceNodeId: node.id,
-      pointerId: event.pointerId,
-      from,
-      to: getCanvasPoint(event.clientX, event.clientY),
-    });
-  };
-
-  const moveConnectionDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (!connectionDrag || connectionDrag.pointerId !== event.pointerId) {
-      return;
-    }
-    event.preventDefault();
-    const to = getCanvasPoint(event.clientX, event.clientY);
-    setConnectionDrag((current) =>
-      current && current.pointerId === event.pointerId
-        ? { ...current, to }
-        : current,
-    );
-  };
-
-  const endConnectionDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (!connectionDrag || connectionDrag.pointerId !== event.pointerId) {
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    const element = document.elementFromPoint(event.clientX, event.clientY);
-    const targetElement =
-      element instanceof HTMLElement
-        ? element.closest<HTMLElement>("[data-workflow-target-node-id]")
-        : null;
-    const nodeElement =
-      element instanceof HTMLElement
-        ? element.closest<HTMLElement>("[data-workflow-node-id]")
-        : null;
-    const targetNodeId =
-      targetElement?.dataset.workflowTargetNodeId ??
-      nodeElement?.dataset.workflowNodeId ??
-      null;
-    if (targetNodeId && targetNodeId !== connectionDrag.sourceNodeId) {
-      createEdgeMutation.mutate({
-        sourceNodeId: connectionDrag.sourceNodeId,
-        targetNodeId,
-      });
-    }
-    setConnectionDrag(null);
-  };
+    },
+    onConnectionCreate: (input) => createEdgeMutation.mutate(input),
+  });
+  workflowCanvasRef.current = workflowCanvas;
+  const {
+    canvasScrollRef,
+    canvasRef,
+    zoom,
+    nodeDrag,
+    connectionDrag,
+    panePan,
+    updateZoom,
+    getRenderedNodePosition,
+    getOutputHandlePoint,
+    getInputHandlePoint,
+    getCanvasSize,
+    setNodeElementRef,
+    setEdgePathRef,
+    setEdgeDeleteButtonRef,
+    startPanePan,
+    movePanePan,
+    endPanePan,
+    cancelPanePan,
+    handleCanvasWheel,
+    startNodeDrag,
+    moveNodeDrag,
+    endNodeDrag,
+    cancelNodeDrag,
+    startConnectionDrag,
+    moveConnectionDrag,
+    endConnectionDrag,
+  } = workflowCanvas;
 
   if (productQuery.isLoading) {
     return (
@@ -1077,24 +642,12 @@ export function ProductDetailPage() {
   const product = productQuery.data;
   const sourceImage = getSourceImageDownload(product);
   const latestRun = workflow?.runs[0] ?? null;
-  const canvasViewportWidth = canvasScrollRef.current?.clientWidth ?? 0;
-  const canvasViewportHeight = canvasScrollRef.current?.clientHeight ?? 0;
-  const canvasWidth = Math.max(
-    CANVAS_MIN_WIDTH,
-    canvasViewportWidth / zoom + CANVAS_VIEWPORT_PADDING,
-    ...(workflow?.nodes.map(
-      (node) => getRenderedNodePosition(node).x + CANVAS_NODE_PADDING_X,
-    ) ?? [CANVAS_MIN_WIDTH]),
-    connectionDrag ? connectionDrag.to.x + CANVAS_NODE_PADDING_X : 0,
-  );
-  const canvasHeight = Math.max(
-    CANVAS_MIN_HEIGHT,
-    canvasViewportHeight / zoom + CANVAS_VIEWPORT_PADDING,
-    ...(workflow?.nodes.map(
-      (node) => getRenderedNodePosition(node).y + CANVAS_NODE_PADDING_Y,
-    ) ?? [CANVAS_MIN_HEIGHT]),
-    connectionDrag ? connectionDrag.to.y + CANVAS_NODE_PADDING_Y : 0,
-  );
+  const canvasSize = getCanvasSize({
+    minWidth: CANVAS_MIN_WIDTH,
+    minHeight: CANVAS_MIN_HEIGHT,
+  });
+  const canvasWidth = canvasSize.width;
+  const canvasHeight = canvasSize.height;
   const posters = historyQuery.data?.poster_variants ?? product.poster_variants;
   const posterSourceAssetIds = buildPosterSourceAssetMap({
     product,
@@ -1212,7 +765,7 @@ export function ProductDetailPage() {
                   })}
                   {connectionDrag ? (
                     <path
-                      d={`M ${connectionDrag.from.x} ${connectionDrag.from.y} C ${connectionDrag.from.x + Math.max(80, Math.abs(connectionDrag.to.x - connectionDrag.from.x) / 2)} ${connectionDrag.from.y}, ${connectionDrag.to.x - Math.max(80, Math.abs(connectionDrag.to.x - connectionDrag.from.x) / 2)} ${connectionDrag.to.y}, ${connectionDrag.to.x} ${connectionDrag.to.y}`}
+                      d={buildConnectionDragPath(connectionDrag)}
                       fill="none"
                       stroke="#2563eb"
                       strokeDasharray="6 4"

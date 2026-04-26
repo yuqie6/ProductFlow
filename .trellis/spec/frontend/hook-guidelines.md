@@ -100,8 +100,35 @@ from fetched config in `SettingsPage.tsx`.
 
 ## Custom Hooks
 
-No custom hooks exist yet. If repeated stateful behavior emerges, extract a hook only when at least two pages/components
-need the same behavior. Follow React naming rules (`useSomething`) and keep API calls typed through `web/src/lib/api.ts`.
+Custom hooks should stay rare and intentional. For cross-page/shared behavior, extract a hook only when at least two
+pages/components need the same behavior. Follow React naming rules (`useSomething`) and keep API calls typed through
+`web/src/lib/api.ts`.
+
+### Page-local controller hooks
+
+An oversized route page may extract a page-local controller hook under that page's local directory even before there is
+cross-page reuse, when the hook isolates a cohesive browser interaction boundary and materially reduces route complexity.
+For ProductDetail-style workbench interactions, keep the hook page-local (for example
+`web/src/pages/product-detail/useWorkflowCanvas.ts`) and pass API/cache work in as callbacks instead of hiding TanStack
+Query mutations inside the controller.
+
+Correct:
+
+```tsx
+const workflowCanvas = useWorkflowCanvas({
+  workflow,
+  onNodePositionCommit: (input) => updateNodePositionMutation.mutate(input),
+  onConnectionCreate: (input) => createEdgeMutation.mutate(input),
+});
+```
+
+Wrong:
+
+```tsx
+function useWorkflowCanvas(productId: string) {
+  return useMutation({ mutationFn: () => api.createWorkflowEdge(productId, input) });
+}
+```
 
 Likely future extraction candidates, if duplication grows:
 
