@@ -13,8 +13,9 @@ through the chat reply is a failure.
 
 ## Workflow
 
-1. Read `.trellis/.current-task` to get the task directory. If empty,
-   ask the user where to write output; do not guess.
+1. Run `python3 ./.trellis/scripts/task.py current --source` to get the
+   active task path and source. If no active task is set, ask the user
+   where to write output; do not guess.
 2. Run `mkdir -p <TASK_DIR>/research` to ensure the directory exists.
 3. Read `.trellis/workflow.md`, relevant `.trellis/spec/` files, and
    target code before forming an opinion.

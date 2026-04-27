@@ -8,8 +8,9 @@ Usage:
     python3 task.py add-context <dir> <file> <path> [reason] # Add jsonl entry
     python3 task.py validate <dir>              # Validate jsonl files
     python3 task.py list-context <dir>          # List jsonl entries
-    python3 task.py start <dir>                 # Set as current task
-    python3 task.py finish                      # Clear current task
+    python3 task.py start <dir>                 # Set active task
+    python3 task.py current [--source]          # Show active task
+    python3 task.py finish                      # Clear active task
     python3 task.py set-branch <dir> <branch>   # Set git branch
     python3 task.py set-base-branch <dir> <branch>  # Set PR target branch
     python3 task.py set-scope <dir> <scope>     # Set scope for PR title
@@ -34,8 +35,12 @@ from common.paths import (
     get_developer,
     get_tasks_dir,
     get_current_task,
-    set_current_task,
-    clear_current_task,
+)
+from common.active_task import (
+    clear_active_task,
+    resolve_active_task,
+    resolve_context_key,
+    set_active_task,
 )
 from common.io import read_json, write_json
 from common.task_utils import resolve_task_dir, run_task_hooks
@@ -63,7 +68,7 @@ from common.task_context import (
 # =============================================================================
 
 def cmd_start(args: argparse.Namespace) -> int:
-    """Set current task."""
+    """Set active task."""
     repo_root = get_repo_root()
     task_input = args.dir
 
@@ -85,8 +90,18 @@ def cmd_start(args: argparse.Namespace) -> int:
     except ValueError:
         task_dir = str(full_path)
 
-    if set_current_task(task_dir, repo_root):
+    if not resolve_context_key():
+        print(colored("Error: Cannot set active task without a session identity.", Colors.RED))
+        print(
+            "Hint: run inside an AI IDE/session that exposes session identity, "
+            "or set TRELLIS_CONTEXT_ID before running task.py start."
+        )
+        return 1
+
+    active = set_active_task(task_dir, repo_root)
+    if active:
         print(colored(f"✓ Current task set to: {task_dir}", Colors.GREEN))
+        print(f"Source: {active.source}")
 
         task_json_path = full_path / FILE_TASK_JSON
         if task_json_path.is_file():
@@ -107,10 +122,10 @@ def cmd_start(args: argparse.Namespace) -> int:
 
 
 def cmd_finish(args: argparse.Namespace) -> int:
-    """Clear current task."""
-    _ = args  # signature required by argparse dispatcher
+    """Clear active task."""
     repo_root = get_repo_root()
-    current = get_current_task(repo_root)
+    active = clear_active_task(repo_root)
+    current = active.task_path
 
     if not current:
         print(colored("No current task set", Colors.YELLOW))
@@ -119,12 +134,31 @@ def cmd_finish(args: argparse.Namespace) -> int:
     # Resolve task.json path before clearing
     task_json_path = repo_root / current / FILE_TASK_JSON
 
-    clear_current_task(repo_root)
     print(colored(f"✓ Cleared current task (was: {current})", Colors.GREEN))
+    print(f"Source: {active.source}")
 
     if task_json_path.is_file():
         run_task_hooks("after_finish", task_json_path, repo_root)
     return 0
+
+
+def cmd_current(args: argparse.Namespace) -> int:
+    """Show active task."""
+    repo_root = get_repo_root()
+    active = resolve_active_task(repo_root)
+
+    if args.source:
+        print(f"Current task: {active.task_path or '(none)'}")
+        print(f"Source: {active.source}")
+        if active.stale:
+            print("State: stale")
+        return 0 if active.task_path else 1
+
+    if active.task_path:
+        print(active.task_path)
+        return 0
+
+    return 1
 
 
 # =============================================================================
@@ -257,8 +291,9 @@ Usage:
   python3 task.py add-context <dir> <jsonl> <path> [reason]  Add entry to jsonl
   python3 task.py validate <dir>                     Validate jsonl files
   python3 task.py list-context <dir>                 List jsonl entries
-  python3 task.py start <dir>                        Set as current task
-  python3 task.py finish                             Clear current task
+  python3 task.py start <dir>                        Set active task
+  python3 task.py current [--source]                 Show active task
+  python3 task.py finish                             Clear active task
   python3 task.py set-branch <dir> <branch>          Set git branch
   python3 task.py set-base-branch <dir> <branch>     Set PR target branch
   python3 task.py set-scope <dir> <scope>            Set scope for PR title
@@ -282,6 +317,7 @@ Examples:
   python3 task.py add-context <dir> implement .trellis/spec/cli/backend/auth.md "Auth guidelines"
   python3 task.py set-branch <dir> task/add-login
   python3 task.py start .trellis/tasks/01-21-add-login
+  python3 task.py current --source
   python3 task.py finish
   python3 task.py archive add-login
   python3 task.py add-subtask parent-task child-task  # Link existing tasks
@@ -360,11 +396,16 @@ def main() -> int:
     p_listctx.add_argument("dir", help="Task directory")
 
     # start
-    p_start = subparsers.add_parser("start", help="Set current task")
+    p_start = subparsers.add_parser("start", help="Set active task")
     p_start.add_argument("dir", help="Task directory")
 
+    # current
+    p_current = subparsers.add_parser("current", help="Show active task")
+    p_current.add_argument("--source", action="store_true",
+                           help="Show active task source")
+
     # finish
-    subparsers.add_parser("finish", help="Clear current task")
+    subparsers.add_parser("finish", help="Clear active task")
 
     # set-branch
     p_branch = subparsers.add_parser("set-branch", help="Set git branch")
@@ -417,6 +458,7 @@ def main() -> int:
         "validate": cmd_validate,
         "list-context": cmd_list_context,
         "start": cmd_start,
+        "current": cmd_current,
         "finish": cmd_finish,
         "set-branch": cmd_set_branch,
         "set-base-branch": cmd_set_base_branch,
