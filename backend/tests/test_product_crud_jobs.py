@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from helpers import (
@@ -12,6 +13,7 @@ from helpers import (
 )
 
 from productflow_backend.application.use_cases import (
+    _is_retryable_exception,
     add_reference_images,
     confirm_copy_set,
     create_copy_job,
@@ -68,6 +70,13 @@ def test_end_to_end_copy_and_poster_workflow(db_session, configured_env: Path) -
 
     poster_paths = [Path(configured_env) / poster.storage_path for poster in product_after_poster.poster_variants]
     assert all(path.exists() for path in poster_paths)
+
+
+def test_sanitized_provider_runtime_errors_preserve_retryable_cause() -> None:
+    try:
+        raise RuntimeError("图片供应商请求失败，请检查供应商配置后重试") from httpx.TimeoutException("provider timeout")
+    except RuntimeError as exc:
+        assert _is_retryable_exception(exc) is True
 
 def test_product_create_persists_source_note_for_ai_context(configured_env: Path) -> None:
     from productflow_backend.presentation.api import create_app

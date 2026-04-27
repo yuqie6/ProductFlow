@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import type { ImageSessionAsset, ImageSessionRound } from "../../lib/types";
-import { clampGenerationCount, groupImageSessionRounds, pruneSelectedReferenceIds } from "./branching";
+import type { ImageSessionAsset, ImageSessionGenerationTask, ImageSessionRound } from "../../lib/types";
+import {
+  clampGenerationCount,
+  compactImageToolOptions,
+  groupImageSessionRounds,
+  pruneSelectedReferenceIds,
+  selectVisibleGenerationTasks,
+} from "./branching";
 
 const createdAt = "2026-04-27T00:00:00Z";
 
@@ -35,8 +41,36 @@ function round(overrides: Partial<ImageSessionRound>): ImageSessionRound {
     candidate_count: 1,
     base_asset_id: null,
     selected_reference_asset_ids: [],
+    provider_notes: [],
     generated_asset: asset("asset-1"),
     created_at: createdAt,
+    ...overrides,
+  };
+}
+
+function task(overrides: Partial<ImageSessionGenerationTask>): ImageSessionGenerationTask {
+  return {
+    id: "task-1",
+    session_id: "session-1",
+    status: "succeeded",
+    prompt: "prompt",
+    size: "1024x1024",
+    base_asset_id: null,
+    selected_reference_asset_ids: [],
+    generation_count: 1,
+    failure_reason: null,
+    result_generation_group_id: null,
+    tool_options: null,
+    provider_notes: [],
+    created_at: createdAt,
+    started_at: null,
+    finished_at: null,
+    queue_active_count: 0,
+    queue_running_count: 0,
+    queue_queued_count: 0,
+    queue_max_concurrent_tasks: 3,
+    queued_ahead_count: null,
+    queue_position: null,
     ...overrides,
   };
 }
@@ -59,6 +93,33 @@ describe("image chat branching helpers", () => {
     expect(clampGenerationCount(10)).toBe(4);
   });
 
+  it("compacts optional provider fields before submitting a generation", () => {
+    expect(
+      compactImageToolOptions({
+        model: "  gpt-image-2 ",
+        quality: "high",
+        output_format: null,
+        output_compression: 101,
+        background: "transparent",
+        moderation: null,
+        action: "generate",
+        input_fidelity: "high",
+        partial_images: 4,
+        n: 0,
+      }),
+    ).toEqual({
+      model: "gpt-image-2",
+      quality: "high",
+      output_compression: 100,
+      background: "transparent",
+      action: "generate",
+      input_fidelity: "high",
+      partial_images: 3,
+      n: 1,
+    });
+    expect(compactImageToolOptions({})).toBeUndefined();
+  });
+
   it("prunes deleted reference ids and removes duplicates", () => {
     expect(pruneSelectedReferenceIds(["ref-1", "ref-2", "ref-1", "gone"], ["ref-1", "ref-2"])).toEqual([
       "ref-1",
@@ -67,6 +128,25 @@ describe("image chat branching helpers", () => {
     expect(pruneSelectedReferenceIds(["ref-1", "ref-2", "ref-3"], ["ref-1", "ref-2", "ref-3"], 2)).toEqual([
       "ref-1",
       "ref-2",
+    ]);
+  });
+
+  it("keeps active and failed generation tasks visible before old succeeded tasks", () => {
+    const tasks = selectVisibleGenerationTasks([
+      task({ id: "old-success-1", status: "succeeded", created_at: "2026-04-27T00:00:01Z" }),
+      task({ id: "old-success-2", status: "succeeded", created_at: "2026-04-27T00:00:02Z" }),
+      task({ id: "old-success-3", status: "succeeded", created_at: "2026-04-27T00:00:03Z" }),
+      task({ id: "old-success-4", status: "succeeded", created_at: "2026-04-27T00:00:04Z" }),
+      task({ id: "queued-new", status: "queued", created_at: "2026-04-27T00:00:05Z" }),
+      task({ id: "running-new", status: "running", created_at: "2026-04-27T00:00:06Z" }),
+      task({ id: "failed-new", status: "failed", created_at: "2026-04-27T00:00:07Z" }),
+    ]);
+
+    expect(tasks.map((item) => item.id)).toEqual([
+      "running-new",
+      "queued-new",
+      "failed-new",
+      "old-success-4",
     ]);
   });
 });

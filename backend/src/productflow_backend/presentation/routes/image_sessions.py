@@ -165,6 +165,7 @@ def generate_image_session_round_endpoint(
             base_asset_id=payload.base_asset_id,
             selected_reference_asset_ids=payload.selected_reference_asset_ids,
             generation_count=payload.generation_count,
+            tool_options=payload.tool_options.model_dump(exclude_none=True) if payload.tool_options else None,
         )
     except ValueError as exc:
         raise_value_error_as_http(exc)

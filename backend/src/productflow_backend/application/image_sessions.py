@@ -3,7 +3,7 @@ from __future__ import annotations
 from base64 import b64encode
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from sqlalchemy import desc, select, update
 from sqlalchemy.orm import Session, selectinload
@@ -187,6 +187,7 @@ def _validate_generation_request(
     base_asset_id: str | None,
     selected_reference_asset_ids: list[str] | None,
     generation_count: int,
+    tool_options: dict[str, Any] | None = None,
 ) -> tuple[str, str | None, list[str]]:
     if not 1 <= generation_count <= 4:
         raise ValueError("一次生成数量必须在 1-4 张之间")
@@ -215,6 +216,17 @@ def _validate_generation_request(
         normalized_reference_ids.append(reference_asset.id)
 
     return normalized_size, normalized_base_asset_id, normalized_reference_ids
+
+
+def _normalize_tool_options(tool_options: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not tool_options:
+        return None
+    normalized = {
+        key: value
+        for key, value in tool_options.items()
+        if value is not None and not (isinstance(value, str) and not value.strip())
+    }
+    return normalized or None
 
 
 def list_image_sessions(
@@ -336,6 +348,7 @@ def _execute_image_session_round_generation(
     base_asset_id: str | None = None,
     selected_reference_asset_ids: list[str] | None = None,
     generation_count: int = 1,
+    tool_options: dict[str, Any] | None = None,
     storage: LocalStorage | None = None,
     generation_task_id: str | None = None,
 ) -> ImageSessionRoundGenerationResult:
@@ -348,7 +361,9 @@ def _execute_image_session_round_generation(
         base_asset_id=base_asset_id,
         selected_reference_asset_ids=selected_reference_asset_ids,
         generation_count=generation_count,
+        tool_options=tool_options,
     )
+    normalized_tool_options = _normalize_tool_options(tool_options)
     (
         history,
         manual_references,
@@ -373,6 +388,7 @@ def _execute_image_session_round_generation(
                 history=history,
                 manual_reference_images=manual_references,
                 previous_response_id=previous_response_id,
+                tool_options=normalized_tool_options,
             )
 
             relative_path = storage.save_image_session_generated(
@@ -453,6 +469,7 @@ def generate_image_session_round(
     base_asset_id: str | None = None,
     selected_reference_asset_ids: list[str] | None = None,
     generation_count: int = 1,
+    tool_options: dict[str, Any] | None = None,
     storage: LocalStorage | None = None,
 ) -> ImageSession:
     """兼容同步调用的薄封装；HTTP route 不再使用。"""
@@ -464,6 +481,7 @@ def generate_image_session_round(
         base_asset_id=base_asset_id,
         selected_reference_asset_ids=selected_reference_asset_ids,
         generation_count=generation_count,
+        tool_options=tool_options,
         storage=storage,
     ).image_session
 
@@ -477,6 +495,7 @@ def create_image_session_generation_task(
     base_asset_id: str | None = None,
     selected_reference_asset_ids: list[str] | None = None,
     generation_count: int = 1,
+    tool_options: dict[str, Any] | None = None,
 ) -> ImageSessionGenerationTaskCreationResult:
     """校验并创建连续生图 durable 任务；不调用 provider。"""
     image_session = _get_image_session_or_raise(session, image_session_id)
@@ -486,7 +505,9 @@ def create_image_session_generation_task(
         base_asset_id=base_asset_id,
         selected_reference_asset_ids=selected_reference_asset_ids,
         generation_count=generation_count,
+        tool_options=tool_options,
     )
+    normalized_tool_options = _normalize_tool_options(tool_options)
     ensure_generation_capacity(session)
     task = ImageSessionGenerationTask(
         session_id=image_session.id,
@@ -495,6 +516,7 @@ def create_image_session_generation_task(
         size=normalized_size,
         base_asset_id=normalized_base_asset_id,
         selected_reference_asset_ids=normalized_reference_ids,
+        tool_options=normalized_tool_options,
         generation_count=generation_count,
     )
     session.add(task)
@@ -577,6 +599,7 @@ def execute_image_session_generation_task(task_id: str) -> None:
                 base_asset_id=task.base_asset_id,
                 selected_reference_asset_ids=task.selected_reference_asset_ids or [],
                 generation_count=task.generation_count,
+                tool_options=task.tool_options,
                 generation_task_id=task_id,
             )
         except Exception:  # noqa: BLE001

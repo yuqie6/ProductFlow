@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -126,6 +127,99 @@ def test_image_session_generate_returns_queued_task_without_waiting_for_provider
     persisted = db_session.get(ImageSessionGenerationTask, task["id"])
     assert persisted is not None
     assert persisted.status == "queued"
+
+
+def test_image_session_generation_accepts_per_request_tool_options_and_exposes_provider_notes(
+    configured_env: Path,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.infrastructure.image.chat_service import GeneratedChatImage
+    from productflow_backend.presentation.api import create_app
+
+    calls: list[dict | None] = []
+
+    def generate_with_note(self, **kwargs) -> GeneratedChatImage:
+        calls.append(kwargs.get("tool_options"))
+        return GeneratedChatImage(
+            bytes_data=_make_demo_image_bytes(),
+            mime_type="image/png",
+            model_name="mock-image-chat-v1",
+            provider_name="mock",
+            prompt_version="test-v1",
+            size=kwargs["size"],
+            generated_at=datetime.now(UTC),
+            provider_request_json={"tool_options": kwargs.get("tool_options")},
+            provider_output_json={
+                "_productflow": {
+                    "notes": [{"kind": "fallback", "message": "供应商不支持部分参数，已按基础参数完成。"}]
+                }
+            },
+        )
+
+    monkeypatch.setattr(
+        "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
+        generate_with_note,
+    )
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post("/api/image-sessions", json={"title": "每轮参数"})
+    assert created.status_code == 201
+    response = client.post(
+        f"/api/image-sessions/{created.json()['id']}/generate",
+        json={
+            "prompt": "每轮覆盖 tool 参数",
+            "size": "1024x1024",
+            "tool_options": {
+                "model": "gpt-image-2",
+                "quality": "high",
+                "output_format": "webp",
+                "output_compression": 72,
+                "background": "transparent",
+                "moderation": "low",
+                "action": "generate",
+                "input_fidelity": "high",
+                "partial_images": 1,
+                "n": 2,
+            },
+        },
+    )
+
+    assert response.status_code == 202
+    payload = response.json()
+    expected_options = {
+        "model": "gpt-image-2",
+        "quality": "high",
+        "output_format": "webp",
+        "output_compression": 72,
+        "background": "transparent",
+        "moderation": "low",
+        "action": "generate",
+        "input_fidelity": "high",
+        "partial_images": 1,
+        "n": 2,
+    }
+    assert calls == [expected_options]
+    assert payload["generation_tasks"][0]["tool_options"] == expected_options
+    assert payload["generation_tasks"][0]["provider_notes"] == ["供应商不支持部分参数，已按基础参数完成。"]
+    assert payload["rounds"][0]["provider_notes"] == ["供应商不支持部分参数，已按基础参数完成。"]
+
+    db_session.expire_all()
+    task = db_session.get(ImageSessionGenerationTask, payload["generation_tasks"][0]["id"])
+    assert task is not None
+    assert task.tool_options == expected_options
+
+    invalid = client.post(
+        f"/api/image-sessions/{created.json()['id']}/generate",
+        json={
+            "prompt": "非法 tool 参数",
+            "size": "1024x1024",
+            "tool_options": {"output_compression": 101},
+        },
+    )
+    assert invalid.status_code == 422
 
 
 def test_image_session_generate_enqueue_failure_marks_task_failed(

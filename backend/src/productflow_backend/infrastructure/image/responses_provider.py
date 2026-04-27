@@ -19,6 +19,19 @@ from productflow_backend.infrastructure.image.base import (
 )
 from productflow_backend.infrastructure.prompts import render_prompt_template
 
+IMAGE_TOOL_OPTIONAL_FIELD_KEYS: tuple[str, ...] = (
+    "model",
+    "quality",
+    "output_format",
+    "output_compression",
+    "background",
+    "moderation",
+    "action",
+    "input_fidelity",
+    "partial_images",
+    "n",
+)
+
 
 @dataclass(slots=True)
 class ResponsesReferenceImage:
@@ -96,6 +109,39 @@ def _mime_type_for_path(path: Path) -> str:
     return "image/png"
 
 
+def _mime_type_from_output_format(value: Any) -> str | None:
+    normalized = "" if value is None else str(value).strip().lower()
+    return {
+        "png": "image/png",
+        "jpeg": "image/jpeg",
+        "jpg": "image/jpeg",
+        "webp": "image/webp",
+    }.get(normalized)
+
+
+def _mime_type_from_image_bytes(bytes_data: bytes) -> str | None:
+    if bytes_data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if bytes_data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if bytes_data.startswith(b"RIFF") and bytes_data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def _infer_generated_mime_type(output_call: Any, bytes_data: bytes) -> str:
+    detected = _mime_type_from_image_bytes(bytes_data)
+    if detected:
+        return detected
+
+    output_mime = _get_value(output_call, "mime_type") or _get_value(output_call, "content_type")
+    if isinstance(output_mime, str) and output_mime.startswith("image/"):
+        return output_mime
+
+    output_format = _get_value(output_call, "output_format") or _get_value(output_call, "format")
+    return _mime_type_from_output_format(output_format) or "image/png"
+
+
 class OpenAIResponsesImageClient:
     provider_name = "openai-responses"
     prompt_version = "responses-image-generation-v1"
@@ -105,6 +151,16 @@ class OpenAIResponsesImageClient:
         self.api_key = settings.image_api_key
         self.base_url = settings.image_base_url
         self.model = settings.image_generate_model
+        self.tool_model = settings.image_tool_model
+        self.tool_quality = settings.image_tool_quality
+        self.tool_output_format = settings.image_tool_output_format
+        self.tool_output_compression = settings.image_tool_output_compression
+        self.tool_background = settings.image_tool_background
+        self.tool_moderation = settings.image_tool_moderation
+        self.tool_action = settings.image_tool_action
+        self.tool_input_fidelity = settings.image_tool_input_fidelity
+        self.tool_partial_images = settings.image_tool_partial_images
+        self.tool_n = settings.image_tool_n
 
     def generate_image(
         self,
@@ -113,17 +169,18 @@ class OpenAIResponsesImageClient:
         size: str,
         reference_images: list[ResponsesReferenceImage] | None = None,
         previous_response_id: str | None = None,
+        tool_options: dict[str, Any] | None = None,
     ) -> ResponsesImageResult:
         if not self.api_key:
             raise RuntimeError("图片供应商缺少 IMAGE_API_KEY")
 
         reference_images = reference_images or []
-        tools = [{"type": "image_generation", "size": size}]
+        tool = self._build_image_generation_tool(size, tool_options=tool_options)
         input_payload = self._build_input(prompt=prompt, reference_images=reference_images)
         request_payload: dict[str, Any] = {
             "model": self.model,
             "input": input_payload,
-            "tools": tools,
+            "tools": [tool],
         }
         if previous_response_id:
             request_payload["previous_response_id"] = previous_response_id
@@ -131,20 +188,53 @@ class OpenAIResponsesImageClient:
         client_kwargs: dict[str, Any] = {"api_key": self.api_key}
         if self.base_url:
             client_kwargs["base_url"] = self.base_url
-        client = OpenAI(**client_kwargs)
-        response = client.responses.create(**request_payload)
+        fallback_used = False
+        requested_tool = dict(tool)
+        try:
+            client = OpenAI(**client_kwargs)
+        except Exception as exc:  # noqa: BLE001
+            raise RuntimeError("图片供应商请求失败，请检查供应商配置后重试") from exc
+
+        try:
+            response = client.responses.create(**request_payload)
+        except Exception as exc:  # noqa: BLE001
+            if not self._has_optional_tool_fields(tool):
+                raise RuntimeError("图片供应商请求失败，请检查供应商配置后重试") from exc
+            fallback_payload = dict(request_payload)
+            fallback_payload["tools"] = [self._build_image_generation_tool(size, include_optional=False)]
+            try:
+                response = client.responses.create(**fallback_payload)
+            except Exception as fallback_exc:  # noqa: BLE001
+                raise RuntimeError("图片供应商请求失败，请检查供应商配置后重试") from fallback_exc
+            request_payload = fallback_payload
+            fallback_used = True
 
         output_call = self._extract_image_generation_call(response)
         image_b64 = _get_value(output_call, "result")
         if not image_b64:
             raise RuntimeError("图片供应商没有返回 image_generation_call.result")
 
+        image_bytes = decode_b64_image(image_b64)
         response_json = _jsonable(response)
+        request_json = _sanitize_base64_images(request_payload)
+        output_json = _sanitize_base64_images(response_json)
+        productflow_metadata = self._build_productflow_metadata(
+            requested_tool=requested_tool,
+            effective_response=response_json,
+            output_call=output_call,
+            fallback_used=fallback_used,
+        )
+        if productflow_metadata:
+            request_json["_productflow"] = {
+                "requested_image_tool": requested_tool,
+                "fallback_used": fallback_used,
+            }
+            output_json["_productflow"] = productflow_metadata
         response_id = str(_get_value(response, "id", "") or "") or None
         call_id = str(_get_value(output_call, "id", "") or "") or None
         return ResponsesImageResult(
-            bytes_data=decode_b64_image(image_b64),
-            mime_type="image/png",
+            bytes_data=image_bytes,
+            mime_type=_infer_generated_mime_type(output_call, image_bytes),
             model_name=self.model,
             provider_name=self.provider_name,
             prompt_version=self.prompt_version,
@@ -153,9 +243,104 @@ class OpenAIResponsesImageClient:
             provider_response_id=response_id,
             previous_response_id=previous_response_id,
             image_generation_call_id=call_id,
-            provider_request_json=_sanitize_base64_images(request_payload),
-            provider_output_json=_sanitize_base64_images(response_json),
+            provider_request_json=request_json,
+            provider_output_json=output_json,
         )
+
+    def _build_image_generation_tool(
+        self,
+        size: str,
+        *,
+        tool_options: dict[str, Any] | None = None,
+        include_optional: bool = True,
+    ) -> dict[str, Any]:
+        tool: dict[str, Any] = {"type": "image_generation", "size": size}
+        if not include_optional:
+            return tool
+        runtime_options = {
+            "model": self.tool_model,
+            "quality": self.tool_quality,
+            "output_format": self.tool_output_format,
+            "output_compression": self.tool_output_compression,
+            "background": self.tool_background,
+            "moderation": self.tool_moderation,
+            "action": self.tool_action,
+            "input_fidelity": self.tool_input_fidelity,
+            "partial_images": self.tool_partial_images,
+            "n": self.tool_n,
+        }
+        merged_options = {**runtime_options, **(tool_options or {})}
+        for key in IMAGE_TOOL_OPTIONAL_FIELD_KEYS:
+            value = merged_options.get(key)
+            if value is None:
+                continue
+            if isinstance(value, str) and not value.strip():
+                continue
+            tool[key] = value
+        return tool
+
+    def _has_optional_tool_fields(self, tool: dict[str, Any]) -> bool:
+        return any(key in tool for key in IMAGE_TOOL_OPTIONAL_FIELD_KEYS)
+
+    def _build_productflow_metadata(
+        self,
+        *,
+        requested_tool: dict[str, Any],
+        effective_response: dict[str, Any],
+        output_call: Any,
+        fallback_used: bool,
+    ) -> dict[str, Any] | None:
+        notes: list[dict[str, Any]] = []
+        effective_tool = self._extract_effective_tool_metadata(effective_response, output_call)
+        requested_relevant = {
+            key: value
+            for key, value in requested_tool.items()
+            if key == "size" or key in IMAGE_TOOL_OPTIONAL_FIELD_KEYS
+        }
+        adjusted_fields = [
+            key
+            for key, requested_value in requested_relevant.items()
+            if key in effective_tool and effective_tool[key] != requested_value
+        ]
+        if fallback_used:
+            notes.append(
+                {
+                    "kind": "fallback",
+                    "message": "供应商不支持部分参数，已按基础参数完成。",
+                }
+            )
+        if adjusted_fields and not fallback_used:
+            notes.append(
+                {
+                    "kind": "provider_adjusted",
+                    "message": f"供应商调整了 {', '.join(adjusted_fields)}。",
+                    "fields": adjusted_fields,
+                }
+            )
+        if not notes and not effective_tool:
+            return None
+        return {
+            "requested_image_tool": requested_relevant,
+            "effective_image_tool": effective_tool,
+            "notes": notes,
+        }
+
+    def _extract_effective_tool_metadata(self, response_json: dict[str, Any], output_call: Any) -> dict[str, Any]:
+        effective: dict[str, Any] = {}
+        output_keys = ("size", "quality", "output_format", "background", "action", "input_fidelity")
+        for key in output_keys:
+            value = _get_value(output_call, key)
+            if value is not None:
+                effective[key] = value
+        response_tools = response_json.get("tools")
+        if isinstance(response_tools, list):
+            for tool in response_tools:
+                if isinstance(tool, dict) and tool.get("type") == "image_generation":
+                    for key in ("size", *IMAGE_TOOL_OPTIONAL_FIELD_KEYS):
+                        if key not in effective and tool.get(key) is not None:
+                            effective[key] = tool[key]
+                    break
+        return effective
 
     def _build_input(
         self,

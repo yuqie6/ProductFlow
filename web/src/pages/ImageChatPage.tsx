@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Check,
@@ -12,8 +12,10 @@ import {
   Pencil,
   Plus,
   Save,
+  Settings,
   Sparkles,
   Trash2,
+  Wand2,
   X,
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -23,12 +25,24 @@ import { ImageSizePicker } from "../components/ImageSizePicker";
 import { TopNav } from "../components/TopNav";
 import { api, ApiError } from "../lib/api";
 import { formatDateTime } from "../lib/format";
-import { DEFAULT_IMAGE_GENERATION_MAX_DIMENSION, buildImageSizeOptions } from "../lib/imageSizes";
-import { clampGenerationCount, groupImageSessionRounds, pruneSelectedReferenceIds } from "./image-chat/branching";
+import {
+  DEFAULT_IMAGE_GENERATION_MAX_DIMENSION,
+  buildImageSizeOptions,
+  formatImageSizeValue,
+  type ImageSizeOption,
+} from "../lib/imageSizes";
+import {
+  clampGenerationCount,
+  compactImageToolOptions,
+  groupImageSessionRounds,
+  pruneSelectedReferenceIds,
+  selectVisibleGenerationTasks,
+} from "./image-chat/branching";
 import type {
   ImageSessionDetail,
   ImageSessionGenerationTask,
   ImageSessionListResponse,
+  ImageToolOptions,
   ProductDetail,
   ProductSummary,
   SourceAsset,
@@ -39,6 +53,11 @@ function getSessionReferenceAssets(imageSession: ImageSessionDetail | undefined)
 }
 
 const MAX_BRANCH_CONTEXT_IMAGES = 6;
+const PRIMARY_SIZE_ASPECTS = [
+  { aspect: "1:1", label: "1:1", frameClassName: "h-7 w-7" },
+  { aspect: "2:3", label: "2:3", frameClassName: "h-8 w-6" },
+  { aspect: "3:2", label: "3:2", frameClassName: "h-6 w-8" },
+] as const;
 
 function isActiveGenerationTask(task: ImageSessionGenerationTask) {
   return task.status === "queued" || task.status === "running";
@@ -69,6 +88,21 @@ function generationTaskQueueText(task: ImageSessionGenerationTask) {
   return "";
 }
 
+function pickPrimarySizeTiles(options: ImageSizeOption[]): ImageSizeOption[] {
+  return PRIMARY_SIZE_ASPECTS.flatMap((target) => {
+    const match = options.find((option) => option.aspect === target.aspect);
+    return match ? [match] : [];
+  });
+}
+
+function parseOptionalNumber(value: string): number | null {
+  if (!value.trim()) {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 export function ImageChatPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -84,6 +118,7 @@ export function ImageChatPage() {
   const [generationCount, setGenerationCount] = useState(1);
   const [draft, setDraft] = useState("");
   const [size, setSize] = useState("1024x1024");
+  const [toolOptions, setToolOptions] = useState<ImageToolOptions>({});
   const [titleDraft, setTitleDraft] = useState("");
   const [renameEnabled, setRenameEnabled] = useState(false);
   const [targetProductId, setTargetProductId] = useState("");
@@ -120,6 +155,7 @@ export function ImageChatPage() {
     () => buildImageSizeOptions(imageGenerationMaxDimension),
     [imageGenerationMaxDimension],
   );
+  const primarySizeOptions = useMemo(() => pickPrimarySizeTiles(sizeOptions), [sizeOptions]);
 
   useEffect(() => {
     if (!isProductMode && products.length && !targetProductId) {
@@ -172,10 +208,10 @@ export function ImageChatPage() {
   const maxSelectedReferenceCount = branchBaseAssetId ? MAX_BRANCH_CONTEXT_IMAGES - 1 : MAX_BRANCH_CONTEXT_IMAGES;
   const roundGroups = useMemo(() => groupImageSessionRounds(imageSession?.rounds ?? []), [imageSession]);
   const visibleGenerationTasks = useMemo(
-    () => imageSession?.generation_tasks.filter((task) => task.status !== "succeeded").slice(0, 4) ?? [],
+    () => selectVisibleGenerationTasks(imageSession?.generation_tasks ?? []),
     [imageSession],
   );
-  const hasActiveGenerationTask = visibleGenerationTasks.some(isActiveGenerationTask);
+  const hasActiveGenerationTask = imageSession?.generation_tasks.some(isActiveGenerationTask) ?? false;
 
   useEffect(() => {
     if (!imageSession) {
@@ -332,6 +368,7 @@ export function ImageChatPage() {
       base_asset_id: string | null;
       selected_reference_asset_ids: string[];
       generation_count: number;
+      tool_options?: ImageToolOptions | null;
     }) => api.generateImageSessionRound(selectedSessionId!, payload),
     onSuccess: (updated) => {
       queryClient.setQueryData(["image-session", updated.id], updated);
@@ -390,6 +427,7 @@ export function ImageChatPage() {
       base_asset_id: branchBaseAssetId,
       selected_reference_asset_ids: selectedReferenceAssetIds,
       generation_count: clampGenerationCount(generationCount),
+      tool_options: compactImageToolOptions(toolOptions),
     });
   }
 
@@ -486,7 +524,7 @@ export function ImageChatPage() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold text-slate-950">会话列表</div>
-                <div className="mt-1 text-xs text-slate-500">{sessionItems.length} 个方向</div>
+                <div className="mt-1 text-xs text-slate-500">{sessionItems.length} 个</div>
               </div>
               <button
                 type="button"
@@ -600,9 +638,11 @@ export function ImageChatPage() {
                       href={api.toApiUrl(selectedRound.generated_asset.download_url)}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:border-indigo-200 hover:text-indigo-700"
+                      title="下载当前图片"
+                      aria-label="下载当前图片"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition-colors hover:border-indigo-200 hover:text-indigo-700"
                     >
-                      <Download size={15} className="mr-1.5" /> 下载
+                      <Download size={15} />
                     </a>
                   </>
                 ) : null}
@@ -625,16 +665,31 @@ export function ImageChatPage() {
                   <button
                     type="button"
                     onClick={() => handleContinueFrom(selectedRound.generated_asset.id)}
-                    className={`rounded-full px-3 py-1.5 text-xs font-semibold shadow-sm ring-1 transition-colors backdrop-blur ${
+                    title="从当前继续"
+                    aria-label="从当前继续"
+                    className={`inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-semibold shadow-sm ring-1 transition-colors backdrop-blur ${
                       selectedRound.generated_asset.id === branchBaseAssetId
                         ? "bg-indigo-600 text-white ring-indigo-500"
                         : "bg-white/90 text-slate-700 ring-slate-200 hover:text-indigo-700"
                     }`}
                   >
-                    从当前继续
+                    <Wand2 size={13} />
+                    继续
                   </button>
                 ) : null}
               </div>
+              {selectedRound?.provider_notes.length ? (
+                <div className="absolute left-5 top-14 z-10 flex max-w-[calc(100%-2.5rem)] flex-wrap gap-2">
+                  {selectedRound.provider_notes.map((note) => (
+                    <span
+                      key={note}
+                      className="rounded-full bg-amber-50/95 px-3 py-1 text-xs font-medium text-amber-700 shadow-sm ring-1 ring-amber-200 backdrop-blur"
+                    >
+                      {note}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
 
               {selectedRound ? (
                 <div className="relative z-0 flex h-full min-h-0 w-full items-center justify-center px-4 pb-4 pt-14 sm:px-6 sm:pb-6 sm:pt-16">
@@ -652,7 +707,6 @@ export function ImageChatPage() {
                   </div>
                   <div>
                     <div className="text-sm font-semibold text-slate-600">还没有结果</div>
-                    <div className="mt-1 text-xs text-slate-400">在右侧输入画面描述后开始生成。</div>
                   </div>
                 </div>
               )}
@@ -663,7 +717,6 @@ export function ImageChatPage() {
             <div className="mb-2 flex items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold text-slate-950">历史记录</div>
-                <div className="text-xs text-slate-500">选择候选预览，或指定分支基图。</div>
               </div>
               {branchBaseRound ? (
                 <button
@@ -730,7 +783,7 @@ export function ImageChatPage() {
                                 : "bg-white/95 text-slate-700 opacity-100 ring-1 ring-slate-200 hover:text-indigo-700 md:opacity-0 md:group-hover/card:opacity-100"
                             }`}
                           >
-                            从这张继续
+                            继续
                           </button>
                         </div>
                       );
@@ -751,8 +804,9 @@ export function ImageChatPage() {
             <div className="mb-5">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
-                  <div className="text-sm font-semibold text-slate-950">生成控制台</div>
-                  <div className="mt-1 text-xs text-slate-500">名称、参考图、尺寸与保存。</div>
+                  <div className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-950">
+                    <Settings size={15} /> 生成设置
+                  </div>
                 </div>
                 <button
                   type="button"
@@ -826,11 +880,12 @@ export function ImageChatPage() {
                     <div className="min-w-0 text-xs leading-5 text-slate-500">
                       <div className="truncate font-medium text-slate-800">{branchBaseRound.prompt}</div>
                       <div>{branchBaseRound.size}</div>
-                      <div>本轮从这张继续。</div>
                     </div>
                   </div>
                 ) : (
-                  <div className="text-xs leading-5 text-slate-500">未指定基图，将按画面描述和已选参考图生成。</div>
+                  <div className="flex h-16 items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white text-xs text-slate-400">
+                    无
+                  </div>
                 )}
               </div>
 
@@ -854,9 +909,7 @@ export function ImageChatPage() {
                     </>
                   )}
                 </ImageDropZone>
-                <div className="mt-2 text-xs leading-5 text-slate-500">
-                  已选 {selectedReferenceAssetIds.length}/{maxSelectedReferenceCount}；勾选的图会进入下一轮。
-                </div>
+                <div className="mt-2 text-xs leading-5 text-slate-500">已选 {selectedReferenceAssetIds.length}/{maxSelectedReferenceCount}</div>
                 {sessionReferenceAssets.length ? (
                   <div className="mt-3 grid grid-cols-4 gap-2">
                     {sessionReferenceAssets.map((asset) => {
@@ -887,7 +940,7 @@ export function ImageChatPage() {
                               onChange={(event) => handleReferenceToggle(asset.id, event.target.checked)}
                               className="mr-1 h-3 w-3 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                             />
-                            使用
+                            用
                           </label>
                           <button
                             type="button"
@@ -921,9 +974,10 @@ export function ImageChatPage() {
 
               <div>
                 <div className="mb-2 text-sm font-semibold text-slate-950">尺寸</div>
-                <ImageSizePicker
+                <VisualSizePicker
                   value={size}
-                  presets={sizeOptions}
+                  primaryOptions={primarySizeOptions}
+                  allOptions={sizeOptions}
                   maxDimension={imageGenerationMaxDimension}
                   onChange={setSize}
                 />
@@ -946,6 +1000,8 @@ export function ImageChatPage() {
                   ))}
                 </select>
               </div>
+
+              <ProviderToolControls value={toolOptions} onChange={setToolOptions} />
 
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="mb-3 text-sm font-semibold text-slate-950">保存至商品库</div>
@@ -985,7 +1041,9 @@ export function ImageChatPage() {
                     )}
                   </div>
                 ) : (
-                  <div className="text-sm text-slate-500">生成图片后可保存。</div>
+                  <div className="flex h-12 items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white text-sm text-slate-400">
+                    无图片
+                  </div>
                 )}
               </div>
 
@@ -1013,11 +1071,14 @@ export function ImageChatPage() {
                         <div className="mt-1 line-clamp-2 text-xs opacity-80">{task.prompt}</div>
                         {task.status === "failed" ? (
                           <div className="mt-1 text-xs">{task.failure_reason ?? "图片生成失败，请稍后重试"}</div>
-                        ) : (
+                        ) : generationTaskQueueText(task) ? (
                           <div className="mt-1 text-xs opacity-70">
                             {generationTaskQueueText(task)}
                           </div>
-                        )}
+                        ) : null}
+                        {task.provider_notes.length ? (
+                          <div className="mt-1 text-xs opacity-80">{task.provider_notes.join(" ")}</div>
+                        ) : null}
                       </div>
                     );
                   })}
@@ -1057,6 +1118,209 @@ export function ImageChatPage() {
 
 }
 
+function VisualSizePicker({
+  value,
+  primaryOptions,
+  allOptions,
+  maxDimension,
+  onChange,
+}: {
+  value: string;
+  primaryOptions: ImageSizeOption[];
+  allOptions: ImageSizeOption[];
+  maxDimension: number;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="grid grid-cols-3 gap-2">
+        {primaryOptions.map((option) => {
+          const active = option.value === value;
+          const aspectConfig = PRIMARY_SIZE_ASPECTS.find((item) => item.aspect === option.aspect);
+          return (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => onChange(option.value)}
+              title={formatImageSizeValue(option.value)}
+              className={`flex h-20 flex-col items-center justify-center rounded-xl border text-xs font-semibold transition-colors ${
+                active
+                  ? "border-indigo-500 bg-indigo-50 text-indigo-700 ring-2 ring-indigo-100"
+                  : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900"
+              }`}
+            >
+              <span className={`mb-1.5 block rounded-sm border-2 border-current ${aspectConfig?.frameClassName ?? "h-7 w-7"}`} />
+              <span>{aspectConfig?.label ?? option.aspect}</span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="text-right text-[11px] font-medium text-slate-400">{formatImageSizeValue(value)}</div>
+      <details className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+        <summary className="cursor-pointer text-xs font-medium text-slate-500">自定义</summary>
+        <div className="mt-3">
+          <ImageSizePicker value={value} presets={allOptions} maxDimension={maxDimension} onChange={onChange} />
+        </div>
+      </details>
+    </div>
+  );
+}
+
+function ProviderToolControls({
+  value,
+  onChange,
+}: {
+  value: ImageToolOptions;
+  onChange: (value: ImageToolOptions) => void;
+}) {
+  const update = (next: Partial<ImageToolOptions>) => onChange({ ...value, ...next });
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+      <div className="mb-3 text-sm font-semibold text-slate-950">Provider</div>
+      <div className="grid grid-cols-2 gap-2">
+        <CompactInput
+          label="Tool"
+          value={value.model ?? ""}
+          placeholder="默认"
+          onChange={(next) => update({ model: next || null })}
+        />
+        <CompactSelect
+          label="质量"
+          value={value.quality ?? ""}
+          onChange={(next) => update({ quality: (next || null) as ImageToolOptions["quality"] })}
+        >
+          <option value="">默认</option>
+          <option value="auto">Auto</option>
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+        </CompactSelect>
+        <CompactSelect
+          label="格式"
+          value={value.output_format ?? ""}
+          onChange={(next) => update({ output_format: (next || null) as ImageToolOptions["output_format"] })}
+        >
+          <option value="">默认</option>
+          <option value="png">PNG</option>
+          <option value="jpeg">JPEG</option>
+          <option value="webp">WebP</option>
+        </CompactSelect>
+        <CompactInput
+          label="压缩"
+          value={value.output_compression ?? ""}
+          inputMode="numeric"
+          placeholder="默认"
+          onChange={(next) => update({ output_compression: parseOptionalNumber(next) })}
+        />
+        <CompactSelect
+          label="背景"
+          value={value.background ?? ""}
+          onChange={(next) => update({ background: (next || null) as ImageToolOptions["background"] })}
+        >
+          <option value="">默认</option>
+          <option value="auto">Auto</option>
+          <option value="opaque">Opaque</option>
+          <option value="transparent">Transparent</option>
+        </CompactSelect>
+        <CompactSelect
+          label="审核"
+          value={value.moderation ?? ""}
+          onChange={(next) => update({ moderation: (next || null) as ImageToolOptions["moderation"] })}
+        >
+          <option value="">默认</option>
+          <option value="auto">Auto</option>
+          <option value="low">Low</option>
+        </CompactSelect>
+        <CompactSelect
+          label="Action"
+          value={value.action ?? ""}
+          onChange={(next) => update({ action: (next || null) as ImageToolOptions["action"] })}
+        >
+          <option value="">默认</option>
+          <option value="auto">Auto</option>
+          <option value="generate">Generate</option>
+          <option value="edit">Edit</option>
+        </CompactSelect>
+        <CompactSelect
+          label="Fidelity"
+          value={value.input_fidelity ?? ""}
+          onChange={(next) => update({ input_fidelity: (next || null) as ImageToolOptions["input_fidelity"] })}
+        >
+          <option value="">默认</option>
+          <option value="low">Low</option>
+          <option value="high">High</option>
+        </CompactSelect>
+        <CompactInput
+          label="Partial"
+          value={value.partial_images ?? ""}
+          inputMode="numeric"
+          placeholder="默认"
+          onChange={(next) => update({ partial_images: parseOptionalNumber(next) })}
+        />
+        <CompactInput
+          label="n"
+          value={value.n ?? ""}
+          inputMode="numeric"
+          placeholder="默认"
+          onChange={(next) => update({ n: parseOptionalNumber(next) })}
+        />
+      </div>
+    </div>
+  );
+}
+
+function CompactInput({
+  label,
+  value,
+  placeholder,
+  inputMode,
+  onChange,
+}: {
+  label: string;
+  value: string | number;
+  placeholder?: string;
+  inputMode?: "text" | "numeric";
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[11px] font-semibold text-slate-500">{label}</span>
+      <input
+        value={value}
+        inputMode={inputMode}
+        placeholder={placeholder}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-9 w-full rounded-lg border border-slate-200 bg-slate-50 px-2 text-xs text-slate-900 outline-none transition-colors placeholder:text-slate-400 focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-100"
+      />
+    </label>
+  );
+}
+
+function CompactSelect({
+  label,
+  value,
+  onChange,
+  children,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  children: ReactNode;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[11px] font-semibold text-slate-500">{label}</span>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-9 w-full rounded-lg border border-slate-200 bg-slate-50 px-2 text-xs text-slate-900 outline-none transition-colors focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-100"
+      >
+        {children}
+      </select>
+    </label>
+  );
+}
+
 function ProductContextPanel({
   product,
   sourceImage,
@@ -1075,7 +1339,6 @@ function ProductContextPanel({
       <div className="mb-3 text-sm font-semibold text-zinc-900">商品上下文</div>
       {product ? (
         <>
-          <div className="mb-3 text-xs text-zinc-500">商品图用于回看与保存；连续生图只使用你选择的分支基图和会话参考图。</div>
           <div className="grid grid-cols-[88px_minmax(0,1fr)] gap-3">
             <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
               {sourceImage ? (
@@ -1142,7 +1405,6 @@ function StandaloneTargetPanel({
   return (
     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
       <div className="mb-2 text-sm font-semibold text-zinc-900">目标商品</div>
-      <div className="text-xs leading-5 text-zinc-500">先自由生成，满意后再把图片保存到已有商品。</div>
       <select
         value={targetProductId}
         onChange={(event) => onTargetProductChange(event.target.value)}

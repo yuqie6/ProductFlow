@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from base64 import b64encode
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -11,6 +13,7 @@ from helpers import (
     _make_demo_image_data_url,
     _wait_for_workflow_run,
 )
+from PIL import Image
 from pydantic import ValidationError
 
 from productflow_backend.application.contracts import (
@@ -694,6 +697,289 @@ def test_openai_responses_poster_provider_uses_image_generation_tool(
     assert len([item for item in content if item["type"] == "input_image"]) == 2
     assert "/images/generations" not in str(payload)
     assert "/images/edits" not in str(payload)
+
+
+def test_openai_responses_image_tool_optional_fields_are_omitted_until_configured(
+    configured_env: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("IMAGE_BASE_URL", "https://example.test/v1")
+    monkeypatch.setenv("IMAGE_API_KEY", "demo-api-key")
+    monkeypatch.setenv("IMAGE_GENERATE_MODEL", "gpt-5.4")
+    get_settings.cache_clear()
+
+    calls: list[dict] = []
+    encoded_result = _make_demo_image_data_url().split(",", maxsplit=1)[1]
+
+    class DummyImageGenerationCall:
+        type = "image_generation_call"
+        id = "ig_tool"
+        result = encoded_result
+
+        def model_dump(self, *, mode: str, exclude_none: bool) -> dict[str, str]:
+            return {"id": self.id, "type": self.type, "result": self.result}
+
+    class DummyResponse:
+        id = "resp_tool"
+        output = [DummyImageGenerationCall()]
+
+        def model_dump(self, *, mode: str, exclude_none: bool) -> dict:
+            return {"id": self.id, "output": [self.output[0].model_dump(mode=mode, exclude_none=exclude_none)]}
+
+    class DummyResponses:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            return DummyResponse()
+
+    class DummyOpenAI:
+        def __init__(self, **kwargs) -> None:
+            self.responses = DummyResponses()
+
+    monkeypatch.setattr("productflow_backend.infrastructure.image.responses_provider.OpenAI", DummyOpenAI)
+
+    from productflow_backend.infrastructure.image.responses_provider import OpenAIResponsesImageClient
+
+    OpenAIResponsesImageClient().generate_image(prompt="默认 payload", size="1024x1024")
+
+    assert calls[-1]["model"] == "gpt-5.4"
+    assert calls[-1]["tools"] == [{"type": "image_generation", "size": "1024x1024"}]
+    assert "tool_choice" not in calls[-1]
+
+    session = get_session_factory()()
+    try:
+        session.add_all(
+            [
+                AppSetting(key="image_tool_model", value="gpt-image-2"),
+                AppSetting(key="image_tool_quality", value="high"),
+                AppSetting(key="image_tool_output_format", value="jpeg"),
+                AppSetting(key="image_tool_output_compression", value="80"),
+                AppSetting(key="image_tool_background", value="transparent"),
+                AppSetting(key="image_tool_moderation", value="low"),
+                AppSetting(key="image_tool_action", value="generate"),
+                AppSetting(key="image_tool_input_fidelity", value="high"),
+                AppSetting(key="image_tool_partial_images", value="2"),
+                AppSetting(key="image_tool_n", value="3"),
+            ]
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    OpenAIResponsesImageClient().generate_image(prompt="带可选字段", size="1024x1536")
+
+    assert calls[-1]["tools"] == [
+        {
+            "type": "image_generation",
+            "size": "1024x1536",
+            "model": "gpt-image-2",
+            "quality": "high",
+            "output_format": "jpeg",
+            "output_compression": 80,
+            "background": "transparent",
+            "moderation": "low",
+            "action": "generate",
+            "input_fidelity": "high",
+            "partial_images": 2,
+            "n": 3,
+        }
+    ]
+    assert "tool_choice" not in calls[-1]
+
+
+def test_openai_responses_image_client_retries_without_optional_fields_and_records_note(
+    configured_env: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("IMAGE_BASE_URL", "https://example.test/v1")
+    monkeypatch.setenv("IMAGE_API_KEY", "demo-api-key")
+    monkeypatch.setenv("IMAGE_GENERATE_MODEL", "gpt-5.4")
+    get_settings.cache_clear()
+
+    calls: list[dict] = []
+    encoded_result = _make_demo_image_data_url().split(",", maxsplit=1)[1]
+
+    class DummyImageGenerationCall:
+        type = "image_generation_call"
+        id = "ig_fallback"
+        result = encoded_result
+        size = "1024x1024"
+
+        def model_dump(self, *, mode: str, exclude_none: bool) -> dict[str, str]:
+            return {"id": self.id, "type": self.type, "result": self.result, "size": self.size}
+
+    class DummyResponse:
+        id = "resp_fallback"
+        output = [DummyImageGenerationCall()]
+
+        def model_dump(self, *, mode: str, exclude_none: bool) -> dict:
+            return {"id": self.id, "output": [self.output[0].model_dump(mode=mode, exclude_none=exclude_none)]}
+
+    class DummyResponses:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                raise RuntimeError("raw provider 400 unsupported field image_tool_quality")
+            return DummyResponse()
+
+    class DummyOpenAI:
+        def __init__(self, **kwargs) -> None:
+            self.responses = DummyResponses()
+
+    monkeypatch.setattr("productflow_backend.infrastructure.image.responses_provider.OpenAI", DummyOpenAI)
+
+    from productflow_backend.infrastructure.image.responses_provider import OpenAIResponsesImageClient
+
+    result = OpenAIResponsesImageClient().generate_image(
+        prompt="带每轮字段",
+        size="1024x1024",
+        tool_options={"quality": "high", "output_format": "webp", "n": 2},
+    )
+
+    assert len(calls) == 2
+    assert calls[0]["tools"] == [
+        {"type": "image_generation", "size": "1024x1024", "quality": "high", "output_format": "webp", "n": 2}
+    ]
+    assert calls[1]["tools"] == [{"type": "image_generation", "size": "1024x1024"}]
+    assert result.provider_request_json["_productflow"]["fallback_used"] is True
+    assert result.provider_output_json["_productflow"]["notes"] == [
+        {"kind": "fallback", "message": "供应商不支持部分参数，已按基础参数完成。"}
+    ]
+    assert "unsupported field" not in str(result.provider_output_json)
+
+
+def test_openai_responses_image_client_records_provider_adjusted_note(
+    configured_env: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("IMAGE_BASE_URL", "https://example.test/v1")
+    monkeypatch.setenv("IMAGE_API_KEY", "demo-api-key")
+    monkeypatch.setenv("IMAGE_GENERATE_MODEL", "gpt-5.4")
+    get_settings.cache_clear()
+
+    encoded_result = _make_demo_image_data_url().split(",", maxsplit=1)[1]
+
+    class DummyImageGenerationCall:
+        type = "image_generation_call"
+        id = "ig_adjusted"
+        result = encoded_result
+        output_format = "png"
+        quality = "auto"
+
+        def model_dump(self, *, mode: str, exclude_none: bool) -> dict[str, str]:
+            return {
+                "id": self.id,
+                "type": self.type,
+                "result": self.result,
+                "output_format": self.output_format,
+                "quality": self.quality,
+            }
+
+    class DummyResponse:
+        id = "resp_adjusted"
+        output = [DummyImageGenerationCall()]
+
+        def model_dump(self, *, mode: str, exclude_none: bool) -> dict:
+            return {"id": self.id, "output": [self.output[0].model_dump(mode=mode, exclude_none=exclude_none)]}
+
+    class DummyResponses:
+        def create(self, **kwargs):
+            return DummyResponse()
+
+    class DummyOpenAI:
+        def __init__(self, **kwargs) -> None:
+            self.responses = DummyResponses()
+
+    monkeypatch.setattr("productflow_backend.infrastructure.image.responses_provider.OpenAI", DummyOpenAI)
+
+    from productflow_backend.infrastructure.image.responses_provider import OpenAIResponsesImageClient
+
+    result = OpenAIResponsesImageClient().generate_image(
+        prompt="provider 调整字段",
+        size="1024x1024",
+        tool_options={"quality": "high", "output_format": "webp"},
+    )
+
+    metadata = result.provider_output_json["_productflow"]
+    assert metadata["effective_image_tool"]["output_format"] == "png"
+    assert metadata["notes"][0]["kind"] == "provider_adjusted"
+    assert metadata["notes"][0]["fields"] == ["quality", "output_format"]
+
+
+def test_openai_responses_image_client_sanitizes_client_initialization_errors(
+    configured_env: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("IMAGE_BASE_URL", "https://secret-provider.example/v1")
+    monkeypatch.setenv("IMAGE_API_KEY", "sk-sensitive")
+    monkeypatch.setenv("IMAGE_GENERATE_MODEL", "gpt-5.4")
+    get_settings.cache_clear()
+
+    class DummyOpenAI:
+        def __init__(self, **kwargs) -> None:
+            raise RuntimeError(f"raw provider init failed: {kwargs}")
+
+    monkeypatch.setattr("productflow_backend.infrastructure.image.responses_provider.OpenAI", DummyOpenAI)
+
+    from productflow_backend.infrastructure.image.responses_provider import OpenAIResponsesImageClient
+
+    with pytest.raises(RuntimeError) as error:
+        OpenAIResponsesImageClient().generate_image(prompt="初始化失败", size="1024x1024")
+
+    assert str(error.value) == "图片供应商请求失败，请检查供应商配置后重试"
+    assert isinstance(error.value.__cause__, RuntimeError)
+    assert "sk-sensitive" not in str(error.value)
+    assert "secret-provider" not in str(error.value)
+
+
+def test_openai_responses_image_client_infers_mime_type_from_returned_bytes(
+    configured_env: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("IMAGE_BASE_URL", "https://example.test/v1")
+    monkeypatch.setenv("IMAGE_API_KEY", "demo-api-key")
+    monkeypatch.setenv("IMAGE_GENERATE_MODEL", "gpt-5.4")
+    get_settings.cache_clear()
+
+    buffer = BytesIO()
+    Image.new("RGB", (16, 16), (255, 255, 255)).save(buffer, format="JPEG")
+    encoded_result = b64encode(buffer.getvalue()).decode("utf-8")
+
+    class DummyImageGenerationCall:
+        type = "image_generation_call"
+        id = "ig_jpeg"
+        result = encoded_result
+        output_format = "png"
+
+        def model_dump(self, *, mode: str, exclude_none: bool) -> dict[str, str]:
+            return {
+                "id": self.id,
+                "type": self.type,
+                "result": self.result,
+                "output_format": self.output_format,
+            }
+
+    class DummyResponse:
+        id = "resp_jpeg"
+        output = [DummyImageGenerationCall()]
+
+        def model_dump(self, *, mode: str, exclude_none: bool) -> dict:
+            return {"id": self.id, "output": [self.output[0].model_dump(mode=mode, exclude_none=exclude_none)]}
+
+    class DummyResponses:
+        def create(self, **kwargs):
+            return DummyResponse()
+
+    class DummyOpenAI:
+        def __init__(self, **kwargs) -> None:
+            self.responses = DummyResponses()
+
+    monkeypatch.setattr("productflow_backend.infrastructure.image.responses_provider.OpenAI", DummyOpenAI)
+
+    from productflow_backend.infrastructure.image.responses_provider import OpenAIResponsesImageClient
+
+    result = OpenAIResponsesImageClient().generate_image(prompt="返回 JPEG", size="1024x1024")
+
+    assert result.mime_type == "image/jpeg"
 
 def test_generated_poster_mode_uses_image_provider(
     db_session,

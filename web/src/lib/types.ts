@@ -238,8 +238,22 @@ export interface ImageSessionRound {
   candidate_count: number;
   base_asset_id: string | null;
   selected_reference_asset_ids: string[];
+  provider_notes: string[];
   generated_asset: ImageSessionAsset;
   created_at: string;
+}
+
+export interface ImageToolOptions {
+  model?: string | null;
+  quality?: "auto" | "low" | "medium" | "high" | null;
+  output_format?: "png" | "jpeg" | "webp" | null;
+  output_compression?: number | null;
+  background?: "auto" | "opaque" | "transparent" | null;
+  moderation?: "auto" | "low" | null;
+  action?: "auto" | "generate" | "edit" | null;
+  input_fidelity?: "low" | "high" | null;
+  partial_images?: number | null;
+  n?: number | null;
 }
 
 export interface ImageSessionGenerationTask {
@@ -253,6 +267,8 @@ export interface ImageSessionGenerationTask {
   generation_count: number;
   failure_reason: string | null;
   result_generation_group_id: string | null;
+  tool_options: ImageToolOptions | null;
+  provider_notes: string[];
   created_at: string;
   started_at: string | null;
   finished_at: string | null;

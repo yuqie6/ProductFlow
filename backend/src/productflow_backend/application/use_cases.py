@@ -447,6 +447,9 @@ def _mark_job_succeeded(session: Session, job: JobRun) -> None:
 
 
 def _is_retryable_exception(exc: Exception) -> bool:
+    cause = exc.__cause__
+    if isinstance(cause, Exception):
+        return _is_retryable_exception(cause)
     if isinstance(exc, (APIConnectionError, APITimeoutError, InternalServerError, RateLimitError)):
         return True
     if isinstance(exc, (httpx.TimeoutException, httpx.TransportError)):

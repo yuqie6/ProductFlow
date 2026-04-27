@@ -529,6 +529,7 @@ class ImageSessionGenerationTask(Base):
         nullable=True,
     )
     selected_reference_asset_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    tool_options: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     generation_count: Mapped[int] = mapped_column(Integer, default=1)
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     result_generation_group_id: Mapped[str | None] = mapped_column(String(36), nullable=True)

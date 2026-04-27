@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from productflow_backend.domain.enums import ImageSessionAssetKind, JobStatus
 from productflow_backend.infrastructure.db.models import (
@@ -43,6 +43,7 @@ class ImageSessionRoundResponse(BaseModel):
     candidate_count: int = 1
     base_asset_id: str | None = None
     selected_reference_asset_ids: list[str] = Field(default_factory=list)
+    provider_notes: list[str] = Field(default_factory=list)
     generated_asset: ImageSessionAssetResponse
     created_at: datetime
 
@@ -58,6 +59,8 @@ class ImageSessionGenerationTaskResponse(BaseModel):
     generation_count: int
     failure_reason: str | None = None
     result_generation_group_id: str | None = None
+    tool_options: dict | None = None
+    provider_notes: list[str] = Field(default_factory=list)
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -103,12 +106,34 @@ class UpdateImageSessionRequest(BaseModel):
     title: str = Field(min_length=1, max_length=255)
 
 
+class ImageToolOptionsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    model: str | None = Field(default=None, min_length=1, max_length=100)
+    quality: Literal["auto", "low", "medium", "high"] | None = None
+    output_format: Literal["png", "jpeg", "webp"] | None = None
+    output_compression: int | None = Field(default=None, ge=0, le=100)
+    background: Literal["auto", "opaque", "transparent"] | None = None
+    moderation: Literal["auto", "low"] | None = None
+    action: Literal["auto", "generate", "edit"] | None = None
+    input_fidelity: Literal["low", "high"] | None = None
+    partial_images: int | None = Field(default=None, ge=0, le=3)
+    n: int | None = Field(default=None, ge=1, le=10)
+
+    @field_validator("model", mode="before")
+    @classmethod
+    def normalize_model(cls, value: object) -> str | None:
+        normalized = "" if value is None else str(value).strip()
+        return normalized or None
+
+
 class GenerateImageSessionRoundRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=4000)
     size: str = Field(default="1024x1024")
     base_asset_id: str | None = None
     selected_reference_asset_ids: list[str] = Field(default_factory=list, max_length=6)
     generation_count: int = Field(default=1, ge=1, le=4)
+    tool_options: ImageToolOptionsRequest | None = None
 
     @field_validator("size")
     @classmethod
@@ -138,6 +163,25 @@ def serialize_image_session_asset(asset: ImageSessionAsset) -> ImageSessionAsset
     )
 
 
+def extract_provider_notes(provider_output_json: dict | None) -> list[str]:
+    if not isinstance(provider_output_json, dict):
+        return []
+    metadata = provider_output_json.get("_productflow")
+    if not isinstance(metadata, dict):
+        return []
+    notes = metadata.get("notes")
+    if not isinstance(notes, list):
+        return []
+    messages: list[str] = []
+    for note in notes:
+        if not isinstance(note, dict):
+            continue
+        message = note.get("message")
+        if isinstance(message, str) and message.strip():
+            messages.append(message.strip())
+    return messages[:3]
+
+
 def serialize_image_session_round(round_item: ImageSessionRound) -> ImageSessionRoundResponse:
     return ImageSessionRoundResponse(
         id=round_item.id,
@@ -155,6 +199,7 @@ def serialize_image_session_round(round_item: ImageSessionRound) -> ImageSession
         candidate_count=round_item.candidate_count,
         base_asset_id=round_item.base_asset_id,
         selected_reference_asset_ids=round_item.selected_reference_asset_ids or [],
+        provider_notes=extract_provider_notes(round_item.provider_output_json),
         generated_asset=serialize_image_session_asset(round_item.generated_asset),
         created_at=round_item.created_at,
     )
@@ -162,6 +207,8 @@ def serialize_image_session_round(round_item: ImageSessionRound) -> ImageSession
 
 def serialize_image_session_generation_task(
     task: ImageSessionGenerationTask,
+    *,
+    provider_notes: list[str] | None = None,
 ) -> ImageSessionGenerationTaskResponse:
     queue_metadata = getattr(task, "_queue_metadata", None)
     queue_overview = getattr(queue_metadata, "overview", None)
@@ -176,6 +223,8 @@ def serialize_image_session_generation_task(
         generation_count=task.generation_count,
         failure_reason=task.failure_reason,
         result_generation_group_id=task.result_generation_group_id,
+        tool_options=task.tool_options,
+        provider_notes=provider_notes or [],
         created_at=task.created_at,
         started_at=task.started_at,
         finished_at=task.finished_at,
@@ -205,13 +254,24 @@ def serialize_image_session_detail(image_session: ImageSession) -> ImageSessionD
     rounds = sorted(image_session.rounds, key=lambda item: item.created_at)
     assets = sorted(image_session.assets, key=lambda item: item.created_at, reverse=True)
     generation_tasks = sorted(image_session.generation_tasks, key=lambda item: item.created_at, reverse=True)
+    notes_by_group = {
+        round_item.generation_group_id: extract_provider_notes(round_item.provider_output_json)
+        for round_item in rounds
+        if round_item.generation_group_id and extract_provider_notes(round_item.provider_output_json)
+    }
     return ImageSessionDetailResponse(
         id=image_session.id,
         product_id=image_session.product_id,
         title=image_session.title,
         assets=[serialize_image_session_asset(item) for item in assets],
         rounds=[serialize_image_session_round(item) for item in rounds],
-        generation_tasks=[serialize_image_session_generation_task(item) for item in generation_tasks],
+        generation_tasks=[
+            serialize_image_session_generation_task(
+                item,
+                provider_notes=notes_by_group.get(item.result_generation_group_id or ""),
+            )
+            for item in generation_tasks
+        ],
         created_at=image_session.created_at,
         updated_at=image_session.updated_at,
     )

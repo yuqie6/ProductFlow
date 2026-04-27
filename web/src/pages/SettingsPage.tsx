@@ -47,11 +47,12 @@ interface ConfigFieldProps {
   value: DraftValue;
   secretTouched: boolean;
   isResetting: boolean;
+  compact?: boolean;
   onChange: (value: DraftValue, touchedSecret?: boolean) => void;
   onReset: () => void;
 }
 
-function ConfigField({ item, value, secretTouched, isResetting, onChange, onReset }: ConfigFieldProps) {
+function ConfigField({ item, value, secretTouched, isResetting, compact = false, onChange, onReset }: ConfigFieldProps) {
   const baseInputClass =
     "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 transition-shadow placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
 
@@ -60,6 +61,83 @@ function ConfigField({ item, value, secretTouched, isResetting, onChange, onRese
       ? `${item.description || "密钥字段不会回显。"} 留空保存时不会覆盖当前值。`
       : item.description || "密钥字段不会回显。"
     : item.description;
+
+  const control =
+    item.input_type === "select" ? (
+      <select
+        id={item.key}
+        value={String(value)}
+        onChange={(event) => onChange(event.target.value)}
+        className={baseInputClass}
+      >
+        {item.options.map((option) => (
+          <option key={`${item.key}-${option.value}`} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    ) : item.input_type === "textarea" ? (
+      <textarea
+        id={item.key}
+        value={String(value)}
+        onChange={(event) => onChange(event.target.value)}
+        rows={item.key.startsWith("prompt_") ? 8 : 3}
+        className={`${baseInputClass} resize-y leading-6`}
+      />
+    ) : item.input_type === "boolean" ? (
+      <label className="inline-flex cursor-pointer items-center gap-3 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 transition-colors hover:border-zinc-300">
+        <input
+          id={item.key}
+          type="checkbox"
+          checked={Boolean(value)}
+          onChange={(event) => onChange(event.target.checked)}
+          className="h-4 w-4 accent-zinc-900"
+        />
+        <span>{Boolean(value) ? "已启用" : "已关闭"}</span>
+      </label>
+    ) : (
+      <input
+        id={item.key}
+        type={item.input_type === "password" ? "password" : item.input_type === "number" ? "number" : "text"}
+        value={String(value)}
+        min={item.minimum ?? undefined}
+        max={item.maximum ?? undefined}
+        placeholder={item.secret && item.has_value ? "已有值，输入新值后覆盖" : item.description || undefined}
+        onChange={(event) => onChange(event.target.value, item.secret)}
+        className={baseInputClass}
+        autoComplete={item.secret ? "new-password" : undefined}
+      />
+    );
+
+  if (compact) {
+    return (
+      <div className="rounded-xl border border-slate-200 bg-white p-3">
+        <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
+          <label htmlFor={item.key} className="truncate text-xs font-semibold text-zinc-900">
+            {item.label}
+          </label>
+          <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium ${sourceClassName(item)}`}>
+            {sourceLabel(item)}
+          </span>
+        </div>
+        {control}
+        <div className="mt-2 flex min-h-5 items-center justify-between gap-2">
+          <span className="truncate font-mono text-[10px] text-zinc-400">{item.key}</span>
+          {item.source === "database" ? (
+            <button
+              type="button"
+              onClick={onReset}
+              disabled={isResetting}
+              className="inline-flex shrink-0 items-center text-[11px] font-medium text-zinc-500 transition-colors hover:text-zinc-900 disabled:opacity-50"
+              aria-label={`恢复 ${item.label} 默认值`}
+            >
+              {isResetting ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />}
+            </button>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="grid gap-3 border-t border-slate-100 py-5 first:border-t-0 md:grid-cols-[220px_minmax(0,1fr)]">
@@ -76,51 +154,7 @@ function ConfigField({ item, value, secretTouched, isResetting, onChange, onRese
       </div>
 
       <div className="space-y-2">
-        {item.input_type === "select" ? (
-          <select
-            id={item.key}
-            value={String(value)}
-            onChange={(event) => onChange(event.target.value)}
-            className={baseInputClass}
-          >
-            {item.options.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        ) : item.input_type === "textarea" ? (
-          <textarea
-            id={item.key}
-            value={String(value)}
-            onChange={(event) => onChange(event.target.value)}
-            rows={item.key.startsWith("prompt_") ? 8 : 3}
-            className={`${baseInputClass} resize-y leading-6`}
-          />
-        ) : item.input_type === "boolean" ? (
-          <label className="inline-flex cursor-pointer items-center gap-3 rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-700 transition-colors hover:border-zinc-300">
-            <input
-              id={item.key}
-              type="checkbox"
-              checked={Boolean(value)}
-              onChange={(event) => onChange(event.target.checked)}
-              className="h-4 w-4 accent-zinc-900"
-            />
-            <span>{Boolean(value) ? "已启用" : "已关闭"}</span>
-          </label>
-        ) : (
-          <input
-            id={item.key}
-            type={item.input_type === "password" ? "password" : item.input_type === "number" ? "number" : "text"}
-            value={String(value)}
-            min={item.minimum ?? undefined}
-            max={item.maximum ?? undefined}
-            placeholder={item.secret && item.has_value ? "已有值，输入新值后覆盖" : undefined}
-            onChange={(event) => onChange(event.target.value, item.secret)}
-            className={baseInputClass}
-            autoComplete={item.secret ? "new-password" : undefined}
-          />
-        )}
+        {control}
 
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="min-h-4 text-xs leading-5 text-zinc-500">
@@ -411,7 +445,7 @@ export function SettingsPage() {
                       <h2 className="text-sm font-semibold text-slate-950">{group.category}</h2>
                       <p className="mt-1 text-xs text-slate-500">{group.items.length} 项运行时配置</p>
                     </div>
-                    <div className="px-5">
+                    <div className={group.category === "图片工具参数" ? "grid gap-3 p-5 sm:grid-cols-2" : "px-5"}>
                       {group.items.map((item) => (
                         <ConfigField
                           key={item.key}
@@ -419,6 +453,7 @@ export function SettingsPage() {
                           value={drafts[item.key] ?? draftFromItem(item)}
                           secretTouched={Boolean(secretTouched[item.key])}
                           isResetting={resettingKey === item.key}
+                          compact={group.category === "图片工具参数"}
                           onChange={(nextValue, touchedSecret) => {
                             setDrafts((current) => ({ ...current, [item.key]: nextValue }));
                             setSavedMessage("");

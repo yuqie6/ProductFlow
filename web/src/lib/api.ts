@@ -6,6 +6,7 @@ import type {
   GenerationQueueOverview,
   ImageSessionDetail,
   ImageSessionListResponse,
+  ImageToolOptions,
   JobRun,
   ProductDetail,
   ProductHistory,
@@ -221,6 +222,7 @@ export const api = {
       base_asset_id?: string | null;
       selected_reference_asset_ids?: string[];
       generation_count?: number;
+      tool_options?: ImageToolOptions | null;
     },
   ): Promise<ImageSessionDetail> {
     return request(`/api/image-sessions/${sessionId}/generate`, {

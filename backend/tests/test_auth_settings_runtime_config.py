@@ -140,6 +140,65 @@ def test_settings_api_persists_database_overrides(configured_env: Path) -> None:
     assert reset_items["image_provider_kind"]["value"] == "mock"
     assert reset_items["image_provider_kind"]["source"] == "env_default"
 
+
+def test_settings_api_accepts_and_validates_optional_image_tool_fields(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+    _unlock_settings(client)
+
+    initial = client.get("/api/settings")
+    assert initial.status_code == 200
+    initial_items = {item["key"]: item for item in initial.json()["items"]}
+    assert initial_items["image_tool_quality"]["category"] == "图片工具参数"
+    assert initial_items["image_tool_quality"]["input_type"] == "select"
+    assert initial_items["image_tool_output_compression"]["minimum"] == 0
+    assert initial_items["image_tool_output_compression"]["maximum"] == 100
+
+    updated = client.patch(
+        "/api/settings",
+        json={
+            "values": {
+                "image_tool_model": "gpt-image-2",
+                "image_tool_quality": "high",
+                "image_tool_output_format": "jpeg",
+                "image_tool_output_compression": 82,
+                "image_tool_background": "transparent",
+                "image_tool_moderation": "low",
+                "image_tool_action": "generate",
+                "image_tool_input_fidelity": "high",
+                "image_tool_partial_images": 2,
+                "image_tool_n": 3,
+            }
+        },
+    )
+    assert updated.status_code == 200
+    settings = get_runtime_settings()
+    assert settings.image_tool_model == "gpt-image-2"
+    assert settings.image_tool_quality == "high"
+    assert settings.image_tool_output_format == "jpeg"
+    assert settings.image_tool_output_compression == 82
+    assert settings.image_tool_background == "transparent"
+    assert settings.image_tool_moderation == "low"
+    assert settings.image_tool_action == "generate"
+    assert settings.image_tool_input_fidelity == "high"
+    assert settings.image_tool_partial_images == 2
+    assert settings.image_tool_n == 3
+
+    invalid_number = client.patch("/api/settings", json={"values": {"image_tool_output_compression": 101}})
+    assert invalid_number.status_code == 400
+    assert "不能大于 100" in invalid_number.json()["detail"]
+
+    invalid_select = client.patch("/api/settings", json={"values": {"image_tool_quality": "ultra"}})
+    assert invalid_select.status_code == 400
+    assert "必须是以下之一" in invalid_select.json()["detail"]
+
+    cleared = client.patch("/api/settings", json={"values": {"image_tool_output_compression": ""}})
+    assert cleared.status_code == 200
+    assert get_runtime_settings().image_tool_output_compression is None
+
 def test_prompt_settings_api_accepts_rejects_and_resets(configured_env: Path) -> None:
     from productflow_backend.presentation.api import create_app
 

@@ -285,6 +285,148 @@ When adding a runtime setting, update all of these together:
 `generation_max_concurrent_tasks` is the public-demo global provider/worker admission cap. It is a runtime setting backed
 by `app_settings` and must gate new resource-consuming entrypoints before they enqueue or synchronously call providers.
 
+### Scenario: Optional Responses image-generation tool fields
+
+#### 1. Scope / Trigger
+
+- Trigger: adding or editing provider-level fields sent inside the OpenAI Responses `image_generation` tool object.
+- Applies to runtime settings, `/api/settings`, `OpenAIResponsesImageClient`, backend provider payload tests, and the
+  frontend settings UI that renders config definitions.
+
+#### 2. Signatures
+
+- Runtime config keys:
+  - `image_tool_model`
+  - `image_tool_quality`
+  - `image_tool_output_format`
+  - `image_tool_output_compression`
+  - `image_tool_background`
+  - `image_tool_moderation`
+  - `image_tool_action`
+  - `image_tool_input_fidelity`
+  - `image_tool_partial_images`
+  - `image_tool_n`
+- Continuous image session generation request:
+  - `tool_options?: { model?, quality?, output_format?, output_compression?, background?, moderation?, action?,
+    input_fidelity?, partial_images?, n? }`
+- DB task persistence:
+  - `image_session_generation_tasks.tool_options` stores validated per-request overrides so queued worker execution uses
+    the same options the operator submitted.
+- Response notes:
+  - `ImageSessionRoundResponse.provider_notes: string[]`
+  - `ImageSessionGenerationTaskResponse.provider_notes: string[]`
+- Provider request shape:
+
+```json
+{
+  "model": "<image_generate_model>",
+  "input": "<prompt or Responses multimodal input>",
+  "tools": [
+    {
+      "type": "image_generation",
+      "size": "<request size>"
+    }
+  ]
+}
+```
+
+#### 3. Contracts
+
+- Top-level `model` remains `image_generate_model`; `image_tool_model` is only the optional tool-level `model`.
+- Defaults must remain AnyRouter-compatible: the tool object is effectively `{"type":"image_generation","size": size}`.
+- Do not add default `tool_choice` for image generation.
+- Optional tool fields are sent only when non-empty/non-null after runtime settings normalization.
+- Continuous image session `tool_options` override only the matching tool fields for that generation; omitted request
+  fields fall back to runtime defaults.
+- ProductFlow `generation_count` remains an application-level repeated-generation concept. `image_tool_n` is an advanced
+  provider field and must not be treated as a replacement for `generation_count` unless multi-output extraction and
+  persistence are implemented end to end.
+- Provider request/response JSON persisted for diagnostics must continue to sanitize base64 image data.
+- If a provider rejects a request that contains optional tool fields, retry once with a basic tool object containing only
+  `type` and `size`. If that fallback succeeds, persist a compact compatibility note in sanitized provider metadata and
+  expose it through `provider_notes`; never expose the raw provider error.
+- If provider output/tool metadata reports effective fields that differ from requested fields, persist and expose a
+  compact provider-adjusted note when the difference is detectable.
+- Returned MIME type should be inferred from decoded bytes or provider output metadata; do not hardcode generated
+  Responses images to PNG.
+- When sanitizing provider SDK/request exceptions, raise the generic user-facing exception from the original exception so
+  job retry classification can still inspect `__cause__` for retryable network, timeout, rate-limit, or 5xx failures.
+
+#### 4. Validation & Error Matrix
+
+- Empty optional string setting -> `None` at runtime, omitted from provider payload.
+- Empty optional numeric setting -> `None` at runtime, omitted from provider payload.
+- `image_tool_output_compression < 0` or `> 100` -> `/api/settings` returns `400`.
+- `image_tool_partial_images < 0` or `> 3` -> `/api/settings` returns `400`.
+- `image_tool_n < 1` or `> 10` -> `/api/settings` returns `400`.
+- Per-request `tool_options.output_compression < 0` or `> 100` -> `/api/image-sessions/{id}/generate` returns `422`.
+- Per-request `tool_options.partial_images < 0` or `> 3` -> `/api/image-sessions/{id}/generate` returns `422`.
+- Per-request `tool_options.n < 1` or `> 10` -> `/api/image-sessions/{id}/generate` returns `422`.
+- Unknown select value such as `image_tool_quality="ultra"` -> `/api/settings` returns `400`.
+- Unknown per-request select value such as `tool_options.quality="ultra"` -> request validation returns `422`.
+- OpenAI SDK/provider request exception -> raise a generic sanitized runtime error; do not expose API keys, raw request
+  bodies, base URLs with secrets, or provider internals to the frontend.
+- OpenAI SDK/provider timeout wrapped in a sanitized `RuntimeError` -> product job failure reason remains generic, while
+  retry classification follows `__cause__` and keeps the task retryable when the original exception is retryable.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: operator sets `image_tool_output_format=jpeg` and `image_tool_output_compression=80`; the next request includes
+  those two fields inside the tool object and no `tool_choice`.
+- Good: operator sets per-generation `tool_options.output_format=webp`; that round uses WebP while workflow/poster
+  generation still follows runtime defaults.
+- Good: provider rejects optional fields, fallback with `{"type":"image_generation","size": size}` succeeds, and the
+  completed round/task shows only `供应商不支持部分参数，已按基础参数完成。`.
+- Base: all optional fields unset; request payload is unchanged from the historical AnyRouter-compatible shape.
+- Base: provider returns JPEG bytes even while output metadata is normalized to PNG; stored/generated MIME type is
+  `image/jpeg` because byte detection wins.
+- Base: provider accepts the request but reports `output_format=png` after `webp` was requested; the result remains
+  successful and exposes a compact provider-adjusted note.
+- Bad: sending blank config values as `""` fields in the provider payload.
+- Bad: changing top-level `model` to the tool override or using `image_tool_n` to silently alter persisted candidate
+  count semantics.
+- Bad: returning raw OpenAI exception strings through `/api/image-sessions/*/generate` or workflow failures.
+
+#### 6. Tests Required
+
+- Settings/API test that optional tool fields appear in `/api/settings`, persist through `app_settings`, normalize empty
+  numeric values to `None`, and reject out-of-range numeric/select values.
+- Provider unit/integration test that default payload remains exactly `tools: [{"type":"image_generation","size": size}]`
+  and omits `tool_choice`.
+- Provider test that configured optional fields are included inside the tool object and only there.
+- API/schema test that image-session `tool_options` are accepted, validated, persisted on the generation task, and passed
+  into `ImageChatService`.
+- Provider fallback test that optional-field request failure triggers exactly one basic-tool retry and exposes only a
+  compact compatibility note.
+- Provider-adjusted metadata test that detectable effective field changes are persisted as compact notes.
+- MIME regression test using non-PNG returned bytes.
+- Retry regression test that a sanitized provider `RuntimeError` raised from a retryable network/timeout cause is still
+  classified retryable by product job failure handling.
+- Keep `uv run --directory backend ruff check .`, `just backend-test`, `pnpm --dir web lint`,
+  `pnpm --dir web test:run`, and `just web-build` green after cross-layer settings changes.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+request_payload["tool_choice"] = {"type": "image_generation"}
+tool = {
+    "type": "image_generation",
+    "size": size,
+    "output_format": settings.image_tool_output_format or "",
+}
+```
+
+Correct:
+
+```python
+tool = {"type": "image_generation", "size": size}
+if settings.image_tool_output_format:
+    tool["output_format"] = settings.image_tool_output_format
+request_payload = {"model": settings.image_generate_model, "input": input_payload, "tools": [tool]}
+```
+
 ### Scenario: Runtime prompt customization
 
 #### 1. Scope / Trigger

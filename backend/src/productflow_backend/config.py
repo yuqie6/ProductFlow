@@ -69,6 +69,7 @@ class ConfigDefinition:
     secret: bool = False
     minimum: int | None = None
     maximum: int | None = None
+    optional: bool = False
 
 
 class Settings(BaseSettings):
@@ -114,6 +115,16 @@ class Settings(BaseSettings):
     image_api_key: str | None = None
     image_base_url: str | None = None
     image_generate_model: str = "gpt-5.4"
+    image_tool_model: str | None = None
+    image_tool_quality: str | None = None
+    image_tool_output_format: str | None = None
+    image_tool_output_compression: int | None = Field(default=None, ge=0, le=100)
+    image_tool_background: str | None = None
+    image_tool_moderation: str | None = None
+    image_tool_action: str | None = None
+    image_tool_input_fidelity: str | None = None
+    image_tool_partial_images: int | None = Field(default=None, ge=0, le=3)
+    image_tool_n: int | None = Field(default=None, ge=1, le=10)
     image_generation_max_dimension: int = Field(
         default=DEFAULT_IMAGE_GENERATION_MAX_DIMENSION,
         ge=IMAGE_GENERATION_MIN_MAX_DIMENSION,
@@ -145,6 +156,30 @@ class Settings(BaseSettings):
     def _normalize_image_generation_fallback_size(cls, value: str, info: ValidationInfo) -> str:
         max_dimension = int(info.data.get("image_generation_max_dimension") or DEFAULT_IMAGE_GENERATION_MAX_DIMENSION)
         return normalize_image_generation_size(value, max_dimension=max_dimension)
+
+    @field_validator(
+        "image_tool_model",
+        "image_tool_quality",
+        "image_tool_output_format",
+        "image_tool_background",
+        "image_tool_moderation",
+        "image_tool_action",
+        "image_tool_input_fidelity",
+        mode="before",
+    )
+    @classmethod
+    def _normalize_optional_image_tool_text(cls, value: Any) -> str | None:
+        normalized = "" if value is None else str(value).strip()
+        return normalized or None
+
+    @field_validator("image_tool_output_compression", "image_tool_partial_images", "image_tool_n", mode="before")
+    @classmethod
+    def _normalize_optional_image_tool_int(cls, value: Any) -> int | None:
+        if value is None:
+            return None
+        if isinstance(value, str) and not value.strip():
+            return None
+        return int(value)
 
     @model_validator(mode="after")
     def _validate_distinct_settings_token(self) -> Settings:
@@ -241,6 +276,113 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
         label="图片模型",
         category="图片生成",
         input_type="text",
+    ),
+    ConfigDefinition(
+        key="image_tool_model",
+        label="Tool 模型",
+        category="图片工具参数",
+        input_type="text",
+        description="留空不发送；需要 provider 支持。",
+        optional=True,
+    ),
+    ConfigDefinition(
+        key="image_tool_quality",
+        label="质量",
+        category="图片工具参数",
+        input_type="select",
+        options=(
+            ConfigOption("", "默认"),
+            ConfigOption("auto", "Auto"),
+            ConfigOption("low", "Low"),
+            ConfigOption("medium", "Medium"),
+            ConfigOption("high", "High"),
+        ),
+        optional=True,
+    ),
+    ConfigDefinition(
+        key="image_tool_output_format",
+        label="格式",
+        category="图片工具参数",
+        input_type="select",
+        options=(
+            ConfigOption("", "默认"),
+            ConfigOption("png", "PNG"),
+            ConfigOption("jpeg", "JPEG"),
+            ConfigOption("webp", "WebP"),
+        ),
+        optional=True,
+    ),
+    ConfigDefinition(
+        key="image_tool_output_compression",
+        label="压缩",
+        category="图片工具参数",
+        input_type="number",
+        description="0-100；留空不发送。",
+        minimum=0,
+        maximum=100,
+        optional=True,
+    ),
+    ConfigDefinition(
+        key="image_tool_background",
+        label="背景",
+        category="图片工具参数",
+        input_type="select",
+        options=(
+            ConfigOption("", "默认"),
+            ConfigOption("auto", "Auto"),
+            ConfigOption("opaque", "Opaque"),
+            ConfigOption("transparent", "Transparent"),
+        ),
+        optional=True,
+    ),
+    ConfigDefinition(
+        key="image_tool_moderation",
+        label="审核",
+        category="图片工具参数",
+        input_type="select",
+        options=(ConfigOption("", "默认"), ConfigOption("auto", "Auto"), ConfigOption("low", "Low")),
+        optional=True,
+    ),
+    ConfigDefinition(
+        key="image_tool_action",
+        label="Action",
+        category="图片工具参数",
+        input_type="select",
+        options=(
+            ConfigOption("", "默认"),
+            ConfigOption("auto", "Auto"),
+            ConfigOption("generate", "Generate"),
+            ConfigOption("edit", "Edit"),
+        ),
+        optional=True,
+    ),
+    ConfigDefinition(
+        key="image_tool_input_fidelity",
+        label="Input fidelity",
+        category="图片工具参数",
+        input_type="select",
+        options=(ConfigOption("", "默认"), ConfigOption("low", "Low"), ConfigOption("high", "High")),
+        optional=True,
+    ),
+    ConfigDefinition(
+        key="image_tool_partial_images",
+        label="Partial",
+        category="图片工具参数",
+        input_type="number",
+        description="0-3；留空不发送。",
+        minimum=0,
+        maximum=3,
+        optional=True,
+    ),
+    ConfigDefinition(
+        key="image_tool_n",
+        label="Provider n",
+        category="图片工具参数",
+        input_type="number",
+        description="高级字段；不改变连续生图候选数量语义。",
+        minimum=1,
+        maximum=10,
+        optional=True,
     ),
     ConfigDefinition(
         key="image_generation_max_dimension",
@@ -445,6 +587,8 @@ def normalize_config_value(key: str, value: Any) -> str:
         raise ValueError(f"{definition.label} 必须是布尔值")
 
     if definition.input_type == "number":
+        if definition.optional and (value is None or str(value).strip() == ""):
+            return ""
         try:
             normalized_int = int(value)
         except (TypeError, ValueError) as exc:
