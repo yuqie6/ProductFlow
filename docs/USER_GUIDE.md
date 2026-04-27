@@ -182,11 +182,12 @@
 
 ## 参考说明：提示词配置
 
-进入顶部导航 **配置**，找到 **提示词** 分组，可以调整四类长期默认提示词：
+进入顶部导航 **配置**，找到 **提示词** 分组，可以调整五类长期默认提示词：
 
 - `prompt_brief_system`：商品理解默认提示词。
 - `prompt_copy_system`：文案生成默认提示词。
 - `prompt_poster_image_template`：工作台生图模板。
+- `prompt_poster_image_edit_template`：工作台参考图/生成图继续改图模板。
 - `prompt_image_chat_template`：连续生图模板。
 
 建议用法：
@@ -199,7 +200,7 @@
 
 常用占位符：
 
-- 工作台生图模板：`product_name`、`category`、`price`、`source_note`、`instruction`、`title`、`selling_points`、`poster_headline`、`cta`、`size`、`kind`、`kind_label`、`kind_requirements`。
+- 工作台生图/改图模板：`product_name`、`category`、`price`、`source_note`、`instruction`、`title`、`selling_points`、`poster_headline`、`cta`、`context_block`、`size`、`kind`、`kind_label`、`kind_requirements`。
 - 连续生图模板：`prompt`、`size`、`history_block`。
 
 如果占位符写错，系统不会因为未知占位符直接崩掉，但那一段可能不会按预期替换。建议先小改、再测试。
