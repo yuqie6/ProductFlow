@@ -25,7 +25,7 @@ from productflow_backend.domain.enums import ProductWorkflowState
 from productflow_backend.infrastructure.db.models import PosterVariant, SourceAsset
 from productflow_backend.infrastructure.queue import enqueue_copy_job, enqueue_poster_job
 from productflow_backend.infrastructure.storage import ImageVariantName, LocalStorage
-from productflow_backend.presentation.deps import get_session, require_admin
+from productflow_backend.presentation.deps import get_session, require_admin, require_deletion_enabled
 from productflow_backend.presentation.errors import raise_value_error_as_http
 from productflow_backend.presentation.image_variants import build_variant_filename
 from productflow_backend.presentation.schemas.jobs import JobRunResponse, serialize_job
@@ -111,7 +111,11 @@ def get_product_detail_endpoint(product_id: str, session: Session = Depends(get_
         raise_value_error_as_http(exc)
 
 
-@router.delete("/products/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/products/{product_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_deletion_enabled)],
+)
 def delete_product_endpoint(product_id: str, session: Session = Depends(get_session)) -> None:
     try:
         delete_product(session, product_id=product_id)

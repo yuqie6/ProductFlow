@@ -246,6 +246,7 @@ export function SettingsPage() {
     },
     onSuccess: (data) => {
       queryClient.setQueryData(["config"], data);
+      void queryClient.invalidateQueries({ queryKey: ["runtime-config"] });
       setError("");
       setSavedMessage("配置已写入数据库，后续任务会优先读取数据库配置。");
     },
@@ -271,6 +272,7 @@ export function SettingsPage() {
     },
     onSuccess: (data) => {
       queryClient.setQueryData(["config"], data);
+      void queryClient.invalidateQueries({ queryKey: ["runtime-config"] });
       setSavedMessage("已删除数据库覆盖值，当前配置回退到 env/default。 ");
     },
     onError: (mutationError) => {

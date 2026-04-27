@@ -122,7 +122,10 @@ def get_config_endpoint(session: Session = Depends(get_session)) -> ConfigRespon
 @router.get("/runtime", response_model=RuntimeConfigResponse)
 def get_runtime_config_endpoint() -> RuntimeConfigResponse:
     settings = get_runtime_settings()
-    return RuntimeConfigResponse(image_generation_max_dimension=settings.image_generation_max_dimension)
+    return RuntimeConfigResponse(
+        image_generation_max_dimension=settings.image_generation_max_dimension,
+        deletion_enabled=settings.deletion_enabled,
+    )
 
 
 @router.patch("", response_model=ConfigResponse, dependencies=[Depends(require_settings_unlocked)])

@@ -340,6 +340,7 @@ export interface ConfigResponse {
 
 export interface RuntimeConfig {
   image_generation_max_dimension: number;
+  deletion_enabled: boolean;
 }
 
 export interface GenerationQueueOverview {

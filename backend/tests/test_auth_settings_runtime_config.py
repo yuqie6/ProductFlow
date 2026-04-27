@@ -104,6 +104,8 @@ def test_settings_api_persists_database_overrides(configured_env: Path) -> None:
     assert initial_items["image_provider_kind"]["value"] == "mock"
     assert initial_items["image_provider_kind"]["source"] == "env_default"
     assert initial_items["generation_max_concurrent_tasks"]["value"] == 3
+    assert initial_items["deletion_enabled"]["value"] is False
+    assert initial_items["deletion_enabled"]["category"] == "安全与运维"
 
     updated = client.patch(
         "/api/settings",
@@ -114,6 +116,7 @@ def test_settings_api_persists_database_overrides(configured_env: Path) -> None:
                 "image_generate_model": "gpt-5.4-mini",
                 "job_retry_delay_ms": 2500,
                 "generation_max_concurrent_tasks": 2,
+                "deletion_enabled": True,
             }
         },
     )
@@ -127,6 +130,7 @@ def test_settings_api_persists_database_overrides(configured_env: Path) -> None:
     assert get_runtime_settings().image_api_key == "database-image-key"
     assert get_runtime_settings().job_retry_delay_ms == 2500
     assert get_runtime_settings().generation_max_concurrent_tasks == 2
+    assert get_runtime_settings().deletion_enabled is True
 
     session = get_session_factory()()
     try:
@@ -334,7 +338,7 @@ def test_image_generation_max_dimension_runtime_config_controls_size_bounds(conf
 
     runtime = client.get("/api/settings/runtime")
     assert runtime.status_code == 200
-    assert runtime.json()["image_generation_max_dimension"] == 3840
+    assert runtime.json() == {"image_generation_max_dimension": 3840, "deletion_enabled": False}
 
     updated = client.patch(
         "/api/settings",

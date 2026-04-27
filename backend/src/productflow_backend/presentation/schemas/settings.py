@@ -34,6 +34,7 @@ class ConfigResponse(BaseModel):
 
 class RuntimeConfigResponse(BaseModel):
     image_generation_max_dimension: int
+    deletion_enabled: bool
 
 
 class ConfigUpdateRequest(BaseModel):

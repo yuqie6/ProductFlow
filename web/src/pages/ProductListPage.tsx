@@ -18,6 +18,7 @@ import { formatPrice, formatShortDate } from "../lib/format";
 import type { ProductSummary } from "../lib/types";
 
 const PAGE_SIZE = 12;
+const DELETION_DISABLED_MESSAGE = "删除功能已关闭，请联系管理员";
 
 export function ProductListPage() {
   const navigate = useNavigate();
@@ -28,9 +29,14 @@ export function ProductListPage() {
     queryKey: ["products", page, PAGE_SIZE],
     queryFn: () => api.listProducts({ page, page_size: PAGE_SIZE }),
   });
+  const runtimeConfigQuery = useQuery({
+    queryKey: ["runtime-config"],
+    queryFn: api.getRuntimeConfig,
+  });
   const products = productsQuery.data?.items ?? [];
   const total = productsQuery.data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const deletionEnabled = runtimeConfigQuery.data?.deletion_enabled ?? false;
   const posterReadyCount = products.filter((product) => product.workflow_state === "poster_ready").length;
   const copyReadyCount = products.filter(
     (product) => product.workflow_state === "copy_ready" || product.workflow_state === "poster_ready",
@@ -65,6 +71,10 @@ export function ProductListPage() {
   });
 
   const handleDeleteProduct = (productId: string, productName: string) => {
+    if (!deletionEnabled) {
+      setDeleteError(DELETION_DISABLED_MESSAGE);
+      return;
+    }
     if (!window.confirm(`确定删除「${productName}」吗？此操作不可恢复。`)) {
       return;
     }
@@ -179,7 +189,8 @@ export function ProductListPage() {
                             <button
                               type="button"
                               onClick={() => handleDeleteProduct(product.id, product.name)}
-                              disabled={deleteProductMutation.isPending}
+                              disabled={deleteProductMutation.isPending || !deletionEnabled}
+                              title={deletionEnabled ? "删除商品" : DELETION_DISABLED_MESSAGE}
                               className="inline-flex items-center text-sm font-medium text-red-500 transition-colors hover:text-red-700 disabled:opacity-50"
                             >
                               <Trash2 size={14} className="mr-1" /> 删除

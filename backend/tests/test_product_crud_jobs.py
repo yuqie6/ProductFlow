@@ -6,6 +6,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 from helpers import (
+    _enable_deletion,
     _execute_workflow_queue_inline,
     _login,
     _make_demo_image_bytes,
@@ -136,6 +137,7 @@ def test_product_can_be_deleted_from_api(configured_env: Path) -> None:
     assert product_with_artifacts.json()["copy_sets"]
     assert product_with_artifacts.json()["poster_variants"]
 
+    _enable_deletion(client)
     deleted = client.delete(f"/api/products/{product_id}")
     assert deleted.status_code == 204
     assert deleted.content == b""

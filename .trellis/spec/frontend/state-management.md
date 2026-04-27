@@ -31,7 +31,9 @@ Current query key patterns:
 - Jobs: `['job', activeCopyJobId]` and `['job', activePosterJobId]` in `ProductDetailPage.tsx`.
 - Image sessions: `['image-sessions', productId ?? 'standalone']` and `['image-session', selectedSessionId]` in
   `ImageChatPage.tsx`.
-- Runtime config: `['config']` in `ImageChatPage.tsx` and `SettingsPage.tsx`.
+- Runtime config: `['runtime-config']` in `ProductDetailPage.tsx`, `ProductListPage.tsx`, and `ImageChatPage.tsx`.
+- Full settings config: `['config']` in `SettingsPage.tsx`; successful settings saves/resets must invalidate
+  `['runtime-config']` when they can affect public runtime behavior.
 - Settings lock state: `['settings-lock-state']` in `SettingsPage.tsx`; fetch full `['config']` only after the secondary
   settings token unlock succeeds.
 

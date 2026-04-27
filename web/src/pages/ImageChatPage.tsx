@@ -55,6 +55,7 @@ function getSessionReferenceAssets(imageSession: ImageSessionDetail | undefined)
 }
 
 const MAX_BRANCH_CONTEXT_IMAGES = 6;
+const DELETION_DISABLED_MESSAGE = "删除功能已关闭，请联系管理员";
 
 function isActiveGenerationTask(task: ImageSessionGenerationTask) {
   return task.status === "queued" || task.status === "running";
@@ -141,6 +142,7 @@ export function ImageChatPage() {
   const products = productsQuery.data?.items ?? [];
   const imageGenerationMaxDimension =
     runtimeConfigQuery.data?.image_generation_max_dimension ?? DEFAULT_IMAGE_GENERATION_MAX_DIMENSION;
+  const deletionEnabled = runtimeConfigQuery.data?.deletion_enabled ?? false;
   const sizeOptions = useMemo(
     () => buildImageSizeOptions(imageGenerationMaxDimension),
     [imageGenerationMaxDimension],
@@ -466,6 +468,10 @@ export function ImageChatPage() {
     if (deleteSessionMutation.isPending) {
       return;
     }
+    if (!deletionEnabled) {
+      setErrorMessage(DELETION_DISABLED_MESSAGE);
+      return;
+    }
     if (!window.confirm("删除这个会话？会话里的参考图和生成记录都会移除，已保存到商品的图片不受影响。")) {
       return;
     }
@@ -583,7 +589,8 @@ export function ImageChatPage() {
                       type="button"
                       aria-label="删除会话"
                       onClick={() => handleDeleteSession(item.id)}
-                      disabled={deleting}
+                      disabled={deleting || !deletionEnabled}
+                      title={deletionEnabled ? "删除会话" : DELETION_DISABLED_MESSAGE}
                       className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-lg bg-white/95 text-slate-400 opacity-100 shadow-sm ring-1 ring-slate-200 transition-colors hover:text-red-600 disabled:opacity-60 md:opacity-0 md:group-hover:opacity-100"
                     >
                       {deleting ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}

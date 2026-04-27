@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from helpers import (
+    _enable_deletion,
     _execute_workflow_queue_inline,
     _login,
     _make_demo_image_bytes,
@@ -715,6 +716,7 @@ def test_image_session_can_be_deleted_with_files(configured_env: Path, db_sessio
     session_root = Path(configured_env) / "image_sessions" / session_id
     assert session_root.exists()
 
+    _enable_deletion(client)
     deleted = client.delete(f"/api/image-sessions/{session_id}")
     assert deleted.status_code == 204
 

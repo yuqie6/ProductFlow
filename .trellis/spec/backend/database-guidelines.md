@@ -112,6 +112,77 @@ separate count query. The route `presentation/routes/products.py::list_products_
 
 Do not reintroduce full-table product loads for list pages.
 
+## Scenario: Runtime deletion toggle for traceability
+
+### 1. Scope / Trigger
+
+- Trigger: changing runtime settings, `/api/settings/runtime`, product deletion, or image-session deletion.
+- This is a cross-layer contract because `Settings`, config serialization, route dependencies, frontend DTOs, and UI delete
+  buttons must agree on the same field and scope.
+
+### 2. Signatures
+
+- Runtime setting: `Settings.deletion_enabled: bool = False`.
+- Config definition key: `deletion_enabled`, non-secret, boolean, category `安全与运维`.
+- Runtime API response: `GET /api/settings/runtime` returns `deletion_enabled` alongside
+  `image_generation_max_dimension`.
+- Guard helper: `presentation.deps.require_deletion_enabled() -> None`.
+
+### 3. Contracts
+
+- Default behavior is evidence-preserving: `deletion_enabled` is `False` unless explicitly set through env/defaults or
+  `app_settings`.
+- The guard applies only to high-risk whole-record deletion routes:
+  - `DELETE /api/products/{product_id}`
+  - `DELETE /api/image-sessions/{image_session_id}`
+- The guard must not apply to workflow editing or reference-image cleanup:
+  - `DELETE /api/workflow-edges/{edge_id}`
+  - `DELETE /api/workflow-nodes/{node_id}`
+  - `DELETE /api/source-assets/{asset_id}`
+  - `DELETE /api/image-sessions/{image_session_id}/reference-images/{asset_id}`
+- `DELETE /api/auth/session` and settings reset behavior are not business deletion and must remain available.
+
+### 4. Validation & Error Matrix
+
+- `deletion_enabled == False` and product delete -> `403`, `{"detail": "删除功能已关闭，请联系管理员"}`.
+- `deletion_enabled == False` and image-session delete -> `403`, same detail.
+- `deletion_enabled == True` and product/session delete -> original application behavior, including existing busy-state
+  validation.
+- Reference-image deletion and workflow node/edge deletion -> original behavior regardless of `deletion_enabled`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: public demo keeps generated content traceable by disabling whole product and whole image-session deletion.
+- Base: admin temporarily enables deletion from settings, deletes a whole product/session, then disables it again.
+- Bad: blocking workflow node/edge deletion; this breaks normal workbench editing and is outside the traceability goal.
+- Bad: blocking reference-image deletion; image-library cleanup is not the high-risk traceability gap this toggle targets.
+
+### 6. Tests Required
+
+- Route test for default-disabled product delete preserving database row and storage files.
+- Route test for default-disabled image-session delete preserving database row and storage files.
+- Existing product/session delete success tests must explicitly enable deletion first.
+- Existing workflow node/edge and reference-image delete tests must continue to pass without enabling deletion.
+- Runtime config test must assert `deletion_enabled` appears in `/api/settings/runtime` and settings persistence.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+@router.delete("/workflow-nodes/{node_id}", dependencies=[Depends(require_deletion_enabled)])
+def delete_workflow_node_endpoint(...):
+    ...
+```
+
+Correct:
+
+```python
+@router.delete("/products/{product_id}", dependencies=[Depends(require_deletion_enabled)])
+def delete_product_endpoint(...):
+    ...
+```
+
 ## Scenario: Continuous image-session branching and multi-candidate rounds
 
 ### 1. Scope / Trigger

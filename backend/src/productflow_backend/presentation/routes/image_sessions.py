@@ -19,7 +19,7 @@ from productflow_backend.application.image_sessions import (
 from productflow_backend.infrastructure.db.models import ImageSessionAsset
 from productflow_backend.infrastructure.queue import enqueue_image_session_generation_task
 from productflow_backend.infrastructure.storage import ImageVariantName, LocalStorage
-from productflow_backend.presentation.deps import get_session, require_admin
+from productflow_backend.presentation.deps import get_session, require_admin, require_deletion_enabled
 from productflow_backend.presentation.errors import raise_value_error_as_http
 from productflow_backend.presentation.image_variants import build_variant_filename
 from productflow_backend.presentation.schemas.image_sessions import (
@@ -87,7 +87,11 @@ def update_image_session_endpoint(
     return serialize_image_session_detail(image_session)
 
 
-@router.delete("/image-sessions/{image_session_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/image-sessions/{image_session_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_deletion_enabled)],
+)
 def delete_image_session_endpoint(
     image_session_id: str,
     session: Session = Depends(get_session),

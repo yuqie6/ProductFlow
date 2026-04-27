@@ -40,6 +40,12 @@ def _unlock_settings(client: TestClient) -> None:
     assert unlock.status_code == 200
 
 
+def _enable_deletion(client: TestClient) -> None:
+    _unlock_settings(client)
+    response = client.patch("/api/settings", json={"values": {"deletion_enabled": True}})
+    assert response.status_code == 200
+
+
 def _wait_for_workflow_run(
     client: TestClient,
     product_id: str,

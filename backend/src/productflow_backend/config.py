@@ -150,6 +150,7 @@ class Settings(BaseSettings):
     job_max_attempts: int = 3
     job_retry_delay_ms: int = 10_000
     generation_max_concurrent_tasks: int = Field(default=3, ge=1, le=20)
+    deletion_enabled: bool = False
 
     @field_validator("image_main_image_size", "image_promo_poster_size")
     @classmethod
@@ -519,6 +520,13 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
         description="全局资源保护阈值；文案、海报、工作流和连续生图达到上限时会提示稍后重试。",
         minimum=1,
         maximum=20,
+    ),
+    ConfigDefinition(
+        key="deletion_enabled",
+        label="启用业务删除",
+        category="安全与运维",
+        input_type="boolean",
+        description="默认关闭，用于体验站禁止整条商品和连续生图会话被删除，保留溯源证据。",
     ),
 )
 
