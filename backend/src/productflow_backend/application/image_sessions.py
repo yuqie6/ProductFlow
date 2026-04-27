@@ -28,7 +28,7 @@ from productflow_backend.infrastructure.db.models import (
     new_id,
 )
 from productflow_backend.infrastructure.db.session import get_session_factory
-from productflow_backend.infrastructure.image.base import infer_extension
+from productflow_backend.infrastructure.image.base import image_dimensions_from_bytes, infer_extension
 from productflow_backend.infrastructure.image.chat_service import ImageChatService, ImageChatTurn
 from productflow_backend.infrastructure.storage import LocalStorage
 
@@ -229,6 +229,38 @@ def _normalize_tool_options(tool_options: dict[str, Any] | None) -> dict[str, An
     return normalized or None
 
 
+def _provider_output_with_actual_size(
+    provider_output_json: dict[str, Any] | None,
+    *,
+    requested_size: str,
+    image_bytes: bytes,
+) -> dict[str, Any]:
+    output = dict(provider_output_json or {})
+    dimensions = image_dimensions_from_bytes(image_bytes)
+    if dimensions is None:
+        return output
+
+    actual_size = f"{dimensions[0]}x{dimensions[1]}"
+    metadata = output.get("_productflow")
+    metadata = dict(metadata) if isinstance(metadata, dict) else {}
+    metadata["actual_image_size"] = actual_size
+    if actual_size != requested_size:
+        raw_notes = metadata.get("notes")
+        notes = [note for note in raw_notes if isinstance(note, dict)] if isinstance(raw_notes, list) else []
+        if not any(note.get("kind") == "actual_size_mismatch" for note in notes):
+            notes.append(
+                {
+                    "kind": "actual_size_mismatch",
+                    "message": f"供应商实际返回 {actual_size}，请求尺寸为 {requested_size}。",
+                    "requested_size": requested_size,
+                    "actual_size": actual_size,
+                }
+            )
+        metadata["notes"] = notes
+    output["_productflow"] = metadata
+    return output
+
+
 def list_image_sessions(
     session: Session,
     *,
@@ -427,7 +459,11 @@ def _execute_image_session_round_generation(
                 previous_response_id=None,
                 image_generation_call_id=result.image_generation_call_id,
                 provider_request_json=result.provider_request_json,
-                provider_output_json=result.provider_output_json,
+                provider_output_json=_provider_output_with_actual_size(
+                    result.provider_output_json,
+                    requested_size=normalized_size,
+                    image_bytes=result.bytes_data,
+                ),
                 generation_group_id=generation_group_id,
                 candidate_index=candidate_index,
                 candidate_count=generation_count,

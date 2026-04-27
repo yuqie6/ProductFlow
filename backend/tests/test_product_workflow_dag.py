@@ -593,7 +593,17 @@ def test_product_context_source_image_reaches_image_generation_context(
     )
     patched_image = client.patch(
         f"/api/workflow-nodes/{image_node['id']}",
-        json={"config_json": {"instruction": "生成宽屏商品场景", "size": "3840x2160"}},
+        json={
+            "config_json": {
+                "instruction": "生成宽屏商品场景",
+                "size": "3840x2160",
+                "tool_options": {
+                    "quality": "high",
+                    "output_format": "webp",
+                    "input_fidelity": "high",
+                },
+            }
+        },
     )
     assert patched_image.status_code == 200
 
@@ -615,6 +625,11 @@ def test_product_context_source_image_reaches_image_generation_context(
     provider_input = captured_inputs[0]
     assert provider_input.copy_prompt_mode == "copy"
     assert provider_input.image_size == "3840x2160"
+    assert provider_input.tool_options == {
+        "quality": "high",
+        "output_format": "webp",
+        "input_fidelity": "high",
+    }
     assert len(provider_input.reference_images) == 1
     assert provider_input.reference_images[0].path == provider_input.source_image
 

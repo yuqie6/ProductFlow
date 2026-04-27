@@ -1,3 +1,5 @@
+import type { ImageToolOptions } from "../../lib/types";
+
 export type CanvasPoint = {
   x: number;
   y: number;
@@ -41,6 +43,7 @@ export type NodeConfigDraft = {
   tone: string;
   channel: string;
   size: string;
+  toolOptions: ImageToolOptions;
   copyTitle: string;
   copySellingPoints: string;
   copyPosterHeadline: string;

@@ -134,6 +134,18 @@ def _image_size_from_config(config: dict[str, Any]) -> str | None:
     return normalize_image_generation_size(raw, label="生图尺寸")
 
 
+def _image_tool_options_from_config(config: dict[str, Any]) -> dict[str, Any] | None:
+    raw = config.get("tool_options")
+    if not isinstance(raw, dict):
+        return None
+    normalized = {
+        str(key): value
+        for key, value in raw.items()
+        if value is not None and not (isinstance(value, str) and not value.strip())
+    }
+    return normalized or None
+
+
 class _IncomingContext:
     def __init__(self) -> None:
         self.copy_set_id: str | None = None

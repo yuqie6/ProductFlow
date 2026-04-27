@@ -667,6 +667,8 @@ def test_openai_responses_poster_provider_uses_image_generation_tool(
             price="9.90",
             source_note="防水牛津布，适合通勤和短途出差。",
             instruction="背景更干净，强调收纳空间。",
+            image_size="1536x1024",
+            tool_options={"quality": "high", "output_format": "webp"},
             title="测试标题",
             selling_points=["卖点1", "卖点2", "卖点3"],
             poster_headline="测试海报标题",
@@ -684,10 +686,13 @@ def test_openai_responses_poster_provider_uses_image_generation_tool(
     )
 
     assert generated_image.mime_type == "image/png"
+    assert (generated_image.width, generated_image.height) == (800, 800)
     assert model_name == "gpt-5.4"
     payload = calls[0]
     assert payload["model"] == "gpt-5.4"
-    assert payload["tools"] == [{"type": "image_generation", "size": "1024x1024"}]
+    assert payload["tools"] == [
+        {"type": "image_generation", "size": "1536x1024", "quality": "high", "output_format": "webp"}
+    ]
     content = payload["input"][0]["content"]
     assert content[0]["type"] == "input_text"
     prompt_text = content[0]["text"]

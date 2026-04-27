@@ -93,6 +93,9 @@
   those threads do not open SQLAlchemy sessions just to read config while images are being generated.
 - `image_generation` node config may override provider size with `size`; application contracts must carry this as
   `PosterGenerationInput.image_size` and providers should prefer it over global runtime defaults.
+- `image_generation` node config may override image-generation tool parameters with `tool_options`; application contracts
+  must carry this as `PosterGenerationInput.tool_options`, and generated-mode providers should pass it into their image
+  client/tool builder after normalizing blank/null values.
 - Generated images should still be persisted as first-class `poster_variants` for history and as `source_assets` on the
   downstream `reference_image` slots. Keep only workflow-boundary summaries and internal generated-poster IDs in
   `image_generation.output_json`; do not expose `poster_variant_ids` there as the preview/download contract.

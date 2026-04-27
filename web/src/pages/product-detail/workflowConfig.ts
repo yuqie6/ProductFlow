@@ -1,4 +1,5 @@
 import type { ProductDetail, WorkflowNode, WorkflowNodeType } from "../../lib/types";
+import { compactImageToolOptions, imageToolOptionsFromUnknown } from "../../lib/imageToolOptions";
 import type { NodeConfigDraft } from "./types";
 import { configString, outputStringArray, outputText } from "./utils";
 
@@ -27,6 +28,7 @@ export function draftFromNode(
     tone: configString(node, "tone", "转化清晰"),
     channel: configString(node, "channel", "商品主图"),
     size: configString(node, "size", "1024x1024"),
+    toolOptions: imageToolOptionsFromUnknown(node?.config_json?.tool_options),
     copyTitle:
       copySet?.title ??
       (node?.output_json ? (outputText(node.output_json, "title") ?? "") : ""),
@@ -70,10 +72,12 @@ export function nodeConfigFromDraft(
     };
   }
   if (node.node_type === "image_generation") {
+    const toolOptions = compactImageToolOptions(draft.toolOptions);
     return {
       ...base,
       instruction: draft.instruction,
       size: draft.size,
+      ...(toolOptions ? { tool_options: toolOptions } : { tool_options: null }),
     };
   }
   return base;
@@ -90,6 +94,7 @@ export function defaultConfigForType(type: WorkflowNodeType): Record<string, unk
     return {
       instruction: "描述你想生成的图片",
       size: "1024x1024",
+      tool_options: null,
     };
   }
   return {};

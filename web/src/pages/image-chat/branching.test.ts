@@ -41,6 +41,7 @@ function round(overrides: Partial<ImageSessionRound>): ImageSessionRound {
     candidate_count: 1,
     base_asset_id: null,
     selected_reference_asset_ids: [],
+    actual_size: null,
     provider_notes: [],
     generated_asset: asset("asset-1"),
     created_at: createdAt,

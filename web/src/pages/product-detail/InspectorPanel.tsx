@@ -15,6 +15,7 @@ import {
 
 import { ImageDropZone } from "../../components/ImageDropZone";
 import { ImageSizePicker } from "../../components/ImageSizePicker";
+import { ImageToolControls } from "../../components/ImageToolControls";
 import { PromptPreviewDialog, type PromptPreview } from "../../components/PromptPreviewDialog";
 import type { DownloadableImage } from "../../lib/image-downloads";
 import type { ImageSizeOption } from "../../lib/imageSizes";
@@ -594,6 +595,11 @@ function ImageGenerationInspector({
           onChange={(size) => onDraftChange({ ...draft, size })}
         />
       </div>
+      <ImageToolControls
+        surface="plain"
+        value={draft.toolOptions}
+        onChange={(toolOptions) => onDraftChange({ ...draft, toolOptions })}
+      />
     </div>
   );
 }

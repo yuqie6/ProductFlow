@@ -130,10 +130,10 @@ Do not reintroduce full-table product loads for list pages.
 - API request:
   - `POST /api/image-sessions/{image_session_id}/generate`
   - body fields: `prompt: string`, `size: WIDTHxHEIGHT`, `base_asset_id?: string | null`,
-    `selected_reference_asset_ids?: string[]`, `generation_count?: int`.
+    `selected_reference_asset_ids?: string[]`, `generation_count?: int`, `tool_options?: object | null`.
 - API response:
   - Each round returns `generation_group_id`, `candidate_index`, `candidate_count`, `base_asset_id`,
-    `selected_reference_asset_ids`, and the single `generated_asset`.
+    `selected_reference_asset_ids`, `actual_size`, and the single `generated_asset`.
 
 ### 3. Contracts
 
@@ -163,6 +163,9 @@ Do not reintroduce full-table product loads for list pages.
 - More than 6 total selected context images including the base -> `400`, `本轮最多选择 6 张图片上下文（含分支基图）`.
 - Oversized `size` -> normalize through the shared image-size validator before generation; do not treat custom size as an
   allowlist lookup.
+- Provider returns image bytes whose real dimensions differ from requested `size` -> keep `size` as the normalized request,
+  store the measured bytes dimensions as provider `_productflow.actual_image_size`, and expose a provider note rather than
+  silently presenting the request as the actual output.
 
 ### 5. Good/Base/Bad Cases
 

@@ -100,6 +100,7 @@ class PosterGenerationInput(BaseModel):
     source_note: str | None = None
     instruction: str | None = None
     image_size: str | None = None
+    tool_options: dict[str, Any] | None = None
     title: str = ""
     selling_points: list[str] = Field(default_factory=list)
     poster_headline: str = ""

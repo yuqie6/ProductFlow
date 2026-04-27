@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from base64 import b64decode, b64encode
+from io import BytesIO
 
+from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
 
 from productflow_backend.application.contracts import PosterGenerationInput, ReferenceImageInput
@@ -54,3 +56,11 @@ def infer_extension(mime_type: str) -> str:
         "image/jpeg": ".jpg",
         "image/webp": ".webp",
     }.get(mime_type, ".bin")
+
+
+def image_dimensions_from_bytes(bytes_data: bytes) -> tuple[int, int] | None:
+    try:
+        with Image.open(BytesIO(bytes_data)) as image:
+            return image.width, image.height
+    except (OSError, UnidentifiedImageError):
+        return None

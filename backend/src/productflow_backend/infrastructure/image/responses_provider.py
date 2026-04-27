@@ -15,6 +15,7 @@ from productflow_backend.infrastructure.image.base import (
     GeneratedImagePayload,
     ImageProvider,
     decode_b64_image,
+    image_dimensions_from_bytes,
     parse_size,
 )
 from productflow_backend.infrastructure.prompts import render_prompt_template
@@ -389,7 +390,11 @@ class OpenAIResponsesImageProvider(ImageProvider):
             prompt=prompt,
             size=size,
             reference_images=self._build_reference_images(poster),
+            tool_options=poster.tool_options,
         )
+        actual_dimensions = image_dimensions_from_bytes(result.bytes_data)
+        if actual_dimensions is not None:
+            width, height = actual_dimensions
         variant_label = "generated-main" if kind == PosterKind.MAIN_IMAGE else "generated-promo"
         return (
             GeneratedImagePayload(

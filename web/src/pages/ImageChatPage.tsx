@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Check,
@@ -22,6 +22,7 @@ import { useNavigate, useParams } from "react-router-dom";
 
 import { ImageDropZone } from "../components/ImageDropZone";
 import { ImageSizePicker } from "../components/ImageSizePicker";
+import { ImageToolControls } from "../components/ImageToolControls";
 import { PromptPreviewDialog, type PromptPreview } from "../components/PromptPreviewDialog";
 import { TopNav } from "../components/TopNav";
 import { api, ApiError } from "../lib/api";
@@ -84,12 +85,11 @@ function generationTaskQueueText(task: ImageSessionGenerationTask) {
   return "";
 }
 
-function parseOptionalNumber(value: string): number | null {
-  if (!value.trim()) {
-    return null;
+function imageRoundSizeLabel(round: ImageSessionRound) {
+  if (round.actual_size && round.actual_size !== round.size) {
+    return `实际 ${round.actual_size} · 请求 ${round.size}`;
   }
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  return round.actual_size ?? round.size;
 }
 
 export function ImageChatPage() {
@@ -600,7 +600,7 @@ export function ImageChatPage() {
         </aside>
 
         <section className="flex min-w-0 flex-1 flex-col overflow-hidden bg-slate-100">
-          <div className="flex min-h-0 flex-1 flex-col p-4 pb-3">
+          <div className="flex min-h-0 flex-1 flex-col p-3 pb-2">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
                 <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
@@ -621,7 +621,7 @@ export function ImageChatPage() {
                 {selectedRound ? (
                   <>
                     <span className="hidden rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 shadow-sm md:inline-flex">
-                      {selectedRound.size} · 候选 {selectedRound.candidate_index}/{selectedRound.candidate_count}
+                      {imageRoundSizeLabel(selectedRound)} · 候选 {selectedRound.candidate_index}/{selectedRound.candidate_count}
                     </span>
                     <a
                       href={api.toApiUrl(selectedRound.generated_asset.download_url)}
@@ -638,7 +638,7 @@ export function ImageChatPage() {
               </div>
             </div>
 
-            <div className="relative flex min-h-[320px] flex-1 items-center justify-center overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+            <div className="relative flex min-h-[360px] flex-1 items-center justify-center overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
               <div className="absolute inset-0 bg-[radial-gradient(#cbd5e1_1px,transparent_1px)] [background-size:20px_20px]" />
               <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between px-5 py-4">
                 {selectedRound ? (
@@ -681,12 +681,12 @@ export function ImageChatPage() {
               ) : null}
 
               {selectedRound ? (
-                <div className="relative z-0 flex h-full min-h-0 w-full items-center justify-center px-4 pb-4 pt-14 sm:px-6 sm:pb-6 sm:pt-16">
+                <div className="relative z-0 flex h-full min-h-0 w-full items-center justify-center px-2 pb-2 pt-12 sm:px-3 sm:pb-3 sm:pt-14">
                   <img
-                    src={api.toApiUrl(selectedRound.generated_asset.preview_url)}
+                    src={api.toApiUrl(selectedRound.generated_asset.download_url)}
                     alt="当前结果"
                     decoding="async"
-                    className="h-full w-full object-contain drop-shadow-2xl"
+                    className="max-h-full max-w-full object-contain drop-shadow-2xl"
                   />
                 </div>
               ) : (
@@ -702,7 +702,7 @@ export function ImageChatPage() {
             </div>
           </div>
 
-          <div className="flex h-[clamp(10rem,18vh,12.5rem)] shrink-0 flex-col border-t border-slate-200 bg-white/95 px-4 py-3 shadow-[0_-8px_24px_rgba(15,23,42,0.04)]">
+          <div className="flex h-[clamp(8.75rem,15vh,10.5rem)] shrink-0 flex-col border-t border-slate-200 bg-white/95 px-3 py-2.5 shadow-[0_-8px_24px_rgba(15,23,42,0.04)]">
             <div className="mb-2 flex items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold text-slate-950">历史记录</div>
@@ -722,7 +722,7 @@ export function ImageChatPage() {
               <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto pb-1">
                 {roundGroups.map((group) => (
                   <div key={group.id} className="flex h-full shrink-0 gap-2 rounded-2xl border border-slate-200 bg-slate-50/80 p-2">
-                    <div className="flex w-28 shrink-0 flex-col justify-between rounded-xl bg-white p-2 text-xs text-slate-500 ring-1 ring-slate-200">
+                    <div className="flex w-24 shrink-0 flex-col justify-between rounded-xl bg-white p-2 text-xs text-slate-500 ring-1 ring-slate-200">
                       <div>
                         <div className="font-semibold text-slate-800">{group.base_asset_id ? "分支" : "首轮"}</div>
                         <div className="mt-1">{group.rounds.length} 张</div>
@@ -747,7 +747,7 @@ export function ImageChatPage() {
                       return (
                         <div
                           key={round.id}
-                          className={`group/card relative aspect-square h-full shrink-0 overflow-hidden rounded-2xl border bg-white transition-all ${
+                          className={`group/card relative aspect-square h-full min-w-[7rem] shrink-0 overflow-hidden rounded-2xl border bg-white transition-all ${
                             active ? "border-indigo-400 ring-2 ring-indigo-200" : "border-slate-200 hover:border-slate-300"
                           } ${asBase ? "shadow-md shadow-indigo-200/70" : "shadow-sm shadow-slate-200/60"}`}
                         >
@@ -763,28 +763,32 @@ export function ImageChatPage() {
                               decoding="async"
                               className="h-full w-full object-cover"
                             />
-                            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/80 via-slate-950/35 to-transparent p-2 pt-8 text-white">
+                            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/85 via-slate-950/35 to-transparent p-1.5 pt-8 text-white">
                               <div className="flex items-center justify-between gap-2 text-[11px] font-medium">
-                                <span>{round.candidate_count > 1 ? `${round.candidate_index}/${round.candidate_count}` : round.size}</span>
-                                {active ? <span className="rounded-full bg-white/20 px-1.5 py-0.5">已选</span> : null}
+                                <span className="min-w-0 truncate">
+                                  {round.candidate_count > 1 ? `${round.candidate_index}/${round.candidate_count}` : imageRoundSizeLabel(round)}
+                                </span>
+                                {active ? <Check size={13} className="shrink-0" /> : null}
                               </div>
                             </div>
                           </button>
                           {asBase ? (
-                            <div className="absolute left-2 top-2 rounded-full bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white shadow-sm">
+                            <div className="absolute left-1.5 top-1.5 max-w-[calc(100%-2.75rem)] truncate rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow-sm">
                               基图
                             </div>
                           ) : null}
                           <button
                             type="button"
                             onClick={() => handleContinueFrom(round.generated_asset.id)}
-                            className={`absolute right-2 top-2 rounded-full px-2 py-1 text-[11px] font-semibold shadow-sm transition-colors ${
+                            title="从这张继续"
+                            aria-label="从这张继续"
+                            className={`absolute right-1.5 top-1.5 inline-flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-semibold shadow-sm transition-colors ${
                               asBase
                                 ? "bg-indigo-600 text-white"
                                 : "bg-white/95 text-slate-700 opacity-100 ring-1 ring-slate-200 hover:text-indigo-700 md:opacity-0 md:group-hover/card:opacity-100"
                             }`}
                           >
-                            继续
+                            <Wand2 size={13} />
                           </button>
                         </div>
                       );
@@ -800,7 +804,7 @@ export function ImageChatPage() {
           </div>
         </section>
 
-        <aside className="flex w-[clamp(320px,24vw,380px)] shrink-0 flex-col border-l border-slate-200 bg-white">
+        <aside className="flex w-[clamp(300px,21vw,340px)] shrink-0 flex-col border-l border-slate-200 bg-white">
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
             <div className="mb-5">
               <div className="mb-3 flex items-center justify-between gap-3">
@@ -879,7 +883,7 @@ export function ImageChatPage() {
                     />
                     <div className="min-w-0 text-xs leading-5 text-slate-500">
                       <div className="truncate font-medium text-slate-800">{branchBaseRound.prompt}</div>
-                      <div>{branchBaseRound.size}</div>
+                      <div>{imageRoundSizeLabel(branchBaseRound)}</div>
                     </div>
                   </div>
                 ) : (
@@ -1000,7 +1004,7 @@ export function ImageChatPage() {
                 </label>
               </div>
 
-              <ProviderToolControls value={toolOptions} onChange={setToolOptions} />
+              <ImageToolControls value={toolOptions} onChange={setToolOptions} />
 
               {visibleGenerationTasks.length ? (
                 <div className="space-y-2 rounded-2xl border border-slate-200 bg-white p-4">
@@ -1086,161 +1090,6 @@ export function ImageChatPage() {
     </div>
   );
 
-}
-
-function ProviderToolControls({
-  value,
-  onChange,
-}: {
-  value: ImageToolOptions;
-  onChange: (value: ImageToolOptions) => void;
-}) {
-  const update = (next: Partial<ImageToolOptions>) => onChange({ ...value, ...next });
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4">
-      <div className="mb-3 text-sm font-semibold text-slate-950">Provider</div>
-      <div className="grid grid-cols-2 gap-2">
-        <CompactInput
-          label="Tool"
-          value={value.model ?? ""}
-          placeholder="默认"
-          onChange={(next) => update({ model: next || null })}
-        />
-        <CompactSelect
-          label="质量"
-          value={value.quality ?? ""}
-          onChange={(next) => update({ quality: (next || null) as ImageToolOptions["quality"] })}
-        >
-          <option value="">默认</option>
-          <option value="auto">Auto</option>
-          <option value="low">Low</option>
-          <option value="medium">Medium</option>
-          <option value="high">High</option>
-        </CompactSelect>
-        <CompactSelect
-          label="格式"
-          value={value.output_format ?? ""}
-          onChange={(next) => update({ output_format: (next || null) as ImageToolOptions["output_format"] })}
-        >
-          <option value="">默认</option>
-          <option value="png">PNG</option>
-          <option value="jpeg">JPEG</option>
-          <option value="webp">WebP</option>
-        </CompactSelect>
-        <CompactInput
-          label="压缩"
-          value={value.output_compression ?? ""}
-          inputMode="numeric"
-          placeholder="默认"
-          onChange={(next) => update({ output_compression: parseOptionalNumber(next) })}
-        />
-        <CompactSelect
-          label="背景"
-          value={value.background ?? ""}
-          onChange={(next) => update({ background: (next || null) as ImageToolOptions["background"] })}
-        >
-          <option value="">默认</option>
-          <option value="auto">Auto</option>
-          <option value="opaque">Opaque</option>
-          <option value="transparent">Transparent</option>
-        </CompactSelect>
-        <CompactSelect
-          label="审核"
-          value={value.moderation ?? ""}
-          onChange={(next) => update({ moderation: (next || null) as ImageToolOptions["moderation"] })}
-        >
-          <option value="">默认</option>
-          <option value="auto">Auto</option>
-          <option value="low">Low</option>
-        </CompactSelect>
-        <CompactSelect
-          label="Action"
-          value={value.action ?? ""}
-          onChange={(next) => update({ action: (next || null) as ImageToolOptions["action"] })}
-        >
-          <option value="">默认</option>
-          <option value="auto">Auto</option>
-          <option value="generate">Generate</option>
-          <option value="edit">Edit</option>
-        </CompactSelect>
-        <CompactSelect
-          label="Fidelity"
-          value={value.input_fidelity ?? ""}
-          onChange={(next) => update({ input_fidelity: (next || null) as ImageToolOptions["input_fidelity"] })}
-        >
-          <option value="">默认</option>
-          <option value="low">Low</option>
-          <option value="high">High</option>
-        </CompactSelect>
-        <CompactInput
-          label="Partial"
-          value={value.partial_images ?? ""}
-          inputMode="numeric"
-          placeholder="默认"
-          onChange={(next) => update({ partial_images: parseOptionalNumber(next) })}
-        />
-        <CompactInput
-          label="n"
-          value={value.n ?? ""}
-          inputMode="numeric"
-          placeholder="默认"
-          onChange={(next) => update({ n: parseOptionalNumber(next) })}
-        />
-      </div>
-    </div>
-  );
-}
-
-function CompactInput({
-  label,
-  value,
-  placeholder,
-  inputMode,
-  onChange,
-}: {
-  label: string;
-  value: string | number;
-  placeholder?: string;
-  inputMode?: "text" | "numeric";
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label className="block">
-      <span className="mb-1 block text-[11px] font-semibold text-slate-500">{label}</span>
-      <input
-        value={value}
-        inputMode={inputMode}
-        placeholder={placeholder}
-        onChange={(event) => onChange(event.target.value)}
-        className="h-9 w-full rounded-lg border border-slate-200 bg-slate-50 px-2 text-xs text-slate-900 outline-none transition-colors placeholder:text-slate-400 focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-100"
-      />
-    </label>
-  );
-}
-
-function CompactSelect({
-  label,
-  value,
-  onChange,
-  children,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  children: ReactNode;
-}) {
-  return (
-    <label className="block">
-      <span className="mb-1 block text-[11px] font-semibold text-slate-500">{label}</span>
-      <select
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="h-9 w-full rounded-lg border border-slate-200 bg-slate-50 px-2 text-xs text-slate-900 outline-none transition-colors focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-100"
-      >
-        {children}
-      </select>
-    </label>
-  );
 }
 
 function ProductAssociationPanel({

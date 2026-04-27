@@ -238,6 +238,7 @@ export interface ImageSessionRound {
   candidate_count: number;
   base_asset_id: string | null;
   selected_reference_asset_ids: string[];
+  actual_size: string | null;
   provider_notes: string[];
   generated_asset: ImageSessionAsset;
   created_at: string;

@@ -43,6 +43,7 @@ class ImageSessionRoundResponse(BaseModel):
     candidate_count: int = 1
     base_asset_id: str | None = None
     selected_reference_asset_ids: list[str] = Field(default_factory=list)
+    actual_size: str | None = None
     provider_notes: list[str] = Field(default_factory=list)
     generated_asset: ImageSessionAssetResponse
     created_at: datetime
@@ -182,6 +183,18 @@ def extract_provider_notes(provider_output_json: dict | None) -> list[str]:
     return messages[:3]
 
 
+def extract_actual_image_size(provider_output_json: dict | None) -> str | None:
+    if not isinstance(provider_output_json, dict):
+        return None
+    metadata = provider_output_json.get("_productflow")
+    if not isinstance(metadata, dict):
+        return None
+    actual_size = metadata.get("actual_image_size")
+    if isinstance(actual_size, str) and actual_size.strip():
+        return actual_size.strip()
+    return None
+
+
 def serialize_image_session_round(round_item: ImageSessionRound) -> ImageSessionRoundResponse:
     return ImageSessionRoundResponse(
         id=round_item.id,
@@ -199,6 +212,7 @@ def serialize_image_session_round(round_item: ImageSessionRound) -> ImageSession
         candidate_count=round_item.candidate_count,
         base_asset_id=round_item.base_asset_id,
         selected_reference_asset_ids=round_item.selected_reference_asset_ids or [],
+        actual_size=extract_actual_image_size(round_item.provider_output_json),
         provider_notes=extract_provider_notes(round_item.provider_output_json),
         generated_asset=serialize_image_session_asset(round_item.generated_asset),
         created_at=round_item.created_at,

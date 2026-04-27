@@ -9,6 +9,7 @@ from helpers import (
     _execute_workflow_queue_inline,
     _login,
     _make_demo_image_bytes,
+    _make_demo_image_bytes_with_size,
     _read_image_size,
 )
 
@@ -142,7 +143,7 @@ def test_image_session_generation_accepts_per_request_tool_options_and_exposes_p
     def generate_with_note(self, **kwargs) -> GeneratedChatImage:
         calls.append(kwargs.get("tool_options"))
         return GeneratedChatImage(
-            bytes_data=_make_demo_image_bytes(),
+            bytes_data=_make_demo_image_bytes_with_size(1024, 1024),
             mime_type="image/png",
             model_name="mock-image-chat-v1",
             provider_name="mock",
@@ -205,6 +206,7 @@ def test_image_session_generation_accepts_per_request_tool_options_and_exposes_p
     assert payload["generation_tasks"][0]["tool_options"] == expected_options
     assert payload["generation_tasks"][0]["provider_notes"] == ["供应商不支持部分参数，已按基础参数完成。"]
     assert payload["rounds"][0]["provider_notes"] == ["供应商不支持部分参数，已按基础参数完成。"]
+    assert payload["rounds"][0]["actual_size"] == "1024x1024"
 
     db_session.expire_all()
     task = db_session.get(ImageSessionGenerationTask, payload["generation_tasks"][0]["id"])
@@ -220,6 +222,48 @@ def test_image_session_generation_accepts_per_request_tool_options_and_exposes_p
         },
     )
     assert invalid.status_code == 422
+
+
+def test_image_session_generation_exposes_actual_size_when_provider_downscales(
+    configured_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.infrastructure.image.chat_service import GeneratedChatImage
+    from productflow_backend.presentation.api import create_app
+
+    def generate_downscaled(self, **kwargs) -> GeneratedChatImage:
+        return GeneratedChatImage(
+            bytes_data=_make_demo_image_bytes_with_size(1024, 1024),
+            mime_type="image/png",
+            model_name="mock-image-chat-v1",
+            provider_name="mock",
+            prompt_version="test-v1",
+            size=kwargs["size"],
+            generated_at=datetime.now(UTC),
+            provider_request_json={"size": kwargs["size"]},
+            provider_output_json={},
+        )
+
+    monkeypatch.setattr(
+        "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
+        generate_downscaled,
+    )
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post("/api/image-sessions", json={"title": "尺寸反馈"})
+    assert created.status_code == 201
+    response = client.post(
+        f"/api/image-sessions/{created.json()['id']}/generate",
+        json={"prompt": "请求 2K 但供应商返回 1K", "size": "2048x2048"},
+    )
+
+    assert response.status_code == 202
+    round_payload = response.json()["rounds"][0]
+    assert round_payload["size"] == "2048x2048"
+    assert round_payload["actual_size"] == "1024x1024"
+    assert round_payload["provider_notes"] == ["供应商实际返回 1024x1024，请求尺寸为 2048x2048。"]
 
 
 def test_image_session_generate_enqueue_failure_marks_task_failed(

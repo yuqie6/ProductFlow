@@ -124,6 +124,9 @@ If a component starts needing API calls, consider whether it is actually a route
 
 - Continuous image chat and workflow image-generation inspector must use the same shared picker instead of duplicating
   separate button/input implementations.
+- Continuous image chat and workflow image-generation inspector must use the same shared `ImageToolControls` component for
+  provider image-tool parameters. Keep compaction/normalization in shared helpers under `web/src/lib/`, not inside one
+  page, so the workbench node and image chat submit the same payload shape.
 - Pages pass built-in preset options into the component; `ImageSizePicker` must not call the API.
 - Runtime config filters built-in size preset buttons by maximum single edge. It must not provide an arbitrary backend
   allowlist; a custom value may be valid even when it is not present in the preset list.
@@ -144,6 +147,8 @@ If a component starts needing API calls, consider whether it is actually a route
   `3840x2160` unchanged.
 - Base: `1024x1024`, `2048x2048`, and `3840x3840` appear as preset buttons when present in the derived presets.
 - Bad: `ImageChatPage` accepts custom dimensions while `InspectorPanel` still exposes a raw text field.
+- Bad: `ImageChatPage` supports provider quality/format/fidelity fields while `InspectorPanel` has a separate partial
+  implementation or sends raw unnormalized `tool_options`.
 - Bad: a custom value is auto-reset because it is not one of the built-in preset buttons.
 
 ### 6. Tests Required
