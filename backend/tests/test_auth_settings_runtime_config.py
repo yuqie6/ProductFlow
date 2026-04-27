@@ -265,6 +265,44 @@ def test_runtime_image_size_env_defaults_are_generation_bounded(configured_env: 
     assert settings.image_promo_poster_size == "3840x1920"
 
 
+def test_image_generation_max_dimension_runtime_config_controls_size_bounds(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+    _unlock_settings(client)
+
+    runtime = client.get("/api/settings/runtime")
+    assert runtime.status_code == 200
+    assert runtime.json()["image_generation_max_dimension"] == 3840
+
+    updated = client.patch(
+        "/api/settings",
+        json={"values": {"image_generation_max_dimension": 2048}},
+    )
+    assert updated.status_code == 200
+    items = {item["key"]: item for item in updated.json()["items"]}
+    assert items["image_generation_max_dimension"]["value"] == 2048
+    assert get_runtime_settings().image_generation_max_dimension == 2048
+
+    created = client.post("/api/image-sessions", json={"title": "运行时尺寸上限"})
+    assert created.status_code == 201
+    generated = client.post(
+        f"/api/image-sessions/{created.json()['id']}/generate",
+        json={"prompt": "尺寸应被运行时上限校准", "size": "3840x2160"},
+    )
+    assert generated.status_code == 202
+    assert generated.json()["rounds"][-1]["size"] == "2048x1152"
+
+    rejected = client.patch(
+        "/api/settings",
+        json={"values": {"image_generation_max_dimension": 256}},
+    )
+    assert rejected.status_code == 400
+    assert "不能小于 512" in rejected.json()["detail"]
+
+
 def test_legacy_image_chat_route_is_removed(configured_env: Path) -> None:
     from productflow_backend.presentation.api import create_app
 

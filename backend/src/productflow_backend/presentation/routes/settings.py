@@ -25,6 +25,7 @@ from productflow_backend.presentation.schemas.settings import (
     ConfigOptionResponse,
     ConfigResponse,
     ConfigUpdateRequest,
+    RuntimeConfigResponse,
     SettingsLockStateResponse,
     SettingsUnlockRequest,
 )
@@ -116,6 +117,12 @@ def unlock_settings_endpoint(payload: SettingsUnlockRequest, request: Request) -
 @router.get("", response_model=ConfigResponse, dependencies=[Depends(require_settings_unlocked)])
 def get_config_endpoint(session: Session = Depends(get_session)) -> ConfigResponse:
     return _serialize_config(session)
+
+
+@router.get("/runtime", response_model=RuntimeConfigResponse)
+def get_runtime_config_endpoint() -> RuntimeConfigResponse:
+    settings = get_runtime_settings()
+    return RuntimeConfigResponse(image_generation_max_dimension=settings.image_generation_max_dimension)
 
 
 @router.patch("", response_model=ConfigResponse, dependencies=[Depends(require_settings_unlocked)])

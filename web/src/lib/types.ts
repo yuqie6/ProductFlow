@@ -256,6 +256,12 @@ export interface ImageSessionGenerationTask {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+  queue_active_count: number;
+  queue_running_count: number;
+  queue_queued_count: number;
+  queue_max_concurrent_tasks: number;
+  queued_ahead_count: number | null;
+  queue_position: number | null;
 }
 
 export interface ImageSessionSummary {
@@ -313,6 +319,17 @@ export interface ConfigItem {
 
 export interface ConfigResponse {
   items: ConfigItem[];
+}
+
+export interface RuntimeConfig {
+  image_generation_max_dimension: number;
+}
+
+export interface GenerationQueueOverview {
+  active_count: number;
+  running_count: number;
+  queued_count: number;
+  max_concurrent_tasks: number;
 }
 
 export interface ConfigUpdateRequest {

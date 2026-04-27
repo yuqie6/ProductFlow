@@ -8,7 +8,12 @@ from typing import Literal
 from sqlalchemy import desc, select, update
 from sqlalchemy.orm import Session, selectinload
 
-from productflow_backend.application.admission import ensure_generation_capacity
+from productflow_backend.application.admission import (
+    ensure_generation_capacity,
+    get_generation_queue_overview,
+    get_generation_task_queue_metadata,
+    get_queued_generation_positions,
+)
 from productflow_backend.application.time import now_utc
 from productflow_backend.config import normalize_image_generation_size
 from productflow_backend.domain.enums import ImageSessionAssetKind, JobStatus, SourceAssetKind
@@ -63,7 +68,21 @@ def _get_image_session_or_raise(session: Session, image_session_id: str) -> Imag
     image_session = session.scalar(_image_session_query().where(ImageSession.id == image_session_id))
     if image_session is None:
         raise NotFoundError("连续生图会话不存在")
+    _attach_generation_task_queue_metadata(session, image_session)
     return image_session
+
+
+def _attach_generation_task_queue_metadata(session: Session, image_session: ImageSession) -> None:
+    overview = get_generation_queue_overview(session)
+    queued_positions = get_queued_generation_positions(session)
+    for task in image_session.generation_tasks:
+        metadata = get_generation_task_queue_metadata(
+            session,
+            task,
+            overview=overview,
+            queued_positions=queued_positions,
+        )
+        task._queue_metadata = metadata
 
 
 def _get_product_or_raise(session: Session, product_id: str) -> Product:

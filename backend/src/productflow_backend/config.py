@@ -7,15 +7,18 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import Field, ValidationError, field_validator, model_validator
+from pydantic import Field, ValidationError, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 ConfigInputType = Literal["text", "password", "number", "boolean", "select", "textarea"]
 IMAGE_SIZE_PATTERN = re.compile(r"^\d+x\d+$")
-IMAGE_GENERATION_MAX_DIMENSION = 3840
-IMAGE_GENERATION_MAX_PIXELS = 3840 * 3840
+DEFAULT_IMAGE_GENERATION_MAX_DIMENSION = 3840
+IMAGE_GENERATION_MIN_MAX_DIMENSION = 512
+IMAGE_GENERATION_MAX_MAX_DIMENSION = 8192
+IMAGE_GENERATION_MAX_DIMENSION = DEFAULT_IMAGE_GENERATION_MAX_DIMENSION
+IMAGE_GENERATION_MAX_PIXELS = DEFAULT_IMAGE_GENERATION_MAX_DIMENSION * DEFAULT_IMAGE_GENERATION_MAX_DIMENSION
 IMAGE_SIZE_CONFIG_KEYS = {"image_main_image_size", "image_promo_poster_size"}
 PROMPT_CONFIG_KEYS = {
     "prompt_brief_system",
@@ -111,6 +114,11 @@ class Settings(BaseSettings):
     image_api_key: str | None = None
     image_base_url: str | None = None
     image_generate_model: str = "gpt-5.4"
+    image_generation_max_dimension: int = Field(
+        default=DEFAULT_IMAGE_GENERATION_MAX_DIMENSION,
+        ge=IMAGE_GENERATION_MIN_MAX_DIMENSION,
+        le=IMAGE_GENERATION_MAX_MAX_DIMENSION,
+    )
     image_main_image_size: str = "1024x1024"
     image_promo_poster_size: str = "1024x1536"
     poster_generation_mode: str = "template"
@@ -134,8 +142,9 @@ class Settings(BaseSettings):
 
     @field_validator("image_main_image_size", "image_promo_poster_size")
     @classmethod
-    def _normalize_image_generation_fallback_size(cls, value: str) -> str:
-        return normalize_image_generation_size(value)
+    def _normalize_image_generation_fallback_size(cls, value: str, info: ValidationInfo) -> str:
+        max_dimension = int(info.data.get("image_generation_max_dimension") or DEFAULT_IMAGE_GENERATION_MAX_DIMENSION)
+        return normalize_image_generation_size(value, max_dimension=max_dimension)
 
     @model_validator(mode="after")
     def _validate_distinct_settings_token(self) -> Settings:
@@ -232,6 +241,15 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
         label="图片模型",
         category="图片生成",
         input_type="text",
+    ),
+    ConfigDefinition(
+        key="image_generation_max_dimension",
+        label="生图最大单边",
+        category="图片生成",
+        input_type="number",
+        description="连续生图和工作流生图的最大宽/高像素；最大面积同步使用该值的平方。",
+        minimum=IMAGE_GENERATION_MIN_MAX_DIMENSION,
+        maximum=IMAGE_GENERATION_MAX_MAX_DIMENSION,
     ),
     ConfigDefinition(
         key="image_main_image_size",
@@ -379,15 +397,33 @@ def normalize_image_size(value: Any, *, label: str = "图片尺寸") -> str:
     return normalized
 
 
-def normalize_image_generation_size(value: Any, *, label: str = "图片尺寸") -> str:
-    """校验并校准生图尺寸，包含格式、正数和单边 3840 安全边界。"""
+def _runtime_image_generation_max_dimension() -> int:
+    return int(get_runtime_settings().image_generation_max_dimension)
+
+
+def normalize_image_generation_size(
+    value: Any,
+    *,
+    label: str = "图片尺寸",
+    max_dimension: int | None = None,
+) -> str:
+    """校验并校准生图尺寸，包含格式、正数和运行时安全边界。"""
     normalized = normalize_image_size(value, label=label)
+    resolved_max_dimension = int(max_dimension or _runtime_image_generation_max_dimension())
+    if (
+        resolved_max_dimension < IMAGE_GENERATION_MIN_MAX_DIMENSION
+        or resolved_max_dimension > IMAGE_GENERATION_MAX_MAX_DIMENSION
+    ):
+        raise ValueError(
+            f"生图最大单边必须在 {IMAGE_GENERATION_MIN_MAX_DIMENSION}-{IMAGE_GENERATION_MAX_MAX_DIMENSION} 之间"
+        )
+    max_pixels = resolved_max_dimension * resolved_max_dimension
     width, height = (int(part) for part in normalized.split("x", maxsplit=1))
-    scale = min(1.0, IMAGE_GENERATION_MAX_DIMENSION / width, IMAGE_GENERATION_MAX_DIMENSION / height)
-    resolved_width = min(IMAGE_GENERATION_MAX_DIMENSION, max(1, round(width * scale)))
-    resolved_height = min(IMAGE_GENERATION_MAX_DIMENSION, max(1, round(height * scale)))
-    if resolved_width * resolved_height > IMAGE_GENERATION_MAX_PIXELS:
-        pixel_scale = (IMAGE_GENERATION_MAX_PIXELS / (resolved_width * resolved_height)) ** 0.5
+    scale = min(1.0, resolved_max_dimension / width, resolved_max_dimension / height)
+    resolved_width = min(resolved_max_dimension, max(1, round(width * scale)))
+    resolved_height = min(resolved_max_dimension, max(1, round(height * scale)))
+    if resolved_width * resolved_height > max_pixels:
+        pixel_scale = (max_pixels / (resolved_width * resolved_height)) ** 0.5
         resolved_width = max(1, int(resolved_width * pixel_scale))
         resolved_height = max(1, int(resolved_height * pixel_scale))
     return f"{resolved_width}x{resolved_height}"

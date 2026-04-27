@@ -277,8 +277,11 @@ Do not duplicate these checks in multiple pages/routes.
 
 #### 2. Signatures
 
-- Backend canonical normalizer: `normalize_image_generation_size(value: str) -> str`.
-- Built-in presets are application UI constants; runtime settings no longer expose a user-facing allowed-size preset list.
+- Backend canonical normalizer: `normalize_image_generation_size(value: str, *, max_dimension: int | None = None) -> str`.
+- Runtime max single-edge setting: `image_generation_max_dimension`.
+- Public runtime config API: `GET /api/settings/runtime` returns `image_generation_max_dimension`.
+- Built-in presets are application UI constants; runtime settings expose only the max single-edge limit, not a
+  user-facing allowed-size preset list.
 - Continuous image API request field: `GenerateImageSessionRoundRequest.size`.
 - Workflow image node config field: `config_json.size` for nodes with `kind == "image_generation"`.
 - Frontend shared picker: `ImageSizePicker` emits normalized lowercase `WIDTHxHEIGHT` strings.
@@ -286,7 +289,10 @@ Do not duplicate these checks in multiple pages/routes.
 #### 3. Contracts
 
 - Store and pass image size as a provider-neutral lowercase `WIDTHxHEIGHT` string, for example `1024x1024` or `3840x2160`.
-- Preset buttons are built-in ratio/tier shortcuts; they are not derived from runtime config and are not a backend allowlist.
+- Preset buttons are built-in ratio/tier shortcuts filtered by the runtime max single-edge setting; they are not a backend
+  allowlist and are not loaded as arbitrary database-configured options.
+- `normalize_image_generation_size(...)` must use `get_runtime_settings().image_generation_max_dimension` unless a focused
+  caller/test passes an explicit `max_dimension`.
 - Custom dimensions must be validated and calibrated by the backend before provider calls, not only by frontend controls.
 - Continuous image generation and workflow image-generation nodes must use the same backend normalizer so their accepted/rejected sizes do not drift.
 - Provider adapters should receive the normalized string unchanged unless a provider-specific adapter explicitly documents a conversion.
@@ -297,6 +303,7 @@ Do not duplicate these checks in multiple pages/routes.
 - Non-positive dimensions such as `0x1024` or `1024x-1` -> request/config validation error.
 - Dimensions above the project safety bounds -> normalize to a safe calibrated `WIDTHxHEIGHT` before provider dispatch.
 - Uppercase separators/digits such as `3840X2160` -> normalize to lowercase `3840x2160`.
+- `image_generation_max_dimension < 512` or `> 8192` -> settings validation error.
 - Invalid runtime default image dimensions -> settings validation error instead of silently publishing broken provider defaults.
 
 #### 5. Good/Base/Bad Cases
@@ -312,7 +319,8 @@ Do not duplicate these checks in multiple pages/routes.
   oversized dimensions being stored as calibrated safe output sizes.
 - Workflow DAG/API tests must cover node create/update normalization, invalid config rejection, provider input receiving
   the configured custom size, and oversized config being persisted as calibrated safe output size.
-- Runtime settings tests must cover invalid default image dimensions when validation behavior changes.
+- Runtime settings tests must cover invalid default image dimensions and `image_generation_max_dimension` validation when
+  validation behavior changes.
 - Frontend helper/component tests should cover preset parsing, duplicate normalization, and custom-size round-tripping when picker logic changes.
 
 #### 7. Wrong vs Correct
@@ -411,11 +419,17 @@ Preserve these semantics when editing job code.
   timedelta = 30 minutes)` re-sends queued tasks and, only for worker startup, may reset stale running tasks to queued.
 - Response DTO: `ImageSessionDetailResponse.generation_tasks` exposes task summaries so route entry/refresh can show
   active or failed generation work without a separate orchestration endpoint.
+- Each generation task summary includes global queue fields: `queue_active_count`, `queue_running_count`,
+  `queue_queued_count`, `queue_max_concurrent_tasks`, `queued_ahead_count`, and `queue_position`.
+- Queue overview API: `GET /api/generation-queue` returns `active_count`, `running_count`, `queued_count`, and
+  `max_concurrent_tasks` for product/workflow surfaces that do not own a specific image-session task.
 
 ##### 3. Contracts
 
 - Task statuses are `queued`, `running`, `succeeded`, and `failed`; queued/running rows count toward
   `generation_max_concurrent_tasks`.
+- Queue position is computed from durable queued DB rows ordered by `created_at` across queued product jobs and
+  image-session generation tasks. Running tasks have no queue position and should be displayed as front-of-queue work.
 - New image-session generation work must call shared admission before creating a queued task. The count must be based on
   active DB rows, not an in-process slot, because API/worker processes may be replicated.
 - Queue enqueue failure after task creation must mark the task `failed` (or otherwise return a stable `503`) before the
@@ -467,6 +481,8 @@ Preserve these semantics when editing job code.
 - Duplicate/no-op tests: terminal and already-running task messages do not call the provider or create extra rounds.
 - Recovery tests: queued tasks are re-sent; stale running tasks reset only when `reset_stale_running=True`.
 - Admission test: queued/running image-session generation tasks count toward `generation_max_concurrent_tasks`.
+- Queue metadata test: queued task responses expose `queued_ahead_count` / `queue_position`, and the global overview
+  counts active queued/running durable work.
 - Frontend gate: update DTO types and run `just web-build` when `ImageSessionDetail` or task status rendering changes.
 
 ##### 7. Wrong vs Correct

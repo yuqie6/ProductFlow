@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -20,7 +20,7 @@ import { useNavigate, useParams } from "react-router-dom";
 
 import { TopNav } from "../components/TopNav";
 import { api, ApiError } from "../lib/api";
-import { DEFAULT_IMAGE_SIZE_OPTIONS } from "../lib/imageSizes";
+import { DEFAULT_IMAGE_GENERATION_MAX_DIMENSION, buildImageSizeOptions } from "../lib/imageSizes";
 import type {
   ProductWorkflow,
   WorkflowNode,
@@ -112,10 +112,24 @@ export function ProductDetailPage() {
     refetchInterval: (query) =>
       hasActiveWorkflow(query.state.data as ProductWorkflow | undefined) ? 1200 : false,
   });
-  const imageSizeOptions = DEFAULT_IMAGE_SIZE_OPTIONS;
-
   const workflow = workflowQuery.data ?? null;
   const workflowActive = hasActiveWorkflow(workflow);
+  const runtimeConfigQuery = useQuery({
+    queryKey: ["runtime-config"],
+    queryFn: api.getRuntimeConfig,
+  });
+  const queueOverviewQuery = useQuery({
+    queryKey: ["generation-queue"],
+    queryFn: api.getGenerationQueueOverview,
+    refetchInterval: (query) => ((query.state.data?.active_count ?? 0) > 0 || workflowActive ? 1500 : false),
+  });
+  const imageGenerationMaxDimension =
+    runtimeConfigQuery.data?.image_generation_max_dimension ?? DEFAULT_IMAGE_GENERATION_MAX_DIMENSION;
+  const imageSizeOptions = useMemo(
+    () => buildImageSizeOptions(imageGenerationMaxDimension),
+    [imageGenerationMaxDimension],
+  );
+
   const selectedNode =
     workflow?.nodes.find((node) => node.id === selectedNodeId) ??
     workflow?.nodes[0] ??
@@ -671,6 +685,10 @@ export function ProductDetailPage() {
   const selectedReferenceNode =
     selectedNode?.node_type === "reference_image" ? selectedNode : null;
   const fillReferenceBusy = bindNodeImageMutation.isPending;
+  const queueOverview = queueOverviewQuery.data ?? null;
+  const showQueueOverview = Boolean(
+    queueOverview && (queueOverview.active_count > 0 || product.recent_jobs.some((job) => job.status === "queued" || job.status === "running")),
+  );
 
   const renderWorkflowToolbarButtons = () => (
     <>
@@ -712,6 +730,12 @@ export function ProductDetailPage() {
         {error ? (
           <div className="z-20 border-b border-red-200 bg-red-50 px-4 py-2 text-xs text-red-700">
             <AlertCircle size={14} className="mr-2 inline" /> {error}
+          </div>
+        ) : null}
+        {showQueueOverview && queueOverview ? (
+          <div className="z-20 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">
+            当前全局生成：运行 {queueOverview.running_count} 个，排队 {queueOverview.queued_count} 个，
+            活跃 {queueOverview.active_count}/{queueOverview.max_concurrent_tasks}。
           </div>
         ) : null}
 
@@ -970,6 +994,8 @@ export function ProductDetailPage() {
                       node={selectedNode}
                       draft={draft}
                       imageSizeOptions={imageSizeOptions}
+                      imageGenerationMaxDimension={imageGenerationMaxDimension}
+                      onPreviewImage={setPreviewImage}
                       onDraftChange={handleDraftChange}
                       onRun={() => void handleRunWorkflow(selectedNode.id)}
                       saveStatus={saveStatus}

@@ -116,6 +116,11 @@ def test_image_session_generate_returns_queued_task_without_waiting_for_provider
     task = payload["generation_tasks"][0]
     assert task["status"] == "queued"
     assert task["prompt"] == "只创建任务，不等待 provider"
+    assert task["queue_active_count"] == 1
+    assert task["queue_running_count"] == 0
+    assert task["queue_queued_count"] == 1
+    assert task["queued_ahead_count"] == 0
+    assert task["queue_position"] == 1
     assert sent == [task["id"]]
     db_session.expire_all()
     persisted = db_session.get(ImageSessionGenerationTask, task["id"])

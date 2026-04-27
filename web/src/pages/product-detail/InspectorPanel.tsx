@@ -20,6 +20,7 @@ import { formatDateTime, formatPrice } from "../../lib/format";
 import type { ProductDetail, ProductWorkflow, WorkflowNode } from "../../lib/types";
 import { IMAGE_PREVIEW_SURFACE_CLASS_NAME, NODE_LABELS, NODE_STATUS_LABELS } from "./constants";
 import { DownloadLink } from "./ImageDownloadComponents";
+import { getNodeImageDownload } from "./imageDownloads";
 import type { NodeConfigDraft, SaveStatus } from "./types";
 import { outputText, statusClass } from "./utils";
 import { TextArea } from "./TextArea";
@@ -45,7 +46,9 @@ interface InspectorPanelProps {
   node: WorkflowNode;
   draft: NodeConfigDraft;
   imageSizeOptions: ImageSizeOption[];
+  imageGenerationMaxDimension: number;
   onDraftChange: (draft: NodeConfigDraft) => void;
+  onPreviewImage: (image: DownloadableImage) => void;
   onRun: () => void;
   onUploadImage: (file: File) => void;
   onDelete: () => void;
@@ -61,7 +64,9 @@ export function InspectorPanel({
   node,
   draft,
   imageSizeOptions,
+  imageGenerationMaxDimension,
   onDraftChange,
+  onPreviewImage,
   onRun,
   onUploadImage,
   onDelete,
@@ -97,6 +102,7 @@ export function InspectorPanel({
       Array.isArray(node.output_json?.source_asset_ids) &&
       node.output_json.source_asset_ids.length,
   );
+  const referenceImage = node.node_type === "reference_image" ? getNodeImageDownload(node, product) : null;
 
   return (
     <div className="space-y-3">
@@ -207,6 +213,8 @@ export function InspectorPanel({
             onUploadImage={onUploadImage}
             busy={busy}
             hasImage={hasReferenceImage}
+            image={referenceImage}
+            onPreviewImage={onPreviewImage}
           />
         ) : null}
         {node.node_type === "copy_generation" ? (
@@ -220,6 +228,7 @@ export function InspectorPanel({
             <ImageGenerationInspector
               draft={draft}
               imageSizeOptions={imageSizeOptions}
+              imageGenerationMaxDimension={imageGenerationMaxDimension}
               onDraftChange={onDraftChange}
               downstreamReferenceCount={downstreamReferenceCount}
             />
@@ -322,15 +331,37 @@ function ReferenceImageInspector({
   onUploadImage,
   busy,
   hasImage,
+  image,
+  onPreviewImage,
 }: {
   draft: NodeConfigDraft;
   onDraftChange: (draft: NodeConfigDraft) => void;
   onUploadImage: (file: File) => void;
   busy: boolean;
   hasImage: boolean;
+  image: DownloadableImage | null;
+  onPreviewImage: (image: DownloadableImage) => void;
 }) {
   return (
     <div className="space-y-3">
+      {image ? (
+        <div
+          className={`group relative flex aspect-[4/3] min-h-[180px] w-full items-center justify-center overflow-hidden rounded-xl border border-zinc-200 p-3 transition-colors hover:border-indigo-300 ${IMAGE_PREVIEW_SURFACE_CLASS_NAME}`}
+        >
+          <button
+            type="button"
+            onClick={() => onPreviewImage(image)}
+            className="flex h-full w-full items-center justify-center rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2"
+            aria-label={`预览 ${image.alt}`}
+          >
+            <img src={image.previewUrl} alt={image.alt} className="h-full w-full object-contain" />
+            <span className="pointer-events-none absolute bottom-2 left-2 rounded-md bg-zinc-950/70 px-2 py-1 text-[11px] font-medium text-white opacity-0 transition-opacity group-hover:opacity-100">
+              点击预览
+            </span>
+          </button>
+          <DownloadLink image={image} variant="overlay" />
+        </div>
+      ) : null}
       <label className="block">
         <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
           标签
@@ -487,11 +518,13 @@ function CopyNodeInspector({
 function ImageGenerationInspector({
   draft,
   imageSizeOptions,
+  imageGenerationMaxDimension,
   onDraftChange,
   downstreamReferenceCount,
 }: {
   draft: NodeConfigDraft;
   imageSizeOptions: ImageSizeOption[];
+  imageGenerationMaxDimension: number;
   onDraftChange: (draft: NodeConfigDraft) => void;
   downstreamReferenceCount: number;
 }) {
@@ -512,6 +545,7 @@ function ImageGenerationInspector({
         <ImageSizePicker
           value={draft.size}
           presets={imageSizeOptions}
+          maxDimension={imageGenerationMaxDimension}
           onChange={(size) => onDraftChange({ ...draft, size })}
         />
       </div>

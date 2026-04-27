@@ -61,6 +61,12 @@ class ImageSessionGenerationTaskResponse(BaseModel):
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    queue_active_count: int
+    queue_running_count: int
+    queue_queued_count: int
+    queue_max_concurrent_tasks: int
+    queued_ahead_count: int | None = None
+    queue_position: int | None = None
 
 
 class ImageSessionSummaryResponse(BaseModel):
@@ -157,6 +163,8 @@ def serialize_image_session_round(round_item: ImageSessionRound) -> ImageSession
 def serialize_image_session_generation_task(
     task: ImageSessionGenerationTask,
 ) -> ImageSessionGenerationTaskResponse:
+    queue_metadata = getattr(task, "_queue_metadata", None)
+    queue_overview = getattr(queue_metadata, "overview", None)
     return ImageSessionGenerationTaskResponse(
         id=task.id,
         session_id=task.session_id,
@@ -171,6 +179,12 @@ def serialize_image_session_generation_task(
         created_at=task.created_at,
         started_at=task.started_at,
         finished_at=task.finished_at,
+        queue_active_count=getattr(queue_overview, "active_count", 0),
+        queue_running_count=getattr(queue_overview, "running_count", 0),
+        queue_queued_count=getattr(queue_overview, "queued_count", 0),
+        queue_max_concurrent_tasks=getattr(queue_overview, "max_concurrent_tasks", 0),
+        queued_ahead_count=getattr(queue_metadata, "queued_ahead_count", None),
+        queue_position=getattr(queue_metadata, "queue_position", None),
     )
 
 

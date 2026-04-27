@@ -32,6 +32,10 @@ class ConfigResponse(BaseModel):
     items: list[ConfigItemResponse]
 
 
+class RuntimeConfigResponse(BaseModel):
+    image_generation_max_dimension: int
+
+
 class ConfigUpdateRequest(BaseModel):
     values: dict[str, Any] = Field(default_factory=dict)
     reset_keys: list[str] = Field(default_factory=list)

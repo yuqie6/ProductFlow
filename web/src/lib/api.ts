@@ -3,6 +3,7 @@ import type {
   ConfigUpdateRequest,
   CopySet,
   CopySetUpdateRequest,
+  GenerationQueueOverview,
   ImageSessionDetail,
   ImageSessionListResponse,
   JobRun,
@@ -11,6 +12,7 @@ import type {
   ProductWorkflow,
   ProductWritebackResponse,
   ProductListResponse,
+  RuntimeConfig,
   SettingsLockState,
   SessionState,
 } from "./types";
@@ -95,6 +97,12 @@ export const api = {
   },
   getSettingsLockState(): Promise<SettingsLockState> {
     return request("/api/settings/lock-state");
+  },
+  getRuntimeConfig(): Promise<RuntimeConfig> {
+    return request("/api/settings/runtime");
+  },
+  getGenerationQueueOverview(): Promise<GenerationQueueOverview> {
+    return request("/api/generation-queue");
   },
   unlockSettings(token: string): Promise<SettingsLockState> {
     return request("/api/settings/unlock", {

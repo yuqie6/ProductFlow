@@ -114,8 +114,10 @@ If a component starts needing API calls, consider whether it is actually a route
 
 ### 2. Signatures
 
-- Shared component: `ImageSizePicker({ value, onChange, presets, disabled? })`.
+- Shared component: `ImageSizePicker({ value, onChange, presets, disabled?, maxDimension? })`.
 - Shared helpers live under `web/src/lib/imageSizes.ts`.
+- Runtime max dimension comes from `api.getRuntimeConfig()` and is passed into `buildImageSizeOptions(maxDimension)` and
+  `ImageSizePicker({ maxDimension })`.
 - Page/API boundary values remain normalized `WIDTHxHEIGHT` strings, for example `1024x1024` or `3840x2160`.
 
 ### 3. Contracts
@@ -123,8 +125,8 @@ If a component starts needing API calls, consider whether it is actually a route
 - Continuous image chat and workflow image-generation inspector must use the same shared picker instead of duplicating
   separate button/input implementations.
 - Pages pass built-in preset options into the component; `ImageSizePicker` must not call the API.
-- Runtime config must not drive size preset buttons. A custom value may be valid even when it is not present in the
-  preset list.
+- Runtime config filters built-in size preset buttons by maximum single edge. It must not provide an arbitrary backend
+  allowlist; a custom value may be valid even when it is not present in the preset list.
 - The picker should preserve and round-trip unknown valid values by switching to custom width/height mode instead of
   resetting to the first preset.
 - Preset labels should include the human tier/aspect and the exact pixel string so users know what will be submitted.

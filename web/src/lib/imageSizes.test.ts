@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_IMAGE_SIZE_OPTIONS,
+  buildImageSizeOptions,
   labelForImageSize,
   normalizeImageSizeValue,
   parseImageSizeValue,
@@ -47,5 +48,21 @@ describe("image size helpers", () => {
       calibrated: true,
     });
     expect(resolveImageSize(100, 0)).toBeNull();
+  });
+
+  it("filters built-in presets by runtime max dimension", () => {
+    expect(buildImageSizeOptions(2048).map((option) => option.value)).toEqual([
+      "1024x1024",
+      "1024x1536",
+      "1536x1024",
+      "2048x2048",
+    ]);
+    expect(resolveImageSize(3072, 2048, 2048)).toEqual({
+      width: 2048,
+      height: 1365,
+      value: "2048x1365",
+      calibrated: true,
+    });
+    expect(normalizeImageSizeValue("3840X2160", 2048)).toBe("2048x1152");
   });
 });

@@ -191,3 +191,90 @@ def test_active_generation_task_count_includes_image_session_generation_tasks(
     result.task.status = JobStatus.SUCCEEDED
     db_session.commit()
     assert active_generation_task_count(db_session) == 0
+
+
+def test_generation_queue_overview_and_positions_include_durable_tasks(
+    configured_env: Path,
+    db_session,
+) -> None:
+    from productflow_backend.application.admission import (
+        get_generation_queue_overview,
+        get_generation_task_queue_metadata,
+        get_queued_generation_positions,
+    )
+
+    product = _create_product(db_session, "队列商品")
+    copy_job = create_copy_job(db_session, product_id=product.id).job
+    image_session = create_image_session(db_session, product_id=None, title="队列会话")
+    first = create_image_session_generation_task(
+        db_session,
+        image_session_id=image_session.id,
+        prompt="第一个连续生图任务",
+        size="1024x1024",
+    ).task
+    second = create_image_session_generation_task(
+        db_session,
+        image_session_id=image_session.id,
+        prompt="第二个连续生图任务",
+        size="1024x1024",
+    ).task
+    second.status = JobStatus.RUNNING
+    db_session.commit()
+
+    overview = get_generation_queue_overview(db_session)
+    positions = get_queued_generation_positions(db_session)
+    first_metadata = get_generation_task_queue_metadata(
+        db_session,
+        first,
+        overview=overview,
+        queued_positions=positions,
+    )
+    second_metadata = get_generation_task_queue_metadata(
+        db_session,
+        second,
+        overview=overview,
+        queued_positions=positions,
+    )
+
+    assert overview.active_count == 3
+    assert overview.running_count == 1
+    assert overview.queued_count == 2
+    assert positions[copy_job.id] == 1
+    assert positions[first.id] == 2
+    assert first_metadata.queue_position == 2
+    assert first_metadata.queued_ahead_count == 1
+    assert second_metadata.queue_position is None
+    assert second_metadata.queued_ahead_count is None
+
+
+def test_generation_queue_overview_endpoint_returns_public_snapshot(
+    configured_env: Path,
+    db_session,
+) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    product = _create_product(db_session, "队列 API 商品")
+    create_copy_job(db_session, product_id=product.id)
+    image_session = create_image_session(db_session, product_id=None, title="队列 API 会话")
+    running = create_image_session_generation_task(
+        db_session,
+        image_session_id=image_session.id,
+        prompt="运行中的连续生图任务",
+        size="1024x1024",
+    ).task
+    running.status = JobStatus.RUNNING
+    db_session.commit()
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get("/api/generation-queue")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "active_count": 2,
+        "running_count": 1,
+        "queued_count": 1,
+        "max_concurrent_tasks": 3,
+    }

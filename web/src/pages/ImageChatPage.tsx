@@ -23,7 +23,7 @@ import { ImageSizePicker } from "../components/ImageSizePicker";
 import { TopNav } from "../components/TopNav";
 import { api, ApiError } from "../lib/api";
 import { formatDateTime } from "../lib/format";
-import { DEFAULT_IMAGE_SIZE_OPTIONS } from "../lib/imageSizes";
+import { DEFAULT_IMAGE_GENERATION_MAX_DIMENSION, buildImageSizeOptions } from "../lib/imageSizes";
 import { clampGenerationCount, groupImageSessionRounds, pruneSelectedReferenceIds } from "./image-chat/branching";
 import type {
   ImageSessionDetail,
@@ -46,7 +46,7 @@ function isActiveGenerationTask(task: ImageSessionGenerationTask) {
 
 function generationTaskLabel(task: ImageSessionGenerationTask) {
   if (task.status === "queued") {
-    return "排队中";
+    return task.queue_position ? `排队中 · 第 ${task.queue_position} 位` : "排队中";
   }
   if (task.status === "running") {
     return "生成中";
@@ -55,6 +55,18 @@ function generationTaskLabel(task: ImageSessionGenerationTask) {
     return "生成失败";
   }
   return "已完成";
+}
+
+function generationTaskQueueText(task: ImageSessionGenerationTask) {
+  if (task.status === "queued") {
+    const ahead = task.queued_ahead_count ?? 0;
+    const position = task.queue_position ? `当前第 ${task.queue_position} 位` : "当前排队中";
+    return `前方 ${ahead} 个，${position}；全局活跃 ${task.queue_active_count}/${task.queue_max_concurrent_tasks}。`;
+  }
+  if (task.status === "running") {
+    return `正在生成，前方 0 个；全局运行 ${task.queue_running_count} 个，排队 ${task.queue_queued_count} 个。`;
+  }
+  return "";
 }
 
 export function ImageChatPage() {
@@ -96,10 +108,18 @@ export function ImageChatPage() {
     queryFn: () => api.listProducts({ page_size: 100 }),
     enabled: !isProductMode,
   });
+  const runtimeConfigQuery = useQuery({
+    queryKey: ["runtime-config"],
+    queryFn: api.getRuntimeConfig,
+  });
 
   const products = productsQuery.data?.items ?? [];
-
-  const sizeOptions = DEFAULT_IMAGE_SIZE_OPTIONS;
+  const imageGenerationMaxDimension =
+    runtimeConfigQuery.data?.image_generation_max_dimension ?? DEFAULT_IMAGE_GENERATION_MAX_DIMENSION;
+  const sizeOptions = useMemo(
+    () => buildImageSizeOptions(imageGenerationMaxDimension),
+    [imageGenerationMaxDimension],
+  );
 
   useEffect(() => {
     if (!isProductMode && products.length && !targetProductId) {
@@ -552,7 +572,7 @@ export function ImageChatPage() {
           </div>
         </aside>
 
-        <section className="flex min-w-0 flex-1 flex-col bg-slate-100">
+        <section className="flex min-w-0 flex-1 flex-col overflow-hidden bg-slate-100">
           <div className="flex min-h-0 flex-1 flex-col p-4 pb-3">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
@@ -589,7 +609,7 @@ export function ImageChatPage() {
               </div>
             </div>
 
-            <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-sm">
+            <div className="relative flex min-h-[320px] flex-1 items-center justify-center overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
               <div className="absolute inset-0 bg-[radial-gradient(#cbd5e1_1px,transparent_1px)] [background-size:20px_20px]" />
               <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between px-5 py-4">
                 {selectedRound ? (
@@ -617,12 +637,12 @@ export function ImageChatPage() {
               </div>
 
               {selectedRound ? (
-                <div className="relative z-0 flex h-full w-full items-center justify-center p-8 pt-16">
+                <div className="relative z-0 flex h-full min-h-0 w-full items-center justify-center px-4 pb-4 pt-14 sm:px-6 sm:pb-6 sm:pt-16">
                   <img
                     src={api.toApiUrl(selectedRound.generated_asset.preview_url)}
                     alt="当前结果"
                     decoding="async"
-                    className="max-h-full max-w-full rounded-3xl object-contain shadow-2xl shadow-slate-900/12 ring-1 ring-slate-900/10"
+                    className="h-full w-full object-contain drop-shadow-2xl"
                   />
                 </div>
               ) : (
@@ -639,8 +659,8 @@ export function ImageChatPage() {
             </div>
           </div>
 
-          <div className="h-56 shrink-0 border-t border-slate-200 bg-white/95 px-4 py-3 shadow-[0_-8px_24px_rgba(15,23,42,0.04)]">
-            <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="flex h-[clamp(10rem,18vh,12.5rem)] shrink-0 flex-col border-t border-slate-200 bg-white/95 px-4 py-3 shadow-[0_-8px_24px_rgba(15,23,42,0.04)]">
+            <div className="mb-2 flex items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold text-slate-950">历史记录</div>
                 <div className="text-xs text-slate-500">选择候选预览，或指定分支基图。</div>
@@ -657,9 +677,9 @@ export function ImageChatPage() {
             </div>
 
             {roundGroups.length ? (
-              <div className="flex h-[164px] gap-3 overflow-x-auto pb-1">
+              <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto pb-1">
                 {roundGroups.map((group) => (
-                  <div key={group.id} className="flex shrink-0 gap-2 rounded-2xl border border-slate-200 bg-slate-50/80 p-2">
+                  <div key={group.id} className="flex h-full shrink-0 gap-2 rounded-2xl border border-slate-200 bg-slate-50/80 p-2">
                     <div className="flex w-28 shrink-0 flex-col justify-between rounded-xl bg-white p-2 text-xs text-slate-500 ring-1 ring-slate-200">
                       <div>
                         <div className="font-semibold text-slate-800">{group.base_asset_id ? "分支" : "首轮"}</div>
@@ -673,7 +693,7 @@ export function ImageChatPage() {
                       return (
                         <div
                           key={round.id}
-                          className={`group/card relative h-36 w-36 shrink-0 overflow-hidden rounded-2xl border bg-white transition-all ${
+                          className={`group/card relative aspect-square h-full shrink-0 overflow-hidden rounded-2xl border bg-white transition-all ${
                             active ? "border-indigo-400 ring-2 ring-indigo-200" : "border-slate-200 hover:border-slate-300"
                           } ${asBase ? "shadow-md shadow-indigo-200/70" : "shadow-sm shadow-slate-200/60"}`}
                         >
@@ -719,14 +739,14 @@ export function ImageChatPage() {
                 ))}
               </div>
             ) : (
-              <div className="flex h-[164px] items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-400">
+              <div className="flex min-h-0 flex-1 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-400">
                 生成结果会出现在这里
               </div>
             )}
           </div>
         </section>
 
-        <aside className="flex w-[390px] shrink-0 flex-col border-l border-slate-200 bg-white">
+        <aside className="flex w-[clamp(320px,24vw,380px)] shrink-0 flex-col border-l border-slate-200 bg-white">
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
             <div className="mb-5">
               <div className="mb-3 flex items-center justify-between gap-3">
@@ -901,7 +921,12 @@ export function ImageChatPage() {
 
               <div>
                 <div className="mb-2 text-sm font-semibold text-slate-950">尺寸</div>
-                <ImageSizePicker value={size} presets={sizeOptions} onChange={setSize} />
+                <ImageSizePicker
+                  value={size}
+                  presets={sizeOptions}
+                  maxDimension={imageGenerationMaxDimension}
+                  onChange={setSize}
+                />
               </div>
 
               <div>
@@ -990,7 +1015,7 @@ export function ImageChatPage() {
                           <div className="mt-1 text-xs">{task.failure_reason ?? "图片生成失败，请稍后重试"}</div>
                         ) : (
                           <div className="mt-1 text-xs opacity-70">
-                            {task.status === "queued" ? "任务已保存，等待 worker 消费。" : "正在生成，完成后会自动刷新候选图。"}
+                            {generationTaskQueueText(task)}
                           </div>
                         )}
                       </div>

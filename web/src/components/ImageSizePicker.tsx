@@ -8,40 +8,41 @@ interface ImageSizePickerProps {
   presets: ImageSizeOption[];
   onChange: (value: string) => void;
   disabled?: boolean;
+  maxDimension?: number;
 }
 
-function splitSize(value: string): { width: string; height: string } {
-  const parsed = parseImageSizeValue(value);
+function splitSize(value: string, maxDimension?: number): { width: string; height: string } {
+  const parsed = parseImageSizeValue(value, maxDimension);
   if (!parsed) {
     return { width: "", height: "" };
   }
   return { width: String(parsed.width), height: String(parsed.height) };
 }
 
-function resolveCustomDraft(width: string, height: string) {
+function resolveCustomDraft(width: string, height: string, maxDimension?: number) {
   if (!/^\d+$/.test(width) || !/^\d+$/.test(height)) {
     return null;
   }
-  return resolveImageSize(Number(width), Number(height));
+  return resolveImageSize(Number(width), Number(height), maxDimension);
 }
 
-export function ImageSizePicker({ value, presets, onChange, disabled = false }: ImageSizePickerProps) {
+export function ImageSizePicker({ value, presets, onChange, disabled = false, maxDimension }: ImageSizePickerProps) {
   const optionValues = useMemo(() => new Set(presets.map((option) => option.value)), [presets]);
-  const normalizedValue = normalizeImageSizeValue(value);
+  const normalizedValue = normalizeImageSizeValue(value, maxDimension);
   const selectedPreset = normalizedValue !== null && optionValues.has(normalizedValue);
   const [customMode, setCustomMode] = useState(!selectedPreset);
-  const [{ width, height }, setCustomDraft] = useState(() => splitSize(value));
-  const customResolution = resolveCustomDraft(width, height);
+  const [{ width, height }, setCustomDraft] = useState(() => splitSize(value, maxDimension));
+  const customResolution = resolveCustomDraft(width, height, maxDimension);
 
   useEffect(() => {
-    const parsed = splitSize(value);
+    const parsed = splitSize(value, maxDimension);
     setCustomDraft(parsed);
     setCustomMode(!selectedPreset);
-  }, [selectedPreset, value]);
+  }, [maxDimension, selectedPreset, value]);
 
   const updateCustom = (nextWidth: string, nextHeight: string) => {
     setCustomDraft({ width: nextWidth, height: nextHeight });
-    const nextResolution = resolveCustomDraft(nextWidth, nextHeight);
+    const nextResolution = resolveCustomDraft(nextWidth, nextHeight, maxDimension);
     if (nextResolution) {
       onChange(nextResolution.value);
     }
@@ -119,7 +120,7 @@ export function ImageSizePicker({ value, presets, onChange, disabled = false }: 
             {customResolution ? (
               <>
                 最终输出：{formatImageSizeValue(customResolution.value)}
-                {customResolution.calibrated ? "（已按单边 3840 安全边界自动校准）" : ""}
+                {customResolution.calibrated ? `（已按单边 ${maxDimension ?? 3840} 安全边界自动校准）` : ""}
               </>
             ) : (
               "请输入正整数宽高；后端仍会做最终校验。"
