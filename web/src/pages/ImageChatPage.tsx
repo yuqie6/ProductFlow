@@ -22,6 +22,7 @@ import { useNavigate, useParams } from "react-router-dom";
 
 import { ImageDropZone } from "../components/ImageDropZone";
 import { ImageSizePicker } from "../components/ImageSizePicker";
+import { PromptPreviewDialog, type PromptPreview } from "../components/PromptPreviewDialog";
 import { TopNav } from "../components/TopNav";
 import { api, ApiError } from "../lib/api";
 import { formatDateTime } from "../lib/format";
@@ -29,7 +30,6 @@ import {
   DEFAULT_IMAGE_GENERATION_MAX_DIMENSION,
   buildImageSizeOptions,
   formatImageSizeValue,
-  type ImageSizeOption,
 } from "../lib/imageSizes";
 import {
   clampGenerationCount,
@@ -40,6 +40,7 @@ import {
 } from "./image-chat/branching";
 import type {
   ImageSessionDetail,
+  ImageSessionRound,
   ImageSessionGenerationTask,
   ImageSessionListResponse,
   ImageToolOptions,
@@ -53,11 +54,6 @@ function getSessionReferenceAssets(imageSession: ImageSessionDetail | undefined)
 }
 
 const MAX_BRANCH_CONTEXT_IMAGES = 6;
-const PRIMARY_SIZE_ASPECTS = [
-  { aspect: "1:1", label: "1:1", frameClassName: "h-7 w-7" },
-  { aspect: "2:3", label: "2:3", frameClassName: "h-8 w-6" },
-  { aspect: "3:2", label: "3:2", frameClassName: "h-6 w-8" },
-] as const;
 
 function isActiveGenerationTask(task: ImageSessionGenerationTask) {
   return task.status === "queued" || task.status === "running";
@@ -88,13 +84,6 @@ function generationTaskQueueText(task: ImageSessionGenerationTask) {
   return "";
 }
 
-function pickPrimarySizeTiles(options: ImageSizeOption[]): ImageSizeOption[] {
-  return PRIMARY_SIZE_ASPECTS.flatMap((target) => {
-    const match = options.find((option) => option.aspect === target.aspect);
-    return match ? [match] : [];
-  });
-}
-
 function parseOptionalNumber(value: string): number | null {
   if (!value.trim()) {
     return null;
@@ -122,6 +111,7 @@ export function ImageChatPage() {
   const [titleDraft, setTitleDraft] = useState("");
   const [renameEnabled, setRenameEnabled] = useState(false);
   const [targetProductId, setTargetProductId] = useState("");
+  const [promptPreview, setPromptPreview] = useState<PromptPreview | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
 
@@ -155,7 +145,6 @@ export function ImageChatPage() {
     () => buildImageSizeOptions(imageGenerationMaxDimension),
     [imageGenerationMaxDimension],
   );
-  const primarySizeOptions = useMemo(() => pickPrimarySizeTiles(sizeOptions), [sizeOptions]);
 
   useEffect(() => {
     if (!isProductMode && products.length && !targetProductId) {
@@ -738,7 +727,19 @@ export function ImageChatPage() {
                         <div className="font-semibold text-slate-800">{group.base_asset_id ? "分支" : "首轮"}</div>
                         <div className="mt-1">{group.rounds.length} 张</div>
                       </div>
-                      <div className="line-clamp-3 text-[11px] leading-4 text-slate-400">{group.prompt}</div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPromptPreview({
+                            title: group.base_asset_id ? "分支 Prompt" : "首轮 Prompt",
+                            text: group.prompt,
+                            meta: `${group.rounds.length} 张 · ${formatDateTime(group.rounds[0].created_at)}`,
+                          })
+                        }
+                        className="line-clamp-3 rounded-md text-left text-[11px] leading-4 text-slate-400 transition-colors hover:text-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                      >
+                        {group.prompt}
+                      </button>
                     </div>
                     {group.rounds.map((round) => {
                       const active = round.generated_asset.id === selectedGeneratedAssetId;
@@ -837,23 +838,22 @@ export function ImageChatPage() {
             </div>
 
             <div className="space-y-4">
-              {isProductMode ? (
-                <ProductContextPanel
-                  product={productQuery.data}
-                  sourceImage={sourceImage}
-                  referenceImages={productReferenceImages}
-                  deletingReferenceAssetId={
-                    deleteProductReferenceMutation.isPending ? (deleteProductReferenceMutation.variables ?? null) : null
-                  }
-                  onDeleteReference={handleDeleteProductReference}
-                />
-              ) : (
-                <StandaloneTargetPanel
-                  products={products}
-                  targetProductId={targetProductId}
-                  onTargetProductChange={setTargetProductId}
-                />
-              )}
+              <ProductAssociationPanel
+                isProductMode={isProductMode}
+                product={productQuery.data}
+                products={products}
+                targetProductId={targetProductId}
+                sourceImage={sourceImage}
+                referenceImages={productReferenceImages}
+                selectedRound={selectedRound}
+                attachBusy={attachMutation.isPending}
+                deletingReferenceAssetId={
+                  deleteProductReferenceMutation.isPending ? (deleteProductReferenceMutation.variables ?? null) : null
+                }
+                onTargetProductChange={setTargetProductId}
+                onDeleteReference={handleDeleteProductReference}
+                onAttach={handleAttach}
+              />
 
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
                 <div className="mb-2 flex items-center justify-between gap-3">
@@ -972,80 +972,35 @@ export function ImageChatPage() {
                 />
               </div>
 
-              <div>
-                <div className="mb-2 text-sm font-semibold text-slate-950">尺寸</div>
-                <VisualSizePicker
+              <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div className="text-sm font-semibold text-slate-950">参数</div>
+                  <span className="text-[11px] font-medium text-slate-400">{formatImageSizeValue(size)}</span>
+                </div>
+                <ImageSizePicker
                   value={size}
-                  primaryOptions={primarySizeOptions}
-                  allOptions={sizeOptions}
+                  presets={sizeOptions}
                   maxDimension={imageGenerationMaxDimension}
                   onChange={setSize}
                 />
-              </div>
-
-              <div>
-                <label className="mb-2 block text-sm font-semibold text-slate-950" htmlFor="generation-count">
-                  生成数量
+                <label className="mt-3 block" htmlFor="generation-count">
+                  <span className="mb-1.5 block text-xs font-semibold text-slate-700">生成数量</span>
+                  <select
+                    id="generation-count"
+                    value={generationCount}
+                    onChange={(event) => setGenerationCount(clampGenerationCount(Number(event.target.value)))}
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                  >
+                    {[1, 2, 3, 4].map((count) => (
+                      <option key={count} value={count}>
+                        {count} 张候选
+                      </option>
+                    ))}
+                  </select>
                 </label>
-                <select
-                  id="generation-count"
-                  value={generationCount}
-                  onChange={(event) => setGenerationCount(clampGenerationCount(Number(event.target.value)))}
-                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-                >
-                  {[1, 2, 3, 4].map((count) => (
-                    <option key={count} value={count}>
-                      {count} 张候选
-                    </option>
-                  ))}
-                </select>
               </div>
 
               <ProviderToolControls value={toolOptions} onChange={setToolOptions} />
-
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="mb-3 text-sm font-semibold text-slate-950">保存至商品库</div>
-                {selectedRound ? (
-                  <div className="space-y-3">
-                    {!isProductMode ? (
-                      <button
-                        type="button"
-                        onClick={() => handleAttach("reference")}
-                        disabled={!targetProductId || attachMutation.isPending}
-                        className="inline-flex w-full items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:border-slate-300 hover:text-slate-950 disabled:opacity-60"
-                      >
-                        {attachMutation.isPending ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Check size={14} className="mr-2" />}
-                        保存为参考图
-                      </button>
-                    ) : (
-                      <div className="grid gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleAttach("reference")}
-                          disabled={attachMutation.isPending}
-                          className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:border-slate-300 hover:text-slate-950 disabled:opacity-60"
-                        >
-                          {attachMutation.isPending ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Check size={14} className="mr-2" />}
-                          加入参考图
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleAttach("main_source")}
-                          disabled={attachMutation.isPending}
-                          className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:opacity-60"
-                        >
-                          {attachMutation.isPending ? <Loader2 size={14} className="mr-2 animate-spin" /> : <ImageIcon size={14} className="mr-2" />}
-                          设为商品主图
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="flex h-12 items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white text-sm text-slate-400">
-                    无图片
-                  </div>
-                )}
-              </div>
 
               {visibleGenerationTasks.length ? (
                 <div className="space-y-2 rounded-2xl border border-slate-200 bg-white p-4">
@@ -1068,7 +1023,19 @@ export function ImageChatPage() {
                           </div>
                           <span className="text-xs opacity-70">{task.generation_count} 张</span>
                         </div>
-                        <div className="mt-1 line-clamp-2 text-xs opacity-80">{task.prompt}</div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPromptPreview({
+                              title: "任务 Prompt",
+                              text: task.prompt,
+                              meta: `${generationTaskLabel(task)} · ${formatImageSizeValue(task.size)} · ${task.generation_count} 张`,
+                            })
+                          }
+                          className="mt-1 line-clamp-2 rounded text-left text-xs opacity-80 transition-opacity hover:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                        >
+                          {task.prompt}
+                        </button>
                         {task.status === "failed" ? (
                           <div className="mt-1 text-xs">{task.failure_reason ?? "图片生成失败，请稍后重试"}</div>
                         ) : generationTaskQueueText(task) ? (
@@ -1113,57 +1080,12 @@ export function ImageChatPage() {
           </div>
         </aside>
       </main>
+      {promptPreview ? (
+        <PromptPreviewDialog preview={promptPreview} onClose={() => setPromptPreview(null)} />
+      ) : null}
     </div>
   );
 
-}
-
-function VisualSizePicker({
-  value,
-  primaryOptions,
-  allOptions,
-  maxDimension,
-  onChange,
-}: {
-  value: string;
-  primaryOptions: ImageSizeOption[];
-  allOptions: ImageSizeOption[];
-  maxDimension: number;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div className="space-y-2">
-      <div className="grid grid-cols-3 gap-2">
-        {primaryOptions.map((option) => {
-          const active = option.value === value;
-          const aspectConfig = PRIMARY_SIZE_ASPECTS.find((item) => item.aspect === option.aspect);
-          return (
-            <button
-              key={option.value}
-              type="button"
-              onClick={() => onChange(option.value)}
-              title={formatImageSizeValue(option.value)}
-              className={`flex h-20 flex-col items-center justify-center rounded-xl border text-xs font-semibold transition-colors ${
-                active
-                  ? "border-indigo-500 bg-indigo-50 text-indigo-700 ring-2 ring-indigo-100"
-                  : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900"
-              }`}
-            >
-              <span className={`mb-1.5 block rounded-sm border-2 border-current ${aspectConfig?.frameClassName ?? "h-7 w-7"}`} />
-              <span>{aspectConfig?.label ?? option.aspect}</span>
-            </button>
-          );
-        })}
-      </div>
-      <div className="text-right text-[11px] font-medium text-slate-400">{formatImageSizeValue(value)}</div>
-      <details className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-        <summary className="cursor-pointer text-xs font-medium text-slate-500">自定义</summary>
-        <div className="mt-3">
-          <ImageSizePicker value={value} presets={allOptions} maxDimension={maxDimension} onChange={onChange} />
-        </div>
-      </details>
-    </div>
-  );
 }
 
 function ProviderToolControls({
@@ -1321,101 +1243,147 @@ function CompactSelect({
   );
 }
 
-function ProductContextPanel({
+function ProductAssociationPanel({
+  isProductMode,
   product,
+  products,
+  targetProductId,
   sourceImage,
   referenceImages,
+  selectedRound,
+  attachBusy,
   deletingReferenceAssetId,
+  onTargetProductChange,
   onDeleteReference,
+  onAttach,
 }: {
+  isProductMode: boolean;
   product: ProductDetail | undefined;
+  products: ProductSummary[];
+  targetProductId: string;
   sourceImage: SourceAsset | null;
   referenceImages: SourceAsset[];
+  selectedRound: ImageSessionRound | null;
+  attachBusy: boolean;
   deletingReferenceAssetId: string | null;
+  onTargetProductChange: (value: string) => void;
   onDeleteReference: (assetId: string) => void;
+  onAttach: (target: "reference" | "main_source") => void;
 }) {
+  const saveDisabled = attachBusy || !selectedRound || (!isProductMode && !targetProductId);
+
   return (
     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-      <div className="mb-3 text-sm font-semibold text-zinc-900">商品上下文</div>
-      {product ? (
-        <>
+      <div className="mb-3 text-sm font-semibold text-zinc-900">保存至商品库</div>
+      {isProductMode ? (
+        product ? (
           <div className="grid grid-cols-[88px_minmax(0,1fr)] gap-3">
-            <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
-              {sourceImage ? (
-                <img src={api.toApiUrl(sourceImage.thumbnail_url)} alt={product.name} decoding="async" className="h-24 w-full object-cover" />
-              ) : (
-                <div className="flex h-24 items-center justify-center text-zinc-300">
-                  <ImageIcon size={20} />
-                </div>
-              )}
-            </div>
-            <div className="min-w-0">
-              <div className="truncate font-medium text-zinc-900">{product.name}</div>
+            <ProductThumbnail sourceImage={sourceImage} alt={product.name} />
+            <div className="min-w-0 self-center">
+              <div className="truncate text-sm font-medium text-zinc-900">{product.name}</div>
               <div className="mt-1 text-xs text-zinc-500">当前参考图 {referenceImages.length} 张</div>
             </div>
           </div>
-          {referenceImages.length ? (
-            <div className="mt-3 grid grid-cols-4 gap-2">
-              {referenceImages.slice(0, 4).map((asset) => {
-                const deleting = deletingReferenceAssetId === asset.id;
-                return (
-                  <div key={asset.id} className="group relative overflow-hidden rounded-md border border-zinc-200 bg-white">
-                    <a href={api.toApiUrl(asset.preview_url)} target="_blank" rel="noreferrer" title={asset.original_filename}>
-                      <img
-                        src={api.toApiUrl(asset.thumbnail_url)}
-                        alt={asset.original_filename}
-                        loading="lazy"
-                        decoding="async"
-                        className="h-16 w-full object-cover"
-                      />
-                    </a>
-                    <button
-                      type="button"
-                      aria-label="删除商品参考图"
-                      onClick={() => onDeleteReference(asset.id)}
-                      disabled={deleting}
-                      className="absolute right-1 top-1 inline-flex h-6 w-6 items-center justify-center rounded bg-white/90 text-zinc-500 opacity-100 shadow-sm ring-1 ring-zinc-200 transition-colors hover:text-red-600 disabled:opacity-60 md:opacity-0 md:group-hover:opacity-100"
-                    >
-                      {deleting ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          ) : null}
-        </>
+        ) : (
+          <div className="flex justify-center py-6 text-zinc-400">
+            <Loader2 size={16} className="animate-spin" />
+          </div>
+        )
       ) : (
-        <div className="flex justify-center py-6 text-zinc-400">
-          <Loader2 size={16} className="animate-spin" />
-        </div>
+        <label className="block">
+          <span className="mb-1.5 block text-xs font-semibold text-slate-700">目标商品</span>
+          <select
+            value={targetProductId}
+            onChange={(event) => onTargetProductChange(event.target.value)}
+            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-zinc-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+          >
+            {products.length ? null : <option value="">暂无商品</option>}
+            {products.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </label>
       )}
+
+      {referenceImages.length ? (
+        <div className="mt-3 grid grid-cols-4 gap-2">
+          {referenceImages.slice(0, 4).map((asset) => {
+            const deleting = deletingReferenceAssetId === asset.id;
+            return (
+              <div key={asset.id} className="group relative overflow-hidden rounded-md border border-zinc-200 bg-white">
+                <a href={api.toApiUrl(asset.preview_url)} target="_blank" rel="noreferrer" title={asset.original_filename}>
+                  <img
+                    src={api.toApiUrl(asset.thumbnail_url)}
+                    alt={asset.original_filename}
+                    loading="lazy"
+                    decoding="async"
+                    className="h-16 w-full object-cover"
+                  />
+                </a>
+                <button
+                  type="button"
+                  aria-label="删除商品参考图"
+                  onClick={() => onDeleteReference(asset.id)}
+                  disabled={deleting}
+                  className="absolute right-1 top-1 inline-flex h-6 w-6 items-center justify-center rounded bg-white/90 text-zinc-500 opacity-100 shadow-sm ring-1 ring-zinc-200 transition-colors hover:text-red-600 disabled:opacity-60 md:opacity-0 md:group-hover:opacity-100"
+                >
+                  {deleting ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+
+      <div className="mt-4 border-t border-slate-200 pt-3">
+        {selectedRound ? (
+          <div className="mb-2 text-[11px] leading-5 text-slate-500">
+            当前选中候选：{formatImageSizeValue(selectedRound.size)}
+          </div>
+        ) : (
+          <div className="mb-2 rounded-xl border border-dashed border-slate-200 bg-white px-3 py-2 text-center text-sm text-slate-400">
+            先从历史记录中选择一张图片
+          </div>
+        )}
+        <div className="grid gap-2">
+          <button
+            type="button"
+            onClick={() => onAttach("reference")}
+            disabled={saveDisabled}
+            className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:border-slate-300 hover:text-slate-950 disabled:opacity-60"
+          >
+            {attachBusy ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Check size={14} className="mr-2" />}
+            {isProductMode ? "加入参考图" : "保存为参考图"}
+          </button>
+          {isProductMode ? (
+            <button
+              type="button"
+              onClick={() => onAttach("main_source")}
+              disabled={saveDisabled}
+              className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:opacity-60"
+            >
+              {attachBusy ? <Loader2 size={14} className="mr-2 animate-spin" /> : <ImageIcon size={14} className="mr-2" />}
+              设为商品主图
+            </button>
+          ) : null}
+        </div>
+      </div>
     </div>
   );
 }
 
-function StandaloneTargetPanel({
-  products,
-  targetProductId,
-  onTargetProductChange,
-}: {
-  products: ProductSummary[];
-  targetProductId: string;
-  onTargetProductChange: (value: string) => void;
-}) {
+function ProductThumbnail({ sourceImage, alt }: { sourceImage: SourceAsset | null; alt: string }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-      <div className="mb-2 text-sm font-semibold text-zinc-900">目标商品</div>
-      <select
-        value={targetProductId}
-        onChange={(event) => onTargetProductChange(event.target.value)}
-        className="mt-3 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900"
-      >
-        {products.map((product) => (
-          <option key={product.id} value={product.id}>
-            {product.name}
-          </option>
-        ))}
-      </select>
+    <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
+      {sourceImage ? (
+        <img src={api.toApiUrl(sourceImage.thumbnail_url)} alt={alt} decoding="async" className="h-24 w-full object-cover" />
+      ) : (
+        <div className="flex h-24 items-center justify-center text-zinc-300">
+          <ImageIcon size={20} />
+        </div>
+      )}
     </div>
   );
 }

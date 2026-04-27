@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -14,6 +15,7 @@ import {
 
 import { ImageDropZone } from "../../components/ImageDropZone";
 import { ImageSizePicker } from "../../components/ImageSizePicker";
+import { PromptPreviewDialog, type PromptPreview } from "../../components/PromptPreviewDialog";
 import type { DownloadableImage } from "../../lib/image-downloads";
 import type { ImageSizeOption } from "../../lib/imageSizes";
 import { formatDateTime, formatPrice } from "../../lib/format";
@@ -74,6 +76,7 @@ export function InspectorPanel({
   runBusy,
   saveStatus,
 }: InspectorPanelProps) {
+  const [promptPreview, setPromptPreview] = useState<PromptPreview | null>(null);
   const icon = {
     product_context: FileText,
     reference_image: ImagePlus,
@@ -225,13 +228,15 @@ export function InspectorPanel({
           />
         ) : null}
         {node.node_type === "image_generation" ? (
-            <ImageGenerationInspector
-              draft={draft}
-              imageSizeOptions={imageSizeOptions}
-              imageGenerationMaxDimension={imageGenerationMaxDimension}
-              onDraftChange={onDraftChange}
-              downstreamReferenceCount={downstreamReferenceCount}
-            />
+          <ImageGenerationInspector
+            node={node}
+            draft={draft}
+            imageSizeOptions={imageSizeOptions}
+            imageGenerationMaxDimension={imageGenerationMaxDimension}
+            onDraftChange={onDraftChange}
+            downstreamReferenceCount={downstreamReferenceCount}
+            onPreviewPrompt={setPromptPreview}
+          />
         ) : null}
       </section>
       {node.failure_reason ? (
@@ -239,6 +244,9 @@ export function InspectorPanel({
           <AlertCircle size={13} className="mr-1.5 inline" />
           {node.failure_reason}
         </section>
+      ) : null}
+      {promptPreview ? (
+        <PromptPreviewDialog preview={promptPreview} onClose={() => setPromptPreview(null)} />
       ) : null}
     </div>
   );
@@ -516,18 +524,26 @@ function CopyNodeInspector({
 }
 
 function ImageGenerationInspector({
+  node,
   draft,
   imageSizeOptions,
   imageGenerationMaxDimension,
   onDraftChange,
   downstreamReferenceCount,
+  onPreviewPrompt,
 }: {
+  node: WorkflowNode;
   draft: NodeConfigDraft;
   imageSizeOptions: ImageSizeOption[];
   imageGenerationMaxDimension: number;
   onDraftChange: (draft: NodeConfigDraft) => void;
   downstreamReferenceCount: number;
+  onPreviewPrompt: (preview: PromptPreview) => void;
 }) {
+  const savedInstruction = node.output_json ? outputText(node.output_json, "instruction") : "";
+  const previewText = savedInstruction || draft.instruction;
+  const promptMeta = savedInstruction ? "最近一次运行保存的生图指令" : "当前草稿";
+
   return (
     <div className="space-y-3">
       {downstreamReferenceCount === 0 ? (
@@ -535,11 +551,40 @@ function ImageGenerationInspector({
           请先连接一个参考图节点，生成结果会写入该节点。
         </div>
       ) : null}
+      <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-xs font-semibold text-slate-700">生成数量</div>
+            <div className="mt-1 text-[11px] leading-5 text-slate-500">
+              由下游参考图节点决定；当前会生成 {downstreamReferenceCount} 张。
+            </div>
+          </div>
+          <span className="shrink-0 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700">
+            {downstreamReferenceCount} 张
+          </span>
+        </div>
+      </div>
       <TextArea
-        label="生图"
+        label="画面描述"
         value={draft.instruction}
         onChange={(value) => onDraftChange({ ...draft, instruction: value })}
       />
+      {previewText.trim() ? (
+        <button
+          type="button"
+          onClick={() =>
+            onPreviewPrompt({
+              title: "生图 Prompt",
+              text: previewText,
+              meta: promptMeta,
+            })
+          }
+          className="inline-flex w-full items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-950"
+        >
+          <FileText size={13} className="mr-1.5" />
+          回看完整 Prompt
+        </button>
+      ) : null}
       <div>
         <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-zinc-400">尺寸</div>
         <ImageSizePicker
