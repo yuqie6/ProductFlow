@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_IMAGE_SIZE_OPTIONS,
   buildImageSizeOptions,
+  getImageSizePresetDisplay,
   labelForImageSize,
   normalizeImageSizeValue,
   parseImageSizeValue,
@@ -64,5 +65,19 @@ describe("image size helpers", () => {
       calibrated: true,
     });
     expect(normalizeImageSizeValue("3840X2160", 2048)).toBe("2048x1152");
+  });
+
+  it("derives preset display labels for the picker grid", () => {
+    expect(DEFAULT_IMAGE_SIZE_OPTIONS.map(getImageSizePresetDisplay)).toEqual([
+      { aspectLabel: "1:1", tierLabel: "1K", dimensionLabel: "1024×1024" },
+      { aspectLabel: "2:3", tierLabel: "1K", dimensionLabel: "1024×1536" },
+      { aspectLabel: "3:2", tierLabel: "1K", dimensionLabel: "1536×1024" },
+      { aspectLabel: "1:1", tierLabel: "2K", dimensionLabel: "2048×2048" },
+      { aspectLabel: "2:3", tierLabel: "2K", dimensionLabel: "2048×3072" },
+      { aspectLabel: "3:2", tierLabel: "2K", dimensionLabel: "3072×2048" },
+      { aspectLabel: "1:1", tierLabel: "4K", dimensionLabel: "3840×3840" },
+      { aspectLabel: "9:16", tierLabel: "4K", dimensionLabel: "2160×3840" },
+      { aspectLabel: "16:9", tierLabel: "4K", dimensionLabel: "3840×2160" },
+    ]);
   });
 });

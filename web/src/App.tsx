@@ -4,6 +4,7 @@ import { Loader2 } from "lucide-react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 import { api } from "./lib/api";
+import { GalleryPage } from "./pages/GalleryPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ImageChatPage } from "./pages/ImageChatPage";
 import { ProductCreatePage } from "./pages/ProductCreatePage";
@@ -42,6 +43,10 @@ function AppRoutes() {
       <Route
         path="/image-chat"
         element={authenticated ? <ImageChatPage /> : <Navigate to="/login" replace />}
+      />
+      <Route
+        path="/gallery"
+        element={authenticated ? <GalleryPage /> : <Navigate to="/login" replace />}
       />
       <Route
         path="/settings"

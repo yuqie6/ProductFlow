@@ -311,6 +311,36 @@ export interface ProductWritebackResponse {
   message: string;
 }
 
+export interface GalleryEntry {
+  id: string;
+  image_session_asset_id: string;
+  image_session_round_id: string | null;
+  image_session_id: string;
+  image_session_title: string;
+  product_id: string | null;
+  product_name: string | null;
+  image: ImageSessionAsset;
+  prompt: string | null;
+  size: string | null;
+  actual_size: string | null;
+  model_name: string | null;
+  provider_name: string | null;
+  prompt_version: string | null;
+  provider_response_id: string | null;
+  image_generation_call_id: string | null;
+  generation_group_id: string | null;
+  candidate_index: number | null;
+  candidate_count: number | null;
+  base_asset_id: string | null;
+  selected_reference_asset_ids: string[];
+  provider_notes: string[];
+  created_at: string;
+}
+
+export interface GalleryEntryListResponse {
+  items: GalleryEntry[];
+}
+
 export type ConfigSource = "database" | "env_default";
 export type ConfigInputType = "text" | "password" | "number" | "boolean" | "select" | "textarea";
 

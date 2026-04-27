@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 
 import type { ImageSizeOption } from "../lib/imageSizes";
-import { formatImageSizeValue, normalizeImageSizeValue, parseImageSizeValue, resolveImageSize } from "../lib/imageSizes";
+import {
+  formatImageSizeValue,
+  getImageSizePresetDisplay,
+  normalizeImageSizeValue,
+  parseImageSizeValue,
+  resolveImageSize,
+} from "../lib/imageSizes";
 
 interface ImageSizePickerProps {
   value: string;
@@ -26,23 +32,21 @@ function resolveCustomDraft(width: string, height: string, maxDimension?: number
   return resolveImageSize(Number(width), Number(height), maxDimension);
 }
 
-const VISUAL_ASPECTS = [
-  { aspect: "1:1", label: "1:1", frameClassName: "h-7 w-7" },
-  { aspect: "2:3", label: "2:3", frameClassName: "h-8 w-6" },
-  { aspect: "3:2", label: "3:2", frameClassName: "h-6 w-8" },
-] as const;
-
-function pickVisualPresets(presets: ImageSizeOption[]): ImageSizeOption[] {
-  const visualOptions = VISUAL_ASPECTS.flatMap((target) => {
-    const match = presets.find((option) => option.aspect === target.aspect);
-    return match ? [match] : [];
-  });
-  return visualOptions.length ? visualOptions : presets.slice(0, 3);
+function frameClassName(aspect: string): string {
+  if (aspect === "1:1") {
+    return "h-8 w-8";
+  }
+  if (aspect === "2:3" || aspect === "9:16") {
+    return "h-10 w-7";
+  }
+  if (aspect === "3:2" || aspect === "16:9") {
+    return "h-7 w-10";
+  }
+  return "h-8 w-8";
 }
 
 export function ImageSizePicker({ value, presets, onChange, disabled = false, maxDimension }: ImageSizePickerProps) {
-  const visualPresets = useMemo(() => pickVisualPresets(presets), [presets]);
-  const optionValues = useMemo(() => new Set(visualPresets.map((option) => option.value)), [visualPresets]);
+  const optionValues = useMemo(() => new Set(presets.map((option) => option.value)), [presets]);
   const normalizedValue = normalizeImageSizeValue(value, maxDimension);
   const selectedPreset = normalizedValue !== null && optionValues.has(normalizedValue);
   const [{ width, height }, setCustomDraft] = useState(() => splitSize(value, maxDimension));
@@ -64,9 +68,9 @@ export function ImageSizePicker({ value, presets, onChange, disabled = false, ma
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-3 gap-2">
-        {visualPresets.map((option) => {
+        {presets.map((option) => {
           const active = selectedPreset && option.value === normalizedValue;
-          const aspectConfig = VISUAL_ASPECTS.find((item) => item.aspect === option.aspect);
+          const display = getImageSizePresetDisplay(option);
           return (
             <button
               key={option.value}
@@ -76,14 +80,19 @@ export function ImageSizePicker({ value, presets, onChange, disabled = false, ma
               }}
               disabled={disabled}
               title={formatImageSizeValue(option.value)}
-              className={`flex h-20 flex-col items-center justify-center rounded-xl border text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+              className={`flex h-24 flex-col items-center justify-center rounded-xl border px-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
                 active
                   ? "border-indigo-500 bg-indigo-50 text-indigo-700 ring-2 ring-indigo-100"
                   : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900"
               }`}
             >
-              <span className={`mb-1.5 block rounded-sm border-2 border-current ${aspectConfig?.frameClassName ?? "h-7 w-7"}`} />
-              <span>{aspectConfig?.label ?? option.aspect}</span>
+              <span
+                className={`mb-1.5 flex items-center justify-center rounded-sm border-2 border-current text-[10px] font-black leading-none ${frameClassName(option.aspect)}`}
+              >
+                {display.tierLabel}
+              </span>
+              <span>{display.aspectLabel}</span>
+              <span className="mt-0.5 text-[10px] font-medium text-slate-400">{display.dimensionLabel}</span>
             </button>
           );
         })}

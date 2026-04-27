@@ -12,6 +12,12 @@ export interface ImageSizeResolution {
   calibrated: boolean;
 }
 
+export interface ImageSizePresetDisplay {
+  aspectLabel: string;
+  tierLabel: string;
+  dimensionLabel: string;
+}
+
 export const IMAGE_SIZE_PATTERN = /^\d+x\d+$/;
 export const DEFAULT_IMAGE_GENERATION_MAX_DIMENSION = 3840;
 export const IMAGE_GENERATION_MIN_MAX_DIMENSION = 512;
@@ -121,4 +127,13 @@ export function formatImageSizeValue(value: string): string {
 
 export function labelForImageSize(value: string): string {
   return PRESET_LABELS.get(value) ?? `自定义 · ${formatImageSizeValue(value)}`;
+}
+
+export function getImageSizePresetDisplay(option: ImageSizeOption): ImageSizePresetDisplay {
+  const [, tier] = option.label.split("·", 2);
+  return {
+    aspectLabel: option.aspect,
+    tierLabel: tier?.trim() || option.label,
+    dimensionLabel: formatImageSizeValue(option.value),
+  };
 }

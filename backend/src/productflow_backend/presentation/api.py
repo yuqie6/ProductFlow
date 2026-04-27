@@ -15,6 +15,7 @@ from productflow_backend.infrastructure.queue import (
     recover_unfinished_workflow_runs,
 )
 from productflow_backend.presentation.routes.auth import router as auth_router
+from productflow_backend.presentation.routes.gallery import router as gallery_router
 from productflow_backend.presentation.routes.generation_queue import router as generation_queue_router
 from productflow_backend.presentation.routes.image_sessions import router as image_sessions_router
 from productflow_backend.presentation.routes.jobs import router as jobs_router
@@ -57,6 +58,7 @@ def create_app() -> FastAPI:
 
     app.include_router(auth_router)
     app.include_router(generation_queue_router)
+    app.include_router(gallery_router)
     app.include_router(products_router)
     app.include_router(product_workflows_router)
     app.include_router(jobs_router)

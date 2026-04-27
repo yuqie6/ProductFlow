@@ -541,3 +541,37 @@ class ImageSessionGenerationTask(Base):
 
     session: Mapped[ImageSession] = relationship(back_populates="generation_tasks")
     base_asset: Mapped[ImageSessionAsset | None] = relationship(foreign_keys=[base_asset_id])
+
+
+class ImageGalleryEntry(Base):
+    """全局精选画廊条目，引用连续生图生成资产，不复制图片文件。"""
+
+    __tablename__ = "image_gallery_entries"
+    __table_args__ = (
+        Index("uq_image_gallery_entries_asset_id", "image_session_asset_id", unique=True),
+        Index("ix_image_gallery_entries_round_id", "image_session_round_id"),
+        Index("ix_image_gallery_entries_created_at", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    image_session_asset_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "image_session_assets.id",
+            ondelete="CASCADE",
+            name="fk_image_gallery_entries_image_session_asset_id",
+        ),
+    )
+    image_session_round_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "image_session_rounds.id",
+            ondelete="SET NULL",
+            name="fk_image_gallery_entries_image_session_round_id",
+        ),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    asset: Mapped[ImageSessionAsset] = relationship(foreign_keys=[image_session_asset_id])
+    round: Mapped[ImageSessionRound | None] = relationship(foreign_keys=[image_session_round_id])

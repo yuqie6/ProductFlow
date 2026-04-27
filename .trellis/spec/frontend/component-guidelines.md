@@ -186,8 +186,9 @@ Pages provide data and mutations; the shared picker owns only presentational siz
 `web/src/components/TopNav.tsx` is the shared authenticated product navigation bar, not just a page title strip.
 
 - Every primary authenticated page should render `TopNav` so the same frequent entries are always available:
-  `商品/工作台`, `连续生图`, and `配置`.
-- The entries link to `/products`, `/image-chat`, and `/settings`; keep route declarations centralized in `web/src/App.tsx`.
+  `商品/工作台`, `连续生图`, `画廊`, and `配置`.
+- The entries link to `/products`, `/image-chat`, `/gallery`, and `/settings`; keep route declarations centralized in
+  `web/src/App.tsx`.
 - `TopNav` also exposes the persistent guided-onboarding action through `OnboardingNavButton`. Keep it visually secondary
   to the centered main nav but large enough to be discoverable.
 - Page components may still pass `breadcrumbs`, `onHome`, and `onLogout`, but should not duplicate these global nav links
@@ -209,6 +210,107 @@ Correct:
 ```
 
 The shared nav itself exposes the settings/image-chat/product links and the guided-onboarding action; pages only add page-specific actions.
+
+## Scenario: Global gallery display page
+
+### 1. Scope / Trigger
+
+- Trigger: editing `GalleryPage`, gallery route registration, gallery API DTO consumption, or continuous image-chat save
+  to gallery affordances.
+- The gallery is a visual browsing surface for generated images, not a management dashboard.
+
+### 2. Signatures
+
+- Route: `/gallery` in `web/src/App.tsx`.
+- API client:
+  - `api.listGalleryEntries()`.
+  - `api.saveGalleryEntry(imageSessionAssetId)`.
+- Query key: `['gallery']`.
+- DTO: `GalleryEntry` in `web/src/lib/types.ts`.
+
+### 3. Contracts
+
+- `GalleryPage` lists global gallery entries and uses `api.toApiUrl(...)` for `image.thumbnail_url`, `image.preview_url`,
+  and `image.download_url`.
+- Continuous image chat saves only the selected generated candidate to the gallery; existing save-to-product behavior must
+  remain separate.
+- Successful save invalidates `['gallery']` so the global page refreshes without a hard reload.
+- The page should emphasize image-led browsing: a strong selected/hero image, a responsive visual grid, and compact prompt
+  and metadata context. Do not turn it into product filters, bulk tools, or a table-first admin page.
+- Gallery feed cards should preserve the full generated image instead of cropping it. Derive card aspect from
+  `actual_size` first and `size` second, clamp extreme ratios, and use a stable id/index-based score for featured cards
+  so the layout feels varied without changing on every render.
+- If the feed uses CSS Grid masonry behavior with `auto-rows-*` and `gridRowEnd: span N`, the span calculation must include
+  both the row unit and the grid gap. A span that ignores `gap-*` will produce oversized dark bars because CSS Grid adds
+  every inter-row gap inside the spanned area.
+- Desktop masonry row spans must be calculated from the measured grid width, not a fixed container width. Account for
+  column gaps when deriving tile width: subtract `gap * (columns - 1)` before dividing into columns, then add the gaps
+  inside the tile span back. Keep `auto-rows-*` and `gridRowEnd` scoped to the desktop grid; mobile and tablet layouts
+  should use natural `aspect-ratio` sizing.
+
+### 4. Validation & Error Matrix
+
+- Empty gallery -> styled empty state, no broken image placeholders.
+- API load failure -> visible page-local error state.
+- Missing selected ID after refresh/list change -> fall back to the newest available entry.
+- Save-to-gallery API error from image chat -> show page-local mutation error near existing image-chat feedback.
+
+### 5. Good/Base/Bad Cases
+
+- Good: the selected generated candidate appears in the gallery after saving and refreshes via `['gallery']`.
+- Base: if a gallery image has no product reference, show it as a global/standalone item without blocking preview.
+- Bad: raw `fetch('/api/gallery')` from a page.
+- Bad: adding gallery grouping/filtering/bulk controls under this display-only contract.
+
+### 6. Tests Required
+
+- Pure helper tests for selected-entry fallback, size/actual-size labels, aspect-ratio parsing/clamping, stable featured
+  tile placement, masonry row-span behavior, gap-aware tile width, and measured grid width changes.
+- Frontend build must type-check `GalleryEntry` DTOs and API methods.
+- When save behavior changes, run image-chat related helper tests and `pnpm --dir web test:run`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```tsx
+fetch('/api/gallery')
+```
+
+#### Correct
+
+```tsx
+useQuery({ queryKey: ['gallery'], queryFn: api.listGalleryEntries })
+```
+
+#### Wrong
+
+```tsx
+const rowSpan = Math.ceil(tileHeight / 8)
+```
+
+This ignores the `gap-4` space that CSS Grid adds between every spanned row.
+
+#### Correct
+
+```tsx
+const rowSpan = Math.ceil((tileHeight + gridGapPx) / (rowUnitPx + gridGapPx))
+```
+
+#### Wrong
+
+```tsx
+const tileWidth = (1280 * columnSpan) / 12
+```
+
+This ignores the 11 grid gaps in a 12-column desktop grid.
+
+#### Correct
+
+```tsx
+const columnWidth = (gridWidth - gridGapPx * (columns - 1)) / columns
+const tileWidth = columnWidth * columnSpan + gridGapPx * (columnSpan - 1)
+```
 
 ---
 

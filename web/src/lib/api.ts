@@ -3,6 +3,8 @@ import type {
   ConfigUpdateRequest,
   CopySet,
   CopySetUpdateRequest,
+  GalleryEntry,
+  GalleryEntryListResponse,
   GenerationQueueOverview,
   ImageSessionDetail,
   ImageSessionListResponse,
@@ -238,6 +240,15 @@ export const api = {
     return request(`/api/image-sessions/${sessionId}/assets/${assetId}/attach-to-product`, {
       method: "POST",
       body: JSON.stringify(input),
+    });
+  },
+  listGalleryEntries(): Promise<GalleryEntryListResponse> {
+    return request("/api/gallery");
+  },
+  saveGalleryEntry(imageSessionAssetId: string): Promise<GalleryEntry> {
+    return request("/api/gallery", {
+      method: "POST",
+      body: JSON.stringify({ image_session_asset_id: imageSessionAssetId }),
     });
   },
   getProductWorkflow(productId: string): Promise<ProductWorkflow> {

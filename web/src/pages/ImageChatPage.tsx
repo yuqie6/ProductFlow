@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Check,
   Download,
+  GalleryHorizontalEnd,
   History,
   Image as ImageIcon,
   ImagePlus,
@@ -390,6 +391,18 @@ export function ImageChatPage() {
     },
   });
 
+  const saveGalleryMutation = useMutation({
+    mutationFn: (assetId: string) => api.saveGalleryEntry(assetId),
+    onSuccess: async () => {
+      setSuccessMessage("已保存至画廊");
+      setErrorMessage("");
+      await queryClient.invalidateQueries({ queryKey: ["gallery"] });
+    },
+    onError: (error) => {
+      setErrorMessage(error instanceof ApiError ? error.detail : "保存到画廊失败");
+    },
+  });
+
   const deleteProductReferenceMutation = useMutation({
     mutationFn: (assetId: string) => api.deleteSourceAsset(assetId),
     onSuccess: async (updated) => {
@@ -462,6 +475,13 @@ export function ImageChatPage() {
       target,
       productId: isProductMode ? productId : targetProductId,
     });
+  }
+
+  function handleSaveSelectedToGallery() {
+    if (!selectedRound || saveGalleryMutation.isPending) {
+      return;
+    }
+    saveGalleryMutation.mutate(selectedRound.generated_asset.id);
   }
 
   function handleDeleteSession(sessionId: string) {
@@ -608,8 +628,8 @@ export function ImageChatPage() {
 
         <section className="flex min-w-0 flex-1 flex-col overflow-hidden bg-slate-100">
           <div className="flex min-h-0 flex-1 flex-col p-3 pb-2">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <div>
+            <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
                 <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
                   <span className="inline-flex h-7 items-center rounded-full bg-white px-3 shadow-sm ring-1 ring-slate-200">
                     当前结果
@@ -624,7 +644,7 @@ export function ImageChatPage() {
                   {imageSession?.title ?? "连续生图工作台"}
                 </h1>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex w-full flex-wrap items-center justify-start gap-2 sm:w-auto sm:justify-end">
                 {selectedRound ? (
                   <>
                     <span className="hidden rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 shadow-sm md:inline-flex">
@@ -640,6 +660,21 @@ export function ImageChatPage() {
                     >
                       <Download size={15} />
                     </a>
+                    <button
+                      type="button"
+                      onClick={handleSaveSelectedToGallery}
+                      disabled={saveGalleryMutation.isPending}
+                      title="将当前选中的生成候选保存到全局画廊"
+                      aria-label="将当前选中的生成候选保存到全局画廊"
+                      className="inline-flex h-10 shrink-0 items-center justify-center rounded-xl bg-indigo-600 px-4 text-sm font-semibold text-white shadow-sm shadow-indigo-500/20 ring-1 ring-indigo-500 transition-colors hover:bg-indigo-700 disabled:opacity-60"
+                    >
+                      {saveGalleryMutation.isPending ? (
+                        <Loader2 size={16} className="mr-2 animate-spin" />
+                      ) : (
+                        <GalleryHorizontalEnd size={16} className="mr-2" />
+                      )}
+                      投至画廊
+                    </button>
                   </>
                 ) : null}
               </div>

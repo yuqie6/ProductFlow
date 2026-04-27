@@ -1,4 +1,4 @@
-import { LayoutGrid, LogOut, MessagesSquare, Settings, Wand2 } from "lucide-react";
+import { GalleryHorizontalEnd, LayoutGrid, LogOut, MessagesSquare, Settings, Wand2 } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 
 import { OnboardingNavButton } from "./OnboardingGuide";
@@ -21,6 +21,12 @@ const navItems = [
     to: "/image-chat",
     icon: MessagesSquare,
     match: (pathname: string) => pathname.includes("image-chat"),
+  },
+  {
+    label: "画廊",
+    to: "/gallery",
+    icon: GalleryHorizontalEnd,
+    match: (pathname: string) => pathname.startsWith("/gallery"),
   },
   {
     label: "配置",

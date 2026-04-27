@@ -304,6 +304,73 @@ The current pattern commits database changes before performing non-transactional
 For create/update operations, file writes happen before adding the final DB asset rows. Keep storage paths relative to the
 storage root; `LocalStorage.resolve()` guards against path traversal.
 
+## Scenario: Global generated-image gallery entries
+
+### 1. Scope / Trigger
+
+- Trigger: changing gallery persistence, gallery API response fields, or continuous image-session "save to gallery"
+  behavior.
+- Gallery is a global display surface over generated image-session assets. It is not a product library replacement and not
+  a file-copying workflow.
+
+### 2. Signatures
+
+- DB table: `image_gallery_entries(id, image_session_asset_id, image_session_round_id, created_at)`.
+- Unique index: `uq_image_gallery_entries_asset_id` on `image_session_asset_id`.
+- API:
+  - `GET /api/gallery` -> `{items: GalleryEntryResponse[]}`.
+  - `POST /api/gallery` with `{image_session_asset_id: string}` -> `GalleryEntryResponse`.
+
+### 3. Contracts
+
+- `image_session_asset_id` must point to an `image_session_assets.kind == generated_image` row.
+- `image_session_round_id` references the round that generated the asset and may be set null by database delete behavior.
+- Gallery entries reference existing generated files through `/api/image-session-assets/{asset_id}/download` URLs; they
+  must not duplicate image bytes into product storage or a gallery-specific storage tree.
+- Repeated saves for the same generated asset are idempotent and return the existing gallery entry.
+- Response metadata should include prompt, requested size, actual size, provider/model, candidate metadata, session ID/title,
+  product ID/name when available, and `created_at`.
+
+### 4. Validation & Error Matrix
+
+- Missing image-session asset -> `404`, `{"detail": "会话图片不存在"}`.
+- Reference upload asset -> `400`, `{"detail": "只有生成结果可以保存到画廊"}`.
+- Generated asset without a generating round -> `404`, `{"detail": "生成记录不存在"}`.
+- Duplicate generated asset save -> existing gallery entry, no duplicate database row.
+
+### 5. Good/Base/Bad Cases
+
+- Good: a continuous image candidate can be saved once, then repeated clicks keep one gallery row.
+- Base: product-scoped and standalone image sessions both appear in the same global gallery list.
+- Bad: copying generated image bytes into `source_assets` or product storage when the user only chose "save to gallery".
+- Bad: adding product-level grouping, bulk management, tags, or search inside this global display-only gallery task.
+
+### 6. Tests Required
+
+- Backend route test saves a generated image and verifies prompt, image URLs, size/actual size, provider/model, candidate,
+  session, product, and creation metadata.
+- Backend route test repeats the same save and asserts one database row.
+- Backend route test rejects reference-upload assets.
+- Migration test path must keep Alembic upgrade-to-head green on SQLite and PostgreSQL-compatible schema definitions.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+storage.save_reference_upload(product.id, asset.original_filename, image_bytes)
+```
+
+This writes to the product library and changes product state.
+
+#### Correct
+
+```python
+ImageGalleryEntry(image_session_asset_id=asset.id, image_session_round_id=round_item.id)
+```
+
+The gallery keeps a curated pointer to the generated asset and reuses existing download URLs.
+
 ---
 
 ## Migrations
