@@ -356,7 +356,7 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
         label="全局生成并发上限",
         category="任务重试",
         input_type="number",
-        description="公网共享体验站的全局资源保护阈值；文案、海报、工作流和连续生图达到上限时会提示稍后重试。",
+        description="全局资源保护阈值；文案、海报、工作流和连续生图达到上限时会提示稍后重试。",
         minimum=1,
         maximum=20,
     ),

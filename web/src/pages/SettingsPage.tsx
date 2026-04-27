@@ -319,7 +319,7 @@ export function SettingsPage() {
               </div>
               <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">系统配置</h1>
               <p className="mt-1 text-sm text-slate-500">
-                公网共享体验站中请勿上传隐私素材；数据库配置优先生效，未写入数据库的字段继续使用 env/default 值。
+                数据库配置优先生效，未写入数据库的字段继续使用 env/default 值。
               </p>
             </div>
             <button
@@ -341,7 +341,7 @@ export function SettingsPage() {
             </div>
           ) : !lockStateQuery.data?.configured ? (
             <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800">
-              设置解锁令牌未配置。请在后端环境变量中设置 SETTINGS_ACCESS_TOKEN 后重启服务，避免公网体验用户修改全局配置。
+              设置解锁令牌未配置。请在后端环境变量中设置 SETTINGS_ACCESS_TOKEN 后重启服务，保护全局配置不被未授权修改。
             </div>
           ) : !lockStateQuery.data.unlocked ? (
             <form
@@ -355,7 +355,7 @@ export function SettingsPage() {
                 <div>
                   <h2 className="text-base font-semibold text-slate-950">需要二次令牌才能查看系统配置</h2>
                   <p className="mt-1 text-sm leading-6 text-slate-500">
-                    当前站点按公网共享体验站运行。商品和生成记录会被同站体验者共享，但模型、API Key、提示词和并发上限属于全局配置，需要单独授权。
+                    模型、API Key、提示词和并发上限属于全局配置。请输入设置解锁令牌后再查看或修改这些配置。
                   </p>
                 </div>
               </div>

@@ -61,9 +61,6 @@ export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
             <span className="truncate font-medium text-slate-600">{breadcrumbs}</span>
           </>
         ) : null}
-        <span className="hidden rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700 xl:inline-flex">
-          共享体验站 · 请勿上传隐私素材
-        </span>
       </div>
 
       <div className="flex min-w-0 justify-start overflow-x-auto lg:justify-center">
