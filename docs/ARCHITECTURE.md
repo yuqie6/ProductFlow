@@ -66,8 +66,6 @@ Product
 ```text
 ImageSession
   -> ImageSessionAsset(reference_upload/generated_image)
-  -> ImageSessionGenerationTask
-  -> ImageSessionRound
   -> optional Product attachment
 ```
 
@@ -92,16 +90,15 @@ PostgreSQL 是元数据和运行状态的权威存储；Redis/Dramatiq 只负责
 
 ## 5. 异步任务与恢复
 
-当前有三套后台执行入口：
+当前有两套后台执行入口：
 
 1. 传统 `JobRun`：用于文案生成和海报生成。
 2. `WorkflowRun`：用于商品 DAG 工作流执行。
-3. `ImageSessionGenerationTask`：用于连续生图的异步候选生成。
 
 共同原则：
 
 - 数据库记录先落地，Redis 消息只是可恢复的投递尝试。
-- 同一商品同类任务/工作流通过数据库约束避免重复 active run；连续生图任务以会话任务记录表达排队、运行和失败状态。
+- 同一商品同类任务/工作流通过数据库约束避免重复 active run。
 - enqueue 失败时会把新建 run 标记为失败，避免 active 状态卡死。
 - API 启动时会恢复 queued 的未完成任务/工作流。
 - worker 启动时可重置 stale running 状态后重新投递。
@@ -111,7 +108,6 @@ PostgreSQL 是元数据和运行状态的权威存储；Redis/Dramatiq 只负责
 
 - `productflow_backend.infrastructure.queue.recover_unfinished_jobs`
 - `productflow_backend.infrastructure.queue.recover_unfinished_workflow_runs`
-- `productflow_backend.infrastructure.queue.recover_unfinished_image_session_generation_tasks`
 - `productflow_backend.workers`
 
 ## 6. Provider 架构

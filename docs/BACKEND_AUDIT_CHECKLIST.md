@@ -32,11 +32,11 @@
 ## P2 API/架构清理
 
 - [x] 旧 `/api/image-chat/generate` 已删除，连续生图只保留 `/api/image-sessions` 持久会话接口。
-- [x] 连续生图已改为异步 job：HTTP 入口创建 `ImageSessionGenerationTask` 并返回 202，worker 后台生成，前端轮询任务状态。
+- [ ] 连续生图不宜长期在 HTTP 请求内同步等待 180 秒，后续应改成 job；当前同步入口已纳入全局生成并发 admission control。
 - [x] 构建连续生图上下文时不要读取全部历史图片再丢弃，应只读取实际会传给 provider 的最近图片。
 - [x] OpenAI 文本 provider 应使用结构化输出或更强 JSON 解析错误处理。
 - [x] DB 层补业务唯一约束：active job、generated_asset_id、主图唯一性等。
 
 ## 剩余刻意暂缓项
 
-- 继续完善异步生图任务的失败分类、用户可见重试入口和 provider 侧错误排查说明。
+- 连续生图改异步 job 会改变前端交互协议，需要和 `/web` 的轮询/加载态一起做；本轮先保留同步 API，但已经限制图片尺寸、历史图片读取量，并通过全局生成并发上限降低资源风险。

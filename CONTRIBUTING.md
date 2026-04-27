@@ -39,12 +39,8 @@ just backend-test
 前端变更建议运行：
 
 ```bash
-pnpm --dir web lint
-pnpm --dir web test:run
 just web-build
 ```
-
-说明：当前根目录 `justfile` 只封装了 `web-build`，前端 lint / Vitest 仍通过 `web/package.json` 脚本直接执行。
 
 文档或开源治理文件变更至少应确认引用的命令、路径和配置文件存在。
 
