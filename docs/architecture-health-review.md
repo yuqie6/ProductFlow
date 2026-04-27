@@ -1,6 +1,7 @@
 # ProductFlow 架构健康度审查
 
-> 审查日期：2026-04-26
+> 初始审查日期：2026-04-26
+> 最近校准日期：2026-04-27
 > 范围：当前仓库静态结构、真实文件大小、当前分层和测试/构建配置。
 > 结论用途：指导后续分批重构任务；本文件不执行任何代码重构。
 
@@ -27,7 +28,7 @@ rg -n "from sqlalchemy\.orm import Session|productflow_backend\.infrastructure" 
 jq '.scripts' web/package.json
 ```
 
-审查时的工作区基线由 Trellis PRD 记录为 clean；当前可见变更只新增本文档，未改动后端、前端或迁移代码。
+审查时的工作区基线由 Trellis PRD 记录为 clean；当前文档已在 2026-04-27 根据最新仓库状态补充校准前端测试与质量门禁相关结论。
 
 ## 3. 当前结构快照
 
@@ -47,11 +48,11 @@ jq '.scripts' web/package.json
 
 | 区域 | 真实证据 | 观察 |
 | --- | ---: | --- |
-| 前端源码文件数 | `web/src` 下 26 个 `.ts` / `.tsx` / `.css` 文件 | 文件数少，但页面承载较重 |
-| 前端源码总行数样本 | `web/src` TypeScript/TSX 总计约 6,276 行 | `ProductDetailPage.tsx` 占比过高 |
-| 顶层目录 | `web/src/components`、`web/src/lib`、`web/src/pages`、`web/src/pages/product-detail` | 已开始为 product detail 做 page-local 拆分 |
-| package scripts | `web/package.json` 只有 `dev` / `build` / `preview` | 无前端 lint、format、test 脚本 |
-| 测试/格式化配置 | 未发现 `*test*` / `*spec*` / `eslint.config.*` / `.prettierrc*` | 前端自动化回归几乎为空 |
+| 前端源码文件数 | `web/src` 下 44 个 `.ts` / `.tsx` / `.css` 文件 | 页面与 page-local 模块持续拆分，规模仍可控 |
+| 前端源码总行数样本 | `web/src` TypeScript/TSX/CSS 总计约 7,719 行 | `ProductDetailPage.tsx` 仍是热点文件，但已不是唯一复杂区 |
+| 顶层目录 | `web/src/components`、`web/src/lib`、`web/src/pages`、`web/src/pages/product-detail`、`web/src/pages/image-chat` | product detail 与 image chat 都已有 page-local 拆分 |
+| package scripts | `web/package.json` 包含 `dev` / `build` / `lint` / `test` / `test:run` / `preview` | 前端已有基础 lint 与测试脚本 |
+| 测试/格式化配置 | 已存在 `web/eslint.config.js`，并有 6 个 `*.test.ts` 文件 | 已有 ESLint + Vitest 基线，但尚未收敛为项目级统一入口 |
 
 ## 4. 现有优点
 
@@ -85,7 +86,7 @@ jq '.scripts' web/package.json
 | --- | --- | --- | --- | --- | --- |
 | A1 | P1 | 后端 workflow application 巨型模块 | `application/product_workflows.py` 1,675 行，约 55 个 class/function 顶层声明 | 修改 DAG 逻辑时回归面大，难定位状态/执行/产物边界 | 第 1 阶段 |
 | A2 | P1 | 前端 ProductDetail workbench 页面过大 | `web/src/pages/ProductDetailPage.tsx` 2,430 行，顶层组件/函数/常量约 25 个 | 画布、sidebar、inspector、gallery、mutation 状态耦合，交互回归风险高 | 第 1 阶段 |
-| A3 | P1 | 前端缺少自动化测试与 lint/format gate | `web/package.json` 仅 `dev/build/preview`；未发现测试或 ESLint/Prettier 配置 | UI 重构缺少行为护栏，review 只能依赖人工和 `tsc` | 第 1 阶段 |
+| A3 | P2 | 前端质量门禁已建立基础能力，但项目级入口和覆盖深度仍不足 | `web/package.json` 已含 `lint/test/test:run`，`web/eslint.config.js` 存在，`web/src` 下已有 6 个 `*.test.ts`；但根目录 `justfile` 仍只有 `web-build` | 已不再是“完全无护栏”，但 lint/test 入口分散、覆盖面仍偏轻，重构时仍有回归风险 | 第 1 阶段 |
 | A4 | P2 | 领域层偏贫血，业务规则散落在 application | `domain/enums.py` 84 行；application 直接实现大量 DAG、copy、image 规则 | 规则复用和错误类型升级困难，application 文件继续膨胀 | 第 2 阶段 |
 | A5 | P2 | Application 直接依赖 SQLAlchemy Session 与 infrastructure 细节 | `application/use_cases.py`、`image_sessions.py`、`product_workflows.py` 均导入 `Session` 和 infrastructure adapters | 单元测试必须带 DB/adapter 思维；难替换 persistence/provider 边界 | 第 2 阶段 |
 | A6 | P2 | 错误处理依赖中文字符串后缀判断 | `presentation/errors.py:8-14` 用 `detail.endswith("不存在")` 决定 404 | 文案改动可能改变 HTTP 语义；多语言/错误码扩展脆弱 | 第 1-2 阶段 |
@@ -195,44 +196,56 @@ web/src/pages/product-detail/
 - 降低风险：先拆 presentational 组件，再抽 hook；每次拆分后只跑 build 和关键手测。
 - 回滚：按组件拆分 commit 回滚，不影响后端数据。
 
-### A3. 前端质量门禁不足
+### A3. 前端质量门禁已有基线，但项目级入口和覆盖深度仍不足
 
 **证据**
 
-- `web/package.json` scripts 只有：
+- `web/package.json` scripts 目前包含：
   - `dev`: `vite`
   - `build`: `tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json && vite build`
+  - `lint`: `eslint .`
+  - `test`: `vitest`
+  - `test:run`: `vitest run`
   - `preview`: `vite preview`
-- 未发现 `eslint.config.*`、`.eslintrc*`、`.prettierrc*`、`*test*`、`*spec*`。
+- 已存在 `web/eslint.config.js`。
+- `web/src` 下已存在 6 个 `*.test.ts` 文件，包括：
+  - `web/src/pages/product-detail/galleryImages.test.ts`
+  - `web/src/pages/product-detail/utils.test.ts`
+  - `web/src/pages/product-detail/useWorkflowCanvas.test.ts`
+  - `web/src/pages/product-detail/canvasUtils.test.ts`
+  - `web/src/pages/image-chat/branching.test.ts`
+  - `web/src/lib/imageSizes.test.ts`
+- 根目录 `justfile` 目前仍只封装 `web-build`，未提供 `web-lint` / `web-test` 入口。
 
 **影响**
 
-- TypeScript 能抓类型错误，但抓不到 hook dependency、无障碍、未使用变量风格、格式漂移、交互回归。
-- ProductDetail 拆分时缺少最小回归测试，风险集中到人工验收。
+- 前端已经不再是“只能靠 `tsc` 和人工验收”的状态，基础 lint 与单元测试护栏真实存在。
+- 但项目级统一入口还不完整，贡献者容易只跑 `just web-build` 而漏掉 ESLint / Vitest。
+- 现有测试以 helper 和局部 hook 为主，尚不足以完全覆盖 ProductDetail workbench 的高风险交互。
 
 **建议方案**
 
-先补轻量质量 gate，不要一次性引入过重工具链：
+下一阶段不需要“从零引入”前端质量工具，而应补齐项目级接入：
 
-1. 配置 ESLint：React hooks、TypeScript、import 基本规则即可。
-2. 配置 Prettier 或明确只用 ESLint format，不要两个工具规则互相打架。
-3. 引入 Vitest + Testing Library 的最小样例，优先覆盖纯 helper 与少数关键 UI：
+1. 在根目录 `justfile` 增加 `web-lint`、`web-test`（或等价入口），让 README / CONTRIBUTING / CI 使用统一命令。
+2. 把现有 lint/test 纳入提交前最小检查，而不只写 `just web-build`。
+3. 继续优先覆盖低成本高价值逻辑：
    - `galleryImages.ts` 去重逻辑。
    - `imageDownloads.ts` 文件名/URL 逻辑。
-   - workflow polling / active run helper 若抽成纯函数。
-4. 对 canvas pointer 行为暂时先保留手动验收清单，等组件边界稳定后再加高成本测试。
+   - `image-chat/branching.ts` 分支和参考图裁剪逻辑。
+4. 对 canvas pointer 行为和复杂交互仍可先保留手动验收清单，等组件边界进一步稳定后再补更高成本测试。
 
 **验收**
 
-- `web/package.json` 新增 `lint`、`format:check` 或等价脚本。
-- CI/本地质量命令至少包含 `just web-build` + 前端 lint。
-- 有 3-5 个低成本单元测试覆盖 product-detail 纯函数。
+- 项目级文档与命令入口明确包含前端 lint/test，而不仅是 build。
+- `pnpm --dir web lint`、`pnpm --dir web test:run`、`just web-build` 可在本地稳定执行。
+- 继续维持并扩展现有低成本单元测试覆盖，优先覆盖纯函数与 page-local helper。
 
 **风险与回滚**
 
-- 风险：初次引入 lint 造成大量风格噪音。
-- 降低风险：规则先宽后严；首个 PR 只修自动发现的低风险问题。
-- 回滚：配置和脚本可独立 revert，不影响运行功能。
+- 风险：新增项目级入口后，贡献者会更频繁遇到历史 lint/test 失败，短期会暴露存量问题。
+- 降低风险：先统一入口与文档，再渐进收紧规则，不要求一次补齐所有交互测试。
+- 回滚：`justfile` 与文档入口可独立 revert，不影响运行功能。
 
 ### A4/A5. 领域层和 repository 抽象应渐进引入
 
@@ -347,8 +360,8 @@ backend/tests/helpers.py
 
 ## 7. 推荐优先级排序
 
-1. **先补安全网：前端 lint/test 最小 gate + 后端 typed error 兼容层。**
-   - 这是后续拆巨型文件的保险。
+1. **先用已有前端 lint/test 基线补齐项目级入口，同时补后端 typed error 兼容层。**
+   - 前端不是从零开始，重点是把现有 `lint` / `Vitest` 接到统一命令和日常检查里。
    - 影响面可控，能快速提高 review 和回归信心。
 
 2. **拆前端 ProductDetail 的低状态组件与纯 helper。**
@@ -390,8 +403,8 @@ backend/tests/helpers.py
 
 **建议任务**
 
-1. 前端引入 ESLint/format check 的最小配置。
-2. 前端为 product-detail 纯 helper 增加 Vitest 基线。
+1. 把已有前端 ESLint / Vitest 接入项目级命令入口。
+2. 扩展前端现有 product-detail / image-chat 纯 helper 测试基线。
 3. 后端引入 typed business errors，保留旧 `ValueError` fallback。
 
 **验收**
