@@ -4,6 +4,10 @@
 
 # ProductFlow
 
+<p align="center">
+  <a href="https://draw.devbin.de"><strong>体验站 / Live Demo</strong></a>
+</p>
+
 ProductFlow 是一个面向单人或小团队商家的开源自托管商品素材工作台。它把商品资料、AI 文案、参考图、AI/模板海报、连续生图会话和可视化商品工作流放在同一个私有部署里，目标是让运营者更快地把单个商品整理成可复用的电商素材。
 
 本仓库当前不是多租户 SaaS，也不包含托管服务账号。自托管部署需自行准备 PostgreSQL、Redis、后端、worker 和前端，并配置可用的文本/图片模型供应商。
