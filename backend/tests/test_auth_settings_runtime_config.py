@@ -24,11 +24,68 @@ def test_auth_session_required(configured_env: Path) -> None:
     unauthorized = client.get("/api/products")
     assert unauthorized.status_code == 401
 
+    wrong_key = client.post("/api/auth/session", json={"admin_key": "wrong-admin-key"})
+    assert wrong_key.status_code == 401
+    assert wrong_key.json()["detail"] == "管理员密钥不正确"
+
     _login(client)
 
     authorized = client.get("/api/products")
     assert authorized.status_code == 200
     assert authorized.json()["items"] == []
+
+
+def test_admin_access_can_be_disabled_and_re_enabled(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    admin_client = TestClient(app)
+    _login(admin_client)
+    _unlock_settings(admin_client)
+
+    disabled = admin_client.patch("/api/settings", json={"values": {"admin_access_required": False}})
+    assert disabled.status_code == 200
+    disabled_items = {item["key"]: item for item in disabled.json()["items"]}
+    assert disabled_items["admin_access_required"]["value"] is False
+    assert get_runtime_settings().admin_access_required is False
+
+    public_client = TestClient(app)
+    public_products = public_client.get("/api/products")
+    assert public_products.status_code == 200
+    assert public_products.json()["items"] == []
+
+    session_state = public_client.get("/api/auth/session")
+    assert session_state.status_code == 200
+    assert session_state.json() == {"authenticated": True, "access_required": False}
+
+    disabled_login = public_client.post("/api/auth/session", json={"admin_key": ""})
+    assert disabled_login.status_code == 200
+
+    locked_settings = public_client.get("/api/settings")
+    assert locked_settings.status_code == 403
+    assert locked_settings.json()["detail"] == "请先解锁系统配置"
+
+    _unlock_settings(public_client)
+    unlocked_settings = public_client.get("/api/settings")
+    assert unlocked_settings.status_code == 200
+
+    disabled_login_after_unlock = public_client.post("/api/auth/session", json={"admin_key": ""})
+    assert disabled_login_after_unlock.status_code == 200
+    still_unlocked = public_client.get("/api/settings/lock-state")
+    assert still_unlocked.status_code == 200
+    assert still_unlocked.json() == {"unlocked": True, "configured": True}
+
+    re_enabled = public_client.patch("/api/settings", json={"values": {"admin_access_required": True}})
+    assert re_enabled.status_code == 200
+    assert get_runtime_settings().admin_access_required is True
+
+    new_client = TestClient(app)
+    private_products = new_client.get("/api/products")
+    assert private_products.status_code == 401
+
+    required_session = new_client.get("/api/auth/session")
+    assert required_session.status_code == 200
+    assert required_session.json() == {"authenticated": False, "access_required": True}
 
 
 def test_settings_api_requires_secondary_unlock(configured_env: Path) -> None:
@@ -104,6 +161,8 @@ def test_settings_api_persists_database_overrides(configured_env: Path) -> None:
     assert initial_items["image_provider_kind"]["value"] == "mock"
     assert initial_items["image_provider_kind"]["source"] == "env_default"
     assert initial_items["generation_max_concurrent_tasks"]["value"] == 3
+    assert initial_items["admin_access_required"]["value"] is True
+    assert initial_items["admin_access_required"]["category"] == "安全与运维"
     assert initial_items["deletion_enabled"]["value"] is False
     assert initial_items["deletion_enabled"]["category"] == "安全与运维"
 
@@ -338,7 +397,11 @@ def test_image_generation_max_dimension_runtime_config_controls_size_bounds(conf
 
     runtime = client.get("/api/settings/runtime")
     assert runtime.status_code == 200
-    assert runtime.json() == {"image_generation_max_dimension": 3840, "deletion_enabled": False}
+    assert runtime.json() == {
+        "image_generation_max_dimension": 3840,
+        "admin_access_required": True,
+        "deletion_enabled": False,
+    }
 
     updated = client.patch(
         "/api/settings",

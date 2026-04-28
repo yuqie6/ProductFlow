@@ -150,6 +150,7 @@ class Settings(BaseSettings):
     job_max_attempts: int = 3
     job_retry_delay_ms: int = 10_000
     generation_max_concurrent_tasks: int = Field(default=3, ge=1, le=20)
+    admin_access_required: bool = True
     deletion_enabled: bool = False
 
     @field_validator("image_main_image_size", "image_promo_poster_size")
@@ -520,6 +521,16 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
         description="全局资源保护阈值；文案、海报、工作流和连续生图达到上限时会提示稍后重试。",
         minimum=1,
         maximum=20,
+    ),
+    ConfigDefinition(
+        key="admin_access_required",
+        label="要求登录访问密钥",
+        category="安全与运维",
+        input_type="boolean",
+        description=(
+            "默认开启，普通工作台和私有 API 需要 ADMIN_ACCESS_KEY 登录；关闭后仍需 SETTINGS_ACCESS_TOKEN "
+            "才能查看和修改系统配置。"
+        ),
     ),
     ConfigDefinition(
         key="deletion_enabled",

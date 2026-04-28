@@ -112,6 +112,85 @@ separate count query. The route `presentation/routes/products.py::list_products_
 
 Do not reintroduce full-table product loads for list pages.
 
+## Scenario: Runtime admin access toggle
+
+### 1. Scope / Trigger
+
+- Trigger: changing login/session auth, settings persistence, `/api/auth/session`, `/api/settings/runtime`, or the
+  settings page security section.
+- This is a cross-layer contract because `Settings`, config serialization, route dependencies, session responses,
+  frontend DTOs, and route gating must agree on the same field and security boundary.
+
+### 2. Signatures
+
+- Env-only secret: `Settings.admin_access_key: str` remains required and must not be stored in `app_settings`.
+- Runtime setting: `Settings.admin_access_required: bool = True`.
+- Config definition key: `admin_access_required`, non-secret, boolean, category `安全与运维`.
+- Runtime API response: `GET /api/settings/runtime` includes `admin_access_required`.
+- Session state response: `GET /api/auth/session` returns `authenticated: bool` and `access_required: bool`.
+- Guard helper: `presentation.deps.require_admin(request: Request) -> None`.
+
+### 3. Contracts
+
+- Default behavior is secure: `admin_access_required` is `True` unless explicitly set through env/defaults or
+  `app_settings`.
+- When `admin_access_required` is true, private workspace routes require a signed Cookie session with
+  `is_authenticated == True`.
+- When `admin_access_required` is false, private workspace routes guarded by `require_admin` are open without a login
+  cookie.
+- Disabling admin access must not bypass the independent settings lock. Full settings reads/writes still require
+  `SETTINGS_ACCESS_TOKEN` through `require_settings_unlocked`.
+- `POST /api/auth/session` is a no-op success when login is disabled and must leave the existing session untouched,
+  including any `settings_unlocked` flag.
+- `DELETE /api/auth/session` still clears the browser session; if login is disabled, the next session-state response is
+  authenticated again because access is no longer required.
+
+### 4. Validation & Error Matrix
+
+- `admin_access_required == True` and no login cookie -> private route returns `401`, `{"detail": "请先登录"}`.
+- `admin_access_required == True` and wrong admin key -> `POST /api/auth/session` returns `401`,
+  `{"detail": "管理员密钥不正确"}`.
+- `admin_access_required == False` and no login cookie -> private workspace route follows normal application behavior.
+- `admin_access_required == False` and no settings unlock -> `GET /api/settings` returns `403`,
+  `{"detail": "请先解锁系统配置"}`.
+- Re-enabling `admin_access_required` immediately restores the login requirement for unauthenticated clients.
+
+### 5. Good/Base/Bad Cases
+
+- Good: a trusted LAN deployment disables the login gate for normal product workflows while keeping settings protected.
+- Base: the default deployment keeps `admin_access_required=True` and requires `ADMIN_ACCESS_KEY` login.
+- Bad: storing `ADMIN_ACCESS_KEY` in DB settings; it is an env-only secret.
+- Bad: treating disabled login as permission to skip `SETTINGS_ACCESS_TOKEN`; settings protection is a separate boundary.
+- Bad: clearing `settings_unlocked` from `POST /api/auth/session` while login is disabled; that couples unrelated session
+  concerns.
+
+### 6. Tests Required
+
+- Default-required route test: unauthenticated private route returns 401.
+- Default-required login test: wrong admin key returns 401 with the documented detail.
+- Disabled-login route test: a fresh client can access a private workspace route without logging in.
+- Disabled-login session-state test: response is `{"authenticated": true, "access_required": false}`.
+- Settings-boundary test: disabled login still requires `SETTINGS_ACCESS_TOKEN` before full settings reads/writes.
+- No-op login test: disabled-login `POST /api/auth/session` does not clear an already unlocked settings session.
+- Re-enable test: setting `admin_access_required=True` makes a fresh unauthenticated client receive 401 again.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+if not get_runtime_settings().admin_access_required:
+    request.session.clear()
+    return SessionResponse()
+```
+
+Correct:
+
+```python
+if not get_runtime_settings().admin_access_required:
+    return SessionResponse()
+```
+
 ## Scenario: Runtime deletion toggle for traceability
 
 ### 1. Scope / Trigger

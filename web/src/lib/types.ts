@@ -15,6 +15,7 @@ export type WorkflowRunStatus = "running" | "succeeded" | "failed";
 
 export interface SessionState {
   authenticated: boolean;
+  access_required: boolean;
 }
 
 export interface SourceAsset {
@@ -424,6 +425,7 @@ export interface ConfigResponse {
 
 export interface RuntimeConfig {
   image_generation_max_dimension: number;
+  admin_access_required: boolean;
   deletion_enabled: boolean;
 }
 

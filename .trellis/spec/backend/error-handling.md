@@ -158,13 +158,23 @@ if product is None:
 
 ## Authentication and Session Errors
 
-`presentation/deps.py::require_admin` protects private API routes with a session flag and raises:
+`presentation/deps.py::require_admin` protects private API routes with a session flag when
+`get_runtime_settings().admin_access_required` is true. It raises:
 
 - `401` with detail `"请先登录"` when the session is not authenticated.
 
-`presentation/routes/auth.py::create_session` compares the submitted admin key with `Settings.admin_access_key` and raises:
+When `admin_access_required` is false, `require_admin` allows private workspace routes without the admin login session.
+This does not bypass `presentation/routes/settings.py::require_settings_unlocked`; full settings reads/writes still require
+the independent `SETTINGS_ACCESS_TOKEN` unlock.
+
+`presentation/routes/auth.py::create_session` compares the submitted admin key with `Settings.admin_access_key` while
+login is required and raises:
 
 - `401` with detail `"管理员密钥不正确"` for an invalid key.
+
+When login is disabled, `POST /api/auth/session` is a harmless no-op success and leaves the current session untouched. `GET
+/api/auth/session` returns `authenticated=true` and `access_required=false`; after login is re-enabled, an unauthenticated
+session again returns `authenticated=false` and `access_required=true`.
 
 Routes that require auth use `dependencies=[Depends(require_admin)]` on the router, for example
 `presentation/routes/products.py`, `presentation/routes/image_sessions.py`, `presentation/routes/jobs.py`, and

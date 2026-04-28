@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 
 class SessionCreateRequest(BaseModel):
-    admin_key: str = Field(min_length=8)
+    admin_key: str = Field(default="")
 
 
 class SessionResponse(BaseModel):
@@ -13,3 +13,4 @@ class SessionResponse(BaseModel):
 
 class SessionStateResponse(BaseModel):
     authenticated: bool
+    access_required: bool
