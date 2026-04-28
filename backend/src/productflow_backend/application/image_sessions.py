@@ -5,6 +5,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from dramatiq.middleware.time_limit import TimeLimitExceeded
 from sqlalchemy import desc, func, select, update
 from sqlalchemy.orm import Session, selectinload
 
@@ -37,6 +38,8 @@ DEFAULT_SESSION_TITLE = "未命名会话"
 DEFAULT_ASSISTANT_MESSAGE = "已按本轮选择的图片上下文生成候选，你可以从任意候选继续。"
 MAX_BRANCH_CONTEXT_IMAGES = 6
 GENERIC_IMAGE_GENERATION_FAILURE = "图片生成失败，请稍后重试"
+PARTIAL_IMAGE_GENERATION_FAILURE = "已生成 {completed}/{requested} 张候选，后续生成失败，请重新发起生成补齐。"
+PARTIAL_IMAGE_GENERATION_TIMEOUT = "已生成 {completed}/{requested} 张候选，但任务超时，剩余候选未完成。"
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +61,14 @@ class ImageSessionStatusSnapshot:
     latest_round_id: str | None
     latest_generation_group_id: str | None
     provider_output_by_generation_group: dict[str, dict[str, Any] | None]
+
+
+@dataclass(frozen=True, slots=True)
+class ImageSessionGenerationExecutionError(Exception):
+    completed_candidates: int
+    requested_candidates: int
+    generation_group_id: str | None
+    timed_out: bool = False
 
 
 def _image_session_query():
@@ -466,9 +477,12 @@ def _execute_image_session_round_generation(
 
     generation_group_id = new_id()
     service = ImageChatService()
-    saved_generated_paths: list[str] = []
-    try:
-        for candidate_index in range(1, generation_count + 1):
+    should_update_default_title = not image_session.rounds and image_session.title == DEFAULT_SESSION_TITLE
+    completed_candidates = 0
+
+    for candidate_index in range(1, generation_count + 1):
+        relative_path: str | None = None
+        try:
             result = service.generate(
                 prompt=prompt,
                 size=normalized_size,
@@ -483,7 +497,6 @@ def _execute_image_session_round_generation(
                 result.bytes_data,
                 suffix=infer_extension(result.mime_type),
             )
-            saved_generated_paths.append(relative_path)
             asset = ImageSessionAsset(
                 session_id=image_session.id,
                 kind=ImageSessionAssetKind.GENERATED_IMAGE,
@@ -527,23 +540,40 @@ def _execute_image_session_round_generation(
                 generated_asset_id=asset.id,
             )
             session.add(round_item)
-        if not image_session.rounds and image_session.title == DEFAULT_SESSION_TITLE:
-            image_session.title = _trim_title(prompt)
-        image_session.updated_at = now_utc()
-        if generation_task_id is not None:
-            task = session.get(ImageSessionGenerationTask, generation_task_id)
-            if task is not None:
-                task.status = JobStatus.SUCCEEDED
-                task.result_generation_group_id = generation_group_id
-                task.is_retryable = False
-                task.finished_at = now_utc()
-        session.commit()
-    except Exception:
-        session.rollback()
-        for path in saved_generated_paths:
-            with suppress(ValueError, OSError):
-                storage.delete_image_with_variants(path)
-        raise
+            if should_update_default_title:
+                image_session.title = _trim_title(prompt)
+                should_update_default_title = False
+            image_session.updated_at = now_utc()
+            if generation_task_id is not None and candidate_index == generation_count:
+                task = session.get(ImageSessionGenerationTask, generation_task_id)
+                if task is not None:
+                    _finish_image_generation_task(
+                        session,
+                        task=task,
+                        status=JobStatus.SUCCEEDED,
+                        result_generation_group_id=generation_group_id,
+                        is_retryable=False,
+                    )
+                else:
+                    session.commit()
+            else:
+                session.commit()
+            completed_candidates += 1
+        except BaseException as exc:  # noqa: BLE001
+            session.rollback()
+            if relative_path is not None:
+                with suppress(ValueError, OSError):
+                    storage.delete_image_with_variants(relative_path)
+            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                raise
+            if generation_task_id is None:
+                raise
+            raise ImageSessionGenerationExecutionError(
+                completed_candidates=completed_candidates,
+                requested_candidates=generation_count,
+                generation_group_id=generation_group_id if completed_candidates else None,
+                timed_out=isinstance(exc, TimeLimitExceeded),
+            ) from exc
     session.expire_all()
     return ImageSessionRoundGenerationResult(
         image_session=_get_image_session_or_raise(session, image_session.id),
@@ -634,6 +664,26 @@ def mark_image_session_generation_task_enqueue_failed(session: Session, *, task_
     session.commit()
 
 
+def _finish_image_generation_task(
+    session: Session,
+    *,
+    task: ImageSessionGenerationTask,
+    status: JobStatus,
+    failure_reason: str | None = None,
+    result_generation_group_id: str | None = None,
+    is_retryable: bool,
+) -> None:
+    task.status = status
+    task.failure_reason = failure_reason[:1000] if failure_reason else None
+    task.result_generation_group_id = result_generation_group_id
+    task.is_retryable = is_retryable
+    task.finished_at = now_utc()
+    image_session = session.get(ImageSession, task.session_id)
+    if image_session is not None:
+        image_session.updated_at = now_utc()
+    session.commit()
+
+
 def _mark_image_generation_task_running(session: Session, task: ImageSessionGenerationTask) -> bool:
     if task.status != JobStatus.QUEUED:
         return False
@@ -663,14 +713,13 @@ def _mark_image_generation_task_failed(session: Session, *, task_id: str, reason
     task = session.get(ImageSessionGenerationTask, task_id)
     if task is None:
         return
-    task.status = JobStatus.FAILED
-    task.failure_reason = reason[:1000]
-    task.is_retryable = False
-    task.finished_at = now_utc()
-    image_session = session.get(ImageSession, task.session_id)
-    if image_session is not None:
-        image_session.updated_at = now_utc()
-    session.commit()
+    _finish_image_generation_task(
+        session,
+        task=task,
+        status=JobStatus.FAILED,
+        failure_reason=reason,
+        is_retryable=False,
+    )
 
 
 def execute_image_session_generation_task(task_id: str) -> None:
@@ -693,7 +742,29 @@ def execute_image_session_generation_task(task_id: str) -> None:
                 tool_options=task.tool_options,
                 generation_task_id=task_id,
             )
-        except Exception:  # noqa: BLE001
+        except ImageSessionGenerationExecutionError as exc:
+            session.rollback()
+            reason = GENERIC_IMAGE_GENERATION_FAILURE
+            if exc.completed_candidates > 0:
+                template = PARTIAL_IMAGE_GENERATION_TIMEOUT if exc.timed_out else PARTIAL_IMAGE_GENERATION_FAILURE
+                reason = template.format(
+                    completed=exc.completed_candidates,
+                    requested=exc.requested_candidates,
+                )
+            task = session.get(ImageSessionGenerationTask, task_id)
+            if task is not None:
+                _finish_image_generation_task(
+                    session,
+                    task=task,
+                    status=JobStatus.FAILED,
+                    failure_reason=reason,
+                    result_generation_group_id=exc.generation_group_id,
+                    is_retryable=False,
+                )
+            return
+        except BaseException as exc:  # noqa: BLE001
+            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                raise
             session.rollback()
             _mark_image_generation_task_failed(
                 session,

@@ -15,10 +15,11 @@ from productflow_backend.infrastructure.db.models import (
     ImageSessionRound,
 )
 from productflow_backend.infrastructure.db.session import get_session_factory
-from productflow_backend.main import app
+from productflow_backend.presentation.api import create_app
 
 
 def test_generated_image_can_be_saved_to_gallery_idempotently(configured_env: Path, db_session) -> None:
+    app = create_app()
     client = TestClient(app)
     _login(client)
     product = client.post(
@@ -72,6 +73,7 @@ def test_generated_image_can_be_saved_to_gallery_idempotently(configured_env: Pa
 
 
 def test_gallery_rejects_non_generated_session_assets(configured_env: Path) -> None:
+    app = create_app()
     client = TestClient(app)
     _login(client)
     created_session = client.post("/api/image-sessions", json={"title": "参考图会话"})
@@ -103,6 +105,7 @@ def test_gallery_rejects_generated_asset_without_round(configured_env: Path, db_
     db_session.add(asset)
     db_session.commit()
 
+    app = create_app()
     client = TestClient(app)
     _login(client)
 

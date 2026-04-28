@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from dramatiq.middleware.time_limit import TimeLimitExceeded
 from fastapi.testclient import TestClient
 from helpers import (
     _enable_deletion,
@@ -391,6 +392,110 @@ def test_image_session_worker_failure_uses_generic_safe_reason(
     assert task.failure_reason == "图片生成失败，请稍后重试"
 
 
+def test_image_session_worker_timeout_after_partial_success_persists_completed_candidates(
+    configured_env: Path,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.application.image_sessions import (
+        create_image_session,
+        create_image_session_generation_task,
+        execute_image_session_generation_task,
+    )
+    from productflow_backend.infrastructure.image.chat_service import GeneratedChatImage
+
+    calls = {"count": 0}
+
+    def generate_then_timeout(self, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 2:
+            raise TimeLimitExceeded()
+        return GeneratedChatImage(
+            bytes_data=_make_demo_image_bytes_with_size(1024, 1024),
+            mime_type="image/png",
+            model_name="mock-image-chat-v1",
+            provider_name="mock",
+            prompt_version="test-v1",
+            size=kwargs["size"],
+            generated_at=datetime.now(UTC),
+            provider_request_json={"size": kwargs["size"], "candidate": calls["count"]},
+            provider_output_json={},
+        )
+
+    monkeypatch.setattr(
+        "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
+        generate_then_timeout,
+    )
+
+    image_session = create_image_session(db_session, product_id=None, title="部分成功超时")
+    result = create_image_session_generation_task(
+        db_session,
+        image_session_id=image_session.id,
+        prompt="生成两张，第二张超时",
+        size="1024x1024",
+        generation_count=2,
+    )
+
+    execute_image_session_generation_task(result.task.id)
+
+    db_session.expire_all()
+    task = db_session.get(ImageSessionGenerationTask, result.task.id)
+    rounds = (
+        db_session.query(ImageSessionRound)
+        .filter(ImageSessionRound.session_id == image_session.id)
+        .order_by(ImageSessionRound.candidate_index)
+        .all()
+    )
+
+    assert task is not None
+    assert task.status == "failed"
+    assert task.failure_reason == "已生成 1/2 张候选，但任务超时，剩余候选未完成。"
+    assert task.result_generation_group_id is not None
+    assert task.finished_at is not None
+    assert task.is_retryable is False
+    assert len(rounds) == 1
+    assert rounds[0].candidate_index == 1
+    assert rounds[0].candidate_count == 2
+    assert rounds[0].generation_group_id == task.result_generation_group_id
+    assert Path(configured_env, rounds[0].generated_asset.storage_path).exists()
+
+
+def test_image_session_worker_marks_task_failed_when_time_limit_raises_outside_candidate_loop(
+    configured_env: Path,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.application.image_sessions import (
+        create_image_session,
+        create_image_session_generation_task,
+        execute_image_session_generation_task,
+    )
+
+    monkeypatch.setattr(
+        "productflow_backend.application.image_sessions._execute_image_session_round_generation",
+        lambda *args, **kwargs: (_ for _ in ()).throw(TimeLimitExceeded()),
+    )
+
+    image_session = create_image_session(db_session, product_id=None, title="整体超时")
+    result = create_image_session_generation_task(
+        db_session,
+        image_session_id=image_session.id,
+        prompt="进入候选循环前超时",
+        size="1024x1024",
+    )
+
+    execute_image_session_generation_task(result.task.id)
+
+    db_session.expire_all()
+    task = db_session.get(ImageSessionGenerationTask, result.task.id)
+
+    assert task is not None
+    assert task.status == "failed"
+    assert task.failure_reason == "图片生成失败，请稍后重试"
+    assert task.finished_at is not None
+    assert task.is_retryable is False
+
+
 def test_image_session_worker_duplicate_message_noops_terminal_task(
     configured_env: Path,
     db_session,
@@ -672,6 +777,16 @@ def test_image_session_multi_candidate_generation_persists_one_round_per_candida
     assert len(persisted_rounds) == 3
     assert {round_item.generation_group_id for round_item in persisted_rounds} == group_ids
     assert [round_item.candidate_index for round_item in persisted_rounds] == [1, 2, 3]
+
+
+def test_image_session_worker_actor_uses_extended_time_limit() -> None:
+    from productflow_backend.workers import (
+        IMAGE_SESSION_GENERATION_TIME_LIMIT_MS,
+        run_image_session_generation_task,
+    )
+
+    assert IMAGE_SESSION_GENERATION_TIME_LIMIT_MS == 30 * 60 * 1000
+    assert run_image_session_generation_task.options["time_limit"] == IMAGE_SESSION_GENERATION_TIME_LIMIT_MS
 
 
 def test_image_session_generation_accepts_custom_size_and_rejects_invalid_dimensions(configured_env: Path) -> None:
