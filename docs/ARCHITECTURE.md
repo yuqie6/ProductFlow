@@ -1,5 +1,7 @@
 # ProductFlow Architecture
 
+当前架构健康度、已完成治理和剩余风险见 `docs/ARCHITECTURE_HEALTH_REVIEW.md`；本文保持为系统结构说明。
+
 ## 1. 系统概览
 
 ProductFlow 由前端、后端 API、后台 worker、PostgreSQL、Redis 和本地文件存储组成：
@@ -26,7 +28,9 @@ React/Vite web
 后端代码位于 `backend/src/productflow_backend/`，按以下层组织：
 
 - `presentation/`：FastAPI app、路由、鉴权依赖、Pydantic schemas、上传校验。
-- `application/`：商品、文案、海报、图片会话、商品工作流等用例逻辑。
+- `application/`：商品、文案、海报、画廊、图片会话、商品工作流等用例逻辑。商品工作流已拆成 graph /
+  mutations / query / execution / context / artifacts / dependencies 等 page-facing use case 模块，由
+  `product_workflows.py` 作为兼容 facade 对外暴露。
 - `domain/`：稳定枚举，如任务状态、素材类型、工作流节点类型。
 - `infrastructure/`：SQLAlchemy models/session、队列、storage、text/image provider、海报 renderer。
 - `workers.py`：Dramatiq actor 入口。
@@ -38,13 +42,21 @@ React/Vite web
 
 前端代码位于 `web/src/`：
 
-- `pages/`：登录、商品列表、创建商品、商品详情、设置、图片会话页面（当前路由为 `/image-chat` 和 `/products/:productId/image-chat`）。
+- `pages/`：登录、商品列表、创建商品、商品详情、画廊、设置、图片会话页面（当前路由为 `/image-chat` 和
+  `/products/:productId/image-chat`）。
 - `components/`：共享 UI，如顶栏、状态标签、图片拖拽上传区和产品内引导。
 - `lib/api.ts`：集中封装 REST API 请求。
 - `lib/types.ts`：前端 DTO 类型，需与后端 schemas 保持一致。
 - `lib/onboarding.ts`：产品内 guided onboarding 的轻量步骤和浏览器本地进度状态。
 
-前端使用 TanStack Query 管理服务端状态。商品详情页会轮询任务/工作流状态，并在 mutation 成功后更新相关 query cache。
+前端使用 TanStack Query 管理服务端状态。商品详情页和连续生图页对运行中状态采用轻量 status 轮询：
+
+- 连续生图运行中轮询 `['image-session-status', selectedSessionId]`，只合并任务状态，完成后再刷新完整 session。
+- 商品工作流运行中轮询 `['product-workflow-status', productId]`，只合并 node/run 状态，完成后再刷新完整 workflow
+  和商品产物查询。
+
+不要重新给完整 `ImageSessionDetailResponse` 或完整 `ProductWorkflowResponse` 加 active 轮询；它们包含历史图片、
+节点配置、产物引用和运行记录，运行中高频刷新会放大前端渲染和后端序列化压力。
 
 商品详情页当前是 ProductFlow workbench：画布负责节点、连接线、缩放、平移和节点拖拽；右侧侧栏负责 Details、Runs、Images。画布缩放比例和侧栏宽度是浏览器本地偏好，工作流节点、连接、运行状态和产物仍以数据库为准。
 
@@ -66,7 +78,10 @@ Product
 ```text
 ImageSession
   -> ImageSessionAsset(reference_upload/generated_image)
+  -> ImageSessionRound(one generated candidate per row)
+  -> ImageSessionGenerationTask(durable async generation task)
   -> optional Product attachment
+  -> optional ImageGalleryEntry
 ```
 
 商品 DAG 工作流链路：
@@ -90,10 +105,11 @@ PostgreSQL 是元数据和运行状态的权威存储；Redis/Dramatiq 只负责
 
 ## 5. 异步任务与恢复
 
-当前有两套后台执行入口：
+当前有三套后台执行入口：
 
 1. 传统 `JobRun`：用于文案生成和海报生成。
 2. `WorkflowRun`：用于商品 DAG 工作流执行。
+3. `ImageSessionGenerationTask`：用于连续生图异步生成。
 
 共同原则：
 
@@ -103,11 +119,14 @@ PostgreSQL 是元数据和运行状态的权威存储；Redis/Dramatiq 只负责
 - API 启动时会恢复 queued 的未完成任务/工作流。
 - worker 启动时可重置 stale running 状态后重新投递。
 - Dramatiq actor 对 terminal/currently-running 的重复消息应 no-op。
+- 全局生成并发上限通过数据库中的 active `JobRun`、`WorkflowRun`、`ImageSessionGenerationTask` 计数实现。
+- `/api/generation-queue` 返回全局 durable 队列概览；连续生图 status 响应会带回当前任务的队列位置。
 
 相关入口：
 
 - `productflow_backend.infrastructure.queue.recover_unfinished_jobs`
 - `productflow_backend.infrastructure.queue.recover_unfinished_workflow_runs`
+- `productflow_backend.infrastructure.queue.recover_unfinished_image_session_generation_tasks`
 - `productflow_backend.workers`
 
 ## 6. Provider 架构
@@ -127,7 +146,7 @@ ProductFlow 把模型能力按模态拆分。
 图片 provider 位于 `infrastructure/image/`，统一服务于海报生成和图片会话。当前实现：
 
 - `mock`
-- `openai_responses`（Responses API `image_generation` 工具，支持 `input_image` 和连续上下文）
+- `openai_responses`（Responses API `image_generation` 工具，支持 `input_image`；ProductFlow 侧的连续生图分支上下文由显式选择的基图和参考图构造）
 
 Provider 选择由 `config.py` 和对应 factory 控制。路由不直接依赖具体 SDK。
 
