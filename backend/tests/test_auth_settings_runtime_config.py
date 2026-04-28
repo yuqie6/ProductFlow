@@ -173,7 +173,6 @@ def test_settings_api_persists_database_overrides(configured_env: Path) -> None:
                 "image_provider_kind": "openai_responses",
                 "image_api_key": "database-image-key",
                 "image_generate_model": "gpt-5.4-mini",
-                "job_retry_delay_ms": 2500,
                 "generation_max_concurrent_tasks": 2,
                 "deletion_enabled": True,
             }
@@ -187,7 +186,6 @@ def test_settings_api_persists_database_overrides(configured_env: Path) -> None:
     assert updated_items["image_api_key"]["has_value"] is True
     assert get_runtime_settings().image_provider_kind == "openai_responses"
     assert get_runtime_settings().image_api_key == "database-image-key"
-    assert get_runtime_settings().job_retry_delay_ms == 2500
     assert get_runtime_settings().generation_max_concurrent_tasks == 2
     assert get_runtime_settings().deletion_enabled is True
 

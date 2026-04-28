@@ -10,7 +10,6 @@ from productflow_backend.config import get_settings
 from productflow_backend.domain.enums import (
     CopyStatus,
     ImageSessionAssetKind,
-    JobKind,
     JobStatus,
     PosterKind,
     SourceAssetKind,
@@ -23,7 +22,6 @@ from productflow_backend.infrastructure.db.models import (
     ImageGalleryEntry,
     ImageSessionAsset,
     ImageSessionGenerationTask,
-    JobRun,
     PosterVariant,
     SourceAsset,
     WorkflowNode,
@@ -38,10 +36,7 @@ def test_sqlalchemy_enum_columns_use_database_values() -> None:
     assert ImageSessionAsset.__table__.c.kind.type.enums == [member.value for member in ImageSessionAssetKind]
     assert CopySet.__table__.c.status.type.enums == [member.value for member in CopyStatus]
     assert PosterVariant.__table__.c.kind.type.enums == [member.value for member in PosterKind]
-    assert JobRun.__table__.c.kind.type.enums == [member.value for member in JobKind]
-    assert JobRun.__table__.c.status.type.enums == [member.value for member in JobStatus]
     assert ImageSessionGenerationTask.__table__.c.status.type.enums == [member.value for member in JobStatus]
-    assert JobRun.__table__.c.target_poster_kind.type.enums == [member.value for member in PosterKind]
     assert WorkflowNode.__table__.c.node_type.type.enums == [member.value for member in WorkflowNodeType]
     assert WorkflowNode.__table__.c.status.type.enums == [member.value for member in WorkflowNodeStatus]
     assert WorkflowRun.__table__.c.status.type.enums == [member.value for member in WorkflowRunStatus]
@@ -129,6 +124,51 @@ def test_gallery_migration_schema_and_downgrade_support_sqlite(tmp_path: Path, m
     engine = sa.create_engine(f"sqlite:///{database_path}")
     inspector = sa.inspect(engine)
     assert "image_gallery_entries" not in inspector.get_table_names()
+    engine.dispose()
+    get_settings.cache_clear()
+
+
+def test_job_runs_drop_migration_and_downgrade_support_sqlite(tmp_path: Path, monkeypatch) -> None:
+    database_path = tmp_path / "job-runs-drop.db"
+    storage_root = tmp_path / "storage"
+    monkeypatch.setenv("ADMIN_ACCESS_KEY", "super-secret-admin-key")
+    monkeypatch.setenv("SESSION_SECRET", "super-secret-session-key-123")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path}")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/9")
+    monkeypatch.setenv("STORAGE_ROOT", str(storage_root))
+    get_settings.cache_clear()
+
+    backend_dir = Path(__file__).resolve().parents[1]
+    config = Config(str(backend_dir / "alembic.ini"))
+    config.set_main_option("script_location", str(backend_dir / "alembic"))
+    command.upgrade(config, "20260428_0016")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    inspector = sa.inspect(engine)
+    assert "job_runs" in inspector.get_table_names()
+    assert "uq_job_runs_one_active_per_product_kind" in {
+        index["name"] for index in inspector.get_indexes("job_runs")
+    }
+
+    engine.dispose()
+    command.upgrade(config, "head")
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    inspector = sa.inspect(engine)
+    assert "job_runs" not in inspector.get_table_names()
+
+    engine.dispose()
+    command.downgrade(config, "20260428_0016")
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    inspector = sa.inspect(engine)
+    assert "job_runs" in inspector.get_table_names()
+    columns = {column["name"]: column for column in inspector.get_columns("job_runs")}
+    assert columns["product_id"]["nullable"] is False
+    assert columns["kind"]["nullable"] is False
+    assert columns["status"]["nullable"] is False
+    assert "uq_job_runs_one_active_per_product_kind" in {
+        index["name"] for index in inspector.get_indexes("job_runs")
+    }
+
     engine.dispose()
     get_settings.cache_clear()
 

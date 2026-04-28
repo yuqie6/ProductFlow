@@ -7,13 +7,10 @@ import dramatiq
 
 from productflow_backend.application.image_sessions import execute_image_session_generation_task
 from productflow_backend.application.product_workflows import execute_product_workflow_run
-from productflow_backend.application.use_cases import execute_copy_job, execute_poster_job
-from productflow_backend.config import get_runtime_settings
 from productflow_backend.infrastructure.logging import cleanup_old_logs, configure_logging
 from productflow_backend.infrastructure.queue import (
     get_broker,
     recover_unfinished_image_session_generation_tasks,
-    recover_unfinished_jobs,
     recover_unfinished_workflow_runs,
 )
 
@@ -21,20 +18,6 @@ configure_logging()
 get_broker()
 
 IMAGE_SESSION_GENERATION_TIME_LIMIT_MS = 30 * 60 * 1000
-
-
-@dramatiq.actor(max_retries=0)
-def run_copy_generation(job_id: str) -> None:
-    """文案生成 worker：执行失败时自调度重试。"""
-    if execute_copy_job(job_id):
-        run_copy_generation.send_with_options(args=(job_id,), delay=get_runtime_settings().job_retry_delay_ms)
-
-
-@dramatiq.actor(max_retries=0)
-def run_poster_generation(job_id: str) -> None:
-    """海报生成 worker：执行失败时自调度重试。"""
-    if execute_poster_job(job_id):
-        run_poster_generation.send_with_options(args=(job_id,), delay=get_runtime_settings().job_retry_delay_ms)
 
 
 @dramatiq.actor(max_retries=0)
@@ -55,6 +38,5 @@ def _running_under_dramatiq_cli() -> bool:
 
 if _running_under_dramatiq_cli():
     cleanup_old_logs()
-    recover_unfinished_jobs(reset_stale_running=True)
     recover_unfinished_workflow_runs(reset_stale_running=True)
     recover_unfinished_image_session_generation_tasks(reset_stale_running=True)

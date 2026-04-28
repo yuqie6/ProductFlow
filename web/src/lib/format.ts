@@ -29,7 +29,3 @@ export function formatPrice(value: string | null | undefined): string {
   return `¥${value}`;
 }
 
-export function jobIsRunning(status: string | null | undefined): boolean {
-  return status === "queued" || status === "running";
-}
-

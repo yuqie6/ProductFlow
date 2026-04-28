@@ -59,6 +59,6 @@ def _execute_image_session_queue_inline(monkeypatch: pytest.MonkeyPatch) -> None
     from productflow_backend.application.image_sessions import execute_image_session_generation_task
 
     monkeypatch.setattr(
-        "productflow_backend.presentation.routes.image_sessions.enqueue_image_session_generation_task",
+        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
         execute_image_session_generation_task,
     )

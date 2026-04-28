@@ -21,7 +21,6 @@ from productflow_backend.infrastructure.db.models import (
     SourceAsset,
 )
 from productflow_backend.presentation.image_variants import build_image_urls
-from productflow_backend.presentation.schemas.jobs import JobRunResponse, serialize_job
 
 
 class SourceAssetResponse(BaseModel):
@@ -116,7 +115,6 @@ class ProductDetailResponse(BaseModel):
     current_confirmed_copy_set: CopySetResponse | None = None
     copy_sets: list[CopySetResponse]
     poster_variants: list[PosterVariantResponse]
-    recent_jobs: list[JobRunResponse]
     created_at: datetime
     updated_at: datetime
 
@@ -124,7 +122,6 @@ class ProductDetailResponse(BaseModel):
 class ProductHistoryResponse(BaseModel):
     copy_sets: list[CopySetResponse]
     poster_variants: list[PosterVariantResponse]
-    jobs: list[JobRunResponse]
 
 
 class CopySetUpdateRequest(BaseModel):
@@ -223,7 +220,6 @@ def serialize_product_detail(product: Product) -> ProductDetailResponse:
     latest_brief = max(product.creative_briefs, key=lambda item: item.created_at, default=None)
     copy_sets = sorted(product.copy_sets, key=lambda item: item.created_at, reverse=True)
     poster_variants = sorted(product.poster_variants, key=lambda item: item.created_at, reverse=True)
-    jobs = sorted(product.job_runs, key=lambda item: item.created_at, reverse=True)[:10]
     return ProductDetailResponse(
         id=product.id,
         name=product.name,
@@ -238,7 +234,6 @@ def serialize_product_detail(product: Product) -> ProductDetailResponse:
         ),
         copy_sets=[serialize_copy_set(item) for item in copy_sets],
         poster_variants=[serialize_poster_variant(item) for item in poster_variants],
-        recent_jobs=[serialize_job(item) for item in jobs],
         created_at=product.created_at,
         updated_at=product.updated_at,
     )

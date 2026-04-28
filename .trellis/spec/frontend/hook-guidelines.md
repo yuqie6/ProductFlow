@@ -36,7 +36,7 @@ Examples:
 - `App.tsx` uses `['session']` for `api.getSessionState` with `retry: false`.
 - `ProductListPage.tsx` uses `['products']` for `api.listProducts`.
 - `ProductDetailPage.tsx` uses `['product', productId]`, `['product-history', productId]`,
-  `['product-workflow', productId]`, `['product-workflow-status', productId]`, and `['job', jobId]`.
+  `['product-workflow', productId]`, `['product-workflow-status', productId]`, and `['runtime-config']`.
 - `ImageChatPage.tsx` uses `['image-sessions', productId ?? 'standalone']`, `['image-session', selectedSessionId]`,
   `['image-session-status', selectedSessionId]`, `['config']`, and product queries.
 - `SettingsPage.tsx` uses `['config']` for runtime settings.
@@ -61,20 +61,21 @@ Keep cache keys consistent with the page that reads them. If a mutation changes 
 
 ## Polling Pattern
 
-Long-running product copy/poster jobs are polled from `ProductDetailPage.tsx` with `refetchInterval` that stops when the
-job is no longer `queued` or `running`:
+Long-running product workflow and continuous image-session tasks are polled through their owning status/detail queries.
+Polling must stop when no durable run/task is still `queued` or `running`:
 
 ```tsx
 refetchInterval: (query) => {
-  const data = query.state.data as JobRun | undefined;
-  if (!data || jobIsRunning(data.status)) {
+  const data = query.state.data as ProductWorkflowStatus | undefined;
+  if (!data || hasActiveWorkflow(data)) {
     return 1000;
   }
   return false;
 }
 ```
 
-Use the shared `jobIsRunning(...)` helper from `web/src/lib/format.ts` rather than duplicating status checks.
+Keep workflow polling status-specific: use the lightweight workflow status DTO and derive active state from queued/running
+nodes or running workflow runs.
 
 ## Scenario: ImageChat active-task lightweight status polling
 
@@ -215,7 +216,7 @@ useQuery({ queryKey: ["product-workflow-status", productId], refetchInterval: 12
 Use `useState` for local form/UI state:
 
 - `ProductCreatePage.tsx`: product form fields, selected file(s), error text.
-- `ProductDetailPage.tsx`: copy editing state, active job IDs, error text.
+- `ProductDetailPage.tsx`: copy editing state, selected workbench/canvas state, error text.
 - `ImageChatPage.tsx`: selected session/asset IDs, draft prompt, size, rename mode, target product, messages.
 - `SettingsPage.tsx`: draft config values, touched secret keys, resetting key, saved/error messages.
 
@@ -226,8 +227,8 @@ Use `useMemo` for derived values that depend on fetched data or local state:
 - `SettingsPage.tsx` groups config items by category.
 
 Use `useEffect` for synchronization side effects, not for deriving values that can be calculated during render. Current
-examples include auth redirects in `LoginPage.tsx`, job completion invalidation in `ProductDetailPage.tsx`, and draft reset
-from fetched config in `SettingsPage.tsx`.
+examples include auth redirects in `LoginPage.tsx`, workflow status completion invalidation in
+`ProductDetailPage.tsx`, and draft reset from fetched config in `SettingsPage.tsx`.
 
 ---
 
@@ -266,7 +267,7 @@ function useWorkflowCanvas(productId: string) {
 Likely future extraction candidates, if duplication grows:
 
 - session/logout behavior shared by `ProductListPage.tsx`, `ImageChatPage.tsx`, and `SettingsPage.tsx`.
-- job polling behavior from `ProductDetailPage.tsx`.
+- workflow status polling behavior from `ProductDetailPage.tsx`.
 - config draft handling from `SettingsPage.tsx`.
 
 Do not create a `hooks/` directory for one-off logic that is still page-specific.

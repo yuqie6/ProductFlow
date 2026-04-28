@@ -70,7 +70,6 @@ Product
   -> CreativeBrief
   -> CopySet(draft/confirmed)
   -> PosterVariant(main_image/promo_poster)
-  -> JobRun(copy_generation/poster_generation)
 ```
 
 连续生图链路：
@@ -105,26 +104,24 @@ PostgreSQL 是元数据和运行状态的权威存储；Redis/Dramatiq 只负责
 
 ## 5. 异步任务与恢复
 
-当前有三套后台执行入口：
+当前有两套后台执行入口：
 
-1. 传统 `JobRun`：用于文案生成和海报生成。
-2. `WorkflowRun`：用于商品 DAG 工作流执行。
-3. `ImageSessionGenerationTask`：用于连续生图异步生成。
+1. `WorkflowRun`：用于商品 DAG 工作流执行。
+2. `ImageSessionGenerationTask`：用于连续生图异步生成。
 
 共同原则：
 
 - 数据库记录先落地，Redis 消息只是可恢复的投递尝试。
-- 同一商品同类任务/工作流通过数据库约束避免重复 active run。
+- 同一商品工作流通过数据库约束避免重复 active run。
 - enqueue 失败时会把新建 run 标记为失败，避免 active 状态卡死。
 - API 启动时会恢复 queued 的未完成任务/工作流。
 - worker 启动时可重置 stale running 状态后重新投递。
 - Dramatiq actor 对 terminal/currently-running 的重复消息应 no-op。
-- 全局生成并发上限通过数据库中的 active `JobRun`、`WorkflowRun`、`ImageSessionGenerationTask` 计数实现。
+- 全局生成并发上限通过数据库中的 active `WorkflowRun`、`ImageSessionGenerationTask` 计数实现。
 - `/api/generation-queue` 返回全局 durable 队列概览；连续生图 status 响应会带回当前任务的队列位置。
 
 相关入口：
 
-- `productflow_backend.infrastructure.queue.recover_unfinished_jobs`
 - `productflow_backend.infrastructure.queue.recover_unfinished_workflow_runs`
 - `productflow_backend.infrastructure.queue.recover_unfinished_image_session_generation_tasks`
 - `productflow_backend.workers`

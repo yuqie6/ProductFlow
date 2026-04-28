@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 from helpers import (
@@ -14,15 +13,8 @@ from helpers import (
 )
 
 from productflow_backend.application.use_cases import (
-    _is_retryable_exception,
     add_reference_images,
-    confirm_copy_set,
-    create_copy_job,
-    create_poster_job,
     create_product,
-    execute_copy_job,
-    execute_poster_job,
-    get_product_detail,
 )
 from productflow_backend.domain.enums import (
     SourceAssetKind,
@@ -38,46 +30,6 @@ def _execute_workflow_queue_inline_fixture(monkeypatch: pytest.MonkeyPatch) -> N
 
     _execute_workflow_queue_inline(monkeypatch)
 
-
-def test_end_to_end_copy_and_poster_workflow(db_session, configured_env: Path) -> None:
-    product = create_product(
-        db_session,
-        name="防滑菜板",
-        category="家居百货",
-        price="29.90",
-        source_note=None,
-        image_bytes=_make_demo_image_bytes(),
-        filename="product.png",
-        content_type="image/png",
-    )
-
-    copy_job = create_copy_job(db_session, product_id=product.id).job
-    execute_copy_job(copy_job.id)
-
-    db_session.expire_all()
-    product_after_copy = get_product_detail(db_session, product.id)
-    assert len(product_after_copy.copy_sets) == 1
-    copy_set = product_after_copy.copy_sets[0]
-    assert "防滑菜板" in copy_set.title
-
-    confirm_copy_set(db_session, copy_set_id=copy_set.id)
-    poster_job = create_poster_job(db_session, product_id=product.id).job
-    execute_poster_job(poster_job.id)
-
-    db_session.expire_all()
-    product_after_poster = get_product_detail(db_session, product.id)
-    assert product_after_poster.confirmed_copy_set is not None
-    assert len(product_after_poster.poster_variants) == 2
-
-    poster_paths = [Path(configured_env) / poster.storage_path for poster in product_after_poster.poster_variants]
-    assert all(path.exists() for path in poster_paths)
-
-
-def test_sanitized_provider_runtime_errors_preserve_retryable_cause() -> None:
-    try:
-        raise RuntimeError("图片供应商请求失败，请检查供应商配置后重试") from httpx.TimeoutException("provider timeout")
-    except RuntimeError as exc:
-        assert _is_retryable_exception(exc) is True
 
 def test_product_create_persists_source_note_for_ai_context(configured_env: Path) -> None:
     from productflow_backend.presentation.api import create_app
@@ -111,6 +63,32 @@ def test_product_create_persists_source_note_for_ai_context(configured_env: Path
     assert minimal_payload["category"] is None
     assert minimal_payload["price"] is None
     assert minimal_payload["source_note"] is None
+
+
+def test_legacy_jobrun_routes_are_removed(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post(
+        "/api/products",
+        data={"name": "无传统任务商品"},
+        files={"image": ("legacy.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+
+    assert client.post(f"/api/products/{product_id}/copy-jobs").status_code == 404
+    assert client.post(f"/api/products/{product_id}/poster-jobs").status_code == 404
+    assert client.post("/api/posters/missing/regenerate").status_code == 404
+    assert client.get("/api/jobs/missing").status_code == 404
+
+    history = client.get(f"/api/products/{product_id}/history")
+    assert history.status_code == 200
+    assert set(history.json()) == {"copy_sets", "poster_variants"}
+
 
 def test_product_can_be_deleted_from_api(configured_env: Path) -> None:
     from productflow_backend.presentation.api import create_app
@@ -211,22 +189,3 @@ def test_product_reference_image_can_be_deleted(configured_env: Path, db_session
     rejected = client.delete(f"/api/source-assets/{original_asset['id']}")
     assert rejected.status_code == 400
     assert "只能删除商品参考图" in rejected.json()["detail"]
-
-def test_duplicate_active_copy_job_reuses_existing_job(db_session, configured_env: Path) -> None:
-    product = create_product(
-        db_session,
-        name="收纳盒",
-        category="家居",
-        price="19.90",
-        source_note=None,
-        image_bytes=_make_demo_image_bytes(),
-        filename="box.png",
-        content_type="image/png",
-    )
-
-    first_result = create_copy_job(db_session, product_id=product.id)
-    second_result = create_copy_job(db_session, product_id=product.id)
-
-    assert first_result.job.id == second_result.job.id
-    assert first_result.created is True
-    assert second_result.created is False

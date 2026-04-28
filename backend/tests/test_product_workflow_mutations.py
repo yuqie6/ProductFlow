@@ -16,19 +16,12 @@ from helpers import (
 from productflow_backend.application.contracts import (
     PosterGenerationInput,
 )
-from productflow_backend.application.use_cases import (
-    confirm_copy_set,
-    create_copy_job,
-    create_poster_job,
-    execute_copy_job,
-    execute_poster_job,
-    get_product_detail,
-)
 from productflow_backend.domain.enums import (
     PosterKind,
 )
 from productflow_backend.infrastructure.db.models import (
     AppSetting,
+    CopySet,
     PosterVariant,
 )
 from productflow_backend.infrastructure.db.session import get_session_factory
@@ -39,6 +32,52 @@ def _execute_workflow_queue_inline_fixture(monkeypatch: pytest.MonkeyPatch) -> N
     """Keep API workflow tests deterministic while production delivery goes through Dramatiq."""
 
     _execute_workflow_queue_inline(monkeypatch)
+
+
+def _create_poster_variant_for_binding(
+    *,
+    product_id: str,
+    storage_root: Path,
+    write_file: bool,
+) -> str:
+    session = get_session_factory()()
+    try:
+        copy_set = CopySet(
+            product_id=product_id,
+            title="绑定海报文案",
+            selling_points=["卖点一"],
+            poster_headline="绑定海报标题",
+            cta="立即了解",
+            model_title="绑定海报文案",
+            model_selling_points=["卖点一"],
+            model_poster_headline="绑定海报标题",
+            model_cta="立即了解",
+            provider_name="test",
+            model_name="test",
+            prompt_version="test",
+        )
+        session.add(copy_set)
+        session.flush()
+        storage_path = f"products/{product_id}/posters/manual-poster.png"
+        if write_file:
+            poster_path = storage_root / storage_path
+            poster_path.parent.mkdir(parents=True, exist_ok=True)
+            poster_path.write_bytes(_make_demo_image_bytes())
+        poster = PosterVariant(
+            product_id=product_id,
+            copy_set_id=copy_set.id,
+            kind=PosterKind.PROMO_POSTER,
+            template_name="test",
+            mime_type="image/png",
+            storage_path=storage_path,
+            width=1024,
+            height=1024,
+        )
+        session.add(poster)
+        session.commit()
+        return poster.id
+    finally:
+        session.close()
 
 
 def test_product_workflow_status_endpoint_returns_lightweight_state(configured_env: Path) -> None:
@@ -173,19 +212,11 @@ def test_reference_workflow_node_can_bind_existing_source_or_poster_image(config
     assert created.status_code == 201
     product_id = created.json()["id"]
 
-    session = get_session_factory()()
-    try:
-        copy_job = create_copy_job(session, product_id=product_id).job
-        execute_copy_job(copy_job.id)
-        session.expire_all()
-        product = get_product_detail(session, product_id)
-        confirm_copy_set(session, copy_set_id=product.copy_sets[0].id)
-        poster_job = create_poster_job(session, product_id=product_id).job
-        execute_poster_job(poster_job.id)
-        session.expire_all()
-        poster_id = get_product_detail(session, product_id).poster_variants[0].id
-    finally:
-        session.close()
+    poster_id = _create_poster_variant_for_binding(
+        product_id=product_id,
+        storage_root=configured_env,
+        write_file=True,
+    )
 
     workflow_response = client.get(f"/api/products/{product_id}/workflow")
     assert workflow_response.status_code == 200
@@ -323,23 +354,11 @@ def test_reference_workflow_node_bind_poster_reports_missing_file_as_bad_request
     assert created.status_code == 201
     product_id = created.json()["id"]
 
-    session = get_session_factory()()
-    try:
-        copy_job = create_copy_job(session, product_id=product_id).job
-        execute_copy_job(copy_job.id)
-        session.expire_all()
-        product = get_product_detail(session, product_id)
-        confirm_copy_set(session, copy_set_id=product.copy_sets[0].id)
-        poster_job = create_poster_job(session, product_id=product_id).job
-        execute_poster_job(poster_job.id)
-        session.expire_all()
-        poster_id = get_product_detail(session, product_id).poster_variants[0].id
-        poster = session.get(PosterVariant, poster_id)
-        assert poster is not None
-        poster.storage_path = f"products/{product_id}/missing-poster-file.png"
-        session.commit()
-    finally:
-        session.close()
+    poster_id = _create_poster_variant_for_binding(
+        product_id=product_id,
+        storage_root=configured_env,
+        write_file=False,
+    )
 
     workflow_response = client.get(f"/api/products/{product_id}/workflow")
     assert workflow_response.status_code == 200

@@ -23,13 +23,9 @@ from productflow_backend.application.contracts import (
     ProductInput,
     ReferenceImageInput,
 )
+from productflow_backend.application.product_workflows import run_product_workflow
 from productflow_backend.application.use_cases import (
-    confirm_copy_set,
-    create_copy_job,
-    create_poster_job,
     create_product,
-    execute_copy_job,
-    execute_poster_job,
     get_product_detail,
 )
 from productflow_backend.config import get_settings
@@ -217,77 +213,6 @@ def test_ai_payload_normalizes_scalar_text_lists_without_swallowing_malformed_va
                     "cta": "马上试试",
                 }
             )
-
-def test_copy_job_persists_normalized_provider_scalar_lists(
-    db_session, configured_env: Path, monkeypatch
-) -> None:
-    class ListAudienceTextProvider:
-        provider_name = "list-audience"
-        prompt_version = "test-v1"
-
-        def generate_brief(self, product: ProductInput) -> tuple[CreativeBriefPayload, str]:
-            return (
-                CreativeBriefPayload.model_validate(
-                    {
-                        "positioning": f"{product.name} 的入门场景",
-                        "audience": ["摄影入门用户", "小红书图文内容创作者"],
-                        "selling_angles": ["上手快", "构图稳", "出片自然"],
-                        "taboo_phrases": [],
-                        "poster_style_hint": "干净明亮",
-                    }
-                ),
-                "list-audience-brief",
-            )
-
-        def generate_copy(
-            self,
-            product: ProductInput,
-            brief: CreativeBriefPayload,
-            instruction: str | None = None,
-            reference_images: list[ReferenceImageInput] | None = None,
-        ) -> tuple[CopyPayload, str]:
-            return (
-                CopyPayload.model_validate(
-                    {
-                        "title": [product.name, "入门也能拍得稳"],
-                        "selling_points": [
-                            f"适合{brief.audience}",
-                            "构图辅助更直观",
-                            "轻松提升日常出片效率",
-                        ],
-                        "poster_headline": ["新手拍照", "画面更稳"],
-                        "cta": ["立即提升", "出片率"],
-                    }
-                ),
-                "list-audience-copy",
-            )
-
-    monkeypatch.setattr(
-        "productflow_backend.application.use_cases.get_text_provider",
-        lambda: ListAudienceTextProvider(),
-    )
-
-    product = create_product(
-        db_session,
-        name="手机摄影支架",
-        category="数码配件",
-        price=None,
-        source_note=None,
-        image_bytes=_make_demo_image_bytes(),
-        filename="tripod.png",
-        content_type="image/png",
-    )
-
-    copy_job = create_copy_job(db_session, product_id=product.id).job
-    assert execute_copy_job(copy_job.id) is False
-
-    db_session.expire_all()
-    product_after_copy = get_product_detail(db_session, product.id)
-    assert product_after_copy.creative_briefs[0].payload["audience"] == "摄影入门用户、小红书图文内容创作者"
-    assert product_after_copy.copy_sets[0].title == "手机摄影支架、入门也能拍得稳"
-    assert product_after_copy.copy_sets[0].poster_headline == "新手拍照、画面更稳"
-    assert product_after_copy.copy_sets[0].cta == "立即提升、出片率"
-    assert "摄影入门用户、小红书图文内容创作者" in product_after_copy.copy_sets[0].selling_points[0]
 
 def test_product_workflow_copy_run_normalizes_provider_scalar_lists(configured_env: Path, monkeypatch) -> None:
     class ListAudienceTextProvider:
@@ -1010,21 +935,15 @@ def test_generated_poster_mode_uses_image_provider(
         ],
     )
 
-    copy_job = create_copy_job(db_session, product_id=product.id).job
-    execute_copy_job(copy_job.id)
-    db_session.expire_all()
-
-    product_after_copy = get_product_detail(db_session, product.id)
-    copy_set = product_after_copy.copy_sets[0]
-    confirm_copy_set(db_session, copy_set_id=copy_set.id)
-
-    poster_job = create_poster_job(db_session, product_id=product.id).job
-    execute_poster_job(poster_job.id)
+    run_product_workflow(db_session, product_id=product.id)
     db_session.expire_all()
 
     product_after_poster = get_product_detail(db_session, product.id)
-    assert len(product_after_poster.poster_variants) == 2
-    assert all("mock:mock-generated-r3" in poster.template_name for poster in product_after_poster.poster_variants)
+    assert product_after_poster.poster_variants
+    assert all(
+        "workflow:mock:mock-generated-r1:mock-image-v1" in poster.template_name
+        for poster in product_after_poster.poster_variants
+    )
 
 def test_default_image_prompts_are_low_pollution_context_carriers(configured_env: Path) -> None:
     from productflow_backend.infrastructure.image.chat_service import ImageChatService

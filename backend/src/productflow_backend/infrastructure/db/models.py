@@ -12,7 +12,6 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from productflow_backend.domain.enums import (
     CopyStatus,
     ImageSessionAssetKind,
-    JobKind,
     JobStatus,
     PosterKind,
     SourceAssetKind,
@@ -99,10 +98,6 @@ class Product(Base, TimestampMixin):
         post_update=True,
     )
     poster_variants: Mapped[list[PosterVariant]] = relationship(
-        back_populates="product",
-        cascade="all, delete-orphan",
-    )
-    job_runs: Mapped[list[JobRun]] = relationship(
         back_populates="product",
         cascade="all, delete-orphan",
     )
@@ -368,49 +363,6 @@ class PosterVariant(Base):
 
     product: Mapped[Product] = relationship(back_populates="poster_variants")
     copy_set: Mapped[CopySet] = relationship(back_populates="poster_variants")
-
-
-class JobRun(Base):
-    """异步任务记录，支持幂等去重和自动重试。"""
-
-    __tablename__ = "job_runs"
-    __table_args__ = (
-        Index(
-            "uq_job_runs_one_active_per_product_kind",
-            "product_id",
-            "kind",
-            unique=True,
-            postgresql_where=text("status IN ('queued', 'running')"),
-            sqlite_where=text("status IN ('queued', 'running')"),
-        ),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    product_id: Mapped[str] = mapped_column(String(36), ForeignKey("products.id", ondelete="CASCADE"))
-    kind: Mapped[JobKind] = mapped_column(enum_value_column(JobKind))
-    status: Mapped[JobStatus] = mapped_column(enum_value_column(JobStatus), default=JobStatus.QUEUED)
-    target_poster_kind: Mapped[PosterKind | None] = mapped_column(
-        enum_value_column(PosterKind),
-        nullable=True,
-    )
-    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    copy_set_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey("copy_sets.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    poster_variant_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey("poster_variants.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    attempts: Mapped[int] = mapped_column(default=0)
-    is_retryable: Mapped[bool] = mapped_column(Boolean, default=True)
-
-    product: Mapped[Product] = relationship(back_populates="job_runs")
 
 
 class ImageSession(Base, TimestampMixin):

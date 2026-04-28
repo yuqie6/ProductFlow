@@ -147,8 +147,6 @@ class Settings(BaseSettings):
     upload_max_pixels: int = 16_000_000
     upload_allowed_image_mime_types: str = "image/png,image/jpeg,image/webp"
 
-    job_max_attempts: int = 3
-    job_retry_delay_ms: int = 10_000
     generation_max_concurrent_tasks: int = Field(default=3, ge=1, le=20)
     admin_access_required: bool = True
     deletion_enabled: bool = False
@@ -500,25 +498,11 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
         description="逗号分隔，例如 image/png,image/jpeg,image/webp。",
     ),
     ConfigDefinition(
-        key="job_max_attempts",
-        label="任务最大尝试次数",
-        category="任务重试",
-        input_type="number",
-        minimum=1,
-    ),
-    ConfigDefinition(
-        key="job_retry_delay_ms",
-        label="任务重试延迟毫秒",
-        category="任务重试",
-        input_type="number",
-        minimum=0,
-    ),
-    ConfigDefinition(
         key="generation_max_concurrent_tasks",
         label="全局生成并发上限",
-        category="任务重试",
+        category="生成队列",
         input_type="number",
-        description="全局资源保护阈值；文案、海报、工作流和连续生图达到上限时会提示稍后重试。",
+        description="全局资源保护阈值；工作流和连续生图达到上限时会提示稍后重试。",
         minimum=1,
         maximum=20,
     ),

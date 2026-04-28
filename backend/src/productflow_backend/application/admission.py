@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from productflow_backend.config import get_runtime_settings
 from productflow_backend.domain.enums import JobStatus, WorkflowRunStatus
 from productflow_backend.domain.errors import ResourceBusyError
-from productflow_backend.infrastructure.db.models import ImageSessionGenerationTask, JobRun, WorkflowRun
+from productflow_backend.infrastructure.db.models import ImageSessionGenerationTask, WorkflowRun
 
 GENERATION_BUSY_DETAIL = "当前生成任务较多，请稍后再试"
 
@@ -30,9 +30,6 @@ class GenerationTaskQueueMetadata:
 
 
 def _active_async_task_count(session: Session) -> int:
-    active_jobs = session.scalar(
-        select(func.count()).select_from(JobRun).where(JobRun.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]))
-    )
     active_workflow_runs = session.scalar(
         select(func.count()).select_from(WorkflowRun).where(WorkflowRun.status == WorkflowRunStatus.RUNNING)
     )
@@ -41,7 +38,7 @@ def _active_async_task_count(session: Session) -> int:
         .select_from(ImageSessionGenerationTask)
         .where(ImageSessionGenerationTask.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]))
     )
-    return int(active_jobs or 0) + int(active_workflow_runs or 0) + int(active_image_session_tasks or 0)
+    return int(active_workflow_runs or 0) + int(active_image_session_tasks or 0)
 
 
 def _status_count(session: Session, model: type, status: JobStatus | WorkflowRunStatus) -> int:
@@ -53,14 +50,10 @@ def get_generation_queue_overview(session: Session) -> GenerationQueueOverview:
     """Return the global durable generation queue snapshot."""
 
     running_count = (
-        _status_count(session, JobRun, JobStatus.RUNNING)
-        + _status_count(session, WorkflowRun, WorkflowRunStatus.RUNNING)
+        _status_count(session, WorkflowRun, WorkflowRunStatus.RUNNING)
         + _status_count(session, ImageSessionGenerationTask, JobStatus.RUNNING)
     )
-    queued_count = (
-        _status_count(session, JobRun, JobStatus.QUEUED)
-        + _status_count(session, ImageSessionGenerationTask, JobStatus.QUEUED)
-    )
+    queued_count = _status_count(session, ImageSessionGenerationTask, JobStatus.QUEUED)
     return GenerationQueueOverview(
         active_count=running_count + queued_count,
         running_count=running_count,
@@ -71,10 +64,6 @@ def get_generation_queue_overview(session: Session) -> GenerationQueueOverview:
 
 def get_queued_generation_positions(session: Session) -> dict[str, int]:
     queued_items: list[tuple[datetime, str, str]] = []
-    queued_items.extend(
-        (job.created_at, "job", job.id)
-        for job in session.scalars(select(JobRun).where(JobRun.status == JobStatus.QUEUED)).all()
-    )
     queued_items.extend(
         (task.created_at, "image_session", task.id)
         for task in session.scalars(

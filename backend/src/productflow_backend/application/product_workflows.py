@@ -56,6 +56,7 @@ from productflow_backend.application.product_workflow_execution import (
     mark_workflow_run_enqueue_failed,
     run_product_workflow,
     start_product_workflow_run,
+    submit_product_workflow_run,
 )
 from productflow_backend.application.product_workflow_mutations import (
     _normalize_product_context_singleton,
@@ -143,6 +144,7 @@ __all__ = [
     "mark_workflow_run_enqueue_failed",
     "run_product_workflow",
     "start_product_workflow_run",
+    "submit_product_workflow_run",
     "update_workflow_copy_set",
     "update_workflow_node",
     "upload_workflow_node_image",

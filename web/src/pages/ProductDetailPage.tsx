@@ -720,9 +720,7 @@ export function ProductDetailPage() {
     selectedNode?.node_type === "reference_image" ? selectedNode : null;
   const fillReferenceBusy = bindNodeImageMutation.isPending;
   const queueOverview = queueOverviewQuery.data ?? null;
-  const showQueueOverview = Boolean(
-    queueOverview && (queueOverview.active_count > 0 || product.recent_jobs.some((job) => job.status === "queued" || job.status === "running")),
-  );
+  const showQueueOverview = Boolean(queueOverview && queueOverview.active_count > 0);
 
   const renderWorkflowToolbarButtons = () => (
     <>

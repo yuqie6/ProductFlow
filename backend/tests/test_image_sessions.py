@@ -31,7 +31,7 @@ def _execute_workflow_queue_inline_fixture(monkeypatch: pytest.MonkeyPatch) -> N
     from productflow_backend.application.image_sessions import execute_image_session_generation_task
 
     monkeypatch.setattr(
-        "productflow_backend.presentation.routes.image_sessions.enqueue_image_session_generation_task",
+        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
         execute_image_session_generation_task,
     )
 
@@ -99,7 +99,7 @@ def test_image_session_generate_returns_queued_task_without_waiting_for_provider
 
     sent: list[str] = []
     monkeypatch.setattr(
-        "productflow_backend.presentation.routes.image_sessions.enqueue_image_session_generation_task",
+        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
         lambda task_id: sent.append(task_id),
     )
     app = create_app()
@@ -141,7 +141,7 @@ def test_image_session_status_returns_lightweight_task_snapshot(
 
     sent: list[str] = []
     monkeypatch.setattr(
-        "productflow_backend.presentation.routes.image_sessions.enqueue_image_session_generation_task",
+        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
         lambda task_id: sent.append(task_id),
     )
     app = create_app()
@@ -333,7 +333,7 @@ def test_image_session_generate_enqueue_failure_marks_task_failed(
         raise RuntimeError(f"redis down for {task_id}")
 
     monkeypatch.setattr(
-        "productflow_backend.presentation.routes.image_sessions.enqueue_image_session_generation_task",
+        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
         fail_enqueue,
     )
     app = create_app()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from base64 import b64encode
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -15,6 +16,7 @@ from productflow_backend.application.admission import (
     get_generation_task_queue_metadata,
     get_queued_generation_positions,
 )
+from productflow_backend.application.queue_submission import enqueue_or_mark_failed
 from productflow_backend.application.time import now_utc
 from productflow_backend.config import normalize_image_generation_size
 from productflow_backend.domain.enums import ImageSessionAssetKind, JobStatus, SourceAssetKind
@@ -31,6 +33,7 @@ from productflow_backend.infrastructure.db.models import (
 from productflow_backend.infrastructure.db.session import get_session_factory
 from productflow_backend.infrastructure.image.base import image_dimensions_from_bytes, infer_extension
 from productflow_backend.infrastructure.image.chat_service import ImageChatService, ImageChatTurn
+from productflow_backend.infrastructure.queue import enqueue_image_session_generation_task
 from productflow_backend.infrastructure.storage import LocalStorage
 
 ATTACH_TARGET = Literal["reference", "main_source"]
@@ -648,6 +651,41 @@ def create_image_session_generation_task(
         task=session.get(ImageSessionGenerationTask, task.id) or task,
         image_session=_get_image_session_or_raise(session, image_session.id),
     )
+
+
+def submit_image_session_generation_task(
+    session: Session,
+    *,
+    image_session_id: str,
+    prompt: str,
+    size: str,
+    base_asset_id: str | None = None,
+    selected_reference_asset_ids: list[str] | None = None,
+    generation_count: int = 1,
+    tool_options: dict[str, Any] | None = None,
+    enqueue: Callable[[str], None] | None = None,
+) -> ImageSession:
+    result = create_image_session_generation_task(
+        session,
+        image_session_id=image_session_id,
+        prompt=prompt,
+        size=size,
+        base_asset_id=base_asset_id,
+        selected_reference_asset_ids=selected_reference_asset_ids,
+        generation_count=generation_count,
+        tool_options=tool_options,
+    )
+    enqueue_or_mark_failed(
+        result.task.id,
+        enqueue=enqueue or enqueue_image_session_generation_task,
+        mark_failed=lambda task_id, reason: mark_image_session_generation_task_enqueue_failed(
+            session,
+            task_id=task_id,
+            reason=reason,
+        ),
+    )
+    session.expire_all()
+    return get_image_session_detail(session, image_session_id)
 
 
 def mark_image_session_generation_task_enqueue_failed(session: Session, *, task_id: str, reason: str) -> None:

@@ -29,7 +29,7 @@ including `snake_case`:
 
 - `ProductSummary.workflow_state`
 - `CopySet.creative_brief_id`
-- `JobRun.failure_reason`
+- `ImageSessionGenerationTask.failure_reason`
 - `ImageSessionRound.provider_response_id`
 - `SessionState.access_required`
 - `RuntimeConfig.admin_access_required`

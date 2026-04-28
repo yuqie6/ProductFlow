@@ -18,15 +18,8 @@ class ImageSessionAssetKind(StrEnum):
     GENERATED_IMAGE = "generated_image"
 
 
-class JobKind(StrEnum):
-    """异步任务类型：文案生成 / 海报生成。"""
-
-    COPY_GENERATION = "copy_generation"
-    POSTER_GENERATION = "poster_generation"
-
-
 class JobStatus(StrEnum):
-    """异步任务状态：排队 -> 运行中 -> 成功/失败。"""
+    """连续生图任务状态：排队 -> 运行中 -> 成功/失败。"""
 
     QUEUED = "queued"
     RUNNING = "running"

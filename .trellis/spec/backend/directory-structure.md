@@ -35,8 +35,9 @@ backend/
 │   ├── domain/errors.py                 # typed business errors shared by application and presentation mapping
 │   ├── application/
 │   │   ├── contracts.py                 # Pydantic contracts between use cases and providers/renderers
-│   │   ├── use_cases.py                 # product/copy/poster workflow use cases
-│   │   └── image_sessions.py            # continuous image-session use cases
+│   │   ├── image_sessions.py            # continuous image-session use cases
+│   │   ├── queue_submission.py           # durable task enqueue failure handling helper
+│   │   └── use_cases.py                 # product/copy/poster workflow use cases
 │   ├── presentation/
 │   │   ├── api.py                       # FastAPI app factory, middleware, router registration
 │   │   ├── deps.py                      # FastAPI dependencies, including auth/session dependency
@@ -89,20 +90,22 @@ Put HTTP concerns in `backend/src/productflow_backend/presentation/`:
 - Upload validation stays in `presentation/upload_validation.py` because it raises HTTP status-specific exceptions.
 
 Do not put provider calls, storage writes, or workflow state transitions directly in route handlers. Existing routes call
-application functions such as `create_product(...)`, `generate_image_session_round(...)`, or `create_copy_job(...)` and
-then serialize the returned model.
+application functions such as `create_product(...)`, `submit_product_workflow_run(...)`, or
+`submit_image_session_generation_task(...)` and then serialize the returned model.
 
 ### Application layer
 
 Put workflow rules and orchestration in `backend/src/productflow_backend/application/`:
 
 - `application/use_cases.py` owns the core product flow:
-  product creation, reference images, copy jobs, poster jobs, retry state, and history reads.
+  product creation, reference images, copy/copy-confirmation edits, product deletion, and history reads.
 - `application/image_sessions.py` owns continuous image-session behavior, including building provider context,
   trimming title text, attaching generated assets back to products, and deleting session storage.
 - `application/contracts.py` contains Pydantic contracts shared with providers/renderers, such as
   `ProductInput`, `CreativeBriefPayload`, `CopyPayload`, and `PosterGenerationInput`.
 - `application/time.py` is the shared application timestamp helper for timezone-aware UTC values.
+- `application/queue_submission.py` owns the small shared helper for "durable row persisted, queue delivery failed"
+  handling. Submit use cases use it to mark the persisted task failed and raise `QueueUnavailableError`.
 - `application/product_workflow_graph.py` owns product workflow graph loading, default graph templates, lookup helpers,
   topological ordering, and latest-run ordering. Keep these graph/query concerns out of
   `application/product_workflows.py`, which owns mutations and execution orchestration.
@@ -132,7 +135,7 @@ This layer receives a SQLAlchemy `Session` from callers. It is allowed to call i
 ### Domain layer
 
 `backend/src/productflow_backend/domain/enums.py` is the shared home for enum values such as `ProductWorkflowState`,
-`SourceAssetKind`, `CopyStatus`, `JobKind`, `JobStatus`, `PosterKind`, and `ImageSessionAssetKind`. The same string
+`SourceAssetKind`, `CopyStatus`, `JobStatus`, `PosterKind`, and `ImageSessionAssetKind`. The same string
 values are mirrored in `web/src/lib/types.ts`, so enum changes are cross-layer changes.
 
 `backend/src/productflow_backend/domain/errors.py` is the shared home for typed business errors such as `BusinessError`,
@@ -167,8 +170,7 @@ and the runtime config definitions in `config.py`, then update tests and fronten
 
 - Python modules and functions use `snake_case`.
 - Most product/image-session/settings route handler names end with `_endpoint`, e.g. `create_product_endpoint` and
-  `generate_image_session_round_endpoint`; `presentation/routes/auth.py` and `presentation/routes/jobs.py` keep shorter
-  names such as `create_session` and `get_job_detail`.
+  `generate_image_session_round_endpoint`; `presentation/routes/auth.py` keeps shorter names such as `create_session`.
 - Internal helper functions are prefixed with `_`, e.g. `_raise_http_error`, `_get_product_or_raise`,
   `_load_database_values`.
 - Pydantic response/request classes use descriptive `PascalCase` names ending in `Response` or `Request`, for example
@@ -193,7 +195,7 @@ and the runtime config definitions in `config.py`, then update tests and fronten
   `backend/src/productflow_backend/infrastructure/image/factory.py` choose implementations from runtime settings.
 - Tests: `backend/tests/test_*.py` are split by behavior area. Keep shared image/client/workflow helpers in
   `backend/tests/helpers.py`, and put regressions near their owning theme: auth/settings/runtime config, error handling,
-  product CRUD and jobs, product workflow DAG/mutations/queue recovery, image sessions, storage/upload validation,
+  product CRUD, product workflow DAG/mutations/queue recovery, image sessions, storage/upload validation,
   provider payloads, queue/logging behavior, and migrations/database constraints.
 
 ---

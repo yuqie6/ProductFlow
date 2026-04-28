@@ -9,26 +9,20 @@ from sqlalchemy.orm import Session
 from productflow_backend.application.use_cases import (
     add_reference_images,
     confirm_copy_set,
-    create_copy_job,
-    create_poster_job,
     create_product,
-    create_regenerate_poster_job,
     delete_product,
     delete_reference_image,
     get_product_detail,
     get_product_history,
     list_products,
-    mark_job_enqueue_failed,
     update_copy_set,
 )
 from productflow_backend.domain.enums import ProductWorkflowState
 from productflow_backend.infrastructure.db.models import PosterVariant, SourceAsset
-from productflow_backend.infrastructure.queue import enqueue_copy_job, enqueue_poster_job
 from productflow_backend.infrastructure.storage import ImageVariantName, LocalStorage
 from productflow_backend.presentation.deps import get_session, require_admin, require_deletion_enabled
 from productflow_backend.presentation.errors import raise_value_error_as_http
 from productflow_backend.presentation.image_variants import build_variant_filename
-from productflow_backend.presentation.schemas.jobs import JobRunResponse, serialize_job
 from productflow_backend.presentation.schemas.products import (
     CopySetResponse,
     CopySetUpdateRequest,
@@ -151,22 +145,6 @@ async def upload_reference_images_endpoint(
     return serialize_product_detail(product)
 
 
-@router.post("/products/{product_id}/copy-jobs", response_model=JobRunResponse, status_code=status.HTTP_202_ACCEPTED)
-def create_copy_job_endpoint(product_id: str, session: Session = Depends(get_session)) -> JobRunResponse:
-    try:
-        result = create_copy_job(session, product_id=product_id)
-    except ValueError as exc:
-        raise_value_error_as_http(exc)
-    job = result.job
-    if result.created:
-        try:
-            enqueue_copy_job(job.id)
-        except Exception as exc:  # noqa: BLE001
-            mark_job_enqueue_failed(session, job_id=job.id, reason="任务队列暂不可用，请稍后重试")
-            raise HTTPException(status_code=503, detail="任务队列暂不可用，请稍后重试") from exc
-    return serialize_job(job)
-
-
 @router.patch("/copy-sets/{copy_set_id}", response_model=CopySetResponse)
 def update_copy_set_endpoint(
     copy_set_id: str,
@@ -194,38 +172,6 @@ def confirm_copy_set_endpoint(copy_set_id: str, session: Session = Depends(get_s
     except ValueError as exc:
         raise_value_error_as_http(exc)
     return serialize_copy_set(copy_set)
-
-
-@router.post("/products/{product_id}/poster-jobs", response_model=JobRunResponse, status_code=status.HTTP_202_ACCEPTED)
-def create_poster_job_endpoint(product_id: str, session: Session = Depends(get_session)) -> JobRunResponse:
-    try:
-        result = create_poster_job(session, product_id=product_id)
-    except ValueError as exc:
-        raise_value_error_as_http(exc)
-    job = result.job
-    if result.created:
-        try:
-            enqueue_poster_job(job.id)
-        except Exception as exc:  # noqa: BLE001
-            mark_job_enqueue_failed(session, job_id=job.id, reason="任务队列暂不可用，请稍后重试")
-            raise HTTPException(status_code=503, detail="任务队列暂不可用，请稍后重试") from exc
-    return serialize_job(job)
-
-
-@router.post("/posters/{poster_id}/regenerate", response_model=JobRunResponse, status_code=status.HTTP_202_ACCEPTED)
-def regenerate_poster_endpoint(poster_id: str, session: Session = Depends(get_session)) -> JobRunResponse:
-    try:
-        result = create_regenerate_poster_job(session, poster_id=poster_id)
-    except ValueError as exc:
-        raise_value_error_as_http(exc)
-    job = result.job
-    if result.created:
-        try:
-            enqueue_poster_job(job.id)
-        except Exception as exc:  # noqa: BLE001
-            mark_job_enqueue_failed(session, job_id=job.id, reason="任务队列暂不可用，请稍后重试")
-            raise HTTPException(status_code=503, detail="任务队列暂不可用，请稍后重试") from exc
-    return serialize_job(job)
 
 
 @router.get("/posters/{poster_id}/download")
@@ -301,5 +247,4 @@ def get_product_history_endpoint(product_id: str, session: Session = Depends(get
     return ProductHistoryResponse(
         copy_sets=[serialize_copy_set(item) for item in history["copy_sets"]],
         poster_variants=[serialize_poster_variant(item) for item in history["poster_variants"]],
-        jobs=[serialize_job(item) for item in history["jobs"]],
     )

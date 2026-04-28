@@ -74,8 +74,9 @@ When changing an enum, update:
 
 Relationships are defined on models and use explicit cascades where child records belong to a parent. Examples:
 
-- `Product.source_assets`, `Product.creative_briefs`, `Product.copy_sets`, `Product.poster_variants`, `Product.job_runs`,
-  and `Product.image_sessions` use `cascade="all, delete-orphan"` in `infrastructure/db/models.py`.
+- `Product.source_assets`, `Product.creative_briefs`, `Product.copy_sets`, `Product.poster_variants`,
+  `Product.image_sessions`, and `Product.workflows` use `cascade="all, delete-orphan"` in
+  `infrastructure/db/models.py`.
 - Foreign keys use `ondelete="CASCADE"` for owned children and `ondelete="SET NULL"` for optional references such as
   `creative_brief_id`, `copy_set_id`, and `poster_variant_id`.
 - `Product.current_confirmed_copy_set_id` uses a named foreign key (`fk_products_current_confirmed_copy_set_id`) and
@@ -100,7 +101,7 @@ then reload a fully populated object.
 Use `select(...)`, `session.scalar(...)`, and `session.scalars(...)`. When a response needs related data, define a query
 helper with `selectinload(...)` instead of relying on accidental lazy loading. Current examples:
 
-- `_product_query()` in `application/use_cases.py` loads source assets, briefs, copy sets, posters, jobs, and confirmed copy.
+- `_product_query()` in `application/use_cases.py` loads source assets, briefs, copy sets, posters, and confirmed copy.
 - `_image_session_query()` in `application/image_sessions.py` loads assets, rounds, generated assets, and product source
   assets.
 
@@ -659,8 +660,9 @@ by `app_settings` and must gate new resource-consuming entrypoints before they e
 - Unknown per-request select value such as `tool_options.quality="ultra"` -> request validation returns `422`.
 - OpenAI SDK/provider request exception -> raise a generic sanitized runtime error; do not expose API keys, raw request
   bodies, base URLs with secrets, or provider internals to the frontend.
-- OpenAI SDK/provider timeout wrapped in a sanitized `RuntimeError` -> product job failure reason remains generic, while
-  retry classification follows `__cause__` and keeps the task retryable when the original exception is retryable.
+- OpenAI SDK/provider timeout wrapped in a sanitized `RuntimeError` -> workflow/image-session failure reason remains
+  generic, while retry classification follows `__cause__` and keeps retryable durable tasks retryable when the original
+  exception is retryable.
 
 #### 5. Good/Base/Bad Cases
 
@@ -694,7 +696,7 @@ by `app_settings` and must gate new resource-consuming entrypoints before they e
 - Provider-adjusted metadata test that detectable effective field changes are persisted as compact notes.
 - MIME regression test using non-PNG returned bytes.
 - Retry regression test that a sanitized provider `RuntimeError` raised from a retryable network/timeout cause is still
-  classified retryable by product job failure handling.
+  classified retryable by durable task failure handling where that retry policy applies.
 - Keep `uv run --directory backend ruff check .`, `just backend-test`, `pnpm --dir web lint`,
   `pnpm --dir web test:run`, and `just web-build` green after cross-layer settings changes.
 
@@ -797,10 +799,10 @@ system_prompt = settings.prompt_copy_system
 
 ## Naming Conventions
 
-- Table names are plural snake_case: `products`, `source_assets`, `job_runs`, `image_session_rounds`.
+- Table names are plural snake_case: `products`, `source_assets`, `workflow_runs`, `image_session_rounds`.
 - Foreign key columns end with `_id`: `product_id`, `copy_set_id`, `generated_asset_id`.
 - Unique partial indexes use descriptive names beginning with `uq_`, e.g.
-  `uq_job_runs_one_active_per_product_kind` and `uq_source_assets_one_original_per_product`.
+  `uq_workflow_runs_one_running_per_workflow` and `uq_source_assets_one_original_per_product`.
 - Foreign key constraint names are explicit only where the project already needs them for cycles or migration stability,
   e.g. `fk_products_current_confirmed_copy_set_id`.
 

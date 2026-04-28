@@ -1,7 +1,6 @@
 export type ProductWorkflowState = "draft" | "copy_ready" | "poster_ready" | "failed";
 export type CopyStatus = "draft" | "confirmed";
 export type PosterKind = "main_image" | "promo_poster";
-export type JobKind = "copy_generation" | "poster_generation";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed";
 export type SourceAssetKind = "original_image" | "reference_image" | "processed_product_image";
 export type ImageSessionAssetKind = "reference_upload" | "generated_image";
@@ -82,21 +81,6 @@ export interface PosterVariant {
   created_at: string;
 }
 
-export interface JobRun {
-  id: string;
-  product_id: string;
-  kind: JobKind;
-  status: JobStatus;
-  target_poster_kind: PosterKind | null;
-  failure_reason: string | null;
-  attempts: number;
-  created_at: string;
-  started_at: string | null;
-  finished_at: string | null;
-  copy_set_id: string | null;
-  poster_variant_id: string | null;
-}
-
 export interface ProductSummary {
   id: string;
   name: string;
@@ -132,7 +116,6 @@ export interface ProductDetail {
   current_confirmed_copy_set: CopySet | null;
   copy_sets: CopySet[];
   poster_variants: PosterVariant[];
-  recent_jobs: JobRun[];
   created_at: string;
   updated_at: string;
 }
@@ -140,7 +123,6 @@ export interface ProductDetail {
 export interface ProductHistory {
   copy_sets: CopySet[];
   poster_variants: PosterVariant[];
-  jobs: JobRun[];
 }
 
 export interface WorkflowNode {

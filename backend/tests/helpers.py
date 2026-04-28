@@ -71,6 +71,6 @@ def _execute_workflow_queue_inline(monkeypatch: pytest.MonkeyPatch) -> None:
     from productflow_backend.application.product_workflows import execute_product_workflow_run
 
     monkeypatch.setattr(
-        "productflow_backend.presentation.routes.product_workflows.enqueue_workflow_run",
+        "productflow_backend.application.product_workflow_execution.enqueue_workflow_run",
         execute_product_workflow_run,
     )

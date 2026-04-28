@@ -29,3 +29,9 @@ class ResourceBusyError(BusinessError):
     """Global provider/worker resource capacity is currently exhausted."""
 
     status_code: ClassVar[int] = 429
+
+
+class QueueUnavailableError(BusinessError):
+    """Durable queue delivery failed after the database task state was persisted."""
+
+    status_code: ClassVar[int] = 503

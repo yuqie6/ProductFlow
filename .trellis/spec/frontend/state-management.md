@@ -29,7 +29,8 @@ Current query key patterns:
   login is disabled server-side, `authenticated` is true even without a login cookie.
 - Product list: `['products']` in `ProductListPage.tsx` and `ImageChatPage.tsx`.
 - Product detail/history: `['product', productId]` and `['product-history', productId]` in `ProductDetailPage.tsx`.
-- Jobs: `['job', activeCopyJobId]` and `['job', activePosterJobId]` in `ProductDetailPage.tsx`.
+- Product workbench: `['product-workflow', productId]` and `['product-workflow-status', productId]` in
+  `ProductDetailPage.tsx`.
 - Image sessions: `['image-sessions', productId ?? 'standalone']` and `['image-session', selectedSessionId]` in
   `ImageChatPage.tsx`.
 - Runtime config: `['runtime-config']` in `ProductDetailPage.tsx`, `ProductListPage.tsx`, and `ImageChatPage.tsx`.
@@ -48,7 +49,8 @@ When writing mutations, update/invalidate every key that can show stale data.
 Keep short-lived UI state local to the page that owns the interaction:
 
 - `ProductCreatePage.tsx` stores form fields, selected files, and a local error string.
-- `ProductDetailPage.tsx` stores editing mode, editable copy draft, active job IDs, and job error strings.
+- `ProductDetailPage.tsx` stores editing mode, editable copy draft, selected canvas/workbench state, and local mutation
+  error strings.
 - `ImageChatPage.tsx` stores selected session/generated asset, prompt draft, image size, rename mode, target product,
   and transient success/error messages.
 - `SettingsPage.tsx` stores config drafts, secret touched flags, reset progress, and save/error messages.

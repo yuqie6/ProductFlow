@@ -7,9 +7,10 @@ from fastapi.testclient import TestClient
 from helpers import _login, _make_demo_image_bytes
 
 from productflow_backend.application.image_sessions import create_image_session, create_image_session_generation_task
-from productflow_backend.application.use_cases import create_copy_job, create_product
+from productflow_backend.application.product_workflows import start_product_workflow_run
+from productflow_backend.application.use_cases import create_product
 from productflow_backend.domain.enums import JobStatus
-from productflow_backend.infrastructure.db.models import AppSetting, CopySet
+from productflow_backend.infrastructure.db.models import AppSetting
 
 
 def _set_generation_cap(db_session, value: int) -> None:
@@ -30,29 +31,7 @@ def _create_product(db_session, name: str):
     )
 
 
-def _add_confirmed_copy_set(db_session, product) -> CopySet:
-    copy_set = CopySet(
-        product_id=product.id,
-        title=f"{product.name} 文案",
-        selling_points=["卖点一"],
-        poster_headline=f"{product.name} 海报",
-        cta="立即了解",
-        model_title=f"{product.name} 文案",
-        model_selling_points=["卖点一"],
-        model_poster_headline=f"{product.name} 海报",
-        model_cta="立即了解",
-        provider_name="test",
-        model_name="test",
-        prompt_version="test",
-    )
-    db_session.add(copy_set)
-    db_session.flush()
-    product.current_confirmed_copy_set_id = copy_set.id
-    db_session.commit()
-    return copy_set
-
-
-def test_generation_cap_rejects_async_resource_entrypoints(
+def test_generation_cap_rejects_workflow_run_creation(
     configured_env: Path,
     db_session,
     monkeypatch: pytest.MonkeyPatch,
@@ -60,23 +39,12 @@ def test_generation_cap_rejects_async_resource_entrypoints(
     from productflow_backend.presentation.api import create_app
 
     monkeypatch.setattr(
-        "productflow_backend.presentation.routes.products.enqueue_copy_job",
-        lambda job_id: pytest.fail(f"busy copy job must not enqueue: {job_id}"),
-    )
-    monkeypatch.setattr(
-        "productflow_backend.presentation.routes.products.enqueue_poster_job",
-        lambda job_id: pytest.fail(f"busy poster job must not enqueue: {job_id}"),
-    )
-    monkeypatch.setattr(
-        "productflow_backend.presentation.routes.product_workflows.enqueue_workflow_run",
+        "productflow_backend.application.product_workflow_execution.enqueue_workflow_run",
         lambda run_id: pytest.fail(f"busy workflow run must not enqueue: {run_id}"),
     )
 
     busy_product = _create_product(db_session, "占用并发商品")
-    create_copy_job(db_session, product_id=busy_product.id)
-    copy_target = _create_product(db_session, "文案限流商品")
-    poster_target = _create_product(db_session, "海报限流商品")
-    _add_confirmed_copy_set(db_session, poster_target)
+    start_product_workflow_run(db_session, product_id=busy_product.id)
     workflow_target = _create_product(db_session, "工作流限流商品")
     _set_generation_cap(db_session, 1)
 
@@ -84,66 +52,9 @@ def test_generation_cap_rejects_async_resource_entrypoints(
     client = TestClient(app)
     _login(client)
 
-    copy_response = client.post(f"/api/products/{copy_target.id}/copy-jobs")
-    assert copy_response.status_code == 429
-    assert copy_response.json()["detail"] == "当前生成任务较多，请稍后再试"
-
-    poster_response = client.post(f"/api/products/{poster_target.id}/poster-jobs")
-    assert poster_response.status_code == 429
-    assert poster_response.json()["detail"] == "当前生成任务较多，请稍后再试"
-
     workflow_response = client.post(f"/api/products/{workflow_target.id}/workflow/run", json={})
     assert workflow_response.status_code == 429
     assert workflow_response.json()["detail"] == "当前生成任务较多，请稍后再试"
-
-
-def test_generation_cap_allows_idempotent_existing_copy_job_response(
-    configured_env: Path,
-    db_session,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from productflow_backend.presentation.api import create_app
-
-    monkeypatch.setattr(
-        "productflow_backend.presentation.routes.products.enqueue_copy_job",
-        lambda job_id: pytest.fail(f"existing active copy job must not enqueue again: {job_id}"),
-    )
-
-    product = _create_product(db_session, "重复提交商品")
-    existing_job = create_copy_job(db_session, product_id=product.id).job
-    _set_generation_cap(db_session, 1)
-
-    app = create_app()
-    client = TestClient(app)
-    _login(client)
-
-    response = client.post(f"/api/products/{product.id}/copy-jobs")
-
-    assert response.status_code == 202
-    payload = response.json()
-    assert payload["id"] == existing_job.id
-    assert payload["status"] == "queued"
-
-
-def test_generation_cap_does_not_mask_poster_business_validation(
-    configured_env: Path,
-    db_session,
-) -> None:
-    from productflow_backend.presentation.api import create_app
-
-    busy_product = _create_product(db_session, "占用并发商品")
-    create_copy_job(db_session, product_id=busy_product.id)
-    poster_target = _create_product(db_session, "缺少确认文案商品")
-    _set_generation_cap(db_session, 1)
-
-    app = create_app()
-    client = TestClient(app)
-    _login(client)
-
-    response = client.post(f"/api/products/{poster_target.id}/poster-jobs")
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == "请先确认一版文案，再生成海报"
 
 
 def test_generation_cap_rejects_image_session_generation_task_creation(
@@ -153,7 +64,7 @@ def test_generation_cap_rejects_image_session_generation_task_creation(
     from productflow_backend.presentation.api import create_app
 
     busy_product = _create_product(db_session, "同步占用商品")
-    create_copy_job(db_session, product_id=busy_product.id)
+    start_product_workflow_run(db_session, product_id=busy_product.id)
     _set_generation_cap(db_session, 1)
 
     app = create_app()
@@ -203,8 +114,6 @@ def test_generation_queue_overview_and_positions_include_durable_tasks(
         get_queued_generation_positions,
     )
 
-    product = _create_product(db_session, "队列商品")
-    copy_job = create_copy_job(db_session, product_id=product.id).job
     image_session = create_image_session(db_session, product_id=None, title="队列会话")
     first = create_image_session_generation_task(
         db_session,
@@ -236,13 +145,12 @@ def test_generation_queue_overview_and_positions_include_durable_tasks(
         queued_positions=positions,
     )
 
-    assert overview.active_count == 3
+    assert overview.active_count == 2
     assert overview.running_count == 1
-    assert overview.queued_count == 2
-    assert positions[copy_job.id] == 1
-    assert positions[first.id] == 2
-    assert first_metadata.queue_position == 2
-    assert first_metadata.queued_ahead_count == 1
+    assert overview.queued_count == 1
+    assert positions[first.id] == 1
+    assert first_metadata.queue_position == 1
+    assert first_metadata.queued_ahead_count == 0
     assert second_metadata.queue_position is None
     assert second_metadata.queued_ahead_count is None
 
@@ -253,8 +161,6 @@ def test_generation_queue_overview_endpoint_returns_public_snapshot(
 ) -> None:
     from productflow_backend.presentation.api import create_app
 
-    product = _create_product(db_session, "队列 API 商品")
-    create_copy_job(db_session, product_id=product.id)
     image_session = create_image_session(db_session, product_id=None, title="队列 API 会话")
     running = create_image_session_generation_task(
         db_session,
@@ -273,8 +179,8 @@ def test_generation_queue_overview_endpoint_returns_public_snapshot(
 
     assert response.status_code == 200
     assert response.json() == {
-        "active_count": 2,
+        "active_count": 1,
         "running_count": 1,
-        "queued_count": 1,
+        "queued_count": 0,
         "max_concurrent_tasks": 3,
     }
