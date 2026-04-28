@@ -8,11 +8,13 @@ import type {
   GenerationQueueOverview,
   ImageSessionDetail,
   ImageSessionListResponse,
+  ImageSessionStatus,
   ImageToolOptions,
   JobRun,
   ProductDetail,
   ProductHistory,
   ProductWorkflow,
+  ProductWorkflowStatus,
   ProductWritebackResponse,
   ProductListResponse,
   RuntimeConfig,
@@ -194,6 +196,9 @@ export const api = {
   getImageSession(sessionId: string): Promise<ImageSessionDetail> {
     return request(`/api/image-sessions/${sessionId}`);
   },
+  getImageSessionStatus(sessionId: string): Promise<ImageSessionStatus> {
+    return request(`/api/image-sessions/${sessionId}/status`);
+  },
   updateImageSession(sessionId: string, input: { title: string }): Promise<ImageSessionDetail> {
     return request(`/api/image-sessions/${sessionId}`, {
       method: "PATCH",
@@ -253,6 +258,9 @@ export const api = {
   },
   getProductWorkflow(productId: string): Promise<ProductWorkflow> {
     return request(`/api/products/${productId}/workflow`);
+  },
+  getProductWorkflowStatus(productId: string): Promise<ProductWorkflowStatus> {
+    return request(`/api/products/${productId}/workflow/status`);
   },
   createWorkflowNode(
     productId: string,

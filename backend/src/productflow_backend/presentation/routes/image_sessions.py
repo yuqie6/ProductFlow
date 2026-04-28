@@ -12,6 +12,7 @@ from productflow_backend.application.image_sessions import (
     delete_image_session,
     delete_image_session_reference_image,
     get_image_session_detail,
+    get_image_session_status,
     list_image_sessions,
     mark_image_session_generation_task_enqueue_failed,
     update_image_session,
@@ -28,9 +29,11 @@ from productflow_backend.presentation.schemas.image_sessions import (
     GenerateImageSessionRoundRequest,
     ImageSessionDetailResponse,
     ImageSessionListResponse,
+    ImageSessionStatusResponse,
     ProductWritebackResponse,
     UpdateImageSessionRequest,
     serialize_image_session_detail,
+    serialize_image_session_status,
     serialize_image_session_summary,
 )
 from productflow_backend.presentation.upload_validation import (
@@ -72,6 +75,18 @@ def get_image_session_detail_endpoint(
     except ValueError as exc:
         raise_value_error_as_http(exc)
     return serialize_image_session_detail(image_session)
+
+
+@router.get("/image-sessions/{image_session_id}/status", response_model=ImageSessionStatusResponse)
+def get_image_session_status_endpoint(
+    image_session_id: str,
+    session: Session = Depends(get_session),
+) -> ImageSessionStatusResponse:
+    try:
+        snapshot = get_image_session_status(session, image_session_id)
+    except ValueError as exc:
+        raise_value_error_as_http(exc)
+    return serialize_image_session_status(snapshot)
 
 
 @router.patch("/image-sessions/{image_session_id}", response_model=ImageSessionDetailResponse)

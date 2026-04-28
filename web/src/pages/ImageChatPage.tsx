@@ -37,14 +37,18 @@ import {
   clampGenerationCount,
   compactImageToolOptions,
   groupImageSessionRounds,
+  isImageSessionGenerationTaskActive,
+  mergeImageSessionStatusIntoDetail,
   pruneSelectedReferenceIds,
   selectVisibleGenerationTasks,
+  shouldRefreshImageSessionDetailFromStatus,
 } from "./image-chat/branching";
 import type {
   ImageSessionDetail,
   ImageSessionRound,
   ImageSessionGenerationTask,
   ImageSessionListResponse,
+  ImageSessionStatus,
   ImageToolOptions,
   ProductDetail,
   ProductSummary,
@@ -57,10 +61,6 @@ function getSessionReferenceAssets(imageSession: ImageSessionDetail | undefined)
 
 const MAX_BRANCH_CONTEXT_IMAGES = 6;
 const DELETION_DISABLED_MESSAGE = "删除功能已关闭，请联系管理员";
-
-function isActiveGenerationTask(task: ImageSessionGenerationTask) {
-  return task.status === "queued" || task.status === "running";
-}
 
 function generationTaskLabel(task: ImageSessionGenerationTask) {
   if (task.status === "queued") {
@@ -189,10 +189,6 @@ export function ImageChatPage() {
     queryKey: ["image-session", selectedSessionId],
     queryFn: () => api.getImageSession(selectedSessionId!),
     enabled: Boolean(selectedSessionId),
-    refetchInterval: (query) => {
-      const data = query.state.data as ImageSessionDetail | undefined;
-      return data?.generation_tasks.some(isActiveGenerationTask) ? 1500 : false;
-    },
   });
 
   const imageSession = sessionDetailQuery.data;
@@ -203,7 +199,33 @@ export function ImageChatPage() {
     () => selectVisibleGenerationTasks(imageSession?.generation_tasks ?? []),
     [imageSession],
   );
-  const hasActiveGenerationTask = imageSession?.generation_tasks.some(isActiveGenerationTask) ?? false;
+  const hasActiveGenerationTask = imageSession?.generation_tasks.some(isImageSessionGenerationTaskActive) ?? false;
+
+  const sessionStatusQuery = useQuery({
+    queryKey: ["image-session-status", selectedSessionId],
+    queryFn: () => api.getImageSessionStatus(selectedSessionId!),
+    enabled: Boolean(selectedSessionId && hasActiveGenerationTask),
+    refetchInterval: (query) => {
+      const data = query.state.data as ImageSessionStatus | undefined;
+      return data?.has_active_generation_task ? 1500 : false;
+    },
+  });
+
+  useEffect(() => {
+    const status = sessionStatusQuery.data;
+    if (!status || !selectedSessionId || status.id !== selectedSessionId) {
+      return;
+    }
+    const detail = queryClient.getQueryData<ImageSessionDetail>(["image-session", status.id]);
+    const shouldRefetchDetail = shouldRefreshImageSessionDetailFromStatus(detail, status);
+    if (detail) {
+      queryClient.setQueryData(["image-session", status.id], mergeImageSessionStatusIntoDetail(detail, status));
+    }
+    if (shouldRefetchDetail) {
+      void queryClient.invalidateQueries({ queryKey: ["image-session", status.id] });
+      void queryClient.invalidateQueries({ queryKey: ["image-sessions", productId ?? "standalone"] });
+    }
+  }, [productId, queryClient, selectedSessionId, sessionStatusQuery.data]);
 
   useEffect(() => {
     if (!imageSession) {
@@ -1057,7 +1079,7 @@ export function ImageChatPage() {
                 <div className="space-y-2 rounded-2xl border border-slate-200 bg-white p-4">
                   <div className="text-sm font-semibold text-slate-950">生成任务</div>
                   {visibleGenerationTasks.map((task) => {
-                    const active = isActiveGenerationTask(task);
+                    const active = isImageSessionGenerationTaskActive(task);
                     return (
                       <div
                         key={task.id}

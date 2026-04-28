@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import type { ImageSessionAsset, ImageSessionGenerationTask, ImageSessionRound } from "../../lib/types";
+import type { ImageSessionAsset, ImageSessionDetail, ImageSessionGenerationTask, ImageSessionRound, ImageSessionStatus } from "../../lib/types";
 import {
   clampGenerationCount,
   compactImageToolOptions,
   groupImageSessionRounds,
+  isImageSessionGenerationTaskActive,
+  mergeImageSessionStatusIntoDetail,
   pruneSelectedReferenceIds,
   selectVisibleGenerationTasks,
+  shouldRefreshImageSessionDetailFromStatus,
 } from "./branching";
 
 const createdAt = "2026-04-27T00:00:00Z";
@@ -72,6 +75,36 @@ function task(overrides: Partial<ImageSessionGenerationTask>): ImageSessionGener
     queue_max_concurrent_tasks: 3,
     queued_ahead_count: null,
     queue_position: null,
+    ...overrides,
+  };
+}
+
+function detail(overrides: Partial<ImageSessionDetail>): ImageSessionDetail {
+  return {
+    id: "session-1",
+    product_id: null,
+    title: "会话",
+    assets: [],
+    rounds: [],
+    generation_tasks: [],
+    created_at: createdAt,
+    updated_at: createdAt,
+    ...overrides,
+  };
+}
+
+function status(overrides: Partial<ImageSessionStatus>): ImageSessionStatus {
+  return {
+    id: "session-1",
+    product_id: null,
+    title: "会话",
+    rounds_count: 0,
+    latest_round_id: null,
+    latest_generation_group_id: null,
+    has_active_generation_task: false,
+    generation_tasks: [],
+    created_at: createdAt,
+    updated_at: createdAt,
     ...overrides,
   };
 }
@@ -149,5 +182,62 @@ describe("image chat branching helpers", () => {
       "failed-new",
       "old-success-4",
     ]);
+  });
+
+  it("detects active generation tasks", () => {
+    expect(isImageSessionGenerationTaskActive(task({ status: "queued" }))).toBe(true);
+    expect(isImageSessionGenerationTaskActive(task({ status: "running" }))).toBe(true);
+    expect(isImageSessionGenerationTaskActive(task({ status: "succeeded" }))).toBe(false);
+    expect(isImageSessionGenerationTaskActive(task({ status: "failed" }))).toBe(false);
+  });
+
+  it("merges lightweight session status into cached detail without replacing rounds and assets", () => {
+    const cached = detail({
+      title: "旧标题",
+      assets: [asset("asset-1")],
+      rounds: [round({ id: "round-1" })],
+      generation_tasks: [task({ id: "task-1", status: "queued" })],
+      updated_at: "2026-04-27T00:00:00Z",
+    });
+    const merged = mergeImageSessionStatusIntoDetail(
+      cached,
+      status({
+        title: "新标题",
+        generation_tasks: [task({ id: "task-1", status: "running", queue_running_count: 1 })],
+        updated_at: "2026-04-27T00:00:10Z",
+      }),
+    );
+
+    expect(merged.title).toBe("新标题");
+    expect(merged.assets).toBe(cached.assets);
+    expect(merged.rounds).toBe(cached.rounds);
+    expect(merged.generation_tasks[0].status).toBe("running");
+    expect(merged.updated_at).toBe("2026-04-27T00:00:10Z");
+  });
+
+  it("refreshes full detail when lightweight status reaches terminal state or new rounds", () => {
+    const cached = detail({
+      rounds: [round({ id: "round-1" })],
+      generation_tasks: [task({ id: "task-1", status: "running" })],
+    });
+
+    expect(
+      shouldRefreshImageSessionDetailFromStatus(
+        cached,
+        status({ rounds_count: 1, latest_round_id: "round-1", generation_tasks: [task({ id: "task-1", status: "running" })] }),
+      ),
+    ).toBe(false);
+    expect(
+      shouldRefreshImageSessionDetailFromStatus(
+        cached,
+        status({ rounds_count: 1, latest_round_id: "round-1", generation_tasks: [task({ id: "task-1", status: "failed" })] }),
+      ),
+    ).toBe(true);
+    expect(
+      shouldRefreshImageSessionDetailFromStatus(
+        cached,
+        status({ rounds_count: 2, latest_round_id: "round-2", generation_tasks: [task({ id: "task-1", status: "succeeded" })] }),
+      ),
+    ).toBe(true);
   });
 });

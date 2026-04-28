@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from productflow_backend.application.image_sessions import ImageSessionStatusSnapshot
 from productflow_backend.domain.enums import ImageSessionAssetKind, JobStatus
 from productflow_backend.infrastructure.db.models import (
     ImageSession,
@@ -89,6 +90,19 @@ class ImageSessionDetailResponse(BaseModel):
     title: str
     assets: list[ImageSessionAssetResponse]
     rounds: list[ImageSessionRoundResponse]
+    generation_tasks: list[ImageSessionGenerationTaskResponse] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class ImageSessionStatusResponse(BaseModel):
+    id: str
+    product_id: str | None = None
+    title: str
+    rounds_count: int
+    latest_round_id: str | None = None
+    latest_generation_group_id: str | None = None
+    has_active_generation_task: bool
     generation_tasks: list[ImageSessionGenerationTaskResponse] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
@@ -279,6 +293,35 @@ def serialize_image_session_detail(image_session: ImageSession) -> ImageSessionD
         title=image_session.title,
         assets=[serialize_image_session_asset(item) for item in assets],
         rounds=[serialize_image_session_round(item) for item in rounds],
+        generation_tasks=[
+            serialize_image_session_generation_task(
+                item,
+                provider_notes=notes_by_group.get(item.result_generation_group_id or ""),
+            )
+            for item in generation_tasks
+        ],
+        created_at=image_session.created_at,
+        updated_at=image_session.updated_at,
+    )
+
+
+def serialize_image_session_status(snapshot: ImageSessionStatusSnapshot) -> ImageSessionStatusResponse:
+    image_session = snapshot.image_session
+    generation_tasks = sorted(image_session.generation_tasks, key=lambda item: item.created_at, reverse=True)
+    notes_by_group = {
+        generation_group_id: extract_provider_notes(provider_output_json)
+        for generation_group_id, provider_output_json in snapshot.provider_output_by_generation_group.items()
+    }
+    return ImageSessionStatusResponse(
+        id=image_session.id,
+        product_id=image_session.product_id,
+        title=image_session.title,
+        rounds_count=snapshot.rounds_count,
+        latest_round_id=snapshot.latest_round_id,
+        latest_generation_group_id=snapshot.latest_generation_group_id,
+        has_active_generation_task=any(
+            item.status in {JobStatus.QUEUED, JobStatus.RUNNING} for item in generation_tasks
+        ),
         generation_tasks=[
             serialize_image_session_generation_task(
                 item,

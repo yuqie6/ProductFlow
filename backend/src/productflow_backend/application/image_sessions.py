@@ -5,7 +5,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from sqlalchemy import desc, select, update
+from sqlalchemy import desc, func, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.admission import (
@@ -51,6 +51,15 @@ class ImageSessionRoundGenerationResult:
     generation_group_id: str
 
 
+@dataclass(frozen=True, slots=True)
+class ImageSessionStatusSnapshot:
+    image_session: ImageSession
+    rounds_count: int
+    latest_round_id: str | None
+    latest_generation_group_id: str | None
+    provider_output_by_generation_group: dict[str, dict[str, Any] | None]
+
+
 def _image_session_query():
     return (
         select(ImageSession)
@@ -62,6 +71,10 @@ def _image_session_query():
         )
         .order_by(desc(ImageSession.updated_at))
     )
+
+
+def _image_session_status_query():
+    return select(ImageSession).options(selectinload(ImageSession.generation_tasks))
 
 
 def _get_image_session_or_raise(session: Session, image_session_id: str) -> ImageSession:
@@ -276,6 +289,48 @@ def list_image_sessions(
 
 def get_image_session_detail(session: Session, image_session_id: str) -> ImageSession:
     return _get_image_session_or_raise(session, image_session_id)
+
+
+def get_image_session_status(session: Session, image_session_id: str) -> ImageSessionStatusSnapshot:
+    image_session = session.scalar(_image_session_status_query().where(ImageSession.id == image_session_id))
+    if image_session is None:
+        raise NotFoundError("连续生图会话不存在")
+    _attach_generation_task_queue_metadata(session, image_session)
+
+    rounds_count = session.scalar(
+        select(func.count()).select_from(ImageSessionRound).where(ImageSessionRound.session_id == image_session.id)
+    )
+    latest_round_row = session.execute(
+        select(ImageSessionRound.id, ImageSessionRound.generation_group_id)
+        .where(ImageSessionRound.session_id == image_session.id)
+        .order_by(desc(ImageSessionRound.created_at), desc(ImageSessionRound.id))
+        .limit(1)
+    ).first()
+    result_group_ids = {
+        task.result_generation_group_id
+        for task in image_session.generation_tasks
+        if task.result_generation_group_id is not None
+    }
+    provider_output_by_group: dict[str, dict[str, Any] | None] = {}
+    if result_group_ids:
+        for generation_group_id, provider_output_json in session.execute(
+            select(ImageSessionRound.generation_group_id, ImageSessionRound.provider_output_json)
+            .where(
+                ImageSessionRound.session_id == image_session.id,
+                ImageSessionRound.generation_group_id.in_(result_group_ids),
+            )
+            .order_by(desc(ImageSessionRound.created_at))
+        ):
+            if generation_group_id and generation_group_id not in provider_output_by_group:
+                provider_output_by_group[generation_group_id] = provider_output_json
+
+    return ImageSessionStatusSnapshot(
+        image_session=image_session,
+        rounds_count=int(rounds_count or 0),
+        latest_round_id=latest_round_row.id if latest_round_row else None,
+        latest_generation_group_id=latest_round_row.generation_group_id if latest_round_row else None,
+        provider_output_by_generation_group=provider_output_by_group,
+    )
 
 
 def create_image_session(

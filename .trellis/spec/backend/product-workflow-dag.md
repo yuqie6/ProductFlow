@@ -20,6 +20,7 @@
   - `workflow_node_runs(workflow_run_id, node_id, status, output_json, copy_set_id, poster_variant_id, image_session_asset_id)`.
 - APIs:
   - `GET /api/products/{product_id}/workflow`
+  - `GET /api/products/{product_id}/workflow/status`
   - `POST /api/products/{product_id}/workflow/nodes`
   - `PATCH /api/workflow-nodes/{node_id}`
   - `PATCH /api/workflow-nodes/{node_id}/copy`
@@ -40,6 +41,11 @@
   and migrate old image-slot rows to it; fresh databases should create only the supported simplified node values.
 - Node status values are `idle`, `queued`, `running`, `succeeded`, `failed`; run status values are
   `running`, `succeeded`, `failed`.
+- Active workflow status polling must use `GET /api/products/{product_id}/workflow/status`, not repeated full workflow
+  detail loads. The status endpoint returns workflow identity/timestamps, node status fields, latest run status fields,
+  and node-run status fields only; it must not serialize edges, node `config_json`, node `output_json`, or node-run
+  artifact fields. The status query should load only the ORM columns needed for those status DTOs and avoid eager-loading
+  product artifacts or full DAG relationships.
 - `reference_image` nodes are user-visible `参考图` slots. They can be manually uploaded into through
   `POST /api/workflow-nodes/{node_id}/image`, filled from an existing product image through
   `POST /api/workflow-nodes/{node_id}/image-source`, or filled by upstream `image_generation` nodes.

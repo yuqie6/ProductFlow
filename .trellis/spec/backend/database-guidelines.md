@@ -294,6 +294,79 @@ round.candidate_index = index
 round.generated_asset_id = asset.id
 ```
 
+## Scenario: Continuous image-session lightweight status polling
+
+### 1. Scope / Trigger
+
+- Trigger: changing continuous image-session active-task polling, task status DTOs, or the frontend detail refresh path.
+- Goal: active generation polling must not load full session assets and rounds on every tick.
+
+### 2. Signatures
+
+- Full detail API: `GET /api/image-sessions/{image_session_id}` returns `ImageSessionDetailResponse` with `assets`,
+  all `rounds`, and `generation_tasks`.
+- Lightweight status API: `GET /api/image-sessions/{image_session_id}/status` returns `ImageSessionStatusResponse`.
+- Status response fields:
+  - `id`, `product_id`, `title`, `created_at`, `updated_at`.
+  - `rounds_count`, `latest_round_id`, `latest_generation_group_id`.
+  - `has_active_generation_task`.
+  - `generation_tasks` using the same task DTO fields as detail, including queue metadata, failure reason, tool options,
+    provider notes, and result group id.
+
+### 3. Contracts
+
+- The status use case loads the `ImageSession` row and `generation_tasks`, then uses aggregate/minimal round queries for
+  `rounds_count` and latest round identifiers. It must not eager-load `assets` or full `rounds`.
+- Status tasks must attach the same queue metadata as full detail so the UI can show queue position and global queue counts
+  while polling.
+- Full detail remains the source of truth for generated assets, thumbnails, history cards, selected reference pruning, and
+  generated round payloads.
+- When status shows a new round or an active task reaches `succeeded` / `failed`, the frontend should refetch full detail
+  once. Do not make the status response grow into a second full session detail payload.
+
+### 4. Validation & Error Matrix
+
+- Missing image session -> `404`, `连续生图会话不存在`, same as full detail.
+- Queued task -> status includes `queue_position` / `queued_ahead_count` when available.
+- Running task -> status includes global running/queued counts and `has_active_generation_task == true`.
+- Terminal task without new rounds -> status is enough to show failure reason, then the frontend refetches detail once.
+- Terminal task with new rounds -> status exposes `rounds_count` / latest identifiers, then the frontend refetches detail
+  once to display new candidates.
+
+### 5. Good/Base/Bad Cases
+
+- Good: ten browsers watching active generation poll `/status` every 1500ms and fetch full detail only when output appears
+  or failure completes.
+- Base: a queued task keeps visible prompt, queue position, generation count, and duplicate-submit disabling without
+  loading all historical rounds.
+- Bad: adding `assets` or serialized `rounds` to `ImageSessionStatusResponse`; that recreates the original heavy polling.
+- Bad: using status polling for ProductDetail workflow runs in this scenario; workflow status needs its own contract.
+
+### 6. Tests Required
+
+- Backend API test for `/status` asserts it omits `assets` and `rounds`, includes task queue metadata, and returns
+  `has_active_generation_task` correctly.
+- Backend API test or extension asserts completed status exposes `rounds_count`, latest identifiers, and terminal task
+  result group.
+- Frontend helper tests should cover merging status tasks into cached detail and deciding when status requires a full
+  detail refetch.
+- Frontend gates remain `pnpm --dir web lint`, `pnpm --dir web test:run`, and `just web-build`.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+return serialize_image_session_detail(get_image_session_detail(session, image_session_id))
+```
+
+Correct:
+
+```python
+snapshot = get_image_session_status(session, image_session_id)
+return serialize_image_session_status(snapshot)
+```
+
 ### Persistence and external side effects
 
 The current pattern commits database changes before performing non-transactional file deletion:

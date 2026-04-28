@@ -80,6 +80,10 @@ def latest_workflow_runs(workflow: ProductWorkflow, limit: int = 10) -> list[Wor
     return product_workflow_graph.latest_workflow_runs(workflow, limit=limit)
 
 
+def get_product_workflow_status(session, product_id: str) -> product_workflow_graph.ProductWorkflowStatusSnapshot:
+    return product_workflow_graph.get_active_workflow_status(session, product_id)
+
+
 __all__ = [
     "_GeneratedWorkflowImage",
     "_IncomingContext",
@@ -132,6 +136,7 @@ __all__ = [
     "execute_product_workflow_run",
     "get_image_provider",
     "get_or_create_product_workflow",
+    "get_product_workflow_status",
     "get_text_provider",
     "latest_workflow_runs",
     "logger",

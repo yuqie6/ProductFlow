@@ -10,6 +10,7 @@ from productflow_backend.application.product_workflows import (
     delete_workflow_edge,
     delete_workflow_node,
     get_or_create_product_workflow,
+    get_product_workflow_status,
     mark_workflow_run_enqueue_failed,
     start_product_workflow_run,
     update_workflow_copy_set,
@@ -24,10 +25,12 @@ from productflow_backend.presentation.schemas.product_workflows import (
     CreateWorkflowEdgeRequest,
     CreateWorkflowNodeRequest,
     ProductWorkflowResponse,
+    ProductWorkflowStatusResponse,
     RunWorkflowRequest,
     UpdateWorkflowCopySetRequest,
     UpdateWorkflowNodeRequest,
     serialize_product_workflow,
+    serialize_product_workflow_status,
 )
 from productflow_backend.presentation.upload_validation import read_validated_image_upload
 
@@ -41,6 +44,18 @@ def get_product_workflow_endpoint(product_id: str, session: Session = Depends(ge
     except ValueError as exc:
         raise_value_error_as_http(exc)
     return serialize_product_workflow(workflow)
+
+
+@router.get("/products/{product_id}/workflow/status", response_model=ProductWorkflowStatusResponse)
+def get_product_workflow_status_endpoint(
+    product_id: str,
+    session: Session = Depends(get_session),
+) -> ProductWorkflowStatusResponse:
+    try:
+        workflow = get_product_workflow_status(session, product_id)
+    except ValueError as exc:
+        raise_value_error_as_http(exc)
+    return serialize_product_workflow_status(workflow)
 
 
 @router.post(

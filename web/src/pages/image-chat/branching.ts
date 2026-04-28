@@ -1,4 +1,4 @@
-import type { ImageSessionGenerationTask, ImageSessionRound } from "../../lib/types";
+import type { ImageSessionDetail, ImageSessionGenerationTask, ImageSessionRound, ImageSessionStatus } from "../../lib/types";
 export { compactImageToolOptions } from "../../lib/imageToolOptions";
 
 export interface ImageRoundGroup {
@@ -61,6 +61,10 @@ function generationTaskPriority(task: ImageSessionGenerationTask): number {
   return 3;
 }
 
+export function isImageSessionGenerationTaskActive(task: ImageSessionGenerationTask): boolean {
+  return task.status === "queued" || task.status === "running";
+}
+
 export function selectVisibleGenerationTasks(
   tasks: ImageSessionGenerationTask[],
   limit = 4,
@@ -74,4 +78,36 @@ export function selectVisibleGenerationTasks(
       return Date.parse(right.created_at) - Date.parse(left.created_at);
     })
     .slice(0, limit);
+}
+
+export function mergeImageSessionStatusIntoDetail(
+  detail: ImageSessionDetail,
+  status: ImageSessionStatus,
+): ImageSessionDetail {
+  return {
+    ...detail,
+    title: status.title,
+    updated_at: status.updated_at,
+    generation_tasks: status.generation_tasks,
+  };
+}
+
+export function shouldRefreshImageSessionDetailFromStatus(
+  detail: ImageSessionDetail | undefined,
+  status: ImageSessionStatus,
+): boolean {
+  if (!detail) {
+    return false;
+  }
+  if (status.rounds_count > detail.rounds.length) {
+    return true;
+  }
+  if (status.latest_round_id && !detail.rounds.some((round) => round.id === status.latest_round_id)) {
+    return true;
+  }
+  const previousTasksById = new Map(detail.generation_tasks.map((task) => [task.id, task]));
+  return status.generation_tasks.some((task) => {
+    const previousTask = previousTasksById.get(task.id);
+    return Boolean(previousTask && isImageSessionGenerationTaskActive(previousTask) && !isImageSessionGenerationTaskActive(task));
+  });
 }

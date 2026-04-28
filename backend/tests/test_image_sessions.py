@@ -131,6 +131,60 @@ def test_image_session_generate_returns_queued_task_without_waiting_for_provider
     assert persisted.status == "queued"
 
 
+def test_image_session_status_returns_lightweight_task_snapshot(
+    configured_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.application.image_sessions import execute_image_session_generation_task
+    from productflow_backend.presentation.api import create_app
+
+    sent: list[str] = []
+    monkeypatch.setattr(
+        "productflow_backend.presentation.routes.image_sessions.enqueue_image_session_generation_task",
+        lambda task_id: sent.append(task_id),
+    )
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post("/api/image-sessions", json={"title": "轻量状态"})
+    assert created.status_code == 201
+    session_id = created.json()["id"]
+    submitted = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={"prompt": "只轮询状态", "size": "1024x1024"},
+    )
+    assert submitted.status_code == 202
+    task_id = submitted.json()["generation_tasks"][0]["id"]
+
+    queued_status = client.get(f"/api/image-sessions/{session_id}/status")
+    assert queued_status.status_code == 200
+    queued_payload = queued_status.json()
+    assert "assets" not in queued_payload
+    assert "rounds" not in queued_payload
+    assert queued_payload["rounds_count"] == 0
+    assert queued_payload["latest_round_id"] is None
+    assert queued_payload["has_active_generation_task"] is True
+    assert queued_payload["generation_tasks"][0]["id"] == task_id
+    assert queued_payload["generation_tasks"][0]["status"] == "queued"
+    assert queued_payload["generation_tasks"][0]["queue_position"] == 1
+    assert sent == [task_id]
+
+    execute_image_session_generation_task(task_id)
+
+    completed_status = client.get(f"/api/image-sessions/{session_id}/status")
+    assert completed_status.status_code == 200
+    completed_payload = completed_status.json()
+    assert completed_payload["rounds_count"] == 1
+    assert completed_payload["latest_round_id"]
+    assert completed_payload["latest_generation_group_id"]
+    assert completed_payload["has_active_generation_task"] is False
+    assert completed_payload["generation_tasks"][0]["status"] == "succeeded"
+    assert completed_payload["generation_tasks"][0]["result_generation_group_id"] == completed_payload[
+        "latest_generation_group_id"
+    ]
+
+
 def test_image_session_generation_accepts_per_request_tool_options_and_exposes_provider_notes(
     configured_env: Path,
     db_session,

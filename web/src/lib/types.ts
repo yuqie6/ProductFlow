@@ -182,6 +182,16 @@ export interface WorkflowNodeRun {
   finished_at: string | null;
 }
 
+export interface WorkflowNodeRunStatus {
+  id: string;
+  workflow_run_id: string;
+  node_id: string;
+  status: WorkflowNodeStatus;
+  failure_reason: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
 export interface WorkflowRun {
   id: string;
   workflow_id: string;
@@ -192,6 +202,25 @@ export interface WorkflowRun {
   node_runs: WorkflowNodeRun[];
 }
 
+export interface WorkflowRunStatusSummary {
+  id: string;
+  workflow_id: string;
+  status: WorkflowRunStatus;
+  started_at: string;
+  finished_at: string | null;
+  failure_reason: string | null;
+  node_runs: WorkflowNodeRunStatus[];
+}
+
+export interface WorkflowNodeStatusSummary {
+  id: string;
+  workflow_id: string;
+  status: WorkflowNodeStatus;
+  failure_reason: string | null;
+  last_run_at: string | null;
+  updated_at: string;
+}
+
 export interface ProductWorkflow {
   id: string;
   product_id: string;
@@ -200,6 +229,18 @@ export interface ProductWorkflow {
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
   runs: WorkflowRun[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProductWorkflowStatus {
+  id: string;
+  product_id: string;
+  title: string;
+  active: boolean;
+  has_active_workflow: boolean;
+  nodes: WorkflowNodeStatusSummary[];
+  runs: WorkflowRunStatusSummary[];
   created_at: string;
   updated_at: string;
 }
@@ -297,6 +338,19 @@ export interface ImageSessionDetail {
   title: string;
   assets: ImageSessionAsset[];
   rounds: ImageSessionRound[];
+  generation_tasks: ImageSessionGenerationTask[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ImageSessionStatus {
+  id: string;
+  product_id: string | null;
+  title: string;
+  rounds_count: number;
+  latest_round_id: string | null;
+  latest_generation_group_id: string | null;
+  has_active_generation_task: boolean;
   generation_tasks: ImageSessionGenerationTask[];
   created_at: string;
   updated_at: string;

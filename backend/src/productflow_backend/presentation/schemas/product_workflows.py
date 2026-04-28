@@ -5,6 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from productflow_backend.application.product_workflow_graph import ProductWorkflowStatusSnapshot
 from productflow_backend.application.product_workflows import latest_workflow_runs
 from productflow_backend.domain.enums import WorkflowNodeStatus, WorkflowNodeType, WorkflowRunStatus
 from productflow_backend.infrastructure.db.models import (
@@ -56,6 +57,16 @@ class WorkflowNodeRunResponse(BaseModel):
     finished_at: datetime | None = None
 
 
+class WorkflowNodeRunStatusResponse(BaseModel):
+    id: str
+    workflow_run_id: str
+    node_id: str
+    status: WorkflowNodeStatus
+    failure_reason: str | None = None
+    started_at: datetime
+    finished_at: datetime | None = None
+
+
 class WorkflowRunResponse(BaseModel):
     id: str
     workflow_id: str
@@ -66,6 +77,25 @@ class WorkflowRunResponse(BaseModel):
     node_runs: list[WorkflowNodeRunResponse]
 
 
+class WorkflowRunStatusResponse(BaseModel):
+    id: str
+    workflow_id: str
+    status: WorkflowRunStatus
+    started_at: datetime
+    finished_at: datetime | None = None
+    failure_reason: str | None = None
+    node_runs: list[WorkflowNodeRunStatusResponse]
+
+
+class WorkflowNodeStatusResponse(BaseModel):
+    id: str
+    workflow_id: str
+    status: WorkflowNodeStatus
+    failure_reason: str | None = None
+    last_run_at: datetime | None = None
+    updated_at: datetime
+
+
 class ProductWorkflowResponse(BaseModel):
     id: str
     product_id: str
@@ -74,6 +104,18 @@ class ProductWorkflowResponse(BaseModel):
     nodes: list[WorkflowNodeResponse]
     edges: list[WorkflowEdgeResponse]
     runs: list[WorkflowRunResponse]
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProductWorkflowStatusResponse(BaseModel):
+    id: str
+    product_id: str
+    title: str
+    active: bool
+    has_active_workflow: bool
+    nodes: list[WorkflowNodeStatusResponse]
+    runs: list[WorkflowRunStatusResponse]
     created_at: datetime
     updated_at: datetime
 
@@ -162,6 +204,18 @@ def serialize_workflow_node_run(node_run: WorkflowNodeRun) -> WorkflowNodeRunRes
     )
 
 
+def serialize_workflow_node_run_status(node_run: WorkflowNodeRun) -> WorkflowNodeRunStatusResponse:
+    return WorkflowNodeRunStatusResponse(
+        id=node_run.id,
+        workflow_run_id=node_run.workflow_run_id,
+        node_id=node_run.node_id,
+        status=node_run.status,
+        failure_reason=node_run.failure_reason,
+        started_at=node_run.started_at,
+        finished_at=node_run.finished_at,
+    )
+
+
 def serialize_workflow_run(run: WorkflowRun) -> WorkflowRunResponse:
     node_runs = sorted(run.node_runs, key=lambda item: item.started_at)
     return WorkflowRunResponse(
@@ -172,6 +226,19 @@ def serialize_workflow_run(run: WorkflowRun) -> WorkflowRunResponse:
         finished_at=run.finished_at,
         failure_reason=run.failure_reason,
         node_runs=[serialize_workflow_node_run(item) for item in node_runs],
+    )
+
+
+def serialize_workflow_run_status(run: WorkflowRun) -> WorkflowRunStatusResponse:
+    node_runs = sorted(run.node_runs, key=lambda item: item.started_at)
+    return WorkflowRunStatusResponse(
+        id=run.id,
+        workflow_id=run.workflow_id,
+        status=run.status,
+        started_at=run.started_at,
+        finished_at=run.finished_at,
+        failure_reason=run.failure_reason,
+        node_runs=[serialize_workflow_node_run_status(item) for item in node_runs],
     )
 
 
@@ -186,6 +253,33 @@ def serialize_product_workflow(workflow: ProductWorkflow) -> ProductWorkflowResp
         nodes=[serialize_workflow_node(item) for item in nodes],
         edges=[serialize_workflow_edge(item) for item in edges],
         runs=[serialize_workflow_run(item) for item in latest_workflow_runs(workflow)],
+        created_at=workflow.created_at,
+        updated_at=workflow.updated_at,
+    )
+
+
+def serialize_product_workflow_status(snapshot: ProductWorkflowStatusSnapshot) -> ProductWorkflowStatusResponse:
+    workflow = snapshot.workflow
+    nodes = snapshot.nodes
+    return ProductWorkflowStatusResponse(
+        id=workflow.id,
+        product_id=workflow.product_id,
+        title=workflow.title,
+        active=workflow.active,
+        has_active_workflow=any(item.status == WorkflowRunStatus.RUNNING for item in snapshot.runs)
+        or any(item.status in {WorkflowNodeStatus.QUEUED, WorkflowNodeStatus.RUNNING} for item in nodes),
+        nodes=[
+            WorkflowNodeStatusResponse(
+                id=item.id,
+                workflow_id=item.workflow_id,
+                status=item.status,
+                failure_reason=item.failure_reason,
+                last_run_at=item.last_run_at,
+                updated_at=item.updated_at,
+            )
+            for item in nodes
+        ],
+        runs=[serialize_workflow_run_status(item) for item in snapshot.runs],
         created_at=workflow.created_at,
         updated_at=workflow.updated_at,
     )

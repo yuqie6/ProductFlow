@@ -41,6 +41,72 @@ def _execute_workflow_queue_inline_fixture(monkeypatch: pytest.MonkeyPatch) -> N
     _execute_workflow_queue_inline(monkeypatch)
 
 
+def test_product_workflow_status_endpoint_returns_lightweight_state(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post(
+        "/api/products",
+        data={"name": "桌面收纳盒"},
+        files={"image": ("box.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+
+    workflow_response = client.get(f"/api/products/{product_id}/workflow")
+    assert workflow_response.status_code == 200
+    workflow = workflow_response.json()
+    status_response = client.get(f"/api/products/{product_id}/workflow/status")
+    assert status_response.status_code == 200
+    status_payload = status_response.json()
+    assert status_payload["id"] == workflow["id"]
+    assert status_payload["product_id"] == product_id
+    assert status_payload["title"] == workflow["title"]
+    assert status_payload["active"] is True
+    assert status_payload["has_active_workflow"] is False
+    assert "edges" not in status_payload
+    assert status_payload["nodes"]
+    assert set(status_payload["nodes"][0]) == {
+        "id",
+        "workflow_id",
+        "status",
+        "failure_reason",
+        "last_run_at",
+        "updated_at",
+    }
+
+    run_response = client.post(f"/api/products/{product_id}/workflow/run", json={})
+    assert run_response.status_code == 200
+    run_status_response = client.get(f"/api/products/{product_id}/workflow/status")
+    assert run_status_response.status_code == 200
+    run_status_payload = run_status_response.json()
+    assert run_status_payload["runs"]
+    assert set(run_status_payload["runs"][0]) == {
+        "id",
+        "workflow_id",
+        "status",
+        "started_at",
+        "finished_at",
+        "failure_reason",
+        "node_runs",
+    }
+    assert run_status_payload["runs"][0]["status"] == "succeeded"
+    assert run_status_payload["runs"][0]["node_runs"]
+    assert set(run_status_payload["runs"][0]["node_runs"][0]) == {
+        "id",
+        "workflow_run_id",
+        "node_id",
+        "status",
+        "failure_reason",
+        "started_at",
+        "finished_at",
+    }
+    assert "output_json" not in run_status_payload["runs"][0]["node_runs"][0]
+
+
 def test_reference_workflow_node_upload_replaces_current_image(configured_env: Path) -> None:
     from productflow_backend.presentation.api import create_app
 
