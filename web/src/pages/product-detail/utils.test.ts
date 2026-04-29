@@ -8,6 +8,7 @@ import {
   mergeProductWorkflowStatusIntoDetail,
   outputStringArray,
   shouldRefreshProductWorkflowDetailFromStatus,
+  workflowNodeStatusLabel,
 } from "./utils";
 
 const baseNode: WorkflowNode = {
@@ -92,6 +93,11 @@ describe("product-detail utils", () => {
     );
     expect(isImageWorkflowNodeWaiting({ ...baseNode, node_type: "copy_generation", status: "running" })).toBe(false);
     expect(imageWorkflowNodeWaitingLabel({ ...baseNode, node_type: "reference_image", status: "succeeded" })).toBe("");
+  });
+
+  it("labels idle product context nodes as usable static context", () => {
+    expect(workflowNodeStatusLabel({ ...baseNode, node_type: "product_context", status: "idle" })).toBe("可用");
+    expect(workflowNodeStatusLabel({ ...baseNode, node_type: "image_generation", status: "idle" })).toBe("未运行");
   });
 
   it("merges lightweight workflow status without replacing structure or node outputs", () => {

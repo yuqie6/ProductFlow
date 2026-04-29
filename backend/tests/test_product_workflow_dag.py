@@ -633,6 +633,124 @@ def test_product_context_source_image_reaches_image_generation_context(
     assert len(provider_input.reference_images) == 1
     assert provider_input.reference_images[0].path == provider_input.source_image
 
+
+def test_image_generation_collects_product_context_through_upstream_copy_edge(
+    configured_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.infrastructure.image.base import GeneratedImagePayload
+    from productflow_backend.presentation.api import create_app
+
+    session = get_session_factory()()
+    try:
+        session.add(AppSetting(key="poster_generation_mode", value="generated"))
+        session.commit()
+    finally:
+        session.close()
+
+    captured_inputs: list[PosterGenerationInput] = []
+
+    class CapturingImageProvider:
+        provider_name = "capturing"
+        prompt_version = "capturing-v1"
+
+        def generate_poster_image(
+            self,
+            poster: PosterGenerationInput,
+            kind: PosterKind,
+        ) -> tuple[GeneratedImagePayload, str]:
+            captured_inputs.append(poster)
+            return (
+                GeneratedImagePayload(
+                    kind=kind,
+                    bytes_data=_make_demo_image_bytes(),
+                    mime_type="image/png",
+                    width=800,
+                    height=800,
+                    variant_label=f"capturing-r{len(poster.reference_images)}",
+                ),
+                "capturing-v1",
+            )
+
+    monkeypatch.setattr(
+        "productflow_backend.application.product_workflows.get_image_provider",
+        CapturingImageProvider,
+    )
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post(
+        "/api/products",
+        data={"name": "折叠露营椅"},
+        files={"image": ("chair.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+
+    workflow_response = client.get(f"/api/products/{product_id}/workflow")
+    assert workflow_response.status_code == 200
+    workflow = workflow_response.json()
+    context_node = next(node for node in workflow["nodes"] if node["node_type"] == "product_context")
+    copy_node = next(node for node in workflow["nodes"] if node["node_type"] == "copy_generation")
+    image_node = next(node for node in workflow["nodes"] if node["node_type"] == "image_generation")
+    direct_context_edge = next(
+        edge
+        for edge in workflow["edges"]
+        if edge["source_node_id"] == context_node["id"] and edge["target_node_id"] == image_node["id"]
+    )
+    assert any(
+        edge["source_node_id"] == context_node["id"] and edge["target_node_id"] == copy_node["id"]
+        for edge in workflow["edges"]
+    )
+    assert any(
+        edge["source_node_id"] == copy_node["id"] and edge["target_node_id"] == image_node["id"]
+        for edge in workflow["edges"]
+    )
+
+    deleted_direct_edge = client.delete(f"/api/workflow-edges/{direct_context_edge['id']}")
+    assert deleted_direct_edge.status_code == 200
+    patched_context = client.patch(
+        f"/api/workflow-nodes/{context_node['id']}",
+        json={
+            "config_json": {
+                "name": "折叠露营椅",
+                "category": "户外家具",
+                "price": "129",
+                "source_note": "铝合金支架，可折叠收纳，适合露营和阳台休息。",
+            }
+        },
+    )
+    assert patched_context.status_code == 200
+
+    selected_run = client.post(
+        f"/api/products/{product_id}/workflow/run",
+        json={"start_node_id": image_node["id"]},
+    )
+    assert selected_run.status_code == 200
+    payload = _wait_for_workflow_run(client, product_id, status="succeeded")
+    image_output = next(node for node in payload["nodes"] if node["id"] == image_node["id"])["output_json"]
+
+    assert image_output["context_summary"]["product_context"]["category"] == "户外家具"
+    assert image_output["context_summary"]["product_context"]["price"] == "129"
+    assert image_output["context_summary"]["reference_image_count"] == 1
+    assert any("折叠露营椅" in source["text"] for source in image_output["context_sources"])
+    assert any(
+        source["label"] == "商品图" and "chair.png" in source["text"]
+        for source in image_output["context_sources"]
+    )
+    assert len(captured_inputs) == 1
+    provider_input = captured_inputs[0]
+    assert provider_input.product_name == "折叠露营椅"
+    assert provider_input.category == "户外家具"
+    assert provider_input.price == "129"
+    assert provider_input.source_note == "铝合金支架，可折叠收纳，适合露营和阳台休息。"
+    assert provider_input.source_image is not None
+    assert len(provider_input.reference_images) == 1
+    assert provider_input.reference_images[0].path == provider_input.source_image
+
+
 def test_single_node_workflow_run_reuses_succeeded_upstream_outputs(configured_env: Path) -> None:
     from productflow_backend.presentation.api import create_app
 

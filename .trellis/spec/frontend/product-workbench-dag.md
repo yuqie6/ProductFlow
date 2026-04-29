@@ -59,6 +59,9 @@
 - Workflow execution is asynchronous from the frontend perspective: `runProductWorkflow(productId, input?)` returns the
   persisted kickoff state, then the page polls `['product-workflow', productId]` while any run is `running` or any node is
   `queued` / `running`.
+- Running any workflow node must first flush the currently selected dirty inspector draft, even when the clicked run action
+  belongs to a different node. Otherwise a user can edit the product context node and immediately run an image node from
+  the canvas before autosave persists the newest product fields.
 - Do not use the run mutation pending state as a global canvas lock. Split interaction busy state so `runBusy` prevents
   duplicate run clicks, structural mutations can be disabled during active runs, and node dragging remains available unless
   a layout/position mutation is already pending.
@@ -114,6 +117,8 @@
   backend URLs through `api.toApiUrl(...)`, use short visible copy such as `下载`, stop propagation inside node cards, and
   sanitize generated filenames so product names cannot introduce path separators or control characters.
 - User-visible copy should be short utility labels such as `商品`, `参考图`, `文案`, `生图`, `运行`, `连接`, `删除`.
+- An idle `product_context` node is usable static context and should not be labeled as `未运行`; display it as available
+  context while leaving real generative/action nodes to use the generic idle label.
 - Mutations that create artifacts must refresh `['product', productId]`, `['product-history', productId]`, and
   `['products']` when outputs can affect copy, posters, or list status.
 

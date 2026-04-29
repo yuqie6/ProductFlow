@@ -15,10 +15,14 @@ import { DownloadLink } from "./ImageDownloadComponents";
 import {
   IMAGE_PREVIEW_SURFACE_CLASS_NAME,
   NODE_LABELS,
-  NODE_STATUS_LABELS,
 } from "./constants";
 import type { CanvasPoint } from "./types";
-import { imageWorkflowNodeWaitingLabel, isImageWorkflowNodeWaiting, statusClass } from "./utils";
+import {
+  imageWorkflowNodeWaitingLabel,
+  isImageWorkflowNodeWaiting,
+  statusClass,
+  workflowNodeStatusLabel,
+} from "./utils";
 
 interface WorkflowNodeCardProps {
   node: WorkflowNode;
@@ -130,7 +134,7 @@ export function WorkflowNodeCard({
           <span
             className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium ${statusClass(node.status)}`}
           >
-            {NODE_STATUS_LABELS[node.status]}
+            {workflowNodeStatusLabel(node)}
           </span>
         </div>
         {image ? (

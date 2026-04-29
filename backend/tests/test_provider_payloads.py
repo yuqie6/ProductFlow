@@ -64,11 +64,18 @@ def test_prompt_settings_reach_provider_prompt_builders(configured_env: Path, mo
                 AppSetting(key="prompt_copy_system", value="自定义文案提示"),
                 AppSetting(
                     key="prompt_poster_image_template",
-                    value="自定义海报 {product_name} / {instruction} / {kind_label} / {selling_points}",
+                    value=(
+                        "自定义海报 {product_name} / {instruction} / {kind_label} / "
+                        "{selling_points} / {reference_policy}"
+                    ),
                 ),
                 AppSetting(
                     key="prompt_poster_image_edit_template",
-                    value="自定义改图 {product_name} / {instruction} / {kind_label} / {size}",
+                    value="自定义改图 {product_name} / {instruction} / {kind_label} / {size} / {reference_policy}",
+                ),
+                AppSetting(
+                    key="prompt_poster_image_reference_policy",
+                    value="自定义视觉参考规则",
                 ),
                 AppSetting(
                     key="prompt_image_chat_template",
@@ -137,7 +144,7 @@ def test_prompt_settings_reach_provider_prompt_builders(configured_env: Path, mo
         PosterKind.MAIN_IMAGE,
         "1024x1024",
     )
-    assert poster_prompt == "自定义海报 测试商品 / 强调轻便 / 主图 / 卖点一；卖点二；卖点三"
+    assert poster_prompt == "自定义海报 测试商品 / 强调轻便 / 主图 / 卖点一；卖点二；卖点三 / 自定义视觉参考规则"
 
     edit_prompt = OpenAIResponsesImageProvider()._build_prompt(
         PosterGenerationInput(
@@ -156,7 +163,7 @@ def test_prompt_settings_reach_provider_prompt_builders(configured_env: Path, mo
         PosterKind.MAIN_IMAGE,
         "1024x1024",
     )
-    assert edit_prompt == "自定义改图 测试商品 / 改成白底，保留主体 / 主图 / 1024x1024"
+    assert edit_prompt == "自定义改图 测试商品 / 改成白底，保留主体 / 主图 / 1024x1024 / 自定义视觉参考规则"
 
     chat_prompt = ImageChatService()._build_prompt(
         "改成白底",
@@ -618,6 +625,10 @@ def test_openai_responses_poster_provider_uses_image_generation_tool(
     assert "用户要求：背景更干净，强调收纳空间。" in prompt_text
     assert "- 补充说明：防水牛津布，适合通勤和短途出差。" in prompt_text
     assert "- 参考图片数量：2" in prompt_text
+    assert "- 商品原图：第 1 张输入图片" in prompt_text
+    assert "- 参考图：reference.png（角色：参考图）" in prompt_text
+    assert "视觉参考规则：" in prompt_text
+    assert "如有输入图片，以输入图片中的商品/主体作为视觉基准" in prompt_text
     assert len([item for item in content if item["type"] == "input_image"]) == 2
     assert "/images/generations" not in str(payload)
     assert "/images/edits" not in str(payload)

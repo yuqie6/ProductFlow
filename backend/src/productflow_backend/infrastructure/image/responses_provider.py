@@ -455,6 +455,7 @@ class OpenAIResponsesImageProvider(ImageProvider):
         self.promo_poster_size = settings.image_promo_poster_size
         self.poster_image_template = settings.prompt_poster_image_template
         self.poster_image_edit_template = settings.prompt_poster_image_edit_template
+        self.poster_image_reference_policy = settings.prompt_poster_image_reference_policy
         self.client = OpenAIResponsesImageClient()
 
     def generate_poster_image(
@@ -538,6 +539,7 @@ class OpenAIResponsesImageProvider(ImageProvider):
                 "selling_points": "；".join(poster.selling_points[:3]),
                 "cta": poster.cta,
                 "context_block": context_block,
+                "reference_policy": self.poster_image_reference_policy if self._has_reference_input(poster) else "",
                 "size": size,
                 "kind": kind.value,
                 "kind_label": "主图" if kind == PosterKind.MAIN_IMAGE else "促销海报",
@@ -571,7 +573,18 @@ class OpenAIResponsesImageProvider(ImageProvider):
                 reference_paths.add(str(poster.source_image.resolve()))
             reference_count = len(reference_paths)
             lines.append(f"- 参考图片数量：{reference_count}")
+            if poster.source_image is not None:
+                lines.append("- 商品原图：第 1 张输入图片")
+            reference_labels = [
+                f"{reference.label or reference.filename}（角色：{reference.role or '参考图'}）"
+                for reference in poster.reference_images
+            ]
+            if reference_labels:
+                lines.append(f"- 参考图：{'；'.join(reference_labels)}")
         return "\n".join(lines) if lines else "- 无显式上游上下文。"
+
+    def _has_reference_input(self, poster: PosterGenerationInput) -> bool:
+        return poster.source_image is not None or bool(poster.reference_images)
 
     def _build_kind_requirements(self, kind: PosterKind) -> str:
         kind_label = "主图" if kind == PosterKind.MAIN_IMAGE else "海报/竖图"

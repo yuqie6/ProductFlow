@@ -41,15 +41,57 @@ def _empty_product_context() -> dict[str, str | None]:
     return {"name": None, "category": None, "price": None, "source_note": None}
 
 
-def _effective_product_context(workflow: ProductWorkflow, target_node_id: str) -> dict[str, str | None]:
-    incoming_context_nodes = [
-        node
-        for edge in workflow.edges
-        for node in workflow.nodes
-        if edge.target_node_id == target_node_id
-        and edge.source_node_id == node.id
-        and node.node_type == WorkflowNodeType.PRODUCT_CONTEXT
-    ]
+def _direct_source_nodes(workflow: ProductWorkflow, target_node_id: str) -> list[WorkflowNode]:
+    ordered_edges = sorted(
+        [edge for edge in workflow.edges if edge.target_node_id == target_node_id],
+        key=lambda item: (item.created_at, item.id),
+    )
+    incoming_sources = list(dict.fromkeys(edge.source_node_id for edge in ordered_edges))
+    nodes_by_id = {node.id: node for node in workflow.nodes}
+    return [nodes_by_id[source_id] for source_id in incoming_sources if source_id in nodes_by_id]
+
+
+def _upstream_nodes_of_type(
+    workflow: ProductWorkflow,
+    target_node_id: str,
+    node_type: WorkflowNodeType,
+) -> list[WorkflowNode]:
+    ordered_edges = sorted(workflow.edges, key=lambda item: (item.created_at, item.id))
+    incoming_by_target: dict[str, list[str]] = {}
+    for edge in ordered_edges:
+        incoming_by_target.setdefault(edge.target_node_id, []).append(edge.source_node_id)
+
+    nodes_by_id = {node.id: node for node in workflow.nodes}
+    queue = list(incoming_by_target.get(target_node_id, []))
+    seen: set[str] = set()
+    matched: list[WorkflowNode] = []
+    while queue:
+        source_id = queue.pop(0)
+        if source_id in seen:
+            continue
+        seen.add(source_id)
+        source_node = nodes_by_id.get(source_id)
+        if source_node is not None and source_node.node_type == node_type:
+            matched.append(source_node)
+        queue.extend(incoming_by_target.get(source_id, []))
+    return matched
+
+
+def _effective_product_context(
+    workflow: ProductWorkflow,
+    target_node_id: str,
+    *,
+    include_transitive: bool = False,
+) -> dict[str, str | None]:
+    incoming_context_nodes = (
+        _upstream_nodes_of_type(workflow, target_node_id, WorkflowNodeType.PRODUCT_CONTEXT)
+        if include_transitive
+        else [
+            node
+            for node in _direct_source_nodes(workflow, target_node_id)
+            if node.node_type == WorkflowNodeType.PRODUCT_CONTEXT
+        ]
+    )
     if not incoming_context_nodes:
         return _empty_product_context()
 
@@ -165,15 +207,22 @@ class _IncomingContext:
         )
 
 
-def _collect_incoming_context(workflow: ProductWorkflow, node_id: str) -> _IncomingContext:
+def _collect_incoming_context(
+    workflow: ProductWorkflow,
+    node_id: str,
+    *,
+    include_transitive_product_context: bool = False,
+) -> _IncomingContext:
     context = _IncomingContext()
-    ordered_edges = sorted(
-        [edge for edge in workflow.edges if edge.target_node_id == node_id],
-        key=lambda item: (item.created_at, item.id),
-    )
-    incoming_sources = list(dict.fromkeys(edge.source_node_id for edge in ordered_edges))
-    nodes_by_id = {node.id: node for node in workflow.nodes}
-    candidates = [nodes_by_id[source_id] for source_id in incoming_sources if source_id in nodes_by_id]
+    candidates = _direct_source_nodes(workflow, node_id)
+    if include_transitive_product_context:
+        candidate_ids = {node.id for node in candidates}
+        product_context_ancestors = [
+            node
+            for node in _upstream_nodes_of_type(workflow, node_id, WorkflowNodeType.PRODUCT_CONTEXT)
+            if node.id not in candidate_ids
+        ]
+        candidates = [*product_context_ancestors, *candidates]
     for candidate in candidates:
         output = candidate.output_json or {}
         if context.copy_set_id is None and isinstance(output.get("copy_set_id"), str):

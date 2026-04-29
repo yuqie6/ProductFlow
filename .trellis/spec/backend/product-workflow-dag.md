@@ -76,16 +76,25 @@
 - `image_generation` nodes collect incoming edge context, including upstream copy text and reference-image outputs. They
   are trigger/config nodes, not image-bearing artifact slots; generated images must be viewed/downloaded from linked
   downstream `reference_image` nodes or normal product artifact history, not from the `image_generation` node card.
+- Generated-mode provider prompts expose visual-subject policy through the runtime-configurable
+  `prompt_poster_image_reference_policy` placeholder, not hidden provider code. The default policy treats the first/source
+  image as the primary visual subject when present, while upstream copy is auxiliary selling-point/layout context. This is
+  important when product text is weak such as a default name `商品` and copy generation may otherwise invent an unrelated
+  role, IP, brand, or ad theme.
 - Image prompt mode is determined by explicit copy linkage, not by whether a fallback `CopySet` exists for persistence.
   If `image_generation.config_json.copy_set_id` or an upstream `copy_generation.output_json.copy_set_id` points to a
   same-product `CopySet`, provider input must set `PosterGenerationInput.copy_prompt_mode = "copy"` and use the poster/copy
   image template. If no explicit copy link exists, create the workflow-local draft `CopySet` as needed for
   `PosterVariant.copy_set_id`, but set `copy_prompt_mode = "image_edit"` so provider prompts use the no-copy image-edit
   template and do not require title/selling-points/headline/CTA semantics.
-- A connected upstream `product_context` node contributes the product source image asset to
-  `image_generation` image context. Use the node output `source_asset_id` when available and fall back to the product's
-  current original source asset so direct selected image-node runs do not require re-running product context only to get
-  image context. Deduplicate with other reference assets before provider/render input construction.
+- A connected upstream `product_context` node contributes the product source image asset and product fields to
+  `image_generation` image context. For image-generation context only, "upstream" includes direct edges and transitive
+  ancestors such as `product_context -> copy_generation -> image_generation`; this preserves product context for older or
+  manually rewired canvases that no longer have a direct `product_context -> image_generation` edge. Use the node output
+  `source_asset_id` when available and fall back to the product's current original source asset so direct selected
+  image-node runs do not require re-running product context only to get image context. Deduplicate with other reference
+  assets before provider/render input construction. A totally disconnected image-generation node remains free-form and
+  must not implicitly inherit product context.
 - Image-generation count is driven by graph structure: an `image_generation` node connected to N downstream
   `reference_image` slots generates N images and fills those slots. If no downstream reference slot is connected, the node
   must fail with a clear user-facing message asking the user to connect at least one image/reference node before running.
@@ -159,6 +168,9 @@
   another image.
 - Base: run from a selected node; the executor runs the selected node and only missing/invalid required dependencies.
   Previously succeeded upstream nodes with valid first-class artifacts are read as context, not re-run.
+- Base: selected image-node runs may leave upstream `product_context` node status as `idle`; that node is reusable static
+  context, so provider input must read its latest saved config/source image directly instead of depending on a current
+  `WorkflowNodeRun` or fresh `output_json`.
 - Base: selected-node execution planning is a DB-free domain rule fed by an application/query-layer reusable-edge
   decision. The domain rule decides which missing upstream node types are required; the query layer decides whether an
   existing `CopySet`, `PosterVariant`, or `SourceAsset` actually belongs to the workflow product.
@@ -201,6 +213,10 @@
 - API/provider regression asserts the default `product_context -> image_generation` edge contributes the product source
   image to image-generation context, so `context_summary.reference_image_count` does not report `0` when the product image
   is connected through the product-context node, and that copy-linked runs expose `copy_prompt_mode = "copy"`.
+- API/provider regression deletes the direct `product_context -> image_generation` edge while retaining
+  `product_context -> copy_generation -> image_generation`, then directly runs the image node and asserts the provider
+  still receives product fields plus the product source image. A separate regression must keep the disconnected blank
+  image-generation path free-form.
 - API/provider regression removes the copy node or otherwise runs an image node with no explicit copy link and asserts the
   provider receives `PosterGenerationInput.copy_prompt_mode = "image_edit"` while generated artifacts still have a
   `copy_set_id` for persistence.

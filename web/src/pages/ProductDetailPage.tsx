@@ -262,8 +262,22 @@ export function ProductDetailPage() {
   };
 
   const selectNodeForDetails = (nodeId: string) => {
-    setSelectedNodeId(nodeId);
-    setActiveSidebarTab("details");
+    const applySelection = () => {
+      setSelectedNodeId(nodeId);
+      setActiveSidebarTab("details");
+    };
+    if (nodeId === selectedNode?.id || !draftDirty) {
+      applySelection();
+      return;
+    }
+    void (async () => {
+      try {
+        await flushSelectedDraft();
+        applySelection();
+      } catch {
+        // Mutations already surface ApiError.detail in local error state.
+      }
+    })();
   };
 
   const runWorkflowMutation = useMutation({
@@ -571,9 +585,7 @@ export function ProductDetailPage() {
 
   const handleRunWorkflow = async (startNodeId?: string) => {
     try {
-      if (!startNodeId || startNodeId === selectedNode?.id) {
-        await flushSelectedDraft();
-      }
+      await flushSelectedDraft();
       await runWorkflowMutation.mutateAsync(startNodeId);
     } catch {
       // Mutations already surface ApiError.detail in local error state.

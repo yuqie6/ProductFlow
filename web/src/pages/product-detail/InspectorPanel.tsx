@@ -21,11 +21,11 @@ import type { DownloadableImage } from "../../lib/image-downloads";
 import type { ImageSizeOption } from "../../lib/imageSizes";
 import { formatDateTime, formatPrice } from "../../lib/format";
 import type { ImageToolOptionKey, ProductDetail, ProductWorkflow, WorkflowNode } from "../../lib/types";
-import { IMAGE_PREVIEW_SURFACE_CLASS_NAME, NODE_LABELS, NODE_STATUS_LABELS } from "./constants";
+import { IMAGE_PREVIEW_SURFACE_CLASS_NAME, NODE_LABELS } from "./constants";
 import { DownloadLink } from "./ImageDownloadComponents";
 import { getNodeImageDownload } from "./imageDownloads";
 import type { NodeConfigDraft, SaveStatus } from "./types";
-import { outputText, statusClass } from "./utils";
+import { outputText, statusClass, workflowNodeStatusLabel } from "./utils";
 import { TextArea } from "./TextArea";
 
 const SAVE_STATUS_LABELS: Record<SaveStatus, string> = {
@@ -137,7 +137,7 @@ export function InspectorPanel({
                 ) : (
                   <Clock3 size={11} className="mr-1" />
                 )}
-                {NODE_STATUS_LABELS[node.status]}
+                {workflowNodeStatusLabel(node)}
               </span>
               <span
                 className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${SAVE_STATUS_CLASS_NAMES[saveStatus]}`}

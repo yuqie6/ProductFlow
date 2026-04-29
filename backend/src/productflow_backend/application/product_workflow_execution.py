@@ -687,8 +687,8 @@ def _execute_image_generation(
 ) -> dict[str, Any]:
     dependencies = dependencies or default_workflow_execution_dependencies()
     product = workflow.product
-    incoming_context = _collect_incoming_context(workflow, node.id)
-    product_context = _effective_product_context(workflow, node.id)
+    incoming_context = _collect_incoming_context(workflow, node.id, include_transitive_product_context=True)
+    product_context = _effective_product_context(workflow, node.id, include_transitive=True)
     downstream_reference_nodes = _downstream_reference_nodes(workflow, node.id)
     if not downstream_reference_nodes:
         raise ValueError("请先把生图节点连接到至少一个图片/参考图节点，再运行图片生成")

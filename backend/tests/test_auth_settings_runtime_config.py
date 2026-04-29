@@ -319,6 +319,9 @@ def test_prompt_settings_api_accepts_rejects_and_resets(configured_env: Path) ->
     assert initial_items["prompt_poster_image_edit_template"]["category"] == "提示词"
     assert initial_items["prompt_poster_image_edit_template"]["input_type"] == "textarea"
     assert "显式连接的上游上下文" in initial_items["prompt_poster_image_edit_template"]["value"]
+    assert initial_items["prompt_poster_image_reference_policy"]["category"] == "提示词"
+    assert initial_items["prompt_poster_image_reference_policy"]["input_type"] == "textarea"
+    assert "输入图片中的商品/主体作为视觉基准" in initial_items["prompt_poster_image_reference_policy"]["value"]
 
     updated = client.patch("/api/settings", json={"values": {"prompt_copy_system": "自定义文案系统提示"}})
     assert updated.status_code == 200

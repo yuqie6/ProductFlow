@@ -5,6 +5,7 @@ import type {
   WorkflowNodeRun,
   WorkflowRun,
 } from "../../lib/types";
+import { NODE_STATUS_LABELS } from "./constants";
 
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -50,6 +51,13 @@ export function statusClass(status: WorkflowNode["status"]): string {
     succeeded: "border-emerald-200 bg-emerald-50 text-emerald-700",
     failed: "border-red-200 bg-red-50 text-red-700",
   }[status];
+}
+
+export function workflowNodeStatusLabel(node: Pick<WorkflowNode, "node_type" | "status">): string {
+  if (node.node_type === "product_context" && node.status === "idle") {
+    return "可用";
+  }
+  return NODE_STATUS_LABELS[node.status];
 }
 
 export function isImageWorkflowNodeWaiting(node: WorkflowNode): boolean {
