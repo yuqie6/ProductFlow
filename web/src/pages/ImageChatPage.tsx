@@ -37,14 +37,18 @@ import {
   clampGenerationCount,
   compactImageToolOptions,
   groupImageSessionRounds,
+  isImageSessionGenerationTaskActive,
+  mergeImageSessionStatusIntoDetail,
   pruneSelectedReferenceIds,
   selectVisibleGenerationTasks,
+  shouldRefreshImageSessionDetailFromStatus,
 } from "./image-chat/branching";
 import type {
   ImageSessionDetail,
   ImageSessionRound,
   ImageSessionGenerationTask,
   ImageSessionListResponse,
+  ImageSessionStatus,
   ImageToolOptions,
   ProductDetail,
   ProductSummary,
@@ -58,16 +62,14 @@ function getSessionReferenceAssets(imageSession: ImageSessionDetail | undefined)
 const MAX_BRANCH_CONTEXT_IMAGES = 6;
 const DELETION_DISABLED_MESSAGE = "删除功能已关闭，请联系管理员";
 
-function isActiveGenerationTask(task: ImageSessionGenerationTask) {
-  return task.status === "queued" || task.status === "running";
-}
-
 function generationTaskLabel(task: ImageSessionGenerationTask) {
   if (task.status === "queued") {
     return task.queue_position ? `排队中 · 第 ${task.queue_position} 位` : "排队中";
   }
   if (task.status === "running") {
-    return "生成中";
+    const total = task.generation_count || 1;
+    const current = task.active_candidate_index ?? Math.min(task.completed_candidates + 1, total);
+    return `生成中 · ${task.completed_candidates}/${total} 已完成 · 当前第 ${current} 张`;
   }
   if (task.status === "failed") {
     return "生成失败";
@@ -82,7 +84,8 @@ function generationTaskQueueText(task: ImageSessionGenerationTask) {
     return `前方 ${ahead} 个，${position}；全局活跃 ${task.queue_active_count}/${task.queue_max_concurrent_tasks}。`;
   }
   if (task.status === "running") {
-    return `正在生成，前方 0 个；全局运行 ${task.queue_running_count} 个，排队 ${task.queue_queued_count} 个。`;
+    const providerStatus = task.provider_response_status ? `供应商状态 ${task.provider_response_status}；` : "";
+    return `${providerStatus}最近进度 ${task.progress_updated_at ? formatDateTime(task.progress_updated_at) : "刚开始"}；全局运行 ${task.queue_running_count} 个，排队 ${task.queue_queued_count} 个。`;
   }
   return "";
 }
@@ -189,10 +192,6 @@ export function ImageChatPage() {
     queryKey: ["image-session", selectedSessionId],
     queryFn: () => api.getImageSession(selectedSessionId!),
     enabled: Boolean(selectedSessionId),
-    refetchInterval: (query) => {
-      const data = query.state.data as ImageSessionDetail | undefined;
-      return data?.generation_tasks.some(isActiveGenerationTask) ? 1500 : false;
-    },
   });
 
   const imageSession = sessionDetailQuery.data;
@@ -203,7 +202,33 @@ export function ImageChatPage() {
     () => selectVisibleGenerationTasks(imageSession?.generation_tasks ?? []),
     [imageSession],
   );
-  const hasActiveGenerationTask = imageSession?.generation_tasks.some(isActiveGenerationTask) ?? false;
+  const hasActiveGenerationTask = imageSession?.generation_tasks.some(isImageSessionGenerationTaskActive) ?? false;
+
+  const sessionStatusQuery = useQuery({
+    queryKey: ["image-session-status", selectedSessionId],
+    queryFn: () => api.getImageSessionStatus(selectedSessionId!),
+    enabled: Boolean(selectedSessionId && hasActiveGenerationTask),
+    refetchInterval: (query) => {
+      const data = query.state.data as ImageSessionStatus | undefined;
+      return data?.has_active_generation_task ? 1500 : false;
+    },
+  });
+
+  useEffect(() => {
+    const status = sessionStatusQuery.data;
+    if (!status || !selectedSessionId || status.id !== selectedSessionId) {
+      return;
+    }
+    const detail = queryClient.getQueryData<ImageSessionDetail>(["image-session", status.id]);
+    const shouldRefetchDetail = shouldRefreshImageSessionDetailFromStatus(detail, status);
+    if (detail) {
+      queryClient.setQueryData(["image-session", status.id], mergeImageSessionStatusIntoDetail(detail, status));
+    }
+    if (shouldRefetchDetail) {
+      void queryClient.invalidateQueries({ queryKey: ["image-session", status.id] });
+      void queryClient.invalidateQueries({ queryKey: ["image-sessions", productId ?? "standalone"] });
+    }
+  }, [productId, queryClient, selectedSessionId, sessionStatusQuery.data]);
 
   useEffect(() => {
     if (!imageSession) {
@@ -526,15 +551,15 @@ export function ImageChatPage() {
   }
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-slate-100 text-slate-900">
+    <div className="flex min-h-screen flex-col bg-slate-100 text-slate-900 lg:h-screen lg:overflow-hidden">
       <TopNav
         breadcrumbs={isProductMode ? `${productQuery.data?.name ?? "商品"} / 连续生图` : "连续生图"}
         onHome={() => navigate(isProductMode && productId ? `/products/${productId}` : "/products")}
         onLogout={() => logoutMutation.mutate()}
       />
 
-      <main className="flex min-h-0 flex-1 overflow-hidden">
-        <aside className="flex w-72 shrink-0 flex-col border-r border-slate-200 bg-white/95">
+      <main className="flex flex-1 flex-col pb-28 lg:min-h-0 lg:flex-row lg:overflow-hidden lg:pb-0">
+        <aside className="flex w-full shrink-0 flex-col border-b border-slate-200 bg-white/95 lg:w-72 lg:border-b-0 lg:border-r">
           <div className="border-b border-slate-200 px-4 py-4">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -553,7 +578,7 @@ export function ImageChatPage() {
             </div>
           </div>
 
-          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+          <div className="flex gap-3 overflow-x-auto p-3 lg:min-h-0 lg:flex-1 lg:flex-col lg:gap-2 lg:overflow-x-visible lg:overflow-y-auto">
             {sessionsQuery.isLoading ? (
               <div className="flex justify-center py-12 text-slate-400">
                 <Loader2 size={18} className="animate-spin" />
@@ -565,7 +590,7 @@ export function ImageChatPage() {
                 return (
                   <div
                     key={item.id}
-                    className={`group relative overflow-hidden rounded-2xl border transition-all ${
+                    className={`group relative w-64 shrink-0 overflow-hidden rounded-2xl border transition-all lg:w-auto ${
                       active
                         ? "border-indigo-300 bg-indigo-50 shadow-sm shadow-indigo-100 ring-1 ring-indigo-200/80"
                         : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
@@ -626,8 +651,8 @@ export function ImageChatPage() {
           </div>
         </aside>
 
-        <section className="flex min-w-0 flex-1 flex-col overflow-hidden bg-slate-100">
-          <div className="flex min-h-0 flex-1 flex-col p-3 pb-2">
+        <section className="flex min-w-0 flex-col bg-slate-100 lg:min-h-0 lg:flex-1 lg:overflow-hidden">
+          <div className="flex flex-col p-3 pb-2 lg:min-h-0 lg:flex-1">
             <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0">
                 <div className="flex items-center gap-2 text-xs font-medium text-slate-500">
@@ -643,6 +668,11 @@ export function ImageChatPage() {
                 <h1 className="mt-2 text-xl font-semibold tracking-tight text-slate-950">
                   {imageSession?.title ?? "连续生图工作台"}
                 </h1>
+                {selectedRound ? (
+                  <div className="mt-1 text-xs font-medium text-slate-500 md:hidden">
+                    {imageRoundSizeLabel(selectedRound)} · 候选 {selectedRound.candidate_index}/{selectedRound.candidate_count}
+                  </div>
+                ) : null}
               </div>
               <div className="flex w-full flex-wrap items-center justify-start gap-2 sm:w-auto sm:justify-end">
                 {selectedRound ? (
@@ -680,11 +710,11 @@ export function ImageChatPage() {
               </div>
             </div>
 
-            <div className="relative flex min-h-[360px] flex-1 items-center justify-center overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+            <div className="relative flex min-h-[320px] flex-1 items-center justify-center overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm max-h-[72vh] lg:min-h-[360px] lg:max-h-none">
               <div className="absolute inset-0 bg-[radial-gradient(#cbd5e1_1px,transparent_1px)] [background-size:20px_20px]" />
-              <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between px-5 py-4">
+              <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between gap-3 px-5 py-4">
                 {selectedRound ? (
-                  <div className="rounded-full bg-white/90 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm ring-1 ring-slate-200 backdrop-blur">
+                  <div className="min-w-0 max-w-[calc(100%-5.5rem)] truncate rounded-full bg-white/90 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm ring-1 ring-slate-200 backdrop-blur">
                     {formatDateTime(selectedRound.created_at)} · {selectedRound.model_name}
                   </div>
                 ) : (
@@ -744,7 +774,7 @@ export function ImageChatPage() {
             </div>
           </div>
 
-          <div className="flex h-[clamp(8.75rem,15vh,10.5rem)] shrink-0 flex-col border-t border-slate-200 bg-white/95 px-3 py-2.5 shadow-[0_-8px_24px_rgba(15,23,42,0.04)]">
+          <div className="flex h-40 shrink-0 flex-col border-t border-slate-200 bg-white/95 px-3 py-2.5 shadow-[0_-8px_24px_rgba(15,23,42,0.04)] lg:h-[clamp(8.75rem,15vh,10.5rem)]">
             <div className="mb-2 flex items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold text-slate-950">历史记录</div>
@@ -846,8 +876,8 @@ export function ImageChatPage() {
           </div>
         </section>
 
-        <aside className="flex w-[clamp(300px,21vw,340px)] shrink-0 flex-col border-l border-slate-200 bg-white">
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
+        <aside className="flex w-full shrink-0 flex-col border-t border-slate-200 bg-white lg:w-[clamp(300px,21vw,340px)] lg:border-l lg:border-t-0">
+          <div className="min-h-0 flex-1 px-4 py-5 lg:overflow-y-auto lg:px-5">
             <div className="mb-5">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
@@ -1052,7 +1082,7 @@ export function ImageChatPage() {
                 <div className="space-y-2 rounded-2xl border border-slate-200 bg-white p-4">
                   <div className="text-sm font-semibold text-slate-950">生成任务</div>
                   {visibleGenerationTasks.map((task) => {
-                    const active = isActiveGenerationTask(task);
+                    const active = isImageSessionGenerationTaskActive(task);
                     return (
                       <div
                         key={task.id}
@@ -1109,7 +1139,7 @@ export function ImageChatPage() {
             </div>
           </div>
 
-          <div className="sticky bottom-0 border-t border-slate-200 bg-white/95 p-4 shadow-[0_-8px_24px_rgba(15,23,42,0.06)] backdrop-blur">
+          <div className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 p-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] shadow-[0_-8px_24px_rgba(15,23,42,0.10)] backdrop-blur lg:sticky lg:inset-x-auto lg:bottom-0 lg:p-4">
             <button
               type="button"
               onClick={handleGenerate}

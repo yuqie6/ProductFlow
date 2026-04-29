@@ -74,8 +74,9 @@ When changing an enum, update:
 
 Relationships are defined on models and use explicit cascades where child records belong to a parent. Examples:
 
-- `Product.source_assets`, `Product.creative_briefs`, `Product.copy_sets`, `Product.poster_variants`, `Product.job_runs`,
-  and `Product.image_sessions` use `cascade="all, delete-orphan"` in `infrastructure/db/models.py`.
+- `Product.source_assets`, `Product.creative_briefs`, `Product.copy_sets`, `Product.poster_variants`,
+  `Product.image_sessions`, and `Product.workflows` use `cascade="all, delete-orphan"` in
+  `infrastructure/db/models.py`.
 - Foreign keys use `ondelete="CASCADE"` for owned children and `ondelete="SET NULL"` for optional references such as
   `creative_brief_id`, `copy_set_id`, and `poster_variant_id`.
 - `Product.current_confirmed_copy_set_id` uses a named foreign key (`fk_products_current_confirmed_copy_set_id`) and
@@ -100,7 +101,7 @@ then reload a fully populated object.
 Use `select(...)`, `session.scalar(...)`, and `session.scalars(...)`. When a response needs related data, define a query
 helper with `selectinload(...)` instead of relying on accidental lazy loading. Current examples:
 
-- `_product_query()` in `application/use_cases.py` loads source assets, briefs, copy sets, posters, jobs, and confirmed copy.
+- `_product_query()` in `application/use_cases.py` loads source assets, briefs, copy sets, posters, and confirmed copy.
 - `_image_session_query()` in `application/image_sessions.py` loads assets, rounds, generated assets, and product source
   assets.
 
@@ -111,6 +112,85 @@ separate count query. The route `presentation/routes/products.py::list_products_
 `1 <= page_size <= 100` using FastAPI `Query`.
 
 Do not reintroduce full-table product loads for list pages.
+
+## Scenario: Runtime admin access toggle
+
+### 1. Scope / Trigger
+
+- Trigger: changing login/session auth, settings persistence, `/api/auth/session`, `/api/settings/runtime`, or the
+  settings page security section.
+- This is a cross-layer contract because `Settings`, config serialization, route dependencies, session responses,
+  frontend DTOs, and route gating must agree on the same field and security boundary.
+
+### 2. Signatures
+
+- Env-only secret: `Settings.admin_access_key: str` remains required and must not be stored in `app_settings`.
+- Runtime setting: `Settings.admin_access_required: bool = True`.
+- Config definition key: `admin_access_required`, non-secret, boolean, category `安全与运维`.
+- Runtime API response: `GET /api/settings/runtime` includes `admin_access_required`.
+- Session state response: `GET /api/auth/session` returns `authenticated: bool` and `access_required: bool`.
+- Guard helper: `presentation.deps.require_admin(request: Request) -> None`.
+
+### 3. Contracts
+
+- Default behavior is secure: `admin_access_required` is `True` unless explicitly set through env/defaults or
+  `app_settings`.
+- When `admin_access_required` is true, private workspace routes require a signed Cookie session with
+  `is_authenticated == True`.
+- When `admin_access_required` is false, private workspace routes guarded by `require_admin` are open without a login
+  cookie.
+- Disabling admin access must not bypass the independent settings lock. Full settings reads/writes still require
+  `SETTINGS_ACCESS_TOKEN` through `require_settings_unlocked`.
+- `POST /api/auth/session` is a no-op success when login is disabled and must leave the existing session untouched,
+  including any `settings_unlocked` flag.
+- `DELETE /api/auth/session` still clears the browser session; if login is disabled, the next session-state response is
+  authenticated again because access is no longer required.
+
+### 4. Validation & Error Matrix
+
+- `admin_access_required == True` and no login cookie -> private route returns `401`, `{"detail": "请先登录"}`.
+- `admin_access_required == True` and wrong admin key -> `POST /api/auth/session` returns `401`,
+  `{"detail": "管理员密钥不正确"}`.
+- `admin_access_required == False` and no login cookie -> private workspace route follows normal application behavior.
+- `admin_access_required == False` and no settings unlock -> `GET /api/settings` returns `403`,
+  `{"detail": "请先解锁系统配置"}`.
+- Re-enabling `admin_access_required` immediately restores the login requirement for unauthenticated clients.
+
+### 5. Good/Base/Bad Cases
+
+- Good: a trusted LAN deployment disables the login gate for normal product workflows while keeping settings protected.
+- Base: the default deployment keeps `admin_access_required=True` and requires `ADMIN_ACCESS_KEY` login.
+- Bad: storing `ADMIN_ACCESS_KEY` in DB settings; it is an env-only secret.
+- Bad: treating disabled login as permission to skip `SETTINGS_ACCESS_TOKEN`; settings protection is a separate boundary.
+- Bad: clearing `settings_unlocked` from `POST /api/auth/session` while login is disabled; that couples unrelated session
+  concerns.
+
+### 6. Tests Required
+
+- Default-required route test: unauthenticated private route returns 401.
+- Default-required login test: wrong admin key returns 401 with the documented detail.
+- Disabled-login route test: a fresh client can access a private workspace route without logging in.
+- Disabled-login session-state test: response is `{"authenticated": true, "access_required": false}`.
+- Settings-boundary test: disabled login still requires `SETTINGS_ACCESS_TOKEN` before full settings reads/writes.
+- No-op login test: disabled-login `POST /api/auth/session` does not clear an already unlocked settings session.
+- Re-enable test: setting `admin_access_required=True` makes a fresh unauthenticated client receive 401 again.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+if not get_runtime_settings().admin_access_required:
+    request.session.clear()
+    return SessionResponse()
+```
+
+Correct:
+
+```python
+if not get_runtime_settings().admin_access_required:
+    return SessionResponse()
+```
 
 ## Scenario: Runtime deletion toggle for traceability
 
@@ -292,6 +372,79 @@ Correct:
 round.generation_group_id = group_id
 round.candidate_index = index
 round.generated_asset_id = asset.id
+```
+
+## Scenario: Continuous image-session lightweight status polling
+
+### 1. Scope / Trigger
+
+- Trigger: changing continuous image-session active-task polling, task status DTOs, or the frontend detail refresh path.
+- Goal: active generation polling must not load full session assets and rounds on every tick.
+
+### 2. Signatures
+
+- Full detail API: `GET /api/image-sessions/{image_session_id}` returns `ImageSessionDetailResponse` with `assets`,
+  all `rounds`, and `generation_tasks`.
+- Lightweight status API: `GET /api/image-sessions/{image_session_id}/status` returns `ImageSessionStatusResponse`.
+- Status response fields:
+  - `id`, `product_id`, `title`, `created_at`, `updated_at`.
+  - `rounds_count`, `latest_round_id`, `latest_generation_group_id`.
+  - `has_active_generation_task`.
+  - `generation_tasks` using the same task DTO fields as detail, including queue metadata, failure reason, tool options,
+    provider notes, and result group id.
+
+### 3. Contracts
+
+- The status use case loads the `ImageSession` row and `generation_tasks`, then uses aggregate/minimal round queries for
+  `rounds_count` and latest round identifiers. It must not eager-load `assets` or full `rounds`.
+- Status tasks must attach the same queue metadata as full detail so the UI can show queue position and global queue counts
+  while polling.
+- Full detail remains the source of truth for generated assets, thumbnails, history cards, selected reference pruning, and
+  generated round payloads.
+- When status shows a new round or an active task reaches `succeeded` / `failed`, the frontend should refetch full detail
+  once. Do not make the status response grow into a second full session detail payload.
+
+### 4. Validation & Error Matrix
+
+- Missing image session -> `404`, `连续生图会话不存在`, same as full detail.
+- Queued task -> status includes `queue_position` / `queued_ahead_count` when available.
+- Running task -> status includes global running/queued counts and `has_active_generation_task == true`.
+- Terminal task without new rounds -> status is enough to show failure reason, then the frontend refetches detail once.
+- Terminal task with new rounds -> status exposes `rounds_count` / latest identifiers, then the frontend refetches detail
+  once to display new candidates.
+
+### 5. Good/Base/Bad Cases
+
+- Good: ten browsers watching active generation poll `/status` every 1500ms and fetch full detail only when output appears
+  or failure completes.
+- Base: a queued task keeps visible prompt, queue position, generation count, and duplicate-submit disabling without
+  loading all historical rounds.
+- Bad: adding `assets` or serialized `rounds` to `ImageSessionStatusResponse`; that recreates the original heavy polling.
+- Bad: using status polling for ProductDetail workflow runs in this scenario; workflow status needs its own contract.
+
+### 6. Tests Required
+
+- Backend API test for `/status` asserts it omits `assets` and `rounds`, includes task queue metadata, and returns
+  `has_active_generation_task` correctly.
+- Backend API test or extension asserts completed status exposes `rounds_count`, latest identifiers, and terminal task
+  result group.
+- Frontend helper tests should cover merging status tasks into cached detail and deciding when status requires a full
+  detail refetch.
+- Frontend gates remain `pnpm --dir web lint`, `pnpm --dir web test:run`, and `just web-build`.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+return serialize_image_session_detail(get_image_session_detail(session, image_session_id))
+```
+
+Correct:
+
+```python
+snapshot = get_image_session_status(session, image_session_id)
+return serialize_image_session_status(snapshot)
 ```
 
 ### Persistence and external side effects
@@ -507,8 +660,9 @@ by `app_settings` and must gate new resource-consuming entrypoints before they e
 - Unknown per-request select value such as `tool_options.quality="ultra"` -> request validation returns `422`.
 - OpenAI SDK/provider request exception -> raise a generic sanitized runtime error; do not expose API keys, raw request
   bodies, base URLs with secrets, or provider internals to the frontend.
-- OpenAI SDK/provider timeout wrapped in a sanitized `RuntimeError` -> product job failure reason remains generic, while
-  retry classification follows `__cause__` and keeps the task retryable when the original exception is retryable.
+- OpenAI SDK/provider timeout wrapped in a sanitized `RuntimeError` -> workflow/image-session failure reason remains
+  generic, while retry classification follows `__cause__` and keeps retryable durable tasks retryable when the original
+  exception is retryable.
 
 #### 5. Good/Base/Bad Cases
 
@@ -542,7 +696,7 @@ by `app_settings` and must gate new resource-consuming entrypoints before they e
 - Provider-adjusted metadata test that detectable effective field changes are persisted as compact notes.
 - MIME regression test using non-PNG returned bytes.
 - Retry regression test that a sanitized provider `RuntimeError` raised from a retryable network/timeout cause is still
-  classified retryable by product job failure handling.
+  classified retryable by durable task failure handling where that retry policy applies.
 - Keep `uv run --directory backend ruff check .`, `just backend-test`, `pnpm --dir web lint`,
   `pnpm --dir web test:run`, and `just web-build` green after cross-layer settings changes.
 
@@ -645,10 +799,10 @@ system_prompt = settings.prompt_copy_system
 
 ## Naming Conventions
 
-- Table names are plural snake_case: `products`, `source_assets`, `job_runs`, `image_session_rounds`.
+- Table names are plural snake_case: `products`, `source_assets`, `workflow_runs`, `image_session_rounds`.
 - Foreign key columns end with `_id`: `product_id`, `copy_set_id`, `generated_asset_id`.
 - Unique partial indexes use descriptive names beginning with `uq_`, e.g.
-  `uq_job_runs_one_active_per_product_kind` and `uq_source_assets_one_original_per_product`.
+  `uq_workflow_runs_one_running_per_workflow` and `uq_source_assets_one_original_per_product`.
 - Foreign key constraint names are explicit only where the project already needs them for cycles or migration stability,
   e.g. `fk_products_current_confirmed_copy_set_id`.
 

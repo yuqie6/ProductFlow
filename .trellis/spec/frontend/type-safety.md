@@ -29,8 +29,10 @@ including `snake_case`:
 
 - `ProductSummary.workflow_state`
 - `CopySet.creative_brief_id`
-- `JobRun.failure_reason`
+- `ImageSessionGenerationTask.failure_reason`
 - `ImageSessionRound.provider_response_id`
+- `SessionState.access_required`
+- `RuntimeConfig.admin_access_required`
 - `ConfigUpdateRequest.reset_keys`
 
 Do not silently convert these to camelCase in frontend types unless the API layer also performs explicit mapping.

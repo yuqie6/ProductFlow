@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from dramatiq.middleware.time_limit import TimeLimitExceeded
 from fastapi.testclient import TestClient
 from helpers import (
     _enable_deletion,
@@ -30,7 +31,7 @@ def _execute_workflow_queue_inline_fixture(monkeypatch: pytest.MonkeyPatch) -> N
     from productflow_backend.application.image_sessions import execute_image_session_generation_task
 
     monkeypatch.setattr(
-        "productflow_backend.presentation.routes.image_sessions.enqueue_image_session_generation_task",
+        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
         execute_image_session_generation_task,
     )
 
@@ -98,7 +99,7 @@ def test_image_session_generate_returns_queued_task_without_waiting_for_provider
 
     sent: list[str] = []
     monkeypatch.setattr(
-        "productflow_backend.presentation.routes.image_sessions.enqueue_image_session_generation_task",
+        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
         lambda task_id: sent.append(task_id),
     )
     app = create_app()
@@ -119,6 +120,13 @@ def test_image_session_generate_returns_queued_task_without_waiting_for_provider
     task = payload["generation_tasks"][0]
     assert task["status"] == "queued"
     assert task["prompt"] == "只创建任务，不等待 provider"
+    assert task["completed_candidates"] == 0
+    assert task["active_candidate_index"] is None
+    assert task["progress_phase"] is None
+    assert task["progress_updated_at"] is None
+    assert task["provider_response_id"] is None
+    assert task["provider_response_status"] is None
+    assert task["progress_metadata"] is None
     assert task["queue_active_count"] == 1
     assert task["queue_running_count"] == 0
     assert task["queue_queued_count"] == 1
@@ -129,6 +137,63 @@ def test_image_session_generate_returns_queued_task_without_waiting_for_provider
     persisted = db_session.get(ImageSessionGenerationTask, task["id"])
     assert persisted is not None
     assert persisted.status == "queued"
+
+
+def test_image_session_status_returns_lightweight_task_snapshot(
+    configured_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.application.image_sessions import execute_image_session_generation_task
+    from productflow_backend.presentation.api import create_app
+
+    sent: list[str] = []
+    monkeypatch.setattr(
+        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
+        lambda task_id: sent.append(task_id),
+    )
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post("/api/image-sessions", json={"title": "轻量状态"})
+    assert created.status_code == 201
+    session_id = created.json()["id"]
+    submitted = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={"prompt": "只轮询状态", "size": "1024x1024"},
+    )
+    assert submitted.status_code == 202
+    task_id = submitted.json()["generation_tasks"][0]["id"]
+
+    queued_status = client.get(f"/api/image-sessions/{session_id}/status")
+    assert queued_status.status_code == 200
+    queued_payload = queued_status.json()
+    assert "assets" not in queued_payload
+    assert "rounds" not in queued_payload
+    assert queued_payload["rounds_count"] == 0
+    assert queued_payload["latest_round_id"] is None
+    assert queued_payload["has_active_generation_task"] is True
+    assert queued_payload["generation_tasks"][0]["id"] == task_id
+    assert queued_payload["generation_tasks"][0]["status"] == "queued"
+    assert queued_payload["generation_tasks"][0]["queue_position"] == 1
+    assert sent == [task_id]
+
+    execute_image_session_generation_task(task_id)
+
+    completed_status = client.get(f"/api/image-sessions/{session_id}/status")
+    assert completed_status.status_code == 200
+    completed_payload = completed_status.json()
+    assert completed_payload["rounds_count"] == 1
+    assert completed_payload["latest_round_id"]
+    assert completed_payload["latest_generation_group_id"]
+    assert completed_payload["has_active_generation_task"] is False
+    assert completed_payload["generation_tasks"][0]["status"] == "succeeded"
+    assert completed_payload["generation_tasks"][0]["completed_candidates"] == 1
+    assert completed_payload["generation_tasks"][0]["progress_phase"] == "succeeded"
+    assert completed_payload["generation_tasks"][0]["progress_updated_at"] is not None
+    assert completed_payload["generation_tasks"][0]["result_generation_group_id"] == completed_payload[
+        "latest_generation_group_id"
+    ]
 
 
 def test_image_session_generation_accepts_per_request_tool_options_and_exposes_provider_notes(
@@ -278,7 +343,7 @@ def test_image_session_generate_enqueue_failure_marks_task_failed(
         raise RuntimeError(f"redis down for {task_id}")
 
     monkeypatch.setattr(
-        "productflow_backend.presentation.routes.image_sessions.enqueue_image_session_generation_task",
+        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
         fail_enqueue,
     )
     app = create_app()
@@ -335,6 +400,184 @@ def test_image_session_worker_failure_uses_generic_safe_reason(
     task = db_session.get(ImageSessionGenerationTask, payload["generation_tasks"][0]["id"])
     assert task is not None
     assert task.failure_reason == "图片生成失败，请稍后重试"
+
+
+def test_image_session_worker_timeout_after_partial_success_persists_completed_candidates(
+    configured_env: Path,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.application.image_sessions import (
+        create_image_session,
+        create_image_session_generation_task,
+        execute_image_session_generation_task,
+    )
+    from productflow_backend.infrastructure.image.chat_service import GeneratedChatImage
+
+    calls = {"count": 0}
+
+    def generate_then_timeout(self, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 2:
+            raise TimeLimitExceeded()
+        return GeneratedChatImage(
+            bytes_data=_make_demo_image_bytes_with_size(1024, 1024),
+            mime_type="image/png",
+            model_name="mock-image-chat-v1",
+            provider_name="mock",
+            prompt_version="test-v1",
+            size=kwargs["size"],
+            generated_at=datetime.now(UTC),
+            provider_request_json={"size": kwargs["size"], "candidate": calls["count"]},
+            provider_output_json={},
+        )
+
+    monkeypatch.setattr(
+        "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
+        generate_then_timeout,
+    )
+
+    image_session = create_image_session(db_session, product_id=None, title="部分成功超时")
+    result = create_image_session_generation_task(
+        db_session,
+        image_session_id=image_session.id,
+        prompt="生成两张，第二张超时",
+        size="1024x1024",
+        generation_count=2,
+    )
+
+    execute_image_session_generation_task(result.task.id)
+
+    db_session.expire_all()
+    task = db_session.get(ImageSessionGenerationTask, result.task.id)
+    rounds = (
+        db_session.query(ImageSessionRound)
+        .filter(ImageSessionRound.session_id == image_session.id)
+        .order_by(ImageSessionRound.candidate_index)
+        .all()
+    )
+
+    assert task is not None
+    assert task.status == "failed"
+    assert task.failure_reason == "已生成 1/2 张候选，但任务超时，剩余候选未完成。"
+    assert task.result_generation_group_id is not None
+    assert task.completed_candidates == 1
+    assert task.active_candidate_index is None
+    assert task.progress_phase == "failed"
+    assert task.progress_updated_at is not None
+    assert task.finished_at is not None
+    assert task.is_retryable is False
+    assert len(rounds) == 1
+    assert rounds[0].candidate_index == 1
+    assert rounds[0].candidate_count == 2
+    assert rounds[0].generation_group_id == task.result_generation_group_id
+    assert Path(configured_env, rounds[0].generated_asset.storage_path).exists()
+
+
+def test_image_session_worker_marks_task_failed_when_time_limit_raises_outside_candidate_loop(
+    configured_env: Path,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.application.image_sessions import (
+        create_image_session,
+        create_image_session_generation_task,
+        execute_image_session_generation_task,
+    )
+
+    monkeypatch.setattr(
+        "productflow_backend.application.image_sessions._execute_image_session_round_generation",
+        lambda *args, **kwargs: (_ for _ in ()).throw(TimeLimitExceeded()),
+    )
+
+    image_session = create_image_session(db_session, product_id=None, title="整体超时")
+    result = create_image_session_generation_task(
+        db_session,
+        image_session_id=image_session.id,
+        prompt="进入候选循环前超时",
+        size="1024x1024",
+    )
+
+    execute_image_session_generation_task(result.task.id)
+
+    db_session.expire_all()
+    task = db_session.get(ImageSessionGenerationTask, result.task.id)
+
+    assert task is not None
+    assert task.status == "failed"
+    assert task.failure_reason == "图片生成失败，请稍后重试"
+    assert task.finished_at is not None
+    assert task.is_retryable is False
+
+
+def test_image_session_worker_persists_provider_progress_heartbeat(
+    configured_env: Path,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.application.image_sessions import (
+        create_image_session,
+        create_image_session_generation_task,
+        execute_image_session_generation_task,
+    )
+    from productflow_backend.infrastructure.image.chat_service import GeneratedChatImage
+
+    def generate_with_progress(self, **kwargs):
+        kwargs["progress_callback"](
+            {
+                "provider_response_id": "resp_background",
+                "provider_response_status": "in_progress",
+                "provider_response": {"id": "resp_background", "status": "in_progress"},
+            }
+        )
+        kwargs["progress_callback"](
+            {
+                "provider_response_id": "resp_background",
+                "provider_response_status": "completed",
+                "provider_response": {"id": "resp_background", "status": "completed"},
+            }
+        )
+        return GeneratedChatImage(
+            bytes_data=_make_demo_image_bytes_with_size(1024, 1024),
+            mime_type="image/png",
+            model_name="mock-image-chat-v1",
+            provider_name="mock",
+            prompt_version="test-v1",
+            size=kwargs["size"],
+            generated_at=datetime.now(UTC),
+            provider_response_id="resp_background",
+            provider_request_json={"size": kwargs["size"]},
+            provider_output_json={"id": "resp_background", "status": "completed"},
+        )
+
+    monkeypatch.setattr(
+        "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
+        generate_with_progress,
+    )
+
+    image_session = create_image_session(db_session, product_id=None, title="provider progress")
+    result = create_image_session_generation_task(
+        db_session,
+        image_session_id=image_session.id,
+        prompt="provider polling 更新 heartbeat",
+        size="1024x1024",
+    )
+
+    execute_image_session_generation_task(result.task.id)
+
+    db_session.expire_all()
+    task = db_session.get(ImageSessionGenerationTask, result.task.id)
+
+    assert task is not None
+    assert task.status == "succeeded"
+    assert task.completed_candidates == 1
+    assert task.provider_response_id == "resp_background"
+    assert task.provider_response_status == "completed"
+    assert task.progress_updated_at is not None
+    assert task.progress_metadata["candidate_index"] == 1
+    assert task.progress_metadata["candidate_count"] == 1
+    assert task.progress_metadata["generated_asset_id"]
+    assert task.progress_metadata["round_id"]
 
 
 def test_image_session_worker_duplicate_message_noops_terminal_task(
@@ -618,6 +861,18 @@ def test_image_session_multi_candidate_generation_persists_one_round_per_candida
     assert len(persisted_rounds) == 3
     assert {round_item.generation_group_id for round_item in persisted_rounds} == group_ids
     assert [round_item.candidate_index for round_item in persisted_rounds] == [1, 2, 3]
+
+
+def test_image_session_worker_actor_uses_internal_failsafe_time_limit(configured_env: Path) -> None:
+    from productflow_backend.workers import (
+        IMAGE_SESSION_WORKER_FAILSAFE_TIME_LIMIT_MS,
+        get_image_session_worker_failsafe_time_limit_ms,
+        run_image_session_generation_task,
+    )
+
+    assert get_image_session_worker_failsafe_time_limit_ms() == 24 * 60 * 60 * 1000
+    assert IMAGE_SESSION_WORKER_FAILSAFE_TIME_LIMIT_MS == 24 * 60 * 60 * 1000
+    assert run_image_session_generation_task.options["time_limit"] == IMAGE_SESSION_WORKER_FAILSAFE_TIME_LIMIT_MS
 
 
 def test_image_session_generation_accepts_custom_size_and_rejects_invalid_dimensions(configured_env: Path) -> None:

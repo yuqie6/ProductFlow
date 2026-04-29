@@ -78,7 +78,8 @@ Use `web/src/pages/` for route-level modules that own data fetching, navigation,
 Current examples:
 
 - `ProductListPage.tsx` owns product list fetching, logout mutation, and navigation to settings/image chat/new product.
-- `ProductDetailPage.tsx` owns product detail/history queries, job polling, copy editing state, and poster actions.
+- `ProductDetailPage.tsx` owns product detail/history queries, workflow status polling, copy editing state, and
+  workbench actions.
 - `ImageChatPage.tsx` owns session selection, auto-create behavior, config-derived image size options, and generation.
 - `SettingsPage.tsx` owns config fetching, grouped drafts, secret touched state, save/reset mutations.
 
@@ -98,8 +99,8 @@ until another page actually reuses them.
 
 - `web/src/lib/api.ts` is the only place that should know fetch details, credentials, `VITE_API_BASE_URL`, and API paths.
 - `web/src/lib/types.ts` contains DTO interfaces and string union types mirroring backend Pydantic responses and enums.
-- `web/src/lib/format.ts` contains pure formatting helpers such as `formatDateTime`, `formatShortDate`, `formatPrice`,
-  and `jobIsRunning`.
+- `web/src/lib/format.ts` contains pure formatting helpers such as `formatDateTime`, `formatShortDate`, and
+  `formatPrice`.
 - `web/src/lib/image-downloads.ts` contains reusable image URL, filename sanitization, timestamp suffix, and extension
   helpers. Page-specific mapping from product/poster records to downloadable images should stay page-local.
 

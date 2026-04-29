@@ -12,6 +12,8 @@ def get_session(session: Session = Depends(get_db_session)) -> Session:
 
 
 def require_admin(request: Request) -> None:
+    if not get_runtime_settings().admin_access_required:
+        return
     if not request.session.get("is_authenticated"):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="请先登录")
 

@@ -7,14 +7,13 @@ from functools import lru_cache
 
 import dramatiq
 from dramatiq.brokers.redis import RedisBroker
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 
-from productflow_backend.config import get_settings
-from productflow_backend.domain.enums import JobKind, JobStatus, WorkflowNodeStatus, WorkflowRunStatus
+from productflow_backend.config import get_runtime_settings, get_settings
+from productflow_backend.domain.enums import JobStatus, WorkflowNodeStatus, WorkflowRunStatus
 from productflow_backend.infrastructure.db.models import (
     ImageSessionGenerationTask,
-    JobRun,
     WorkflowNode,
     WorkflowRun,
     utcnow,
@@ -26,19 +25,14 @@ logger = logging.getLogger(__name__)
 DEFAULT_STALE_RUNNING_AFTER = timedelta(minutes=30)
 
 
+def get_image_session_stale_running_after() -> timedelta:
+    return timedelta(minutes=int(get_runtime_settings().image_session_stale_running_after_minutes))
+
+
 def _as_aware_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value
-
-
-@dataclass(frozen=True, slots=True)
-class JobRecoverySummary:
-    """启动恢复结果：把数据库里还没结束、但 Redis 里可能已丢消息的任务补回队列。"""
-
-    queued_jobs: int = 0
-    stale_running_jobs: int = 0
-    enqueued_jobs: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,20 +62,6 @@ def get_broker() -> RedisBroker:
     return broker
 
 
-def enqueue_copy_job(job_id: str) -> None:
-    from productflow_backend.workers import run_copy_generation
-
-    get_broker()
-    run_copy_generation.send(job_id)
-
-
-def enqueue_poster_job(job_id: str) -> None:
-    from productflow_backend.workers import run_poster_generation
-
-    get_broker()
-    run_poster_generation.send(job_id)
-
-
 def enqueue_workflow_run(run_id: str) -> None:
     from productflow_backend.workers import run_product_workflow_run
 
@@ -94,89 +74,6 @@ def enqueue_image_session_generation_task(task_id: str) -> None:
 
     get_broker()
     run_image_session_generation_task.send(task_id)
-
-
-def _send_job_to_queue(job_id: str, kind: JobKind) -> None:
-    if kind == JobKind.COPY_GENERATION:
-        enqueue_copy_job(job_id)
-        return
-    if kind == JobKind.POSTER_GENERATION:
-        enqueue_poster_job(job_id)
-        return
-    raise ValueError(f"未知任务类型: {kind}")
-
-
-def recover_unfinished_jobs(
-    *,
-    reset_stale_running: bool = False,
-    stale_running_after: timedelta = DEFAULT_STALE_RUNNING_AFTER,
-) -> JobRecoverySummary:
-    """恢复重启期间滞留的异步任务。
-
-    任务创建是“先写数据库、再发 Redis 消息”。如果后端在这两个动作之间重启，
-    数据库会留下 queued 任务，但 Redis 里没有可消费消息；如果 worker 在执行中
-    被重启，数据库会留下 running 任务，也不会再被 Dramatiq 自动消费。
-
-    恢复策略保持幂等：
-    - queued 任务直接补发到队列；
-    - running 任务只在 worker 启动且超过宽限时间后重置为 queued 再补发；
-    - 重复补发是安全的，真正执行前 `_mark_job_running` 会拒绝非 queued 任务。
-    """
-
-    cutoff = utcnow() - stale_running_after
-    session = get_session_factory()()
-    jobs_to_enqueue: list[tuple[str, JobKind]] = []
-    queued_jobs = 0
-    stale_running_jobs = 0
-
-    try:
-        statement = select(JobRun).where(
-            JobRun.is_retryable.is_(True),
-            or_(
-                JobRun.status == JobStatus.QUEUED,
-                (JobRun.status == JobStatus.RUNNING) & (JobRun.started_at <= cutoff)
-                if reset_stale_running
-                else False,
-            ),
-        )
-        jobs = list(session.scalars(statement).all())
-        for job in jobs:
-            if job.status == JobStatus.RUNNING:
-                job.status = JobStatus.QUEUED
-                job.started_at = None
-                stale_running_jobs += 1
-            else:
-                queued_jobs += 1
-            jobs_to_enqueue.append((job.id, job.kind))
-        if stale_running_jobs:
-            session.commit()
-    except Exception:
-        session.rollback()
-        logger.exception("恢复滞留任务时读取数据库失败")
-        return JobRecoverySummary()
-    finally:
-        session.close()
-
-    enqueued_jobs = 0
-    for job_id, kind in jobs_to_enqueue:
-        try:
-            _send_job_to_queue(job_id, kind)
-            enqueued_jobs += 1
-        except Exception:
-            logger.exception("恢复滞留任务入队失败: job_id=%s kind=%s", job_id, kind)
-
-    if jobs_to_enqueue:
-        logger.info(
-            "已恢复滞留任务: queued=%s stale_running=%s enqueued=%s",
-            queued_jobs,
-            stale_running_jobs,
-            enqueued_jobs,
-        )
-    return JobRecoverySummary(
-        queued_jobs=queued_jobs,
-        stale_running_jobs=stale_running_jobs,
-        enqueued_jobs=enqueued_jobs,
-    )
 
 
 def recover_unfinished_workflow_runs(
@@ -269,24 +166,31 @@ def recover_unfinished_workflow_runs(
 def recover_unfinished_image_session_generation_tasks(
     *,
     reset_stale_running: bool = False,
-    stale_running_after: timedelta = DEFAULT_STALE_RUNNING_AFTER,
+    stale_running_after: timedelta | None = None,
 ) -> ImageSessionGenerationTaskRecoverySummary:
     """恢复 queued / stale running 的连续生图任务，Redis 只作为可补发 delivery。"""
 
-    cutoff = utcnow() - stale_running_after
+    resolved_stale_running_after = (
+        get_image_session_stale_running_after() if stale_running_after is None else stale_running_after
+    )
+    cutoff = utcnow() - resolved_stale_running_after
     session = get_session_factory()()
     task_ids_to_enqueue: list[str] = []
     queued_tasks = 0
     stale_running_tasks = 0
 
     try:
+        last_progress_at = func.coalesce(
+            ImageSessionGenerationTask.progress_updated_at,
+            ImageSessionGenerationTask.started_at,
+        )
         statement = select(ImageSessionGenerationTask).where(
             ImageSessionGenerationTask.is_retryable.is_(True),
             or_(
                 ImageSessionGenerationTask.status == JobStatus.QUEUED,
                 (
                     (ImageSessionGenerationTask.status == JobStatus.RUNNING)
-                    & (ImageSessionGenerationTask.started_at <= cutoff)
+                    & (last_progress_at <= cutoff)
                 )
                 if reset_stale_running
                 else False,
@@ -295,12 +199,31 @@ def recover_unfinished_image_session_generation_tasks(
         tasks = list(session.scalars(statement).all())
         for task in tasks:
             if task.status == JobStatus.RUNNING:
-                task.status = JobStatus.QUEUED
-                task.started_at = None
+                if task.completed_candidates:
+                    now = utcnow()
+                    task.status = JobStatus.FAILED
+                    task.finished_at = now
+                    task.is_retryable = False
+                    task.active_candidate_index = None
+                    task.progress_phase = "failed_idle_timeout"
+                    task.progress_updated_at = now
+                    task.failure_reason = (
+                        f"已生成 {task.completed_candidates}/{task.generation_count} 张候选，"
+                        "但任务超时，剩余候选未完成。"
+                    )
+                else:
+                    task.status = JobStatus.QUEUED
+                    task.started_at = None
+                    task.active_candidate_index = None
+                    task.provider_response_status = None
+                    task.provider_response_id = None
+                    task.progress_phase = "requeued_after_idle"
+                    task.progress_updated_at = utcnow()
+                    task_ids_to_enqueue.append(task.id)
                 stale_running_tasks += 1
             else:
                 queued_tasks += 1
-            task_ids_to_enqueue.append(task.id)
+                task_ids_to_enqueue.append(task.id)
         if stale_running_tasks:
             session.commit()
     except Exception:

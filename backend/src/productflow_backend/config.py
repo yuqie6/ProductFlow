@@ -19,6 +19,10 @@ IMAGE_GENERATION_MIN_MAX_DIMENSION = 512
 IMAGE_GENERATION_MAX_MAX_DIMENSION = 8192
 IMAGE_GENERATION_MAX_DIMENSION = DEFAULT_IMAGE_GENERATION_MAX_DIMENSION
 IMAGE_GENERATION_MAX_PIXELS = DEFAULT_IMAGE_GENERATION_MAX_DIMENSION * DEFAULT_IMAGE_GENERATION_MAX_DIMENSION
+DEFAULT_IMAGE_SESSION_IDLE_TIMEOUT_MINUTES = 90
+IMAGE_SESSION_IDLE_TIMEOUT_MIN_MINUTES = 1
+IMAGE_SESSION_IDLE_TIMEOUT_MAX_MINUTES = 24 * 60
+DEFAULT_IMAGE_SESSION_WORKER_FAILSAFE_TIME_LIMIT_MINUTES = 24 * 60
 IMAGE_SIZE_CONFIG_KEYS = {"image_main_image_size", "image_promo_poster_size"}
 PROMPT_CONFIG_KEYS = {
     "prompt_brief_system",
@@ -147,9 +151,18 @@ class Settings(BaseSettings):
     upload_max_pixels: int = 16_000_000
     upload_allowed_image_mime_types: str = "image/png,image/jpeg,image/webp"
 
-    job_max_attempts: int = 3
-    job_retry_delay_ms: int = 10_000
     generation_max_concurrent_tasks: int = Field(default=3, ge=1, le=20)
+    image_session_stale_running_after_minutes: int = Field(
+        default=DEFAULT_IMAGE_SESSION_IDLE_TIMEOUT_MINUTES,
+        ge=IMAGE_SESSION_IDLE_TIMEOUT_MIN_MINUTES,
+        le=IMAGE_SESSION_IDLE_TIMEOUT_MAX_MINUTES,
+    )
+    image_session_worker_failsafe_time_limit_minutes: int = Field(
+        default=DEFAULT_IMAGE_SESSION_WORKER_FAILSAFE_TIME_LIMIT_MINUTES,
+        ge=IMAGE_SESSION_IDLE_TIMEOUT_MIN_MINUTES,
+        le=IMAGE_SESSION_IDLE_TIMEOUT_MAX_MINUTES,
+    )
+    admin_access_required: bool = True
     deletion_enabled: bool = False
 
     @field_validator("image_main_image_size", "image_promo_poster_size")
@@ -499,27 +512,35 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
         description="逗号分隔，例如 image/png,image/jpeg,image/webp。",
     ),
     ConfigDefinition(
-        key="job_max_attempts",
-        label="任务最大尝试次数",
-        category="任务重试",
-        input_type="number",
-        minimum=1,
-    ),
-    ConfigDefinition(
-        key="job_retry_delay_ms",
-        label="任务重试延迟毫秒",
-        category="任务重试",
-        input_type="number",
-        minimum=0,
-    ),
-    ConfigDefinition(
         key="generation_max_concurrent_tasks",
         label="全局生成并发上限",
-        category="任务重试",
+        category="生成队列",
         input_type="number",
-        description="全局资源保护阈值；文案、海报、工作流和连续生图达到上限时会提示稍后重试。",
+        description="全局资源保护阈值；工作流和连续生图达到上限时会提示稍后重试。",
         minimum=1,
         maximum=20,
+    ),
+    ConfigDefinition(
+        key="image_session_stale_running_after_minutes",
+        label="连续生图进度闲置恢复阈值（分钟）",
+        category="生成队列",
+        input_type="number",
+        description=(
+            "worker 启动恢复时，running 连续生图任务会按最近 progress heartbeat 判断是否闲置；"
+            "旧任务没有 progress 时回退到 started_at。"
+        ),
+        minimum=IMAGE_SESSION_IDLE_TIMEOUT_MIN_MINUTES,
+        maximum=IMAGE_SESSION_IDLE_TIMEOUT_MAX_MINUTES,
+    ),
+    ConfigDefinition(
+        key="admin_access_required",
+        label="要求登录访问密钥",
+        category="安全与运维",
+        input_type="boolean",
+        description=(
+            "默认开启，普通工作台和私有 API 需要 ADMIN_ACCESS_KEY 登录；关闭后仍需 SETTINGS_ACCESS_TOKEN "
+            "才能查看和修改系统配置。"
+        ),
     ),
     ConfigDefinition(
         key="deletion_enabled",

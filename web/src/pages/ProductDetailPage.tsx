@@ -23,6 +23,7 @@ import { api, ApiError } from "../lib/api";
 import { DEFAULT_IMAGE_GENERATION_MAX_DIMENSION, buildImageSizeOptions } from "../lib/imageSizes";
 import type {
   ProductWorkflow,
+  ProductWorkflowStatus,
   WorkflowNode,
   WorkflowNodeType,
 } from "../lib/types";
@@ -46,7 +47,15 @@ import {
 } from "./product-detail/galleryImages";
 import { getNodeImageDownload, getSourceImageDownload } from "./product-detail/imageDownloads";
 import type { NodeConfigDraft, SaveStatus } from "./product-detail/types";
-import { clamp, hasActiveWorkflow, outputText, readStoredNumber } from "./product-detail/utils";
+import {
+  clamp,
+  hasActiveWorkflow,
+  isProductWorkflowStatusActive,
+  mergeProductWorkflowStatusIntoDetail,
+  outputText,
+  readStoredNumber,
+  shouldRefreshProductWorkflowDetailFromStatus,
+} from "./product-detail/utils";
 import {
   defaultConfigForType,
   defaultTitleForType,
@@ -109,11 +118,18 @@ export function ProductDetailPage() {
     queryKey: ["product-workflow", productId],
     queryFn: () => api.getProductWorkflow(productId),
     enabled: Boolean(productId),
-    refetchInterval: (query) =>
-      hasActiveWorkflow(query.state.data as ProductWorkflow | undefined) ? 1200 : false,
   });
   const workflow = workflowQuery.data ?? null;
   const workflowActive = hasActiveWorkflow(workflow);
+  const workflowStatusQuery = useQuery({
+    queryKey: ["product-workflow-status", productId],
+    queryFn: () => api.getProductWorkflowStatus(productId),
+    enabled: Boolean(productId && workflowActive),
+    refetchInterval: (query) => {
+      const data = query.state.data as ProductWorkflowStatus | undefined;
+      return isProductWorkflowStatusActive(data) ? 1200 : false;
+    },
+  });
   const runtimeConfigQuery = useQuery({
     queryKey: ["runtime-config"],
     queryFn: api.getRuntimeConfig,
@@ -206,6 +222,24 @@ export function ProductDetailPage() {
     });
     await queryClient.invalidateQueries({ queryKey: ["products"] });
   };
+
+  useEffect(() => {
+    const status = workflowStatusQuery.data;
+    if (!status || !productId || status.product_id !== productId) {
+      return;
+    }
+    const currentWorkflow = queryClient.getQueryData<ProductWorkflow>(["product-workflow", productId]);
+    const shouldRefetchWorkflow = shouldRefreshProductWorkflowDetailFromStatus(currentWorkflow, status);
+    if (currentWorkflow) {
+      queryClient.setQueryData(
+        ["product-workflow", productId],
+        mergeProductWorkflowStatusIntoDetail(currentWorkflow, status),
+      );
+    }
+    if (shouldRefetchWorkflow) {
+      void queryClient.invalidateQueries({ queryKey: ["product-workflow", productId] });
+    }
+  }, [productId, queryClient, workflowStatusQuery.data]);
 
   useEffect(() => {
     if (!wasWorkflowActiveRef.current && workflowActive) {
@@ -686,9 +720,7 @@ export function ProductDetailPage() {
     selectedNode?.node_type === "reference_image" ? selectedNode : null;
   const fillReferenceBusy = bindNodeImageMutation.isPending;
   const queueOverview = queueOverviewQuery.data ?? null;
-  const showQueueOverview = Boolean(
-    queueOverview && (queueOverview.active_count > 0 || product.recent_jobs.some((job) => job.status === "queued" || job.status === "running")),
-  );
+  const showQueueOverview = Boolean(queueOverview && queueOverview.active_count > 0);
 
   const renderWorkflowToolbarButtons = () => (
     <>

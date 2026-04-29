@@ -8,20 +8,21 @@
 
 The application backend now uses standard-library logging with a process-wide configuration that keeps stdout visible and
 writes persistent rotating log files. Runtime output also comes from Uvicorn/FastAPI, Dramatiq, exceptions, tests, and
-persisted job state.
+persisted durable task state.
 
 Current observability files and mechanisms:
 
 - `backend/src/productflow_backend/infrastructure/logging.py` configures stdout plus rotating file logs and deletes expired
   log files.
-- `backend/src/productflow_backend/workers.py` persists async job status through application use cases rather than logging
-  retry state only.
-- `backend/src/productflow_backend/application/use_cases.py` updates `JobRun.status`, `failure_reason`, `attempts`,
-  `started_at`, and `finished_at`.
-- `backend/src/productflow_backend/presentation/routes/jobs.py` exposes persisted job state through `/api/jobs/{job_id}`.
+- `backend/src/productflow_backend/workers.py` persists async workflow and continuous image generation state through
+  application use cases rather than logging retry state only.
+- `backend/src/productflow_backend/application/product_workflow_execution.py` updates `WorkflowRun` /
+  `WorkflowNodeRun` status and failure fields.
+- `backend/src/productflow_backend/application/image_sessions.py` updates `ImageSessionGenerationTask` status,
+  failure, attempt, queue, and result fields.
 - `backend/tests/test_queue_recovery.py`, `backend/tests/test_product_workflow_queue_recovery.py`, and
-  `backend/tests/test_logging_behavior.py` assert job/workflow retry, recovery, and logging behavior through durable state,
-  filesystem state, and HTTP responses.
+  `backend/tests/test_logging_behavior.py` assert workflow/image-session retry, recovery, and logging behavior through
+  durable state, filesystem state, and HTTP responses.
 
 Because this project uses a small standard-library logging setup, do not invent a separate framework in random modules. If
 logging is needed, add it deliberately and consistently through `logging.getLogger(__name__)`.
@@ -41,13 +42,13 @@ continue to reach stdout/stderr and are mirrored into a rotating file handler.
 
 ### Persisted operational state
 
-For product copy/poster jobs, durable state is preferred over log-only state:
+For product workflow and continuous image-session tasks, durable state is preferred over log-only state:
 
-- `JobRun.status` tracks `queued`, `running`, `succeeded`, or `failed`.
-- `JobRun.failure_reason` stores the user/operator-visible failure reason.
-- `JobRun.attempts` and retry timestamps are used by the worker flow.
+- `WorkflowRun.status` / `WorkflowNodeRun.status` track DAG execution.
+- `ImageSessionGenerationTask.status` tracks `queued`, `running`, `succeeded`, or `failed`.
+- Failure reason, attempt, queue, and result fields are stored on the owning durable rows.
 
-This is why queue/recovery tests verify job records rather than scraping logs.
+This is why queue/recovery tests verify durable records rather than scraping logs.
 
 ---
 

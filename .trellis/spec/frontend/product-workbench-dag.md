@@ -67,7 +67,7 @@
 - Product creation is intentionally minimal: only product name and preview/main image are required; category, price,
   description/context, reference images, copy, and image directions are configured later through canvas nodes.
 - Product list deletion must use `api.deleteProduct(productId)`, ask for explicit confirmation, and refresh `['products']`
-  after success. Show `ApiError.detail` when active jobs/runs block deletion.
+  after success. Show `ApiError.detail` when active workflow runs block deletion.
 - `reference_image` nodes use `uploadWorkflowNodeImage(...)` for manual uploads and can also be filled by upstream
   `image_generation` nodes.
 - A `reference_image` node is a single current-image slot. When manual upload or upstream `image_generation` fills a slot,
@@ -123,7 +123,7 @@
 - Missing workflow while loading -> loading state, not an empty destructive reset.
 - Active workflow polling stops when no run is `running` and no node is `queued` / `running`.
 - Deleting a node during an active workflow run -> show backend `运行中，稍后删除`; do not locally remove it.
-- Deleting a product during active jobs/runs -> show backend detail; do not locally remove it until the API succeeds.
+- Deleting a product during active workflow runs -> show backend detail; do not locally remove it until the API succeeds.
 - Unsupported node config fields stay in `config_json` and are not force-cast to narrower frontend-only types.
 - Image URLs from workflow-created source assets and poster artifacts still go through `api.toApiUrl(...)`.
 - Direct image runs without downstream reference slots should show the backend error near the workflow action/node; do not

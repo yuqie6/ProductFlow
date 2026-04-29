@@ -8,16 +8,15 @@ from productflow_backend.application.image_sessions import (
     add_image_session_reference_images,
     attach_image_session_asset_to_product,
     create_image_session,
-    create_image_session_generation_task,
     delete_image_session,
     delete_image_session_reference_image,
     get_image_session_detail,
+    get_image_session_status,
     list_image_sessions,
-    mark_image_session_generation_task_enqueue_failed,
+    submit_image_session_generation_task,
     update_image_session,
 )
 from productflow_backend.infrastructure.db.models import ImageSessionAsset
-from productflow_backend.infrastructure.queue import enqueue_image_session_generation_task
 from productflow_backend.infrastructure.storage import ImageVariantName, LocalStorage
 from productflow_backend.presentation.deps import get_session, require_admin, require_deletion_enabled
 from productflow_backend.presentation.errors import raise_value_error_as_http
@@ -28,9 +27,11 @@ from productflow_backend.presentation.schemas.image_sessions import (
     GenerateImageSessionRoundRequest,
     ImageSessionDetailResponse,
     ImageSessionListResponse,
+    ImageSessionStatusResponse,
     ProductWritebackResponse,
     UpdateImageSessionRequest,
     serialize_image_session_detail,
+    serialize_image_session_status,
     serialize_image_session_summary,
 )
 from productflow_backend.presentation.upload_validation import (
@@ -72,6 +73,18 @@ def get_image_session_detail_endpoint(
     except ValueError as exc:
         raise_value_error_as_http(exc)
     return serialize_image_session_detail(image_session)
+
+
+@router.get("/image-sessions/{image_session_id}/status", response_model=ImageSessionStatusResponse)
+def get_image_session_status_endpoint(
+    image_session_id: str,
+    session: Session = Depends(get_session),
+) -> ImageSessionStatusResponse:
+    try:
+        snapshot = get_image_session_status(session, image_session_id)
+    except ValueError as exc:
+        raise_value_error_as_http(exc)
+    return serialize_image_session_status(snapshot)
 
 
 @router.patch("/image-sessions/{image_session_id}", response_model=ImageSessionDetailResponse)
@@ -161,7 +174,7 @@ def generate_image_session_round_endpoint(
     session: Session = Depends(get_session),
 ) -> ImageSessionDetailResponse:
     try:
-        result = create_image_session_generation_task(
+        image_session = submit_image_session_generation_task(
             session,
             image_session_id=image_session_id,
             prompt=payload.prompt,
@@ -171,20 +184,6 @@ def generate_image_session_round_endpoint(
             generation_count=payload.generation_count,
             tool_options=payload.tool_options.model_dump(exclude_none=True) if payload.tool_options else None,
         )
-    except ValueError as exc:
-        raise_value_error_as_http(exc)
-    try:
-        enqueue_image_session_generation_task(result.task.id)
-    except Exception as exc:  # noqa: BLE001
-        mark_image_session_generation_task_enqueue_failed(
-            session,
-            task_id=result.task.id,
-            reason="任务队列暂不可用，请稍后重试",
-        )
-        raise HTTPException(status_code=503, detail="任务队列暂不可用，请稍后重试") from exc
-    try:
-        session.expire_all()
-        image_session = get_image_session_detail(session, image_session_id)
     except ValueError as exc:
         raise_value_error_as_http(exc)
     return serialize_image_session_detail(image_session)

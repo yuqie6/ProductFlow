@@ -20,6 +20,7 @@
   - `workflow_node_runs(workflow_run_id, node_id, status, output_json, copy_set_id, poster_variant_id, image_session_asset_id)`.
 - APIs:
   - `GET /api/products/{product_id}/workflow`
+  - `GET /api/products/{product_id}/workflow/status`
   - `POST /api/products/{product_id}/workflow/nodes`
   - `PATCH /api/workflow-nodes/{node_id}`
   - `PATCH /api/workflow-nodes/{node_id}/copy`
@@ -40,6 +41,11 @@
   and migrate old image-slot rows to it; fresh databases should create only the supported simplified node values.
 - Node status values are `idle`, `queued`, `running`, `succeeded`, `failed`; run status values are
   `running`, `succeeded`, `failed`.
+- Active workflow status polling must use `GET /api/products/{product_id}/workflow/status`, not repeated full workflow
+  detail loads. The status endpoint returns workflow identity/timestamps, node status fields, latest run status fields,
+  and node-run status fields only; it must not serialize edges, node `config_json`, node `output_json`, or node-run
+  artifact fields. The status query should load only the ORM columns needed for those status DTOs and avoid eager-loading
+  product artifacts or full DAG relationships.
 - `reference_image` nodes are user-visible `参考图` slots. They can be manually uploaded into through
   `POST /api/workflow-nodes/{node_id}/image`, filled from an existing product image through
   `POST /api/workflow-nodes/{node_id}/image-source`, or filled by upstream `image_generation` nodes.
@@ -318,7 +324,7 @@ artifacts, such as a newly connected empty `reference_image` slot that needs its
 
 - Contract regression directly validates `CreativeBriefPayload` and `CopyPayload` with scalar text arrays and malformed
   arrays; assert good arrays are joined with `、` and bad arrays raise `ValidationError`.
-- Normal copy-job regression monkeypatches the text provider to return scalar arrays and asserts the persisted
+- Copy-generation workflow regression monkeypatches the text provider to return scalar arrays and asserts the persisted
   `CreativeBrief.payload` and `CopySet` fields are strings.
 - Product workflow DAG regression runs `POST /api/products/{product_id}/workflow/run` with provider scalar arrays and
   asserts copy-node `output_json` and product `latest_brief.payload` expose normalized strings.
@@ -341,8 +347,8 @@ This leaks Python/JSON list formatting into persisted copy and hides malformed p
 CreativeBriefPayload.model_validate(response_json)
 ```
 
-Keep normalization and malformed-shape rejection inside the application contract validators so all provider entrypoints,
-jobs, and workflow runs share the same behavior.
+Keep normalization and malformed-shape rejection inside the application contract validators so all provider entrypoints
+and workflow runs share the same behavior.
 
 ## Scenario: Async workflow runs and deletion safety
 
@@ -394,7 +400,7 @@ jobs, and workflow runs share the same behavior.
   `running` row that causes indefinite frontend polling.
 - Node deletion must remove connected incoming/outgoing edges and existing `workflow_node_runs` for that node before
   returning the refreshed workflow.
-- Product deletion must refuse active jobs or active workflow runs, then rely on ORM/database cascade for related rows and
+- Product deletion must refuse active workflow runs, then rely on ORM/database cascade for related rows and
   perform best-effort storage tree cleanup after the database delete commits.
 
 ### 4. Validation & Error Matrix
@@ -437,7 +443,7 @@ jobs, and workflow runs share the same behavior.
   worker recovery, and duplicate messages no-op for terminal/currently-running runs.
 - Node deletion regression asserts connected edges and node runs are removed and active-run deletion is rejected.
 - Product deletion regression asserts completed products are deleted, direct detail fetch returns `404`, and active
-  jobs/runs block deletion with the expected concise error.
+  workflow runs block deletion with the expected concise error.
 - Alembic upgrade must create the active-run unique index and first close historical duplicate running rows if present.
 
 ### 7. Wrong vs Correct

@@ -71,7 +71,7 @@ def test_workflow_run_endpoint_enqueues_durable_actor_and_reuses_active_run(
 
     sent_run_ids: list[str] = []
     monkeypatch.setattr(
-        "productflow_backend.presentation.routes.product_workflows.enqueue_workflow_run",
+        "productflow_backend.application.product_workflow_execution.enqueue_workflow_run",
         lambda run_id: sent_run_ids.append(run_id),
     )
 
@@ -121,7 +121,7 @@ def test_workflow_run_enqueue_failure_marks_run_failed(
     def fail_enqueue(_: str) -> None:
         raise RuntimeError("redis unavailable")
 
-    monkeypatch.setattr("productflow_backend.presentation.routes.product_workflows.enqueue_workflow_run", fail_enqueue)
+    monkeypatch.setattr("productflow_backend.application.product_workflow_execution.enqueue_workflow_run", fail_enqueue)
 
     app = create_app()
     client = TestClient(app)

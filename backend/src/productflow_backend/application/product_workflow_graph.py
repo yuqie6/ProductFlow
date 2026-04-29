@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import desc, select
+from sqlalchemy.orm import Session, load_only, selectinload
 
 from productflow_backend.domain.enums import WorkflowNodeType
 from productflow_backend.domain.errors import NotFoundError
@@ -13,11 +14,19 @@ from productflow_backend.infrastructure.db.models import (
     ProductWorkflow,
     WorkflowEdge,
     WorkflowNode,
+    WorkflowNodeRun,
     WorkflowRun,
 )
 
 DEFAULT_WORKFLOW_TITLE = "商品创意工作流"
 DEFAULT_IMAGE_SIZE = "1024x1024"
+
+
+@dataclass(frozen=True, slots=True)
+class ProductWorkflowStatusSnapshot:
+    workflow: ProductWorkflow
+    nodes: list[WorkflowNode]
+    runs: list[WorkflowRun]
 
 
 def workflow_query():
@@ -30,6 +39,19 @@ def workflow_query():
         selectinload(ProductWorkflow.nodes),
         selectinload(ProductWorkflow.edges),
         selectinload(ProductWorkflow.runs).selectinload(WorkflowRun.node_runs),
+    )
+
+
+def workflow_status_query():
+    return select(ProductWorkflow).options(
+        load_only(
+            ProductWorkflow.id,
+            ProductWorkflow.product_id,
+            ProductWorkflow.title,
+            ProductWorkflow.active,
+            ProductWorkflow.created_at,
+            ProductWorkflow.updated_at,
+        ),
     )
 
 
@@ -61,6 +83,60 @@ def get_active_workflow(session: Session, product_id: str) -> ProductWorkflow | 
     return session.scalar(
         workflow_query().where(ProductWorkflow.product_id == product_id, ProductWorkflow.active.is_(True))
     )
+
+
+def get_active_workflow_status(session: Session, product_id: str) -> ProductWorkflowStatusSnapshot:
+    workflow = session.scalar(
+        workflow_status_query().where(ProductWorkflow.product_id == product_id, ProductWorkflow.active.is_(True))
+    )
+    if workflow is None:
+        get_product_or_raise(session, product_id)
+        raise NotFoundError("工作流不存在")
+    nodes = list(
+        session.scalars(
+            select(WorkflowNode)
+            .options(
+                load_only(
+                    WorkflowNode.id,
+                    WorkflowNode.workflow_id,
+                    WorkflowNode.status,
+                    WorkflowNode.failure_reason,
+                    WorkflowNode.last_run_at,
+                    WorkflowNode.updated_at,
+                )
+            )
+            .where(WorkflowNode.workflow_id == workflow.id)
+            .order_by(WorkflowNode.position_x, WorkflowNode.position_y, WorkflowNode.created_at)
+        )
+    )
+    runs = list(
+        session.scalars(
+            select(WorkflowRun)
+            .options(
+                load_only(
+                    WorkflowRun.id,
+                    WorkflowRun.workflow_id,
+                    WorkflowRun.status,
+                    WorkflowRun.started_at,
+                    WorkflowRun.finished_at,
+                    WorkflowRun.failure_reason,
+                ),
+                selectinload(WorkflowRun.node_runs).load_only(
+                    WorkflowNodeRun.id,
+                    WorkflowNodeRun.workflow_run_id,
+                    WorkflowNodeRun.node_id,
+                    WorkflowNodeRun.status,
+                    WorkflowNodeRun.failure_reason,
+                    WorkflowNodeRun.started_at,
+                    WorkflowNodeRun.finished_at,
+                ),
+            )
+            .where(WorkflowRun.workflow_id == workflow.id)
+            .order_by(desc(WorkflowRun.started_at), desc(WorkflowRun.id))
+            .limit(10)
+        )
+    )
+    return ProductWorkflowStatusSnapshot(workflow=workflow, nodes=nodes, runs=runs)
 
 
 def get_node_or_raise(session: Session, node_id: str) -> WorkflowNode:

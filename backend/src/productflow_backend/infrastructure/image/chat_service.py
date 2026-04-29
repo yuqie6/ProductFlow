@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from base64 import b64decode, b64encode
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from io import BytesIO
 from textwrap import shorten
-from typing import Literal
+from typing import Any, Literal
 
 from PIL import Image, ImageDraw
 
@@ -67,6 +68,7 @@ class ImageChatService:
         manual_reference_images: list[str],
         previous_response_id: str | None = None,
         tool_options: dict | None = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> GeneratedChatImage:
         if self.provider_kind == "mock":
             return self._generate_mock(
@@ -83,6 +85,7 @@ class ImageChatService:
                 manual_reference_images=manual_reference_images,
                 previous_response_id=previous_response_id,
                 tool_options=tool_options,
+                progress_callback=progress_callback,
             )
         raise RuntimeError(f"暂不支持的图片 provider: {self.provider_kind}")
 
@@ -155,6 +158,7 @@ class ImageChatService:
         manual_reference_images: list[str],
         previous_response_id: str | None,
         tool_options: dict | None,
+        progress_callback: Callable[[dict[str, Any]], None] | None,
     ) -> GeneratedChatImage:
         client = OpenAIResponsesImageClient()
         history_for_prompt = [] if previous_response_id else history
@@ -165,6 +169,7 @@ class ImageChatService:
             reference_images=self._collect_reference_images(history_for_images, manual_reference_images),
             previous_response_id=previous_response_id,
             tool_options=tool_options,
+            progress_callback=progress_callback,
         )
         return GeneratedChatImage(
             bytes_data=result.bytes_data,

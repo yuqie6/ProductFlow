@@ -54,7 +54,6 @@ function product(sourceAssets: SourceAsset[]): ProductDetail {
     current_confirmed_copy_set: null,
     copy_sets: [],
     poster_variants: [],
-    recent_jobs: [],
     created_at: createdAt,
     updated_at: createdAt,
   };

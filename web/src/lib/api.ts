@@ -8,11 +8,12 @@ import type {
   GenerationQueueOverview,
   ImageSessionDetail,
   ImageSessionListResponse,
+  ImageSessionStatus,
   ImageToolOptions,
-  JobRun,
   ProductDetail,
   ProductHistory,
   ProductWorkflow,
+  ProductWorkflowStatus,
   ProductWritebackResponse,
   ProductListResponse,
   RuntimeConfig,
@@ -160,9 +161,6 @@ export const api = {
   deleteSourceAsset(assetId: string): Promise<ProductDetail> {
     return request(`/api/source-assets/${assetId}`, { method: "DELETE" });
   },
-  createCopyJob(productId: string): Promise<JobRun> {
-    return request(`/api/products/${productId}/copy-jobs`, { method: "POST" });
-  },
   updateCopySet(copySetId: string, payload: CopySetUpdateRequest): Promise<CopySet> {
     return request(`/api/copy-sets/${copySetId}`, {
       method: "PATCH",
@@ -171,15 +169,6 @@ export const api = {
   },
   confirmCopySet(copySetId: string): Promise<CopySet> {
     return request(`/api/copy-sets/${copySetId}/confirm`, { method: "POST" });
-  },
-  createPosterJob(productId: string): Promise<JobRun> {
-    return request(`/api/products/${productId}/poster-jobs`, { method: "POST" });
-  },
-  regeneratePoster(posterId: string): Promise<JobRun> {
-    return request(`/api/posters/${posterId}/regenerate`, { method: "POST" });
-  },
-  getJob(jobId: string): Promise<JobRun> {
-    return request(`/api/jobs/${jobId}`);
   },
   listImageSessions(productId?: string): Promise<ImageSessionListResponse> {
     const query = productId ? `?product_id=${encodeURIComponent(productId)}` : "";
@@ -193,6 +182,9 @@ export const api = {
   },
   getImageSession(sessionId: string): Promise<ImageSessionDetail> {
     return request(`/api/image-sessions/${sessionId}`);
+  },
+  getImageSessionStatus(sessionId: string): Promise<ImageSessionStatus> {
+    return request(`/api/image-sessions/${sessionId}/status`);
   },
   updateImageSession(sessionId: string, input: { title: string }): Promise<ImageSessionDetail> {
     return request(`/api/image-sessions/${sessionId}`, {
@@ -253,6 +245,9 @@ export const api = {
   },
   getProductWorkflow(productId: string): Promise<ProductWorkflow> {
     return request(`/api/products/${productId}/workflow`);
+  },
+  getProductWorkflowStatus(productId: string): Promise<ProductWorkflowStatus> {
+    return request(`/api/products/${productId}/workflow/status`);
   },
   createWorkflowNode(
     productId: string,

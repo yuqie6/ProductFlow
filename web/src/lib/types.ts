@@ -1,7 +1,6 @@
 export type ProductWorkflowState = "draft" | "copy_ready" | "poster_ready" | "failed";
 export type CopyStatus = "draft" | "confirmed";
 export type PosterKind = "main_image" | "promo_poster";
-export type JobKind = "copy_generation" | "poster_generation";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed";
 export type SourceAssetKind = "original_image" | "reference_image" | "processed_product_image";
 export type ImageSessionAssetKind = "reference_upload" | "generated_image";
@@ -15,6 +14,7 @@ export type WorkflowRunStatus = "running" | "succeeded" | "failed";
 
 export interface SessionState {
   authenticated: boolean;
+  access_required: boolean;
 }
 
 export interface SourceAsset {
@@ -81,21 +81,6 @@ export interface PosterVariant {
   created_at: string;
 }
 
-export interface JobRun {
-  id: string;
-  product_id: string;
-  kind: JobKind;
-  status: JobStatus;
-  target_poster_kind: PosterKind | null;
-  failure_reason: string | null;
-  attempts: number;
-  created_at: string;
-  started_at: string | null;
-  finished_at: string | null;
-  copy_set_id: string | null;
-  poster_variant_id: string | null;
-}
-
 export interface ProductSummary {
   id: string;
   name: string;
@@ -131,7 +116,6 @@ export interface ProductDetail {
   current_confirmed_copy_set: CopySet | null;
   copy_sets: CopySet[];
   poster_variants: PosterVariant[];
-  recent_jobs: JobRun[];
   created_at: string;
   updated_at: string;
 }
@@ -139,7 +123,6 @@ export interface ProductDetail {
 export interface ProductHistory {
   copy_sets: CopySet[];
   poster_variants: PosterVariant[];
-  jobs: JobRun[];
 }
 
 export interface WorkflowNode {
@@ -182,6 +165,16 @@ export interface WorkflowNodeRun {
   finished_at: string | null;
 }
 
+export interface WorkflowNodeRunStatus {
+  id: string;
+  workflow_run_id: string;
+  node_id: string;
+  status: WorkflowNodeStatus;
+  failure_reason: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
 export interface WorkflowRun {
   id: string;
   workflow_id: string;
@@ -192,6 +185,25 @@ export interface WorkflowRun {
   node_runs: WorkflowNodeRun[];
 }
 
+export interface WorkflowRunStatusSummary {
+  id: string;
+  workflow_id: string;
+  status: WorkflowRunStatus;
+  started_at: string;
+  finished_at: string | null;
+  failure_reason: string | null;
+  node_runs: WorkflowNodeRunStatus[];
+}
+
+export interface WorkflowNodeStatusSummary {
+  id: string;
+  workflow_id: string;
+  status: WorkflowNodeStatus;
+  failure_reason: string | null;
+  last_run_at: string | null;
+  updated_at: string;
+}
+
 export interface ProductWorkflow {
   id: string;
   product_id: string;
@@ -200,6 +212,18 @@ export interface ProductWorkflow {
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
   runs: WorkflowRun[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProductWorkflowStatus {
+  id: string;
+  product_id: string;
+  title: string;
+  active: boolean;
+  has_active_workflow: boolean;
+  nodes: WorkflowNodeStatusSummary[];
+  runs: WorkflowRunStatusSummary[];
   created_at: string;
   updated_at: string;
 }
@@ -266,6 +290,13 @@ export interface ImageSessionGenerationTask {
   base_asset_id: string | null;
   selected_reference_asset_ids: string[];
   generation_count: number;
+  completed_candidates: number;
+  active_candidate_index: number | null;
+  progress_phase: string | null;
+  progress_updated_at: string | null;
+  provider_response_id: string | null;
+  provider_response_status: string | null;
+  progress_metadata: Record<string, unknown> | null;
   failure_reason: string | null;
   result_generation_group_id: string | null;
   tool_options: ImageToolOptions | null;
@@ -297,6 +328,19 @@ export interface ImageSessionDetail {
   title: string;
   assets: ImageSessionAsset[];
   rounds: ImageSessionRound[];
+  generation_tasks: ImageSessionGenerationTask[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ImageSessionStatus {
+  id: string;
+  product_id: string | null;
+  title: string;
+  rounds_count: number;
+  latest_round_id: string | null;
+  latest_generation_group_id: string | null;
+  has_active_generation_task: boolean;
   generation_tasks: ImageSessionGenerationTask[];
   created_at: string;
   updated_at: string;
@@ -370,6 +414,7 @@ export interface ConfigResponse {
 
 export interface RuntimeConfig {
   image_generation_max_dimension: number;
+  admin_access_required: boolean;
   deletion_enabled: boolean;
 }
 

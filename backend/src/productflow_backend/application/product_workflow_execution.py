@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,6 +44,7 @@ from productflow_backend.application.product_workflow_dependencies import (
 )
 from productflow_backend.application.product_workflow_mutations import get_or_create_product_workflow
 from productflow_backend.application.product_workflow_query import WorkflowQueryService
+from productflow_backend.application.queue_submission import enqueue_or_mark_failed
 from productflow_backend.application.time import now_utc
 from productflow_backend.config import get_runtime_settings
 from productflow_backend.domain.enums import (
@@ -73,6 +75,7 @@ from productflow_backend.infrastructure.db.models import (
 )
 from productflow_backend.infrastructure.db.session import get_session_factory
 from productflow_backend.infrastructure.image.base import ImageProvider, infer_extension
+from productflow_backend.infrastructure.queue import enqueue_workflow_run
 from productflow_backend.infrastructure.storage import LocalStorage
 
 logger = logging.getLogger(__name__)
@@ -211,6 +214,23 @@ def run_product_workflow(
         execute_product_workflow_run(kickoff.run_id, dependencies=dependencies)
         session.expire_all()
         return product_workflow_graph.get_workflow_or_raise(session, kickoff.workflow.id)
+    return kickoff.workflow
+
+
+def submit_product_workflow_run(
+    session: Session,
+    *,
+    product_id: str,
+    start_node_id: str | None = None,
+    enqueue: Callable[[str], None] | None = None,
+) -> ProductWorkflow:
+    kickoff = start_product_workflow_run(session, product_id=product_id, start_node_id=start_node_id)
+    if kickoff.should_enqueue:
+        enqueue_or_mark_failed(
+            kickoff.run_id,
+            enqueue=enqueue or enqueue_workflow_run,
+            mark_failed=lambda run_id, reason: mark_workflow_run_enqueue_failed(session, run_id=run_id, reason=reason),
+        )
     return kickoff.workflow
 
 

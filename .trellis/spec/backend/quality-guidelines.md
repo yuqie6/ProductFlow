@@ -378,15 +378,13 @@ should own pure graph decisions.
 Use `LocalStorage` from `backend/src/productflow_backend/infrastructure/storage.py` for storage paths. It resolves relative
 paths under the configured root and rejects absolute/path-traversal paths. Do not build download paths manually in routes.
 
-### Keep async job semantics idempotent
+### Keep durable async task semantics idempotent
 
-Job creation and workers are designed to avoid duplicate active jobs and duplicate execution:
+Durable task creation and workers are designed to avoid duplicate active work and duplicate execution:
 
-- Active job uniqueness is enforced with `uq_job_runs_one_active_per_product_kind` in models/migration.
-- Queue send failures are marked with `mark_job_enqueue_failed(...)` before returning 503.
+- Queue send failures are handled by application submit use cases before returning 503:
+  `submit_product_workflow_run(...)` and `submit_image_session_generation_task(...)`.
 - Dramatiq actors use `max_retries=0`; application code owns retry state.
-- Backend/worker startup must call `recover_unfinished_jobs(...)` so a database-persisted job is not stranded when the
-  process restarts before the Redis message is consumed.
 - Product workflow runs follow the same durable-delivery rule with `recover_unfinished_workflow_runs(...)`: the
   `workflow_runs` / `workflow_node_runs` tables are authoritative, Dramatiq is only delivery, and duplicate messages must
   no-op for terminal or currently-running runs.
@@ -395,7 +393,7 @@ Job creation and workers are designed to avoid duplicate active jobs and duplica
   /api/image-sessions/{id}/generate` creates a queued DB task and returns `202`; worker execution creates the existing
   `image_session_rounds` / `image_session_assets` rows on success, and duplicate terminal messages must no-op.
 
-Preserve these semantics when editing job code.
+Preserve these semantics when editing durable task code.
 
 #### Scenario: Durable async continuous image-session generation
 
@@ -411,12 +409,16 @@ Preserve these semantics when editing job code.
 - API: `POST /api/image-sessions/{image_session_id}/generate` returns `202 Accepted` after validation, durable task
   creation, and enqueue; it must not wait for an image provider call.
 - DB: `image_session_generation_tasks` stores `session_id`, `prompt`, `size`, `base_asset_id`,
-  `selected_reference_asset_ids`, `generation_count`, `status`, `failure_reason`, `result_generation_group_id`,
-  `attempts`, `is_retryable`, `created_at`, `started_at`, and `finished_at`.
+  `selected_reference_asset_ids`, `generation_count`, `status`, progress fields (`completed_candidates`,
+  `active_candidate_index`, `progress_phase`, `progress_updated_at`, provider response id/status and metadata),
+  `failure_reason`, `result_generation_group_id`, `attempts`, `is_retryable`, `created_at`, `started_at`, and
+  `finished_at`.
 - Queue: `enqueue_image_session_generation_task(task_id: str)` sends the durable task ID; the worker actor consumes only
   the ID and reloads state from the database.
 - Recovery: `recover_unfinished_image_session_generation_tasks(reset_stale_running: bool = False, stale_running_after:
-  timedelta = 30 minutes)` re-sends queued tasks and, only for worker startup, may reset stale running tasks to queued.
+  timedelta | None = None)` re-sends queued tasks and, only for worker startup, handles stale running tasks by comparing
+  the cutoff against `progress_updated_at`, falling back to `started_at` for older rows. Tasks with no completed
+  candidates may be reset to queued; stale partial-success tasks are marked failed without retry.
 - Response DTO: `ImageSessionDetailResponse.generation_tasks` exposes task summaries so route entry/refresh can show
   active or failed generation work without a separate orchestration endpoint.
 - Each generation task summary includes global queue fields: `queue_active_count`, `queue_running_count`,
@@ -428,8 +430,11 @@ Preserve these semantics when editing job code.
 
 - Task statuses are `queued`, `running`, `succeeded`, and `failed`; queued/running rows count toward
   `generation_max_concurrent_tasks`.
-- Queue position is computed from durable queued DB rows ordered by `created_at` across queued product jobs and
-  image-session generation tasks. Running tasks have no queue position and should be displayed as front-of-queue work.
+- The continuous image-session worker actor keeps an internal failsafe Dramatiq `time_limit` via
+  `image_session_worker_failsafe_time_limit_minutes`. User-facing stale behavior must be driven by progress heartbeat
+  idle recovery, not a hard total task timeout.
+- Queue position is computed from durable queued image-session generation task rows ordered by `created_at`. Running tasks
+  have no queue position and should be displayed as front-of-queue work.
 - New image-session generation work must call shared admission before creating a queued task. The count must be based on
   active DB rows, not an in-process slot, because API/worker processes may be replicated.
 - Queue enqueue failure after task creation must mark the task `failed` (or otherwise return a stable `503`) before the
@@ -454,8 +459,9 @@ Preserve these semantics when editing job code.
   `任务队列暂不可用，请稍后重试`.
 - Duplicate Redis message for `succeeded`, `failed`, or `running` task -> no provider call and no new round/asset rows.
 - API restart with queued retryable task -> re-enqueue without changing task semantics.
-- Worker restart with stale running retryable task -> reset to queued, clear stale running timestamps as needed, and
-  re-enqueue.
+- Worker restart with stale running retryable task and no completed candidates -> reset to queued and re-enqueue.
+- Worker restart with stale running partial-success task -> mark failed without retry, keeping the partial
+  `result_generation_group_id`.
 
 ##### 5. Good/Base/Bad Cases
 
@@ -479,7 +485,8 @@ Preserve these semantics when editing job code.
   `result_generation_group_id`.
 - Worker failure test: provider exception marks the task failed with a generic reason and does not leak the raw exception.
 - Duplicate/no-op tests: terminal and already-running task messages do not call the provider or create extra rounds.
-- Recovery tests: queued tasks are re-sent; stale running tasks reset only when `reset_stale_running=True`.
+- Recovery tests: queued tasks are re-sent; stale running recovery uses `progress_updated_at`, falls back to `started_at`,
+  and fails stale partial-success tasks instead of retrying them.
 - Admission test: queued/running image-session generation tasks count toward `generation_max_concurrent_tasks`.
 - Queue metadata test: queued task responses expose `queued_ahead_count` / `queue_position`, and the global overview
   counts active queued/running durable work.
@@ -507,8 +514,8 @@ Wrong:
 
 ```python
 task = session.get(ImageSessionGenerationTask, task_id)
-if task.status == ImageSessionGenerationStatus.QUEUED:
-    task.status = ImageSessionGenerationStatus.RUNNING
+if task.status == JobStatus.QUEUED:
+    task.status = JobStatus.RUNNING
     session.commit()
     call_provider()
 ```
@@ -520,79 +527,14 @@ updated = session.execute(
     update(ImageSessionGenerationTask)
     .where(
         ImageSessionGenerationTask.id == task_id,
-        ImageSessionGenerationTask.status == ImageSessionGenerationStatus.QUEUED,
+        ImageSessionGenerationTask.status == JobStatus.QUEUED,
     )
-    .values(status=ImageSessionGenerationStatus.RUNNING, started_at=now_utc())
+    .values(status=JobStatus.RUNNING, started_at=now_utc())
 )
 if updated.rowcount != 1:
     return
 call_provider()
 ```
-
-#### Scenario: Recover stranded async jobs after process restart
-
-##### 1. Scope / Trigger
-
-- Trigger: queue infra integration for `job_runs` plus Dramatiq/Redis.
-- Applies when editing `backend/src/productflow_backend/infrastructure/queue.py`,
-  `backend/src/productflow_backend/workers.py`, or product job route enqueue behavior.
-
-##### 2. Signatures
-
-- `recover_unfinished_jobs(reset_stale_running: bool = False, stale_running_after: timedelta = 30 minutes)`
-- API startup calls `recover_unfinished_jobs()` for `queued` jobs only.
-- Dramatiq worker startup calls `recover_unfinished_jobs(reset_stale_running=True)` so old `running` jobs can be retried.
-
-##### 3. Contracts
-
-- `queued + is_retryable=true` means "DB says work should happen"; startup must send the job ID back to Redis.
-- `running + is_retryable=true + started_at <= stale cutoff` means "worker likely died"; worker startup may reset it to
-  `queued` before sending.
-- `succeeded`, `failed`, non-retryable, and recent `running` jobs must not be reset.
-
-##### 4. Validation & Error Matrix
-
-- Redis enqueue fails during recovery -> log the failure and leave the DB state retryable for the next startup.
-- DB read/update fails during recovery -> rollback, log, and do not crash normal app startup.
-- Unknown `JobKind` -> treat as a programming error in the queue helper, not as a silent no-op.
-- Workflow run Redis enqueue failure -> mark the just-created workflow run `failed` before returning `503`, so the active
-  run uniqueness guard is not stranded.
-- Workflow worker startup may reset stale `workflow_node_runs.status = 'running'` back to `queued`, then re-enqueue the
-  parent run; API startup should only re-enqueue runs that do not have a node currently running.
-
-##### 5. Good/Base/Bad Cases
-
-- Good: API restarts after committing a `queued` poster job but before sending Redis; startup re-sends the job.
-- Base: Worker sees a duplicate Redis message for a job already `running` or `succeeded`; `_mark_job_running(...)` returns
-  false and the actor exits.
-- Bad: Resetting every `running` job on API startup; that can duplicate currently active generation work.
-
-##### 6. Tests Required
-
-- Regression test that a `queued` retryable job is sent by `recover_unfinished_jobs()`.
-- Regression test that a stale `running` retryable job is reset to `queued` only when `reset_stale_running=True`.
-- Regression tests that workflow run kickoff enqueues the Dramatiq actor, enqueue failure marks the run failed, queued
-  workflow runs are recovered, stale running node runs are reset during worker recovery, and duplicate workflow messages
-  do not execute terminal/currently-running runs.
-- Keep `uv run --directory backend ruff check .` and backend pytest green after queue changes.
-
-##### 7. Wrong vs Correct
-
-Wrong:
-
-```python
-# Only Redis is trusted; DB queued jobs are ignored on restart.
-run_poster_generation.send(job_id)
-```
-
-Correct:
-
-```python
-# DB remains authoritative for unfinished work; Redis messages are recoverable delivery attempts.
-recover_unfinished_jobs(reset_stale_running=True)
-```
-
----
 
 ## Testing Requirements
 
@@ -623,8 +565,8 @@ and add/update an Alembic revision under `backend/alembic/versions/`. Existing t
 - Unbounded list endpoints that load all rows for UI lists.
 - Raw filesystem access for user-controlled storage paths; go through `LocalStorage.resolve(...)`.
 - Broad `except Exception` that hides failures. Existing broad catches are narrow boundary cases:
-  queue enqueue failure in `presentation/routes/products.py`, config table bootstrap tolerance in `config.py`, and provider
-  error classification in application/provider code.
+  durable queue enqueue failure inside application submit helpers, config table bootstrap tolerance in `config.py`, and
+  provider error classification in application/provider code.
 - Committing generated storage, cache directories, `.env`, build output, or pycache files.
 
 ---
@@ -638,6 +580,6 @@ When reviewing backend changes, check:
 - Are database model changes mirrored by Alembic migrations and tests?
 - Are enum values stored/returned as stable lowercase string values?
 - Are uploads, image sizes, and storage paths still bounded?
-- Are job failures persisted in `JobRun` and visible via `/api/jobs/{job_id}`?
+- Are durable workflow/image-session task failures persisted and visible through their owning status/detail APIs?
 - Are provider secrets hidden from API responses and logs?
 - Do `uv run --directory backend ruff check .` and `just backend-test` pass?

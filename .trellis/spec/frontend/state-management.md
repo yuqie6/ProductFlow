@@ -25,15 +25,18 @@ Server state is loaded through `web/src/lib/api.ts` and cached by TanStack Query
 
 Current query key patterns:
 
-- Session: `['session']` in `App.tsx`.
+- Session: `['session']` in `App.tsx`. `GET /api/auth/session` returns both `authenticated` and `access_required`; when
+  login is disabled server-side, `authenticated` is true even without a login cookie.
 - Product list: `['products']` in `ProductListPage.tsx` and `ImageChatPage.tsx`.
 - Product detail/history: `['product', productId]` and `['product-history', productId]` in `ProductDetailPage.tsx`.
-- Jobs: `['job', activeCopyJobId]` and `['job', activePosterJobId]` in `ProductDetailPage.tsx`.
+- Product workbench: `['product-workflow', productId]` and `['product-workflow-status', productId]` in
+  `ProductDetailPage.tsx`.
 - Image sessions: `['image-sessions', productId ?? 'standalone']` and `['image-session', selectedSessionId]` in
   `ImageChatPage.tsx`.
 - Runtime config: `['runtime-config']` in `ProductDetailPage.tsx`, `ProductListPage.tsx`, and `ImageChatPage.tsx`.
 - Full settings config: `['config']` in `SettingsPage.tsx`; successful settings saves/resets must invalidate
-  `['runtime-config']` when they can affect public runtime behavior.
+  `['runtime-config']` when they can affect public runtime behavior, and `['session']` because settings can toggle
+  `admin_access_required`.
 - Settings lock state: `['settings-lock-state']` in `SettingsPage.tsx`; fetch full `['config']` only after the secondary
   settings token unlock succeeds.
 
@@ -46,7 +49,8 @@ When writing mutations, update/invalidate every key that can show stale data.
 Keep short-lived UI state local to the page that owns the interaction:
 
 - `ProductCreatePage.tsx` stores form fields, selected files, and a local error string.
-- `ProductDetailPage.tsx` stores editing mode, editable copy draft, active job IDs, and job error strings.
+- `ProductDetailPage.tsx` stores editing mode, editable copy draft, selected canvas/workbench state, and local mutation
+  error strings.
 - `ImageChatPage.tsx` stores selected session/generated asset, prompt draft, image size, rename mode, target product,
   and transient success/error messages.
 - `SettingsPage.tsx` stores config drafts, secret touched flags, reset progress, and save/error messages.

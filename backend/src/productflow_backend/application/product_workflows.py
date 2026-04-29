@@ -56,6 +56,7 @@ from productflow_backend.application.product_workflow_execution import (
     mark_workflow_run_enqueue_failed,
     run_product_workflow,
     start_product_workflow_run,
+    submit_product_workflow_run,
 )
 from productflow_backend.application.product_workflow_mutations import (
     _normalize_product_context_singleton,
@@ -78,6 +79,10 @@ logger = logging.getLogger(__name__)
 
 def latest_workflow_runs(workflow: ProductWorkflow, limit: int = 10) -> list[WorkflowRun]:
     return product_workflow_graph.latest_workflow_runs(workflow, limit=limit)
+
+
+def get_product_workflow_status(session, product_id: str) -> product_workflow_graph.ProductWorkflowStatusSnapshot:
+    return product_workflow_graph.get_active_workflow_status(session, product_id)
 
 
 __all__ = [
@@ -132,12 +137,14 @@ __all__ = [
     "execute_product_workflow_run",
     "get_image_provider",
     "get_or_create_product_workflow",
+    "get_product_workflow_status",
     "get_text_provider",
     "latest_workflow_runs",
     "logger",
     "mark_workflow_run_enqueue_failed",
     "run_product_workflow",
     "start_product_workflow_run",
+    "submit_product_workflow_run",
     "update_workflow_copy_set",
     "update_workflow_node",
     "upload_workflow_node_image",

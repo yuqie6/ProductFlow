@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 from sqlalchemy.orm import Session
 
 from productflow_backend.application.product_workflows import (
@@ -10,13 +10,12 @@ from productflow_backend.application.product_workflows import (
     delete_workflow_edge,
     delete_workflow_node,
     get_or_create_product_workflow,
-    mark_workflow_run_enqueue_failed,
-    start_product_workflow_run,
+    get_product_workflow_status,
+    submit_product_workflow_run,
     update_workflow_copy_set,
     update_workflow_node,
     upload_workflow_node_image,
 )
-from productflow_backend.infrastructure.queue import enqueue_workflow_run
 from productflow_backend.presentation.deps import get_session, require_admin
 from productflow_backend.presentation.errors import raise_value_error_as_http
 from productflow_backend.presentation.schemas.product_workflows import (
@@ -24,10 +23,12 @@ from productflow_backend.presentation.schemas.product_workflows import (
     CreateWorkflowEdgeRequest,
     CreateWorkflowNodeRequest,
     ProductWorkflowResponse,
+    ProductWorkflowStatusResponse,
     RunWorkflowRequest,
     UpdateWorkflowCopySetRequest,
     UpdateWorkflowNodeRequest,
     serialize_product_workflow,
+    serialize_product_workflow_status,
 )
 from productflow_backend.presentation.upload_validation import read_validated_image_upload
 
@@ -41,6 +42,18 @@ def get_product_workflow_endpoint(product_id: str, session: Session = Depends(ge
     except ValueError as exc:
         raise_value_error_as_http(exc)
     return serialize_product_workflow(workflow)
+
+
+@router.get("/products/{product_id}/workflow/status", response_model=ProductWorkflowStatusResponse)
+def get_product_workflow_status_endpoint(
+    product_id: str,
+    session: Session = Depends(get_session),
+) -> ProductWorkflowStatusResponse:
+    try:
+        workflow = get_product_workflow_status(session, product_id)
+    except ValueError as exc:
+        raise_value_error_as_http(exc)
+    return serialize_product_workflow_status(workflow)
 
 
 @router.post(
@@ -199,22 +212,11 @@ def run_product_workflow_endpoint(
     session: Session = Depends(get_session),
 ) -> ProductWorkflowResponse:
     try:
-        kickoff = start_product_workflow_run(
+        workflow = submit_product_workflow_run(
             session,
             product_id=product_id,
             start_node_id=payload.start_node_id if payload else None,
         )
     except ValueError as exc:
         raise_value_error_as_http(exc)
-    response = serialize_product_workflow(kickoff.workflow)
-    if kickoff.should_enqueue:
-        try:
-            enqueue_workflow_run(kickoff.run_id)
-        except Exception as exc:
-            mark_workflow_run_enqueue_failed(
-                session,
-                run_id=kickoff.run_id,
-                reason="任务队列暂不可用，请稍后重试",
-            )
-            raise HTTPException(status_code=503, detail="任务队列暂不可用，请稍后重试") from exc
-    return response
+    return serialize_product_workflow(workflow)
