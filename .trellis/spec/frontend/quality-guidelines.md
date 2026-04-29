@@ -144,6 +144,17 @@ Current pages show loading, error, disabled, and success states close to the act
 
 Follow this style for new actions.
 
+### Keep desktop-only layout state bounded
+
+When adding resizable panels to a desktop-only layout:
+
+- Keep min/max sizing and viewport-fit calculations in pure helper functions when the math is non-trivial.
+- Re-clamp stored panel sizes on desktop viewport resize so hidden overflow does not push primary content below its
+  minimum useful size.
+- Gate desktop-only clamping with the same breakpoint that controls the desktop layout. Do not shrink hidden panel state
+  while the page is in a mobile stacked layout, or the user may return to desktop with unexpectedly collapsed panels.
+- Cover clamp helpers with deterministic Vitest tests instead of relying only on manual drag checks.
+
 ---
 
 ## Accessibility and UX Checklist

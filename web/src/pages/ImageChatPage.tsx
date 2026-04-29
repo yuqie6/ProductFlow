@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Check,
@@ -32,6 +33,20 @@ import {
   buildImageSizeOptions,
   formatImageSizeValue,
 } from "../lib/imageSizes";
+import {
+  HISTORY_PANEL_DEFAULT_HEIGHT,
+  HISTORY_PANEL_MIN_HEIGHT,
+  LEFT_PANEL_DEFAULT_WIDTH,
+  LEFT_PANEL_MIN_WIDTH,
+  RIGHT_PANEL_DEFAULT_WIDTH,
+  RIGHT_PANEL_MIN_WIDTH,
+  clampImageChatPanelLayout,
+  clampPanelSize,
+  getHistoryPanelMaxHeight,
+  getLeftPanelMaxWidth,
+  getRightPanelMaxWidth,
+  wheelDeltaToPixels,
+} from "./image-chat/resizableLayout";
 import {
   buildImageGenerationSubmitSignature,
   buildImageSessionHistoryTree,
@@ -71,6 +86,32 @@ import type {
 const DELETION_DISABLED_MESSAGE = "删除功能已关闭，请联系管理员";
 const DUPLICATE_GENERATION_SUBMIT_WINDOW_MS = 1800;
 const MAX_BRANCH_CONTEXT_IMAGES = 6;
+const DESKTOP_RESIZABLE_LAYOUT_QUERY = "(min-width: 1024px)";
+
+type ImageChatResizeTarget = "left" | "right" | "history";
+
+function handleHistoryWheelScroll(event: ReactWheelEvent<HTMLDivElement>) {
+  if (event.ctrlKey) {
+    return;
+  }
+  const container = event.currentTarget;
+  const maxScrollLeft = container.scrollWidth - container.clientWidth;
+  if (maxScrollLeft <= 1) {
+    return;
+  }
+  const absDeltaX = Math.abs(event.deltaX);
+  const absDeltaY = Math.abs(event.deltaY);
+  if (absDeltaY === 0 || absDeltaX >= absDeltaY) {
+    return;
+  }
+  const delta = wheelDeltaToPixels(event.deltaY, event.deltaMode, container.clientWidth);
+  const nextScrollLeft = clampPanelSize(container.scrollLeft + delta, 0, maxScrollLeft);
+  if (nextScrollLeft === container.scrollLeft) {
+    return;
+  }
+  event.preventDefault();
+  container.scrollLeft = nextScrollLeft;
+}
 
 function getSessionReferenceAssets(imageSession: ImageSessionDetail | undefined): ImageSessionAsset[] {
   return imageSession?.assets.filter((asset) => asset.kind === "reference_upload") ?? [];
@@ -197,6 +238,51 @@ export function ImageChatPage() {
   const [promptPreview, setPromptPreview] = useState<PromptPreview | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const [leftPanelWidth, setLeftPanelWidth] = useState(LEFT_PANEL_DEFAULT_WIDTH);
+  const [rightPanelWidth, setRightPanelWidth] = useState(RIGHT_PANEL_DEFAULT_WIDTH);
+  const [historyPanelHeight, setHistoryPanelHeight] = useState(HISTORY_PANEL_DEFAULT_HEIGHT);
+
+  const leftPanelStyle = {
+    "--image-chat-left-panel-width": `${leftPanelWidth}px`,
+  } as CSSProperties;
+  const rightPanelStyle = {
+    "--image-chat-right-panel-width": `${rightPanelWidth}px`,
+  } as CSSProperties;
+  const historyPanelStyle = {
+    "--image-chat-history-panel-height": `${historyPanelHeight}px`,
+  } as CSSProperties;
+
+  useEffect(() => {
+    function clampPanelSizesToViewport() {
+      if (!window.matchMedia(DESKTOP_RESIZABLE_LAYOUT_QUERY).matches) {
+        return;
+      }
+      const nextLayout = clampImageChatPanelLayout(
+        {
+          leftPanelWidth,
+          rightPanelWidth,
+          historyPanelHeight,
+        },
+        {
+          viewportWidth: window.innerWidth,
+          viewportHeight: window.innerHeight,
+        },
+      );
+      if (nextLayout.leftPanelWidth !== leftPanelWidth) {
+        setLeftPanelWidth(nextLayout.leftPanelWidth);
+      }
+      if (nextLayout.rightPanelWidth !== rightPanelWidth) {
+        setRightPanelWidth(nextLayout.rightPanelWidth);
+      }
+      if (nextLayout.historyPanelHeight !== historyPanelHeight) {
+        setHistoryPanelHeight(nextLayout.historyPanelHeight);
+      }
+    }
+
+    clampPanelSizesToViewport();
+    window.addEventListener("resize", clampPanelSizesToViewport);
+    return () => window.removeEventListener("resize", clampPanelSizesToViewport);
+  }, [historyPanelHeight, leftPanelWidth, rightPanelWidth]);
 
   const sessionsQuery = useQuery({
     queryKey: ["image-sessions", productId ?? "standalone"],
@@ -730,6 +816,49 @@ export function ImageChatPage() {
     uploadReferenceMutation.mutate({ sessionId: selectedSessionId, files });
   }
 
+  function handlePanelResizeStart(target: ImageChatResizeTarget, event: ReactPointerEvent<HTMLButtonElement>) {
+    if (event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const startLeftWidth = leftPanelWidth;
+    const startRightWidth = rightPanelWidth;
+    const startHistoryHeight = historyPanelHeight;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = target === "history" ? "row-resize" : "col-resize";
+    document.body.style.userSelect = "none";
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      if (target === "left") {
+        const maxWidth = getLeftPanelMaxWidth(window.innerWidth, startRightWidth);
+        setLeftPanelWidth(clampPanelSize(startLeftWidth + moveEvent.clientX - startX, LEFT_PANEL_MIN_WIDTH, maxWidth));
+        return;
+      }
+      if (target === "right") {
+        const maxWidth = getRightPanelMaxWidth(window.innerWidth, startLeftWidth);
+        setRightPanelWidth(clampPanelSize(startRightWidth + startX - moveEvent.clientX, RIGHT_PANEL_MIN_WIDTH, maxWidth));
+        return;
+      }
+      const maxHeight = getHistoryPanelMaxHeight(window.innerHeight);
+      setHistoryPanelHeight(clampPanelSize(startHistoryHeight + startY - moveEvent.clientY, HISTORY_PANEL_MIN_HEIGHT, maxHeight));
+    };
+
+    const finishResize = () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", finishResize);
+      window.removeEventListener("pointercancel", finishResize);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", finishResize);
+    window.addEventListener("pointercancel", finishResize);
+  }
+
   return (
     <div className="flex min-h-screen flex-col bg-slate-100 text-slate-900 lg:h-screen lg:overflow-hidden">
       <TopNav
@@ -739,7 +868,19 @@ export function ImageChatPage() {
       />
 
       <main className="flex flex-1 flex-col pb-28 lg:min-h-0 lg:flex-row lg:overflow-hidden lg:pb-0">
-        <aside className="flex w-full shrink-0 flex-col border-b border-slate-200 bg-white/95 lg:w-72 lg:border-b-0 lg:border-r">
+        <aside
+          className="relative flex w-full shrink-0 flex-col border-b border-slate-200 bg-white/95 lg:w-[var(--image-chat-left-panel-width)] lg:border-b-0 lg:border-r"
+          style={leftPanelStyle}
+        >
+          <button
+            type="button"
+            aria-label="调整会话列表宽度"
+            title="拖拽调整会话列表宽度"
+            onPointerDown={(event) => handlePanelResizeStart("left", event)}
+            className="absolute right-[-5px] top-0 z-20 hidden h-full w-3 cursor-col-resize items-center justify-center transition-colors hover:bg-indigo-50/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 lg:flex"
+          >
+            <span className="h-12 w-1 rounded-full bg-slate-300" />
+          </button>
           <div className="border-b border-slate-200 px-4 py-4">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -967,7 +1108,19 @@ export function ImageChatPage() {
             ) : null}
           </div>
 
-          <div className="flex h-44 shrink-0 flex-col border-t border-slate-200 bg-white/95 px-3 py-2.5 shadow-[0_-8px_24px_rgba(15,23,42,0.04)] lg:h-[clamp(9.5rem,16vh,11rem)]">
+          <div
+            className="relative flex h-44 shrink-0 flex-col border-t border-slate-200 bg-white/95 px-3 py-2.5 shadow-[0_-8px_24px_rgba(15,23,42,0.04)] lg:h-[var(--image-chat-history-panel-height)]"
+            style={historyPanelStyle}
+          >
+            <button
+              type="button"
+              aria-label="调整历史记录高度"
+              title="拖拽调整历史记录高度"
+              onPointerDown={(event) => handlePanelResizeStart("history", event)}
+              className="absolute inset-x-0 -top-1 z-20 hidden h-3 cursor-row-resize items-center justify-center transition-colors hover:bg-indigo-50/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 lg:flex"
+            >
+              <span className="h-1 w-12 rounded-full bg-slate-300" />
+            </button>
             <div className="mb-2 flex items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold text-slate-950">历史记录</div>
@@ -976,7 +1129,7 @@ export function ImageChatPage() {
             </div>
 
             {historyBranches.length ? (
-              <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto pb-1">
+              <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto pb-1" onWheel={handleHistoryWheelScroll}>
                 {historyBranches.map((branch) => (
                   <HistoryBranchStrip
                     key={branch.id}
@@ -1007,7 +1160,19 @@ export function ImageChatPage() {
           </div>
         </section>
 
-        <aside className="flex w-full shrink-0 flex-col border-t border-slate-200 bg-white lg:w-[clamp(300px,21vw,340px)] lg:border-l lg:border-t-0">
+        <aside
+          className="relative flex w-full shrink-0 flex-col border-t border-slate-200 bg-white lg:w-[var(--image-chat-right-panel-width)] lg:border-l lg:border-t-0"
+          style={rightPanelStyle}
+        >
+          <button
+            type="button"
+            aria-label="调整生成设置宽度"
+            title="拖拽调整生成设置宽度"
+            onPointerDown={(event) => handlePanelResizeStart("right", event)}
+            className="absolute left-[-5px] top-0 z-20 hidden h-full w-3 cursor-col-resize items-center justify-center transition-colors hover:bg-indigo-50/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 lg:flex"
+          >
+            <span className="h-12 w-1 rounded-full bg-slate-300" />
+          </button>
           <div className="min-h-0 flex-1 px-4 py-5 lg:overflow-y-auto lg:px-5">
             <div className="mb-5">
               <div className="mb-3 flex items-center justify-between gap-3">

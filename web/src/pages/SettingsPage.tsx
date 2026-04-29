@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Loader2, LockKeyhole, RotateCcw, Save, Settings as SettingsIcon } from "lucide-react";
+import {
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  LockKeyhole,
+  RotateCcw,
+  Save,
+  Settings as SettingsIcon,
+} from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { TopNav } from "../components/TopNav";
@@ -230,6 +239,7 @@ export function SettingsPage() {
   const [error, setError] = useState("");
   const [savedMessage, setSavedMessage] = useState("");
   const [unlockToken, setUnlockToken] = useState("");
+  const [activeConfigCategory, setActiveConfigCategory] = useState<string | null>(null);
 
   const lockStateQuery = useQuery({
     queryKey: ["settings-lock-state"],
@@ -275,6 +285,24 @@ export function SettingsPage() {
     }
     return groups;
   }, [configQuery.data]);
+  const selectedCategoryIndex = activeConfigCategory
+    ? groupedItems.findIndex((group) => group.category === activeConfigCategory)
+    : -1;
+  const activeGroupIndex = selectedCategoryIndex >= 0 ? selectedCategoryIndex : 0;
+  const activeGroup = groupedItems[activeGroupIndex];
+  const activePageNumber = activeGroup ? activeGroupIndex + 1 : 0;
+
+  useEffect(() => {
+    if (!groupedItems.length) {
+      if (activeConfigCategory !== null) {
+        setActiveConfigCategory(null);
+      }
+      return;
+    }
+    if (!activeConfigCategory || !groupedItems.some((group) => group.category === activeConfigCategory)) {
+      setActiveConfigCategory(groupedItems[0].category);
+    }
+  }, [activeConfigCategory, groupedItems]);
 
   const saveMutation = useMutation({
     mutationFn: () => {
@@ -482,25 +510,89 @@ export function SettingsPage() {
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-6">
-              <div className="space-y-5">
-                {groupedItems.map((group) => (
+              {activeGroup ? (
+                <>
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm shadow-slate-200/50">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                      <div>
+                        <div className="text-sm font-semibold text-slate-950">配置分类</div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          第 {activePageNumber} / {groupedItems.length} 页 · 当前 {activeGroup.items.length} 项
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setActiveConfigCategory(groupedItems[activeGroupIndex - 1]?.category ?? activeGroup.category)}
+                          disabled={activeGroupIndex === 0}
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-950 disabled:opacity-40"
+                          aria-label="上一类配置"
+                        >
+                          <ChevronLeft size={16} />
+                        </button>
+                        <span className="min-w-14 text-center text-xs font-semibold text-slate-500">
+                          {activePageNumber}/{groupedItems.length}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setActiveConfigCategory(groupedItems[activeGroupIndex + 1]?.category ?? activeGroup.category)}
+                          disabled={activeGroupIndex >= groupedItems.length - 1}
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-950 disabled:opacity-40"
+                          aria-label="下一类配置"
+                        >
+                          <ChevronRight size={16} />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="mt-4 flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="配置分类">
+                      {groupedItems.map((group, index) => {
+                        const active = group.category === activeGroup.category;
+                        return (
+                          <button
+                            key={group.category}
+                            type="button"
+                            role="tab"
+                            aria-selected={active}
+                            aria-controls="settings-category-panel"
+                            onClick={() => setActiveConfigCategory(group.category)}
+                            className={`inline-flex shrink-0 items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold transition-colors ${
+                              active
+                                ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+                                : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-950"
+                            }`}
+                          >
+                            <span>{group.category}</span>
+                            <span
+                              className={`rounded-full px-1.5 py-0.5 text-[11px] ${
+                                active ? "bg-white text-indigo-600" : "bg-slate-100 text-slate-500"
+                              }`}
+                            >
+                              {index + 1}/{groupedItems.length}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                   <section
-                    key={group.category}
+                    id="settings-category-panel"
+                    role="tabpanel"
                     className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm shadow-slate-200/50"
                   >
                     <div className="border-b border-slate-100 bg-slate-50/70 px-5 py-4">
-                      <h2 className="text-sm font-semibold text-slate-950">{group.category}</h2>
-                      <p className="mt-1 text-xs text-slate-500">{group.items.length} 项运行时配置</p>
+                      <h2 className="text-sm font-semibold text-slate-950">{activeGroup.category}</h2>
+                      <p className="mt-1 text-xs text-slate-500">{activeGroup.items.length} 项运行时配置</p>
                     </div>
-                    <div className={group.category === "图片工具参数" ? "grid gap-3 p-5 sm:grid-cols-2" : "px-5"}>
-                      {group.items.map((item) => (
+                    <div className={activeGroup.category === "图片工具参数" ? "grid gap-3 p-5 sm:grid-cols-2" : "px-5"}>
+                      {activeGroup.items.map((item) => (
                         <ConfigField
                           key={item.key}
                           item={item}
                           value={drafts[item.key] ?? draftFromItem(item)}
                           secretTouched={Boolean(secretTouched[item.key])}
                           isResetting={resettingKey === item.key}
-                          compact={group.category === "图片工具参数"}
+                          compact={activeGroup.category === "图片工具参数"}
                           onChange={(nextValue, touchedSecret) => {
                             setDrafts((current) => ({ ...current, [item.key]: nextValue }));
                             setSavedMessage("");
@@ -513,8 +605,12 @@ export function SettingsPage() {
                       ))}
                     </div>
                   </section>
-                ))}
-              </div>
+                </>
+              ) : (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-5 py-10 text-center text-sm text-slate-500">
+                  暂无可配置项
+                </div>
+              )}
 
               {error ? (
                 <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
