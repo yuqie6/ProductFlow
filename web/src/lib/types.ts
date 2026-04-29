@@ -290,6 +290,13 @@ export interface ImageSessionGenerationTask {
   base_asset_id: string | null;
   selected_reference_asset_ids: string[];
   generation_count: number;
+  completed_candidates: number;
+  active_candidate_index: number | null;
+  progress_phase: string | null;
+  progress_updated_at: string | null;
+  provider_response_id: string | null;
+  provider_response_status: string | null;
+  progress_metadata: Record<string, unknown> | null;
   failure_reason: string | null;
   result_generation_group_id: string | null;
   tool_options: ImageToolOptions | null;

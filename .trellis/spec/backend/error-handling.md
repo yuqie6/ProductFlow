@@ -245,6 +245,11 @@ return a generic queue/provider failure detail instead.
 - Worker actor: `workers.run_image_session_generation_task(task_id: str)`.
 - Application entrypoint: `application.image_sessions.execute_image_session_generation_task(task_id: str) -> None`.
 - Continuous generation task statuses use existing `JobStatus`: `queued`, `running`, `succeeded`, `failed`.
+- Stale-running recovery uses a heartbeat/idle model: compare the cutoff with
+  `ImageSessionGenerationTask.progress_updated_at`, falling back to `started_at` for older rows that do not have progress
+  metadata. The user-facing runtime setting is `image_session_stale_running_after_minutes`, defaulting to 90 minutes.
+- The Dramatiq actor keeps only an internal worker failsafe `time_limit` from
+  `image_session_worker_failsafe_time_limit_minutes`; this is not the product-level timeout decision.
 
 #### 3. Contracts
 
@@ -259,6 +264,14 @@ return a generic queue/provider failure detail instead.
   - commit that candidate before requesting the next candidate.
 - If a later candidate fails or times out, earlier committed candidates remain visible and keep one
   `generation_group_id`.
+- Running tasks must persist durable progress metadata while they advance:
+  - `completed_candidates`;
+  - `active_candidate_index`;
+  - `progress_phase`;
+  - `progress_updated_at`;
+  - current `provider_response_id` / `provider_response_status` when available.
+- OpenAI Responses image generation should use background response creation and `responses.retrieve(...)` polling when the
+  provider supports it. Each provider status response should refresh task progress while generation is still working.
 - Failed/timeout tasks must set:
   - `status = failed`;
   - `finished_at` to an aware UTC timestamp;
@@ -275,6 +288,8 @@ return a generic queue/provider failure detail instead.
   mentions partial completion without provider secrets.
 - Candidate 1 succeeds, candidate 2 raises `TimeLimitExceeded` -> task `failed`, first round/asset remains, failure
   reason is `"已生成 1/2 张候选，但任务超时，剩余候选未完成。"`.
+- Stale running task with fresh `progress_updated_at` but old `started_at` -> remains `running`; recovery must not reset it.
+- Stale running task with already completed candidates -> mark `failed` with the partial-timeout reason and do not retry.
 - Timeout or safe worker exception before any candidate is committed -> task `failed`, no rounds/assets, generic
   `"图片生成失败，请稍后重试"`.
 - Duplicate worker message for a terminal task -> no-op; do not call the provider again.
@@ -297,7 +312,9 @@ return a generic queue/provider failure detail instead.
 - Worker test: partial success followed by `TimeLimitExceeded` keeps the committed round/asset, marks the task `failed`,
   sets `finished_at`, `is_retryable=false`, and clears active queue counts.
 - Worker test: timeout outside the per-candidate loop still marks the task `failed` with the generic safe reason.
-- Worker actor test: `run_image_session_generation_task` has an explicit extended `time_limit`.
+- Worker progress test: provider polling callbacks update durable progress fields while the task remains running.
+- Worker actor test: `run_image_session_generation_task` has an internal failsafe `time_limit`; user-facing timeout
+  behavior is covered by stale-running idle recovery tests.
 - Existing duplicate-message tests must continue proving terminal/running tasks do not call the provider again.
 
 #### 7. Wrong vs Correct

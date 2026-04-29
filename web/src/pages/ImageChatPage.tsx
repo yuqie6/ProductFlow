@@ -67,7 +67,9 @@ function generationTaskLabel(task: ImageSessionGenerationTask) {
     return task.queue_position ? `排队中 · 第 ${task.queue_position} 位` : "排队中";
   }
   if (task.status === "running") {
-    return "生成中";
+    const total = task.generation_count || 1;
+    const current = task.active_candidate_index ?? Math.min(task.completed_candidates + 1, total);
+    return `生成中 · ${task.completed_candidates}/${total} 已完成 · 当前第 ${current} 张`;
   }
   if (task.status === "failed") {
     return "生成失败";
@@ -82,7 +84,8 @@ function generationTaskQueueText(task: ImageSessionGenerationTask) {
     return `前方 ${ahead} 个，${position}；全局活跃 ${task.queue_active_count}/${task.queue_max_concurrent_tasks}。`;
   }
   if (task.status === "running") {
-    return `正在生成，前方 0 个；全局运行 ${task.queue_running_count} 个，排队 ${task.queue_queued_count} 个。`;
+    const providerStatus = task.provider_response_status ? `供应商状态 ${task.provider_response_status}；` : "";
+    return `${providerStatus}最近进度 ${task.progress_updated_at ? formatDateTime(task.progress_updated_at) : "刚开始"}；全局运行 ${task.queue_running_count} 个，排队 ${task.queue_queued_count} 个。`;
   }
   return "";
 }

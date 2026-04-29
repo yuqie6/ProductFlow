@@ -409,12 +409,16 @@ Preserve these semantics when editing durable task code.
 - API: `POST /api/image-sessions/{image_session_id}/generate` returns `202 Accepted` after validation, durable task
   creation, and enqueue; it must not wait for an image provider call.
 - DB: `image_session_generation_tasks` stores `session_id`, `prompt`, `size`, `base_asset_id`,
-  `selected_reference_asset_ids`, `generation_count`, `status`, `failure_reason`, `result_generation_group_id`,
-  `attempts`, `is_retryable`, `created_at`, `started_at`, and `finished_at`.
+  `selected_reference_asset_ids`, `generation_count`, `status`, progress fields (`completed_candidates`,
+  `active_candidate_index`, `progress_phase`, `progress_updated_at`, provider response id/status and metadata),
+  `failure_reason`, `result_generation_group_id`, `attempts`, `is_retryable`, `created_at`, `started_at`, and
+  `finished_at`.
 - Queue: `enqueue_image_session_generation_task(task_id: str)` sends the durable task ID; the worker actor consumes only
   the ID and reloads state from the database.
 - Recovery: `recover_unfinished_image_session_generation_tasks(reset_stale_running: bool = False, stale_running_after:
-  timedelta = 30 minutes)` re-sends queued tasks and, only for worker startup, may reset stale running tasks to queued.
+  timedelta | None = None)` re-sends queued tasks and, only for worker startup, handles stale running tasks by comparing
+  the cutoff against `progress_updated_at`, falling back to `started_at` for older rows. Tasks with no completed
+  candidates may be reset to queued; stale partial-success tasks are marked failed without retry.
 - Response DTO: `ImageSessionDetailResponse.generation_tasks` exposes task summaries so route entry/refresh can show
   active or failed generation work without a separate orchestration endpoint.
 - Each generation task summary includes global queue fields: `queue_active_count`, `queue_running_count`,
@@ -426,6 +430,9 @@ Preserve these semantics when editing durable task code.
 
 - Task statuses are `queued`, `running`, `succeeded`, and `failed`; queued/running rows count toward
   `generation_max_concurrent_tasks`.
+- The continuous image-session worker actor keeps an internal failsafe Dramatiq `time_limit` via
+  `image_session_worker_failsafe_time_limit_minutes`. User-facing stale behavior must be driven by progress heartbeat
+  idle recovery, not a hard total task timeout.
 - Queue position is computed from durable queued image-session generation task rows ordered by `created_at`. Running tasks
   have no queue position and should be displayed as front-of-queue work.
 - New image-session generation work must call shared admission before creating a queued task. The count must be based on
@@ -452,8 +459,9 @@ Preserve these semantics when editing durable task code.
   `任务队列暂不可用，请稍后重试`.
 - Duplicate Redis message for `succeeded`, `failed`, or `running` task -> no provider call and no new round/asset rows.
 - API restart with queued retryable task -> re-enqueue without changing task semantics.
-- Worker restart with stale running retryable task -> reset to queued, clear stale running timestamps as needed, and
-  re-enqueue.
+- Worker restart with stale running retryable task and no completed candidates -> reset to queued and re-enqueue.
+- Worker restart with stale running partial-success task -> mark failed without retry, keeping the partial
+  `result_generation_group_id`.
 
 ##### 5. Good/Base/Bad Cases
 
@@ -477,7 +485,8 @@ Preserve these semantics when editing durable task code.
   `result_generation_group_id`.
 - Worker failure test: provider exception marks the task failed with a generic reason and does not leak the raw exception.
 - Duplicate/no-op tests: terminal and already-running task messages do not call the provider or create extra rounds.
-- Recovery tests: queued tasks are re-sent; stale running tasks reset only when `reset_stale_running=True`.
+- Recovery tests: queued tasks are re-sent; stale running recovery uses `progress_updated_at`, falls back to `started_at`,
+  and fails stale partial-success tasks instead of retrying them.
 - Admission test: queued/running image-session generation tasks count toward `generation_max_concurrent_tasks`.
 - Queue metadata test: queued task responses expose `queued_ahead_count` / `queue_position`, and the global overview
   counts active queued/running durable work.
@@ -505,8 +514,8 @@ Wrong:
 
 ```python
 task = session.get(ImageSessionGenerationTask, task_id)
-if task.status == ImageSessionGenerationStatus.QUEUED:
-    task.status = ImageSessionGenerationStatus.RUNNING
+if task.status == JobStatus.QUEUED:
+    task.status = JobStatus.RUNNING
     session.commit()
     call_provider()
 ```
@@ -518,9 +527,9 @@ updated = session.execute(
     update(ImageSessionGenerationTask)
     .where(
         ImageSessionGenerationTask.id == task_id,
-        ImageSessionGenerationTask.status == ImageSessionGenerationStatus.QUEUED,
+        ImageSessionGenerationTask.status == JobStatus.QUEUED,
     )
-    .values(status=ImageSessionGenerationStatus.RUNNING, started_at=now_utc())
+    .values(status=JobStatus.RUNNING, started_at=now_utc())
 )
 if updated.rowcount != 1:
     return

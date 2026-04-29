@@ -116,6 +116,10 @@ PostgreSQL 是元数据和运行状态的权威存储；Redis/Dramatiq 只负责
 - enqueue 失败时会把新建 run 标记为失败，避免 active 状态卡死。
 - API 启动时会恢复 queued 的未完成任务/工作流。
 - worker 启动时可重置 stale running 状态后重新投递。
+- 连续生图不再用用户可配置的硬总超时作为产品语义。运行中任务会持久化 `progress_updated_at`、
+  `completed_candidates`、当前候选和 provider response 状态；stale running 恢复按最近 progress heartbeat
+  判断 idle，旧行才回退到 `started_at`。
+- 连续生图 worker 的 Dramatiq `time_limit` 只保留为内部 failsafe，避免进程永久占用，不作为用户可调的生成总时限。
 - Dramatiq actor 对 terminal/currently-running 的重复消息应 no-op。
 - 全局生成并发上限通过数据库中的 active `WorkflowRun`、`ImageSessionGenerationTask` 计数实现。
 - `/api/generation-queue` 返回全局 durable 队列概览；连续生图 status 响应会带回当前任务的队列位置。
@@ -143,7 +147,8 @@ ProductFlow 把模型能力按模态拆分。
 图片 provider 位于 `infrastructure/image/`，统一服务于海报生成和图片会话。当前实现：
 
 - `mock`
-- `openai_responses`（Responses API `image_generation` 工具，支持 `input_image`；ProductFlow 侧的连续生图分支上下文由显式选择的基图和参考图构造）
+- `openai_responses`（Responses API `image_generation` 工具，支持 `input_image`；连续生图优先使用 background
+  response + retrieve polling，把 provider status 写入任务 progress）
 
 Provider 选择由 `config.py` 和对应 factory 控制。路由不直接依赖具体 SDK。
 
