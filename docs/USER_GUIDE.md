@@ -1,5 +1,7 @@
 # ProductFlow 新手教程与参考说明
 
+[中文](USER_GUIDE.md) | [English](USER_GUIDE.en.md)
+
 这份文档分两部分：
 
 1. **新手教程**：少术语，照着点、照着填，先生成一张能用的商品图。

@@ -4,6 +4,7 @@
 
 # ProductFlow
 
+[中文](README.md) | [English](README.en.md)
 <p align="center">
   <a href="https://draw.devbin.de"><strong>体验站 / Live Demo</strong></a>
 </p>

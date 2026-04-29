@@ -1,5 +1,6 @@
 # ProductFlow Architecture
 
+[中文](ARCHITECTURE.md) | [English](ARCHITECTURE.en.md)
 当前架构健康度、已完成治理和剩余风险见 `docs/ARCHITECTURE_HEALTH_REVIEW.md`；本文保持为系统结构说明。
 
 ## 1. 系统概览

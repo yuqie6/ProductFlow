@@ -1,5 +1,7 @@
 # ProductFlow PRD
 
+[中文](PRD.md) | [English](PRD.en.md)
+
 ## 1. 产品定位
 
 ProductFlow 是一个开源、自托管的商品素材工作台，面向单人商家、小团队运营者或希望在自己基础设施里管理 AI 素材链路的开发者。
