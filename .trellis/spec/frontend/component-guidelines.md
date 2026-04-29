@@ -127,6 +127,9 @@ If a component starts needing API calls, consider whether it is actually a route
 - Continuous image chat and workflow image-generation inspector must use the same shared `ImageToolControls` component for
   provider image-tool parameters. Keep compaction/normalization in shared helpers under `web/src/lib/`, not inside one
   page, so the workbench node and image chat submit the same payload shape.
+- `ImageToolControls` visibility and `compactImageToolOptions(...)` submission filtering must both use
+  `runtime-config.image_tool_allowed_fields`; do not show or submit provider fields that the active provider profile has
+  not enabled.
 - Pages pass built-in preset options into the component; `ImageSizePicker` must not call the API.
 - Runtime config filters built-in size preset buttons by maximum single edge. It must not provide an arbitrary backend
   allowlist; a custom value may be valid even when it is not present in the preset list.

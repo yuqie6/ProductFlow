@@ -11,7 +11,12 @@ from typing import Any
 from openai import OpenAI
 
 from productflow_backend.application.contracts import PosterGenerationInput
-from productflow_backend.config import get_runtime_settings
+from productflow_backend.config import (
+    IMAGE_TOOL_FIELD_KEYS,
+    filter_image_tool_options,
+    get_runtime_settings,
+    parse_image_tool_allowed_fields,
+)
 from productflow_backend.domain.enums import PosterKind
 from productflow_backend.infrastructure.image.base import (
     GeneratedImagePayload,
@@ -22,17 +27,7 @@ from productflow_backend.infrastructure.image.base import (
 )
 from productflow_backend.infrastructure.prompts import render_prompt_template
 
-IMAGE_TOOL_OPTIONAL_FIELD_KEYS: tuple[str, ...] = (
-    "model",
-    "quality",
-    "output_format",
-    "output_compression",
-    "moderation",
-    "action",
-    "input_fidelity",
-    "partial_images",
-    "n",
-)
+IMAGE_TOOL_OPTIONAL_FIELD_KEYS = IMAGE_TOOL_FIELD_KEYS
 RESPONSES_BACKGROUND_POLL_INTERVAL_SECONDS = 2.0
 RESPONSES_IN_PROGRESS_STATUSES = {"queued", "in_progress"}
 RESPONSES_TERMINAL_FAILURE_STATUSES = {"failed", "cancelled", "canceled", "incomplete", "expired"}
@@ -156,15 +151,18 @@ class OpenAIResponsesImageClient:
         self.api_key = settings.image_api_key
         self.base_url = settings.image_base_url
         self.model = settings.image_generate_model
+        self.background_enabled = settings.image_responses_background_enabled
         self.tool_model = settings.image_tool_model
         self.tool_quality = settings.image_tool_quality
         self.tool_output_format = settings.image_tool_output_format
         self.tool_output_compression = settings.image_tool_output_compression
+        self.tool_background = settings.image_tool_background
         self.tool_moderation = settings.image_tool_moderation
         self.tool_action = settings.image_tool_action
         self.tool_input_fidelity = settings.image_tool_input_fidelity
         self.tool_partial_images = settings.image_tool_partial_images
         self.tool_n = settings.image_tool_n
+        self.tool_allowed_fields = parse_image_tool_allowed_fields(settings.image_tool_allowed_fields)
 
     def generate_image(
         self,
@@ -186,8 +184,9 @@ class OpenAIResponsesImageClient:
             "model": self.model,
             "input": input_payload,
             "tools": [tool],
-            "background": True,
         }
+        if self.background_enabled:
+            request_payload["background"] = True
         if previous_response_id:
             request_payload["previous_response_id"] = previous_response_id
 
@@ -340,15 +339,19 @@ class OpenAIResponsesImageClient:
             "quality": self.tool_quality,
             "output_format": self.tool_output_format,
             "output_compression": self.tool_output_compression,
+            "background": self.tool_background,
             "moderation": self.tool_moderation,
             "action": self.tool_action,
             "input_fidelity": self.tool_input_fidelity,
             "partial_images": self.tool_partial_images,
             "n": self.tool_n,
         }
-        merged_options = {**runtime_options, **(tool_options or {})}
+        merged_options = filter_image_tool_options(
+            {**runtime_options, **(tool_options or {})},
+            allowed_fields=self.tool_allowed_fields,
+        )
         for key in IMAGE_TOOL_OPTIONAL_FIELD_KEYS:
-            value = merged_options.get(key)
+            value = (merged_options or {}).get(key)
             if value is None:
                 continue
             if isinstance(value, str) and not value.strip():

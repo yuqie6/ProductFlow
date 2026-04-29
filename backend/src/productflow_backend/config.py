@@ -12,7 +12,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
-ConfigInputType = Literal["text", "password", "number", "boolean", "select", "textarea"]
+ConfigInputType = Literal["text", "password", "number", "boolean", "select", "multi_select", "textarea"]
 IMAGE_SIZE_PATTERN = re.compile(r"^\d+x\d+$")
 DEFAULT_IMAGE_GENERATION_MAX_DIMENSION = 3840
 IMAGE_GENERATION_MIN_MAX_DIMENSION = 512
@@ -31,6 +31,20 @@ PROMPT_CONFIG_KEYS = {
     "prompt_poster_image_edit_template",
     "prompt_image_chat_template",
 }
+IMAGE_TOOL_FIELD_KEYS: tuple[str, ...] = (
+    "model",
+    "quality",
+    "output_format",
+    "output_compression",
+    "background",
+    "moderation",
+    "action",
+    "input_fidelity",
+    "partial_images",
+    "n",
+)
+DEFAULT_IMAGE_TOOL_ALLOWED_FIELDS: tuple[str, ...] = tuple(key for key in IMAGE_TOOL_FIELD_KEYS if key != "background")
+DEFAULT_IMAGE_TOOL_ALLOWED_FIELDS_TEXT = ",".join(DEFAULT_IMAGE_TOOL_ALLOWED_FIELDS)
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_LOG_DIR = BACKEND_DIR / "storage" / "logs"
 DEFAULT_PROMPT_BRIEF_SYSTEM = (
@@ -119,15 +133,18 @@ class Settings(BaseSettings):
     image_api_key: str | None = None
     image_base_url: str | None = None
     image_generate_model: str = "gpt-5.4"
+    image_responses_background_enabled: bool = False
     image_tool_model: str | None = None
     image_tool_quality: str | None = None
     image_tool_output_format: str | None = None
     image_tool_output_compression: int | None = Field(default=None, ge=0, le=100)
+    image_tool_background: str | None = None
     image_tool_moderation: str | None = None
     image_tool_action: str | None = None
     image_tool_input_fidelity: str | None = None
     image_tool_partial_images: int | None = Field(default=None, ge=0, le=3)
     image_tool_n: int | None = Field(default=None, ge=1, le=10)
+    image_tool_allowed_fields: str = DEFAULT_IMAGE_TOOL_ALLOWED_FIELDS_TEXT
     image_generation_max_dimension: int = Field(
         default=DEFAULT_IMAGE_GENERATION_MAX_DIMENSION,
         ge=IMAGE_GENERATION_MIN_MAX_DIMENSION,
@@ -174,6 +191,7 @@ class Settings(BaseSettings):
         "image_tool_model",
         "image_tool_quality",
         "image_tool_output_format",
+        "image_tool_background",
         "image_tool_moderation",
         "image_tool_action",
         "image_tool_input_fidelity",
@@ -192,6 +210,11 @@ class Settings(BaseSettings):
         if isinstance(value, str) and not value.strip():
             return None
         return int(value)
+
+    @field_validator("image_tool_allowed_fields", mode="before")
+    @classmethod
+    def _normalize_image_tool_allowed_fields(cls, value: Any) -> str:
+        return normalize_image_tool_allowed_fields(value)
 
     @model_validator(mode="after")
     def _validate_distinct_settings_token(self) -> Settings:
@@ -290,6 +313,21 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
         input_type="text",
     ),
     ConfigDefinition(
+        key="image_responses_background_enabled",
+        label="Responses 后台响应模式",
+        category="图片生成",
+        input_type="boolean",
+        description="默认关闭，兼容 OpenAI-like 网关；开启后会向 /responses 发送顶层 background=true 并轮询响应状态。",
+    ),
+    ConfigDefinition(
+        key="image_tool_allowed_fields",
+        label="可用 Tool 字段",
+        category="图片工具参数",
+        input_type="multi_select",
+        options=tuple(ConfigOption(key, key) for key in IMAGE_TOOL_FIELD_KEYS),
+        description="控制前端可展示、后端可持久化并发送给 image_generation tool 的高级字段；默认不启用 background。",
+    ),
+    ConfigDefinition(
         key="image_tool_model",
         label="Tool 模型",
         category="图片工具参数",
@@ -332,6 +370,20 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
         description="0-100；留空不发送。",
         minimum=0,
         maximum=100,
+        optional=True,
+    ),
+    ConfigDefinition(
+        key="image_tool_background",
+        label="背景",
+        category="图片工具参数",
+        input_type="select",
+        options=(
+            ConfigOption("", "默认"),
+            ConfigOption("auto", "Auto"),
+            ConfigOption("opaque", "Opaque"),
+            ConfigOption("transparent", "Transparent"),
+        ),
+        description="仅在可用 Tool 字段勾选 background 后发送。",
         optional=True,
     ),
     ConfigDefinition(
@@ -585,6 +637,50 @@ def normalize_image_generation_size(
     return f"{resolved_width}x{resolved_height}"
 
 
+def parse_image_tool_allowed_fields(value: Any) -> tuple[str, ...]:
+    if value is None:
+        parts: list[str] = []
+    elif isinstance(value, str):
+        parts = [part.strip() for part in re.split(r"[\s,]+", value) if part.strip()]
+    elif isinstance(value, list | tuple | set):
+        parts = [str(part).strip() for part in value if str(part).strip()]
+    else:
+        parts = [str(value).strip()] if str(value).strip() else []
+
+    selected = set(parts)
+    unknown = selected - set(IMAGE_TOOL_FIELD_KEYS)
+    if unknown:
+        raise ValueError(f"可用 Tool 字段包含不支持的字段: {', '.join(sorted(unknown))}")
+    return tuple(key for key in IMAGE_TOOL_FIELD_KEYS if key in selected)
+
+
+def normalize_image_tool_allowed_fields(value: Any) -> str:
+    return ",".join(parse_image_tool_allowed_fields(value))
+
+
+def filter_image_tool_options(
+    tool_options: Mapping[str, Any] | None,
+    *,
+    allowed_fields: tuple[str, ...] | None = None,
+) -> dict[str, Any] | None:
+    if not tool_options:
+        return None
+    resolved_allowed_fields = (
+        allowed_fields
+        if allowed_fields is not None
+        else parse_image_tool_allowed_fields(get_runtime_settings().image_tool_allowed_fields)
+    )
+    selected_fields = set(resolved_allowed_fields)
+    normalized = {
+        str(key): value
+        for key, value in tool_options.items()
+        if str(key) in selected_fields
+        and value is not None
+        and not (isinstance(value, str) and not value.strip())
+    }
+    return normalized or None
+
+
 def normalize_config_value(key: str, value: Any) -> str:
     definition = CONFIG_DEFINITION_BY_KEY.get(key)
     if definition is None:
@@ -599,6 +695,9 @@ def normalize_config_value(key: str, value: Any) -> str:
         if normalized_bool in {"0", "false", "no", "off"}:
             return "false"
         raise ValueError(f"{definition.label} 必须是布尔值")
+
+    if definition.input_type == "multi_select":
+        return normalize_image_tool_allowed_fields(value)
 
     if definition.input_type == "number":
         if definition.optional and (value is None or str(value).strip() == ""):

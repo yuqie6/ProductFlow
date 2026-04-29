@@ -24,6 +24,7 @@ import { PromptPreviewDialog, type PromptPreview } from "../components/PromptPre
 import { TopNav } from "../components/TopNav";
 import { api, ApiError } from "../lib/api";
 import { formatDateTime } from "../lib/format";
+import { DEFAULT_IMAGE_TOOL_ALLOWED_FIELDS } from "../lib/imageToolOptions";
 import {
   DEFAULT_IMAGE_GENERATION_MAX_DIMENSION,
   buildImageSizeOptions,
@@ -213,6 +214,7 @@ export function ImageChatPage() {
   const products = productsQuery.data?.items ?? [];
   const imageGenerationMaxDimension =
     runtimeConfigQuery.data?.image_generation_max_dimension ?? DEFAULT_IMAGE_GENERATION_MAX_DIMENSION;
+  const imageToolAllowedFields = runtimeConfigQuery.data?.image_tool_allowed_fields ?? DEFAULT_IMAGE_TOOL_ALLOWED_FIELDS;
   const deletionEnabled = runtimeConfigQuery.data?.deletion_enabled ?? false;
   const sizeOptions = useMemo(
     () => buildImageSizeOptions(imageGenerationMaxDimension),
@@ -542,7 +544,7 @@ export function ImageChatPage() {
       base_asset_id: requiresGenerationBase ? branchBaseAssetId : null,
       selected_reference_asset_ids: [],
       generation_count: clampGenerationCount(generationCount),
-      tool_options: compactImageToolOptions(toolOptions),
+      tool_options: compactImageToolOptions(toolOptions, imageToolAllowedFields),
     };
     const signature = buildImageGenerationSubmitSignature(payload);
     const now = Date.now();
@@ -1015,7 +1017,11 @@ export function ImageChatPage() {
               ) : (
                 <>
 
-                  <ImageToolControls value={toolOptions} onChange={setToolOptions} />
+                  <ImageToolControls
+                    value={toolOptions}
+                    allowedFields={imageToolAllowedFields}
+                    onChange={setToolOptions}
+                  />
 
               {visibleGenerationTasks.length ? (
                 <div className="space-y-2 rounded-2xl border border-slate-200 bg-white p-4">

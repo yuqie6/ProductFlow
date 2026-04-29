@@ -17,6 +17,7 @@ from productflow_backend.config import (
     get_settings,
     normalize_config_values,
     normalize_image_generation_size,
+    parse_image_tool_allowed_fields,
 )
 from productflow_backend.infrastructure.db.models import AppSetting
 from productflow_backend.presentation.deps import get_session, require_admin
@@ -73,7 +74,11 @@ def _serialize_config(session: Session) -> ConfigResponse:
     for definition in CONFIG_DEFINITIONS:
         source = "database" if definition.key in db_values else "env_default"
         raw_value = getattr(settings, definition.key)
-        effective_value = _public_value(raw_value, secret=definition.secret)
+        effective_value = (
+            list(parse_image_tool_allowed_fields(raw_value))
+            if definition.input_type == "multi_select"
+            else _public_value(raw_value, secret=definition.secret)
+        )
         has_value = bool(db_values.get(definition.key) if source == "database" else raw_value)
         items.append(
             ConfigItemResponse(
@@ -124,6 +129,7 @@ def get_runtime_config_endpoint() -> RuntimeConfigResponse:
     settings = get_runtime_settings()
     return RuntimeConfigResponse(
         image_generation_max_dimension=settings.image_generation_max_dimension,
+        image_tool_allowed_fields=list(parse_image_tool_allowed_fields(settings.image_tool_allowed_fields)),
         admin_access_required=settings.admin_access_required,
         deletion_enabled=settings.deletion_enabled,
     )

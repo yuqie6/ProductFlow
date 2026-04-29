@@ -596,18 +596,21 @@ by `app_settings` and must gate new resource-consuming entrypoints before they e
 #### 2. Signatures
 
 - Runtime config keys:
+  - `image_responses_background_enabled`
+  - `image_tool_allowed_fields`
   - `image_tool_model`
   - `image_tool_quality`
   - `image_tool_output_format`
   - `image_tool_output_compression`
+  - `image_tool_background`
   - `image_tool_moderation`
   - `image_tool_action`
   - `image_tool_input_fidelity`
   - `image_tool_partial_images`
   - `image_tool_n`
 - Continuous image session generation request:
-  - `tool_options?: { model?, quality?, output_format?, output_compression?, moderation?, action?, input_fidelity?,
-    partial_images?, n? }`
+  - `tool_options?: { model?, quality?, output_format?, output_compression?, background?, moderation?, action?,
+    input_fidelity?, partial_images?, n? }`
 - DB task persistence:
   - `image_session_generation_tasks.tool_options` stores validated per-request overrides so queued worker execution uses
     the same options the operator submitted.
@@ -633,10 +636,14 @@ by `app_settings` and must gate new resource-consuming entrypoints before they e
 
 - Top-level `model` remains `image_generate_model`; `image_tool_model` is only the optional tool-level `model`.
 - Defaults must remain AnyRouter-compatible: the tool object is effectively `{"type":"image_generation","size": size}`.
+- Top-level Responses `background=true` is controlled by `image_responses_background_enabled` and must default to disabled
+  for OpenAI-compatible gateways that reject the parameter.
 - Do not add default `tool_choice` for image generation.
-- Optional tool fields are sent only when non-empty/non-null after runtime settings normalization.
-- `background` is not a supported `image_generation` tool field in the current provider path. Legacy request payloads may
-  include it, but ProductFlow must filter it before task persistence and provider calls.
+- Optional tool fields are sent only when non-empty/non-null after runtime settings normalization and when included in
+  `image_tool_allowed_fields`.
+- `image_tool_allowed_fields` controls frontend visibility, backend task/config persistence, and provider payload fields.
+  Its default excludes `background` because OpenAI-compatible providers may reject it, while operators can explicitly
+  enable it for providers that support tool-level `background`.
 - Continuous image session `tool_options` override only the matching tool fields for that generation; omitted request
   fields fall back to runtime defaults.
 - ProductFlow `generation_count` remains an application-level repeated-generation concept. `image_tool_n` is an advanced
@@ -660,6 +667,11 @@ by `app_settings` and must gate new resource-consuming entrypoints before they e
 - `image_tool_output_compression < 0` or `> 100` -> `/api/settings` returns `400`.
 - `image_tool_partial_images < 0` or `> 3` -> `/api/settings` returns `400`.
 - `image_tool_n < 1` or `> 10` -> `/api/settings` returns `400`.
+- `image_tool_allowed_fields` contains an unknown field -> `/api/settings` returns `400`.
+- `image_responses_background_enabled == False` -> provider payload omits top-level `background`.
+- `image_responses_background_enabled == True` and provider rejects top-level `background` -> retry without it once.
+- Per-request or workflow `tool_options` contains fields not listed in `image_tool_allowed_fields` -> field is filtered
+  before persistence and provider calls.
 - Per-request `tool_options.output_compression < 0` or `> 100` -> `/api/image-sessions/{id}/generate` returns `422`.
 - Per-request `tool_options.partial_images < 0` or `> 3` -> `/api/image-sessions/{id}/generate` returns `422`.
 - Per-request `tool_options.n < 1` or `> 10` -> `/api/image-sessions/{id}/generate` returns `422`.
@@ -675,6 +687,8 @@ by `app_settings` and must gate new resource-consuming entrypoints before they e
 
 - Good: operator sets `image_tool_output_format=jpeg` and `image_tool_output_compression=80`; the next request includes
   those two fields inside the tool object and no `tool_choice`.
+- Good: operator enables `background` in `image_tool_allowed_fields`; only then do the UI and provider payload allow the
+  tool-level `background` field.
 - Good: operator sets per-generation `tool_options.output_format=webp`; that round uses WebP while workflow/poster
   generation still follows runtime defaults.
 - Good: provider rejects optional fields, fallback with `{"type":"image_generation","size": size}` succeeds, and the
@@ -691,8 +705,8 @@ by `app_settings` and must gate new resource-consuming entrypoints before they e
 
 #### 6. Tests Required
 
-- Settings/API test that optional tool fields appear in `/api/settings`, persist through `app_settings`, normalize empty
-  numeric values to `None`, and reject out-of-range numeric/select values.
+- Settings/API test that optional tool fields and `image_tool_allowed_fields` appear in `/api/settings`, persist through
+  `app_settings`, normalize empty numeric values to `None`, and reject out-of-range numeric/select values.
 - Provider unit/integration test that default payload remains exactly `tools: [{"type":"image_generation","size": size}]`
   and omits `tool_choice`.
 - Provider test that configured optional fields are included inside the tool object and only there.

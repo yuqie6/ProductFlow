@@ -302,6 +302,7 @@ describe("image chat branching helpers", () => {
         quality: "high",
         output_format: null,
         output_compression: 101,
+        background: "transparent",
         moderation: null,
         action: "generate",
         input_fidelity: "high",
@@ -316,6 +317,9 @@ describe("image chat branching helpers", () => {
       input_fidelity: "high",
       partial_images: 3,
       n: 1,
+    });
+    expect(compactImageToolOptions({ background: "transparent" }, ["background"] as const)).toEqual({
+      background: "transparent",
     });
     expect(compactImageToolOptions({})).toBeUndefined();
   });

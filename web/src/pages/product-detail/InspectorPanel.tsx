@@ -20,7 +20,7 @@ import { PromptPreviewDialog, type PromptPreview } from "../../components/Prompt
 import type { DownloadableImage } from "../../lib/image-downloads";
 import type { ImageSizeOption } from "../../lib/imageSizes";
 import { formatDateTime, formatPrice } from "../../lib/format";
-import type { ProductDetail, ProductWorkflow, WorkflowNode } from "../../lib/types";
+import type { ImageToolOptionKey, ProductDetail, ProductWorkflow, WorkflowNode } from "../../lib/types";
 import { IMAGE_PREVIEW_SURFACE_CLASS_NAME, NODE_LABELS, NODE_STATUS_LABELS } from "./constants";
 import { DownloadLink } from "./ImageDownloadComponents";
 import { getNodeImageDownload } from "./imageDownloads";
@@ -50,6 +50,7 @@ interface InspectorPanelProps {
   draft: NodeConfigDraft;
   imageSizeOptions: ImageSizeOption[];
   imageGenerationMaxDimension: number;
+  imageToolAllowedFields: readonly ImageToolOptionKey[];
   onDraftChange: (draft: NodeConfigDraft) => void;
   onPreviewImage: (image: DownloadableImage) => void;
   onRun: () => void;
@@ -68,6 +69,7 @@ export function InspectorPanel({
   draft,
   imageSizeOptions,
   imageGenerationMaxDimension,
+  imageToolAllowedFields,
   onDraftChange,
   onPreviewImage,
   onRun,
@@ -234,6 +236,7 @@ export function InspectorPanel({
             draft={draft}
             imageSizeOptions={imageSizeOptions}
             imageGenerationMaxDimension={imageGenerationMaxDimension}
+            imageToolAllowedFields={imageToolAllowedFields}
             onDraftChange={onDraftChange}
             downstreamReferenceCount={downstreamReferenceCount}
             onPreviewPrompt={setPromptPreview}
@@ -529,6 +532,7 @@ function ImageGenerationInspector({
   draft,
   imageSizeOptions,
   imageGenerationMaxDimension,
+  imageToolAllowedFields,
   onDraftChange,
   downstreamReferenceCount,
   onPreviewPrompt,
@@ -537,6 +541,7 @@ function ImageGenerationInspector({
   draft: NodeConfigDraft;
   imageSizeOptions: ImageSizeOption[];
   imageGenerationMaxDimension: number;
+  imageToolAllowedFields: readonly ImageToolOptionKey[];
   onDraftChange: (draft: NodeConfigDraft) => void;
   downstreamReferenceCount: number;
   onPreviewPrompt: (preview: PromptPreview) => void;
@@ -598,6 +603,7 @@ function ImageGenerationInspector({
       <ImageToolControls
         surface="plain"
         value={draft.toolOptions}
+        allowedFields={imageToolAllowedFields}
         onChange={(toolOptions) => onDraftChange({ ...draft, toolOptions })}
       />
     </div>

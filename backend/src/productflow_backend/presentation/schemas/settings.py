@@ -5,7 +5,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 ConfigSource = Literal["database", "env_default"]
-ConfigInputType = Literal["text", "password", "number", "boolean", "select", "textarea"]
+ConfigInputType = Literal["text", "password", "number", "boolean", "select", "multi_select", "textarea"]
 
 
 class ConfigOptionResponse(BaseModel):
@@ -19,7 +19,7 @@ class ConfigItemResponse(BaseModel):
     category: str
     input_type: ConfigInputType
     description: str = ""
-    value: str | int | bool | None
+    value: str | int | bool | list[str] | None
     source: ConfigSource
     secret: bool = False
     has_value: bool = False
@@ -34,6 +34,7 @@ class ConfigResponse(BaseModel):
 
 class RuntimeConfigResponse(BaseModel):
     image_generation_max_dimension: int
+    image_tool_allowed_fields: list[str]
     admin_access_required: bool
     deletion_enabled: bool
 

@@ -1,5 +1,9 @@
-import type { ProductDetail, WorkflowNode, WorkflowNodeType } from "../../lib/types";
-import { compactImageToolOptions, imageToolOptionsFromUnknown } from "../../lib/imageToolOptions";
+import type { ImageToolOptionKey, ProductDetail, WorkflowNode, WorkflowNodeType } from "../../lib/types";
+import {
+  DEFAULT_IMAGE_TOOL_ALLOWED_FIELDS,
+  compactImageToolOptions,
+  imageToolOptionsFromUnknown,
+} from "../../lib/imageToolOptions";
 import type { NodeConfigDraft } from "./types";
 import { configString, outputStringArray, outputText } from "./utils";
 
@@ -49,6 +53,7 @@ export function draftFromNode(
 export function nodeConfigFromDraft(
   node: WorkflowNode,
   draft: NodeConfigDraft,
+  imageToolAllowedFields: readonly ImageToolOptionKey[] = DEFAULT_IMAGE_TOOL_ALLOWED_FIELDS,
 ): Record<string, unknown> {
   const base = { ...node.config_json };
   if (node.node_type === "product_context") {
@@ -72,7 +77,7 @@ export function nodeConfigFromDraft(
     };
   }
   if (node.node_type === "image_generation") {
-    const toolOptions = compactImageToolOptions(draft.toolOptions);
+    const toolOptions = compactImageToolOptions(draft.toolOptions, imageToolAllowedFields);
     return {
       ...base,
       instruction: draft.instruction,

@@ -20,6 +20,7 @@ import { useNavigate, useParams } from "react-router-dom";
 
 import { TopNav } from "../components/TopNav";
 import { api, ApiError } from "../lib/api";
+import { DEFAULT_IMAGE_TOOL_ALLOWED_FIELDS } from "../lib/imageToolOptions";
 import { DEFAULT_IMAGE_GENERATION_MAX_DIMENSION, buildImageSizeOptions } from "../lib/imageSizes";
 import type {
   ProductWorkflow,
@@ -141,6 +142,7 @@ export function ProductDetailPage() {
   });
   const imageGenerationMaxDimension =
     runtimeConfigQuery.data?.image_generation_max_dimension ?? DEFAULT_IMAGE_GENERATION_MAX_DIMENSION;
+  const imageToolAllowedFields = runtimeConfigQuery.data?.image_tool_allowed_fields ?? DEFAULT_IMAGE_TOOL_ALLOWED_FIELDS;
   const imageSizeOptions = useMemo(
     () => buildImageSizeOptions(imageGenerationMaxDimension),
     [imageGenerationMaxDimension],
@@ -329,7 +331,7 @@ export function ProductDetailPage() {
     mutationFn: (node: WorkflowNode) =>
       api.updateWorkflowNode(node.id, {
         title: draft.title,
-        config_json: nodeConfigFromDraft(node, draft),
+        config_json: nodeConfigFromDraft(node, draft, imageToolAllowedFields),
     }),
     onSuccess: (nextWorkflow) => {
       setError("");
@@ -1027,6 +1029,7 @@ export function ProductDetailPage() {
                       draft={draft}
                       imageSizeOptions={imageSizeOptions}
                       imageGenerationMaxDimension={imageGenerationMaxDimension}
+                      imageToolAllowedFields={imageToolAllowedFields}
                       onPreviewImage={setPreviewImage}
                       onDraftChange={handleDraftChange}
                       onRun={() => void handleRunWorkflow(selectedNode.id)}

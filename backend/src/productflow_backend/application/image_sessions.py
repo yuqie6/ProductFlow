@@ -18,7 +18,7 @@ from productflow_backend.application.admission import (
 )
 from productflow_backend.application.queue_submission import enqueue_or_mark_failed
 from productflow_backend.application.time import now_utc
-from productflow_backend.config import normalize_image_generation_size
+from productflow_backend.config import filter_image_tool_options, normalize_image_generation_size
 from productflow_backend.domain.enums import ImageSessionAssetKind, JobStatus, SourceAssetKind
 from productflow_backend.domain.errors import BusinessValidationError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
@@ -43,7 +43,6 @@ MAX_BRANCH_CONTEXT_IMAGES = 6
 GENERIC_IMAGE_GENERATION_FAILURE = "图片生成失败，请稍后重试"
 PARTIAL_IMAGE_GENERATION_FAILURE = "已生成 {completed}/{requested} 张候选，后续生成失败，请重新发起生成补齐。"
 PARTIAL_IMAGE_GENERATION_TIMEOUT = "已生成 {completed}/{requested} 张候选，但任务超时，剩余候选未完成。"
-UNSUPPORTED_IMAGE_TOOL_OPTION_KEYS = {"background"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,16 +265,7 @@ def _validate_generation_request(
 
 
 def _normalize_tool_options(tool_options: dict[str, Any] | None) -> dict[str, Any] | None:
-    if not tool_options:
-        return None
-    normalized = {
-        key: value
-        for key, value in tool_options.items()
-        if key not in UNSUPPORTED_IMAGE_TOOL_OPTION_KEYS
-        and value is not None
-        and not (isinstance(value, str) and not value.strip())
-    }
-    return normalized or None
+    return filter_image_tool_options(tool_options)
 
 
 def _provider_output_with_actual_size(

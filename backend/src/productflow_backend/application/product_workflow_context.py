@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from productflow_backend.application.contracts import ReferenceImageInput
-from productflow_backend.config import normalize_image_generation_size
+from productflow_backend.config import filter_image_tool_options, normalize_image_generation_size
 from productflow_backend.domain.enums import (
     PosterKind,
     SourceAssetKind,
@@ -138,12 +138,7 @@ def _image_tool_options_from_config(config: dict[str, Any]) -> dict[str, Any] | 
     raw = config.get("tool_options")
     if not isinstance(raw, dict):
         return None
-    normalized = {
-        str(key): value
-        for key, value in raw.items()
-        if value is not None and not (isinstance(value, str) and not value.strip())
-    }
-    return normalized or None
+    return filter_image_tool_options(raw)
 
 
 class _IncomingContext:

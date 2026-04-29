@@ -273,12 +273,15 @@ export interface ImageToolOptions {
   quality?: "auto" | "low" | "medium" | "high" | null;
   output_format?: "png" | "jpeg" | "webp" | null;
   output_compression?: number | null;
+  background?: "auto" | "opaque" | "transparent" | null;
   moderation?: "auto" | "low" | null;
   action?: "auto" | "generate" | "edit" | null;
   input_fidelity?: "low" | "high" | null;
   partial_images?: number | null;
   n?: number | null;
 }
+
+export type ImageToolOptionKey = keyof ImageToolOptions;
 
 export interface ImageSessionGenerationTask {
   id: string;
@@ -385,7 +388,7 @@ export interface GalleryEntryListResponse {
 }
 
 export type ConfigSource = "database" | "env_default";
-export type ConfigInputType = "text" | "password" | "number" | "boolean" | "select" | "textarea";
+export type ConfigInputType = "text" | "password" | "number" | "boolean" | "select" | "multi_select" | "textarea";
 
 export interface ConfigOption {
   value: string;
@@ -398,7 +401,7 @@ export interface ConfigItem {
   category: string;
   input_type: ConfigInputType;
   description: string;
-  value: string | number | boolean | null;
+  value: string | number | boolean | string[] | null;
   source: ConfigSource;
   secret: boolean;
   has_value: boolean;
@@ -413,6 +416,7 @@ export interface ConfigResponse {
 
 export interface RuntimeConfig {
   image_generation_max_dimension: number;
+  image_tool_allowed_fields: ImageToolOptionKey[];
   admin_access_required: boolean;
   deletion_enabled: boolean;
 }
@@ -425,7 +429,7 @@ export interface GenerationQueueOverview {
 }
 
 export interface ConfigUpdateRequest {
-  values?: Record<string, string | number | boolean | null>;
+  values?: Record<string, string | number | boolean | string[] | null>;
   reset_keys?: string[];
 }
 

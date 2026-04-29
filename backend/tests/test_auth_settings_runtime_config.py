@@ -228,20 +228,36 @@ def test_settings_api_accepts_and_validates_optional_image_tool_fields(configure
     initial = client.get("/api/settings")
     assert initial.status_code == 200
     initial_items = {item["key"]: item for item in initial.json()["items"]}
+    assert initial_items["image_responses_background_enabled"]["input_type"] == "boolean"
+    assert initial_items["image_responses_background_enabled"]["value"] is False
+    assert initial_items["image_tool_allowed_fields"]["input_type"] == "multi_select"
+    assert initial_items["image_tool_allowed_fields"]["value"] == [
+        "model",
+        "quality",
+        "output_format",
+        "output_compression",
+        "moderation",
+        "action",
+        "input_fidelity",
+        "partial_images",
+        "n",
+    ]
     assert initial_items["image_tool_quality"]["category"] == "图片工具参数"
     assert initial_items["image_tool_quality"]["input_type"] == "select"
     assert initial_items["image_tool_output_compression"]["minimum"] == 0
     assert initial_items["image_tool_output_compression"]["maximum"] == 100
-    assert "image_tool_background" not in initial_items
+    assert initial_items["image_tool_background"]["input_type"] == "select"
 
     updated = client.patch(
         "/api/settings",
         json={
             "values": {
+                "image_tool_allowed_fields": ["model", "quality", "background", "n"],
                 "image_tool_model": "gpt-image-2",
                 "image_tool_quality": "high",
                 "image_tool_output_format": "jpeg",
                 "image_tool_output_compression": 82,
+                "image_tool_background": "transparent",
                 "image_tool_moderation": "low",
                 "image_tool_action": "generate",
                 "image_tool_input_fidelity": "high",
@@ -252,10 +268,12 @@ def test_settings_api_accepts_and_validates_optional_image_tool_fields(configure
     )
     assert updated.status_code == 200
     settings = get_runtime_settings()
+    assert settings.image_tool_allowed_fields == "model,quality,background,n"
     assert settings.image_tool_model == "gpt-image-2"
     assert settings.image_tool_quality == "high"
     assert settings.image_tool_output_format == "jpeg"
     assert settings.image_tool_output_compression == 82
+    assert settings.image_tool_background == "transparent"
     assert settings.image_tool_moderation == "low"
     assert settings.image_tool_action == "generate"
     assert settings.image_tool_input_fidelity == "high"
@@ -269,6 +287,14 @@ def test_settings_api_accepts_and_validates_optional_image_tool_fields(configure
     invalid_select = client.patch("/api/settings", json={"values": {"image_tool_quality": "ultra"}})
     assert invalid_select.status_code == 400
     assert "必须是以下之一" in invalid_select.json()["detail"]
+
+    invalid_field = client.patch("/api/settings", json={"values": {"image_tool_allowed_fields": ["quality", "bogus"]}})
+    assert invalid_field.status_code == 400
+    assert "可用 Tool 字段包含不支持的字段" in invalid_field.json()["detail"]
+
+    runtime = client.get("/api/settings/runtime")
+    assert runtime.status_code == 200
+    assert runtime.json()["image_tool_allowed_fields"] == ["model", "quality", "background", "n"]
 
     cleared = client.patch("/api/settings", json={"values": {"image_tool_output_compression": ""}})
     assert cleared.status_code == 200
@@ -411,6 +437,17 @@ def test_image_generation_max_dimension_runtime_config_controls_size_bounds(conf
     assert runtime.status_code == 200
     assert runtime.json() == {
         "image_generation_max_dimension": 3840,
+        "image_tool_allowed_fields": [
+            "model",
+            "quality",
+            "output_format",
+            "output_compression",
+            "moderation",
+            "action",
+            "input_fidelity",
+            "partial_images",
+            "n",
+        ],
         "admin_access_required": True,
         "deletion_enabled": False,
     }

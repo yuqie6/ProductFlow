@@ -8,11 +8,27 @@ import { TopNav } from "../components/TopNav";
 import { api, ApiError } from "../lib/api";
 import type { ConfigItem, ConfigResponse } from "../lib/types";
 
-type DraftValue = string | boolean;
+type DraftValue = string | boolean | string[];
+
+function multiSelectValue(value: ConfigItem["value"]): string[] {
+  if (Array.isArray(value)) {
+    return value.map(String);
+  }
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
 
 function draftFromItem(item: ConfigItem): DraftValue {
   if (item.input_type === "boolean") {
     return Boolean(item.value);
+  }
+  if (item.input_type === "multi_select") {
+    return multiSelectValue(item.value);
   }
   if (item.secret) {
     return "";
@@ -55,6 +71,16 @@ interface ConfigFieldProps {
 function ConfigField({ item, value, secretTouched, isResetting, compact = false, onChange, onReset }: ConfigFieldProps) {
   const baseInputClass =
     "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 transition-shadow placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500";
+  const selectedMultiValues = Array.isArray(value) ? value : [];
+  const toggleMultiValue = (optionValue: string) => {
+    const selected = new Set(selectedMultiValues);
+    if (selected.has(optionValue)) {
+      selected.delete(optionValue);
+    } else {
+      selected.add(optionValue);
+    }
+    onChange(item.options.filter((option) => selected.has(option.value)).map((option) => option.value));
+  };
 
   const description = item.secret
     ? item.has_value
@@ -63,7 +89,24 @@ function ConfigField({ item, value, secretTouched, isResetting, compact = false,
     : item.description;
 
   const control =
-    item.input_type === "select" ? (
+    item.input_type === "multi_select" ? (
+      <div className="grid gap-2 sm:grid-cols-2">
+        {item.options.map((option) => (
+          <label
+            key={`${item.key}-${option.value}`}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-xs font-medium text-slate-700"
+          >
+            <input
+              type="checkbox"
+              checked={selectedMultiValues.includes(option.value)}
+              onChange={() => toggleMultiValue(option.value)}
+              className="h-3.5 w-3.5 accent-indigo-600"
+            />
+            <span>{option.label}</span>
+          </label>
+        ))}
+      </div>
+    ) : item.input_type === "select" ? (
       <select
         id={item.key}
         value={String(value)}
@@ -235,7 +278,7 @@ export function SettingsPage() {
 
   const saveMutation = useMutation({
     mutationFn: () => {
-      const values: Record<string, string | number | boolean | null> = {};
+      const values: Record<string, string | number | boolean | string[] | null> = {};
       for (const item of configQuery.data?.items ?? []) {
         if (item.secret && !secretTouched[item.key]) {
           continue;

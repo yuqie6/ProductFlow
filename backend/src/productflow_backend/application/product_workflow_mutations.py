@@ -15,6 +15,7 @@ from productflow_backend.application.product_workflow_artifacts import (
 from productflow_backend.application.product_workflow_context import _image_size_from_config, _optional_config_text
 from productflow_backend.application.time import now_utc
 from productflow_backend.application.use_cases import update_copy_set
+from productflow_backend.config import filter_image_tool_options
 from productflow_backend.domain.enums import (
     SourceAssetKind,
     WorkflowNodeStatus,
@@ -53,6 +54,11 @@ def _normalize_node_config(node_type: WorkflowNodeType, config_json: dict[str, A
         normalized_size = _image_size_from_config(config)
         if normalized_size is not None:
             config["size"] = normalized_size
+        if "tool_options" in config:
+            raw_tool_options = config.get("tool_options")
+            config["tool_options"] = filter_image_tool_options(
+                raw_tool_options if isinstance(raw_tool_options, dict) else None
+            )
     return config
 
 

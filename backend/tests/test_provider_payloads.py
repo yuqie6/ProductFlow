@@ -621,6 +621,7 @@ def test_openai_responses_poster_provider_uses_image_generation_tool(
     assert len([item for item in content if item["type"] == "input_image"]) == 2
     assert "/images/generations" not in str(payload)
     assert "/images/edits" not in str(payload)
+    assert "background" not in payload
 
 
 def test_openai_responses_image_tool_optional_fields_are_omitted_until_configured(
@@ -667,16 +668,25 @@ def test_openai_responses_image_tool_optional_fields_are_omitted_until_configure
 
     assert calls[-1]["model"] == "gpt-5.4"
     assert calls[-1]["tools"] == [{"type": "image_generation", "size": "1024x1024"}]
+    assert "background" not in calls[-1]
     assert "tool_choice" not in calls[-1]
 
     session = get_session_factory()()
     try:
         session.add_all(
             [
+                AppSetting(
+                    key="image_tool_allowed_fields",
+                    value=(
+                        "model,quality,output_format,output_compression,background,moderation,action,"
+                        "input_fidelity,partial_images,n"
+                    ),
+                ),
                 AppSetting(key="image_tool_model", value="gpt-image-2"),
                 AppSetting(key="image_tool_quality", value="high"),
                 AppSetting(key="image_tool_output_format", value="jpeg"),
                 AppSetting(key="image_tool_output_compression", value="80"),
+                AppSetting(key="image_tool_background", value="transparent"),
                 AppSetting(key="image_tool_moderation", value="low"),
                 AppSetting(key="image_tool_action", value="generate"),
                 AppSetting(key="image_tool_input_fidelity", value="high"),
@@ -698,6 +708,7 @@ def test_openai_responses_image_tool_optional_fields_are_omitted_until_configure
             "quality": "high",
             "output_format": "jpeg",
             "output_compression": 80,
+            "background": "transparent",
             "moderation": "low",
             "action": "generate",
             "input_fidelity": "high",
@@ -714,6 +725,7 @@ def test_openai_responses_image_client_polls_background_response_and_reports_pro
 ) -> None:
     monkeypatch.setenv("IMAGE_API_KEY", "demo-api-key")
     monkeypatch.setenv("IMAGE_GENERATE_MODEL", "gpt-5.4")
+    monkeypatch.setenv("IMAGE_RESPONSES_BACKGROUND_ENABLED", "true")
     get_settings.cache_clear()
 
     encoded_result = _make_demo_image_data_url().split(",", maxsplit=1)[1]
@@ -783,6 +795,7 @@ def test_openai_responses_image_client_falls_back_when_background_is_unsupported
 ) -> None:
     monkeypatch.setenv("IMAGE_API_KEY", "demo-api-key")
     monkeypatch.setenv("IMAGE_GENERATE_MODEL", "gpt-5.4")
+    monkeypatch.setenv("IMAGE_RESPONSES_BACKGROUND_ENABLED", "true")
     get_settings.cache_clear()
 
     encoded_result = _make_demo_image_data_url().split(",", maxsplit=1)[1]
@@ -833,6 +846,7 @@ def test_openai_responses_image_client_wraps_background_poll_errors(
 ) -> None:
     monkeypatch.setenv("IMAGE_API_KEY", "demo-api-key")
     monkeypatch.setenv("IMAGE_GENERATE_MODEL", "gpt-5.4")
+    monkeypatch.setenv("IMAGE_RESPONSES_BACKGROUND_ENABLED", "true")
     get_settings.cache_clear()
 
     class DummyResponse:
