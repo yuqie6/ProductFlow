@@ -1,5 +1,7 @@
 # ProductFlow 架构健康度审查
 
+[中文](architecture-health-review.md) | [English](architecture-health-review.en.md)
+
 > 审查日期：2026-04-26
 > 范围：当前仓库静态结构、真实文件大小、当前分层和测试/构建配置。
 > 结论用途：指导后续分批重构任务；本文件不执行任何代码重构。

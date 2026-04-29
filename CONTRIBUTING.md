@@ -1,5 +1,7 @@
 # Contributing to ProductFlow
 
+[中文](CONTRIBUTING.md) | [English](CONTRIBUTING.en.md)
+
 感谢你考虑为 ProductFlow 贡献代码、文档或问题反馈。ProductFlow 当前定位为开源自托管项目，优先保证本地可运行、文档真实、数据和密钥边界清晰。
 
 ## 开始前

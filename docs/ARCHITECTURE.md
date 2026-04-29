@@ -1,5 +1,7 @@
 # ProductFlow Architecture
 
+[中文](ARCHITECTURE.md) | [English](ARCHITECTURE.en.md)
+
 ## 1. 系统概览
 
 ProductFlow 由前端、后端 API、后台 worker、PostgreSQL、Redis 和本地文件存储组成：

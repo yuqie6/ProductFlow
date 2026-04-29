@@ -1,5 +1,7 @@
 # Backend audit checklist
 
+[中文](BACKEND_AUDIT_CHECKLIST.md) | [English](BACKEND_AUDIT_CHECKLIST.en.md)
+
 本清单来自 2026-04-23 对 `backend/` 的只读审查，按“先稳定性、再安全边界、再可维护性”的顺序推进。
 
 ## P0 稳定性
