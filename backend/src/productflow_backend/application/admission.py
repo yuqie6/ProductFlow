@@ -12,6 +12,7 @@ from productflow_backend.domain.errors import ResourceBusyError
 from productflow_backend.infrastructure.db.models import ImageSessionGenerationTask, WorkflowRun
 
 GENERATION_BUSY_DETAIL = "当前生成任务较多，请稍后再试"
+GENERATION_CAPACITY_LOCK_KEY = 42630001
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +40,18 @@ def _active_async_task_count(session: Session) -> int:
         .where(ImageSessionGenerationTask.status.in_([JobStatus.QUEUED, JobStatus.RUNNING]))
     )
     return int(active_workflow_runs or 0) + int(active_image_session_tasks or 0)
+
+
+def _running_async_task_count(session: Session) -> int:
+    running_workflow_runs = session.scalar(
+        select(func.count()).select_from(WorkflowRun).where(WorkflowRun.status == WorkflowRunStatus.RUNNING)
+    )
+    running_image_session_tasks = session.scalar(
+        select(func.count())
+        .select_from(ImageSessionGenerationTask)
+        .where(ImageSessionGenerationTask.status == JobStatus.RUNNING)
+    )
+    return int(running_workflow_runs or 0) + int(running_image_session_tasks or 0)
 
 
 def _status_count(session: Session, model: type, status: JobStatus | WorkflowRunStatus) -> int:
@@ -102,7 +115,22 @@ def active_generation_task_count(session: Session) -> int:
     return _active_async_task_count(session)
 
 
+def _lock_generation_capacity(session: Session) -> None:
+    bind = session.get_bind()
+    if bind.dialect.name == "postgresql":
+        session.execute(select(func.pg_advisory_xact_lock(GENERATION_CAPACITY_LOCK_KEY)))
+
+
+def generation_running_capacity_available(session: Session) -> bool:
+    """Serialize worker claim checks and return whether one more task may enter provider execution."""
+
+    _lock_generation_capacity(session)
+    limit = get_runtime_settings().generation_max_concurrent_tasks
+    return _running_async_task_count(session) < limit
+
+
 def _raise_if_at_capacity(session: Session) -> None:
+    _lock_generation_capacity(session)
     limit = get_runtime_settings().generation_max_concurrent_tasks
     active_count = _active_async_task_count(session)
     if active_count >= limit:

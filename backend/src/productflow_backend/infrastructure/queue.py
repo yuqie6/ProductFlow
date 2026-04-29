@@ -76,6 +76,13 @@ def enqueue_image_session_generation_task(task_id: str) -> None:
     run_image_session_generation_task.send(task_id)
 
 
+def enqueue_image_session_generation_task_later(task_id: str, *, delay_ms: int) -> None:
+    from productflow_backend.workers import run_image_session_generation_task
+
+    get_broker()
+    run_image_session_generation_task.send_with_options(args=(task_id,), delay=delay_ms)
+
+
 def recover_unfinished_workflow_runs(
     *,
     reset_stale_running: bool = False,

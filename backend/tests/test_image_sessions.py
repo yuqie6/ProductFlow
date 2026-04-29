@@ -914,6 +914,63 @@ def test_image_session_worker_duplicate_message_noops_running_task(
     assert calls == []
 
 
+def test_image_session_worker_defers_queued_task_when_global_running_capacity_full(
+    configured_env: Path,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.application.image_sessions import (
+        IMAGE_SESSION_CAPACITY_RETRY_DELAY_MS,
+        create_image_session,
+        execute_image_session_generation_task,
+    )
+    from productflow_backend.domain.enums import JobStatus
+    from productflow_backend.infrastructure.db.models import AppSetting
+
+    image_session = create_image_session(db_session, product_id=None, title="同会话并发上限")
+    running = ImageSessionGenerationTask(
+        session_id=image_session.id,
+        status=JobStatus.RUNNING,
+        prompt="第一张正在跑",
+        size="1024x1024",
+        generation_count=1,
+    )
+    queued = ImageSessionGenerationTask(
+        session_id=image_session.id,
+        status=JobStatus.QUEUED,
+        prompt="第二张必须等容量",
+        size="1024x1024",
+        generation_count=1,
+    )
+    db_session.add_all([running, queued])
+    db_session.add(AppSetting(key="generation_max_concurrent_tasks", value="1"))
+    db_session.commit()
+
+    delayed_requeues: list[tuple[str, int]] = []
+    monkeypatch.setattr(
+        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task_later",
+        lambda task_id, *, delay_ms: delayed_requeues.append((task_id, delay_ms)),
+    )
+    monkeypatch.setattr(
+        "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
+        lambda *args, **kwargs: pytest.fail("capacity-blocked task must not call provider"),
+    )
+
+    execute_image_session_generation_task(queued.id)
+
+    db_session.expire_all()
+    persisted = db_session.get(ImageSessionGenerationTask, queued.id)
+    rounds = db_session.query(ImageSessionRound).filter(ImageSessionRound.session_id == image_session.id).all()
+
+    assert persisted is not None
+    assert persisted.status == JobStatus.QUEUED
+    assert persisted.attempts == 0
+    assert persisted.progress_phase == "waiting_for_capacity"
+    assert persisted.progress_updated_at is not None
+    assert rounds == []
+    assert delayed_requeues == [(queued.id, IMAGE_SESSION_CAPACITY_RETRY_DELAY_MS)]
+
+
 def test_image_session_branch_uses_selected_base_and_references_only(configured_env: Path, db_session) -> None:
     from productflow_backend.presentation.api import create_app
 

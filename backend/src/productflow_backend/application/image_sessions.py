@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.admission import (
     ensure_generation_capacity,
+    generation_running_capacity_available,
     get_generation_queue_overview,
     get_generation_task_queue_metadata,
     get_queued_generation_positions,
@@ -34,7 +35,10 @@ from productflow_backend.infrastructure.db.models import (
 from productflow_backend.infrastructure.db.session import get_session_factory
 from productflow_backend.infrastructure.image.base import image_dimensions_from_bytes, infer_extension
 from productflow_backend.infrastructure.image.chat_service import ImageChatService, ImageChatTurn
-from productflow_backend.infrastructure.queue import enqueue_image_session_generation_task
+from productflow_backend.infrastructure.queue import (
+    enqueue_image_session_generation_task,
+    enqueue_image_session_generation_task_later,
+)
 from productflow_backend.infrastructure.storage import LocalStorage
 
 ATTACH_TARGET = Literal["reference", "main_source"]
@@ -42,6 +46,7 @@ DEFAULT_SESSION_TITLE = "未命名会话"
 DEFAULT_ASSISTANT_MESSAGE = "已按本轮选择的图片上下文生成候选，你可以从任意候选继续。"
 MAX_BRANCH_CONTEXT_IMAGES = 6
 IMAGE_SESSION_GENERATION_MAX_ATTEMPTS = 3
+IMAGE_SESSION_CAPACITY_RETRY_DELAY_MS = 2000
 GENERIC_IMAGE_GENERATION_FAILURE = "图片生成失败，请稍后重试"
 PARTIAL_IMAGE_GENERATION_FAILURE = "已生成 {completed}/{requested} 张候选，后续生成失败，请重新发起生成补齐。"
 PARTIAL_IMAGE_GENERATION_TIMEOUT = "已生成 {completed}/{requested} 张候选，但任务超时，剩余候选未完成。"
@@ -53,6 +58,12 @@ logger = logging.getLogger(__name__)
 class ImageSessionGenerationTaskCreationResult:
     task: ImageSessionGenerationTask
     image_session: ImageSession
+
+
+@dataclass(frozen=True, slots=True)
+class _ImageSessionGenerationTaskClaimResult:
+    claimed: bool
+    should_requeue: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -944,9 +955,18 @@ def _provider_progress_callback(
     return callback
 
 
-def _mark_image_generation_task_running(session: Session, task: ImageSessionGenerationTask) -> bool:
+def _mark_image_generation_task_running(
+    session: Session,
+    task: ImageSessionGenerationTask,
+) -> _ImageSessionGenerationTaskClaimResult:
     if task.status != JobStatus.QUEUED:
-        return False
+        return _ImageSessionGenerationTaskClaimResult(claimed=False)
+    now = now_utc()
+    if not generation_running_capacity_available(session):
+        task.progress_phase = "waiting_for_capacity"
+        task.progress_updated_at = now
+        session.commit()
+        return _ImageSessionGenerationTaskClaimResult(claimed=False, should_requeue=True)
     result = session.execute(
         update(ImageSessionGenerationTask)
         .where(
@@ -955,11 +975,11 @@ def _mark_image_generation_task_running(session: Session, task: ImageSessionGene
         )
         .values(
             status=JobStatus.RUNNING,
-            started_at=now_utc(),
+            started_at=now,
             finished_at=None,
             failure_reason=None,
             progress_phase="running",
-            progress_updated_at=now_utc(),
+            progress_updated_at=now,
             active_candidate_index=None,
             provider_response_id=None,
             provider_response_status=None,
@@ -969,10 +989,17 @@ def _mark_image_generation_task_running(session: Session, task: ImageSessionGene
     )
     if result.rowcount != 1:
         session.rollback()
-        return False
+        return _ImageSessionGenerationTaskClaimResult(claimed=False)
     session.commit()
     session.refresh(task)
-    return True
+    return _ImageSessionGenerationTaskClaimResult(claimed=True)
+
+
+def _requeue_image_generation_task_after_capacity_wait(task_id: str) -> None:
+    try:
+        enqueue_image_session_generation_task_later(task_id, delay_ms=IMAGE_SESSION_CAPACITY_RETRY_DELAY_MS)
+    except Exception:  # noqa: BLE001
+        logger.exception("连续生图等待并发容量后重新入队失败: task_id=%s", task_id)
 
 
 def _mark_image_generation_task_failed(session: Session, *, task_id: str, reason: str) -> None:
@@ -1037,7 +1064,12 @@ def execute_image_session_generation_task(task_id: str) -> None:
     session = session_factory()
     try:
         task = session.get(ImageSessionGenerationTask, task_id)
-        if task is None or not _mark_image_generation_task_running(session, task):
+        if task is None:
+            return
+        claim = _mark_image_generation_task_running(session, task)
+        if not claim.claimed:
+            if claim.should_requeue:
+                _requeue_image_generation_task_after_capacity_wait(task_id)
             return
         try:
             _execute_image_session_round_generation(
