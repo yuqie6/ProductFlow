@@ -59,16 +59,6 @@ export function ImageToolControls({ value, onChange, surface = "card" }: ImageTo
           onChange={(next) => update({ output_compression: parseOptionalNumber(next) })}
         />
         <CompactSelect
-          label="背景"
-          value={value.background ?? ""}
-          onChange={(next) => update({ background: (next || null) as ImageToolOptions["background"] })}
-        >
-          <option value="">默认</option>
-          <option value="auto">Auto</option>
-          <option value="opaque">Opaque</option>
-          <option value="transparent">Transparent</option>
-        </CompactSelect>
-        <CompactSelect
           label="审核"
           value={value.moderation ?? ""}
           onChange={(next) => update({ moderation: (next || null) as ImageToolOptions["moderation"] })}

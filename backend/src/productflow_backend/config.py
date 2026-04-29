@@ -123,7 +123,6 @@ class Settings(BaseSettings):
     image_tool_quality: str | None = None
     image_tool_output_format: str | None = None
     image_tool_output_compression: int | None = Field(default=None, ge=0, le=100)
-    image_tool_background: str | None = None
     image_tool_moderation: str | None = None
     image_tool_action: str | None = None
     image_tool_input_fidelity: str | None = None
@@ -175,7 +174,6 @@ class Settings(BaseSettings):
         "image_tool_model",
         "image_tool_quality",
         "image_tool_output_format",
-        "image_tool_background",
         "image_tool_moderation",
         "image_tool_action",
         "image_tool_input_fidelity",
@@ -268,7 +266,7 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
         category="图片生成",
         input_type="select",
         options=(ConfigOption("mock", "Mock"), ConfigOption("openai_responses", "OpenAI Responses")),
-        description="控制连续生图和 AI 生成海报使用的图片供应商。",
+        description="控制文/图生图和 AI 生成海报使用的图片供应商。",
     ),
     ConfigDefinition(
         key="image_api_key",
@@ -337,19 +335,6 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
         optional=True,
     ),
     ConfigDefinition(
-        key="image_tool_background",
-        label="背景",
-        category="图片工具参数",
-        input_type="select",
-        options=(
-            ConfigOption("", "默认"),
-            ConfigOption("auto", "Auto"),
-            ConfigOption("opaque", "Opaque"),
-            ConfigOption("transparent", "Transparent"),
-        ),
-        optional=True,
-    ),
-    ConfigDefinition(
         key="image_tool_moderation",
         label="审核",
         category="图片工具参数",
@@ -393,7 +378,7 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
         label="Provider n",
         category="图片工具参数",
         input_type="number",
-        description="高级字段；不改变连续生图候选数量语义。",
+        description="高级字段；不改变文/图生图候选数量语义。",
         minimum=1,
         maximum=10,
         optional=True,
@@ -403,7 +388,7 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
         label="生图最大单边",
         category="图片生成",
         input_type="number",
-        description="连续生图和工作流生图的最大宽/高像素；最大面积同步使用该值的平方。",
+        description="文/图生图和工作流生图的最大宽/高像素；最大面积同步使用该值的平方。",
         minimum=IMAGE_GENERATION_MIN_MAX_DIMENSION,
         maximum=IMAGE_GENERATION_MAX_MAX_DIMENSION,
     ),
@@ -478,10 +463,10 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
     ),
     ConfigDefinition(
         key="prompt_image_chat_template",
-        label="连续生图提示词模板",
+        label="文/图生图提示词模板",
         category="提示词",
         input_type="textarea",
-        description="用于连续生图对话。可用占位符：prompt、size、history_block。",
+        description="用于文/图生图对话。可用占位符：prompt、size、history_block。",
     ),
     ConfigDefinition(
         key="upload_max_image_bytes",
@@ -516,17 +501,17 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
         label="全局生成并发上限",
         category="生成队列",
         input_type="number",
-        description="全局资源保护阈值；工作流和连续生图达到上限时会提示稍后重试。",
+        description="全局资源保护阈值；工作流和文/图生图达到上限时会提示稍后重试。",
         minimum=1,
         maximum=20,
     ),
     ConfigDefinition(
         key="image_session_stale_running_after_minutes",
-        label="连续生图进度闲置恢复阈值（分钟）",
+        label="文/图生图进度闲置恢复阈值（分钟）",
         category="生成队列",
         input_type="number",
         description=(
-            "worker 启动恢复时，running 连续生图任务会按最近 progress heartbeat 判断是否闲置；"
+            "worker 启动恢复时，running 文/图生图任务会按最近 progress heartbeat 判断是否闲置；"
             "旧任务没有 progress 时回退到 started_at。"
         ),
         minimum=IMAGE_SESSION_IDLE_TIMEOUT_MIN_MINUTES,
@@ -547,7 +532,7 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
         label="启用业务删除",
         category="安全与运维",
         input_type="boolean",
-        description="默认关闭，用于体验站禁止整条商品和连续生图会话被删除，保留溯源证据。",
+        description="默认关闭，用于体验站禁止整条商品和文/图生图会话被删除，保留溯源证据。",
     ),
 )
 

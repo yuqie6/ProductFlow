@@ -115,6 +115,7 @@ def test_generation_queue_overview_and_positions_include_durable_tasks(
     )
 
     image_session = create_image_session(db_session, product_id=None, title="队列会话")
+    second_image_session = create_image_session(db_session, product_id=None, title="队列会话 2")
     first = create_image_session_generation_task(
         db_session,
         image_session_id=image_session.id,
@@ -123,7 +124,7 @@ def test_generation_queue_overview_and_positions_include_durable_tasks(
     ).task
     second = create_image_session_generation_task(
         db_session,
-        image_session_id=image_session.id,
+        image_session_id=second_image_session.id,
         prompt="第二个连续生图任务",
         size="1024x1024",
     ).task

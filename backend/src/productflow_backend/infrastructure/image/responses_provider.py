@@ -27,7 +27,6 @@ IMAGE_TOOL_OPTIONAL_FIELD_KEYS: tuple[str, ...] = (
     "quality",
     "output_format",
     "output_compression",
-    "background",
     "moderation",
     "action",
     "input_fidelity",
@@ -161,7 +160,6 @@ class OpenAIResponsesImageClient:
         self.tool_quality = settings.image_tool_quality
         self.tool_output_format = settings.image_tool_output_format
         self.tool_output_compression = settings.image_tool_output_compression
-        self.tool_background = settings.image_tool_background
         self.tool_moderation = settings.image_tool_moderation
         self.tool_action = settings.image_tool_action
         self.tool_input_fidelity = settings.image_tool_input_fidelity
@@ -342,7 +340,6 @@ class OpenAIResponsesImageClient:
             "quality": self.tool_quality,
             "output_format": self.tool_output_format,
             "output_compression": self.tool_output_compression,
-            "background": self.tool_background,
             "moderation": self.tool_moderation,
             "action": self.tool_action,
             "input_fidelity": self.tool_input_fidelity,

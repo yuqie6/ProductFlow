@@ -18,7 +18,7 @@ import {
   NODE_STATUS_LABELS,
 } from "./constants";
 import type { CanvasPoint } from "./types";
-import { statusClass } from "./utils";
+import { imageWorkflowNodeWaitingLabel, isImageWorkflowNodeWaiting, statusClass } from "./utils";
 
 interface WorkflowNodeCardProps {
   node: WorkflowNode;
@@ -68,6 +68,8 @@ export function WorkflowNodeCard({
     image_generation: ImageIcon,
   }[node.node_type];
   const Icon = icon;
+  const imageWaiting = isImageWorkflowNodeWaiting(node);
+  const waitingLabel = imageWorkflowNodeWaitingLabel(node);
 
   return (
     <div
@@ -141,6 +143,17 @@ export function WorkflowNodeCard({
               className="h-full w-full object-contain"
             />
             <DownloadLink image={image} variant="overlay" />
+            {imageWaiting ? (
+              <div className="absolute inset-x-2 bottom-2 flex items-center justify-center rounded-lg bg-white/90 px-2 py-1 text-[11px] font-medium text-indigo-700 shadow-sm ring-1 ring-indigo-100 backdrop-blur">
+                <Loader2 size={11} className="mr-1 animate-spin" />
+                {waitingLabel}
+              </div>
+            ) : null}
+          </div>
+        ) : imageWaiting ? (
+          <div className="mb-2 flex h-28 flex-col items-center justify-center rounded-xl border border-indigo-100 bg-indigo-50 text-indigo-700">
+            <Loader2 size={18} className="animate-spin" />
+            <div className="mt-2 text-xs font-medium">{waitingLabel}</div>
           </div>
         ) : null}
         {node.failure_reason ? (

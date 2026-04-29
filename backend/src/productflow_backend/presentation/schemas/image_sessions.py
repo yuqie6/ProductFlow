@@ -135,7 +135,7 @@ class ImageToolOptionsRequest(BaseModel):
     quality: Literal["auto", "low", "medium", "high"] | None = None
     output_format: Literal["png", "jpeg", "webp"] | None = None
     output_compression: int | None = Field(default=None, ge=0, le=100)
-    background: Literal["auto", "opaque", "transparent"] | None = None
+    background: Literal["auto", "opaque", "transparent"] | None = Field(default=None, deprecated=True)
     moderation: Literal["auto", "low"] | None = None
     action: Literal["auto", "generate", "edit"] | None = None
     input_fidelity: Literal["low", "high"] | None = None

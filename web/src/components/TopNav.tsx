@@ -17,7 +17,7 @@ const navItems = [
     match: (pathname: string) => pathname.startsWith("/products") && !pathname.endsWith("/image-chat"),
   },
   {
-    label: "连续生图",
+    label: "文/图生图",
     to: "/image-chat",
     icon: MessagesSquare,
     match: (pathname: string) => pathname.includes("image-chat"),

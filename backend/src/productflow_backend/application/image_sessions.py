@@ -20,7 +20,7 @@ from productflow_backend.application.queue_submission import enqueue_or_mark_fai
 from productflow_backend.application.time import now_utc
 from productflow_backend.config import normalize_image_generation_size
 from productflow_backend.domain.enums import ImageSessionAssetKind, JobStatus, SourceAssetKind
-from productflow_backend.domain.errors import NotFoundError
+from productflow_backend.domain.errors import BusinessValidationError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     ImageSession,
     ImageSessionAsset,
@@ -43,6 +43,7 @@ MAX_BRANCH_CONTEXT_IMAGES = 6
 GENERIC_IMAGE_GENERATION_FAILURE = "图片生成失败，请稍后重试"
 PARTIAL_IMAGE_GENERATION_FAILURE = "已生成 {completed}/{requested} 张候选，后续生成失败，请重新发起生成补齐。"
 PARTIAL_IMAGE_GENERATION_TIMEOUT = "已生成 {completed}/{requested} 张候选，但任务超时，剩余候选未完成。"
+UNSUPPORTED_IMAGE_TOOL_OPTION_KEYS = {"background"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,6 +169,22 @@ def _unique_ids(ids: list[str] | None) -> list[str]:
     return values
 
 
+def _has_prior_generation_request(
+    image_session: ImageSession,
+    *,
+    current_generation_task_id: str | None = None,
+) -> bool:
+    if image_session.rounds:
+        return True
+    if current_generation_task_id is None:
+        return bool(image_session.generation_tasks)
+
+    tasks = sorted(image_session.generation_tasks, key=lambda task: (task.created_at, task.id))
+    if not tasks:
+        return False
+    return tasks[0].id != current_generation_task_id
+
+
 def _build_branch_generation_context(
     image_session: ImageSession,
     storage: LocalStorage,
@@ -215,6 +232,7 @@ def _validate_generation_request(
     selected_reference_asset_ids: list[str] | None,
     generation_count: int,
     tool_options: dict[str, Any] | None = None,
+    current_generation_task_id: str | None = None,
 ) -> tuple[str, str | None, list[str]]:
     if not 1 <= generation_count <= 4:
         raise ValueError("一次生成数量必须在 1-4 张之间")
@@ -231,6 +249,8 @@ def _validate_generation_request(
             expected_kind=ImageSessionAssetKind.GENERATED_IMAGE,
         )
         normalized_base_asset_id = base_asset.id
+    elif _has_prior_generation_request(image_session, current_generation_task_id=current_generation_task_id):
+        raise BusinessValidationError("后续生图必须选择一张本会话已生成图片作为基图")
 
     normalized_reference_ids: list[str] = []
     for asset_id in selected_reference_ids:
@@ -251,7 +271,9 @@ def _normalize_tool_options(tool_options: dict[str, Any] | None) -> dict[str, An
     normalized = {
         key: value
         for key, value in tool_options.items()
-        if value is not None and not (isinstance(value, str) and not value.strip())
+        if key not in UNSUPPORTED_IMAGE_TOOL_OPTION_KEYS
+        and value is not None
+        and not (isinstance(value, str) and not value.strip())
     }
     return normalized or None
 
@@ -463,6 +485,7 @@ def _execute_image_session_round_generation(
         selected_reference_asset_ids=selected_reference_asset_ids,
         generation_count=generation_count,
         tool_options=tool_options,
+        current_generation_task_id=generation_task_id,
     )
     normalized_tool_options = _normalize_tool_options(tool_options)
     (

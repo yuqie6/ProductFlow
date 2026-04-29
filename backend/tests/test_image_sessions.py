@@ -58,6 +58,7 @@ def test_image_session_rounds_support_same_conversation(configured_env: Path) ->
     assert first.status_code == 202
     first_payload = first.json()
     assert len(first_payload["rounds"]) == 1
+    first_asset_id = first_payload["rounds"][0]["generated_asset"]["id"]
     assert first_payload["rounds"][0]["generated_asset"]["download_url"].startswith("/api/image-session-assets/")
     assert first_payload["rounds"][0]["generated_asset"]["preview_url"].endswith("variant=preview")
     assert first_payload["rounds"][0]["generated_asset"]["thumbnail_url"].endswith("variant=thumbnail")
@@ -73,11 +74,22 @@ def test_image_session_rounds_support_same_conversation(configured_env: Path) ->
     upload_payload = upload.json()
     assert any(asset["kind"] == "reference_upload" for asset in upload_payload["assets"])
 
+    missing_base = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={
+            "prompt": "保持同样产品和光线，把背景改成浴室台面，增加一点水珠",
+            "size": "1024x1024",
+        },
+    )
+    assert missing_base.status_code == 400
+    assert missing_base.json()["detail"] == "后续生图必须选择一张本会话已生成图片作为基图"
+
     second = client.post(
         f"/api/image-sessions/{session_id}/generate",
         json={
             "prompt": "保持同样产品和光线，把背景改成浴室台面，增加一点水珠",
             "size": "1024x1024",
+            "base_asset_id": first_asset_id,
         },
     )
     assert second.status_code == 202
@@ -86,7 +98,7 @@ def test_image_session_rounds_support_same_conversation(configured_env: Path) ->
     assert second_payload["rounds"][-1]["provider_name"] == "mock"
     assert second_payload["rounds"][-1]["assistant_message"].startswith("已按本轮选择的图片上下文")
     assert second_payload["rounds"][-1]["previous_response_id"] is None
-    assert second_payload["rounds"][-1]["base_asset_id"] is None
+    assert second_payload["rounds"][-1]["base_asset_id"] == first_asset_id
     assert second_payload["rounds"][-1]["selected_reference_asset_ids"] == []
 
 
@@ -137,6 +149,56 @@ def test_image_session_generate_returns_queued_task_without_waiting_for_provider
     persisted = db_session.get(ImageSessionGenerationTask, task["id"])
     assert persisted is not None
     assert persisted.status == "queued"
+
+    duplicate_without_base = client.post(
+        f"/api/image-sessions/{created.json()['id']}/generate",
+        json={"prompt": "第一张还没完成时不能再无基图提交", "size": "1024x1024"},
+    )
+    assert duplicate_without_base.status_code == 400
+    assert duplicate_without_base.json()["detail"] == "后续生图必须选择一张本会话已生成图片作为基图"
+    assert sent == [task["id"]]
+
+
+def test_first_queued_image_session_task_without_base_still_executes_if_later_task_exists(
+    configured_env: Path,
+    db_session,
+) -> None:
+    from productflow_backend.application.image_sessions import (
+        create_image_session,
+        create_image_session_generation_task,
+        execute_image_session_generation_task,
+    )
+    from productflow_backend.domain.enums import JobStatus
+
+    image_session = create_image_session(db_session, product_id=None, title="首任务 worker 校验")
+    result = create_image_session_generation_task(
+        db_session,
+        image_session_id=image_session.id,
+        prompt="第一张基础图",
+        size="1024x1024",
+    )
+    first_task_id = result.task.id
+
+    db_session.add(
+        ImageSessionGenerationTask(
+            session_id=image_session.id,
+            status=JobStatus.QUEUED,
+            prompt="模拟后来的历史任务",
+            size="1024x1024",
+            generation_count=1,
+        )
+    )
+    db_session.commit()
+
+    execute_image_session_generation_task(first_task_id)
+
+    db_session.expire_all()
+    task = db_session.get(ImageSessionGenerationTask, first_task_id)
+    rounds = db_session.query(ImageSessionRound).filter(ImageSessionRound.session_id == image_session.id).all()
+    assert task is not None
+    assert task.status == "succeeded"
+    assert len(rounds) == 1
+    assert rounds[0].base_asset_id is None
 
 
 def test_image_session_status_returns_lightweight_task_snapshot(
@@ -261,7 +323,6 @@ def test_image_session_generation_accepts_per_request_tool_options_and_exposes_p
         "quality": "high",
         "output_format": "webp",
         "output_compression": 72,
-        "background": "transparent",
         "moderation": "low",
         "action": "generate",
         "input_fidelity": "high",
@@ -665,12 +726,6 @@ def test_image_session_branch_uses_selected_base_and_references_only(configured_
     assert first.status_code == 202
     first_asset_id = first.json()["rounds"][-1]["generated_asset"]["id"]
 
-    later = client.post(
-        f"/api/image-sessions/{session_id}/generate",
-        json={"prompt": "后续但不应被自动继承的图", "size": "1024x1024"},
-    )
-    assert later.status_code == 202
-
     upload = client.post(
         f"/api/image-sessions/{session_id}/reference-images",
         files=[
@@ -777,6 +832,7 @@ def test_image_session_branch_validates_asset_scope_and_kind(configured_env: Pat
         json={
             "prompt": "错会话参考图",
             "size": "1024x1024",
+            "base_asset_id": generated_asset_id,
             "selected_reference_asset_ids": [other_reference_asset_id],
         },
     )
@@ -788,6 +844,7 @@ def test_image_session_branch_validates_asset_scope_and_kind(configured_env: Pat
         json={
             "prompt": "错类型参考图",
             "size": "1024x1024",
+            "base_asset_id": generated_asset_id,
             "selected_reference_asset_ids": [generated_asset_id],
         },
     )
@@ -893,6 +950,7 @@ def test_image_session_generation_accepts_custom_size_and_rejects_invalid_dimens
     )
     assert generated.status_code == 202
     assert generated.json()["rounds"][-1]["size"] == "1280x720"
+    generated_asset_id = generated.json()["rounds"][-1]["generated_asset"]["id"]
 
     zero = client.post(
         f"/api/image-sessions/{session_id}/generate",
@@ -903,7 +961,7 @@ def test_image_session_generation_accepts_custom_size_and_rejects_invalid_dimens
 
     oversized = client.post(
         f"/api/image-sessions/{session_id}/generate",
-        json={"prompt": "尺寸过大", "size": "5000x5000"},
+        json={"prompt": "尺寸过大", "size": "5000x5000", "base_asset_id": generated_asset_id},
     )
     assert oversized.status_code == 202
     assert oversized.json()["rounds"][-1]["size"] == "3840x3840"

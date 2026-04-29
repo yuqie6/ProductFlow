@@ -273,7 +273,6 @@ export interface ImageToolOptions {
   quality?: "auto" | "low" | "medium" | "high" | null;
   output_format?: "png" | "jpeg" | "webp" | null;
   output_compression?: number | null;
-  background?: "auto" | "opaque" | "transparent" | null;
   moderation?: "auto" | "low" | null;
   action?: "auto" | "generate" | "edit" | null;
   input_fidelity?: "low" | "high" | null;

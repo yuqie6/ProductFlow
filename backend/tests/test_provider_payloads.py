@@ -497,15 +497,12 @@ def test_image_session_openai_responses_uses_explicit_branch_context(
     assert first_round["image_generation_call_id"] == "ig_1"
     first_asset_id = first_round["generated_asset"]["id"]
 
-    second = client.post(
+    second_without_base = client.post(
         f"/api/image-sessions/{session_id}/generate",
         json={"prompt": "保持主体，把背景改成晴天街角", "size": "1024x1024"},
     )
-    assert second.status_code == 202
-    second_round = second.json()["rounds"][-1]
-    assert second_round["provider_response_id"] == "resp_2"
-    assert second_round["previous_response_id"] is None
-    assert second_round["image_generation_call_id"] == "ig_2"
+    assert second_without_base.status_code == 400
+    assert second_without_base.json()["detail"] == "后续生图必须选择一张本会话已生成图片作为基图"
 
     branched = client.post(
         f"/api/image-sessions/{session_id}/generate",
@@ -518,7 +515,7 @@ def test_image_session_openai_responses_uses_explicit_branch_context(
     )
     assert branched.status_code == 202
     branched_round = branched.json()["rounds"][-1]
-    assert branched_round["provider_response_id"] == "resp_3"
+    assert branched_round["provider_response_id"] == "resp_2"
     assert branched_round["previous_response_id"] is None
     assert branched_round["base_asset_id"] == first_asset_id
     assert branched_round["selected_reference_asset_ids"] == [reference_id]
@@ -528,11 +525,8 @@ def test_image_session_openai_responses_uses_explicit_branch_context(
     assert calls[0]["tools"] == [{"type": "image_generation", "size": "1024x1024"}]
     assert "previous_response_id" not in calls[0]
     assert "previous_response_id" not in calls[1]
-    assert calls[1]["tools"] == [{"type": "image_generation", "size": "1024x1024"}]
     assert isinstance(calls[0]["input"], str)
-    assert isinstance(calls[1]["input"], str)
-    assert "previous_response_id" not in calls[2]
-    branch_content = calls[2]["input"][0]["content"]
+    branch_content = calls[1]["input"][0]["content"]
     assert branch_content[0]["type"] == "input_text"
     branch_images = [item for item in branch_content if item["type"] == "input_image"]
     assert len(branch_images) == 2
@@ -683,7 +677,6 @@ def test_openai_responses_image_tool_optional_fields_are_omitted_until_configure
                 AppSetting(key="image_tool_quality", value="high"),
                 AppSetting(key="image_tool_output_format", value="jpeg"),
                 AppSetting(key="image_tool_output_compression", value="80"),
-                AppSetting(key="image_tool_background", value="transparent"),
                 AppSetting(key="image_tool_moderation", value="low"),
                 AppSetting(key="image_tool_action", value="generate"),
                 AppSetting(key="image_tool_input_fidelity", value="high"),
@@ -705,7 +698,6 @@ def test_openai_responses_image_tool_optional_fields_are_omitted_until_configure
             "quality": "high",
             "output_format": "jpeg",
             "output_compression": 80,
-            "background": "transparent",
             "moderation": "low",
             "action": "generate",
             "input_fidelity": "high",

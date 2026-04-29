@@ -52,6 +52,23 @@ export function statusClass(status: WorkflowNode["status"]): string {
   }[status];
 }
 
+export function isImageWorkflowNodeWaiting(node: WorkflowNode): boolean {
+  return (
+    (node.node_type === "image_generation" || node.node_type === "reference_image") &&
+    (node.status === "queued" || node.status === "running")
+  );
+}
+
+export function imageWorkflowNodeWaitingLabel(node: WorkflowNode): string {
+  if (!isImageWorkflowNodeWaiting(node)) {
+    return "";
+  }
+  if (node.node_type === "reference_image") {
+    return node.status === "queued" ? "参考图排队更新" : "参考图更新中";
+  }
+  return node.status === "queued" ? "生图排队中" : "生图生成中";
+}
+
 export function hasActiveWorkflow(workflow: ProductWorkflow | undefined | null): boolean {
   if (!workflow) {
     return false;

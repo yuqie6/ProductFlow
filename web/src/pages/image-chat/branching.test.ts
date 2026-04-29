@@ -2,13 +2,19 @@ import { describe, expect, it } from "vitest";
 
 import type { ImageSessionAsset, ImageSessionDetail, ImageSessionGenerationTask, ImageSessionRound, ImageSessionStatus } from "../../lib/types";
 import {
+  buildImageGenerationSubmitSignature,
+  buildImageSessionHistoryTree,
   clampGenerationCount,
   compactImageToolOptions,
+  findImageGenerationTaskPlaceholderRound,
+  findImageHistoryPlaceholder,
   groupImageSessionRounds,
   isImageSessionGenerationTaskActive,
   mergeImageSessionStatusIntoDetail,
   pruneSelectedReferenceIds,
+  requiresImageSessionGenerationBase,
   selectVisibleGenerationTasks,
+  shouldBlockDuplicateGenerationSubmit,
   shouldRefreshImageSessionDetailFromStatus,
 } from "./branching";
 
@@ -134,6 +140,161 @@ describe("image chat branching helpers", () => {
     expect(clampGenerationCount(10)).toBe(4);
   });
 
+  it("builds a lightweight branch tree with task-derived placeholders", () => {
+    const branches = buildImageSessionHistoryTree(
+      [
+        round({
+          id: "root-round",
+          generation_group_id: "root-group",
+          generated_asset: asset("root-asset"),
+          candidate_index: 1,
+          candidate_count: 1,
+        }),
+      ],
+      [
+        task({
+          id: "task-branch",
+          status: "running",
+          base_asset_id: "root-asset",
+          generation_count: 4,
+          completed_candidates: 1,
+          active_candidate_index: 2,
+          created_at: "2026-04-27T00:01:00Z",
+        }),
+      ],
+    );
+
+    expect(branches).toHaveLength(2);
+    expect(branches.map((branch) => [branch.id, branch.depth, branch.parent_group_id])).toEqual([
+      ["root-group", 0, null],
+      ["task:task-branch", 1, "root-group"],
+    ]);
+    expect(branches[1].candidates).toHaveLength(4);
+    expect(branches[1].candidates.map((candidate) => candidate.status)).toEqual([
+      "completed",
+      "running",
+      "running",
+      "running",
+    ]);
+  });
+
+  it("keeps completed rounds in the same task branch and only fills missing candidates with placeholders", () => {
+    const branches = buildImageSessionHistoryTree(
+      [
+        round({
+          id: "root-round",
+          generation_group_id: "root-group",
+          generated_asset: asset("root-asset"),
+        }),
+        round({
+          id: "branch-round-1",
+          generation_group_id: "branch-group",
+          base_asset_id: "root-asset",
+          generated_asset: asset("branch-asset-1"),
+          candidate_index: 1,
+          candidate_count: 3,
+          created_at: "2026-04-27T00:02:00Z",
+        }),
+      ],
+      [
+        task({
+          id: "task-branch",
+          status: "running",
+          base_asset_id: "root-asset",
+          generation_count: 3,
+          completed_candidates: 1,
+          result_generation_group_id: "branch-group",
+          created_at: "2026-04-27T00:01:00Z",
+        }),
+      ],
+    );
+
+    const branch = branches.find((item) => item.id === "branch-group");
+    expect(branch?.depth).toBe(1);
+    expect(branch?.candidates.map((candidate) => [candidate.kind, candidate.candidate_index])).toEqual([
+      ["round", 1],
+      ["placeholder", 2],
+      ["placeholder", 3],
+    ]);
+    expect(findImageHistoryPlaceholder(branches, "task:task-branch:candidate:2")?.candidate_index).toBe(2);
+  });
+
+  it("creates placeholders for queued and failed generation tasks", () => {
+    const branches = buildImageSessionHistoryTree([], [
+      task({
+        id: "queued-task",
+        status: "queued",
+        generation_count: 2,
+        created_at: "2026-04-27T00:01:00Z",
+      }),
+      task({
+        id: "failed-task",
+        status: "failed",
+        generation_count: 3,
+        failure_reason: "provider failed",
+        created_at: "2026-04-27T00:02:00Z",
+      }),
+    ]);
+
+    expect(branches.map((branch) => branch.id)).toEqual(["task:queued-task", "task:failed-task"]);
+    expect(branches[0].candidates.map((candidate) => candidate.status)).toEqual(["queued", "queued"]);
+    expect(branches[1].candidates.map((candidate) => candidate.status)).toEqual(["failed", "failed", "failed"]);
+    expect(findImageHistoryPlaceholder(branches, "task:failed-task:candidate:3")?.failure_reason).toBe(
+      "provider failed",
+    );
+  });
+
+  it("requires a generated base after any prior round or generation task", () => {
+    expect(requiresImageSessionGenerationBase([], [])).toBe(false);
+    expect(
+      requiresImageSessionGenerationBase(
+        [
+          round({
+            id: "root-round",
+            generated_asset: asset("root-asset"),
+          }),
+        ],
+        [],
+      ),
+    ).toBe(true);
+    expect(
+      requiresImageSessionGenerationBase(
+        [],
+        [
+          task({
+            id: "queued-task",
+            status: "queued",
+          }),
+        ],
+      ),
+    ).toBe(true);
+  });
+
+  it("finds the generated round that replaces a selected task placeholder", () => {
+    const rounds = [
+      round({
+        id: "branch-round-2",
+        generation_group_id: "branch-group",
+        generated_asset: asset("branch-asset-2"),
+        candidate_index: 2,
+        candidate_count: 3,
+      }),
+    ];
+    const tasks = [
+      task({
+        id: "task-branch",
+        generation_count: 3,
+        result_generation_group_id: "branch-group",
+      }),
+    ];
+
+    expect(findImageGenerationTaskPlaceholderRound(rounds, tasks, "task:task-branch:candidate:2")?.generated_asset.id).toBe(
+      "branch-asset-2",
+    );
+    expect(findImageGenerationTaskPlaceholderRound(rounds, tasks, "task:task-branch:candidate:3")).toBeNull();
+    expect(findImageGenerationTaskPlaceholderRound(rounds, tasks, "not-a-placeholder")).toBeNull();
+  });
+
   it("compacts optional provider fields before submitting a generation", () => {
     expect(
       compactImageToolOptions({
@@ -141,7 +302,6 @@ describe("image chat branching helpers", () => {
         quality: "high",
         output_format: null,
         output_compression: 101,
-        background: "transparent",
         moderation: null,
         action: "generate",
         input_fidelity: "high",
@@ -152,7 +312,6 @@ describe("image chat branching helpers", () => {
       model: "gpt-image-2",
       quality: "high",
       output_compression: 100,
-      background: "transparent",
       action: "generate",
       input_fidelity: "high",
       partial_images: 3,
@@ -246,5 +405,58 @@ describe("image chat branching helpers", () => {
         status({ rounds_count: 2, latest_round_id: "round-2", generation_tasks: [task({ id: "task-1", status: "succeeded" })] }),
       ),
     ).toBe(true);
+  });
+
+  it("builds duplicate-submit signatures from every generation input that changes output", () => {
+    const payload = {
+      prompt: "  prompt  ",
+      size: "1024x1024",
+      base_asset_id: "base-1",
+      selected_reference_asset_ids: ["ref-1", "ref-2"],
+      generation_count: 2,
+      tool_options: {
+        quality: "high" as const,
+        output_format: "png" as const,
+      },
+    };
+
+    const signature = buildImageGenerationSubmitSignature(payload);
+    expect(signature).toBe(
+      buildImageGenerationSubmitSignature({
+        ...payload,
+        prompt: "prompt",
+        tool_options: {
+          output_format: "png",
+          quality: "high",
+        },
+      }),
+    );
+    expect(signature).not.toBe(buildImageGenerationSubmitSignature({ ...payload, prompt: "changed" }));
+    expect(signature).not.toBe(buildImageGenerationSubmitSignature({ ...payload, size: "1536x1024" }));
+    expect(signature).not.toBe(buildImageGenerationSubmitSignature({ ...payload, base_asset_id: null }));
+    expect(signature).not.toBe(
+      buildImageGenerationSubmitSignature({ ...payload, selected_reference_asset_ids: ["ref-2", "ref-1"] }),
+    );
+    expect(signature).not.toBe(buildImageGenerationSubmitSignature({ ...payload, generation_count: 3 }));
+    expect(signature).not.toBe(
+      buildImageGenerationSubmitSignature({ ...payload, tool_options: { quality: "low", output_format: "png" } }),
+    );
+  });
+
+  it("blocks identical duplicate submits only inside the short guard window", () => {
+    const signature = buildImageGenerationSubmitSignature({
+      prompt: "prompt",
+      size: "1024x1024",
+      base_asset_id: null,
+      selected_reference_asset_ids: [],
+      generation_count: 1,
+      tool_options: null,
+    });
+
+    expect(shouldBlockDuplicateGenerationSubmit({ signature, submittedAt: 1_000 }, signature, 2_000, 1_800)).toBe(true);
+    expect(shouldBlockDuplicateGenerationSubmit({ signature, submittedAt: 1_000 }, signature, 3_000, 1_800)).toBe(false);
+    expect(shouldBlockDuplicateGenerationSubmit({ signature: "other", submittedAt: 1_000 }, signature, 1_200, 1_800)).toBe(
+      false,
+    );
   });
 });

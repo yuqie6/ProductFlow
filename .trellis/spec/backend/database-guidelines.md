@@ -294,8 +294,12 @@ def delete_product_endpoint(...):
   selected references.
 - A multi-candidate generation action creates N `image_session_rounds` rows that share one `generation_group_id`, each with
   a distinct `generated_asset_id`, `candidate_index` from `1..N`, and `candidate_count=N`.
-- `base_asset_id` must reference a same-session `generated_image`; it is the explicit historical card the user chose with
-  `从这张继续`.
+- Only the first generation task in an image session may omit `base_asset_id`. Once a session has any generated round or
+  any prior generation task, later submissions must include a same-session generated image as `base_asset_id`.
+- Worker execution must revalidate persisted task payloads by task creation order: the earliest task may still execute
+  without `base_asset_id` even though its own task row already exists, while later persisted tasks without a base fail.
+- `base_asset_id` must reference a same-session `generated_image`; it is the explicit historical card the user selected
+  for the next image-to-image generation.
 - `selected_reference_asset_ids` must reference same-session `reference_upload` assets. They are the only session uploads
   that participate in the next provider request.
 - Card branching must not blindly pass `previous_response_id` or assemble all later history images. Provider context for
@@ -309,6 +313,8 @@ def delete_product_endpoint(...):
 - `generation_count < 1` or `> 4` -> request validation `422` at the API schema, or application `400` if called directly.
 - `base_asset_id` outside the session -> `404`, `会话图片不存在`.
 - `base_asset_id` points to a reference upload -> `400`, `只能从会话生成图继续`.
+- Missing `base_asset_id` after the session already has a round or generation task -> `400`,
+  `后续生图必须选择一张本会话已生成图片作为基图`.
 - `selected_reference_asset_ids` contains an asset outside the session -> `404`, `会话参考图不存在`.
 - `selected_reference_asset_ids` contains a generated image -> `400`, `只能选择会话参考图参与本轮生成`.
 - More than 6 total selected context images including the base -> `400`, `本轮最多选择 6 张图片上下文（含分支基图）`.
@@ -320,7 +326,7 @@ def delete_product_endpoint(...):
 
 ### 5. Good/Base/Bad Cases
 
-- Good: user clicks a generated card's `从这张继续`, selects two uploaded references, asks for 3 candidates; the API stores
+- Good: user selects a generated history card as the next base, selects two uploaded references, asks for 3 candidates; the API stores
   three rounds in one group and provider receives exactly the base plus two references.
 - Good: user branches from an old card after newer rounds exist; newer generated images are not included unless the user
   selects one as the base.
@@ -594,15 +600,14 @@ by `app_settings` and must gate new resource-consuming entrypoints before they e
   - `image_tool_quality`
   - `image_tool_output_format`
   - `image_tool_output_compression`
-  - `image_tool_background`
   - `image_tool_moderation`
   - `image_tool_action`
   - `image_tool_input_fidelity`
   - `image_tool_partial_images`
   - `image_tool_n`
 - Continuous image session generation request:
-  - `tool_options?: { model?, quality?, output_format?, output_compression?, background?, moderation?, action?,
-    input_fidelity?, partial_images?, n? }`
+  - `tool_options?: { model?, quality?, output_format?, output_compression?, moderation?, action?, input_fidelity?,
+    partial_images?, n? }`
 - DB task persistence:
   - `image_session_generation_tasks.tool_options` stores validated per-request overrides so queued worker execution uses
     the same options the operator submitted.
@@ -630,6 +635,8 @@ by `app_settings` and must gate new resource-consuming entrypoints before they e
 - Defaults must remain AnyRouter-compatible: the tool object is effectively `{"type":"image_generation","size": size}`.
 - Do not add default `tool_choice` for image generation.
 - Optional tool fields are sent only when non-empty/non-null after runtime settings normalization.
+- `background` is not a supported `image_generation` tool field in the current provider path. Legacy request payloads may
+  include it, but ProductFlow must filter it before task persistence and provider calls.
 - Continuous image session `tool_options` override only the matching tool fields for that generation; omitted request
   fields fall back to runtime defaults.
 - ProductFlow `generation_count` remains an application-level repeated-generation concept. `image_tool_n` is an advanced

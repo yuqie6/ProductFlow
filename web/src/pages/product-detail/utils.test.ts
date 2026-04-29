@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { ProductWorkflow, WorkflowNode } from "../../lib/types";
 import {
   hasActiveWorkflow,
+  imageWorkflowNodeWaitingLabel,
+  isImageWorkflowNodeWaiting,
   mergeProductWorkflowStatusIntoDetail,
   outputStringArray,
   shouldRefreshProductWorkflowDetailFromStatus,
@@ -78,6 +80,18 @@ describe("product-detail utils", () => {
     ).toBe(true);
 
     expect(hasActiveWorkflow(workflowWith({}))).toBe(false);
+  });
+
+  it("scopes visible image waiting state to image-generation and reference nodes", () => {
+    expect(isImageWorkflowNodeWaiting({ ...baseNode, node_type: "reference_image", status: "queued" })).toBe(true);
+    expect(imageWorkflowNodeWaitingLabel({ ...baseNode, node_type: "reference_image", status: "running" })).toBe(
+      "参考图更新中",
+    );
+    expect(imageWorkflowNodeWaitingLabel({ ...baseNode, node_type: "image_generation", status: "queued" })).toBe(
+      "生图排队中",
+    );
+    expect(isImageWorkflowNodeWaiting({ ...baseNode, node_type: "copy_generation", status: "running" })).toBe(false);
+    expect(imageWorkflowNodeWaitingLabel({ ...baseNode, node_type: "reference_image", status: "succeeded" })).toBe("");
   });
 
   it("merges lightweight workflow status without replacing structure or node outputs", () => {

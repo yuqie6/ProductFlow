@@ -6,7 +6,6 @@ import {
   GalleryHorizontalEnd,
   History,
   Image as ImageIcon,
-  ImagePlus,
   Layers3,
   Loader2,
   MessagesSquare,
@@ -16,12 +15,9 @@ import {
   Settings,
   Sparkles,
   Trash2,
-  Wand2,
-  X,
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 
-import { ImageDropZone } from "../components/ImageDropZone";
 import { ImageSizePicker } from "../components/ImageSizePicker";
 import { ImageToolControls } from "../components/ImageToolControls";
 import { PromptPreviewDialog, type PromptPreview } from "../components/PromptPreviewDialog";
@@ -34,14 +30,26 @@ import {
   formatImageSizeValue,
 } from "../lib/imageSizes";
 import {
+  buildImageGenerationSubmitSignature,
+  buildImageSessionHistoryTree,
   clampGenerationCount,
   compactImageToolOptions,
-  groupImageSessionRounds,
+  findImageGenerationTaskPlaceholderRound,
+  findImageHistoryPlaceholder,
+  getImageGenerationTaskPlaceholderId,
   isImageSessionGenerationTaskActive,
   mergeImageSessionStatusIntoDetail,
-  pruneSelectedReferenceIds,
+  requiresImageSessionGenerationBase,
   selectVisibleGenerationTasks,
+  shouldBlockDuplicateGenerationSubmit,
   shouldRefreshImageSessionDetailFromStatus,
+} from "./image-chat/branching";
+import type {
+  ImageGenerationSubmitGuard,
+  ImageGenerationSubmitPayload,
+  ImageHistoryBranch,
+  ImageHistoryCandidate,
+  ImageHistoryPlaceholderCandidate,
 } from "./image-chat/branching";
 import type {
   ImageSessionDetail,
@@ -55,12 +63,8 @@ import type {
   SourceAsset,
 } from "../lib/types";
 
-function getSessionReferenceAssets(imageSession: ImageSessionDetail | undefined) {
-  return imageSession?.assets.filter((asset) => asset.kind === "reference_upload") ?? [];
-}
-
-const MAX_BRANCH_CONTEXT_IMAGES = 6;
 const DELETION_DISABLED_MESSAGE = "删除功能已关闭，请联系管理员";
+const DUPLICATE_GENERATION_SUBMIT_WINDOW_MS = 1800;
 
 function generationTaskLabel(task: ImageSessionGenerationTask) {
   if (task.status === "queued") {
@@ -97,6 +101,67 @@ function imageRoundSizeLabel(round: ImageSessionRound) {
   return round.actual_size ?? round.size;
 }
 
+function placeholderStatusLabel(candidate: ImageHistoryPlaceholderCandidate) {
+  if (candidate.status === "queued") {
+    return candidate.task.queue_position ? `排队中 · 第 ${candidate.task.queue_position} 位` : "排队中";
+  }
+  if (candidate.status === "running") {
+    return `生成中 · ${candidate.candidate_index}/${candidate.candidate_count}`;
+  }
+  if (candidate.status === "completed") {
+    return "已完成，刷新中";
+  }
+  if (candidate.status === "failed") {
+    return "生成失败";
+  }
+  return "已完成";
+}
+
+function placeholderStatusClass(candidate: ImageHistoryPlaceholderCandidate) {
+  if (candidate.status === "failed") {
+    return "border-red-200 bg-red-50 text-red-700";
+  }
+  if (candidate.status === "queued") {
+    return "border-amber-200 bg-amber-50 text-amber-700";
+  }
+  if (candidate.status === "completed") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+  return "border-indigo-200 bg-indigo-50 text-indigo-700";
+}
+
+function taskMatchesSubmitPayload(task: ImageSessionGenerationTask, payload: ImageGenerationSubmitPayload) {
+  return (
+    buildImageGenerationSubmitSignature({
+      prompt: task.prompt,
+      size: task.size,
+      base_asset_id: task.base_asset_id,
+      selected_reference_asset_ids: task.selected_reference_asset_ids,
+      generation_count: task.generation_count,
+      tool_options: task.tool_options,
+    }) === buildImageGenerationSubmitSignature(payload)
+  );
+}
+
+function selectSubmittedTaskPlaceholderId(
+  tasks: ImageSessionGenerationTask[],
+  payload: ImageGenerationSubmitPayload,
+): string | null {
+  const newestTasks = [...tasks].sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at));
+  const task =
+    newestTasks.find((item) => taskMatchesSubmitPayload(item, payload)) ??
+    newestTasks.find(isImageSessionGenerationTaskActive) ??
+    newestTasks[0];
+  if (!task) {
+    return null;
+  }
+  const candidateIndex = Math.min(
+    clampGenerationCount(task.generation_count || 1),
+    task.active_candidate_index ?? Math.max(1, task.completed_candidates + 1),
+  );
+  return getImageGenerationTaskPlaceholderId(task, candidateIndex);
+}
+
 export function ImageChatPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -104,15 +169,17 @@ export function ImageChatPage() {
   const isProductMode = Boolean(productId);
   const autoCreateTriggered = useRef(false);
   const pendingGeneratedRoundCountRef = useRef<number | null>(null);
+  const duplicateSubmitGuardRef = useRef<ImageGenerationSubmitGuard | null>(null);
 
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [selectedGeneratedAssetId, setSelectedGeneratedAssetId] = useState<string | null>(null);
+  const [selectedTaskPlaceholderId, setSelectedTaskPlaceholderId] = useState<string | null>(null);
   const [branchBaseAssetId, setBranchBaseAssetId] = useState<string | null>(null);
-  const [selectedReferenceAssetIds, setSelectedReferenceAssetIds] = useState<string[]>([]);
   const [generationCount, setGenerationCount] = useState(1);
   const [draft, setDraft] = useState("");
   const [size, setSize] = useState("1024x1024");
   const [toolOptions, setToolOptions] = useState<ImageToolOptions>({});
+  const [settingsTab, setSettingsTab] = useState<"basic" | "advanced">("basic");
   const [titleDraft, setTitleDraft] = useState("");
   const [renameEnabled, setRenameEnabled] = useState(false);
   const [targetProductId, setTargetProductId] = useState("");
@@ -162,6 +229,9 @@ export function ImageChatPage() {
     mutationFn: () => api.createImageSession(productId ? { product_id: productId } : {}),
     onSuccess: async (imageSession) => {
       setSelectedSessionId(imageSession.id);
+      setBranchBaseAssetId(null);
+      setSelectedGeneratedAssetId(null);
+      setSelectedTaskPlaceholderId(null);
       queryClient.setQueryData(["image-session", imageSession.id], imageSession);
       await queryClient.invalidateQueries({ queryKey: ["image-sessions", productId ?? "standalone"] });
       setErrorMessage("");
@@ -185,6 +255,9 @@ export function ImageChatPage() {
     }
     if (sessionItems.length) {
       setSelectedSessionId(sessionItems[0].id);
+      setSelectedGeneratedAssetId(null);
+      setSelectedTaskPlaceholderId(null);
+      setBranchBaseAssetId(null);
     }
   }, [createSessionMutation, selectedSessionId, sessionItems, sessionsQuery.isLoading]);
 
@@ -195,12 +268,17 @@ export function ImageChatPage() {
   });
 
   const imageSession = sessionDetailQuery.data;
-  const sessionReferenceAssets = useMemo(() => getSessionReferenceAssets(imageSession), [imageSession]);
-  const maxSelectedReferenceCount = branchBaseAssetId ? MAX_BRANCH_CONTEXT_IMAGES - 1 : MAX_BRANCH_CONTEXT_IMAGES;
-  const roundGroups = useMemo(() => groupImageSessionRounds(imageSession?.rounds ?? []), [imageSession]);
+  const historyBranches = useMemo(
+    () => buildImageSessionHistoryTree(imageSession?.rounds ?? [], imageSession?.generation_tasks ?? []),
+    [imageSession],
+  );
   const visibleGenerationTasks = useMemo(
     () => selectVisibleGenerationTasks(imageSession?.generation_tasks ?? []),
     [imageSession],
+  );
+  const requiresGenerationBase = requiresImageSessionGenerationBase(
+    imageSession?.rounds ?? [],
+    imageSession?.generation_tasks ?? [],
   );
   const hasActiveGenerationTask = imageSession?.generation_tasks.some(isImageSessionGenerationTaskActive) ?? false;
 
@@ -235,38 +313,79 @@ export function ImageChatPage() {
       return;
     }
     setTitleDraft(imageSession.title);
-    if (!selectedGeneratedAssetId || !imageSession.rounds.some((round) => round.generated_asset.id === selectedGeneratedAssetId)) {
+    const selectedPlaceholderStillExists = Boolean(
+      selectedTaskPlaceholderId && findImageHistoryPlaceholder(historyBranches, selectedTaskPlaceholderId),
+    );
+    const selectedPlaceholderReplacementRound =
+      selectedTaskPlaceholderId && !selectedPlaceholderStillExists
+        ? findImageGenerationTaskPlaceholderRound(
+            imageSession.rounds,
+            imageSession.generation_tasks,
+            selectedTaskPlaceholderId,
+          )
+        : null;
+    const selectedPlaceholderWasReplaced = Boolean(selectedTaskPlaceholderId && !selectedPlaceholderStillExists);
+    const selectedCompletedAssetId =
+      !selectedTaskPlaceholderId &&
+      selectedGeneratedAssetId &&
+      imageSession.rounds.some((round) => round.generated_asset.id === selectedGeneratedAssetId)
+        ? selectedGeneratedAssetId
+        : null;
+    if (selectedTaskPlaceholderId && !selectedPlaceholderStillExists) {
+      setSelectedTaskPlaceholderId(null);
+      setSelectedGeneratedAssetId(
+        selectedPlaceholderReplacementRound?.generated_asset.id ?? imageSession.rounds.at(-1)?.generated_asset.id ?? null,
+      );
+    } else if (
+      !selectedTaskPlaceholderId &&
+      (!selectedGeneratedAssetId || !imageSession.rounds.some((round) => round.generated_asset.id === selectedGeneratedAssetId))
+    ) {
       setSelectedGeneratedAssetId(imageSession.rounds.at(-1)?.generated_asset.id ?? null);
     }
     if (branchBaseAssetId && !imageSession.rounds.some((round) => round.generated_asset.id === branchBaseAssetId)) {
       setBranchBaseAssetId(null);
+    }
+    if (selectedCompletedAssetId && branchBaseAssetId !== selectedCompletedAssetId) {
+      setBranchBaseAssetId(selectedCompletedAssetId);
     }
     if (
       pendingGeneratedRoundCountRef.current !== null &&
       imageSession.rounds.length > pendingGeneratedRoundCountRef.current
     ) {
       pendingGeneratedRoundCountRef.current = null;
-      setSelectedGeneratedAssetId(imageSession.rounds.at(-1)?.generated_asset.id ?? null);
+      if (!selectedTaskPlaceholderId || selectedPlaceholderWasReplaced) {
+        setSelectedTaskPlaceholderId(null);
+        if (!selectedPlaceholderReplacementRound) {
+          setSelectedGeneratedAssetId(imageSession.rounds.at(-1)?.generated_asset.id ?? null);
+        }
+      }
       setSuccessMessage("新候选已生成");
       setErrorMessage("");
     }
-    setSelectedReferenceAssetIds((current) =>
-      pruneSelectedReferenceIds(
-        current,
-        imageSession.assets.filter((asset) => asset.kind === "reference_upload").map((asset) => asset.id),
-        maxSelectedReferenceCount,
-      ),
-    );
-  }, [branchBaseAssetId, imageSession, maxSelectedReferenceCount, selectedGeneratedAssetId]);
+  }, [
+    branchBaseAssetId,
+    historyBranches,
+    imageSession,
+    selectedGeneratedAssetId,
+    selectedTaskPlaceholderId,
+  ]);
 
   const selectedRound = useMemo(() => {
+    if (selectedTaskPlaceholderId) {
+      return null;
+    }
     if (!imageSession?.rounds.length) {
       return null;
     }
     return (
       imageSession.rounds.find((round) => round.generated_asset.id === selectedGeneratedAssetId) ?? imageSession.rounds.at(-1) ?? null
     );
-  }, [imageSession, selectedGeneratedAssetId]);
+  }, [imageSession, selectedGeneratedAssetId, selectedTaskPlaceholderId]);
+
+  const selectedPlaceholder = useMemo(
+    () => findImageHistoryPlaceholder(historyBranches, selectedTaskPlaceholderId),
+    [historyBranches, selectedTaskPlaceholderId],
+  );
 
   const branchBaseRound = useMemo(() => {
     if (!imageSession?.rounds.length || !branchBaseAssetId) {
@@ -274,6 +393,8 @@ export function ImageChatPage() {
     }
     return imageSession.rounds.find((round) => round.generated_asset.id === branchBaseAssetId) ?? null;
   }, [branchBaseAssetId, imageSession]);
+  const baseRequirementMessage =
+    requiresGenerationBase && !branchBaseRound ? "请选择一张已完成历史图作为本轮基图" : "";
 
   const sourceImage = useMemo(
     () => productQuery.data?.source_assets.find((asset) => asset.kind === "original_image") ?? null,
@@ -307,32 +428,6 @@ export function ImageChatPage() {
     },
   });
 
-  const uploadReferenceMutation = useMutation({
-    mutationFn: (files: File[]) => api.addImageSessionReferenceImages(selectedSessionId!, files),
-    onSuccess: (updated) => {
-      const previousReferenceIds = new Set(sessionReferenceAssets.map((asset) => asset.id));
-      const uploadedReferenceIds = updated.assets
-        .filter((asset) => asset.kind === "reference_upload" && !previousReferenceIds.has(asset.id))
-        .map((asset) => asset.id);
-      queryClient.setQueryData(["image-session", updated.id], updated);
-      void queryClient.invalidateQueries({ queryKey: ["image-sessions", productId ?? "standalone"] });
-      if (uploadedReferenceIds.length) {
-        setSelectedReferenceAssetIds((current) =>
-          pruneSelectedReferenceIds(
-            [...current, ...uploadedReferenceIds],
-            updated.assets.filter((asset) => asset.kind === "reference_upload").map((asset) => asset.id),
-            maxSelectedReferenceCount,
-          ),
-        );
-      }
-      setSuccessMessage("参考图已上传");
-      setErrorMessage("");
-    },
-    onError: (error) => {
-      setErrorMessage(error instanceof ApiError ? error.detail : "参考图上传失败");
-    },
-  });
-
   const deleteSessionMutation = useMutation({
     mutationFn: (sessionId: string) => api.deleteImageSession(sessionId),
     onSuccess: async (_response, deletedSessionId) => {
@@ -345,6 +440,8 @@ export function ImageChatPage() {
       if (selectedSessionId === deletedSessionId) {
         setSelectedSessionId(remainingSessions[0]?.id ?? null);
         setSelectedGeneratedAssetId(null);
+        setSelectedTaskPlaceholderId(null);
+        setBranchBaseAssetId(null);
         if (!remainingSessions.length) {
           autoCreateTriggered.current = false;
         }
@@ -358,46 +455,32 @@ export function ImageChatPage() {
     },
   });
 
-  const deleteSessionReferenceMutation = useMutation({
-    mutationFn: (assetId: string) => api.deleteImageSessionReferenceImage(selectedSessionId!, assetId),
-    onSuccess: (updated) => {
-      queryClient.setQueryData(["image-session", updated.id], updated);
-      void queryClient.invalidateQueries({ queryKey: ["image-sessions", productId ?? "standalone"] });
-      setSelectedReferenceAssetIds((current) =>
-        pruneSelectedReferenceIds(
-          current,
-          updated.assets.filter((asset) => asset.kind === "reference_upload").map((asset) => asset.id),
-          maxSelectedReferenceCount,
-        ),
-      );
-      setSuccessMessage("参考图已删除");
-      setErrorMessage("");
-    },
-    onError: (error) => {
-      setErrorMessage(error instanceof ApiError ? error.detail : "参考图删除失败");
-    },
-  });
-
   const generateMutation = useMutation({
-    mutationFn: (payload: {
-      prompt: string;
-      size: string;
-      base_asset_id: string | null;
-      selected_reference_asset_ids: string[];
-      generation_count: number;
-      tool_options?: ImageToolOptions | null;
-    }) => api.generateImageSessionRound(selectedSessionId!, payload),
-    onSuccess: (updated) => {
+    mutationFn: (payload: ImageGenerationSubmitPayload) => api.generateImageSessionRound(selectedSessionId!, payload),
+    onSuccess: (updated, variables) => {
       queryClient.setQueryData(["image-session", updated.id], updated);
       void queryClient.invalidateQueries({ queryKey: ["image-sessions", productId ?? "standalone"] });
+      const placeholderId = selectSubmittedTaskPlaceholderId(updated.generation_tasks, variables);
+      if (placeholderId) {
+        setSelectedTaskPlaceholderId(placeholderId);
+        setSelectedGeneratedAssetId(null);
+      }
       setDraft("");
-      setSuccessMessage(generationCount > 1 ? `已提交生成任务 · ${generationCount} 张候选` : "已提交生成任务");
+      setSuccessMessage(
+        variables.generation_count > 1 ? `已提交生成任务 · ${variables.generation_count} 张候选` : "已提交生成任务",
+      );
       setErrorMessage("");
     },
-    onError: (error) => {
+    onError: (error, variables) => {
+      const signature = buildImageGenerationSubmitSignature(variables);
+      if (duplicateSubmitGuardRef.current?.signature === signature) {
+        duplicateSubmitGuardRef.current = null;
+      }
       setErrorMessage(error instanceof ApiError ? error.detail : "生成失败");
     },
   });
+  const generateDisabled =
+    !selectedSessionId || !imageSession || !draft.trim() || generateMutation.isPending || Boolean(baseRequirementMessage);
 
   const attachMutation = useMutation({
     mutationFn: (payload: { assetId: string; target: "reference" | "main_source"; productId?: string }) =>
@@ -446,36 +529,37 @@ export function ImageChatPage() {
 
   function handleGenerate() {
     const prompt = draft.trim();
-    if (!selectedSessionId || !prompt || generateMutation.isPending) {
+    if (!selectedSessionId || !imageSession || !prompt || generateMutation.isPending) {
       return;
     }
-    pendingGeneratedRoundCountRef.current = imageSession?.rounds.length ?? 0;
-    generateMutation.mutate({
+    if (baseRequirementMessage) {
+      setErrorMessage(baseRequirementMessage);
+      return;
+    }
+    const payload: ImageGenerationSubmitPayload = {
       prompt,
       size,
-      base_asset_id: branchBaseAssetId,
-      selected_reference_asset_ids: selectedReferenceAssetIds,
+      base_asset_id: requiresGenerationBase ? branchBaseAssetId : null,
+      selected_reference_asset_ids: [],
       generation_count: clampGenerationCount(generationCount),
       tool_options: compactImageToolOptions(toolOptions),
-    });
-  }
-
-  function handleContinueFrom(roundAssetId: string) {
-    setBranchBaseAssetId(roundAssetId);
-    setSelectedGeneratedAssetId(roundAssetId);
-    setSuccessMessage("");
-    setErrorMessage("");
-  }
-
-  function handleReferenceToggle(assetId: string, checked: boolean) {
-    setSelectedReferenceAssetIds((current) => {
-      const next = checked ? [...current, assetId] : current.filter((id) => id !== assetId);
-      return pruneSelectedReferenceIds(
-        next,
-        sessionReferenceAssets.map((asset) => asset.id),
-        maxSelectedReferenceCount,
-      );
-    });
+    };
+    const signature = buildImageGenerationSubmitSignature(payload);
+    const now = Date.now();
+    if (
+      shouldBlockDuplicateGenerationSubmit(
+        duplicateSubmitGuardRef.current,
+        signature,
+        now,
+        DUPLICATE_GENERATION_SUBMIT_WINDOW_MS,
+      )
+    ) {
+      setErrorMessage("相同任务刚刚提交，稍等片刻即可在历史记录中查看状态。");
+      return;
+    }
+    duplicateSubmitGuardRef.current = { signature, submittedAt: now };
+    pendingGeneratedRoundCountRef.current = imageSession?.rounds.length ?? 0;
+    generateMutation.mutate(payload);
   }
 
   function handleRename() {
@@ -523,16 +607,6 @@ export function ImageChatPage() {
     deleteSessionMutation.mutate(sessionId);
   }
 
-  function handleDeleteSessionReference(assetId: string) {
-    if (deleteSessionReferenceMutation.isPending) {
-      return;
-    }
-    if (!window.confirm("删除这张会话参考图？后续生成将不再参考它。")) {
-      return;
-    }
-    deleteSessionReferenceMutation.mutate(assetId);
-  }
-
   function handleDeleteProductReference(assetId: string) {
     if (deleteProductReferenceMutation.isPending) {
       return;
@@ -543,17 +617,10 @@ export function ImageChatPage() {
     deleteProductReferenceMutation.mutate(assetId);
   }
 
-  function handleUploadReferenceFiles(files: File[]) {
-    if (!files.length || !selectedSessionId || uploadReferenceMutation.isPending) {
-      return;
-    }
-    uploadReferenceMutation.mutate(files);
-  }
-
   return (
     <div className="flex min-h-screen flex-col bg-slate-100 text-slate-900 lg:h-screen lg:overflow-hidden">
       <TopNav
-        breadcrumbs={isProductMode ? `${productQuery.data?.name ?? "商品"} / 连续生图` : "连续生图"}
+        breadcrumbs={isProductMode ? `${productQuery.data?.name ?? "商品"} / 文/图生图` : "文/图生图"}
         onHome={() => navigate(isProductMode && productId ? `/products/${productId}` : "/products")}
         onLogout={() => logoutMutation.mutate()}
       />
@@ -600,6 +667,9 @@ export function ImageChatPage() {
                       type="button"
                       onClick={() => {
                         setSelectedSessionId(item.id);
+                        setSelectedGeneratedAssetId(null);
+                        setSelectedTaskPlaceholderId(null);
+                        setBranchBaseAssetId(null);
                         setSuccessMessage("");
                         setErrorMessage("");
                       }}
@@ -661,16 +731,20 @@ export function ImageChatPage() {
                   </span>
                   {branchBaseRound ? (
                     <span className="inline-flex h-7 items-center gap-1 rounded-full bg-indigo-600 px-3 text-white shadow-sm shadow-indigo-500/20">
-                      <Layers3 size={12} /> 分支生成
+                      <Layers3 size={12} /> 已选基图
                     </span>
                   ) : null}
                 </div>
                 <h1 className="mt-2 text-xl font-semibold tracking-tight text-slate-950">
-                  {imageSession?.title ?? "连续生图工作台"}
+                  {imageSession?.title ?? "文/图生图工作台"}
                 </h1>
                 {selectedRound ? (
                   <div className="mt-1 text-xs font-medium text-slate-500 md:hidden">
                     {imageRoundSizeLabel(selectedRound)} · 候选 {selectedRound.candidate_index}/{selectedRound.candidate_count}
+                  </div>
+                ) : selectedPlaceholder ? (
+                  <div className="mt-1 text-xs font-medium text-slate-500 md:hidden">
+                    {placeholderStatusLabel(selectedPlaceholder)} · 候选 {selectedPlaceholder.candidate_index}/{selectedPlaceholder.candidate_count}
                   </div>
                 ) : null}
               </div>
@@ -706,6 +780,10 @@ export function ImageChatPage() {
                       投至画廊
                     </button>
                   </>
+                ) : selectedPlaceholder ? (
+                  <span className={`rounded-full border px-3 py-1.5 text-xs font-medium shadow-sm ${placeholderStatusClass(selectedPlaceholder)}`}>
+                    {placeholderStatusLabel(selectedPlaceholder)}
+                  </span>
                 ) : null}
               </div>
             </div>
@@ -717,40 +795,22 @@ export function ImageChatPage() {
                   <div className="min-w-0 max-w-[calc(100%-5.5rem)] truncate rounded-full bg-white/90 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm ring-1 ring-slate-200 backdrop-blur">
                     {formatDateTime(selectedRound.created_at)} · {selectedRound.model_name}
                   </div>
+                ) : selectedPlaceholder ? (
+                  <div className="min-w-0 max-w-[calc(100%-5.5rem)] truncate rounded-full bg-white/90 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm ring-1 ring-slate-200 backdrop-blur">
+                    {placeholderStatusLabel(selectedPlaceholder)} · {formatImageSizeValue(selectedPlaceholder.size)}
+                  </div>
                 ) : (
                   <div className="rounded-full bg-white/90 px-3 py-1.5 text-xs font-medium text-slate-500 shadow-sm ring-1 ring-slate-200 backdrop-blur">
                     等待第一张结果
                   </div>
                 )}
-                {selectedRound ? (
-                  <button
-                    type="button"
-                    onClick={() => handleContinueFrom(selectedRound.generated_asset.id)}
-                    title="从当前继续"
-                    aria-label="从当前继续"
-                    className={`inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-semibold shadow-sm ring-1 transition-colors backdrop-blur ${
-                      selectedRound.generated_asset.id === branchBaseAssetId
-                        ? "bg-indigo-600 text-white ring-indigo-500"
-                        : "bg-white/90 text-slate-700 ring-slate-200 hover:text-indigo-700"
-                    }`}
-                  >
-                    <Wand2 size={13} />
-                    继续
-                  </button>
+                {branchBaseRound ? (
+                  <div className="inline-flex h-8 items-center gap-1.5 rounded-full bg-indigo-600 px-3 text-xs font-semibold text-white shadow-sm shadow-indigo-500/20">
+                    <Layers3 size={13} />
+                    已选基图
+                  </div>
                 ) : null}
               </div>
-              {selectedRound?.provider_notes.length ? (
-                <div className="absolute left-5 top-14 z-10 flex max-w-[calc(100%-2.5rem)] flex-wrap gap-2">
-                  {selectedRound.provider_notes.map((note) => (
-                    <span
-                      key={note}
-                      className="rounded-full bg-amber-50/95 px-3 py-1 text-xs font-medium text-amber-700 shadow-sm ring-1 ring-amber-200 backdrop-blur"
-                    >
-                      {note}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
 
               {selectedRound ? (
                 <div className="relative z-0 flex h-full min-h-0 w-full items-center justify-center px-2 pb-2 pt-12 sm:px-3 sm:pb-3 sm:pt-14">
@@ -761,6 +821,8 @@ export function ImageChatPage() {
                     className="max-h-full max-w-full object-contain drop-shadow-2xl"
                   />
                 </div>
+              ) : selectedPlaceholder ? (
+                <GenerationCanvasPlaceholder candidate={selectedPlaceholder} />
               ) : (
                 <div className="relative z-0 flex flex-col items-center gap-4 text-center text-slate-400">
                   <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-white shadow-sm ring-1 ring-slate-200">
@@ -772,100 +834,55 @@ export function ImageChatPage() {
                 </div>
               )}
             </div>
+            {selectedRound?.provider_notes.length ? (
+              <div className="mt-2 flex flex-wrap gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                {selectedRound.provider_notes.map((note) => (
+                  <span key={note}>{note}</span>
+                ))}
+              </div>
+            ) : selectedPlaceholder?.failure_reason ? (
+              <div className="mt-2 rounded-2xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                {selectedPlaceholder.failure_reason}
+              </div>
+            ) : selectedPlaceholder?.provider_notes.length ? (
+              <div className="mt-2 flex flex-wrap gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                {selectedPlaceholder.provider_notes.map((note) => (
+                  <span key={note}>{note}</span>
+                ))}
+              </div>
+            ) : null}
           </div>
 
-          <div className="flex h-40 shrink-0 flex-col border-t border-slate-200 bg-white/95 px-3 py-2.5 shadow-[0_-8px_24px_rgba(15,23,42,0.04)] lg:h-[clamp(8.75rem,15vh,10.5rem)]">
+          <div className="flex h-44 shrink-0 flex-col border-t border-slate-200 bg-white/95 px-3 py-2.5 shadow-[0_-8px_24px_rgba(15,23,42,0.04)] lg:h-[clamp(9.5rem,16vh,11rem)]">
             <div className="mb-2 flex items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold text-slate-950">历史记录</div>
               </div>
-              {branchBaseRound ? (
-                <button
-                  type="button"
-                  onClick={() => setBranchBaseAssetId(null)}
-                  className="inline-flex items-center rounded-full border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-900"
-                >
-                  <X size={12} className="mr-1" /> 清空基图
-                </button>
-              ) : null}
+              {branchBaseRound ? <div className="text-xs font-medium text-indigo-700">点击历史图可切换基图</div> : null}
             </div>
 
-            {roundGroups.length ? (
+            {historyBranches.length ? (
               <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto pb-1">
-                {roundGroups.map((group) => (
-                  <div key={group.id} className="flex h-full shrink-0 gap-2 rounded-2xl border border-slate-200 bg-slate-50/80 p-2">
-                    <div className="flex w-24 shrink-0 flex-col justify-between rounded-xl bg-white p-2 text-xs text-slate-500 ring-1 ring-slate-200">
-                      <div>
-                        <div className="font-semibold text-slate-800">{group.base_asset_id ? "分支" : "首轮"}</div>
-                        <div className="mt-1">{group.rounds.length} 张</div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setPromptPreview({
-                            title: group.base_asset_id ? "分支 Prompt" : "首轮 Prompt",
-                            text: group.prompt,
-                            meta: `${group.rounds.length} 张 · ${formatDateTime(group.rounds[0].created_at)}`,
-                          })
-                        }
-                        className="line-clamp-3 rounded-md text-left text-[11px] leading-4 text-slate-400 transition-colors hover:text-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
-                      >
-                        {group.prompt}
-                      </button>
-                    </div>
-                    {group.rounds.map((round) => {
-                      const active = round.generated_asset.id === selectedGeneratedAssetId;
-                      const asBase = round.generated_asset.id === branchBaseAssetId;
-                      return (
-                        <div
-                          key={round.id}
-                          className={`group/card relative aspect-square h-full min-w-[7rem] shrink-0 overflow-hidden rounded-2xl border bg-white transition-all ${
-                            active ? "border-indigo-400 ring-2 ring-indigo-200" : "border-slate-200 hover:border-slate-300"
-                          } ${asBase ? "shadow-md shadow-indigo-200/70" : "shadow-sm shadow-slate-200/60"}`}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => setSelectedGeneratedAssetId(round.generated_asset.id)}
-                            className="block h-full w-full text-left"
-                          >
-                            <img
-                              src={api.toApiUrl(round.generated_asset.thumbnail_url)}
-                              alt={round.prompt}
-                              loading="lazy"
-                              decoding="async"
-                              className="h-full w-full object-cover"
-                            />
-                            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/85 via-slate-950/35 to-transparent p-1.5 pt-8 text-white">
-                              <div className="flex items-center justify-between gap-2 text-[11px] font-medium">
-                                <span className="min-w-0 truncate">
-                                  {round.candidate_count > 1 ? `${round.candidate_index}/${round.candidate_count}` : imageRoundSizeLabel(round)}
-                                </span>
-                                {active ? <Check size={13} className="shrink-0" /> : null}
-                              </div>
-                            </div>
-                          </button>
-                          {asBase ? (
-                            <div className="absolute left-1.5 top-1.5 max-w-[calc(100%-2.75rem)] truncate rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow-sm">
-                              基图
-                            </div>
-                          ) : null}
-                          <button
-                            type="button"
-                            onClick={() => handleContinueFrom(round.generated_asset.id)}
-                            title="从这张继续"
-                            aria-label="从这张继续"
-                            className={`absolute right-1.5 top-1.5 inline-flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-semibold shadow-sm transition-colors ${
-                              asBase
-                                ? "bg-indigo-600 text-white"
-                                : "bg-white/95 text-slate-700 opacity-100 ring-1 ring-slate-200 hover:text-indigo-700 md:opacity-0 md:group-hover/card:opacity-100"
-                            }`}
-                          >
-                            <Wand2 size={13} />
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
+                {historyBranches.map((branch) => (
+                  <HistoryBranchStrip
+                    key={branch.id}
+                    branch={branch}
+                    selectedGeneratedAssetId={selectedGeneratedAssetId}
+                    selectedTaskPlaceholderId={selectedTaskPlaceholderId}
+                    branchBaseAssetId={branchBaseAssetId}
+                    onSelectRound={(assetId) => {
+                      setSelectedGeneratedAssetId(assetId);
+                      setBranchBaseAssetId(assetId);
+                      setSelectedTaskPlaceholderId(null);
+                      setSuccessMessage("");
+                      setErrorMessage("");
+                    }}
+                    onSelectPlaceholder={(placeholderId) => {
+                      setSelectedTaskPlaceholderId(placeholderId);
+                      setSelectedGeneratedAssetId(null);
+                    }}
+                    onPreviewPrompt={setPromptPreview}
+                  />
                 ))}
               </div>
             ) : (
@@ -913,170 +930,92 @@ export function ImageChatPage() {
               </div>
             </div>
 
-            <div className="space-y-4">
-              <ProductAssociationPanel
-                isProductMode={isProductMode}
-                product={productQuery.data}
-                products={products}
-                targetProductId={targetProductId}
-                sourceImage={sourceImage}
-                referenceImages={productReferenceImages}
-                selectedRound={selectedRound}
-                attachBusy={attachMutation.isPending}
-                deletingReferenceAssetId={
-                  deleteProductReferenceMutation.isPending ? (deleteProductReferenceMutation.variables ?? null) : null
-                }
-                onTargetProductChange={setTargetProductId}
-                onDeleteReference={handleDeleteProductReference}
-                onAttach={handleAttach}
-              />
-
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="mb-2 flex items-center justify-between gap-3">
-                  <div className="text-sm font-semibold text-slate-950">分支基图</div>
-                  {branchBaseRound ? (
-                    <button
-                      type="button"
-                      onClick={() => setBranchBaseAssetId(null)}
-                      className="text-xs font-medium text-slate-500 transition-colors hover:text-slate-900"
-                    >
-                      清空
-                    </button>
-                  ) : null}
-                </div>
-                {branchBaseRound ? (
-                  <div className="grid grid-cols-[76px_minmax(0,1fr)] gap-3">
-                    <img
-                      src={api.toApiUrl(branchBaseRound.generated_asset.thumbnail_url)}
-                      alt="分支基图"
-                      loading="lazy"
-                      decoding="async"
-                      className="h-20 w-full rounded-xl object-cover ring-1 ring-slate-200"
-                    />
-                    <div className="min-w-0 text-xs leading-5 text-slate-500">
-                      <div className="truncate font-medium text-slate-800">{branchBaseRound.prompt}</div>
-                      <div>{imageRoundSizeLabel(branchBaseRound)}</div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex h-16 items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white text-xs text-slate-400">
-                    无
-                  </div>
-                )}
-              </div>
-
-              <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                <div className="mb-2 text-sm font-semibold text-slate-950">参考图</div>
-                <ImageDropZone
-                  ariaLabel="上传会话参考图"
-                  multiple
-                  disabled={!selectedSessionId || uploadReferenceMutation.isPending}
-                  className="flex cursor-pointer items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-600 transition-colors hover:border-indigo-300 hover:bg-indigo-50/40"
-                  onFiles={handleUploadReferenceFiles}
+            <div className="mb-4 grid grid-cols-2 gap-1 rounded-xl border border-slate-200 bg-slate-100 p-1">
+              {(
+                [
+                  ["basic", "生成设置"],
+                  ["advanced", "高级"],
+                ] as const
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setSettingsTab(value)}
+                  className={`h-9 rounded-lg text-sm font-semibold transition-colors ${
+                    settingsTab === value ? "bg-white text-indigo-700 shadow-sm" : "text-slate-500 hover:text-slate-900"
+                  }`}
                 >
-                  {({ isDragging }) => (
-                    <>
-                      {uploadReferenceMutation.isPending ? (
-                        <Loader2 size={16} className="mr-2 animate-spin" />
-                      ) : (
-                        <ImagePlus size={16} className="mr-2" />
-                      )}
-                      {isDragging ? "松开上传" : "上传参考图"}
-                    </>
-                  )}
-                </ImageDropZone>
-                <div className="mt-2 text-xs leading-5 text-slate-500">已选 {selectedReferenceAssetIds.length}/{maxSelectedReferenceCount}</div>
-                {sessionReferenceAssets.length ? (
-                  <div className="mt-3 grid grid-cols-4 gap-2">
-                    {sessionReferenceAssets.map((asset) => {
-                      const deleting = deleteSessionReferenceMutation.isPending && deleteSessionReferenceMutation.variables === asset.id;
-                      const selected = selectedReferenceAssetIds.includes(asset.id);
-                      const selectionLimitReached = !selected && selectedReferenceAssetIds.length >= maxSelectedReferenceCount;
-                      return (
-                        <div
-                          key={asset.id}
-                          className={`group relative overflow-hidden rounded-xl border bg-slate-50 ${
-                            selected ? "border-indigo-500 ring-2 ring-indigo-100" : "border-slate-200"
-                          }`}
-                        >
-                          <a href={api.toApiUrl(asset.preview_url)} target="_blank" rel="noreferrer" title={asset.original_filename}>
-                            <img
-                              src={api.toApiUrl(asset.thumbnail_url)}
-                              alt={asset.original_filename}
-                              loading="lazy"
-                              decoding="async"
-                              className="h-20 w-full object-cover"
-                            />
-                          </a>
-                          <label className="absolute bottom-1 left-1 inline-flex items-center rounded-md bg-white/95 px-1.5 py-1 text-[11px] font-medium text-slate-700 shadow-sm ring-1 ring-slate-200">
-                            <input
-                              type="checkbox"
-                              checked={selected}
-                              disabled={selectionLimitReached}
-                              onChange={(event) => handleReferenceToggle(asset.id, event.target.checked)}
-                              className="mr-1 h-3 w-3 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                            />
-                            用
-                          </label>
-                          <button
-                            type="button"
-                            aria-label="删除参考图"
-                            onClick={() => handleDeleteSessionReference(asset.id)}
-                            disabled={deleting}
-                            className="absolute right-1 top-1 inline-flex h-7 w-7 items-center justify-center rounded-lg bg-white/90 text-slate-500 opacity-100 shadow-sm ring-1 ring-slate-200 transition-colors hover:text-red-600 disabled:opacity-60 md:opacity-0 md:group-hover:opacity-100"
-                          >
-                            {deleting ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
-                          </button>
-                        </div>
-                      );
-                    })}
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <div className="space-y-4">
+              {settingsTab === "basic" ? (
+                <>
+                  <ProductAssociationPanel
+                    isProductMode={isProductMode}
+                    product={productQuery.data}
+                    products={products}
+                    targetProductId={targetProductId}
+                    sourceImage={sourceImage}
+                    referenceImages={productReferenceImages}
+                    selectedRound={selectedRound}
+                    attachBusy={attachMutation.isPending}
+                    deletingReferenceAssetId={
+                      deleteProductReferenceMutation.isPending ? (deleteProductReferenceMutation.variables ?? null) : null
+                    }
+                    onTargetProductChange={setTargetProductId}
+                    onDeleteReference={handleDeleteProductReference}
+                    onAttach={handleAttach}
+                  />
+
+                  <div>
+                    <label className="mb-2 block text-sm font-semibold text-slate-950" htmlFor="image-chat-prompt">
+                      画面描述
+                    </label>
+                    <textarea
+                      id="image-chat-prompt"
+                      value={draft}
+                      onChange={(event) => setDraft(event.target.value)}
+                      rows={6}
+                      placeholder={isProductMode ? "描述这一轮要在商品图上调整什么。" : "描述你想生成的画面。"}
+                      className="w-full resize-none rounded-2xl border border-slate-200 px-3 py-3 text-sm leading-6 text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                    />
                   </div>
-                ) : null}
-              </div>
 
-              <div>
-                <label className="mb-2 block text-sm font-semibold text-slate-950" htmlFor="image-chat-prompt">
-                  画面描述
-                </label>
-                <textarea
-                  id="image-chat-prompt"
-                  value={draft}
-                  onChange={(event) => setDraft(event.target.value)}
-                  rows={6}
-                  placeholder={isProductMode ? "描述这一轮要在商品图上调整什么。" : "描述你想生成的画面。"}
-                  className="w-full resize-none rounded-2xl border border-slate-200 px-3 py-3 text-sm leading-6 text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-                />
-              </div>
+                  <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div className="text-sm font-semibold text-slate-950">参数</div>
+                      <span className="text-[11px] font-medium text-slate-400">{formatImageSizeValue(size)}</span>
+                    </div>
+                    <ImageSizePicker
+                      value={size}
+                      presets={sizeOptions}
+                      maxDimension={imageGenerationMaxDimension}
+                      onChange={setSize}
+                    />
+                    <label className="mt-3 block" htmlFor="generation-count">
+                      <span className="mb-1.5 block text-xs font-semibold text-slate-700">生成数量</span>
+                      <select
+                        id="generation-count"
+                        value={generationCount}
+                        onChange={(event) => setGenerationCount(clampGenerationCount(Number(event.target.value)))}
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                      >
+                        {[1, 2, 3, 4].map((count) => (
+                          <option key={count} value={count}>
+                            {count} 张候选
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                </>
+              ) : (
+                <>
 
-              <div className="rounded-2xl border border-slate-200 bg-white p-4">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div className="text-sm font-semibold text-slate-950">参数</div>
-                  <span className="text-[11px] font-medium text-slate-400">{formatImageSizeValue(size)}</span>
-                </div>
-                <ImageSizePicker
-                  value={size}
-                  presets={sizeOptions}
-                  maxDimension={imageGenerationMaxDimension}
-                  onChange={setSize}
-                />
-                <label className="mt-3 block" htmlFor="generation-count">
-                  <span className="mb-1.5 block text-xs font-semibold text-slate-700">生成数量</span>
-                  <select
-                    id="generation-count"
-                    value={generationCount}
-                    onChange={(event) => setGenerationCount(clampGenerationCount(Number(event.target.value)))}
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-100"
-                  >
-                    {[1, 2, 3, 4].map((count) => (
-                      <option key={count} value={count}>
-                        {count} 张候选
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-
-              <ImageToolControls value={toolOptions} onChange={setToolOptions} />
+                  <ImageToolControls value={toolOptions} onChange={setToolOptions} />
 
               {visibleGenerationTasks.length ? (
                 <div className="space-y-2 rounded-2xl border border-slate-200 bg-white p-4">
@@ -1119,14 +1058,13 @@ export function ImageChatPage() {
                             {generationTaskQueueText(task)}
                           </div>
                         ) : null}
-                        {task.provider_notes.length ? (
-                          <div className="mt-1 text-xs opacity-80">{task.provider_notes.join(" ")}</div>
-                        ) : null}
                       </div>
                     );
                   })}
                 </div>
               ) : null}
+                </>
+              )}
 
               {successMessage ? (
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
@@ -1140,18 +1078,27 @@ export function ImageChatPage() {
           </div>
 
           <div className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 p-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] shadow-[0_-8px_24px_rgba(15,23,42,0.10)] backdrop-blur lg:sticky lg:inset-x-auto lg:bottom-0 lg:p-4">
+            {baseRequirementMessage ? (
+              <div className="mb-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
+                {baseRequirementMessage}
+              </div>
+            ) : null}
             <button
               type="button"
               onClick={handleGenerate}
-              disabled={!selectedSessionId || !draft.trim() || generateMutation.isPending || hasActiveGenerationTask}
+              disabled={generateDisabled}
               className="inline-flex w-full items-center justify-center rounded-2xl bg-indigo-600 px-4 py-3.5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition-colors hover:bg-indigo-500 disabled:opacity-60"
             >
-              {generateMutation.isPending || hasActiveGenerationTask ? (
+              {generateMutation.isPending ? (
                 <Loader2 size={15} className="mr-2 animate-spin" />
               ) : (
                 <Sparkles size={15} className="mr-2" />
               )}
-              {hasActiveGenerationTask ? "已有任务生成中" : generationCount > 1 ? `开始生成 · ${generationCount} 张候选` : "开始生成"}
+              {generateMutation.isPending
+                ? "提交中"
+                : generationCount > 1
+                  ? `开始生成 · ${generationCount} 张候选`
+                  : "开始生成"}
             </button>
           </div>
         </aside>
@@ -1162,6 +1109,182 @@ export function ImageChatPage() {
     </div>
   );
 
+}
+
+function GenerationCanvasPlaceholder({ candidate }: { candidate: ImageHistoryPlaceholderCandidate }) {
+  const active = candidate.status === "queued" || candidate.status === "running";
+  const failed = candidate.status === "failed";
+  const queueText = generationTaskQueueText(candidate.task);
+
+  return (
+    <div className="relative z-0 flex h-full min-h-0 w-full items-center justify-center px-6 pb-6 pt-16">
+      <div className="flex max-w-md flex-col items-center text-center">
+        <div
+          className={`relative flex h-24 w-24 items-center justify-center rounded-3xl border shadow-sm ${
+            failed ? "border-red-200 bg-red-50 text-red-600" : "border-indigo-100 bg-indigo-50 text-indigo-700"
+          }`}
+        >
+          {active ? <div className="absolute inset-2 rounded-3xl bg-indigo-200/70 opacity-70 blur-xl animate-pulse" /> : null}
+          {active ? <Loader2 size={30} className="relative animate-spin" /> : <Sparkles size={30} className="relative" />}
+        </div>
+        <div className="mt-4 text-sm font-semibold text-slate-900">{placeholderStatusLabel(candidate)}</div>
+        <div className="mt-1 text-xs text-slate-500">
+          候选 {candidate.candidate_index}/{candidate.candidate_count} · {formatImageSizeValue(candidate.size)}
+        </div>
+        {queueText ? <div className="mt-3 max-w-sm text-xs leading-5 text-slate-500">{queueText}</div> : null}
+        <div className="mt-4 line-clamp-3 max-w-sm text-xs leading-5 text-slate-600">{candidate.prompt}</div>
+      </div>
+    </div>
+  );
+}
+
+function HistoryBranchStrip({
+  branch,
+  selectedGeneratedAssetId,
+  selectedTaskPlaceholderId,
+  branchBaseAssetId,
+  onSelectRound,
+  onSelectPlaceholder,
+  onPreviewPrompt,
+}: {
+  branch: ImageHistoryBranch;
+  selectedGeneratedAssetId: string | null;
+  selectedTaskPlaceholderId: string | null;
+  branchBaseAssetId: string | null;
+  onSelectRound: (assetId: string) => void;
+  onSelectPlaceholder: (placeholderId: string) => void;
+  onPreviewPrompt: (preview: PromptPreview) => void;
+}) {
+  const depthOffset = Math.min(branch.depth, 4) * 18;
+  const branchLabel = branch.base_asset_id ? `分支 ${branch.depth}` : "首轮";
+
+  return (
+    <div
+      className="relative flex h-full shrink-0 gap-2 rounded-2xl border border-slate-200 bg-slate-50/80 p-2"
+      style={{ marginLeft: depthOffset }}
+    >
+      {branch.depth > 0 ? (
+        <div className="pointer-events-none absolute -left-3 top-1/2 h-px w-3 bg-slate-300" />
+      ) : null}
+      <div className="flex w-28 shrink-0 flex-col justify-between rounded-xl bg-white p-2 text-xs text-slate-500 ring-1 ring-slate-200">
+        <div>
+          <div className="flex items-center gap-1.5 font-semibold text-slate-800">
+            {branch.depth > 0 ? <Layers3 size={12} /> : <History size={12} />}
+            {branchLabel}
+          </div>
+          <div className="mt-1">{branch.candidates.length} 张</div>
+        </div>
+        <button
+          type="button"
+          onClick={() =>
+            onPreviewPrompt({
+              title: branch.base_asset_id ? "分支 Prompt" : "首轮 Prompt",
+              text: branch.prompt,
+              meta: `${branch.candidates.length} 张 · ${formatDateTime(branch.created_at)}`,
+            })
+          }
+          className="line-clamp-3 rounded-md text-left text-[11px] leading-4 text-slate-400 transition-colors hover:text-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+        >
+          {branch.prompt}
+        </button>
+      </div>
+      {branch.candidates.map((candidate) => (
+        <HistoryCandidateCard
+          key={candidate.id}
+          candidate={candidate}
+          selectedGeneratedAssetId={selectedGeneratedAssetId}
+          selectedTaskPlaceholderId={selectedTaskPlaceholderId}
+          branchBaseAssetId={branchBaseAssetId}
+          onSelectRound={onSelectRound}
+          onSelectPlaceholder={onSelectPlaceholder}
+        />
+      ))}
+    </div>
+  );
+}
+
+function HistoryCandidateCard({
+  candidate,
+  selectedGeneratedAssetId,
+  selectedTaskPlaceholderId,
+  branchBaseAssetId,
+  onSelectRound,
+  onSelectPlaceholder,
+}: {
+  candidate: ImageHistoryCandidate;
+  selectedGeneratedAssetId: string | null;
+  selectedTaskPlaceholderId: string | null;
+  branchBaseAssetId: string | null;
+  onSelectRound: (assetId: string) => void;
+  onSelectPlaceholder: (placeholderId: string) => void;
+}) {
+  if (candidate.kind === "placeholder") {
+    const active = candidate.id === selectedTaskPlaceholderId;
+    const running = candidate.status === "queued" || candidate.status === "running";
+    return (
+      <div
+        className={`group/card relative aspect-square h-full min-w-[7rem] shrink-0 overflow-hidden rounded-2xl border bg-white transition-all ${
+          active ? "border-indigo-400 ring-2 ring-indigo-200" : "border-slate-200 hover:border-slate-300"
+        }`}
+      >
+        <button
+          type="button"
+          onClick={() => onSelectPlaceholder(candidate.id)}
+          className="flex h-full w-full flex-col justify-between p-2 text-left"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <span className={`rounded-full border px-1.5 py-0.5 text-[10px] font-semibold ${placeholderStatusClass(candidate)}`}>
+              {candidate.candidate_index}/{candidate.candidate_count}
+            </span>
+            {active ? <Check size={13} className="shrink-0 text-indigo-600" /> : null}
+          </div>
+          <div className="flex flex-1 items-center justify-center">
+            <div className="relative flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-50 text-indigo-600 ring-1 ring-slate-200">
+              {running ? <Loader2 size={19} className="animate-spin" /> : <Sparkles size={19} />}
+            </div>
+          </div>
+          <div>
+            <div className="truncate text-[11px] font-semibold text-slate-700">{placeholderStatusLabel(candidate)}</div>
+            <div className="mt-0.5 line-clamp-2 text-[10px] leading-3 text-slate-400">{candidate.prompt}</div>
+          </div>
+        </button>
+      </div>
+    );
+  }
+
+  const round = candidate.round;
+  const active = round.generated_asset.id === selectedGeneratedAssetId;
+  const asBase = round.generated_asset.id === branchBaseAssetId;
+  return (
+    <div
+      className={`group/card relative aspect-square h-full min-w-[7rem] shrink-0 overflow-hidden rounded-2xl border bg-white transition-all ${
+        active ? "border-indigo-400 ring-2 ring-indigo-200" : "border-slate-200 hover:border-slate-300"
+      } ${asBase ? "shadow-md shadow-indigo-200/70" : "shadow-sm shadow-slate-200/60"}`}
+    >
+      <button type="button" onClick={() => onSelectRound(round.generated_asset.id)} className="block h-full w-full text-left">
+        <img
+          src={api.toApiUrl(round.generated_asset.thumbnail_url)}
+          alt={round.prompt}
+          loading="lazy"
+          decoding="async"
+          className="h-full w-full object-cover"
+        />
+        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/85 via-slate-950/35 to-transparent p-1.5 pt-8 text-white">
+          <div className="flex items-center justify-between gap-2 text-[11px] font-medium">
+            <span className="min-w-0 truncate">
+              {round.candidate_count > 1 ? `${round.candidate_index}/${round.candidate_count}` : imageRoundSizeLabel(round)}
+            </span>
+            {active ? <Check size={13} className="shrink-0" /> : null}
+          </div>
+        </div>
+      </button>
+      {asBase ? (
+        <div className="absolute left-1.5 top-1.5 max-w-[calc(100%-2.75rem)] truncate rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow-sm">
+          基图
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function ProductAssociationPanel({

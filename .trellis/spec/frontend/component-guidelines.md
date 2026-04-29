@@ -186,7 +186,7 @@ Pages provide data and mutations; the shared picker owns only presentational siz
 `web/src/components/TopNav.tsx` is the shared authenticated product navigation bar, not just a page title strip.
 
 - Every primary authenticated page should render `TopNav` so the same frequent entries are always available:
-  `商品/工作台`, `连续生图`, `画廊`, and `配置`.
+  `商品/工作台`, `文/图生图`, `画廊`, and `配置`.
 - The entries link to `/products`, `/image-chat`, `/gallery`, and `/settings`; keep route declarations centralized in
   `web/src/App.tsx`.
 - `TopNav` also exposes the persistent guided-onboarding action through `OnboardingNavButton`. Keep it visually secondary

@@ -232,6 +232,7 @@ def test_settings_api_accepts_and_validates_optional_image_tool_fields(configure
     assert initial_items["image_tool_quality"]["input_type"] == "select"
     assert initial_items["image_tool_output_compression"]["minimum"] == 0
     assert initial_items["image_tool_output_compression"]["maximum"] == 100
+    assert "image_tool_background" not in initial_items
 
     updated = client.patch(
         "/api/settings",
@@ -241,7 +242,6 @@ def test_settings_api_accepts_and_validates_optional_image_tool_fields(configure
                 "image_tool_quality": "high",
                 "image_tool_output_format": "jpeg",
                 "image_tool_output_compression": 82,
-                "image_tool_background": "transparent",
                 "image_tool_moderation": "low",
                 "image_tool_action": "generate",
                 "image_tool_input_fidelity": "high",
@@ -256,7 +256,6 @@ def test_settings_api_accepts_and_validates_optional_image_tool_fields(configure
     assert settings.image_tool_quality == "high"
     assert settings.image_tool_output_format == "jpeg"
     assert settings.image_tool_output_compression == 82
-    assert settings.image_tool_background == "transparent"
     assert settings.image_tool_moderation == "low"
     assert settings.image_tool_action == "generate"
     assert settings.image_tool_input_fidelity == "high"

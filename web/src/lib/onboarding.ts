@@ -119,18 +119,18 @@ export const ONBOARDING_STEPS: OnboardingStep[] = [
       "如果背景太乱，加“干净背景，只保留 1-2 个陪衬物”。",
       "每次只改一两个点，再重新运行，这样更容易知道哪句话有效。",
     ],
-    expected: "满意后下载图片；还想继续微调，可以进入连续生图。",
-    ctaLabel: "去连续生图微调",
+    expected: "满意后下载图片；还想继续微调，可以进入文/图生图。",
+    ctaLabel: "去文/图生图微调",
   },
   {
     id: "image-chat-polish",
     page: "image-chat",
-    title: "第 8 步：用连续生图继续微调",
+    title: "第 8 步：用文/图生图继续微调",
     shortTitle: "连续微调",
     goal: "围绕同一商品或同一张结果继续对话式改图。",
     instructions: [
       "选择商品或使用当前会话。",
-      "上传参考图，或选中上一轮生成结果。",
+      "选中上一轮生成结果作为基图。",
       "用一句话提出修改，例如“保持包的角度不变，背景换成更明亮的办公室，减少桌面杂物”。",
     ],
     expected: "得到满意结果后，可以下载，或回写到商品里继续作为参考素材。",
@@ -174,7 +174,7 @@ export function pageLabel(page: OnboardingPage): string {
     products: "商品列表",
     "product-create": "新建商品页",
     workbench: "商品工作台",
-    "image-chat": "连续生图",
+    "image-chat": "文/图生图",
   };
   return labels[page];
 }

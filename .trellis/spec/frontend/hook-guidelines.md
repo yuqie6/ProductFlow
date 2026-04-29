@@ -97,8 +97,13 @@ nodes or running workflow runs.
 
 - Do not put `refetchInterval` on the full `['image-session', selectedSessionId]` query for active generation.
 - Enable the status query only when the cached full detail has an active queued/running generation task.
-- Each status response should merge `title`, `updated_at`, and `generation_tasks` into the cached full detail so the task
-  card, queue position, failure reason, provider notes, and duplicate-submit disabled state stay current.
+- Each status response should merge `title`, `updated_at`, and `generation_tasks` into the cached full detail so task
+  cards, queue position, failure reason, provider notes, and history placeholders stay current.
+- Active `generation_tasks` must not be used as a session-wide submit lock. The submit button may be disabled while the
+  current mutation is pending, but queued/running tasks in the same session still allow a changed prompt, size, branch
+  base image, reference selection, generation count, or tool-options payload to submit immediately.
+- Accidental duplicate prevention for ImageChat is a short local guard keyed by prompt, size, branch base image, selected
+  references, generation count, and normalized tool options. It blocks only very-short-window identical payload repeats.
 - When status shows a new round count/latest round or a task changes from active to terminal, invalidate/refetch the full
   detail query once so generated candidates/history appear.
 - Keep write mutations authoritative: create/update/upload/delete/generate handlers may still set full detail cache from
@@ -116,15 +121,18 @@ nodes or running workflow runs.
 ### 5. Good/Base/Bad Cases
 
 - Good: active task updates the visible queue position every 1500ms without refetching every historical round and asset.
+- Good: one queued/running task is visible in the history tree while a different payload can be submitted immediately.
 - Base: a task failure appears in the task card, then full detail is refetched once.
 - Bad: status polling replaces the detail cache with a partial object missing `assets` or `rounds`.
 - Bad: broadening this ImageChat status query to ProductDetail workflow polling without a separate workflow DTO.
+- Bad: disabling ImageChat submission solely because `has_active_generation_task` is true.
 
 ### 6. Tests Required
 
 - Pure helper tests for active-task detection.
 - Pure helper tests for merging status into cached detail without replacing `assets` or `rounds`.
 - Pure helper tests for deciding when status requires a full detail refresh.
+- Pure helper tests for task-derived history placeholders/tree structure and the short duplicate-submit guard.
 - Run `pnpm --dir web lint`, `pnpm --dir web test:run`, and `just web-build`.
 
 ### 7. Wrong vs Correct
