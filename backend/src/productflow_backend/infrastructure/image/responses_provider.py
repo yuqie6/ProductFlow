@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from base64 import b64encode
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from time import sleep
 from typing import Any
 
 from openai import OpenAI
@@ -32,6 +34,9 @@ IMAGE_TOOL_OPTIONAL_FIELD_KEYS: tuple[str, ...] = (
     "partial_images",
     "n",
 )
+RESPONSES_BACKGROUND_POLL_INTERVAL_SECONDS = 2.0
+RESPONSES_IN_PROGRESS_STATUSES = {"queued", "in_progress"}
+RESPONSES_TERMINAL_FAILURE_STATUSES = {"failed", "cancelled", "canceled", "incomplete", "expired"}
 
 
 @dataclass(slots=True)
@@ -171,6 +176,7 @@ class OpenAIResponsesImageClient:
         reference_images: list[ResponsesReferenceImage] | None = None,
         previous_response_id: str | None = None,
         tool_options: dict[str, Any] | None = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> ResponsesImageResult:
         if not self.api_key:
             raise RuntimeError("图片供应商缺少 IMAGE_API_KEY")
@@ -182,6 +188,7 @@ class OpenAIResponsesImageClient:
             "model": self.model,
             "input": input_payload,
             "tools": [tool],
+            "background": True,
         }
         if previous_response_id:
             request_payload["previous_response_id"] = previous_response_id
@@ -196,19 +203,13 @@ class OpenAIResponsesImageClient:
         except Exception as exc:  # noqa: BLE001
             raise RuntimeError("图片供应商请求失败，请检查供应商配置后重试") from exc
 
-        try:
-            response = client.responses.create(**request_payload)
-        except Exception as exc:  # noqa: BLE001
-            if not self._has_optional_tool_fields(tool):
-                raise RuntimeError("图片供应商请求失败，请检查供应商配置后重试") from exc
-            fallback_payload = dict(request_payload)
-            fallback_payload["tools"] = [self._build_image_generation_tool(size, include_optional=False)]
-            try:
-                response = client.responses.create(**fallback_payload)
-            except Exception as fallback_exc:  # noqa: BLE001
-                raise RuntimeError("图片供应商请求失败，请检查供应商配置后重试") from fallback_exc
-            request_payload = fallback_payload
-            fallback_used = True
+        response, request_payload, fallback_used = self._create_response_with_fallback(
+            client=client,
+            request_payload=request_payload,
+            requested_tool=tool,
+            size=size,
+        )
+        response = self._poll_background_response(client, response, progress_callback=progress_callback)
 
         output_call = self._extract_image_generation_call(response)
         image_b64 = _get_value(output_call, "result")
@@ -246,6 +247,84 @@ class OpenAIResponsesImageClient:
             image_generation_call_id=call_id,
             provider_request_json=request_json,
             provider_output_json=output_json,
+        )
+
+    def _create_response_with_fallback(
+        self,
+        *,
+        client: Any,
+        request_payload: dict[str, Any],
+        requested_tool: dict[str, Any],
+        size: str,
+    ) -> tuple[Any, dict[str, Any], bool]:
+        fallback_used = False
+        current_payload = request_payload
+        while True:
+            try:
+                return client.responses.create(**current_payload), current_payload, fallback_used
+            except Exception as exc:  # noqa: BLE001
+                if current_payload.get("background") is True and self._is_background_unsupported_error(exc):
+                    current_payload = dict(current_payload)
+                    current_payload.pop("background", None)
+                    continue
+                if self._has_optional_tool_fields(current_payload["tools"][0]):
+                    current_payload = dict(current_payload)
+                    current_payload["tools"] = [self._build_image_generation_tool(size, include_optional=False)]
+                    fallback_used = current_payload["tools"][0] != requested_tool
+                    continue
+                raise RuntimeError("图片供应商请求失败，请检查供应商配置后重试") from exc
+
+    def _is_background_unsupported_error(self, exc: Exception) -> bool:
+        message = str(exc).lower()
+        return "background" in message and any(
+            marker in message
+            for marker in (
+                "unknown",
+                "unsupported",
+                "unexpected",
+                "extra",
+                "unrecognized",
+                "not support",
+                "not_supported",
+            )
+        )
+
+    def _poll_background_response(
+        self,
+        client: Any,
+        response: Any,
+        *,
+        progress_callback: Callable[[dict[str, Any]], None] | None,
+    ) -> Any:
+        self._emit_response_progress(response, progress_callback)
+        response_id = str(_get_value(response, "id", "") or "")
+        status = str(_get_value(response, "status", "") or "").lower()
+        while response_id and status in RESPONSES_IN_PROGRESS_STATUSES and hasattr(client.responses, "retrieve"):
+            sleep(RESPONSES_BACKGROUND_POLL_INTERVAL_SECONDS)
+            try:
+                response = client.responses.retrieve(response_id)
+            except Exception as exc:  # noqa: BLE001
+                raise RuntimeError("图片供应商请求失败，请检查供应商配置后重试") from exc
+            self._emit_response_progress(response, progress_callback)
+            status = str(_get_value(response, "status", "") or "").lower()
+        if status in RESPONSES_TERMINAL_FAILURE_STATUSES:
+            raise RuntimeError("图片供应商后台生成未完成，请稍后重试")
+        return response
+
+    def _emit_response_progress(
+        self,
+        response: Any,
+        progress_callback: Callable[[dict[str, Any]], None] | None,
+    ) -> None:
+        if progress_callback is None:
+            return
+        response_json = _sanitize_base64_images(_jsonable(response))
+        progress_callback(
+            {
+                "provider_response_id": str(_get_value(response, "id", "") or "") or None,
+                "provider_response_status": str(_get_value(response, "status", "") or "") or None,
+                "provider_response": response_json,
+            }
         )
 
     def _build_image_generation_tool(

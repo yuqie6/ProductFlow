@@ -19,6 +19,10 @@ IMAGE_GENERATION_MIN_MAX_DIMENSION = 512
 IMAGE_GENERATION_MAX_MAX_DIMENSION = 8192
 IMAGE_GENERATION_MAX_DIMENSION = DEFAULT_IMAGE_GENERATION_MAX_DIMENSION
 IMAGE_GENERATION_MAX_PIXELS = DEFAULT_IMAGE_GENERATION_MAX_DIMENSION * DEFAULT_IMAGE_GENERATION_MAX_DIMENSION
+DEFAULT_IMAGE_SESSION_IDLE_TIMEOUT_MINUTES = 90
+IMAGE_SESSION_IDLE_TIMEOUT_MIN_MINUTES = 1
+IMAGE_SESSION_IDLE_TIMEOUT_MAX_MINUTES = 24 * 60
+DEFAULT_IMAGE_SESSION_WORKER_FAILSAFE_TIME_LIMIT_MINUTES = 24 * 60
 IMAGE_SIZE_CONFIG_KEYS = {"image_main_image_size", "image_promo_poster_size"}
 PROMPT_CONFIG_KEYS = {
     "prompt_brief_system",
@@ -148,6 +152,16 @@ class Settings(BaseSettings):
     upload_allowed_image_mime_types: str = "image/png,image/jpeg,image/webp"
 
     generation_max_concurrent_tasks: int = Field(default=3, ge=1, le=20)
+    image_session_stale_running_after_minutes: int = Field(
+        default=DEFAULT_IMAGE_SESSION_IDLE_TIMEOUT_MINUTES,
+        ge=IMAGE_SESSION_IDLE_TIMEOUT_MIN_MINUTES,
+        le=IMAGE_SESSION_IDLE_TIMEOUT_MAX_MINUTES,
+    )
+    image_session_worker_failsafe_time_limit_minutes: int = Field(
+        default=DEFAULT_IMAGE_SESSION_WORKER_FAILSAFE_TIME_LIMIT_MINUTES,
+        ge=IMAGE_SESSION_IDLE_TIMEOUT_MIN_MINUTES,
+        le=IMAGE_SESSION_IDLE_TIMEOUT_MAX_MINUTES,
+    )
     admin_access_required: bool = True
     deletion_enabled: bool = False
 
@@ -505,6 +519,18 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
         description="全局资源保护阈值；工作流和连续生图达到上限时会提示稍后重试。",
         minimum=1,
         maximum=20,
+    ),
+    ConfigDefinition(
+        key="image_session_stale_running_after_minutes",
+        label="连续生图进度闲置恢复阈值（分钟）",
+        category="生成队列",
+        input_type="number",
+        description=(
+            "worker 启动恢复时，running 连续生图任务会按最近 progress heartbeat 判断是否闲置；"
+            "旧任务没有 progress 时回退到 started_at。"
+        ),
+        minimum=IMAGE_SESSION_IDLE_TIMEOUT_MIN_MINUTES,
+        maximum=IMAGE_SESSION_IDLE_TIMEOUT_MAX_MINUTES,
     ),
     ConfigDefinition(
         key="admin_access_required",

@@ -7,10 +7,10 @@ from functools import lru_cache
 
 import dramatiq
 from dramatiq.brokers.redis import RedisBroker
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 
-from productflow_backend.config import get_settings
+from productflow_backend.config import get_runtime_settings, get_settings
 from productflow_backend.domain.enums import JobStatus, WorkflowNodeStatus, WorkflowRunStatus
 from productflow_backend.infrastructure.db.models import (
     ImageSessionGenerationTask,
@@ -23,6 +23,10 @@ from productflow_backend.infrastructure.db.session import get_session_factory
 logger = logging.getLogger(__name__)
 
 DEFAULT_STALE_RUNNING_AFTER = timedelta(minutes=30)
+
+
+def get_image_session_stale_running_after() -> timedelta:
+    return timedelta(minutes=int(get_runtime_settings().image_session_stale_running_after_minutes))
 
 
 def _as_aware_utc(value: datetime) -> datetime:
@@ -162,24 +166,31 @@ def recover_unfinished_workflow_runs(
 def recover_unfinished_image_session_generation_tasks(
     *,
     reset_stale_running: bool = False,
-    stale_running_after: timedelta = DEFAULT_STALE_RUNNING_AFTER,
+    stale_running_after: timedelta | None = None,
 ) -> ImageSessionGenerationTaskRecoverySummary:
     """恢复 queued / stale running 的连续生图任务，Redis 只作为可补发 delivery。"""
 
-    cutoff = utcnow() - stale_running_after
+    resolved_stale_running_after = (
+        get_image_session_stale_running_after() if stale_running_after is None else stale_running_after
+    )
+    cutoff = utcnow() - resolved_stale_running_after
     session = get_session_factory()()
     task_ids_to_enqueue: list[str] = []
     queued_tasks = 0
     stale_running_tasks = 0
 
     try:
+        last_progress_at = func.coalesce(
+            ImageSessionGenerationTask.progress_updated_at,
+            ImageSessionGenerationTask.started_at,
+        )
         statement = select(ImageSessionGenerationTask).where(
             ImageSessionGenerationTask.is_retryable.is_(True),
             or_(
                 ImageSessionGenerationTask.status == JobStatus.QUEUED,
                 (
                     (ImageSessionGenerationTask.status == JobStatus.RUNNING)
-                    & (ImageSessionGenerationTask.started_at <= cutoff)
+                    & (last_progress_at <= cutoff)
                 )
                 if reset_stale_running
                 else False,
@@ -188,12 +199,31 @@ def recover_unfinished_image_session_generation_tasks(
         tasks = list(session.scalars(statement).all())
         for task in tasks:
             if task.status == JobStatus.RUNNING:
-                task.status = JobStatus.QUEUED
-                task.started_at = None
+                if task.completed_candidates:
+                    now = utcnow()
+                    task.status = JobStatus.FAILED
+                    task.finished_at = now
+                    task.is_retryable = False
+                    task.active_candidate_index = None
+                    task.progress_phase = "failed_idle_timeout"
+                    task.progress_updated_at = now
+                    task.failure_reason = (
+                        f"已生成 {task.completed_candidates}/{task.generation_count} 张候选，"
+                        "但任务超时，剩余候选未完成。"
+                    )
+                else:
+                    task.status = JobStatus.QUEUED
+                    task.started_at = None
+                    task.active_candidate_index = None
+                    task.provider_response_status = None
+                    task.provider_response_id = None
+                    task.progress_phase = "requeued_after_idle"
+                    task.progress_updated_at = utcnow()
+                    task_ids_to_enqueue.append(task.id)
                 stale_running_tasks += 1
             else:
                 queued_tasks += 1
-            task_ids_to_enqueue.append(task.id)
+                task_ids_to_enqueue.append(task.id)
         if stale_running_tasks:
             session.commit()
     except Exception:

@@ -486,6 +486,21 @@ def _execute_image_session_round_generation(
     for candidate_index in range(1, generation_count + 1):
         relative_path: str | None = None
         try:
+            if generation_task_id is not None:
+                _update_image_generation_task_progress(
+                    session,
+                    task_id=generation_task_id,
+                    phase="candidate_started",
+                    completed_candidates=completed_candidates,
+                    active_candidate_index=candidate_index,
+                    provider_response_id=None,
+                    provider_response_status=None,
+                    progress_metadata={
+                        "candidate_index": candidate_index,
+                        "candidate_count": generation_count,
+                    },
+                    clear_provider_response=True,
+                )
             result = service.generate(
                 prompt=prompt,
                 size=normalized_size,
@@ -493,6 +508,13 @@ def _execute_image_session_round_generation(
                 manual_reference_images=manual_references,
                 previous_response_id=previous_response_id,
                 tool_options=normalized_tool_options,
+                progress_callback=_provider_progress_callback(
+                    session,
+                    task_id=generation_task_id,
+                    candidate_index=candidate_index,
+                    generation_count=generation_count,
+                    completed_candidates=completed_candidates,
+                ),
             )
 
             relative_path = storage.save_image_session_generated(
@@ -543,13 +565,26 @@ def _execute_image_session_round_generation(
                 generated_asset_id=asset.id,
             )
             session.add(round_item)
+            session.flush()
             if should_update_default_title:
                 image_session.title = _trim_title(prompt)
                 should_update_default_title = False
             image_session.updated_at = now_utc()
-            if generation_task_id is not None and candidate_index == generation_count:
+            if generation_task_id is not None:
                 task = session.get(ImageSessionGenerationTask, generation_task_id)
                 if task is not None:
+                    task.completed_candidates = candidate_index
+                    task.active_candidate_index = None
+                    task.progress_phase = "candidate_saved"
+                    task.progress_updated_at = now_utc()
+                    task.result_generation_group_id = generation_group_id
+                    task.progress_metadata = {
+                        "candidate_index": candidate_index,
+                        "candidate_count": generation_count,
+                        "generated_asset_id": asset.id,
+                        "round_id": round_item.id,
+                    }
+                if task is not None and candidate_index == generation_count:
                     _finish_image_generation_task(
                         session,
                         task=task,
@@ -695,6 +730,8 @@ def mark_image_session_generation_task_enqueue_failed(session: Session, *, task_
     task.status = JobStatus.FAILED
     task.failure_reason = reason[:1000]
     task.finished_at = now_utc()
+    task.progress_phase = "enqueue_failed"
+    task.progress_updated_at = task.finished_at
     task.is_retryable = True
     image_session = session.get(ImageSession, task.session_id)
     if image_session is not None:
@@ -711,15 +748,88 @@ def _finish_image_generation_task(
     result_generation_group_id: str | None = None,
     is_retryable: bool,
 ) -> None:
+    now = now_utc()
     task.status = status
     task.failure_reason = failure_reason[:1000] if failure_reason else None
     task.result_generation_group_id = result_generation_group_id
     task.is_retryable = is_retryable
-    task.finished_at = now_utc()
+    task.finished_at = now
+    task.active_candidate_index = None
+    task.progress_updated_at = now
+    task.progress_phase = "succeeded" if status == JobStatus.SUCCEEDED else "failed"
     image_session = session.get(ImageSession, task.session_id)
     if image_session is not None:
-        image_session.updated_at = now_utc()
+        image_session.updated_at = now
     session.commit()
+
+
+def _update_image_generation_task_progress(
+    session: Session,
+    *,
+    task_id: str,
+    phase: str,
+    completed_candidates: int | None = None,
+    active_candidate_index: int | None = None,
+    provider_response_id: str | None = None,
+    provider_response_status: str | None = None,
+    progress_metadata: dict[str, Any] | None = None,
+    result_generation_group_id: str | None = None,
+    clear_provider_response: bool = False,
+    commit: bool = True,
+) -> None:
+    task = session.get(ImageSessionGenerationTask, task_id)
+    if task is None or task.status not in {JobStatus.QUEUED, JobStatus.RUNNING}:
+        return
+    task.progress_phase = phase[:64]
+    task.progress_updated_at = now_utc()
+    if completed_candidates is not None:
+        task.completed_candidates = completed_candidates
+    task.active_candidate_index = active_candidate_index
+    if clear_provider_response:
+        task.provider_response_id = None
+        task.provider_response_status = None
+    elif provider_response_id is not None:
+        task.provider_response_id = provider_response_id[:255]
+        if provider_response_status is not None:
+            task.provider_response_status = provider_response_status[:64]
+    elif provider_response_status is not None:
+        task.provider_response_status = provider_response_status[:64]
+    if progress_metadata is not None:
+        task.progress_metadata = progress_metadata
+    if result_generation_group_id is not None:
+        task.result_generation_group_id = result_generation_group_id
+    if commit:
+        session.commit()
+
+
+def _provider_progress_callback(
+    session: Session,
+    *,
+    task_id: str | None,
+    candidate_index: int,
+    generation_count: int,
+    completed_candidates: int,
+) -> Callable[[dict[str, Any]], None] | None:
+    if task_id is None:
+        return None
+
+    def callback(progress: dict[str, Any]) -> None:
+        _update_image_generation_task_progress(
+            session,
+            task_id=task_id,
+            phase="provider_polling",
+            completed_candidates=completed_candidates,
+            active_candidate_index=candidate_index,
+            provider_response_id=progress.get("provider_response_id"),
+            provider_response_status=progress.get("provider_response_status"),
+            progress_metadata={
+                "candidate_index": candidate_index,
+                "candidate_count": generation_count,
+                "provider_response": progress.get("provider_response"),
+            },
+        )
+
+    return callback
 
 
 def _mark_image_generation_task_running(session: Session, task: ImageSessionGenerationTask) -> bool:
@@ -736,6 +846,13 @@ def _mark_image_generation_task_running(session: Session, task: ImageSessionGene
             started_at=now_utc(),
             finished_at=None,
             failure_reason=None,
+            progress_phase="running",
+            progress_updated_at=now_utc(),
+            completed_candidates=0,
+            active_candidate_index=None,
+            provider_response_id=None,
+            provider_response_status=None,
+            progress_metadata=None,
             attempts=ImageSessionGenerationTask.attempts + 1,
         )
     )

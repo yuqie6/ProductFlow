@@ -59,6 +59,13 @@ class ImageSessionGenerationTaskResponse(BaseModel):
     base_asset_id: str | None = None
     selected_reference_asset_ids: list[str] = Field(default_factory=list)
     generation_count: int
+    completed_candidates: int
+    active_candidate_index: int | None = None
+    progress_phase: str | None = None
+    progress_updated_at: datetime | None = None
+    provider_response_id: str | None = None
+    provider_response_status: str | None = None
+    progress_metadata: dict | None = None
     failure_reason: str | None = None
     result_generation_group_id: str | None = None
     tool_options: dict | None = None
@@ -249,6 +256,13 @@ def serialize_image_session_generation_task(
         base_asset_id=task.base_asset_id,
         selected_reference_asset_ids=task.selected_reference_asset_ids or [],
         generation_count=task.generation_count,
+        completed_candidates=task.completed_candidates,
+        active_candidate_index=task.active_candidate_index,
+        progress_phase=task.progress_phase,
+        progress_updated_at=task.progress_updated_at,
+        provider_response_id=task.provider_response_id,
+        provider_response_status=task.provider_response_status,
+        progress_metadata=task.progress_metadata,
         failure_reason=task.failure_reason,
         result_generation_group_id=task.result_generation_group_id,
         tool_options=task.tool_options,

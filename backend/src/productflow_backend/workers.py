@@ -7,6 +7,7 @@ import dramatiq
 
 from productflow_backend.application.image_sessions import execute_image_session_generation_task
 from productflow_backend.application.product_workflows import execute_product_workflow_run
+from productflow_backend.config import get_runtime_settings
 from productflow_backend.infrastructure.logging import cleanup_old_logs, configure_logging
 from productflow_backend.infrastructure.queue import (
     get_broker,
@@ -17,7 +18,12 @@ from productflow_backend.infrastructure.queue import (
 configure_logging()
 get_broker()
 
-IMAGE_SESSION_GENERATION_TIME_LIMIT_MS = 30 * 60 * 1000
+
+def get_image_session_worker_failsafe_time_limit_ms() -> int:
+    return int(get_runtime_settings().image_session_worker_failsafe_time_limit_minutes) * 60 * 1000
+
+
+IMAGE_SESSION_WORKER_FAILSAFE_TIME_LIMIT_MS = get_image_session_worker_failsafe_time_limit_ms()
 
 
 @dramatiq.actor(max_retries=0)
@@ -26,7 +32,7 @@ def run_product_workflow_run(workflow_run_id: str) -> None:
     execute_product_workflow_run(workflow_run_id)
 
 
-@dramatiq.actor(max_retries=0, time_limit=IMAGE_SESSION_GENERATION_TIME_LIMIT_MS)
+@dramatiq.actor(max_retries=0, time_limit=IMAGE_SESSION_WORKER_FAILSAFE_TIME_LIMIT_MS)
 def run_image_session_generation_task(task_id: str) -> None:
     """连续生图 worker：执行失败落库为通用安全错误。"""
     execute_image_session_generation_task(task_id)
