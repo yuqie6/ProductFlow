@@ -6,6 +6,7 @@ import {
   GalleryHorizontalEnd,
   History,
   Image as ImageIcon,
+  ImagePlus,
   Layers3,
   Loader2,
   MessagesSquare,
@@ -19,6 +20,7 @@ import {
 import { useNavigate, useParams } from "react-router-dom";
 
 import { ImageSizePicker } from "../components/ImageSizePicker";
+import { ImageDropZone } from "../components/ImageDropZone";
 import { ImageToolControls } from "../components/ImageToolControls";
 import { PromptPreviewDialog, type PromptPreview } from "../components/PromptPreviewDialog";
 import { TopNav } from "../components/TopNav";
@@ -40,6 +42,7 @@ import {
   getImageGenerationTaskPlaceholderId,
   isImageSessionGenerationTaskActive,
   mergeImageSessionStatusIntoDetail,
+  pruneSelectedReferenceIds,
   requiresImageSessionGenerationBase,
   selectVisibleGenerationTasks,
   shouldBlockDuplicateGenerationSubmit,
@@ -54,6 +57,7 @@ import type {
 } from "./image-chat/branching";
 import type {
   ImageSessionDetail,
+  ImageSessionAsset,
   ImageSessionRound,
   ImageSessionGenerationTask,
   ImageSessionListResponse,
@@ -66,6 +70,11 @@ import type {
 
 const DELETION_DISABLED_MESSAGE = "删除功能已关闭，请联系管理员";
 const DUPLICATE_GENERATION_SUBMIT_WINDOW_MS = 1800;
+const MAX_BRANCH_CONTEXT_IMAGES = 6;
+
+function getSessionReferenceAssets(imageSession: ImageSessionDetail | undefined): ImageSessionAsset[] {
+  return imageSession?.assets.filter((asset) => asset.kind === "reference_upload") ?? [];
+}
 
 function generationTaskLabel(task: ImageSessionGenerationTask) {
   if (task.status === "queued") {
@@ -176,6 +185,7 @@ export function ImageChatPage() {
   const [selectedGeneratedAssetId, setSelectedGeneratedAssetId] = useState<string | null>(null);
   const [selectedTaskPlaceholderId, setSelectedTaskPlaceholderId] = useState<string | null>(null);
   const [branchBaseAssetId, setBranchBaseAssetId] = useState<string | null>(null);
+  const [selectedReferenceAssetIds, setSelectedReferenceAssetIds] = useState<string[]>([]);
   const [generationCount, setGenerationCount] = useState(1);
   const [draft, setDraft] = useState("");
   const [size, setSize] = useState("1024x1024");
@@ -234,6 +244,7 @@ export function ImageChatPage() {
       setBranchBaseAssetId(null);
       setSelectedGeneratedAssetId(null);
       setSelectedTaskPlaceholderId(null);
+      setSelectedReferenceAssetIds([]);
       queryClient.setQueryData(["image-session", imageSession.id], imageSession);
       await queryClient.invalidateQueries({ queryKey: ["image-sessions", productId ?? "standalone"] });
       setErrorMessage("");
@@ -260,6 +271,7 @@ export function ImageChatPage() {
       setSelectedGeneratedAssetId(null);
       setSelectedTaskPlaceholderId(null);
       setBranchBaseAssetId(null);
+      setSelectedReferenceAssetIds([]);
     }
   }, [createSessionMutation, selectedSessionId, sessionItems, sessionsQuery.isLoading]);
 
@@ -282,6 +294,8 @@ export function ImageChatPage() {
     imageSession?.rounds ?? [],
     imageSession?.generation_tasks ?? [],
   );
+  const sessionReferenceAssets = useMemo(() => getSessionReferenceAssets(imageSession), [imageSession]);
+  const maxSelectedReferenceCount = branchBaseAssetId ? MAX_BRANCH_CONTEXT_IMAGES - 1 : MAX_BRANCH_CONTEXT_IMAGES;
   const hasActiveGenerationTask = imageSession?.generation_tasks.some(isImageSessionGenerationTaskActive) ?? false;
 
   const sessionStatusQuery = useQuery({
@@ -350,6 +364,11 @@ export function ImageChatPage() {
     if (selectedCompletedAssetId && branchBaseAssetId !== selectedCompletedAssetId) {
       setBranchBaseAssetId(selectedCompletedAssetId);
     }
+    const availableReferenceIds = sessionReferenceAssets.map((asset) => asset.id);
+    setSelectedReferenceAssetIds((current) => {
+      const next = pruneSelectedReferenceIds(current, availableReferenceIds, maxSelectedReferenceCount);
+      return next.length === current.length && next.every((id, index) => id === current[index]) ? current : next;
+    });
     if (
       pendingGeneratedRoundCountRef.current !== null &&
       imageSession.rounds.length > pendingGeneratedRoundCountRef.current
@@ -368,7 +387,9 @@ export function ImageChatPage() {
     branchBaseAssetId,
     historyBranches,
     imageSession,
+    maxSelectedReferenceCount,
     selectedGeneratedAssetId,
+    sessionReferenceAssets,
     selectedTaskPlaceholderId,
   ]);
 
@@ -430,6 +451,62 @@ export function ImageChatPage() {
     },
   });
 
+  const uploadReferenceMutation = useMutation({
+    mutationFn: (input: { sessionId: string; files: File[] }) =>
+      api.addImageSessionReferenceImages(input.sessionId, input.files),
+    onSuccess: (updated, input) => {
+      const previousReferenceIds = new Set(
+        input.sessionId === selectedSessionId ? sessionReferenceAssets.map((asset) => asset.id) : [],
+      );
+      const uploadedReferenceIds = updated.assets
+        .filter((asset) => asset.kind === "reference_upload" && !previousReferenceIds.has(asset.id))
+        .map((asset) => asset.id);
+      queryClient.setQueryData(["image-session", updated.id], updated);
+      void queryClient.invalidateQueries({ queryKey: ["image-sessions", productId ?? "standalone"] });
+      const isCurrentSession = updated.id === selectedSessionId;
+      if (isCurrentSession && uploadedReferenceIds.length) {
+        setSelectedReferenceAssetIds((current) =>
+          pruneSelectedReferenceIds(
+            [...current, ...uploadedReferenceIds],
+            getSessionReferenceAssets(updated).map((asset) => asset.id),
+            maxSelectedReferenceCount,
+          ),
+        );
+      }
+      if (isCurrentSession) {
+        setSuccessMessage("参考图已上传");
+        setErrorMessage("");
+      }
+    },
+    onError: (error) => {
+      setErrorMessage(error instanceof ApiError ? error.detail : "参考图上传失败");
+    },
+  });
+
+  const deleteSessionReferenceMutation = useMutation({
+    mutationFn: (input: { sessionId: string; assetId: string }) =>
+      api.deleteImageSessionReferenceImage(input.sessionId, input.assetId),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(["image-session", updated.id], updated);
+      void queryClient.invalidateQueries({ queryKey: ["image-sessions", productId ?? "standalone"] });
+      const isCurrentSession = updated.id === selectedSessionId;
+      if (isCurrentSession) {
+        setSelectedReferenceAssetIds((current) =>
+          pruneSelectedReferenceIds(
+            current,
+            getSessionReferenceAssets(updated).map((asset) => asset.id),
+            maxSelectedReferenceCount,
+          ),
+        );
+        setSuccessMessage("参考图已删除");
+        setErrorMessage("");
+      }
+    },
+    onError: (error) => {
+      setErrorMessage(error instanceof ApiError ? error.detail : "参考图删除失败");
+    },
+  });
+
   const deleteSessionMutation = useMutation({
     mutationFn: (sessionId: string) => api.deleteImageSession(sessionId),
     onSuccess: async (_response, deletedSessionId) => {
@@ -444,6 +521,7 @@ export function ImageChatPage() {
         setSelectedGeneratedAssetId(null);
         setSelectedTaskPlaceholderId(null);
         setBranchBaseAssetId(null);
+        setSelectedReferenceAssetIds([]);
         if (!remainingSessions.length) {
           autoCreateTriggered.current = false;
         }
@@ -538,11 +616,16 @@ export function ImageChatPage() {
       setErrorMessage(baseRequirementMessage);
       return;
     }
+    const selectedReferenceIds = pruneSelectedReferenceIds(
+      selectedReferenceAssetIds,
+      sessionReferenceAssets.map((asset) => asset.id),
+      maxSelectedReferenceCount,
+    );
     const payload: ImageGenerationSubmitPayload = {
       prompt,
       size,
       base_asset_id: requiresGenerationBase ? branchBaseAssetId : null,
-      selected_reference_asset_ids: [],
+      selected_reference_asset_ids: selectedReferenceIds,
       generation_count: clampGenerationCount(generationCount),
       tool_options: compactImageToolOptions(toolOptions, imageToolAllowedFields),
     };
@@ -619,6 +702,34 @@ export function ImageChatPage() {
     deleteProductReferenceMutation.mutate(assetId);
   }
 
+  function handleReferenceToggle(assetId: string, checked: boolean) {
+    setSelectedReferenceAssetIds((current) => {
+      const next = checked ? [...current, assetId] : current.filter((id) => id !== assetId);
+      return pruneSelectedReferenceIds(
+        next,
+        sessionReferenceAssets.map((asset) => asset.id),
+        maxSelectedReferenceCount,
+      );
+    });
+  }
+
+  function handleDeleteSessionReference(assetId: string) {
+    if (!selectedSessionId || deleteSessionReferenceMutation.isPending) {
+      return;
+    }
+    if (!window.confirm("删除这张会话参考图？已生成的历史记录不受影响。")) {
+      return;
+    }
+    deleteSessionReferenceMutation.mutate({ sessionId: selectedSessionId, assetId });
+  }
+
+  function handleUploadReferenceFiles(files: File[]) {
+    if (!selectedSessionId || uploadReferenceMutation.isPending || files.length === 0) {
+      return;
+    }
+    uploadReferenceMutation.mutate({ sessionId: selectedSessionId, files });
+  }
+
   return (
     <div className="flex min-h-screen flex-col bg-slate-100 text-slate-900 lg:h-screen lg:overflow-hidden">
       <TopNav
@@ -672,6 +783,7 @@ export function ImageChatPage() {
                         setSelectedGeneratedAssetId(null);
                         setSelectedTaskPlaceholderId(null);
                         setBranchBaseAssetId(null);
+                        setSelectedReferenceAssetIds([]);
                         setSuccessMessage("");
                         setErrorMessage("");
                       }}
@@ -970,6 +1082,22 @@ export function ImageChatPage() {
                     onTargetProductChange={setTargetProductId}
                     onDeleteReference={handleDeleteProductReference}
                     onAttach={handleAttach}
+                  />
+
+                  <SessionReferencePanel
+                    assets={sessionReferenceAssets}
+                    selectedAssetIds={selectedReferenceAssetIds}
+                    maxSelectedCount={maxSelectedReferenceCount}
+                    uploadBusy={uploadReferenceMutation.isPending}
+                    deletingAssetId={
+                      deleteSessionReferenceMutation.isPending
+                        ? (deleteSessionReferenceMutation.variables?.assetId ?? null)
+                        : null
+                    }
+                    disabled={!selectedSessionId}
+                    onFiles={handleUploadReferenceFiles}
+                    onToggle={handleReferenceToggle}
+                    onDelete={handleDeleteSessionReference}
                   />
 
                   <div>
@@ -1287,6 +1415,97 @@ function HistoryCandidateCard({
       {asBase ? (
         <div className="absolute left-1.5 top-1.5 max-w-[calc(100%-2.75rem)] truncate rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow-sm">
           基图
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SessionReferencePanel({
+  assets,
+  selectedAssetIds,
+  maxSelectedCount,
+  uploadBusy,
+  deletingAssetId,
+  disabled,
+  onFiles,
+  onToggle,
+  onDelete,
+}: {
+  assets: ImageSessionAsset[];
+  selectedAssetIds: string[];
+  maxSelectedCount: number;
+  uploadBusy: boolean;
+  deletingAssetId: string | null;
+  disabled: boolean;
+  onFiles: (files: File[]) => void;
+  onToggle: (assetId: string, checked: boolean) => void;
+  onDelete: (assetId: string) => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+      <div className="mb-2 text-sm font-semibold text-slate-950">会话参考图</div>
+      <ImageDropZone
+        ariaLabel="上传会话参考图"
+        multiple
+        disabled={disabled || uploadBusy}
+        className="flex cursor-pointer items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-600 transition-colors hover:border-indigo-300 hover:bg-indigo-50/40"
+        onFiles={onFiles}
+      >
+        {({ isDragging }) => (
+          <>
+            {uploadBusy ? <Loader2 size={16} className="mr-2 animate-spin" /> : <ImagePlus size={16} className="mr-2" />}
+            {isDragging ? "松开上传" : "上传参考图"}
+          </>
+        )}
+      </ImageDropZone>
+      <div className="mt-2 text-xs leading-5 text-slate-500">
+        已选 {selectedAssetIds.length}/{maxSelectedCount}
+      </div>
+      {assets.length ? (
+        <div className="mt-3 grid grid-cols-4 gap-2">
+          {assets.map((asset) => {
+            const deleting = deletingAssetId === asset.id;
+            const selected = selectedAssetIds.includes(asset.id);
+            const selectionLimitReached = !selected && selectedAssetIds.length >= maxSelectedCount;
+            return (
+              <div
+                key={asset.id}
+                className={`group relative overflow-hidden rounded-xl border bg-slate-50 ${
+                  selected ? "border-indigo-500 ring-2 ring-indigo-100" : "border-slate-200"
+                }`}
+              >
+                <a href={api.toApiUrl(asset.preview_url)} target="_blank" rel="noreferrer" title={asset.original_filename}>
+                  <img
+                    src={api.toApiUrl(asset.thumbnail_url)}
+                    alt={asset.original_filename}
+                    loading="lazy"
+                    decoding="async"
+                    className="h-20 w-full object-cover"
+                  />
+                </a>
+                <label className="absolute bottom-1 left-1 inline-flex items-center rounded-md bg-white/95 px-1.5 py-1 text-[11px] font-medium text-slate-700 shadow-sm ring-1 ring-slate-200">
+                  <input
+                    type="checkbox"
+                    checked={selected}
+                    disabled={selectionLimitReached}
+                    onChange={(event) => onToggle(asset.id, event.target.checked)}
+                    className="mr-1 h-3 w-3 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  用
+                </label>
+                <button
+                  type="button"
+                  aria-label="删除会话参考图"
+                  onClick={() => onDelete(asset.id)}
+                  disabled={deleting}
+                  className="absolute right-1 top-1 inline-flex h-7 w-7 items-center justify-center rounded-lg bg-white/90 text-slate-500 opacity-100 shadow-sm ring-1 ring-slate-200 transition-colors hover:text-red-600 disabled:opacity-60 md:opacity-0 md:group-hover:opacity-100"
+                >
+                  {deleting ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                </button>
+              </div>
+            );
+          })}
         </div>
       ) : null}
     </div>
