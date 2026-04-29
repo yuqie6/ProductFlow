@@ -173,6 +173,75 @@ def test_job_runs_drop_migration_and_downgrade_support_sqlite(tmp_path: Path, mo
     get_settings.cache_clear()
 
 
+def test_image_session_generation_progress_migration_and_downgrade_support_sqlite(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    database_path = tmp_path / "image-session-progress.db"
+    storage_root = tmp_path / "storage"
+    monkeypatch.setenv("ADMIN_ACCESS_KEY", "super-secret-admin-key")
+    monkeypatch.setenv("SESSION_SECRET", "super-secret-session-key-123")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path}")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/9")
+    monkeypatch.setenv("STORAGE_ROOT", str(storage_root))
+    get_settings.cache_clear()
+
+    backend_dir = Path(__file__).resolve().parents[1]
+    config = Config(str(backend_dir / "alembic.ini"))
+    config.set_main_option("script_location", str(backend_dir / "alembic"))
+    command.upgrade(config, "20260428_0017")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    now = "2026-04-28 00:00:00"
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                "INSERT INTO image_sessions (id, title, created_at, updated_at) "
+                "VALUES ('session-1', '迁移会话', :now, :now)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO image_session_generation_tasks "
+                "(id, session_id, status, prompt, size, generation_count, created_at, attempts, is_retryable) "
+                "VALUES ('task-1', 'session-1', 'running', '旧任务', '1024x1024', 2, :now, 1, 1)"
+            ),
+            {"now": now},
+        )
+
+    engine.dispose()
+    command.upgrade(config, "head")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    inspector = sa.inspect(engine)
+    columns = {column["name"]: column for column in inspector.get_columns("image_session_generation_tasks")}
+    assert columns["completed_candidates"]["nullable"] is False
+    assert columns["completed_candidates"]["default"] is None
+    assert columns["active_candidate_index"]["nullable"] is True
+    assert columns["progress_phase"]["nullable"] is True
+    assert columns["progress_updated_at"]["nullable"] is True
+    assert columns["provider_response_id"]["nullable"] is True
+    assert columns["provider_response_status"]["nullable"] is True
+    assert columns["progress_metadata"]["nullable"] is True
+    with engine.connect() as connection:
+        completed_candidates = connection.execute(
+            sa.text("SELECT completed_candidates FROM image_session_generation_tasks WHERE id = 'task-1'")
+        ).scalar_one()
+    assert completed_candidates == 0
+
+    engine.dispose()
+    command.downgrade(config, "20260428_0017")
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    inspector = sa.inspect(engine)
+    columns = {column["name"] for column in inspector.get_columns("image_session_generation_tasks")}
+    assert "completed_candidates" not in columns
+    assert "progress_metadata" not in columns
+
+    engine.dispose()
+    get_settings.cache_clear()
+
+
 def test_alembic_upgrade_removes_legacy_workflow_nodes(tmp_path: Path, monkeypatch) -> None:
     database_path = tmp_path / "legacy-workflow.db"
     storage_root = tmp_path / "storage"

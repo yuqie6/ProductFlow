@@ -161,6 +161,11 @@ def test_settings_api_persists_database_overrides(configured_env: Path) -> None:
     assert initial_items["image_provider_kind"]["value"] == "mock"
     assert initial_items["image_provider_kind"]["source"] == "env_default"
     assert initial_items["generation_max_concurrent_tasks"]["value"] == 3
+    assert initial_items["image_session_stale_running_after_minutes"]["value"] == 90
+    assert initial_items["image_session_stale_running_after_minutes"]["category"] == "生成队列"
+    assert initial_items["image_session_stale_running_after_minutes"]["minimum"] == 1
+    assert initial_items["image_session_stale_running_after_minutes"]["maximum"] == 24 * 60
+    assert "progress heartbeat" in initial_items["image_session_stale_running_after_minutes"]["description"]
     assert initial_items["admin_access_required"]["value"] is True
     assert initial_items["admin_access_required"]["category"] == "安全与运维"
     assert initial_items["deletion_enabled"]["value"] is False
@@ -174,6 +179,7 @@ def test_settings_api_persists_database_overrides(configured_env: Path) -> None:
                 "image_api_key": "database-image-key",
                 "image_generate_model": "gpt-5.4-mini",
                 "generation_max_concurrent_tasks": 2,
+                "image_session_stale_running_after_minutes": 75,
                 "deletion_enabled": True,
             }
         },
@@ -187,13 +193,22 @@ def test_settings_api_persists_database_overrides(configured_env: Path) -> None:
     assert get_runtime_settings().image_provider_kind == "openai_responses"
     assert get_runtime_settings().image_api_key == "database-image-key"
     assert get_runtime_settings().generation_max_concurrent_tasks == 2
+    assert get_runtime_settings().image_session_stale_running_after_minutes == 75
     assert get_runtime_settings().deletion_enabled is True
 
     session = get_session_factory()()
     try:
         assert session.get(AppSetting, "image_provider_kind").value == "openai_responses"
+        assert session.get(AppSetting, "image_session_stale_running_after_minutes").value == "75"
     finally:
         session.close()
+
+    invalid_timeout = client.patch(
+        "/api/settings",
+        json={"values": {"image_session_stale_running_after_minutes": 0}},
+    )
+    assert invalid_timeout.status_code == 400
+    assert "不能小于 1" in invalid_timeout.json()["detail"]
 
     reset = client.patch("/api/settings", json={"reset_keys": ["image_provider_kind"]})
     assert reset.status_code == 200

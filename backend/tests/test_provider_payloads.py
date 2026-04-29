@@ -716,6 +716,164 @@ def test_openai_responses_image_tool_optional_fields_are_omitted_until_configure
     assert "tool_choice" not in calls[-1]
 
 
+def test_openai_responses_image_client_polls_background_response_and_reports_progress(
+    configured_env: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("IMAGE_API_KEY", "demo-api-key")
+    monkeypatch.setenv("IMAGE_GENERATE_MODEL", "gpt-5.4")
+    get_settings.cache_clear()
+
+    encoded_result = _make_demo_image_data_url().split(",", maxsplit=1)[1]
+    calls: list[dict] = []
+    retrieved: list[str] = []
+    progress_events: list[dict] = []
+
+    class DummyImageGenerationCall:
+        type = "image_generation_call"
+        id = "ig_background"
+        result = encoded_result
+
+        def model_dump(self, *, mode: str, exclude_none: bool) -> dict[str, str]:
+            return {"id": self.id, "type": self.type, "result": self.result}
+
+    class DummyResponse:
+        def __init__(self, status: str, output: list | None = None) -> None:
+            self.id = "resp_background"
+            self.status = status
+            self.output = output or []
+
+        def model_dump(self, *, mode: str, exclude_none: bool) -> dict:
+            return {
+                "id": self.id,
+                "status": self.status,
+                "output": [
+                    output.model_dump(mode=mode, exclude_none=exclude_none)
+                    for output in self.output
+                ],
+            }
+
+    class DummyResponses:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            return DummyResponse("queued")
+
+        def retrieve(self, response_id: str):
+            retrieved.append(response_id)
+            return DummyResponse("completed", [DummyImageGenerationCall()])
+
+    class DummyOpenAI:
+        def __init__(self, **kwargs) -> None:
+            self.responses = DummyResponses()
+
+    monkeypatch.setattr("productflow_backend.infrastructure.image.responses_provider.OpenAI", DummyOpenAI)
+    monkeypatch.setattr("productflow_backend.infrastructure.image.responses_provider.sleep", lambda seconds: None)
+
+    from productflow_backend.infrastructure.image.responses_provider import OpenAIResponsesImageClient
+
+    result = OpenAIResponsesImageClient().generate_image(
+        prompt="后台生成",
+        size="1024x1024",
+        progress_callback=progress_events.append,
+    )
+
+    assert calls[0]["background"] is True
+    assert retrieved == ["resp_background"]
+    assert result.provider_response_id == "resp_background"
+    assert result.image_generation_call_id == "ig_background"
+    assert [event["provider_response_status"] for event in progress_events] == ["queued", "completed"]
+    assert progress_events[-1]["provider_response"]["output"][0]["result"].startswith("<base64 omitted")
+
+
+def test_openai_responses_image_client_falls_back_when_background_is_unsupported(
+    configured_env: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("IMAGE_API_KEY", "demo-api-key")
+    monkeypatch.setenv("IMAGE_GENERATE_MODEL", "gpt-5.4")
+    get_settings.cache_clear()
+
+    encoded_result = _make_demo_image_data_url().split(",", maxsplit=1)[1]
+    calls: list[dict] = []
+
+    class DummyImageGenerationCall:
+        type = "image_generation_call"
+        id = "ig_sync_fallback"
+        result = encoded_result
+
+        def model_dump(self, *, mode: str, exclude_none: bool) -> dict[str, str]:
+            return {"id": self.id, "type": self.type, "result": self.result}
+
+    class DummyResponse:
+        id = "resp_sync_fallback"
+        output = [DummyImageGenerationCall()]
+
+        def model_dump(self, *, mode: str, exclude_none: bool) -> dict:
+            return {"id": self.id, "output": [self.output[0].model_dump(mode=mode, exclude_none=exclude_none)]}
+
+    class DummyResponses:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            if kwargs.get("background") is True:
+                raise RuntimeError("unexpected keyword argument: background")
+            return DummyResponse()
+
+    class DummyOpenAI:
+        def __init__(self, **kwargs) -> None:
+            self.responses = DummyResponses()
+
+    monkeypatch.setattr("productflow_backend.infrastructure.image.responses_provider.OpenAI", DummyOpenAI)
+
+    from productflow_backend.infrastructure.image.responses_provider import OpenAIResponsesImageClient
+
+    result = OpenAIResponsesImageClient().generate_image(prompt="兼容同步响应", size="1024x1024")
+
+    assert len(calls) == 2
+    assert calls[0]["background"] is True
+    assert "background" not in calls[1]
+    assert result.provider_response_id == "resp_sync_fallback"
+    assert result.image_generation_call_id == "ig_sync_fallback"
+
+
+def test_openai_responses_image_client_wraps_background_poll_errors(
+    configured_env: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("IMAGE_API_KEY", "demo-api-key")
+    monkeypatch.setenv("IMAGE_GENERATE_MODEL", "gpt-5.4")
+    get_settings.cache_clear()
+
+    class DummyResponse:
+        id = "resp_poll_error"
+        status = "queued"
+        output = []
+
+        def model_dump(self, *, mode: str, exclude_none: bool) -> dict:
+            return {"id": self.id, "status": self.status, "output": []}
+
+    class DummyResponses:
+        def create(self, **kwargs):
+            return DummyResponse()
+
+        def retrieve(self, response_id: str):
+            raise RuntimeError("raw provider failure with secret material")
+
+    class DummyOpenAI:
+        def __init__(self, **kwargs) -> None:
+            self.responses = DummyResponses()
+
+    monkeypatch.setattr("productflow_backend.infrastructure.image.responses_provider.OpenAI", DummyOpenAI)
+    monkeypatch.setattr("productflow_backend.infrastructure.image.responses_provider.sleep", lambda seconds: None)
+
+    from productflow_backend.infrastructure.image.responses_provider import OpenAIResponsesImageClient
+
+    with pytest.raises(RuntimeError) as exc_info:
+        OpenAIResponsesImageClient().generate_image(prompt="轮询失败", size="1024x1024")
+
+    assert str(exc_info.value) == "图片供应商请求失败，请检查供应商配置后重试"
+    assert "secret material" not in str(exc_info.value)
+
+
 def test_openai_responses_image_client_retries_without_optional_fields_and_records_note(
     configured_env: Path,
     monkeypatch,

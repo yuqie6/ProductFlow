@@ -120,6 +120,13 @@ def test_image_session_generate_returns_queued_task_without_waiting_for_provider
     task = payload["generation_tasks"][0]
     assert task["status"] == "queued"
     assert task["prompt"] == "只创建任务，不等待 provider"
+    assert task["completed_candidates"] == 0
+    assert task["active_candidate_index"] is None
+    assert task["progress_phase"] is None
+    assert task["progress_updated_at"] is None
+    assert task["provider_response_id"] is None
+    assert task["provider_response_status"] is None
+    assert task["progress_metadata"] is None
     assert task["queue_active_count"] == 1
     assert task["queue_running_count"] == 0
     assert task["queue_queued_count"] == 1
@@ -181,6 +188,9 @@ def test_image_session_status_returns_lightweight_task_snapshot(
     assert completed_payload["latest_generation_group_id"]
     assert completed_payload["has_active_generation_task"] is False
     assert completed_payload["generation_tasks"][0]["status"] == "succeeded"
+    assert completed_payload["generation_tasks"][0]["completed_candidates"] == 1
+    assert completed_payload["generation_tasks"][0]["progress_phase"] == "succeeded"
+    assert completed_payload["generation_tasks"][0]["progress_updated_at"] is not None
     assert completed_payload["generation_tasks"][0]["result_generation_group_id"] == completed_payload[
         "latest_generation_group_id"
     ]
@@ -451,6 +461,10 @@ def test_image_session_worker_timeout_after_partial_success_persists_completed_c
     assert task.status == "failed"
     assert task.failure_reason == "已生成 1/2 张候选，但任务超时，剩余候选未完成。"
     assert task.result_generation_group_id is not None
+    assert task.completed_candidates == 1
+    assert task.active_candidate_index is None
+    assert task.progress_phase == "failed"
+    assert task.progress_updated_at is not None
     assert task.finished_at is not None
     assert task.is_retryable is False
     assert len(rounds) == 1
@@ -494,6 +508,76 @@ def test_image_session_worker_marks_task_failed_when_time_limit_raises_outside_c
     assert task.failure_reason == "图片生成失败，请稍后重试"
     assert task.finished_at is not None
     assert task.is_retryable is False
+
+
+def test_image_session_worker_persists_provider_progress_heartbeat(
+    configured_env: Path,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.application.image_sessions import (
+        create_image_session,
+        create_image_session_generation_task,
+        execute_image_session_generation_task,
+    )
+    from productflow_backend.infrastructure.image.chat_service import GeneratedChatImage
+
+    def generate_with_progress(self, **kwargs):
+        kwargs["progress_callback"](
+            {
+                "provider_response_id": "resp_background",
+                "provider_response_status": "in_progress",
+                "provider_response": {"id": "resp_background", "status": "in_progress"},
+            }
+        )
+        kwargs["progress_callback"](
+            {
+                "provider_response_id": "resp_background",
+                "provider_response_status": "completed",
+                "provider_response": {"id": "resp_background", "status": "completed"},
+            }
+        )
+        return GeneratedChatImage(
+            bytes_data=_make_demo_image_bytes_with_size(1024, 1024),
+            mime_type="image/png",
+            model_name="mock-image-chat-v1",
+            provider_name="mock",
+            prompt_version="test-v1",
+            size=kwargs["size"],
+            generated_at=datetime.now(UTC),
+            provider_response_id="resp_background",
+            provider_request_json={"size": kwargs["size"]},
+            provider_output_json={"id": "resp_background", "status": "completed"},
+        )
+
+    monkeypatch.setattr(
+        "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
+        generate_with_progress,
+    )
+
+    image_session = create_image_session(db_session, product_id=None, title="provider progress")
+    result = create_image_session_generation_task(
+        db_session,
+        image_session_id=image_session.id,
+        prompt="provider polling 更新 heartbeat",
+        size="1024x1024",
+    )
+
+    execute_image_session_generation_task(result.task.id)
+
+    db_session.expire_all()
+    task = db_session.get(ImageSessionGenerationTask, result.task.id)
+
+    assert task is not None
+    assert task.status == "succeeded"
+    assert task.completed_candidates == 1
+    assert task.provider_response_id == "resp_background"
+    assert task.provider_response_status == "completed"
+    assert task.progress_updated_at is not None
+    assert task.progress_metadata["candidate_index"] == 1
+    assert task.progress_metadata["candidate_count"] == 1
+    assert task.progress_metadata["generated_asset_id"]
+    assert task.progress_metadata["round_id"]
 
 
 def test_image_session_worker_duplicate_message_noops_terminal_task(
@@ -779,14 +863,16 @@ def test_image_session_multi_candidate_generation_persists_one_round_per_candida
     assert [round_item.candidate_index for round_item in persisted_rounds] == [1, 2, 3]
 
 
-def test_image_session_worker_actor_uses_extended_time_limit() -> None:
+def test_image_session_worker_actor_uses_internal_failsafe_time_limit(configured_env: Path) -> None:
     from productflow_backend.workers import (
-        IMAGE_SESSION_GENERATION_TIME_LIMIT_MS,
+        IMAGE_SESSION_WORKER_FAILSAFE_TIME_LIMIT_MS,
+        get_image_session_worker_failsafe_time_limit_ms,
         run_image_session_generation_task,
     )
 
-    assert IMAGE_SESSION_GENERATION_TIME_LIMIT_MS == 30 * 60 * 1000
-    assert run_image_session_generation_task.options["time_limit"] == IMAGE_SESSION_GENERATION_TIME_LIMIT_MS
+    assert get_image_session_worker_failsafe_time_limit_ms() == 24 * 60 * 60 * 1000
+    assert IMAGE_SESSION_WORKER_FAILSAFE_TIME_LIMIT_MS == 24 * 60 * 60 * 1000
+    assert run_image_session_generation_task.options["time_limit"] == IMAGE_SESSION_WORKER_FAILSAFE_TIME_LIMIT_MS
 
 
 def test_image_session_generation_accepts_custom_size_and_rejects_invalid_dimensions(configured_env: Path) -> None:
