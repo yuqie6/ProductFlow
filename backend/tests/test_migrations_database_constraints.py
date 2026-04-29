@@ -209,6 +209,14 @@ def test_image_session_generation_progress_migration_and_downgrade_support_sqlit
             ),
             {"now": now},
         )
+        connection.execute(
+            sa.text(
+                "INSERT INTO image_session_generation_tasks "
+                "(id, session_id, status, prompt, size, generation_count, created_at, attempts, is_retryable) "
+                "VALUES ('failed-task-1', 'session-1', 'failed', '旧失败任务', '1024x1024', 4, :now, 1, 0)"
+            ),
+            {"now": now},
+        )
 
     engine.dispose()
     command.upgrade(config, "head")
@@ -228,7 +236,11 @@ def test_image_session_generation_progress_migration_and_downgrade_support_sqlit
         completed_candidates = connection.execute(
             sa.text("SELECT completed_candidates FROM image_session_generation_tasks WHERE id = 'task-1'")
         ).scalar_one()
+        failed_task_retryable = connection.execute(
+            sa.text("SELECT is_retryable FROM image_session_generation_tasks WHERE id = 'failed-task-1'")
+        ).scalar_one()
     assert completed_candidates == 0
+    assert bool(failed_task_retryable) is True
 
     engine.dispose()
     command.downgrade(config, "20260428_0017")

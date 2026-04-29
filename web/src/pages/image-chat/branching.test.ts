@@ -10,6 +10,7 @@ import {
   findImageHistoryPlaceholder,
   groupImageSessionRounds,
   isImageSessionGenerationTaskActive,
+  isImageSessionGenerationTaskRetryable,
   mergeImageSessionStatusIntoDetail,
   pruneSelectedReferenceIds,
   requiresImageSessionGenerationBase,
@@ -79,6 +80,8 @@ function task(overrides: Partial<ImageSessionGenerationTask>): ImageSessionGener
     result_generation_group_id: null,
     tool_options: null,
     provider_notes: [],
+    attempts: 0,
+    is_retryable: true,
     created_at: createdAt,
     started_at: null,
     finished_at: null,
@@ -359,6 +362,12 @@ describe("image chat branching helpers", () => {
     expect(isImageSessionGenerationTaskActive(task({ status: "running" }))).toBe(true);
     expect(isImageSessionGenerationTaskActive(task({ status: "succeeded" }))).toBe(false);
     expect(isImageSessionGenerationTaskActive(task({ status: "failed" }))).toBe(false);
+  });
+
+  it("detects failed tasks that can be manually retried", () => {
+    expect(isImageSessionGenerationTaskRetryable(task({ status: "failed", is_retryable: true }))).toBe(true);
+    expect(isImageSessionGenerationTaskRetryable(task({ status: "failed", is_retryable: false }))).toBe(false);
+    expect(isImageSessionGenerationTaskRetryable(task({ status: "queued", is_retryable: true }))).toBe(false);
   });
 
   it("merges lightweight session status into cached detail without replacing rounds and assets", () => {

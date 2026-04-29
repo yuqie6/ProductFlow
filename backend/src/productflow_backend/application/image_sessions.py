@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from base64 import b64encode
 from collections.abc import Callable
 from contextlib import suppress
@@ -16,7 +17,7 @@ from productflow_backend.application.admission import (
     get_generation_task_queue_metadata,
     get_queued_generation_positions,
 )
-from productflow_backend.application.queue_submission import enqueue_or_mark_failed
+from productflow_backend.application.queue_submission import QUEUE_UNAVAILABLE_DETAIL, enqueue_or_mark_failed
 from productflow_backend.application.time import now_utc
 from productflow_backend.config import filter_image_tool_options, normalize_image_generation_size
 from productflow_backend.domain.enums import ImageSessionAssetKind, JobStatus, SourceAssetKind
@@ -40,9 +41,12 @@ ATTACH_TARGET = Literal["reference", "main_source"]
 DEFAULT_SESSION_TITLE = "未命名会话"
 DEFAULT_ASSISTANT_MESSAGE = "已按本轮选择的图片上下文生成候选，你可以从任意候选继续。"
 MAX_BRANCH_CONTEXT_IMAGES = 6
+IMAGE_SESSION_GENERATION_MAX_ATTEMPTS = 3
 GENERIC_IMAGE_GENERATION_FAILURE = "图片生成失败，请稍后重试"
 PARTIAL_IMAGE_GENERATION_FAILURE = "已生成 {completed}/{requested} 张候选，后续生成失败，请重新发起生成补齐。"
 PARTIAL_IMAGE_GENERATION_TIMEOUT = "已生成 {completed}/{requested} 张候选，但任务超时，剩余候选未完成。"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,6 +177,10 @@ def _has_prior_generation_request(
     *,
     current_generation_task_id: str | None = None,
 ) -> bool:
+    if current_generation_task_id is not None:
+        tasks = sorted(image_session.generation_tasks, key=lambda task: (task.created_at, task.id))
+        if tasks:
+            return tasks[0].id != current_generation_task_id
     if image_session.rounds:
         return True
     if current_generation_task_id is None:
@@ -468,6 +476,7 @@ def _execute_image_session_round_generation(
     """执行一轮生图，调用 AI 并保存结果到会话。"""
     image_session = _get_image_session_or_raise(session, image_session_id)
     storage = storage or LocalStorage()
+    generation_task = session.get(ImageSessionGenerationTask, generation_task_id) if generation_task_id else None
     normalized_size, normalized_base_asset_id, normalized_reference_ids = _validate_generation_request(
         image_session,
         size=size,
@@ -491,12 +500,36 @@ def _execute_image_session_round_generation(
         selected_reference_asset_ids=normalized_reference_ids,
     )
 
-    generation_group_id = new_id()
+    generation_group_id = generation_task.result_generation_group_id if generation_task else None
+    completed_candidates = 0
+    if generation_task is not None:
+        completed_candidates = max(0, min(generation_task.completed_candidates or 0, generation_count))
+        if generation_group_id:
+            saved_candidate_index = session.scalar(
+                select(func.max(ImageSessionRound.candidate_index)).where(
+                    ImageSessionRound.session_id == image_session.id,
+                    ImageSessionRound.generation_group_id == generation_group_id,
+                )
+            )
+            completed_candidates = max(completed_candidates, min(int(saved_candidate_index or 0), generation_count))
+        if completed_candidates >= generation_count:
+            _finish_image_generation_task(
+                session,
+                task=generation_task,
+                status=JobStatus.SUCCEEDED,
+                result_generation_group_id=generation_group_id,
+                is_retryable=False,
+            )
+            session.expire_all()
+            return ImageSessionRoundGenerationResult(
+                image_session=_get_image_session_or_raise(session, image_session.id),
+                generation_group_id=generation_group_id or new_id(),
+            )
+    generation_group_id = generation_group_id or new_id()
     service = ImageChatService()
     should_update_default_title = not image_session.rounds and image_session.title == DEFAULT_SESSION_TITLE
-    completed_candidates = 0
 
-    for candidate_index in range(1, generation_count + 1):
+    for candidate_index in range(completed_candidates + 1, generation_count + 1):
         relative_path: str | None = None
         try:
             if generation_task_id is not None:
@@ -736,6 +769,45 @@ def submit_image_session_generation_task(
     return get_image_session_detail(session, image_session_id)
 
 
+def retry_image_session_generation_task(
+    session: Session,
+    *,
+    image_session_id: str,
+    task_id: str,
+    enqueue: Callable[[str], None] | None = None,
+) -> ImageSession:
+    _get_image_session_or_raise(session, image_session_id)
+    task = session.scalar(
+        select(ImageSessionGenerationTask).where(
+            ImageSessionGenerationTask.id == task_id,
+            ImageSessionGenerationTask.session_id == image_session_id,
+        )
+    )
+    if task is None:
+        raise NotFoundError("生成任务不存在")
+    if task.status != JobStatus.FAILED:
+        raise BusinessValidationError("只有失败的生成任务可以重试")
+    if not task.is_retryable:
+        raise BusinessValidationError("该生成任务不可重试")
+
+    _reset_image_generation_task_for_retry(
+        session,
+        task=task,
+        progress_phase="manual_retry_queued",
+    )
+    enqueue_or_mark_failed(
+        task.id,
+        enqueue=enqueue or enqueue_image_session_generation_task,
+        mark_failed=lambda queued_task_id, reason: mark_image_session_generation_task_enqueue_failed(
+            session,
+            task_id=queued_task_id,
+            reason=reason,
+        ),
+    )
+    session.expire_all()
+    return get_image_session_detail(session, image_session_id)
+
+
 def mark_image_session_generation_task_enqueue_failed(session: Session, *, task_id: str, reason: str) -> None:
     task = session.get(ImageSessionGenerationTask, task_id)
     if task is None:
@@ -749,6 +821,33 @@ def mark_image_session_generation_task_enqueue_failed(session: Session, *, task_
     image_session = session.get(ImageSession, task.session_id)
     if image_session is not None:
         image_session.updated_at = now_utc()
+    session.commit()
+
+
+def _reset_image_generation_task_for_retry(
+    session: Session,
+    *,
+    task: ImageSessionGenerationTask,
+    progress_phase: str,
+    result_generation_group_id: str | None = None,
+) -> None:
+    now = now_utc()
+    task.status = JobStatus.QUEUED
+    task.failure_reason = None
+    task.started_at = None
+    task.finished_at = None
+    task.active_candidate_index = None
+    task.progress_phase = progress_phase[:64]
+    task.progress_updated_at = now
+    task.provider_response_id = None
+    task.provider_response_status = None
+    task.progress_metadata = None
+    task.is_retryable = True
+    if result_generation_group_id is not None:
+        task.result_generation_group_id = result_generation_group_id
+    image_session = session.get(ImageSession, task.session_id)
+    if image_session is not None:
+        image_session.updated_at = now
     session.commit()
 
 
@@ -861,7 +960,6 @@ def _mark_image_generation_task_running(session: Session, task: ImageSessionGene
             failure_reason=None,
             progress_phase="running",
             progress_updated_at=now_utc(),
-            completed_candidates=0,
             active_candidate_index=None,
             provider_response_id=None,
             provider_response_status=None,
@@ -886,7 +984,50 @@ def _mark_image_generation_task_failed(session: Session, *, task_id: str, reason
         task=task,
         status=JobStatus.FAILED,
         failure_reason=reason,
-        is_retryable=False,
+        is_retryable=True,
+    )
+
+
+def _handle_image_generation_task_failure(
+    session: Session,
+    *,
+    task_id: str,
+    reason: str,
+    result_generation_group_id: str | None = None,
+) -> None:
+    task = session.get(ImageSessionGenerationTask, task_id)
+    if task is None:
+        return
+    if task.attempts < IMAGE_SESSION_GENERATION_MAX_ATTEMPTS:
+        _reset_image_generation_task_for_retry(
+            session,
+            task=task,
+            progress_phase="auto_retry_queued",
+            result_generation_group_id=result_generation_group_id,
+        )
+        try:
+            enqueue_image_session_generation_task(task.id)
+        except Exception:  # noqa: BLE001
+            logger.exception("连续生图自动重试入队失败: task_id=%s", task.id)
+            task = session.get(ImageSessionGenerationTask, task_id)
+            if task is not None:
+                _finish_image_generation_task(
+                    session,
+                    task=task,
+                    status=JobStatus.FAILED,
+                    failure_reason=QUEUE_UNAVAILABLE_DETAIL,
+                    result_generation_group_id=result_generation_group_id,
+                    is_retryable=True,
+                )
+        return
+
+    _finish_image_generation_task(
+        session,
+        task=task,
+        status=JobStatus.FAILED,
+        failure_reason=reason,
+        result_generation_group_id=result_generation_group_id,
+        is_retryable=True,
     )
 
 
@@ -921,20 +1062,18 @@ def execute_image_session_generation_task(task_id: str) -> None:
                 )
             task = session.get(ImageSessionGenerationTask, task_id)
             if task is not None:
-                _finish_image_generation_task(
+                _handle_image_generation_task_failure(
                     session,
-                    task=task,
-                    status=JobStatus.FAILED,
-                    failure_reason=reason,
+                    task_id=task.id,
+                    reason=reason,
                     result_generation_group_id=exc.generation_group_id,
-                    is_retryable=False,
                 )
             return
         except BaseException as exc:  # noqa: BLE001
             if isinstance(exc, (KeyboardInterrupt, SystemExit)):
                 raise
             session.rollback()
-            _mark_image_generation_task_failed(
+            _handle_image_generation_task_failure(
                 session,
                 task_id=task_id,
                 reason=GENERIC_IMAGE_GENERATION_FAILURE,

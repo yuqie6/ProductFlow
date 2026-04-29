@@ -408,6 +408,8 @@ Preserve these semantics when editing durable task code.
 
 - API: `POST /api/image-sessions/{image_session_id}/generate` returns `202 Accepted` after validation, durable task
   creation, and enqueue; it must not wait for an image provider call.
+- API: `POST /api/image-sessions/{image_session_id}/generation-tasks/{task_id}/retry` returns `202 Accepted` after
+  resetting a failed retryable task to `queued` and enqueueing the same durable task ID.
 - DB: `image_session_generation_tasks` stores `session_id`, `prompt`, `size`, `base_asset_id`,
   `selected_reference_asset_ids`, `generation_count`, `status`, progress fields (`completed_candidates`,
   `active_candidate_index`, `progress_phase`, `progress_updated_at`, provider response id/status and metadata),
@@ -421,6 +423,8 @@ Preserve these semantics when editing durable task code.
   candidates may be reset to queued; stale partial-success tasks are marked failed without retry.
 - Response DTO: `ImageSessionDetailResponse.generation_tasks` exposes task summaries so route entry/refresh can show
   active or failed generation work without a separate orchestration endpoint.
+- Each generation task summary exposes `attempts` and `is_retryable` so the frontend can decide whether to render manual
+  retry affordances.
 - Each generation task summary includes global queue fields: `queue_active_count`, `queue_running_count`,
   `queue_queued_count`, `queue_max_concurrent_tasks`, `queued_ahead_count`, and `queue_position`.
 - Queue overview API: `GET /api/generation-queue` returns `active_count`, `running_count`, `queued_count`, and
@@ -441,8 +445,13 @@ Preserve these semantics when editing durable task code.
   route responds; do not strand a queued row that no worker can consume.
 - Worker claim must be atomic at the database boundary: update `queued -> running` with a status condition and no-op when
   the row is terminal, already running, or already claimed by another worker.
+- Worker failures must retry through application state, not Dramatiq actor retries. Keep
+  `run_image_session_generation_task(max_retries=0)`, increment `attempts` on each worker claim, reset the same task to
+  `queued` while the finite cap has not been reached, and leave terminal failed tasks `is_retryable=true`.
 - On success, create normal `image_session_assets` and `image_session_rounds` rows. Multi-candidate generations still use
   one `generation_group_id` with one round/asset per candidate.
+- Retrying a partial-success generation task must preserve `completed_candidates` and `result_generation_group_id`, then
+  continue from `completed_candidates + 1`. Already saved candidates must not be regenerated.
 - On provider/storage/runtime failure, mark the task `failed` with a generic safe user-facing reason such as
   `图片生成失败，请稍后重试`; never expose provider exception text, API keys, base URLs, local paths, request bodies, or
   tracebacks in API responses.
@@ -457,6 +466,10 @@ Preserve these semantics when editing durable task code.
 - Active generation cap reached -> `429`, `当前生成任务较多，请稍后再试`; no new task row should be created for that request.
 - Redis/Dramatiq send failure after DB task creation -> mark task `failed`, then return `503`,
   `任务队列暂不可用，请稍后重试`.
+- Manual retry for a non-`failed` task -> `400`, `只有失败的生成任务可以重试`.
+- Manual retry for `failed` task with `is_retryable=false` -> `400`, `该生成任务不可重试`.
+- Redis/Dramatiq send failure after manual retry reset -> return `503`, `任务队列暂不可用，请稍后重试`, and keep the task
+  failed + retryable so the user can try again.
 - Duplicate Redis message for `succeeded`, `failed`, or `running` task -> no provider call and no new round/asset rows.
 - API restart with queued retryable task -> re-enqueue without changing task semantics.
 - Worker restart with stale running retryable task and no completed candidates -> reset to queued and re-enqueue.
@@ -484,6 +497,12 @@ Preserve these semantics when editing durable task code.
 - Worker success test: executing a queued task creates expected assets/rounds and marks the task succeeded with
   `result_generation_group_id`.
 - Worker failure test: provider exception marks the task failed with a generic reason and does not leak the raw exception.
+- Auto retry cap test: repeated provider failure calls the provider only up to the finite application cap, then leaves the
+  task failed + retryable with `attempts` exposed in detail/status responses.
+- Manual retry route tests: failed retryable task resets to queued and enqueues; non-failed retry returns `400`; enqueue
+  failure returns `503` and keeps the task retryable.
+- Partial retry test: a task that saved candidate 1/2 and failed resumes at candidate 2 without duplicating candidate 1 or
+  changing the existing `generation_group_id`.
 - Duplicate/no-op tests: terminal and already-running task messages do not call the provider or create extra rounds.
 - Recovery tests: queued tasks are re-sent; stale running recovery uses `progress_updated_at`, falls back to `started_at`,
   and fails stale partial-success tasks instead of retrying them.
@@ -534,6 +553,22 @@ updated = session.execute(
 if updated.rowcount != 1:
     return
 call_provider()
+```
+
+Wrong:
+
+```python
+@dramatiq.actor(max_retries=3)
+def run_image_session_generation_task(task_id: str) -> None:
+    execute_image_session_generation_task(task_id)
+```
+
+Correct:
+
+```python
+@dramatiq.actor(max_retries=0)
+def run_image_session_generation_task(task_id: str) -> None:
+    execute_image_session_generation_task(task_id)
 ```
 
 ## Testing Requirements

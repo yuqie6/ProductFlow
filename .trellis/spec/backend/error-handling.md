@@ -272,12 +272,15 @@ return a generic queue/provider failure detail instead.
   - current `provider_response_id` / `provider_response_status` when available.
 - OpenAI Responses image generation should use background response creation and `responses.retrieve(...)` polling when the
   provider supports it. Each provider status response should refresh task progress while generation is still working.
-- Failed/timeout tasks must set:
-  - `status = failed`;
-  - `finished_at` to an aware UTC timestamp;
-  - `is_retryable = false`;
-  - a generic or partial-success `failure_reason`;
-  - `result_generation_group_id` when at least one candidate was already persisted.
+- Worker-owned failed/timeout tasks use application-level retry instead of Dramatiq actor retries:
+  - `workers.run_image_session_generation_task` must keep `max_retries=0`.
+  - each worker claim increments `ImageSessionGenerationTask.attempts`.
+  - while `attempts` is below the application cap, failure resets the same task to `queued` and re-enqueues it.
+  - after the cap is reached, the task becomes `failed`, sets `finished_at`, and remains `is_retryable=true` so the
+    owning image session can expose a manual retry action.
+  - a generic or partial-success `failure_reason` is stored only on the terminal failed state.
+  - `completed_candidates` and `result_generation_group_id` must be preserved when at least one candidate was already
+    persisted.
 - `KeyboardInterrupt` and `SystemExit` must still propagate. Other `BaseException` subclasses raised by Dramatiq time
   limits should be converted into durable task failure state before returning.
 
@@ -289,9 +292,12 @@ return a generic queue/provider failure detail instead.
 - Candidate 1 succeeds, candidate 2 raises `TimeLimitExceeded` -> task `failed`, first round/asset remains, failure
   reason is `"已生成 1/2 张候选，但任务超时，剩余候选未完成。"`.
 - Stale running task with fresh `progress_updated_at` but old `started_at` -> remains `running`; recovery must not reset it.
-- Stale running task with already completed candidates -> mark `failed` with the partial-timeout reason and do not retry.
+- Stale running task with already completed candidates -> recovery marks `failed` with the partial-timeout reason and does
+  not auto-requeue, because the worker's in-flight provider state is unknown.
 - Timeout or safe worker exception before any candidate is committed -> task `failed`, no rounds/assets, generic
-  `"图片生成失败，请稍后重试"`.
+  `"图片生成失败，请稍后重试"` only after the automatic retry cap is reached.
+- Partial failure after candidate 1 of 2 -> automatic retry preserves the existing generation group and resumes at
+  candidate 2 without calling the provider for candidate 1 again.
 - Duplicate worker message for a terminal task -> no-op; do not call the provider again.
 - Duplicate worker message for an already running non-stale task -> no-op; recovery handles stale running tasks separately.
 
@@ -304,13 +310,17 @@ return a generic queue/provider failure detail instead.
   provider call fails.
 - Bad: letting `TimeLimitExceeded` escape without task cleanup; this leaves `running` rows that block the UI and may be
   re-enqueued after restart.
-- Bad: marking a partial-success task retryable; a restart could duplicate provider spend and create confusing duplicate
-  candidates.
+- Bad: retrying a partial-success task from candidate 1 with a new generation group; this duplicates provider spend and
+  creates confusing duplicate candidates.
+- Bad: enabling generic Dramatiq actor retries; this bypasses the database retry cap and can duplicate work outside the
+  application-level state machine.
 
 #### 6. Tests Required
 
-- Worker test: partial success followed by `TimeLimitExceeded` keeps the committed round/asset, marks the task `failed`,
-  sets `finished_at`, `is_retryable=false`, and clears active queue counts.
+- Worker test: partial success followed by `TimeLimitExceeded` keeps the committed round/asset, auto-retries the same task,
+  resumes at the remaining candidate, and does not duplicate the saved candidate.
+- Worker test: repeated provider failure stops at the application retry cap, marks the task `failed`, exposes the generic
+  safe reason, and leaves `is_retryable=true`.
 - Worker test: timeout outside the per-candidate loop still marks the task `failed` with the generic safe reason.
 - Worker progress test: provider polling callbacks update durable progress fields while the task remains running.
 - Worker actor test: `run_image_session_generation_task` has an internal failsafe `time_limit`; user-facing timeout

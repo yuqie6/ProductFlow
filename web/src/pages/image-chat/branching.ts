@@ -395,6 +395,10 @@ export function isImageSessionGenerationTaskActive(task: ImageSessionGenerationT
   return task.status === "queued" || task.status === "running";
 }
 
+export function isImageSessionGenerationTaskRetryable(task: ImageSessionGenerationTask): boolean {
+  return task.status === "failed" && task.is_retryable;
+}
+
 export function selectVisibleGenerationTasks(
   tasks: ImageSessionGenerationTask[],
   limit = 4,

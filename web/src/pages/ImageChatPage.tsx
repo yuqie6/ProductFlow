@@ -13,6 +13,7 @@ import {
   MessagesSquare,
   Pencil,
   Plus,
+  RotateCcw,
   Save,
   Settings,
   Sparkles,
@@ -56,6 +57,7 @@ import {
   findImageHistoryPlaceholder,
   getImageGenerationTaskPlaceholderId,
   isImageSessionGenerationTaskActive,
+  isImageSessionGenerationTaskRetryable,
   mergeImageSessionStatusIntoDetail,
   pruneSelectedReferenceIds,
   requiresImageSessionGenerationBase,
@@ -206,6 +208,14 @@ function selectSubmittedTaskPlaceholderId(
   if (!task) {
     return null;
   }
+  const candidateIndex = Math.min(
+    clampGenerationCount(task.generation_count || 1),
+    task.active_candidate_index ?? Math.max(1, task.completed_candidates + 1),
+  );
+  return getImageGenerationTaskPlaceholderId(task, candidateIndex);
+}
+
+function selectTaskNextPlaceholderId(task: ImageSessionGenerationTask): string {
   const candidateIndex = Math.min(
     clampGenerationCount(task.generation_count || 1),
     task.active_candidate_index ?? Math.max(1, task.completed_candidates + 1),
@@ -645,6 +655,26 @@ export function ImageChatPage() {
       setErrorMessage(error instanceof ApiError ? error.detail : "生成失败");
     },
   });
+
+  const retryGenerationTaskMutation = useMutation({
+    mutationFn: (input: { sessionId: string; taskId: string }) =>
+      api.retryImageSessionGenerationTask(input.sessionId, input.taskId),
+    onSuccess: (updated, input) => {
+      queryClient.setQueryData(["image-session", updated.id], updated);
+      void queryClient.invalidateQueries({ queryKey: ["image-sessions", productId ?? "standalone"] });
+      const retriedTask = updated.generation_tasks.find((task) => task.id === input.taskId);
+      if (retriedTask) {
+        setSelectedTaskPlaceholderId(selectTaskNextPlaceholderId(retriedTask));
+        setSelectedGeneratedAssetId(null);
+      }
+      setSuccessMessage("已重新提交重试任务");
+      setErrorMessage("");
+    },
+    onError: (error) => {
+      setErrorMessage(error instanceof ApiError ? error.detail : "重试失败");
+    },
+  });
+
   const generateDisabled =
     !selectedSessionId || !imageSession || !draft.trim() || generateMutation.isPending || Boolean(baseRequirementMessage);
 
@@ -731,6 +761,14 @@ export function ImageChatPage() {
     duplicateSubmitGuardRef.current = { signature, submittedAt: now };
     pendingGeneratedRoundCountRef.current = imageSession?.rounds.length ?? 0;
     generateMutation.mutate(payload);
+  }
+
+  function handleRetryGenerationTask(task: ImageSessionGenerationTask) {
+    if (!selectedSessionId || retryGenerationTaskMutation.isPending || !isImageSessionGenerationTaskRetryable(task)) {
+      return;
+    }
+    pendingGeneratedRoundCountRef.current = imageSession?.rounds.length ?? 0;
+    retryGenerationTaskMutation.mutate({ sessionId: selectedSessionId, taskId: task.id });
   }
 
   function handleRename() {
@@ -1077,7 +1115,14 @@ export function ImageChatPage() {
                   />
                 </div>
               ) : selectedPlaceholder ? (
-                <GenerationCanvasPlaceholder candidate={selectedPlaceholder} />
+                <GenerationCanvasPlaceholder
+                  candidate={selectedPlaceholder}
+                  retrying={
+                    retryGenerationTaskMutation.isPending &&
+                    retryGenerationTaskMutation.variables?.taskId === selectedPlaceholder.task_id
+                  }
+                  onRetry={handleRetryGenerationTask}
+                />
               ) : (
                 <div className="relative z-0 flex flex-col items-center gap-4 text-center text-slate-400">
                   <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-white shadow-sm ring-1 ring-slate-200">
@@ -1309,18 +1354,22 @@ export function ImageChatPage() {
                 </>
               ) : (
                 <>
-
                   <ImageToolControls
                     value={toolOptions}
                     allowedFields={imageToolAllowedFields}
                     onChange={setToolOptions}
                   />
+                </>
+              )}
 
               {visibleGenerationTasks.length ? (
                 <div className="space-y-2 rounded-2xl border border-slate-200 bg-white p-4">
                   <div className="text-sm font-semibold text-slate-950">生成任务</div>
                   {visibleGenerationTasks.map((task) => {
                     const active = isImageSessionGenerationTaskActive(task);
+                    const retryable = isImageSessionGenerationTaskRetryable(task);
+                    const retrying =
+                      retryGenerationTaskMutation.isPending && retryGenerationTaskMutation.variables?.taskId === task.id;
                     return (
                       <div
                         key={task.id}
@@ -1335,7 +1384,28 @@ export function ImageChatPage() {
                             {active ? <Loader2 size={13} className="mr-1.5 animate-spin" /> : null}
                             {generationTaskLabel(task)}
                           </div>
-                          <span className="text-xs opacity-70">{task.generation_count} 张</span>
+                          <div className="inline-flex shrink-0 items-center gap-2">
+                            <span className="text-xs opacity-70">{task.generation_count} 张</span>
+                            {retryable ? (
+                              <button
+                                type="button"
+                                onClick={() => handleRetryGenerationTask(task)}
+                                disabled={retrying}
+                                className="inline-flex h-7 items-center rounded-lg border border-red-200 bg-white px-2 text-xs font-semibold text-red-700 transition-colors hover:border-red-300 hover:bg-red-50 disabled:opacity-60"
+                              >
+                                {retrying ? (
+                                  <Loader2 size={12} className="mr-1 animate-spin" />
+                                ) : (
+                                  <RotateCcw size={12} className="mr-1" />
+                                )}
+                                重试
+                              </button>
+                            ) : task.status === "failed" ? (
+                              <span className="rounded-lg border border-red-200 bg-white px-2 py-1 text-xs font-semibold text-red-500">
+                                不可重试
+                              </span>
+                            ) : null}
+                          </div>
                         </div>
                         <button
                           type="button"
@@ -1362,8 +1432,6 @@ export function ImageChatPage() {
                   })}
                 </div>
               ) : null}
-                </>
-              )}
 
               {successMessage ? (
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
@@ -1410,9 +1478,18 @@ export function ImageChatPage() {
 
 }
 
-function GenerationCanvasPlaceholder({ candidate }: { candidate: ImageHistoryPlaceholderCandidate }) {
+function GenerationCanvasPlaceholder({
+  candidate,
+  retrying,
+  onRetry,
+}: {
+  candidate: ImageHistoryPlaceholderCandidate;
+  retrying: boolean;
+  onRetry: (task: ImageSessionGenerationTask) => void;
+}) {
   const active = candidate.status === "queued" || candidate.status === "running";
   const failed = candidate.status === "failed";
+  const retryable = isImageSessionGenerationTaskRetryable(candidate.task);
   const queueText = generationTaskQueueText(candidate.task);
 
   return (
@@ -1432,6 +1509,21 @@ function GenerationCanvasPlaceholder({ candidate }: { candidate: ImageHistoryPla
         </div>
         {queueText ? <div className="mt-3 max-w-sm text-xs leading-5 text-slate-500">{queueText}</div> : null}
         <div className="mt-4 line-clamp-3 max-w-sm text-xs leading-5 text-slate-600">{candidate.prompt}</div>
+        {failed && retryable ? (
+          <button
+            type="button"
+            onClick={() => onRetry(candidate.task)}
+            disabled={retrying}
+            className="mt-5 inline-flex items-center justify-center rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-red-500/20 transition-colors hover:bg-red-500 disabled:opacity-60"
+          >
+            {retrying ? <Loader2 size={15} className="mr-2 animate-spin" /> : <RotateCcw size={15} className="mr-2" />}
+            重试生成
+          </button>
+        ) : failed ? (
+          <div className="mt-5 rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-medium text-red-500">
+            该失败任务不可重试
+          </div>
+        ) : null}
       </div>
     </div>
   );

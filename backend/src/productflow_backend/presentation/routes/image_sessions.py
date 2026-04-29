@@ -13,6 +13,7 @@ from productflow_backend.application.image_sessions import (
     get_image_session_detail,
     get_image_session_status,
     list_image_sessions,
+    retry_image_session_generation_task,
     submit_image_session_generation_task,
     update_image_session,
 )
@@ -183,6 +184,27 @@ def generate_image_session_round_endpoint(
             selected_reference_asset_ids=payload.selected_reference_asset_ids,
             generation_count=payload.generation_count,
             tool_options=payload.tool_options.model_dump(exclude_none=True) if payload.tool_options else None,
+        )
+    except ValueError as exc:
+        raise_value_error_as_http(exc)
+    return serialize_image_session_detail(image_session)
+
+
+@router.post(
+    "/image-sessions/{image_session_id}/generation-tasks/{task_id}/retry",
+    response_model=ImageSessionDetailResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def retry_image_session_generation_task_endpoint(
+    image_session_id: str,
+    task_id: str,
+    session: Session = Depends(get_session),
+) -> ImageSessionDetailResponse:
+    try:
+        image_session = retry_image_session_generation_task(
+            session,
+            image_session_id=image_session_id,
+            task_id=task_id,
         )
     except ValueError as exc:
         raise_value_error_as_http(exc)

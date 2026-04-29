@@ -139,6 +139,8 @@ def test_image_session_generate_returns_queued_task_without_waiting_for_provider
     assert task["provider_response_id"] is None
     assert task["provider_response_status"] is None
     assert task["progress_metadata"] is None
+    assert task["attempts"] == 0
+    assert task["is_retryable"] is True
     assert task["queue_active_count"] == 1
     assert task["queue_running_count"] == 0
     assert task["queue_queued_count"] == 1
@@ -237,6 +239,8 @@ def test_image_session_status_returns_lightweight_task_snapshot(
     assert queued_payload["has_active_generation_task"] is True
     assert queued_payload["generation_tasks"][0]["id"] == task_id
     assert queued_payload["generation_tasks"][0]["status"] == "queued"
+    assert queued_payload["generation_tasks"][0]["attempts"] == 0
+    assert queued_payload["generation_tasks"][0]["is_retryable"] is True
     assert queued_payload["generation_tasks"][0]["queue_position"] == 1
     assert sent == [task_id]
 
@@ -251,6 +255,8 @@ def test_image_session_status_returns_lightweight_task_snapshot(
     assert completed_payload["has_active_generation_task"] is False
     assert completed_payload["generation_tasks"][0]["status"] == "succeeded"
     assert completed_payload["generation_tasks"][0]["completed_candidates"] == 1
+    assert completed_payload["generation_tasks"][0]["attempts"] == 1
+    assert completed_payload["generation_tasks"][0]["is_retryable"] is False
     assert completed_payload["generation_tasks"][0]["progress_phase"] == "succeeded"
     assert completed_payload["generation_tasks"][0]["progress_updated_at"] is not None
     assert completed_payload["generation_tasks"][0]["result_generation_group_id"] == completed_payload[
@@ -425,16 +431,205 @@ def test_image_session_generate_enqueue_failure_marks_task_failed(
     assert len(tasks) == 1
     assert tasks[0].status == "failed"
     assert tasks[0].failure_reason == "任务队列暂不可用，请稍后重试"
+    assert tasks[0].is_retryable is True
 
 
-def test_image_session_worker_failure_uses_generic_safe_reason(
+def test_image_session_manual_retry_resets_failed_task_and_enqueues(
     configured_env: Path,
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from productflow_backend.domain.enums import JobStatus
     from productflow_backend.presentation.api import create_app
 
+    sent: list[str] = []
+    monkeypatch.setattr(
+        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
+        lambda task_id: sent.append(task_id),
+    )
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post("/api/image-sessions", json={"title": "手动重试"})
+    assert created.status_code == 201
+    session_id = created.json()["id"]
+    submitted = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={"prompt": "先失败再重试", "size": "1024x1024"},
+    )
+    assert submitted.status_code == 202
+    task_id = submitted.json()["generation_tasks"][0]["id"]
+
+    db_session.expire_all()
+    task = db_session.get(ImageSessionGenerationTask, task_id)
+    assert task is not None
+    task.status = JobStatus.FAILED
+    task.failure_reason = "图片生成失败，请稍后重试"
+    task.finished_at = datetime.now(UTC)
+    task.attempts = 3
+    task.is_retryable = True
+    db_session.commit()
+
+    sent.clear()
+    retried = client.post(f"/api/image-sessions/{session_id}/generation-tasks/{task_id}/retry")
+
+    assert retried.status_code == 202
+    retry_payload = retried.json()["generation_tasks"][0]
+    assert retry_payload["id"] == task_id
+    assert retry_payload["status"] == "queued"
+    assert retry_payload["failure_reason"] is None
+    assert retry_payload["attempts"] == 3
+    assert retry_payload["is_retryable"] is True
+    assert sent == [task_id]
+    db_session.expire_all()
+    task = db_session.get(ImageSessionGenerationTask, task_id)
+    assert task is not None
+    assert task.status == JobStatus.QUEUED
+    assert task.failure_reason is None
+    assert task.finished_at is None
+    assert task.is_retryable is True
+
+
+def test_image_session_manual_retry_rejects_non_failed_task(
+    configured_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    monkeypatch.setattr(
+        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
+        lambda task_id: None,
+    )
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post("/api/image-sessions", json={"title": "非法重试"})
+    assert created.status_code == 201
+    session_id = created.json()["id"]
+    submitted = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={"prompt": "queued 不能重试", "size": "1024x1024"},
+    )
+    assert submitted.status_code == 202
+    task_id = submitted.json()["generation_tasks"][0]["id"]
+
+    retried = client.post(f"/api/image-sessions/{session_id}/generation-tasks/{task_id}/retry")
+
+    assert retried.status_code == 400
+    assert retried.json()["detail"] == "只有失败的生成任务可以重试"
+
+
+def test_image_session_manual_retry_rejects_non_retryable_failed_task(
+    configured_env: Path,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.domain.enums import JobStatus
+    from productflow_backend.presentation.api import create_app
+
+    monkeypatch.setattr(
+        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
+        lambda task_id: None,
+    )
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post("/api/image-sessions", json={"title": "不可重试失败任务"})
+    assert created.status_code == 201
+    session_id = created.json()["id"]
+    submitted = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={"prompt": "创建后改成不可重试失败", "size": "1024x1024"},
+    )
+    assert submitted.status_code == 202
+    task_id = submitted.json()["generation_tasks"][0]["id"]
+
+    db_session.expire_all()
+    task = db_session.get(ImageSessionGenerationTask, task_id)
+    assert task is not None
+    task.status = JobStatus.FAILED
+    task.failure_reason = "旧失败任务不可重试"
+    task.finished_at = datetime.now(UTC)
+    task.is_retryable = False
+    db_session.commit()
+
+    retried = client.post(f"/api/image-sessions/{session_id}/generation-tasks/{task_id}/retry")
+
+    assert retried.status_code == 400
+    assert retried.json()["detail"] == "该生成任务不可重试"
+
+
+def test_image_session_manual_retry_enqueue_failure_keeps_task_retryable(
+    configured_env: Path,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.domain.enums import JobStatus
+    from productflow_backend.presentation.api import create_app
+
+    sent: list[str] = []
+    monkeypatch.setattr(
+        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
+        lambda task_id: sent.append(task_id),
+    )
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post("/api/image-sessions", json={"title": "重试入队失败"})
+    assert created.status_code == 201
+    session_id = created.json()["id"]
+    submitted = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={"prompt": "创建任务", "size": "1024x1024"},
+    )
+    assert submitted.status_code == 202
+    task_id = submitted.json()["generation_tasks"][0]["id"]
+
+    db_session.expire_all()
+    task = db_session.get(ImageSessionGenerationTask, task_id)
+    assert task is not None
+    task.status = JobStatus.FAILED
+    task.failure_reason = "图片生成失败，请稍后重试"
+    task.finished_at = datetime.now(UTC)
+    task.is_retryable = True
+    db_session.commit()
+
+    def fail_enqueue(task_id: str) -> None:
+        raise RuntimeError(f"redis down for {task_id}")
+
+    monkeypatch.setattr(
+        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
+        fail_enqueue,
+    )
+
+    retried = client.post(f"/api/image-sessions/{session_id}/generation-tasks/{task_id}/retry")
+
+    assert retried.status_code == 503
+    assert retried.json()["detail"] == "任务队列暂不可用，请稍后重试"
+    db_session.expire_all()
+    task = db_session.get(ImageSessionGenerationTask, task_id)
+    assert task is not None
+    assert task.status == JobStatus.FAILED
+    assert task.failure_reason == "任务队列暂不可用，请稍后重试"
+    assert task.is_retryable is True
+
+
+def test_image_session_worker_auto_retry_caps_and_uses_generic_safe_reason(
+    configured_env: Path,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.application.image_sessions import IMAGE_SESSION_GENERATION_MAX_ATTEMPTS
+    from productflow_backend.presentation.api import create_app
+
+    calls = {"count": 0}
+
     def fail_generate(*args, **kwargs) -> None:
+        calls["count"] += 1
         raise RuntimeError("provider raw secret sk-test path=/tmp/provider-traceback")
 
     monkeypatch.setattr(
@@ -457,13 +652,18 @@ def test_image_session_worker_failure_uses_generic_safe_reason(
     assert payload["generation_tasks"][0]["status"] == "failed"
     assert payload["generation_tasks"][0]["failure_reason"] == "图片生成失败，请稍后重试"
     assert "sk-test" not in payload["generation_tasks"][0]["failure_reason"]
+    assert payload["generation_tasks"][0]["attempts"] == IMAGE_SESSION_GENERATION_MAX_ATTEMPTS
+    assert payload["generation_tasks"][0]["is_retryable"] is True
     db_session.expire_all()
     task = db_session.get(ImageSessionGenerationTask, payload["generation_tasks"][0]["id"])
     assert task is not None
     assert task.failure_reason == "图片生成失败，请稍后重试"
+    assert task.attempts == IMAGE_SESSION_GENERATION_MAX_ATTEMPTS
+    assert task.is_retryable is True
+    assert calls["count"] == IMAGE_SESSION_GENERATION_MAX_ATTEMPTS
 
 
-def test_image_session_worker_timeout_after_partial_success_persists_completed_candidates(
+def test_image_session_worker_partial_retry_continues_remaining_candidates_without_duplicates(
     configured_env: Path,
     db_session,
     monkeypatch: pytest.MonkeyPatch,
@@ -519,19 +719,24 @@ def test_image_session_worker_timeout_after_partial_success_persists_completed_c
     )
 
     assert task is not None
-    assert task.status == "failed"
-    assert task.failure_reason == "已生成 1/2 张候选，但任务超时，剩余候选未完成。"
+    assert task.status == "succeeded"
+    assert task.failure_reason is None
     assert task.result_generation_group_id is not None
-    assert task.completed_candidates == 1
+    assert task.completed_candidates == 2
     assert task.active_candidate_index is None
-    assert task.progress_phase == "failed"
+    assert task.progress_phase == "succeeded"
     assert task.progress_updated_at is not None
     assert task.finished_at is not None
     assert task.is_retryable is False
-    assert len(rounds) == 1
+    assert task.attempts == 2
+    assert calls["count"] == 3
+    assert len(rounds) == 2
     assert rounds[0].candidate_index == 1
     assert rounds[0].candidate_count == 2
     assert rounds[0].generation_group_id == task.result_generation_group_id
+    assert rounds[1].candidate_index == 2
+    assert rounds[1].candidate_count == 2
+    assert rounds[1].generation_group_id == task.result_generation_group_id
     assert Path(configured_env, rounds[0].generated_asset.storage_path).exists()
 
 
@@ -568,7 +773,8 @@ def test_image_session_worker_marks_task_failed_when_time_limit_raises_outside_c
     assert task.status == "failed"
     assert task.failure_reason == "图片生成失败，请稍后重试"
     assert task.finished_at is not None
-    assert task.is_retryable is False
+    assert task.attempts == 3
+    assert task.is_retryable is True
 
 
 def test_image_session_worker_persists_provider_progress_heartbeat(

@@ -303,6 +303,8 @@ export interface ImageSessionGenerationTask {
   result_generation_group_id: string | null;
   tool_options: ImageToolOptions | null;
   provider_notes: string[];
+  attempts: number;
+  is_retryable: boolean;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;

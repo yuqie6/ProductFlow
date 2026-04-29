@@ -70,6 +70,8 @@ class ImageSessionGenerationTaskResponse(BaseModel):
     result_generation_group_id: str | None = None
     tool_options: dict | None = None
     provider_notes: list[str] = Field(default_factory=list)
+    attempts: int
+    is_retryable: bool
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -267,6 +269,8 @@ def serialize_image_session_generation_task(
         result_generation_group_id=task.result_generation_group_id,
         tool_options=task.tool_options,
         provider_notes=provider_notes or [],
+        attempts=task.attempts,
+        is_retryable=task.is_retryable,
         created_at=task.created_at,
         started_at=task.started_at,
         finished_at=task.finished_at,

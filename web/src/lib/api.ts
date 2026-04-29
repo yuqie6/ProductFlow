@@ -224,6 +224,9 @@ export const api = {
       body: JSON.stringify(input),
     });
   },
+  retryImageSessionGenerationTask(sessionId: string, taskId: string): Promise<ImageSessionDetail> {
+    return request(`/api/image-sessions/${sessionId}/generation-tasks/${taskId}/retry`, { method: "POST" });
+  },
   attachImageSessionAssetToProduct(
     sessionId: string,
     assetId: string,
