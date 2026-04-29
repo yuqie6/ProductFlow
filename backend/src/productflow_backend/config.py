@@ -23,6 +23,7 @@ DEFAULT_IMAGE_SESSION_IDLE_TIMEOUT_MINUTES = 90
 IMAGE_SESSION_IDLE_TIMEOUT_MIN_MINUTES = 1
 IMAGE_SESSION_IDLE_TIMEOUT_MAX_MINUTES = 24 * 60
 DEFAULT_IMAGE_SESSION_WORKER_FAILSAFE_TIME_LIMIT_MINUTES = 24 * 60
+DEFAULT_WORKFLOW_IMAGE_GENERATION_PROVIDER_TIMEOUT_SECONDS = 15 * 60
 IMAGE_SIZE_CONFIG_KEYS = {"image_main_image_size", "image_promo_poster_size"}
 PROMPT_CONFIG_KEYS = {
     "prompt_brief_system",
@@ -185,6 +186,11 @@ class Settings(BaseSettings):
         default=DEFAULT_IMAGE_SESSION_WORKER_FAILSAFE_TIME_LIMIT_MINUTES,
         ge=IMAGE_SESSION_IDLE_TIMEOUT_MIN_MINUTES,
         le=IMAGE_SESSION_IDLE_TIMEOUT_MAX_MINUTES,
+    )
+    workflow_image_generation_provider_timeout_seconds: int = Field(
+        default=DEFAULT_WORKFLOW_IMAGE_GENERATION_PROVIDER_TIMEOUT_SECONDS,
+        ge=1,
+        le=24 * 60 * 60,
     )
     admin_access_required: bool = True
     deletion_enabled: bool = False
@@ -585,6 +591,15 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
         ),
         minimum=IMAGE_SESSION_IDLE_TIMEOUT_MIN_MINUTES,
         maximum=IMAGE_SESSION_IDLE_TIMEOUT_MAX_MINUTES,
+    ),
+    ConfigDefinition(
+        key="workflow_image_generation_provider_timeout_seconds",
+        label="工作流生图 Provider 超时（秒）",
+        category="生成队列",
+        input_type="number",
+        description="工作流 AI 生图节点单次 provider 调用的项目级超时上界；超时后会安全失败并释放生成队列容量。",
+        minimum=1,
+        maximum=24 * 60 * 60,
     ),
     ConfigDefinition(
         key="admin_access_required",

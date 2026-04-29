@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from dramatiq.middleware.time_limit import TimeLimitExceeded
 from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -79,6 +81,55 @@ from productflow_backend.infrastructure.queue import enqueue_workflow_run
 from productflow_backend.infrastructure.storage import LocalStorage
 
 logger = logging.getLogger(__name__)
+WORKFLOW_IMAGE_GENERATION_FAILURE = "图片生成失败，请稍后重试"
+WORKFLOW_IMAGE_GENERATION_TIMEOUT_FAILURE = "图片生成超时，请稍后重试"
+WORKFLOW_WORKER_TIMEOUT_FAILURE = "工作流执行超时，请稍后重试"
+
+
+class WorkflowSafeExecutionError(RuntimeError):
+    """Execution failure whose string is safe to persist and show to users."""
+
+    def __init__(self, safe_message: str) -> None:
+        super().__init__(safe_message)
+        self.safe_message = safe_message
+
+
+class WorkflowImageGenerationTimeoutError(WorkflowSafeExecutionError):
+    """Raised when workflow image provider calls exceed the project timeout boundary."""
+
+
+class WorkflowImageGenerationProviderError(WorkflowSafeExecutionError):
+    """Raised when workflow image provider failures must be hidden behind a safe user message."""
+
+
+def _safe_workflow_failure_reason(exc: BaseException) -> str:
+    if isinstance(exc, TimeLimitExceeded):
+        return WORKFLOW_WORKER_TIMEOUT_FAILURE
+    if isinstance(exc, WorkflowSafeExecutionError):
+        return exc.safe_message
+    return str(exc)
+
+
+def _workflow_image_generation_provider_timeout_seconds() -> float:
+    return float(get_runtime_settings().workflow_image_generation_provider_timeout_seconds)
+
+
+def _call_with_timeout[T](call: Callable[[], T], *, timeout_seconds: float, timeout_message: str) -> T:
+    executor = ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(call)
+    try:
+        result = future.result(timeout=timeout_seconds)
+    except FuturesTimeoutError as exc:
+        future.cancel()
+        executor.shutdown(wait=False, cancel_futures=True)
+        raise WorkflowImageGenerationTimeoutError(timeout_message) from exc
+    except BaseException:
+        future.cancel()
+        executor.shutdown(wait=False, cancel_futures=True)
+        raise
+    else:
+        executor.shutdown(wait=True)
+        return result
 
 
 def get_text_provider():
@@ -244,13 +295,21 @@ def execute_product_workflow_run(
     try:
         try:
             _execute_product_workflow_run(session, run_id=run_id, dependencies=dependencies)
+        except TimeLimitExceeded as exc:
+            session.rollback()
+            _mark_workflow_run_failed(
+                session,
+                run_id=run_id,
+                failed_node_id=None,
+                reason=_safe_workflow_failure_reason(exc)[:1000],
+            )
         except Exception as exc:  # noqa: BLE001
             session.rollback()
             _mark_workflow_run_failed(
                 session,
                 run_id=run_id,
                 failed_node_id=None,
-                reason=str(exc)[:1000],
+                reason=_safe_workflow_failure_reason(exc)[:1000],
             )
     finally:
         session.close()
@@ -315,13 +374,22 @@ def _execute_product_workflow_run(
                 output = _get_execute_node()(session, workflow_id=workflow.id, node=node)
             else:
                 output = _execute_node(session, workflow_id=workflow.id, node=node, dependencies=dependencies)
+        except TimeLimitExceeded as exc:
+            session.rollback()
+            _mark_workflow_run_failed(
+                session,
+                run_id=run_id,
+                failed_node_id=ordered_node.id,
+                reason=_safe_workflow_failure_reason(exc)[:1000],
+            )
+            return
         except Exception as exc:  # noqa: BLE001
             session.rollback()
             _mark_workflow_run_failed(
                 session,
                 run_id=run_id,
                 failed_node_id=ordered_node.id,
-                reason=str(exc)[:1000],
+                reason=_safe_workflow_failure_reason(exc)[:1000],
             )
             return
 
@@ -398,6 +466,15 @@ def _mark_workflow_run_failed(
         failed_node.last_run_at = now
     for node_run in persisted_run.node_runs:
         if node_run.node_id == failed_node_id:
+            node_run.status = WorkflowNodeStatus.FAILED
+            node_run.failure_reason = reason
+            node_run.finished_at = now
+        elif failed_node_id is None and node_run.status == WorkflowNodeStatus.RUNNING:
+            failed_node = session.get(WorkflowNode, node_run.node_id)
+            if failed_node is not None:
+                failed_node.status = WorkflowNodeStatus.FAILED
+                failed_node.failure_reason = reason
+                failed_node.last_run_at = now
             node_run.status = WorkflowNodeStatus.FAILED
             node_run.failure_reason = reason
             node_run.finished_at = now
@@ -830,7 +907,14 @@ def _generate_workflow_images_concurrently(
             if image_providers is None:
                 raise RuntimeError("图片生成供应商未初始化")
             image_provider = image_providers[target_index - 1]
-            generated_image, image_model = image_provider.generate_poster_image(render_input, kind)
+            try:
+                generated_image, image_model = image_provider.generate_poster_image(render_input, kind)
+            except TimeLimitExceeded:
+                raise
+            except WorkflowSafeExecutionError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                raise WorkflowImageGenerationProviderError(WORKFLOW_IMAGE_GENERATION_FAILURE) from exc
             return _GeneratedWorkflowImage(
                 target_index=target_index,
                 content=generated_image.bytes_data,
@@ -851,6 +935,37 @@ def _generate_workflow_images_concurrently(
         )
 
     if target_count == 1:
+        if poster_generation_mode == "generated":
+            return [
+                _call_with_timeout(
+                    lambda: generate_one(1),
+                    timeout_seconds=_workflow_image_generation_provider_timeout_seconds(),
+                    timeout_message=WORKFLOW_IMAGE_GENERATION_TIMEOUT_FAILURE,
+                )
+            ]
         return [generate_one(1)]
-    with ThreadPoolExecutor(max_workers=target_count) as executor:
-        return list(executor.map(generate_one, range(1, target_count + 1)))
+    executor = ThreadPoolExecutor(max_workers=target_count)
+    futures = {executor.submit(generate_one, target_index): target_index for target_index in range(1, target_count + 1)}
+    results: dict[int, _GeneratedWorkflowImage] = {}
+    try:
+        timeout = (
+            _workflow_image_generation_provider_timeout_seconds()
+            if poster_generation_mode == "generated"
+            else None
+        )
+        for future in as_completed(futures, timeout=timeout):
+            target_index = futures[future]
+            results[target_index] = future.result()
+    except FuturesTimeoutError as exc:
+        for future in futures:
+            future.cancel()
+        executor.shutdown(wait=False, cancel_futures=True)
+        raise WorkflowImageGenerationTimeoutError(WORKFLOW_IMAGE_GENERATION_TIMEOUT_FAILURE) from exc
+    except BaseException:
+        for future in futures:
+            future.cancel()
+        executor.shutdown(wait=False, cancel_futures=True)
+        raise
+    else:
+        executor.shutdown(wait=True)
+    return [results[target_index] for target_index in range(1, target_count + 1)]

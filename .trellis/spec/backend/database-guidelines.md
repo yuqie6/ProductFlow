@@ -584,6 +584,9 @@ When adding a runtime setting, update all of these together:
 
 `generation_max_concurrent_tasks` is the public-demo global provider/worker admission cap. It is a runtime setting backed
 by `app_settings` and must gate new resource-consuming entrypoints before they enqueue or synchronously call providers.
+`workflow_image_generation_provider_timeout_seconds` is the workflow AI image provider timeout cap. It is also backed by
+`app_settings` so operators can tune the timeout without redeploying; workflow execution must convert timeout/provider
+failures into safe persisted failure reasons instead of leaking provider details.
 
 ### Scenario: Optional Responses image-generation tool fields
 

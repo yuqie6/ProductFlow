@@ -414,6 +414,12 @@ and workflow runs share the same behavior.
   status, workflow run `succeeded/failed`, output JSON, artifact IDs, `failure_reason`, and `finished_at`.
 - Any exception inside or around the background execution boundary must mark the run `failed`; do not leave a stale
   `running` row that causes indefinite frontend polling.
+- Generated-mode workflow image provider calls must be bounded by
+  `workflow_image_generation_provider_timeout_seconds`; timeout or provider failure must fail the run/node with a stable
+  safe user-facing reason and must not persist provider keys, base URLs, raw prompts, request bodies, or tracebacks in
+  `failure_reason`.
+- The `run_product_workflow_run` Dramatiq actor must keep `max_retries=0` and an internal worker failsafe `time_limit`;
+  the application execution boundary remains responsible for durable failure state.
 - Node deletion must remove connected incoming/outgoing edges and existing `workflow_node_runs` for that node before
   returning the refreshed workflow.
 - Product deletion must refuse active workflow runs, then rely on ORM/database cascade for related rows and
@@ -426,6 +432,10 @@ and workflow runs share the same behavior.
 - Concurrent duplicate active-run insert hits the partial unique index -> rollback, reload existing active run, return it.
 - Redis enqueue failure after the run has been created -> mark the run `failed`, release the active-run uniqueness guard,
   and return `503` with `任务队列暂不可用，请稍后重试`.
+- Workflow image provider timeout -> mark the active run and image node run `failed`, set `finished_at`, use
+  `图片生成超时，请稍后重试`, and release global generation queue capacity.
+- Workflow image provider failure with raw provider details -> mark failed with a generic safe reason such as
+  `图片生成失败，请稍后重试`; never expose secrets or prompt payloads through `failure_reason`.
 - Duplicate Redis message for terminal run -> no-op and do not call providers.
 - Duplicate Redis message while another worker owns a non-stale running node -> no-op and do not call providers.
 - Delete a node while its workflow has an active run, or while the node is `queued` / `running` -> `400` with
@@ -454,6 +464,8 @@ and workflow runs share the same behavior.
 - Duplicate active-run regression asserts a second kickoff returns/reuses the same active run and that direct duplicate
   database insertion violates the unique active-run guard.
 - Failure-path regression should force execution failure and assert stale `running` runs are marked `failed`.
+- Workflow image-generation regressions should cover provider timeout cleanup, safe provider-failure reason sanitization,
+  and the `run_product_workflow_run` actor failsafe `time_limit`.
 - Durable delivery regressions should assert kickoff sends a Dramatiq workflow message, enqueue failure returns `503` and
   leaves no stranded active run, startup recovery requeues queued workflow runs, stale running node runs are reset only on
   worker recovery, and duplicate messages no-op for terminal/currently-running runs.

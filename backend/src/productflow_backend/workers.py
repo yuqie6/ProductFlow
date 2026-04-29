@@ -23,10 +23,15 @@ def get_image_session_worker_failsafe_time_limit_ms() -> int:
     return int(get_runtime_settings().image_session_worker_failsafe_time_limit_minutes) * 60 * 1000
 
 
+def get_product_workflow_worker_failsafe_time_limit_ms() -> int:
+    return get_image_session_worker_failsafe_time_limit_ms()
+
+
 IMAGE_SESSION_WORKER_FAILSAFE_TIME_LIMIT_MS = get_image_session_worker_failsafe_time_limit_ms()
+PRODUCT_WORKFLOW_WORKER_FAILSAFE_TIME_LIMIT_MS = get_product_workflow_worker_failsafe_time_limit_ms()
 
 
-@dramatiq.actor(max_retries=0)
+@dramatiq.actor(max_retries=0, time_limit=PRODUCT_WORKFLOW_WORKER_FAILSAFE_TIME_LIMIT_MS)
 def run_product_workflow_run(workflow_run_id: str) -> None:
     """商品工作流 worker：执行边界内部负责把失败落库。"""
     execute_product_workflow_run(workflow_run_id)

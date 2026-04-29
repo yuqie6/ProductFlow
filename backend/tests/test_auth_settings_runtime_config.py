@@ -166,6 +166,10 @@ def test_settings_api_persists_database_overrides(configured_env: Path) -> None:
     assert initial_items["image_session_stale_running_after_minutes"]["minimum"] == 1
     assert initial_items["image_session_stale_running_after_minutes"]["maximum"] == 24 * 60
     assert "progress heartbeat" in initial_items["image_session_stale_running_after_minutes"]["description"]
+    assert initial_items["workflow_image_generation_provider_timeout_seconds"]["value"] == 15 * 60
+    assert initial_items["workflow_image_generation_provider_timeout_seconds"]["category"] == "生成队列"
+    assert initial_items["workflow_image_generation_provider_timeout_seconds"]["minimum"] == 1
+    assert initial_items["workflow_image_generation_provider_timeout_seconds"]["maximum"] == 24 * 60 * 60
     assert initial_items["admin_access_required"]["value"] is True
     assert initial_items["admin_access_required"]["category"] == "安全与运维"
     assert initial_items["deletion_enabled"]["value"] is False
@@ -180,6 +184,7 @@ def test_settings_api_persists_database_overrides(configured_env: Path) -> None:
                 "image_generate_model": "gpt-5.4-mini",
                 "generation_max_concurrent_tasks": 2,
                 "image_session_stale_running_after_minutes": 75,
+                "workflow_image_generation_provider_timeout_seconds": 120,
                 "deletion_enabled": True,
             }
         },
@@ -194,12 +199,14 @@ def test_settings_api_persists_database_overrides(configured_env: Path) -> None:
     assert get_runtime_settings().image_api_key == "database-image-key"
     assert get_runtime_settings().generation_max_concurrent_tasks == 2
     assert get_runtime_settings().image_session_stale_running_after_minutes == 75
+    assert get_runtime_settings().workflow_image_generation_provider_timeout_seconds == 120
     assert get_runtime_settings().deletion_enabled is True
 
     session = get_session_factory()()
     try:
         assert session.get(AppSetting, "image_provider_kind").value == "openai_responses"
         assert session.get(AppSetting, "image_session_stale_running_after_minutes").value == "75"
+        assert session.get(AppSetting, "workflow_image_generation_provider_timeout_seconds").value == "120"
     finally:
         session.close()
 
@@ -209,6 +216,13 @@ def test_settings_api_persists_database_overrides(configured_env: Path) -> None:
     )
     assert invalid_timeout.status_code == 400
     assert "不能小于 1" in invalid_timeout.json()["detail"]
+
+    invalid_workflow_timeout = client.patch(
+        "/api/settings",
+        json={"values": {"workflow_image_generation_provider_timeout_seconds": 0}},
+    )
+    assert invalid_workflow_timeout.status_code == 400
+    assert "不能小于 1" in invalid_workflow_timeout.json()["detail"]
 
     reset = client.patch("/api/settings", json={"reset_keys": ["image_provider_kind"]})
     assert reset.status_code == 200
