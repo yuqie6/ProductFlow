@@ -214,7 +214,7 @@ Common placeholders:
 - Workbench edit template: `product_name`, `category`, `price`, `source_note`, `instruction`, `title`, `selling_points`, `poster_headline`, `cta`, `context_block`, `reference_policy`, `size`, `kind`, `kind_label`, `kind_requirements`.
 - Iterative image template: `prompt`, `size`, `history_block`.
 
-If a placeholder is misspelled, the system does not crash just because of the unknown placeholder, but that part may not be replaced as expected. Prefer small edits followed by testing.
+If a placeholder is misspelled, the system does not crash just because of the unknown placeholder. That part may not be replaced as expected. Prefer small edits followed by testing.
 
 ---
 

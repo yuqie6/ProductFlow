@@ -46,6 +46,16 @@ just web-build
 
 For documentation or open-source governance file changes, at least confirm that referenced commands, paths, and configuration files exist.
 
+## Documentation Style
+
+Official docs, release notes, PR descriptions, and contribution guidance should stay concrete and verifiable. Avoid templated delivery copy:
+
+- Do not use empty contrast patterns such as "This is not ..., but ..." or "not ..., but ...".
+- Do not use "establishes the main loop" or promotional "first ..., then ..." scaffolding to describe progress.
+- Chinese docs should also avoid "这不是……而是……", "不是……而是……", "先把……打通", and promotional "先……再……" scaffolding.
+- Keep real technical sequencing when it matters, such as command order, migration steps, auto-save before run, or troubleshooting steps.
+- State current facts and verified results; label future direction as unimplemented or planned.
+
 ## Code Conventions
 
 - Python targets version 3.12, Ruff line width is 120, and lint rules are defined in `backend/pyproject.toml`.

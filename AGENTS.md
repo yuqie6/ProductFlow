@@ -47,5 +47,13 @@ Backend tests use pytest and are discovered from `backend/tests/` as `test_*.py`
 ## Commit & Pull Request Guidelines
 Recent history mixes Conventional Commit prefixes (`feat:`, `chore:`) with concise Chinese summaries. Use one focused commit per topic, for example `feat: 增加设置页模型配置`. Pull requests should describe the user-visible change, list verification commands, call out migrations/config changes, and include screenshots for UI updates.
 
+## Documentation Style
+Official docs, release notes, PR descriptions, and contribution guidance must stay concrete and verifiable. Avoid templated delivery copy and empty contrast/progress scaffolding:
+
+- Do not use Chinese patterns like “这不是……而是……”, “不是……而是……”, “先把……打通”, or promotional “先……再……”.
+- Do not use English patterns like “This is not ..., but ...”, “not ..., but ...”, “establishes the main loop”, or promotional “first ..., then ...”.
+- Keep real technical sequencing when it matters, such as command order, migration steps, auto-save before run, and troubleshooting steps.
+- State current facts and verified results; label future direction as unimplemented or planned.
+
 ## Security & Configuration Tips
 Do not commit `.env`, `web/.env`, generated storage, caches, or build output. Keep secrets in files copied from `.env.example` / `web/.env.example`. Runtime database settings may override selected provider/model options, while `DATABASE_URL`, `REDIS_URL`, `SESSION_SECRET`, and `ADMIN_ACCESS_KEY` remain env-only.

@@ -12,9 +12,9 @@
 
 ProductFlow's foundational architecture direction is healthy: the backend already has a FastAPI presentation / application / domain / infrastructure four-layer structure; external dependencies such as providers, storage, queue, and runtime settings are mostly isolated in infrastructure; the frontend uses React + TypeScript strict + TanStack Query, with API and DTOs centralized through `web/src/lib/api.ts` and `web/src/lib/types.ts`. The current system can support fast product iteration.
 
-The main architecture debt is not "wrong direction", but **oversized hot modules, a thin domain layer, and overly concentrated test/error boundaries**. These issues do not block features immediately, but they will keep increasing iteration cost for the DAG workbench, image sessions, provider expansion, error classification, and frontend interaction regressions.
+The main architecture debt is **oversized hot modules, a thin domain layer, and overly concentrated test/error boundaries**. These issues do not block features immediately. They will keep increasing iteration cost for the DAG workbench, image sessions, provider expansion, error classification, and frontend interaction regressions.
 
-The recommended route is **incremental modularization**: first add test/quality guardrails and error-type boundaries, then split the hottest backend workflow and frontend ProductDetail workbench modules, and finally introduce repository/domain service abstractions according to real business hotspots. Do not rewrite the whole project domain model or migration history in one pass.
+The recommended route is **incremental modularization**: add test/quality guardrails and error-type boundaries, split the hottest backend workflow and frontend ProductDetail workbench modules, and introduce repository/domain service abstractions according to real business hotspots. Do not rewrite the whole project domain model or migration history in one pass.
 
 ## 2. Review Method and Evidence Sources
 
@@ -115,7 +115,7 @@ The worktree baseline during review was recorded as clean by the Trellis PRD. Th
 
 **Recommended plan**
 
-Do not change external APIs or database schema first. Split the file into low-risk modules under the same application package:
+Keep external APIs and database schema unchanged while splitting the file into low-risk modules under the same application package:
 
 ```text
 application/product_workflows.py              # keep public use-case facade, import submodules
@@ -157,7 +157,7 @@ Move only one responsibility category at a time, keeping public function names a
 
 **Recommended plan**
 
-Split into page-local directories first instead of global `components/`, avoiding premature generalization:
+Split into page-local directories rather than global `components/`, avoiding premature generalization:
 
 ```text
 web/src/pages/product-detail/
@@ -183,7 +183,7 @@ web/src/pages/product-detail/
     useWorkflowMutations.ts   # extract only after real reuse appears
 ```
 
-First extract pure display or low-state components such as `RunsPanel`, `ImagePreviewModal`, `TextArea`, and some inspectors. Extract canvas pointer/zoom logic in a second pass.
+Start with pure display or low-state components such as `RunsPanel`, `ImagePreviewModal`, `TextArea`, and some inspectors. Move canvas pointer/zoom logic only after those splits are stable.
 
 **Acceptance**
 
@@ -194,7 +194,7 @@ First extract pure display or low-state components such as `RunsPanel`, `ImagePr
 **Risk and rollback**
 
 - Risks: extracted components may receive too many props and become fake splits; stale closures may affect mutations/cache.
-- Reduce risk by extracting presentational components first, then hooks.
+- Reduce risk by extracting presentational components before hook boundaries.
 - Rollback by component split commit; backend data is unaffected.
 
 ### A3. Frontend Quality Gates Are Insufficient
@@ -214,7 +214,7 @@ First extract pure display or low-state components such as `RunsPanel`, `ImagePr
 
 **Recommended plan**
 
-Add lightweight gates first; do not introduce a heavy toolchain all at once:
+Add lightweight gates and avoid introducing a heavy toolchain all at once:
 
 1. Configure ESLint with React hooks, TypeScript, and basic import rules.
 2. Configure Prettier or clearly choose ESLint formatting, avoiding tool rule conflicts.
@@ -512,7 +512,7 @@ Every later refactor task should satisfy at least:
 
 2. **Frontend splitting can easily create props drilling**
    - If an extracted component has more than 15 props, pause and redesign the boundary.
-   - Extract pure display components first, then decide whether to extract hooks.
+   - Extract pure display components before deciding whether hook boundaries are useful.
 
 3. **Repository abstraction too early increases navigation cost**
    - The current project is still single-merchant self-hosted; complex permissions/multi-tenancy are not near-term goals.
@@ -537,7 +537,7 @@ For this round and the recommended route, these are not goals:
 - Do not change API response shape, DTO field names, or frontend routes.
 - Do not introduce Redux/Zustand or another global state library to replace TanStack Query.
 - Do not move ProductDetail-specific components prematurely into global `web/src/components/`.
-- Do not pause product iteration just because frontend tests are missing; add low-cost guardrails first, then split hotspots.
+- Do not pause product iteration just because frontend tests are missing; add low-cost guardrails before splitting hotspots.
 
 ## 12. Suggested Next Trellis Tasks
 

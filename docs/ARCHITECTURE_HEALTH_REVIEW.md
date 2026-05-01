@@ -181,7 +181,7 @@ Provider 调用已经被隔离在 infrastructure 层，但真实 OpenAI-compatib
 ## 5. 下一步建议
 
 1. **优先补 ProductDetail workbench 关键交互测试**  
-   目标不是一次性测全页面，而是覆盖最容易回归的状态转换：status 合并后不丢节点结构、运行完成触发完整刷新、节点拖拽坐标稳定、图片填充/下载不触发错误选择。
+   目标是覆盖最容易回归的状态转换：status 合并后不丢节点结构、运行完成触发完整刷新、节点拖拽坐标稳定、图片填充/下载不触发错误选择。
 
 2. **为三类 durable task 沉淀共享检查清单**  
    每次新增后台任务都必须回答：DB 状态何时落地、enqueue 失败如何回写、worker 重复消息如何 no-op、API 启动恢复哪些状态、status endpoint 是否轻量。
