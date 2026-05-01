@@ -10,7 +10,6 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
-import { OnboardingGuideCard } from "../components/OnboardingGuide";
 import { StatusPill } from "../components/StatusPill";
 import { TopNav } from "../components/TopNav";
 import { api, ApiError } from "../lib/api";
@@ -117,8 +116,6 @@ export function ProductListPage() {
               </div>
             </div>
           </section>
-
-          <OnboardingGuideCard page="products" />
 
           <div className="flex items-end justify-between gap-4 rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm shadow-slate-200/50">
             <div>

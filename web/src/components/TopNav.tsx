@@ -1,8 +1,6 @@
 import { GalleryHorizontalEnd, LayoutGrid, LogOut, MessagesSquare, Settings, Wand2 } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 
-import { OnboardingNavButton } from "./OnboardingGuide";
-
 interface TopNavProps {
   breadcrumbs?: string;
   onHome?: () => void;
@@ -92,7 +90,6 @@ export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
       </div>
 
       <div className="flex min-w-0 flex-wrap items-center justify-start gap-2 lg:justify-end">
-        <OnboardingNavButton />
         {onLogout ? (
           <button
             type="button"

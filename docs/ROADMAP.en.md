@@ -16,7 +16,7 @@ Completed baseline capabilities:
 - Iterative image sessions and attaching generated images back to products.
 - Generated image gallery: iterative image results can be collected at `/gallery`, keeping source session, product, prompt, size, model, and download entrypoint.
 - Product DAG workflow editing, execution, persistent state, and recovery.
-- In-product guided onboarding and shared top navigation.
+- Shared top navigation.
 - ProductFlow workbench canvas interactions: mouse-wheel zoom, left-drag pan, node drag positioning, and edge drag creation/deletion.
 - Single-slot semantics for reference images, image drag-and-drop upload, compact right sidebar for Details / Runs / Images, and asset fill.
 - Prompt configuration: product understanding, copy, workbench image generation, and iterative image-generation templates can be overridden in the settings page.
@@ -52,7 +52,7 @@ Completed baseline capabilities:
 
 ### 4. Documentation and Productization
 
-- Add README / user-guide screenshots so ProductFlow workbench nodes, sidebar, and onboarding flow are more intuitive.
+- Add README / user-guide screenshots so ProductFlow workbench nodes and sidebar are more intuitive.
 - Capture lightweight brand usage guidance, including recommended sizes and usage boundaries for logo, favicon, and README hero.
 - Add provider configuration examples and common-error troubleshooting instead of expanding dependency lists.
 

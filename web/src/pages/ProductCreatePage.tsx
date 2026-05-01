@@ -4,13 +4,11 @@ import { ImagePlus, Loader2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { ImageDropZone } from "../components/ImageDropZone";
-import { useOnboarding } from "../components/OnboardingGuide";
 import { TopNav } from "../components/TopNav";
 import { api, ApiError } from "../lib/api";
 
 export function ProductCreatePage() {
   const navigate = useNavigate();
-  const onboarding = useOnboarding();
   const [name, setName] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [error, setError] = useState("");
@@ -33,9 +31,6 @@ export function ProductCreatePage() {
       });
     },
     onSuccess: (product) => {
-      if (onboarding.active && onboarding.step.id === "create-product-form") {
-        onboarding.advance();
-      }
       navigate(`/products/${product.id}`);
     },
     onError: (mutationError) => {

@@ -7,15 +7,7 @@ This document has two parts:
 1. **Beginner tutorial**: minimal jargon, follow the clicks and fields, and generate one usable product image first.
 2. **Reference**: after completing one run, read more about workbench cards, prompt configuration, model settings, and common questions.
 
-The in-product beginner entrypoint is the **Start guide / Continue guide** button on the right side of the top navigation. There is no longer a separate beginner tutorial page.
-
-ProductFlow now includes real **guided onboarding**:
-
-- Click **Start guide** on the right side of the top navigation. If you have already started, it shows **Continue guide** and remembers your current progress.
-- The large guide/progress panel appears only on the **Products / Workbench home page** (product list). It does not occupy workspace on the new product page, workbench canvas, or iterative image page.
-- Each step shows current progress, the action to take, the expected result, and a next-step button.
-- You can **mark complete**, **skip**, or **reset** at any time. Reset starts again from "Create product".
-- This repository document keeps only text reference. During real use, continue from the homepage guide panel or the top-navigation button.
+ProductFlow no longer provides a top-navigation guide button, guide progress card, or separate beginner tutorial page. This document remains as text reference; follow the steps below manually to complete one full flow.
 
 The current workbench is the **ProductFlow workbench**: the middle area is a zoomable and draggable node canvas; the right side is a compact sidebar that switches between **Details / Runs / Images** with a small rail. Normal use does not require understanding the internal DAG. Just remember: product, reference image, copy, and image generation are cards; edges mean "downstream generation refers to upstream data".
 
@@ -26,17 +18,6 @@ The current workbench is the **ProductFlow workbench**: the middle area is a zoo
 Goal: upload one product image, add a little information, generate copy, then generate a satisfying image.
 
 ### 1. Create a Product
-
-1. Click **Start guide** on the right side of the top navigation. If you have already started, it shows **Continue guide**.
-2. The guide first takes you to **Products / Workbench**.
-3. Click **New product**.
-4. Upload a clear product main image. You can click the upload area to select a file or drag the image directly into it.
-5. Fill in a product name, for example: `cream white commuter tote bag`.
-6. Click **Create and continue**.
-
-Expected result: the page enters this product's workbench, with several clickable cards in the middle. The top navigation can still continue the guide, but no large tutorial card appears inside the canvas.
-
-If you do not want to open the guide, you can operate manually:
 
 1. Click **Products / Workbench** in the top navigation.
 2. Click **New product**.

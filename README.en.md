@@ -18,7 +18,6 @@ Implemented and visible in the codebase:
 - Product list, paginated browsing, product creation, product detail workbench, and product deletion protected by a global switch.
 ![Product creation list example](images/preview1.png)
 
-- In-product guided onboarding: the top navigation can start, continue, or reset the guide at any time; the home page shows a progress card; operation pages keep the workspace clear.
 - ProductFlow workbench: the product detail page organizes product information, reference images, copy, and image-generation flow on a node canvas.
 - Canvas interactions: mouse-wheel zoom, left-drag panning on blank canvas, node dragging, edge creation by dragging connections, edge deletion, and remembered right-side panel width.
 ![Product workbench example](images/preview2.png)
@@ -328,7 +327,7 @@ Default development ports come from `.env.dev.example`:
 - API: `http://localhost:29282`
 - Web: `http://localhost:29283`
 
-Open the Web page and log in with `ADMIN_ACCESS_KEY`. After login, you can click **Start guide** in the top navigation and follow the in-product guide to create a product, fill product details, generate copy, and generate images.
+Open the Web page and log in with `ADMIN_ACCESS_KEY`. After login, you can create a product from **Products / Workbench**, then use the product detail workbench to fill product details, generate copy, and generate images.
 
 ### 6. Development health check
 

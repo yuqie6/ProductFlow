@@ -45,10 +45,9 @@ React/Vite web
 
 - `pages/`：登录、商品列表、创建商品、商品详情、画廊、设置、图片会话页面（当前路由为 `/image-chat` 和
   `/products/:productId/image-chat`）。
-- `components/`：共享 UI，如顶栏、状态标签、图片拖拽上传区和产品内引导。
+- `components/`：共享 UI，如顶栏、状态标签和图片拖拽上传区。
 - `lib/api.ts`：集中封装 REST API 请求。
 - `lib/types.ts`：前端 DTO 类型，需与后端 schemas 保持一致。
-- `lib/onboarding.ts`：产品内 guided onboarding 的轻量步骤和浏览器本地进度状态。
 
 前端使用 TanStack Query 管理服务端状态。商品详情页和连续生图页对运行中状态采用轻量 status 轮询：
 

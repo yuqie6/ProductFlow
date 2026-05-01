@@ -192,8 +192,6 @@ Pages provide data and mutations; the shared picker owns only presentational siz
   `商品/工作台`, `文/图生图`, `画廊`, and `配置`.
 - The entries link to `/products`, `/image-chat`, `/gallery`, and `/settings`; keep route declarations centralized in
   `web/src/App.tsx`.
-- `TopNav` also exposes the persistent guided-onboarding action through `OnboardingNavButton`. Keep it visually secondary
-  to the centered main nav but large enough to be discoverable.
 - Page components may still pass `breadcrumbs`, `onHome`, and `onLogout`, but should not duplicate these global nav links
   in a separate header unless that page needs an additional hero call-to-action.
 - `TopNav` may use React Router primitives such as `NavLink` / `useLocation`, but must not fetch session or settings data
@@ -203,7 +201,7 @@ Wrong:
 
 ```tsx
 <TopNav breadcrumbs="配置" />
-<button onClick={() => onboarding.start()}>开始引导</button>
+<button onClick={() => navigate("/settings")}>配置</button>
 ```
 
 Correct:
@@ -212,7 +210,7 @@ Correct:
 <TopNav breadcrumbs="配置" onHome={() => navigate("/products")} onLogout={() => logoutMutation.mutate()} />
 ```
 
-The shared nav itself exposes the settings/image-chat/product links and the guided-onboarding action; pages only add page-specific actions.
+The shared nav itself exposes the settings/image-chat/product/gallery links; pages only add page-specific actions.
 
 ## Scenario: Global gallery display page
 
@@ -314,23 +312,6 @@ This ignores the 11 grid gaps in a 12-column desktop grid.
 const columnWidth = (gridWidth - gridGapPx * (columns - 1)) / columns
 const tileWidth = columnWidth * columnSpan + gridGapPx * (columnSpan - 1)
 ```
-
----
-
-## Guided Onboarding Components
-
-`web/src/components/OnboardingGuide.tsx` owns the product-native tutorial UI:
-
-- Store the lightweight progress state in browser localStorage through `web/src/lib/onboarding.ts`; do not persist this
-  user-assistance state in the backend.
-- Do not add a standalone onboarding or documentation route for normal product help. Guided onboarding starts or continues
-  from `OnboardingNavButton`; repo documentation such as `docs/USER_GUIDE.md` remains the reference surface.
-- Show large `OnboardingGuideCard` / progress panels only on the homepage/product list. Operational pages such as
-  product creation, product workbench canvas, and continuous image chat must not render tutorial cards that occupy working
-  space. The nav button may still start/continue/reset onboarding and navigate to the relevant route.
-- The card should always show current step/progress, a next action, and explicit complete/skip/reset controls.
-- Onboarding copy should remain low-jargon and action-oriented: "click this, fill that, expect this result" instead of DAG
-  or provider internals.
 
 ---
 
