@@ -23,20 +23,21 @@ Non-target users: teams that need multi-tenant isolation, complex RBAC, payment 
 ### 3.1 Product Creative Chain
 
 1. Log in with an admin key.
-2. Create a product, upload the product source image, and fill in product name, category, price, and other information.
-3. Upload reference images for poster generation or later image sessions.
-4. Trigger a copy-generation job.
-5. Manually edit and confirm the copy.
-6. Generate posters using the confirmed copy.
-7. Download posters and review product history.
+2. Create a product, upload the product source image, and fill in the product name.
+3. Enter the product workbench and add category, price, product notes, and generation direction.
+4. Use copy nodes to generate and edit the product title, selling points, poster headline, and CTA.
+5. Use image-generation nodes to generate images and fill downstream reference-image slots.
+6. Download images/posters, or review product asset history in the right-side Images panel.
 
 ### 3.2 Iterative Image Sessions
 
 1. Create a standalone image session, optionally attached to a product.
 2. Upload multiple reference images.
 3. Enter a prompt to generate images.
-4. Keep iterative context so later generations can build on the previous response.
-5. Attach satisfactory generated images back to a product as reference assets.
+4. Continue from any generated candidate, or explicitly select reference images for the next generation round.
+5. View queued/running/failed state; after task completion, the page refreshes new candidates automatically.
+6. Attach satisfactory generated images back to a product as reference assets, save them as product main-image references, or collect them in the gallery.
+7. On mobile, use the single-column layout: top actions, status, result preview, generation settings, reference images, and parameter selection.
 
 ### 3.3 Product DAG Workflow
 
@@ -44,7 +45,14 @@ Non-target users: teams that need multi-tenant isolation, complex RBAC, payment 
 2. Create or adjust nodes: product context, reference image, copy generation, and image generation.
 3. Connect nodes to form a DAG.
 4. Start a background workflow run.
-5. Persist run state, node state, and failure reasons in the database, while the page polls and displays the latest state.
+5. Persist run state, node state, and failure reasons in the database.
+6. While running, the frontend polls lightweight workflow status; after completion, it refreshes full workflow, product detail, and historical artifacts.
+
+### 3.4 Gallery
+
+1. Save generated image-session results to the gallery.
+2. Browse collected generated images at `/gallery` by generation time.
+3. Gallery entries keep source session, linked product, prompt, size, model, and download entrypoint.
 
 ## 4. Core Objects
 
@@ -53,8 +61,9 @@ Non-target users: teams that need multi-tenant isolation, complex RBAC, payment 
 - `CreativeBrief`: system-generated product understanding result that provides shared semantics for copy and posters.
 - `CopySet`: one copy-generation result, editable and confirmable.
 - `PosterVariant`: main image / promotional poster output based on copy and assets.
-- `JobRun`: traditional async job record for copy/poster generation.
 - `ImageSession` / `ImageSessionAsset`: standalone iterative image-generation session and its reference/generated images.
+- `ImageSessionRound` / `ImageSessionGenerationTask`: iterative image candidates and durable async generation-task state.
+- `ImageGalleryEntry`: saved generated-image collection record.
 - `ProductWorkflow` / `WorkflowNode` / `WorkflowEdge` / `WorkflowRun`: product DAG workflow structure and run records.
 - `AppSetting`: runtime business configuration override.
 
@@ -66,6 +75,7 @@ Implemented frontend pages:
 - `/products`: product list.
 - `/products/new`: create product.
 - `/products/:productId`: product detail, copy/poster main chain, history, and DAG workflow.
+- `/gallery`: generated image gallery.
 - `/settings`: provider, model, upload limit, job retry, and other business configuration.
 - `/image-chat` and `/products/:productId/image-chat`: iterative image generation and attaching assets back to products.
 
@@ -74,11 +84,14 @@ Implemented frontend pages:
 For a single self-hosted deployment, the current version should be able to:
 
 1. Run the product chain with local `mock` providers without external model keys.
-2. Store products, assets, copy, posters, jobs, image sessions, and workflow state in PostgreSQL.
+2. Store products, assets, copy, posters, tasks, image sessions, and workflow state in PostgreSQL.
 3. Use Redis + Dramatiq to execute async copy/poster jobs and product workflows.
-4. Display job state, workflow node state, and history in the frontend.
-5. Save business configuration overrides through `/settings` while avoiding secret values in API responses.
-6. Store uploaded/generated files in local storage and read them through controlled download APIs.
+4. Use durable `ImageSessionGenerationTask` records for iterative image generation, including queue position, failure reason, and completion refresh.
+5. Display task state, workflow node state, generation queue overview, and history in the frontend.
+6. Refresh running tasks/workflows through lightweight status APIs instead of high-frequency full-object polling.
+7. Save iterative generated images to the gallery and retrieve originals through controlled download APIs.
+8. Save business configuration overrides through `/settings` while avoiding secret values in API responses.
+9. Store uploaded/generated files in local storage and read them through controlled download APIs.
 
 ## 7. Explicit Boundaries
 
@@ -88,7 +101,7 @@ Currently not included:
 - Hosted model keys, cloud account systems, or billing systems.
 - Automatic placement, automatic listing, or store authorization.
 - Video generation workflows.
-- Production Kubernetes / full Docker Compose orchestration.
+- Kubernetes / Helm / released container images or other production orchestration packages. The repository already includes a Docker Compose self-hosting path.
 
 ## 8. Success Criteria
 

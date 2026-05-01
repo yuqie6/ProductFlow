@@ -14,6 +14,7 @@ Completed baseline capabilities:
 - Copy generation, editing, confirmation, and history.
 - Template poster generation, AI image-provider poster generation, and poster download.
 - Iterative image sessions and attaching generated images back to products.
+- Generated image gallery: iterative image results can be collected at `/gallery`, keeping source session, product, prompt, size, model, and download entrypoint.
 - Product DAG workflow editing, execution, persistent state, and recovery.
 - In-product guided onboarding and shared top navigation.
 - ProductFlow workbench canvas interactions: mouse-wheel zoom, left-drag pan, node drag positioning, and edge drag creation/deletion.
@@ -21,6 +22,8 @@ Completed baseline capabilities:
 - Prompt configuration: product understanding, copy, workbench image generation, and iterative image-generation templates can be overridden in the settings page.
 - Initial product brand assets, README preview images, and Web favicon/metadata.
 - Settings page management for providers, models, upload limits, job retry, and other business configuration.
+- Lightweight status polling while running: iterative image generation and product workflows poll status responses only, then refresh full details after completion.
+- Mobile iterative image page adaptation: top actions, status, preview, settings, reference images, and parameters are organized as a single-column mobile flow.
 - One-command Docker Compose self-hosting path: `docker compose up -d --build` starts PostgreSQL, Redis, backend API, Dramatiq worker, and the Web static site; `just release` now uses the Compose production update and health-check flow.
 - Basic open-source files, MIT License, contribution/security guides, and issue/PR templates.
 
@@ -43,7 +46,7 @@ Completed baseline capabilities:
 
 - Improve DAG node run logs and failure reason display.
 - Add node-level retry, skip, and duplicate capabilities.
-- Optimize state refresh and partial loading for large product detail pages.
+- Continue optimizing partial loading and component boundaries on large product detail pages; active full-workflow polling has already been replaced with lightweight status polling.
 - Continue improving asset reuse between image sessions and product workflows, such as batch attach, version comparison, and clearer source labels.
 - Add automated regression tests for canvas zoom, drag, connection, and image fill.
 
@@ -80,7 +83,7 @@ Completed baseline capabilities:
 - Video scripts, voiceover, subtitles, and template rendering.
 - Multi-member collaboration and permission model.
 - Object storage adapter layer.
-- Deployment packages, container images, Helm chart, or other production orchestration options.
+- Released container images, Helm chart, or other production orchestration packages. The repository already includes the Docker Compose self-hosting path, but no hosted image or Helm chart is published.
 - Controlled integration with external stores/ad platforms.
 
 ## Not Planned for Now

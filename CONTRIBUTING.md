@@ -65,6 +65,36 @@ just web-build
 - 已运行的验证命令和结果。
 - UI 变更截图或录屏（如适用）。
 
+正式版本 tag 使用 annotated tag，并写中英双语说明。tag message 应包含版本定位、主要包含内容、已验证命令和明确边界；不要把一次性的发布准备清单写进仓库文档。建议格式：
+
+```text
+ProductFlow vX.Y.Z
+
+中文：
+<一句话版本定位>
+
+包含：
+- ...
+
+已验证：
+- ...
+
+边界：
+- ...
+
+English:
+<One-sentence release positioning>
+
+Includes:
+- ...
+
+Verified:
+- ...
+
+Boundaries:
+- ...
+```
+
 ## Trellis 目录说明
 
 仓库保留 `.trellis/spec/`、`.trellis/workflow.md` 和 `.trellis/scripts/` 作为开发规范和任务工具。`.trellis/tasks/` 和 `.trellis/workspace/` 属于本地任务/开发者记录，不应提交。

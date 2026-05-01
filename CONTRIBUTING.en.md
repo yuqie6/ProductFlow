@@ -65,6 +65,36 @@ Prefer one focused topic per PR. The PR description should include:
 - Verification commands run and their results.
 - Screenshots or recordings for UI changes, when applicable.
 
+Formal version tags use annotated tags with bilingual Chinese/English messages. The tag message should include release positioning, main contents, verification commands, and explicit boundaries; do not keep one-off release-preparation checklists as repository docs. Suggested format:
+
+```text
+ProductFlow vX.Y.Z
+
+中文：
+<一句话版本定位>
+
+包含：
+- ...
+
+已验证：
+- ...
+
+边界：
+- ...
+
+English:
+<One-sentence release positioning>
+
+Includes:
+- ...
+
+Verified:
+- ...
+
+Boundaries:
+- ...
+```
+
 ## Trellis Directory Notes
 
 The repository keeps `.trellis/spec/`, `.trellis/workflow.md`, and `.trellis/scripts/` as development specifications and task tooling. `.trellis/tasks/` and `.trellis/workspace/` are local task/developer records and should not be committed.

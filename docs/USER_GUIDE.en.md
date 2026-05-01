@@ -115,7 +115,7 @@ Copyable rewrite example:
 Make the background cleaner, keep only the laptop and coffee; the bag texture should be clear and the shadow soft.
 ```
 
-Download the image when you are satisfied. If you want to continue fine-tuning iteratively, click **Image chat** in the top navigation.
+Download the image when you are satisfied. If you want to continue fine-tuning iteratively, click **Image chat** in the top navigation. If this image came from Image chat, you can also save it to **Gallery** for centralized browsing later.
 
 ### Canvas Basics
 
@@ -129,7 +129,7 @@ Download the image when you are satisfied. If you want to continue fine-tuning i
 
 1. Click **Image chat** in the top navigation.
 2. Select a product, or generate freely first.
-3. Upload a reference image or select an existing result.
+3. The first image can be generated directly from a text description. For later edits, first click a completed image in history as the base image.
 4. Request changes conversationally, for example:
 
    ```text
@@ -137,6 +137,18 @@ Download the image when you are satisfied. If you want to continue fine-tuning i
    ```
 
 5. When satisfied, write the image back to the product so the workbench can reference it later.
+
+On small screens, Image chat switches to a single-column layout: top actions, generation status, result preview, history, and generation settings appear in order. When generating multiple candidates, the history first shows matching in-progress placeholders.
+
+### 8. Save to Gallery
+
+Image chat results can be saved to **Gallery**. The gallery keeps image source, linked product, prompt, size, and model information, and provides a download entrypoint.
+
+Good gallery candidates:
+
+- Backgrounds or compositions that may be reused later but should not be attached to a product yet.
+- Satisfying candidates that need to be reviewed together.
+- Useful tuning results that are not the current product's final image.
 
 ---
 
@@ -184,6 +196,8 @@ Open **Settings** in the top navigation and find the **Prompts** group. You can 
 - `prompt_brief_system`: default prompt for product understanding.
 - `prompt_copy_system`: default prompt for copy generation.
 - `prompt_poster_image_template`: workbench image-generation template.
+- `prompt_poster_image_edit_template`: workbench edit template when upstream copy or reference-image context is present.
+- `prompt_poster_image_reference_policy`: visual-reference rule used by the `reference_policy` placeholder in workbench image templates.
 - `prompt_image_chat_template`: iterative image-generation template.
 
 Recommended usage:
@@ -196,7 +210,8 @@ Restoring defaults deletes the custom value from the database and returns to the
 
 Common placeholders:
 
-- Workbench image template: `product_name`, `category`, `price`, `source_note`, `instruction`, `title`, `selling_points`, `poster_headline`, `cta`, `size`, `kind`, `kind_label`, `kind_requirements`.
+- Workbench image template: `product_name`, `category`, `price`, `source_note`, `instruction`, `title`, `selling_points`, `poster_headline`, `cta`, `context_block`, `reference_policy`, `size`, `kind`, `kind_label`, `kind_requirements`.
+- Workbench edit template: `product_name`, `category`, `price`, `source_note`, `instruction`, `title`, `selling_points`, `poster_headline`, `cta`, `context_block`, `reference_policy`, `size`, `kind`, `kind_label`, `kind_requirements`.
 - Iterative image template: `prompt`, `size`, `history_block`.
 
 If a placeholder is misspelled, the system does not crash just because of the unknown placeholder, but that part may not be replaced as expected. Prefer small edits followed by testing.
@@ -210,10 +225,21 @@ The top-navigation **Settings** page can also manage:
 - Copy provider and copy model.
 - Image provider and image model.
 - Default image size. Iterative image generation and workbench image generation can directly select common 1K / 2K / 4K frames or enter custom width/height.
+- Iterative image-generation idle recovery threshold, defaulting to 90 minutes; the system judges stale running tasks by the latest generation-progress heartbeat.
 - Upload file size limits.
 - API keys for copy/image providers.
 
 Secret fields are not echoed back. Saving with an empty value does not overwrite the old secret; only entering a new value writes it to the database.
+
+## Reference: Running State
+
+Copy, poster, workflow, and Image chat generation are background tasks. Pages refresh status while running, but they do not repeatedly download complete historical data:
+
+- Image chat updates queue position, completed candidate count, latest progress time, provider status, success/failure state, and failure reason.
+- Product workflows update node state, run state, and failure reasons.
+- After a task ends, the page refreshes full details and shows new images, copy, or product history.
+
+If a page does not change for a long time, check the running state and error message first, then refresh the page to confirm backend results.
 
 ---
 

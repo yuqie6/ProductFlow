@@ -2,6 +2,8 @@
 
 [中文](ARCHITECTURE.md) | English
 
+[Current architecture health, completed cleanup, and remaining risks are tracked in `docs/architecture-health-review.en.md`; this document stays focused on system structure.]
+
 ## 1. System Overview
 
 ProductFlow consists of the frontend, backend API, background worker, PostgreSQL, Redis, and local file storage:
@@ -28,8 +30,8 @@ Local hot-reload development is still driven by the root `justfile`: you can sta
 Backend code lives under `backend/src/productflow_backend/` and is organized by layer:
 
 - `presentation/`: FastAPI app, routes, auth dependencies, Pydantic schemas, and upload validation.
-- `application/`: use-case logic for products, copy, posters, image sessions, and product workflows.
-- `domain/`: stable enums such as job status, asset type, and workflow node type.
+- `application/`: use-case logic for products, copy, posters, gallery, image sessions, and product workflows. Product workflow logic is split into graph / mutations / query / execution / context / artifacts / dependencies modules, with `product_workflows.py` kept as the compatibility facade.
+- `domain/`: stable enums such as task status, asset type, and workflow node type.
 - `infrastructure/`: SQLAlchemy models/session, queue, storage, text/image providers, and poster renderer.
 - `workers.py`: Dramatiq actor entrypoint.
 - `config.py`: environment configuration, runtime configuration definitions, and database override reading.
@@ -40,13 +42,18 @@ The route layer only handles input adaptation, authentication, error mapping, an
 
 Frontend code lives under `web/src/`:
 
-- `pages/`: login, product list, product creation, product detail, settings, and image-session pages (current routes include `/image-chat` and `/products/:productId/image-chat`).
+- `pages/`: login, product list, product creation, product detail, gallery, settings, and image-session pages (current routes include `/image-chat`, `/products/:productId/image-chat`, `/gallery`, and `/settings`).
 - `components/`: shared UI such as the top navigation, status tags, image drag-and-drop upload area, and in-product onboarding.
 - `lib/api.ts`: centralized REST API request wrapper.
 - `lib/types.ts`: frontend DTO types that must stay aligned with backend schemas.
 - `lib/onboarding.ts`: lightweight in-product guided onboarding steps and browser-local progress state.
 
-The frontend uses TanStack Query for server state. The product detail page polls job/workflow state and updates relevant query caches after successful mutations.
+The frontend uses TanStack Query for server state. The product detail page and iterative image page use lightweight status polling while work is active:
+
+- Iterative image generation polls `['image-session-status', selectedSessionId]`, merges task state only, then refreshes the full session after completion.
+- Product workflows poll `['product-workflow-status', productId]`, merge node/run state only, then refresh full workflow and product artifact queries after completion.
+
+Do not reintroduce active polling for complete `ImageSessionDetailResponse` or complete `ProductWorkflowResponse`; those payloads include image history, node configuration, artifact references, and run records, and high-frequency refresh increases frontend render cost and backend serialization work.
 
 The product detail page is currently the ProductFlow workbench: the canvas handles nodes, edges, zoom, pan, and node dragging; the right sidebar handles Details, Runs, and Images. Canvas zoom ratio and sidebar width are browser-local preferences, while workflow nodes, edges, run state, and artifacts remain database-backed.
 
@@ -60,7 +67,6 @@ Product
   -> CreativeBrief
   -> CopySet(draft/confirmed)
   -> PosterVariant(main_image/promo_poster)
-  -> JobRun(copy_generation/poster_generation)
 ```
 
 Iterative image-generation chain:
@@ -68,7 +74,10 @@ Iterative image-generation chain:
 ```text
 ImageSession
   -> ImageSessionAsset(reference_upload/generated_image)
+  -> ImageSessionRound(one generated candidate per row)
+  -> ImageSessionGenerationTask(durable async generation task)
   -> optional Product attachment
+  -> optional ImageGalleryEntry
 ```
 
 Product DAG workflow chain:
@@ -94,22 +103,26 @@ Workflow node semantics for users:
 
 There are currently two background execution entrypoints:
 
-1. Traditional `JobRun`: used for copy generation and poster generation.
-2. `WorkflowRun`: used for product DAG workflow execution.
+1. `WorkflowRun`: used for product DAG workflow execution.
+2. `ImageSessionGenerationTask`: used for iterative image generation.
 
 Shared principles:
 
 - Database records are persisted first; Redis messages are only recoverable dispatch attempts.
-- Database constraints prevent duplicate active runs of the same type for the same product.
-- If enqueue fails, the newly created run is marked failed to avoid stuck active state.
-- API startup recovers queued unfinished jobs/workflows.
+- Database constraints prevent duplicate active workflow runs for the same product.
+- If enqueue fails, the newly created run/task is marked failed to avoid stuck active state.
+- API startup recovers queued unfinished tasks/workflows.
 - Worker startup can reset stale running state and re-dispatch work.
+- Iterative image generation no longer treats a user-configurable hard total timeout as product semantics. Running tasks persist `progress_updated_at`, completed candidate count, current candidate, and provider response state; stale-running recovery uses the latest progress heartbeat for idle detection and only falls back to `started_at` for older rows.
+- The iterative image worker's Dramatiq `time_limit` remains only as an internal failsafe, not as a user-tunable generation deadline.
 - Dramatiq actors should no-op on duplicate messages for terminal/currently-running records.
+- The global generation concurrency limit is enforced by counting active `WorkflowRun` and `ImageSessionGenerationTask` rows in the database.
+- `/api/generation-queue` returns the global durable queue overview; iterative image status responses include the current task's queue position.
 
 Related entrypoints:
 
-- `productflow_backend.infrastructure.queue.recover_unfinished_jobs`
 - `productflow_backend.infrastructure.queue.recover_unfinished_workflow_runs`
+- `productflow_backend.infrastructure.queue.recover_unfinished_image_session_generation_tasks`
 - `productflow_backend.workers`
 
 ## 6. Provider Architecture
@@ -129,7 +142,7 @@ Current implementations:
 Image providers live under `infrastructure/image/` and serve poster generation and image sessions. Current implementations:
 
 - `mock`
-- `openai_responses` (Responses API `image_generation` tool, supporting `input_image` and iterative context)
+- `openai_responses` (Responses API `image_generation` tool, supporting `input_image`; iterative image generation prefers background response + retrieve polling and writes provider status into task progress)
 
 Provider selection is controlled by `config.py` and corresponding factories. Routes do not directly depend on concrete SDKs.
 
@@ -150,9 +163,11 @@ Both modes target two artifact types:
 Configuration is split into two categories:
 
 1. Env-only infrastructure configuration: `DATABASE_URL`, `REDIS_URL`, `SESSION_SECRET`, `ADMIN_ACCESS_KEY`, `SETTINGS_ACCESS_TOKEN`, and similar values. These must be available before the application can access the database, or they protect the secondary unlock for the settings page, so runtime DB overrides are not supported.
-2. Runtime business configuration: provider, model, image size, upload limits, job retry, global generation concurrency limit, poster mode, prompt templates, business deletion switch, and similar values. They can be provided as defaults by `.env` / `.env.dev`, or written to `app_settings` through `/api/settings` after login and settings-page unlock.
+2. Runtime business configuration: provider, model, image size, upload limits, task retry, global generation concurrency limit, poster mode, prompt templates, login-gate switch, business deletion switch, and similar values. They can be provided as defaults by `.env` / `.env.dev`, or written to `app_settings` through `/api/settings` after login and settings-page unlock.
 
 Secret configuration values are not echoed back in API responses.
+
+The login gate `admin_access_required` is enabled by default. When enabled, private APIs require an admin marker in the Cookie session through `require_admin`, and invalid `ADMIN_ACCESS_KEY` values still return 401. When disabled, normal workspace/private APIs can be used without the admin key, and `GET /api/auth/session` returns `authenticated=true` and `access_required=false`; complete `/api/settings` reads/writes still require the independent `SETTINGS_ACCESS_TOKEN` unlock.
 
 The business deletion switch `deletion_enabled` is disabled by default. When disabled, the backend rejects whole-product deletion and whole iterative image-session deletion at the route boundary, so demo sites do not lose evidence after problematic content is deleted. Workflow node/edge editing and reference-image deletion are not affected. `DELETE /api/auth/session` and restoring database overrides from the settings page are not part of business deletion protection.
 
@@ -175,7 +190,8 @@ Do not bypass the storage service by directly concatenating user-controlled path
 The current security model is "single-admin self-hosted":
 
 - Admin-key login, not public registration.
-- The settings page uses an independent `SETTINGS_ACCESS_TOKEN` for secondary unlock; the session stores only the unlocked marker, not the plaintext token.
+- `ADMIN_ACCESS_KEY` is read only from environment variables and does not enter database configuration. The login gate can be disabled through the `admin_access_required` runtime switch, but stays enabled by default.
+- The settings page uses an independent `SETTINGS_ACCESS_TOKEN` for secondary unlock; the session stores only the unlocked marker, not the plaintext token. Disabling the login gate does not disable this secondary unlock.
 - Session cookies are signed with `SESSION_SECRET`.
 - CORS is controlled by `BACKEND_CORS_ORIGINS`.
 - Uploaded files have MIME, size, pixel, and count limits.

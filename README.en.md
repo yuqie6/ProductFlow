@@ -29,19 +29,24 @@ Implemented and visible in the codebase:
 - Two poster output modes: local Pillow template rendering and remote image-provider generation.
 - Poster download, poster regeneration, product history timeline, and a right-side Images panel that aggregates downloadable assets.
 - Standalone image sessions: upload reference images, generate images iteratively, and attach generated images back to products.
+- Standalone image sessions support durable async generation tasks, queue position, lightweight status refresh, multiple candidates, and a single-column mobile workflow.
+- Generated image gallery: iterative image results can be saved to `/gallery` for centralized source, prompt, size, model, and download browsing.
 - Prompt configuration: the settings page can override default prompt templates for product understanding, copy generation, workbench image generation, and iterative image generation.
 ![Product workbench example](images/preview3.png)
 ![Product workbench example](images/preview4.png)
 - Runtime settings page: provider, model, image size, upload limits, job retry, business deletion switch, and other business configuration can be overridden in the database; secrets are not echoed back.
-- Async jobs: Dramatiq + Redis for dispatch, PostgreSQL for state, and startup recovery for unfinished jobs/workflows.
+- Async jobs: Dramatiq + Redis for dispatch, PostgreSQL for state, and startup recovery for unfinished product workflows and iterative image-generation tasks.
+- Lightweight polling while running: active iterative image generation and product workflows poll status responses only, then refresh full details after completion to reduce frontend rendering and backend serialization load.
 
-Still out of scope: multi-user/multi-tenant support, team permissions, payments, hosted account systems, automatic ad placement/listing, video generation, and production-grade container orchestration templates.
+Still out of scope: multi-user/multi-tenant support, team permissions, payments, hosted account systems, automatic ad placement/listing, video generation, Kubernetes/Helm/released container images, and other production orchestration packages. The in-repository Docker Compose self-hosting path is available.
 
 ## Product Entry Points and Docs
 
 - New user guide: `docs/USER_GUIDE.en.md`
 - Architecture guide: `docs/ARCHITECTURE.en.md`
+- Current architecture health review: `docs/architecture-health-review.en.md`
 - Roadmap: `docs/ROADMAP.en.md`
+- Version history: `CHANGELOG.md`
 - Brand assets: `docs/assets/productflow-brand-concept.png`, `docs/assets/productflow-mark.svg`
 - Web metadata / favicon assets: `web/public/productflow-brand-concept.png`, `web/public/productflow-mark.svg`
 
@@ -50,7 +55,7 @@ Still out of scope: multi-user/multi-tenant support, team permissions, payments,
 - Backend: Python 3.12, FastAPI, SQLAlchemy, Alembic, Dramatiq, Redis, PostgreSQL, Pillow, OpenAI Python SDK.
 - Frontend: React 19, Vite, TypeScript, React Router, TanStack Query, Tailwind CSS 4.
 - Local development entrypoint: root `justfile`; if `just` is unavailable, raw commands are listed below.
-- Docs: `docs/PRD.en.md`, `docs/USER_GUIDE.en.md`, `docs/ARCHITECTURE.en.md`, `docs/ROADMAP.en.md`.
+- Docs: `docs/PRD.en.md`, `docs/USER_GUIDE.en.md`, `docs/ARCHITECTURE.en.md`, `docs/ROADMAP.en.md`, `CHANGELOG.md`.
 
 ## Open Source Dependencies and Thanks
 
@@ -91,6 +96,7 @@ ProductFlow/
   CONTRIBUTING.en.md
   SECURITY.md
   SECURITY.en.md
+  CHANGELOG.md
   .env.example
   .env.dev.example
   docker-compose.yml
@@ -340,6 +346,8 @@ Expected response:
 
 ProductFlow configures text and image capabilities separately. Infrastructure configuration (database, Redis, session, admin key) is still read only from environment variables. Business configuration can be written to the database from the frontend `/settings` page and override environment defaults.
 
+The login gate `admin_access_required` is enabled by default: normal workspace pages and private APIs require login with `ADMIN_ACCESS_KEY` first. Administrators can disable this gate after the secondary `/settings` unlock, allowing the ordinary workspace/API to be used without the admin key. `ADMIN_ACCESS_KEY` still must remain in the environment for future re-enabling, and `SETTINGS_ACCESS_TOKEN` always protects settings reads and writes independently.
+
 Business hard deletion is disabled by default: when `DELETION_ENABLED=false`, product deletion and iterative image-session deletion APIs return 403 so demo sites can preserve evidence for policy review. Workflow node/edge editing and reference-image deletion are not affected. To remove whole products or sessions, an administrator can explicitly enable "business deletion" in `/settings`, or enable the environment default.
 
 Text providers:
@@ -351,7 +359,7 @@ Text providers:
 Image providers:
 
 - `IMAGE_PROVIDER_KIND=mock`: local fake image implementation.
-- `IMAGE_PROVIDER_KIND=openai_responses`: OpenAI Responses `image_generation` tool, supporting reference image input and `previous_response_id` iterative context.
+- `IMAGE_PROVIDER_KIND=openai_responses`: OpenAI Responses `image_generation` tool with reference image input. ProductFlow's current iterative image branch context is determined by the base image and reference images explicitly selected by the user; it does not automatically send the entire historical image chain to the provider.
 - Related variables: `IMAGE_API_KEY`, `IMAGE_BASE_URL`, `IMAGE_GENERATE_MODEL`, `IMAGE_MAIN_IMAGE_SIZE`, `IMAGE_PROMO_POSTER_SIZE`, `IMAGE_ALLOWED_SIZES`.
 
 Poster modes:
@@ -375,6 +383,8 @@ Prompt templates:
 | Start Dramatiq worker | `just backend-worker` | `bash scripts/with_dev_env.sh uv run --directory backend dramatiq --processes 2 --threads 4 productflow_backend.workers` |
 | Run backend pytest | `just backend-test` | `uv run --directory backend pytest` |
 | Start Vite dev server | `just web-dev` | `bash scripts/with_dev_env.sh bash -lc 'web_port="${WEB_PORT:-29283}"; api_target="${VITE_DEV_PROXY_TARGET:-http://127.0.0.1:${APP_PORT:-29282}}"; VITE_API_BASE_URL= VITE_DEV_PROXY_TARGET="$api_target" pnpm --dir web dev -- --host 0.0.0.0 --port "$web_port" --strictPort'` |
+| Run frontend lint | no just wrapper | `pnpm --dir web lint` |
+| Run frontend unit tests | no just wrapper | `pnpm --dir web test:run` |
 | TypeScript check + Vite build | `just web-build` | `pnpm --dir web build` |
 | Release dry run | `just release-dry-run` | `DRY_RUN=1 bash scripts/release.sh` |
 | Production update | `just release` | `bash scripts/release.sh` |
@@ -390,12 +400,13 @@ The backend exposes REST APIs only. Main entrypoints include:
 - `POST /api/auth/session`, `GET /api/auth/session`, `DELETE /api/auth/session`
 - `/api/products`, `/api/products/{product_id}`, `/api/products/{product_id}/history`
 - `/api/products/{product_id}/reference-images`, `/api/source-assets/{asset_id}`, `/api/source-assets/{asset_id}/download`
-- `/api/products/{product_id}/copy-jobs`, `/api/copy-sets/{copy_set_id}`, `/api/copy-sets/{copy_set_id}/confirm`
-- `/api/products/{product_id}/poster-jobs`, `/api/posters/{poster_id}/regenerate`, `/api/posters/{poster_id}/download`
-- `/api/image-sessions`, `/api/image-sessions/{image_session_id}`, `/api/image-session-assets/{asset_id}/download`
-- `/api/products/{product_id}/workflow`, `/api/products/{product_id}/workflow/run`, `/api/workflow-nodes/{node_id}`, `/api/workflow-edges/{edge_id}`
-- `/api/settings`
-- `/api/jobs/{job_id}`
+- `/api/copy-sets/{copy_set_id}`, `/api/copy-sets/{copy_set_id}/confirm`
+- `/api/posters/{poster_id}/download`
+- `/api/image-sessions`, `/api/image-sessions/{image_session_id}`, `/api/image-sessions/{image_session_id}/status`, `/api/image-session-assets/{asset_id}/download`
+- `/api/gallery`
+- `/api/generation-queue`
+- `/api/products/{product_id}/workflow`, `/api/products/{product_id}/workflow/status`, `/api/products/{product_id}/workflow/run`, `/api/workflow-nodes/{node_id}`, `/api/workflow-edges/{edge_id}`
+- `/api/settings`, `/api/settings/lock-state`, `/api/settings/unlock`, `/api/settings/runtime`
 
 ## Open Source and Security Boundaries
 
