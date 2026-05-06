@@ -5,7 +5,9 @@ import type {
   ImageSessionStatus,
   ImageToolOptions,
 } from "../../lib/types";
-export { compactImageToolOptions, pruneSelectedReferenceIds } from "../../lib/imageToolOptions";
+import { compactImageToolOptions, pruneSelectedReferenceIds } from "../../lib/imageToolOptions";
+
+export { compactImageToolOptions, pruneSelectedReferenceIds };
 
 export interface ImageRoundGroup {
   id: string;
@@ -74,6 +76,26 @@ export interface ImageGenerationSubmitPayload {
 export interface ImageGenerationSubmitGuard {
   signature: string;
   submittedAt: number;
+}
+
+export interface ImageSessionSelectionState {
+  selectedGeneratedAssetId: string | null;
+  selectedTaskPlaceholderId: string | null;
+  branchBaseAssetId: string | null;
+  selectedReferenceAssetIds: string[];
+  pendingGeneratedRoundCount: number | null;
+}
+
+export interface ImageSessionSelectionReconciliationInput extends ImageSessionSelectionState {
+  rounds: ImageSessionRound[];
+  generationTasks: ImageSessionGenerationTask[];
+  historyBranches: ImageHistoryBranch[];
+  availableReferenceAssetIds: string[];
+  maxSelectedReferenceCount: number;
+}
+
+export interface ImageSessionSelectionReconciliation extends ImageSessionSelectionState {
+  generatedRoundCompleted: boolean;
 }
 
 export function groupImageSessionRounds(rounds: ImageSessionRound[]): ImageRoundGroup[] {
@@ -358,6 +380,96 @@ export function findImageGenerationTaskPlaceholderRound(
         round.candidate_index === parsed.candidateIndex,
     ) ?? null
   );
+}
+
+function sameStringList(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((item, index) => item === right[index]);
+}
+
+function latestGeneratedAssetId(rounds: ImageSessionRound[]): string | null {
+  return rounds.at(-1)?.generated_asset.id ?? null;
+}
+
+function generatedAssetIds(rounds: ImageSessionRound[]): Set<string> {
+  return new Set(rounds.map((round) => round.generated_asset.id));
+}
+
+export function reconcileImageSessionSelection({
+  rounds,
+  generationTasks,
+  historyBranches,
+  selectedGeneratedAssetId,
+  selectedTaskPlaceholderId,
+  branchBaseAssetId,
+  selectedReferenceAssetIds,
+  availableReferenceAssetIds,
+  maxSelectedReferenceCount,
+  pendingGeneratedRoundCount,
+}: ImageSessionSelectionReconciliationInput): ImageSessionSelectionReconciliation {
+  const roundAssetIds = generatedAssetIds(rounds);
+  const latestAssetId = latestGeneratedAssetId(rounds);
+  const selectedPlaceholderStillExists = Boolean(
+    selectedTaskPlaceholderId && findImageHistoryPlaceholder(historyBranches, selectedTaskPlaceholderId),
+  );
+  const selectedPlaceholderReplacementRound =
+    selectedTaskPlaceholderId && !selectedPlaceholderStillExists
+      ? findImageGenerationTaskPlaceholderRound(rounds, generationTasks, selectedTaskPlaceholderId)
+      : null;
+  const selectedPlaceholderWasReplaced = Boolean(selectedTaskPlaceholderId && !selectedPlaceholderStillExists);
+
+  let nextSelectedGeneratedAssetId = selectedGeneratedAssetId;
+  let nextSelectedTaskPlaceholderId = selectedTaskPlaceholderId;
+  let nextBranchBaseAssetId = branchBaseAssetId;
+  let nextPendingGeneratedRoundCount = pendingGeneratedRoundCount;
+  let generatedRoundCompleted = false;
+
+  if (selectedTaskPlaceholderId && !selectedPlaceholderStillExists) {
+    nextSelectedTaskPlaceholderId = null;
+    nextSelectedGeneratedAssetId = selectedPlaceholderReplacementRound?.generated_asset.id ?? latestAssetId;
+  } else if (
+    !selectedTaskPlaceholderId &&
+    (!selectedGeneratedAssetId || !roundAssetIds.has(selectedGeneratedAssetId))
+  ) {
+    nextSelectedGeneratedAssetId = latestAssetId;
+  }
+
+  if (nextBranchBaseAssetId && !roundAssetIds.has(nextBranchBaseAssetId)) {
+    nextBranchBaseAssetId = null;
+  }
+  if (nextSelectedGeneratedAssetId && !nextSelectedTaskPlaceholderId && roundAssetIds.has(nextSelectedGeneratedAssetId)) {
+    nextBranchBaseAssetId = nextSelectedGeneratedAssetId;
+  }
+
+  const prunedReferenceAssetIds = pruneSelectedReferenceIds(
+    selectedReferenceAssetIds,
+    availableReferenceAssetIds,
+    maxSelectedReferenceCount,
+  );
+
+  if (pendingGeneratedRoundCount !== null && rounds.length > pendingGeneratedRoundCount) {
+    nextPendingGeneratedRoundCount = null;
+    generatedRoundCompleted = true;
+    if (!selectedTaskPlaceholderId || selectedPlaceholderWasReplaced) {
+      nextSelectedTaskPlaceholderId = null;
+      if (!selectedPlaceholderReplacementRound) {
+        nextSelectedGeneratedAssetId = latestAssetId;
+        if (latestAssetId) {
+          nextBranchBaseAssetId = latestAssetId;
+        }
+      }
+    }
+  }
+
+  return {
+    selectedGeneratedAssetId: nextSelectedGeneratedAssetId,
+    selectedTaskPlaceholderId: nextSelectedTaskPlaceholderId,
+    branchBaseAssetId: nextBranchBaseAssetId,
+    selectedReferenceAssetIds: sameStringList(selectedReferenceAssetIds, prunedReferenceAssetIds)
+      ? selectedReferenceAssetIds
+      : prunedReferenceAssetIds,
+    pendingGeneratedRoundCount: nextPendingGeneratedRoundCount,
+    generatedRoundCompleted,
+  };
 }
 
 export function clampGenerationCount(value: number): number {

@@ -108,6 +108,10 @@ nodes or running workflow runs.
   detail query once so generated candidates/history appear.
 - Keep write mutations authoritative: create/update/upload/delete/generate handlers may still set full detail cache from
   mutation responses and invalidate the session list.
+- Keep ImageChat selection reconciliation out of long page effects. Selection state that depends on fetched rounds,
+  task-derived placeholders, selected generated assets, branch base images, reference uploads, and pending round counts
+  belongs in a page-local pure helper such as `image-chat/branching.ts::reconcileImageSessionSelection(...)`; the page
+  effect should only apply the helper result and set user-facing success/error messages.
 
 ### 4. Validation & Error Matrix
 
@@ -117,6 +121,12 @@ nodes or running workflow runs.
 - Status terminal or new latest round -> invalidate `['image-session', selectedSessionId]` and the session list key.
 - Status API error -> normal React Query error state; do not clear existing full detail cache only because a status poll
   failed.
+- Selected task placeholder no longer exists because the generated round arrived -> select the matching generated round
+  when possible; otherwise fall back to the latest generated asset.
+- Selected generated asset or branch base no longer exists -> clear or fall back through the selection reconciliation
+  helper, not through ad hoc page-level branches.
+- Uploaded/deleted reference images change the available id set -> prune selected reference ids through the shared helper
+  and preserve valid order.
 
 ### 5. Good/Base/Bad Cases
 
@@ -133,6 +143,8 @@ nodes or running workflow runs.
 - Pure helper tests for merging status into cached detail without replacing `assets` or `rounds`.
 - Pure helper tests for deciding when status requires a full detail refresh.
 - Pure helper tests for task-derived history placeholders/tree structure and the short duplicate-submit guard.
+- Pure helper tests for ImageChat selection reconciliation: placeholder-to-round replacement, selected asset fallback,
+  branch base cleanup, reference selection pruning, and pending generation completion.
 - Run `pnpm --dir web lint`, `pnpm --dir web test:run`, and `just web-build`.
 
 ### 7. Wrong vs Correct

@@ -11,6 +11,7 @@ import {
   isImageSessionGenerationTaskActive,
   isImageSessionGenerationTaskRetryable,
   mergeImageSessionStatusIntoDetail,
+  reconcileImageSessionSelection,
   requiresImageSessionGenerationBase,
   selectVisibleGenerationTasks,
   shouldBlockDuplicateGenerationSubmit,
@@ -294,6 +295,112 @@ describe("image chat branching helpers", () => {
     );
     expect(findImageGenerationTaskPlaceholderRound(rounds, tasks, "task:task-branch:candidate:3")).toBeNull();
     expect(findImageGenerationTaskPlaceholderRound(rounds, tasks, "not-a-placeholder")).toBeNull();
+  });
+
+  it("reconciles a selected placeholder to the generated replacement round", () => {
+    const rounds = [
+      round({
+        id: "branch-round-2",
+        generation_group_id: "branch-group",
+        generated_asset: asset("branch-asset-2"),
+        candidate_index: 2,
+        candidate_count: 3,
+      }),
+    ];
+    const tasks = [
+      task({
+        id: "task-branch",
+        generation_count: 3,
+        result_generation_group_id: "branch-group",
+      }),
+    ];
+
+    expect(
+      reconcileImageSessionSelection({
+        rounds,
+        generationTasks: tasks,
+        historyBranches: buildImageSessionHistoryTree(rounds, tasks),
+        selectedGeneratedAssetId: null,
+        selectedTaskPlaceholderId: "task:task-branch:candidate:2",
+        branchBaseAssetId: null,
+        selectedReferenceAssetIds: [],
+        availableReferenceAssetIds: [],
+        maxSelectedReferenceCount: 6,
+        pendingGeneratedRoundCount: null,
+      }),
+    ).toMatchObject({
+      selectedGeneratedAssetId: "branch-asset-2",
+      selectedTaskPlaceholderId: null,
+      branchBaseAssetId: "branch-asset-2",
+    });
+  });
+
+  it("falls back to the latest generated asset when the selected round no longer exists", () => {
+    const rounds = [
+      round({ id: "round-1", generated_asset: asset("asset-1"), created_at: "2026-04-27T00:00:00Z" }),
+      round({ id: "round-2", generated_asset: asset("asset-2"), created_at: "2026-04-27T00:01:00Z" }),
+    ];
+
+    expect(
+      reconcileImageSessionSelection({
+        rounds,
+        generationTasks: [],
+        historyBranches: buildImageSessionHistoryTree(rounds, []),
+        selectedGeneratedAssetId: "gone",
+        selectedTaskPlaceholderId: null,
+        branchBaseAssetId: "gone",
+        selectedReferenceAssetIds: [],
+        availableReferenceAssetIds: [],
+        maxSelectedReferenceCount: 6,
+        pendingGeneratedRoundCount: null,
+      }),
+    ).toMatchObject({
+      selectedGeneratedAssetId: "asset-2",
+      selectedTaskPlaceholderId: null,
+      branchBaseAssetId: "asset-2",
+    });
+  });
+
+  it("prunes unavailable reference selections while preserving valid order", () => {
+    const reconciled = reconcileImageSessionSelection({
+      rounds: [],
+      generationTasks: [],
+      historyBranches: [],
+      selectedGeneratedAssetId: null,
+      selectedTaskPlaceholderId: null,
+      branchBaseAssetId: null,
+      selectedReferenceAssetIds: ["ref-1", "gone", "ref-2", "ref-1", "ref-3"],
+      availableReferenceAssetIds: ["ref-1", "ref-2", "ref-3"],
+      maxSelectedReferenceCount: 2,
+      pendingGeneratedRoundCount: null,
+    });
+
+    expect(reconciled.selectedReferenceAssetIds).toEqual(["ref-1", "ref-2"]);
+  });
+
+  it("marks a pending generation complete when the round count increases", () => {
+    const rounds = [round({ id: "round-1", generated_asset: asset("asset-1") })];
+
+    expect(
+      reconcileImageSessionSelection({
+        rounds,
+        generationTasks: [],
+        historyBranches: buildImageSessionHistoryTree(rounds, []),
+        selectedGeneratedAssetId: null,
+        selectedTaskPlaceholderId: null,
+        branchBaseAssetId: null,
+        selectedReferenceAssetIds: [],
+        availableReferenceAssetIds: [],
+        maxSelectedReferenceCount: 6,
+        pendingGeneratedRoundCount: 0,
+      }),
+    ).toMatchObject({
+      selectedGeneratedAssetId: "asset-1",
+      selectedTaskPlaceholderId: null,
+      branchBaseAssetId: "asset-1",
+      pendingGeneratedRoundCount: null,
+      generatedRoundCompleted: true,
+    });
   });
 
   it("keeps active and failed generation tasks visible before old succeeded tasks", () => {

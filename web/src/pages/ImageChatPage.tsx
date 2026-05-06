@@ -54,13 +54,13 @@ import {
   buildImageSessionHistoryTree,
   clampGenerationCount,
   compactImageToolOptions,
-  findImageGenerationTaskPlaceholderRound,
   findImageHistoryPlaceholder,
   getImageGenerationTaskPlaceholderId,
   isImageSessionGenerationTaskActive,
   isImageSessionGenerationTaskRetryable,
   mergeImageSessionStatusIntoDetail,
   pruneSelectedReferenceIds,
+  reconcileImageSessionSelection,
   requiresImageSessionGenerationBase,
   selectVisibleGenerationTasks,
   shouldBlockDuplicateGenerationSubmit,
@@ -328,6 +328,20 @@ export function ImageChatPage() {
     [imageGenerationMaxDimension],
   );
 
+  function resetImageSessionSelection() {
+    setSelectedGeneratedAssetId(null);
+    setSelectedTaskPlaceholderId(null);
+    setBranchBaseAssetId(null);
+    setSelectedReferenceAssetIds([]);
+  }
+
+  function handleSelectSession(sessionId: string) {
+    setSelectedSessionId(sessionId);
+    resetImageSessionSelection();
+    setSuccessMessage("");
+    setErrorMessage("");
+  }
+
   useEffect(() => {
     if (!isProductMode && products.length && !targetProductId) {
       setTargetProductId(products[0].id);
@@ -338,10 +352,7 @@ export function ImageChatPage() {
     mutationFn: () => api.createImageSession(productId ? { product_id: productId } : {}),
     onSuccess: async (imageSession) => {
       setSelectedSessionId(imageSession.id);
-      setBranchBaseAssetId(null);
-      setSelectedGeneratedAssetId(null);
-      setSelectedTaskPlaceholderId(null);
-      setSelectedReferenceAssetIds([]);
+      resetImageSessionSelection();
       queryClient.setQueryData(["image-session", imageSession.id], imageSession);
       await queryClient.invalidateQueries({ queryKey: ["image-sessions", productId ?? "standalone"] });
       setErrorMessage("");
@@ -365,10 +376,7 @@ export function ImageChatPage() {
     }
     if (sessionItems.length) {
       setSelectedSessionId(sessionItems[0].id);
-      setSelectedGeneratedAssetId(null);
-      setSelectedTaskPlaceholderId(null);
-      setBranchBaseAssetId(null);
-      setSelectedReferenceAssetIds([]);
+      resetImageSessionSelection();
     }
   }, [createSessionMutation, selectedSessionId, sessionItems, sessionsQuery.isLoading]);
 
@@ -426,57 +434,34 @@ export function ImageChatPage() {
       return;
     }
     setTitleDraft(imageSession.title);
-    const selectedPlaceholderStillExists = Boolean(
-      selectedTaskPlaceholderId && findImageHistoryPlaceholder(historyBranches, selectedTaskPlaceholderId),
-    );
-    const selectedPlaceholderReplacementRound =
-      selectedTaskPlaceholderId && !selectedPlaceholderStillExists
-        ? findImageGenerationTaskPlaceholderRound(
-            imageSession.rounds,
-            imageSession.generation_tasks,
-            selectedTaskPlaceholderId,
-          )
-        : null;
-    const selectedPlaceholderWasReplaced = Boolean(selectedTaskPlaceholderId && !selectedPlaceholderStillExists);
-    const selectedCompletedAssetId =
-      !selectedTaskPlaceholderId &&
-      selectedGeneratedAssetId &&
-      imageSession.rounds.some((round) => round.generated_asset.id === selectedGeneratedAssetId)
-        ? selectedGeneratedAssetId
-        : null;
-    if (selectedTaskPlaceholderId && !selectedPlaceholderStillExists) {
-      setSelectedTaskPlaceholderId(null);
-      setSelectedGeneratedAssetId(
-        selectedPlaceholderReplacementRound?.generated_asset.id ?? imageSession.rounds.at(-1)?.generated_asset.id ?? null,
-      );
-    } else if (
-      !selectedTaskPlaceholderId &&
-      (!selectedGeneratedAssetId || !imageSession.rounds.some((round) => round.generated_asset.id === selectedGeneratedAssetId))
-    ) {
-      setSelectedGeneratedAssetId(imageSession.rounds.at(-1)?.generated_asset.id ?? null);
-    }
-    if (branchBaseAssetId && !imageSession.rounds.some((round) => round.generated_asset.id === branchBaseAssetId)) {
-      setBranchBaseAssetId(null);
-    }
-    if (selectedCompletedAssetId && branchBaseAssetId !== selectedCompletedAssetId) {
-      setBranchBaseAssetId(selectedCompletedAssetId);
-    }
-    const availableReferenceIds = sessionReferenceAssets.map((asset) => asset.id);
-    setSelectedReferenceAssetIds((current) => {
-      const next = pruneSelectedReferenceIds(current, availableReferenceIds, maxSelectedReferenceCount);
-      return next.length === current.length && next.every((id, index) => id === current[index]) ? current : next;
+    const reconciled = reconcileImageSessionSelection({
+      rounds: imageSession.rounds,
+      generationTasks: imageSession.generation_tasks,
+      historyBranches,
+      selectedGeneratedAssetId,
+      selectedTaskPlaceholderId,
+      branchBaseAssetId,
+      selectedReferenceAssetIds,
+      availableReferenceAssetIds: sessionReferenceAssets.map((asset) => asset.id),
+      maxSelectedReferenceCount,
+      pendingGeneratedRoundCount: pendingGeneratedRoundCountRef.current,
     });
-    if (
-      pendingGeneratedRoundCountRef.current !== null &&
-      imageSession.rounds.length > pendingGeneratedRoundCountRef.current
-    ) {
-      pendingGeneratedRoundCountRef.current = null;
-      if (!selectedTaskPlaceholderId || selectedPlaceholderWasReplaced) {
-        setSelectedTaskPlaceholderId(null);
-        if (!selectedPlaceholderReplacementRound) {
-          setSelectedGeneratedAssetId(imageSession.rounds.at(-1)?.generated_asset.id ?? null);
-        }
-      }
+
+    if (reconciled.selectedGeneratedAssetId !== selectedGeneratedAssetId) {
+      setSelectedGeneratedAssetId(reconciled.selectedGeneratedAssetId);
+    }
+    if (reconciled.selectedTaskPlaceholderId !== selectedTaskPlaceholderId) {
+      setSelectedTaskPlaceholderId(reconciled.selectedTaskPlaceholderId);
+    }
+    if (reconciled.branchBaseAssetId !== branchBaseAssetId) {
+      setBranchBaseAssetId(reconciled.branchBaseAssetId);
+    }
+    if (reconciled.selectedReferenceAssetIds !== selectedReferenceAssetIds) {
+      setSelectedReferenceAssetIds(reconciled.selectedReferenceAssetIds);
+    }
+    pendingGeneratedRoundCountRef.current = reconciled.pendingGeneratedRoundCount;
+
+    if (reconciled.generatedRoundCompleted) {
       setSuccessMessage("新候选已生成");
       setErrorMessage("");
     }
@@ -485,6 +470,7 @@ export function ImageChatPage() {
     historyBranches,
     imageSession,
     maxSelectedReferenceCount,
+    selectedReferenceAssetIds,
     selectedGeneratedAssetId,
     sessionReferenceAssets,
     selectedTaskPlaceholderId,
@@ -615,10 +601,7 @@ export function ImageChatPage() {
       queryClient.removeQueries({ queryKey: ["image-session", deletedSessionId] });
       if (selectedSessionId === deletedSessionId) {
         setSelectedSessionId(remainingSessions[0]?.id ?? null);
-        setSelectedGeneratedAssetId(null);
-        setSelectedTaskPlaceholderId(null);
-        setBranchBaseAssetId(null);
-        setSelectedReferenceAssetIds([]);
+        resetImageSessionSelection();
         if (!remainingSessions.length) {
           autoCreateTriggered.current = false;
         }
@@ -958,15 +941,7 @@ export function ImageChatPage() {
                   >
                     <button
                       type="button"
-                      onClick={() => {
-                        setSelectedSessionId(item.id);
-                        setSelectedGeneratedAssetId(null);
-                        setSelectedTaskPlaceholderId(null);
-                        setBranchBaseAssetId(null);
-                        setSelectedReferenceAssetIds([]);
-                        setSuccessMessage("");
-                        setErrorMessage("");
-                      }}
+                      onClick={() => handleSelectSession(item.id)}
                       className="flex w-full items-center gap-3 p-2.5 pr-10 text-left"
                     >
                       <div className="relative flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-slate-100 text-slate-400 ring-1 ring-slate-200">
