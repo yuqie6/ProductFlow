@@ -66,6 +66,15 @@ class CanvasTemplateSuggestedConnection(BaseModel):
     reason: str
 
 
+class CanvasTemplateDefaultExternalConnection(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    source: Literal["existing_product_context"]
+    target_node_key: str
+    label: str
+    reason: str
+
+
 class CanvasTemplateNodeSpec(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -112,6 +121,7 @@ class CanvasTemplate(BaseModel):
     output_slots: tuple[CanvasTemplateOutputSlot, ...] = ()
     reference_input_hints: tuple[CanvasTemplateReferenceInputHint, ...] = ()
     suggested_connections: tuple[CanvasTemplateSuggestedConnection, ...] = ()
+    default_external_connections: tuple[CanvasTemplateDefaultExternalConnection, ...] = ()
 
     @model_validator(mode="after")
     def validate_contract(self) -> CanvasTemplate:
@@ -134,6 +144,8 @@ def validate_canvas_template(template: CanvasTemplate) -> None:
         nodes_by_key[node.key] = node
         if node.node_type not in SUPPORTED_CANVAS_TEMPLATE_NODE_TYPES:
             raise BusinessValidationError("画布模板包含不支持的节点类型")
+        if template.kind == "node_group" and node.node_type == WorkflowNodeType.PRODUCT_CONTEXT:
+            raise BusinessValidationError("节点组模板不能包含商品资料节点")
         if node.size is not None and node.node_type != WorkflowNodeType.IMAGE_GENERATION:
             raise BusinessValidationError("只有生图节点可以声明尺寸")
 
@@ -163,6 +175,16 @@ def validate_canvas_template(template: CanvasTemplate) -> None:
             or connection.target_node_key not in nodes_by_key
         ):
             raise BusinessValidationError("画布模板连接建议引用了不存在的节点")
+    for connection in template.default_external_connections:
+        if template.kind != "node_group":
+            raise BusinessValidationError("只有节点组模板可以声明默认外部连接")
+        if connection.target_node_key not in nodes_by_key:
+            raise BusinessValidationError("画布模板默认外部连接引用了不存在的节点")
+        if nodes_by_key[connection.target_node_key].node_type not in {
+            WorkflowNodeType.COPY_GENERATION,
+            WorkflowNodeType.IMAGE_GENERATION,
+        }:
+            raise BusinessValidationError("画布模板默认外部连接只能接入文案或生图节点")
 
     try:
         topological_node_ids(
@@ -293,6 +315,15 @@ def _reference_hint(
 
 def _suggest(source: str, target: str, reason: str) -> CanvasTemplateSuggestedConnection:
     return CanvasTemplateSuggestedConnection(source_node_key=source, target_node_key=target, reason=reason)
+
+
+def _default_product_connection(target: str) -> CanvasTemplateDefaultExternalConnection:
+    return CanvasTemplateDefaultExternalConnection(
+        source="existing_product_context",
+        target_node_key=target,
+        label="自动接商品",
+        reason="沿用当前画布的商品资料和商品主图。",
+    )
 
 
 def _commerce_template(
@@ -469,6 +500,103 @@ def _commerce_template(
     return template
 
 
+def _node_group_template(
+    *,
+    key: str,
+    title: str,
+    description: str,
+    scenario: CanvasTemplateScenarioMetadata,
+    copy_instruction: str,
+    image_instruction: str,
+    size: str,
+    output_label: str,
+    output_description: str,
+    reference_label: str,
+    reference_description: str,
+    reference_role: str,
+) -> CanvasTemplate:
+    reference_x = 0
+    reference_y = 0
+    copy_x = 440
+    copy_y = 40
+    image_x = 880
+    image_y = 120
+    output_x = 1320
+    output_y = 120
+    nodes = (
+        _node(
+            "reference",
+            WorkflowNodeType.REFERENCE_IMAGE,
+            title=reference_label,
+            x=reference_x,
+            y=reference_y,
+            config_json={"role": reference_role, "label": reference_label},
+            reference_input_hint=reference_description,
+        ),
+        _node(
+            "copy",
+            WorkflowNodeType.COPY_GENERATION,
+            title=title,
+            x=copy_x,
+            y=copy_y,
+            instruction_seed=copy_instruction,
+        ),
+        _node(
+            "image",
+            WorkflowNodeType.IMAGE_GENERATION,
+            title=f"生成{output_label}",
+            x=image_x,
+            y=image_y,
+            instruction_seed=image_instruction,
+            size=size,
+        ),
+        _node(
+            "output",
+            WorkflowNodeType.REFERENCE_IMAGE,
+            title=output_label,
+            x=output_x,
+            y=output_y,
+            config_json={"role": "output", "label": output_label},
+            output_slot_label=output_label,
+        ),
+    )
+    return CanvasTemplate(
+        key=key,
+        kind="node_group",
+        title=title,
+        description=description,
+        scenario=scenario,
+        nodes=nodes,
+        edges=(
+            _edge("reference", "copy"),
+            _edge("reference", "image"),
+            _edge("copy", "image"),
+            _edge("image", "output"),
+        ),
+        prompt_seeds=(copy_instruction, image_instruction),
+        instruction_seeds=(copy_instruction, image_instruction),
+        output_slots=(_output_slot("output", output_label, output_description),),
+        reference_input_hints=(
+            _reference_hint(
+                "reference",
+                role=reference_role,
+                label=reference_label,
+                description=reference_description,
+            ),
+        ),
+        suggested_connections=(
+            _suggest("reference", "copy", "参考图为文案提供规格、材质或主体约束。"),
+            _suggest("reference", "image", "参考图可作为生图输入，保持主体或细节一致。"),
+            _suggest("copy", "image", "文案为生图提供标题、卖点和视觉重点。"),
+            _suggest("image", "output", "生图结果写入下游参考图输出槽。"),
+        ),
+        default_external_connections=(
+            _default_product_connection("copy"),
+            _default_product_connection("image"),
+        ),
+    )
+
+
 BUILTIN_CANVAS_TEMPLATES: tuple[CanvasTemplate, ...] = (
     _commerce_template(
         key="ecommerce-main-image-v1",
@@ -488,9 +616,8 @@ BUILTIN_CANVAS_TEMPLATES: tuple[CanvasTemplate, ...] = (
         output_description="商品列表和详情首图候选。",
         extra_image_node=True,
     ),
-    _commerce_template(
+    _node_group_template(
         key="ecommerce-sku-variant-image-v1",
-        kind="node_group",
         title="SKU/变体图",
         description="为颜色、规格或组合 SKU 生成差异化展示图。",
         scenario=_scenario(
@@ -549,9 +676,8 @@ BUILTIN_CANVAS_TEMPLATES: tuple[CanvasTemplate, ...] = (
         reference_description="上传目标空间、季节、光线或陈列方式参考图。",
         reference_role="scene",
     ),
-    _commerce_template(
+    _node_group_template(
         key="ecommerce-detail-material-image-v1",
-        kind="node_group",
         title="细节/材质图",
         description="生成材质、工艺、局部结构或功能细节展示图。",
         scenario=_scenario(
@@ -590,9 +716,8 @@ BUILTIN_CANVAS_TEMPLATES: tuple[CanvasTemplate, ...] = (
         reference_description="上传活动主视觉、品牌色、节日氛围或版式参考图。",
         reference_role="style",
     ),
-    _commerce_template(
+    _node_group_template(
         key="ecommerce-white-background-image-v1",
-        kind="node_group",
         title="白底图",
         description="生成用于平台规范、抠图或基础陈列的白底商品图。",
         scenario=_scenario(

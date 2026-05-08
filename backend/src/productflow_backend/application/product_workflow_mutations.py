@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import delete
@@ -7,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from productflow_backend.application import product_workflow_graph
+from productflow_backend.application.canvas_templates import CanvasTemplateNodeSpec, get_builtin_canvas_template
 from productflow_backend.application.image_generation_core import normalize_image_generation_tool_options
 from productflow_backend.application.product_workflow_artifacts import (
     fill_reference_node,
@@ -14,6 +16,7 @@ from productflow_backend.application.product_workflow_artifacts import (
     source_asset_for_poster_variant,
 )
 from productflow_backend.application.product_workflow_context import image_size_from_config, optional_config_text
+from productflow_backend.application.product_workflow_templates import materialize_canvas_template_graph
 from productflow_backend.application.time import now_utc
 from productflow_backend.application.use_cases import update_copy_set
 from productflow_backend.domain.durable_generation_tasks import WORKFLOW_RUN_GENERATION_TASK_CONTRACT
@@ -35,6 +38,75 @@ from productflow_backend.infrastructure.db.models import (
 )
 from productflow_backend.infrastructure.image.base import infer_extension
 from productflow_backend.infrastructure.storage import LocalStorage
+
+NODE_GROUP_TEMPLATE_COLLISION_NODE_WIDTH = 248
+NODE_GROUP_TEMPLATE_COLLISION_NODE_HEIGHT = 248
+NODE_GROUP_TEMPLATE_COLLISION_GAP = 32
+
+
+@dataclass(frozen=True, slots=True)
+class _NodeBounds:
+    left: int
+    top: int
+    right: int
+    bottom: int
+
+
+def _node_bounds(position_x: int, position_y: int) -> _NodeBounds:
+    return _NodeBounds(
+        left=position_x,
+        top=position_y,
+        right=position_x + NODE_GROUP_TEMPLATE_COLLISION_NODE_WIDTH,
+        bottom=position_y + NODE_GROUP_TEMPLATE_COLLISION_NODE_HEIGHT,
+    )
+
+
+def _node_bounds_overlap(first: _NodeBounds, second: _NodeBounds) -> bool:
+    return (
+        first.left < second.right
+        and first.right > second.left
+        and first.top < second.bottom
+        and first.bottom > second.top
+    )
+
+
+def _node_group_template_offsets(
+    *,
+    template_nodes: tuple[CanvasTemplateNodeSpec, ...],
+    existing_nodes: list[WorkflowNode],
+    position_x: int,
+    position_y: int,
+) -> tuple[int, int]:
+    min_x = min(node.position_x for node in template_nodes)
+    min_y = min(node.position_y for node in template_nodes)
+    position_x_offset = position_x - min_x
+    position_y_offset = position_y - min_y
+    existing_bounds = [_node_bounds(node.position_x, node.position_y) for node in existing_nodes]
+
+    for _ in range(len(existing_bounds) + 1):
+        template_bounds = [
+            _node_bounds(node.position_x + position_x_offset, node.position_y + position_y_offset)
+            for node in template_nodes
+        ]
+        overlapping_existing_bounds = [
+            existing
+            for existing in existing_bounds
+            if any(_node_bounds_overlap(template_bound, existing) for template_bound in template_bounds)
+        ]
+        if not overlapping_existing_bounds:
+            return position_x_offset, position_y_offset
+        position_y_offset = max(bound.bottom for bound in overlapping_existing_bounds) + (
+            NODE_GROUP_TEMPLATE_COLLISION_GAP - min_y
+        )
+
+    return position_x_offset, position_y_offset
+
+
+def _single_product_context_node(workflow: ProductWorkflow) -> WorkflowNode:
+    product_context_nodes = [node for node in workflow.nodes if node.node_type == WorkflowNodeType.PRODUCT_CONTEXT]
+    if len(product_context_nodes) != 1:
+        raise BusinessValidationError("节点组模板需要当前画布中的商品资料节点")
+    return product_context_nodes[0]
 
 
 def _active_workflow_run(workflow: ProductWorkflow) -> WorkflowRun | None:
@@ -130,6 +202,53 @@ def create_workflow_node(
     )
     session.add(node)
     workflow.updated_at = now_utc()
+    session.commit()
+    session.expire_all()
+    return product_workflow_graph.get_workflow_or_raise(session, workflow.id)
+
+
+def apply_node_group_template_to_workflow(
+    session: Session,
+    *,
+    product_id: str,
+    template_key: str,
+    position_x: int,
+    position_y: int,
+) -> ProductWorkflow:
+    template = get_builtin_canvas_template(template_key.strip())
+    if template.kind != "node_group":
+        raise BusinessValidationError("画布内只能添加节点组模板，完整画布模板请在创建商品时选择")
+    workflow = product_workflow_graph.get_active_workflow(session, product_id)
+    if workflow is None:
+        product_workflow_graph.get_product_or_raise(session, product_id)
+        raise BusinessValidationError("需要先创建或打开画布后才能添加节点组")
+    external_source_nodes = {"existing_product_context": _single_product_context_node(workflow)}
+    position_x_offset, position_y_offset = _node_group_template_offsets(
+        template_nodes=template.nodes,
+        existing_nodes=list(workflow.nodes),
+        position_x=position_x,
+        position_y=position_y,
+    )
+    materialize_canvas_template_graph(
+        session,
+        workflow=workflow,
+        template=template,
+        position_x_offset=position_x_offset,
+        position_y_offset=position_y_offset,
+        external_source_nodes_by_template_source=external_source_nodes,
+    )
+    workflow.updated_at = now_utc()
+    session.flush()
+    session.expire(workflow, ["nodes", "edges"])
+    refreshed = product_workflow_graph.get_workflow_or_raise(session, workflow.id)
+    try:
+        product_workflow_graph.topological_nodes(refreshed)
+    except BusinessError:
+        session.rollback()
+        raise
+    except ValueError as exc:
+        session.rollback()
+        raise BusinessValidationError(str(exc)) from exc
     session.commit()
     session.expire_all()
     return product_workflow_graph.get_workflow_or_raise(session, workflow.id)

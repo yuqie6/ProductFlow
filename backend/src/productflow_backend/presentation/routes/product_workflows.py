@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 from sqlalchemy.orm import Session
 
 from productflow_backend.application.product_workflows import (
+    apply_node_group_template_to_workflow,
     bind_workflow_node_image,
     cancel_product_workflow_run,
     create_workflow_edge,
@@ -12,6 +13,7 @@ from productflow_backend.application.product_workflows import (
     delete_workflow_node,
     get_or_create_product_workflow,
     get_product_workflow_status,
+    list_builtin_canvas_templates,
     retry_product_workflow_run,
     submit_product_workflow_run,
     update_workflow_copy_set,
@@ -21,7 +23,9 @@ from productflow_backend.application.product_workflows import (
 from productflow_backend.presentation.deps import get_session, require_admin
 from productflow_backend.presentation.errors import raise_value_error_as_http
 from productflow_backend.presentation.schemas.product_workflows import (
+    ApplyWorkflowTemplateGroupRequest,
     BindWorkflowNodeImageRequest,
+    CanvasTemplateListResponse,
     CreateWorkflowEdgeRequest,
     CreateWorkflowNodeRequest,
     ProductWorkflowResponse,
@@ -29,6 +33,7 @@ from productflow_backend.presentation.schemas.product_workflows import (
     RunWorkflowRequest,
     UpdateWorkflowCopySetRequest,
     UpdateWorkflowNodeRequest,
+    serialize_canvas_template_summary,
     serialize_product_workflow,
     serialize_product_workflow_status,
 )
@@ -58,6 +63,12 @@ def get_product_workflow_status_endpoint(
     return serialize_product_workflow_status(workflow)
 
 
+@router.get("/workflow/canvas-templates", response_model=CanvasTemplateListResponse)
+def list_canvas_templates_endpoint() -> CanvasTemplateListResponse:
+    templates = [serialize_canvas_template_summary(template) for template in list_builtin_canvas_templates()]
+    return CanvasTemplateListResponse(items=templates)
+
+
 @router.post(
     "/products/{product_id}/workflow/nodes",
     response_model=ProductWorkflowResponse,
@@ -77,6 +88,29 @@ def create_workflow_node_endpoint(
             position_x=payload.position_x,
             position_y=payload.position_y,
             config_json=payload.config_json,
+        )
+    except ValueError as exc:
+        raise_value_error_as_http(exc)
+    return serialize_product_workflow(workflow)
+
+
+@router.post(
+    "/products/{product_id}/workflow/template-groups",
+    response_model=ProductWorkflowResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def apply_workflow_template_group_endpoint(
+    product_id: str,
+    payload: ApplyWorkflowTemplateGroupRequest,
+    session: Session = Depends(get_session),
+) -> ProductWorkflowResponse:
+    try:
+        workflow = apply_node_group_template_to_workflow(
+            session,
+            product_id=product_id,
+            template_key=payload.template_key,
+            position_x=payload.position_x,
+            position_y=payload.position_y,
         )
     except ValueError as exc:
         raise_value_error_as_http(exc)

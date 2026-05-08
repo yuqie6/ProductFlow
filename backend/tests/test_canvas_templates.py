@@ -7,6 +7,7 @@ from productflow_backend.application.canvas_templates import (
     BUILTIN_CANVAS_TEMPLATES,
     SUPPORTED_CANVAS_TEMPLATE_NODE_TYPES,
     CanvasTemplate,
+    CanvasTemplateDefaultExternalConnection,
     CanvasTemplateEdgeSpec,
     CanvasTemplateNodeSpec,
     CanvasTemplateOutputSlot,
@@ -116,6 +117,18 @@ def test_builtin_canvas_templates_satisfy_v1_contract() -> None:
             assert edge.source_node_key != edge.target_node_key
             assert edge.source_node_key in nodes_by_key
             assert edge.target_node_key in nodes_by_key
+
+
+def test_builtin_node_group_templates_keep_readable_horizontal_spacing() -> None:
+    for template in list_builtin_canvas_templates():
+        if template.kind != "node_group":
+            continue
+        nodes = sorted(template.nodes, key=lambda node: node.position_x)
+
+        assert all(
+            next_node.position_x - current_node.position_x >= 400
+            for current_node, next_node in zip(nodes, nodes[1:], strict=False)
+        )
 
 
 def test_builtin_catalog_expresses_dag_safe_downstream_iteration() -> None:
@@ -247,6 +260,69 @@ def test_template_validator_rejects_invalid_suggested_connection() -> None:
         validate_canvas_template(self_reference)
 
 
+def test_template_validator_rejects_invalid_default_external_connection() -> None:
+    valid = _minimal_template(
+        kind="node_group",
+        nodes=(
+            CanvasTemplateNodeSpec(
+                key="copy",
+                node_type=WorkflowNodeType.COPY_GENERATION,
+                title="文案",
+            ),
+            CanvasTemplateNodeSpec(
+                key="reference",
+                node_type=WorkflowNodeType.REFERENCE_IMAGE,
+                title="参考图",
+            ),
+        ),
+        edges=(),
+        output_slots=(),
+    )
+    missing_reference = valid.model_copy(
+        update={
+            "default_external_connections": (
+                CanvasTemplateDefaultExternalConnection(
+                    source="existing_product_context",
+                    target_node_key="missing",
+                    label="自动接商品",
+                    reason="目标不存在。",
+                ),
+            )
+        }
+    )
+    invalid_target_type = valid.model_copy(
+        update={
+            "default_external_connections": (
+                CanvasTemplateDefaultExternalConnection(
+                    source="existing_product_context",
+                    target_node_key="reference",
+                    label="自动接商品",
+                    reason="参考图不是生成节点。",
+                ),
+            )
+        }
+    )
+    full_canvas = _minimal_template().model_copy(
+        update={
+            "default_external_connections": (
+                CanvasTemplateDefaultExternalConnection(
+                    source="existing_product_context",
+                    target_node_key="image",
+                    label="自动接商品",
+                    reason="完整画布不声明外部连接。",
+                ),
+            )
+        }
+    )
+
+    with pytest.raises(BusinessValidationError, match="默认外部连接引用了不存在的节点"):
+        validate_canvas_template(missing_reference)
+    with pytest.raises(BusinessValidationError, match="默认外部连接只能接入文案或生图节点"):
+        validate_canvas_template(invalid_target_type)
+    with pytest.raises(BusinessValidationError, match="只有节点组模板可以声明默认外部连接"):
+        validate_canvas_template(full_canvas)
+
+
 def test_template_validator_rejects_duplicate_node_keys() -> None:
     valid = _minimal_template()
     duplicate = valid.model_copy(
@@ -264,6 +340,14 @@ def test_template_validator_rejects_duplicate_node_keys() -> None:
 
     with pytest.raises(BusinessValidationError, match="节点 key 不能重复"):
         validate_canvas_template(duplicate)
+
+
+def test_template_validator_rejects_product_context_in_node_group() -> None:
+    valid = _minimal_template()
+    invalid = valid.model_copy(update={"kind": "node_group"})
+
+    with pytest.raises(BusinessValidationError, match="节点组模板不能包含商品资料节点"):
+        validate_canvas_template(invalid)
 
 
 def test_template_validator_rejects_invalid_template_kind() -> None:

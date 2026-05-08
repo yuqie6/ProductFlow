@@ -1,4 +1,6 @@
 import type {
+  ApplyWorkflowTemplateGroupInput,
+  CanvasTemplateListResponse,
   ConfigResponse,
   ConfigUpdateRequest,
   CopySet,
@@ -251,6 +253,15 @@ export const api = {
   },
   getProductWorkflowStatus(productId: string): Promise<ProductWorkflowStatus> {
     return request(`/api/products/${productId}/workflow/status`);
+  },
+  listCanvasTemplates(): Promise<CanvasTemplateListResponse> {
+    return request("/api/workflow/canvas-templates");
+  },
+  applyWorkflowTemplateGroup(productId: string, input: ApplyWorkflowTemplateGroupInput): Promise<ProductWorkflow> {
+    return request(`/api/products/${productId}/workflow/template-groups`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
   },
   createWorkflowNode(
     productId: string,

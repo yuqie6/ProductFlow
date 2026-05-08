@@ -7,6 +7,7 @@ import {
   ChevronRight,
   CircleDot,
   Image as ImageIcon,
+  Layers3,
   Loader2,
   Maximize2,
   Minimize2,
@@ -23,6 +24,7 @@ import { api, ApiError } from "../lib/api";
 import { DEFAULT_IMAGE_TOOL_ALLOWED_FIELDS } from "../lib/imageToolOptions";
 import { DEFAULT_IMAGE_GENERATION_MAX_DIMENSION, buildImageSizeOptions } from "../lib/imageSizes";
 import type {
+  CanvasTemplateSummary,
   ProductWorkflow,
   ProductWorkflowStatus,
   WorkflowNode,
@@ -41,6 +43,7 @@ import { ImagesPanel } from "./product-detail/ImagesPanel";
 import { InspectorPanel } from "./product-detail/InspectorPanel";
 import { RunsPanel } from "./product-detail/RunsPanel";
 import { SidebarTabButton } from "./product-detail/SidebarTabButton";
+import { TemplateGroupsPanel } from "./product-detail/TemplateGroupsPanel";
 import { WorkflowNodeCard } from "./product-detail/WorkflowNodeCard";
 import {
   buildPosterSourceAssetMap,
@@ -72,7 +75,7 @@ import {
 } from "./product-detail/useWorkflowCanvas";
 import type { NodePositionCommitInput } from "./product-detail/useWorkflowCanvas";
 
-type SidebarTab = "details" | "runs" | "images";
+type SidebarTab = "details" | "runs" | "images" | "templates";
 
 type WorkflowCanvasMutationBridge = {
   acceptNodePositionMutation: (nodeId: string, mutationVersion: number) => boolean;
@@ -123,6 +126,10 @@ export function ProductDetailPage() {
     enabled: Boolean(productId),
   });
   const workflow = workflowQuery.data ?? null;
+  const canvasTemplatesQuery = useQuery({
+    queryKey: ["canvas-templates"],
+    queryFn: api.listCanvasTemplates,
+  });
   const workflowActive = hasActiveWorkflow(workflow);
   const workflowStatusQuery = useQuery({
     queryKey: ["product-workflow-status", productId],
@@ -371,6 +378,41 @@ export function ProductDetailPage() {
         mutationError instanceof ApiError
           ? mutationError.detail
           : "新增节点失败",
+      );
+    },
+  });
+
+  const applyTemplateGroupMutation = useMutation({
+    mutationFn: async (template: CanvasTemplateSummary) => {
+      await flushSelectedDraft();
+      const previousWorkflow = queryClient.getQueryData<ProductWorkflow>(["product-workflow", productId]) ?? workflow;
+      const previousNodeIds = new Set(previousWorkflow?.nodes.map((node) => node.id) ?? []);
+      const nextPosition = workflowCanvas.getViewportCenterNodePosition();
+      const nextWorkflow = await api.applyWorkflowTemplateGroup(productId, {
+        template_key: template.key,
+        position_x: nextPosition.x,
+        position_y: nextPosition.y,
+      });
+      return { nextWorkflow, previousNodeIds };
+    },
+    onSuccess: async ({ nextWorkflow, previousNodeIds }) => {
+      setError("");
+      queryClient.setQueryData(["product-workflow", productId], nextWorkflow);
+      await queryClient.invalidateQueries({ queryKey: ["product-workflow", productId] });
+      const createdNodes = nextWorkflow.nodes.filter((node) => !previousNodeIds.has(node.id));
+      const selectedCreatedNode =
+        createdNodes.find((node) => node.node_type === "copy_generation") ??
+        createdNodes.find((node) => node.node_type === "image_generation") ??
+        createdNodes[0] ??
+        null;
+      setSelectedNodeId(selectedCreatedNode?.id ?? null);
+      setActiveSidebarTab("details");
+    },
+    onError: (mutationError) => {
+      setError(
+        mutationError instanceof ApiError
+          ? mutationError.detail
+          : "添加节点组失败",
       );
     },
   });
@@ -640,6 +682,11 @@ export function ProductDetailPage() {
     retryWorkflowRunMutation.mutate(run.id);
   };
 
+  const openSidebarTab = (tab: SidebarTab) => {
+    setActiveSidebarTab(tab);
+    setSidebarCollapsed(false);
+  };
+
   const startInspectorResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     disableBodyUserSelect();
@@ -663,6 +710,7 @@ export function ProductDetailPage() {
 
   const layoutMutationBusy =
     createNodeMutation.isPending ||
+    applyTemplateGroupMutation.isPending ||
     updateNodeConfigMutation.isPending ||
     createEdgeMutation.isPending ||
     deleteEdgeMutation.isPending ||
@@ -789,6 +837,9 @@ export function ProductDetailPage() {
   const fillReferenceBusy = bindNodeImageMutation.isPending;
   const queueOverview = queueOverviewQuery.data ?? null;
   const showQueueOverview = Boolean(queueOverview && queueOverview.active_count > 0);
+  const nodeGroupTemplates = (canvasTemplatesQuery.data?.items ?? []).filter(
+    (template) => template.kind === "node_group",
+  );
 
   const renderWorkflowToolbarButtons = () => (
     <>
@@ -1025,9 +1076,10 @@ export function ProductDetailPage() {
               className="absolute right-4 top-16 z-30 flex w-14 flex-col items-center gap-2 rounded-2xl border border-slate-800 bg-slate-950/95 p-2 shadow-xl shadow-slate-950/20 backdrop-blur"
             >
               {renderWorkflowToolbarButtons()}
-              <SidebarTabButton active={false} label="详情" title="Details" icon={<Settings2 size={15} />} onClick={() => { setActiveSidebarTab("details"); setSidebarCollapsed(false); }} />
-              <SidebarTabButton active={false} label="日志" title="运行日志" icon={<CircleDot size={15} />} onClick={() => { setActiveSidebarTab("runs"); setSidebarCollapsed(false); }} />
-              <SidebarTabButton active={false} label="图片" title="Images" icon={<ImageIcon size={15} />} onClick={() => { setActiveSidebarTab("images"); setSidebarCollapsed(false); }} />
+              <SidebarTabButton active={false} label="详情" title="Details" icon={<Settings2 size={15} />} onClick={() => openSidebarTab("details")} />
+              <SidebarTabButton active={false} label="日志" title="运行日志" icon={<CircleDot size={15} />} onClick={() => openSidebarTab("runs")} />
+              <SidebarTabButton active={false} label="图片" title="Images" icon={<ImageIcon size={15} />} onClick={() => openSidebarTab("images")} />
+              <SidebarTabButton active={false} label="模板" title="模板" icon={<Layers3 size={15} />} onClick={() => openSidebarTab("templates")} />
             </div>
             </>
           ) : (
@@ -1050,21 +1102,28 @@ export function ProductDetailPage() {
                 label="详情"
                 title="Details"
                 icon={<Settings2 size={15} />}
-                onClick={() => setActiveSidebarTab("details")}
+                onClick={() => openSidebarTab("details")}
               />
               <SidebarTabButton
                 active={activeSidebarTab === "runs"}
                 label="日志"
                 title="运行日志"
                 icon={<CircleDot size={15} />}
-                onClick={() => setActiveSidebarTab("runs")}
+                onClick={() => openSidebarTab("runs")}
               />
               <SidebarTabButton
                 active={activeSidebarTab === "images"}
                 label="图片"
                 title="Images"
                 icon={<ImageIcon size={15} />}
-                onClick={() => setActiveSidebarTab("images")}
+                onClick={() => openSidebarTab("images")}
+              />
+              <SidebarTabButton
+                active={activeSidebarTab === "templates"}
+                label="模板"
+                title="模板"
+                icon={<Layers3 size={15} />}
+                onClick={() => openSidebarTab("templates")}
               />
             </div>
             <aside
@@ -1082,8 +1141,15 @@ export function ProductDetailPage() {
                 {activeSidebarTab === "details" ? <Settings2 size={14} className="mr-2 text-zinc-400" /> : null}
                 {activeSidebarTab === "runs" ? <CircleDot size={14} className="mr-2 text-zinc-400" /> : null}
                 {activeSidebarTab === "images" ? <ImageIcon size={14} className="mr-2 text-zinc-400" /> : null}
+                {activeSidebarTab === "templates" ? <Layers3 size={14} className="mr-2 text-zinc-400" /> : null}
                 <span className="text-[11px] font-semibold uppercase tracking-widest text-zinc-500">
-                  {activeSidebarTab === "details" ? "详情" : activeSidebarTab === "runs" ? "日志" : "图片"}
+                  {activeSidebarTab === "details"
+                    ? "详情"
+                    : activeSidebarTab === "runs"
+                      ? "日志"
+                      : activeSidebarTab === "images"
+                        ? "图片"
+                        : "模板"}
                 </span>
                 </div>
               </div>
@@ -1151,6 +1217,17 @@ export function ProductDetailPage() {
                       })
                     }
                     fillReferenceBusy={fillReferenceBusy}
+                  />
+                ) : null}
+                {activeSidebarTab === "templates" ? (
+                  <TemplateGroupsPanel
+                    templates={nodeGroupTemplates}
+                    isLoading={canvasTemplatesQuery.isLoading}
+                    isError={canvasTemplatesQuery.isError}
+                    structureBusy={structureBusy || !workflow}
+                    applyBusy={applyTemplateGroupMutation.isPending}
+                    applyingTemplateKey={applyTemplateGroupMutation.variables?.key ?? null}
+                    onApplyTemplate={(template) => applyTemplateGroupMutation.mutate(template)}
                   />
                 ) : null}
               </div>

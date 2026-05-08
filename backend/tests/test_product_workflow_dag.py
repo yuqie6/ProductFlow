@@ -12,6 +12,10 @@ from helpers import (
     _wait_for_workflow_run,
 )
 
+from productflow_backend.application.canvas_templates import (
+    get_builtin_canvas_template,
+    list_builtin_canvas_templates,
+)
 from productflow_backend.application.contracts import (
     CopyPayload,
     CreativeBriefPayload,
@@ -29,9 +33,13 @@ from productflow_backend.infrastructure.db.models import (
     CopySet,
     Product,
     ProductWorkflow,
+    WorkflowEdge,
     WorkflowNode,
 )
 from productflow_backend.infrastructure.db.session import get_session_factory
+
+_WORKFLOW_NODE_VISUAL_WIDTH = 248
+_WORKFLOW_NODE_VISUAL_HEIGHT = 248
 
 
 @pytest.fixture(autouse=True)
@@ -324,6 +332,486 @@ def test_product_workflow_dag_runs_and_persists_artifacts(configured_env: Path) 
         assert session.query(ProductWorkflow).filter_by(product_id=product_id).count() == 1
     finally:
         session.close()
+
+
+def test_canvas_template_catalog_endpoint_lists_builtin_node_groups(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    response = client.get("/api/workflow/canvas-templates")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert {item["key"] for item in payload["items"]} == {template.key for template in list_builtin_canvas_templates()}
+    node_group = next(item for item in payload["items"] if item["key"] == "ecommerce-sku-variant-image-v1")
+    template = get_builtin_canvas_template("ecommerce-sku-variant-image-v1")
+    assert node_group["kind"] == "node_group"
+    assert node_group["preview_nodes"] == [
+        {
+            "key": node.key,
+            "node_type": node.node_type.value,
+            "title": node.title,
+            "position_x": node.position_x,
+            "position_y": node.position_y,
+        }
+        for node in template.nodes
+    ]
+    assert node_group["preview_edges"] == [
+        {
+            "source_node_key": edge.source_node_key,
+            "target_node_key": edge.target_node_key,
+        }
+        for edge in template.edges
+    ]
+    assert all("config_json" not in node for node in node_group["preview_nodes"])
+    assert node_group["reference_input_hints"]
+    assert node_group["output_slots"]
+    assert node_group["suggested_connections"]
+    assert node_group["default_external_connections"] == [
+        {
+            "source": "existing_product_context",
+            "target_node_key": "copy",
+            "label": "自动接商品",
+        },
+        {
+            "source": "existing_product_context",
+            "target_node_key": "image",
+            "label": "自动接商品",
+        },
+    ]
+    assert all("config_json" not in connection for connection in node_group["default_external_connections"])
+    assert all("reason" not in connection for connection in node_group["default_external_connections"])
+
+
+def test_apply_node_group_template_appends_real_workflow_nodes_and_edges(
+    configured_env: Path,
+    db_session,
+) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    template = get_builtin_canvas_template("ecommerce-sku-variant-image-v1")
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+    created = client.post(
+        "/api/products",
+        data={"name": "节点组追加商品"},
+        files={"image": ("node-group.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+    original = client.get(f"/api/products/{product_id}/workflow").json()
+    original_node_ids = {node["id"] for node in original["nodes"]}
+    original_edges = {
+        (edge["source_node_id"], edge["target_node_id"], edge["source_handle"], edge["target_handle"])
+        for edge in original["edges"]
+    }
+
+    response = client.post(
+        f"/api/products/{product_id}/workflow/template-groups",
+        json={"template_key": template.key, "position_x": 480, "position_y": 360},
+    )
+
+    assert response.status_code == 201
+    workflow = response.json()
+    assert len(workflow["nodes"]) == len(original["nodes"]) + len(template.nodes)
+    assert len(workflow["edges"]) == len(original["edges"]) + len(template.edges) + len(
+        template.default_external_connections
+    )
+    assert original_node_ids <= {node["id"] for node in workflow["nodes"]}
+    assert original_edges <= {
+        (edge["source_node_id"], edge["target_node_id"], edge["source_handle"], edge["target_handle"])
+        for edge in workflow["edges"]
+    }
+
+    created_nodes = [node for node in workflow["nodes"] if node["id"] not in original_node_ids]
+    created_node_ids = {node["id"] for node in created_nodes}
+    product_context_node = next(node for node in original["nodes"] if node["node_type"] == "product_context")
+    assert {node["node_type"] for node in created_nodes} == {
+        "reference_image",
+        "copy_generation",
+        "image_generation",
+    }
+    min_x = min(node.position_x for node in template.nodes)
+    min_y = min(node.position_y for node in template.nodes)
+    unmatched_nodes = list(created_nodes)
+    persisted_node_ids_by_template_key: dict[str, str] = {}
+    for template_node in template.nodes:
+        matched_node = next(
+            (
+                node
+                for node in unmatched_nodes
+                if node["node_type"] == template_node.node_type.value
+                and node["title"] == template_node.title
+                and node["position_x"] == template_node.position_x - min_x + 480
+                and node["position_y"] == template_node.position_y - min_y + 360
+                and node["config_json"] == template_node.config_json
+            ),
+            None,
+        )
+        assert matched_node is not None
+        unmatched_nodes.remove(matched_node)
+        persisted_node_ids_by_template_key[template_node.key] = matched_node["id"]
+
+    created_edges = [
+        edge
+        for edge in workflow["edges"]
+        if edge["source_node_id"] in created_node_ids or edge["target_node_id"] in created_node_ids
+    ]
+    assert len(created_edges) == len(template.edges) + len(template.default_external_connections)
+    assert all(edge["source_node_id"] != edge["target_node_id"] for edge in created_edges)
+    internal_edges = [
+        edge
+        for edge in created_edges
+        if edge["source_node_id"] in created_node_ids and edge["target_node_id"] in created_node_ids
+    ]
+    external_edges = [
+        edge
+        for edge in created_edges
+        if edge["source_node_id"] == product_context_node["id"] and edge["target_node_id"] in created_node_ids
+    ]
+    assert all(
+        edge["source_node_id"] in created_node_ids and edge["target_node_id"] in created_node_ids
+        for edge in internal_edges
+    )
+    assert {
+        (edge["source_node_id"], edge["target_node_id"], edge["source_handle"], edge["target_handle"])
+        for edge in internal_edges
+    } == {
+        (
+            persisted_node_ids_by_template_key[edge.source_node_key],
+            persisted_node_ids_by_template_key[edge.target_node_key],
+            edge.source_handle,
+            edge.target_handle,
+        )
+        for edge in template.edges
+    }
+    assert {
+        (edge["source_node_id"], edge["target_node_id"], edge["source_handle"], edge["target_handle"])
+        for edge in external_edges
+    } == {
+        (
+            product_context_node["id"],
+            persisted_node_ids_by_template_key["copy"],
+            "output",
+            "input",
+        ),
+        (
+            product_context_node["id"],
+            persisted_node_ids_by_template_key["image"],
+            "output",
+            "input",
+        ),
+    }
+    db_session.expire_all()
+    workflow_row = db_session.query(ProductWorkflow).filter_by(product_id=product_id, active=True).one()
+    assert db_session.query(WorkflowNode).filter_by(workflow_id=workflow_row.id).count() == len(workflow["nodes"])
+    assert db_session.query(WorkflowEdge).filter_by(workflow_id=workflow_row.id).count() == len(workflow["edges"])
+
+
+@pytest.mark.parametrize(
+    "template_key",
+    [
+        "ecommerce-sku-variant-image-v1",
+        "ecommerce-detail-material-image-v1",
+        "ecommerce-white-background-image-v1",
+    ],
+)
+def test_node_group_template_runs_with_auto_product_context_edges(
+    configured_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    template_key: str,
+) -> None:
+    from productflow_backend.infrastructure.image.base import GeneratedImagePayload
+    from productflow_backend.presentation.api import create_app
+
+    session = get_session_factory()()
+    try:
+        session.add(AppSetting(key="poster_generation_mode", value="generated"))
+        session.commit()
+    finally:
+        session.close()
+
+    captured_inputs: list[PosterGenerationInput] = []
+
+    class CapturingImageProvider:
+        provider_name = "capturing"
+        prompt_version = "capturing-v1"
+
+        def generate_poster_image(
+            self,
+            poster: PosterGenerationInput,
+            kind: PosterKind,
+        ) -> tuple[GeneratedImagePayload, str]:
+            captured_inputs.append(poster)
+            return (
+                GeneratedImagePayload(
+                    kind=kind,
+                    bytes_data=_make_demo_image_bytes(),
+                    mime_type="image/png",
+                    width=800,
+                    height=800,
+                    variant_label=f"capturing-{template_key}",
+                ),
+                "capturing-v1",
+            )
+
+    _execute_workflow_queue_inline(
+        monkeypatch,
+        dependencies=WorkflowExecutionDependencies(
+            image_provider_resolver=CapturingImageProvider,
+        ),
+    )
+
+    template = get_builtin_canvas_template(template_key)
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+    created = client.post(
+        "/api/products",
+        data={"name": "自动接入测试商品"},
+        files={"image": ("auto-context.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+    workflow = client.get(f"/api/products/{product_id}/workflow").json()
+    product_context_node = next(node for node in workflow["nodes"] if node["node_type"] == "product_context")
+    patched_context = client.patch(
+        f"/api/workflow-nodes/{product_context_node['id']}",
+        json={
+            "config_json": {
+                "name": "自动接入测试商品",
+                "category": "出图工具",
+                "price": "199",
+                "source_note": "验证节点组模板会自动继承商品资料和商品主图。",
+            }
+        },
+    )
+    assert patched_context.status_code == 200
+    original_node_ids = {node["id"] for node in patched_context.json()["nodes"]}
+
+    applied = client.post(
+        f"/api/products/{product_id}/workflow/template-groups",
+        json={"template_key": template.key, "position_x": 720, "position_y": 420},
+    )
+
+    assert applied.status_code == 201
+    applied_workflow = applied.json()
+    created_nodes = [node for node in applied_workflow["nodes"] if node["id"] not in original_node_ids]
+    template_copy_node = next(node for node in created_nodes if node["node_type"] == "copy_generation")
+    template_image_node = next(node for node in created_nodes if node["node_type"] == "image_generation")
+    template_output_node = next(
+        node
+        for node in created_nodes
+        if node["node_type"] == "reference_image" and node["title"] == template.output_slots[0].label
+    )
+    assert {
+        (edge["source_node_id"], edge["target_node_id"])
+        for edge in applied_workflow["edges"]
+        if edge["source_node_id"] == product_context_node["id"]
+        and edge["target_node_id"] in {template_copy_node["id"], template_image_node["id"]}
+    } == {
+        (product_context_node["id"], template_copy_node["id"]),
+        (product_context_node["id"], template_image_node["id"]),
+    }
+
+    run = client.post(
+        f"/api/products/{product_id}/workflow/run",
+        json={"start_node_id": template_image_node["id"]},
+    )
+
+    assert run.status_code == 200
+    payload = _wait_for_workflow_run(client, product_id, status="succeeded")
+    ran_image_node = next(node for node in payload["nodes"] if node["id"] == template_image_node["id"])
+    filled_output_node = next(node for node in payload["nodes"] if node["id"] == template_output_node["id"])
+    image_output = ran_image_node["output_json"]
+    assert image_output["context_summary"]["product_context"] == {
+        "name": "自动接入测试商品",
+        "category": "出图工具",
+        "price": "199",
+        "source_note": "验证节点组模板会自动继承商品资料和商品主图。",
+    }
+    assert image_output["context_summary"]["reference_image_count"] == 1
+    assert template_output_node["id"] in image_output["filled_reference_node_ids"]
+    assert filled_output_node["output_json"]["source_asset_ids"]
+    assert len(captured_inputs) == 1
+    provider_input = captured_inputs[0]
+    assert provider_input.product_name == "自动接入测试商品"
+    assert provider_input.category == "出图工具"
+    assert provider_input.price == "199"
+    assert provider_input.source_note == "验证节点组模板会自动继承商品资料和商品主图。"
+    assert provider_input.source_image is not None
+    assert len(provider_input.reference_images) == 1
+    assert provider_input.reference_images[0].path == provider_input.source_image
+
+
+def test_apply_node_group_template_avoids_existing_node_overlap(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    def node_box(node: dict[str, object]) -> tuple[int, int, int, int]:
+        left = int(node["position_x"])
+        top = int(node["position_y"])
+        return (
+            left,
+            top,
+            left + _WORKFLOW_NODE_VISUAL_WIDTH,
+            top + _WORKFLOW_NODE_VISUAL_HEIGHT,
+        )
+
+    def boxes_overlap(first: tuple[int, int, int, int], second: tuple[int, int, int, int]) -> bool:
+        return first[0] < second[2] and first[2] > second[0] and first[1] < second[3] and first[3] > second[1]
+
+    template = get_builtin_canvas_template("ecommerce-sku-variant-image-v1")
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+    created = client.post(
+        "/api/products",
+        data={"name": "节点组避让商品"},
+        files={"image": ("node-group-overlap.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+    original = client.get(f"/api/products/{product_id}/workflow").json()
+    original_node_ids = {node["id"] for node in original["nodes"]}
+    target = original["nodes"][0]
+
+    response = client.post(
+        f"/api/products/{product_id}/workflow/template-groups",
+        json={"template_key": template.key, "position_x": target["position_x"], "position_y": target["position_y"]},
+    )
+
+    assert response.status_code == 201
+    workflow = response.json()
+    created_nodes = [node for node in workflow["nodes"] if node["id"] not in original_node_ids]
+    assert len(created_nodes) == len(template.nodes)
+    assert min(node["position_x"] for node in created_nodes) == target["position_x"]
+    assert min(node["position_y"] for node in created_nodes) > target["position_y"]
+    assert not any(
+        boxes_overlap(node_box(created_node), node_box(original_node))
+        for created_node in created_nodes
+        for original_node in original["nodes"]
+    )
+
+    min_template_x = min(node.position_x for node in template.nodes)
+    min_template_y = min(node.position_y for node in template.nodes)
+    min_created_x = min(node["position_x"] for node in created_nodes)
+    min_created_y = min(node["position_y"] for node in created_nodes)
+    unmatched_nodes = list(created_nodes)
+    for template_node in template.nodes:
+        matched_node = next(
+            (
+                node
+                for node in unmatched_nodes
+                if node["node_type"] == template_node.node_type.value
+                and node["title"] == template_node.title
+                and node["position_x"] == template_node.position_x - min_template_x + min_created_x
+                and node["position_y"] == template_node.position_y - min_template_y + min_created_y
+            ),
+            None,
+        )
+        assert matched_node is not None
+        unmatched_nodes.remove(matched_node)
+
+
+def test_apply_node_group_template_requires_existing_active_workflow(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+    created = client.post(
+        "/api/products",
+        data={"name": "未打开画布商品"},
+        files={"image": ("no-workflow.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+
+    response = client.post(
+        f"/api/products/{product_id}/workflow/template-groups",
+        json={"template_key": "ecommerce-sku-variant-image-v1", "position_x": 120, "position_y": 120},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "需要先创建或打开画布后才能添加节点组"
+    session = get_session_factory()()
+    try:
+        assert session.query(ProductWorkflow).filter_by(product_id=product_id).count() == 0
+        assert session.query(ProductWorkflow).filter_by(product_id=product_id, active=True).count() == 0
+    finally:
+        session.close()
+
+
+def test_apply_node_group_template_requires_product_context_node(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+    created = client.post(
+        "/api/products",
+        data={"name": "缺少商品节点商品"},
+        files={"image": ("missing-context.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+    workflow = client.get(f"/api/products/{product_id}/workflow").json()
+    context_node = next(node for node in workflow["nodes"] if node["node_type"] == "product_context")
+    deleted = client.delete(f"/api/workflow-nodes/{context_node['id']}")
+    assert deleted.status_code == 200
+    without_context = deleted.json()
+
+    response = client.post(
+        f"/api/products/{product_id}/workflow/template-groups",
+        json={"template_key": "ecommerce-sku-variant-image-v1", "position_x": 120, "position_y": 120},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "节点组模板需要当前画布中的商品资料节点"
+    session = get_session_factory()()
+    try:
+        workflow_row = session.query(ProductWorkflow).filter_by(product_id=product_id, active=True).one()
+        assert session.query(WorkflowNode).filter_by(workflow_id=workflow_row.id).count() == len(
+            without_context["nodes"]
+        )
+        assert session.query(WorkflowEdge).filter_by(workflow_id=workflow_row.id).count() == len(
+            without_context["edges"]
+        )
+    finally:
+        session.close()
+
+
+def test_apply_node_group_template_rejects_unknown_and_full_canvas_keys(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+    created = client.post(
+        "/api/products",
+        data={"name": "模板拒绝商品"},
+        files={"image": ("reject.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+
+    missing = client.post(
+        f"/api/products/{product_id}/workflow/template-groups",
+        json={"template_key": "missing-template", "position_x": 120, "position_y": 120},
+    )
+    assert missing.status_code == 400
+    assert "画布模板不存在" in missing.json()["detail"]
+
+    full_canvas = client.post(
+        f"/api/products/{product_id}/workflow/template-groups",
+        json={"template_key": "ecommerce-main-image-v1", "position_x": 120, "position_y": 120},
+    )
+    assert full_canvas.status_code == 400
+    assert "只能添加节点组模板" in full_canvas.json()["detail"]
 
 
 def test_image_generation_node_normalizes_custom_size_and_rejects_unsafe_dimensions(configured_env: Path) -> None:

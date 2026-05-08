@@ -11,6 +11,15 @@ export type WorkflowNodeType =
   | "image_generation";
 export type WorkflowNodeStatus = "idle" | "queued" | "running" | "succeeded" | "failed";
 export type WorkflowRunStatus = "running" | "succeeded" | "failed" | "cancelled";
+export type CanvasTemplateKind = "full_canvas" | "node_group";
+export type CanvasTemplateScenario =
+  | "main_image"
+  | "sku_variant"
+  | "model_lifestyle"
+  | "scene_image"
+  | "detail_material"
+  | "campaign_promotion"
+  | "white_background";
 
 export interface SessionState {
   authenticated: boolean;
@@ -252,6 +261,78 @@ export interface ProductWorkflowStatus {
   runs: WorkflowRunStatusSummary[];
   created_at: string;
   updated_at: string;
+}
+
+export interface CanvasTemplateScenarioMetadata {
+  scenario: CanvasTemplateScenario;
+  title: string;
+  description: string;
+  ecommerce_stage: string;
+  tags: string[];
+}
+
+export interface CanvasTemplateOutputSlot {
+  node_key: string;
+  label: string;
+  description: string;
+}
+
+export interface CanvasTemplateReferenceInputHint {
+  node_key: string;
+  role: string;
+  label: string;
+  required: boolean;
+  description: string;
+}
+
+export interface CanvasTemplateSuggestedConnection {
+  source_node_key: string;
+  target_node_key: string;
+  reason: string;
+}
+
+export interface CanvasTemplateDefaultExternalConnection {
+  source: "existing_product_context";
+  target_node_key: string;
+  label: string;
+}
+
+export interface CanvasTemplatePreviewNode {
+  key: string;
+  node_type: WorkflowNodeType;
+  title: string;
+  position_x: number;
+  position_y: number;
+}
+
+export interface CanvasTemplatePreviewEdge {
+  source_node_key: string;
+  target_node_key: string;
+}
+
+export interface CanvasTemplateSummary {
+  key: string;
+  version: number;
+  kind: CanvasTemplateKind;
+  title: string;
+  description: string;
+  scenario: CanvasTemplateScenarioMetadata;
+  preview_nodes: CanvasTemplatePreviewNode[];
+  preview_edges: CanvasTemplatePreviewEdge[];
+  output_slots: CanvasTemplateOutputSlot[];
+  reference_input_hints: CanvasTemplateReferenceInputHint[];
+  suggested_connections: CanvasTemplateSuggestedConnection[];
+  default_external_connections: CanvasTemplateDefaultExternalConnection[];
+}
+
+export interface CanvasTemplateListResponse {
+  items: CanvasTemplateSummary[];
+}
+
+export interface ApplyWorkflowTemplateGroupInput {
+  template_key: string;
+  position_x: number;
+  position_y: number;
 }
 
 export interface CopySetUpdateRequest {

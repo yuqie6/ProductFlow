@@ -5,6 +5,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from productflow_backend.application.canvas_templates import (
+    CanvasTemplate,
+    CanvasTemplateScenario,
+    TemplateKind,
+)
 from productflow_backend.application.product_workflow_graph import ProductWorkflowStatusSnapshot
 from productflow_backend.application.product_workflows import latest_workflow_runs
 from productflow_backend.domain.durable_generation_tasks import WORKFLOW_RUN_GENERATION_TASK_CONTRACT
@@ -137,6 +142,72 @@ class ProductWorkflowStatusResponse(BaseModel):
     updated_at: datetime
 
 
+class CanvasTemplateScenarioResponse(BaseModel):
+    scenario: CanvasTemplateScenario
+    title: str
+    description: str
+    ecommerce_stage: str
+    tags: list[str]
+
+
+class CanvasTemplateReferenceInputHintResponse(BaseModel):
+    node_key: str
+    role: str
+    label: str
+    required: bool
+    description: str
+
+
+class CanvasTemplateOutputSlotResponse(BaseModel):
+    node_key: str
+    label: str
+    description: str
+
+
+class CanvasTemplateSuggestedConnectionResponse(BaseModel):
+    source_node_key: str
+    target_node_key: str
+    reason: str
+
+
+class CanvasTemplateDefaultExternalConnectionResponse(BaseModel):
+    source: str
+    target_node_key: str
+    label: str
+
+
+class CanvasTemplatePreviewNodeResponse(BaseModel):
+    key: str
+    node_type: WorkflowNodeType
+    title: str
+    position_x: int
+    position_y: int
+
+
+class CanvasTemplatePreviewEdgeResponse(BaseModel):
+    source_node_key: str
+    target_node_key: str
+
+
+class CanvasTemplateSummaryResponse(BaseModel):
+    key: str
+    version: int
+    kind: TemplateKind
+    title: str
+    description: str
+    scenario: CanvasTemplateScenarioResponse
+    preview_nodes: list[CanvasTemplatePreviewNodeResponse]
+    preview_edges: list[CanvasTemplatePreviewEdgeResponse]
+    output_slots: list[CanvasTemplateOutputSlotResponse]
+    reference_input_hints: list[CanvasTemplateReferenceInputHintResponse]
+    suggested_connections: list[CanvasTemplateSuggestedConnectionResponse]
+    default_external_connections: list[CanvasTemplateDefaultExternalConnectionResponse]
+
+
+class CanvasTemplateListResponse(BaseModel):
+    items: list[CanvasTemplateSummaryResponse]
+
+
 class CreateWorkflowNodeRequest(BaseModel):
     node_type: WorkflowNodeType
     title: str = Field(min_length=1, max_length=255)
@@ -169,6 +240,12 @@ class CreateWorkflowEdgeRequest(BaseModel):
     target_node_id: str
     source_handle: str | None = Field(default=None, max_length=80)
     target_handle: str | None = Field(default=None, max_length=80)
+
+
+class ApplyWorkflowTemplateGroupRequest(BaseModel):
+    template_key: str = Field(min_length=1, max_length=120)
+    position_x: int = 0
+    position_y: int = 0
 
 
 class RunWorkflowRequest(BaseModel):
@@ -299,6 +376,74 @@ def serialize_product_workflow(workflow: ProductWorkflow) -> ProductWorkflowResp
         runs=[serialize_workflow_run(item) for item in latest_workflow_runs(workflow)],
         created_at=workflow.created_at,
         updated_at=workflow.updated_at,
+    )
+
+
+def serialize_canvas_template_summary(template: CanvasTemplate) -> CanvasTemplateSummaryResponse:
+    return CanvasTemplateSummaryResponse(
+        key=template.key,
+        version=template.version,
+        kind=template.kind,
+        title=template.title,
+        description=template.description,
+        scenario=CanvasTemplateScenarioResponse(
+            scenario=template.scenario.scenario,
+            title=template.scenario.title,
+            description=template.scenario.description,
+            ecommerce_stage=template.scenario.ecommerce_stage,
+            tags=list(template.scenario.tags),
+        ),
+        preview_nodes=[
+            CanvasTemplatePreviewNodeResponse(
+                key=item.key,
+                node_type=item.node_type,
+                title=item.title,
+                position_x=item.position_x,
+                position_y=item.position_y,
+            )
+            for item in template.nodes
+        ],
+        preview_edges=[
+            CanvasTemplatePreviewEdgeResponse(
+                source_node_key=item.source_node_key,
+                target_node_key=item.target_node_key,
+            )
+            for item in template.edges
+        ],
+        output_slots=[
+            CanvasTemplateOutputSlotResponse(
+                node_key=item.node_key,
+                label=item.label,
+                description=item.description,
+            )
+            for item in template.output_slots
+        ],
+        reference_input_hints=[
+            CanvasTemplateReferenceInputHintResponse(
+                node_key=item.node_key,
+                role=item.role,
+                label=item.label,
+                required=item.required,
+                description=item.description,
+            )
+            for item in template.reference_input_hints
+        ],
+        suggested_connections=[
+            CanvasTemplateSuggestedConnectionResponse(
+                source_node_key=item.source_node_key,
+                target_node_key=item.target_node_key,
+                reason=item.reason,
+            )
+            for item in template.suggested_connections
+        ],
+        default_external_connections=[
+            CanvasTemplateDefaultExternalConnectionResponse(
+                source=item.source,
+                target_node_key=item.target_node_key,
+                label=item.label,
+            )
+            for item in template.default_external_connections
+        ],
     )
 
 

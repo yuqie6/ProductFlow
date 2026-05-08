@@ -24,6 +24,7 @@
   - `CanvasTemplateOutputSlot`
   - `CanvasTemplateReferenceInputHint`
   - `CanvasTemplateSuggestedConnection`
+  - `CanvasTemplateDefaultExternalConnection`
   - `CanvasTemplateScenario`
   - `TemplateKind = Literal["full_canvas", "node_group"]`
 - Catalog helpers:
@@ -58,6 +59,9 @@
   running downstream nodes.
 - `suggested_connections` may describe optional UI connection advice, but every suggestion must point to existing template
   node keys and must not connect a node to itself.
+- Built-in `node_group` templates may declare `default_external_connections` from `existing_product_context` to template
+  copy/image node keys. Applying the template must materialize those declarations as normal visible `workflow_edges`.
+  They are not hidden suggestions or frontend-only hints.
 - Built-in templates must cover real ecommerce image-production scenarios: main image, SKU/variant, model/lifestyle,
   scene, detail/material, campaign/promotion, and white-background output.
 - Templates must not introduce new workflow node types by enum drift. When a new `WorkflowNodeType` is added elsewhere,
@@ -81,6 +85,12 @@
   `BusinessValidationError("画布模板参考输入必须引用参考图节点")`.
 - Suggested connection connects a node to itself -> `BusinessValidationError("画布模板连接建议不能连接到自身")`.
 - Suggested connection references a missing node -> `BusinessValidationError("画布模板连接建议引用了不存在的节点")`.
+- Default external connection on a non-`node_group` template ->
+  `BusinessValidationError("只有节点组模板可以声明默认外部连接")`.
+- Default external connection references a missing template node ->
+  `BusinessValidationError("画布模板默认外部连接引用了不存在的节点")`.
+- Default external connection targets a node that is not `copy_generation` or `image_generation` ->
+  `BusinessValidationError("画布模板默认外部连接只能接入文案或生图节点")`.
 - Unknown built-in template key -> `ValueError("画布模板不存在")`.
 
 ### 5. Good/Base/Bad Cases
@@ -90,8 +100,8 @@
 - Good: campaign template contains campaign prompt defaults, poster image size, and an explicit generated output slot.
 - Good: node-group template appends a reusable group by materializing normal workflow nodes and remapping template keys to
   database node IDs before creating edges.
-- Base: a template can include suggested connections for palette guidance without requiring those suggestions to be
-  materialized as edges.
+- Base: a template can include suggested connections for optional palette guidance without requiring those suggestions to
+  be materialized as edges. Default external connections are a separate executable contract and are materialized.
 - Base: a template can include multiple output slots when one generation node is expected to fill multiple downstream
   `reference_image` nodes.
 - Bad: a template stores a hidden chain in frontend state and creates only one placeholder node in the database.
@@ -104,7 +114,8 @@
   campaign/promotion, and white-background.
 - Unit test downstream iteration remains acyclic and includes only downstream template edges.
 - Unit test validation rejects missing edge references, self-edges, cycles, duplicate node keys, unsupported node types,
-  invalid template kind, invalid output slot references, and invalid suggested connections.
+  invalid template kind, invalid output slot references, invalid suggested connections, and invalid default external
+  connections.
 - Unit test direct Pydantic model construction still runs contract validation so bypassing catalog helpers cannot create an
   invalid template instance.
 - Regression test `SUPPORTED_CANVAS_TEMPLATE_NODE_TYPES` as an explicit allowlist so future `WorkflowNodeType` additions do
@@ -256,6 +267,120 @@ session.commit()
 ```
 
 Creation-time template application must persist the visible workflow graph in the same product creation transaction.
+
+## Scenario: Product workflow node-group template application
+
+### 1. Scope / Trigger
+
+- Trigger: changes to canvas-internal template insertion APIs, built-in `node_group` templates, or product workflow
+  mutation code that materializes template nodes.
+- The workbench may append built-in `node_group` templates to an existing active product workflow by creating normal
+  persisted workflow rows.
+- This scenario does not cover product-creation `full_canvas` selection, user-saved templates, drag-to-canvas authoring,
+  or hidden suggested external connections.
+
+### 2. Signatures
+
+- Catalog API: `GET /api/workflow/canvas-templates -> CanvasTemplateListResponse`.
+- Catalog summary preview fields:
+  - `preview_nodes: list[{key, node_type, title, position_x, position_y}]`
+  - `preview_edges: list[{source_node_key, target_node_key}]`
+  - `default_external_connections: list[{source, target_node_key, label}]`
+- Apply API: `POST /api/products/{product_id}/workflow/template-groups -> ProductWorkflowResponse`.
+- Request schema:
+  - `template_key: str`
+  - `position_x: int`
+  - `position_y: int`
+- Application entrypoint:
+  - `apply_node_group_template_to_workflow(session, product_id, template_key, position_x, position_y) -> ProductWorkflow`
+- Shared materialization helper:
+  - `materialize_canvas_template_graph(session, workflow, template, position_x_offset=0, position_y_offset=0)`
+
+### 3. Contracts
+
+- The apply API resolves `template_key` through the built-in backend catalog only.
+- Catalog summary responses must expose lightweight real graph preview data from `CanvasTemplate.nodes` and
+  `CanvasTemplate.edges`. Include node key, type, title, and relative coordinates plus edge source/target keys; do not
+  include large prompt seeds, instruction strings, or `config_json` in summary preview data.
+- Only `CanvasTemplate.kind == "node_group"` is valid for canvas-internal insertion.
+- `full_canvas` templates remain valid only for product creation.
+- Applying a node group appends to the product's active workflow and preserves all existing nodes and edges.
+- Template node specs are materialized into real `workflow_nodes` rows by copying `node_type`, `title`, `config_json`, and
+  relative layout.
+- The smallest template `position_x` / `position_y` becomes the anchor that lands at request `position_x` /
+  `position_y`; other template nodes keep their relative offsets.
+- Template edge specs are materialized as real `workflow_edges` rows only between nodes created in the same template
+  application.
+- `suggested_connections` are returned by the catalog for UI guidance and must not be silently materialized as external
+  workflow edges.
+- `default_external_connections` are returned by the catalog as lightweight metadata and are materialized by the apply API
+  as real visible `workflow_edges`. For built-in SKU/detail/white-background node groups, the existing active workflow
+  `product_context` node connects to the newly created `copy_generation` and `image_generation` nodes so the group can
+  inherit product fields and the product source image.
+- Built-in `node_group` templates should not contain a `product_context` node, because the active workflow already owns
+  the product-context singleton.
+
+### 4. Validation & Error Matrix
+
+- Unknown `template_key` -> `400`, `{"detail": "画布模板不存在"}`.
+- `template_key` resolves to `full_canvas` -> `400`, detail explains that canvas insertion accepts node-group templates.
+- Missing product -> `404`, `{"detail": "商品不存在"}`.
+- Existing product without an active workflow -> `400`; the apply API must not create a workflow implicitly.
+- Active workflow without exactly one `product_context` node -> `400`; the apply API must not create a partially usable
+  node group.
+- Template self-edge, missing edge reference, or cycle -> `400` business validation error.
+- Any generated edge that would make the full active workflow cyclic -> rollback and return a `400` DAG validation error.
+
+### 5. Good/Base/Bad Cases
+
+- Good: applying `ecommerce-sku-variant-image-v1` to the default workflow increases node and edge counts, keeps all
+  previous node/edge IDs, adds template-internal edges, and adds visible external edges from the existing product context
+  to the new copy/image nodes.
+- Good: applying a template at `position_x=480`, `position_y=360` places the template's minimum coordinate there while
+  preserving relative spacing.
+- Base: the UI may render reference input hints and connection suggestions from the catalog.
+- Bad: frontend creates local-only template nodes without calling the apply API.
+- Bad: applying a `full_canvas` template inside an existing canvas.
+- Bad: materializing suggested external connections as hidden edges.
+
+### 6. Tests Required
+
+- API test catalog response includes built-in templates with `kind`, scenario metadata, output slots, reference input
+  hints, suggested connections, lightweight default external connections, and real `preview_nodes` / `preview_edges`
+  matching the built-in template definitions. Catalog summaries must not expose config/prompt payloads.
+- API test successful node-group apply preserves existing nodes and edges.
+- API test persisted node count, edge count, node types, titles, config, and shifted positions match the backend template.
+- API test created edges connect only newly created template nodes and no self-edge is created.
+- API test default external connections persist visible edges from the existing product context node to the new
+  copy/image nodes.
+- API test missing product-context node returns `400` and does not create a partial node group.
+- API test unknown key returns `400` with template-missing detail.
+- API test `full_canvas` key returns `400` with node-group-only detail.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+workflow.nodes.extend(local_template_nodes)
+```
+
+This leaves the template in local memory and loses the persisted DAG contract.
+
+#### Correct
+
+```python
+workflow = apply_node_group_template_to_workflow(
+    session,
+    product_id=product_id,
+    template_key="ecommerce-sku-variant-image-v1",
+    position_x=480,
+    position_y=360,
+)
+```
+
+The application use case resolves the built-in template, materializes visible workflow rows, validates the full DAG, and
+returns the normal `ProductWorkflow`.
 
 ## Scenario: Product workflow DAG persistence and execution
 

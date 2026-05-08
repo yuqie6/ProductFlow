@@ -58,14 +58,29 @@ def materialize_product_workflow_from_template(
     session.add(workflow)
     session.flush()
 
+    materialize_canvas_template_graph(session, workflow=workflow, template=template)
+    session.flush()
+    return workflow
+
+
+def materialize_canvas_template_graph(
+    session: Session,
+    *,
+    workflow: ProductWorkflow,
+    template: CanvasTemplate,
+    position_x_offset: int = 0,
+    position_y_offset: int = 0,
+    external_source_nodes_by_template_source: dict[str, WorkflowNode] | None = None,
+) -> dict[str, WorkflowNode]:
+    validate_canvas_template(template)
     nodes_by_template_key: dict[str, WorkflowNode] = {}
     for node_spec in template.nodes:
         node = WorkflowNode(
             workflow_id=workflow.id,
             node_type=node_spec.node_type,
             title=node_spec.title,
-            position_x=node_spec.position_x,
-            position_y=node_spec.position_y,
+            position_x=node_spec.position_x + position_x_offset,
+            position_y=node_spec.position_y + position_y_offset,
             config_json=deepcopy(node_spec.config_json),
         )
         session.add(node)
@@ -82,5 +97,19 @@ def materialize_product_workflow_from_template(
                 target_handle=edge_spec.target_handle,
             )
         )
+    external_sources = external_source_nodes_by_template_source or {}
+    for connection in template.default_external_connections:
+        source_node = external_sources.get(connection.source)
+        if source_node is None:
+            raise BusinessValidationError("节点组模板需要当前画布中的商品资料节点")
+        session.add(
+            WorkflowEdge(
+                workflow_id=workflow.id,
+                source_node_id=source_node.id,
+                target_node_id=nodes_by_template_key[connection.target_node_key].id,
+                source_handle="output",
+                target_handle="input",
+            )
+        )
     session.flush()
-    return workflow
+    return nodes_by_template_key
