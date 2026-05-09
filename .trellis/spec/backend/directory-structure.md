@@ -219,8 +219,9 @@ and the runtime config definitions in `config.py`, then update tests and fronten
   and routers in one place.
 - Product route shape: `backend/src/productflow_backend/presentation/routes/products.py` accepts FastAPI inputs,
   delegates to `application/use_cases.py`, and serializes with `presentation/schemas/products.py`.
-- Business error mapping: route modules import `raise_value_error_as_http(...)` from
-  `presentation/errors.py` instead of redefining `ValueError -> HTTPException` logic locally.
+- Business error mapping: application use cases raise typed `BusinessError` subclasses, and
+  `presentation/errors.py` registers the FastAPI handler that preserves the `{"detail": "..."}` response shape. Do not
+  add route-local raw `ValueError` adapters for expected business failures.
 - Continuous image sessions: `backend/src/productflow_backend/presentation/routes/image_sessions.py` delegates to
   `application/image_sessions.py`, which delegates provider-specific chat generation to
   `infrastructure/image/chat_service.py`, and keeps download handling in the route.

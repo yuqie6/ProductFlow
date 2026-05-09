@@ -72,11 +72,18 @@ logger = logging.getLogger(__name__)
 
 Then log at the boundary where the event is meaningful:
 
-- `info`: lifecycle events that operators need, such as worker job start/finish or provider mode selection.
-- `warning`: recoverable anomalies, such as a failed thumbnail variant fallback in `LocalStorage.resolve_for_variant(...)`
-  if that behavior becomes hard to diagnose.
-- `error` / `exception`: unexpected failures that are being handled and would otherwise disappear.
+- `info`: lifecycle events that operators need, such as worker job start/finish, queue recovery summaries, or provider
+  mode selection.
+- `warning`: recoverable anomalies worth investigation, such as provider fallback, sanitized provider failure, capacity
+  requeue, or a failed thumbnail variant fallback in `LocalStorage.resolve_for_variant(...)` if that behavior becomes
+  hard to diagnose.
+- `exception`: unexpected failures that are caught and would otherwise disappear, such as durable enqueue failure after
+  a row was already created or an automatic retry enqueue failure.
+- `error`: handled failures that are not exceptions at the logging site but still need operator attention.
 - `debug`: local-only details that are too noisy for normal runs.
+
+Do not add noisy route-level logs for ordinary successful requests or ordinary user-caused `4xx` business validation
+errors. Uvicorn access logs and HTTP responses already cover those paths.
 
 Do not add `print(...)` to backend application code for diagnostics. Use tests or temporary local instrumentation instead.
 
@@ -101,9 +108,12 @@ Do not add `print(...)` to backend application code for diagnostics. Use tests o
 - API requests accept incoming `X-Request-ID`; when missing, the backend generates one and returns it in the same response
   header.
 - API request id correlation must not change any JSON response model or route response shape.
+- Business error responses converted by the global typed handler still return the normal `X-Request-ID` response header.
 - `run_product_workflow_run(...)` sets `workflow_run_id` only while that Dramatiq actor executes.
 - `run_image_session_generation_task(...)` sets `image_session_generation_task_id` only while that Dramatiq actor executes.
 - Ordinary process logs outside request/worker context use `-` placeholders.
+- Do not manually pass request ids, workflow run ids, or generation task ids through application DTOs just to support
+  logging. Use the existing contextvar boundary helpers.
 
 ### 4. Validation & Error Matrix
 - Missing request header -> generate a non-empty request id and return it in `X-Request-ID`.
@@ -208,10 +218,17 @@ Never log secrets or full request payloads that may contain secrets:
 - Provider keys such as `text_api_key` and `image_api_key`.
 - Uploaded image bytes or data URLs built in `application/image_sessions.py::_session_data_url`.
 - Session cookies or `request.session` contents.
-- Raw provider responses if they can include prompts, base64 images, or credentials.
+- Full prompts or full request bodies.
+- Raw provider responses if they can include prompts, base64 images, credentials, provider request bodies, or provider
+  response payloads.
+- Upload bytes, multipart bodies, image base64 strings, and generated data URLs.
 
 The settings API already hides secret values in `presentation/routes/settings.py::_public_value(...)`; keep logs at least as
 strict as API responses.
+
+Prefer IDs, counts, status values, enum names, queue positions, task/run ids, and already-sanitized concise failure
+reasons. When logging provider failures, use the same sanitized/category-level detail that is safe for durable failure
+state, not raw exception payloads.
 
 ---
 

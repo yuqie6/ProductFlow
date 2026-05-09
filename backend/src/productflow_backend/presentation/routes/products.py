@@ -21,7 +21,6 @@ from productflow_backend.domain.enums import ProductWorkflowState
 from productflow_backend.infrastructure.db.models import PosterVariant, SourceAsset
 from productflow_backend.infrastructure.storage import ImageVariantName, LocalStorage
 from productflow_backend.presentation.deps import get_session, require_admin, require_deletion_enabled
-from productflow_backend.presentation.errors import raise_value_error_as_http
 from productflow_backend.presentation.image_variants import build_variant_filename
 from productflow_backend.presentation.schemas.products import (
     CopySetResponse,
@@ -65,21 +64,18 @@ async def create_product_endpoint(
                 validated_reference.mime_type,
             )
         )
-    try:
-        product = create_product(
-            session,
-            name=name,
-            category=category,
-            price=price,
-            source_note=source_note,
-            image_bytes=main_image.content,
-            filename=main_image.filename,
-            content_type=main_image.mime_type,
-            reference_image_uploads=reference_payloads,
-            canvas_template_key=canvas_template_key,
-        )
-    except ValueError as exc:
-        raise_value_error_as_http(exc)
+    product = create_product(
+        session,
+        name=name,
+        category=category,
+        price=price,
+        source_note=source_note,
+        image_bytes=main_image.content,
+        filename=main_image.filename,
+        content_type=main_image.mime_type,
+        reference_image_uploads=reference_payloads,
+        canvas_template_key=canvas_template_key,
+    )
     return serialize_product_detail(product)
 
 
@@ -101,10 +97,7 @@ def list_products_endpoint(
 
 @router.get("/products/{product_id}", response_model=ProductDetailResponse)
 def get_product_detail_endpoint(product_id: str, session: Session = Depends(get_session)) -> ProductDetailResponse:
-    try:
-        return serialize_product_detail(get_product_detail(session, product_id))
-    except ValueError as exc:
-        raise_value_error_as_http(exc)
+    return serialize_product_detail(get_product_detail(session, product_id))
 
 
 @router.delete(
@@ -113,10 +106,7 @@ def get_product_detail_endpoint(product_id: str, session: Session = Depends(get_
     dependencies=[Depends(require_deletion_enabled)],
 )
 def delete_product_endpoint(product_id: str, session: Session = Depends(get_session)) -> None:
-    try:
-        delete_product(session, product_id=product_id)
-    except ValueError as exc:
-        raise_value_error_as_http(exc)
+    delete_product(session, product_id=product_id)
 
 
 @router.post("/products/{product_id}/reference-images", response_model=ProductDetailResponse)
@@ -136,14 +126,11 @@ async def upload_reference_images_endpoint(
                 validated_reference.mime_type,
             )
         )
-    try:
-        product = add_reference_images(
-            session,
-            product_id=product_id,
-            reference_image_uploads=reference_payloads,
-        )
-    except ValueError as exc:
-        raise_value_error_as_http(exc)
+    product = add_reference_images(
+        session,
+        product_id=product_id,
+        reference_image_uploads=reference_payloads,
+    )
     return serialize_product_detail(product)
 
 
@@ -153,23 +140,17 @@ def update_copy_set_endpoint(
     payload: CopySetUpdateRequest,
     session: Session = Depends(get_session),
 ) -> CopySetResponse:
-    try:
-        copy_set = update_copy_set(
-            session,
-            copy_set_id=copy_set_id,
-            structured_payload=payload.structured_payload,
-        )
-    except ValueError as exc:
-        raise_value_error_as_http(exc)
+    copy_set = update_copy_set(
+        session,
+        copy_set_id=copy_set_id,
+        structured_payload=payload.structured_payload,
+    )
     return serialize_copy_set(copy_set)
 
 
 @router.post("/copy-sets/{copy_set_id}/confirm", response_model=CopySetResponse)
 def confirm_copy_set_endpoint(copy_set_id: str, session: Session = Depends(get_session)) -> CopySetResponse:
-    try:
-        copy_set = confirm_copy_set(session, copy_set_id=copy_set_id)
-    except ValueError as exc:
-        raise_value_error_as_http(exc)
+    copy_set = confirm_copy_set(session, copy_set_id=copy_set_id)
     return serialize_copy_set(copy_set)
 
 
@@ -230,19 +211,13 @@ def delete_source_asset_endpoint(
     asset_id: str,
     session: Session = Depends(get_session),
 ) -> ProductDetailResponse:
-    try:
-        product = delete_reference_image(session, asset_id=asset_id)
-    except ValueError as exc:
-        raise_value_error_as_http(exc)
+    product = delete_reference_image(session, asset_id=asset_id)
     return serialize_product_detail(product)
 
 
 @router.get("/products/{product_id}/history", response_model=ProductHistoryResponse)
 def get_product_history_endpoint(product_id: str, session: Session = Depends(get_session)) -> ProductHistoryResponse:
-    try:
-        history = get_product_history(session, product_id)
-    except ValueError as exc:
-        raise_value_error_as_http(exc)
+    history = get_product_history(session, product_id)
     return ProductHistoryResponse(
         copy_sets=[serialize_copy_set(item) for item in history["copy_sets"]],
         poster_variants=[serialize_poster_variant(item) for item in history["poster_variants"]],

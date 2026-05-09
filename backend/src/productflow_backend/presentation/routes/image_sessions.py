@@ -21,7 +21,6 @@ from productflow_backend.application.image_sessions import (
 from productflow_backend.infrastructure.db.models import ImageSessionAsset
 from productflow_backend.infrastructure.storage import ImageVariantName, LocalStorage
 from productflow_backend.presentation.deps import get_session, require_admin, require_deletion_enabled
-from productflow_backend.presentation.errors import raise_value_error_as_http
 from productflow_backend.presentation.image_variants import build_variant_filename
 from productflow_backend.presentation.schemas.image_sessions import (
     AttachImageSessionAssetRequest,
@@ -58,10 +57,7 @@ def create_image_session_endpoint(
     payload: CreateImageSessionRequest,
     session: Session = Depends(get_session),
 ) -> ImageSessionDetailResponse:
-    try:
-        image_session = create_image_session(session, product_id=payload.product_id, title=payload.title)
-    except ValueError as exc:
-        raise_value_error_as_http(exc)
+    image_session = create_image_session(session, product_id=payload.product_id, title=payload.title)
     return serialize_image_session_detail(image_session)
 
 
@@ -70,10 +66,7 @@ def get_image_session_detail_endpoint(
     image_session_id: str,
     session: Session = Depends(get_session),
 ) -> ImageSessionDetailResponse:
-    try:
-        image_session = get_image_session_detail(session, image_session_id)
-    except ValueError as exc:
-        raise_value_error_as_http(exc)
+    image_session = get_image_session_detail(session, image_session_id)
     return serialize_image_session_detail(image_session)
 
 
@@ -82,10 +75,7 @@ def get_image_session_status_endpoint(
     image_session_id: str,
     session: Session = Depends(get_session),
 ) -> ImageSessionStatusResponse:
-    try:
-        snapshot = get_image_session_status(session, image_session_id)
-    except ValueError as exc:
-        raise_value_error_as_http(exc)
+    snapshot = get_image_session_status(session, image_session_id)
     return serialize_image_session_status(snapshot)
 
 
@@ -95,10 +85,7 @@ def update_image_session_endpoint(
     payload: UpdateImageSessionRequest,
     session: Session = Depends(get_session),
 ) -> ImageSessionDetailResponse:
-    try:
-        image_session = update_image_session(session, image_session_id=image_session_id, title=payload.title)
-    except ValueError as exc:
-        raise_value_error_as_http(exc)
+    image_session = update_image_session(session, image_session_id=image_session_id, title=payload.title)
     return serialize_image_session_detail(image_session)
 
 
@@ -111,10 +98,7 @@ def delete_image_session_endpoint(
     image_session_id: str,
     session: Session = Depends(get_session),
 ) -> None:
-    try:
-        delete_image_session(session, image_session_id=image_session_id)
-    except ValueError as exc:
-        raise_value_error_as_http(exc)
+    delete_image_session(session, image_session_id=image_session_id)
 
 
 @router.post("/image-sessions/{image_session_id}/reference-images", response_model=ImageSessionDetailResponse)
@@ -134,14 +118,11 @@ async def upload_image_session_reference_images_endpoint(
                 validated_image.mime_type,
             )
         )
-    try:
-        image_session = add_image_session_reference_images(
-            session,
-            image_session_id=image_session_id,
-            reference_image_uploads=payloads,
-        )
-    except ValueError as exc:
-        raise_value_error_as_http(exc)
+    image_session = add_image_session_reference_images(
+        session,
+        image_session_id=image_session_id,
+        reference_image_uploads=payloads,
+    )
     return serialize_image_session_detail(image_session)
 
 
@@ -154,14 +135,11 @@ def delete_image_session_reference_image_endpoint(
     asset_id: str,
     session: Session = Depends(get_session),
 ) -> ImageSessionDetailResponse:
-    try:
-        image_session = delete_image_session_reference_image(
-            session,
-            image_session_id=image_session_id,
-            asset_id=asset_id,
-        )
-    except ValueError as exc:
-        raise_value_error_as_http(exc)
+    image_session = delete_image_session_reference_image(
+        session,
+        image_session_id=image_session_id,
+        asset_id=asset_id,
+    )
     return serialize_image_session_detail(image_session)
 
 
@@ -175,19 +153,16 @@ def generate_image_session_round_endpoint(
     payload: GenerateImageSessionRoundRequest,
     session: Session = Depends(get_session),
 ) -> ImageSessionDetailResponse:
-    try:
-        image_session = submit_image_session_generation_task(
-            session,
-            image_session_id=image_session_id,
-            prompt=payload.prompt,
-            size=payload.size,
-            base_asset_id=payload.base_asset_id,
-            selected_reference_asset_ids=payload.selected_reference_asset_ids,
-            generation_count=payload.generation_count,
-            tool_options=payload.tool_options.model_dump(exclude_none=True) if payload.tool_options else None,
-        )
-    except ValueError as exc:
-        raise_value_error_as_http(exc)
+    image_session = submit_image_session_generation_task(
+        session,
+        image_session_id=image_session_id,
+        prompt=payload.prompt,
+        size=payload.size,
+        base_asset_id=payload.base_asset_id,
+        selected_reference_asset_ids=payload.selected_reference_asset_ids,
+        generation_count=payload.generation_count,
+        tool_options=payload.tool_options.model_dump(exclude_none=True) if payload.tool_options else None,
+    )
     return serialize_image_session_detail(image_session)
 
 
@@ -201,14 +176,11 @@ def retry_image_session_generation_task_endpoint(
     task_id: str,
     session: Session = Depends(get_session),
 ) -> ImageSessionDetailResponse:
-    try:
-        image_session = retry_image_session_generation_task(
-            session,
-            image_session_id=image_session_id,
-            task_id=task_id,
-        )
-    except ValueError as exc:
-        raise_value_error_as_http(exc)
+    image_session = retry_image_session_generation_task(
+        session,
+        image_session_id=image_session_id,
+        task_id=task_id,
+    )
     return serialize_image_session_detail(image_session)
 
 
@@ -221,14 +193,11 @@ def cancel_image_session_generation_task_endpoint(
     task_id: str,
     session: Session = Depends(get_session),
 ) -> ImageSessionDetailResponse:
-    try:
-        image_session = cancel_image_session_generation_task(
-            session,
-            image_session_id=image_session_id,
-            task_id=task_id,
-        )
-    except ValueError as exc:
-        raise_value_error_as_http(exc)
+    image_session = cancel_image_session_generation_task(
+        session,
+        image_session_id=image_session_id,
+        task_id=task_id,
+    )
     return serialize_image_session_detail(image_session)
 
 
@@ -242,16 +211,13 @@ def attach_image_session_asset_to_product_endpoint(
     payload: AttachImageSessionAssetRequest,
     session: Session = Depends(get_session),
 ) -> ProductWritebackResponse:
-    try:
-        product = attach_image_session_asset_to_product(
-            session,
-            image_session_id=image_session_id,
-            asset_id=asset_id,
-            target=payload.target,
-            product_id=payload.product_id,
-        )
-    except ValueError as exc:
-        raise_value_error_as_http(exc)
+    product = attach_image_session_asset_to_product(
+        session,
+        image_session_id=image_session_id,
+        asset_id=asset_id,
+        target=payload.target,
+        product_id=payload.product_id,
+    )
     message = "已加入商品参考图" if payload.target == "reference" else "已设为商品主图"
     return ProductWritebackResponse(product_id=product.id, message=message)
 

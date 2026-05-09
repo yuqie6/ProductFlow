@@ -41,8 +41,8 @@ Current typed errors:
   work. Current durable generation submissions should queue instead of using this error for a full running-capacity slot.
 - `QueueUnavailableError`: explicit `503` when a durable task row was created but Redis/Dramatiq delivery failed.
 
-Typed business errors intentionally subclass `ValueError` during the migration so existing route catches continue to
-work, but new code should choose the typed class instead of relying on message suffixes.
+Typed business errors intentionally subclass `ValueError` for Python compatibility with older code paths, but HTTP
+mapping must not rely on raw `ValueError` catches or message suffixes.
 
 Use typed errors for newly touched expected failures:
 
@@ -54,8 +54,9 @@ Use typed errors for newly touched expected failures:
 - Workflow graph integrity or selection problems that were legacy `400`s, such as an edge referencing a node outside the
   loaded graph, should use `BusinessValidationError` rather than `NotFoundError`.
 
-Legacy `ValueError` fallback remains only for already-existing compatibility paths and parser boundaries that are not
-the owner of HTTP status semantics. Newly touched application/business failures must use typed errors.
+The legacy route-level `ValueError` fallback has been removed from production code after the high-traffic route migration.
+Newly touched application/business failures must use typed errors. Parser, provider, and internal normalization helpers
+may still raise raw `ValueError` when they do not own route-facing HTTP status semantics.
 
 FastAPI registers a global handler for typed `BusinessError` subclasses during app creation. Route handlers may let typed
 business errors propagate directly; the response remains the standard FastAPI-compatible shape:
@@ -73,31 +74,20 @@ Do not add global handlers for raw `ValueError` or `Exception`.
 `presentation/errors.py::register_exception_handlers(...)` is called from `presentation/api.py::create_app(...)` and
 registers the `BusinessError` HTTP boundary. This handler maps only typed expected business failures.
 
-`presentation/errors.py::raise_value_error_as_http(...)` remains as a legacy route adapter for endpoints whose called use
-cases can still expose raw route-facing business `ValueError`s. Do not redefine this mapping in each route file:
-
-```python
-try:
-    product = get_product_detail(session, product_id)
-except ValueError as exc:
-    raise_value_error_as_http(exc)
-```
-
-The helper preserves the route-boundary contract:
-
-- `BusinessError` subclasses map by explicit `status_code`, not by Chinese message content.
-- legacy `ValueError("海报文件不存在")` remains `400` for compatibility.
-- legacy `ValueError` messages ending with `"不存在"` remain `404` for compatibility.
-- other expected legacy business `ValueError`s remain `400`.
+Do not reintroduce a shared route adapter that maps raw `ValueError` to HTTP by Chinese string content. If a route-facing
+use case still exposes a raw expected business failure, convert the owner use case to `BusinessValidationError`,
+`NotFoundError`, `QueueUnavailableError`, or another existing typed `BusinessError` subclass.
 
 Examples:
 
 - `presentation/routes/product_workflows.py` lets typed business errors propagate through the global handler after the
   workflow use cases were inventoried as typed at the route boundary.
-- `presentation/routes/products.py` still catches `ValueError` around product/copy routes during migration because some
-  adjacent copy payload normalization paths can still expose raw parser `ValueError`.
-- `presentation/routes/image_sessions.py` catches `ValueError` around session CRUD, reference image upload/delete,
-  generation, and attach-to-product actions until that route surface is migrated.
+- `presentation/routes/products.py`, `presentation/routes/image_sessions.py`, and `presentation/routes/gallery.py` let
+  typed business errors propagate through the global handler after their route-facing failures were inventoried as typed.
+- Download/file-serving routes may still catch `ValueError` from `LocalStorage.resolve_for_variant(...)` and raise direct
+  `HTTPException(404)` because the route owns file-serving semantics.
+- Settings routes may still translate local configuration normalization `ValueError` into direct `HTTPException(400)`
+  because settings unlock/runtime validation is presentation-owned.
 
 When adding or touching use cases, prefer `BusinessValidationError` / `NotFoundError` over raw `ValueError` for expected
 business failures. Keep using direct `HTTPException` for HTTP-owned protocol boundaries such as auth/session, settings
@@ -117,7 +107,6 @@ unlock, upload validation, and download/file serving. Do not import FastAPI `HTT
 - `NotFoundError(message: str)` -> `status_code = 404`.
 - `presentation.errors.register_exception_handlers(app: FastAPI) -> None`.
 - `presentation.errors.business_error_exception_handler(request: Request, exc: BusinessError) -> JSONResponse`.
-- `presentation.errors.raise_value_error_as_http(exc: ValueError) -> NoReturn`.
 
 #### 3. Contracts
 
@@ -133,9 +122,10 @@ unlock, upload validation, and download/file serving. Do not import FastAPI `HTT
 - `BusinessValidationError("工作流连线引用了不存在的节点")` -> `400`,
   `{"detail": "工作流连线引用了不存在的节点"}`.
 - `BusinessError("请选择一张图片")` -> `400`, `{"detail": "请选择一张图片"}`.
-- Legacy `ValueError("旧资源不存在")` -> `404` while migration is incomplete.
-- Legacy `ValueError("海报文件不存在")` -> `400` for backward compatibility.
-- Legacy `ValueError("普通业务错误")` -> `400`.
+- `QueueUnavailableError("任务队列暂不可用，请稍后重试")` -> `503`,
+  `{"detail": "任务队列暂不可用，请稍后重试"}`.
+- Raw `ValueError("旧资源不存在")` must not be globally mapped to HTTP. Convert the owning route-facing use case to a typed
+  business error instead.
 
 #### 5. Good/Base/Bad Cases
 
@@ -146,14 +136,17 @@ unlock, upload validation, and download/file serving. Do not import FastAPI `HTT
 
 #### 6. Tests Required
 
-- Unit test `raise_value_error_as_http(NotFoundError("资源已移除"))` returns `404` even without an `"不存在"` suffix.
-- Unit test generic `BusinessError` returns `400`.
+- Unit test typed `NotFoundError("资源已移除")` maps to `404` even without an `"不存在"` suffix.
+- Unit test generic `BusinessError` maps to `400`.
+- Unit test `QueueUnavailableError` maps to `503`.
 - Route/global-handler test typed `BusinessError` preserves response shape `{"detail": "..."}` and does not add a `code`
   field.
 - Unit or route test poster-file missing remains `400` with detail `"海报文件不存在"`.
 - Application-level test newly touched business validations raise `BusinessValidationError`, for example product field
   validation, workflow graph validation, and image-session generation validation.
-- Unit test legacy `ValueError` fallback preserves old `404` / `400` behavior.
+- Regression test route surfaces that used to have wrappers, such as product detail, image-session detail/generation, and
+  gallery save, use the global typed handler.
+- Regression test the legacy raw `ValueError` helper is absent from `presentation.errors`.
 
 #### 7. Wrong vs Correct
 
@@ -224,14 +217,13 @@ Application submit use cases create durable work first, then enqueue through `in
   `mark_image_session_generation_task_enqueue_failed(...)`.
 - All submit use cases raise `QueueUnavailableError("任务队列暂不可用，请稍后重试")` after marking persisted state failed.
   The typed business error handler preserves status `503` plus the stable FastAPI error shape
-  `{"detail": "任务队列暂不可用，请稍后重试"}`. Legacy routes that still call `raise_value_error_as_http(...)` preserve the same
-  mapping because the adapter checks `BusinessError` first.
+  `{"detail": "任务队列暂不可用，请稍后重试"}`.
 - Worker actors in `backend/src/productflow_backend/workers.py` use `@dramatiq.actor(max_retries=0)` and rely on
   application execution entrypoints to persist failure/retry state.
 
 Keep queue send failures visible to the API caller; do not leave a `QUEUED` durable task silently unenqueued. Route
-modules should remain HTTP adapters: they call the submit use case, let typed `BusinessError`s reach the global handler
-or use the legacy adapter for still-untyped `ValueError`s, and serialize the returned model.
+modules should remain HTTP adapters: they call the submit use case, let typed `BusinessError`s reach the global handler,
+and serialize the returned model.
 
 Public-demo durable generation entrypoints persist queued work before provider execution:
 
@@ -460,6 +452,7 @@ plain and user-readable; do not return stack traces or provider secrets.
 - Swallowing queue/provider/storage failures without updating job state or returning a meaningful HTTP error.
 - Returning raw exception strings that may include API keys, paths outside storage root, or provider request bodies.
 - Changing Chinese user-facing `detail` text without checking frontend pages that display it directly.
-- Treating all `ValueError`s as 500s; existing route helpers intentionally map them to 400/404.
+- Letting route-facing raw `ValueError`s reach the API boundary; convert expected business failures to typed
+  `BusinessError` subclasses and leave parser/provider/internal `ValueError`s inside their owner boundaries.
 - Adding new string-suffix status checks for converted business errors; add or reuse a typed `BusinessError` subclass
   instead.

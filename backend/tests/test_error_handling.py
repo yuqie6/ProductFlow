@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
+
 import pytest
-from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from helpers import _login, _make_demo_image_bytes
 
@@ -15,58 +16,56 @@ from productflow_backend.application.product_workflow.mutations import (
 )
 from productflow_backend.application.use_cases import create_product, update_copy_set
 from productflow_backend.domain.enums import WorkflowNodeType
-from productflow_backend.domain.errors import BusinessError, BusinessValidationError, NotFoundError
+from productflow_backend.domain.errors import (
+    BusinessError,
+    BusinessValidationError,
+    NotFoundError,
+    QueueUnavailableError,
+)
 from productflow_backend.infrastructure.db.models import CopySet
 from productflow_backend.infrastructure.logging import current_log_context
+from productflow_backend.presentation import errors as presentation_errors
 from productflow_backend.presentation.api import create_app
-from productflow_backend.presentation.errors import raise_value_error_as_http
-
-
-def _mapped_http_error(exc: ValueError) -> HTTPException:
-    with pytest.raises(HTTPException) as raised:
-        raise_value_error_as_http(exc)
-    return raised.value
+from productflow_backend.presentation.errors import business_error_to_response
 
 
 def test_typed_not_found_maps_to_404_without_message_suffix() -> None:
-    error = _mapped_http_error(NotFoundError("资源已移除"))
+    response = business_error_to_response(NotFoundError("资源已移除"))
 
-    assert error.status_code == 404
-    assert error.detail == "资源已移除"
+    assert response.status_code == 404
+    assert json.loads(response.body) == {"detail": "资源已移除"}
 
 
 def test_typed_business_error_maps_to_400() -> None:
-    error = _mapped_http_error(BusinessError("请选择一张图片"))
+    response = business_error_to_response(BusinessError("请选择一张图片"))
 
-    assert error.status_code == 400
-    assert error.detail == "请选择一张图片"
+    assert response.status_code == 400
+    assert json.loads(response.body) == {"detail": "请选择一张图片"}
 
 
 def test_typed_poster_file_missing_remains_400() -> None:
-    error = _mapped_http_error(BusinessValidationError("海报文件不存在"))
+    response = business_error_to_response(BusinessValidationError("海报文件不存在"))
 
-    assert error.status_code == 400
-    assert error.detail == "海报文件不存在"
+    assert response.status_code == 400
+    assert json.loads(response.body) == {"detail": "海报文件不存在"}
 
 
 def test_typed_workflow_integrity_error_remains_400() -> None:
-    error = _mapped_http_error(BusinessValidationError("工作流连线引用了不存在的节点"))
+    response = business_error_to_response(BusinessValidationError("工作流连线引用了不存在的节点"))
 
-    assert error.status_code == 400
-    assert error.detail == "工作流连线引用了不存在的节点"
+    assert response.status_code == 400
+    assert json.loads(response.body) == {"detail": "工作流连线引用了不存在的节点"}
 
 
-def test_legacy_value_error_fallback_remains_compatible() -> None:
-    missing = _mapped_http_error(ValueError("旧资源不存在"))
-    poster_file_missing = _mapped_http_error(ValueError("海报文件不存在"))
-    generic = _mapped_http_error(ValueError("普通业务错误"))
+def test_typed_queue_unavailable_maps_to_503() -> None:
+    response = business_error_to_response(QueueUnavailableError("任务队列暂不可用，请稍后重试"))
 
-    assert missing.status_code == 404
-    assert missing.detail == "旧资源不存在"
-    assert poster_file_missing.status_code == 400
-    assert poster_file_missing.detail == "海报文件不存在"
-    assert generic.status_code == 400
-    assert generic.detail == "普通业务错误"
+    assert response.status_code == 503
+    assert json.loads(response.body) == {"detail": "任务队列暂不可用，请稍后重试"}
+
+
+def test_legacy_value_error_adapter_is_removed_after_route_migration() -> None:
+    assert not hasattr(presentation_errors, "raise_value_error_as_http")
 
 
 def test_global_business_error_handler_preserves_detail_shape(configured_env) -> None:  # noqa: ARG001
@@ -99,6 +98,69 @@ def test_product_workflow_route_uses_global_business_error_handler(configured_en
 
     assert response.status_code == 404
     assert response.json() == {"detail": "商品不存在"}
+
+
+def test_product_route_uses_global_business_error_handler(configured_env) -> None:  # noqa: ARG001
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    missing = client.get("/api/products/missing-product")
+
+    assert missing.status_code == 404
+    assert missing.json() == {"detail": "商品不存在"}
+    assert "code" not in missing.json()
+
+    invalid = client.post(
+        "/api/products",
+        data={"name": "   "},
+        files={"image": ("blank.png", _make_demo_image_bytes(), "image/png")},
+    )
+
+    assert invalid.status_code == 400
+    assert invalid.json() == {"detail": "商品名不能为空"}
+    assert "code" not in invalid.json()
+
+
+def test_image_session_route_uses_global_business_error_handler(configured_env) -> None:  # noqa: ARG001
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    missing = client.get("/api/image-sessions/missing-session")
+
+    assert missing.status_code == 404
+    assert missing.json() == {"detail": "连续生图会话不存在"}
+    assert "code" not in missing.json()
+
+    created = client.post("/api/image-sessions", json={"title": "typed route 生图"})
+    assert created.status_code == 201
+    session_id = created.json()["id"]
+    first = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={"prompt": "首轮排队", "size": "1024x1024"},
+    )
+    assert first.status_code == 202
+    invalid = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={"prompt": "第二轮缺少基图", "size": "1024x1024"},
+    )
+
+    assert invalid.status_code == 400
+    assert invalid.json() == {"detail": "后续生图必须选择一张本会话已生成图片作为基图"}
+    assert "code" not in invalid.json()
+
+
+def test_gallery_route_uses_global_business_error_handler(configured_env) -> None:  # noqa: ARG001
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    response = client.post("/api/gallery", json={"image_session_asset_id": "missing-asset"})
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "会话图片不存在"}
+    assert "code" not in response.json()
 
 
 def test_high_risk_business_paths_raise_typed_validation_errors(db_session, configured_env) -> None:  # noqa: ARG001
