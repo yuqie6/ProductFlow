@@ -127,7 +127,7 @@ describe("product-detail utils", () => {
   it("scopes visible image waiting state to image-generation and reference nodes", () => {
     expect(isImageWorkflowNodeWaiting({ ...baseNode, node_type: "reference_image", status: "queued" })).toBe(true);
     expect(imageWorkflowNodeWaitingLabel({ ...baseNode, node_type: "reference_image", status: "running" })).toBe(
-      "图片节点更新中",
+      "承载图片节点更新中",
     );
     expect(imageWorkflowNodeWaitingLabel({ ...baseNode, node_type: "image_generation", status: "queued" })).toBe(
       "图片排队生成",

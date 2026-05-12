@@ -72,8 +72,8 @@ describe("draftFromNode", () => {
 
   it("uses merchant-facing defaults for new nodes", () => {
     expect(defaultConfigForType("reference_image")).toMatchObject({ role: "reference", label: "" });
-    expect(defaultTitleForType("reference_image", 1)).toBe("图片节点 1");
-    expect(defaultTitleForType("copy_generation", 1)).toBe("商品文案 1");
-    expect(defaultTitleForType("image_generation", 1)).toBe("生成图片 1");
+    expect(defaultTitleForType("reference_image", 1)).toBe("承载图片节点 1");
+    expect(defaultTitleForType("copy_generation", 1)).toBe("文案生成节点 1");
+    expect(defaultTitleForType("image_generation", 1)).toBe("生图触发器节点 1");
   });
 });

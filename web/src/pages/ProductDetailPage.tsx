@@ -7,6 +7,7 @@ import {
   ChevronRight,
   CircleDot,
   Check,
+  Eye,
   Save,
   Image as ImageIcon,
   Layers3,
@@ -89,7 +90,7 @@ import {
 } from "./product-detail/useWorkflowCanvas";
 import type { NodePositionCommitInput } from "./product-detail/useWorkflowCanvas";
 
-type SidebarTab = "details" | "runs" | "images" | "templates";
+type SidebarTab = "singleNode" | "templates" | "details" | "runs" | "images";
 
 type WorkflowCanvasMutationBridge = {
   acceptNodePositionMutation: (nodeId: string, mutationVersion: number) => boolean;
@@ -1130,37 +1131,84 @@ export function ProductDetailPage() {
 
   const renderWorkflowToolbarButtons = () => (
     <>
+      <span className="w-full text-center text-[10px] font-semibold leading-none text-slate-500">
+        {t("detail.toolbar.runSection")}
+      </span>
       <button
         type="button"
         onClick={() => void handleRunWorkflow(undefined)}
         disabled={fullWorkflowRunBusy || !workflow}
-        className="flex w-full flex-col items-center rounded-lg bg-indigo-600 px-1 py-2 text-[10px] font-semibold text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex w-full flex-col items-center rounded-lg bg-indigo-600 px-1.5 py-2 text-xs font-semibold text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
         title={fullWorkflowRunBusy ? t("detail.workflowRunning") : t("detail.runWorkflow")}
         aria-label={fullWorkflowRunBusy ? t("detail.workflowRunning") : t("detail.runWorkflow")}
       >
-        {fullWorkflowRunBusy ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />}
-        <span className="mt-1 leading-none">{fullWorkflowRunBusy ? t("detail.running") : t("detail.run")}</span>
+        {fullWorkflowRunBusy ? <Loader2 size={17} className="animate-spin" /> : <Play size={17} />}
+        <span className="mt-1 leading-tight">{fullWorkflowRunBusy ? t("detail.running") : t("detail.run")}</span>
       </button>
-      <div className="my-1 h-px w-8 self-center bg-slate-700/80" />
+      <div className="my-1 h-px w-11 self-center bg-slate-700/80" />
+      <span className="w-full text-center text-[10px] font-semibold leading-none text-slate-500">
+        {t("detail.toolbar.addSection")}
+      </span>
+    </>
+  );
+
+  const renderToolbarViewDivider = () => (
+    <>
+      <div className="my-1 h-px w-11 self-center bg-slate-700/80" />
+      <span className="w-full text-center text-[10px] font-semibold leading-none text-slate-500">
+        {t("detail.toolbar.viewSection")}
+      </span>
+    </>
+  );
+
+  const renderSingleNodePanel = () => (
+    <div className="space-y-3">
       {ADD_NODE_OPTIONS.map((option) => {
         const optionLabel = localizedWorkflowNodeTypeLabel(option.type, t);
+        const description =
+          option.type === "reference_image"
+            ? t("detail.singleNode.description.referenceImage")
+            : option.type === "copy_generation"
+              ? t("detail.singleNode.description.copyGeneration")
+              : t("detail.singleNode.description.imageGeneration");
+        const creatingThisNode = createNodeMutation.isPending && createNodeMutation.variables === option.type;
         return (
-        <button
-          key={option.type}
-          type="button"
-          onClick={() => createNodeMutation.mutate(option.type)}
-          disabled={structureBusy || !workflow}
-          className="flex w-full flex-col items-center rounded-lg border border-transparent px-1 py-2 text-[10px] font-medium text-slate-400 transition-colors hover:border-slate-700 hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
-          title={t("detail.addNode", { label: optionLabel })}
-          aria-label={t("detail.addNode", { label: optionLabel })}
-        >
-          <Plus size={15} />
-          <span className="mt-1 leading-none">{optionLabel}</span>
-        </button>
+          <div
+            key={option.type}
+            className="rounded-lg border border-zinc-200 bg-white px-3 py-3 dark:border-slate-700/80 dark:bg-slate-900/70"
+          >
+            <div className="flex items-start">
+              <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 dark:bg-violet-500/14 dark:text-violet-200">
+                <Plus size={16} />
+              </span>
+              <span className="ml-3 min-w-0 flex-1">
+                <span className="block text-sm font-semibold text-zinc-900 dark:text-slate-100">{optionLabel}</span>
+                <span className="mt-1 block text-xs leading-5 text-zinc-500 dark:text-slate-400">
+                  {description}
+                </span>
+              </span>
+            </div>
+            <div className="mt-3 flex justify-end">
+              <button
+                type="button"
+                onClick={() => createNodeMutation.mutate(option.type)}
+                disabled={structureBusy || !workflow}
+                className="inline-flex h-8 items-center rounded-md bg-zinc-950 px-2.5 text-xs font-medium text-white transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-violet-500 dark:hover:bg-violet-400"
+                title={t("detail.addNode", { label: optionLabel })}
+                aria-label={t("detail.addNode", { label: optionLabel })}
+              >
+                {creatingThisNode ? (
+                  <Loader2 size={13} className="mr-1.5 animate-spin" />
+                ) : (
+                  <Plus size={13} className="mr-1.5" />
+                )}
+                {t("detail.template.add")}
+              </button>
+            </div>
+          </div>
         );
       })}
-      <div className="my-1 h-px w-8 self-center bg-slate-700/80" />
-    </>
+    </div>
   );
 
   return (
@@ -1471,13 +1519,15 @@ export function ProductDetailPage() {
             </div>
             <div
               data-canvas-control
-              className="absolute right-4 top-16 z-30 flex w-14 flex-col items-center gap-2 rounded-2xl border border-slate-700/80 bg-[#0f1726]/95 p-2 shadow-xl shadow-slate-950/25 backdrop-blur"
+              className="absolute right-4 top-16 z-30 flex w-[72px] flex-col items-center gap-2 rounded-2xl border border-slate-700/80 bg-[#0f1726]/95 p-2 shadow-xl shadow-slate-950/25 backdrop-blur"
             >
               {renderWorkflowToolbarButtons()}
-              <SidebarTabButton active={false} label={t("detail.tabDetails")} title={t("detail.tabDetails")} icon={<Settings2 size={15} />} onClick={() => openSidebarTab("details")} />
-              <SidebarTabButton active={false} label={t("detail.tabRuns")} title={t("detail.runsTitle")} icon={<CircleDot size={15} />} onClick={() => openSidebarTab("runs")} />
-              <SidebarTabButton active={false} label={t("detail.tabImages")} title={t("detail.tabImages")} icon={<ImageIcon size={15} />} onClick={() => openSidebarTab("images")} />
-              <SidebarTabButton active={false} label={t("detail.tabTemplates")} title={t("detail.tabTemplates")} icon={<Layers3 size={15} />} onClick={() => openSidebarTab("templates")} />
+              <SidebarTabButton active={false} label={t("detail.tabSingleNode")} title={t("detail.tabSingleNode")} icon={<Plus size={17} />} onClick={() => openSidebarTab("singleNode")} />
+              <SidebarTabButton active={false} label={t("detail.tabTemplates")} title={t("detail.tabTemplates")} icon={<Layers3 size={17} />} onClick={() => openSidebarTab("templates")} />
+              {renderToolbarViewDivider()}
+              <SidebarTabButton active={false} label={t("detail.tabDetails")} title={t("detail.tabDetails")} icon={<Eye size={17} />} onClick={() => openSidebarTab("details")} />
+              <SidebarTabButton active={false} label={t("detail.tabRuns")} title={t("detail.runsTitle")} icon={<CircleDot size={17} />} onClick={() => openSidebarTab("runs")} />
+              <SidebarTabButton active={false} label={t("detail.tabImages")} title={t("detail.tabImages")} icon={<ImageIcon size={17} />} onClick={() => openSidebarTab("images")} />
             </div>
             </>
           ) : (
@@ -1493,35 +1543,43 @@ export function ProductDetailPage() {
                 <ChevronRight size={14} />
               </button>
             </div>
-            <div data-canvas-control className="flex w-14 shrink-0 flex-col items-center gap-2 border-r border-slate-800 bg-slate-950 px-1.5 py-3 dark:border-slate-700/80 dark:bg-[#0b1220]">
+            <div data-canvas-control className="flex w-[72px] shrink-0 flex-col items-center gap-2 border-r border-slate-800 bg-slate-950 px-2 py-3 dark:border-slate-700/80 dark:bg-[#0b1220]">
               {renderWorkflowToolbarButtons()}
+              <SidebarTabButton
+                active={activeSidebarTab === "singleNode"}
+                label={t("detail.tabSingleNode")}
+                title={t("detail.tabSingleNode")}
+                icon={<Plus size={17} />}
+                onClick={() => openSidebarTab("singleNode")}
+              />
+              <SidebarTabButton
+                active={activeSidebarTab === "templates"}
+                label={t("detail.tabTemplates")}
+                title={t("detail.tabTemplates")}
+                icon={<Layers3 size={17} />}
+                onClick={() => openSidebarTab("templates")}
+              />
+              {renderToolbarViewDivider()}
               <SidebarTabButton
                 active={activeSidebarTab === "details"}
                 label={t("detail.tabDetails")}
                 title={t("detail.tabDetails")}
-                icon={<Settings2 size={15} />}
+                icon={<Eye size={17} />}
                 onClick={() => openSidebarTab("details")}
               />
               <SidebarTabButton
                 active={activeSidebarTab === "runs"}
                 label={t("detail.tabRuns")}
                 title={t("detail.runsTitle")}
-                icon={<CircleDot size={15} />}
+                icon={<CircleDot size={17} />}
                 onClick={() => openSidebarTab("runs")}
               />
               <SidebarTabButton
                 active={activeSidebarTab === "images"}
                 label={t("detail.tabImages")}
                 title={t("detail.tabImages")}
-                icon={<ImageIcon size={15} />}
+                icon={<ImageIcon size={17} />}
                 onClick={() => openSidebarTab("images")}
-              />
-              <SidebarTabButton
-                active={activeSidebarTab === "templates"}
-                label={t("detail.tabTemplates")}
-                title={t("detail.tabTemplates")}
-                icon={<Layers3 size={15} />}
-                onClick={() => openSidebarTab("templates")}
               />
             </div>
             <aside
@@ -1536,22 +1594,26 @@ export function ProductDetailPage() {
               />
               <div className="flex h-12 shrink-0 items-center justify-between border-b border-zinc-200 px-4 dark:border-slate-700/80">
                 <div className="flex items-center">
+                {activeSidebarTab === "singleNode" ? <Plus size={14} className="mr-2 text-zinc-400 dark:text-slate-400" /> : null}
+                {activeSidebarTab === "templates" ? <Layers3 size={14} className="mr-2 text-zinc-400 dark:text-slate-400" /> : null}
                 {activeSidebarTab === "details" ? <Settings2 size={14} className="mr-2 text-zinc-400 dark:text-slate-400" /> : null}
                 {activeSidebarTab === "runs" ? <CircleDot size={14} className="mr-2 text-zinc-400 dark:text-slate-400" /> : null}
                 {activeSidebarTab === "images" ? <ImageIcon size={14} className="mr-2 text-zinc-400 dark:text-slate-400" /> : null}
-                {activeSidebarTab === "templates" ? <Layers3 size={14} className="mr-2 text-zinc-400 dark:text-slate-400" /> : null}
                 <span className="text-[11px] font-semibold uppercase tracking-widest text-zinc-500 dark:text-slate-300">
-                  {activeSidebarTab === "details"
-                    ? t("detail.tabDetails")
-                    : activeSidebarTab === "runs"
-                      ? t("detail.tabRuns")
-                      : activeSidebarTab === "images"
-                        ? t("detail.tabImages")
-                        : t("detail.tabTemplates")}
+                  {activeSidebarTab === "singleNode"
+                    ? t("detail.tabSingleNode")
+                    : activeSidebarTab === "templates"
+                      ? t("detail.tabTemplates")
+                      : activeSidebarTab === "details"
+                        ? t("detail.tabDetails")
+                        : activeSidebarTab === "runs"
+                          ? t("detail.tabRuns")
+                          : t("detail.tabImages")}
                 </span>
                 </div>
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                {activeSidebarTab === "singleNode" ? renderSingleNodePanel() : null}
                 {activeSidebarTab === "details" ? (
                   selectedNode ? (
                     <InspectorPanel

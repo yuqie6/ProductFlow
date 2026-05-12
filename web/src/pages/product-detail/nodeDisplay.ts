@@ -24,6 +24,12 @@ const LEGACY_TITLE_PREFIX_KEYS: Record<WorkflowNodeType, TranslationKey> = {
   image_generation: "detail.node.legacyImage",
 };
 
+const EXTRA_LEGACY_TITLE_PREFIXES: Partial<Record<WorkflowNodeType, string[]>> = {
+  reference_image: ["图片节点", "图片输入", "Image node", "Image input"],
+  copy_generation: ["商品文案", "文案生成", "Product copy", "Copy generation"],
+  image_generation: ["生成图片", "图片生成", "Generate image", "Image generation"],
+};
+
 const REFERENCE_ROLE_LABEL_KEYS: Record<string, TranslationKey> = {
   reference: "detail.referenceRole.reference",
   style: "detail.referenceRole.style",
@@ -48,7 +54,7 @@ function defaultTitlePrefixes(type: WorkflowNodeType, t: TranslateFunction): str
     translate(locale, LEGACY_TITLE_PREFIX_KEYS[type]),
     translate(locale, BASE_NODE_LABEL_KEYS[type]),
   ]);
-  return Array.from(new Set([...localizedPrefixes, ...knownLocalePrefixes]));
+  return Array.from(new Set([...localizedPrefixes, ...knownLocalePrefixes, ...(EXTRA_LEGACY_TITLE_PREFIXES[type] ?? [])]));
 }
 
 function escapeRegExp(value: string): string {

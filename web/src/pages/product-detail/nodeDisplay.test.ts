@@ -42,44 +42,44 @@ function stubEnT(values: Partial<Record<TranslationKey, string>>) {
 describe("node display helpers", () => {
   it("uses business-facing labels for internal node types", () => {
     expect(workflowNodeDisplayLabel({ ...baseNode, node_type: "product_context" })).toBe("商品资料");
-    expect(workflowNodeDisplayLabel(baseNode)).toBe("图片节点");
-    expect(workflowNodeDisplayLabel({ ...baseNode, node_type: "copy_generation" })).toBe("商品文案");
-    expect(workflowNodeDisplayLabel({ ...baseNode, node_type: "image_generation" })).toBe("生成图片");
+    expect(workflowNodeDisplayLabel(baseNode)).toBe("承载图片节点");
+    expect(workflowNodeDisplayLabel({ ...baseNode, node_type: "copy_generation" })).toBe("文案生成节点");
+    expect(workflowNodeDisplayLabel({ ...baseNode, node_type: "image_generation" })).toBe("生图触发器节点");
     expect(workflowNodeDisplayLabel({ ...baseNode, title: "Image node 1" }, stubT({
-      "detail.node.referenceImage": "Image node",
+      "detail.node.referenceImage": "Image carrier node",
       "detail.node.legacyReference": "Reference",
-    }))).toBe("Image node");
+    }))).toBe("Image carrier node");
   });
 
   it("derives reference slot labels from explicit labels and merchant roles", () => {
     expect(referenceSlotLabel({ ...baseNode, config_json: { label: "活动图" } })).toBe("活动图");
     expect(referenceSlotLabel({ ...baseNode, config_json: { role: "model_image" } })).toBe("模特图");
     expect(referenceSlotLabel({ ...baseNode, config_json: { role: "scene_image" } })).toBe("场景图");
-    expect(referenceSlotLabel(baseNode)).toBe("图片节点");
+    expect(referenceSlotLabel(baseNode)).toBe("承载图片节点");
     expect(referenceSlotLabel({ ...baseNode, config_json: { role: "model_image" } }, stubT({
       "detail.referenceRole.modelImage": "Model image",
     }))).toBe("Model image");
   });
 
   it("hides legacy default titles but preserves user-authored titles", () => {
-    expect(workflowNodeDisplayTitle({ ...baseNode, title: "参考图 2" })).toBe("图片节点");
+    expect(workflowNodeDisplayTitle({ ...baseNode, title: "参考图 2" })).toBe("承载图片节点");
     expect(workflowNodeDisplayTitle({ ...baseNode, title: "参考图 2" }, stubT({
-      "detail.node.referenceImage": "Image node",
+      "detail.node.referenceImage": "Image carrier node",
       "detail.node.legacyReference": "Reference",
-    }))).toBe("Image node");
-    expect(workflowNodeDisplayTitle({ ...baseNode, title: "Image node 2" })).toBe("图片节点");
+    }))).toBe("Image carrier node");
+    expect(workflowNodeDisplayTitle({ ...baseNode, title: "Image node 2" })).toBe("承载图片节点");
     expect(workflowNodeDisplayTitle({ ...baseNode, title: "详情图 A" })).toBe("详情图 A");
-    expect(defaultTitleForNodeType("reference_image", 2)).toBe("图片节点 2");
-    expect(defaultTitleForNodeType("image_generation", 2)).toBe("生成图片 2");
+    expect(defaultTitleForNodeType("reference_image", 2)).toBe("承载图片节点 2");
+    expect(defaultTitleForNodeType("image_generation", 2)).toBe("生图触发器节点 2");
     expect(defaultTitleForNodeType("image_generation", 2, stubT({
-      "detail.node.imageGeneration": "Generate image",
-    }))).toBe("Generate image 2");
+      "detail.node.imageGeneration": "Image trigger node",
+    }))).toBe("Image trigger node 2");
   });
 
   it("localizes persisted built-in template node titles without translating user titles", () => {
     const t = stubEnT({
-      "detail.node.referenceImage": "Image node",
-      "detail.node.copyGeneration": "Product copy",
+      "detail.node.referenceImage": "Image carrier node",
+      "detail.node.copyGeneration": "Copy generation node",
       "detail.node.legacyReference": "Reference",
       "detail.node.legacyCopy": "Copy",
     });
@@ -104,24 +104,24 @@ describe("node display helpers", () => {
       ...baseNode,
       id: "image-node",
       node_type: "image_generation",
-      title: "生成图片 1",
+      title: "生图触发器节点 1",
     };
 
     expect(connectionDescription(baseNode, { ...baseNode, title: "参考图 2" })).toContain(
-      "图片节点不能互连",
+      "承载图片节点不能互连",
     );
-    expect(connectionDescription(baseNode, copyNode)).toBe("图片节点作为商品文案参考。");
-    expect(connectionDescription(imageNode, baseNode)).toBe("生成图片写入图片节点。");
+    expect(connectionDescription(baseNode, copyNode)).toBe("承载图片节点作为文案生成节点参考。");
+    expect(connectionDescription(imageNode, baseNode)).toBe("生图触发器节点写入承载图片节点。");
     expect(connectionDescription(
       { ...baseNode, title: "Image node 1" },
       { ...copyNode, title: "Product copy 1" },
       stubT({
-        "detail.node.referenceImage": "Image node",
-        "detail.node.copyGeneration": "Product copy",
+        "detail.node.referenceImage": "Image carrier node",
+        "detail.node.copyGeneration": "Copy generation node",
         "detail.node.legacyReference": "Reference",
         "detail.node.legacyCopy": "Copy",
         "detail.connection.referenceToCopy": "{source} references {target}.",
       }),
-    )).toBe("Image node references Product copy.");
+    )).toBe("Image carrier node references Copy generation node.");
   });
 });
