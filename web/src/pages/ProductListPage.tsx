@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { StatusPill } from "../components/StatusPill";
 import { TopNav } from "../components/TopNav";
 import { api, ApiError } from "../lib/api";
@@ -25,6 +26,7 @@ export function ProductListPage() {
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [deleteError, setDeleteError] = useState("");
+  const [pendingDeleteProduct, setPendingDeleteProduct] = useState<ProductSummary | null>(null);
   const productsQuery = useQuery({
     queryKey: ["products", page, PAGE_SIZE],
     queryFn: () => api.listProducts({ page, page_size: PAGE_SIZE }),
@@ -60,25 +62,24 @@ export function ProductListPage() {
     mutationFn: (productId: string) => api.deleteProduct(productId),
     onSuccess: async () => {
       setDeleteError("");
+      setPendingDeleteProduct(null);
       await queryClient.invalidateQueries({ queryKey: ["products"] });
       if (products.length === 1 && page > 1) {
         setPage((current) => Math.max(1, current - 1));
       }
     },
     onError: (mutationError) => {
+      setPendingDeleteProduct(null);
       setDeleteError(mutationError instanceof ApiError ? mutationError.detail : t("products.deleteFailed"));
     },
   });
 
-  const handleDeleteProduct = (productId: string, productName: string) => {
+  const handleDeleteProduct = (product: ProductSummary) => {
     if (!deletionEnabled) {
       setDeleteError(t("products.deleteDisabled"));
       return;
     }
-    if (!window.confirm(t("products.deleteConfirm", { name: productName }))) {
-      return;
-    }
-    deleteProductMutation.mutate(productId);
+    setPendingDeleteProduct(product);
   };
 
   return (
@@ -193,7 +194,7 @@ export function ProductListPage() {
                           <div className="flex items-center justify-end gap-3 opacity-0 transition-opacity group-hover:opacity-100">
                             <button
                               type="button"
-                              onClick={() => handleDeleteProduct(product.id, product.name)}
+                              onClick={() => handleDeleteProduct(product)}
                               disabled={deleteProductMutation.isPending || !deletionEnabled}
                               title={deletionEnabled ? t("products.delete") : t("products.deleteDisabled")}
                               className="inline-flex items-center text-sm font-medium text-red-500 transition-colors hover:text-red-700 disabled:opacity-50"
@@ -237,6 +238,22 @@ export function ProductListPage() {
           ) : null}
         </div>
       </main>
+      <ConfirmDialog
+        open={Boolean(pendingDeleteProduct)}
+        title={t("products.deleteConfirmTitle")}
+        description={
+          pendingDeleteProduct ? t("products.deleteConfirm", { name: pendingDeleteProduct.name }) : ""
+        }
+        confirmLabel={t("confirm.delete.confirm")}
+        cancelLabel={t("common.cancel")}
+        busy={deleteProductMutation.isPending}
+        onClose={() => setPendingDeleteProduct(null)}
+        onConfirm={() => {
+          if (pendingDeleteProduct) {
+            deleteProductMutation.mutate(pendingDeleteProduct.id);
+          }
+        }}
+      />
     </div>
   );
 }

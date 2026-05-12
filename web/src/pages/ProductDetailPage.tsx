@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { TopNav } from "../components/TopNav";
 import { api, ApiError } from "../lib/api";
 import { DEFAULT_IMAGE_TOOL_ALLOWED_FIELDS } from "../lib/imageToolOptions";
@@ -92,6 +93,11 @@ import type { NodePositionCommitInput } from "./product-detail/useWorkflowCanvas
 
 type SidebarTab = "singleNode" | "templates" | "details" | "runs" | "images";
 
+type PendingDeleteAction =
+  | { kind: "node"; node: WorkflowNode }
+  | { kind: "selectedNodes"; nodeIds: string[]; count: number }
+  | { kind: "template"; templateId: string; title: string };
+
 type WorkflowCanvasMutationBridge = {
   acceptNodePositionMutation: (nodeId: string, mutationVersion: number) => boolean;
   clearOptimisticNodePosition: (nodeId: string) => void;
@@ -128,6 +134,8 @@ export function ProductDetailPage() {
   const [previewImage, setPreviewImage] = useState<DownloadableImage | null>(
     null,
   );
+  const [pendingDeleteAction, setPendingDeleteAction] =
+    useState<PendingDeleteAction | null>(null);
   const [error, setError] = useState("");
 
   const productQuery = useQuery({
@@ -448,6 +456,7 @@ export function ProductDetailPage() {
       await refreshProductArtifacts();
     },
     onError: (mutationError) => {
+      setPendingDeleteAction(null);
       setError(
         mutationError instanceof ApiError
           ? mutationError.detail
@@ -614,9 +623,11 @@ export function ProductDetailPage() {
     mutationFn: (templateId: string) => api.archiveUserTemplateGroup(templateId),
     onSuccess: async () => {
       setError("");
+      setPendingDeleteAction(null);
       await queryClient.invalidateQueries({ queryKey: ["canvas-templates"] });
     },
     onError: (mutationError) => {
+      setPendingDeleteAction(null);
       setError(mutationError instanceof ApiError ? mutationError.detail : t("detail.error.deleteTemplate"));
     },
   });
@@ -776,6 +787,7 @@ export function ProductDetailPage() {
       setSelectedNodeIds(clearSelectedNodeGroup(selectedNodeId));
     },
     onError: (mutationError) => {
+      setPendingDeleteAction(null);
       setError(
         mutationError instanceof ApiError
           ? mutationError.detail
@@ -788,6 +800,7 @@ export function ProductDetailPage() {
     mutationFn: (nodeId: string) => api.deleteWorkflowNode(nodeId),
     onSuccess: (nextWorkflow, nodeId) => {
       setError("");
+      setPendingDeleteAction(null);
       queryClient.setQueryData(["product-workflow", productId], nextWorkflow);
       const fallbackPrimaryNodeId = selectedNodeId === nodeId ? nextWorkflow.nodes[0]?.id ?? null : selectedNodeId;
       const nextSelection = deleteNodeFromSelection(selectedNodeIds, nodeId, fallbackPrimaryNodeId);
@@ -795,6 +808,7 @@ export function ProductDetailPage() {
       setSelectedNodeIds(nextSelection.selectedNodeIds);
     },
     onError: (mutationError) => {
+      setPendingDeleteAction(null);
       setError(
         mutationError instanceof ApiError
           ? mutationError.detail
@@ -804,10 +818,7 @@ export function ProductDetailPage() {
   });
 
   const handleDeleteNode = (node: WorkflowNode) => {
-    if (!window.confirm(t("detail.confirm.deleteNode", { title: node.title }))) {
-      return;
-    }
-    deleteNodeMutation.mutate(node.id);
+    setPendingDeleteAction({ kind: "node", node });
   };
 
   const deleteSelectedNodesMutation = useMutation({
@@ -826,6 +837,7 @@ export function ProductDetailPage() {
     },
     onSuccess: (nextWorkflow) => {
       setError("");
+      setPendingDeleteAction(null);
       queryClient.setQueryData(["product-workflow", productId], nextWorkflow);
       const nextPrimaryNodeId = nextWorkflow.nodes[0]?.id ?? null;
       setSelectedNodeId(nextPrimaryNodeId);
@@ -847,10 +859,11 @@ export function ProductDetailPage() {
     if (selectedNodeIds.length < 2) {
       return;
     }
-    if (!window.confirm(t("detail.confirm.deleteSelectedNodes", { count: selectedNodeIds.length }))) {
-      return;
-    }
-    deleteSelectedNodesMutation.mutate([...selectedNodeIds]);
+    setPendingDeleteAction({
+      kind: "selectedNodes",
+      nodeIds: [...selectedNodeIds],
+      count: selectedNodeIds.length,
+    });
   };
 
   const uploadNodeImageMutation = useMutation({
@@ -1003,6 +1016,28 @@ export function ProductDetailPage() {
   const workflowRunActionBusyRunId =
     (cancelWorkflowRunMutation.isPending ? cancelWorkflowRunMutation.variables : null) ??
     (retryWorkflowRunMutation.isPending ? retryWorkflowRunMutation.variables : null);
+  const pendingDeleteDialog = pendingDeleteAction
+    ? {
+        title:
+          pendingDeleteAction.kind === "node"
+            ? t("detail.confirm.deleteNodeTitle")
+            : pendingDeleteAction.kind === "selectedNodes"
+              ? t("detail.confirm.deleteSelectedNodesTitle")
+              : t("detail.confirm.deleteTemplateTitle"),
+        description:
+          pendingDeleteAction.kind === "node"
+            ? t("detail.confirm.deleteNode", { title: pendingDeleteAction.node.title })
+            : pendingDeleteAction.kind === "selectedNodes"
+              ? t("detail.confirm.deleteSelectedNodes", { count: pendingDeleteAction.count })
+              : t("detail.confirm.deleteTemplate", { title: pendingDeleteAction.title }),
+        busy:
+          pendingDeleteAction.kind === "node"
+            ? deleteNodeMutation.isPending
+            : pendingDeleteAction.kind === "selectedNodes"
+              ? deleteSelectedNodesMutation.isPending
+              : archiveUserTemplateGroupMutation.isPending,
+      }
+    : null;
   const commitNodePosition = (input: NodePositionCommitInput) => {
     const rollbackWorkflow = queryClient.getQueryData<ProductWorkflow>([
       "product-workflow",
@@ -1699,10 +1734,11 @@ export function ProductDetailPage() {
                     }}
                     onArchiveUserTemplate={(template) => {
                       if (template.user_template_id) {
-                        if (!window.confirm(t("detail.confirm.deleteTemplate", { title: template.title }))) {
-                          return;
-                        }
-                        archiveUserTemplateGroupMutation.mutate(template.user_template_id);
+                        setPendingDeleteAction({
+                          kind: "template",
+                          templateId: template.user_template_id,
+                          title: template.title,
+                        });
                       }
                     }}
                   />
@@ -1719,6 +1755,29 @@ export function ProductDetailPage() {
           onClose={() => setPreviewImage(null)}
         />
       ) : null}
+      <ConfirmDialog
+        open={Boolean(pendingDeleteDialog)}
+        title={pendingDeleteDialog?.title ?? ""}
+        description={pendingDeleteDialog?.description ?? ""}
+        confirmLabel={t("confirm.delete.confirm")}
+        cancelLabel={t("common.cancel")}
+        busy={pendingDeleteDialog?.busy ?? false}
+        onClose={() => setPendingDeleteAction(null)}
+        onConfirm={() => {
+          if (!pendingDeleteAction) {
+            return;
+          }
+          if (pendingDeleteAction.kind === "node") {
+            deleteNodeMutation.mutate(pendingDeleteAction.node.id);
+            return;
+          }
+          if (pendingDeleteAction.kind === "selectedNodes") {
+            deleteSelectedNodesMutation.mutate(pendingDeleteAction.nodeIds);
+            return;
+          }
+          archiveUserTemplateGroupMutation.mutate(pendingDeleteAction.templateId);
+        }}
+      />
     </div>
   );
 }

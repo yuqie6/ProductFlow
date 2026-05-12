@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { GalleryImagePreviewDialog } from "../components/GalleryImagePreviewDialog";
 import { ImageDropZone } from "../components/ImageDropZone";
 import { ImageGenerationSettingsPanel } from "../components/ImageGenerationSettingsPanel";
@@ -215,6 +216,11 @@ function placeholderStatusClass(candidate: ImageHistoryPlaceholderCandidate) {
   return "border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-violet-400/50 dark:bg-violet-500/15 dark:text-violet-100";
 }
 
+type PendingDeleteAction =
+  | { kind: "session"; sessionId: string }
+  | { kind: "productReference"; assetId: string }
+  | { kind: "sessionReference"; sessionId: string; assetId: string };
+
 export function ImageChatPage() {
   const { t } = useI18n();
   const navigate = useNavigate();
@@ -240,6 +246,8 @@ export function ImageChatPage() {
   const [targetProductId, setTargetProductId] = useState("");
   const [promptPreview, setPromptPreview] = useState<PromptPreview | null>(null);
   const [previewRound, setPreviewRound] = useState<ImageSessionRound | null>(null);
+  const [pendingDeleteAction, setPendingDeleteAction] =
+    useState<PendingDeleteAction | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [leftPanelWidth, setLeftPanelWidth] = useState(LEFT_PANEL_DEFAULT_WIDTH);
@@ -563,6 +571,7 @@ export function ImageChatPage() {
     onSuccess: (updated) => {
       queryClient.setQueryData(["image-session", updated.id], updated);
       void queryClient.invalidateQueries({ queryKey: ["image-sessions", productId ?? "standalone"] });
+      setPendingDeleteAction(null);
       const isCurrentSession = updated.id === selectedSessionId;
       if (isCurrentSession) {
         setSelectedReferenceAssetIds((current) =>
@@ -577,6 +586,7 @@ export function ImageChatPage() {
       }
     },
     onError: (error) => {
+      setPendingDeleteAction(null);
       setErrorMessage(error instanceof ApiError ? error.detail : t("chat.referenceDeleteFailed"));
     },
   });
@@ -585,6 +595,7 @@ export function ImageChatPage() {
     mutationFn: (sessionId: string) => api.deleteImageSession(sessionId),
     onSuccess: async (_response, deletedSessionId) => {
       const remainingSessions = sessionItems.filter((item) => item.id !== deletedSessionId);
+      setPendingDeleteAction(null);
       queryClient.setQueryData<ImageSessionListResponse>(
         ["image-sessions", productId ?? "standalone"],
         (current) => current ? { ...current, items: current.items.filter((item) => item.id !== deletedSessionId) } : current,
@@ -602,6 +613,7 @@ export function ImageChatPage() {
       setErrorMessage("");
     },
     onError: (error) => {
+      setPendingDeleteAction(null);
       setErrorMessage(error instanceof ApiError ? error.detail : t("chat.sessionDeleteFailed"));
     },
   });
@@ -703,6 +715,7 @@ export function ImageChatPage() {
     mutationFn: (assetId: string) => api.deleteSourceAsset(assetId),
     onSuccess: async (updated) => {
       queryClient.setQueryData(["product", updated.id], updated);
+      setPendingDeleteAction(null);
       await queryClient.invalidateQueries({ queryKey: ["product", updated.id] });
       if (selectedSessionId) {
         await queryClient.invalidateQueries({ queryKey: ["image-session", selectedSessionId] });
@@ -711,6 +724,7 @@ export function ImageChatPage() {
       setErrorMessage("");
     },
     onError: (error) => {
+      setPendingDeleteAction(null);
       setErrorMessage(error instanceof ApiError ? error.detail : t("chat.productReferenceDeleteFailed"));
     },
   });
@@ -813,20 +827,18 @@ export function ImageChatPage() {
       setErrorMessage(t("chat.deleteDisabled"));
       return;
     }
-    if (!window.confirm(t("chat.confirmDeleteSession"))) {
-      return;
-    }
-    deleteSessionMutation.mutate(sessionId);
+    setPendingDeleteAction({ kind: "session", sessionId });
   }
 
   function handleDeleteProductReference(assetId: string) {
     if (deleteProductReferenceMutation.isPending) {
       return;
     }
-    if (!window.confirm(t("chat.confirmDeleteProductReference"))) {
+    if (!deletionEnabled) {
+      setErrorMessage(t("chat.deleteDisabled"));
       return;
     }
-    deleteProductReferenceMutation.mutate(assetId);
+    setPendingDeleteAction({ kind: "productReference", assetId });
   }
 
   function handleReferenceToggle(assetId: string, checked: boolean) {
@@ -844,10 +856,11 @@ export function ImageChatPage() {
     if (!selectedSessionId || deleteSessionReferenceMutation.isPending) {
       return;
     }
-    if (!window.confirm(t("chat.confirmDeleteSessionReference"))) {
+    if (!deletionEnabled) {
+      setErrorMessage(t("chat.deleteDisabled"));
       return;
     }
-    deleteSessionReferenceMutation.mutate({ sessionId: selectedSessionId, assetId });
+    setPendingDeleteAction({ kind: "sessionReference", sessionId: selectedSessionId, assetId });
   }
 
   function handleUploadReferenceFiles(files: File[]) {
@@ -899,6 +912,29 @@ export function ImageChatPage() {
     window.addEventListener("pointerup", finishResize);
     window.addEventListener("pointercancel", finishResize);
   }
+
+  const pendingDeleteDialog = pendingDeleteAction
+    ? {
+        title:
+          pendingDeleteAction.kind === "session"
+            ? t("chat.confirmDeleteSessionTitle")
+            : pendingDeleteAction.kind === "productReference"
+              ? t("chat.confirmDeleteProductReferenceTitle")
+              : t("chat.confirmDeleteSessionReferenceTitle"),
+        description:
+          pendingDeleteAction.kind === "session"
+            ? t("chat.confirmDeleteSession")
+            : pendingDeleteAction.kind === "productReference"
+              ? t("chat.confirmDeleteProductReference")
+              : t("chat.confirmDeleteSessionReference"),
+        busy:
+          pendingDeleteAction.kind === "session"
+            ? deleteSessionMutation.isPending
+            : pendingDeleteAction.kind === "productReference"
+              ? deleteProductReferenceMutation.isPending
+              : deleteSessionReferenceMutation.isPending,
+      }
+    : null;
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-100 text-slate-900 dark:bg-[#060a12] dark:text-slate-100 lg:h-screen lg:overflow-hidden">
@@ -1413,6 +1449,32 @@ export function ImageChatPage() {
           onClose={() => setPreviewRound(null)}
         />
       ) : null}
+      <ConfirmDialog
+        open={Boolean(pendingDeleteDialog)}
+        title={pendingDeleteDialog?.title ?? ""}
+        description={pendingDeleteDialog?.description ?? ""}
+        confirmLabel={t("confirm.delete.confirm")}
+        cancelLabel={t("common.cancel")}
+        busy={pendingDeleteDialog?.busy ?? false}
+        onClose={() => setPendingDeleteAction(null)}
+        onConfirm={() => {
+          if (!pendingDeleteAction) {
+            return;
+          }
+          if (pendingDeleteAction.kind === "session") {
+            deleteSessionMutation.mutate(pendingDeleteAction.sessionId);
+            return;
+          }
+          if (pendingDeleteAction.kind === "productReference") {
+            deleteProductReferenceMutation.mutate(pendingDeleteAction.assetId);
+            return;
+          }
+          deleteSessionReferenceMutation.mutate({
+            sessionId: pendingDeleteAction.sessionId,
+            assetId: pendingDeleteAction.assetId,
+          });
+        }}
+      />
     </div>
   );
 
