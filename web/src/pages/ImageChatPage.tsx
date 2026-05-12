@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 
+import { GalleryImagePreviewDialog } from "../components/GalleryImagePreviewDialog";
 import { ImageDropZone } from "../components/ImageDropZone";
 import { ImageGenerationSettingsPanel } from "../components/ImageGenerationSettingsPanel";
 import { ImageGenerationSettingsTabs, type ImageGenerationSettingsTab } from "../components/ImageGenerationSettingsTabs";
@@ -238,6 +239,7 @@ export function ImageChatPage() {
   const [renameEnabled, setRenameEnabled] = useState(false);
   const [targetProductId, setTargetProductId] = useState("");
   const [promptPreview, setPromptPreview] = useState<PromptPreview | null>(null);
+  const [previewRound, setPreviewRound] = useState<ImageSessionRound | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [leftPanelWidth, setLeftPanelWidth] = useState(LEFT_PANEL_DEFAULT_WIDTH);
@@ -479,6 +481,8 @@ export function ImageChatPage() {
     () => findImageHistoryPlaceholder(historyBranches, selectedTaskPlaceholderId),
     [historyBranches, selectedTaskPlaceholderId],
   );
+  const activePreviewRound =
+    previewRound && imageSession?.rounds.some((round) => round.id === previewRound.id) ? previewRound : null;
 
   const branchBaseRound = useMemo(() => {
     if (!imageSession?.rounds.length || !branchBaseAssetId) {
@@ -1098,12 +1102,20 @@ export function ImageChatPage() {
 
               {selectedRound ? (
                 <div className="relative z-0 flex h-full min-h-0 w-full items-center justify-center px-2 pb-2 pt-12 sm:px-3 sm:pb-3 sm:pt-14">
-                  <img
-                    src={api.toApiUrl(selectedRound.generated_asset.download_url)}
-                    alt={t("chat.currentResultAlt")}
-                    decoding="async"
-                    className="max-h-full max-w-full object-contain drop-shadow-2xl"
-                  />
+                  <button
+                    type="button"
+                    onClick={() => setPreviewRound(selectedRound)}
+                    className="flex h-full w-full items-center justify-center rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:focus-visible:ring-violet-400"
+                    aria-label={t("chat.previewCurrent")}
+                    title={t("chat.previewCurrent")}
+                  >
+                    <img
+                      src={api.toApiUrl(selectedRound.generated_asset.download_url)}
+                      alt={t("chat.currentResultAlt")}
+                      decoding="async"
+                      className="max-h-full max-w-full object-contain drop-shadow-2xl"
+                    />
+                  </button>
                 </div>
               ) : selectedPlaceholder ? (
                 <GenerationCanvasPlaceholder
@@ -1370,6 +1382,36 @@ export function ImageChatPage() {
       </main>
       {promptPreview ? (
         <PromptPreviewDialog preview={promptPreview} onClose={() => setPromptPreview(null)} />
+      ) : null}
+      {activePreviewRound ? (
+        <GalleryImagePreviewDialog
+          ariaLabel={t("chat.currentPreviewLabel")}
+          imageUrl={api.toApiUrl(activePreviewRound.generated_asset.preview_url)}
+          imageAlt={activePreviewRound.prompt || t("chat.currentResultAlt")}
+          title={t("gallery.prompt")}
+          subtitle={activePreviewRound.generated_asset.original_filename}
+          body={activePreviewRound.prompt || t("gallery.noPrompt")}
+          metadataRows={[
+            { label: t("gallery.meta.size"), value: imageRoundSizeLabel(activePreviewRound, t) },
+            {
+              label: t("gallery.meta.model"),
+              value:
+                [activePreviewRound.provider_name, activePreviewRound.model_name].filter(Boolean).join(" / ") ||
+                t("common.unknown"),
+            },
+            {
+              label: t("gallery.meta.candidate"),
+              value: `${activePreviewRound.candidate_index}/${activePreviewRound.candidate_count}`,
+            },
+            { label: t("chat.generatedAt"), value: formatDateTime(activePreviewRound.created_at) },
+          ]}
+          providerNotes={activePreviewRound.provider_notes}
+          providerNotesTitle={t("gallery.providerNotes")}
+          downloadUrl={activePreviewRound.generated_asset.download_url}
+          downloadLabel={t("gallery.download")}
+          closeLabel={t("gallery.closePreview")}
+          onClose={() => setPreviewRound(null)}
+        />
       ) : null}
     </div>
   );
