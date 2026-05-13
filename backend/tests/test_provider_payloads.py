@@ -45,6 +45,7 @@ from productflow_backend.infrastructure.db.models import (
     AppSetting,
 )
 from productflow_backend.infrastructure.db.session import get_session_factory
+from productflow_backend.infrastructure.image.images_provider import OpenAIImagesImageProvider
 from productflow_backend.infrastructure.image.responses_provider import OpenAIResponsesImageProvider
 
 REMOVED_COPY_OUTPUT_KEYS = [
@@ -82,6 +83,17 @@ def _progress_collector_with_context(
         "candidate_count": candidate_count,
     }
     return append
+
+
+class DummyImagesAPIItem:
+    def __init__(self, b64_json: str | None, revised_prompt: str | None = "revised prompt") -> None:
+        self.b64_json = b64_json
+        self.revised_prompt = revised_prompt
+
+
+class DummyImagesAPIResponse:
+    def __init__(self, b64_json: str | None = None) -> None:
+        self.data = [DummyImagesAPIItem(b64_json)]
 
 
 def test_prompt_settings_reach_provider_prompt_builders(configured_env: Path, monkeypatch) -> None:
@@ -1544,6 +1556,293 @@ def test_openai_responses_image_client_infers_mime_type_from_returned_bytes(
     result = OpenAIResponsesImageClient().generate_image(prompt="返回 JPEG", size="1024x1024")
 
     assert result.mime_type == "image/jpeg"
+
+
+def test_openai_images_provider_factory_and_client_generate_payload(
+    configured_env: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("IMAGE_BASE_URL", "https://example.test/v1")
+    monkeypatch.setenv("IMAGE_API_KEY", "demo-api-key")
+    monkeypatch.setenv("IMAGE_PROVIDER_KIND", "openai_images")
+    monkeypatch.setenv("IMAGE_GENERATE_MODEL", "gpt-image-1")
+    monkeypatch.setenv("IMAGE_IMAGES_QUALITY", "high")
+    monkeypatch.setenv("IMAGE_IMAGES_STYLE", "vivid")
+    get_settings.cache_clear()
+
+    calls: list[dict] = []
+    client_kwargs: list[dict] = []
+    encoded_result = _make_demo_image_data_url().split(",", maxsplit=1)[1]
+
+    class DummyImages:
+        def generate(self, **kwargs):
+            calls.append(kwargs)
+            return DummyImagesAPIResponse(encoded_result)
+
+    class DummyOpenAI:
+        def __init__(self, **kwargs) -> None:
+            client_kwargs.append(kwargs)
+            self.images = DummyImages()
+
+    monkeypatch.setattr("productflow_backend.infrastructure.image.images_provider.OpenAI", DummyOpenAI)
+
+    from productflow_backend.infrastructure.image.factory import get_image_provider
+    from productflow_backend.infrastructure.image.images_provider import OpenAIImagesClient
+
+    assert isinstance(get_image_provider(), OpenAIImagesImageProvider)
+
+    result = OpenAIImagesClient().generate(prompt="生成商品图", size="1024x1024")[0]
+
+    assert client_kwargs == [{"api_key": "demo-api-key", "base_url": "https://example.test/v1"}]
+    assert calls == [
+        {
+            "model": "gpt-image-1",
+            "prompt": "生成商品图",
+            "size": "1024x1024",
+            "n": 1,
+            "response_format": "b64_json",
+            "quality": "high",
+            "style": "vivid",
+        }
+    ]
+    assert result.mime_type == "image/png"
+    assert result.model_name == "gpt-image-1"
+    assert result.provider_request_json == {
+        "model": "gpt-image-1",
+        "prompt": "生成商品图",
+        "size": "1024x1024",
+        "n": 1,
+        "quality": "high",
+        "style": "vivid",
+    }
+    assert result.provider_output_json == {}
+
+
+def test_openai_images_client_retries_generate_without_optional_fields(
+    configured_env: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("IMAGE_API_KEY", "demo-api-key")
+    monkeypatch.setenv("IMAGE_GENERATE_MODEL", "gpt-image-1")
+    monkeypatch.setenv("IMAGE_IMAGES_QUALITY", "high")
+    monkeypatch.setenv("IMAGE_IMAGES_STYLE", "natural")
+    get_settings.cache_clear()
+
+    calls: list[dict] = []
+    encoded_result = _make_demo_image_data_url().split(",", maxsplit=1)[1]
+
+    class DummyImages:
+        def generate(self, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                raise RuntimeError("unsupported optional field")
+            return DummyImagesAPIResponse(encoded_result)
+
+    class DummyOpenAI:
+        def __init__(self, **kwargs) -> None:
+            self.images = DummyImages()
+
+    monkeypatch.setattr("productflow_backend.infrastructure.image.images_provider.OpenAI", DummyOpenAI)
+
+    from productflow_backend.infrastructure.image.images_provider import OpenAIImagesClient
+
+    result = OpenAIImagesClient().generate(prompt="fallback", size="1024x1024")[0]
+
+    assert len(calls) == 2
+    assert "quality" in calls[0]
+    assert "style" in calls[0]
+    assert "quality" not in calls[1]
+    assert "style" not in calls[1]
+    assert result.provider_output_json["_productflow"]["notes"] == [
+        {"kind": "fallback", "message": "供应商不支持部分可选参数，已按基础参数完成。"}
+    ]
+    assert "unsupported optional field" not in str(result.provider_output_json)
+
+
+def test_openai_images_client_edit_sends_multiple_images_and_falls_back_to_base_image(
+    configured_env: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("IMAGE_API_KEY", "demo-api-key")
+    monkeypatch.setenv("IMAGE_GENERATE_MODEL", "gpt-image-1")
+    monkeypatch.setenv("IMAGE_IMAGES_QUALITY", "high")
+    get_settings.cache_clear()
+
+    calls: list[dict] = []
+    encoded_result = _make_demo_image_data_url().split(",", maxsplit=1)[1]
+
+    class DummyImages:
+        def edit(self, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                raise RuntimeError("multiple files are not supported")
+            return DummyImagesAPIResponse(encoded_result)
+
+    class DummyOpenAI:
+        def __init__(self, **kwargs) -> None:
+            self.images = DummyImages()
+
+    monkeypatch.setattr("productflow_backend.infrastructure.image.images_provider.OpenAI", DummyOpenAI)
+
+    from productflow_backend.infrastructure.image.images_provider import ImagesReferenceImage, OpenAIImagesClient
+
+    result = OpenAIImagesClient().edit(
+        image=[
+            ImagesReferenceImage(_make_demo_image_bytes(), "image/png", "base.png"),
+            ImagesReferenceImage(_make_demo_image_bytes(), "image/png", "ref.png"),
+        ],
+        prompt="改图",
+        size="1024x1024",
+    )[0]
+
+    assert len(calls) == 2
+    assert isinstance(calls[0]["image"], list)
+    assert [image.name for image in calls[0]["image"]] == ["base.png", "ref.png"]
+    assert calls[0]["quality"] == "high"
+    assert calls[1]["image"].name == "base.png"
+    assert "quality" not in calls[1]
+    assert result.provider_request_json == {
+        "model": "gpt-image-1",
+        "prompt": "改图",
+        "size": "1024x1024",
+        "n": 1,
+        "image_count": 1,
+        "images": [{"filename": "base.png", "mime_type": "image/png"}],
+        "has_mask": False,
+    }
+    assert result.provider_output_json["_productflow"] == {
+        "notes": [
+            {"kind": "fallback", "message": "供应商不支持部分可选参数，已按基础参数完成。"},
+            {"kind": "multi_image_fallback", "message": "供应商不支持多张编辑输入，已仅使用基图完成。"},
+        ],
+        "requested_image_count": 2,
+        "effective_image_count": 1,
+    }
+    assert "multiple files" not in str(result.provider_output_json)
+
+
+def test_openai_images_client_reports_missing_output_and_sanitizes_failures(
+    configured_env: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("IMAGE_BASE_URL", "https://secret-provider.example/v1")
+    monkeypatch.setenv("IMAGE_API_KEY", "sk-sensitive")
+    monkeypatch.setenv("IMAGE_GENERATE_MODEL", "gpt-image-1")
+    get_settings.cache_clear()
+
+    class MissingOutputImages:
+        def generate(self, **kwargs):
+            return DummyImagesAPIResponse(None)
+
+    class FailingImages:
+        def generate(self, **kwargs):
+            raise RuntimeError(f"raw failure with {kwargs}")
+
+    class MissingOutputOpenAI:
+        def __init__(self, **kwargs) -> None:
+            self.images = MissingOutputImages()
+
+    class FailingOpenAI:
+        def __init__(self, **kwargs) -> None:
+            self.images = FailingImages()
+
+    from productflow_backend.infrastructure.image import images_provider
+    from productflow_backend.infrastructure.image.images_provider import OpenAIImagesClient
+
+    monkeypatch.setattr(images_provider, "OpenAI", MissingOutputOpenAI)
+    with pytest.raises(RuntimeError) as missing_error:
+        OpenAIImagesClient().generate(prompt="没有图", size="1024x1024")
+    assert str(missing_error.value) == "图片供应商没有返回图片结果，请稍后重试"
+
+    monkeypatch.setattr(images_provider, "OpenAI", FailingOpenAI)
+    with pytest.raises(RuntimeError) as failure_error:
+        OpenAIImagesClient().generate(prompt="失败", size="1024x1024")
+    assert str(failure_error.value) == "图片供应商请求失败，请检查供应商配置后重试"
+    assert "sk-sensitive" not in str(failure_error.value)
+    assert "secret-provider" not in str(failure_error.value)
+
+
+def test_openai_images_poster_provider_uses_existing_prompt_contract_and_references(
+    configured_env: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("IMAGE_API_KEY", "demo-api-key")
+    monkeypatch.setenv("IMAGE_GENERATE_MODEL", "gpt-image-1")
+    get_settings.cache_clear()
+
+    calls: list[dict] = []
+    encoded_result = _make_demo_image_data_url().split(",", maxsplit=1)[1]
+
+    class DummyImages:
+        def edit(self, **kwargs):
+            calls.append(kwargs)
+            return DummyImagesAPIResponse(encoded_result)
+
+    class DummyOpenAI:
+        def __init__(self, **kwargs) -> None:
+            self.images = DummyImages()
+
+    monkeypatch.setattr("productflow_backend.infrastructure.image.images_provider.OpenAI", DummyOpenAI)
+
+    session = get_session_factory()()
+    try:
+        session.add_all(
+            [
+                AppSetting(
+                    key="prompt_poster_image_edit_template",
+                    value=(
+                        "EDIT {product_name}/{category}/{price}/{source_note}/{instruction}/"
+                        "{kind_label}/{size}/{context_block}/{reference_policy}/{kind_requirements}"
+                    ),
+                ),
+                AppSetting(key="prompt_poster_image_reference_policy", value="保留商品主体"),
+            ]
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    source_path = configured_env / "images-source.png"
+    reference_path = configured_env / "images-reference.png"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_bytes(_make_demo_image_bytes())
+    reference_path.write_bytes(_make_demo_image_bytes())
+
+    generated_image, model_name = OpenAIImagesImageProvider().generate_poster_image(
+        poster=PosterGenerationInput(
+            copy_prompt_mode="image_edit",
+            product_name="测试商品",
+            category="测试类目",
+            price="9.90",
+            source_note="防水牛津布",
+            instruction="背景更干净",
+            image_size="1024x1024",
+            source_image=source_path,
+            reference_images=[
+                ReferenceImageInput(
+                    path=reference_path,
+                    mime_type="image/png",
+                    filename="reference.png",
+                )
+            ],
+        ),
+        kind=PosterKind.MAIN_IMAGE,
+    )
+
+    assert generated_image.mime_type == "image/png"
+    assert model_name == "gpt-image-1"
+    payload = calls[0]
+    assert payload["model"] == "gpt-image-1"
+    assert payload["size"] == "1024x1024"
+    assert [image.name for image in payload["image"]] == ["images-source.png", "reference.png"]
+    prompt = payload["prompt"]
+    assert "EDIT 测试商品/测试类目/9.90/防水牛津布/背景更干净/主图/1024x1024" in prompt
+    assert "- 补充说明：防水牛津布" in prompt
+    assert "- 参考图片数量：2" in prompt
+    assert "- 商品原图：第 1 张输入图片" in prompt
+    assert "- 参考图：reference.png（角色：参考图）" in prompt
+    assert "保留商品主体" in prompt
+    assert "不要把字段名" in prompt
 
 def test_generated_poster_mode_uses_image_provider(
     db_session,

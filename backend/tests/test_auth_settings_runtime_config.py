@@ -2,13 +2,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from helpers import (
     _login,
     _unlock_settings,
 )
 
-from productflow_backend.config import CONFIG_DEFINITION_BY_KEY, RUNTIME_CONFIG_KEYS, get_runtime_settings, get_settings
+from productflow_backend.config import (
+    CONFIG_DEFINITION_BY_KEY,
+    RUNTIME_CONFIG_KEYS,
+    get_runtime_settings,
+    get_settings,
+    normalize_config_values,
+)
 from productflow_backend.infrastructure.db.models import (
     AppSetting,
 )
@@ -192,6 +199,11 @@ def test_settings_api_persists_database_overrides(configured_env: Path) -> None:
     assert initial_items["image_provider_kind"]["value"] == "mock"
     assert initial_items["image_provider_kind"]["source"] == "env_default"
     assert initial_items["image_provider_kind"]["updated_at"] is None
+    assert [option["value"] for option in initial_items["image_provider_kind"]["options"]] == [
+        "mock",
+        "openai_responses",
+        "openai_images",
+    ]
     assert initial_items["generation_max_concurrent_tasks"]["value"] == 3
     assert initial_items["image_session_stale_running_after_minutes"]["value"] == 90
     assert initial_items["image_session_stale_running_after_minutes"]["category"] == "生成队列"
@@ -214,6 +226,8 @@ def test_settings_api_persists_database_overrides(configured_env: Path) -> None:
                 "image_provider_kind": "openai_responses",
                 "image_api_key": "database-image-key",
                 "image_generate_model": "gpt-5.4-mini",
+                "image_images_quality": "auto",
+                "image_images_style": "natural",
                 "generation_max_concurrent_tasks": 2,
                 "image_session_stale_running_after_minutes": 75,
                 "workflow_image_generation_provider_timeout_seconds": 120,
@@ -231,6 +245,8 @@ def test_settings_api_persists_database_overrides(configured_env: Path) -> None:
     assert updated_items["image_api_key"]["updated_at"] is not None
     assert get_runtime_settings().image_provider_kind == "openai_responses"
     assert get_runtime_settings().image_api_key == "database-image-key"
+    assert get_runtime_settings().image_images_quality == "auto"
+    assert get_runtime_settings().image_images_style == "natural"
     assert get_runtime_settings().generation_max_concurrent_tasks == 2
     assert get_runtime_settings().image_session_stale_running_after_minutes == 75
     assert get_runtime_settings().workflow_image_generation_provider_timeout_seconds == 120
@@ -239,6 +255,8 @@ def test_settings_api_persists_database_overrides(configured_env: Path) -> None:
     session = get_session_factory()()
     try:
         assert session.get(AppSetting, "image_provider_kind").value == "openai_responses"
+        assert session.get(AppSetting, "image_images_quality").value == "auto"
+        assert session.get(AppSetting, "image_images_style").value == "natural"
         assert session.get(AppSetting, "image_session_stale_running_after_minutes").value == "75"
         assert session.get(AppSetting, "workflow_image_generation_provider_timeout_seconds").value == "120"
     finally:
@@ -263,6 +281,32 @@ def test_settings_api_persists_database_overrides(configured_env: Path) -> None:
     reset_items = {item["key"]: item for item in reset.json()["items"]}
     assert reset_items["image_provider_kind"]["value"] == "mock"
     assert reset_items["image_provider_kind"]["source"] == "env_default"
+
+    cleared_images_api_options = client.patch(
+        "/api/settings",
+        json={"values": {"image_images_quality": "", "image_images_style": ""}},
+    )
+    assert cleared_images_api_options.status_code == 200
+    assert get_runtime_settings().image_images_quality is None
+    assert get_runtime_settings().image_images_style is None
+
+    invalid_images_quality = client.patch("/api/settings", json={"values": {"image_images_quality": "ultra"}})
+    assert invalid_images_quality.status_code == 400
+    assert "Images API Quality 必须是以下之一" in invalid_images_quality.json()["detail"]
+
+
+def test_images_api_runtime_options_normalize_and_validate_without_provider_key(configured_env: Path) -> None:
+    assert normalize_config_values({"image_images_quality": "", "image_images_style": ""}) == {
+        "image_images_quality": "",
+        "image_images_style": "",
+    }
+    assert normalize_config_values({"image_images_quality": "high", "image_images_style": "natural"}) == {
+        "image_images_quality": "high",
+        "image_images_style": "natural",
+    }
+    with pytest.raises(ValueError) as error:
+        normalize_config_values({"image_images_quality": "ultra"})
+    assert "Images API Quality 必须是以下之一" in str(error.value)
 
 
 def test_settings_api_accepts_and_validates_optional_image_tool_fields(configured_env: Path) -> None:

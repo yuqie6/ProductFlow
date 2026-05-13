@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from base64 import b64encode
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from helpers import (
     _read_image_size,
 )
 
+from productflow_backend.config import get_settings
 from productflow_backend.infrastructure.db.models import (
     ImageSession,
     ImageSessionAsset,
@@ -1631,6 +1633,98 @@ def test_image_session_branch_uses_selected_base_and_references_only(configured_
         "manual_reference_count": 2,
         "previous_response_id": None,
     }
+
+
+def test_image_session_openai_images_uses_selected_base_and_references_only(
+    configured_env: Path,
+    db_session,
+    monkeypatch,
+) -> None:
+    from productflow_backend.application.image_sessions import (
+        add_image_session_reference_images,
+        create_image_session,
+        generate_image_session_round,
+    )
+
+    monkeypatch.setenv("IMAGE_PROVIDER_KIND", "openai_images")
+    monkeypatch.setenv("IMAGE_API_KEY", "demo-api-key")
+    monkeypatch.setenv("IMAGE_GENERATE_MODEL", "gpt-image-1")
+    get_settings.cache_clear()
+
+    calls: list[dict] = []
+
+    class DummyItem:
+        b64_json = b64encode(_make_demo_image_bytes()).decode("utf-8")
+        revised_prompt = None
+
+    class DummyResponse:
+        data = [DummyItem()]
+
+    class DummyImages:
+        def generate(self, **kwargs):
+            calls.append({"method": "generate", **kwargs})
+            return DummyResponse()
+
+        def edit(self, **kwargs):
+            calls.append({"method": "edit", **kwargs})
+            return DummyResponse()
+
+    class DummyOpenAI:
+        def __init__(self, **kwargs) -> None:
+            self.images = DummyImages()
+
+    monkeypatch.setattr("productflow_backend.infrastructure.image.images_provider.OpenAI", DummyOpenAI)
+
+    image_session = create_image_session(db_session, product_id=None, title="Images API 分支测试")
+    first = generate_image_session_round(
+        db_session,
+        image_session_id=image_session.id,
+        prompt="第一张基础图",
+        size="1024x1024",
+    )
+    first_asset_id = first.rounds[-1].generated_asset_id
+    assert first_asset_id is not None
+
+    updated = add_image_session_reference_images(
+        db_session,
+        image_session_id=image_session.id,
+        reference_image_uploads=[
+            (_make_demo_image_bytes(), "ref-a.png", "image/png"),
+            (_make_demo_image_bytes(), "ref-b.png", "image/png"),
+        ],
+    )
+    reference_ids = [asset.id for asset in updated.assets if asset.kind.value == "reference_upload"]
+    assert len(reference_ids) == 2
+
+    branched = generate_image_session_round(
+        db_session,
+        image_session_id=image_session.id,
+        prompt="只从第一张和第二张参考图继续",
+        size="1024x1024",
+        base_asset_id=first_asset_id,
+        selected_reference_asset_ids=[reference_ids[1]],
+        generation_count=1,
+    )
+    branch_round = branched.rounds[-1]
+    assert branch_round.provider_name == "openai-images"
+    assert branch_round.base_asset_id == first_asset_id
+    assert branch_round.selected_reference_asset_ids == [reference_ids[1]]
+
+    assert calls[0]["method"] == "generate"
+    assert calls[1]["method"] == "edit"
+    assert [image.name for image in calls[1]["image"]] == ["base.png", "reference-1.png"]
+    assert "previous_response_id" not in calls[1]
+
+    db_session.expire_all()
+    persisted = db_session.get(ImageSessionRound, branch_round.id)
+    assert persisted is not None
+    assert persisted.provider_request_json["image_count"] == 2
+    assert persisted.provider_request_json["images"] == [
+        {"filename": "base.png", "mime_type": "image/png"},
+        {"filename": "reference-1.png", "mime_type": "image/png"},
+    ]
+    assert persisted.provider_output_json["_productflow"]["requested_image_count"] == 2
+    assert persisted.provider_output_json["_productflow"]["effective_image_count"] == 2
 
 
 def test_image_session_branch_validates_asset_scope_and_kind(configured_env: Path) -> None:

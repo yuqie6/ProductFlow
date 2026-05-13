@@ -307,7 +307,11 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
         label="图片供应商",
         category="图片生成",
         input_type="select",
-        options=(ConfigOption("mock", "Mock"), ConfigOption("openai_responses", "OpenAI Responses"), ConfigOption("openai_images", "OpenAI Images API")),
+        options=(
+            ConfigOption("mock", "Mock"),
+            ConfigOption("openai_responses", "OpenAI Responses"),
+            ConfigOption("openai_images", "OpenAI Images API"),
+        ),
         description="控制文/图生图和 AI 生成海报使用的图片供应商。",
     ),
     ConfigDefinition(
@@ -316,7 +320,7 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
         category="图片生成",
         input_type="password",
         secret=True,
-        description="仅在图片供应商为 OpenAI Responses 时使用；接口不会回显已有密钥。",
+        description="仅在图片供应商为真实 OpenAI / OpenAI 兼容接口时使用；接口不会回显已有密钥。",
     ),
     ConfigDefinition(
         key="image_base_url",
@@ -330,6 +334,7 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
         label="图片模型",
         category="图片生成",
         input_type="text",
+        description="发送给当前图片供应商的模型名；Responses 与 Images API 支持的模型范围可能不同。",
     ),
     ConfigDefinition(
         key="image_responses_background_enabled",
@@ -343,8 +348,16 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
         label="Images API Quality",
         category="图片生成",
         input_type="select",
-        options=(ConfigOption("", "默认"), ConfigOption("standard", "standard"), ConfigOption("hd", "hd"), ConfigOption("auto", "auto")),
-        description="仅 openai_images 供应商使用。DALL-E 3 支持 standard/hd。",
+        options=(
+            ConfigOption("", "默认"),
+            ConfigOption("standard", "standard"),
+            ConfigOption("hd", "hd"),
+            ConfigOption("low", "low"),
+            ConfigOption("medium", "medium"),
+            ConfigOption("high", "high"),
+            ConfigOption("auto", "auto"),
+        ),
+        description="仅 openai_images 供应商使用；不支持该字段的兼容网关会回退到基础参数重试。",
         optional=True,
     ),
     ConfigDefinition(

@@ -168,6 +168,8 @@ ProductFlow 把模型能力按模态拆分。
 - `mock`
 - `openai_responses`（Responses API `image_generation` 工具，支持 `input_image`；连续生图优先使用 background
   response + retrieve polling，把 provider status 写入任务 progress）
+- `openai_images`（Images API `images.generate` / `images.edit` 兼容接口；不使用 Responses
+  `previous_response_id`，连续生图由 ProductFlow 显式传入所选基图和参考图）
 
 Provider 选择由 `config.py` 和对应 factory 控制。路由不直接依赖具体 SDK。
 

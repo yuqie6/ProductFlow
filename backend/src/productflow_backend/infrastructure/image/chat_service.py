@@ -11,8 +11,8 @@ from typing import Any, Literal
 from PIL import Image, ImageDraw
 
 from productflow_backend.config import get_runtime_settings
-from productflow_backend.infrastructure.image.base import decode_b64_image, parse_size
-from productflow_backend.infrastructure.image.images_provider import OpenAIImagesClient
+from productflow_backend.infrastructure.image.base import parse_size
+from productflow_backend.infrastructure.image.images_provider import ImagesReferenceImage, OpenAIImagesClient
 from productflow_backend.infrastructure.image.responses_provider import (
     OpenAIResponsesImageClient,
     ResponsesReferenceImage,
@@ -245,9 +245,9 @@ class ImageChatService:
         client = OpenAIImagesClient()
         full_prompt = self._build_prompt(prompt=prompt, history=history, size=size)
 
-        base_image_bytes = self._find_base_image_bytes(history, manual_reference_images)
-        if base_image_bytes is not None:
-            results = client.edit(image=base_image_bytes, prompt=full_prompt, size=size)
+        reference_images = self._collect_images_api_references(history, manual_reference_images)
+        if reference_images:
+            results = client.edit(image=reference_images, prompt=full_prompt, size=size)
         else:
             results = client.generate(prompt=full_prompt, size=size)
 
@@ -264,20 +264,43 @@ class ImageChatService:
             previous_response_id=None,
             image_generation_call_id=None,
             provider_request_json=result.provider_request_json,
-            provider_output_json=None,
+            provider_output_json=result.provider_output_json,
         )
 
-    def _find_base_image_bytes(
+    def _collect_images_api_references(
         self,
         history: list[ImageChatTurn],
         manual_reference_images: list[str],
-    ) -> bytes | None:
-        """Find the most recent assistant-generated image to use as edit base."""
+    ) -> list[ImagesReferenceImage]:
+        references: list[ImagesReferenceImage] = []
+        has_base_image = False
         for turn in reversed(history):
             if turn.role == "assistant" and turn.image_data_url:
                 ref = decode_reference_data_url(turn.image_data_url)
-                return ref.bytes_data
-        if manual_reference_images:
-            ref = decode_reference_data_url(manual_reference_images[0])
-            return ref.bytes_data
-        return None
+                references.append(
+                    ImagesReferenceImage(
+                        bytes_data=ref.bytes_data,
+                        mime_type=ref.mime_type,
+                        filename="base.png",
+                    )
+                )
+                has_base_image = True
+                break
+        manual_images = manual_reference_images[:5] if has_base_image else manual_reference_images[:6]
+        reference_index = 1
+        for index, data_url in enumerate(manual_images, start=1):
+            ref = decode_reference_data_url(data_url)
+            if not has_base_image and index == 1:
+                filename = "base.png"
+                has_base_image = True
+            else:
+                filename = f"reference-{reference_index}.png"
+                reference_index += 1
+            references.append(
+                ImagesReferenceImage(
+                    bytes_data=ref.bytes_data,
+                    mime_type=ref.mime_type,
+                    filename=filename,
+                )
+            )
+        return references

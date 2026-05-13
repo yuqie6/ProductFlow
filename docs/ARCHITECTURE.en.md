@@ -162,6 +162,7 @@ Image providers live under `infrastructure/image/` and serve poster generation a
 
 - `mock`
 - `openai_responses` (Responses API `image_generation` tool, supporting `input_image`; iterative image generation prefers background response + retrieve polling and writes provider status into task progress)
+- `openai_images` (Images API `images.generate` / `images.edit` compatible interface; it does not use Responses `previous_response_id`, and ProductFlow explicitly sends the selected base image plus references for iterative image sessions)
 
 Provider selection is controlled by `config.py` and corresponding factories. Routes do not directly depend on concrete SDKs.
 
