@@ -838,6 +838,42 @@ export function ImageChatPage() {
     window.addEventListener("pointercancel", finishSwipe);
   }
 
+  function handleMobileSessionDrawerSwipeBackStart(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.pointerType === "mouse" || !mobileSessionDrawerOpen) {
+      return;
+    }
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const pointerId = event.pointerId;
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== pointerId) {
+        return;
+      }
+      const deltaX = moveEvent.clientX - startX;
+      const deltaY = Math.abs(moveEvent.clientY - startY);
+      if (deltaX < -72 && deltaY < 48) {
+        setMobileSessionDrawerOpen(false);
+        mobileSessionButtonRef.current?.focus();
+        window.removeEventListener("pointermove", handlePointerMove);
+        window.removeEventListener("pointerup", finishSwipe);
+        window.removeEventListener("pointercancel", finishSwipe);
+      }
+    };
+    const finishSwipe = (finishEvent: PointerEvent) => {
+      if (finishEvent.pointerId !== pointerId) {
+        return;
+      }
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", finishSwipe);
+      window.removeEventListener("pointercancel", finishSwipe);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", finishSwipe);
+    window.addEventListener("pointercancel", finishSwipe);
+  }
+
   const pendingDeleteDialog = pendingDeleteAction
     ? {
         title:
@@ -870,7 +906,7 @@ export function ImageChatPage() {
       />
 
       <main
-        className="flex flex-1 flex-col pb-[calc(8.5rem+env(safe-area-inset-bottom))] lg:min-h-0 lg:flex-row lg:overflow-hidden lg:pb-0"
+        className="flex min-h-0 flex-1 flex-col pb-[calc(8.5rem+env(safe-area-inset-bottom))] lg:flex-row lg:overflow-hidden lg:pb-0"
         onPointerDown={handleMobileEdgeSwipeStart}
       >
         <aside
@@ -917,8 +953,8 @@ export function ImageChatPage() {
           />
         </aside>
 
-        <section className="flex min-w-0 flex-col bg-slate-100 dark:bg-[#0b1220] lg:min-h-0 lg:flex-1 lg:overflow-hidden">
-          <div className="flex flex-col p-3 pb-2 lg:min-h-0 lg:flex-1">
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-slate-100 dark:bg-[#0b1220] lg:overflow-hidden">
+          <div className="flex min-h-0 flex-1 flex-col p-3 pb-2">
             <div className="mb-3 flex items-center justify-between gap-2 lg:hidden">
               <button
                 ref={mobileSessionButtonRef}
@@ -1272,7 +1308,10 @@ export function ImageChatPage() {
       >
         <Drawer.Portal>
           <Drawer.Overlay className="fixed inset-0 z-[70] bg-slate-950/45 backdrop-blur-[2px] lg:hidden" />
-          <Drawer.Content className="fixed inset-y-0 left-0 z-[71] flex w-[min(86vw,360px)] flex-col border-r border-slate-200 bg-white shadow-2xl outline-none dark:border-slate-700 dark:bg-[#0f1726] lg:hidden">
+          <Drawer.Content
+            onPointerDown={handleMobileSessionDrawerSwipeBackStart}
+            className="fixed inset-y-0 left-0 z-[71] flex w-[min(86vw,360px)] flex-col border-r border-slate-200 bg-white shadow-2xl outline-none dark:border-slate-700 dark:bg-[#0f1726] lg:hidden"
+          >
             <Drawer.Title className="sr-only">{t("chat.mobileSessionDrawer")}</Drawer.Title>
             <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-4 dark:border-slate-800">
               <div>

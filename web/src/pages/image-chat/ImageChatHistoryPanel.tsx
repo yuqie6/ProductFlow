@@ -58,7 +58,7 @@ export function ImageChatHistoryPanel({
 }: ImageChatHistoryPanelProps) {
   return (
     <div
-      className="relative flex h-44 shrink-0 flex-col border-t border-slate-200 bg-white/95 px-3 py-2.5 shadow-[0_-8px_24px_rgba(15,23,42,0.04)] dark:border-slate-700/80 dark:bg-[#0f1726] dark:shadow-[0_-18px_40px_rgba(0,0,0,0.24)] lg:h-[var(--image-chat-history-panel-height)]"
+      className="relative flex h-[9.5rem] shrink-0 flex-col border-t border-slate-200 bg-white/95 px-2.5 py-2 shadow-[0_-8px_24px_rgba(15,23,42,0.04)] dark:border-slate-700/80 dark:bg-[#0f1726] dark:shadow-[0_-18px_40px_rgba(0,0,0,0.24)] lg:h-[var(--image-chat-history-panel-height)] lg:px-3 lg:py-2.5"
       style={style}
     >
       <button
@@ -70,7 +70,7 @@ export function ImageChatHistoryPanel({
       >
         <span className="h-1 w-12 rounded-full bg-slate-300 dark:bg-slate-600" />
       </button>
-      <div className="mb-2 flex items-center justify-between gap-3">
+      <div className="mb-1 flex items-center justify-between gap-3 lg:mb-2">
         <div>
           <div className="text-sm font-semibold text-slate-950 dark:text-white">{t("chat.history")}</div>
         </div>
