@@ -15,6 +15,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 @router.post("/session", response_model=SessionResponse)
 def create_session(payload: SessionCreateRequest, request: Request) -> SessionResponse:
     if not get_runtime_settings().admin_access_required:
+        request.session["is_authenticated"] = True
         return SessionResponse()
     settings = get_settings()
     if payload.admin_key != settings.admin_access_key:

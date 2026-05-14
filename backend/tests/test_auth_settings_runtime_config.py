@@ -92,6 +92,7 @@ def test_admin_access_can_be_disabled_and_re_enabled(configured_env: Path) -> No
     re_enabled = public_client.patch("/api/settings", json={"values": {"admin_access_required": True}})
     assert re_enabled.status_code == 200
     assert get_runtime_settings().admin_access_required is True
+    assert public_client.get("/api/products").status_code == 200
 
     new_client = TestClient(app)
     private_products = new_client.get("/api/products")
