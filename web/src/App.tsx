@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo } from "react";
+import { lazy, Suspense, useEffect, useMemo } from "react";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
@@ -15,18 +15,18 @@ const HelpPage = lazy(() =>
 const LoginPage = lazy(() =>
   import("./pages/LoginPage").then((module) => ({ default: module.LoginPage })),
 );
-const ImageChatPage = lazy(() =>
-  import("./pages/ImageChatPage").then((module) => ({ default: module.ImageChatPage })),
-);
+const loadImageChatPage = () =>
+  import("./pages/ImageChatPage").then((module) => ({ default: module.ImageChatPage }));
+const ImageChatPage = lazy(loadImageChatPage);
 const ProductCreatePage = lazy(() =>
   import("./pages/ProductCreatePage").then((module) => ({ default: module.ProductCreatePage })),
 );
 const ProductDetailPage = lazy(() =>
   import("./pages/ProductDetailPage").then((module) => ({ default: module.ProductDetailPage })),
 );
-const ProductListPage = lazy(() =>
-  import("./pages/ProductListPage").then((module) => ({ default: module.ProductListPage })),
-);
+const loadProductListPage = () =>
+  import("./pages/ProductListPage").then((module) => ({ default: module.ProductListPage }));
+const ProductListPage = lazy(loadProductListPage);
 const SettingsPage = lazy(() =>
   import("./pages/SettingsPage").then((module) => ({ default: module.SettingsPage })),
 );
@@ -49,11 +49,19 @@ function AppRoutes() {
     retry: false,
   });
 
+  const authenticated = Boolean(sessionQuery.data?.authenticated);
+
+  useEffect(() => {
+    if (!authenticated) {
+      return;
+    }
+    void loadProductListPage();
+    void loadImageChatPage();
+  }, [authenticated]);
+
   if (sessionQuery.isLoading) {
     return <LoadingScreen />;
   }
-
-  const authenticated = Boolean(sessionQuery.data?.authenticated);
 
   return (
     <Suspense fallback={<LoadingScreen />}>

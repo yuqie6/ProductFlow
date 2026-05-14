@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Drawer } from "vaul";
 import {
   ChevronRight,
@@ -84,8 +84,50 @@ import type {
 const DUPLICATE_GENERATION_SUBMIT_WINDOW_MS = 1800;
 const MAX_BRANCH_CONTEXT_IMAGES = 6;
 const DESKTOP_RESIZABLE_LAYOUT_QUERY = "(min-width: 1024px)";
+const PRODUCT_PICKER_LIST_STALE_TIME_MS = 60_000;
+const RUNTIME_CONFIG_STALE_TIME_MS = 5 * 60_000;
 
 type ImageChatResizeTarget = "left" | "right" | "history";
+
+interface ImageChatRouteState {
+  selectedSessionId: string | null;
+  selectedGeneratedAssetId: string | null;
+  selectedTaskPlaceholderId: string | null;
+  branchBaseAssetId: string | null;
+  selectedReferenceAssetIds: string[];
+  generationCount: number;
+  draft: string;
+  size: string;
+  toolOptions: ImageToolOptions;
+  settingsTab: ImageGenerationSettingsTab;
+  targetProductId: string;
+}
+
+const imageChatRouteStateCache = new Map<string, ImageChatRouteState>();
+
+function getImageChatRouteStateScope(productId: string | undefined): string {
+  return productId ? `product:${productId}` : "standalone";
+}
+
+function readImageChatRouteState(scope: string): ImageChatRouteState | undefined {
+  const cached = imageChatRouteStateCache.get(scope);
+  if (!cached) {
+    return undefined;
+  }
+  return {
+    ...cached,
+    selectedReferenceAssetIds: [...cached.selectedReferenceAssetIds],
+    toolOptions: { ...cached.toolOptions },
+  };
+}
+
+function writeImageChatRouteState(scope: string, state: ImageChatRouteState) {
+  imageChatRouteStateCache.set(scope, {
+    ...state,
+    selectedReferenceAssetIds: [...state.selectedReferenceAssetIds],
+    toolOptions: { ...state.toolOptions },
+  });
+}
 
 function getSessionReferenceAssets(imageSession: ImageSessionDetail | undefined): ImageSessionAsset[] {
   return imageSession?.assets.filter((asset) => asset.kind === "reference_upload") ?? [];
@@ -102,6 +144,7 @@ export function ImageChatPage() {
   const queryClient = useQueryClient();
   const { productId } = useParams();
   const isProductMode = Boolean(productId);
+  const routeStateScope = getImageChatRouteStateScope(productId);
   const autoCreateTriggered = useRef(false);
   const pendingGeneratedRoundCountRef = useRef<number | null>(null);
   const duplicateSubmitGuardRef = useRef<ImageGenerationSubmitGuard | null>(null);
@@ -109,19 +152,37 @@ export function ImageChatPage() {
   const mobileHistoryButtonRef = useRef<HTMLButtonElement | null>(null);
   const mobileSettingsButtonRef = useRef<HTMLButtonElement | null>(null);
 
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
-  const [selectedGeneratedAssetId, setSelectedGeneratedAssetId] = useState<string | null>(null);
-  const [selectedTaskPlaceholderId, setSelectedTaskPlaceholderId] = useState<string | null>(null);
-  const [branchBaseAssetId, setBranchBaseAssetId] = useState<string | null>(null);
-  const [selectedReferenceAssetIds, setSelectedReferenceAssetIds] = useState<string[]>([]);
-  const [generationCount, setGenerationCount] = useState(1);
-  const [draft, setDraft] = useState("");
-  const [size, setSize] = useState("1024x1024");
-  const [toolOptions, setToolOptions] = useState<ImageToolOptions>({});
-  const [settingsTab, setSettingsTab] = useState<ImageGenerationSettingsTab>("basic");
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
+    () => readImageChatRouteState(routeStateScope)?.selectedSessionId ?? null,
+  );
+  const [selectedGeneratedAssetId, setSelectedGeneratedAssetId] = useState<string | null>(
+    () => readImageChatRouteState(routeStateScope)?.selectedGeneratedAssetId ?? null,
+  );
+  const [selectedTaskPlaceholderId, setSelectedTaskPlaceholderId] = useState<string | null>(
+    () => readImageChatRouteState(routeStateScope)?.selectedTaskPlaceholderId ?? null,
+  );
+  const [branchBaseAssetId, setBranchBaseAssetId] = useState<string | null>(
+    () => readImageChatRouteState(routeStateScope)?.branchBaseAssetId ?? null,
+  );
+  const [selectedReferenceAssetIds, setSelectedReferenceAssetIds] = useState<string[]>(
+    () => readImageChatRouteState(routeStateScope)?.selectedReferenceAssetIds ?? [],
+  );
+  const [generationCount, setGenerationCount] = useState(
+    () => readImageChatRouteState(routeStateScope)?.generationCount ?? 1,
+  );
+  const [draft, setDraft] = useState(() => readImageChatRouteState(routeStateScope)?.draft ?? "");
+  const [size, setSize] = useState(() => readImageChatRouteState(routeStateScope)?.size ?? "1024x1024");
+  const [toolOptions, setToolOptions] = useState<ImageToolOptions>(
+    () => readImageChatRouteState(routeStateScope)?.toolOptions ?? {},
+  );
+  const [settingsTab, setSettingsTab] = useState<ImageGenerationSettingsTab>(
+    () => readImageChatRouteState(routeStateScope)?.settingsTab ?? "basic",
+  );
   const [titleDraft, setTitleDraft] = useState("");
   const [renameEnabled, setRenameEnabled] = useState(false);
-  const [targetProductId, setTargetProductId] = useState("");
+  const [targetProductId, setTargetProductId] = useState(
+    () => readImageChatRouteState(routeStateScope)?.targetProductId ?? "",
+  );
   const [promptPreview, setPromptPreview] = useState<PromptPreview | null>(null);
   const [previewRound, setPreviewRound] = useState<ImageSessionRound | null>(null);
   const [pendingDeleteAction, setPendingDeleteAction] =
@@ -144,6 +205,35 @@ export function ImageChatPage() {
   const historyPanelStyle = {
     "--image-chat-history-panel-height": `${historyPanelHeight}px`,
   } as CSSProperties;
+
+  useEffect(() => {
+    writeImageChatRouteState(routeStateScope, {
+      selectedSessionId,
+      selectedGeneratedAssetId,
+      selectedTaskPlaceholderId,
+      branchBaseAssetId,
+      selectedReferenceAssetIds,
+      generationCount,
+      draft,
+      size,
+      toolOptions,
+      settingsTab,
+      targetProductId,
+    });
+  }, [
+    branchBaseAssetId,
+    draft,
+    generationCount,
+    routeStateScope,
+    selectedGeneratedAssetId,
+    selectedReferenceAssetIds,
+    selectedSessionId,
+    selectedTaskPlaceholderId,
+    settingsTab,
+    size,
+    targetProductId,
+    toolOptions,
+  ]);
 
   useEffect(() => {
     function clampPanelSizesToViewport() {
@@ -194,10 +284,13 @@ export function ImageChatPage() {
     queryKey: ["products"],
     queryFn: () => api.listProducts({ page_size: 100 }),
     enabled: !isProductMode,
+    placeholderData: keepPreviousData,
+    staleTime: PRODUCT_PICKER_LIST_STALE_TIME_MS,
   });
   const runtimeConfigQuery = useQuery({
     queryKey: ["runtime-config"],
     queryFn: api.getRuntimeConfig,
+    staleTime: RUNTIME_CONFIG_STALE_TIME_MS,
   });
 
   const products = productsQuery.data?.items ?? [];
