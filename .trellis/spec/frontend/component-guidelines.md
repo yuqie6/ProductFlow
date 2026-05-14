@@ -156,6 +156,27 @@ Shared components should not call the API directly today. API calls live in page
 
 If a component starts needing API calls, consider whether it is actually a route/page-level component.
 
+## Feature Page Extraction Boundary
+
+Large route pages should keep query/mutation ownership, URL parameters, selection reconciliation, and submit handlers in
+the route component. Move repeated or bulky display surfaces into page-local feature components under the route's feature
+folder, for example `web/src/pages/image-chat/`.
+
+Good extraction targets:
+
+- Main preview/canvas surfaces that receive already-derived rounds, task placeholders, and callback props.
+- History strips, session lists, reference panels, and other repeated UI regions that can stay presentational.
+- Pure display helpers for labels, status classes, and sizing text.
+
+Keep extracted components API-free. Pass action callbacks such as `onSelectRound`, `onDeleteSession`, `onRetry`, and
+`onCancel` from the page. If extraction starts requiring TanStack Query hooks or direct `api.*` mutations inside the
+component, promote the design to a dedicated controller/hook refactor with focused regression tests around selection and
+submission behavior.
+
+When optimizing image-heavy pages, preserve the resource contract while extracting UI: visible preview surfaces should use
+preview-sized assets, explicit download actions should use download URLs, and route-level lazy loading should stay in
+`App.tsx` so unrelated pages do not inflate the initial route load.
+
 ---
 
 ## Scenario: Shared image size picker contract

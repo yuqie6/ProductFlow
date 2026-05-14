@@ -1,49 +1,40 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Drawer } from "vaul";
 import {
-  Check,
   ChevronRight,
   Download,
   GalleryHorizontalEnd,
-  History,
-  Image as ImageIcon,
-  ImagePlus,
   Layers3,
   Loader2,
   Menu,
-  MessagesSquare,
-  OctagonX,
   Pencil,
   Plus,
-  RotateCcw,
   Save,
   Settings,
   Sparkles,
-  Trash2,
   X,
 } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { GalleryImagePreviewDialog } from "../components/GalleryImagePreviewDialog";
-import { ImageDropZone } from "../components/ImageDropZone";
 import { ImageGenerationSettingsPanel } from "../components/ImageGenerationSettingsPanel";
 import { ImageGenerationSettingsTabs, type ImageGenerationSettingsTab } from "../components/ImageGenerationSettingsTabs";
 import { ImageToolControls } from "../components/ImageToolControls";
 import { PromptPreviewDialog, type PromptPreview } from "../components/PromptPreviewDialog";
-import { SelectField } from "../components/SelectField";
 import { TopNav } from "../components/TopNav";
 import { api, ApiError } from "../lib/api";
 import { formatDateTime } from "../lib/format";
 import { DEFAULT_IMAGE_TOOL_ALLOWED_FIELDS } from "../lib/imageToolOptions";
 import { useI18n } from "../lib/preferences";
-import {
-  DEFAULT_IMAGE_GENERATION_MAX_DIMENSION,
-  buildImageSizeOptions,
-  formatImageSizeValue,
-} from "../lib/imageSizes";
+import { DEFAULT_IMAGE_GENERATION_MAX_DIMENSION, buildImageSizeOptions } from "../lib/imageSizes";
+import { imageRoundSizeLabel, placeholderStatusClass, placeholderStatusLabel } from "./image-chat/display";
+import { ImageChatHistoryPanel } from "./image-chat/ImageChatHistoryPanel";
+import { ImageChatMainStage } from "./image-chat/ImageChatMainStage";
+import { ImageChatSessionList } from "./image-chat/ImageChatSessionList";
+import { ProductAssociationPanel, SessionReferencePanel } from "./image-chat/ReferencePanels";
 import {
   HISTORY_PANEL_DEFAULT_HEIGHT,
   HISTORY_PANEL_MIN_HEIGHT,
@@ -56,7 +47,6 @@ import {
   getHistoryPanelMaxHeight,
   getLeftPanelMaxWidth,
   getRightPanelMaxWidth,
-  wheelDeltaToPixels,
 } from "./image-chat/resizableLayout";
 import {
   buildImageGenerationSubmitSignature,
@@ -64,9 +54,7 @@ import {
   clampGenerationCount,
   compactImageToolOptions,
   findImageHistoryPlaceholder,
-  imageGenerationRetryMetadata,
   isImageSessionGenerationTaskActive,
-  isImageSessionGenerationTaskAutoRetrying,
   isImageSessionGenerationTaskCancelable,
   isImageSessionGenerationTaskRetryable,
   mergeImageSessionStatusIntoDetail,
@@ -82,9 +70,6 @@ import { formatMobileGenerationSummary } from "./image-chat/mobileLayout";
 import type {
   ImageGenerationSubmitGuard,
   ImageGenerationSubmitPayload,
-  ImageHistoryBranch,
-  ImageHistoryCandidate,
-  ImageHistoryPlaceholderCandidate,
 } from "./image-chat/branching";
 import type {
   ImageSessionDetail,
@@ -94,9 +79,6 @@ import type {
   ImageSessionListResponse,
   ImageSessionStatus,
   ImageToolOptions,
-  ProductDetail,
-  ProductSummary,
-  SourceAsset,
 } from "../lib/types";
 
 const DUPLICATE_GENERATION_SUBMIT_WINDOW_MS = 1800;
@@ -105,121 +87,8 @@ const DESKTOP_RESIZABLE_LAYOUT_QUERY = "(min-width: 1024px)";
 
 type ImageChatResizeTarget = "left" | "right" | "history";
 
-function handleHistoryWheelScroll(event: ReactWheelEvent<HTMLDivElement>) {
-  if (event.ctrlKey) {
-    return;
-  }
-  const container = event.currentTarget;
-  const maxScrollLeft = container.scrollWidth - container.clientWidth;
-  if (maxScrollLeft <= 1) {
-    return;
-  }
-  const absDeltaX = Math.abs(event.deltaX);
-  const absDeltaY = Math.abs(event.deltaY);
-  if (absDeltaY === 0 || absDeltaX >= absDeltaY) {
-    return;
-  }
-  const delta = wheelDeltaToPixels(event.deltaY, event.deltaMode, container.clientWidth);
-  const nextScrollLeft = clampPanelSize(container.scrollLeft + delta, 0, maxScrollLeft);
-  if (nextScrollLeft === container.scrollLeft) {
-    return;
-  }
-  event.preventDefault();
-  container.scrollLeft = nextScrollLeft;
-}
-
 function getSessionReferenceAssets(imageSession: ImageSessionDetail | undefined): ImageSessionAsset[] {
   return imageSession?.assets.filter((asset) => asset.kind === "reference_upload") ?? [];
-}
-
-function generationTaskQueueText(task: ImageSessionGenerationTask, t: ReturnType<typeof useI18n>["t"]) {
-  const retryMetadata = imageGenerationRetryMetadata(task);
-  if (isImageSessionGenerationTaskAutoRetrying(task) && retryMetadata?.auto_retry_attempt && retryMetadata.max_attempts) {
-    return t("chat.autoRetryText", {
-      attempt: Math.min(retryMetadata.auto_retry_attempt + 1, retryMetadata.max_attempts),
-      max: retryMetadata.max_attempts,
-      reason: retryMetadata.last_failure_reason ?? t("chat.autoRetryGenericReason"),
-    });
-  }
-  if (task.status === "queued") {
-    const ahead = task.queued_ahead_count ?? 0;
-    const position = task.queue_position
-      ? t("chat.queuePosition", { position: task.queue_position })
-      : t("chat.queueWaiting");
-    return t("chat.queueText", {
-      ahead,
-      position,
-      active: task.queue_active_count,
-      max: task.queue_max_concurrent_tasks,
-    });
-  }
-  if (task.status === "running") {
-    const providerStatus = task.provider_response_status
-      ? t("chat.providerStatus", { status: task.provider_response_status })
-      : "";
-    return t("chat.runningText", {
-      providerStatus,
-      progress: task.progress_updated_at ? formatDateTime(task.progress_updated_at) : t("chat.progressJustStarted"),
-      running: task.queue_running_count,
-      queued: task.queue_queued_count,
-    });
-  }
-  return "";
-}
-
-function imageRoundSizeLabel(round: ImageSessionRound, t: ReturnType<typeof useI18n>["t"]) {
-  if (round.actual_size && round.actual_size !== round.size) {
-    return t("gallery.sizeActualRequested", { actual: round.actual_size, requested: round.size });
-  }
-  return round.actual_size ?? round.size;
-}
-
-function placeholderStatusLabel(candidate: ImageHistoryPlaceholderCandidate, t: ReturnType<typeof useI18n>["t"]) {
-  const retryMetadata = imageGenerationRetryMetadata(candidate.task);
-  if (
-    isImageSessionGenerationTaskAutoRetrying(candidate.task) &&
-    retryMetadata?.auto_retry_attempt &&
-    retryMetadata.max_attempts
-  ) {
-    return t("chat.statusAutoRetry", {
-      attempt: Math.min(retryMetadata.auto_retry_attempt + 1, retryMetadata.max_attempts),
-      max: retryMetadata.max_attempts,
-    });
-  }
-  if (candidate.status === "queued") {
-    return candidate.task.queue_position
-      ? t("chat.statusQueuedPosition", { position: candidate.task.queue_position })
-      : t("chat.statusQueued");
-  }
-  if (candidate.status === "running") {
-    return t("chat.statusRunning", { index: candidate.candidate_index, count: candidate.candidate_count });
-  }
-  if (candidate.status === "completed") {
-    return t("chat.statusCompletedRefreshing");
-  }
-  if (candidate.status === "failed") {
-    return t("chat.statusFailed");
-  }
-  if (candidate.status === "cancelled") {
-    return t("chat.statusCancelled");
-  }
-  return t("chat.statusCompleted");
-}
-
-function placeholderStatusClass(candidate: ImageHistoryPlaceholderCandidate) {
-  if (candidate.status === "failed") {
-    return "border-red-200 bg-red-50 text-red-700 dark:border-red-400/40 dark:bg-red-500/15 dark:text-red-100";
-  }
-  if (candidate.status === "queued") {
-    return "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-300/40 dark:bg-amber-500/15 dark:text-amber-100";
-  }
-  if (candidate.status === "completed") {
-    return "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-300/40 dark:bg-emerald-500/15 dark:text-emerald-100";
-  }
-  if (candidate.status === "cancelled") {
-    return "border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-600 dark:bg-slate-800/80 dark:text-slate-200";
-  }
-  return "border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-violet-400/50 dark:bg-violet-500/15 dark:text-violet-100";
 }
 
 type PendingDeleteAction =
@@ -1035,73 +904,17 @@ export function ImageChatPage() {
             </div>
           </div>
 
-          <div className="flex gap-3 overflow-x-auto p-3 lg:min-h-0 lg:flex-1 lg:flex-col lg:gap-2 lg:overflow-x-visible lg:overflow-y-auto">
-            {sessionsQuery.isLoading ? (
-              <div className="flex justify-center py-12 text-slate-400">
-                <Loader2 size={18} className="animate-spin" />
-              </div>
-            ) : sessionItems.length ? (
-              sessionItems.map((item) => {
-                const active = item.id === selectedSessionId;
-                const deleting = deleteSessionMutation.isPending && deleteSessionMutation.variables === item.id;
-                return (
-                  <div
-                    key={item.id}
-                    className={`group relative w-64 shrink-0 overflow-hidden rounded-2xl border transition-all lg:w-auto ${
-                      active
-                        ? "border-indigo-300 bg-indigo-50 shadow-sm shadow-indigo-100 ring-1 ring-indigo-200/80 dark:border-violet-500/80 dark:bg-violet-500/14 dark:shadow-violet-950/30 dark:ring-violet-400/45"
-                        : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700/75 dark:bg-[#151f33] dark:hover:border-violet-500/45 dark:hover:bg-[#1a2740]"
-                    }`}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => handleSelectSession(item.id)}
-                      className="flex w-full items-center gap-3 p-2.5 pr-10 text-left"
-                    >
-                      <div className="relative flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-slate-100 text-slate-400 ring-1 ring-slate-200 dark:bg-[#0a1020] dark:text-slate-400 dark:ring-slate-600/80">
-                        {item.latest_generated_asset ? (
-                          <img
-                            src={api.toApiUrl(item.latest_generated_asset.thumbnail_url)}
-                            alt={item.title}
-                            loading="lazy"
-                            decoding="async"
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          <MessagesSquare size={18} />
-                        )}
-                        {active ? <div className="absolute inset-0 ring-2 ring-inset ring-indigo-500/60 dark:ring-violet-400/80" /> : null}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className={`truncate text-sm font-semibold ${active ? "text-indigo-950 dark:text-white" : "text-slate-900 dark:text-slate-100"}`}>
-                          {item.title}
-                        </div>
-                        <div className="mt-1 flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-300">
-                          <History size={11} />
-                          <span>{t("chat.roundCount", { count: item.rounds_count })}</span>
-                        </div>
-                        <div className="mt-0.5 truncate text-[11px] text-slate-400 dark:text-slate-500">{formatDateTime(item.updated_at)}</div>
-                      </div>
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={t("chat.deleteSession")}
-                      onClick={() => handleDeleteSession(item.id)}
-                      disabled={deleting || !deletionEnabled}
-                      title={deletionEnabled ? t("chat.deleteSession") : t("chat.deleteDisabled")}
-                      className="absolute right-2 top-2 inline-flex h-7 w-7 items-center justify-center rounded-lg bg-white/95 text-slate-400 opacity-100 shadow-sm ring-1 ring-slate-200 transition-colors hover:text-red-600 disabled:opacity-60 dark:bg-slate-950/88 dark:text-slate-400 dark:ring-slate-700 dark:hover:text-red-300 md:opacity-0 md:group-hover:opacity-100"
-                    >
-                      {deleting ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
-                    </button>
-                  </div>
-                );
-              })
-            ) : (
-              <div className="rounded-2xl border border-dashed border-slate-200 p-5 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-                {t("chat.noSessions")}
-              </div>
-            )}
-          </div>
+          <ImageChatSessionList
+            items={sessionItems}
+            isLoading={sessionsQuery.isLoading}
+            selectedSessionId={selectedSessionId}
+            deletingSessionId={deleteSessionMutation.isPending ? (deleteSessionMutation.variables ?? null) : null}
+            deletionEnabled={deletionEnabled}
+            variant="desktop"
+            onSelectSession={handleSelectSession}
+            onDeleteSession={handleDeleteSession}
+            t={t}
+          />
         </aside>
 
         <section className="flex min-w-0 flex-col bg-slate-100 dark:bg-[#0b1220] lg:min-h-0 lg:flex-1 lg:overflow-hidden">
@@ -1230,103 +1043,19 @@ export function ImageChatPage() {
               </div>
             </div>
 
-            <div className="relative flex min-h-[50dvh] flex-1 items-center justify-center overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm max-h-[58dvh] dark:border-slate-600/80 dark:bg-[#121b2d] dark:shadow-[0_0_0_1px_rgba(139,92,246,0.10),0_24px_80px_rgba(0,0,0,0.35)] lg:min-h-[360px] lg:max-h-none">
-              <div className="absolute inset-0 bg-[radial-gradient(#cbd5e1_1px,transparent_1px)] [background-size:20px_20px] dark:bg-[radial-gradient(rgba(148,163,184,0.26)_1px,transparent_1px)]" />
-              <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between gap-3 px-5 py-4">
-                {selectedRound ? (
-                  <div className="hidden min-w-0 max-w-[calc(100%-5.5rem)] truncate rounded-full bg-white/90 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm ring-1 ring-slate-200 backdrop-blur dark:bg-slate-950/82 dark:text-slate-200 dark:ring-slate-700 lg:block">
-                    {formatDateTime(selectedRound.created_at)} · {selectedRound.model_name}
-                  </div>
-                ) : selectedPlaceholder ? (
-                  <div className="hidden min-w-0 max-w-[calc(100%-5.5rem)] truncate rounded-full bg-white/90 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm ring-1 ring-slate-200 backdrop-blur dark:bg-slate-950/82 dark:text-slate-200 dark:ring-slate-700 lg:block">
-                    {placeholderStatusLabel(selectedPlaceholder, t)} · {formatImageSizeValue(selectedPlaceholder.size)}
-                  </div>
-                ) : (
-                  <div className="hidden rounded-full bg-white/90 px-3 py-1.5 text-xs font-medium text-slate-500 shadow-sm ring-1 ring-slate-200 backdrop-blur dark:border dark:border-violet-400/35 dark:bg-slate-950/82 dark:text-violet-100 dark:ring-violet-400/20 lg:block">
-                    {t("chat.waitingFirstResult")}
-                  </div>
-                )}
-                <div className="hidden shrink-0 items-center gap-2 lg:flex">
-                  {selectedRound ? (
-                    <>
-                      <a
-                        href={api.toApiUrl(selectedRound.generated_asset.download_url)}
-                        target="_blank"
-                        rel="noreferrer"
-                        title={t("chat.downloadCurrent")}
-                        aria-label={t("chat.downloadCurrent")}
-                        className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white/92 text-slate-700 shadow-sm backdrop-blur transition-colors active:scale-[0.98] hover:border-indigo-200 hover:text-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-slate-700 dark:bg-slate-950/82 dark:text-slate-200 dark:hover:border-violet-400/60 dark:hover:text-violet-100 lg:hidden"
-                      >
-                        <Download size={16} />
-                      </a>
-                      <button
-                        type="button"
-                        onClick={handleSaveSelectedToGallery}
-                        disabled={saveGalleryMutation.isPending}
-                        title={t("chat.saveSelectedGallery")}
-                        aria-label={t("chat.saveSelectedGallery")}
-                        className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-sm shadow-indigo-500/20 ring-1 ring-indigo-500 transition-colors active:scale-[0.98] hover:bg-indigo-700 disabled:opacity-60 dark:bg-gradient-to-r dark:from-indigo-500 dark:to-violet-500 dark:shadow-violet-900/35 dark:ring-violet-300/35 lg:hidden"
-                      >
-                        {saveGalleryMutation.isPending ? (
-                          <Loader2 size={16} className="animate-spin" />
-                        ) : (
-                          <GalleryHorizontalEnd size={16} />
-                        )}
-                      </button>
-                    </>
-                  ) : null}
-                  {branchBaseRound ? (
-                    <div className="hidden h-8 items-center gap-1.5 rounded-full bg-indigo-600 px-3 text-xs font-semibold text-white shadow-sm shadow-indigo-500/20 dark:bg-violet-500/20 dark:text-violet-100 dark:ring-1 dark:ring-violet-400/40 sm:inline-flex">
-                      <Layers3 size={13} />
-                      {t("chat.baseSelected")}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-
-              {selectedRound ? (
-                <div className="absolute inset-0 z-0 flex min-h-0 w-full items-center justify-center px-2 py-2 sm:px-3 sm:py-3 lg:pt-14">
-                  <button
-                    type="button"
-                    onClick={() => setPreviewRound(selectedRound)}
-                    className="flex h-full w-full items-center justify-center rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:focus-visible:ring-violet-400"
-                    aria-label={t("chat.previewCurrent")}
-                    title={t("chat.previewCurrent")}
-                  >
-                    <img
-                      src={api.toApiUrl(selectedRound.generated_asset.preview_url)}
-                      alt={t("chat.currentResultAlt")}
-                      decoding="async"
-                      className="max-h-full max-w-full object-contain drop-shadow-2xl"
-                    />
-                  </button>
-                </div>
-              ) : selectedPlaceholder ? (
-                <GenerationCanvasPlaceholder
-                  candidate={selectedPlaceholder}
-                  retrying={
-                    retryGenerationTaskMutation.isPending &&
-                    retryGenerationTaskMutation.variables?.taskId === selectedPlaceholder.task_id
-                  }
-                  cancelling={
-                    cancelGenerationTaskMutation.isPending &&
-                    cancelGenerationTaskMutation.variables?.taskId === selectedPlaceholder.task_id
-                  }
-                  onRetry={handleRetryGenerationTask}
-                  onCancel={handleCancelGenerationTask}
-                  t={t}
-                />
-              ) : (
-                <div className="relative z-0 flex flex-col items-center gap-4 text-center text-slate-400 dark:text-slate-100">
-                  <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-white shadow-sm ring-1 ring-slate-200 dark:bg-slate-950/86 dark:text-violet-200 dark:ring-violet-400/35">
-                    <Sparkles size={28} />
-                  </div>
-                  <div>
-                    <div className="text-sm font-semibold text-slate-600 dark:text-white">{t("chat.noResult")}</div>
-                  </div>
-                </div>
-              )}
-            </div>
+            <ImageChatMainStage
+              selectedRound={selectedRound}
+              selectedPlaceholder={selectedPlaceholder}
+              branchBaseRound={branchBaseRound}
+              saveGalleryPending={saveGalleryMutation.isPending}
+              retryingTaskId={retryGenerationTaskMutation.isPending ? (retryGenerationTaskMutation.variables?.taskId ?? null) : null}
+              cancellingTaskId={cancelGenerationTaskMutation.isPending ? (cancelGenerationTaskMutation.variables?.taskId ?? null) : null}
+              onPreviewRound={setPreviewRound}
+              onSaveSelectedToGallery={handleSaveSelectedToGallery}
+              onRetryGenerationTask={handleRetryGenerationTask}
+              onCancelGenerationTask={handleCancelGenerationTask}
+              t={t}
+            />
             {selectedRound?.provider_notes.length ? (
               <div className="mt-2 flex flex-wrap gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-400/35 dark:bg-amber-500/10 dark:text-amber-200">
                 {selectedRound.provider_notes.map((note) => (
@@ -1346,61 +1075,28 @@ export function ImageChatPage() {
             ) : null}
           </div>
 
-          <div
-            className="relative flex h-44 shrink-0 flex-col border-t border-slate-200 bg-white/95 px-3 py-2.5 shadow-[0_-8px_24px_rgba(15,23,42,0.04)] dark:border-slate-700/80 dark:bg-[#0f1726] dark:shadow-[0_-18px_40px_rgba(0,0,0,0.24)] lg:h-[var(--image-chat-history-panel-height)]"
+          <ImageChatHistoryPanel
+            historyBranches={historyBranches}
+            selectedGeneratedAssetId={selectedGeneratedAssetId}
+            selectedTaskPlaceholderId={selectedTaskPlaceholderId}
+            branchBaseAssetId={branchBaseAssetId}
+            branchBaseSelected={Boolean(branchBaseRound)}
             style={historyPanelStyle}
-          >
-            <button
-              type="button"
-              aria-label={t("chat.resizeHistory")}
-              title={t("chat.resizeHistoryTitle")}
-              onPointerDown={(event) => handlePanelResizeStart("history", event)}
-              className="absolute inset-x-0 -top-1 z-20 hidden h-3 cursor-row-resize items-center justify-center transition-colors hover:bg-indigo-50/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:hover:bg-violet-500/15 lg:flex"
-            >
-              <span className="h-1 w-12 rounded-full bg-slate-300 dark:bg-slate-600" />
-            </button>
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <div>
-                <div className="text-sm font-semibold text-slate-950 dark:text-white">{t("chat.history")}</div>
-              </div>
-              {branchBaseRound ? (
-                <div className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs font-semibold text-indigo-700 dark:border-violet-400/40 dark:bg-violet-500/15 dark:text-violet-100">
-                  {t("chat.clickHistoryBase")}
-                </div>
-              ) : null}
-            </div>
-
-            {historyBranches.length ? (
-              <div className="image-chat-history-scroll flex min-h-0 flex-1 snap-x snap-mandatory gap-3 overflow-x-auto pb-1" onWheel={handleHistoryWheelScroll}>
-                {historyBranches.map((branch) => (
-                  <HistoryBranchStrip
-                    key={branch.id}
-                    branch={branch}
-                    selectedGeneratedAssetId={selectedGeneratedAssetId}
-                    selectedTaskPlaceholderId={selectedTaskPlaceholderId}
-                    branchBaseAssetId={branchBaseAssetId}
-                    onSelectRound={(assetId) => {
-                      setSelectedGeneratedAssetId(assetId);
-                      setBranchBaseAssetId(assetId);
-                      setSelectedTaskPlaceholderId(null);
-                      setSuccessMessage("");
-                      setErrorMessage("");
-                    }}
-                    onSelectPlaceholder={(placeholderId) => {
-                      setSelectedTaskPlaceholderId(placeholderId);
-                      setSelectedGeneratedAssetId(null);
-                    }}
-                    onPreviewPrompt={setPromptPreview}
-                    t={t}
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="flex min-h-0 flex-1 items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-sm text-slate-400 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-500">
-                {t("chat.resultsAppearHere")}
-              </div>
-            )}
-          </div>
+            onResizeStart={(event) => handlePanelResizeStart("history", event)}
+            onSelectRound={(assetId) => {
+              setSelectedGeneratedAssetId(assetId);
+              setBranchBaseAssetId(assetId);
+              setSelectedTaskPlaceholderId(null);
+              setSuccessMessage("");
+              setErrorMessage("");
+            }}
+            onSelectPlaceholder={(placeholderId) => {
+              setSelectedTaskPlaceholderId(placeholderId);
+              setSelectedGeneratedAssetId(null);
+            }}
+            onPreviewPrompt={setPromptPreview}
+            t={t}
+          />
         </section>
 
         <aside
@@ -1606,73 +1302,17 @@ export function ImageChatPage() {
                 </button>
               </div>
             </div>
-            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
-              {sessionsQuery.isLoading ? (
-                <div className="flex justify-center py-12 text-slate-400">
-                  <Loader2 size={18} className="animate-spin" />
-                </div>
-              ) : sessionItems.length ? (
-                sessionItems.map((item) => {
-                  const active = item.id === selectedSessionId;
-                  const deleting = deleteSessionMutation.isPending && deleteSessionMutation.variables === item.id;
-                  return (
-                    <div
-                      key={item.id}
-                      className={`group relative overflow-hidden rounded-2xl border transition-all ${
-                        active
-                          ? "border-indigo-300 bg-indigo-50 shadow-sm shadow-indigo-100 ring-1 ring-indigo-200/80 dark:border-violet-500/80 dark:bg-violet-500/14 dark:shadow-violet-950/30 dark:ring-violet-400/45"
-                          : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700/75 dark:bg-[#151f33] dark:hover:border-violet-500/45 dark:hover:bg-[#1a2740]"
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => handleSelectSession(item.id)}
-                        className="flex min-h-20 w-full items-center gap-3 p-2.5 pr-12 text-left active:scale-[0.99] focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:focus-visible:ring-violet-400"
-                      >
-                        <div className="relative flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-slate-100 text-slate-400 ring-1 ring-slate-200 dark:bg-[#0a1020] dark:text-slate-400 dark:ring-slate-600/80">
-                          {item.latest_generated_asset ? (
-                            <img
-                              src={api.toApiUrl(item.latest_generated_asset.thumbnail_url)}
-                              alt={item.title}
-                              loading="lazy"
-                              decoding="async"
-                              className="h-full w-full object-cover"
-                            />
-                          ) : (
-                            <MessagesSquare size={18} />
-                          )}
-                          {active ? <div className="absolute inset-0 ring-2 ring-inset ring-indigo-500/60 dark:ring-violet-400/80" /> : null}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className={`truncate text-sm font-semibold ${active ? "text-indigo-950 dark:text-white" : "text-slate-900 dark:text-slate-100"}`}>
-                            {item.title}
-                          </div>
-                          <div className="mt-1 flex items-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-300">
-                            <History size={11} />
-                            <span>{t("chat.roundCount", { count: item.rounds_count })}</span>
-                          </div>
-                          <div className="mt-0.5 truncate text-[11px] text-slate-400 dark:text-slate-500">{formatDateTime(item.updated_at)}</div>
-                        </div>
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={t("chat.deleteSession")}
-                        onClick={() => handleDeleteSession(item.id)}
-                        disabled={deleting || !deletionEnabled}
-                        title={deletionEnabled ? t("chat.deleteSession") : t("chat.deleteDisabled")}
-                        className="absolute right-2 top-2 inline-flex h-11 w-11 items-center justify-center rounded-xl bg-white/95 text-slate-400 shadow-sm ring-1 ring-slate-200 transition-colors active:scale-[0.98] hover:text-red-600 disabled:opacity-60 dark:bg-slate-950/88 dark:text-slate-400 dark:ring-slate-700 dark:hover:text-red-300"
-                      >
-                        {deleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={15} />}
-                      </button>
-                    </div>
-                  );
-                })
-              ) : (
-                <div className="rounded-2xl border border-dashed border-slate-200 p-5 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-                  {t("chat.noSessions")}
-                </div>
-              )}
-            </div>
+            <ImageChatSessionList
+              items={sessionItems}
+              isLoading={sessionsQuery.isLoading}
+              selectedSessionId={selectedSessionId}
+              deletingSessionId={deleteSessionMutation.isPending ? (deleteSessionMutation.variables ?? null) : null}
+              deletionEnabled={deletionEnabled}
+              variant="mobile"
+              onSelectSession={handleSelectSession}
+              onDeleteSession={handleDeleteSession}
+              t={t}
+            />
           </Drawer.Content>
         </Drawer.Portal>
       </Drawer.Root>
@@ -1886,493 +1526,4 @@ export function ImageChatPage() {
     </div>
   );
 
-}
-
-function GenerationCanvasPlaceholder({
-  candidate,
-  retrying,
-  cancelling,
-  onRetry,
-  onCancel,
-  t,
-}: {
-  candidate: ImageHistoryPlaceholderCandidate;
-  retrying: boolean;
-  cancelling: boolean;
-  onRetry: (task: ImageSessionGenerationTask) => void;
-  onCancel: (task: ImageSessionGenerationTask) => void;
-  t: ReturnType<typeof useI18n>["t"];
-}) {
-  const active = candidate.status === "queued" || candidate.status === "running";
-  const failed = candidate.status === "failed";
-  const cancelled = candidate.status === "cancelled";
-  const retryable = isImageSessionGenerationTaskRetryable(candidate.task);
-  const queueText = generationTaskQueueText(candidate.task, t);
-  const retryMetadata = imageGenerationRetryMetadata(candidate.task);
-  const nonRetryableReason = candidate.failure_reason ?? retryMetadata?.last_failure_reason;
-
-  return (
-    <div className="relative z-0 flex h-full min-h-0 w-full items-center justify-center px-6 pb-6 pt-16">
-      <div className="flex max-w-md flex-col items-center text-center">
-        <div
-          className={`relative flex h-24 w-24 items-center justify-center rounded-3xl border shadow-sm ${
-            failed
-              ? "border-red-200 bg-red-50 text-red-600 dark:border-red-400/35 dark:bg-red-500/10 dark:text-red-200"
-              : "border-indigo-100 bg-indigo-50 text-indigo-700 dark:border-violet-400/35 dark:bg-violet-500/14 dark:text-violet-100"
-          }`}
-        >
-          {active ? <div className="absolute inset-2 rounded-3xl bg-indigo-200/70 opacity-70 blur-xl animate-pulse" /> : null}
-          {active ? <Loader2 size={30} className="relative animate-spin" /> : <Sparkles size={30} className="relative" />}
-        </div>
-        <div className="mt-4 text-sm font-semibold text-slate-900">{placeholderStatusLabel(candidate, t)}</div>
-        <div className="mt-1 text-xs text-slate-500">
-          {t("chat.candidate", { index: candidate.candidate_index, count: candidate.candidate_count })} · {formatImageSizeValue(candidate.size)}
-        </div>
-        {queueText ? <div className="mt-3 max-w-sm text-xs leading-5 text-slate-500">{queueText}</div> : null}
-        <div className="mt-4 line-clamp-3 max-w-sm rounded-xl border border-slate-200/80 bg-white/80 px-3 py-2 text-xs font-medium leading-5 text-[#334155] shadow-sm dark:border-slate-700/70 dark:bg-slate-950/75 dark:text-[#e2e8f0]">
-          {candidate.prompt}
-        </div>
-        {isImageSessionGenerationTaskCancelable(candidate.task) ? (
-          <button
-            type="button"
-            onClick={() => onCancel(candidate.task)}
-            disabled={cancelling}
-            className="mt-5 inline-flex items-center justify-center rounded-xl border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-600 shadow-sm transition-colors hover:bg-red-50 disabled:opacity-60 dark:border-red-400/40 dark:bg-[#0b1220] dark:text-red-200 dark:hover:bg-red-500/12"
-          >
-            {cancelling ? <Loader2 size={15} className="mr-2 animate-spin" /> : <OctagonX size={15} className="mr-2" />}
-            {t("chat.cancelGeneration")}
-          </button>
-        ) : null}
-        {failed && retryable ? (
-          <button
-            type="button"
-            onClick={() => onRetry(candidate.task)}
-            disabled={retrying}
-            className="mt-5 inline-flex items-center justify-center rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-red-500/20 transition-colors hover:bg-red-500 disabled:opacity-60"
-          >
-            {retrying ? <Loader2 size={15} className="mr-2 animate-spin" /> : <RotateCcw size={15} className="mr-2" />}
-            {t("chat.retryGeneration")}
-          </button>
-        ) : failed ? (
-          <div className="mt-5 max-w-sm rounded-xl border border-red-200 bg-white px-3 py-2 text-xs font-medium leading-5 text-red-500 dark:border-red-400/40 dark:bg-[#0b1220] dark:text-red-200">
-            <div>{t("chat.notRetryable")}</div>
-            {nonRetryableReason ? <div className="mt-1 text-red-500/80 dark:text-red-100/80">{nonRetryableReason}</div> : null}
-          </div>
-        ) : cancelled ? (
-          <div className="mt-5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-500">
-            {t("chat.taskCancelled")}
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function HistoryBranchStrip({
-  branch,
-  selectedGeneratedAssetId,
-  selectedTaskPlaceholderId,
-  branchBaseAssetId,
-  onSelectRound,
-  onSelectPlaceholder,
-  onPreviewPrompt,
-  t,
-}: {
-  branch: ImageHistoryBranch;
-  selectedGeneratedAssetId: string | null;
-  selectedTaskPlaceholderId: string | null;
-  branchBaseAssetId: string | null;
-  onSelectRound: (assetId: string) => void;
-  onSelectPlaceholder: (placeholderId: string) => void;
-  onPreviewPrompt: (preview: PromptPreview) => void;
-  t: ReturnType<typeof useI18n>["t"];
-}) {
-  const depthOffset = Math.min(branch.depth, 4) * 18;
-  const branchLabel = branch.base_asset_id ? t("chat.branch", { depth: branch.depth }) : t("chat.firstRound");
-
-  return (
-    <div
-      className="relative flex w-max shrink-0 snap-start flex-col gap-1.5 rounded-2xl lg:ml-[var(--branch-depth-offset)] lg:h-full lg:flex-row lg:gap-2 lg:border lg:border-slate-200 lg:bg-slate-50/80 lg:p-2 lg:dark:border-slate-700/80 lg:dark:bg-[#151f33]"
-      style={{ "--branch-depth-offset": `${depthOffset}px` } as CSSProperties}
-    >
-      {branch.depth > 0 ? (
-        <div className="pointer-events-none absolute -left-3 top-1/2 hidden h-px w-3 bg-slate-300 dark:bg-slate-700 lg:block" />
-      ) : null}
-      <div className="flex w-max items-center gap-1.5 px-0.5 text-xs text-slate-500 dark:text-slate-400 lg:hidden">
-        <div className="flex min-w-0 items-center gap-1.5 rounded-full border border-slate-200 bg-white/86 px-2 py-1 shadow-sm dark:border-slate-700 dark:bg-[#0b1220]/88">
-          <span className="inline-flex h-6 shrink-0 items-center gap-1 rounded-full border border-slate-200 bg-white px-2 font-semibold text-slate-700 shadow-sm dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-100">
-            {branch.depth > 0 ? <Layers3 size={12} /> : <History size={12} />}
-            {branchLabel}
-          </span>
-          <span>{t("chat.imageCount", { count: branch.candidates.length })}</span>
-        </div>
-      </div>
-      <div className="hidden w-28 shrink-0 flex-col justify-between rounded-xl bg-white p-2 text-xs text-slate-500 ring-1 ring-slate-200 dark:bg-[#0b1220] dark:text-slate-400 dark:ring-slate-600/80 lg:flex">
-        <div>
-          <div className="flex items-center gap-1.5 font-semibold text-slate-800 dark:text-slate-100">
-            {branch.depth > 0 ? <Layers3 size={12} /> : <History size={12} />}
-            {branchLabel}
-          </div>
-          <div className="mt-1">{t("chat.imageCount", { count: branch.candidates.length })}</div>
-        </div>
-        <button
-          type="button"
-          onClick={() =>
-            onPreviewPrompt({
-              title: branch.base_asset_id ? t("chat.branchPrompt") : t("chat.firstPrompt"),
-              text: branch.prompt,
-              meta: `${t("chat.imageCount", { count: branch.candidates.length })} · ${formatDateTime(branch.created_at)}`,
-            })
-          }
-          className="hidden rounded-md text-left text-[11px] leading-4 text-slate-400 transition-colors hover:text-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:text-slate-500 dark:hover:text-violet-200 lg:line-clamp-3"
-        >
-          {branch.prompt}
-        </button>
-      </div>
-      <div className="flex w-max shrink-0 gap-2 lg:min-h-0 lg:flex-1">
-        {branch.candidates.map((candidate) => (
-          <HistoryCandidateCard
-            key={candidate.id}
-            candidate={candidate}
-            selectedGeneratedAssetId={selectedGeneratedAssetId}
-            selectedTaskPlaceholderId={selectedTaskPlaceholderId}
-            branchBaseAssetId={branchBaseAssetId}
-            onSelectRound={onSelectRound}
-            onSelectPlaceholder={onSelectPlaceholder}
-            t={t}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function HistoryCandidateCard({
-  candidate,
-  selectedGeneratedAssetId,
-  selectedTaskPlaceholderId,
-  branchBaseAssetId,
-  onSelectRound,
-  onSelectPlaceholder,
-  t,
-}: {
-  candidate: ImageHistoryCandidate;
-  selectedGeneratedAssetId: string | null;
-  selectedTaskPlaceholderId: string | null;
-  branchBaseAssetId: string | null;
-  onSelectRound: (assetId: string) => void;
-  onSelectPlaceholder: (placeholderId: string) => void;
-  t: ReturnType<typeof useI18n>["t"];
-}) {
-  if (candidate.kind === "placeholder") {
-    const active = candidate.id === selectedTaskPlaceholderId;
-    const running = candidate.status === "queued" || candidate.status === "running";
-    return (
-      <div
-        className={`group/card relative h-20 w-20 shrink-0 overflow-hidden rounded-xl border bg-white transition-all dark:bg-[#0b1220] lg:aspect-square lg:h-full lg:w-auto lg:min-w-[7rem] lg:rounded-2xl ${
-          active
-            ? "border-indigo-400 ring-2 ring-indigo-200 dark:border-violet-400 dark:ring-violet-400/45"
-            : "border-slate-200 hover:border-slate-300 dark:border-slate-700 dark:hover:border-violet-400/45"
-        }`}
-      >
-        <button
-          type="button"
-          onClick={() => onSelectPlaceholder(candidate.id)}
-          className="flex h-full w-full flex-col justify-between p-2 text-left"
-        >
-          <div className="flex items-center justify-between gap-2">
-            <span className={`rounded-full border px-1.5 py-0.5 text-[10px] font-semibold ${placeholderStatusClass(candidate)}`}>
-              {candidate.candidate_index}/{candidate.candidate_count}
-            </span>
-            {active ? <Check size={13} className="shrink-0 text-indigo-600" /> : null}
-          </div>
-          <div className="flex flex-1 items-center justify-center">
-            <div className="relative flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-50 text-indigo-600 ring-1 ring-slate-200 dark:bg-violet-500/12 dark:text-violet-200 dark:ring-violet-400/30 lg:h-12 lg:w-12">
-              {running ? <Loader2 size={19} className="animate-spin" /> : <Sparkles size={19} />}
-            </div>
-          </div>
-          <div>
-            <div className="truncate text-[11px] font-semibold text-slate-700 dark:text-slate-100">{placeholderStatusLabel(candidate, t)}</div>
-            <div className="mt-0.5 hidden text-[10px] leading-3 text-slate-400 dark:text-slate-500 lg:line-clamp-2">{candidate.prompt}</div>
-          </div>
-        </button>
-      </div>
-    );
-  }
-
-  const round = candidate.round;
-  const active = round.generated_asset.id === selectedGeneratedAssetId;
-  const asBase = round.generated_asset.id === branchBaseAssetId;
-  return (
-    <div
-      className={`group/card relative h-20 w-20 shrink-0 overflow-hidden rounded-xl border bg-white transition-all dark:bg-[#0b1220] lg:aspect-square lg:h-full lg:w-auto lg:min-w-[7rem] lg:rounded-2xl ${
-        active
-          ? "border-indigo-400 ring-2 ring-indigo-200 dark:border-violet-400 dark:ring-violet-400/45"
-          : "border-slate-200 hover:border-slate-300 dark:border-slate-700 dark:hover:border-violet-400/45"
-      } ${asBase ? "shadow-md shadow-indigo-200/70 dark:shadow-violet-950/40" : "shadow-sm shadow-slate-200/60 dark:shadow-slate-950/30"}`}
-    >
-      <button type="button" onClick={() => onSelectRound(round.generated_asset.id)} className="block h-full w-full text-left">
-        <img
-          src={api.toApiUrl(round.generated_asset.thumbnail_url)}
-          alt={round.prompt}
-          loading="lazy"
-          decoding="async"
-          className="h-full w-full object-cover"
-        />
-        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/85 via-slate-950/35 to-transparent p-1.5 pt-8 text-white">
-          <div className="flex items-center justify-between gap-2 text-[11px] font-medium">
-            <span className="min-w-0 truncate">
-              {round.candidate_count > 1 ? `${round.candidate_index}/${round.candidate_count}` : imageRoundSizeLabel(round, t)}
-            </span>
-            {active ? <Check size={13} className="shrink-0" /> : null}
-          </div>
-        </div>
-      </button>
-      {asBase ? (
-        <div className="absolute left-1.5 top-1.5 max-w-[calc(100%-2.75rem)] truncate rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow-sm dark:bg-violet-500/85 dark:ring-1 dark:ring-violet-200/30">
-          {t("chat.baseImage")}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function SessionReferencePanel({
-  assets,
-  selectedAssetIds,
-  maxSelectedCount,
-  uploadBusy,
-  deletingAssetId,
-  disabled,
-  onFiles,
-  onToggle,
-  onDelete,
-  t,
-}: {
-  assets: ImageSessionAsset[];
-  selectedAssetIds: string[];
-  maxSelectedCount: number;
-  uploadBusy: boolean;
-  deletingAssetId: string | null;
-  disabled: boolean;
-  onFiles: (files: File[]) => void;
-  onToggle: (assetId: string, checked: boolean) => void;
-  onDelete: (assetId: string) => void;
-  t: ReturnType<typeof useI18n>["t"];
-}) {
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700/80 dark:bg-[#151f33]">
-      <div className="mb-2 text-sm font-semibold text-slate-950 dark:text-white">{t("chat.sessionReferences")}</div>
-      <ImageDropZone
-        ariaLabel={t("chat.uploadSessionReference")}
-        multiple
-        disabled={disabled || uploadBusy}
-        className="flex cursor-pointer items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-600 transition-colors hover:border-indigo-300 hover:bg-indigo-50/40 dark:border-slate-600/80 dark:bg-[#0b1220] dark:text-slate-300 dark:hover:border-violet-400/55 dark:hover:bg-violet-500/10"
-        onFiles={onFiles}
-      >
-        {({ isDragging }) => (
-          <>
-            {uploadBusy ? <Loader2 size={16} className="mr-2 animate-spin" /> : <ImagePlus size={16} className="mr-2" />}
-            {isDragging ? t("chat.dropUpload") : t("chat.uploadReference")}
-          </>
-        )}
-      </ImageDropZone>
-      <div className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">
-        {t("chat.selectedReferences", { selected: selectedAssetIds.length, max: maxSelectedCount })}
-      </div>
-      {assets.length ? (
-        <div className="mt-3 grid grid-cols-4 gap-2">
-          {assets.map((asset) => {
-            const deleting = deletingAssetId === asset.id;
-            const selected = selectedAssetIds.includes(asset.id);
-            const selectionLimitReached = !selected && selectedAssetIds.length >= maxSelectedCount;
-            return (
-              <div
-                key={asset.id}
-                className={`group relative overflow-hidden rounded-xl border bg-slate-50 dark:bg-[#0b1220] ${
-                  selected
-                    ? "border-indigo-500 ring-2 ring-indigo-100 dark:border-violet-400 dark:ring-violet-400/45"
-                    : "border-slate-200 dark:border-slate-700"
-                }`}
-              >
-                <a href={api.toApiUrl(asset.preview_url)} target="_blank" rel="noreferrer" title={asset.original_filename}>
-                  <img
-                    src={api.toApiUrl(asset.thumbnail_url)}
-                    alt={asset.original_filename}
-                    loading="lazy"
-                    decoding="async"
-                    className="h-20 w-full object-cover"
-                  />
-                </a>
-                <label className="absolute bottom-1 left-1 inline-flex h-6 w-6 items-center justify-center rounded-md bg-white/95 text-slate-700 shadow-sm ring-1 ring-slate-200 dark:bg-slate-950/90 dark:text-violet-100 dark:ring-violet-400/35">
-                  <input
-                    type="checkbox"
-                    checked={selected}
-                    disabled={selectionLimitReached}
-                    onChange={(event) => onToggle(asset.id, event.target.checked)}
-                    aria-label={t("chat.useReference")}
-                    className="h-3 w-3 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                  />
-                  <span className="sr-only">{t("chat.useReference")}</span>
-                </label>
-                <button
-                  type="button"
-                  aria-label={t("chat.deleteSessionReference")}
-                  onClick={() => onDelete(asset.id)}
-                  disabled={deleting}
-                  className="absolute right-1 top-1 inline-flex h-7 w-7 items-center justify-center rounded-lg bg-white/90 text-slate-500 opacity-100 shadow-sm ring-1 ring-slate-200 transition-colors hover:text-red-600 disabled:opacity-60 dark:bg-slate-950/90 dark:text-slate-300 dark:ring-slate-700 dark:hover:text-red-300 md:opacity-0 md:group-hover:opacity-100"
-                >
-                  {deleting ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function ProductAssociationPanel({
-  isProductMode,
-  product,
-  products,
-  targetProductId,
-  sourceImage,
-  referenceImages,
-  selectedRound,
-  attachBusy,
-  deletingReferenceAssetId,
-  onTargetProductChange,
-  onDeleteReference,
-  onAttach,
-  t,
-}: {
-  isProductMode: boolean;
-  product: ProductDetail | undefined;
-  products: ProductSummary[];
-  targetProductId: string;
-  sourceImage: SourceAsset | null;
-  referenceImages: SourceAsset[];
-  selectedRound: ImageSessionRound | null;
-  attachBusy: boolean;
-  deletingReferenceAssetId: string | null;
-  onTargetProductChange: (value: string) => void;
-  onDeleteReference: (assetId: string) => void;
-  onAttach: (target: "reference" | "main_source") => void;
-  t: ReturnType<typeof useI18n>["t"];
-}) {
-  const saveDisabled = attachBusy || !selectedRound || (!isProductMode && !targetProductId);
-
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700/80 dark:bg-[#151f33]">
-      <div className="mb-3 text-sm font-semibold text-zinc-900 dark:text-white">{t("chat.saveToProduct")}</div>
-      {isProductMode ? (
-        product ? (
-          <div className="grid grid-cols-[88px_minmax(0,1fr)] gap-3">
-            <ProductThumbnail sourceImage={sourceImage} alt={product.name} />
-            <div className="min-w-0 self-center">
-              <div className="truncate text-sm font-medium text-zinc-900 dark:text-slate-100">{product.name}</div>
-              <div className="mt-1 text-xs text-zinc-500 dark:text-slate-400">{t("chat.productReferenceCount", { count: referenceImages.length })}</div>
-            </div>
-          </div>
-        ) : (
-          <div className="flex justify-center py-6 text-zinc-400">
-            <Loader2 size={16} className="animate-spin" />
-          </div>
-        )
-      ) : (
-        <label className="block">
-          <span className="mb-1.5 block text-xs font-semibold text-slate-700 dark:text-slate-200">{t("chat.targetProduct")}</span>
-          <SelectField
-            value={targetProductId}
-            options={
-              products.length
-                ? products.map((item) => ({ value: item.id, label: item.name }))
-                : [{ value: "", label: t("chat.noProducts"), disabled: true }]
-            }
-            onChange={onTargetProductChange}
-          />
-        </label>
-      )}
-
-      {referenceImages.length ? (
-        <div className="mt-3 grid grid-cols-4 gap-2">
-          {referenceImages.slice(0, 4).map((asset) => {
-            const deleting = deletingReferenceAssetId === asset.id;
-            return (
-              <div key={asset.id} className="group relative overflow-hidden rounded-md border border-zinc-200 bg-white dark:border-slate-700 dark:bg-slate-950/70">
-                <a href={api.toApiUrl(asset.preview_url)} target="_blank" rel="noreferrer" title={asset.original_filename}>
-                  <img
-                    src={api.toApiUrl(asset.thumbnail_url)}
-                    alt={asset.original_filename}
-                    loading="lazy"
-                    decoding="async"
-                    className="h-16 w-full object-cover"
-                  />
-                </a>
-                <button
-                  type="button"
-                  aria-label={t("chat.deleteProductReference")}
-                  onClick={() => onDeleteReference(asset.id)}
-                  disabled={deleting}
-                  className="absolute right-1 top-1 inline-flex h-6 w-6 items-center justify-center rounded bg-white/90 text-zinc-500 opacity-100 shadow-sm ring-1 ring-zinc-200 transition-colors hover:text-red-600 disabled:opacity-60 dark:bg-slate-950/90 dark:text-slate-300 dark:ring-slate-700 dark:hover:text-red-300 md:opacity-0 md:group-hover:opacity-100"
-                >
-                  {deleting ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      ) : null}
-
-      <div className="mt-4 border-t border-slate-200 pt-3 dark:border-slate-800">
-        {selectedRound ? (
-          <div className="mb-2 text-[11px] leading-5 text-slate-500 dark:text-slate-400">
-            {t("chat.selectedCandidate", { size: formatImageSizeValue(selectedRound.size) })}
-          </div>
-        ) : (
-          <div className="mb-2 rounded-xl border border-dashed border-slate-200 bg-white px-3 py-2 text-center text-sm text-slate-400 dark:border-slate-700 dark:bg-slate-950/45 dark:text-slate-500">
-            {t("chat.selectHistoryFirst")}
-          </div>
-        )}
-        <div className="grid gap-2">
-          <button
-            type="button"
-            onClick={() => onAttach("reference")}
-            disabled={saveDisabled}
-            className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:border-slate-300 hover:text-slate-950 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950/70 dark:text-slate-200 dark:hover:border-violet-400/55 dark:hover:text-violet-100"
-          >
-            {attachBusy ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Check size={14} className="mr-2" />}
-            {isProductMode ? t("chat.addReference") : t("chat.saveAsReference")}
-          </button>
-          {isProductMode ? (
-            <button
-              type="button"
-              onClick={() => onAttach("main_source")}
-              disabled={saveDisabled}
-              className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:opacity-60 dark:bg-violet-500/20 dark:text-violet-100 dark:ring-1 dark:ring-violet-400/35 dark:hover:bg-violet-500/30"
-            >
-              {attachBusy ? <Loader2 size={14} className="mr-2 animate-spin" /> : <ImageIcon size={14} className="mr-2" />}
-              {t("chat.setMainSource")}
-            </button>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ProductThumbnail({ sourceImage, alt }: { sourceImage: SourceAsset | null; alt: string }) {
-  return (
-    <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white dark:border-slate-700 dark:bg-slate-950/70">
-      {sourceImage ? (
-        <img src={api.toApiUrl(sourceImage.thumbnail_url)} alt={alt} decoding="async" className="h-24 w-full object-cover" />
-      ) : (
-        <div className="flex h-24 items-center justify-center text-zinc-300 dark:text-slate-500">
-          <ImageIcon size={20} />
-        </div>
-      )}
-    </div>
-  );
 }
