@@ -43,6 +43,18 @@
 - Empty canvas/background areas may be left-button dragged to pan the scrollable workbench viewport by mutating the
   viewport `scrollLeft` / `scrollTop`. Guard this interaction by target so node drag, edge handles/buttons, node actions,
   zoom controls, uploads, and panel resize handles do not start background panning.
+- Mobile canvas interaction uses an explicit `CanvasInteractionMode`:
+  `browse`, `edit`, and `select`. Mobile defaults to `browse`; desktop passes `edit` so existing mouse drag and Shift
+  selection behavior stay available. In `browse`, one-finger empty-canvas drag pans the viewport and tapping a node selects
+  it without starting a node drag. In `edit`, touch/pen users may drag nodes and create connections. In `select`, tapping
+  nodes toggles multi-select without keyboard modifiers, and tapping blank canvas exits the temporary selection mode.
+- Touch and pen canvas edits must be gated by the active mobile interaction mode. Mouse pointers keep the desktop behavior.
+  Add a small drag threshold before a pending node drag becomes active so tap/select sequences do not persist accidental
+  node movement.
+- Mobile pinch zoom tracks two touch pointers, clamps through the shared workflow zoom bounds, and anchors scroll around
+  the gesture center. Pinch has higher gesture priority than pan, selection box, node drag, and connection drag; entering
+  pinch must cancel those transient states, including any temporary connection line, and restore body `user-select` on
+  pointer cancel, pointer leave, and lost capture paths.
 - ProductDetail supports canvas node multi-select through local UI state. Keep `selectedNodeId` as the primary node that
   drives the Details sidebar, draft saving, reference-image fill target, and node-level run/delete/cancel/upload actions.
   Keep `selectedNodeIds` as the selected node group for group actions such as saving a node-group template, group drag,

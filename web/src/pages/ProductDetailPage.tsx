@@ -8,12 +8,15 @@ import {
   CircleDot,
   Check,
   Eye,
+  Hand,
   Save,
   Image as ImageIcon,
   Layers3,
   Loader2,
   Maximize2,
   Minimize2,
+  MousePointer2,
+  Move,
   Play,
   Plus,
   Settings2,
@@ -68,7 +71,7 @@ import {
   toggleSelectedNodeId,
 } from "./product-detail/selection";
 import { connectionDescription, localizedWorkflowNodeTypeLabel } from "./product-detail/nodeDisplay";
-import type { NodeConfigDraft, SaveStatus } from "./product-detail/types";
+import type { CanvasInteractionMode, NodeConfigDraft, SaveStatus } from "./product-detail/types";
 import {
   clamp,
   getWorkflowNodeCancelableRun,
@@ -126,6 +129,10 @@ export function ProductDetailPage() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [topChromeCollapsed, setTopChromeCollapsed] = useState(false);
   const [mobileDetailsSheetOpen, setMobileDetailsSheetOpen] = useState(false);
+  const [mobileCanvasMode, setMobileCanvasMode] = useState<CanvasInteractionMode>("browse");
+  const [mobileCanvasControlsActive, setMobileCanvasControlsActive] = useState(() =>
+    typeof window === "undefined" ? false : window.matchMedia("(max-width: 1023px)").matches,
+  );
   const [draft, setDraft] = useState<NodeConfigDraft>(() =>
     draftFromNode(null),
   );
@@ -309,6 +316,14 @@ export function ProductDetailPage() {
     }
   }, [workflowActive]);
 
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(max-width: 1023px)");
+    const syncMobileCanvasControls = () => setMobileCanvasControlsActive(mediaQuery.matches);
+    syncMobileCanvasControls();
+    mediaQuery.addEventListener("change", syncMobileCanvasControls);
+    return () => mediaQuery.removeEventListener("change", syncMobileCanvasControls);
+  }, []);
+
   const handleDraftChange = (nextDraft: NodeConfigDraft) => {
     draftVersionRef.current += 1;
     setDraft(nextDraft);
@@ -375,7 +390,8 @@ export function ProductDetailPage() {
   };
 
   const selectNodeFromPointer = (nodeId: string, event: ReactPointerEvent | ReactMouseEvent) => {
-    if (event.ctrlKey || event.metaKey || event.shiftKey) {
+    const mobileSelectionMode = mobileCanvasControlsActive && mobileCanvasMode === "select";
+    if (event.ctrlKey || event.metaKey || event.shiftKey || mobileSelectionMode) {
       toggleNodeSelectionForDetails(nodeId);
       return;
     }
@@ -419,6 +435,9 @@ export function ProductDetailPage() {
       return;
     }
     clearMultiSelection();
+    if (mobileCanvasControlsActive && mobileCanvasMode === "select") {
+      setMobileCanvasMode("browse");
+    }
   };
 
   const replaceSelectionFromBox = (nodeIds: string[]) => {
@@ -1082,6 +1101,7 @@ export function ProductDetailPage() {
     onSelectionBoxComplete: replaceSelectionFromBox,
     onNodePositionCommit: commitNodePosition,
     onConnectionCreate: (input) => createEdgeMutation.mutate(input),
+    mobileInteractionMode: mobileCanvasControlsActive ? mobileCanvasMode : "edit",
   });
   workflowCanvasRef.current = workflowCanvas;
   const {
@@ -1091,6 +1111,7 @@ export function ProductDetailPage() {
     nodeDrag,
     connectionDrag,
     panePan,
+    pinchZooming,
     selectionBoxRect,
     previewSelectedNodeIds,
     updateZoom,
@@ -1105,6 +1126,7 @@ export function ProductDetailPage() {
     movePanePan,
     endPanePan,
     cancelPanePan,
+    leavePanePan,
     handleCanvasWheel,
     startNodeDrag,
     moveNodeDrag,
@@ -1113,6 +1135,7 @@ export function ProductDetailPage() {
     startConnectionDrag,
     moveConnectionDrag,
     endConnectionDrag,
+    cancelConnectionDrag,
   } = workflowCanvas;
 
   useEffect(() => {
@@ -1120,7 +1143,7 @@ export function ProductDetailPage() {
     if (!scrollElement || !workflow?.nodes.length || !selectedNode) {
       return;
     }
-    if (!window.matchMedia("(max-width: 1023px)").matches) {
+    if (!mobileCanvasControlsActive) {
       return;
     }
 
@@ -1145,7 +1168,7 @@ export function ProductDetailPage() {
         selectedNodePosition.y * zoom - Math.min(160, currentScrollElement.clientHeight * 0.22),
       );
     });
-  }, [canvasScrollRef, getRenderedNodePosition, productId, selectedNode, workflow?.nodes, zoom]);
+  }, [canvasScrollRef, getRenderedNodePosition, mobileCanvasControlsActive, productId, selectedNode, workflow?.nodes, zoom]);
 
   if (productQuery.isLoading) {
     return (
@@ -1295,6 +1318,31 @@ export function ProductDetailPage() {
   ];
 
   const activeSidebarTabItem = sidebarTabItems.find((item) => item.key === activeSidebarTab) ?? sidebarTabItems[2];
+  const mobileCanvasModeItems: Array<{
+    key: CanvasInteractionMode;
+    label: string;
+    description: string;
+    icon: ReactNode;
+  }> = [
+    {
+      key: "browse",
+      label: t("detail.mobileCanvasBrowse"),
+      description: t("detail.mobileCanvasBrowseHint"),
+      icon: <Hand size={15} />,
+    },
+    {
+      key: "edit",
+      label: t("detail.mobileCanvasEdit"),
+      description: t("detail.mobileCanvasEditHint"),
+      icon: <Move size={15} />,
+    },
+    {
+      key: "select",
+      label: t("detail.mobileCanvasSelect"),
+      description: t("detail.mobileCanvasSelectHint"),
+      icon: <MousePointer2 size={15} />,
+    },
+  ];
 
   const openMobileSidebarTab = (tab: SidebarTab) => {
     setActiveSidebarTab(tab);
@@ -1445,11 +1493,12 @@ export function ProductDetailPage() {
             </div>
             <div
               ref={canvasScrollRef}
-              className={`h-full overflow-auto p-3 pb-[calc(10rem+env(safe-area-inset-bottom))] lg:p-6 ${panePan ? "cursor-grabbing" : "cursor-grab"}`}
+              className={`h-full touch-none overflow-auto overscroll-contain p-3 pb-[calc(13rem+env(safe-area-inset-bottom))] lg:p-6 ${panePan ? "cursor-grabbing" : pinchZooming ? "cursor-zoom-in" : "cursor-grab"}`}
               onPointerDown={startPanePan}
               onPointerMove={movePanePan}
               onPointerUp={endPanePan}
               onPointerCancel={cancelPanePan}
+              onPointerLeave={leavePanePan}
               onLostPointerCapture={cancelPanePan}
               onClick={handleCanvasBlankClick}
               onWheel={handleCanvasWheel}
@@ -1562,6 +1611,7 @@ export function ProductDetailPage() {
                         }
                         onMoveConnection={moveConnectionDrag}
                         onEndConnection={endConnectionDrag}
+                        onCancelConnection={cancelConnectionDrag}
                         onRun={() => void handleRunWorkflow(node.id)}
                         onDelete={() => handleDeleteNode(node)}
                         busy={structureBusy}
@@ -1580,7 +1630,7 @@ export function ProductDetailPage() {
               )}
             </div>
 
-            <div data-canvas-control className="pointer-events-none absolute bottom-[calc(9.25rem+env(safe-area-inset-bottom))] left-3 z-30 lg:bottom-4 lg:left-4">
+            <div data-canvas-control className="pointer-events-none absolute left-3 top-3 z-30 lg:left-4 lg:top-4">
               <div className="pointer-events-auto flex items-center gap-1 rounded-lg border border-zinc-200 bg-white/90 p-1 shadow-sm backdrop-blur dark:border-slate-700/80 dark:bg-[#151f33]/92 dark:shadow-black/20">
               <button
                 type="button"
@@ -1609,7 +1659,7 @@ export function ProductDetailPage() {
               </div>
             </div>
             {selectedGroupCount > 1 ? (
-              <div data-canvas-control className="pointer-events-none absolute left-3 right-3 top-3 z-30 lg:left-1/2 lg:right-auto lg:top-4 lg:-translate-x-1/2">
+              <div data-canvas-control className="pointer-events-none absolute left-3 right-3 top-[4.5rem] z-30 lg:left-1/2 lg:right-auto lg:top-4 lg:-translate-x-1/2">
                 <div className="pointer-events-auto rounded-xl border border-indigo-200 bg-white/95 p-2.5 text-sm font-semibold text-indigo-700 shadow-lg shadow-indigo-950/10 backdrop-blur dark:border-violet-400/50 dark:bg-[#151f33]/95 dark:text-violet-100 dark:shadow-black/30 lg:min-w-[22rem]">
                   <div className="flex items-center gap-2">
                     <Check size={16} strokeWidth={2.5} />
@@ -1805,21 +1855,44 @@ export function ProductDetailPage() {
         style={{ bottom: topChromeCollapsed ? "calc(0.75rem + env(safe-area-inset-bottom))" : "calc(4.1rem + env(safe-area-inset-bottom))" }}
       >
         <div
-          role="toolbar"
-          aria-label={t("detail.mobileToolbar")}
-          className="mx-auto grid max-w-[28rem] grid-cols-6 gap-1 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-[0_-6px_18px_rgba(15,23,42,0.12)] dark:border-slate-700 dark:bg-slate-950 dark:shadow-[0_-12px_28px_rgba(0,0,0,0.30)]"
+          className="mx-auto max-w-[28rem] rounded-2xl border border-slate-200 bg-white p-1.5 shadow-[0_-6px_18px_rgba(15,23,42,0.12)] dark:border-slate-700 dark:bg-slate-950 dark:shadow-[0_-12px_28px_rgba(0,0,0,0.30)]"
         >
-          <button
-            type="button"
-            onClick={() => void handleRunWorkflow(undefined)}
-            disabled={fullWorkflowRunBusy || !workflow}
-            className="inline-flex min-h-14 min-w-0 flex-col items-center justify-center rounded-xl bg-indigo-600 px-1 text-[10px] font-semibold leading-[1.05] text-white shadow-lg shadow-indigo-600/20 transition-colors active:scale-[0.98] hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-gradient-to-r dark:from-indigo-500 dark:via-violet-500 dark:to-fuchsia-500 dark:shadow-violet-900/45 dark:ring-1 dark:ring-violet-300/35"
-            aria-label={fullWorkflowRunBusy ? t("detail.workflowRunning") : t("detail.runWorkflow")}
+          <div className="grid grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-900/85">
+            {mobileCanvasModeItems.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => setMobileCanvasMode(item.key)}
+                className={`inline-flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-lg px-2 text-xs font-semibold transition-colors active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:focus-visible:ring-violet-400 ${
+                  mobileCanvasMode === item.key
+                    ? "bg-white text-indigo-700 shadow-sm dark:bg-violet-500/18 dark:text-violet-100 dark:ring-1 dark:ring-violet-300/35"
+                    : "text-slate-500 hover:bg-white/70 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                }`}
+                aria-pressed={mobileCanvasMode === item.key}
+                aria-label={item.description}
+                title={item.description}
+              >
+                {item.icon}
+                <span className="truncate">{item.label}</span>
+              </button>
+            ))}
+          </div>
+          <div
+            role="toolbar"
+            aria-label={t("detail.mobileToolbar")}
+            className="mt-1.5 grid grid-cols-6 gap-1"
           >
-            {fullWorkflowRunBusy ? <Loader2 size={17} className="mb-1 shrink-0 animate-spin" /> : <Play size={17} className="mb-1 shrink-0" />}
-            <span className="max-w-full text-center">{fullWorkflowRunBusy ? t("detail.running") : t("detail.run")}</span>
-          </button>
-          {sidebarTabItems.map((item) => (
+            <button
+              type="button"
+              onClick={() => void handleRunWorkflow(undefined)}
+              disabled={fullWorkflowRunBusy || !workflow}
+              className="inline-flex min-h-14 min-w-0 flex-col items-center justify-center rounded-xl bg-indigo-600 px-1 text-[10px] font-semibold leading-[1.05] text-white shadow-lg shadow-indigo-600/20 transition-colors active:scale-[0.98] hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-gradient-to-r dark:from-indigo-500 dark:via-violet-500 dark:to-fuchsia-500 dark:shadow-violet-900/45 dark:ring-1 dark:ring-violet-300/35"
+              aria-label={fullWorkflowRunBusy ? t("detail.workflowRunning") : t("detail.runWorkflow")}
+            >
+              {fullWorkflowRunBusy ? <Loader2 size={17} className="mb-1 shrink-0 animate-spin" /> : <Play size={17} className="mb-1 shrink-0" />}
+              <span className="max-w-full text-center">{fullWorkflowRunBusy ? t("detail.running") : t("detail.run")}</span>
+            </button>
+            {sidebarTabItems.map((item) => (
             <button
               key={item.key}
               type="button"
@@ -1835,7 +1908,8 @@ export function ProductDetailPage() {
               {item.icon}
               <span className="mt-1 max-w-full text-center">{item.label}</span>
             </button>
-          ))}
+            ))}
+          </div>
         </div>
       </div>
 

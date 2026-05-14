@@ -2,11 +2,18 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildConnectionDragPath,
+  canStartTouchCanvasEdit,
+  exceedsNodeDragStartThreshold,
+  getAnchoredZoomScroll,
   getFinalNodeDragPosition,
   getNodeDragPositions,
   getNodePositionForViewportCenter,
+  getPinchCenter,
+  getPinchDistance,
+  getPinchZoom,
   getWheelZoom,
   normalizeWorkflowZoom,
+  shouldDelayNodeDragStart,
 } from "./useWorkflowCanvas";
 
 const baseConnectionDrag = {
@@ -28,6 +35,61 @@ describe("workflow canvas pure helpers", () => {
     expect(getWheelZoom(1, -120)).toBeGreaterThan(1);
     expect(getWheelZoom(0.5, 10_000)).toBe(0.5);
     expect(getWheelZoom(1.6, -10_000)).toBe(1.6);
+  });
+
+  it("calculates pinch distance, center, zoom, and anchored scroll", () => {
+    const first = { clientX: 100, clientY: 120 };
+    const second = { clientX: 220, clientY: 280 };
+    expect(getPinchDistance(first, second)).toBe(200);
+    expect(getPinchCenter(first, second)).toEqual({ x: 160, y: 200 });
+    expect(getPinchZoom(1, 200, 260)).toBe(1.3);
+    expect(getPinchZoom(1, 200, 40)).toBe(0.5);
+    expect(getPinchZoom(1.4, 200, 400)).toBe(1.6);
+    expect(getPinchZoom(1.2, 0, 200)).toBe(1.2);
+    expect(
+      getAnchoredZoomScroll({
+        anchorPoint: { x: 300, y: 180 },
+        startZoom: 1,
+        nextZoom: 1.25,
+        startScrollLeft: 40,
+        startScrollTop: 70,
+        startCenter: { x: 160, y: 200 },
+        currentCenter: { x: 150, y: 215 },
+      }),
+    ).toEqual({ scrollLeft: 125, scrollTop: 100 });
+  });
+
+  it("gates touch and pen canvas edits behind explicit edit mode", () => {
+    expect(canStartTouchCanvasEdit({ pointerType: "mouse", interactionMode: "browse" })).toBe(true);
+    expect(canStartTouchCanvasEdit({ pointerType: "touch", interactionMode: "browse" })).toBe(false);
+    expect(canStartTouchCanvasEdit({ pointerType: "pen", interactionMode: "select" })).toBe(false);
+    expect(canStartTouchCanvasEdit({ pointerType: "touch", interactionMode: "edit" })).toBe(true);
+  });
+
+  it("keeps desktop mouse node dragging immediate while delaying touch-like drags", () => {
+    expect(shouldDelayNodeDragStart("mouse")).toBe(false);
+    expect(shouldDelayNodeDragStart("")).toBe(false);
+    expect(shouldDelayNodeDragStart("touch")).toBe(true);
+    expect(shouldDelayNodeDragStart("pen")).toBe(true);
+  });
+
+  it("uses a drag threshold so taps do not become node drags", () => {
+    expect(
+      exceedsNodeDragStartThreshold({
+        startClientX: 10,
+        startClientY: 10,
+        clientX: 13,
+        clientY: 14,
+      }),
+    ).toBe(false);
+    expect(
+      exceedsNodeDragStartThreshold({
+        startClientX: 10,
+        startClientY: 10,
+        clientX: 16,
+        clientY: 10,
+      }),
+    ).toBe(true);
   });
 
   it("rounds final drag positions and keeps nodes inside the canvas minimum", () => {

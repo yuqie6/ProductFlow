@@ -12,6 +12,8 @@ export type CanvasRect = {
   height: number;
 };
 
+export type CanvasInteractionMode = "browse" | "edit" | "select";
+
 export type NodeDragState = {
   nodeId: string;
   nodeIds: string[];

@@ -21,6 +21,7 @@ import {
 } from "./canvasUtils";
 import { getIntersectingNodeIds } from "./selection";
 import type {
+  CanvasInteractionMode,
   CanvasPoint,
   CanvasRect,
   ConnectionDragState,
@@ -32,11 +33,39 @@ import { clamp, readStoredNumber } from "./utils";
 
 const CANVAS_WHEEL_ZOOM_SENSITIVITY = 0.001;
 const CANVAS_ZOOM_PRECISION = 10_000;
+const NODE_DRAG_START_THRESHOLD_PX = 6;
 
 interface PlannedWheelView {
   zoom: number;
   scrollLeft: number;
   scrollTop: number;
+}
+
+interface TouchPointerState {
+  pointerId: number;
+  clientX: number;
+  clientY: number;
+}
+
+interface PinchZoomState {
+  pointerIds: [number, number];
+  startDistance: number;
+  startCenter: { x: number; y: number };
+  startZoom: number;
+  startScrollLeft: number;
+  startScrollTop: number;
+  anchorPoint: CanvasPoint;
+}
+
+interface PendingNodeDragState {
+  node: WorkflowNode;
+  pointerId: number;
+  startClientX: number;
+  startClientY: number;
+  offsetX: number;
+  offsetY: number;
+  renderedPosition: CanvasPoint;
+  originPositions: Record<string, CanvasPoint>;
 }
 
 export interface NodePositionCommitInput {
@@ -56,6 +85,7 @@ interface UseWorkflowCanvasOptions {
   onSelectionBoxComplete: (nodeIds: string[]) => void;
   onNodePositionCommit: (input: NodePositionCommitInput) => void;
   onConnectionCreate: (input: { sourceNodeId: string; targetNodeId: string }) => void;
+  mobileInteractionMode?: CanvasInteractionMode;
 }
 
 export function normalizeWorkflowZoom(nextZoom: number): number {
@@ -64,6 +94,75 @@ export function normalizeWorkflowZoom(nextZoom: number): number {
 
 export function getWheelZoom(previousZoom: number, wheelDelta: number): number {
   return normalizeWorkflowZoom(previousZoom * Math.exp(-wheelDelta * CANVAS_WHEEL_ZOOM_SENSITIVITY));
+}
+
+export function getPinchDistance(
+  first: Pick<TouchPointerState, "clientX" | "clientY">,
+  second: Pick<TouchPointerState, "clientX" | "clientY">,
+): number {
+  return Math.hypot(second.clientX - first.clientX, second.clientY - first.clientY);
+}
+
+export function getPinchCenter(
+  first: Pick<TouchPointerState, "clientX" | "clientY">,
+  second: Pick<TouchPointerState, "clientX" | "clientY">,
+): { x: number; y: number } {
+  return {
+    x: (first.clientX + second.clientX) / 2,
+    y: (first.clientY + second.clientY) / 2,
+  };
+}
+
+export function getPinchZoom(startZoom: number, startDistance: number, currentDistance: number): number {
+  if (startDistance <= 0 || currentDistance <= 0) {
+    return normalizeWorkflowZoom(startZoom);
+  }
+  return normalizeWorkflowZoom(startZoom * (currentDistance / startDistance));
+}
+
+export function getAnchoredZoomScroll(input: {
+  anchorPoint: CanvasPoint;
+  startZoom: number;
+  nextZoom: number;
+  startScrollLeft: number;
+  startScrollTop: number;
+  startCenter: { x: number; y: number };
+  currentCenter: { x: number; y: number };
+}): { scrollLeft: number; scrollTop: number } {
+  return {
+    scrollLeft:
+      input.startScrollLeft +
+      input.anchorPoint.x * (input.nextZoom - input.startZoom) +
+      input.startCenter.x -
+      input.currentCenter.x,
+    scrollTop:
+      input.startScrollTop +
+      input.anchorPoint.y * (input.nextZoom - input.startZoom) +
+      input.startCenter.y -
+      input.currentCenter.y,
+  };
+}
+
+export function exceedsNodeDragStartThreshold(input: {
+  startClientX: number;
+  startClientY: number;
+  clientX: number;
+  clientY: number;
+  threshold?: number;
+}): boolean {
+  const threshold = input.threshold ?? NODE_DRAG_START_THRESHOLD_PX;
+  return Math.hypot(input.clientX - input.startClientX, input.clientY - input.startClientY) >= threshold;
+}
+
+export function canStartTouchCanvasEdit(input: {
+  pointerType: string;
+  interactionMode: CanvasInteractionMode;
+}): boolean {
+  return input.pointerType !== "touch" && input.pointerType !== "pen" ? true : input.interactionMode === "edit";
+}
+
+export function shouldDelayNodeDragStart(pointerType: string): boolean {
+  return pointerType === "touch" || pointerType === "pen";
 }
 
 export function getFinalNodeDragPosition(point: CanvasPoint, drag: Pick<NodeDragState, "offsetX" | "offsetY">): CanvasPoint {
@@ -127,11 +226,15 @@ export function useWorkflowCanvas({
   onSelectionBoxComplete,
   onNodePositionCommit,
   onConnectionCreate,
+  mobileInteractionMode = "browse",
 }: UseWorkflowCanvasOptions) {
   const canvasScrollRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const plannedWheelViewRef = useRef<PlannedWheelView | null>(null);
   const nodeDragRef = useRef<NodeDragState | null>(null);
+  const pendingNodeDragRef = useRef<PendingNodeDragState | null>(null);
+  const activeTouchPointersRef = useRef<Record<number, TouchPointerState>>({});
+  const pinchZoomRef = useRef<PinchZoomState | null>(null);
   const nodeElementRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const edgePathRefs = useRef<Record<string, SVGPathElement | null>>({});
   const edgeDeleteButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -144,6 +247,7 @@ export function useWorkflowCanvas({
   const [selectionBox, setSelectionBox] = useState<SelectionBoxState | null>(null);
   const [zoom, setZoom] = useState(() => normalizeWorkflowZoom(readStoredNumber(zoomStorageKey, 1)));
   const zoomRef = useRef(zoom);
+  const [pinchZooming, setPinchZooming] = useState(false);
   const [wheelViewRevision, setWheelViewRevision] = useState(0);
 
   const disableBodyUserSelect = () => {
@@ -243,6 +347,92 @@ export function useWorkflowCanvas({
     return normalized;
   };
 
+  const canStartDirectCanvasEdit = (event: ReactPointerEvent<HTMLElement>) =>
+    canStartTouchCanvasEdit({
+      pointerType: event.pointerType,
+      interactionMode: mobileInteractionMode,
+    });
+
+  const trackTouchPointer = (event: ReactPointerEvent<HTMLElement>) => {
+    if (event.pointerType !== "touch") {
+      return;
+    }
+    activeTouchPointersRef.current[event.pointerId] = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+    };
+  };
+
+  const removeTouchPointer = (pointerId: number) => {
+    delete activeTouchPointersRef.current[pointerId];
+  };
+
+  const getTrackedTouchPair = (pointerIds?: [number, number]) => {
+    if (pointerIds) {
+      const first = activeTouchPointersRef.current[pointerIds[0]];
+      const second = activeTouchPointersRef.current[pointerIds[1]];
+      return first && second ? ([first, second] as const) : null;
+    }
+    const pointers = Object.values(activeTouchPointersRef.current).sort(
+      (first, second) => first.pointerId - second.pointerId,
+    );
+    return pointers.length >= 2 ? ([pointers[0], pointers[1]] as const) : null;
+  };
+
+  const clearPinchZoom = () => {
+    pinchZoomRef.current = null;
+    setPinchZooming(false);
+  };
+
+  const startPinchZoom = (scrollElement: HTMLDivElement) => {
+    const touchPair = getTrackedTouchPair();
+    if (!touchPair) {
+      return false;
+    }
+    const [first, second] = touchPair;
+    const startDistance = getPinchDistance(first, second);
+    if (startDistance <= 0) {
+      return false;
+    }
+    const startCenter = getPinchCenter(first, second);
+    const startZoom = zoomRef.current;
+    pendingNodeDragRef.current = null;
+    nodeDragRef.current = null;
+    setNodeDrag(null);
+    setConnectionDrag(null);
+    setPanePan(null);
+    setSelectionBox(null);
+    pinchZoomRef.current = {
+      pointerIds: [first.pointerId, second.pointerId],
+      startDistance,
+      startCenter,
+      startZoom,
+      startScrollLeft: scrollElement.scrollLeft,
+      startScrollTop: scrollElement.scrollTop,
+      anchorPoint: getCanvasPoint(
+        startCenter.x,
+        startCenter.y,
+        startZoom,
+        scrollElement.scrollLeft,
+        scrollElement.scrollTop,
+      ),
+    };
+    setPinchZooming(true);
+    return true;
+  };
+
+  const buildNodeDragFromPending = (pendingDrag: PendingNodeDragState): NodeDragState => ({
+    nodeId: pendingDrag.node.id,
+    nodeIds: Object.keys(pendingDrag.originPositions),
+    pointerId: pendingDrag.pointerId,
+    offsetX: pendingDrag.offsetX,
+    offsetY: pendingDrag.offsetY,
+    currentX: pendingDrag.renderedPosition.x,
+    currentY: pendingDrag.renderedPosition.y,
+    originPositions: pendingDrag.originPositions,
+  });
+
   const setNodeElementRef = (nodeId: string, element: HTMLDivElement | null) => {
     if (element) {
       nodeElementRefs.current[nodeId] = element;
@@ -312,6 +502,15 @@ export function useWorkflowCanvas({
   };
 
   const startPanePan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    trackTouchPointer(event);
+    const scrollElement = canvasScrollRef.current;
+    if (event.pointerType === "touch" && scrollElement && getTrackedTouchPair()) {
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      disableBodyUserSelect();
+      startPinchZoom(scrollElement);
+      return;
+    }
     if (
       event.button !== 0 ||
       event.defaultPrevented ||
@@ -321,7 +520,6 @@ export function useWorkflowCanvas({
     ) {
       return;
     }
-    const scrollElement = canvasScrollRef.current;
     if (!scrollElement) {
       return;
     }
@@ -347,6 +545,37 @@ export function useWorkflowCanvas({
   };
 
   const movePanePan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    trackTouchPointer(event);
+    const activePinch = pinchZoomRef.current;
+    if (activePinch?.pointerIds.includes(event.pointerId)) {
+      const scrollElement = canvasScrollRef.current;
+      const touchPair = getTrackedTouchPair(activePinch.pointerIds);
+      if (!scrollElement || !touchPair) {
+        return;
+      }
+      event.preventDefault();
+      const [first, second] = touchPair;
+      const currentDistance = getPinchDistance(first, second);
+      const currentCenter = getPinchCenter(first, second);
+      const nextZoom = getPinchZoom(activePinch.startZoom, activePinch.startDistance, currentDistance);
+      if (nextZoom !== zoomRef.current) {
+        updateZoom(nextZoom);
+      }
+      plannedWheelViewRef.current = {
+        zoom: nextZoom,
+        ...getAnchoredZoomScroll({
+          anchorPoint: activePinch.anchorPoint,
+          startZoom: activePinch.startZoom,
+          nextZoom,
+          startScrollLeft: activePinch.startScrollLeft,
+          startScrollTop: activePinch.startScrollTop,
+          startCenter: activePinch.startCenter,
+          currentCenter,
+        }),
+      };
+      setWheelViewRevision((current) => current + 1);
+      return;
+    }
     if (selectionBox?.pointerId === event.pointerId) {
       event.preventDefault();
       setSelectionBox((current) =>
@@ -372,6 +601,22 @@ export function useWorkflowCanvas({
   };
 
   const endPanePan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const activePinch = pinchZoomRef.current;
+    const endedPinchPointer = activePinch?.pointerIds.includes(event.pointerId) ?? false;
+    if (event.pointerType === "touch") {
+      removeTouchPointer(event.pointerId);
+    }
+    if (endedPinchPointer) {
+      event.preventDefault();
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      clearPinchZoom();
+      restoreBodyUserSelect();
+      setPanePan(null);
+      setSelectionBox(null);
+      return;
+    }
     if (selectionBox?.pointerId === event.pointerId) {
       event.preventDefault();
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
@@ -407,6 +652,21 @@ export function useWorkflowCanvas({
   };
 
   const cancelPanePan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const activePinch = pinchZoomRef.current;
+    const cancelledPinchPointer = activePinch?.pointerIds.includes(event.pointerId) ?? false;
+    if (event.pointerType === "touch") {
+      removeTouchPointer(event.pointerId);
+    }
+    if (cancelledPinchPointer) {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      clearPinchZoom();
+      restoreBodyUserSelect();
+      setPanePan(null);
+      setSelectionBox(null);
+      return;
+    }
     if (selectionBox && selectionBox.pointerId === event.pointerId) {
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId);
@@ -423,6 +683,32 @@ export function useWorkflowCanvas({
     }
     restoreBodyUserSelect();
     setPanePan(null);
+  };
+
+  const leavePanePan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "touch") {
+      removeTouchPointer(event.pointerId);
+    }
+    const activePinch = pinchZoomRef.current;
+    if (activePinch?.pointerIds.includes(event.pointerId)) {
+      clearPinchZoom();
+      restoreBodyUserSelect();
+      setPanePan(null);
+      setSelectionBox(null);
+      return;
+    }
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      return;
+    }
+    if (selectionBox?.pointerId === event.pointerId) {
+      restoreBodyUserSelect();
+      setSelectionBox(null);
+      return;
+    }
+    if (panePan?.pointerId === event.pointerId) {
+      restoreBodyUserSelect();
+      setPanePan(null);
+    }
   };
 
   const handleCanvasWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
@@ -473,6 +759,9 @@ export function useWorkflowCanvas({
     if (event.button !== 0) {
       return;
     }
+    if (!canStartDirectCanvasEdit(event)) {
+      return;
+    }
     if (event.ctrlKey || event.metaKey || event.shiftKey) {
       return;
     }
@@ -483,7 +772,6 @@ export function useWorkflowCanvas({
     event.currentTarget.setPointerCapture(event.pointerId);
     disableBodyUserSelect();
     const point = getCanvasPoint(event.clientX, event.clientY);
-    onNodeDragStartSelect(node.id);
     const renderedPosition = getRenderedNodePosition(node);
     const selectedGroup = getNodeDragGroup(node.id);
     const groupNodeIds = selectedGroup.includes(node.id) ? selectedGroup : [node.id];
@@ -495,21 +783,49 @@ export function useWorkflowCanvas({
         getRenderedNodePosition(workflowNode),
       ]),
     );
-    const nextDrag = {
-      nodeId: node.id,
-      nodeIds: Object.keys(originPositions),
+    const pendingDrag = {
+      node,
       pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
       offsetX: point.x - renderedPosition.x,
       offsetY: point.y - renderedPosition.y,
-      currentX: renderedPosition.x,
-      currentY: renderedPosition.y,
+      renderedPosition,
       originPositions,
     };
+    if (shouldDelayNodeDragStart(event.pointerType)) {
+      pendingNodeDragRef.current = pendingDrag;
+      return;
+    }
+    onNodeDragStartSelect(node.id);
+    const nextDrag = buildNodeDragFromPending(pendingDrag);
     nodeDragRef.current = nextDrag;
     setNodeDrag(nextDrag);
   };
 
   const moveNodeDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (pinchZoomRef.current) {
+      return;
+    }
+    const pendingDrag = pendingNodeDragRef.current;
+    if (pendingDrag?.pointerId === event.pointerId) {
+      if (
+        !exceedsNodeDragStartThreshold({
+          startClientX: pendingDrag.startClientX,
+          startClientY: pendingDrag.startClientY,
+          clientX: event.clientX,
+          clientY: event.clientY,
+        })
+      ) {
+        return;
+      }
+      event.preventDefault();
+      onNodeDragStartSelect(pendingDrag.node.id);
+      const nextDrag = buildNodeDragFromPending(pendingDrag);
+      pendingNodeDragRef.current = null;
+      nodeDragRef.current = nextDrag;
+      setNodeDrag(nextDrag);
+    }
     const activeDrag = nodeDragRef.current;
     if (!activeDrag || activeDrag.pointerId !== event.pointerId) {
       return;
@@ -536,6 +852,15 @@ export function useWorkflowCanvas({
   };
 
   const cancelNodeDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const pendingDrag = pendingNodeDragRef.current;
+    if (pendingDrag?.pointerId === event.pointerId) {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      restoreBodyUserSelect();
+      pendingNodeDragRef.current = null;
+      return;
+    }
     const activeDrag = nodeDragRef.current;
     if (!activeDrag || activeDrag.pointerId !== event.pointerId) {
       return;
@@ -550,6 +875,15 @@ export function useWorkflowCanvas({
   };
 
   const endNodeDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const pendingDrag = pendingNodeDragRef.current;
+    if (pendingDrag?.pointerId === event.pointerId) {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+      restoreBodyUserSelect();
+      pendingNodeDragRef.current = null;
+      return;
+    }
     const activeDrag = nodeDragRef.current;
     if (!activeDrag || activeDrag.pointerId !== event.pointerId) {
       return;
@@ -604,6 +938,10 @@ export function useWorkflowCanvas({
     if (structureBusy || event.button !== 0) {
       return;
     }
+    if (!canStartDirectCanvasEdit(event)) {
+      return;
+    }
+    trackTouchPointer(event);
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -621,17 +959,24 @@ export function useWorkflowCanvas({
     if (!connectionDrag || connectionDrag.pointerId !== event.pointerId) {
       return;
     }
+    trackTouchPointer(event);
     event.preventDefault();
     const to = getCanvasPoint(event.clientX, event.clientY);
     setConnectionDrag((current) => (current && current.pointerId === event.pointerId ? { ...current, to } : current));
   };
 
   const endConnectionDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.pointerType === "touch") {
+      removeTouchPointer(event.pointerId);
+    }
     if (!connectionDrag || connectionDrag.pointerId !== event.pointerId) {
       return;
     }
     event.preventDefault();
     event.stopPropagation();
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
     const element = document.elementFromPoint(event.clientX, event.clientY);
     const targetElement =
       element instanceof HTMLElement ? element.closest<HTMLElement>("[data-workflow-target-node-id]") : null;
@@ -642,6 +987,21 @@ export function useWorkflowCanvas({
         sourceNodeId: connectionDrag.sourceNodeId,
         targetNodeId,
       });
+    }
+    setConnectionDrag(null);
+  };
+
+  const cancelConnectionDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.pointerType === "touch") {
+      removeTouchPointer(event.pointerId);
+    }
+    if (!connectionDrag || connectionDrag.pointerId !== event.pointerId) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
     }
     setConnectionDrag(null);
   };
@@ -700,6 +1060,7 @@ export function useWorkflowCanvas({
     nodeDrag,
     connectionDrag,
     panePan,
+    pinchZooming,
     selectionBoxRect,
     previewSelectedNodeIds,
     updateZoom,
@@ -715,6 +1076,7 @@ export function useWorkflowCanvas({
     movePanePan,
     endPanePan,
     cancelPanePan,
+    leavePanePan,
     handleCanvasWheel,
     startNodeDrag,
     moveNodeDrag,
@@ -723,6 +1085,7 @@ export function useWorkflowCanvas({
     startConnectionDrag,
     moveConnectionDrag,
     endConnectionDrag,
+    cancelConnectionDrag,
     acceptNodePositionMutation,
     clearOptimisticNodePosition,
     restoreBodyUserSelect,

@@ -45,6 +45,7 @@ interface WorkflowNodeCardProps {
   onStartConnection: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   onMoveConnection: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   onEndConnection: (event: ReactPointerEvent<HTMLButtonElement>) => void;
+  onCancelConnection: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   onRun: () => void;
   onDelete: () => void;
   busy: boolean;
@@ -68,6 +69,7 @@ export function WorkflowNodeCard({
   onStartConnection,
   onMoveConnection,
   onEndConnection,
+  onCancelConnection,
   onRun,
   onDelete,
   busy,
@@ -138,7 +140,8 @@ export function WorkflowNodeCard({
         onPointerDown={onStartConnection}
         onPointerMove={onMoveConnection}
         onPointerUp={onEndConnection}
-        onPointerCancel={onEndConnection}
+        onPointerCancel={onCancelConnection}
+        onLostPointerCapture={onCancelConnection}
         className="absolute right-[-22px] top-[34px] z-20 h-11 w-11 rounded-full border border-transparent bg-transparent before:absolute before:left-1/2 before:top-1/2 before:h-5 before:w-5 before:-translate-x-1/2 before:-translate-y-1/2 before:rounded-full before:border-2 before:border-indigo-500 before:bg-white before:shadow-sm hover:before:bg-indigo-50 hover:before:ring-4 hover:before:ring-indigo-100 dark:before:border-violet-300 dark:before:bg-[#111b2d] dark:before:shadow-black/30 dark:hover:before:bg-violet-500/20 dark:hover:before:ring-violet-400/25 lg:right-[-10px] lg:top-[46px] lg:h-5 lg:w-5"
         title={t("detail.dragOutput")}
         aria-label={`${displayTitle} ${t("detail.outputHandle")}`}
@@ -209,16 +212,18 @@ export function WorkflowNodeCard({
           </div>
         ) : null}
       </div>
-      <div className="mt-3 flex items-center justify-between text-[10px] text-zinc-400 dark:text-slate-300">
-        <span>{node.last_run_at ? t("detail.recent", { time: formatDateTime(node.last_run_at) }) : displayLabel}</span>
+      <div className="mt-3 flex items-center gap-2 text-[10px] text-zinc-400 dark:text-slate-300">
+        <span className="min-w-0 max-w-[5.5rem] flex-1 truncate text-left leading-tight lg:max-w-[6.25rem]">
+          {node.last_run_at ? t("detail.recent", { time: formatDateTime(node.last_run_at) }) : displayLabel}
+        </span>
         {node.node_type !== "product_context" ? (
-          <div className="flex items-center gap-1.5">
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
             <button
               type="button"
               data-node-action
               onClick={onDelete}
               disabled={busy}
-              className="inline-flex min-h-11 items-center rounded border border-zinc-200 px-3 text-[11px] font-medium text-red-500 hover:border-red-300 hover:bg-red-50 disabled:opacity-50 dark:border-slate-700 dark:text-red-300 dark:hover:border-red-400/60 dark:hover:bg-red-500/10 lg:min-h-0 lg:px-2 lg:py-1"
+              className="inline-flex min-h-11 min-w-[4rem] items-center justify-center rounded border border-zinc-200 px-3 text-[11px] font-medium text-red-500 hover:border-red-300 hover:bg-red-50 disabled:opacity-50 dark:border-slate-700 dark:text-red-300 dark:hover:border-red-400/60 dark:hover:bg-red-500/10 lg:min-h-0 lg:min-w-[3.25rem] lg:px-2 lg:py-1"
             >
               <Trash2 size={11} className="mr-1" /> {t("detail.delete")}
             </button>
@@ -227,7 +232,7 @@ export function WorkflowNodeCard({
               data-node-action
               onClick={onRun}
               disabled={runActionState.disabled}
-              className="inline-flex min-h-11 items-center rounded border border-zinc-200 px-3 text-[11px] font-medium text-zinc-600 hover:border-zinc-900 hover:text-zinc-900 disabled:opacity-50 dark:border-slate-700 dark:text-slate-100 dark:hover:border-slate-400 dark:hover:text-white lg:min-h-0 lg:px-2 lg:py-1"
+              className="inline-flex min-h-11 min-w-[4rem] items-center justify-center rounded border border-zinc-200 px-3 text-[11px] font-medium text-zinc-600 hover:border-zinc-900 hover:text-zinc-900 disabled:opacity-50 dark:border-slate-700 dark:text-slate-100 dark:hover:border-slate-400 dark:hover:text-white lg:min-h-0 lg:min-w-[3.25rem] lg:px-2 lg:py-1"
               title={runActionState.title}
               aria-label={`${displayTitle} ${runActionState.label}`}
             >
