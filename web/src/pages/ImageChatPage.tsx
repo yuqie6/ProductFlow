@@ -1294,7 +1294,7 @@ export function ImageChatPage() {
                     title={t("chat.previewCurrent")}
                   >
                     <img
-                      src={api.toApiUrl(selectedRound.generated_asset.download_url)}
+                      src={api.toApiUrl(selectedRound.generated_asset.preview_url)}
                       alt={t("chat.currentResultAlt")}
                       decoding="async"
                       className="max-h-full max-w-full object-contain drop-shadow-2xl"
