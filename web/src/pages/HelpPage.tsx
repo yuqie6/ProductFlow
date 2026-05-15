@@ -1412,8 +1412,8 @@ export function HelpPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [searchQuery, setSearchQuery] = useState("");
-  const docPages = locale === "en-US" ? DOC_PAGES_EN : DOC_PAGES;
-  const navGroups = locale === "en-US" ? NAV_GROUPS_EN : NAV_GROUPS;
+  const docPages = locale === "zh-CN" ? DOC_PAGES : DOC_PAGES_EN;
+  const navGroups = locale === "zh-CN" ? NAV_GROUPS : NAV_GROUPS_EN;
   const page = findPage(searchParams.get("page"), docPages);
   const currentIndex = pageIndex(page, docPages);
   const previousPage = currentIndex > 0 ? docPages[currentIndex - 1] : null;

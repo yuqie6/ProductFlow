@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 
-import { LOCALES } from "../lib/i18n";
+import { LOCALES, type Locale, type TranslationKey } from "../lib/i18n";
 import { usePreferences } from "../lib/preferences";
 import { THEME_PREFERENCES, type ThemePreference } from "../lib/theme";
 
@@ -62,6 +62,12 @@ const themeIcons: Record<ThemePreference, typeof Sun> = {
   system: Monitor,
 };
 
+const localeLabelKey: Record<Locale, TranslationKey> = {
+  "zh-CN": "locale.zhCN",
+  "en-US": "locale.enUS",
+  "ja-JP": "locale.jaJP",
+};
+
 function navItemClassName(active: boolean) {
   return [
     "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-sm font-semibold transition-colors sm:w-auto sm:px-4 lg:px-5",
@@ -77,6 +83,7 @@ export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
   const CurrentThemeIcon = themeIcons[themePreference];
   const nextThemePreference =
     THEME_PREFERENCES[(THEME_PREFERENCES.indexOf(themePreference) + 1) % THEME_PREFERENCES.length];
+  const nextLocale = LOCALES[(LOCALES.indexOf(locale) + 1) % LOCALES.length];
 
   return (
     <>
@@ -103,8 +110,9 @@ export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
           <div className="flex shrink-0 items-center gap-1 lg:hidden">
             <button
               type="button"
-              onClick={() => setLocale(locale === "zh-CN" ? "en-US" : "zh-CN")}
-              aria-label={`${t("nav.language")}: ${t(locale === "zh-CN" ? "locale.zhCN" : "locale.enUS")}`}
+              onClick={() => setLocale(nextLocale)}
+              aria-label={`${t("nav.language")}: ${t(localeLabelKey[locale])}`}
+              title={t(localeLabelKey[locale])}
               className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition-colors active:scale-[0.98] hover:border-indigo-200 hover:text-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-slate-700 dark:bg-slate-950/80 dark:text-slate-300 dark:hover:border-violet-400/55 dark:hover:text-violet-100"
             >
               <Languages size={16} />
@@ -152,14 +160,14 @@ export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
                 key={item}
                 type="button"
                 onClick={() => setLocale(item)}
-                aria-label={`${t("nav.language")}: ${t(item === "zh-CN" ? "locale.zhCN" : "locale.enUS")}`}
+                aria-label={`${t("nav.language")}: ${t(localeLabelKey[item])}`}
                 className={`h-7 rounded-md px-2 text-xs font-semibold transition-colors ${
                   locale === item
                     ? "bg-white text-indigo-700 shadow-sm dark:bg-slate-800 dark:text-indigo-300"
                     : "text-slate-500 hover:text-slate-950 dark:text-slate-400 dark:hover:text-slate-100"
                 }`}
               >
-                {t(item === "zh-CN" ? "locale.zhCN" : "locale.enUS")}
+                {t(localeLabelKey[item])}
               </button>
             ))}
           </div>
