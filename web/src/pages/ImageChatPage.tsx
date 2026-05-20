@@ -57,8 +57,10 @@ import {
   compactImageToolOptions,
   effectiveImageGenerationSubmitCount,
   findImageHistoryPlaceholder,
+  imageGenerationTaskSubmitPayload,
   isImageSessionGenerationTaskActive,
   isImageSessionGenerationTaskCancelable,
+  isImageSessionGenerationTaskRegeneratable,
   isImageSessionGenerationTaskRetryable,
   mergeImageSessionStatusIntoDetail,
   pruneSelectedReferenceIds,
@@ -777,6 +779,19 @@ export function ImageChatPage() {
     cancelGenerationTaskMutation.mutate({ sessionId: selectedSessionId, taskId: task.id });
   }
 
+  function handleRegenerateGenerationTask(task: ImageSessionGenerationTask) {
+    if (
+      !selectedSessionId ||
+      !imageSession ||
+      generateMutation.isPending ||
+      !isImageSessionGenerationTaskRegeneratable(task)
+    ) {
+      return;
+    }
+    pendingGeneratedRoundCountRef.current = imageSession.rounds.length;
+    generateMutation.mutate(imageGenerationTaskSubmitPayload(task));
+  }
+
   function handleRename() {
     const nextTitle = titleDraft.trim();
     if (!selectedSessionId || !nextTitle || nextTitle === imageSession?.title) {
@@ -1214,9 +1229,11 @@ export function ImageChatPage() {
               branchBaseRound={branchBaseRound}
               retryingTaskId={retryGenerationTaskMutation.isPending ? (retryGenerationTaskMutation.variables?.taskId ?? null) : null}
               cancellingTaskId={cancelGenerationTaskMutation.isPending ? (cancelGenerationTaskMutation.variables?.taskId ?? null) : null}
+              regenerating={generateMutation.isPending}
               onPreviewRound={setPreviewRound}
               onRetryGenerationTask={handleRetryGenerationTask}
               onCancelGenerationTask={handleCancelGenerationTask}
+              onRegenerateGenerationTask={handleRegenerateGenerationTask}
               t={t}
             />
             {selectedRound?.provider_notes.length ? (

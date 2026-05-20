@@ -14,9 +14,11 @@ interface ImageChatMainStageProps {
   branchBaseRound: ImageSessionRound | null;
   retryingTaskId: string | null;
   cancellingTaskId: string | null;
+  regenerating: boolean;
   onPreviewRound: (round: ImageSessionRound) => void;
   onRetryGenerationTask: (task: ImageSessionGenerationTask) => void;
   onCancelGenerationTask: (task: ImageSessionGenerationTask) => void;
+  onRegenerateGenerationTask: (task: ImageSessionGenerationTask) => void;
   t: ImageChatTranslate;
 }
 
@@ -26,9 +28,11 @@ export function ImageChatMainStage({
   branchBaseRound,
   retryingTaskId,
   cancellingTaskId,
+  regenerating,
   onPreviewRound,
   onRetryGenerationTask,
   onCancelGenerationTask,
+  onRegenerateGenerationTask,
   t,
 }: ImageChatMainStageProps) {
   return (
@@ -80,8 +84,10 @@ export function ImageChatMainStage({
           candidate={selectedPlaceholder}
           retrying={retryingTaskId === selectedPlaceholder.task_id}
           cancelling={cancellingTaskId === selectedPlaceholder.task_id}
+          regenerating={regenerating}
           onRetry={onRetryGenerationTask}
           onCancel={onCancelGenerationTask}
+          onRegenerate={onRegenerateGenerationTask}
           t={t}
         />
       ) : (

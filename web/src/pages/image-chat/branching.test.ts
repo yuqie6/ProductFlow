@@ -11,8 +11,10 @@ import {
   findImageHistoryPlaceholder,
   groupImageSessionRounds,
   imageGenerationRetryMetadata,
+  imageGenerationTaskSubmitPayload,
   isImageSessionGenerationTaskActive,
   isImageSessionGenerationTaskAutoRetrying,
+  isImageSessionGenerationTaskRegeneratable,
   isImageSessionGenerationTaskRetryable,
   mergeImageSessionStatusIntoDetail,
   reconcileImageSessionSelection,
@@ -467,6 +469,32 @@ describe("image chat branching helpers", () => {
     expect(selectSubmittedImageGenerationTaskPlaceholderId(tasks, payload)).toBe("task:matching:candidate:2");
   });
 
+  it("prefers an active matching submitted task over a newer cancelled task with the same payload", () => {
+    const payload = {
+      prompt: "prompt",
+      size: "1024x1024",
+      base_asset_id: null,
+      selected_reference_asset_ids: [],
+      generation_count: 1,
+      tool_options: null,
+    };
+    const tasks = [
+      task({
+        id: "cancelled-newer",
+        status: "cancelled",
+        created_at: "2026-04-27T00:02:00Z",
+      }),
+      task({
+        id: "queued-new-task",
+        status: "queued",
+        is_cancelable: true,
+        created_at: "2026-04-27T00:01:00Z",
+      }),
+    ];
+
+    expect(selectSubmittedImageGenerationTaskPlaceholderId(tasks, payload)).toBe("task:queued-new-task:candidate:1");
+  });
+
   it("matches submitted high-count generation tasks", () => {
     const payload = {
       prompt: "prompt",
@@ -556,6 +584,29 @@ describe("image chat branching helpers", () => {
     expect(isImageSessionGenerationTaskRetryable(task({ status: "failed", is_retryable: true }))).toBe(true);
     expect(isImageSessionGenerationTaskRetryable(task({ status: "failed", is_retryable: false }))).toBe(false);
     expect(isImageSessionGenerationTaskRetryable(task({ status: "queued", is_retryable: true }))).toBe(false);
+  });
+
+  it("builds a new generation payload from a cancelled task", () => {
+    const cancelledTask = task({
+      status: "cancelled",
+      prompt: "same prompt",
+      size: "1536x1024",
+      base_asset_id: "base-1",
+      selected_reference_asset_ids: ["ref-1", "ref-2"],
+      generation_count: 3,
+      tool_options: { model: "image-model", quality: "high" },
+    });
+
+    expect(isImageSessionGenerationTaskRegeneratable(cancelledTask)).toBe(true);
+    expect(isImageSessionGenerationTaskRegeneratable(task({ status: "failed" }))).toBe(false);
+    expect(imageGenerationTaskSubmitPayload(cancelledTask)).toEqual({
+      prompt: "same prompt",
+      size: "1536x1024",
+      base_asset_id: "base-1",
+      selected_reference_asset_ids: ["ref-1", "ref-2"],
+      generation_count: 3,
+      tool_options: { model: "image-model", quality: "high" },
+    });
   });
 
   it("detects active auto retry tasks and parses retry metadata", () => {

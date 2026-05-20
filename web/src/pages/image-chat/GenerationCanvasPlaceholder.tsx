@@ -5,6 +5,7 @@ import type { ImageSessionGenerationTask } from "../../lib/types";
 import {
   imageGenerationRetryMetadata,
   isImageSessionGenerationTaskCancelable,
+  isImageSessionGenerationTaskRegeneratable,
   isImageSessionGenerationTaskRetryable,
 } from "./branching";
 import type { ImageHistoryPlaceholderCandidate } from "./branching";
@@ -15,8 +16,10 @@ interface GenerationCanvasPlaceholderProps {
   candidate: ImageHistoryPlaceholderCandidate;
   retrying: boolean;
   cancelling: boolean;
+  regenerating: boolean;
   onRetry: (task: ImageSessionGenerationTask) => void;
   onCancel: (task: ImageSessionGenerationTask) => void;
+  onRegenerate: (task: ImageSessionGenerationTask) => void;
   t: ImageChatTranslate;
 }
 
@@ -24,14 +27,17 @@ export function GenerationCanvasPlaceholder({
   candidate,
   retrying,
   cancelling,
+  regenerating,
   onRetry,
   onCancel,
+  onRegenerate,
   t,
 }: GenerationCanvasPlaceholderProps) {
   const active = candidate.status === "queued" || candidate.status === "running";
   const failed = candidate.status === "failed";
   const cancelled = candidate.status === "cancelled";
   const retryable = isImageSessionGenerationTaskRetryable(candidate.task);
+  const regeneratable = isImageSessionGenerationTaskRegeneratable(candidate.task);
   const queueText = generationTaskQueueText(candidate.task, t);
   const retryMetadata = imageGenerationRetryMetadata(candidate.task);
   const nonRetryableReason = candidate.failure_reason ?? retryMetadata?.last_failure_reason;
@@ -101,9 +107,22 @@ export function GenerationCanvasPlaceholder({
             {nonRetryableReason ? <div className="mt-1 text-red-500/80 dark:text-red-100/80">{nonRetryableReason}</div> : null}
           </div>
         ) : cancelled ? (
-          <div className="mt-5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-500">
-            {t("chat.taskCancelled")}
-          </div>
+          <>
+            <div className="mt-5 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-500 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-300">
+              {t("chat.taskCancelled")}
+            </div>
+            {regeneratable ? (
+              <button
+                type="button"
+                onClick={() => onRegenerate(candidate.task)}
+                disabled={regenerating}
+                className="mt-3 inline-flex items-center justify-center rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-indigo-500/20 transition-colors hover:bg-indigo-700 disabled:opacity-60 dark:bg-violet-500 dark:hover:bg-violet-400"
+              >
+                {regenerating ? <Loader2 size={15} className="mr-2 animate-spin" /> : <RotateCcw size={15} className="mr-2" />}
+                {t("chat.regenerateCancelled")}
+              </button>
+            ) : null}
+          </>
         ) : null}
       </div>
     </div>

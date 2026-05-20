@@ -169,13 +169,26 @@ export function selectImageGenerationTaskNextPlaceholderId(task: ImageSessionGen
   return getImageGenerationTaskPlaceholderId(task, candidateIndex);
 }
 
+export function imageGenerationTaskSubmitPayload(task: ImageSessionGenerationTask): ImageGenerationSubmitPayload {
+  return {
+    prompt: task.prompt,
+    size: task.size,
+    base_asset_id: task.base_asset_id,
+    selected_reference_asset_ids: task.selected_reference_asset_ids,
+    generation_count: clampGenerationCount(task.generation_count),
+    tool_options: task.tool_options,
+  };
+}
+
 export function selectSubmittedImageGenerationTaskPlaceholderId(
   tasks: ImageSessionGenerationTask[],
   payload: ImageGenerationSubmitPayload,
 ): string | null {
   const newestTasks = [...tasks].sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at));
+  const matchingTasks = newestTasks.filter((item) => taskMatchesSubmitPayload(item, payload));
   const task =
-    newestTasks.find((item) => taskMatchesSubmitPayload(item, payload)) ??
+    matchingTasks.find(isImageSessionGenerationTaskActive) ??
+    matchingTasks[0] ??
     newestTasks.find(isImageSessionGenerationTaskActive) ??
     newestTasks[0];
   return task ? selectImageGenerationTaskNextPlaceholderId(task) : null;
@@ -548,6 +561,10 @@ export function isImageSessionGenerationTaskActive(task: ImageSessionGenerationT
 
 export function isImageSessionGenerationTaskRetryable(task: ImageSessionGenerationTask): boolean {
   return task.status === "failed" && task.is_retryable;
+}
+
+export function isImageSessionGenerationTaskRegeneratable(task: ImageSessionGenerationTask): boolean {
+  return task.status === "cancelled";
 }
 
 export function imageGenerationRetryMetadata(task: ImageSessionGenerationTask): ImageGenerationRetryMetadata | null {
