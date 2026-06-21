@@ -196,6 +196,7 @@ class Settings(BaseSettings):
         ge=1,
         le=24 * 60 * 60,
     )
+    launch_kit_inline_generation: bool = False
     admin_access_required: bool = True
     deletion_enabled: bool = False
 

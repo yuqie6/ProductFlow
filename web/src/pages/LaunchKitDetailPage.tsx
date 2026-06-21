@@ -16,6 +16,32 @@ const statusTone: Record<LaunchKitStatus, string> = {
   failed: "bg-red-50 text-red-700 ring-red-200 dark:bg-red-500/10 dark:text-red-200 dark:ring-red-400/30",
 };
 
+const progressStageLabels: Record<string, string> = {
+  extracting_facts: "Extracting product facts",
+  applying_playbook: "Applying category playbook",
+  applying_store_profile: "Applying store profile",
+  generating_angles: "Selecting buyer angle",
+  generating_copy: "Writing platform copy",
+  planning_images: "Planning image proof",
+  scoring: "Scoring readiness",
+  exporting_optional_snapshot: "Preparing export snapshot",
+};
+
+const progressStageOrder = Object.keys(progressStageLabels);
+
+function generationButtonLabel(status: LaunchKitStatus, pending: boolean) {
+  if (pending) {
+    return "Submitting…";
+  }
+  if (status === "failed") {
+    return "Retry generation";
+  }
+  if (status === "ready") {
+    return "Regenerate";
+  }
+  return "Generate";
+}
+
 function platformLabel(platform: string) {
   return platform === "tiktok_shop" ? "TikTok Shop" : "Shopee";
 }
@@ -105,7 +131,7 @@ function ManualExportCard({ kit }: { kit: LaunchKitDetail }) {
   const platformBlocks = Array.isArray(manualExport?.platform_blocks)
     ? manualExport.platform_blocks.map(recordValue).filter((item): item is Record<string, unknown> => Boolean(item))
     : [];
-  const checklist = stringList(manualExport?.checklist ?? snapshot?.checklist_items);
+  const checklist = stringList(manualExport?.checklist ?? (snapshot?.checklist_items));
   if (!manualExport && platformBlocks.length === 0) {
     return <JsonPreview value={kit.export_snapshot ?? kit.exports} />;
   }
@@ -131,6 +157,26 @@ function ManualExportCard({ kit }: { kit: LaunchKitDetail }) {
           <ul className="space-y-1">{checklist.map((item) => <li key={item}>• {item}</li>)}</ul>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function GenerationProgress({ kit }: { kit: LaunchKitDetail }) {
+  const task = kit.latest_task;
+  if (!task) {
+    return <p className="text-sm text-slate-500 dark:text-slate-400">No generation task yet.</p>;
+  }
+  const stage = task.progress_stage ?? "";
+  const index = progressStageOrder.indexOf(stage);
+  const percent = task.status === "succeeded" ? 100 : index >= 0 ? Math.round(((index + 1) / progressStageOrder.length) * 100) : 8;
+  return (
+    <div className="space-y-3 text-sm text-slate-600 dark:text-slate-300">
+      <p><span className="font-semibold">Status:</span> {task.status}</p>
+      <p><span className="font-semibold">Stage:</span> {progressStageLabels[stage] ?? (stage || "—")}</p>
+      <div className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800" aria-label="Generation progress">
+        <div className="h-full rounded-full bg-blue-600 transition-all" style={{ width: `${percent}%` }} />
+      </div>
+      {task.failure_detail ? <p className="text-red-600 dark:text-red-300">{task.failure_detail}</p> : null}
     </div>
   );
 }
@@ -236,7 +282,7 @@ export function LaunchKitDetailPage() {
                     onClick={() => generateMutation.mutate()}
                     className="inline-flex items-center rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-emerald-600/20 transition hover:bg-emerald-500 disabled:opacity-50"
                   >
-                    <ClipboardList size={16} className="mr-1.5" /> {generateMutation.isPending ? "Submitting…" : "Generate"}
+                    <ClipboardList size={16} className="mr-1.5" /> {generationButtonLabel(kit.status, generateMutation.isPending)}
                   </button>
                   <button
                     type="button"
@@ -268,13 +314,7 @@ export function LaunchKitDetailPage() {
                 </section>
                 <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/60 dark:border-slate-700/80 dark:bg-[#0f1726] dark:shadow-black/25">
                   <h2 className="mb-3 text-base font-semibold text-slate-950 dark:text-white">Latest task</h2>
-                  {kit.latest_task ? (
-                    <div className="space-y-2 text-sm text-slate-600 dark:text-slate-300">
-                      <p><span className="font-semibold">Status:</span> {kit.latest_task.status}</p>
-                      <p><span className="font-semibold">Stage:</span> {kit.latest_task.progress_stage ?? "—"}</p>
-                      {kit.latest_task.failure_detail ? <p className="text-red-600 dark:text-red-300">{kit.latest_task.failure_detail}</p> : null}
-                    </div>
-                  ) : <p className="text-sm text-slate-500 dark:text-slate-400">No generation task yet.</p>}
+<GenerationProgress kit={kit} />
                 </section>
               </aside>
 

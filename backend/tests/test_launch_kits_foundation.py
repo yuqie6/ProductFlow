@@ -219,3 +219,37 @@ def test_execute_launch_kit_generation_task_produces_manual_export_content(confi
     assert "# Áo khoác chống nắng UPF50 LaunchKit" in exported.text
     assert "## Platform copy blocks" in exported.text
     assert "## Manual export checklist" in exported.text
+
+
+def test_launch_kit_generate_endpoint_can_run_inline_without_queue(
+    configured_env: Path,
+    db_session,
+    monkeypatch,
+) -> None:
+    from productflow_backend.config import get_settings
+
+    monkeypatch.setenv("LAUNCH_KIT_INLINE_GENERATION", "true")
+    get_settings.cache_clear()
+    ensure_starter_category_playbooks(db_session)
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+    created = client.post(
+        "/api/launch-kits",
+        json={
+            "product_name": "Kệ để bàn nhỏ",
+            "category_key": "home_goods",
+            "target_platforms": ["shopee"],
+            "source_references": {"pasted_reference_text": "Kích thước nhỏ gọn, dùng trên bàn làm việc."},
+        },
+    ).json()
+
+    generated = client.post(f"/api/launch-kits/{created['id']}/generate")
+
+    assert generated.status_code == 202
+    payload = generated.json()
+    assert payload["status"] == "ready"
+    assert payload["latest_task"]["status"] == "succeeded"
+    assert payload["export_snapshot"]["manual_export"]["platform_blocks"]
+    assert payload["quality_score_summary"]["overall"] > 0
+    get_settings.cache_clear()

@@ -5,11 +5,17 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from productflow_backend.application.launch_kit.exporting import launch_kit_export_filename, render_launch_kit_markdown
-from productflow_backend.application.launch_kit.generation import submit_launch_kit_generation_task
+from productflow_backend.application.launch_kit.generation import (
+    create_launch_kit_generation_task,
+    execute_launch_kit_generation_task,
+    submit_launch_kit_generation_task,
+)
 from productflow_backend.application.launch_kit.mutations import create_launch_kit
 from productflow_backend.application.launch_kit.payloads import SourceReferencePayload
 from productflow_backend.application.launch_kit.playbooks import ensure_starter_category_playbooks
 from productflow_backend.application.launch_kit.query import get_launch_kit, list_launch_kits
+from productflow_backend.config import get_runtime_settings
+from productflow_backend.infrastructure.db.session import get_session_factory
 from productflow_backend.presentation.deps import get_session, require_admin
 from productflow_backend.presentation.schemas.launch_kits import (
     LaunchKitCreateRequest,
@@ -78,6 +84,12 @@ def generate_launch_kit_endpoint(
     launch_kit_id: str,
     session: Session = Depends(get_session),
 ) -> LaunchKitDetailResponse:
+    if get_runtime_settings().launch_kit_inline_generation:
+        task = create_launch_kit_generation_task(session, launch_kit_id=launch_kit_id)
+        execute_launch_kit_generation_task(task.id, session_factory=get_session_factory())
+        session.expire_all()
+        return serialize_launch_kit_detail(get_launch_kit(session, launch_kit_id))
+
     launch_kit = submit_launch_kit_generation_task(session, launch_kit_id=launch_kit_id)
     return serialize_launch_kit_detail(launch_kit)
 
