@@ -1,6 +1,8 @@
 import { DEFAULT_LOCALE, type Locale } from "./i18n";
 import type { CanvasTemplateSummary, WorkflowNodeType } from "./types";
 
+const CANVAS_TEMPLATE_SOURCE_LOCALE: Locale = "zh-CN";
+
 interface BuiltInCanvasTemplateText {
   title: string;
   description: string;
@@ -635,11 +637,11 @@ for (const [templateKey, item] of Object.entries(BUILT_IN_TEMPLATE_TEXT)) {
 }
 
 function shouldLocalizeTemplate(template: CanvasTemplateSummary, locale: Locale): boolean {
-  return locale !== DEFAULT_LOCALE && template.source === "builtin" && template.key in BUILT_IN_TEMPLATE_TEXT;
+  return locale !== CANVAS_TEMPLATE_SOURCE_LOCALE && template.source === "builtin" && template.key in BUILT_IN_TEMPLATE_TEXT;
 }
 
 function localizedByKey(sourceValue: string, localizedValue: string | undefined, locale: Locale): string {
-  return locale === DEFAULT_LOCALE ? sourceValue : (localizedValue ?? sourceValue);
+  return locale === CANVAS_TEMPLATE_SOURCE_LOCALE ? sourceValue : (localizedValue ?? sourceValue);
 }
 
 export function localizeCanvasTemplateSummary(
@@ -688,7 +690,7 @@ export function localizeBuiltInTemplateNodeTitle(
   locale: Locale = DEFAULT_LOCALE,
   configJson?: Record<string, unknown>,
 ): string | null {
-  if (locale === DEFAULT_LOCALE) {
+  if (locale === CANVAS_TEMPLATE_SOURCE_LOCALE) {
     return null;
   }
   const templateMetadata = objectValue(configJson?._canvas_template);
@@ -707,7 +709,7 @@ export function localizeBuiltInTemplateNodeTitle(
 }
 
 export function localizeBuiltInTemplateLabel(label: string, locale: Locale = DEFAULT_LOCALE): string | null {
-  if (locale === DEFAULT_LOCALE) {
+  if (locale === CANVAS_TEMPLATE_SOURCE_LOCALE) {
     return null;
   }
   const trimmed = label.trim();

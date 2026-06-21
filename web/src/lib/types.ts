@@ -741,3 +741,81 @@ export interface DuplicateWorkflowNodeGroupInput {
   position_x?: number;
   position_y?: number;
 }
+
+export type LaunchKitStatus = "draft" | "generating" | "ready" | "exported" | "failed";
+export type LaunchKitPlatform = "shopee" | "tiktok_shop";
+export type LaunchKitProgressStage =
+  | "queued"
+  | "analyzing_input"
+  | "selecting_angle"
+  | "drafting_copy"
+  | "scoring_quality"
+  | "building_exports"
+  | "completed";
+
+export interface SourceReferenceRequest {
+  pasted_reference_text?: string | null;
+  reference_urls?: string[];
+  notes?: string | null;
+}
+
+export interface LaunchKitCreateRequest {
+  product_name: string;
+  category_key: string;
+  target_platforms: LaunchKitPlatform[];
+  source_references?: SourceReferenceRequest | null;
+}
+
+export interface LaunchKitTaskStatus {
+  id: string;
+  status: JobStatus;
+  progress_stage: LaunchKitProgressStage | null;
+  attempt_count: number;
+  failure_category: string | null;
+  failure_detail: string | null;
+  is_retryable: boolean;
+  is_cancelable: boolean;
+  started_at: string | null;
+  progress_updated_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LaunchKitSummary {
+  id: string;
+  product_id: string;
+  product_name: string;
+  category_key: string;
+  target_platforms: string[];
+  status: LaunchKitStatus;
+  latest_task: LaunchKitTaskStatus | null;
+  quality_score_summary: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LaunchKitListResponse {
+  items: LaunchKitSummary[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface LaunchKitDetail extends LaunchKitSummary {
+  buyer_angle_key: string | null;
+  source_references: Record<string, unknown>;
+  generated_summary: Record<string, unknown> | null;
+  selected_angle: Record<string, unknown> | null;
+  export_snapshot: Record<string, unknown> | null;
+  seller_feedback: Record<string, unknown> | null;
+  variants: Record<string, unknown>[];
+  exports: Record<string, unknown>[];
+}
+
+export interface LaunchKitStatusResponse {
+  id: string;
+  status: LaunchKitStatus;
+  latest_task: LaunchKitTaskStatus | null;
+  updated_at: string;
+}

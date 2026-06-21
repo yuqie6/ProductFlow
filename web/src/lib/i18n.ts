@@ -1,9 +1,9 @@
-export const LOCALES = ["zh-CN", "en-US", "ja-JP"] as const;
+export const LOCALES = ["vi-VN", "zh-CN", "en-US", "ja-JP"] as const;
 
 export type Locale = (typeof LOCALES)[number];
 export type TranslationParams = Record<string, string | number>;
 
-export const DEFAULT_LOCALE: Locale = "zh-CN";
+export const DEFAULT_LOCALE: Locale = "vi-VN";
 export const LOCALE_STORAGE_KEY = "productflow.locale";
 
 export const zhCN = {
@@ -17,6 +17,11 @@ export const zhCN = {
   "nav.language": "语言",
   "nav.theme": "主题",
   "nav.mobile": "移动端导航",
+  "nav.launchKits": "LaunchKit",
+  "nav.newKit": "新建套件",
+  "nav.assets": "素材",
+  "nav.advanced": "高级",
+  "locale.viVN": "VI",
   "locale.zhCN": "中文",
   "locale.enUS": "EN",
   "locale.jaJP": "日本語",
@@ -756,6 +761,11 @@ export const enUS: Record<keyof typeof zhCN, string> = {
   "nav.language": "Language",
   "nav.theme": "Theme",
   "nav.mobile": "Mobile navigation",
+  "nav.launchKits": "LaunchKit",
+  "nav.newKit": "New kit",
+  "nav.assets": "Assets",
+  "nav.advanced": "Advanced",
+  "locale.viVN": "VI",
   "locale.zhCN": "中文",
   "locale.enUS": "EN",
   "locale.jaJP": "日本語",
@@ -1495,6 +1505,11 @@ export const jaJP: Record<keyof typeof zhCN, string> = {
   "nav.language": "言語",
   "nav.theme": "テーマ",
   "nav.mobile": "モバイルナビゲーション",
+  "nav.launchKits": "LaunchKit",
+  "nav.newKit": "新規キット",
+  "nav.assets": "アセット",
+  "nav.advanced": "詳細",
+  "locale.viVN": "VI",
   "locale.zhCN": "中文",
   "locale.enUS": "EN",
   "locale.jaJP": "日本語",
@@ -2223,10 +2238,56 @@ export const jaJP: Record<keyof typeof zhCN, string> = {
   "help.openImageChat": "画像チャットを開く",
 };
 
+const viVN = {
+  ...zhCN,
+  "app.loading": "Đang tải",
+  "nav.products": "Sản phẩm",
+  "nav.imageChat": "Lab ảnh",
+  "nav.gallery": "Thư viện",
+  "nav.help": "Trợ giúp",
+  "nav.settings": "Cấu hình",
+  "nav.logout": "Đăng xuất",
+  "nav.language": "Ngôn ngữ",
+  "nav.theme": "Giao diện",
+  "nav.mobile": "Điều hướng di động",
+  "nav.launchKits": "LaunchKit",
+  "nav.newKit": "Tạo kit",
+  "nav.assets": "Tài sản",
+  "nav.advanced": "Nâng cao",
+  "locale.viVN": "VI",
+  "locale.zhCN": "中文",
+  "locale.enUS": "EN",
+  "locale.jaJP": "日本語",
+  "theme.light": "Sáng",
+  "theme.dark": "Tối",
+  "theme.system": "Hệ thống",
+} satisfies Record<keyof typeof zhCN, string>;
+
+const enUSComplete = {
+  ...zhCN,
+  ...enUS,
+  "nav.launchKits": "LaunchKit",
+  "nav.newKit": "New kit",
+  "nav.assets": "Assets",
+  "nav.advanced": "Advanced",
+  "locale.viVN": "VI",
+} satisfies Record<keyof typeof zhCN, string>;
+
+const jaJPComplete = {
+  ...zhCN,
+  ...jaJP,
+  "nav.launchKits": "LaunchKit",
+  "nav.newKit": "新規キット",
+  "nav.assets": "アセット",
+  "nav.advanced": "詳細",
+  "locale.viVN": "VI",
+} satisfies Record<keyof typeof zhCN, string>;
+
 export const translations = {
+  "vi-VN": viVN,
   "zh-CN": zhCN,
-  "en-US": enUS,
-  "ja-JP": jaJP,
+  "en-US": enUSComplete,
+  "ja-JP": jaJPComplete,
 } satisfies Record<Locale, Record<keyof typeof zhCN, string>>;
 
 export type TranslationKey = keyof typeof zhCN;

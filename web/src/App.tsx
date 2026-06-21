@@ -15,6 +15,15 @@ const HelpPage = lazy(() =>
 const LoginPage = lazy(() =>
   import("./pages/LoginPage").then((module) => ({ default: module.LoginPage })),
 );
+const LaunchKitListPage = lazy(() =>
+  import("./pages/LaunchKitListPage").then((module) => ({ default: module.LaunchKitListPage })),
+);
+const LaunchKitCreatePage = lazy(() =>
+  import("./pages/LaunchKitCreatePage").then((module) => ({ default: module.LaunchKitCreatePage })),
+);
+const LaunchKitDetailPage = lazy(() =>
+  import("./pages/LaunchKitDetailPage").then((module) => ({ default: module.LaunchKitDetailPage })),
+);
 const loadImageChatPage = () =>
   import("./pages/ImageChatPage").then((module) => ({ default: module.ImageChatPage }));
 const ImageChatPage = lazy(loadImageChatPage);
@@ -55,6 +64,7 @@ function AppRoutes() {
     if (!authenticated) {
       return;
     }
+    void import("./pages/LaunchKitListPage");
     void loadProductListPage();
     void loadImageChatPage();
   }, [authenticated]);
@@ -67,6 +77,18 @@ function AppRoutes() {
     <Suspense fallback={<LoadingScreen />}>
       <Routes>
         <Route path="/login" element={<LoginPage authenticated={authenticated} />} />
+        <Route
+          path="/launch-kits"
+          element={authenticated ? <LaunchKitListPage /> : <Navigate to="/login" replace />}
+        />
+        <Route
+          path="/launch-kits/new"
+          element={authenticated ? <LaunchKitCreatePage /> : <Navigate to="/login" replace />}
+        />
+        <Route
+          path="/launch-kits/:id"
+          element={authenticated ? <LaunchKitDetailPage /> : <Navigate to="/login" replace />}
+        />
         <Route
           path="/products"
           element={authenticated ? <ProductListPage /> : <Navigate to="/login" replace />}
@@ -99,7 +121,7 @@ function AppRoutes() {
           path="/products/:productId"
           element={authenticated ? <ProductDetailPage /> : <Navigate to="/login" replace />}
         />
-        <Route path="*" element={<Navigate to={authenticated ? "/products" : "/login"} replace />} />
+        <Route path="*" element={<Navigate to={authenticated ? "/launch-kits" : "/login"} replace />} />
       </Routes>
     </Suspense>
   );

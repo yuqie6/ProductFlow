@@ -16,6 +16,10 @@ import type {
   ImageSessionListResponse,
   ImageSessionStatus,
   ImageToolOptions,
+  LaunchKitCreateRequest,
+  LaunchKitDetail,
+  LaunchKitListResponse,
+  LaunchKitStatusResponse,
   ProductDetail,
   ProductHistory,
   ProviderBinding,
@@ -102,6 +106,23 @@ export const api = {
     const page = input?.page ?? 1;
     const pageSize = input?.page_size ?? 20;
     return request(`/api/products?page=${encodeURIComponent(page)}&page_size=${encodeURIComponent(pageSize)}`);
+  },
+  listLaunchKits(input?: { page?: number; page_size?: number }): Promise<LaunchKitListResponse> {
+    const page = input?.page ?? 1;
+    const pageSize = input?.page_size ?? 20;
+    return request(`/api/launch-kits?page=${encodeURIComponent(page)}&page_size=${encodeURIComponent(pageSize)}`);
+  },
+  createLaunchKit(payload: LaunchKitCreateRequest): Promise<LaunchKitDetail> {
+    return request("/api/launch-kits", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  getLaunchKit(launchKitId: string): Promise<LaunchKitDetail> {
+    return request(`/api/launch-kits/${launchKitId}`);
+  },
+  getLaunchKitStatus(launchKitId: string): Promise<LaunchKitStatusResponse> {
+    return request(`/api/launch-kits/${launchKitId}/status`);
   },
   getProduct(productId: string): Promise<ProductDetail> {
     return request(`/api/products/${productId}`);
