@@ -71,6 +71,26 @@ function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+function booleanOrNull(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
+async function copyToClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.append(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
+}
+
 function downloadTextFile(filename: string, content: string, mimeType: string) {
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
@@ -201,31 +221,91 @@ function TogglePill({ label, checked, onChange }: { label: string; checked: bool
 }
 
 function ManualExportCard({ kit }: { kit: LaunchKitDetail }) {
+  const queryClient = useQueryClient();
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [copyError, setCopyError] = useState("");
   const snapshot = recordValue(kit.export_snapshot);
   const manualExport = recordValue(snapshot?.manual_export);
   const platformBlocks = Array.isArray(manualExport?.platform_blocks)
     ? manualExport.platform_blocks.map(recordValue).filter((item): item is Record<string, unknown> => Boolean(item))
     : [];
   const checklist = stringList(manualExport?.checklist ?? (snapshot?.checklist_items));
+  const feedback = recordValue(kit.seller_feedback);
+  const feedbackMetrics = recordValue(feedback?.metrics);
+  const metricMutation = useMutation({
+    mutationFn: (metricKey: string) => api.saveLaunchKitFeedback(kit.id, {
+      used: booleanOrNull(feedback?.used),
+      edited: booleanOrNull(feedback?.edited),
+      would_reuse: booleanOrNull(feedback?.would_reuse),
+      would_pay: booleanOrNull(feedback?.would_pay),
+      notes: stringValue(feedback?.notes),
+      metrics: {
+        ...feedbackMetrics,
+        [metricKey]: Number(feedbackMetrics?.[metricKey] ?? 0) + 1,
+        last_copy_action_at: new Date().toISOString(),
+      },
+    }),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(["launch-kit", kit.id], updated);
+    },
+  });
+
+  const handleCopy = async (key: string, text: string, metricKey: string) => {
+    if (!text.trim()) {
+      return;
+    }
+    try {
+      await copyToClipboard(text);
+      setCopiedKey(key);
+      setCopyError("");
+      metricMutation.mutate(metricKey);
+      window.setTimeout(() => setCopiedKey((current) => (current === key ? null : current)), 1800);
+    } catch {
+      setCopyError("Copy failed. Select the text manually and copy it.");
+    }
+  };
+
   if (!manualExport && platformBlocks.length === 0) {
     return <JsonPreview value={kit.export_snapshot ?? kit.exports} />;
   }
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" aria-live="polite">
       {platformBlocks.map((block) => {
         const platform = stringValue(block.platform) ?? "platform";
+        const title = stringValue(block.title) ?? "";
+        const hook = stringValue(block.hook) ?? "";
+        const description = stringValue(block.description) ?? "";
+        const hashtags = stringList(block.hashtags);
+        const allText = [title, hook, description, hashtags.join(" ")].filter(Boolean).join("\n\n");
+        const blockKey = `${platform}-${title}`;
         return (
-          <article key={`${platform}-${stringValue(block.title)}`} className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
-            <div className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300">
-              {platformLabel(platform)} copy block
+          <article key={blockKey} className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
+            <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300">
+                  {platformLabel(platform)} copy block
+                </div>
+                <h3 className="text-base font-semibold text-slate-950 dark:text-white">{title || "Untitled"}</h3>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <CopyButton label="Copy title" copied={copiedKey === `${blockKey}-title`} onClick={() => handleCopy(`${blockKey}-title`, title, `copied_${platform}_title`)} disabled={!title} />
+                <CopyButton label="Copy description" copied={copiedKey === `${blockKey}-description`} onClick={() => handleCopy(`${blockKey}-description`, description, `copied_${platform}_description`)} disabled={!description} />
+                <CopyButton label="Copy all" copied={copiedKey === `${blockKey}-all`} onClick={() => handleCopy(`${blockKey}-all`, allText, `copied_${platform}_all`)} disabled={!allText} />
+              </div>
             </div>
-            <h3 className="text-base font-semibold text-slate-950 dark:text-white">{stringValue(block.title) ?? "Untitled"}</h3>
-            {stringValue(block.hook) ? <p className="mt-2 text-sm font-medium text-slate-700 dark:text-slate-200">{stringValue(block.hook)}</p> : null}
-            <pre className="mt-3 whitespace-pre-wrap rounded-xl bg-slate-50 p-3 text-sm leading-6 text-slate-700 dark:bg-slate-900 dark:text-slate-200">{stringValue(block.description) ?? ""}</pre>
-            {stringList(block.hashtags).length ? <p className="mt-3 text-sm text-emerald-700 dark:text-emerald-300">{stringList(block.hashtags).join(" ")}</p> : null}
+            {hook ? <p className="mt-2 text-sm font-medium text-slate-700 dark:text-slate-200">{hook}</p> : null}
+            <pre className="mt-3 whitespace-pre-wrap rounded-xl bg-slate-50 p-3 text-sm leading-6 text-slate-700 dark:bg-slate-900 dark:text-slate-200">{description}</pre>
+            {hashtags.length ? (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <p className="text-sm text-emerald-700 dark:text-emerald-300">{hashtags.join(" ")}</p>
+                <CopyButton label="Copy hashtags" copied={copiedKey === `${blockKey}-hashtags`} onClick={() => handleCopy(`${blockKey}-hashtags`, hashtags.join(" "), `copied_${platform}_hashtags`)} />
+              </div>
+            ) : null}
           </article>
         );
       })}
+      {copyError ? <p className="text-sm font-semibold text-red-600 dark:text-red-300">{copyError}</p> : null}
+      {metricMutation.isError ? <p className="text-sm text-amber-700 dark:text-amber-200">Copied, but usage metric was not saved.</p> : null}
       {checklist.length ? (
         <div className="rounded-2xl bg-amber-50 p-4 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-100">
           <div className="mb-2 font-semibold">Manual export checklist</div>
@@ -233,6 +313,19 @@ function ManualExportCard({ kit }: { kit: LaunchKitDetail }) {
         </div>
       ) : null}
     </div>
+  );
+}
+
+function CopyButton({ label, copied, disabled, onClick }: { label: string; copied: boolean; disabled?: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-emerald-500/10 dark:hover:text-emerald-200"
+    >
+      {copied ? "Copied" : label}
+    </button>
   );
 }
 
