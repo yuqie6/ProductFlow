@@ -263,6 +263,67 @@ def test_launch_kit_generate_endpoint_can_run_inline_without_queue(
     get_settings.cache_clear()
 
 
+def test_launch_kit_manual_edits_persist_and_markdown_uses_edited_content(configured_env: Path, db_session) -> None:
+    from productflow_backend.application.launch_kit.generation import (
+        execute_launch_kit_generation_task,
+        submit_launch_kit_generation_task,
+    )
+    from productflow_backend.infrastructure.db.session import get_session_factory
+
+    ensure_starter_category_playbooks(db_session)
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+    created = client.post(
+        "/api/launch-kits",
+        json={
+            "product_name": "Bộ hộp cơm văn phòng",
+            "category_key": "home_goods",
+            "target_platforms": ["shopee"],
+            "source_references": {"pasted_reference_text": "Nhựa PP, 3 ngăn, dùng cho cơm trưa văn phòng."},
+        },
+    ).json()
+    enqueued: list[str] = []
+    submit_launch_kit_generation_task(db_session, launch_kit_id=created["id"], enqueue=enqueued.append)
+    execute_launch_kit_generation_task(enqueued[0], session_factory=get_session_factory())
+
+    db_session.expire_all()
+    launch_kit = db_session.get(LaunchKit, created["id"])
+    assert launch_kit is not None
+    original_blocks = launch_kit.export_snapshot_json["manual_export"]["platform_blocks"]
+    edited_blocks = [
+        {
+            **original_blocks[0],
+            "title": "Hộp cơm văn phòng 3 ngăn chống tràn",
+            "hook": "Chuẩn bị bữa trưa gọn hơn mỗi ngày",
+            "description": "Bản đã chỉnh sửa để seller dùng ngay trên Shopee.",
+            "hashtags": ["#hopcom", "vanphong"],
+        }
+    ]
+
+    saved = client.patch(
+        f"/api/launch-kits/{created['id']}/manual-edits",
+        json={"platform_blocks": edited_blocks},
+    )
+
+    assert saved.status_code == 200
+    payload = saved.json()
+    manual_export = payload["export_snapshot"]["manual_export"]
+    assert manual_export["edited"] is True
+    assert manual_export["edit_count"] == 1
+    assert manual_export["original_platform_blocks"][0]["title"] == original_blocks[0]["title"]
+    assert manual_export["platform_blocks"][0]["title"] == "Hộp cơm văn phòng 3 ngăn chống tràn"
+    assert manual_export["platform_blocks"][0]["hashtags"] == ["#hopcom", "#vanphong"]
+    assert payload["seller_feedback"]["edited"] is True
+    assert payload["seller_feedback"]["metrics"]["manual_content_edits"] == 1
+
+    exported = client.get(f"/api/launch-kits/{created['id']}/exports/markdown")
+    assert exported.status_code == 200
+    assert "Hộp cơm văn phòng 3 ngăn chống tràn" in exported.text
+    assert "Bản đã chỉnh sửa để seller dùng ngay trên Shopee." in exported.text
+    assert original_blocks[0]["title"] not in exported.text
+
+
 def test_launch_kit_feedback_endpoint_marks_used_and_persists_notes(configured_env: Path, db_session) -> None:
     ensure_starter_category_playbooks(db_session)
     app = create_app()

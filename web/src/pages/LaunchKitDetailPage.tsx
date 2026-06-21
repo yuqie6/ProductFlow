@@ -1,5 +1,5 @@
 import type React from "react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, ArrowLeft, CheckCircle2, ClipboardList, Download, FileText, Loader2, Store } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -7,7 +7,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { TopNav } from "../components/TopNav";
 import { api, ApiError } from "../lib/api";
 import { formatDateTime } from "../lib/format";
-import type { LaunchKitDetail, LaunchKitStatus } from "../lib/types";
+import type { LaunchKitDetail, LaunchKitEditablePlatformBlock, LaunchKitStatus } from "../lib/types";
 
 const statusTone: Record<LaunchKitStatus, string> = {
   draft: "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-200 dark:ring-amber-400/30",
@@ -69,6 +69,24 @@ function stringValue(value: unknown): string | null {
 
 function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function editableBlockFromRecord(block: Record<string, unknown>): LaunchKitEditablePlatformBlock {
+  return {
+    platform: stringValue(block.platform),
+    title: stringValue(block.title) ?? "",
+    hook: stringValue(block.hook) ?? "",
+    description: stringValue(block.description) ?? "",
+    hashtags: stringList(block.hashtags),
+  };
+}
+
+function hashtagsFromText(value: string): string[] {
+  return value
+    .split(/[\s,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => (item.startsWith("#") ? item : `#${item}`));
 }
 
 function booleanOrNull(value: unknown): boolean | null {
@@ -224,14 +242,23 @@ function ManualExportCard({ kit }: { kit: LaunchKitDetail }) {
   const queryClient = useQueryClient();
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [copyError, setCopyError] = useState("");
+  const [isEditing, setIsEditing] = useState(false);
+  const [draftBlocks, setDraftBlocks] = useState<LaunchKitEditablePlatformBlock[]>([]);
+  const [editSaved, setEditSaved] = useState(false);
   const snapshot = recordValue(kit.export_snapshot);
   const manualExport = recordValue(snapshot?.manual_export);
-  const platformBlocks = Array.isArray(manualExport?.platform_blocks)
+  const platformBlocks = useMemo(() => (Array.isArray(manualExport?.platform_blocks)
     ? manualExport.platform_blocks.map(recordValue).filter((item): item is Record<string, unknown> => Boolean(item))
-    : [];
+    : []), [manualExport]);
+  const editableBlocks = useMemo(() => platformBlocks.map(editableBlockFromRecord), [platformBlocks]);
   const checklist = stringList(manualExport?.checklist ?? (snapshot?.checklist_items));
   const feedback = recordValue(kit.seller_feedback);
   const feedbackMetrics = recordValue(feedback?.metrics);
+
+  useEffect(() => {
+    setDraftBlocks(editableBlocks);
+  }, [editableBlocks]);
+
   const metricMutation = useMutation({
     mutationFn: (metricKey: string) => api.saveLaunchKitFeedback(kit.id, {
       used: booleanOrNull(feedback?.used),
@@ -249,6 +276,22 @@ function ManualExportCard({ kit }: { kit: LaunchKitDetail }) {
       queryClient.setQueryData(["launch-kit", kit.id], updated);
     },
   });
+
+  const editMutation = useMutation({
+    mutationFn: () => api.saveLaunchKitManualEdits(kit.id, { platform_blocks: draftBlocks }),
+    onSuccess: async (updated) => {
+      queryClient.setQueryData(["launch-kit", kit.id], updated);
+      await queryClient.invalidateQueries({ queryKey: ["launch-kits"] });
+      setIsEditing(false);
+      setEditSaved(true);
+      window.setTimeout(() => setEditSaved(false), 2200);
+    },
+  });
+
+  const updateDraft = (index: number, patch: Partial<LaunchKitEditablePlatformBlock>) => {
+    setEditSaved(false);
+    setDraftBlocks((current) => current.map((block, blockIndex) => (blockIndex === index ? { ...block, ...patch } : block)));
+  };
 
   const handleCopy = async (key: string, text: string, metricKey: string) => {
     if (!text.trim()) {
@@ -268,39 +311,91 @@ function ManualExportCard({ kit }: { kit: LaunchKitDetail }) {
   if (!manualExport && platformBlocks.length === 0) {
     return <JsonPreview value={kit.export_snapshot ?? kit.exports} />;
   }
+
   return (
     <div className="space-y-4" aria-live="polite">
-      {platformBlocks.map((block) => {
-        const platform = stringValue(block.platform) ?? "platform";
-        const title = stringValue(block.title) ?? "";
-        const hook = stringValue(block.hook) ?? "";
-        const description = stringValue(block.description) ?? "";
-        const hashtags = stringList(block.hashtags);
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-slate-50 p-3 dark:bg-slate-900/70">
+        <div>
+          <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">Nội dung có thể chỉnh sửa trước khi copy/export.</p>
+          <p className="text-xs text-slate-500 dark:text-slate-400">{manualExport?.edited ? "Đã chỉnh sửa — Markdown sẽ dùng bản đã sửa." : "Bản gốc được giữ lại khi bạn lưu chỉnh sửa đầu tiên."}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {isEditing ? (
+            <>
+              <button type="button" onClick={() => { setDraftBlocks(editableBlocks); setIsEditing(false); }} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300">Hủy sửa</button>
+              <button type="button" onClick={() => editMutation.mutate()} disabled={editMutation.isPending} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">{editMutation.isPending ? "Đang lưu…" : "Lưu chỉnh sửa"}</button>
+            </>
+          ) : (
+            <button type="button" onClick={() => setIsEditing(true)} className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 dark:border-emerald-400/30 dark:bg-emerald-500/10 dark:text-emerald-200">Chỉnh sửa nội dung</button>
+          )}
+        </div>
+      </div>
+      {editSaved ? <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">Đã lưu chỉnh sửa. Copy và Markdown sẽ dùng bản mới.</p> : null}
+      {editMutation.isError ? <p className="text-sm font-semibold text-red-600 dark:text-red-300">Không lưu được chỉnh sửa. Kiểm tra tiêu đề/mô tả rồi thử lại.</p> : null}
+
+      {platformBlocks.map((block, index) => {
+        const draft = draftBlocks[index] ?? editableBlockFromRecord(block);
+        const platform = draft.platform ?? stringValue(block.platform) ?? "platform";
+        const title = draft.title;
+        const hook = draft.hook ?? "";
+        const description = draft.description;
+        const hashtags = draft.hashtags;
         const allText = [title, hook, description, hashtags.join(" ")].filter(Boolean).join("\n\n");
-        const blockKey = `${platform}-${title}`;
+        const blockKey = `${platform}-${index}`;
         return (
           <article key={blockKey} className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
             <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div>
+              <div className="min-w-0 flex-1">
                 <div className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300">
                   {platformLabel(platform)} khối nội dung
                 </div>
-                <h3 className="text-base font-semibold text-slate-950 dark:text-white">{title || "Chưa có tiêu đề"}</h3>
+                {isEditing ? (
+                  <div className="space-y-3">
+                    <label className="block">
+                      <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">Tiêu đề</span>
+                      <input value={title} onChange={(event) => updateDraft(index, { title: event.target.value })} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 outline-none focus:border-emerald-400 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+                    </label>
+                    <label className="block">
+                      <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">Hook</span>
+                      <input value={hook} onChange={(event) => updateDraft(index, { hook: event.target.value })} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 outline-none focus:border-emerald-400 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+                    </label>
+                  </div>
+                ) : (
+                  <h3 className="text-base font-semibold text-slate-950 dark:text-white">{title || "Chưa có tiêu đề"}</h3>
+                )}
               </div>
-              <div className="flex flex-wrap gap-2">
-                <CopyButton label="Copy tiêu đề" copied={copiedKey === `${blockKey}-title`} onClick={() => handleCopy(`${blockKey}-title`, title, `copied_${platform}_title`)} disabled={!title} />
-                <CopyButton label="Copy mô tả" copied={copiedKey === `${blockKey}-description`} onClick={() => handleCopy(`${blockKey}-description`, description, `copied_${platform}_description`)} disabled={!description} />
-                <CopyButton label="Copy tất cả" copied={copiedKey === `${blockKey}-all`} onClick={() => handleCopy(`${blockKey}-all`, allText, `copied_${platform}_all`)} disabled={!allText} />
-              </div>
+              {!isEditing ? (
+                <div className="flex flex-wrap gap-2">
+                  <CopyButton label="Copy tiêu đề" copied={copiedKey === `${blockKey}-title`} onClick={() => handleCopy(`${blockKey}-title`, title, `copied_${platform}_title`)} disabled={!title} />
+                  <CopyButton label="Copy mô tả" copied={copiedKey === `${blockKey}-description`} onClick={() => handleCopy(`${blockKey}-description`, description, `copied_${platform}_description`)} disabled={!description} />
+                  <CopyButton label="Copy tất cả" copied={copiedKey === `${blockKey}-all`} onClick={() => handleCopy(`${blockKey}-all`, allText, `copied_${platform}_all`)} disabled={!allText} />
+                </div>
+              ) : null}
             </div>
-            {hook ? <p className="mt-2 text-sm font-medium text-slate-700 dark:text-slate-200">{hook}</p> : null}
-            <pre className="mt-3 whitespace-pre-wrap rounded-xl bg-slate-50 p-3 text-sm leading-6 text-slate-700 dark:bg-slate-900 dark:text-slate-200">{description}</pre>
-            {hashtags.length ? (
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <p className="text-sm text-emerald-700 dark:text-emerald-300">{hashtags.join(" ")}</p>
-                <CopyButton label="Copy hashtag" copied={copiedKey === `${blockKey}-hashtags`} onClick={() => handleCopy(`${blockKey}-hashtags`, hashtags.join(" "), `copied_${platform}_hashtags`)} />
-              </div>
-            ) : null}
+            {isEditing ? (
+              <label className="block">
+                <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">Mô tả</span>
+                <textarea value={description} rows={7} onChange={(event) => updateDraft(index, { description: event.target.value })} className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm leading-6 text-slate-950 outline-none focus:border-emerald-400 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+              </label>
+            ) : (
+              <>
+                {hook ? <p className="mt-2 text-sm font-medium text-slate-700 dark:text-slate-200">{hook}</p> : null}
+                <pre className="mt-3 whitespace-pre-wrap rounded-xl bg-slate-50 p-3 text-sm leading-6 text-slate-700 dark:bg-slate-900 dark:text-slate-200">{description}</pre>
+              </>
+            )}
+            <div className="mt-3">
+              {isEditing ? (
+                <label className="block">
+                  <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">Hashtag</span>
+                  <input value={hashtags.join(" ")} onChange={(event) => updateDraft(index, { hashtags: hashtagsFromText(event.target.value) })} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 outline-none focus:border-emerald-400 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+                </label>
+              ) : hashtags.length ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm text-emerald-700 dark:text-emerald-300">{hashtags.join(" ")}</p>
+                  <CopyButton label="Copy hashtag" copied={copiedKey === `${blockKey}-hashtags`} onClick={() => handleCopy(`${blockKey}-hashtags`, hashtags.join(" "), `copied_${platform}_hashtags`)} />
+                </div>
+              ) : null}
+            </div>
           </article>
         );
       })}

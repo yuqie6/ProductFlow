@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
+from productflow_backend.application.launch_kit.edits import save_launch_kit_manual_edits
 from productflow_backend.application.launch_kit.exporting import launch_kit_export_filename, render_launch_kit_markdown
 from productflow_backend.application.launch_kit.feedback import save_launch_kit_feedback
 from productflow_backend.application.launch_kit.generation import (
@@ -23,6 +24,7 @@ from productflow_backend.presentation.schemas.launch_kits import (
     LaunchKitDetailResponse,
     LaunchKitFeedbackRequest,
     LaunchKitListResponse,
+    LaunchKitManualEditsRequest,
     LaunchKitStatusResponse,
     serialize_launch_kit_detail,
     serialize_launch_kit_summary,
@@ -113,6 +115,20 @@ def save_launch_kit_feedback_endpoint(
             notes=payload.notes,
             metrics=payload.metrics,
         ),
+    )
+    return serialize_launch_kit_detail(launch_kit)
+
+
+@router.patch("/{launch_kit_id}/manual-edits", response_model=LaunchKitDetailResponse)
+def save_launch_kit_manual_edits_endpoint(
+    launch_kit_id: str,
+    payload: LaunchKitManualEditsRequest,
+    session: Session = Depends(get_session),
+) -> LaunchKitDetailResponse:
+    launch_kit = save_launch_kit_manual_edits(
+        session,
+        launch_kit_id=launch_kit_id,
+        platform_blocks=[item.model_dump(mode="json") for item in payload.platform_blocks],
     )
     return serialize_launch_kit_detail(launch_kit)
 

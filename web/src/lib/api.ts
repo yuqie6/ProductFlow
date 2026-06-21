@@ -19,6 +19,7 @@ import type {
   LaunchKitCreateRequest,
   LaunchKitDetail,
   LaunchKitFeedbackRequest,
+  LaunchKitManualEditsRequest,
   LaunchKitListResponse,
   LaunchKitStatusResponse,
   ProductDetail,
@@ -153,6 +154,12 @@ export const api = {
   },
   exportLaunchKitMarkdown(launchKitId: string): Promise<string> {
     return requestText(`/api/launch-kits/${launchKitId}/exports/markdown`);
+  },
+  saveLaunchKitManualEdits(launchKitId: string, payload: LaunchKitManualEditsRequest): Promise<LaunchKitDetail> {
+    return request(`/api/launch-kits/${launchKitId}/manual-edits`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
   },
   saveLaunchKitFeedback(launchKitId: string, payload: LaunchKitFeedbackRequest): Promise<LaunchKitDetail> {
     return request(`/api/launch-kits/${launchKitId}/feedback`, {

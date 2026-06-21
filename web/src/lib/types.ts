@@ -761,6 +761,18 @@ export interface SourceReferenceRequest {
 }
 
 
+export interface LaunchKitEditablePlatformBlock {
+  platform?: string | null;
+  title: string;
+  hook?: string | null;
+  description: string;
+  hashtags: string[];
+}
+
+export interface LaunchKitManualEditsRequest {
+  platform_blocks: LaunchKitEditablePlatformBlock[];
+}
+
 export interface LaunchKitFeedbackRequest {
   used?: boolean | null;
   edited?: boolean | null;

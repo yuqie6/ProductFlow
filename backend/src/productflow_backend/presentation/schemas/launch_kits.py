@@ -33,6 +33,18 @@ class LaunchKitFeedbackRequest(BaseModel):
     metrics: dict[str, Any] = Field(default_factory=dict)
 
 
+class LaunchKitEditablePlatformBlockRequest(BaseModel):
+    platform: str | None = Field(default=None, max_length=40)
+    title: str = Field(min_length=1, max_length=255)
+    hook: str | None = Field(default=None, max_length=500)
+    description: str = Field(min_length=1, max_length=8_000)
+    hashtags: list[str] = Field(default_factory=list, max_length=30)
+
+
+class LaunchKitManualEditsRequest(BaseModel):
+    platform_blocks: list[LaunchKitEditablePlatformBlockRequest] = Field(min_length=1, max_length=2)
+
+
 class LaunchKitTaskStatusResponse(BaseModel):
     id: str
     status: JobStatus

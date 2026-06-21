@@ -43,6 +43,13 @@ test("seller can create, generate, copy, export, give feedback, and reach Advanc
   await expect(page.getByRole("heading", { name: "Proof-first practical value" })).toBeVisible();
   await expect(page.getByText("/ 100 sẵn sàng")).toBeVisible();
 
+  await page.getByRole("button", { name: "Chỉnh sửa nội dung" }).click();
+  await page.getByLabel("Tiêu đề").first().fill("Áo khoác UPF50 bản seller đã sửa");
+  await page.getByLabel("Mô tả").first().fill("Mô tả đã chỉnh sửa để copy sang sàn.");
+  await page.getByRole("button", { name: "Lưu chỉnh sửa" }).click();
+  await expect(page.getByText("Đã lưu chỉnh sửa. Copy và Markdown sẽ dùng bản mới.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Áo khoác UPF50 bản seller đã sửa" })).toBeVisible();
+
   await page.getByRole("button", { name: "Copy tiêu đề" }).first().click();
   await expect(page.getByRole("button", { name: "Đã copy" }).first()).toBeVisible();
   await page.getByRole("button", { name: "Copy tất cả" }).first().click();
