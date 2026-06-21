@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
+from productflow_backend.application.launch_kit.generation import submit_launch_kit_generation_task
 from productflow_backend.application.launch_kit.mutations import create_launch_kit
 from productflow_backend.application.launch_kit.payloads import SourceReferencePayload
 from productflow_backend.application.launch_kit.playbooks import ensure_starter_category_playbooks
@@ -64,6 +65,19 @@ def create_launch_kit_endpoint(
 @router.get("/{launch_kit_id}", response_model=LaunchKitDetailResponse)
 def get_launch_kit_endpoint(launch_kit_id: str, session: Session = Depends(get_session)) -> LaunchKitDetailResponse:
     return serialize_launch_kit_detail(get_launch_kit(session, launch_kit_id))
+
+
+@router.post(
+    "/{launch_kit_id}/generate",
+    response_model=LaunchKitDetailResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def generate_launch_kit_endpoint(
+    launch_kit_id: str,
+    session: Session = Depends(get_session),
+) -> LaunchKitDetailResponse:
+    launch_kit = submit_launch_kit_generation_task(session, launch_kit_id=launch_kit_id)
+    return serialize_launch_kit_detail(launch_kit)
 
 
 @router.get("/{launch_kit_id}/status", response_model=LaunchKitStatusResponse)

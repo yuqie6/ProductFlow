@@ -124,6 +124,9 @@ export const api = {
   getLaunchKitStatus(launchKitId: string): Promise<LaunchKitStatusResponse> {
     return request(`/api/launch-kits/${launchKitId}/status`);
   },
+  generateLaunchKit(launchKitId: string): Promise<LaunchKitDetail> {
+    return request(`/api/launch-kits/${launchKitId}/generate`, { method: "POST" });
+  },
   getProduct(productId: string): Promise<ProductDetail> {
     return request(`/api/products/${productId}`);
   },

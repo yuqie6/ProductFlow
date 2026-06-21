@@ -742,16 +742,17 @@ export interface DuplicateWorkflowNodeGroupInput {
   position_y?: number;
 }
 
-export type LaunchKitStatus = "draft" | "generating" | "ready" | "exported" | "failed";
+export type LaunchKitStatus = "draft" | "generating" | "ready" | "failed" | "archived";
 export type LaunchKitPlatform = "shopee" | "tiktok_shop";
 export type LaunchKitProgressStage =
-  | "queued"
-  | "analyzing_input"
-  | "selecting_angle"
-  | "drafting_copy"
-  | "scoring_quality"
-  | "building_exports"
-  | "completed";
+  | "extracting_facts"
+  | "applying_playbook"
+  | "applying_store_profile"
+  | "generating_angles"
+  | "generating_copy"
+  | "planning_images"
+  | "scoring"
+  | "exporting_optional_snapshot";
 
 export interface SourceReferenceRequest {
   pasted_reference_text?: string | null;

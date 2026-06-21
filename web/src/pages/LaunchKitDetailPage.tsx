@@ -12,7 +12,7 @@ const statusTone: Record<LaunchKitStatus, string> = {
   draft: "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-200 dark:ring-amber-400/30",
   generating: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-500/10 dark:text-blue-200 dark:ring-blue-400/30",
   ready: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-200 dark:ring-emerald-400/30",
-  exported: "bg-slate-100 text-slate-700 ring-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700",
+  archived: "bg-slate-100 text-slate-700 ring-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700",
   failed: "bg-red-50 text-red-700 ring-red-200 dark:bg-red-500/10 dark:text-red-200 dark:ring-red-400/30",
 };
 
@@ -72,6 +72,14 @@ export function LaunchKitDetailPage() {
     },
   });
 
+  const generateMutation = useMutation({
+    mutationFn: () => api.generateLaunchKit(id ?? ""),
+    onSuccess: async (updated) => {
+      queryClient.setQueryData(["launch-kit", id], updated);
+      await queryClient.invalidateQueries({ queryKey: ["launch-kits"] });
+    },
+  });
+
   const kit = kitQuery.data;
 
   return (
@@ -110,14 +118,24 @@ export function LaunchKitDetailPage() {
                   <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">Created {formatDateTime(kit.created_at)} · Updated {formatDateTime(kit.updated_at)}</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <button type="button" disabled className="inline-flex items-center rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white opacity-50">
-                    <ClipboardList size={16} className="mr-1.5" /> Generate (next slice)
+                  <button
+                    type="button"
+                    disabled={kit.status === "generating" || generateMutation.isPending}
+                    onClick={() => generateMutation.mutate()}
+                    className="inline-flex items-center rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-emerald-600/20 transition hover:bg-emerald-500 disabled:opacity-50"
+                  >
+                    <ClipboardList size={16} className="mr-1.5" /> {generateMutation.isPending ? "Submitting…" : "Generate"}
                   </button>
                   <button type="button" disabled className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-500 opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
                     <Download size={16} className="mr-1.5" /> Export
                   </button>
                 </div>
               </div>
+              {generateMutation.isError ? (
+                <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-400/35 dark:bg-red-500/10 dark:text-red-200">
+                  Queue submission failed or another generation is active. Try again after checking backend queue settings.
+                </div>
+              ) : null}
             </section>
 
             <div className="grid gap-5 lg:grid-cols-[320px_1fr]">

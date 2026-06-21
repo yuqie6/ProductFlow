@@ -14,7 +14,7 @@ const statusTone: Record<LaunchKitStatus, string> = {
   draft: "bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-200 dark:ring-amber-400/30",
   generating: "bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-500/10 dark:text-blue-200 dark:ring-blue-400/30",
   ready: "bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-200 dark:ring-emerald-400/30",
-  exported: "bg-slate-100 text-slate-700 ring-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700",
+  archived: "bg-slate-100 text-slate-700 ring-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700",
   failed: "bg-red-50 text-red-700 ring-red-200 dark:bg-red-500/10 dark:text-red-200 dark:ring-red-400/30",
 };
 
@@ -23,7 +23,7 @@ function statusLabel(status: LaunchKitStatus) {
     draft: "Draft",
     generating: "Generating",
     ready: "Ready",
-    exported: "Exported",
+    archived: "Archived",
     failed: "Failed",
   }[status];
 }
@@ -81,7 +81,7 @@ export function LaunchKitListPage() {
   });
   const total = kitsQuery.data?.total ?? 0;
   const kits = kitsQuery.data?.items ?? [];
-  const ready = kits.filter((kit) => kit.status === "ready" || kit.status === "exported").length;
+  const ready = kits.filter((kit) => kit.status === "ready").length;
   const active = kits.filter((kit) => kit.status === "generating").length;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 

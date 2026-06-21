@@ -6,6 +6,7 @@ from pathlib import Path
 import dramatiq
 
 from productflow_backend.application.image_sessions import execute_image_session_generation_task
+from productflow_backend.application.launch_kit.generation import mark_launch_kit_generation_task_enqueue_failed
 from productflow_backend.application.product_workflows import (
     execute_product_workflow_node_run,
     execute_product_workflow_run,
@@ -76,6 +77,22 @@ def run_image_session_generation_task(task_id: str) -> None:
         execute_image_session_generation_task(task_id)
     finally:
         reset_image_session_generation_task_id(token)
+
+
+@dramatiq.actor(max_retries=0, time_limit=IMAGE_SESSION_WORKER_FAILSAFE_TIME_LIMIT_MS)
+def run_launch_kit_generation_task(task_id: str) -> None:
+    """LaunchKit worker placeholder; app-owned durable state records the not-yet-implemented execution."""
+    from productflow_backend.infrastructure.db.session import get_session_factory
+
+    session = get_session_factory()()
+    try:
+        mark_launch_kit_generation_task_enqueue_failed(
+            session,
+            task_id=task_id,
+            reason="LaunchKit generation worker is not implemented yet",
+        )
+    finally:
+        session.close()
 
 
 assert_actor_uses_durable_generation_contract(WORKFLOW_RUN_GENERATION_TASK_CONTRACT, run_product_workflow_run)

@@ -99,3 +99,61 @@ def test_create_launch_kit_api_persists_product_root_and_summary_status(configur
         "latest_task": None,
         "updated_at": payload["updated_at"],
     }
+
+
+def test_submit_launch_kit_generation_task_creates_durable_task(configured_env: Path, db_session) -> None:
+    from productflow_backend.application.launch_kit.generation import submit_launch_kit_generation_task
+
+    ensure_starter_category_playbooks(db_session)
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+    created = client.post(
+        "/api/launch-kits",
+        json={
+            "product_name": "Son dưỡng có màu",
+            "category_key": "beauty",
+            "target_platforms": ["shopee"],
+        },
+    ).json()
+    enqueued: list[str] = []
+
+    launch_kit = submit_launch_kit_generation_task(
+        db_session,
+        launch_kit_id=created["id"],
+        enqueue=enqueued.append,
+    )
+
+    assert launch_kit.status == LaunchKitStatus.GENERATING
+    assert len(enqueued) == 1
+    task = db_session.get(LaunchKitGenerationTask, enqueued[0])
+    assert task is not None
+    assert task.status == JobStatus.QUEUED
+    assert task.progress_stage == LaunchKitProgressStage.EXTRACTING_FACTS
+    assert task.is_cancelable is True
+
+
+def test_launch_kit_generation_rejects_duplicate_active_task(configured_env: Path, db_session) -> None:
+    from productflow_backend.application.launch_kit.generation import submit_launch_kit_generation_task
+    from productflow_backend.domain.errors import BusinessValidationError
+
+    ensure_starter_category_playbooks(db_session)
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+    created = client.post(
+        "/api/launch-kits",
+        json={
+            "product_name": "Túi tote canvas",
+            "category_key": "fashion",
+            "target_platforms": ["tiktok_shop"],
+        },
+    ).json()
+    submit_launch_kit_generation_task(db_session, launch_kit_id=created["id"], enqueue=lambda _task_id: None)
+
+    try:
+        submit_launch_kit_generation_task(db_session, launch_kit_id=created["id"], enqueue=lambda _task_id: None)
+    except BusinessValidationError as exc:
+        assert "already queued or running" in str(exc)
+    else:  # pragma: no cover - assertion helper
+        raise AssertionError("duplicate active task should fail")
