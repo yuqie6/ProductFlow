@@ -24,6 +24,15 @@ class LaunchKitCreateRequest(BaseModel):
     source_references: SourceReferenceRequest | None = None
 
 
+class LaunchKitFeedbackRequest(BaseModel):
+    used: bool | None = None
+    edited: bool | None = None
+    would_reuse: bool | None = None
+    would_pay: bool | None = None
+    notes: str | None = Field(default=None, max_length=4_000)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+
+
 class LaunchKitTaskStatusResponse(BaseModel):
     id: str
     status: JobStatus

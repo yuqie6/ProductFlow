@@ -760,6 +760,16 @@ export interface SourceReferenceRequest {
   notes?: string | null;
 }
 
+
+export interface LaunchKitFeedbackRequest {
+  used?: boolean | null;
+  edited?: boolean | null;
+  would_reuse?: boolean | null;
+  would_pay?: boolean | null;
+  notes?: string | null;
+  metrics?: Record<string, unknown>;
+}
+
 export interface LaunchKitCreateRequest {
   product_name: string;
   category_key: string;

@@ -5,13 +5,14 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from productflow_backend.application.launch_kit.exporting import launch_kit_export_filename, render_launch_kit_markdown
+from productflow_backend.application.launch_kit.feedback import save_launch_kit_feedback
 from productflow_backend.application.launch_kit.generation import (
     create_launch_kit_generation_task,
     execute_launch_kit_generation_task,
     submit_launch_kit_generation_task,
 )
 from productflow_backend.application.launch_kit.mutations import create_launch_kit
-from productflow_backend.application.launch_kit.payloads import SourceReferencePayload
+from productflow_backend.application.launch_kit.payloads import SellerFeedbackPayload, SourceReferencePayload
 from productflow_backend.application.launch_kit.playbooks import ensure_starter_category_playbooks
 from productflow_backend.application.launch_kit.query import get_launch_kit, list_launch_kits
 from productflow_backend.config import get_runtime_settings
@@ -20,6 +21,7 @@ from productflow_backend.presentation.deps import get_session, require_admin
 from productflow_backend.presentation.schemas.launch_kits import (
     LaunchKitCreateRequest,
     LaunchKitDetailResponse,
+    LaunchKitFeedbackRequest,
     LaunchKitListResponse,
     LaunchKitStatusResponse,
     serialize_launch_kit_detail,
@@ -91,6 +93,27 @@ def generate_launch_kit_endpoint(
         return serialize_launch_kit_detail(get_launch_kit(session, launch_kit_id))
 
     launch_kit = submit_launch_kit_generation_task(session, launch_kit_id=launch_kit_id)
+    return serialize_launch_kit_detail(launch_kit)
+
+
+@router.post("/{launch_kit_id}/feedback", response_model=LaunchKitDetailResponse)
+def save_launch_kit_feedback_endpoint(
+    launch_kit_id: str,
+    payload: LaunchKitFeedbackRequest,
+    session: Session = Depends(get_session),
+) -> LaunchKitDetailResponse:
+    launch_kit = save_launch_kit_feedback(
+        session,
+        launch_kit_id=launch_kit_id,
+        feedback=SellerFeedbackPayload(
+            used=payload.used,
+            edited=payload.edited,
+            would_reuse=payload.would_reuse,
+            would_pay=payload.would_pay,
+            notes=payload.notes,
+            metrics=payload.metrics,
+        ),
+    )
     return serialize_launch_kit_detail(launch_kit)
 
 

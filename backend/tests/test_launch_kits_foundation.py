@@ -253,3 +253,41 @@ def test_launch_kit_generate_endpoint_can_run_inline_without_queue(
     assert payload["export_snapshot"]["manual_export"]["platform_blocks"]
     assert payload["quality_score_summary"]["overall"] > 0
     get_settings.cache_clear()
+
+
+def test_launch_kit_feedback_endpoint_marks_used_and_persists_notes(configured_env: Path, db_session) -> None:
+    ensure_starter_category_playbooks(db_session)
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+    created = client.post(
+        "/api/launch-kits",
+        json={
+            "product_name": "Bình giữ nhiệt",
+            "category_key": "home_goods",
+            "target_platforms": ["shopee"],
+        },
+    ).json()
+
+    saved = client.post(
+        f"/api/launch-kits/{created['id']}/feedback",
+        json={
+            "used": True,
+            "edited": True,
+            "would_reuse": True,
+            "would_pay": False,
+            "notes": "Đã sửa title trước khi đăng.",
+            "metrics": {"export_minutes": 12},
+        },
+    )
+
+    assert saved.status_code == 200
+    payload = saved.json()
+    assert payload["seller_feedback"]["used"] is True
+    assert payload["seller_feedback"]["edited"] is True
+    assert payload["seller_feedback"]["notes"] == "Đã sửa title trước khi đăng."
+    assert payload["seller_feedback"]["metrics"] == {"export_minutes": 12}
+    db_session.expire_all()
+    launch_kit = db_session.get(LaunchKit, created["id"])
+    assert launch_kit is not None
+    assert launch_kit.used_at is not None

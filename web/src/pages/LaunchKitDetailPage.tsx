@@ -1,4 +1,5 @@
 import type React from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, ArrowLeft, CheckCircle2, ClipboardList, Download, FileText, Loader2, Store } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -122,6 +123,80 @@ function AngleCard({ value }: { value: Record<string, unknown> | null }) {
       <p><span className="font-semibold text-slate-800 dark:text-slate-100">Buyer emotion:</span> {stringValue(value.buyer_emotion) ?? "—"}</p>
       <p><span className="font-semibold text-slate-800 dark:text-slate-100">Risk:</span> {stringValue(value.risk) ?? "—"}</p>
     </div>
+  );
+}
+
+function FeedbackPanel({ kit }: { kit: LaunchKitDetail }) {
+  const queryClient = useQueryClient();
+  const [used, setUsed] = useState(Boolean(recordValue(kit.seller_feedback)?.used));
+  const [edited, setEdited] = useState(Boolean(recordValue(kit.seller_feedback)?.edited));
+  const [wouldReuse, setWouldReuse] = useState(Boolean(recordValue(kit.seller_feedback)?.would_reuse));
+  const [wouldPay, setWouldPay] = useState(Boolean(recordValue(kit.seller_feedback)?.would_pay));
+  const [notes, setNotes] = useState(stringValue(recordValue(kit.seller_feedback)?.notes) ?? "");
+  const [saved, setSaved] = useState(false);
+  const mutation = useMutation({
+    mutationFn: () => api.saveLaunchKitFeedback(kit.id, {
+      used,
+      edited,
+      would_reuse: wouldReuse,
+      would_pay: wouldPay,
+      notes: notes.trim() || null,
+      metrics: {},
+    }),
+    onSuccess: async (updated) => {
+      setSaved(true);
+      queryClient.setQueryData(["launch-kit", kit.id], updated);
+      await queryClient.invalidateQueries({ queryKey: ["launch-kits"] });
+    },
+  });
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-2 sm:grid-cols-2">
+        <TogglePill label="Used in listing" checked={used} onChange={setUsed} />
+        <TogglePill label="Edited before use" checked={edited} onChange={setEdited} />
+        <TogglePill label="Would reuse" checked={wouldReuse} onChange={setWouldReuse} />
+        <TogglePill label="Would pay" checked={wouldPay} onChange={setWouldPay} />
+      </div>
+      <label className="block">
+        <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Notes</span>
+        <textarea
+          value={notes}
+          onChange={(event) => { setNotes(event.target.value); setSaved(false); }}
+          rows={3}
+          placeholder="What did you edit? Did this help you publish faster?"
+          className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-950 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 dark:border-slate-700 dark:bg-slate-950 dark:text-white dark:focus:ring-emerald-400/20"
+        />
+      </label>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-slate-500 dark:text-slate-400">Lightweight feedback helps tune playbooks without marketplace APIs.</p>
+        <button
+          type="button"
+          onClick={() => mutation.mutate()}
+          disabled={mutation.isPending}
+          className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-emerald-600/20 transition hover:bg-emerald-500 disabled:opacity-50"
+        >
+          {mutation.isPending ? "Saving…" : "Save feedback"}
+        </button>
+      </div>
+      {saved ? <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">Feedback saved.</p> : null}
+      {mutation.isError ? <p className="text-sm font-semibold text-red-600 dark:text-red-300">Could not save feedback.</p> : null}
+    </div>
+  );
+}
+
+function TogglePill({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(!checked)}
+      className={`rounded-xl border px-3 py-2.5 text-left text-sm font-semibold transition ${checked
+        ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-400/45 dark:bg-emerald-500/10 dark:text-emerald-100"
+        : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"}`}
+      aria-pressed={checked}
+    >
+      {checked ? "✓ " : ""}{label}
+    </button>
   );
 }
 
@@ -324,6 +399,7 @@ export function LaunchKitDetailPage() {
                 <Panel title="Generated summary" icon={ClipboardList}><JsonPreview value={kit.generated_summary} /></Panel>
                 <Panel title="Quality score" icon={CheckCircle2}><QualityScoreCard value={recordValue(kit.quality_score_summary)} /></Panel>
                 <Panel title="Manual export" icon={Download}><ManualExportCard kit={kit} /></Panel>
+                <Panel title="Feedback" icon={CheckCircle2}><FeedbackPanel kit={kit} /></Panel>
               </section>
             </div>
           </div>

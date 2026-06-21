@@ -18,6 +18,7 @@ import type {
   ImageToolOptions,
   LaunchKitCreateRequest,
   LaunchKitDetail,
+  LaunchKitFeedbackRequest,
   LaunchKitListResponse,
   LaunchKitStatusResponse,
   ProductDetail,
@@ -152,6 +153,12 @@ export const api = {
   },
   exportLaunchKitMarkdown(launchKitId: string): Promise<string> {
     return requestText(`/api/launch-kits/${launchKitId}/exports/markdown`);
+  },
+  saveLaunchKitFeedback(launchKitId: string, payload: LaunchKitFeedbackRequest): Promise<LaunchKitDetail> {
+    return request(`/api/launch-kits/${launchKitId}/feedback`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   },
   getProduct(productId: string): Promise<ProductDetail> {
     return request(`/api/products/${productId}`);
