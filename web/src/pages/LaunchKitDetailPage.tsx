@@ -31,6 +31,93 @@ function JsonPreview({ value }: { value: unknown }) {
   );
 }
 
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function QualityScoreCard({ value }: { value: Record<string, unknown> | null }) {
+  if (!value) {
+    return <p className="text-sm text-slate-500 dark:text-slate-400">Generate the kit to calculate readiness.</p>;
+  }
+  const overall = typeof value.overall === "number" ? value.overall : 0;
+  const warnings = stringList(value.warnings);
+  return (
+    <div>
+      <div className="flex items-end gap-3">
+        <div className="text-4xl font-semibold text-slate-950 dark:text-white">{overall}</div>
+        <div className="pb-1 text-sm font-semibold text-slate-500 dark:text-slate-400">/ 100 readiness</div>
+      </div>
+      <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+        <div className="h-full rounded-full bg-emerald-600" style={{ width: `${Math.min(100, Math.max(0, overall))}%` }} />
+      </div>
+      {warnings.length ? (
+        <ul className="mt-4 space-y-2 text-sm text-amber-700 dark:text-amber-200">
+          {warnings.map((warning) => <li key={warning}>• {warning}</li>)}
+        </ul>
+      ) : <p className="mt-4 text-sm text-emerald-700 dark:text-emerald-200">No blocking readiness warnings.</p>}
+    </div>
+  );
+}
+
+function AngleCard({ value }: { value: Record<string, unknown> | null }) {
+  if (!value) {
+    return <p className="text-sm text-slate-500 dark:text-slate-400">No angle selected yet.</p>;
+  }
+  return (
+    <div className="space-y-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
+      <h3 className="text-lg font-semibold text-slate-950 dark:text-white">{stringValue(value.label) ?? "Selected angle"}</h3>
+      <p>{stringValue(value.why_it_might_work) ?? "—"}</p>
+      <p><span className="font-semibold text-slate-800 dark:text-slate-100">Buyer emotion:</span> {stringValue(value.buyer_emotion) ?? "—"}</p>
+      <p><span className="font-semibold text-slate-800 dark:text-slate-100">Risk:</span> {stringValue(value.risk) ?? "—"}</p>
+    </div>
+  );
+}
+
+function ManualExportCard({ kit }: { kit: LaunchKitDetail }) {
+  const snapshot = recordValue(kit.export_snapshot);
+  const manualExport = recordValue(snapshot?.manual_export);
+  const platformBlocks = Array.isArray(manualExport?.platform_blocks)
+    ? manualExport.platform_blocks.map(recordValue).filter((item): item is Record<string, unknown> => Boolean(item))
+    : [];
+  const checklist = stringList(manualExport?.checklist ?? snapshot?.checklist_items);
+  if (!manualExport && platformBlocks.length === 0) {
+    return <JsonPreview value={kit.export_snapshot ?? kit.exports} />;
+  }
+  return (
+    <div className="space-y-4">
+      {platformBlocks.map((block) => {
+        const platform = stringValue(block.platform) ?? "platform";
+        return (
+          <article key={`${platform}-${stringValue(block.title)}`} className="rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
+            <div className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300">
+              {platformLabel(platform)} copy block
+            </div>
+            <h3 className="text-base font-semibold text-slate-950 dark:text-white">{stringValue(block.title) ?? "Untitled"}</h3>
+            {stringValue(block.hook) ? <p className="mt-2 text-sm font-medium text-slate-700 dark:text-slate-200">{stringValue(block.hook)}</p> : null}
+            <pre className="mt-3 whitespace-pre-wrap rounded-xl bg-slate-50 p-3 text-sm leading-6 text-slate-700 dark:bg-slate-900 dark:text-slate-200">{stringValue(block.description) ?? ""}</pre>
+            {stringList(block.hashtags).length ? <p className="mt-3 text-sm text-emerald-700 dark:text-emerald-300">{stringList(block.hashtags).join(" ")}</p> : null}
+          </article>
+        );
+      })}
+      {checklist.length ? (
+        <div className="rounded-2xl bg-amber-50 p-4 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-100">
+          <div className="mb-2 font-semibold">Manual export checklist</div>
+          <ul className="space-y-1">{checklist.map((item) => <li key={item}>• {item}</li>)}</ul>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ReadinessRail({ kit }: { kit: LaunchKitDetail }) {
   const steps = [
     { label: "Brief captured", done: true },
@@ -158,10 +245,10 @@ export function LaunchKitDetailPage() {
 
               <section className="space-y-5">
                 <Panel title="Source references" icon={FileText}><JsonPreview value={kit.source_references} /></Panel>
-                <Panel title="Selected buyer angle" icon={ClipboardList}><JsonPreview value={kit.selected_angle} /></Panel>
+                <Panel title="Selected buyer angle" icon={ClipboardList}><AngleCard value={recordValue(kit.selected_angle)} /></Panel>
                 <Panel title="Generated summary" icon={ClipboardList}><JsonPreview value={kit.generated_summary} /></Panel>
-                <Panel title="Quality score" icon={CheckCircle2}><JsonPreview value={kit.quality_score_summary} /></Panel>
-                <Panel title="Export snapshot" icon={Download}><JsonPreview value={kit.export_snapshot ?? kit.exports} /></Panel>
+                <Panel title="Quality score" icon={CheckCircle2}><QualityScoreCard value={recordValue(kit.quality_score_summary)} /></Panel>
+                <Panel title="Manual export" icon={Download}><ManualExportCard kit={kit} /></Panel>
               </section>
             </div>
           </div>

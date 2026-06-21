@@ -157,3 +157,57 @@ def test_launch_kit_generation_rejects_duplicate_active_task(configured_env: Pat
         assert "already queued or running" in str(exc)
     else:  # pragma: no cover - assertion helper
         raise AssertionError("duplicate active task should fail")
+
+
+def test_execute_launch_kit_generation_task_produces_manual_export_content(configured_env: Path, db_session) -> None:
+    from productflow_backend.application.launch_kit.generation import (
+        execute_launch_kit_generation_task,
+        submit_launch_kit_generation_task,
+    )
+    from productflow_backend.domain.launch_kits import LaunchKitExportType, LaunchKitVariantKind
+    from productflow_backend.infrastructure.db.session import get_session_factory
+
+    ensure_starter_category_playbooks(db_session)
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+    created = client.post(
+        "/api/launch-kits",
+        json={
+            "product_name": "Áo khoác chống nắng UPF50",
+            "category_key": "fashion",
+            "target_platforms": ["shopee", "tiktok_shop"],
+            "source_references": {
+                "pasted_reference_text": "Vải nhẹ, có nhiều màu, size M L XL, chống nắng khi đi xe máy.",
+                "reference_urls": ["https://example.com/listing"],
+                "notes": "Tone rõ ràng, tránh claim y tế.",
+            },
+        },
+    ).json()
+    enqueued: list[str] = []
+    submit_launch_kit_generation_task(db_session, launch_kit_id=created["id"], enqueue=enqueued.append)
+
+    execute_launch_kit_generation_task(enqueued[0], session_factory=get_session_factory())
+
+    db_session.expire_all()
+    launch_kit = db_session.get(LaunchKit, created["id"])
+    assert launch_kit is not None
+    assert launch_kit.status == LaunchKitStatus.READY
+    assert launch_kit.buyer_angle_key == "proof_first_practical_value"
+    assert launch_kit.generated_summary_json["product_facts"]["product_name"] == "Áo khoác chống nắng UPF50"
+    assert launch_kit.selected_angle_json["label"] == "Proof-first practical value"
+    assert len(launch_kit.variants) == 3
+    assert {variant.kind for variant in launch_kit.variants} == {
+        LaunchKitVariantKind.FULL_KIT,
+        LaunchKitVariantKind.IMAGE_PLAN,
+    }
+    assert launch_kit.quality_scores[-1].score_json["overall"] > 0
+    assert launch_kit.export_snapshot_json["manual_export"]["platform_blocks"]
+    assert {export.export_type for export in launch_kit.exports} == {
+        LaunchKitExportType.MARKDOWN,
+        LaunchKitExportType.CHECKLIST,
+    }
+    task = db_session.get(LaunchKitGenerationTask, enqueued[0])
+    assert task is not None
+    assert task.status == JobStatus.SUCCEEDED
+    assert task.progress_stage == LaunchKitProgressStage.EXPORTING_OPTIONAL_SNAPSHOT
