@@ -65,3 +65,6 @@ backend/backend/storage-dev/
 
 # Local AI memory
 .ai_memory/
+
+web/test-results/
+web/playwright-report/

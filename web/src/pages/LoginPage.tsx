@@ -19,7 +19,7 @@ export function LoginPage({ authenticated }: LoginPageProps) {
 
   useEffect(() => {
     if (authenticated) {
-      navigate("/products", { replace: true });
+      navigate("/launch-kits", { replace: true });
     }
   }, [authenticated, navigate]);
 
@@ -29,7 +29,7 @@ export function LoginPage({ authenticated }: LoginPageProps) {
       queryClient.removeQueries({ queryKey: ["settings-lock-state"] });
       queryClient.removeQueries({ queryKey: ["config"] });
       await queryClient.invalidateQueries({ queryKey: ["session"] });
-      navigate("/products", { replace: true });
+      navigate("/launch-kits", { replace: true });
     },
     onError: (mutationError) => {
       if (mutationError instanceof ApiError) {
