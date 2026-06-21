@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query, status
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
+from productflow_backend.application.launch_kit.exporting import launch_kit_export_filename, render_launch_kit_markdown
 from productflow_backend.application.launch_kit.generation import submit_launch_kit_generation_task
 from productflow_backend.application.launch_kit.mutations import create_launch_kit
 from productflow_backend.application.launch_kit.payloads import SourceReferencePayload
@@ -78,6 +80,21 @@ def generate_launch_kit_endpoint(
 ) -> LaunchKitDetailResponse:
     launch_kit = submit_launch_kit_generation_task(session, launch_kit_id=launch_kit_id)
     return serialize_launch_kit_detail(launch_kit)
+
+
+@router.get("/{launch_kit_id}/exports/markdown", response_class=PlainTextResponse)
+def export_launch_kit_markdown_endpoint(
+    launch_kit_id: str,
+    session: Session = Depends(get_session),
+) -> PlainTextResponse:
+    launch_kit = get_launch_kit(session, launch_kit_id)
+    markdown = render_launch_kit_markdown(launch_kit)
+    filename = launch_kit_export_filename(launch_kit)
+    return PlainTextResponse(
+        markdown,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/{launch_kit_id}/status", response_model=LaunchKitStatusResponse)

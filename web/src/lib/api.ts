@@ -88,6 +88,29 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+async function requestText(path: string, init?: RequestInit): Promise<string> {
+  const response = await fetch(toApiUrl(path), {
+    credentials: "include",
+    headers: {
+      ...init?.headers,
+    },
+    ...init,
+  });
+
+  if (!response.ok) {
+    let detail = "请求失败";
+    try {
+      const payload = (await response.json()) as { detail?: string };
+      detail = payload.detail ?? detail;
+    } catch {
+      detail = response.statusText || detail;
+    }
+    throw new ApiError(response.status, detail);
+  }
+
+  return response.text();
+}
+
 export const api = {
   toApiUrl,
   getSessionState(): Promise<SessionState> {
@@ -126,6 +149,9 @@ export const api = {
   },
   generateLaunchKit(launchKitId: string): Promise<LaunchKitDetail> {
     return request(`/api/launch-kits/${launchKitId}/generate`, { method: "POST" });
+  },
+  exportLaunchKitMarkdown(launchKitId: string): Promise<string> {
+    return requestText(`/api/launch-kits/${launchKitId}/exports/markdown`);
   },
   getProduct(productId: string): Promise<ProductDetail> {
     return request(`/api/products/${productId}`);

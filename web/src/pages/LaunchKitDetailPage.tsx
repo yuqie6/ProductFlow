@@ -44,6 +44,23 @@ function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+function downloadTextFile(filename: string, content: string, mimeType: string) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+function slugifyFilename(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9_-]+/gi, "-").replace(/^-+|-+$/g, "") || "launch-kit";
+}
+
+
 function QualityScoreCard({ value }: { value: Record<string, unknown> | null }) {
   if (!value) {
     return <p className="text-sm text-slate-500 dark:text-slate-400">Generate the kit to calculate readiness.</p>;
@@ -167,6 +184,14 @@ export function LaunchKitDetailPage() {
     },
   });
 
+  const exportMutation = useMutation({
+    mutationFn: () => api.exportLaunchKitMarkdown(id ?? ""),
+    onSuccess: (markdown) => {
+      const productName = kitQuery.data?.product_name ?? "launch-kit";
+      downloadTextFile(`${slugifyFilename(productName)}-${id ?? "export"}.md`, markdown, "text/markdown;charset=utf-8");
+    },
+  });
+
   const kit = kitQuery.data;
 
   return (
@@ -213,14 +238,24 @@ export function LaunchKitDetailPage() {
                   >
                     <ClipboardList size={16} className="mr-1.5" /> {generateMutation.isPending ? "Submitting…" : "Generate"}
                   </button>
-                  <button type="button" disabled className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-500 opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
-                    <Download size={16} className="mr-1.5" /> Export
+                  <button
+                    type="button"
+                    disabled={!kit.export_snapshot || exportMutation.isPending}
+                    onClick={() => exportMutation.mutate()}
+                    className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-emerald-200 hover:bg-emerald-50 disabled:text-slate-400 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-emerald-500/10"
+                  >
+                    <Download size={16} className="mr-1.5" /> {exportMutation.isPending ? "Exporting…" : "Export MD"}
                   </button>
                 </div>
               </div>
               {generateMutation.isError ? (
                 <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-400/35 dark:bg-red-500/10 dark:text-red-200">
                   Queue submission failed or another generation is active. Try again after checking backend queue settings.
+                </div>
+              ) : null}
+              {exportMutation.isError ? (
+                <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-400/35 dark:bg-red-500/10 dark:text-red-200">
+                  Export failed. Generate the LaunchKit first, then try downloading again.
                 </div>
               ) : null}
             </section>

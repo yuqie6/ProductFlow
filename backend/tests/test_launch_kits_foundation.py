@@ -211,3 +211,11 @@ def test_execute_launch_kit_generation_task_produces_manual_export_content(confi
     assert task is not None
     assert task.status == JobStatus.SUCCEEDED
     assert task.progress_stage == LaunchKitProgressStage.EXPORTING_OPTIONAL_SNAPSHOT
+
+    exported = client.get(f"/api/launch-kits/{created['id']}/exports/markdown")
+    assert exported.status_code == 200
+    assert exported.headers["content-type"].startswith("text/markdown")
+    assert "attachment;" in exported.headers["content-disposition"]
+    assert "# Áo khoác chống nắng UPF50 LaunchKit" in exported.text
+    assert "## Platform copy blocks" in exported.text
+    assert "## Manual export checklist" in exported.text
