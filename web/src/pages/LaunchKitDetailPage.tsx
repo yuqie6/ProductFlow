@@ -400,9 +400,24 @@ export function LaunchKitDetailPage() {
 
   const exportMutation = useMutation({
     mutationFn: () => api.exportLaunchKitMarkdown(id ?? ""),
-    onSuccess: (markdown) => {
+    onSuccess: async (markdown) => {
       const productName = kitQuery.data?.product_name ?? "launch-kit";
       downloadTextFile(`${slugifyFilename(productName)}-${id ?? "export"}.md`, markdown, "text/markdown;charset=utf-8");
+      const feedback = recordValue(kitQuery.data?.seller_feedback);
+      const metrics = recordValue(feedback?.metrics);
+      const updated = await api.saveLaunchKitFeedback(id ?? "", {
+        used: booleanOrNull(feedback?.used),
+        edited: booleanOrNull(feedback?.edited),
+        would_reuse: booleanOrNull(feedback?.would_reuse),
+        would_pay: booleanOrNull(feedback?.would_pay),
+        notes: stringValue(feedback?.notes),
+        metrics: {
+          ...metrics,
+          downloaded_markdown: Number(metrics?.downloaded_markdown ?? 0) + 1,
+          last_export_action_at: new Date().toISOString(),
+        },
+      });
+      queryClient.setQueryData(["launch-kit", id], updated);
     },
   });
 
