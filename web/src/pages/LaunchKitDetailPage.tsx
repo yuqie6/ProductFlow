@@ -5,7 +5,7 @@ import { AlertCircle, ArrowLeft, CheckCircle2, ClipboardList, Download, FileText
 import { useNavigate, useParams } from "react-router-dom";
 
 import { TopNav } from "../components/TopNav";
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 import { formatDateTime } from "../lib/format";
 import type { LaunchKitDetail, LaunchKitStatus } from "../lib/types";
 
@@ -371,6 +371,10 @@ function ReadinessRail({ kit }: { kit: LaunchKitDetail }) {
   );
 }
 
+function mutationErrorDetail(error: unknown, fallback: string) {
+  return error instanceof ApiError ? error.detail : fallback;
+}
+
 export function LaunchKitDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -422,6 +426,12 @@ export function LaunchKitDetailPage() {
   });
 
   const kit = kitQuery.data;
+  const generateError = generateMutation.isError
+    ? mutationErrorDetail(generateMutation.error, "Không gửi được tác vụ hoặc đang có tác vụ khác chạy. Kiểm tra queue/backend rồi thử lại.")
+    : "";
+  const exportError = exportMutation.isError
+    ? mutationErrorDetail(exportMutation.error, "Không xuất được Markdown. Tạo nội dung LaunchKit trước rồi thử lại.")
+    : "";
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-50 dark:bg-[#060a12]">
@@ -467,24 +477,29 @@ export function LaunchKitDetailPage() {
                   >
                     <ClipboardList size={16} className="mr-1.5" /> {generationButtonLabel(kit.status, generateMutation.isPending)}
                   </button>
-                  <button
-                    type="button"
-                    disabled={!kit.export_snapshot || exportMutation.isPending}
-                    onClick={() => exportMutation.mutate()}
-                    className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-emerald-200 hover:bg-emerald-50 disabled:text-slate-400 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-emerald-500/10"
-                  >
-                    <Download size={16} className="mr-1.5" /> {exportMutation.isPending ? "Đang xuất…" : "Tải Markdown"}
-                  </button>
+                  <div className="flex flex-col gap-1">
+                    <button
+                      type="button"
+                      disabled={!kit.export_snapshot || exportMutation.isPending}
+                      onClick={() => exportMutation.mutate()}
+                      className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-emerald-200 hover:bg-emerald-50 disabled:text-slate-400 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-emerald-500/10"
+                    >
+                      <Download size={16} className="mr-1.5" /> {exportMutation.isPending ? "Đang xuất…" : "Tải Markdown"}
+                    </button>
+                    {!kit.export_snapshot ? (
+                      <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Tạo nội dung trước khi tải Markdown.</span>
+                    ) : null}
+                  </div>
                 </div>
               </div>
               {generateMutation.isError ? (
                 <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-400/35 dark:bg-red-500/10 dark:text-red-200">
-                  Không gửi được tác vụ hoặc đang có tác vụ khác chạy. Kiểm tra queue/backend rồi thử lại.
+                  {generateError}
                 </div>
               ) : null}
               {exportMutation.isError ? (
                 <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-400/35 dark:bg-red-500/10 dark:text-red-200">
-                  Export failed. Tạo nội dung the LaunchKit first, then try downloading again.
+                  {exportError}
                 </div>
               ) : null}
             </section>
@@ -504,7 +519,7 @@ export function LaunchKitDetailPage() {
               <section className="space-y-5">
                 <Panel title="Nguồn tham khảo" icon={FileText}><JsonPreview value={kit.source_references} /></Panel>
                 <Panel title="Góc bán hàng" icon={ClipboardList}><AngleCard value={recordValue(kit.selected_angle)} /></Panel>
-                <Panel title="Tạo nội dungd summary" icon={ClipboardList}><JsonPreview value={kit.generated_summary} /></Panel>
+                <Panel title="Tóm tắt đã tạo" icon={ClipboardList}><JsonPreview value={kit.generated_summary} /></Panel>
                 <Panel title="Điểm sẵn sàng" icon={CheckCircle2}><QualityScoreCard value={recordValue(kit.quality_score_summary)} /></Panel>
                 <Panel title="Xuất thủ công" icon={Download}><ManualExportCard kit={kit} /></Panel>
                 <Panel title="Feedback" icon={CheckCircle2}><FeedbackPanel kit={kit} /></Panel>
