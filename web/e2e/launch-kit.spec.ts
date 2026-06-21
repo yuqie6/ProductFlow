@@ -35,6 +35,13 @@ test.beforeEach(async ({ page }) => {
 test("seller can create, generate, copy, export, give feedback, and reach Advanced mode", async ({ page }) => {
   await login(page);
   await expect(page.getByRole("heading", { name: /Shopee \/ TikTok Shop LaunchKit/i })).toBeVisible();
+  await page.getByLabel("Tên shop").fill("Mộc Home Test");
+  await page.getByLabel("Tone mặc định").fill("ấm áp, rõ ràng, không phóng đại");
+  await page.getByLabel("Khách mục tiêu").fill("dân văn phòng ở TP.HCM");
+  await page.getByLabel("CTA ưu tiên").fill("Nhắn shop để chọn màu trước khi đặt");
+  await page.getByLabel("Claim bị cấm").fill("chữa bệnh");
+  await page.getByRole("button", { name: "Lưu hồ sơ shop" }).click();
+  await expect(page.getByText("Đã lưu hồ sơ shop. LaunchKit tiếp theo sẽ dùng defaults này.")).toBeVisible();
 
   await createLaunchKit(page, "Áo khoác chống nắng UPF50");
 
@@ -42,6 +49,8 @@ test("seller can create, generate, copy, export, give feedback, and reach Advanc
   await expect(page.locator("text=/ready/i").first()).toBeVisible();
   await expect(page.getByRole("heading", { name: "Proof-first practical value" })).toBeVisible();
   await expect(page.getByText("/ 100 sẵn sàng")).toBeVisible();
+  await expect(page.getByText(/CTA ưu tiên: Nhắn shop để chọn màu trước khi đặt/).first()).toBeVisible();
+  await expect(page.getByText(/Store profile banned claim: do not publish 'chữa bệnh'/).first()).toBeVisible();
 
   await page.getByRole("button", { name: "Chỉnh sửa nội dung" }).click();
   await page.getByLabel("Tiêu đề").first().fill("Áo khoác UPF50 bản seller đã sửa");

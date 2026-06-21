@@ -263,6 +263,65 @@ def test_launch_kit_generate_endpoint_can_run_inline_without_queue(
     get_settings.cache_clear()
 
 
+def test_launch_kit_store_profile_endpoint_and_generation_defaults(configured_env: Path, db_session) -> None:
+    from productflow_backend.application.launch_kit.generation import (
+        execute_launch_kit_generation_task,
+        submit_launch_kit_generation_task,
+    )
+    from productflow_backend.infrastructure.db.session import get_session_factory
+
+    ensure_starter_category_playbooks(db_session)
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    empty = client.get("/api/launch-kits/store-profile")
+    assert empty.status_code == 200
+    assert empty.json()["store_tone"] is None
+
+    saved_profile = client.put(
+        "/api/launch-kits/store-profile",
+        json={
+            "store_name": "Mộc Home",
+            "store_tone": "ấm áp, rõ ràng, không phóng đại",
+            "target_buyer": "dân văn phòng ở TP.HCM",
+            "preferred_cta": "Nhắn shop để chọn màu trước khi đặt",
+            "warranty_notes": "Đổi mới trong 7 ngày nếu lỗi sản xuất",
+            "default_shipping_promo_notes": "Freeship cho đơn nội thành",
+            "brand_rules": ["Không dùng emoji quá nhiều"],
+            "prohibited_claims": ["chữa bệnh"],
+        },
+    )
+    assert saved_profile.status_code == 200
+    assert saved_profile.json()["store_name"] == "Mộc Home"
+
+    created = client.post(
+        "/api/launch-kits",
+        json={
+            "product_name": "Kệ gỗ để bàn",
+            "category_key": "home_goods",
+            "target_platforms": ["shopee"],
+            "source_references": {"pasted_reference_text": "Kệ nhỏ để màn hình, màu gỗ sáng, dài 50cm."},
+        },
+    ).json()
+    enqueued: list[str] = []
+    submit_launch_kit_generation_task(db_session, launch_kit_id=created["id"], enqueue=enqueued.append)
+    execute_launch_kit_generation_task(enqueued[0], session_factory=get_session_factory())
+
+    db_session.expire_all()
+    launch_kit = db_session.get(LaunchKit, created["id"])
+    assert launch_kit is not None
+    store_profile = launch_kit.generated_summary_json["product_facts"]["store_profile"]
+    assert store_profile["store_name"] == "Mộc Home"
+    assert store_profile["preferred_cta"] == "Nhắn shop để chọn màu trước khi đặt"
+    platform_block = launch_kit.export_snapshot_json["manual_export"]["platform_blocks"][0]
+    assert "Tone shop: ấm áp" in platform_block["description"]
+    assert "CTA ưu tiên: Nhắn shop" in platform_block["description"]
+    checklist = launch_kit.export_snapshot_json["manual_export"]["checklist"]
+    assert any("Store profile CTA" in item for item in checklist)
+    assert any("chữa bệnh" in item for item in checklist)
+
+
 def test_launch_kit_manual_edits_persist_and_markdown_uses_edited_content(configured_env: Path, db_session) -> None:
     from productflow_backend.application.launch_kit.generation import (
         execute_launch_kit_generation_task,

@@ -761,6 +761,22 @@ export interface SourceReferenceRequest {
 }
 
 
+export interface StoreProfile {
+  schema_version: number;
+  store_name?: string | null;
+  store_tone?: string | null;
+  target_buyer?: string | null;
+  preferred_cta?: string | null;
+  warranty_notes?: string | null;
+  brand_rules: string[];
+  color_logo_notes?: string | null;
+  platform_preferences: Record<string, unknown>;
+  default_shipping_promo_notes?: string | null;
+  prohibited_claims: string[];
+}
+
+export type StoreProfileUpdateRequest = Omit<StoreProfile, "schema_version">;
+
 export interface LaunchKitEditablePlatformBlock {
   platform?: string | null;
   title: string;

@@ -33,6 +33,33 @@ class LaunchKitFeedbackRequest(BaseModel):
     metrics: dict[str, Any] = Field(default_factory=dict)
 
 
+class StoreProfileResponse(BaseModel):
+    schema_version: int = 1
+    store_name: str | None = None
+    store_tone: str | None = None
+    target_buyer: str | None = None
+    preferred_cta: str | None = None
+    warranty_notes: str | None = None
+    brand_rules: list[str] = Field(default_factory=list)
+    color_logo_notes: str | None = None
+    platform_preferences: dict[str, Any] = Field(default_factory=dict)
+    default_shipping_promo_notes: str | None = None
+    prohibited_claims: list[str] = Field(default_factory=list)
+
+
+class StoreProfileUpdateRequest(BaseModel):
+    store_name: str | None = Field(default=None, max_length=160)
+    store_tone: str | None = Field(default=None, max_length=500)
+    target_buyer: str | None = Field(default=None, max_length=500)
+    preferred_cta: str | None = Field(default=None, max_length=300)
+    warranty_notes: str | None = Field(default=None, max_length=1_000)
+    brand_rules: list[str] = Field(default_factory=list, max_length=20)
+    color_logo_notes: str | None = Field(default=None, max_length=1_000)
+    platform_preferences: dict[str, Any] = Field(default_factory=dict)
+    default_shipping_promo_notes: str | None = Field(default=None, max_length=1_000)
+    prohibited_claims: list[str] = Field(default_factory=list, max_length=30)
+
+
 class LaunchKitEditablePlatformBlockRequest(BaseModel):
     platform: str | None = Field(default=None, max_length=40)
     title: str = Field(min_length=1, max_length=255)

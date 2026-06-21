@@ -88,8 +88,11 @@ class CategoryPlaybookPayload(VersionedPayload):
 
 
 class StoreProfilePayload(VersionedPayload):
+    store_name: str | None = None
     store_tone: str | None = None
     target_buyer: str | None = None
+    preferred_cta: str | None = None
+    warranty_notes: str | None = None
     brand_rules: list[str] = Field(default_factory=list)
     color_logo_notes: str | None = None
     platform_preferences: dict[str, Any] = Field(default_factory=dict)

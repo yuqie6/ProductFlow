@@ -13,9 +13,14 @@ from productflow_backend.application.launch_kit.generation import (
     submit_launch_kit_generation_task,
 )
 from productflow_backend.application.launch_kit.mutations import create_launch_kit
-from productflow_backend.application.launch_kit.payloads import SellerFeedbackPayload, SourceReferencePayload
+from productflow_backend.application.launch_kit.payloads import (
+    SellerFeedbackPayload,
+    SourceReferencePayload,
+    StoreProfilePayload,
+)
 from productflow_backend.application.launch_kit.playbooks import ensure_starter_category_playbooks
 from productflow_backend.application.launch_kit.query import get_launch_kit, list_launch_kits
+from productflow_backend.application.launch_kit.store_profile import get_store_profile_payload, save_store_profile
 from productflow_backend.config import get_runtime_settings
 from productflow_backend.infrastructure.db.session import get_session_factory
 from productflow_backend.presentation.deps import get_session, require_admin
@@ -26,6 +31,8 @@ from productflow_backend.presentation.schemas.launch_kits import (
     LaunchKitListResponse,
     LaunchKitManualEditsRequest,
     LaunchKitStatusResponse,
+    StoreProfileResponse,
+    StoreProfileUpdateRequest,
     serialize_launch_kit_detail,
     serialize_launch_kit_summary,
     serialize_launch_kit_task,
@@ -72,6 +79,23 @@ def create_launch_kit_endpoint(
         source_references=references,
     )
     return serialize_launch_kit_detail(launch_kit)
+
+
+@router.get("/store-profile", response_model=StoreProfileResponse)
+def get_store_profile_endpoint(session: Session = Depends(get_session)) -> StoreProfileResponse:
+    return StoreProfileResponse.model_validate(get_store_profile_payload(session).model_dump(mode="json"))
+
+
+@router.put("/store-profile", response_model=StoreProfileResponse)
+def update_store_profile_endpoint(
+    payload: StoreProfileUpdateRequest,
+    session: Session = Depends(get_session),
+) -> StoreProfileResponse:
+    profile = save_store_profile(
+        session,
+        profile=StoreProfilePayload(**payload.model_dump(mode="json")),
+    )
+    return StoreProfileResponse.model_validate(profile.model_dump(mode="json"))
 
 
 @router.get("/{launch_kit_id}", response_model=LaunchKitDetailResponse)

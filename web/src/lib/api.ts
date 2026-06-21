@@ -37,6 +37,8 @@ import type {
   RuntimeConfig,
   SettingsLockState,
   SettingsExportPayload,
+  StoreProfile,
+  StoreProfileUpdateRequest,
   SettingsImportCommitResponse,
   SettingsImportPreviewResponse,
   SessionState,
@@ -136,6 +138,15 @@ export const api = {
     const page = input?.page ?? 1;
     const pageSize = input?.page_size ?? 20;
     return request(`/api/launch-kits?page=${encodeURIComponent(page)}&page_size=${encodeURIComponent(pageSize)}`);
+  },
+  getStoreProfile(): Promise<StoreProfile> {
+    return request("/api/launch-kits/store-profile");
+  },
+  updateStoreProfile(payload: StoreProfileUpdateRequest): Promise<StoreProfile> {
+    return request("/api/launch-kits/store-profile", {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    });
   },
   createLaunchKit(payload: LaunchKitCreateRequest): Promise<LaunchKitDetail> {
     return request("/api/launch-kits", {

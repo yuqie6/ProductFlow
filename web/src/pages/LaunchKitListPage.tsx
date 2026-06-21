@@ -1,12 +1,12 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, ArrowRight, CheckCircle2, Clock3, PackagePlus, Store, Wand2 } from "lucide-react";
-import { useState } from "react";
+import { AlertCircle, ArrowRight, CheckCircle2, Clock3, PackagePlus, Save, Store, Wand2 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
 import { TopNav } from "../components/TopNav";
 import { api } from "../lib/api";
 import { formatShortDate } from "../lib/format";
-import type { LaunchKitStatus, LaunchKitSummary } from "../lib/types";
+import type { LaunchKitStatus, LaunchKitSummary, StoreProfileUpdateRequest } from "../lib/types";
 
 const PAGE_SIZE = 12;
 
@@ -66,6 +66,127 @@ function KitCard({ kit }: { kit: LaunchKitSummary }) {
         </span>
       </div>
     </Link>
+  );
+}
+
+function listToText(items: string[] | undefined) {
+  return (items ?? []).join("\n");
+}
+
+function textToList(value: string) {
+  return value.split("\n").map((item) => item.trim()).filter(Boolean);
+}
+
+function StoreProfilePanel() {
+  const queryClient = useQueryClient();
+  const profileQuery = useQuery({
+    queryKey: ["launch-kit-store-profile"],
+    queryFn: api.getStoreProfile,
+    staleTime: 60_000,
+  });
+  const [form, setForm] = useState<StoreProfileUpdateRequest>({
+    store_name: "",
+    store_tone: "",
+    target_buyer: "",
+    preferred_cta: "",
+    warranty_notes: "",
+    brand_rules: [],
+    color_logo_notes: "",
+    platform_preferences: {},
+    default_shipping_promo_notes: "",
+    prohibited_claims: [],
+  });
+  const [brandRulesText, setBrandRulesText] = useState("");
+  const [bannedClaimsText, setBannedClaimsText] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [dirty, setDirty] = useState(false);
+
+  useEffect(() => {
+    if (!profileQuery.data || dirty) {
+      return;
+    }
+    setForm({
+      store_name: profileQuery.data.store_name ?? "",
+      store_tone: profileQuery.data.store_tone ?? "",
+      target_buyer: profileQuery.data.target_buyer ?? "",
+      preferred_cta: profileQuery.data.preferred_cta ?? "",
+      warranty_notes: profileQuery.data.warranty_notes ?? "",
+      brand_rules: profileQuery.data.brand_rules ?? [],
+      color_logo_notes: profileQuery.data.color_logo_notes ?? "",
+      platform_preferences: profileQuery.data.platform_preferences ?? {},
+      default_shipping_promo_notes: profileQuery.data.default_shipping_promo_notes ?? "",
+      prohibited_claims: profileQuery.data.prohibited_claims ?? [],
+    });
+    setBrandRulesText(listToText(profileQuery.data.brand_rules));
+    setBannedClaimsText(listToText(profileQuery.data.prohibited_claims));
+  }, [profileQuery.data]);
+
+  const mutation = useMutation({
+    mutationFn: () => api.updateStoreProfile({
+      ...form,
+      brand_rules: textToList(brandRulesText),
+      prohibited_claims: textToList(bannedClaimsText),
+    }),
+    onSuccess: async (updated) => {
+      setDirty(false);
+      setSaved(true);
+      queryClient.setQueryData(["launch-kit-store-profile"], updated);
+      window.setTimeout(() => setSaved(false), 2200);
+    },
+  });
+
+  const update = (patch: Partial<StoreProfileUpdateRequest>) => {
+    setDirty(true);
+    setSaved(false);
+    setForm((current) => ({ ...current, ...patch }));
+  };
+
+  return (
+    <section className="mt-5 rounded-2xl border border-emerald-100 bg-emerald-50/70 p-4 shadow-sm shadow-emerald-100/40 dark:border-emerald-400/20 dark:bg-emerald-500/10 dark:shadow-black/20 lg:p-5">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="max-w-xl">
+          <div className="mb-2 inline-flex items-center rounded-full bg-white px-3 py-1 text-[11px] font-bold uppercase tracking-[0.2em] text-emerald-700 ring-1 ring-emerald-100 dark:bg-slate-950/60 dark:text-emerald-200 dark:ring-emerald-400/25">
+            Hồ sơ shop
+          </div>
+          <h2 className="text-base font-semibold text-slate-950 dark:text-white">Defaults dùng cho mọi LaunchKit mới</h2>
+          <p className="mt-1 text-sm leading-6 text-slate-600 dark:text-slate-300">Lưu tone, khách mục tiêu, CTA và claim bị cấm. Ghi chú ở từng sản phẩm vẫn có thể cụ thể hơn.</p>
+        </div>
+        <button type="button" onClick={() => mutation.mutate()} disabled={mutation.isPending || profileQuery.isLoading} className="inline-flex items-center rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-emerald-600/20 transition hover:bg-emerald-500 disabled:opacity-50">
+          <Save size={16} className="mr-1.5" /> {mutation.isPending ? "Đang lưu…" : "Lưu hồ sơ shop"}
+        </button>
+      </div>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+        <ProfileInput label="Tên shop" value={form.store_name ?? ""} onChange={(value) => update({ store_name: value })} placeholder="Mộc Home" />
+        <ProfileInput label="Tone mặc định" value={form.store_tone ?? ""} onChange={(value) => update({ store_tone: value })} placeholder="ấm áp, rõ ràng, không phóng đại" />
+        <ProfileInput label="Khách mục tiêu" value={form.target_buyer ?? ""} onChange={(value) => update({ target_buyer: value })} placeholder="dân văn phòng ở TP.HCM" />
+        <ProfileInput label="CTA ưu tiên" value={form.preferred_cta ?? ""} onChange={(value) => update({ preferred_cta: value })} placeholder="Nhắn shop để chọn màu trước khi đặt" />
+        <ProfileInput label="Bảo hành / đổi trả" value={form.warranty_notes ?? ""} onChange={(value) => update({ warranty_notes: value })} placeholder="Đổi mới trong 7 ngày nếu lỗi sản xuất" />
+        <ProfileInput label="Giao hàng / khuyến mãi" value={form.default_shipping_promo_notes ?? ""} onChange={(value) => update({ default_shipping_promo_notes: value })} placeholder="Freeship cho đơn nội thành" />
+        <ProfileTextarea label="Quy tắc brand" value={brandRulesText} onChange={(value) => { setDirty(true); setSaved(false); setBrandRulesText(value); }} placeholder="Mỗi dòng một quy tắc" />
+        <ProfileTextarea label="Claim bị cấm" value={bannedClaimsText} onChange={(value) => { setDirty(true); setSaved(false); setBannedClaimsText(value); }} placeholder="Mỗi dòng một claim không được dùng" />
+      </div>
+      {saved ? <p className="mt-3 text-sm font-semibold text-emerald-700 dark:text-emerald-300">Đã lưu hồ sơ shop. LaunchKit tiếp theo sẽ dùng defaults này.</p> : null}
+      {mutation.isError ? <p className="mt-3 text-sm font-semibold text-red-600 dark:text-red-300">Không lưu được hồ sơ shop.</p> : null}
+    </section>
+  );
+}
+
+function ProfileInput({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (value: string) => void; placeholder: string }) {
+  return (
+    <label className="block">
+      <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">{label}</span>
+      <input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} className="mt-1 w-full rounded-xl border border-emerald-100 bg-white px-3 py-2.5 text-sm text-slate-950 outline-none transition focus:border-emerald-400 dark:border-emerald-400/20 dark:bg-slate-950 dark:text-white" />
+    </label>
+  );
+}
+
+function ProfileTextarea({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (value: string) => void; placeholder: string }) {
+  return (
+    <label className="block lg:col-span-1">
+      <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">{label}</span>
+      <textarea value={value} onChange={(event) => onChange(event.target.value)} rows={3} placeholder={placeholder} className="mt-1 w-full rounded-xl border border-emerald-100 bg-white px-3 py-2.5 text-sm text-slate-950 outline-none transition focus:border-emerald-400 dark:border-emerald-400/20 dark:bg-slate-950 dark:text-white" />
+    </label>
   );
 }
 
@@ -133,6 +254,8 @@ export function LaunchKitListPage() {
             </div>
           </div>
         </section>
+
+        <StoreProfilePanel />
 
         <section className="mt-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm shadow-slate-200/50 dark:border-slate-700/80 dark:bg-[#0f1726] dark:shadow-black/20 lg:p-5">
           <div className="mb-4 flex items-center justify-between gap-3">

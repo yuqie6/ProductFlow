@@ -16,6 +16,7 @@ from productflow_backend.application.launch_kit.payloads import (
 )
 from productflow_backend.application.launch_kit.playbooks import get_active_category_playbook
 from productflow_backend.application.launch_kit.query import get_launch_kit
+from productflow_backend.application.launch_kit.store_profile import get_store_profile_json
 from productflow_backend.application.queue_submission import enqueue_or_mark_failed
 from productflow_backend.domain.enums import JobStatus
 from productflow_backend.domain.errors import BusinessValidationError
@@ -144,11 +145,15 @@ def execute_launch_kit_generation_task(task_id: str, *, session_factory: Callabl
         _set_progress(session, task, LaunchKitProgressStage.APPLYING_PLAYBOOK)
         playbook = get_active_category_playbook(session, launch_kit.category_key).playbook_json
 
+        _set_progress(session, task, LaunchKitProgressStage.APPLYING_STORE_PROFILE)
+        store_profile = get_store_profile_json(session)
+        summary = _summary_with_store_profile(summary, store_profile)
+
         _set_progress(session, task, LaunchKitProgressStage.GENERATING_ANGLES)
-        selected_angle = _build_selected_angle(launch_kit, playbook)
+        selected_angle = _build_selected_angle(launch_kit, playbook, store_profile)
 
         _set_progress(session, task, LaunchKitProgressStage.GENERATING_COPY)
-        variants = _build_variants(launch_kit, playbook, selected_angle)
+        variants = _build_variants(launch_kit, playbook, selected_angle, store_profile)
 
         _set_progress(session, task, LaunchKitProgressStage.PLANNING_IMAGES)
         image_plan = _build_image_plan(launch_kit, playbook)
@@ -166,6 +171,7 @@ def execute_launch_kit_generation_task(task_id: str, *, session_factory: Callabl
             variants=variants,
             quality_score=quality_score,
             playbook=playbook,
+            store_profile=store_profile,
         )
         _mark_task_succeeded(session, task, launch_kit)
     except Exception as exc:
@@ -317,13 +323,83 @@ def _build_generated_summary(launch_kit: LaunchKit) -> GeneratedSummaryPayload:
     )
 
 
-def _build_selected_angle(launch_kit: LaunchKit, playbook: dict[str, Any]) -> SelectedAnglePayload:
+def _summary_with_store_profile(
+    summary: GeneratedSummaryPayload,
+    store_profile: dict[str, Any],
+) -> GeneratedSummaryPayload:
+    if not _store_profile_has_content(store_profile):
+        return summary
+    facts = dict(summary.product_facts)
+    facts["store_profile"] = {
+        "store_name": store_profile.get("store_name"),
+        "store_tone": store_profile.get("store_tone"),
+        "target_buyer": store_profile.get("target_buyer"),
+        "preferred_cta": store_profile.get("preferred_cta"),
+        "warranty_notes": store_profile.get("warranty_notes"),
+        "default_shipping_promo_notes": store_profile.get("default_shipping_promo_notes"),
+        "prohibited_claims": store_profile.get("prohibited_claims") or [],
+        "brand_rules": store_profile.get("brand_rules") or [],
+    }
+    return summary.model_copy(update={"product_facts": facts})
+
+
+def _store_profile_has_content(store_profile: dict[str, Any] | None) -> bool:
+    if not store_profile:
+        return False
+    ignored = {"schema_version"}
+    return any(bool(value) for key, value in store_profile.items() if key not in ignored)
+
+
+def _store_profile_lines(store_profile: dict[str, Any] | None) -> list[str]:
+    profile = store_profile or {}
+    lines: list[str] = []
+    if profile.get("store_name"):
+        lines.append(f"Shop: {profile['store_name']}.")
+    if profile.get("store_tone"):
+        lines.append(f"Tone shop: {profile['store_tone']}.")
+    if profile.get("target_buyer"):
+        lines.append(f"Khách mục tiêu: {profile['target_buyer']}.")
+    if profile.get("preferred_cta"):
+        lines.append(f"CTA ưu tiên: {profile['preferred_cta']}.")
+    if profile.get("warranty_notes"):
+        lines.append(f"Bảo hành/đổi trả: {profile['warranty_notes']}.")
+    if profile.get("default_shipping_promo_notes"):
+        lines.append(f"Giao hàng/khuyến mãi: {profile['default_shipping_promo_notes']}.")
+    return lines
+
+
+def _store_profile_checklist(store_profile: dict[str, Any] | None) -> list[str]:
+    profile = store_profile or {}
+    items: list[str] = []
+    if profile.get("store_tone"):
+        items.append(f"Store profile tone: keep copy in this voice — {profile['store_tone']}.")
+    if profile.get("preferred_cta"):
+        items.append(f"Store profile CTA: verify final CTA matches — {profile['preferred_cta']}.")
+    if profile.get("warranty_notes"):
+        items.append(f"Store profile warranty note: confirm listing matches — {profile['warranty_notes']}.")
+    for claim in profile.get("prohibited_claims") or []:
+        items.append(f"Store profile banned claim: do not publish '{claim}'.")
+    for rule in profile.get("brand_rules") or []:
+        items.append(f"Store profile brand rule: {rule}.")
+    return items
+
+
+def _build_selected_angle(
+    launch_kit: LaunchKit,
+    playbook: dict[str, Any],
+    store_profile: dict[str, Any] | None = None,
+) -> SelectedAnglePayload:
     first_objection = (playbook.get("buyer_objections") or ["trust before purchase"])[0]
-    tone = ", ".join(playbook.get("content_tone") or ["clear", "practical"])
+    profile = store_profile or {}
+    tone = str(profile.get("store_tone") or ", ".join(playbook.get("content_tone") or ["clear", "practical"]))
+    target_buyer = str(profile.get("target_buyer") or "marketplace buyer")
     return SelectedAnglePayload(
         key="proof_first_practical_value",
         label="Proof-first practical value",
-        why_it_might_work=f"Lead with concrete proof that reduces buyer worry about {first_objection}.",
+        why_it_might_work=(
+            f"Lead with concrete proof that reduces buyer worry about {first_objection} "
+            f"for {target_buyer}."
+        ),
         buyer_emotion="Feels safe to compare, trust, and buy without chatting the seller first.",
         platform_fit="Searchable enough for Shopee, hook-led enough for TikTok Shop.",
         risk=f"Keep claims grounded; use a {tone} tone and avoid unsupported guarantees.",
@@ -348,12 +424,14 @@ def _build_variants(
     launch_kit: LaunchKit,
     playbook: dict[str, Any],
     selected_angle: SelectedAnglePayload,
+    store_profile: dict[str, Any] | None = None,
 ) -> list[VariantContentPayload]:
     text = _source_text(launch_kit)
     keywords = _extract_keywords(text)
     objections = playbook.get("buyer_objections") or []
     proof = playbook.get("required_visual_proof") or []
     variants: list[VariantContentPayload] = []
+    store_lines = _store_profile_lines(store_profile)
     for platform in _platforms_for_output(launch_kit):
         platform_note = (playbook.get("platform_notes") or {}).get(platform, "Keep claims concrete and easy to verify.")
         title = _title_for_platform(launch_kit.product.name, platform, keywords)
@@ -375,6 +453,7 @@ def _build_variants(
                             *[f"- {bullet}" for bullet in bullets],
                             "Bằng chứng ảnh cần có:",
                             *[f"- {item}" for item in proof[:4]],
+                            *( ["Ghi chú hồ sơ shop:", *[f"- {item}" for item in store_lines]] if store_lines else [] ),
                         ]
                     ),
                     "bullet_points": bullets,
@@ -462,6 +541,7 @@ def _persist_generated_outputs(
     variants: list[VariantContentPayload],
     quality_score: LaunchQualityScorePayload,
     playbook: dict[str, Any],
+    store_profile: dict[str, Any] | None = None,
 ) -> None:
     launch_kit.variants.clear()
     launch_kit.quality_scores.clear()
@@ -495,6 +575,7 @@ def _persist_generated_outputs(
         "Check every claim against product packaging and marketplace policy.",
         *[f"Guardrail: {item}" for item in summary.risky_claims],
         *[f"Image proof: {item}" for item in (playbook.get("required_visual_proof") or [])],
+        *_store_profile_checklist(store_profile),
     ]
     snapshot = ExportSnapshotPayload(
         selected_variant_ids=[row.id for row in variant_rows],
