@@ -20,11 +20,11 @@ const statusTone: Record<LaunchKitStatus, string> = {
 
 function statusLabel(status: LaunchKitStatus) {
   return {
-    draft: "Draft",
-    generating: "Generating",
-    ready: "Ready",
-    archived: "Archived",
-    failed: "Failed",
+    draft: "Bản nháp",
+    generating: "Đang tạo",
+    ready: "Sẵn sàng",
+    archived: "Đã lưu trữ",
+    failed: "Lỗi",
   }[status];
 }
 
@@ -60,9 +60,9 @@ function KitCard({ kit }: { kit: LaunchKitSummary }) {
         </div>
       </div>
       <div className="mt-5 flex items-center justify-between border-t border-slate-100 pt-3 text-sm dark:border-slate-800">
-        <span className="text-slate-500 dark:text-slate-400">Updated {formatShortDate(kit.updated_at)}</span>
+        <span className="text-slate-500 dark:text-slate-400">Cập nhật {formatShortDate(kit.updated_at)}</span>
         <span className="inline-flex items-center font-semibold text-emerald-700 transition group-hover:translate-x-0.5 dark:text-emerald-300">
-          Open <ArrowRight size={15} className="ml-1" />
+          Mở <ArrowRight size={15} className="ml-1" />
         </span>
       </div>
     </Link>
@@ -101,7 +101,7 @@ export function LaunchKitListPage() {
           <div className="grid gap-8 p-5 lg:grid-cols-[1.35fr_1fr] lg:p-7">
             <div>
               <div className="mb-3 inline-flex items-center rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.2em] text-emerald-700 ring-1 ring-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-200 dark:ring-emerald-400/25">
-                Vietnam seller launch desk
+                Bàn ra mắt cho seller Việt Nam
               </div>
               <h1 className="text-2xl font-semibold tracking-tight text-slate-950 dark:text-white lg:text-3xl">
                 Shopee / TikTok Shop LaunchKit
@@ -122,14 +122,14 @@ export function LaunchKitListPage() {
                   onClick={() => navigate("/products")}
                   className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
                 >
-                  Advanced mode
+                  Chế độ nâng cao
                 </button>
               </div>
             </div>
             <div className="grid grid-cols-3 gap-3 self-end">
-              <Metric icon={Wand2} label="Total kits" value={total} />
-              <Metric icon={CheckCircle2} label="Ready" value={ready} />
-              <Metric icon={Clock3} label="Active" value={active} />
+              <Metric icon={Wand2} label="Tổng kit" value={total} />
+              <Metric icon={CheckCircle2} label="Sẵn sàng" value={ready} />
+              <Metric icon={Clock3} label="Đang chạy" value={active} />
             </div>
           </div>
         </section>
@@ -137,18 +137,18 @@ export function LaunchKitListPage() {
         <section className="mt-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm shadow-slate-200/50 dark:border-slate-700/80 dark:bg-[#0f1726] dark:shadow-black/20 lg:p-5">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
-              <h2 className="text-base font-semibold text-slate-950 dark:text-white">Launch kits</h2>
-              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Page {page} / {totalPages} · {total} kits</p>
+              <h2 className="text-base font-semibold text-slate-950 dark:text-white">LaunchKit</h2>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Trang {page} / {totalPages} · {total} kit</p>
             </div>
             <div className="flex gap-2">
-              <button type="button" disabled={page <= 1 || kitsQuery.isFetching} onClick={() => setPage((current) => Math.max(1, current - 1))} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300">Prev</button>
-              <button type="button" disabled={page >= totalPages || kitsQuery.isFetching} onClick={() => setPage((current) => Math.min(totalPages, current + 1))} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300">Next</button>
+              <button type="button" disabled={page <= 1 || kitsQuery.isFetching} onClick={() => setPage((current) => Math.max(1, current - 1))} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300">Trước</button>
+              <button type="button" disabled={page >= totalPages || kitsQuery.isFetching} onClick={() => setPage((current) => Math.min(totalPages, current + 1))} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300">Sau</button>
             </div>
           </div>
 
           {kitsQuery.isError ? (
             <div className="flex items-center rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-400/35 dark:bg-red-500/10 dark:text-red-200">
-              <AlertCircle size={16} className="mr-2" /> Could not load LaunchKits. Confirm backend migrations are applied.
+              <AlertCircle size={16} className="mr-2" /> Không tải được LaunchKit. Kiểm tra backend và migration đã chạy.
             </div>
           ) : kitsQuery.isLoading ? (
             <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
@@ -156,9 +156,9 @@ export function LaunchKitListPage() {
             </div>
           ) : kits.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-slate-300 p-8 text-center dark:border-slate-700">
-              <h3 className="text-lg font-semibold text-slate-950 dark:text-white">No LaunchKits yet</h3>
-              <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">Create the first kit from a real product and marketplace notes.</p>
-              <button type="button" onClick={() => navigate("/launch-kits/new")} className="mt-4 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white">Create LaunchKit</button>
+              <h3 className="text-lg font-semibold text-slate-950 dark:text-white">Chưa có LaunchKit</h3>
+              <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">Tạo kit đầu tiên từ sản phẩm thật và ghi chú bán hàng theo sàn.</p>
+              <button type="button" onClick={() => navigate("/launch-kits/new")} className="mt-4 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white">Tạo LaunchKit</button>
             </div>
           ) : (
             <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">

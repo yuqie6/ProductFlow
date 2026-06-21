@@ -18,29 +18,29 @@ const statusTone: Record<LaunchKitStatus, string> = {
 };
 
 const progressStageLabels: Record<string, string> = {
-  extracting_facts: "Extracting product facts",
-  applying_playbook: "Applying category playbook",
-  applying_store_profile: "Applying store profile",
-  generating_angles: "Selecting buyer angle",
-  generating_copy: "Writing platform copy",
-  planning_images: "Planning image proof",
-  scoring: "Scoring readiness",
-  exporting_optional_snapshot: "Preparing export snapshot",
+  extracting_facts: "Đọc thông tin sản phẩm",
+  applying_playbook: "Áp dụng playbook ngành hàng",
+  applying_store_profile: "Áp dụng hồ sơ shop",
+  generating_angles: "Chọn góc bán hàng",
+  generating_copy: "Viết nội dung theo sàn",
+  planning_images: "Lập kế hoạch ảnh chứng minh",
+  scoring: "Chấm điểm sẵn sàng",
+  exporting_optional_snapshot: "Chuẩn bị gói xuất",
 };
 
 const progressStageOrder = Object.keys(progressStageLabels);
 
 function generationButtonLabel(status: LaunchKitStatus, pending: boolean) {
   if (pending) {
-    return "Submitting…";
+    return "Đang gửi…";
   }
   if (status === "failed") {
-    return "Retry generation";
+    return "Tạo lại sau lỗi";
   }
   if (status === "ready") {
-    return "Regenerate";
+    return "Tạo lại";
   }
-  return "Generate";
+  return "Tạo nội dung";
 }
 
 function platformLabel(platform: string) {
@@ -49,7 +49,7 @@ function platformLabel(platform: string) {
 
 function JsonPreview({ value }: { value: unknown }) {
   if (!value || (typeof value === "object" && Object.keys(value as Record<string, unknown>).length === 0)) {
-    return <p className="text-sm text-slate-500 dark:text-slate-400">No data yet.</p>;
+    return <p className="text-sm text-slate-500 dark:text-slate-400">Chưa có dữ liệu.</p>;
   }
   return (
     <pre className="max-h-80 overflow-auto rounded-xl bg-slate-950 p-4 text-xs leading-5 text-slate-100">
@@ -110,7 +110,7 @@ function slugifyFilename(value: string): string {
 
 function QualityScoreCard({ value }: { value: Record<string, unknown> | null }) {
   if (!value) {
-    return <p className="text-sm text-slate-500 dark:text-slate-400">Generate the kit to calculate readiness.</p>;
+    return <p className="text-sm text-slate-500 dark:text-slate-400">Tạo nội dung để chấm điểm sẵn sàng.</p>;
   }
   const overall = typeof value.overall === "number" ? value.overall : 0;
   const warnings = stringList(value.warnings);
@@ -118,7 +118,7 @@ function QualityScoreCard({ value }: { value: Record<string, unknown> | null }) 
     <div>
       <div className="flex items-end gap-3">
         <div className="text-4xl font-semibold text-slate-950 dark:text-white">{overall}</div>
-        <div className="pb-1 text-sm font-semibold text-slate-500 dark:text-slate-400">/ 100 readiness</div>
+        <div className="pb-1 text-sm font-semibold text-slate-500 dark:text-slate-400">/ 100 sẵn sàng</div>
       </div>
       <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
         <div className="h-full rounded-full bg-emerald-600" style={{ width: `${Math.min(100, Math.max(0, overall))}%` }} />
@@ -127,21 +127,21 @@ function QualityScoreCard({ value }: { value: Record<string, unknown> | null }) 
         <ul className="mt-4 space-y-2 text-sm text-amber-700 dark:text-amber-200">
           {warnings.map((warning) => <li key={warning}>• {warning}</li>)}
         </ul>
-      ) : <p className="mt-4 text-sm text-emerald-700 dark:text-emerald-200">No blocking readiness warnings.</p>}
+      ) : <p className="mt-4 text-sm text-emerald-700 dark:text-emerald-200">Không có cảnh báo chặn xuất bản.</p>}
     </div>
   );
 }
 
 function AngleCard({ value }: { value: Record<string, unknown> | null }) {
   if (!value) {
-    return <p className="text-sm text-slate-500 dark:text-slate-400">No angle selected yet.</p>;
+    return <p className="text-sm text-slate-500 dark:text-slate-400">Chưa chọn góc bán hàng.</p>;
   }
   return (
     <div className="space-y-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
-      <h3 className="text-lg font-semibold text-slate-950 dark:text-white">{stringValue(value.label) ?? "Selected angle"}</h3>
+      <h3 className="text-lg font-semibold text-slate-950 dark:text-white">{stringValue(value.label) ?? "Góc đã chọn"}</h3>
       <p>{stringValue(value.why_it_might_work) ?? "—"}</p>
-      <p><span className="font-semibold text-slate-800 dark:text-slate-100">Buyer emotion:</span> {stringValue(value.buyer_emotion) ?? "—"}</p>
-      <p><span className="font-semibold text-slate-800 dark:text-slate-100">Risk:</span> {stringValue(value.risk) ?? "—"}</p>
+      <p><span className="font-semibold text-slate-800 dark:text-slate-100">Cảm xúc người mua:</span> {stringValue(value.buyer_emotion) ?? "—"}</p>
+      <p><span className="font-semibold text-slate-800 dark:text-slate-100">Rủi ro:</span> {stringValue(value.risk) ?? "—"}</p>
     </div>
   );
 }
@@ -173,34 +173,34 @@ function FeedbackPanel({ kit }: { kit: LaunchKitDetail }) {
   return (
     <div className="space-y-4">
       <div className="grid gap-2 sm:grid-cols-2">
-        <TogglePill label="Used in listing" checked={used} onChange={setUsed} />
-        <TogglePill label="Edited before use" checked={edited} onChange={setEdited} />
-        <TogglePill label="Would reuse" checked={wouldReuse} onChange={setWouldReuse} />
-        <TogglePill label="Would pay" checked={wouldPay} onChange={setWouldPay} />
+        <TogglePill label="Đã dùng để đăng" checked={used} onChange={setUsed} />
+        <TogglePill label="Đã sửa trước khi dùng" checked={edited} onChange={setEdited} />
+        <TogglePill label="Muốn dùng lại" checked={wouldReuse} onChange={setWouldReuse} />
+        <TogglePill label="Sẵn sàng trả tiền" checked={wouldPay} onChange={setWouldPay} />
       </div>
       <label className="block">
-        <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Notes</span>
+        <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Ghi chú</span>
         <textarea
           value={notes}
           onChange={(event) => { setNotes(event.target.value); setSaved(false); }}
           rows={3}
-          placeholder="What did you edit? Did this help you publish faster?"
+          placeholder="Bạn đã sửa gì? Kit này có giúp đăng nhanh hơn không?"
           className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-950 outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 dark:border-slate-700 dark:bg-slate-950 dark:text-white dark:focus:ring-emerald-400/20"
         />
       </label>
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-slate-500 dark:text-slate-400">Lightweight feedback helps tune playbooks without marketplace APIs.</p>
+        <p className="text-sm text-slate-500 dark:text-slate-400">Feedback ngắn giúp tinh chỉnh playbook mà không cần API sàn.</p>
         <button
           type="button"
           onClick={() => mutation.mutate()}
           disabled={mutation.isPending}
           className="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-emerald-600/20 transition hover:bg-emerald-500 disabled:opacity-50"
         >
-          {mutation.isPending ? "Saving…" : "Save feedback"}
+          {mutation.isPending ? "Đang lưu…" : "Lưu feedback"}
         </button>
       </div>
-      {saved ? <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">Feedback saved.</p> : null}
-      {mutation.isError ? <p className="text-sm font-semibold text-red-600 dark:text-red-300">Could not save feedback.</p> : null}
+      {saved ? <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">Đã lưu feedback.</p> : null}
+      {mutation.isError ? <p className="text-sm font-semibold text-red-600 dark:text-red-300">Không lưu được feedback.</p> : null}
     </div>
   );
 }
@@ -210,7 +210,7 @@ function TogglePill({ label, checked, onChange }: { label: string; checked: bool
     <button
       type="button"
       onClick={() => onChange(!checked)}
-      className={`rounded-xl border px-3 py-2.5 text-left text-sm font-semibold transition ${checked
+      className={`min-h-11 rounded-xl border px-3 py-2.5 text-left text-sm font-semibold transition ${checked
         ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-400/45 dark:bg-emerald-500/10 dark:text-emerald-100"
         : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300"}`}
       aria-pressed={checked}
@@ -261,7 +261,7 @@ function ManualExportCard({ kit }: { kit: LaunchKitDetail }) {
       metricMutation.mutate(metricKey);
       window.setTimeout(() => setCopiedKey((current) => (current === key ? null : current)), 1800);
     } catch {
-      setCopyError("Copy failed. Select the text manually and copy it.");
+      setCopyError("Copy thất bại. Hãy chọn nội dung và copy thủ công.");
     }
   };
 
@@ -283,14 +283,14 @@ function ManualExportCard({ kit }: { kit: LaunchKitDetail }) {
             <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <div className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300">
-                  {platformLabel(platform)} copy block
+                  {platformLabel(platform)} khối nội dung
                 </div>
-                <h3 className="text-base font-semibold text-slate-950 dark:text-white">{title || "Untitled"}</h3>
+                <h3 className="text-base font-semibold text-slate-950 dark:text-white">{title || "Chưa có tiêu đề"}</h3>
               </div>
               <div className="flex flex-wrap gap-2">
-                <CopyButton label="Copy title" copied={copiedKey === `${blockKey}-title`} onClick={() => handleCopy(`${blockKey}-title`, title, `copied_${platform}_title`)} disabled={!title} />
-                <CopyButton label="Copy description" copied={copiedKey === `${blockKey}-description`} onClick={() => handleCopy(`${blockKey}-description`, description, `copied_${platform}_description`)} disabled={!description} />
-                <CopyButton label="Copy all" copied={copiedKey === `${blockKey}-all`} onClick={() => handleCopy(`${blockKey}-all`, allText, `copied_${platform}_all`)} disabled={!allText} />
+                <CopyButton label="Copy tiêu đề" copied={copiedKey === `${blockKey}-title`} onClick={() => handleCopy(`${blockKey}-title`, title, `copied_${platform}_title`)} disabled={!title} />
+                <CopyButton label="Copy mô tả" copied={copiedKey === `${blockKey}-description`} onClick={() => handleCopy(`${blockKey}-description`, description, `copied_${platform}_description`)} disabled={!description} />
+                <CopyButton label="Copy tất cả" copied={copiedKey === `${blockKey}-all`} onClick={() => handleCopy(`${blockKey}-all`, allText, `copied_${platform}_all`)} disabled={!allText} />
               </div>
             </div>
             {hook ? <p className="mt-2 text-sm font-medium text-slate-700 dark:text-slate-200">{hook}</p> : null}
@@ -298,17 +298,17 @@ function ManualExportCard({ kit }: { kit: LaunchKitDetail }) {
             {hashtags.length ? (
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <p className="text-sm text-emerald-700 dark:text-emerald-300">{hashtags.join(" ")}</p>
-                <CopyButton label="Copy hashtags" copied={copiedKey === `${blockKey}-hashtags`} onClick={() => handleCopy(`${blockKey}-hashtags`, hashtags.join(" "), `copied_${platform}_hashtags`)} />
+                <CopyButton label="Copy hashtag" copied={copiedKey === `${blockKey}-hashtags`} onClick={() => handleCopy(`${blockKey}-hashtags`, hashtags.join(" "), `copied_${platform}_hashtags`)} />
               </div>
             ) : null}
           </article>
         );
       })}
       {copyError ? <p className="text-sm font-semibold text-red-600 dark:text-red-300">{copyError}</p> : null}
-      {metricMutation.isError ? <p className="text-sm text-amber-700 dark:text-amber-200">Copied, but usage metric was not saved.</p> : null}
+      {metricMutation.isError ? <p className="text-sm text-amber-700 dark:text-amber-200">Đã copy, nhưng chưa lưu được chỉ số sử dụng.</p> : null}
       {checklist.length ? (
         <div className="rounded-2xl bg-amber-50 p-4 text-sm text-amber-800 dark:bg-amber-500/10 dark:text-amber-100">
-          <div className="mb-2 font-semibold">Manual export checklist</div>
+          <div className="mb-2 font-semibold">Checklist trước khi đăng</div>
           <ul className="space-y-1">{checklist.map((item) => <li key={item}>• {item}</li>)}</ul>
         </div>
       ) : null}
@@ -322,9 +322,9 @@ function CopyButton({ label, copied, disabled, onClick }: { label: string; copie
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-emerald-500/10 dark:hover:text-emerald-200"
+      className="min-h-10 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-emerald-200 hover:bg-emerald-50 hover:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-emerald-500/10 dark:hover:text-emerald-200"
     >
-      {copied ? "Copied" : label}
+      {copied ? "Đã copy" : label}
     </button>
   );
 }
@@ -332,15 +332,15 @@ function CopyButton({ label, copied, disabled, onClick }: { label: string; copie
 function GenerationProgress({ kit }: { kit: LaunchKitDetail }) {
   const task = kit.latest_task;
   if (!task) {
-    return <p className="text-sm text-slate-500 dark:text-slate-400">No generation task yet.</p>;
+    return <p className="text-sm text-slate-500 dark:text-slate-400">Chưa có tác vụ tạo nội dung.</p>;
   }
   const stage = task.progress_stage ?? "";
   const index = progressStageOrder.indexOf(stage);
   const percent = task.status === "succeeded" ? 100 : index >= 0 ? Math.round(((index + 1) / progressStageOrder.length) * 100) : 8;
   return (
     <div className="space-y-3 text-sm text-slate-600 dark:text-slate-300">
-      <p><span className="font-semibold">Status:</span> {task.status}</p>
-      <p><span className="font-semibold">Stage:</span> {progressStageLabels[stage] ?? (stage || "—")}</p>
+      <p><span className="font-semibold">Trạng thái:</span> {task.status}</p>
+      <p><span className="font-semibold">Bước:</span> {progressStageLabels[stage] ?? (stage || "—")}</p>
       <div className="h-2 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800" aria-label="Generation progress">
         <div className="h-full rounded-full bg-blue-600 transition-all" style={{ width: `${percent}%` }} />
       </div>
@@ -351,11 +351,11 @@ function GenerationProgress({ kit }: { kit: LaunchKitDetail }) {
 
 function ReadinessRail({ kit }: { kit: LaunchKitDetail }) {
   const steps = [
-    { label: "Brief captured", done: true },
-    { label: "Angle selected", done: Boolean(kit.selected_angle) },
-    { label: "Copy variants", done: kit.variants.length > 0 },
-    { label: "Quality scored", done: Boolean(kit.quality_score_summary) },
-    { label: "Export snapshot", done: Boolean(kit.export_snapshot) || kit.exports.length > 0 },
+    { label: "Đã ghi brief", done: true },
+    { label: "Đã chọn góc", done: Boolean(kit.selected_angle) },
+    { label: "Đã có nội dung", done: kit.variants.length > 0 },
+    { label: "Đã chấm điểm", done: Boolean(kit.quality_score_summary) },
+    { label: "Đã có gói xuất", done: Boolean(kit.export_snapshot) || kit.exports.length > 0 },
   ];
   return (
     <div className="space-y-3">
@@ -428,12 +428,12 @@ export function LaunchKitDetailPage() {
       <TopNav breadcrumbs={kit?.product_name ?? "LaunchKit"} onHome={() => navigate("/launch-kits")} onLogout={() => logoutMutation.mutate()} />
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 pt-4 pb-40 sm:px-6 lg:py-10">
         <button type="button" onClick={() => navigate("/launch-kits")} className="mb-4 inline-flex items-center text-sm font-semibold text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white">
-          <ArrowLeft size={16} className="mr-1" /> Back to LaunchKits
+          <ArrowLeft size={16} className="mr-1" /> Quay lại LaunchKit
         </button>
 
         {kitQuery.isError ? (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-400/35 dark:bg-red-500/10 dark:text-red-200">
-            <AlertCircle size={16} className="mr-2 inline" /> Could not load this LaunchKit.
+            <AlertCircle size={16} className="mr-2 inline" /> Không tải được LaunchKit này.
           </div>
         ) : kitQuery.isLoading || !kit ? (
           <div className="flex min-h-80 items-center justify-center rounded-3xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-[#0f1726]">
@@ -456,7 +456,7 @@ export function LaunchKitDetailPage() {
                       </span>
                     ))}
                   </div>
-                  <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">Created {formatDateTime(kit.created_at)} · Updated {formatDateTime(kit.updated_at)}</p>
+                  <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">Tạo lúc {formatDateTime(kit.created_at)} · Cập nhật {formatDateTime(kit.updated_at)}</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <button
@@ -473,18 +473,18 @@ export function LaunchKitDetailPage() {
                     onClick={() => exportMutation.mutate()}
                     className="inline-flex items-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-emerald-200 hover:bg-emerald-50 disabled:text-slate-400 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-emerald-500/10"
                   >
-                    <Download size={16} className="mr-1.5" /> {exportMutation.isPending ? "Exporting…" : "Export MD"}
+                    <Download size={16} className="mr-1.5" /> {exportMutation.isPending ? "Đang xuất…" : "Tải Markdown"}
                   </button>
                 </div>
               </div>
               {generateMutation.isError ? (
                 <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-400/35 dark:bg-red-500/10 dark:text-red-200">
-                  Queue submission failed or another generation is active. Try again after checking backend queue settings.
+                  Không gửi được tác vụ hoặc đang có tác vụ khác chạy. Kiểm tra queue/backend rồi thử lại.
                 </div>
               ) : null}
               {exportMutation.isError ? (
                 <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-400/35 dark:bg-red-500/10 dark:text-red-200">
-                  Export failed. Generate the LaunchKit first, then try downloading again.
+                  Export failed. Tạo nội dung the LaunchKit first, then try downloading again.
                 </div>
               ) : null}
             </section>
@@ -492,21 +492,21 @@ export function LaunchKitDetailPage() {
             <div className="grid gap-5 lg:grid-cols-[320px_1fr]">
               <aside className="space-y-5">
                 <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/60 dark:border-slate-700/80 dark:bg-[#0f1726] dark:shadow-black/25">
-                  <h2 className="mb-4 text-base font-semibold text-slate-950 dark:text-white">Readiness</h2>
+                  <h2 className="mb-4 text-base font-semibold text-slate-950 dark:text-white">Sẵn sàng</h2>
                   <ReadinessRail kit={kit} />
                 </section>
                 <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/60 dark:border-slate-700/80 dark:bg-[#0f1726] dark:shadow-black/25">
-                  <h2 className="mb-3 text-base font-semibold text-slate-950 dark:text-white">Latest task</h2>
+                  <h2 className="mb-3 text-base font-semibold text-slate-950 dark:text-white">Tác vụ mới nhất</h2>
 <GenerationProgress kit={kit} />
                 </section>
               </aside>
 
               <section className="space-y-5">
-                <Panel title="Source references" icon={FileText}><JsonPreview value={kit.source_references} /></Panel>
-                <Panel title="Selected buyer angle" icon={ClipboardList}><AngleCard value={recordValue(kit.selected_angle)} /></Panel>
-                <Panel title="Generated summary" icon={ClipboardList}><JsonPreview value={kit.generated_summary} /></Panel>
-                <Panel title="Quality score" icon={CheckCircle2}><QualityScoreCard value={recordValue(kit.quality_score_summary)} /></Panel>
-                <Panel title="Manual export" icon={Download}><ManualExportCard kit={kit} /></Panel>
+                <Panel title="Nguồn tham khảo" icon={FileText}><JsonPreview value={kit.source_references} /></Panel>
+                <Panel title="Góc bán hàng" icon={ClipboardList}><AngleCard value={recordValue(kit.selected_angle)} /></Panel>
+                <Panel title="Tạo nội dungd summary" icon={ClipboardList}><JsonPreview value={kit.generated_summary} /></Panel>
+                <Panel title="Điểm sẵn sàng" icon={CheckCircle2}><QualityScoreCard value={recordValue(kit.quality_score_summary)} /></Panel>
+                <Panel title="Xuất thủ công" icon={Download}><ManualExportCard kit={kit} /></Panel>
                 <Panel title="Feedback" icon={CheckCircle2}><FeedbackPanel kit={kit} /></Panel>
               </section>
             </div>
