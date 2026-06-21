@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -212,6 +213,13 @@ def test_execute_launch_kit_generation_task_produces_manual_export_content(confi
     assert task.status == JobStatus.SUCCEEDED
     assert task.progress_stage == LaunchKitProgressStage.EXPORTING_OPTIONAL_SNAPSHOT
 
+    execute_launch_kit_generation_task(enqueued[0], session_factory=get_session_factory())
+    db_session.expire_all()
+    launch_kit_after_duplicate_message = db_session.get(LaunchKit, created["id"])
+    assert launch_kit_after_duplicate_message is not None
+    assert len(launch_kit_after_duplicate_message.variants) == 3
+    assert len(launch_kit_after_duplicate_message.quality_scores) == 1
+
     exported = client.get(f"/api/launch-kits/{created['id']}/exports/markdown")
     assert exported.status_code == 200
     assert exported.headers["content-type"].startswith("text/markdown")
@@ -355,3 +363,136 @@ def test_launch_kit_generation_flags_prompt_injection_references(configured_env:
     assert any("prompt-injection" in warning for warning in warnings)
     assert launch_kit.generated_summary_json["product_facts"]["input_guardrails"]["prompt_injection_warning_count"] == 1
     assert any("Guardrail:" in item for item in launch_kit.export_snapshot_json["manual_export"]["checklist"])
+
+
+def test_recover_unfinished_launch_kit_generation_tasks_requeues_queued_tasks(
+    configured_env: Path,
+    db_session,
+    monkeypatch,
+) -> None:
+    from productflow_backend.application.launch_kit.generation import submit_launch_kit_generation_task
+    from productflow_backend.infrastructure.queue import recover_unfinished_launch_kit_generation_tasks
+
+    ensure_starter_category_playbooks(db_session)
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+    created = client.post(
+        "/api/launch-kits",
+        json={
+            "product_name": "Nón chống nắng",
+            "category_key": "fashion",
+            "target_platforms": ["shopee"],
+        },
+    ).json()
+    enqueued: list[str] = []
+    submit_launch_kit_generation_task(db_session, launch_kit_id=created["id"], enqueue=enqueued.append)
+    sent: list[str] = []
+    monkeypatch.setattr(
+        "productflow_backend.infrastructure.queue.enqueue_launch_kit_generation_task",
+        lambda task_id: sent.append(task_id),
+    )
+
+    summary = recover_unfinished_launch_kit_generation_tasks()
+
+    assert summary.queued_tasks == 1
+    assert summary.stale_running_tasks == 0
+    assert summary.enqueued_tasks == 1
+    assert sent == enqueued
+
+
+def test_recover_unfinished_launch_kit_generation_tasks_resets_stale_running_tasks(
+    configured_env: Path,
+    db_session,
+    monkeypatch,
+) -> None:
+    from productflow_backend.application.launch_kit.generation import submit_launch_kit_generation_task
+    from productflow_backend.infrastructure.queue import recover_unfinished_launch_kit_generation_tasks
+
+    ensure_starter_category_playbooks(db_session)
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+    created = client.post(
+        "/api/launch-kits",
+        json={
+            "product_name": "Túi đựng mỹ phẩm",
+            "category_key": "beauty",
+            "target_platforms": ["tiktok_shop"],
+        },
+    ).json()
+    enqueued: list[str] = []
+    submit_launch_kit_generation_task(db_session, launch_kit_id=created["id"], enqueue=enqueued.append)
+    task = db_session.get(LaunchKitGenerationTask, enqueued[0])
+    assert task is not None
+    task.status = JobStatus.RUNNING
+    task.started_at = datetime.now(UTC) - timedelta(hours=2)
+    task.progress_updated_at = datetime.now(UTC) - timedelta(hours=2)
+    task.is_cancelable = False
+    db_session.commit()
+    sent: list[str] = []
+    monkeypatch.setattr(
+        "productflow_backend.infrastructure.queue.enqueue_launch_kit_generation_task",
+        lambda task_id: sent.append(task_id),
+    )
+
+    summary = recover_unfinished_launch_kit_generation_tasks(
+        reset_stale_running=True,
+        stale_running_after=timedelta(minutes=30),
+    )
+    db_session.refresh(task)
+
+    assert summary.queued_tasks == 0
+    assert summary.stale_running_tasks == 1
+    assert summary.enqueued_tasks == 1
+    assert sent == [task.id]
+    assert task.status == JobStatus.QUEUED
+    assert task.started_at is None
+    assert task.is_cancelable is True
+    assert task.provider_metadata_json["recovered_after_idle"] is True
+
+
+def test_recover_unfinished_launch_kit_generation_tasks_uses_progress_heartbeat_for_stale_running(
+    configured_env: Path,
+    db_session,
+    monkeypatch,
+) -> None:
+    from productflow_backend.application.launch_kit.generation import submit_launch_kit_generation_task
+    from productflow_backend.infrastructure.queue import recover_unfinished_launch_kit_generation_tasks
+
+    ensure_starter_category_playbooks(db_session)
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+    created = client.post(
+        "/api/launch-kits",
+        json={
+            "product_name": "Đèn ngủ mini",
+            "category_key": "home_goods",
+            "target_platforms": ["shopee"],
+        },
+    ).json()
+    enqueued: list[str] = []
+    submit_launch_kit_generation_task(db_session, launch_kit_id=created["id"], enqueue=enqueued.append)
+    task = db_session.get(LaunchKitGenerationTask, enqueued[0])
+    assert task is not None
+    task.status = JobStatus.RUNNING
+    task.started_at = datetime.now(UTC) - timedelta(hours=2)
+    task.progress_updated_at = datetime.now(UTC) - timedelta(minutes=5)
+    db_session.commit()
+    sent: list[str] = []
+    monkeypatch.setattr(
+        "productflow_backend.infrastructure.queue.enqueue_launch_kit_generation_task",
+        lambda task_id: sent.append(task_id),
+    )
+
+    summary = recover_unfinished_launch_kit_generation_tasks(
+        reset_stale_running=True,
+        stale_running_after=timedelta(minutes=30),
+    )
+    db_session.refresh(task)
+
+    assert summary.stale_running_tasks == 0
+    assert summary.enqueued_tasks == 0
+    assert sent == []
+    assert task.status == JobStatus.RUNNING

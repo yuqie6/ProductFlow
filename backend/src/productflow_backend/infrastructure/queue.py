@@ -13,11 +13,15 @@ from sqlalchemy.orm import selectinload
 from productflow_backend.config import get_runtime_settings, get_settings
 from productflow_backend.domain.durable_generation_tasks import (
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
+    LAUNCH_KIT_GENERATION_TASK_CONTRACT,
     WORKFLOW_RUN_GENERATION_TASK_CONTRACT,
 )
 from productflow_backend.domain.enums import JobStatus, WorkflowNodeStatus
+from productflow_backend.domain.launch_kits import LaunchKitProgressStage, LaunchKitStatus
 from productflow_backend.infrastructure.db.models import (
     ImageSessionGenerationTask,
+    LaunchKit,
+    LaunchKitGenerationTask,
     WorkflowNode,
     WorkflowRun,
     utcnow,
@@ -46,6 +50,15 @@ class WorkflowRunRecoverySummary:
     queued_runs: int = 0
     stale_running_runs: int = 0
     enqueued_runs: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class LaunchKitGenerationTaskRecoverySummary:
+    """Startup recovery result for durable LaunchKit generation tasks."""
+
+    queued_tasks: int = 0
+    stale_running_tasks: int = 0
+    enqueued_tasks: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +126,94 @@ def enqueue_launch_kit_generation_task(task_id: str) -> None:
 
     get_broker()
     run_launch_kit_generation_task.send(task_id)
+
+
+def recover_unfinished_launch_kit_generation_tasks(
+    *,
+    reset_stale_running: bool = False,
+    stale_running_after: timedelta = DEFAULT_STALE_RUNNING_AFTER,
+) -> LaunchKitGenerationTaskRecoverySummary:
+    """Recover queued / stale running LaunchKit tasks; Redis/Dramatiq is delivery only."""
+
+    cutoff = utcnow() - stale_running_after
+    session = get_session_factory()()
+    task_ids_to_enqueue: list[str] = []
+    queued_tasks = 0
+    stale_running_tasks = 0
+
+    try:
+        last_progress_at = func.coalesce(
+            LaunchKitGenerationTask.progress_updated_at,
+            LaunchKitGenerationTask.started_at,
+        )
+        statement = select(LaunchKitGenerationTask).where(
+            LaunchKitGenerationTask.is_retryable.is_(True),
+            or_(
+                LaunchKitGenerationTask.status.in_(LAUNCH_KIT_GENERATION_TASK_CONTRACT.queued_statuses),
+                (
+                    (LaunchKitGenerationTask.status.in_(LAUNCH_KIT_GENERATION_TASK_CONTRACT.running_statuses))
+                    & (last_progress_at <= cutoff)
+                )
+                if reset_stale_running
+                else False,
+            ),
+        )
+        tasks = list(session.scalars(statement).all())
+        now = utcnow()
+        for task in tasks:
+            launch_kit = session.get(LaunchKit, task.launch_kit_id)
+            if LAUNCH_KIT_GENERATION_TASK_CONTRACT.is_running(task.status):
+                task.status = JobStatus.QUEUED
+                task.started_at = None
+                task.finished_at = None
+                task.failure_category = None
+                task.failure_detail = None
+                task.is_cancelable = True
+                task.progress_stage = task.progress_stage or LaunchKitProgressStage.EXTRACTING_FACTS
+                task.progress_updated_at = now
+                metadata = dict(task.provider_metadata_json or {})
+                metadata["recovered_after_idle"] = True
+                task.provider_metadata_json = metadata
+                if launch_kit is not None:
+                    launch_kit.status = LaunchKitStatus.GENERATING
+                    launch_kit.updated_at = now
+                stale_running_tasks += 1
+                task_ids_to_enqueue.append(task.id)
+            else:
+                queued_tasks += 1
+                task_ids_to_enqueue.append(task.id)
+                if launch_kit is not None and launch_kit.status != LaunchKitStatus.GENERATING:
+                    launch_kit.status = LaunchKitStatus.GENERATING
+                    launch_kit.updated_at = now
+        if stale_running_tasks or queued_tasks:
+            session.commit()
+    except Exception:
+        session.rollback()
+        logger.exception("恢复滞留 LaunchKit 任务时读取数据库失败")
+        return LaunchKitGenerationTaskRecoverySummary()
+    finally:
+        session.close()
+
+    enqueued_tasks = 0
+    for task_id in task_ids_to_enqueue:
+        try:
+            enqueue_launch_kit_generation_task(task_id)
+            enqueued_tasks += 1
+        except Exception:
+            logger.exception("恢复滞留 LaunchKit 任务入队失败: task_id=%s", task_id)
+
+    if task_ids_to_enqueue:
+        logger.info(
+            "已恢复滞留 LaunchKit 任务: queued=%s stale_running=%s enqueued=%s",
+            queued_tasks,
+            stale_running_tasks,
+            enqueued_tasks,
+        )
+    return LaunchKitGenerationTaskRecoverySummary(
+        queued_tasks=queued_tasks,
+        stale_running_tasks=stale_running_tasks,
+        enqueued_tasks=enqueued_tasks,
+    )
 
 
 def recover_unfinished_workflow_runs(

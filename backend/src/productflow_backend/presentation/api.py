@@ -21,6 +21,7 @@ from productflow_backend.infrastructure.provider_config import (
 )
 from productflow_backend.infrastructure.queue import (
     recover_unfinished_image_session_generation_tasks,
+    recover_unfinished_launch_kit_generation_tasks,
     recover_unfinished_workflow_runs,
 )
 from productflow_backend.presentation.errors import register_exception_handlers
@@ -49,6 +50,7 @@ def create_app() -> FastAPI:
             ensure_provider_config_bootstrapped()
         recover_unfinished_workflow_runs()
         recover_unfinished_image_session_generation_tasks()
+        recover_unfinished_launch_kit_generation_tasks()
         yield
 
     app = FastAPI(title="ProductFlow API", version="0.1.0", lifespan=lifespan)

@@ -14,6 +14,7 @@ from productflow_backend.application.product_workflows import (
 from productflow_backend.config import get_runtime_settings
 from productflow_backend.domain.durable_generation_tasks import (
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
+    LAUNCH_KIT_GENERATION_TASK_CONTRACT,
     WORKFLOW_RUN_GENERATION_TASK_CONTRACT,
     assert_actor_uses_durable_generation_contract,
 )
@@ -30,6 +31,7 @@ from productflow_backend.infrastructure.logging import (
 from productflow_backend.infrastructure.queue import (
     get_broker,
     recover_unfinished_image_session_generation_tasks,
+    recover_unfinished_launch_kit_generation_tasks,
     recover_unfinished_workflow_runs,
 )
 
@@ -92,6 +94,10 @@ assert_actor_uses_durable_generation_contract(
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
     run_image_session_generation_task,
 )
+assert_actor_uses_durable_generation_contract(
+    LAUNCH_KIT_GENERATION_TASK_CONTRACT,
+    run_launch_kit_generation_task,
+)
 
 
 def _running_under_dramatiq_cli() -> bool:
@@ -102,3 +108,4 @@ if _running_under_dramatiq_cli():
     cleanup_old_logs()
     recover_unfinished_workflow_runs(reset_stale_running=True)
     recover_unfinished_image_session_generation_tasks(reset_stale_running=True)
+    recover_unfinished_launch_kit_generation_tasks(reset_stale_running=True)

@@ -74,6 +74,21 @@ WORKFLOW_RUN_GENERATION_TASK_CONTRACT = DurableGenerationTaskContract(
     recovery_entrypoint="recover_unfinished_workflow_runs",
 )
 
+LAUNCH_KIT_GENERATION_TASK_CONTRACT = DurableGenerationTaskContract(
+    name="launch_kit_generation_task",
+    durable_model_name="LaunchKitGenerationTask",
+    actor_name="run_launch_kit_generation_task",
+    active_statuses=(JobStatus.QUEUED, JobStatus.RUNNING),
+    queued_statuses=(JobStatus.QUEUED,),
+    running_statuses=(JobStatus.RUNNING,),
+    terminal_statuses=(JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELLED),
+    execution_queued_statuses=(JobStatus.QUEUED,),
+    execution_running_statuses=(JobStatus.RUNNING,),
+    status_snapshot_source="LaunchKitStatusResponse",
+    recovery_entrypoint="recover_unfinished_launch_kit_generation_tasks",
+)
+
+
 IMAGE_SESSION_GENERATION_TASK_CONTRACT = DurableGenerationTaskContract(
     name="image_session_generation_task",
     durable_model_name="ImageSessionGenerationTask",
