@@ -19,6 +19,14 @@ from productflow_backend.domain.enums import (
     WorkflowNodeType,
     WorkflowRunStatus,
 )
+from productflow_backend.domain.launch_kits import (
+    LaunchKitExportStatus,
+    LaunchKitExportType,
+    LaunchKitPlatform,
+    LaunchKitProgressStage,
+    LaunchKitStatus,
+    LaunchKitVariantKind,
+)
 
 
 def utcnow() -> datetime:
@@ -166,6 +174,165 @@ class Product(Base, TimestampMixin):
         back_populates="product",
         cascade="all, delete-orphan",
     )
+    launch_kits: Mapped[list[LaunchKit]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+    )
+
+
+class LaunchKit(Base, TimestampMixin):
+    """Vietnam seller launch kit rooted in an existing Product row."""
+
+    __tablename__ = "launch_kits"
+    __table_args__ = (
+        Index("ix_launch_kits_product_id", "product_id"),
+        Index("ix_launch_kits_status", "status"),
+        Index("ix_launch_kits_category_key", "category_key"),
+        Index("ix_launch_kits_updated_at", "updated_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    product_id: Mapped[str] = mapped_column(String(36), ForeignKey("products.id", ondelete="CASCADE"))
+    target_platforms_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    category_key: Mapped[str] = mapped_column(String(80))
+    buyer_angle_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    status: Mapped[LaunchKitStatus] = mapped_column(
+        enum_value_column(LaunchKitStatus),
+        default=LaunchKitStatus.DRAFT,
+    )
+    source_references_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    generated_summary_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    selected_angle_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    export_snapshot_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    seller_feedback_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+    product: Mapped[Product] = relationship(back_populates="launch_kits")
+    tasks: Mapped[list[LaunchKitGenerationTask]] = relationship(
+        back_populates="launch_kit",
+        cascade="all, delete-orphan",
+        order_by="LaunchKitGenerationTask.created_at",
+    )
+    variants: Mapped[list[LaunchKitVariant]] = relationship(
+        back_populates="launch_kit",
+        cascade="all, delete-orphan",
+        order_by="LaunchKitVariant.created_at",
+    )
+    quality_scores: Mapped[list[LaunchQualityScore]] = relationship(
+        back_populates="launch_kit",
+        cascade="all, delete-orphan",
+        order_by="LaunchQualityScore.created_at",
+    )
+    exports: Mapped[list[LaunchKitExport]] = relationship(
+        back_populates="launch_kit",
+        cascade="all, delete-orphan",
+        order_by="LaunchKitExport.created_at",
+    )
+
+
+class LaunchKitGenerationTask(Base, TimestampMixin):
+    """Durable LaunchKit generation task. DB state is authoritative."""
+
+    __tablename__ = "launch_kit_generation_tasks"
+    __table_args__ = (
+        Index("ix_launch_kit_generation_tasks_launch_kit_id", "launch_kit_id"),
+        Index("ix_launch_kit_generation_tasks_status", "status"),
+        Index("ix_launch_kit_generation_tasks_progress_stage", "progress_stage"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    launch_kit_id: Mapped[str] = mapped_column(String(36), ForeignKey("launch_kits.id", ondelete="CASCADE"))
+    status: Mapped[JobStatus] = mapped_column(enum_value_column(JobStatus), default=JobStatus.QUEUED)
+    progress_stage: Mapped[LaunchKitProgressStage | None] = mapped_column(
+        enum_value_column(LaunchKitProgressStage),
+        nullable=True,
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    failure_category: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    failure_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_retryable: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_cancelable: Mapped[bool] = mapped_column(Boolean, default=True)
+    provider_metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    progress_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    launch_kit: Mapped[LaunchKit] = relationship(back_populates="tasks")
+
+
+class LaunchKitVariant(Base):
+    __tablename__ = "launch_kit_variants"
+    __table_args__ = (
+        Index("ix_launch_kit_variants_launch_kit_id", "launch_kit_id"),
+        Index("ix_launch_kit_variants_kind_platform", "kind", "platform"),
+        Index("ix_launch_kit_variants_selected", "selected"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    launch_kit_id: Mapped[str] = mapped_column(String(36), ForeignKey("launch_kits.id", ondelete="CASCADE"))
+    kind: Mapped[LaunchKitVariantKind] = mapped_column(enum_value_column(LaunchKitVariantKind))
+    platform: Mapped[LaunchKitPlatform] = mapped_column(enum_value_column(LaunchKitPlatform))
+    content_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    score_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    selected: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    launch_kit: Mapped[LaunchKit] = relationship(back_populates="variants")
+
+
+class LaunchQualityScore(Base, TimestampMixin):
+    __tablename__ = "launch_quality_scores"
+    __table_args__ = (Index("ix_launch_quality_scores_launch_kit_id", "launch_kit_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    launch_kit_id: Mapped[str] = mapped_column(String(36), ForeignKey("launch_kits.id", ondelete="CASCADE"))
+    score_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+    launch_kit: Mapped[LaunchKit] = relationship(back_populates="quality_scores")
+
+
+class LaunchKitExport(Base):
+    __tablename__ = "launch_kit_exports"
+    __table_args__ = (
+        Index("ix_launch_kit_exports_launch_kit_id", "launch_kit_id"),
+        Index("ix_launch_kit_exports_status", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    launch_kit_id: Mapped[str] = mapped_column(String(36), ForeignKey("launch_kits.id", ondelete="CASCADE"))
+    export_type: Mapped[LaunchKitExportType] = mapped_column(enum_value_column(LaunchKitExportType))
+    storage_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    status: Mapped[LaunchKitExportStatus] = mapped_column(
+        enum_value_column(LaunchKitExportStatus),
+        default=LaunchKitExportStatus.READY,
+    )
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    launch_kit: Mapped[LaunchKit] = relationship(back_populates="exports")
+
+
+class CategoryPlaybook(Base, TimestampMixin):
+    __tablename__ = "category_playbooks"
+    __table_args__ = (
+        Index("uq_category_playbooks_key", "key", unique=True),
+        Index("ix_category_playbooks_active", "active"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    key: Mapped[str] = mapped_column(String(80), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    playbook_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class StoreProfile(Base, TimestampMixin):
+    __tablename__ = "store_profiles"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    profile_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
 class ProductWorkflow(Base, TimestampMixin):
