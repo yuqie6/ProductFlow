@@ -38,6 +38,20 @@ from productflow_backend.infrastructure.db.models import (
 from productflow_backend.infrastructure.queue import enqueue_launch_kit_generation_task
 
 ACTIVE_TASK_STATUSES = (JobStatus.QUEUED, JobStatus.RUNNING)
+MAX_LAUNCH_KIT_REFERENCE_CHARS = 12_000
+PROMPT_INJECTION_PATTERNS = (
+    "ignore previous",
+    "ignore all previous",
+    "disregard previous",
+    "system prompt",
+    "developer message",
+    "reveal your prompt",
+    "jailbreak",
+    "bypass",
+    "act as",
+    "do not follow",
+    "forget the above",
+)
 PLATFORM_LABELS = {
     LaunchKitPlatform.SHOPEE.value: "Shopee",
     LaunchKitPlatform.TIKTOK_SHOP.value: "TikTok Shop",
@@ -60,6 +74,7 @@ def _has_active_generation_task(session: Session, launch_kit_id: str) -> bool:
 
 def create_launch_kit_generation_task(session: Session, *, launch_kit_id: str) -> LaunchKitGenerationTask:
     launch_kit = get_launch_kit(session, launch_kit_id)
+    _validate_launch_kit_input_budget(launch_kit)
     if _has_active_generation_task(session, launch_kit.id):
         raise BusinessValidationError("LaunchKit generation is already queued or running")
 
@@ -233,6 +248,25 @@ def _source_text(launch_kit: LaunchKit) -> str:
     return "\n".join(part for part in parts if part).strip()
 
 
+def _validate_launch_kit_input_budget(launch_kit: LaunchKit) -> None:
+    reference_chars = len(_source_text(launch_kit))
+    if reference_chars > MAX_LAUNCH_KIT_REFERENCE_CHARS:
+        raise BusinessValidationError(
+            "LaunchKit reference input is too long; keep product notes under "
+            f"{MAX_LAUNCH_KIT_REFERENCE_CHARS:,} characters before generating."
+        )
+
+
+def _detect_prompt_injection_warnings(text: str) -> list[str]:
+    lowered = text.lower()
+    matched = [pattern for pattern in PROMPT_INJECTION_PATTERNS if pattern in lowered]
+    if not matched:
+        return []
+    return [
+        "Potential prompt-injection language detected in references; generated output ignored instruction-like text."
+    ]
+
+
 def _extract_keywords(text: str) -> list[str]:
     separators = [",", ".", ";", "\n", "|", "/", "-", "•", "·"]
     normalized = text.lower()
@@ -254,6 +288,7 @@ def _build_generated_summary(launch_kit: LaunchKit) -> GeneratedSummaryPayload:
     references = launch_kit.source_references_json or {}
     text = _source_text(launch_kit)
     keywords = _extract_keywords(text)
+    guardrail_warnings = _detect_prompt_injection_warnings(text)
     missing_facts = []
     if not references.get("pasted_reference_text"):
         missing_facts.append("Add supplier specs or competitor notes before publishing.")
@@ -270,10 +305,15 @@ def _build_generated_summary(launch_kit: LaunchKit) -> GeneratedSummaryPayload:
             "reference_url_count": len(references.get("reference_urls", [])),
             "observed_keywords": keywords,
             "seller_notes_present": bool(references.get("notes")),
+            "reference_character_count": len(text),
+            "input_guardrails": {
+                "max_reference_characters": MAX_LAUNCH_KIT_REFERENCE_CHARS,
+                "prompt_injection_warning_count": len(guardrail_warnings),
+            },
         },
         missing_facts=missing_facts,
         buyer_objections=[],
-        risky_claims=[],
+        risky_claims=guardrail_warnings,
     )
 
 
@@ -389,13 +429,15 @@ def _build_quality_score(
     image_coverage = 85 if playbook.get("required_visual_proof") else 50
     title_strength = 80 if variants else 0
     claim_risk = 90 if playbook.get("risky_claims") else 75
+    if summary.risky_claims:
+        claim_risk = min(claim_risk, 55)
     objection_coverage = 85 if playbook.get("buyer_objections") else 50
     platform_fit = 85 if len(variants) >= 2 else 72
     missing_score = max(35, 100 - missing_count * 18)
     overall = round(
         (missing_score + title_strength + image_coverage + claim_risk + objection_coverage + platform_fit) / 6
     )
-    warnings = list(summary.missing_facts)
+    warnings = [*summary.missing_facts, *summary.risky_claims]
     if playbook.get("risky_claims"):
         warnings.append("Review risky claims list before publishing any generated copy.")
     return LaunchQualityScorePayload(
@@ -451,6 +493,7 @@ def _persist_generated_outputs(
         "Verify price, stock, shipping fee, and variants in Seller Center.",
         "Replace any placeholder facts with supplier-confirmed details.",
         "Check every claim against product packaging and marketplace policy.",
+        *[f"Guardrail: {item}" for item in summary.risky_claims],
         *[f"Image proof: {item}" for item in (playbook.get("required_visual_proof") or [])],
     ]
     snapshot = ExportSnapshotPayload(
