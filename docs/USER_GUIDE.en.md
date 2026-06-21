@@ -4,16 +4,30 @@
 
 This document has two parts:
 
-1. **Beginner tutorial**: minimal jargon, follow the clicks and fields, and generate one usable product image first.
-2. **Reference**: after completing one run, read more about workbench cards, prompt configuration, model settings, and common questions.
+1. **LaunchKit quick flow**: for Vietnamese Shopee / TikTok Shop sellers who need a manually copyable/downloadable launch pack.
+2. **Advanced workbench tutorial and reference**: minimal jargon, follow the clicks and fields, use the original product canvas to generate copy and images, then read more about workbench cards, prompt configuration, model settings, and common questions.
 
 The product now provides a **Help** page in the top navigation for quick access to workflows, templates, supported operations, and common troubleshooting. This Markdown document remains as repository text reference and should stay aligned with the in-product help page.
 
-The current workbench is the **ProductFlow workbench**: the middle area is a zoomable and draggable node canvas. On desktop, the right side is a compact sidebar that switches between **Details / Runs / Library / Templates** with a small rail. On mobile, the canvas remains the main surface and the bottom toolbar opens workflow run, Single node, Templates, Details, Runs, and Library controls. Normal use does not require understanding the internal DAG. Just remember: product, reference image, copy, and image generation are cards; edges mean "downstream generation refers to upstream data".
+After login, the default surface is **LaunchKit**. It is not an auto-listing tool and does not connect to Shopee/TikTok APIs; it helps you turn product facts into a readiness score, Shopee/TikTok copy blocks, an image proof plan, a publish checklist, and a Markdown export. The original **Products / Workbench** remains as Advanced Mode: the middle area is a zoomable and draggable node canvas. On desktop, the right side is a compact sidebar that switches between **Details / Runs / Library / Templates** with a small rail. On mobile, the canvas remains the main surface and the bottom toolbar opens workflow run, Single node, Templates, Details, Runs, and Library controls.
 
 ---
 
-## Beginner Tutorial: Start from One Product Image
+## LaunchKit Quick Flow: Prepare a Manual Listing Pack
+
+Goal: enter product facts and seller notes, then generate titles, descriptions, hashtags, image proof guidance, and a pre-publish checklist that you can copy into Shopee / TikTok Shop.
+
+1. After login, open **LaunchKit** from the default route or top navigation.
+2. Click **Tạo LaunchKit** / the new-kit entrypoint, then fill product name, category playbook, target platforms, reference text, reference URLs, and seller notes.
+3. Click **Tạo nội dung**. When generation finishes, review **Điểm sẵn sàng** (readiness score) and warnings before copying content.
+4. In **Xuất thủ công**, copy the title, description, hashtags, or full block. Click **Tải Markdown** when you need an offline handoff file.
+5. After publishing, use **Feedback** to mark whether you used it, edited it, would reuse/pay for it, and what you changed.
+
+LaunchKit v1 boundaries: it does not log in to marketplaces, auto-list products, or call Shopee/TikTok APIs. Its value is helping sellers check facts, proof images, and copy before manual publishing.
+
+---
+
+## Advanced Workbench Tutorial: Start from One Product Image
 
 Goal: upload one product image, add a little information, generate copy, then generate a satisfying image.
 

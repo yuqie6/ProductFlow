@@ -9,13 +9,23 @@
   <a href="https://draw.devbin.de"><strong>Live Demo / 体验站</strong></a>
 </p>
 
-ProductFlow is an open-source, self-hosted product creative workspace for solo merchants and small teams. Its core flow covers product information, reference images, AI copywriting, AI/template posters, iterative image sessions, a generated image gallery, and a visual workflow.
+ProductFlow is an open-source, self-hosted product creative workspace for solo merchants and small teams. Its default entrypoint is now LaunchKit for Vietnamese Shopee / TikTok Shop sellers: it turns product facts into manually copyable/downloadable listing copy, image proof plans, publish checklists, and readiness scores. The original product canvas, AI copywriting, AI/template posters, iterative image sessions, generated image gallery, and visual workflow remain available as Advanced Mode.
 
 The current form is a private single-admin instance. A self-hosted deployment requires PostgreSQL, Redis, the backend API, Dramatiq worker, Web frontend, and usable text/image model providers.
 
 ## Feature Overview
 
-### Products / Workbench
+### LaunchKit (Vietnamese Shopee / TikTok Shop)
+
+- After login, the default route is `/launch-kits`, where sellers create product LaunchKits.
+- `POST /api/launch-kits` records the product root, category playbook, target platforms, and seller reference notes.
+- `POST /api/launch-kits/{id}/generate` creates a durable generation task; v1 uses a deterministic local generator and has no Shopee/TikTok API dependency or auto-listing behavior.
+- Generated output includes the buyer angle, Shopee/TikTok copy blocks, image proof plan, readiness score, pre-publish checklist, and Markdown export snapshot.
+- Manual export is the first-class path: the detail page supports copying titles/descriptions/hashtags/full blocks, and `GET /api/launch-kits/{id}/exports/markdown` downloads Markdown.
+- Seller feedback records used/edited/reuse/pay intent plus copy/download metrics to guide playbook tuning.
+- Queue messages are delivery only; PostgreSQL `LaunchKitGenerationTask` rows are authoritative, and API/worker startup recovers queued and stale running tasks.
+
+### Products / Workbench (Advanced Mode)
 
 - Single-admin access-key login with Cookie session access to backend APIs.
 - Product list, paginated browsing, product creation, product detail workbench, and product deletion protected by a global switch; the mobile product list uses cards and floating pagination.
@@ -49,7 +59,7 @@ The current form is a private single-admin instance. A self-hosted deployment re
 - Image tool parameters can control advanced fields sent to the Responses `image_generation` tool, including allowed fields, quality, output format, compression, background, moderation, action, input fidelity, partial images, and provider `n`. Responses background mode is enabled by default and falls back to synchronous requests when unsupported.
 - Secret fields are not echoed back. The settings page is protected by an independent `SETTINGS_ACCESS_TOKEN` secondary unlock.
 - Copy, poster, product workflow, and iterative image generation are dispatched through Dramatiq + Redis, with PostgreSQL as state storage.
-- API/worker startup recovers unfinished copy/poster jobs, product workflows, and iterative image tasks.
+- API/worker startup recovers unfinished copy/poster jobs, LaunchKit generation tasks, product workflows, and iterative image tasks.
 - Running product workflows and iterative image generation only poll lightweight status responses, then refresh full details after completion.
 
 ### In-Product Help
@@ -72,7 +82,7 @@ The current form is a private single-admin instance. A self-hosted deployment re
 
 ## Current Boundaries
 
-ProductFlow does not currently provide multi-user/multi-tenant support, team permissions, payments, hosted account systems, automatic ad placement/listing, video generation, Kubernetes/Helm/released container images, or other production orchestration packages. The in-repository Docker Compose self-hosting path is available.
+ProductFlow does not currently provide multi-user/multi-tenant support, team permissions, payments, hosted account systems, Shopee/TikTok API integration, automatic ad placement/listing, video generation, Kubernetes/Helm/released container images, or other production orchestration packages. LaunchKit v1 is explicitly manual-export first, and the in-repository Docker Compose self-hosting path is available.
 
 ## Product Entry Points and Docs
 
@@ -143,6 +153,7 @@ ProductFlow/
   docs/
     PRD.md
     PRD.en.md
+    VIETNAM_SELLER_FORK_PLAN.md
     USER_GUIDE.md
     USER_GUIDE.en.md
     ARCHITECTURE.md
@@ -169,6 +180,7 @@ ProductFlow/
       productflow-brand-concept.png
       productflow-mark.svg
     src/
+    e2e/
   .trellis/
     workflow.md
     scripts/
@@ -365,7 +377,15 @@ Default development ports come from `.env.dev.example`:
 - API: `http://localhost:29282`
 - Web: `http://localhost:29283`
 
-Open the Web page and log in with `ADMIN_ACCESS_KEY`. The top navigation provides **Products / Workbench**, **Image chat**, **Gallery**, **Help**, and **Settings**.
+Open the Web page and log in with `ADMIN_ACCESS_KEY`. The default route is **LaunchKit**; the top navigation still provides **Products / Workbench** (Advanced canvas mode), **Image chat**, **Gallery**, **Help**, and **Settings**.
+
+For local LaunchKit demos, enable synchronous generation so you do not need a local worker/Redis consumer to pick up messages:
+
+```bash
+LAUNCH_KIT_INLINE_GENERATION=true bash scripts/with_dev_env.sh bash -lc 'uv run --directory backend uvicorn productflow_backend.main:app --reload --host 0.0.0.0 --port "${APP_PORT:-29282}"'
+```
+
+For production or long-running development, keep the default asynchronous mode and run the Dramatiq worker to consume LaunchKit generation tasks.
 
 ### 6. Development health check
 
@@ -423,6 +443,7 @@ Prompt templates:
 | Start Vite dev server | `just web-dev` | `bash scripts/with_dev_env.sh bash -lc 'web_port="${WEB_PORT:-29283}"; api_target="${VITE_DEV_PROXY_TARGET:-http://127.0.0.1:${APP_PORT:-29282}}"; VITE_API_BASE_URL= VITE_DEV_PROXY_TARGET="$api_target" pnpm --dir web dev -- --host 0.0.0.0 --port "$web_port" --strictPort'` |
 | Run frontend lint | no just wrapper | `pnpm --dir web lint` |
 | Run frontend unit tests | no just wrapper | `pnpm --dir web test:run` |
+| Run LaunchKit E2E | no just wrapper | `npm --prefix web run e2e` |
 | TypeScript check + Vite build | `just web-build` | `pnpm --dir web build` |
 | Release dry run | `just release-dry-run` | `DRY_RUN=1 bash scripts/release.sh` |
 | Production update | `just release` | `bash scripts/release.sh` |
@@ -442,6 +463,7 @@ The backend exposes REST APIs only. Main entrypoints include:
 - `/api/posters/{poster_id}/download`
 - `/api/image-sessions`, `/api/image-sessions/{image_session_id}`, `/api/image-sessions/{image_session_id}/status`, `/api/image-session-assets/{asset_id}/download`
 - `/api/gallery`
+- `/api/launch-kits`, `/api/launch-kits/{launch_kit_id}`, `/api/launch-kits/{launch_kit_id}/generate`, `/api/launch-kits/{launch_kit_id}/status`, `/api/launch-kits/{launch_kit_id}/exports/markdown`, `/api/launch-kits/{launch_kit_id}/feedback`
 - `/api/generation-queue`
 - `/api/products/{product_id}/workflow`, `/api/products/{product_id}/workflow/status`, `/api/products/{product_id}/workflow/run`, `/api/products/{product_id}/workflow/runs/{run_id}/cancel`
 - `/api/workflow/canvas-templates`, `/api/workflow/user-template-groups`

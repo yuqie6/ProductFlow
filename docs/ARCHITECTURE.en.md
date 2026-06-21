@@ -30,7 +30,7 @@ Local hot-reload development is still driven by the root `justfile`: you can sta
 Backend code lives under `backend/src/productflow_backend/` and is organized by layer:
 
 - `presentation/`: FastAPI app, routes, auth dependencies, Pydantic schemas, and upload validation.
-- `application/`: use-case logic for products, copy, posters, gallery, image sessions, and product workflows. Product workflow logic is split into graph / mutations / query / execution / context / artifacts / dependencies modules, with `product_workflows.py` kept as the compatibility facade.
+- `application/`: use-case logic for products, LaunchKit, copy, posters, gallery, image sessions, and product workflows. LaunchKit logic lives in `application/launch_kit/` and covers creation, playbook seed/validation, deterministic generation, Markdown export, feedback, and queries. Product workflow logic is split into graph / mutations / query / execution / context / artifacts / dependencies modules, with `product_workflows.py` kept as the compatibility facade.
 - `domain/`: stable enums such as task status, asset type, and workflow node type.
 - `infrastructure/`: SQLAlchemy models/session, queue, storage, text/image providers, and poster renderer.
 - `workers.py`: Dramatiq actor entrypoint.
@@ -42,7 +42,7 @@ The route layer only handles input adaptation, authentication, error mapping, an
 
 Frontend code lives under `web/src/`:
 
-- `pages/`: login, product list, product creation, product detail, gallery, help, settings, and image-session pages (current routes include `/image-chat`, `/products/:productId/image-chat`, `/gallery`, `/help`, and `/settings`).
+- `pages/`: login, LaunchKit list/create/detail, product list, product creation, product detail, gallery, help, settings, and image-session pages (current routes include `/launch-kits`, `/launch-kits/new`, `/launch-kits/:id`, `/products`, `/image-chat`, `/products/:productId/image-chat`, `/gallery`, `/help`, and `/settings`).
 - `components/`: shared UI such as the top navigation, status tags, and image drag-and-drop upload area.
 - `lib/api.ts`: centralized REST API request wrapper.
 - `lib/types.ts`: frontend DTO types that must stay aligned with backend schemas.
@@ -99,6 +99,20 @@ UserCanvasTemplate(node_group)
   -> reusable selected workflow nodes and internal edges
 ```
 
+LaunchKit seller-launch chain:
+
+```text
+Product
+  -> LaunchKit(category_key, target_platforms, source_references_json)
+  -> LaunchKitGenerationTask(durable queued/running/succeeded/failed task)
+  -> LaunchKitVariant(platform copy blocks + image proof plan)
+  -> LaunchQualityScore(readiness score + warnings)
+  -> LaunchKitExport(markdown/checklist snapshot)
+  -> optional seller_feedback_json / used_at
+```
+
+Category playbooks are DB-backed through `CategoryPlaybook` and seeded by `ensure_starter_category_playbooks`; the v1 UI does not expose admin playbook CRUD. `StoreProfile` is modeled for later shop-level defaults but is not wired into the seller UI yet. LaunchKit v1 intentionally does not call Shopee/TikTok APIs: generated copy and checklists are exported manually, and `/products` remains reachable as the advanced canvas workflow.
+
 PostgreSQL is the source of truth for metadata and run state. Redis/Dramatiq is only responsible for dispatching background execution messages.
 
 Workflow node semantics for users:
@@ -118,23 +132,24 @@ Canvas template boundaries:
 
 ## 5. Async Jobs and Recovery
 
-There are currently two background execution entrypoints:
+There are currently three background execution entrypoints:
 
 1. `WorkflowRun`: used for product DAG workflow execution.
 2. `ImageSessionGenerationTask`: used for iterative image generation.
+3. `LaunchKitGenerationTask`: used for LaunchKit copy, image proof plan, readiness score, and export snapshot generation.
 
 Shared principles:
 
 - Database records are persisted first; Redis messages are only recoverable dispatch attempts.
 - Database constraints prevent duplicate active workflow runs for the same product.
 - If enqueue fails, the newly created run/task is marked failed to avoid stuck active state.
-- API startup recovers queued unfinished tasks/workflows.
-- Worker startup can reset stale running state and re-dispatch work.
+- API startup recovers queued unfinished tasks/workflows, including queued LaunchKit generation tasks.
+- Worker startup can reset stale running state and re-dispatch work, including heartbeat-expired running LaunchKit generation tasks.
 - Workflow runs and iterative image-generation tasks serialize `is_retryable` / `is_cancelable`, and the frontend uses those flags to show retry and cancel actions.
 - Image-generation failures are classified into user-readable categories covering provider quota/rate limit, content policy, network interruption, request timeout, provider service errors, and unsupported parameters.
 - Iterative image generation no longer treats a user-configurable hard total timeout as product semantics. Running tasks persist `progress_updated_at`, completed candidate count, current candidate, and provider response state; stale-running recovery uses the latest progress heartbeat for idle detection and only falls back to `started_at` for older rows.
 - The iterative image worker's Dramatiq `time_limit` remains only as an internal failsafe, not as a user-tunable generation deadline.
-- Dramatiq actors should no-op on duplicate messages for terminal/currently-running records.
+- Dramatiq actors should no-op on duplicate messages for terminal/currently-running records; LaunchKit generation has duplicate terminal-message test coverage.
 - The global generation concurrency limit is enforced by counting active `WorkflowRun` and `ImageSessionGenerationTask` rows in the database.
 - `/api/generation-queue` returns the global durable queue overview; iterative image status responses include the current task's queue position.
 
@@ -142,6 +157,7 @@ Related entrypoints:
 
 - `productflow_backend.infrastructure.queue.recover_unfinished_workflow_runs`
 - `productflow_backend.infrastructure.queue.recover_unfinished_image_session_generation_tasks`
+- `productflow_backend.infrastructure.queue.recover_unfinished_launch_kit_generation_tasks`
 - `productflow_backend.workers`
 
 ## 6. Provider Architecture

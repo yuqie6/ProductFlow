@@ -30,7 +30,7 @@ React/Vite web
 后端代码位于 `backend/src/productflow_backend/`，按以下层组织：
 
 - `presentation/`：FastAPI app、路由、鉴权依赖、Pydantic schemas、上传校验。
-- `application/`：商品、文案、海报、画廊、图片会话、商品工作流等用例逻辑。商品工作流已拆成 graph /
+- `application/`：商品、LaunchKit、文案、海报、画廊、图片会话、商品工作流等用例逻辑。LaunchKit 逻辑位于 `application/launch_kit/`，覆盖创建、playbook seed/验证、确定性生成、Markdown 导出、feedback 和查询。商品工作流已拆成 graph /
   mutations / query / execution / context / artifacts / dependencies 等 page-facing use case 模块，由
   `product_workflows.py` 作为兼容 facade 对外暴露。
 - `domain/`：稳定枚举，如任务状态、素材类型、工作流节点类型。
@@ -44,7 +44,7 @@ React/Vite web
 
 前端代码位于 `web/src/`：
 
-- `pages/`：登录、商品列表、创建商品、商品详情、画廊、帮助、设置、图片会话页面（当前路由包括 `/image-chat`、
+- `pages/`：登录、LaunchKit 列表/创建/详情、商品列表、创建商品、商品详情、画廊、帮助、设置、图片会话页面（当前路由包括 `/launch-kits`、`/launch-kits/new`、`/launch-kits/:id`、`/products`、`/image-chat`、
   `/products/:productId/image-chat`、`/gallery`、`/help` 和 `/settings`）。
 - `components/`：共享 UI，如顶栏、状态标签和图片拖拽上传区。
 - `lib/api.ts`：集中封装 REST API 请求。
@@ -104,7 +104,21 @@ UserCanvasTemplate(node_group)
   -> reusable selected workflow nodes and internal edges
 ```
 
-PostgreSQL 是元数据和运行状态的权威存储；Redis/Dramatiq 只负责投递后台执行消息。
+LaunchKit seller-launch 链路：
+
+```text
+Product
+  -> LaunchKit(category_key, target_platforms, source_references_json)
+  -> LaunchKitGenerationTask(durable queued/running/succeeded/failed task)
+  -> LaunchKitVariant(platform copy blocks + image proof plan)
+  -> LaunchQualityScore(readiness score + warnings)
+  -> LaunchKitExport(markdown/checklist snapshot)
+  -> optional seller_feedback_json / used_at
+```
+
+Category playbook 通过 `CategoryPlaybook` 存储，并由 `ensure_starter_category_playbooks` seed；v1 UI 不提供 playbook admin CRUD。`StoreProfile` 已建模用于后续店铺级默认值，但尚未接入 seller UI。LaunchKit v1 明确不调用 Shopee/TikTok API：生成文案和 checklist 通过手动复制/Markdown 导出使用，`/products` 仍作为高级画布工作流保留。
+
+PostgreSQL 是元数据和运行状态的权威存储；Redis/Dramatiq 只负责投递后台执行消息.
 
 工作流节点的用户语义：
 
@@ -121,32 +135,34 @@ PostgreSQL 是元数据和运行状态的权威存储；Redis/Dramatiq 只负责
 
 ## 5. 异步任务与恢复
 
-当前有两套后台执行入口：
+当前有三套后台执行入口：
 
 1. `WorkflowRun`：用于商品 DAG 工作流执行。
 2. `ImageSessionGenerationTask`：用于连续生图异步生成。
+3. `LaunchKitGenerationTask`：用于 LaunchKit 文案、图片证明计划、readiness score 和 export snapshot 生成。
 
 共同原则：
 
 - 数据库记录先落地，Redis 消息只是可恢复的投递尝试。
 - 同一商品工作流通过数据库约束避免重复 active run。
 - enqueue 失败时会把新建 run 标记为失败，避免 active 状态卡死。
-- API 启动时会恢复 queued 的未完成任务/工作流。
-- worker 启动时可重置 stale running 状态后重新投递。
+- API 启动时会恢复 queued 的未完成任务/工作流，包括 queued LaunchKit generation task。
+- worker 启动时可重置 stale running 状态后重新投递，包括 heartbeat 过期的 running LaunchKit generation task。
 - 工作流运行和连续生图任务都会序列化 `is_retryable` / `is_cancelable`，前端据此展示重试和取消入口。
 - 图片生成失败会先做用户可读分类，覆盖供应商限流/配额、内容策略、网络中断、请求超时、服务异常和参数不支持等常见情况。
 - 连续生图不再用用户可配置的硬总超时作为产品语义。运行中任务会持久化 `progress_updated_at`、
   `completed_candidates`、当前候选和 provider response 状态；stale running 恢复按最近 progress heartbeat
   判断 idle，旧行才回退到 `started_at`。
 - 连续生图 worker 的 Dramatiq `time_limit` 只保留为内部 failsafe，避免进程永久占用，不作为用户可调的生成总时限。
-- Dramatiq actor 对 terminal/currently-running 的重复消息应 no-op。
-- 全局生成并发上限通过数据库中的 active `WorkflowRun`、`ImageSessionGenerationTask` 计数实现。
+- Dramatiq actor 对 terminal/currently-running 的重复消息应 no-op；LaunchKit generation 已有 terminal 重复消息测试覆盖。
+- 全局生成并发上限通过数据库中的 active `WorkflowRun`、`ImageSessionGenerationTask` 计数实现；LaunchKit v1 task 单独用自身 active task 防重。
 - `/api/generation-queue` 返回全局 durable 队列概览；连续生图 status 响应会带回当前任务的队列位置。
 
 相关入口：
 
 - `productflow_backend.infrastructure.queue.recover_unfinished_workflow_runs`
 - `productflow_backend.infrastructure.queue.recover_unfinished_image_session_generation_tasks`
+- `productflow_backend.infrastructure.queue.recover_unfinished_launch_kit_generation_tasks`
 - `productflow_backend.workers`
 
 ## 6. Provider 架构
