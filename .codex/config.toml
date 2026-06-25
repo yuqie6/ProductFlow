@@ -5,8 +5,6 @@
 #
 #   [projects."/abs/path/to/this/repo"]
 #   trust_level = "trusted"
-#
-# Without trust, the [features] block below is loaded but disabled.
 
 # Keep AGENTS.md as the primary project instruction file.
 project_doc_fallback_filenames = ["AGENTS.md"]
@@ -19,19 +17,12 @@ project_doc_fallback_filenames = ["AGENTS.md"]
 # Codex 0.129+ additionally gates each installed hook behind a one-time
 # `/hooks` TUI review; until the user approves it, the hook stays inactive.
 
-# multi_agent_v2 forces structured subagent orchestration with the
-# `wait` tool — parent must block on terminal status before acting,
-# instead of cancelling / re-spawning. Incompatible with
-# [agents].max_threads (codex will reject the combination).
-# `enabled = true` is required inside the table — the table form does
-# NOT auto-enable the feature without it.
-# - max_concurrent_threads_per_session: bumps default 4 → 6.
-# - min/default/max_wait_timeout_ms: keep Codex's merged timeout config
-#   valid while raising the default wait to 8 min. Codex 0.131+ validates
-#   min <= default <= max.
-[features.multi_agent_v2]
-enabled = true
-max_concurrent_threads_per_session = 6
-min_wait_timeout_ms = 480000
-default_wait_timeout_ms = 480000
-max_wait_timeout_ms = 3600000
+# NOTE: Trellis intentionally does NOT write a [features.multi_agent_v2]
+# block here. Codex CLI changed `features` deserialization between 0.130
+# and 0.131: the structured table form (with max_concurrent_threads_per_session
+# / *_wait_timeout_ms) is only accepted by 0.131+. On 0.130 and earlier —
+# including the codex CLI bundled inside the Codex desktop app — it fails
+# with `data did not match any variant of untagged enum FeatureToml`, which
+# aborts the entire config load and blocks Codex from starting. Codex's own
+# default for multi_agent_v2 is used instead; tune it in your user-level
+# config if needed.
