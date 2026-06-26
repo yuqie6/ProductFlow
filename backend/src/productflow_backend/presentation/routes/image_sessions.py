@@ -45,10 +45,9 @@ router = APIRouter(prefix="/api", tags=["image-sessions"], dependencies=[Depends
 
 @router.get("/image-sessions", response_model=ImageSessionListResponse)
 def list_image_sessions_endpoint(
-    product_id: str | None = Query(default=None),
     session: Session = Depends(get_session),
 ) -> ImageSessionListResponse:
-    items = list_image_sessions(session, product_id=product_id)
+    items = list_image_sessions(session)
     return ImageSessionListResponse(items=[serialize_image_session_summary(item) for item in items])
 
 
@@ -57,7 +56,7 @@ def create_image_session_endpoint(
     payload: CreateImageSessionRequest,
     session: Session = Depends(get_session),
 ) -> ImageSessionDetailResponse:
-    image_session = create_image_session(session, product_id=payload.product_id, title=payload.title)
+    image_session = create_image_session(session, title=payload.title)
     return serialize_image_session_detail(image_session)
 
 

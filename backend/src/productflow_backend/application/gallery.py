@@ -10,7 +10,6 @@ from productflow_backend.domain.enums import ImageSessionAssetKind
 from productflow_backend.domain.errors import BusinessValidationError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     ImageGalleryEntry,
-    ImageSession,
     ImageSessionAsset,
     ImageSessionRound,
 )
@@ -26,9 +25,7 @@ def _gallery_entry_query():
     return (
         select(ImageGalleryEntry)
         .options(
-            selectinload(ImageGalleryEntry.asset)
-            .selectinload(ImageSessionAsset.session)
-            .selectinload(ImageSession.product),
+            selectinload(ImageGalleryEntry.asset).selectinload(ImageSessionAsset.session),
             selectinload(ImageGalleryEntry.round),
         )
         .order_by(desc(ImageGalleryEntry.created_at))
@@ -52,7 +49,7 @@ def save_generated_asset_to_gallery(session: Session, *, image_session_asset_id:
 
     asset = session.scalar(
         select(ImageSessionAsset)
-        .options(selectinload(ImageSessionAsset.session).selectinload(ImageSession.product))
+        .options(selectinload(ImageSessionAsset.session))
         .where(ImageSessionAsset.id == image_session_asset_id)
     )
     if asset is None:

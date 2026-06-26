@@ -595,7 +595,6 @@ def _execute_workflow_node_run(
     else:
         poster_ids = output.get("poster_variant_ids") if isinstance(output.get("poster_variant_ids"), list) else []
     node_run.poster_variant_id = poster_ids[0] if poster_ids else output.get("poster_variant_id")
-    node_run.image_session_asset_id = output.get("image_session_asset_id")
     node_run.finished_at = now_utc()
     workflow.updated_at = now_utc()
     session.commit()

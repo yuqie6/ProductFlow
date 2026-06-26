@@ -31,8 +31,7 @@ Current query key patterns:
 - Product detail/history: `['product', productId]` and `['product-history', productId]` in `ProductDetailPage.tsx`.
 - Product workbench: `['product-workflow', productId]` and `['product-workflow-status', productId]` in
   `ProductDetailPage.tsx`.
-- Image sessions: `['image-sessions', productId ?? 'standalone']` and `['image-session', selectedSessionId]` in
-  `ImageChatPage.tsx`.
+- Image sessions: `['image-sessions']` and `['image-session', selectedSessionId]` in `ImageChatPage.tsx`.
 - Runtime config: `['runtime-config']` in `ProductDetailPage.tsx`, `ProductListPage.tsx`, and `ImageChatPage.tsx`.
 - Full settings config: `['config']` in `SettingsPage.tsx`; successful settings saves/resets must invalidate
   `['runtime-config']` when they can affect public runtime behavior, and `['session']` because settings can toggle
@@ -65,7 +64,7 @@ Local state should not duplicate server records unless the user is editing a dra
 React Router owns route selection and route params:
 
 - `useNavigate()` is used after login/logout, product creation, and page buttons.
-- `useParams()` supplies `productId` for `ProductDetailPage.tsx` and product-scoped `ImageChatPage.tsx`.
+- `useParams()` supplies `productId` for `ProductDetailPage.tsx`.
 - Auth redirects are centralized in `App.tsx` route elements and `LoginPage.tsx` redirects authenticated users away from
   `/login`.
 

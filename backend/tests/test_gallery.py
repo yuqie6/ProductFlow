@@ -22,15 +22,8 @@ def test_generated_image_can_be_saved_to_gallery_idempotently(configured_env: Pa
     app = create_app()
     client = TestClient(app)
     _login(client)
-    product = client.post(
-        "/api/products",
-        data={"name": "画廊商品"},
-        files={"image": ("source.png", _make_demo_image_bytes(), "image/png")},
-    )
-    assert product.status_code == 201
-    product_id = product.json()["id"]
 
-    created_session = client.post("/api/image-sessions", json={"product_id": product_id, "title": "画廊会话"})
+    created_session = client.post("/api/image-sessions", json={"title": "画廊会话"})
     assert created_session.status_code == 201
     session_id = created_session.json()["id"]
 
@@ -49,8 +42,6 @@ def test_generated_image_can_be_saved_to_gallery_idempotently(configured_env: Pa
     assert payload["image_session_round_id"] == first_round["id"]
     assert payload["image_session_id"] == session_id
     assert payload["image_session_title"] == "画廊会话"
-    assert payload["product_id"] == product_id
-    assert payload["product_name"] == "画廊商品"
     assert payload["prompt"] == "一张用于画廊的图"
     assert payload["size"] == "1024x1024"
     assert payload["actual_size"] == "1024x1024"

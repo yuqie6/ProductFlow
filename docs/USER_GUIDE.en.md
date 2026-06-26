@@ -144,11 +144,11 @@ On small screens, Image chat uses a main-view, drawer, and bottom-sheet layout:
 - **Right history drawer**: shows branch/candidate history and running placeholders. Tapping a completed image selects it as the current result and the next base image; tapping a placeholder shows that candidate's queued, generating, failed, or cancelled state.
 - **Main view**: generation status, current result, failure reason, and provider notes remain visible. When a multi-candidate task is submitted, history first shows the matching number of placeholders; while running, the page refreshes lightweight status and refreshes full session detail after the task ends.
 - **Bottom action bar**: the generation entry is always available. After a completed result is selected, the bar also shows Download and Send to gallery.
-- **Bottom generation sheet**: contains Generation and Advanced tabs. Generation manages product linking, product references, session references, image description, size, and candidate count; Advanced manages enabled image tool parameters. The submit button at the bottom starts generation using the current candidate count.
+- **Bottom generation sheet**: contains Generation and Advanced tabs. Generation manages the write-back target product, session references, image description, size, and candidate count; Advanced manages enabled image tool parameters. The submit button at the bottom starts generation using the current candidate count.
 
 ### 8. Save to Gallery
 
-Image chat results can be saved to **Gallery**. The gallery keeps image source, linked product, prompt, size, and model information, and provides a download entrypoint.
+Image chat results can be saved to **Gallery**. The gallery keeps image source, prompt, size, and model information, and provides a download entrypoint.
 
 Good gallery candidates:
 

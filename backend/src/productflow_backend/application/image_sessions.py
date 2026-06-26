@@ -122,7 +122,6 @@ def _image_session_query():
             selectinload(ImageSession.assets),
             selectinload(ImageSession.rounds).selectinload(ImageSessionRound.generated_asset),
             selectinload(ImageSession.generation_tasks),
-            selectinload(ImageSession.product).selectinload(Product.source_assets),
         )
         .order_by(desc(ImageSession.updated_at))
     )
@@ -352,17 +351,8 @@ def _provider_output_with_actual_size(
     )
 
 
-def list_image_sessions(
-    session: Session,
-    *,
-    product_id: str | None = None,
-) -> list[ImageSession]:
-    stmt = _image_session_query()
-    if product_id is None:
-        stmt = stmt.where(ImageSession.product_id.is_(None))
-    else:
-        stmt = stmt.where(ImageSession.product_id == product_id)
-    return list(session.scalars(stmt).all())
+def list_image_sessions(session: Session) -> list[ImageSession]:
+    return list(session.scalars(_image_session_query()).all())
 
 
 def get_image_session_detail(session: Session, image_session_id: str) -> ImageSession:
@@ -414,13 +404,10 @@ def get_image_session_status(session: Session, image_session_id: str) -> ImageSe
 def create_image_session(
     session: Session,
     *,
-    product_id: str | None,
     title: str | None = None,
 ) -> ImageSession:
-    if product_id:
-        _get_product_or_raise(session, product_id)
     normalized_title = (title or DEFAULT_SESSION_TITLE).strip() or DEFAULT_SESSION_TITLE
-    image_session = ImageSession(product_id=product_id, title=normalized_title)
+    image_session = ImageSession(title=normalized_title)
     session.add(image_session)
     session.commit()
     session.expire_all()
@@ -1334,7 +1321,7 @@ def attach_image_session_asset_to_product(
     image_session_id: str,
     asset_id: str,
     target: ATTACH_TARGET,
-    product_id: str | None,
+    product_id: str,
     storage: LocalStorage | None = None,
 ) -> Product:
     """将生图结果写回商品（设为参考图或替换主图）。"""
@@ -1345,10 +1332,7 @@ def attach_image_session_asset_to_product(
     if asset.kind != ImageSessionAssetKind.GENERATED_IMAGE:
         raise BusinessValidationError("只有生成结果可以写回商品")
 
-    resolved_product_id = product_id or image_session.product_id
-    if not resolved_product_id:
-        raise BusinessValidationError("请选择要写回的商品")
-    product = _get_product_or_raise(session, resolved_product_id)
+    product = _get_product_or_raise(session, product_id)
 
     storage = storage or LocalStorage()
     image_bytes = storage.resolve(asset.storage_path).read_bytes()

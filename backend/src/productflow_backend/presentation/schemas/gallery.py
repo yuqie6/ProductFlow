@@ -23,8 +23,6 @@ class GalleryEntryResponse(BaseModel):
     image_session_round_id: str | None = None
     image_session_id: str
     image_session_title: str
-    product_id: str | None = None
-    product_name: str | None = None
     image: ImageSessionAssetResponse
     prompt: str | None = None
     size: str | None = None
@@ -50,15 +48,12 @@ class GalleryEntryListResponse(BaseModel):
 def serialize_gallery_entry(entry: ImageGalleryEntry) -> GalleryEntryResponse:
     round_item = entry.round
     image_session = entry.asset.session
-    product = image_session.product
     return GalleryEntryResponse(
         id=entry.id,
         image_session_asset_id=entry.image_session_asset_id,
         image_session_round_id=entry.image_session_round_id,
         image_session_id=image_session.id,
         image_session_title=image_session.title,
-        product_id=image_session.product_id,
-        product_name=product.name if product else None,
         image=serialize_image_session_asset(entry.asset),
         prompt=round_item.prompt if round_item else None,
         size=round_item.size if round_item else None,

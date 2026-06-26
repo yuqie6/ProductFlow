@@ -20,8 +20,6 @@ function entry(overrides: Partial<GalleryEntry>): GalleryEntry {
     image_session_round_id: "round-1",
     image_session_id: "session-1",
     image_session_title: "session",
-    product_id: null,
-    product_name: null,
     image: {
       id: "asset-1",
       kind: "generated_image",

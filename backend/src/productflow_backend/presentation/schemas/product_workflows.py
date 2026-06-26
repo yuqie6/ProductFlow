@@ -71,7 +71,6 @@ class WorkflowNodeRunResponse(BaseModel):
     failure_reason: str | None = None
     copy_set_id: str | None = None
     poster_variant_id: str | None = None
-    image_session_asset_id: str | None = None
     started_at: datetime
     finished_at: datetime | None = None
 
@@ -446,7 +445,6 @@ def serialize_workflow_node_run(node_run: WorkflowNodeRun) -> WorkflowNodeRunRes
         failure_reason=node_run.failure_reason,
         copy_set_id=node_run.copy_set_id,
         poster_variant_id=node_run.poster_variant_id,
-        image_session_asset_id=node_run.image_session_asset_id,
         started_at=node_run.started_at,
         finished_at=node_run.finished_at,
     )

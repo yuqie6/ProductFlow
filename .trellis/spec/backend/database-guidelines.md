@@ -75,7 +75,7 @@ When changing an enum, update:
 Relationships are defined on models and use explicit cascades where child records belong to a parent. Examples:
 
 - `Product.source_assets`, `Product.creative_briefs`, `Product.copy_sets`, `Product.poster_variants`,
-  `Product.image_sessions`, and `Product.workflows` use `cascade="all, delete-orphan"` in
+  and `Product.workflows` use `cascade="all, delete-orphan"` in
   `infrastructure/db/models.py`.
 - Foreign keys use `ondelete="CASCADE"` for owned children and `ondelete="SET NULL"` for optional references such as
   `creative_brief_id`, `copy_set_id`, and `poster_variant_id`.
@@ -498,8 +498,8 @@ def delete_product_endpoint(...):
   that participate in the next provider request.
 - Card branching must not blindly pass `previous_response_id` or assemble all later history images. Provider context for
   branching is explicit: selected base image first, then selected references, plus the current prompt/size.
-- Product-scoped continuous sessions may still save results back to the product, but product main/reference images are not
-  implicit generation context for card branching.
+- Continuous-session generated assets can be explicitly saved back to a selected product, but product main/reference
+  images are not implicit generation context for card branching.
 
 ### 4. Validation & Error Matrix
 
@@ -593,7 +593,7 @@ round.generated_asset_id = asset.id
   all `rounds`, and `generation_tasks`.
 - Lightweight status API: `GET /api/image-sessions/{image_session_id}/status` returns `ImageSessionStatusResponse`.
 - Status response fields:
-  - `id`, `product_id`, `title`, `created_at`, `updated_at`.
+  - `id`, `title`, `created_at`, `updated_at`.
   - `rounds_count`, `latest_round_id`, `latest_generation_group_id`.
   - `has_active_generation_task`.
   - `generation_tasks` using the same task DTO fields as detail, including queue metadata, failure reason, tool options,
@@ -659,11 +659,8 @@ The current pattern commits database changes before performing non-transactional
 
 - `delete_reference_image(...)` deletes the DB row, commits, then calls `storage.delete_image_with_variants(...)`.
 - `delete_image_session(...)` deletes the DB row, commits, then calls `storage.delete_image_session_tree(...)`.
-- `delete_product(...)` collects linked image-session IDs before deleting the product, commits the DB cascade, then deletes
-  both `storage/products/{product_id}` and each linked `storage/image_sessions/{session_id}` tree.
-- `delete_product(...)` must reject active linked continuous image-session generation tasks before deleting the product.
-  Queued/running `ImageSessionGenerationTask` rows are product-related work even though their storage lives under
-  `image_sessions/{session_id}`.
+- `delete_product(...)` deletes the product-owned DB rows, commits the DB cascade, then deletes
+  `storage/products/{product_id}`.
 
 For create/update operations, file writes happen before adding the final DB asset rows. Keep storage paths relative to the
 storage root; `LocalStorage.resolve()` guards against path traversal.
@@ -693,7 +690,7 @@ storage root; `LocalStorage.resolve()` guards against path traversal.
   must not duplicate image bytes into product storage or a gallery-specific storage tree.
 - Repeated saves for the same generated asset are idempotent and return the existing gallery entry.
 - Response metadata should include prompt, requested size, actual size, provider/model, candidate metadata, session ID/title,
-  product ID/name when available, and `created_at`.
+  and `created_at`.
 
 ### 4. Validation & Error Matrix
 
@@ -705,7 +702,7 @@ storage root; `LocalStorage.resolve()` guards against path traversal.
 ### 5. Good/Base/Bad Cases
 
 - Good: a continuous image candidate can be saved once, then repeated clicks keep one gallery row.
-- Base: product-scoped and standalone image sessions both appear in the same global gallery list.
+- Base: generated assets from continuous image sessions appear in one global gallery list.
 - Bad: copying generated image bytes into `source_assets` or product storage when the user only chose "save to gallery".
 - Bad: adding product-level grouping, bulk management, tags, or search inside this global display-only gallery task.
 

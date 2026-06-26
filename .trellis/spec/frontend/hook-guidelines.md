@@ -37,8 +37,8 @@ Examples:
 - `ProductListPage.tsx` uses `['products']` for `api.listProducts`.
 - `ProductDetailPage.tsx` uses `['product', productId]`, `['product-history', productId]`,
   `['product-workflow', productId]`, `['product-workflow-status', productId]`, and `['runtime-config']`.
-- `ImageChatPage.tsx` uses `['image-sessions', productId ?? 'standalone']`, `['image-session', selectedSessionId]`,
-  `['image-session-status', selectedSessionId]`, `['config']`, and product queries.
+- `ImageChatPage.tsx` uses `['image-sessions']`, `['image-session', selectedSessionId]`,
+  `['image-session-status', selectedSessionId]`, `['runtime-config']`, and product queries.
 - `SettingsPage.tsx` uses `['config']` for runtime settings.
 
 Use `enabled` when an ID is required. Do not call an API with an empty ID just because a route param has not loaded.
@@ -183,7 +183,7 @@ useQuery({ queryKey: ["image-session-status", id], refetchInterval: 1500 });
 - Enable the status query only when the cached full workflow has a running run or queued/running node.
 - Each status response may merge only workflow/node/run status metadata into the cached full workflow. It must not replace
   `edges`, node `config_json`, node `output_json`, or node-run artifact fields such as `output_json`, `copy_set_id`,
-  `poster_variant_id`, and `image_session_asset_id`.
+  `poster_variant_id`.
 - When status shows an active workflow becoming terminal, invalidate/refetch the full workflow once and let the existing
   active-to-inactive path refresh `['product', productId]`, `['product-history', productId]`, and `['products']`.
 - Keep write mutations authoritative: node/edge/update/run handlers may still set the full workflow cache from mutation

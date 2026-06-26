@@ -495,12 +495,12 @@ const DOC_PAGES: DocPage[] = [
               ["桌面左侧会话列表", "新建、选择、重命名或删除文/图生图会话。每个会话保留自己的历史、参考图和生成任务。"],
               ["桌面中间结果区", "展示当前选中的生成候选、生成中占位、失败状态、下载按钮和“投至画廊”按钮。"],
               ["桌面底部历史记录", "按分支展示历史结果。点击已完成图片会把它选为当前结果，并作为下一轮基图。"],
-              ["桌面右侧生成设置", "管理关联商品、保存到商品、会话参考图、画面描述、尺寸、候选数量和高级图片工具参数。"],
+              ["桌面右侧生成设置", "管理写回目标商品、会话参考图、画面描述、尺寸、候选数量和高级图片工具参数。"],
               ["移动端顶部栏", "左侧按钮打开会话抽屉，中间显示当前会话标题；铅笔按钮用于重命名，右侧按钮打开历史抽屉。"],
               ["移动端左侧会话抽屉", "新建、选择和删除会话；会话卡片显示最近缩略图、轮数和更新时间。"],
               ["移动端右侧历史抽屉", "以窄抽屉展示分支和候选。点已完成图片会选为当前结果和下一轮基图，点占位会查看该候选状态。"],
               ["移动端底部快捷条", "始终提供生成入口；选中已完成结果后，还提供下载和投至画廊。"],
-              ["移动端底部生成面板", "用生成设置/高级标签页管理商品关联、商品/会话参考图、画面描述、尺寸、候选数量和图片工具参数。"],
+              ["移动端底部生成面板", "用生成设置/高级标签页管理写回目标商品、会话参考图、画面描述、尺寸、候选数量和图片工具参数。"],
             ],
           },
         ],
@@ -514,7 +514,7 @@ const DOC_PAGES: DocPage[] = [
             items: [
               "打开顶部导航中的“文/图生图”。",
               "桌面端点击左侧会话区域的“新建”按钮；移动端点击顶部左侧菜单，在会话抽屉中点击加号创建会话。",
-              "如果从商品详情进入，页面会进入商品关联模式；如果从全局入口进入，可以先自由生成，也可以在右侧选择目标商品。",
+              "创建或选择一个文/图生图会话，需要写回商品时再在生成设置里选择目标商品。",
               "点击会话卡片切换会话。卡片会显示最近结果缩略图、轮数和更新时间；移动端选择后抽屉会关闭并回到主视图。",
               "需要改会话名时，桌面端在右侧“生成设置”点击“重命名”；移动端点击顶部栏的铅笔，输入名称后点击保存按钮。",
               "删除会话使用会话卡片上的删除按钮；如果配置关闭了业务删除，按钮会禁用并提示当前不可删除。",
@@ -522,8 +522,8 @@ const DOC_PAGES: DocPage[] = [
           },
           {
             type: "callout",
-            title: "会话和商品不是同一个对象",
-            text: "文/图生图会话可以关联商品，也可以自由生成。只有点击“加入参考图”“保存为参考图”或“设为商品主图参考”这类保存按钮时，当前候选才会写回商品素材库。",
+            title: "写回商品是显式动作",
+            text: "选择目标商品并点击“保存为参考图”或“设为商品主图参考”后，当前候选会写回该商品素材库。",
           },
         ],
       },
@@ -532,7 +532,7 @@ const DOC_PAGES: DocPage[] = [
   {
     slug: "image-chat-references",
     title: "基图和参考图",
-    description: "说明文/图生图里基图、会话参考图、商品参考图的区别，以及单轮图片上下文数量限制。",
+    description: "说明文/图生图里基图、会话参考图的区别，以及单轮图片上下文数量限制。",
     category: "文/图生图",
     icon: Sparkles,
     sections: [
@@ -542,14 +542,14 @@ const DOC_PAGES: DocPage[] = [
         blocks: [
           {
             type: "paragraph",
-            text: "文/图生图每一轮可以同时使用“基图”和“参考图”。基图来自历史记录中选中的已完成图片，用于表达“在这张图基础上继续改”。参考图来自会话参考图或商品参考图，用于补充风格、材质、姿态、背景等上下文。",
+            text: "文/图生图每一轮可以同时使用“基图”和“参考图”。基图来自历史记录中选中的已完成图片，用于表达“在这张图基础上继续改”。参考图来自会话参考图，用于补充风格、材质、姿态、背景等上下文。",
           },
           {
             type: "steps",
             items: [
               "第一轮没有历史图时，直接在“画面描述”里写想生成的画面。",
               "生成完成后，在底部历史记录点击一张已完成图片；移动端从右侧历史抽屉点选。中间结果区会显示“已选基图”。",
-              "如需更多视觉参考，在右侧“会话参考图”上传图片，或从商品参考图区域选择已有素材；移动端在底部生成面板的生成设置标签页操作这些区域。",
+              "如需更多视觉参考，在右侧“会话参考图”上传图片；移动端在底部生成面板的生成设置标签页操作。",
               "勾选参考图后再提交生成。系统会把基图和已选参考图一起作为本轮上下文。",
             ],
           },
@@ -568,7 +568,7 @@ const DOC_PAGES: DocPage[] = [
             type: "list",
             items: [
               "想保留主体角度时，优先选择历史结果作为基图。",
-              "想补充材质、风格、背景或姿态时，选择会话参考图或商品参考图。",
+              "想补充材质、风格、背景或姿态时，选择会话参考图。",
               "如果结果偏离太多，减少参考图数量通常比继续堆参考图更容易定位问题。",
             ],
           },
@@ -591,13 +591,12 @@ const DOC_PAGES: DocPage[] = [
             type: "table",
             headers: ["设置", "说明"],
             rows: [
-              ["商品关联", "商品详情进入时自动关联当前商品；全局入口进入时，可在生成设置里选择目标商品，之后才能把结果保存为商品参考图。"],
-              ["商品参考图", "显示目标商品已有参考图和主图参考；选中已完成候选后，可把候选加入参考图或设为商品主图参考。"],
+              ["写回目标商品", "在生成设置里选择目标商品后，才能把结果保存为商品参考图或商品主图参考。"],
               ["会话参考图", "上传本会话可复用的参考图，并勾选参与本轮生成。单轮图片上下文数量仍受 6 张限制。"],
               ["画面描述", "本轮真正提交给生成任务的用户要求。写清主体、保留项、变化项、背景、构图、光线和用途。"],
               ["尺寸", "选择常用 1K / 2K / 4K 预设，或输入自定义宽高。提交前会按后端最大单边限制校准。"],
               ["候选数量", "决定本轮创建多少张候选。多候选会在历史记录中显示多个占位，完成后分别替换为结果。"],
-              ["生成设置 / 高级标签页", "生成设置包含商品、参考图、描述、尺寸和候选数量；高级包含供应商图片工具参数。"],
+              ["生成设置 / 高级标签页", "生成设置包含写回目标商品、会话参考图、描述、尺寸和候选数量；高级包含供应商图片工具参数。"],
               ["图片工具参数", "只显示配置页“可用 Tool 字段”中启用的字段，例如质量、格式、背景、输入保真度等。未启用字段不会提交。"],
               ["提交按钮", "桌面端在右侧设置底部，移动端在底部生成面板底部。按钮文案会按候选数量显示本轮要提交的数量。"],
             ],
@@ -662,8 +661,8 @@ const DOC_PAGES: DocPage[] = [
             headers: ["操作", "结果"],
             rows: [
               ["下载", "下载当前选中候选的原图。"],
-              ["投至画廊", "把当前候选保存到全局画廊，保留来源会话、商品、提示词、尺寸、模型和下载入口。"],
-              ["加入参考图 / 保存为参考图", "把当前候选写入目标商品的参考图素材，之后商品工作台和文/图生图都可以继续引用。"],
+              ["投至画廊", "把当前候选保存到全局画廊，保留来源会话、提示词、尺寸、模型和下载入口。"],
+              ["保存为参考图", "把当前候选写入目标商品的参考图素材，之后商品工作台可以继续引用。"],
               ["设为商品主图参考", "把当前候选保存为商品主图参考素材，用于后续商品素材链路。"],
             ],
           },
@@ -686,7 +685,7 @@ const DOC_PAGES: DocPage[] = [
               ["主视图", "生成状态、当前结果、失败原因和供应商提示保留可见。点当前结果可打开预览。"],
               ["右侧历史抽屉", "显示分支、候选和生成中占位。多候选提交后会先出现对应数量的占位；任务结束后刷新为真实候选或失败/取消状态。"],
               ["底部快捷条", "生成入口一直可用。选中已完成图片后，快捷条增加下载和投至画廊。"],
-              ["底部生成面板", "生成设置标签页管理商品关联、商品参考图、会话参考图、画面描述、尺寸和候选数量；高级标签页管理图片工具参数。面板底部按钮提交本轮生成。"],
+              ["底部生成面板", "生成设置标签页管理写回目标商品、会话参考图、画面描述、尺寸和候选数量；高级标签页管理图片工具参数。面板底部按钮提交本轮生成。"],
             ],
           },
         ],
@@ -706,7 +705,7 @@ const DOC_PAGES: DocPage[] = [
         blocks: [
           {
             type: "paragraph",
-            text: "文/图生图结果可以保存到画廊。画廊条目保留来源会话、关联商品、提示词、尺寸、模型和下载入口。",
+            text: "文/图生图结果可以保存到画廊。画廊条目保留来源会话、提示词、尺寸、模型和下载入口。",
           },
           {
             type: "list",
@@ -868,7 +867,7 @@ const DOC_PAGES: DocPage[] = [
               ["商品理解系统提示词", "用于商品资料理解，要求模型输出 CreativeBrief JSON。"],
               ["文案生成系统提示词", "用于主图/海报文案生成，要求模型输出 CopyPayloadV2 JSON；后端会兼容常见的自由文案、块状文案和布局说明变体。"],
               ["海报生图提示词模板", "用于工作台 AI 生图。常用占位符包括 `instruction`、`size`、`context_block`、`reference_policy`、`kind` 等。"],
-              ["图片改图提示词模板", "用于工作台参考图/生成图继续生图。适合带上游文案或参考图上下文的场景。"],
+              ["工作台改图提示词模板", "用于工作台带参考图或上游上下文的改图任务。适合带上游文案或参考图上下文的场景。"],
               ["工作台视觉参考规则", "填入工作台生图模板的 `reference_policy` 占位符，用于控制视觉参考优先级规则。"],
               ["文/图生图提示词模板", "用于文/图生图对话。可用占位符：`prompt`、`size`、`history_block`。"],
             ],
@@ -1137,19 +1136,19 @@ const DOC_PAGES_EN: DocPage[] = [
     category: "Image chat",
     icon: Sparkles,
     sections: [
-      { id: "layout", title: "Page layout", blocks: [{ type: "table", headers: ["Area", "Use"], rows: [["Desktop left session list", "Create, select, rename, or delete image chat sessions. Each session keeps its own history, references, and generation tasks."], ["Desktop center result area", "Shows the selected generated candidate, running placeholders, failed state, download button, and Send to gallery button."], ["Desktop bottom history", "Shows results by branch. Clicking a completed image selects it as the current result and base image for the next round."], ["Desktop right generation settings", "Manages linked product, save-to-product actions, session references, image description, size, candidate count, and advanced image tool parameters."], ["Mobile top bar", "The left button opens the session drawer, the center shows the current session title, the pencil renames it, and the right button opens history."], ["Mobile left session drawer", "Creates, selects, and deletes sessions. Session cards show the latest thumbnail, round count, and update time."], ["Mobile right history drawer", "Shows branches and candidates in a narrow drawer. Tapping a completed image selects it as the current result and next base image; tapping a placeholder shows that candidate state."], ["Mobile bottom action bar", "Always exposes generation. After a completed result is selected, it also exposes download and send-to-gallery."], ["Mobile bottom generation sheet", "Uses Generation / Advanced tabs for product linking, product/session references, image description, size, candidate count, and image tool parameters."]] }] },
-      { id: "create-session", title: "Create and select sessions", blocks: [{ type: "steps", items: ["Open Image chat from the top navigation.", "On desktop, click New in the left session area. On mobile, tap the top-left menu and use the plus button in the session drawer.", "If you entered from a product detail page, the page uses product-linked mode. From the global entry, you can generate freely or select a target product in settings.", "Click or tap any session card to switch sessions. Cards show the latest thumbnail, round count, and update time; on mobile, selection closes the drawer and returns to the main view.", "To rename a session, use Rename in desktop Generation settings or tap the pencil in the mobile top bar, enter a name, and save.", "Delete a session from the session card delete button. If business deletion is disabled in Settings, the delete button is disabled and explains why."] }, { type: "callout", title: "Sessions and products are different objects", text: "An image chat session can be linked to a product or used freely. The current candidate is written back to the product asset library only when you click actions such as Add reference image, Save as reference, or Set as product main image." }] },
+      { id: "layout", title: "Page layout", blocks: [{ type: "table", headers: ["Area", "Use"], rows: [["Desktop left session list", "Create, select, rename, or delete image chat sessions. Each session keeps its own history, references, and generation tasks."], ["Desktop center result area", "Shows the selected generated candidate, running placeholders, failed state, download button, and Send to gallery button."], ["Desktop bottom history", "Shows results by branch. Clicking a completed image selects it as the current result and base image for the next round."], ["Desktop right generation settings", "Manages the write-back target product, save-to-product actions, session references, image description, size, candidate count, and advanced image tool parameters."], ["Mobile top bar", "The left button opens the session drawer, the center shows the current session title, the pencil renames it, and the right button opens history."], ["Mobile left session drawer", "Creates, selects, and deletes sessions. Session cards show the latest thumbnail, round count, and update time."], ["Mobile right history drawer", "Shows branches and candidates in a narrow drawer. Tapping a completed image selects it as the current result and next base image; tapping a placeholder shows that candidate state."], ["Mobile bottom action bar", "Always exposes generation. After a completed result is selected, it also exposes download and send-to-gallery."], ["Mobile bottom generation sheet", "Uses Generation / Advanced tabs for the write-back target product, product/session references, image description, size, candidate count, and image tool parameters."]] }] },
+      { id: "create-session", title: "Create and select sessions", blocks: [{ type: "steps", items: ["Open Image chat from the top navigation.", "On desktop, click New in the left session area. On mobile, tap the top-left menu and use the plus button in the session drawer.", "Image chat sessions are independent from products. Select a target product in Generation settings only when saving a result back to a product.", "Click or tap any session card to switch sessions. Cards show the latest thumbnail, round count, and update time; on mobile, selection closes the drawer and returns to the main view.", "To rename a session, use Rename in desktop Generation settings or tap the pencil in the mobile top bar, enter a name, and save.", "Delete a session from the session card delete button. If business deletion is disabled in Settings, the delete button is disabled and explains why."] }, { type: "callout", title: "Sessions and products are different objects", text: "Image chat sessions are independent from products. The current candidate is written back to a product only after you select a target product and click Save as reference or Set as product main image." }] },
     ],
   },
   {
     slug: "image-chat-references",
     title: "Base and reference images",
-    description: "Explains the difference between base images, session references, product references, and the per-round image context limit.",
+    description: "Explains the difference between base images, session references, and the per-round image context limit.",
     category: "Image chat",
     icon: Sparkles,
     sections: [
-      { id: "base-image", title: "Base image vs reference image", blocks: [{ type: "paragraph", text: "Each image chat round can use both a base image and reference images. The base image comes from a selected completed history result and means continue editing from this image. Reference images come from session references or product references and provide extra context such as style, material, pose, or background." }, { type: "steps", items: ["For the first round, write the desired image directly in Image description.", "After generation completes, click a completed image in bottom history; on mobile, select it from the right history drawer. The center result area shows Base selected.", "For more visual context, upload images in Session references or select existing assets from Product references; on mobile, these controls live in the Generation tab of the bottom generation sheet.", "Select references before submitting. The system sends the base image and selected references together as this round's context."] }] },
-      { id: "reference-limit", title: "Image context count", blocks: [{ type: "callout", title: "Up to 6 images per round", text: "One round can select up to 6 image contexts. This count includes the history base image and explicitly selected references. If a base image is selected, at most 5 more references can be selected." }, { type: "list", items: ["Use a history result as the base when you want to preserve the product angle.", "Use session or product references when you need extra material, style, background, or pose context.", "When results drift too much, reducing references is often easier than adding more."] }] },
+      { id: "base-image", title: "Base image vs reference image", blocks: [{ type: "paragraph", text: "Each image chat round can use both a base image and reference images. The base image comes from a selected completed history result and means continue editing from this image. Reference images come from session references and provide extra context such as style, material, pose, or background." }, { type: "steps", items: ["For the first round, write the desired image directly in Image description.", "After generation completes, click a completed image in bottom history; on mobile, select it from the right history drawer. The center result area shows Base selected.", "For more visual context, upload images in Session references; on mobile, use the Generation tab of the bottom generation sheet.", "Select references before submitting. The system sends the base image and selected references together as this round's context."] }] },
+      { id: "reference-limit", title: "Image context count", blocks: [{ type: "callout", title: "Up to 6 images per round", text: "One round can select up to 6 image contexts. This count includes the history base image and explicitly selected references. If a base image is selected, at most 5 more references can be selected." }, { type: "list", items: ["Use a history result as the base when you want to preserve the product angle.", "Use session references when you need extra material, style, background, or pose context.", "When results drift too much, reducing references is often easier than adding more."] }] },
     ],
   },
   {
@@ -1159,7 +1158,7 @@ const DOC_PAGES_EN: DocPage[] = [
     category: "Image chat",
     icon: Sparkles,
     sections: [
-      { id: "generation-settings", title: "Fields", blocks: [{ type: "table", headers: ["Setting", "Description"], rows: [["Product linking", "Product-detail entry links the current product automatically. Global entry can select a target product before saving a result as product reference material."], ["Product references", "Shows the target product's existing references and main-image reference. After a completed candidate is selected, it can be added as a reference or set as the product main-image reference."], ["Session references", "Uploads reusable references for this session and selects them for the next round. The per-round image context limit is still 6 images."], ["Image description", "The actual user requirement submitted for this round. State subject, what to preserve, what to change, background, composition, lighting, and purpose."], ["Size", "Choose common 1K / 2K / 4K presets or enter a custom width and height. Values are calibrated against the backend maximum single-edge limit before submission."], ["Candidate count", "Controls how many candidates are created for this round. Multiple candidates appear as placeholders in history and are replaced individually when complete."], ["Generation / Advanced tabs", "Generation contains product, references, description, size, and candidate count. Advanced contains provider image tool parameters."], ["Image tool parameters", "Only fields enabled in Settings under available tool fields are visible, such as quality, format, background, and input fidelity. Disabled fields are not submitted."], ["Submit button", "On desktop it stays at the bottom of the right settings panel; on mobile it stays at the bottom of the bottom generation sheet. Its label reflects the current candidate count."]] }] },
+      { id: "generation-settings", title: "Fields", blocks: [{ type: "table", headers: ["Setting", "Description"], rows: [["Write-back target product", "Select a target product before saving a generated result as product reference material or as the product main-image reference."], ["Session references", "Uploads reusable references for this session and selects them for the next round. The per-round image context limit is still 6 images."], ["Image description", "The actual user requirement submitted for this round. State subject, what to preserve, what to change, background, composition, lighting, and purpose."], ["Size", "Choose common 1K / 2K / 4K presets or enter a custom width and height. Values are calibrated against the backend maximum single-edge limit before submission."], ["Candidate count", "Controls how many candidates are created for this round. Multiple candidates appear as placeholders in history and are replaced individually when complete."], ["Generation / Advanced tabs", "Generation contains the write-back target product, session references, description, size, and candidate count. Advanced contains provider image tool parameters."], ["Image tool parameters", "Only fields enabled in Settings under available tool fields are visible, such as quality, format, background, and input fidelity. Disabled fields are not submitted."], ["Submit button", "On desktop it stays at the bottom of the right settings panel; on mobile it stays at the bottom of the bottom generation sheet. Its label reflects the current candidate count."]] }] },
       { id: "prompt-pattern", title: "Iterative editing pattern", blocks: [{ type: "code", text: "Keep the bag angle unchanged and change the background to a brighter office. Reduce desk clutter, keep only the laptop and coffee, preserve clear bag texture, and use soft shadows." }, { type: "paragraph", text: "For iterative editing, explicitly say what to keep unchanged and what to modify. A broad new description may be treated as a fresh generation rather than a controlled edit." }] },
     ],
   },
@@ -1171,8 +1170,8 @@ const DOC_PAGES_EN: DocPage[] = [
     icon: Sparkles,
     sections: [
       { id: "run-status", title: "Run status, retry, and cancel", blocks: [{ type: "table", headers: ["Status", "Page behavior"], rows: [["Queued", "The center result area and history show placeholders and may show queue position, tasks ahead, and global active count."], ["Generating", "The placeholder shows candidate index, total candidates, latest progress, and provider status."], ["Complete", "The placeholder is replaced by the real candidate image and the page reports that a new candidate was generated."], ["Failed", "The failure reason is shown. Retry generation appears when the task is retryable."], ["Cancelled", "The page shows the task as cancelled and no new candidate result is written."]] }, { type: "list", items: ["Running tasks can be cancelled with Cancel generation.", "Failed retryable tasks can use Retry generation. Retry reuses the original prompt, size, references, and advanced parameters.", "If you changed description, size, or references, submit a new generation instead of retrying the old failed task.", "While running, the page polls lightweight status and refreshes full session detail after the task ends."] }] },
-      { id: "save-results", title: "Save results", blocks: [{ type: "table", headers: ["Action", "Result"], rows: [["Download", "Downloads the currently selected candidate original image."], ["Send to gallery", "Saves the current candidate to the global gallery with source session, product, prompt, size, model, and download entry."], ["Add reference / Save as reference", "Writes the current candidate into the target product's reference image assets for later use in product workbench and image chat."], ["Set as product main image", "Saves the current candidate as a product main image reference asset for later product asset workflows."]] }, { type: "callout", title: "Save actions require a selected candidate", text: "Download, Send to gallery, and save-to-product actions have a clear target only when the center result area shows a completed image. Selecting a running placeholder or having no result will not submit these actions." }] },
-      { id: "mobile-layout", title: "Mobile layout", blocks: [{ type: "table", headers: ["Location", "Behavior on phones"], rows: [["Top bar", "The left button opens the session drawer, the center shows the current session title, the pencil starts rename, and the history button opens the narrow history drawer."], ["Main view", "Generation status, current result, failure reason, and provider notes remain visible. Tapping the current result opens preview."], ["Right history drawer", "Shows branches, candidates, and running placeholders. Multi-candidate submissions first create matching placeholders; after completion they refresh into real candidates or failed/cancelled states."], ["Bottom action bar", "Generation is always available. After a completed image is selected, the bar adds Download and Send to gallery."], ["Bottom generation sheet", "Generation manages product linking, product references, session references, image description, size, and candidate count; Advanced manages image tool parameters. The bottom button submits the next generation round."]] }] },
+      { id: "save-results", title: "Save results", blocks: [{ type: "table", headers: ["Action", "Result"], rows: [["Download", "Downloads the currently selected candidate original image."], ["Send to gallery", "Saves the current candidate to the global gallery with source session, prompt, size, model, and download entry."], ["Save as reference", "Writes the current candidate into the target product's reference image assets for later use in the product workbench."], ["Set as product main image", "Saves the current candidate as a product main image reference asset for later product asset workflows."]] }, { type: "callout", title: "Save actions require a selected candidate", text: "Download, Send to gallery, and save-to-product actions have a clear target only when the center result area shows a completed image. Selecting a running placeholder or having no result will not submit these actions." }] },
+      { id: "mobile-layout", title: "Mobile layout", blocks: [{ type: "table", headers: ["Location", "Behavior on phones"], rows: [["Top bar", "The left button opens the session drawer, the center shows the current session title, the pencil starts rename, and the history button opens the narrow history drawer."], ["Main view", "Generation status, current result, failure reason, and provider notes remain visible. Tapping the current result opens preview."], ["Right history drawer", "Shows branches, candidates, and running placeholders. Multi-candidate submissions first create matching placeholders; after completion they refresh into real candidates or failed/cancelled states."], ["Bottom action bar", "Generation is always available. After a completed image is selected, the bar adds Download and Send to gallery."], ["Bottom generation sheet", "Generation manages the write-back target product, target product assets, session references, image description, size, and candidate count; Advanced manages image tool parameters. The bottom button submits the next generation round."]] }] },
     ],
   },
   {
@@ -1182,7 +1181,7 @@ const DOC_PAGES_EN: DocPage[] = [
     category: "Gallery",
     icon: GalleryHorizontalEnd,
     sections: [
-      { id: "save-to-gallery", title: "Save to gallery", blocks: [{ type: "paragraph", text: "Image chat results can be saved to the gallery. Each gallery entry keeps source session, linked product, prompt, size, model, and download access." }, { type: "list", items: ["Useful for reusable backgrounds or compositions before attaching them to a product.", "Useful for collecting candidates for others to review.", "Useful for saving good parameter-exploration results that are not the current final draft."] }] },
+      { id: "save-to-gallery", title: "Save to gallery", blocks: [{ type: "paragraph", text: "Image chat results can be saved to the gallery. Each gallery entry keeps source session, prompt, size, model, and download access." }, { type: "list", items: ["Useful for reusable backgrounds or compositions before attaching them to a product.", "Useful for collecting candidates for others to review.", "Useful for saving good parameter-exploration results that are not the current final draft."] }] },
     ],
   },
   {
@@ -1224,7 +1223,7 @@ const DOC_PAGES_EN: DocPage[] = [
     category: "Settings",
     icon: Settings,
     sections: [
-      { id: "prompt-settings", title: "Fields", blocks: [{ type: "table", headers: ["Field", "Description"], rows: [["Product understanding system prompt", "Used for product data understanding and asks the model to output CreativeBrief JSON."], ["Copy generation system prompt", "Used for main image/poster copy generation and asks for CopyPayloadV2 JSON. The backend accepts common freeform, block, and layout variants."], ["Poster image prompt template", "Used for workbench AI image generation. Common placeholders include `instruction`, `size`, `context_block`, `reference_policy`, and `kind`."], ["Image edit prompt template", "Used for continuing generation from workbench reference or generated images. Suitable for scenarios that carry upstream copy or reference context."], ["Workbench visual reference policy", "Fills the `reference_policy` placeholder in workbench image templates to control visual-reference priority rules."], ["Image chat prompt template", "Used for image chat. Available placeholders include `prompt`, `size`, and `history_block`."]] }, { type: "callout", title: "Keep one-off requirements out of global templates", text: "If a background, composition, or tone is needed only for this run, put it in the node requirement or image chat description. Prompt templates are better for long-term default behavior." }] },
+      { id: "prompt-settings", title: "Fields", blocks: [{ type: "table", headers: ["Field", "Description"], rows: [["Product understanding system prompt", "Used for product data understanding and asks the model to output CreativeBrief JSON."], ["Copy generation system prompt", "Used for main image/poster copy generation and asks for CopyPayloadV2 JSON. The backend accepts common freeform, block, and layout variants."], ["Poster image prompt template", "Used for workbench AI image generation. Common placeholders include `instruction`, `size`, `context_block`, `reference_policy`, and `kind`."], ["Workbench image-edit prompt template", "Used for workbench image-edit runs with reference or upstream context."], ["Workbench visual reference policy", "Fills the `reference_policy` placeholder in workbench image templates to control visual-reference priority rules."], ["Image chat prompt template", "Used for image chat. Available placeholders include `prompt`, `size`, and `history_block`."]] }, { type: "callout", title: "Keep one-off requirements out of global templates", text: "If a background, composition, or tone is needed only for this run, put it in the node requirement or image chat description. Prompt templates are better for long-term default behavior." }] },
     ],
   },
   {
@@ -1544,8 +1543,8 @@ const HELP_DOC_JA_TRANSLATIONS: Record<string, string> = {
   "按分支展示历史结果。点击已完成图片会把它选为当前结果，并作为下一轮基图。":
     "履歴結果をブランチ別に表示します。完了画像をクリックすると現在結果として選択され、次ラウンドのベース画像になります。",
   "桌面右侧生成设置": "デスクトップ右側の生成設定",
-  "管理关联商品、保存到商品、会话参考图、画面描述、尺寸、候选数量和高级图片工具参数。":
-    "関連商品、商品への保存、セッション参考画像、画像説明、サイズ、候補数、高度な画像ツールパラメータを管理します。",
+  "管理写回目标商品、会话参考图、画面描述、尺寸、候选数量和高级图片工具参数。":
+    "書き戻し対象商品、セッション参考画像、画像説明、サイズ、候補数、高度な画像ツールパラメータを管理します。",
   "移动端顶部栏": "モバイル上部バー",
   "左侧按钮打开会话抽屉，中间显示当前会话标题；铅笔按钮用于重命名，右侧按钮打开历史抽屉。":
     "左ボタンでセッションドロワーを開き、中央に現在のセッション名を表示します。鉛筆ボタンは名前変更、右ボタンは履歴ドロワーを開きます。",
@@ -1559,35 +1558,35 @@ const HELP_DOC_JA_TRANSLATIONS: Record<string, string> = {
   "始终提供生成入口；选中已完成结果后，还提供下载和投至画廊。":
     "生成入口を常に表示します。完了結果を選択すると、ダウンロードとギャラリー投入も表示されます。",
   "移动端底部生成面板": "モバイル下部生成パネル",
-  "用生成设置/高级标签页管理商品关联、商品/会话参考图、画面描述、尺寸、候选数量和图片工具参数。":
-    "生成設定/高度タブで商品関連付け、商品/セッション参考画像、画像説明、サイズ、候補数、画像ツールパラメータを管理します。",
+  "用生成设置/高级标签页管理写回目标商品、会话参考图、画面描述、尺寸、候选数量和图片工具参数。":
+    "生成設定/高度タブで書き戻し対象商品、セッション参考画像、画像説明、サイズ、候補数、画像ツールパラメータを管理します。",
   "创建和选择会话": "セッションの作成と選択",
   "打开顶部导航中的“文/图生图”。": "上部ナビゲーションの「画像生成チャット」を開きます。",
   "桌面端点击左侧会话区域的“新建”按钮；移动端点击顶部左侧菜单，在会话抽屉中点击加号创建会话。":
     "デスクトップでは左側セッション領域の「新規」ボタンをクリックします。モバイルでは上部左メニューをタップし、セッションドロワー内のプラスボタンでセッションを作成します。",
-  "如果从商品详情进入，页面会进入商品关联模式；如果从全局入口进入，可以先自由生成，也可以在右侧选择目标商品。":
-    "商品詳細から入った場合、ページは商品関連付けモードになります。全体入口から入った場合は、先に自由生成することも、右側で対象商品を選ぶこともできます。",
+  "创建或选择一个文/图生图会话，需要写回商品时再在生成设置里选择目标商品。":
+    "画像生成チャットセッションを作成または選択し、商品へ書き戻す場合は生成設定で対象商品を選びます。",
   "点击会话卡片切换会话。卡片会显示最近结果缩略图、轮数和更新时间；移动端选择后抽屉会关闭并回到主视图。":
     "セッションカードをクリックしてセッションを切り替えます。カードには最新結果のサムネイル、ラウンド数、更新時刻が表示されます。モバイルでは選択後にドロワーが閉じてメインビューに戻ります。",
   "需要改会话名时，桌面端在右侧“生成设置”点击“重命名”；移动端点击顶部栏的铅笔，输入名称后点击保存按钮。":
     "セッション名を変更する場合、デスクトップでは右側の「生成設定」で「名前変更」をクリックします。モバイルでは上部バーの鉛筆をタップし、名前を入力して保存ボタンを押します。",
   "删除会话使用会话卡片上的删除按钮；如果配置关闭了业务删除，按钮会禁用并提示当前不可删除。":
     "セッション削除はセッションカード上の削除ボタンを使います。設定で業務削除が無効な場合、ボタンは無効化され、現在削除できないことが表示されます。",
-  "会话和商品不是同一个对象": "セッションと商品は同じオブジェクトではありません",
-  "文/图生图会话可以关联商品，也可以自由生成。只有点击“加入参考图”“保存为参考图”或“设为商品主图参考”这类保存按钮时，当前候选才会写回商品素材库。":
-    "画像生成チャットセッションは商品に関連付けることも、自由生成することもできます。現在の候補が商品素材庫へ書き戻されるのは、「参考画像に追加」「参考画像として保存」「商品メイン画像参考に設定」などの保存ボタンをクリックした場合だけです。",
+  "写回商品是显式动作": "商品への書き戻しは明示操作です",
+  "选择目标商品并点击“保存为参考图”或“设为商品主图参考”后，当前候选会写回该商品素材库。":
+    "対象商品を選び、「参考画像として保存」または「商品メイン画像参考に設定」をクリックすると、現在の候補がその商品の素材ライブラリへ書き戻されます。",
   "基图和参考图": "ベース画像と参考画像",
-  "说明文/图生图里基图、会话参考图、商品参考图的区别，以及单轮图片上下文数量限制。":
-    "画像生成チャットにおけるベース画像、セッション参考画像、商品参考画像の違いと、1ラウンドの画像コンテキスト数制限を説明します。",
+  "说明文/图生图里基图、会话参考图的区别，以及单轮图片上下文数量限制。":
+    "画像生成チャットにおけるベース画像、セッション参考画像の違いと、1ラウンドの画像コンテキスト数制限を説明します。",
   "基图和参考图的区别": "ベース画像と参考画像の違い",
-  "文/图生图每一轮可以同时使用“基图”和“参考图”。基图来自历史记录中选中的已完成图片，用于表达“在这张图基础上继续改”。参考图来自会话参考图或商品参考图，用于补充风格、材质、姿态、背景等上下文。":
-    "画像生成チャットの各ラウンドでは「ベース画像」と「参考画像」を同時に使用できます。ベース画像は履歴で選択した完了画像で、「この画像をもとに続けて編集する」ことを表します。参考画像はセッション参考画像または商品参考画像から来て、スタイル、素材、ポーズ、背景などのコンテキストを補足します。",
+  "文/图生图每一轮可以同时使用“基图”和“参考图”。基图来自历史记录中选中的已完成图片，用于表达“在这张图基础上继续改”。参考图来自会话参考图，用于补充风格、材质、姿态、背景等上下文。":
+    "画像生成チャットの各ラウンドでは「ベース画像」と「参考画像」を同時に使用できます。ベース画像は履歴で選択した完了画像で、「この画像をもとに続けて編集する」ことを表します。参考画像はセッション参考画像から来て、スタイル、素材、ポーズ、背景などのコンテキストを補足します。",
   "第一轮没有历史图时，直接在“画面描述”里写想生成的画面。":
     "最初のラウンドで履歴画像がない場合は、「画像説明」に生成したい画面を直接書きます。",
   "生成完成后，在底部历史记录点击一张已完成图片；移动端从右侧历史抽屉点选。中间结果区会显示“已选基图”。":
     "生成完了後、下部履歴で完了画像をクリックします。モバイルでは右側履歴ドロワーから選択します。中央結果領域に「ベース画像を選択済み」と表示されます。",
-  "如需更多视觉参考，在右侧“会话参考图”上传图片，或从商品参考图区域选择已有素材；移动端在底部生成面板的生成设置标签页操作这些区域。":
-    "より多くの視覚参考が必要な場合は、右側の「セッション参考画像」に画像をアップロードするか、商品参考画像領域から既存素材を選びます。モバイルでは下部生成パネルの生成設定タブで操作します。",
+  "如需更多视觉参考，在右侧“会话参考图”上传图片；移动端在底部生成面板的生成设置标签页操作。":
+    "より多くの視覚参考が必要な場合は、右側の「セッション参考画像」に画像をアップロードします。モバイルでは下部生成パネルの生成設定タブで操作します。",
   "勾选参考图后再提交生成。系统会把基图和已选参考图一起作为本轮上下文。":
     "参考画像にチェックを入れてから生成を送信します。システムはベース画像と選択済み参考画像をこのラウンドのコンテキストとしてまとめて使います。",
   "图片上下文数量": "画像コンテキスト数",
@@ -1595,8 +1594,8 @@ const HELP_DOC_JA_TRANSLATIONS: Record<string, string> = {
   "单轮最多选择 6 张图片上下文，这个数量包含历史基图和显式选择的参考图。如果已经选了基图，最多还能再选 5 张参考图。":
     "1ラウンドで選択できる画像コンテキストは最大6枚です。この数には履歴ベース画像と明示的に選択した参考画像が含まれます。ベース画像を選択済みの場合、追加できる参考画像は最大5枚です。",
   "想保留主体角度时，优先选择历史结果作为基图。": "主体の角度を保ちたい場合は、履歴結果をベース画像として優先的に選びます。",
-  "想补充材质、风格、背景或姿态时，选择会话参考图或商品参考图。":
-    "素材、スタイル、背景、ポーズを補足したい場合は、セッション参考画像または商品参考画像を選びます。",
+  "想补充材质、风格、背景或姿态时，选择会话参考图。":
+    "素材、スタイル、背景、ポーズを補足したい場合は、セッション参考画像を選びます。",
   "如果结果偏离太多，减少参考图数量通常比继续堆参考图更容易定位问题。":
     "結果が大きくずれる場合、参考画像を増やし続けるより枚数を減らした方が原因を特定しやすくなります。",
   "生成设置": "生成設定",
@@ -1604,12 +1603,9 @@ const HELP_DOC_JA_TRANSLATIONS: Record<string, string> = {
     "画像説明、サイズ、候補数、高度な画像ツールパラメータが画像生成チャットタスクにどう影響するかを説明します。",
   "字段说明": "項目説明",
   "设置": "設定",
-  "商品关联": "商品関連付け",
-  "商品详情进入时自动关联当前商品；全局入口进入时，可在生成设置里选择目标商品，之后才能把结果保存为商品参考图。":
-    "商品詳細から入ると現在の商品に自動関連付けされます。全体入口から入る場合は、生成設定で対象商品を選ぶと、その後で結果を商品参考画像として保存できます。",
-  "商品参考图": "商品参考画像",
-  "显示目标商品已有参考图和主图参考；选中已完成候选后，可把候选加入参考图或设为商品主图参考。":
-    "対象商品の既存参考画像とメイン画像参考を表示します。完了候補を選択すると、候補を参考画像に追加したり、商品メイン画像参考に設定したりできます。",
+  "写回目标商品": "書き戻し対象商品",
+  "在生成设置里选择目标商品后，才能把结果保存为商品参考图或商品主图参考。":
+    "生成設定で対象商品を選ぶと、結果を商品参考画像または商品メイン画像参考として保存できます。",
   "会话参考图": "セッション参考画像",
   "上传本会话可复用的参考图，并勾选参与本轮生成。单轮图片上下文数量仍受 6 张限制。":
     "このセッションで再利用できる参考画像をアップロードし、このラウンドの生成に参加させるものをチェックします。1ラウンドの画像コンテキスト数は引き続き6枚に制限されます。",
@@ -1623,8 +1619,8 @@ const HELP_DOC_JA_TRANSLATIONS: Record<string, string> = {
   "决定本轮创建多少张候选。多候选会在历史记录中显示多个占位，完成后分别替换为结果。":
     "このラウンドで作成する候補数を決めます。複数候補の場合、履歴に複数のプレースホルダーが表示され、完了後にそれぞれ結果へ置き換わります。",
   "生成设置 / 高级标签页": "生成設定 / 高度タブ",
-  "生成设置包含商品、参考图、描述、尺寸和候选数量；高级包含供应商图片工具参数。":
-    "生成設定には商品、参考画像、説明、サイズ、候補数が含まれ、高度タブにはサプライヤー画像ツールパラメータが含まれます。",
+  "生成设置包含写回目标商品、会话参考图、描述、尺寸和候选数量；高级包含供应商图片工具参数。":
+    "生成設定には書き戻し対象商品、セッション参考画像、説明、サイズ、候補数が含まれ、高度タブにはサプライヤー画像ツールパラメータが含まれます。",
   "图片工具参数": "画像ツールパラメータ",
   "只显示配置页“可用 Tool 字段”中启用的字段，例如质量、格式、背景、输入保真度等。未启用字段不会提交。":
     "設定ページの「利用可能な Tool 項目」で有効化された項目だけを表示します。例：品質、形式、背景、入力忠実度など。無効な項目は送信されません。",
@@ -1667,11 +1663,11 @@ const HELP_DOC_JA_TRANSLATIONS: Record<string, string> = {
   "下载": "ダウンロード",
   "下载当前选中候选的原图。": "現在選択中の候補の元画像をダウンロードします。",
   "投至画廊": "ギャラリーへ送る",
-  "把当前候选保存到全局画廊，保留来源会话、商品、提示词、尺寸、模型和下载入口。":
-    "現在の候補を全体ギャラリーに保存し、ソースセッション、商品、プロンプト、サイズ、モデル、ダウンロード入口を保持します。",
-  "加入参考图 / 保存为参考图": "参考画像に追加 / 参考画像として保存",
-  "把当前候选写入目标商品的参考图素材，之后商品工作台和文/图生图都可以继续引用。":
-    "現在の候補を対象商品の参考画像素材へ書き込み、その後は商品ワークベンチと画像生成チャットの両方で引き続き参照できます。",
+  "把当前候选保存到全局画廊，保留来源会话、提示词、尺寸、模型和下载入口。":
+    "現在の候補を全体ギャラリーに保存し、ソースセッション、プロンプト、サイズ、モデル、ダウンロード入口を保持します。",
+  "保存为参考图": "参考画像として保存",
+  "把当前候选写入目标商品的参考图素材，之后商品工作台可以继续引用。":
+    "現在の候補を対象商品の参考画像素材へ書き込み、その後は商品ワークベンチで引き続き参照できます。",
   "设为商品主图参考": "商品メイン画像参考に設定",
   "把当前候选保存为商品主图参考素材，用于后续商品素材链路。":
     "現在の候補を商品メイン画像参考素材として保存し、後続の商品素材フローに使います。",
@@ -1694,13 +1690,13 @@ const HELP_DOC_JA_TRANSLATIONS: Record<string, string> = {
   "生成入口一直可用。选中已完成图片后，快捷条增加下载和投至画廊。":
     "生成入口は常に利用できます。完了画像を選択すると、ショートカットバーにダウンロードとギャラリー投入が追加されます。",
   "底部生成面板": "下部生成パネル",
-  "生成设置标签页管理商品关联、商品参考图、会话参考图、画面描述、尺寸和候选数量；高级标签页管理图片工具参数。面板底部按钮提交本轮生成。":
-    "生成設定タブで商品関連付け、商品参考画像、セッション参考画像、画像説明、サイズ、候補数を管理し、高度タブで画像ツールパラメータを管理します。パネル下部のボタンでこのラウンドの生成を送信します。",
+  "生成设置标签页管理写回目标商品、会话参考图、画面描述、尺寸和候选数量；高级标签页管理图片工具参数。面板底部按钮提交本轮生成。":
+    "生成設定タブで書き戻し対象商品、セッション参考画像、画像説明、サイズ、候補数を管理し、高度タブで画像ツールパラメータを管理します。パネル下部のボタンでこのラウンドの生成を送信します。",
   "画廊用于收藏满意的文/图生图结果，方便集中浏览和下载。":
     "ギャラリーは満足した画像生成チャット結果を保存し、まとめて閲覧・ダウンロードするために使います。",
   "保存到画廊": "ギャラリーへ保存",
-  "文/图生图结果可以保存到画廊。画廊条目保留来源会话、关联商品、提示词、尺寸、模型和下载入口。":
-    "画像生成チャットの結果はギャラリーに保存できます。ギャラリー項目はソースセッション、関連商品、プロンプト、サイズ、モデル、ダウンロード入口を保持します。",
+  "文/图生图结果可以保存到画廊。画廊条目保留来源会话、提示词、尺寸、模型和下载入口。":
+    "画像生成チャットの結果はギャラリーに保存できます。ギャラリー項目はソースセッション、プロンプト、サイズ、モデル、ダウンロード入口を保持します。",
   "适合保存暂时不挂回商品、但以后可能复用的背景或构图。":
     "今すぐ商品に紐づけないが、後で再利用する可能性がある背景や構図の保存に適しています。",
   "适合保存需要集中给别人挑选的候选图。": "他の人にまとめて選んでもらう候補画像の保存に適しています。",
@@ -1826,8 +1822,8 @@ const HELP_DOC_JA_TRANSLATIONS: Record<string, string> = {
   "海报生图提示词模板": "ポスター画像生成プロンプトテンプレート",
   "用于工作台 AI 生图。常用占位符包括 `instruction`、`size`、`context_block`、`reference_policy`、`kind` 等。":
     "ワークベンチ AI 画像生成に使います。よく使うプレースホルダーには `instruction`、`size`、`context_block`、`reference_policy`、`kind` などがあります。",
-  "图片改图提示词模板": "画像編集プロンプトテンプレート",
-  "用于工作台参考图/生成图继续生图。适合带上游文案或参考图上下文的场景。":
+  "工作台改图提示词模板": "画像編集プロンプトテンプレート",
+  "用于工作台带参考图或上游上下文的改图任务。适合带上游文案或参考图上下文的场景。":
     "ワークベンチ参考画像/生成画像から続けて画像生成するために使います。上流コピーや参考画像コンテキストを持つシーンに適しています。",
   "工作台视觉参考规则": "ワークベンチ視覚参考ルール",
   "填入工作台生图模板的 `reference_policy` 占位符，用于控制视觉参考优先级规则。":

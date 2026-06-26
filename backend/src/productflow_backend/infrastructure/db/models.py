@@ -158,10 +158,6 @@ class Product(Base, TimestampMixin):
         back_populates="product",
         cascade="all, delete-orphan",
     )
-    image_sessions: Mapped[list[ImageSession]] = relationship(
-        back_populates="product",
-        cascade="all, delete-orphan",
-    )
     workflows: Mapped[list[ProductWorkflow]] = relationship(
         back_populates="product",
         cascade="all, delete-orphan",
@@ -311,11 +307,6 @@ class WorkflowNodeRun(Base):
         ForeignKey("poster_variants.id", ondelete="SET NULL"),
         nullable=True,
     )
-    image_session_asset_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey("image_session_assets.id", ondelete="SET NULL"),
-        nullable=True,
-    )
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -423,14 +414,8 @@ class ImageSession(Base, TimestampMixin):
     __tablename__ = "image_sessions"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    product_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey("products.id", ondelete="CASCADE"),
-        nullable=True,
-    )
     title: Mapped[str] = mapped_column(String(255))
 
-    product: Mapped[Product | None] = relationship(back_populates="image_sessions")
     assets: Mapped[list[ImageSessionAsset]] = relationship(
         back_populates="session",
         cascade="all, delete-orphan",

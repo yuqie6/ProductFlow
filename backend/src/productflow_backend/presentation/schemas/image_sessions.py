@@ -87,7 +87,6 @@ class ImageSessionGenerationTaskResponse(BaseModel):
 
 class ImageSessionSummaryResponse(BaseModel):
     id: str
-    product_id: str | None = None
     title: str
     rounds_count: int
     latest_generated_asset: ImageSessionAssetResponse | None = None
@@ -97,7 +96,6 @@ class ImageSessionSummaryResponse(BaseModel):
 
 class ImageSessionDetailResponse(BaseModel):
     id: str
-    product_id: str | None = None
     title: str
     assets: list[ImageSessionAssetResponse]
     rounds: list[ImageSessionRoundResponse]
@@ -108,7 +106,6 @@ class ImageSessionDetailResponse(BaseModel):
 
 class ImageSessionStatusResponse(BaseModel):
     id: str
-    product_id: str | None = None
     title: str
     rounds_count: int
     latest_round_id: str | None = None
@@ -124,7 +121,8 @@ class ImageSessionListResponse(BaseModel):
 
 
 class CreateImageSessionRequest(BaseModel):
-    product_id: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
     title: str | None = Field(default=None, max_length=255)
 
 
@@ -176,7 +174,9 @@ class GenerateImageSessionRoundRequest(BaseModel):
 
 
 class AttachImageSessionAssetRequest(BaseModel):
-    product_id: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    product_id: str = Field(min_length=1)
     target: Literal["reference", "main_source"]
 
 
@@ -298,7 +298,6 @@ def serialize_image_session_summary(image_session: ImageSession) -> ImageSession
     latest_round = max(image_session.rounds, key=lambda item: item.created_at, default=None)
     return ImageSessionSummaryResponse(
         id=image_session.id,
-        product_id=image_session.product_id,
         title=image_session.title,
         rounds_count=len(image_session.rounds),
         latest_generated_asset=(serialize_image_session_asset(latest_round.generated_asset) if latest_round else None),
@@ -318,7 +317,6 @@ def serialize_image_session_detail(image_session: ImageSession) -> ImageSessionD
     }
     return ImageSessionDetailResponse(
         id=image_session.id,
-        product_id=image_session.product_id,
         title=image_session.title,
         assets=[serialize_image_session_asset(item) for item in assets],
         rounds=[serialize_image_session_round(item) for item in rounds],
@@ -343,7 +341,6 @@ def serialize_image_session_status(snapshot: ImageSessionStatusSnapshot) -> Imag
     }
     return ImageSessionStatusResponse(
         id=image_session.id,
-        product_id=image_session.product_id,
         title=image_session.title,
         rounds_count=snapshot.rounds_count,
         latest_round_id=snapshot.latest_round_id,

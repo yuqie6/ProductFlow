@@ -87,7 +87,7 @@
 - User templates must reject empty selections, duplicate node ids, missing active workflows, nodes outside the current
   active workflow, and selections containing `product_context`. Known artifact-specific config fields such as
   `source_asset_ids`, `source_poster_variant_id`, `copy_set_id`, `poster_variant_id`,
-  `generated_poster_variant_ids`, `filled_source_asset_ids`, and image-session asset ids must be stripped while preserving
+  `generated_poster_variant_ids` and `filled_source_asset_ids` must be stripped while preserving
   reusable fields such as `role`, `label`, `instruction`, `size`, and normalized `tool_options`. Unknown config keys ending
   in `_id`, `_ids`, `_url`, or `_path` must be rejected so new artifact references do not silently enter templates.
 - Applying a user template must go through the same template application path as built-in templates and must create
@@ -153,7 +153,7 @@
   `reference_image` nodes.
 - Bad: a template stores a hidden chain in frontend state and creates only one placeholder node in the database.
 - Bad: a template uses a new enum value before the explicit template allowlist and tests are updated.
-- Bad: a user template stores output JSON, run results, source asset ids, poster ids, image-session ids, product ids, or
+- Bad: a user template stores output JSON, run results, source asset ids, poster ids, product ids, or
   workflow ids and reuses those artifacts when applied to another product.
 
 ### 6. Tests Required
@@ -450,7 +450,7 @@ returns the normal `ProductWorkflow`.
   - `workflow_nodes(workflow_id, node_type, title, position_x, position_y, config_json, status, output_json, failure_reason)`.
   - `workflow_edges(workflow_id, source_node_id, target_node_id, source_handle, target_handle)`.
   - `workflow_runs(workflow_id, status, started_at, finished_at, failure_reason)`.
-  - `workflow_node_runs(workflow_run_id, node_id, status, output_json, copy_set_id, poster_variant_id, image_session_asset_id)`.
+  - `workflow_node_runs(workflow_run_id, node_id, status, output_json, copy_set_id, poster_variant_id)`.
 - APIs:
   - `GET /api/products/{product_id}/workflow`
   - `GET /api/products/{product_id}/workflow/status`

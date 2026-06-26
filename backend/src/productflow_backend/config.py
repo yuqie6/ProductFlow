@@ -449,11 +449,11 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
     ),
     ConfigDefinition(
         key="prompt_poster_image_edit_template",
-        label="图片改图提示词模板",
+        label="工作台改图提示词模板",
         category="提示词",
         input_type="textarea",
         description=(
-            "用于工作台参考图/生成图继续生图。可用占位符：instruction、size、context_block、"
+            "用于工作台带参考图或上游上下文的改图任务。可用占位符：instruction、size、context_block、"
             "reference_policy、kind、kind_label、kind_requirements。"
         ),
     ),

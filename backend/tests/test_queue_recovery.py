@@ -16,7 +16,7 @@ def test_recover_unfinished_image_session_generation_tasks_requeues_queued_tasks
     configured_env: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    image_session = create_image_session(db_session, product_id=None, title="queued 恢复")
+    image_session = create_image_session(db_session, title="queued 恢复")
     result = create_image_session_generation_task(
         db_session,
         image_session_id=image_session.id,
@@ -42,7 +42,7 @@ def test_recover_unfinished_image_session_generation_tasks_resets_stale_running_
     configured_env: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    image_session = create_image_session(db_session, product_id=None, title="running 恢复")
+    image_session = create_image_session(db_session, title="running 恢复")
     result = create_image_session_generation_task(
         db_session,
         image_session_id=image_session.id,
@@ -79,7 +79,7 @@ def test_recover_unfinished_image_session_generation_tasks_uses_progress_heartbe
     configured_env: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    image_session = create_image_session(db_session, product_id=None, title="heartbeat 恢复")
+    image_session = create_image_session(db_session, title="heartbeat 恢复")
     result = create_image_session_generation_task(
         db_session,
         image_session_id=image_session.id,
@@ -113,7 +113,7 @@ def test_recover_unfinished_image_session_generation_tasks_fails_stale_partial_t
     configured_env: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    image_session = create_image_session(db_session, product_id=None, title="partial heartbeat 恢复")
+    image_session = create_image_session(db_session, title="partial heartbeat 恢复")
     result = create_image_session_generation_task(
         db_session,
         image_session_id=image_session.id,
@@ -154,7 +154,7 @@ def test_recover_unfinished_image_session_generation_tasks_uses_runtime_stale_cu
     configured_env: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    image_session = create_image_session(db_session, product_id=None, title="runtime cutoff 恢复")
+    image_session = create_image_session(db_session, title="runtime cutoff 恢复")
     result = create_image_session_generation_task(
         db_session,
         image_session_id=image_session.id,

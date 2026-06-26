@@ -63,7 +63,7 @@ Global generation admission is implemented by `application/admission.py`, counti
 
 Frontend code lives under `web/src/`:
 
-- `App.tsx`: route entrypoint, including `/login`, `/products`, `/products/new`, `/products/:productId`, `/image-chat`, `/products/:productId/image-chat`, `/gallery`, `/help`, and `/settings`.
+- `App.tsx`: route entrypoint, including `/login`, `/products`, `/products/new`, `/products/:productId`, `/image-chat`, `/gallery`, `/help`, and `/settings`.
 - `pages/`: login, product list, product creation, product detail, iterative image generation, gallery, help, and settings pages.
 - `pages/product-detail/`: product detail workbench page-local components, canvas helpers, download helpers, tests, and types.
 - `pages/image-chat/`: iterative image status merge and branch-selection helpers.
@@ -127,7 +127,7 @@ The gallery has landed as both an independent page and backend resource:
 
 - `GET /api/gallery` lists collected generated images.
 - `POST /api/gallery` saves iterative image generated assets as gallery entries.
-- `ImageGalleryEntry` keeps source session, round, linked product, prompt, size, model, and download entrypoint.
+- `ImageGalleryEntry` keeps source session, round, prompt, size, model, and download entrypoint.
 - Frontend `/gallery` provides centralized browsing and preview.
 
 ### 3.6 Lightweight Polling While Running

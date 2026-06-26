@@ -254,7 +254,7 @@ def test_first_queued_image_session_task_without_base_still_executes_if_later_ta
     )
     from productflow_backend.domain.enums import JobStatus
 
-    image_session = create_image_session(db_session, product_id=None, title="首任务 worker 校验")
+    image_session = create_image_session(db_session, title="首任务 worker 校验")
     result = create_image_session_generation_task(
         db_session,
         image_session_id=image_session.id,
@@ -701,7 +701,7 @@ def test_image_session_generation_cancel_after_file_save_does_not_persist_round_
         generate_success,
     )
 
-    image_session = create_image_session(db_session, product_id=None, title="保存后取消")
+    image_session = create_image_session(db_session, title="保存后取消")
     result = create_image_session_generation_task(
         db_session,
         image_session_id=image_session.id,
@@ -752,7 +752,7 @@ def test_image_session_generation_cancelled_task_is_not_overwritten_by_late_fail
     )
     from productflow_backend.domain.enums import JobStatus
 
-    image_session = create_image_session(db_session, product_id=None, title="取消后失败不覆盖")
+    image_session = create_image_session(db_session, title="取消后失败不覆盖")
     result = create_image_session_generation_task(
         db_session,
         image_session_id=image_session.id,
@@ -1022,7 +1022,7 @@ def test_image_session_worker_auto_retry_exposes_last_failure_metadata(
         lambda task_id: sent.append(task_id),
     )
 
-    image_session = create_image_session(db_session, product_id=None, title="自动重试元数据")
+    image_session = create_image_session(db_session, title="自动重试元数据")
     result = create_image_session_generation_task(
         db_session,
         image_session_id=image_session.id,
@@ -1072,7 +1072,7 @@ def test_image_session_worker_non_retryable_policy_failure_stops_without_auto_re
         "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
         fail_generate,
     )
-    image_session = create_image_session(db_session, product_id=None, title="策略拒绝")
+    image_session = create_image_session(db_session, title="策略拒绝")
     result = create_image_session_generation_task(
         db_session,
         image_session_id=image_session.id,
@@ -1131,7 +1131,7 @@ def test_image_session_worker_non_retryable_parameter_failure_stops_without_auto
         lambda task_id: sent.append(task_id),
     )
 
-    image_session = create_image_session(db_session, product_id=None, title="参数拒绝")
+    image_session = create_image_session(db_session, title="参数拒绝")
     result = create_image_session_generation_task(
         db_session,
         image_session_id=image_session.id,
@@ -1243,7 +1243,7 @@ def test_image_session_worker_surfaces_completed_text_without_image_reason(
         fail_with_text_output,
     )
 
-    image_session = create_image_session(db_session, product_id=None, title="provider text only")
+    image_session = create_image_session(db_session, title="provider text only")
     result = create_image_session_generation_task(
         db_session,
         image_session_id=image_session.id,
@@ -1296,7 +1296,7 @@ def test_image_session_worker_partial_retry_continues_remaining_candidates_witho
         generate_then_timeout,
     )
 
-    image_session = create_image_session(db_session, product_id=None, title="部分成功超时")
+    image_session = create_image_session(db_session, title="部分成功超时")
     result = create_image_session_generation_task(
         db_session,
         image_session_id=image_session.id,
@@ -1354,7 +1354,7 @@ def test_image_session_worker_marks_task_failed_when_time_limit_raises_outside_c
         lambda *args, **kwargs: (_ for _ in ()).throw(TimeLimitExceeded()),
     )
 
-    image_session = create_image_session(db_session, product_id=None, title="整体超时")
+    image_session = create_image_session(db_session, title="整体超时")
     result = create_image_session_generation_task(
         db_session,
         image_session_id=image_session.id,
@@ -1393,7 +1393,7 @@ def test_image_session_worker_failure_settles_task_when_parent_session_deleted(
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("provider failed")),
     )
 
-    image_session = create_image_session(db_session, product_id=None, title="父会话已删除")
+    image_session = create_image_session(db_session, title="父会话已删除")
     result = create_image_session_generation_task(
         db_session,
         image_session_id=image_session.id,
@@ -1454,7 +1454,7 @@ def test_image_session_worker_failure_settlement_retries_after_stale_data_error(
 
     monkeypatch.setattr(image_session_app, "_handle_image_generation_task_failure", flaky_handle_failure)
 
-    image_session = create_image_session(db_session, product_id=None, title="stale 收口")
+    image_session = create_image_session(db_session, title="stale 收口")
     result = create_image_session_generation_task(
         db_session,
         image_session_id=image_session.id,
@@ -1522,7 +1522,7 @@ def test_image_session_worker_persists_provider_progress_heartbeat(
         generate_with_progress,
     )
 
-    image_session = create_image_session(db_session, product_id=None, title="provider progress")
+    image_session = create_image_session(db_session, title="provider progress")
     result = create_image_session_generation_task(
         db_session,
         image_session_id=image_session.id,
@@ -1557,7 +1557,7 @@ def test_image_session_worker_duplicate_message_noops_terminal_task(
         execute_image_session_generation_task,
     )
 
-    image_session = create_image_session(db_session, product_id=None, title="重复消息")
+    image_session = create_image_session(db_session, title="重复消息")
     result = create_image_session_generation_task(
         db_session,
         image_session_id=image_session.id,
@@ -1588,7 +1588,7 @@ def test_image_session_worker_duplicate_message_noops_running_task(
     )
     from productflow_backend.domain.enums import JobStatus
 
-    image_session = create_image_session(db_session, product_id=None, title="running 重复消息")
+    image_session = create_image_session(db_session, title="running 重复消息")
     result = create_image_session_generation_task(
         db_session,
         image_session_id=image_session.id,
@@ -1627,7 +1627,7 @@ def test_image_session_worker_defers_queued_task_when_global_running_capacity_fu
     from productflow_backend.domain.enums import JobStatus
     from productflow_backend.infrastructure.db.models import AppSetting
 
-    image_session = create_image_session(db_session, product_id=None, title="同会话并发上限")
+    image_session = create_image_session(db_session, title="同会话并发上限")
     running = ImageSessionGenerationTask(
         session_id=image_session.id,
         status=JobStatus.RUNNING,
@@ -1777,7 +1777,7 @@ def test_image_session_openai_images_uses_selected_base_and_references_only(
 
     monkeypatch.setattr("productflow_backend.infrastructure.image.images_provider.OpenAI", DummyOpenAI)
 
-    image_session = create_image_session(db_session, product_id=None, title="Images API 分支测试")
+    image_session = create_image_session(db_session, title="Images API 分支测试")
     first = generate_image_session_round(
         db_session,
         image_session_id=image_session.id,
@@ -1894,7 +1894,7 @@ def test_image_session_google_gemini_uses_selected_base_and_references_only(
         fake_generate_image,
     )
 
-    image_session = create_image_session(db_session, product_id=None, title="Gemini 分支测试")
+    image_session = create_image_session(db_session, title="Gemini 分支测试")
     first = generate_image_session_round(
         db_session,
         image_session_id=image_session.id,
@@ -2333,7 +2333,7 @@ def test_image_session_result_can_write_back_to_product(configured_env: Path) ->
     assert create_product_response.status_code == 201
     product_id = create_product_response.json()["id"]
 
-    created = client.post("/api/image-sessions", json={"product_id": product_id})
+    created = client.post("/api/image-sessions", json={})
     assert created.status_code == 201
     session_id = created.json()["id"]
 
@@ -2347,7 +2347,7 @@ def test_image_session_result_can_write_back_to_product(configured_env: Path) ->
 
     attach_reference = client.post(
         f"/api/image-sessions/{session_id}/assets/{generated_asset_id}/attach-to-product",
-        json={"target": "reference"},
+        json={"target": "reference", "product_id": product_id},
     )
     assert attach_reference.status_code == 200
     assert attach_reference.json()["message"] == "已加入商品参考图"
@@ -2361,7 +2361,7 @@ def test_image_session_result_can_write_back_to_product(configured_env: Path) ->
 
     attach_main = client.post(
         f"/api/image-sessions/{session_id}/assets/{generated_asset_id}/attach-to-product",
-        json={"target": "main_source"},
+        json={"target": "main_source", "product_id": product_id},
     )
     assert attach_main.status_code == 200
     assert attach_main.json()["message"] == "已设为商品主图"

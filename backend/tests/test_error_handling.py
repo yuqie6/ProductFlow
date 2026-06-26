@@ -223,7 +223,7 @@ def test_high_risk_business_paths_raise_typed_validation_errors(db_session, conf
         )
     db_session.rollback()
 
-    image_session = create_image_session(db_session, product_id=None, title="typed error 生图")
+    image_session = create_image_session(db_session, title="typed error 生图")
     with pytest.raises(BusinessValidationError, match="一次生成数量必须在 1-10 张之间"):
         submit_image_session_generation_task(
             db_session,

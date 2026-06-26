@@ -16,7 +16,6 @@ function metadataRows(entry: GalleryEntry, locale: ReturnType<typeof useI18n>["l
     ["gallery.meta.size", galleryEntrySizeLabel(entry, locale)],
     ["gallery.meta.model", [entry.provider_name, entry.model_name].filter(Boolean).join(" / ") || t("common.unknown")],
     ["gallery.meta.session", entry.image_session_title],
-    ["gallery.meta.product", entry.product_name ?? t("gallery.global")],
     [
       "gallery.meta.candidate",
       entry.candidate_index != null && entry.candidate_count != null

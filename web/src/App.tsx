@@ -92,10 +92,6 @@ function AppRoutes() {
           element={authenticated ? <SettingsPage /> : <Navigate to="/login" replace />}
         />
         <Route
-          path="/products/:productId/image-chat"
-          element={authenticated ? <ImageChatPage /> : <Navigate to="/login" replace />}
-        />
-        <Route
           path="/products/:productId"
           element={authenticated ? <ProductDetailPage /> : <Navigate to="/login" replace />}
         />

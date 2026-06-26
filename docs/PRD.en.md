@@ -38,7 +38,7 @@ Non-target users: teams that need multi-tenant isolation, complex RBAC, payment 
 4. Continue from any generated candidate, or explicitly select reference images for the next generation round.
 5. View queued/running/failed state; after task completion, the page refreshes new candidates automatically.
 6. Attach satisfactory generated images back to a product as reference assets, save them as product main-image references, or collect them in the gallery.
-7. On mobile, use a main-view, drawer, and bottom-sheet layout: the top bar exposes the session drawer, current session title/rename, and history drawer; the main view keeps status, current result, and provider notes; the left drawer manages sessions; the narrow right drawer selects branch/candidate history; the bottom generation sheet carries product linking, references, prompt, size, candidate count, and advanced image tool parameters.
+7. On mobile, use a main-view, drawer, and bottom-sheet layout: the top bar exposes the session drawer, current session title/rename, and history drawer; the main view keeps status, current result, and provider notes; the left drawer manages sessions; the narrow right drawer selects branch/candidate history; the bottom generation sheet carries the write-back target product, references, prompt, size, candidate count, and advanced image tool parameters.
 
 ### 3.3 Product DAG Workflow
 
@@ -55,7 +55,7 @@ Non-target users: teams that need multi-tenant isolation, complex RBAC, payment 
 
 1. Save generated image-session results to the gallery.
 2. Browse collected generated images at `/gallery` by generation time.
-3. Gallery entries keep source session, linked product, prompt, size, model, and download entrypoint.
+3. Gallery entries keep source session, prompt, size, model, and download entrypoint.
 
 ### 3.5 In-Product Help
 
@@ -88,7 +88,7 @@ Implemented frontend pages:
 - `/gallery`: generated image gallery.
 - `/help`: in-product help page.
 - `/settings`: provider, model, upload limit, job retry, and other business configuration.
-- `/image-chat` and `/products/:productId/image-chat`: iterative image generation and attaching assets back to products.
+- `/image-chat`: iterative image generation; generated assets can be explicitly attached back to products.
 
 ## 6. V1 Implemented Acceptance Surface
 

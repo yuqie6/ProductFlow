@@ -403,7 +403,6 @@ export function mergeProductWorkflowStatusIntoDetail(
           output_json: existingNodeRun?.output_json ?? null,
           copy_set_id: existingNodeRun?.copy_set_id ?? null,
           poster_variant_id: existingNodeRun?.poster_variant_id ?? null,
-          image_session_asset_id: existingNodeRun?.image_session_asset_id ?? null,
         };
       }),
     };

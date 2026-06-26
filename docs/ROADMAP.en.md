@@ -14,7 +14,7 @@ Completed baseline capabilities:
 - Copy generation, editing, confirmation, and history.
 - Template poster generation, AI image-provider poster generation, and poster download.
 - Iterative image sessions and attaching generated images back to products.
-- Generated image gallery: iterative image results can be collected at `/gallery`, keeping source session, product, prompt, size, model, and download entrypoint.
+- Generated image gallery: iterative image results can be collected at `/gallery`, keeping source session, prompt, size, model, and download entrypoint.
 - Product DAG workflow editing, execution, persistent state, and recovery.
 - Shared top navigation.
 - ProductFlow workbench canvas interactions: desktop mouse-wheel zoom, left-drag pan, node drag positioning, box selection / multi-select, and edge drag creation/deletion; mobile Browse, Edit, and Select modes, touch drag/edge creation, and two-finger pinch zoom.
@@ -51,7 +51,7 @@ Completed baseline capabilities:
 - Continue improving DAG node run logs and failure reason display; categorized failure messages and workflow retry/cancel actions already exist.
 - Add node-level skip and duplicate capabilities; workflow-level retry/cancel already exists.
 - Continue optimizing partial loading and component boundaries on large product detail pages; active full-workflow polling has already been replaced with lightweight status polling.
-- Continue improving asset reuse between image sessions and product workflows, such as batch attach, version comparison, and clearer source labels.
+- Continue improving batch selection, version comparison, and source labels after iterative image results are attached back to products.
 - Add more frontend regression coverage for the template panel, user-template saving, and key workbench component interactions; core canvas selection/drag helpers already have unit coverage.
 
 ### 4. Documentation and Productization

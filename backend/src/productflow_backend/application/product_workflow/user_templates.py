@@ -34,8 +34,6 @@ ARTIFACT_SPECIFIC_CONFIG_KEYS = frozenset(
         "filled_reference_node_ids",
         "filled_source_asset_ids",
         "generated_poster_variant_ids",
-        "image_session_asset_id",
-        "image_session_asset_ids",
         "node_id",
         "poster_variant_id",
         "poster_variant_ids",

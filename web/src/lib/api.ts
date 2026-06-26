@@ -221,11 +221,10 @@ export const api = {
   confirmCopySet(copySetId: string): Promise<CopySet> {
     return request(`/api/copy-sets/${copySetId}/confirm`, { method: "POST" });
   },
-  listImageSessions(productId?: string): Promise<ImageSessionListResponse> {
-    const query = productId ? `?product_id=${encodeURIComponent(productId)}` : "";
-    return request(`/api/image-sessions${query}`);
+  listImageSessions(): Promise<ImageSessionListResponse> {
+    return request("/api/image-sessions");
   },
-  createImageSession(input: { product_id?: string; title?: string }): Promise<ImageSessionDetail> {
+  createImageSession(input: { title?: string }): Promise<ImageSessionDetail> {
     return request("/api/image-sessions", {
       method: "POST",
       body: JSON.stringify(input),
@@ -284,7 +283,7 @@ export const api = {
   attachImageSessionAssetToProduct(
     sessionId: string,
     assetId: string,
-    input: { product_id?: string; target: "reference" | "main_source" },
+    input: { product_id: string; target: "reference" | "main_source" },
   ): Promise<ProductWritebackResponse> {
     return request(`/api/image-sessions/${sessionId}/assets/${assetId}/attach-to-product`, {
       method: "POST",

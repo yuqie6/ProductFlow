@@ -28,7 +28,7 @@ const navItems = [
     labelKey: "nav.products",
     to: "/products",
     icon: LayoutGrid,
-    match: (pathname: string) => pathname.startsWith("/products") && !pathname.endsWith("/image-chat"),
+    match: (pathname: string) => pathname.startsWith("/products"),
   },
   {
     labelKey: "nav.imageChat",

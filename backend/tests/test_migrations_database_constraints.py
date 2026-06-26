@@ -481,6 +481,41 @@ def test_gallery_migration_schema_and_downgrade_support_sqlite(tmp_path: Path, m
     get_settings.cache_clear()
 
 
+def test_image_session_product_scope_cleanup_migration_supports_sqlite(tmp_path: Path, monkeypatch) -> None:
+    database_path = tmp_path / "image-session-product-scope-cleanup.db"
+    storage_root = tmp_path / "storage"
+    monkeypatch.setenv("ADMIN_ACCESS_KEY", "super-secret-admin-key")
+    monkeypatch.setenv("SESSION_SECRET", "super-secret-session-key-123")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path}")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/9")
+    monkeypatch.setenv("STORAGE_ROOT", str(storage_root))
+    get_settings.cache_clear()
+
+    backend_dir = Path(__file__).resolve().parents[1]
+    config = Config(str(backend_dir / "alembic.ini"))
+    config.set_main_option("script_location", str(backend_dir / "alembic"))
+    command.upgrade(config, "head")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    inspector = sa.inspect(engine)
+    workflow_node_run_columns = {column["name"] for column in inspector.get_columns("workflow_node_runs")}
+    image_session_columns = {column["name"] for column in inspector.get_columns("image_sessions")}
+    assert "image_session_asset_id" not in workflow_node_run_columns
+    assert "product_id" not in image_session_columns
+
+    engine.dispose()
+    command.downgrade(config, "20260513_0028")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    inspector = sa.inspect(engine)
+    workflow_node_run_columns = {column["name"] for column in inspector.get_columns("workflow_node_runs")}
+    image_session_columns = {column["name"] for column in inspector.get_columns("image_sessions")}
+    assert "image_session_asset_id" in workflow_node_run_columns
+    assert "product_id" in image_session_columns
+    engine.dispose()
+    get_settings.cache_clear()
+
+
 def test_job_runs_drop_migration_and_downgrade_support_sqlite(tmp_path: Path, monkeypatch) -> None:
     database_path = tmp_path / "job-runs-drop.db"
     storage_root = tmp_path / "storage"

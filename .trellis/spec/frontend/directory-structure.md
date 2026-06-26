@@ -64,7 +64,7 @@ Routes are centralized in `web/src/App.tsx` inside `AppRoutes()`:
 - `/products/new` -> `ProductCreatePage`
 - `/products/:productId` -> `ProductDetailPage`
 - `/image-chat` -> standalone `ImageChatPage`
-- `/products/:productId/image-chat` -> product-scoped `ImageChatPage`
+- `/gallery` -> `GalleryPage`
 - `/help` -> `HelpPage`
 - `/settings` -> `SettingsPage`
 

@@ -42,7 +42,7 @@ The route layer only handles input adaptation, authentication, error mapping, an
 
 Frontend code lives under `web/src/`:
 
-- `pages/`: login, product list, product creation, product detail, gallery, help, settings, and image-session pages (current routes include `/image-chat`, `/products/:productId/image-chat`, `/gallery`, `/help`, and `/settings`).
+- `pages/`: login, product list, product creation, product detail, gallery, help, settings, and image-session pages (current routes include `/image-chat`, `/gallery`, `/help`, and `/settings`).
 - `components/`: shared UI such as the top navigation, status tags, and image drag-and-drop upload area.
 - `lib/api.ts`: centralized REST API request wrapper.
 - `lib/types.ts`: frontend DTO types that must stay aligned with backend schemas.

@@ -12,10 +12,7 @@ from productflow_backend.application.product_workflow.templates import (
     resolve_product_creation_canvas_template,
 )
 from productflow_backend.application.time import now_utc
-from productflow_backend.domain.durable_generation_tasks import (
-    IMAGE_SESSION_GENERATION_TASK_CONTRACT,
-    WORKFLOW_RUN_GENERATION_TASK_CONTRACT,
-)
+from productflow_backend.domain.durable_generation_tasks import WORKFLOW_RUN_GENERATION_TASK_CONTRACT
 from productflow_backend.domain.enums import (
     CopyStatus,
     ProductWorkflowState,
@@ -26,8 +23,6 @@ from productflow_backend.domain.enums import (
 from productflow_backend.domain.errors import BusinessValidationError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     CopySet,
-    ImageSession,
-    ImageSessionGenerationTask,
     PosterVariant,
     Product,
     ProductWorkflow,
@@ -314,25 +309,10 @@ def delete_product(
     )
     if active_workflow_run is not None:
         raise BusinessValidationError("商品工作流运行中，稍后删除")
-    active_image_session_task = session.scalar(
-        select(ImageSessionGenerationTask)
-        .join(ImageSession, ImageSessionGenerationTask.session_id == ImageSession.id)
-        .where(
-            ImageSession.product_id == product_id,
-            ImageSessionGenerationTask.status.in_(IMAGE_SESSION_GENERATION_TASK_CONTRACT.active_statuses),
-        )
-    )
-    if active_image_session_task is not None:
-        raise BusinessValidationError("商品任务运行中，稍后删除")
-    image_session_ids = list(
-        session.scalars(select(ImageSession.id).where(ImageSession.product_id == product_id)).all()
-    )
     storage = storage or LocalStorage()
     session.delete(product)
     session.commit()
     storage.delete_product_tree(product_id)
-    for image_session_id in image_session_ids:
-        storage.delete_image_session_tree(image_session_id)
 
 
 def update_copy_set(

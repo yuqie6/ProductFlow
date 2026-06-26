@@ -17,7 +17,7 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { GalleryImagePreviewDialog } from "../components/GalleryImagePreviewDialog";
@@ -91,6 +91,7 @@ const DESKTOP_RESIZABLE_LAYOUT_QUERY = "(min-width: 1024px)";
 const PRODUCT_PICKER_LIST_STALE_TIME_MS = 60_000;
 const RUNTIME_CONFIG_STALE_TIME_MS = 5 * 60_000;
 const IMAGE_CHAT_GENERATION_COUNT_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+const IMAGE_CHAT_ROUTE_STATE_SCOPE = "standalone";
 
 type ImageChatResizeTarget = "left" | "right" | "history";
 
@@ -109,10 +110,6 @@ interface ImageChatRouteState {
 }
 
 const imageChatRouteStateCache = new Map<string, ImageChatRouteState>();
-
-function getImageChatRouteStateScope(productId: string | undefined): string {
-  return productId ? `product:${productId}` : "standalone";
-}
 
 function readImageChatRouteState(scope: string): ImageChatRouteState | undefined {
   const cached = imageChatRouteStateCache.get(scope);
@@ -140,16 +137,13 @@ function getSessionReferenceAssets(imageSession: ImageSessionDetail | undefined)
 
 type PendingDeleteAction =
   | { kind: "session"; sessionId: string }
-  | { kind: "productReference"; assetId: string }
   | { kind: "sessionReference"; sessionId: string; assetId: string };
 
 export function ImageChatPage() {
   const { t } = useI18n();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { productId } = useParams();
-  const isProductMode = Boolean(productId);
-  const routeStateScope = getImageChatRouteStateScope(productId);
+  const routeStateScope = IMAGE_CHAT_ROUTE_STATE_SCOPE;
   const autoCreateTriggered = useRef(false);
   const pendingGeneratedRoundCountRef = useRef<number | null>(null);
   const duplicateSubmitGuardRef = useRef<ImageGenerationSubmitGuard | null>(null);
@@ -273,22 +267,15 @@ export function ImageChatPage() {
   }, [historyPanelHeight, leftPanelWidth, rightPanelWidth]);
 
   const sessionsQuery = useQuery({
-    queryKey: ["image-sessions", productId ?? "standalone"],
-    queryFn: () => api.listImageSessions(productId),
+    queryKey: ["image-sessions"],
+    queryFn: api.listImageSessions,
   });
 
   const sessionItems = sessionsQuery.data?.items ?? [];
 
-  const productQuery = useQuery({
-    queryKey: ["product", productId],
-    queryFn: () => api.getProduct(productId!),
-    enabled: isProductMode,
-  });
-
   const productsQuery = useQuery({
     queryKey: ["products"],
     queryFn: () => api.listProducts({ page_size: 100 }),
-    enabled: !isProductMode,
     placeholderData: keepPreviousData,
     staleTime: PRODUCT_PICKER_LIST_STALE_TIME_MS,
   });
@@ -324,18 +311,18 @@ export function ImageChatPage() {
   }
 
   useEffect(() => {
-    if (!isProductMode && products.length && !targetProductId) {
-      setTargetProductId(products[0].id);
+    if (targetProductId && products.length && !products.some((product) => product.id === targetProductId)) {
+      setTargetProductId("");
     }
-  }, [isProductMode, products, targetProductId]);
+  }, [products, targetProductId]);
 
   const createSessionMutation = useMutation({
-    mutationFn: () => api.createImageSession(productId ? { product_id: productId } : {}),
+    mutationFn: () => api.createImageSession({}),
     onSuccess: async (imageSession) => {
       setSelectedSessionId(imageSession.id);
       resetImageSessionSelection();
       queryClient.setQueryData(["image-session", imageSession.id], imageSession);
-      await queryClient.invalidateQueries({ queryKey: ["image-sessions", productId ?? "standalone"] });
+      await queryClient.invalidateQueries({ queryKey: ["image-sessions"] });
       setErrorMessage("");
     },
     onError: (error) => {
@@ -407,9 +394,9 @@ export function ImageChatPage() {
     }
     if (shouldRefetchDetail) {
       void queryClient.invalidateQueries({ queryKey: ["image-session", status.id] });
-      void queryClient.invalidateQueries({ queryKey: ["image-sessions", productId ?? "standalone"] });
+      void queryClient.invalidateQueries({ queryKey: ["image-sessions"] });
     }
-  }, [productId, queryClient, selectedSessionId, sessionStatusQuery.data]);
+  }, [queryClient, selectedSessionId, sessionStatusQuery.data]);
 
   useEffect(() => {
     if (!imageSession) {
@@ -486,16 +473,6 @@ export function ImageChatPage() {
   const baseRequirementMessage =
     requiresGenerationBase && !branchBaseRound ? t("chat.baseRequired") : "";
 
-  const sourceImage = useMemo(
-    () => productQuery.data?.source_assets.find((asset) => asset.kind === "original_image") ?? null,
-    [productQuery.data],
-  );
-
-  const productReferenceImages = useMemo(
-    () => productQuery.data?.source_assets.filter((asset) => asset.kind === "reference_image") ?? [],
-    [productQuery.data],
-  );
-
   const logoutMutation = useMutation({
     mutationFn: api.destroySession,
     onSuccess: async () => {
@@ -508,7 +485,7 @@ export function ImageChatPage() {
     mutationFn: (title: string) => api.updateImageSession(selectedSessionId!, { title }),
     onSuccess: (updated) => {
       queryClient.setQueryData(["image-session", updated.id], updated);
-      void queryClient.invalidateQueries({ queryKey: ["image-sessions", productId ?? "standalone"] });
+      void queryClient.invalidateQueries({ queryKey: ["image-sessions"] });
       setRenameEnabled(false);
       setSuccessMessage(t("chat.renameSuccess"));
       setErrorMessage("");
@@ -529,7 +506,7 @@ export function ImageChatPage() {
         .filter((asset) => asset.kind === "reference_upload" && !previousReferenceIds.has(asset.id))
         .map((asset) => asset.id);
       queryClient.setQueryData(["image-session", updated.id], updated);
-      void queryClient.invalidateQueries({ queryKey: ["image-sessions", productId ?? "standalone"] });
+      void queryClient.invalidateQueries({ queryKey: ["image-sessions"] });
       const isCurrentSession = updated.id === selectedSessionId;
       if (isCurrentSession && uploadedReferenceIds.length) {
         setSelectedReferenceAssetIds((current) =>
@@ -555,7 +532,7 @@ export function ImageChatPage() {
       api.deleteImageSessionReferenceImage(input.sessionId, input.assetId),
     onSuccess: (updated) => {
       queryClient.setQueryData(["image-session", updated.id], updated);
-      void queryClient.invalidateQueries({ queryKey: ["image-sessions", productId ?? "standalone"] });
+      void queryClient.invalidateQueries({ queryKey: ["image-sessions"] });
       setPendingDeleteAction(null);
       const isCurrentSession = updated.id === selectedSessionId;
       if (isCurrentSession) {
@@ -582,7 +559,7 @@ export function ImageChatPage() {
       const remainingSessions = sessionItems.filter((item) => item.id !== deletedSessionId);
       setPendingDeleteAction(null);
       queryClient.setQueryData<ImageSessionListResponse>(
-        ["image-sessions", productId ?? "standalone"],
+        ["image-sessions"],
         (current) => current ? { ...current, items: current.items.filter((item) => item.id !== deletedSessionId) } : current,
       );
       queryClient.removeQueries({ queryKey: ["image-session", deletedSessionId] });
@@ -593,7 +570,7 @@ export function ImageChatPage() {
           autoCreateTriggered.current = false;
         }
       }
-      await queryClient.invalidateQueries({ queryKey: ["image-sessions", productId ?? "standalone"] });
+      await queryClient.invalidateQueries({ queryKey: ["image-sessions"] });
       setSuccessMessage(t("chat.sessionDeleted"));
       setErrorMessage("");
     },
@@ -607,7 +584,7 @@ export function ImageChatPage() {
     mutationFn: (payload: ImageGenerationSubmitPayload) => api.generateImageSessionRound(selectedSessionId!, payload),
     onSuccess: (updated, variables) => {
       queryClient.setQueryData(["image-session", updated.id], updated);
-      void queryClient.invalidateQueries({ queryKey: ["image-sessions", productId ?? "standalone"] });
+      void queryClient.invalidateQueries({ queryKey: ["image-sessions"] });
       const placeholderId = selectSubmittedImageGenerationTaskPlaceholderId(updated.generation_tasks, variables);
       const submittedTask = placeholderId
         ? updated.generation_tasks.find((task) => placeholderId.startsWith(`task:${task.id}:`))
@@ -641,7 +618,7 @@ export function ImageChatPage() {
       api.retryImageSessionGenerationTask(input.sessionId, input.taskId),
     onSuccess: (updated, input) => {
       queryClient.setQueryData(["image-session", updated.id], updated);
-      void queryClient.invalidateQueries({ queryKey: ["image-sessions", productId ?? "standalone"] });
+      void queryClient.invalidateQueries({ queryKey: ["image-sessions"] });
       const retriedTask = updated.generation_tasks.find((task) => task.id === input.taskId);
       if (retriedTask) {
         setSelectedTaskPlaceholderId(selectImageGenerationTaskNextPlaceholderId(retriedTask));
@@ -661,7 +638,7 @@ export function ImageChatPage() {
     onSuccess: (updated) => {
       queryClient.setQueryData(["image-session", updated.id], updated);
       void queryClient.invalidateQueries({ queryKey: ["image-session-status", updated.id] });
-      void queryClient.invalidateQueries({ queryKey: ["image-sessions", productId ?? "standalone"] });
+      void queryClient.invalidateQueries({ queryKey: ["image-sessions"] });
       setSuccessMessage(t("chat.cancelledTask"));
       setErrorMessage("");
     },
@@ -674,7 +651,7 @@ export function ImageChatPage() {
     !selectedSessionId || !imageSession || !draft.trim() || generateMutation.isPending || Boolean(baseRequirementMessage);
 
   const attachMutation = useMutation({
-    mutationFn: (payload: { assetId: string; target: "reference" | "main_source"; productId?: string }) =>
+    mutationFn: (payload: { assetId: string; target: "reference" | "main_source"; productId: string }) =>
       api.attachImageSessionAssetToProduct(selectedSessionId!, payload.assetId, {
         target: payload.target,
         product_id: payload.productId,
@@ -699,24 +676,6 @@ export function ImageChatPage() {
     },
     onError: (error) => {
       setErrorMessage(error instanceof ApiError ? error.detail : t("chat.saveGalleryFailed"));
-    },
-  });
-
-  const deleteProductReferenceMutation = useMutation({
-    mutationFn: (assetId: string) => api.deleteSourceAsset(assetId),
-    onSuccess: async (updated) => {
-      queryClient.setQueryData(["product", updated.id], updated);
-      setPendingDeleteAction(null);
-      await queryClient.invalidateQueries({ queryKey: ["product", updated.id] });
-      if (selectedSessionId) {
-        await queryClient.invalidateQueries({ queryKey: ["image-session", selectedSessionId] });
-      }
-      setSuccessMessage(t("chat.productReferenceDeleted"));
-      setErrorMessage("");
-    },
-    onError: (error) => {
-      setPendingDeleteAction(null);
-      setErrorMessage(error instanceof ApiError ? error.detail : t("chat.productReferenceDeleteFailed"));
     },
   });
 
@@ -805,14 +764,14 @@ export function ImageChatPage() {
     if (!selectedRound) {
       return;
     }
-    if (!isProductMode && !targetProductId) {
+    if (!targetProductId) {
       setErrorMessage(t("chat.selectProductFirst"));
       return;
     }
     attachMutation.mutate({
       assetId: selectedRound.generated_asset.id,
       target,
-      productId: isProductMode ? productId : targetProductId,
+      productId: targetProductId,
     });
   }
 
@@ -846,17 +805,6 @@ export function ImageChatPage() {
     }
     setMobileSessionDrawerOpen(false);
     setPendingDeleteAction({ kind: "session", sessionId });
-  }
-
-  function handleDeleteProductReference(assetId: string) {
-    if (deleteProductReferenceMutation.isPending) {
-      return;
-    }
-    if (!deletionEnabled) {
-      setErrorMessage(t("chat.deleteDisabled"));
-      return;
-    }
-    setPendingDeleteAction({ kind: "productReference", assetId });
   }
 
   function handleReferenceToggle(assetId: string, checked: boolean) {
@@ -1013,29 +961,23 @@ export function ImageChatPage() {
         title:
           pendingDeleteAction.kind === "session"
             ? t("chat.confirmDeleteSessionTitle")
-            : pendingDeleteAction.kind === "productReference"
-              ? t("chat.confirmDeleteProductReferenceTitle")
-              : t("chat.confirmDeleteSessionReferenceTitle"),
+            : t("chat.confirmDeleteSessionReferenceTitle"),
         description:
           pendingDeleteAction.kind === "session"
             ? t("chat.confirmDeleteSession")
-            : pendingDeleteAction.kind === "productReference"
-              ? t("chat.confirmDeleteProductReference")
-              : t("chat.confirmDeleteSessionReference"),
+            : t("chat.confirmDeleteSessionReference"),
         busy:
           pendingDeleteAction.kind === "session"
             ? deleteSessionMutation.isPending
-            : pendingDeleteAction.kind === "productReference"
-              ? deleteProductReferenceMutation.isPending
-              : deleteSessionReferenceMutation.isPending,
+            : deleteSessionReferenceMutation.isPending,
       }
     : null;
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-100 text-slate-900 dark:bg-[#060a12] dark:text-slate-100 lg:h-screen lg:overflow-hidden">
       <TopNav
-        breadcrumbs={isProductMode ? `${productQuery.data?.name ?? t("chat.productFallback")} / ${t("chat.breadcrumb")}` : t("chat.breadcrumb")}
-        onHome={() => navigate(isProductMode && productId ? `/products/${productId}` : "/products")}
+        breadcrumbs={t("chat.breadcrumb")}
+        onHome={() => navigate("/products")}
         onLogout={() => logoutMutation.mutate()}
       />
 
@@ -1325,19 +1267,11 @@ export function ImageChatPage() {
               basic={
                 <div className="space-y-4">
                   <ProductAssociationPanel
-                    isProductMode={isProductMode}
-                    product={productQuery.data}
                     products={products}
                     targetProductId={targetProductId}
-                    sourceImage={sourceImage}
-                    referenceImages={productReferenceImages}
                     selectedRound={selectedRound}
                     attachBusy={attachMutation.isPending}
-                    deletingReferenceAssetId={
-                      deleteProductReferenceMutation.isPending ? (deleteProductReferenceMutation.variables ?? null) : null
-                    }
                     onTargetProductChange={setTargetProductId}
-                    onDeleteReference={handleDeleteProductReference}
                     onAttach={handleAttach}
                     t={t}
                   />
@@ -1368,7 +1302,7 @@ export function ImageChatPage() {
                       value={draft}
                       onChange={(event) => setDraft(event.target.value)}
                       rows={6}
-                      placeholder={isProductMode ? t("chat.productPromptPlaceholder") : t("chat.freePromptPlaceholder")}
+                      placeholder={t("chat.freePromptPlaceholder")}
                       className="w-full resize-none rounded-2xl border border-slate-200 px-3 py-3 text-sm leading-6 text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100 dark:border-slate-700 dark:bg-slate-950/70 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-violet-400 dark:focus:ring-violet-400/20"
                     />
                   </div>
@@ -1609,19 +1543,11 @@ export function ImageChatPage() {
                 basic={
                   <div className="space-y-4">
                     <ProductAssociationPanel
-                      isProductMode={isProductMode}
-                      product={productQuery.data}
                       products={products}
                       targetProductId={targetProductId}
-                      sourceImage={sourceImage}
-                      referenceImages={productReferenceImages}
                       selectedRound={selectedRound}
                       attachBusy={attachMutation.isPending}
-                      deletingReferenceAssetId={
-                        deleteProductReferenceMutation.isPending ? (deleteProductReferenceMutation.variables ?? null) : null
-                      }
                       onTargetProductChange={setTargetProductId}
-                      onDeleteReference={handleDeleteProductReference}
                       onAttach={handleAttach}
                       t={t}
                     />
@@ -1652,7 +1578,7 @@ export function ImageChatPage() {
                         value={draft}
                         onChange={(event) => setDraft(event.target.value)}
                         rows={6}
-                        placeholder={isProductMode ? t("chat.productPromptPlaceholder") : t("chat.freePromptPlaceholder")}
+                        placeholder={t("chat.freePromptPlaceholder")}
                         className="w-full resize-none rounded-2xl border border-slate-200 px-3 py-3 text-sm leading-6 text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100 dark:border-slate-700 dark:bg-slate-950/70 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-violet-400 dark:focus:ring-violet-400/20"
                       />
                     </div>
@@ -1758,10 +1684,6 @@ export function ImageChatPage() {
           }
           if (pendingDeleteAction.kind === "session") {
             deleteSessionMutation.mutate(pendingDeleteAction.sessionId);
-            return;
-          }
-          if (pendingDeleteAction.kind === "productReference") {
-            deleteProductReferenceMutation.mutate(pendingDeleteAction.assetId);
             return;
           }
           deleteSessionReferenceMutation.mutate({

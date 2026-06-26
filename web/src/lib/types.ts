@@ -229,7 +229,6 @@ export interface WorkflowNodeRun {
   failure_reason: string | null;
   copy_set_id: string | null;
   poster_variant_id: string | null;
-  image_session_asset_id: string | null;
   started_at: string;
   finished_at: string | null;
 }
@@ -494,7 +493,6 @@ export interface ImageSessionGenerationTask {
 
 export interface ImageSessionSummary {
   id: string;
-  product_id: string | null;
   title: string;
   rounds_count: number;
   latest_generated_asset: ImageSessionAsset | null;
@@ -504,7 +502,6 @@ export interface ImageSessionSummary {
 
 export interface ImageSessionDetail {
   id: string;
-  product_id: string | null;
   title: string;
   assets: ImageSessionAsset[];
   rounds: ImageSessionRound[];
@@ -515,7 +512,6 @@ export interface ImageSessionDetail {
 
 export interface ImageSessionStatus {
   id: string;
-  product_id: string | null;
   title: string;
   rounds_count: number;
   latest_round_id: string | null;
@@ -541,8 +537,6 @@ export interface GalleryEntry {
   image_session_round_id: string | null;
   image_session_id: string;
   image_session_title: string;
-  product_id: string | null;
-  product_name: string | null;
   image: ImageSessionAsset;
   prompt: string | null;
   size: string | null;

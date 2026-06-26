@@ -345,7 +345,6 @@ The shared nav itself exposes the settings/image-chat/product/gallery links; pag
 ### 5. Good/Base/Bad Cases
 
 - Good: the selected generated candidate appears in the gallery after saving and refreshes via `['gallery']`.
-- Base: if a gallery image has no product reference, show it as a global/standalone item without blocking preview.
 - Bad: raw `fetch('/api/gallery')` from a page.
 - Bad: adding gallery grouping/filtering/bulk controls under this display-only contract.
 

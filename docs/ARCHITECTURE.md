@@ -44,8 +44,7 @@ React/Vite web
 
 前端代码位于 `web/src/`：
 
-- `pages/`：登录、商品列表、创建商品、商品详情、画廊、帮助、设置、图片会话页面（当前路由包括 `/image-chat`、
-  `/products/:productId/image-chat`、`/gallery`、`/help` 和 `/settings`）。
+- `pages/`：登录、商品列表、创建商品、商品详情、画廊、帮助、设置、图片会话页面（当前路由包括 `/image-chat`、`/gallery`、`/help` 和 `/settings`）。
 - `components/`：共享 UI，如顶栏、状态标签和图片拖拽上传区。
 - `lib/api.ts`：集中封装 REST API 请求。
 - `lib/types.ts`：前端 DTO 类型，需与后端 schemas 保持一致。
