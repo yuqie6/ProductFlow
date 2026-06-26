@@ -126,7 +126,8 @@ There are currently two background execution entrypoints:
 Shared principles:
 
 - Database records are persisted first; Redis messages are only recoverable dispatch attempts.
-- Database constraints prevent duplicate active workflow runs for the same product.
+- A workflow may have multiple disjoint running runs; database constraints ensure one node has at most one queued/running
+  `WorkflowNodeRun` at a time.
 - If enqueue fails, the newly created run/task is marked failed to avoid stuck active state.
 - API startup recovers queued unfinished tasks/workflows.
 - Worker startup can reset stale running state and re-dispatch work.
@@ -135,7 +136,8 @@ Shared principles:
 - Iterative image generation no longer treats a user-configurable hard total timeout as product semantics. Running tasks persist `progress_updated_at`, completed candidate count, current candidate, and provider response state; stale-running recovery uses the latest progress heartbeat for idle detection and only falls back to `started_at` for older rows.
 - The iterative image worker's Dramatiq `time_limit` remains only as an internal failsafe, not as a user-tunable generation deadline.
 - Dramatiq actors should no-op on duplicate messages for terminal/currently-running records.
-- The global generation concurrency limit is enforced by counting active `WorkflowRun` and `ImageSessionGenerationTask` rows in the database.
+- The global generation concurrency limit is enforced by counting running `WorkflowNodeRun` rows and running
+  `ImageSessionGenerationTask` rows in the database.
 - `/api/generation-queue` returns the global durable queue overview; iterative image status responses include the current task's queue position.
 
 Related entrypoints:

@@ -82,8 +82,8 @@ when that keeps runtime behavior unchanged.
 - New pure helper -> add Vitest unit coverage for normal and edge cases.
 - ProductDetail helper changes -> prefer colocated tests under `web/src/pages/product-detail/`.
 - Locale/theme helper changes -> update or add tests near `web/src/lib/preferences.test.ts`.
-- Locale-aware pure helper changes -> test both `zh-CN` and `en-US`, including fallback behavior for legacy system labels
-  when old records store default Chinese titles.
+- Locale-aware pure helper changes -> cover the supported locale set (`zh-CN`, `en-US`, `ja-JP`) where labels differ,
+  including fallback behavior for legacy system labels when old records store default Chinese titles.
 - DTO/API behavior changes still require `just web-build`; frontend unit tests do not replace backend contract tests.
 
 ### 7. Wrong vs Correct
@@ -157,7 +157,7 @@ single-theme mock copied into both modes.
 - Dark mode may use deep navy/slate surfaces and violet/indigo accents, but every explicit light background, border,
   placeholder, muted text, hover state, and alert state needs a matching `dark:*` variant.
 - Every new visible UI label, placeholder, button, section heading, status message, and aria label must use
-  `web/src/lib/i18n.ts` keys for both `zh-CN` and `en-US`.
+  `web/src/lib/i18n.ts` keys for all supported locales: `zh-CN`, `en-US`, and `ja-JP`.
 - Provider names, model IDs, API keys, URLs, filenames, backend `ApiError.detail`, and operator-authored content stay as
   source data and should not be translated.
 - Configuration pages should keep app-style density: fixed or sticky navigation, one active working panel, explicit field
@@ -229,5 +229,5 @@ Before accepting frontend changes, check:
 - Are backend enum/DTO changes mirrored in `web/src/lib/types.ts`?
 - Are loading/error/disabled states present for async actions?
 - Does the UI match the existing Tailwind/zinc visual language?
-- Does visible UI chrome render correctly in both `zh-CN` and `en-US`?
+- Does visible UI chrome render correctly in supported locales (`zh-CN`, `en-US`, `ja-JP`)?
 - Does the changed UI remain readable in `light`, `dark`, and `system` theme modes?

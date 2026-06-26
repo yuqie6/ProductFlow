@@ -129,7 +129,8 @@ PostgreSQL 是元数据和运行状态的权威存储；Redis/Dramatiq 只负责
 共同原则：
 
 - 数据库记录先落地，Redis 消息只是可恢复的投递尝试。
-- 同一商品工作流通过数据库约束避免重复 active run。
+- 同一工作流可以有多个 disjoint 的 running run；数据库约束限制同一节点同时只能有一个 queued/running
+  `WorkflowNodeRun`。
 - enqueue 失败时会把新建 run 标记为失败，避免 active 状态卡死。
 - API 启动时会恢复 queued 的未完成任务/工作流。
 - worker 启动时可重置 stale running 状态后重新投递。
@@ -140,7 +141,7 @@ PostgreSQL 是元数据和运行状态的权威存储；Redis/Dramatiq 只负责
   判断 idle，旧行才回退到 `started_at`。
 - 连续生图 worker 的 Dramatiq `time_limit` 只保留为内部 failsafe，避免进程永久占用，不作为用户可调的生成总时限。
 - Dramatiq actor 对 terminal/currently-running 的重复消息应 no-op。
-- 全局生成并发上限通过数据库中的 active `WorkflowRun`、`ImageSessionGenerationTask` 计数实现。
+- 全局生成并发上限通过数据库中的 running `WorkflowNodeRun` 与 running `ImageSessionGenerationTask` 计数实现。
 - `/api/generation-queue` 返回全局 durable 队列概览；连续生图 status 响应会带回当前任务的队列位置。
 
 相关入口：

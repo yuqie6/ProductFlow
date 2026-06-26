@@ -82,7 +82,7 @@ and empty/loading/error states, not tint or obscure product thumbnails.
 
 User-visible UI chrome should use the local i18n helpers instead of hard-coded one-off strings:
 
-- Translation keys live in `web/src/lib/i18n.ts`; supported locales are `zh-CN` and `en-US`.
+- Translation keys live in `web/src/lib/i18n.ts`; supported locales are `zh-CN`, `en-US`, and `ja-JP`.
 - Components read translations through `useI18n()` / `usePreferences()` from `web/src/lib/preferences.tsx`.
 - Pure helpers that format visible labels should accept an optional translate function or locale rather than importing
   React hooks. Examples include image-size labels, gallery size labels, and ProductDetail node display helpers.
@@ -96,7 +96,7 @@ User-visible UI chrome should use the local i18n helpers instead of hard-coded o
   title. Only translate a persisted built-in node title when the stored title still matches the source built-in label or
   an already-localized system label.
 - Default system labels should be locale-aware. If a helper suppresses legacy default titles, it must recognize defaults
-  from both supported locales so older records such as `参考图 2` do not leak into the English UI.
+  from all supported locales so older records such as `参考图 2` do not leak into non-Chinese UI.
 
 Good:
 

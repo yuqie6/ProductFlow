@@ -11,7 +11,8 @@ ProductFlow uses four state categories:
 1. Server state: TanStack Query in pages and `AppRoutes()`.
 2. Local UI/form state: React `useState`, `useMemo`, and `useEffect` inside page components.
 3. URL state: React Router params and navigation.
-4. Durable local UI preferences: locale and theme mode in `PreferencesProvider`.
+4. Durable browser-local UI preferences: global locale/theme mode in `PreferencesProvider` plus narrowly scoped
+   page-owned workbench preferences.
 
 There is no Redux, Zustand, Jotai, custom event bus, or durable browser-local onboarding state.
 
@@ -74,7 +75,7 @@ Do not introduce a global store just to track current page or product ID; use th
 
 ## Durable UI Preferences
 
-Locale and theme are the only durable browser-local UI preferences currently supported:
+Global app preferences live in `PreferencesProvider`:
 
 - Provider: `PreferencesProvider` in `web/src/lib/preferences.tsx`, mounted once in `App.tsx` inside `BrowserRouter`.
 - Locale storage key: `productflow.locale`; default locale is `zh-CN`.
@@ -87,6 +88,16 @@ Locale and theme are the only durable browser-local UI preferences currently sup
 
 Locale and theme are not server records. Do not store them in TanStack Query, add backend settings for them, or persist
 them with auth/session state unless a future product requirement explicitly changes that boundary.
+
+ProductDetail owns a small set of durable workbench-local browser preferences because they are specific to that page's
+canvas ergonomics rather than global app chrome:
+
+- Workflow zoom: `productflow.workflow.zoom`, read by `ProductDetailPage.tsx` and persisted by `WorkflowCanvas`.
+- Workflow inspector width: `productflow.workflow.inspectorWidth`, read and written by `ProductDetailPage.tsx`.
+- Workflow snap-to-grid toggle: `productflow.workflow.snapToGrid`, read and written by `ProductDetailPage.tsx`.
+
+Keep additional durable local preferences rare and owner-scoped. When a page adds one, document the storage key and owner
+here or in the feature-specific spec, and add focused helper tests when parsing/clamping behavior is non-trivial.
 
 Good:
 
@@ -141,4 +152,5 @@ Keep error display local unless multiple pages need a shared notification system
 - Hiding route state in local storage or globals instead of using React Router params.
 - Storing API keys or admin keys in frontend local storage. Authentication is session-cookie based.
 - Reintroducing durable browser-local onboarding, tour, help, or tutorial state without a new approved product requirement.
-- Adding new durable local preferences outside `PreferencesProvider` without updating this spec and focused helper tests.
+- Adding new durable local preferences outside `PreferencesProvider` or a documented page-owned feature boundary without
+  updating this spec and focused helper tests when parsing/clamping behavior is non-trivial.

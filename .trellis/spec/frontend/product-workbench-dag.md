@@ -521,7 +521,8 @@ pending state for individual node run actions, while keeping layout dragging ind
 - `api.listProducts({ page, page_size })` drives paginated product lists and returns thumbnail URLs.
 - `api.runProductWorkflow(productId, { start_node_id })` may target an image node whose only required upstream is product
   context.
-- Local UI persistence keys: `productflow.workflow.zoom` and `productflow.workflow.inspectorWidth`.
+- Local UI persistence keys: `productflow.workflow.zoom`, `productflow.workflow.inspectorWidth`, and
+  `productflow.workflow.snapToGrid`.
 
 ### 3. Contracts
 - The add-node toolbar must not expose `product_context`; one product context exists per active workflow.
@@ -541,6 +542,9 @@ pending state for individual node run actions, while keeping layout dragging ind
   as `useViewport`, and durable zoom persistence should be tied to ReactFlow viewport change end events.
 - Canvas view-fitting controls should use ReactFlow instance viewport helpers such as `fitView` with node id filters for
   all-nodes and selected-node focus. Do not calculate viewport transforms manually for these standard view operations.
+- The snap-to-grid toggle is a ProductDetail-owned workbench preference persisted under
+  `productflow.workflow.snapToGrid`; it affects canvas editing ergonomics only and must not be serialized into workflow
+  API payloads.
 - Run history and downloadable images live in the right sidebar, not in a persistent bottom panel, so the canvas keeps its
   vertical working space.
 
