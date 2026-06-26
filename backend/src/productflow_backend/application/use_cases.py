@@ -17,14 +17,18 @@ from productflow_backend.domain.enums import (
     CopyStatus,
     ProductWorkflowState,
     SourceAssetKind,
+    WorkflowNodeStatus,
+    WorkflowRunStatus,
 )
 from productflow_backend.domain.errors import BusinessValidationError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     CopySet,
+    ImageSession,
     PosterVariant,
     Product,
     ProductWorkflow,
     SourceAsset,
+    WorkflowNode,
     WorkflowRun,
 )
 from productflow_backend.infrastructure.storage import LocalStorage
@@ -73,6 +77,8 @@ def _product_query():
             selectinload(Product.copy_sets),
             selectinload(Product.poster_variants),
             selectinload(Product.confirmed_copy_set),
+            selectinload(Product.workflows).selectinload(ProductWorkflow.nodes),
+            selectinload(Product.workflows).selectinload(ProductWorkflow.runs),
         )
         .order_by(desc(Product.updated_at))
     )
@@ -97,21 +103,61 @@ def derive_product_state(product: Product) -> ProductWorkflowState:
     """从商品关联数据推导流程状态，用于列表过滤。"""
     if product.poster_variants:
         return ProductWorkflowState.POSTER_READY
+    if _product_has_failed_workflow(product):
+        return ProductWorkflowState.FAILED
     if product.current_confirmed_copy_set_id:
         return ProductWorkflowState.COPY_READY
     return ProductWorkflowState.DRAFT
+
+
+def _product_has_failed_workflow(product: Product) -> bool:
+    return any(
+        workflow.active
+        and (
+            any(run.status == WorkflowRunStatus.FAILED for run in workflow.runs)
+            or any(node.status == WorkflowNodeStatus.FAILED for node in workflow.nodes)
+        )
+        for workflow in product.workflows
+    )
+
+
+def _product_failed_workflow_exists():
+    has_failed_run = exists(
+        select(literal(1))
+        .select_from(WorkflowRun)
+        .join(ProductWorkflow, WorkflowRun.workflow_id == ProductWorkflow.id)
+        .where(
+            ProductWorkflow.product_id == Product.id,
+            ProductWorkflow.active.is_(True),
+            WorkflowRun.status == WorkflowRunStatus.FAILED,
+        )
+    ).correlate(Product)
+    has_failed_node = exists(
+        select(literal(1))
+        .select_from(WorkflowNode)
+        .join(ProductWorkflow, WorkflowNode.workflow_id == ProductWorkflow.id)
+        .where(
+            ProductWorkflow.product_id == Product.id,
+            ProductWorkflow.active.is_(True),
+            WorkflowNode.status == WorkflowNodeStatus.FAILED,
+        )
+    ).correlate(Product)
+    return has_failed_run | has_failed_node
 
 
 def _product_status_filter(status: ProductWorkflowState):
     has_poster = exists(
         select(literal(1)).select_from(PosterVariant).where(PosterVariant.product_id == Product.id)
     ).correlate(Product)
+    has_failed = _product_failed_workflow_exists()
     if status == ProductWorkflowState.POSTER_READY:
         return has_poster
+    if status == ProductWorkflowState.FAILED:
+        return has_failed & ~has_poster
     if status == ProductWorkflowState.COPY_READY:
-        return Product.current_confirmed_copy_set_id.is_not(None) & ~has_poster
+        return Product.current_confirmed_copy_set_id.is_not(None) & ~has_poster & ~has_failed
     if status == ProductWorkflowState.DRAFT:
-        return Product.current_confirmed_copy_set_id.is_(None) & ~has_poster
+        return Product.current_confirmed_copy_set_id.is_(None) & ~has_poster & ~has_failed
     return literal(False)
 
 
@@ -264,10 +310,15 @@ def delete_product(
     )
     if active_workflow_run is not None:
         raise BusinessValidationError("商品工作流运行中，稍后删除")
+    image_session_ids = list(
+        session.scalars(select(ImageSession.id).where(ImageSession.product_id == product_id)).all()
+    )
     storage = storage or LocalStorage()
     session.delete(product)
     session.commit()
     storage.delete_product_tree(product_id)
+    for image_session_id in image_session_ids:
+        storage.delete_image_session_tree(image_session_id)
 
 
 def update_copy_set(

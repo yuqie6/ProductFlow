@@ -25,6 +25,7 @@ from productflow_backend.domain.enums import (
     PosterKind,
     ProductWorkflowState,
     SourceAssetKind,
+    WorkflowRunStatus,
 )
 from productflow_backend.infrastructure.db.models import (
     CopySet,
@@ -33,6 +34,7 @@ from productflow_backend.infrastructure.db.models import (
     SourceAsset,
     WorkflowEdge,
     WorkflowNode,
+    WorkflowRun,
 )
 
 
@@ -263,6 +265,17 @@ def test_product_can_be_deleted_from_api(configured_env: Path) -> None:
     product_id = created.json()["id"]
     product_root = configured_env / "products" / product_id
     assert product_root.exists()
+    linked_session = client.post("/api/image-sessions", json={"product_id": product_id, "title": "关联生图会话"})
+    assert linked_session.status_code == 201
+    image_session_id = linked_session.json()["id"]
+    image_session_root = configured_env / "image_sessions" / image_session_id
+    linked_upload = client.post(
+        f"/api/image-sessions/{image_session_id}/reference-images",
+        files={"reference_images": ("session-reference.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert linked_upload.status_code == 200
+    assert image_session_root.exists()
+
     run = client.post(f"/api/products/{product_id}/workflow/run", json={})
     assert run.status_code == 200
     completed = _wait_for_workflow_run(client, product_id, status="succeeded")
@@ -283,6 +296,8 @@ def test_product_can_be_deleted_from_api(configured_env: Path) -> None:
     missing = client.get(f"/api/products/{product_id}")
     assert missing.status_code == 404
     assert not product_root.exists()
+    assert not image_session_root.exists()
+
 
 def test_reference_images_can_be_attached_to_product(db_session, configured_env: Path) -> None:
     product = create_product(
@@ -341,6 +356,26 @@ def test_product_status_filter_uses_database_pagination_before_eager_loading(db_
         filename="poster.png",
         content_type="image/png",
     )
+    failed_draft = create_product(
+        db_session,
+        name="失败草稿商品",
+        category=None,
+        price=None,
+        source_note=None,
+        image_bytes=_make_demo_image_bytes(),
+        filename="failed-draft.png",
+        content_type="image/png",
+    )
+    failed_copy = create_product(
+        db_session,
+        name="失败文案商品",
+        category=None,
+        price=None,
+        source_note=None,
+        image_bytes=_make_demo_image_bytes(),
+        filename="failed-copy.png",
+        content_type="image/png",
+    )
 
     copy_set = CopySet(
         product_id=copy_ready.id,
@@ -393,6 +428,51 @@ def test_product_status_filter_uses_database_pagination_before_eager_loading(db_
             width=800,
             height=800,
         )
+    )
+    failed_copy_set = CopySet(
+        product_id=failed_copy.id,
+        status=CopyStatus.CONFIRMED,
+        structured_payload={
+            "version": 2,
+            "summary": "失败商品标题",
+            "content": {"kind": "blocks", "blocks": [{"id": "headline", "text": "失败标题"}]},
+        },
+        model_structured_payload={
+            "version": 2,
+            "summary": "失败商品标题",
+            "content": {"kind": "blocks", "blocks": [{"id": "headline", "text": "失败标题"}]},
+        },
+        provider_name="test",
+        model_name="test",
+        prompt_version="test",
+    )
+    db_session.add(failed_copy_set)
+    db_session.flush()
+    failed_copy.current_confirmed_copy_set_id = failed_copy_set.id
+
+    failed_draft_workflow = ProductWorkflow(product_id=failed_draft.id, title="失败草稿工作流")
+    failed_copy_workflow = ProductWorkflow(product_id=failed_copy.id, title="失败文案工作流")
+    poster_failed_workflow = ProductWorkflow(product_id=poster_ready.id, title="已有海报失败工作流")
+    db_session.add_all([failed_draft_workflow, failed_copy_workflow, poster_failed_workflow])
+    db_session.flush()
+    db_session.add_all(
+        [
+            WorkflowRun(
+                workflow_id=failed_draft_workflow.id,
+                status=WorkflowRunStatus.FAILED,
+                failure_reason="draft failed",
+            ),
+            WorkflowRun(
+                workflow_id=failed_copy_workflow.id,
+                status=WorkflowRunStatus.FAILED,
+                failure_reason="copy failed",
+            ),
+            WorkflowRun(
+                workflow_id=poster_failed_workflow.id,
+                status=WorkflowRunStatus.FAILED,
+                failure_reason="poster failed after completion",
+            ),
+        ]
     )
     db_session.commit()
     db_session.expire_all()
@@ -448,8 +528,20 @@ def test_product_status_filter_uses_database_pagination_before_eager_loading(db_
     assert [product.id for product in copy_products] == [copy_ready.id]
     assert poster_total == 1
     assert [product.id for product in poster_products] == [poster_ready.id]
-    assert failed_total == 0
-    assert failed_products == []
+    assert failed_total == 2
+    assert {product.id for product in failed_products} == {failed_draft.id, failed_copy.id}
+
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+    failed_response = client.get("/api/products", params={"status": ProductWorkflowState.FAILED.value})
+    assert failed_response.status_code == 200
+    failed_payload = failed_response.json()
+    assert failed_payload["total"] == 2
+    assert {item["id"] for item in failed_payload["items"]} == {failed_draft.id, failed_copy.id}
+    assert {item["workflow_state"] for item in failed_payload["items"]} == {ProductWorkflowState.FAILED.value}
 
 
 def test_product_reference_image_can_be_deleted(configured_env: Path, db_session) -> None:

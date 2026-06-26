@@ -387,7 +387,7 @@ export function requiresImageSessionGenerationBase(
   rounds: ImageSessionRound[],
   tasks: ImageSessionGenerationTask[],
 ): boolean {
-  return rounds.length > 0 || tasks.length > 0;
+  return rounds.length > 0 || tasks.some(isImageSessionGenerationTaskActive);
 }
 
 export function findImageHistoryPlaceholder(

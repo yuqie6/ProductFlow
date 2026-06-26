@@ -168,6 +168,77 @@ def test_image_session_generate_returns_queued_task_without_waiting_for_provider
     assert sent == [task["id"]]
 
 
+def test_terminal_image_session_task_without_round_does_not_require_base(
+    configured_env: Path,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.domain.enums import JobStatus
+    from productflow_backend.presentation.api import create_app
+
+    sent: list[str] = []
+    monkeypatch.setattr(
+        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
+        lambda task_id: sent.append(task_id),
+    )
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post("/api/image-sessions", json={"title": "首轮失败重提"})
+    assert created.status_code == 201
+    session_id = created.json()["id"]
+    first = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={"prompt": "第一轮会失败", "size": "1024x1024"},
+    )
+    assert first.status_code == 202
+    first_task_id = first.json()["generation_tasks"][0]["id"]
+    assert sent == [first_task_id]
+
+    db_session.expire_all()
+    first_task = db_session.get(ImageSessionGenerationTask, first_task_id)
+    assert first_task is not None
+    first_task.status = JobStatus.FAILED
+    first_task.failure_reason = "provider failed before saving any round"
+    db_session.commit()
+
+    second = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={"prompt": "失败后重新生成第一张", "size": "1024x1024"},
+    )
+
+    assert second.status_code == 202
+    payload = second.json()
+    assert payload["rounds"] == []
+    assert len(payload["generation_tasks"]) == 2
+    second_task = next(task for task in payload["generation_tasks"] if task["id"] != first_task_id)
+    assert second_task["status"] == "queued"
+    assert second_task["base_asset_id"] is None
+    assert sent == [first_task_id, second_task["id"]]
+
+
+def test_image_session_generate_rejects_blank_prompt(configured_env: Path, db_session) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post("/api/image-sessions", json={"title": "空提示词"})
+    assert created.status_code == 201
+    session_id = created.json()["id"]
+
+    response = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={"prompt": "   ", "size": "1024x1024"},
+    )
+
+    assert response.status_code == 422
+    db_session.expire_all()
+    assert db_session.query(ImageSessionGenerationTask).filter_by(session_id=session_id).count() == 0
+
+
 def test_first_queued_image_session_task_without_base_still_executes_if_later_task_exists(
     configured_env: Path,
     db_session,

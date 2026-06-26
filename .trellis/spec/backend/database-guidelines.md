@@ -114,10 +114,10 @@ separate count query. The route `presentation/routes/products.py::list_products_
 `list_products(status=...)` must also stay database-filtered before eager loading and pagination:
 
 - `draft`: no confirmed copy set and no poster variants.
-- `copy_ready`: has `Product.current_confirmed_copy_set_id` and no poster variants.
+- `copy_ready`: has `Product.current_confirmed_copy_set_id`, no poster variants, and no active-workflow failed run/node.
 - `poster_ready`: has at least one poster variant.
-- `failed`: currently has no persisted product-level source of truth and should return no rows until a real state owner is
-  introduced.
+- `failed`: no poster variants, and the active product workflow has either a failed `WorkflowRun` or a failed
+  `WorkflowNode`. Poster completion wins over failure so completed products remain `poster_ready`.
 
 Keep the response shape unchanged. If product state semantics change, update both `derive_product_state(...)` and the SQL
 status filter together, then add a query behavior test. Do not reintroduce full-table product loads for list pages.
@@ -480,10 +480,14 @@ def delete_product_endpoint(...):
   selected references.
 - A multi-candidate generation action creates N `image_session_rounds` rows that share one `generation_group_id`, each with
   a distinct `generated_asset_id`, `candidate_index` from `1..N`, and `candidate_count=N`.
-- Only the first generation task in an image session may omit `base_asset_id`. Once a session has any generated round or
-  any prior generation task, later submissions must include a same-session generated image as `base_asset_id`.
-- Worker execution must revalidate persisted task payloads by task creation order: the earliest task may still execute
-  without `base_asset_id` even though its own task row already exists, while later persisted tasks without a base fail.
+- `prompt` is stripped at the API schema boundary and must be non-blank before a durable generation task is created.
+- A generation request may omit `base_asset_id` only when the session has no generated rounds and no active
+  queued/running generation task. Terminal failed/cancelled tasks without rounds do not count as generation history, so the
+  user can revise the prompt and start again.
+- Worker execution must revalidate persisted task payloads by task context: the current earliest first task may still
+  execute without `base_asset_id` even though its own task row already exists, and partial retry for a task with an existing
+  `result_generation_group_id` may continue remaining candidates without requiring a new base. Other later active tasks
+  without a base fail.
 - `base_asset_id` must reference a same-session `generated_image`; it is the explicit historical card the user selected
   for the next image-to-image generation.
 - `selected_reference_asset_ids` must reference same-session `reference_upload` assets. They are the only session uploads
@@ -496,11 +500,14 @@ def delete_product_endpoint(...):
 ### 4. Validation & Error Matrix
 
 - Missing image session -> `404`, `连续生图会话不存在`.
+- Blank or whitespace-only `prompt` -> request validation `422`, and no `image_session_generation_tasks` row is created.
 - `generation_count < 1` or `> 4` -> request validation `422` at the API schema, or application `400` if called directly.
 - `base_asset_id` outside the session -> `404`, `会话图片不存在`.
 - `base_asset_id` points to a reference upload -> `400`, `只能从会话生成图继续`.
-- Missing `base_asset_id` after the session already has a round or generation task -> `400`,
+- Missing `base_asset_id` after the session already has a generated round or active queued/running generation task -> `400`,
   `后续生图必须选择一张本会话已生成图片作为基图`.
+- Missing `base_asset_id` when the session has only terminal failed/cancelled tasks and no rounds -> accepted as a new
+  first-generation task.
 - `selected_reference_asset_ids` contains an asset outside the session -> `404`, `会话参考图不存在`.
 - `selected_reference_asset_ids` contains a generated image -> `400`, `只能选择会话参考图参与本轮生成`.
 - More than 6 total selected context images including the base -> `400`, `本轮最多选择 6 张图片上下文（含分支基图）`.
@@ -518,6 +525,7 @@ def delete_product_endpoint(...):
   selects one as the base.
 - Base: user generates the first image with no `base_asset_id` and no references; one standalone candidate round is stored
   with a generated group id.
+- Base: the first task fails before any round is saved; the next prompt can be submitted without `base_asset_id`.
 - Base: user uploads session references but leaves them unchecked; they remain assets but do not enter provider context.
 - Bad: using the latest `provider_response_id` for every request, because provider-chain inheritance makes card branching
   unexpectedly linear.
@@ -533,6 +541,8 @@ def delete_product_endpoint(...):
   `previous_response_id is None` and `history_count == 0` in the fake provider request.
 - API/backend test for multi-candidate persistence: N candidates share one `generation_group_id`, have distinct
   `generated_asset_id` values, and expose `candidate_index` / `candidate_count` in responses.
+- API/backend test for terminal failed/cancelled first task with no rounds: a new no-base task is accepted.
+- API/backend test for blank prompt: request is rejected before creating a task row.
 - Frontend pure helper tests should cover grouping by `generation_group_id`, generation-count clamping, and reference-id
   pruning when uploads are deleted.
 
@@ -645,6 +655,8 @@ The current pattern commits database changes before performing non-transactional
 
 - `delete_reference_image(...)` deletes the DB row, commits, then calls `storage.delete_image_with_variants(...)`.
 - `delete_image_session(...)` deletes the DB row, commits, then calls `storage.delete_image_session_tree(...)`.
+- `delete_product(...)` collects linked image-session IDs before deleting the product, commits the DB cascade, then deletes
+  both `storage/products/{product_id}` and each linked `storage/image_sessions/{session_id}` tree.
 
 For create/update operations, file writes happen before adding the final DB asset rows. Keep storage paths relative to the
 storage root; `LocalStorage.resolve()` guards against path traversal.

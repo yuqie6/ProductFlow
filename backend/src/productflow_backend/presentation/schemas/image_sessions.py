@@ -161,6 +161,14 @@ class GenerateImageSessionRoundRequest(BaseModel):
     generation_count: int = Field(default=1, ge=1, le=10)
     tool_options: ImageToolOptionsRequest | None = None
 
+    @field_validator("prompt")
+    @classmethod
+    def normalize_prompt(cls, prompt: str) -> str:
+        normalized = prompt.strip()
+        if not normalized:
+            raise ValueError("提示词不能为空")
+        return normalized
+
     @field_validator("size")
     @classmethod
     def validate_size(cls, size: str) -> str:

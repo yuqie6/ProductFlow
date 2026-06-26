@@ -173,6 +173,13 @@ def _trim_title(prompt: str) -> str:
     return compact[:32] + ("..." if len(compact) > 32 else "")
 
 
+def _normalize_generation_prompt(prompt: str) -> str:
+    normalized = prompt.strip()
+    if not normalized:
+        raise BusinessValidationError("提示词不能为空")
+    return normalized
+
+
 def _get_product_original_assets(product: Product) -> list[SourceAsset]:
     return sorted(
         [asset for asset in product.source_assets if asset.kind == SourceAssetKind.ORIGINAL_IMAGE],
@@ -207,19 +214,36 @@ def _has_prior_generation_request(
     *,
     current_generation_task_id: str | None = None,
 ) -> bool:
+    def has_active_task(excluded_task_id: str | None = None) -> bool:
+        return any(
+            task.id != excluded_task_id and IMAGE_SESSION_GENERATION_TASK_CONTRACT.is_active(task.status)
+            for task in image_session.generation_tasks
+        )
+
     if current_generation_task_id is not None:
         tasks = sorted(image_session.generation_tasks, key=lambda task: (task.created_at, task.id))
+        current_task = next((task for task in tasks if task.id == current_generation_task_id), None)
+        if (
+            current_task is not None
+            and current_task.result_generation_group_id
+            and any(
+                round_item.generation_group_id == current_task.result_generation_group_id
+                for round_item in image_session.rounds
+            )
+        ):
+            return False
+        if image_session.rounds:
+            return True
         if tasks:
-            return tasks[0].id != current_generation_task_id
+            if tasks[0].id == current_generation_task_id:
+                return False
+            return has_active_task(excluded_task_id=current_generation_task_id)
+        return False
     if image_session.rounds:
         return True
     if current_generation_task_id is None:
-        return bool(image_session.generation_tasks)
-
-    tasks = sorted(image_session.generation_tasks, key=lambda task: (task.created_at, task.id))
-    if not tasks:
-        return False
-    return tasks[0].id != current_generation_task_id
+        return has_active_task()
+    return False
 
 
 def _build_branch_generation_context(
@@ -497,6 +521,7 @@ def _execute_image_session_round_generation(
     image_session = _get_image_session_or_raise(session, image_session_id)
     storage = storage or LocalStorage()
     generation_task = session.get(ImageSessionGenerationTask, generation_task_id) if generation_task_id else None
+    normalized_prompt = _normalize_generation_prompt(prompt)
     normalized_tool_options = _normalize_tool_options(tool_options)
     service = ImageChatService()
     normalized_size, normalized_base_asset_id, normalized_reference_ids = _validate_generation_request(
@@ -580,7 +605,7 @@ def _execute_image_session_round_generation(
                 )
                 if batch_count > 1:
                     provider_results = service.generate_many(
-                        prompt=prompt,
+                        prompt=normalized_prompt,
                         size=normalized_size,
                         history=history,
                         manual_reference_images=manual_references,
@@ -591,7 +616,7 @@ def _execute_image_session_round_generation(
                     pending_provider_results.extend(provider_results[1:])
                 else:
                     result = service.generate(
-                        prompt=prompt,
+                        prompt=normalized_prompt,
                         size=normalized_size,
                         history=history,
                         manual_reference_images=manual_references,
@@ -634,7 +659,7 @@ def _execute_image_session_round_generation(
             )
             round_item = ImageSessionRound(
                 session_id=image_session.id,
-                prompt=prompt.strip(),
+                prompt=normalized_prompt,
                 assistant_message=assistant_message,
                 size=normalized_size,
                 model_name=result.model_name,
@@ -660,7 +685,12 @@ def _execute_image_session_round_generation(
             session.flush()
             now = now_utc()
             if should_update_default_title:
-                _touch_image_session_if_present(session, image_session.id, now=now, title=_trim_title(prompt))
+                _touch_image_session_if_present(
+                    session,
+                    image_session.id,
+                    now=now,
+                    title=_trim_title(normalized_prompt),
+                )
                 should_update_default_title = False
             else:
                 _touch_image_session_if_present(session, image_session.id, now=now)
@@ -761,6 +791,7 @@ def create_image_session_generation_task(
 ) -> ImageSessionGenerationTaskCreationResult:
     """校验并创建连续生图 durable 任务；不调用 provider。"""
     image_session = _get_image_session_or_raise(session, image_session_id)
+    normalized_prompt = _normalize_generation_prompt(prompt)
     normalized_tool_options = _normalize_tool_options(tool_options)
     normalized_size, normalized_base_asset_id, normalized_reference_ids = _validate_generation_request(
         image_session,
@@ -774,7 +805,7 @@ def create_image_session_generation_task(
     task = ImageSessionGenerationTask(
         session_id=image_session.id,
         status=JobStatus.QUEUED,
-        prompt=prompt.strip(),
+        prompt=normalized_prompt,
         size=normalized_size,
         base_asset_id=normalized_base_asset_id,
         selected_reference_asset_ids=normalized_reference_ids,

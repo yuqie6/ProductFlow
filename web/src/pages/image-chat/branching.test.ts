@@ -277,7 +277,7 @@ describe("image chat branching helpers", () => {
     );
   });
 
-  it("requires a generated base after any prior round or generation task", () => {
+  it("requires a generated base after any prior round or active generation task", () => {
     expect(requiresImageSessionGenerationBase([], [])).toBe(false);
     expect(
       requiresImageSessionGenerationBase(
@@ -301,6 +301,8 @@ describe("image chat branching helpers", () => {
         ],
       ),
     ).toBe(true);
+    expect(requiresImageSessionGenerationBase([], [task({ id: "failed-task", status: "failed" })])).toBe(false);
+    expect(requiresImageSessionGenerationBase([], [task({ id: "cancelled-task", status: "cancelled" })])).toBe(false);
   });
 
   it("finds the generated round that replaces a selected task placeholder", () => {
