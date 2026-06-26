@@ -31,7 +31,7 @@ from productflow_backend.domain.enums import (
     WorkflowNodeStatus,
     WorkflowNodeType,
 )
-from productflow_backend.domain.errors import BusinessError, BusinessValidationError, NotFoundError
+from productflow_backend.domain.errors import BusinessValidationError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     CopySet,
     PosterVariant,
@@ -67,6 +67,14 @@ class _NodeBounds:
     top: int
     right: int
     bottom: int
+
+
+def _validate_workflow_dag_or_rollback(session: Session, workflow: ProductWorkflow) -> None:
+    try:
+        product_workflow_graph.topological_nodes(workflow)
+    except BusinessValidationError:
+        session.rollback()
+        raise
 
 
 def _node_bounds(position_x: int, position_y: int) -> _NodeBounds:
@@ -345,14 +353,7 @@ def materialize_node_group_template_to_workflow(
     session.flush()
     session.expire(workflow, ["nodes", "edges"])
     refreshed = product_workflow_graph.get_workflow_or_raise(session, workflow.id)
-    try:
-        product_workflow_graph.topological_nodes(refreshed)
-    except BusinessError:
-        session.rollback()
-        raise
-    except ValueError as exc:
-        session.rollback()
-        raise BusinessValidationError(str(exc)) from exc
+    _validate_workflow_dag_or_rollback(session, refreshed)
     return AppliedWorkflowTemplateGroup(
         workflow=refreshed,
         nodes_by_template_key=nodes_by_template_key,
@@ -430,14 +431,7 @@ def duplicate_workflow_node_group(
     session.flush()
     session.expire(workflow, ["nodes", "edges"])
     refreshed = product_workflow_graph.get_workflow_or_raise(session, workflow.id)
-    try:
-        product_workflow_graph.topological_nodes(refreshed)
-    except BusinessError:
-        session.rollback()
-        raise
-    except ValueError as exc:
-        session.rollback()
-        raise BusinessValidationError(str(exc)) from exc
+    _validate_workflow_dag_or_rollback(session, refreshed)
     session.commit()
     session.expire_all()
     return product_workflow_graph.get_workflow_or_raise(session, workflow.id)
@@ -645,14 +639,7 @@ def create_workflow_edge(
     session.flush()
     session.expire(workflow, ["nodes", "edges"])
     refreshed = product_workflow_graph.get_workflow_or_raise(session, workflow.id)
-    try:
-        product_workflow_graph.topological_nodes(refreshed)
-    except BusinessError:
-        session.rollback()
-        raise
-    except ValueError as exc:
-        session.rollback()
-        raise BusinessValidationError(str(exc)) from exc
+    _validate_workflow_dag_or_rollback(session, refreshed)
     session.commit()
     session.expire_all()
     return product_workflow_graph.get_workflow_or_raise(session, workflow.id)

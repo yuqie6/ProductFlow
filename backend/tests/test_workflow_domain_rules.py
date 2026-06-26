@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from productflow_backend.domain.enums import WorkflowNodeType
+from productflow_backend.domain.errors import BusinessValidationError
 from productflow_backend.domain.workflow_rules import (
     WorkflowRuleEdge,
     WorkflowRuleNode,
@@ -74,7 +75,7 @@ def test_selected_node_plan_rejects_broken_target_without_database_session() -> 
     nodes = [_node("copy", WorkflowNodeType.COPY_GENERATION)]
     edges = [WorkflowRuleEdge("copy", "missing-target")]
 
-    with pytest.raises(ValueError, match="工作流连线引用了不存在的节点"):
+    with pytest.raises(BusinessValidationError, match="工作流连线引用了不存在的节点"):
         selected_node_execution_plan(nodes=nodes, edges=edges, start_node_id="copy")
 
 
@@ -88,7 +89,7 @@ def test_selected_node_plan_rejects_cycle_without_database_session() -> None:
         WorkflowRuleEdge("image", "copy"),
     ]
 
-    with pytest.raises(ValueError, match="工作流不能包含循环依赖"):
+    with pytest.raises(BusinessValidationError, match="工作流不能包含循环依赖"):
         selected_node_execution_plan(nodes=nodes, edges=edges, start_node_id="image")
 
 
@@ -102,7 +103,7 @@ def test_topological_node_ids_rejects_cycle_without_database_session() -> None:
         WorkflowRuleEdge("image", "copy"),
     ]
 
-    with pytest.raises(ValueError, match="工作流不能包含循环依赖"):
+    with pytest.raises(BusinessValidationError, match="工作流不能包含循环依赖"):
         topological_node_ids(nodes, edges)
 
 

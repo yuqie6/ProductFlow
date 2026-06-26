@@ -19,9 +19,9 @@ from productflow_backend.application.use_cases import (
 )
 from productflow_backend.domain.enums import ProductWorkflowState
 from productflow_backend.infrastructure.db.models import PosterVariant, SourceAsset
-from productflow_backend.infrastructure.storage import ImageVariantName, LocalStorage
+from productflow_backend.infrastructure.storage import ImageVariantName
 from productflow_backend.presentation.deps import get_session, require_admin, require_deletion_enabled
-from productflow_backend.presentation.image_variants import build_variant_filename
+from productflow_backend.presentation.image_variants import serve_image_variant
 from productflow_backend.presentation.schemas.products import (
     CopySetResponse,
     CopySetUpdateRequest,
@@ -163,23 +163,13 @@ def download_poster_endpoint(
     poster = session.get(PosterVariant, poster_id)
     if poster is None:
         raise HTTPException(status_code=404, detail="海报不存在")
-    storage = LocalStorage()
-    try:
-        path, media_type = storage.resolve_for_variant(
-            poster.storage_path,
-            variant,
-            fallback_media_type=poster.mime_type,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail="海报文件不存在") from exc
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="海报文件不存在")
-    filename = build_variant_filename(
-        f"{poster.kind.value}{Path(poster.storage_path).suffix or '.png'}",
+    return serve_image_variant(
+        storage_path=poster.storage_path,
+        original_filename=f"{poster.kind.value}{Path(poster.storage_path).suffix or '.png'}",
+        mime_type=poster.mime_type,
         variant=variant,
-        resolved_suffix=path.suffix,
+        missing_file_detail="海报文件不存在",
     )
-    return FileResponse(path, media_type=media_type, filename=filename)
 
 
 @router.get("/source-assets/{asset_id}/download")
@@ -191,19 +181,13 @@ def download_source_asset_endpoint(
     asset = session.get(SourceAsset, asset_id)
     if asset is None:
         raise HTTPException(status_code=404, detail="源图不存在")
-    storage = LocalStorage()
-    try:
-        path, media_type = storage.resolve_for_variant(
-            asset.storage_path,
-            variant,
-            fallback_media_type=asset.mime_type,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail="源图文件不存在") from exc
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="源图文件不存在")
-    filename = build_variant_filename(asset.original_filename, variant=variant, resolved_suffix=path.suffix)
-    return FileResponse(path, media_type=media_type, filename=filename)
+    return serve_image_variant(
+        storage_path=asset.storage_path,
+        original_filename=asset.original_filename,
+        mime_type=asset.mime_type,
+        variant=variant,
+        missing_file_detail="源图文件不存在",
+    )
 
 
 @router.delete("/source-assets/{asset_id}", response_model=ProductDetailResponse)

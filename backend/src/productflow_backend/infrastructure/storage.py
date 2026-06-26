@@ -143,10 +143,7 @@ class LocalStorage:
 
     def _warm_image_variants(self, relative_path: str) -> None:
         for variant in ("preview", "thumbnail"):
-            try:
-                self.resolve_for_variant(relative_path, variant)
-            except ValueError:
-                return
+            self.resolve_for_variant(relative_path, variant)
 
     def _variant_path(self, original_path: Path, variant: ImageVariantName) -> Path:
         relative = original_path.relative_to(self.root)

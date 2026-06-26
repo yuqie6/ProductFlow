@@ -19,9 +19,9 @@ from productflow_backend.application.image_sessions import (
     update_image_session,
 )
 from productflow_backend.infrastructure.db.models import ImageSessionAsset
-from productflow_backend.infrastructure.storage import ImageVariantName, LocalStorage
+from productflow_backend.infrastructure.storage import ImageVariantName
 from productflow_backend.presentation.deps import get_session, require_admin, require_deletion_enabled
-from productflow_backend.presentation.image_variants import build_variant_filename
+from productflow_backend.presentation.image_variants import serve_image_variant
 from productflow_backend.presentation.schemas.image_sessions import (
     AttachImageSessionAssetRequest,
     CreateImageSessionRequest,
@@ -231,16 +231,10 @@ def download_image_session_asset_endpoint(
     asset = session.get(ImageSessionAsset, asset_id)
     if asset is None:
         raise HTTPException(status_code=404, detail="会话图片不存在")
-    storage = LocalStorage()
-    try:
-        path, media_type = storage.resolve_for_variant(
-            asset.storage_path,
-            variant,
-            fallback_media_type=asset.mime_type,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail="会话图片文件不存在") from exc
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="会话图片文件不存在")
-    filename = build_variant_filename(asset.original_filename, variant=variant, resolved_suffix=path.suffix)
-    return FileResponse(path, media_type=media_type, filename=filename)
+    return serve_image_variant(
+        storage_path=asset.storage_path,
+        original_filename=asset.original_filename,
+        mime_type=asset.mime_type,
+        variant=variant,
+        missing_file_detail="会话图片文件不存在",
+    )

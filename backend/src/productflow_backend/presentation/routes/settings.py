@@ -3,7 +3,7 @@ from __future__ import annotations
 import secrets
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from pydantic import ValidationError
@@ -90,6 +90,10 @@ def require_settings_unlocked(request: Request) -> None:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="设置解锁令牌未配置，请联系管理员")
     if not request.session.get("settings_unlocked"):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="请先解锁系统配置")
+
+
+def _raise_bad_request(exc: Exception) -> NoReturn:
+    raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _load_database_values(session: Session) -> dict[str, AppSetting]:
@@ -499,7 +503,7 @@ def preview_settings_import_endpoint(payload: Any = Body(...)) -> SettingsImport
     try:
         bundle = _build_settings_import_bundle(payload)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        _raise_bad_request(exc)
     return bundle.preview
 
 
@@ -517,7 +521,7 @@ def import_settings_endpoint(
         _apply_settings_import_bundle(session, bundle)
     except ValueError as exc:
         session.rollback()
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        _raise_bad_request(exc)
     return SettingsImportCommitResponse(
         preview=bundle.preview,
         config=_serialize_config(session),
@@ -548,7 +552,7 @@ def create_provider_profile_endpoint(
             enabled=payload.enabled,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        _raise_bad_request(exc)
     return _serialize_provider_profile(profile)
 
 
@@ -578,7 +582,7 @@ def update_provider_profile_endpoint(
             enabled=payload.enabled,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        _raise_bad_request(exc)
     return _serialize_provider_profile(profile)
 
 
@@ -595,7 +599,7 @@ def archive_provider_profile_endpoint(
         ensure_provider_config_bootstrapped(session)
         profile = archive_provider_profile(session, profile_id)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        _raise_bad_request(exc)
     return _serialize_provider_profile(profile)
 
 
@@ -626,7 +630,7 @@ def update_provider_binding_endpoint(
         session.refresh(binding)
     except (RuntimeError, ValueError) as exc:
         session.rollback()
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        _raise_bad_request(exc)
     return _serialize_provider_binding(binding)
 
 
@@ -661,7 +665,7 @@ def update_config_endpoint(
         next_values.update(normalized_values)
         _validate_runtime_settings(next_values)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        _raise_bad_request(exc)
 
     for key in reset_keys:
         existing = session.get(AppSetting, key)

@@ -231,7 +231,7 @@ class GoogleGeminiImageClient:
                 config=config,
             )
         except Exception as exc:  # noqa: BLE001
-            logger.error("Google Gemini 图片供应商请求失败: %s", exc, exc_info=True)
+            logger.error("Google Gemini 图片供应商请求失败: error_class=%s", type(exc).__name__)
             raise RuntimeError(PROVIDER_REQUEST_FAILURE_MESSAGE) from exc
 
         image_bytes: bytes | None = None

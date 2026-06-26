@@ -6,7 +6,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from pathlib import Path
 
-from dramatiq.middleware.time_limit import TimeLimitExceeded
 from sqlalchemy.orm import Session
 
 from productflow_backend.application.contracts import PosterGenerationInput
@@ -334,8 +333,6 @@ def generate_workflow_images_concurrently(
             def generate_batch() -> list[GeneratedWorkflowImage]:
                 try:
                     generated_payloads = batch_generate(render_input, kind, target_count)
-                except TimeLimitExceeded:
-                    raise
                 except WorkflowSafeExecutionError:
                     raise
                 except Exception as exc:  # noqa: BLE001
@@ -365,8 +362,6 @@ def generate_workflow_images_concurrently(
             image_provider = image_providers[target_index - 1]
             try:
                 generated_image, image_model = image_provider.generate_poster_image(render_input, kind)
-            except TimeLimitExceeded:
-                raise
             except WorkflowSafeExecutionError:
                 raise
             except Exception as exc:  # noqa: BLE001

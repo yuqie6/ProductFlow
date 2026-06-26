@@ -199,29 +199,24 @@ def validate_canvas_template(template: CanvasTemplate) -> None:
         }:
             raise BusinessValidationError("画布模板默认外部连接只能接入文案或生图节点")
 
-    try:
-        topological_node_ids(
-            [
-                WorkflowRuleNode(
-                    id=node.key,
-                    node_type=node.node_type,
-                    position_x=node.position_x,
-                    config_json=node.config_json,
-                )
-                for node in template.nodes
-            ],
-            [
-                WorkflowRuleEdge(
-                    source_node_id=edge.source_node_key,
-                    target_node_id=edge.target_node_key,
-                )
-                for edge in template.edges
-            ],
-        )
-    except BusinessValidationError:
-        raise
-    except ValueError as exc:
-        raise BusinessValidationError(str(exc)) from exc
+    topological_node_ids(
+        [
+            WorkflowRuleNode(
+                id=node.key,
+                node_type=node.node_type,
+                position_x=node.position_x,
+                config_json=node.config_json,
+            )
+            for node in template.nodes
+        ],
+        [
+            WorkflowRuleEdge(
+                source_node_id=edge.source_node_key,
+                target_node_id=edge.target_node_key,
+            )
+            for edge in template.edges
+        ],
+    )
 
 
 def list_builtin_canvas_templates() -> tuple[CanvasTemplate, ...]:

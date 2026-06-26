@@ -88,7 +88,7 @@ def topological_node_ids(nodes: Iterable[WorkflowRuleNode], edges: Iterable[Work
             if incoming_count[target_id] == 0:
                 queue.append(target_id)
     if len(ordered) != len(nodes_by_id):
-        raise ValueError("工作流不能包含循环依赖")
+        raise BusinessValidationError("工作流不能包含循环依赖")
     return ordered
 
 

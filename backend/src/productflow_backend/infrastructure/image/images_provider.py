@@ -187,7 +187,7 @@ class OpenAIImagesClient:
             response = client.images.generate(**request_params)
         except Exception as exc:  # noqa: BLE001
             if not self._should_retry_without_optional_fields(request_params):
-                logger.error("OpenAI Images API generate 失败: %s", exc, exc_info=True)
+                logger.error("OpenAI Images API generate 失败: error_class=%s", type(exc).__name__)
                 raise RuntimeError(PROVIDER_REQUEST_FAILURE_MESSAGE) from exc
             fallback_used = True
             fallback_params = {
@@ -197,7 +197,7 @@ class OpenAIImagesClient:
                 response = client.images.generate(**fallback_params)
                 request_params = fallback_params
             except Exception as fallback_exc:  # noqa: BLE001
-                logger.error("OpenAI Images API generate 失败: %s", fallback_exc, exc_info=True)
+                logger.error("OpenAI Images API generate fallback 失败: error_class=%s", type(fallback_exc).__name__)
                 raise RuntimeError(PROVIDER_REQUEST_FAILURE_MESSAGE) from fallback_exc
 
         provider_output_json = self._with_productflow_metadata(
@@ -261,7 +261,7 @@ class OpenAIImagesClient:
             can_reduce_optional = self._should_retry_without_optional_fields(fallback_params)
             can_reduce_images = len(image_files) > 1
             if not can_reduce_optional and not can_reduce_images:
-                logger.error("OpenAI Images API edit 失败: %s", exc, exc_info=True)
+                logger.error("OpenAI Images API edit 失败: error_class=%s", type(exc).__name__)
                 raise RuntimeError(PROVIDER_REQUEST_FAILURE_MESSAGE) from exc
             if can_reduce_optional:
                 fallback_params = {
@@ -282,7 +282,7 @@ class OpenAIImagesClient:
                     has_mask=mask is not None,
                 )
             except Exception as fallback_exc:  # noqa: BLE001
-                logger.error("OpenAI Images API edit 失败: %s", fallback_exc, exc_info=True)
+                logger.error("OpenAI Images API edit fallback 失败: error_class=%s", type(fallback_exc).__name__)
                 raise RuntimeError(PROVIDER_REQUEST_FAILURE_MESSAGE) from fallback_exc
 
         provider_output_json = self._with_productflow_metadata(
