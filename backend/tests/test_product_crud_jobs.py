@@ -29,6 +29,8 @@ from productflow_backend.domain.enums import (
 )
 from productflow_backend.infrastructure.db.models import (
     CopySet,
+    ImageSession,
+    ImageSessionGenerationTask,
     PosterVariant,
     ProductWorkflow,
     SourceAsset,
@@ -36,6 +38,10 @@ from productflow_backend.infrastructure.db.models import (
     WorkflowNode,
     WorkflowRun,
 )
+
+
+def _variant_paths(path: Path) -> list[Path]:
+    return list((path.parent / ".variants").glob(f"{path.stem}.*"))
 
 
 @pytest.fixture(autouse=True)
@@ -297,6 +303,44 @@ def test_product_can_be_deleted_from_api(configured_env: Path) -> None:
     assert missing.status_code == 404
     assert not product_root.exists()
     assert not image_session_root.exists()
+
+
+def test_product_delete_rejects_active_linked_image_session_task(configured_env: Path, db_session) -> None:
+    from productflow_backend.application.image_sessions import (
+        create_image_session,
+        create_image_session_generation_task,
+    )
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post(
+        "/api/products",
+        data={"name": "有关联生图任务的商品"},
+        files={"image": ("delete-busy.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+    product_root = configured_env / "products" / product_id
+    image_session = create_image_session(db_session, product_id=product_id, title="关联任务")
+    task_result = create_image_session_generation_task(
+        db_session,
+        image_session_id=image_session.id,
+        prompt="排队中的首轮生图",
+        size="1024x1024",
+    )
+
+    _enable_deletion(client)
+    deleted = client.delete(f"/api/products/{product_id}")
+
+    assert deleted.status_code == 400
+    assert deleted.json()["detail"] == "商品任务运行中，稍后删除"
+    db_session.expire_all()
+    assert db_session.get(ImageSession, image_session.id) is not None
+    assert db_session.get(ImageSessionGenerationTask, task_result.task.id) is not None
+    assert product_root.exists()
 
 
 def test_reference_images_can_be_attached_to_product(db_session, configured_env: Path) -> None:
@@ -568,7 +612,9 @@ def test_product_reference_image_can_be_deleted(configured_env: Path, db_session
     persisted_reference = db_session.get(SourceAsset, reference_asset["id"])
     assert persisted_reference is not None
     reference_path = Path(configured_env) / persisted_reference.storage_path
+    reference_variants = _variant_paths(reference_path)
     assert reference_path.exists()
+    assert reference_variants
 
     deleted = client.delete(f"/api/source-assets/{reference_asset['id']}")
     assert deleted.status_code == 200
@@ -577,6 +623,7 @@ def test_product_reference_image_can_be_deleted(configured_env: Path, db_session
     db_session.expire_all()
     assert db_session.get(SourceAsset, reference_asset["id"]) is None
     assert not reference_path.exists()
+    assert all(not path.exists() for path in reference_variants)
 
     rejected = client.delete(f"/api/source-assets/{original_asset['id']}")
     assert rejected.status_code == 400

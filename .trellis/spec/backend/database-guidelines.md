@@ -657,6 +657,9 @@ The current pattern commits database changes before performing non-transactional
 - `delete_image_session(...)` deletes the DB row, commits, then calls `storage.delete_image_session_tree(...)`.
 - `delete_product(...)` collects linked image-session IDs before deleting the product, commits the DB cascade, then deletes
   both `storage/products/{product_id}` and each linked `storage/image_sessions/{session_id}` tree.
+- `delete_product(...)` must reject active linked continuous image-session generation tasks before deleting the product.
+  Queued/running `ImageSessionGenerationTask` rows are product-related work even though their storage lives under
+  `image_sessions/{session_id}`.
 
 For create/update operations, file writes happen before adding the final DB asset rows. Keep storage paths relative to the
 storage root; `LocalStorage.resolve()` guards against path traversal.

@@ -29,6 +29,10 @@ from productflow_backend.infrastructure.db.models import (
 )
 
 
+def _variant_paths(path: Path) -> list[Path]:
+    return list((path.parent / ".variants").glob(f"{path.stem}.*"))
+
+
 @pytest.fixture(autouse=True)
 def _execute_workflow_queue_inline_fixture(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep API workflow tests deterministic while production delivery goes through Dramatiq."""
@@ -2256,7 +2260,9 @@ def test_image_session_reference_image_can_be_deleted(configured_env: Path, db_s
     persisted_asset = db_session.get(ImageSessionAsset, reference_asset["id"])
     assert persisted_asset is not None
     reference_path = Path(configured_env) / persisted_asset.storage_path
+    reference_variants = _variant_paths(reference_path)
     assert reference_path.exists()
+    assert reference_variants
 
     deleted = client.delete(f"/api/image-sessions/{session_id}/reference-images/{reference_asset['id']}")
     assert deleted.status_code == 200
@@ -2265,6 +2271,8 @@ def test_image_session_reference_image_can_be_deleted(configured_env: Path, db_s
     db_session.expire_all()
     assert db_session.get(ImageSessionAsset, reference_asset["id"]) is None
     assert not reference_path.exists()
+    assert all(not path.exists() for path in reference_variants)
+
 
 def test_image_session_can_be_deleted_with_files(configured_env: Path, db_session) -> None:
     from productflow_backend.presentation.api import create_app
