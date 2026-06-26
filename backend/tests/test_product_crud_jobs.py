@@ -18,6 +18,7 @@ from productflow_backend.application.product_workflow.templates import TEMPLATE_
 from productflow_backend.application.use_cases import (
     add_reference_images,
     create_product,
+    derive_product_state,
     list_products,
 )
 from productflow_backend.domain.enums import (
@@ -25,6 +26,8 @@ from productflow_backend.domain.enums import (
     PosterKind,
     ProductWorkflowState,
     SourceAssetKind,
+    WorkflowNodeStatus,
+    WorkflowNodeType,
     WorkflowRunStatus,
 )
 from productflow_backend.infrastructure.db.models import (
@@ -420,6 +423,26 @@ def test_product_status_filter_uses_database_pagination_before_eager_loading(db_
         filename="failed-copy.png",
         content_type="image/png",
     )
+    failed_node = create_product(
+        db_session,
+        name="失败节点商品",
+        category=None,
+        price=None,
+        source_note=None,
+        image_bytes=_make_demo_image_bytes(),
+        filename="failed-node.png",
+        content_type="image/png",
+    )
+    inactive_failed = create_product(
+        db_session,
+        name="非活跃失败商品",
+        category=None,
+        price=None,
+        source_note=None,
+        image_bytes=_make_demo_image_bytes(),
+        filename="inactive-failed.png",
+        content_type="image/png",
+    )
 
     copy_set = CopySet(
         product_id=copy_ready.id,
@@ -496,8 +519,22 @@ def test_product_status_filter_uses_database_pagination_before_eager_loading(db_
 
     failed_draft_workflow = ProductWorkflow(product_id=failed_draft.id, title="失败草稿工作流")
     failed_copy_workflow = ProductWorkflow(product_id=failed_copy.id, title="失败文案工作流")
+    failed_node_workflow = ProductWorkflow(product_id=failed_node.id, title="失败节点工作流")
     poster_failed_workflow = ProductWorkflow(product_id=poster_ready.id, title="已有海报失败工作流")
-    db_session.add_all([failed_draft_workflow, failed_copy_workflow, poster_failed_workflow])
+    inactive_failed_workflow = ProductWorkflow(
+        product_id=inactive_failed.id,
+        title="非活跃失败工作流",
+        active=False,
+    )
+    db_session.add_all(
+        [
+            failed_draft_workflow,
+            failed_copy_workflow,
+            failed_node_workflow,
+            poster_failed_workflow,
+            inactive_failed_workflow,
+        ]
+    )
     db_session.flush()
     db_session.add_all(
         [
@@ -516,10 +553,38 @@ def test_product_status_filter_uses_database_pagination_before_eager_loading(db_
                 status=WorkflowRunStatus.FAILED,
                 failure_reason="poster failed after completion",
             ),
+            WorkflowRun(
+                workflow_id=inactive_failed_workflow.id,
+                status=WorkflowRunStatus.FAILED,
+                failure_reason="inactive workflow failure should not affect product state",
+            ),
+            WorkflowNode(
+                workflow_id=failed_node_workflow.id,
+                node_type=WorkflowNodeType.IMAGE_GENERATION,
+                title="失败节点",
+                status=WorkflowNodeStatus.FAILED,
+                failure_reason="node failed",
+            ),
         ]
     )
     db_session.commit()
     db_session.expire_all()
+
+    expected_state_by_product_id = {
+        draft.id: ProductWorkflowState.DRAFT,
+        copy_ready.id: ProductWorkflowState.COPY_READY,
+        poster_ready.id: ProductWorkflowState.POSTER_READY,
+        failed_draft.id: ProductWorkflowState.FAILED,
+        failed_copy.id: ProductWorkflowState.FAILED,
+        failed_node.id: ProductWorkflowState.FAILED,
+        inactive_failed.id: ProductWorkflowState.DRAFT,
+    }
+    all_products, _ = list_products(db_session, status=None, page=1, page_size=20)
+    assert {
+        product.id: derive_product_state(product)
+        for product in all_products
+        if product.id in expected_state_by_product_id
+    } == expected_state_by_product_id
 
     product_selects: list[str] = []
 
@@ -543,11 +608,19 @@ def test_product_status_filter_uses_database_pagination_before_eager_loading(db_
     finally:
         event.remove(db_session.bind, "before_cursor_execute", record_product_query)
 
-    assert total == 1
-    assert [product.id for product in products] == [draft.id]
+    assert total == 2
+    assert len(products) == 1
+    assert {product.id for product in products} <= {draft.id, inactive_failed.id}
     assert len(product_selects) == 1
     assert "exists" in product_selects[0]
     assert "limit" in product_selects[0]
+
+    draft_products, draft_total = list_products(
+        db_session,
+        status=ProductWorkflowState.DRAFT,
+        page=1,
+        page_size=10,
+    )
 
     copy_products, copy_total = list_products(
         db_session,
@@ -568,24 +641,33 @@ def test_product_status_filter_uses_database_pagination_before_eager_loading(db_
         page_size=10,
     )
 
+    assert draft_total == 2
+    assert {product.id for product in draft_products} == {draft.id, inactive_failed.id}
     assert copy_total == 1
     assert [product.id for product in copy_products] == [copy_ready.id]
     assert poster_total == 1
     assert [product.id for product in poster_products] == [poster_ready.id]
-    assert failed_total == 2
-    assert {product.id for product in failed_products} == {failed_draft.id, failed_copy.id}
+    assert failed_total == 3
+    assert {product.id for product in failed_products} == {failed_draft.id, failed_copy.id, failed_node.id}
 
     from productflow_backend.presentation.api import create_app
 
     app = create_app()
     client = TestClient(app)
     _login(client)
-    failed_response = client.get("/api/products", params={"status": ProductWorkflowState.FAILED.value})
-    assert failed_response.status_code == 200
-    failed_payload = failed_response.json()
-    assert failed_payload["total"] == 2
-    assert {item["id"] for item in failed_payload["items"]} == {failed_draft.id, failed_copy.id}
-    assert {item["workflow_state"] for item in failed_payload["items"]} == {ProductWorkflowState.FAILED.value}
+    expected_ids_by_status = {
+        ProductWorkflowState.DRAFT: {draft.id, inactive_failed.id},
+        ProductWorkflowState.COPY_READY: {copy_ready.id},
+        ProductWorkflowState.POSTER_READY: {poster_ready.id},
+        ProductWorkflowState.FAILED: {failed_draft.id, failed_copy.id, failed_node.id},
+    }
+    for status, expected_ids in expected_ids_by_status.items():
+        response = client.get("/api/products", params={"status": status.value})
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["total"] == len(expected_ids)
+        assert {item["id"] for item in payload["items"]} == expected_ids
+        assert {item["workflow_state"] for item in payload["items"]} == {status.value}
 
 
 def test_product_reference_image_can_be_deleted(configured_env: Path, db_session) -> None:

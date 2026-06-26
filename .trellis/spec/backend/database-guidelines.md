@@ -111,13 +111,17 @@ Product listing uses database-level pagination in `application/use_cases.py::lis
 separate count query. The route `presentation/routes/products.py::list_products_endpoint` constrains `page >= 1` and
 `1 <= page_size <= 100` using FastAPI `Query`.
 
-`list_products(status=...)` must also stay database-filtered before eager loading and pagination:
+`list_products(status=...)` must also stay database-filtered before eager loading and pagination. Its SQL predicate must
+match `derive_product_state(product)`:
 
-- `draft`: no confirmed copy set and no poster variants.
-- `copy_ready`: has `Product.current_confirmed_copy_set_id`, no poster variants, and no active-workflow failed run/node.
 - `poster_ready`: has at least one poster variant.
 - `failed`: no poster variants, and the active product workflow has either a failed `WorkflowRun` or a failed
-  `WorkflowNode`. Poster completion wins over failure so completed products remain `poster_ready`.
+  `WorkflowNode`.
+- `copy_ready`: has `Product.current_confirmed_copy_set_id`, no poster variants, and no active-workflow failed run/node.
+- `draft`: no confirmed copy set, no poster variants, and no active-workflow failed run/node.
+
+The state precedence is `poster_ready` > `failed` > `copy_ready` > `draft`. Poster completion wins over failure, and
+failed runs/nodes on inactive workflows do not affect product state.
 
 Keep the response shape unchanged. If product state semantics change, update both `derive_product_state(...)` and the SQL
 status filter together, then add a query behavior test. Do not reintroduce full-table product loads for list pages.
