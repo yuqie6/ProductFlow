@@ -185,6 +185,7 @@ export interface CreateProductInput {
   price?: string;
   source_note?: string;
   canvas_template_key?: string;
+  template_language?: string;
   file: File;
   referenceFiles?: File[];
 }
@@ -392,6 +393,7 @@ export interface ApplyWorkflowTemplateGroupInput {
   template_key: string;
   position_x: number;
   position_y: number;
+  template_language?: string;
 }
 
 export interface CreateUserTemplateGroupInput {

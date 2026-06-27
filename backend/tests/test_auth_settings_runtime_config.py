@@ -188,6 +188,10 @@ def test_runtime_config_registry_excludes_env_only_settings(configured_env: Path
     }.isdisjoint(RUNTIME_CONFIG_KEYS)
 
 
+def test_responses_background_default_is_disabled(configured_env: Path) -> None:
+    assert get_settings().image_responses_background_enabled is False
+
+
 def test_runtime_config_ignores_database_rows_for_env_only_settings(configured_env: Path) -> None:
     session = get_session_factory()()
     try:
@@ -1221,13 +1225,15 @@ def test_prompt_settings_api_accepts_rejects_and_resets(configured_env: Path) ->
     assert initial_items["prompt_copy_system"]["input_type"] == "textarea"
     assert initial_items["prompt_copy_system"]["secret"] is False
     assert initial_items["prompt_copy_system"]["source"] == "env_default"
-    assert "电商文案助手" in initial_items["prompt_copy_system"]["value"]
+    assert "editable ecommerce copy" in initial_items["prompt_copy_system"]["value"]
     assert initial_items["prompt_poster_image_edit_template"]["category"] == "提示词"
     assert initial_items["prompt_poster_image_edit_template"]["input_type"] == "textarea"
-    assert "显式连接的上游上下文" in initial_items["prompt_poster_image_edit_template"]["value"]
+    assert "explicitly connected\nupstream context" in initial_items["prompt_poster_image_edit_template"]["value"]
     assert initial_items["prompt_poster_image_reference_policy"]["category"] == "提示词"
     assert initial_items["prompt_poster_image_reference_policy"]["input_type"] == "textarea"
-    assert "输入图片中的商品/主体作为视觉基准" in initial_items["prompt_poster_image_reference_policy"]["value"]
+    assert "actual product/subject in those images as the visual baseline" in initial_items[
+        "prompt_poster_image_reference_policy"
+    ]["value"]
 
     updated = client.patch("/api/settings", json={"values": {"prompt_copy_system": "自定义文案系统提示"}})
     assert updated.status_code == 200
@@ -1243,7 +1249,7 @@ def test_prompt_settings_api_accepts_rejects_and_resets(configured_env: Path) ->
     assert reset.status_code == 200
     reset_items = {item["key"]: item for item in reset.json()["items"]}
     assert reset_items["prompt_copy_system"]["source"] == "env_default"
-    assert "电商文案助手" in reset_items["prompt_copy_system"]["value"]
+    assert "editable ecommerce copy" in reset_items["prompt_copy_system"]["value"]
 
 def test_settings_api_rejects_invalid_effective_config(configured_env: Path) -> None:
     from productflow_backend.presentation.api import create_app

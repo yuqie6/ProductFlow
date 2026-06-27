@@ -154,6 +154,7 @@ def execute_workflow_image_generation(
         price=product_context["price"],
         source_note=product_context["source_note"],
         instruction=image_instruction_with_context(node, incoming_context.text_contexts),
+        visible_text_language_hint=optional_config_text(node.config_json, "visible_text_language_hint"),
         image_size=image_size_from_config(node.config_json),
         tool_options=image_tool_options_from_config(node.config_json),
         structured_copy_context=structured_copy_context,

@@ -175,6 +175,12 @@ def normalize_workflow_node_config(node_type: WorkflowNodeType, config_json: dic
             raise BusinessValidationError(str(exc)) from exc
         if normalized_size is not None:
             config["size"] = normalized_size
+        if "visible_text_language_hint" in config:
+            visible_text_language_hint = optional_config_text(config, "visible_text_language_hint")
+            if visible_text_language_hint:
+                config["visible_text_language_hint"] = visible_text_language_hint
+            else:
+                config.pop("visible_text_language_hint", None)
         if "tool_options" in config:
             raw_tool_options = config.get("tool_options")
             config["tool_options"] = normalize_image_generation_tool_options(
@@ -287,6 +293,7 @@ def apply_node_group_template_to_workflow(
     template_key: str,
     position_x: int,
     position_y: int,
+    template_language: str | None = None,
 ) -> ProductWorkflow:
     applied = materialize_node_group_template_to_workflow(
         session,
@@ -294,6 +301,7 @@ def apply_node_group_template_to_workflow(
         template_key=template_key,
         position_x=position_x,
         position_y=position_y,
+        template_language=template_language,
     )
     session.commit()
     session.expire_all()
@@ -307,6 +315,7 @@ def materialize_node_group_template_to_workflow(
     template_key: str,
     position_x: int,
     position_y: int,
+    template_language: str | None = None,
 ) -> AppliedWorkflowTemplateGroup:
     template = get_canvas_template(session, template_key.strip())
     workflow = product_workflow_graph.get_active_workflow(session, product_id)
@@ -348,6 +357,7 @@ def materialize_node_group_template_to_workflow(
         position_y_offset=position_y_offset,
         existing_nodes_by_template_key=existing_nodes_by_template_key,
         external_source_nodes_by_template_source=external_source_nodes,
+        template_language=template_language,
     )
     workflow.updated_at = now_utc()
     session.flush()

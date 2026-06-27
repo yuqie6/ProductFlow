@@ -194,6 +194,9 @@ export const api = {
     if (input.canvas_template_key !== undefined) {
       formData.set("canvas_template_key", input.canvas_template_key);
     }
+    if (input.template_language !== undefined) {
+      formData.set("template_language", input.template_language);
+    }
     return request("/api/products", {
       method: "POST",
       body: formData,

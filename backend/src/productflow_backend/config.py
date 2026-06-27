@@ -52,32 +52,38 @@ DEFAULT_IMAGE_TOOL_ALLOWED_FIELDS_TEXT = ",".join(DEFAULT_IMAGE_TOOL_ALLOWED_FIE
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_LOG_DIR = BACKEND_DIR / "storage" / "logs"
 DEFAULT_PROMPT_BRIEF_SYSTEM = (
-    "你是电商商品理解助手。根据商品名称、类目、价格和用途，"
-    "提炼定位、受众、卖点角度、禁忌表达和视觉风格建议。"
+    "You analyze ecommerce product facts from the JSON task data in the user message. "
+    "Extract positioning, audience, supported selling angles, taboo phrases, and visual style guidance. "
+    "Use only supplied facts; mark sparse facts conservatively."
 )
 DEFAULT_PROMPT_COPY_SYSTEM = (
-    "你是电商文案助手。根据商品资料、商品理解、节点配置和参考图上下文生成可编辑文案。"
-    "语言要口语、直接、适合主图、详情页或促销海报使用。"
+    "You generate editable ecommerce copy from the JSON task data in the user message. "
+    "The structured-output schema owns the response fields. Write concise copy that fits the declared purpose, "
+    "language policy, available facts, and reference-image context. Use only supplied facts."
 )
-DEFAULT_PROMPT_POSTER_IMAGE_TEMPLATE = """请根据本轮用户要求与显式连接的上游上下文生成图片。
-用户要求：{instruction}
-输出尺寸：{size}
-上游上下文：
+DEFAULT_PROMPT_POSTER_IMAGE_TEMPLATE = """Create an image from the current user request and explicitly connected
+upstream context.
+User request:
+{instruction}
+Output size: {size}
+Upstream context:
 {context_block}
-视觉参考规则：
+Visual reference policy:
 {reference_policy}
 {kind_requirements}
-请直接生成图片，不要返回说明文字。"""
+Generate the image directly. Do not return explanatory text."""
 DEFAULT_PROMPT_POSTER_IMAGE_EDIT_TEMPLATE = DEFAULT_PROMPT_POSTER_IMAGE_TEMPLATE
 DEFAULT_PROMPT_POSTER_IMAGE_REFERENCE_POLICY = (
-    "如有输入图片，以输入图片中的商品/主体作为视觉基准；商品文字信息较弱时优先遵循图片主体，"
-    "不要替换成无关角色、IP、品牌、商品或广告主题。文案只作为卖点和排版辅助。"
+    "When input images are provided, use the actual product/subject in those images as the visual baseline. "
+    "If text facts are weak, prioritize the visible product subject. Do not replace it with unrelated people, IP, "
+    "brands, products, or ad themes. Treat copy as auxiliary selling-point and layout context."
 )
-DEFAULT_PROMPT_IMAGE_CHAT_TEMPLATE = """请根据本轮用户要求生成图片。
-输出尺寸：{size}
+DEFAULT_PROMPT_IMAGE_CHAT_TEMPLATE = """Create an image from the current user request.
+Output size: {size}
 {history_block}
-本轮用户要求：{prompt}
-请直接生成图片，不要返回说明文字。"""
+Current user request:
+{prompt}
+Generate the image directly. Do not return explanatory text."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,7 +151,7 @@ class Settings(BaseSettings):
     image_generate_model: str = "gpt-5.4"
     image_images_quality: str | None = None
     image_images_style: str | None = None
-    image_responses_background_enabled: bool = True
+    image_responses_background_enabled: bool = False
     image_tool_model: str | None = None
     image_tool_quality: str | None = None
     image_tool_output_format: str | None = None

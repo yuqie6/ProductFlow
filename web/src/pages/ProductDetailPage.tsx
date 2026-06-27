@@ -129,7 +129,7 @@ type WorkflowClipboard = {
 };
 
 export function ProductDetailPage() {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const { productId = "" } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -884,6 +884,7 @@ export function ProductDetailPage() {
         template_key: template.key,
         position_x: nextPosition.x,
         position_y: nextPosition.y,
+        template_language: locale,
       });
       return { nextWorkflow, previousNodeIds };
     },

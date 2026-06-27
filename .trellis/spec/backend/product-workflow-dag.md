@@ -234,11 +234,12 @@ Keep the template as node and edge specs so application code can persist visible
   - `source_note: str | None`
 - Creation-time template field:
   - `canvas_template_key: str | None`
+  - `template_language: str | None`
 - Application entrypoint:
-  - `create_product(..., canvas_template_key: str | None = None, ...) -> Product`
+  - `create_product(..., canvas_template_key: str | None = None, template_language: str | None = None, ...) -> Product`
 - Application helper:
   - `resolve_product_creation_canvas_template(canvas_template_key: str | None) -> CanvasTemplate | None`
-  - `materialize_product_workflow_from_template(session, *, product_id: str, template: CanvasTemplate) -> ProductWorkflow`
+  - `materialize_product_workflow_from_template(session, *, product_id: str, template: CanvasTemplate, template_language: str | None = None) -> ProductWorkflow`
 
 ### 3. Contracts
 
@@ -256,6 +257,14 @@ Keep the template as node and edge specs so application code can persist visible
   `target_handle`.
 - The materialized workflow must be active and must use normal workflow tables. Do not store a hidden selected-template
   state that later frontend code interprets locally.
+- `template_language` is optional. Blank, `auto`, and `preserve_input` values leave hard language hints unset.
+- Recognized template language codes `zh-CN`, `en-US`, `ja-JP`, and `vi-VN` map to editable node config hints. Template
+  copy nodes receive `copy_language_hint`, and image nodes receive `visible_text_language_hint`.
+- Template language hints constrain newly generated merchant copy and newly generated poster text only. Existing product
+  image/package text, brand names, model identifiers, specifications, and certification marks should be preserved from the
+  source image instead of translated.
+- Language hint application should fill missing hint fields on materialized node config. Existing explicit non-empty hint
+  values in a template or user template remain authoritative.
 - If the product creation page renders a large preview for a built-in `full_canvas` plan, that preview is a mirror of the
   backend template. Node titles, relative order, edges, and coordinates for shared template keys must be updated with the
   backend template and covered by regression tests.
@@ -294,6 +303,8 @@ Keep the template as node and edge specs so application code can persist visible
   coordinates that the creation page preview mirrors.
 - API test unknown key returns `400` with template-missing detail.
 - API test a broad built-in scenario key such as `ecommerce-sku-variant-image-v1` creates an active workflow immediately.
+- API test product creation with `template_language=vi-VN` persists both `copy_language_hint` on copy nodes and
+  `visible_text_language_hint` on image nodes.
 - Regression test fetching the workflow after template-backed creation returns the existing active workflow id.
 
 ### 7. Wrong vs Correct
@@ -345,10 +356,11 @@ Creation-time template application must persist the visible workflow graph in th
   - `template_key: str`
   - `position_x: int`
   - `position_y: int`
+  - `template_language: str | None = None`
 - Application entrypoint:
-  - `apply_node_group_template_to_workflow(session, product_id, template_key, position_x, position_y) -> ProductWorkflow`
+  - `apply_node_group_template_to_workflow(session, product_id, template_key, position_x, position_y, template_language=None) -> ProductWorkflow`
 - Shared materialization helper:
-  - `materialize_canvas_template_graph(..., existing_nodes_by_template_key=None, external_source_nodes_by_template_source=None)`
+  - `materialize_canvas_template_graph(..., existing_nodes_by_template_key=None, external_source_nodes_by_template_source=None, template_language=None)`
 
 ### 3. Contracts
 
@@ -374,6 +386,11 @@ Creation-time template application must persist the visible workflow graph in th
   as real visible `workflow_edges` when a node-group template declares them.
 - Built-in scenario templates contain a `product_context` node in the template graph. The active workflow already owns
   the product-context singleton, so insertion reuses it and still materializes the template's product-to-copy/image edges.
+- `template_language` follows the same node-config contract as product creation: recognized codes fill
+  `copy_language_hint` on materialized copy nodes and `visible_text_language_hint` on materialized image nodes; blank,
+  `auto`, and `preserve_input` leave hard hints unset.
+- Apply-time language hints affect only materialized nodes from the requested template. Existing workflow nodes keep their
+  saved config.
 
 ### 4. Validation & Error Matrix
 
@@ -407,6 +424,8 @@ Creation-time template application must persist the visible workflow graph in th
 - API test created edges are the template edges remapped to newly created nodes plus the existing product-context node,
   and no self-edge is created.
 - API test built-in full-canvas insertion reuses the existing product-context node.
+- API test applying a template with `template_language=vi-VN` persists both copy and image language hints on the newly
+  materialized nodes.
 - API test missing product-context node returns `400` and does not create a partial template.
 - API test unknown key returns `400` with template-missing detail.
 
@@ -870,6 +889,15 @@ and workflow runs share the same behavior.
 
 - Structure belongs to Pydantic/OpenAI structured outputs. Prompt text must not be the primary structure contract.
 - `prompt_brief_system` and `prompt_copy_system` control semantic behavior, tone, and task guidance only.
+- Provider input messages should carry task data as JSON, including `task`, `product`, `brief`, `reference_images`,
+  `node_config`, `language_policy`, `fact_policy`, and `copy_planning_policy` for copy generation. This JSON is the
+  semantic task payload; structural output remains enforced by `responses.parse(..., text_format=...)`.
+- `copy_language_hint` belongs to copy node config and the provider-facing `language_policy`. It constrains newly
+  generated copy only, while brand names, model names, unit strings, and source-image text should be preserved when they
+  are known product facts.
+- When product facts are sparse, the fact policy should prefer short neutral copy, known-information organization, and
+  layout guidance. It should forbid unsupported discounts, time limits, lowest-price claims, best-seller claims,
+  certification claims, specifications, gifts, effect promises, and other missing facts.
 - Provider prompts must not depend on phrases such as `请输出 JSON`, `不要输出 markdown`, `请输出字段`, or
   `请输出 v2 JSON 外壳` for correctness.
 - `OpenAITextProvider` must not silently fall back to parsing JSON text from `response.output_text`, raw strings,
@@ -936,6 +964,8 @@ and workflow runs share the same behavior.
 - User-edit regression asserts invalid copy payloads raise typed business validation errors without shape repair.
 - Prompt regression asserts provider user/system prompt text no longer contains old structure fallback phrases such as
   `请输出 JSON`, `不要输出 markdown`, `请输出字段`, `请输出 v2 JSON 外壳`, or `content.kind 必须`.
+- Prompt regression parses the OpenAI text provider user message as JSON and asserts the copy language policy, node config,
+  sparse-fact policy, and planning policy fields are present.
 - Backend API E2E regression creates a product, runs the workflow through `/api/products/{id}/workflow/run`, waits for a
   succeeded run, and asserts the copy node and product detail expose `structured_payload`.
 - Settings/help regression keeps default prompt descriptions aligned with structured-output ownership.

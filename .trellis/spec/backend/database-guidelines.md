@@ -186,6 +186,8 @@ For runtime settings:
   - `image_provider_kind`, `image_api_key`, `image_base_url`
   - `image_generate_model`, `image_images_quality`, `image_images_style`, `image_responses_background_enabled`
 - `Settings` may keep those fields only as env parsing and legacy bootstrap input.
+- `Settings.image_responses_background_enabled` defaults to `False`. Background Responses image generation is opt-in
+  because several OpenAI-compatible gateways fail or stall on the top-level `background` flag.
 - `ensure_provider_config_bootstrapped(session)` reads legacy effective provider config from env plus legacy
   `app_settings` rows, then creates provider profiles and text/image bindings once.
 - If legacy text and image configs share the same `(base_url, api_key)`, bootstrap creates one profile with merged

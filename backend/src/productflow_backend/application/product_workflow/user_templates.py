@@ -315,6 +315,13 @@ def _normalize_template_node_config(node_type: WorkflowNodeType, config_json: di
             raise BusinessValidationError(str(exc)) from exc
         if normalized_size is not None:
             config["size"] = normalized_size
+        if "visible_text_language_hint" in config:
+            value = config.get("visible_text_language_hint")
+            hint = value.strip() if isinstance(value, str) else ""
+            if hint:
+                config["visible_text_language_hint"] = hint
+            else:
+                config.pop("visible_text_language_hint", None)
         if "tool_options" in config:
             raw_tool_options = config.get("tool_options")
             config["tool_options"] = normalize_image_generation_tool_options(

@@ -265,6 +265,7 @@ class ApplyWorkflowTemplateGroupRequest(BaseModel):
     template_key: str = Field(min_length=1, max_length=120)
     position_x: int = 0
     position_y: int = 0
+    template_language: str | None = Field(default=None, max_length=120)
 
 
 class DuplicateWorkflowNodeGroupRequest(BaseModel):

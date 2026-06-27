@@ -222,6 +222,7 @@ export function ProductCreatePage() {
         name,
         file,
         canvas_template_key: selectedPlan.key,
+        template_language: selectedPlan.key ? locale : undefined,
       });
     },
     onSuccess: (product) => {

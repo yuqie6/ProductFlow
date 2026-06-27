@@ -85,6 +85,7 @@ class CopyNodeConfigV2(BaseModel):
     purpose: str | None = None
     channel: str | None = None
     tone: str | None = None
+    copy_language_hint: str | None = None
     output_mode: Literal["freeform", "blocks", "layout_brief"] = "blocks"
     requested_slots: list[CopySlotRequest] = Field(default_factory=list)
 
@@ -207,6 +208,7 @@ class PosterGenerationInput(BaseModel):
     price: str | None = None
     source_note: str | None = None
     instruction: str | None = None
+    visible_text_language_hint: str | None = None
     image_size: str | None = None
     tool_options: dict[str, Any] | None = None
     structured_copy_context: str | None = None

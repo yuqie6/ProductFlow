@@ -149,6 +149,7 @@ def apply_workflow_template_group_endpoint(
         template_key=payload.template_key,
         position_x=payload.position_x,
         position_y=payload.position_y,
+        template_language=payload.template_language,
     )
     return serialize_product_workflow(workflow)
 

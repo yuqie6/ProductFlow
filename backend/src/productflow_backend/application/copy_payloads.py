@@ -27,6 +27,7 @@ def normalize_copy_node_config(raw_config: dict[str, Any] | None) -> CopyNodeCon
             "purpose": _string_or_none(config.get("purpose")),
             "channel": _string_or_none(config.get("channel")),
             "tone": _string_or_none(config.get("tone")),
+            "copy_language_hint": _string_or_none(config.get("copy_language_hint")),
             "output_mode": output_mode,
             "requested_slots": normalize_copy_slot_requests(requested_slots) if requested_slots is not None else [],
         }
@@ -77,39 +78,39 @@ def copy_set_structured_payload(copy_set: CopySet) -> CopyPayloadV2:
 
 
 def copy_payload_context_text(payload: CopyPayloadV2) -> str:
-    parts = [f"摘要：{payload.summary}"]
+    parts = [f"Summary: {payload.summary}"]
     if payload.purpose:
-        parts.append(f"用途：{payload.purpose}")
+        parts.append(f"Purpose: {payload.purpose}")
     if isinstance(payload.content, FreeformCopyContent):
-        parts.append(f"正文：{payload.content.text}")
+        parts.append(f"Body: {payload.content.text}")
     elif isinstance(payload.content, BlocksCopyContent):
         for block in payload.content.blocks:
             prefix = " / ".join(part for part in (block.label, block.role) if part)
             body = block.text
             if block.note:
-                body = f"{body}（{block.note}）"
+                body = f"{body} ({block.note})"
             if block.visual_hint:
-                body = f"{body}；视觉建议：{block.visual_hint}"
-            parts.append(f"{prefix}：{body}" if prefix else body)
+                body = f"{body}; Visual suggestion: {block.visual_hint}"
+            parts.append(f"{prefix}: {body}" if prefix else body)
     elif isinstance(payload.content, LayoutBriefCopyContent):
         for section in payload.content.sections:
-            title = f"{section.title}：" if section.title else ""
+            title = f"{section.title}: " if section.title else ""
             body = section.body or ""
-            item_text = "；".join(
-                f"{item.label or item.role or '条目'}：{item.text}" for item in section.items
+            item_text = "; ".join(
+                f"{item.label or item.role or 'Item'}: {item.text}" for item in section.items
             )
-            visual = f"；视觉建议：{section.visual_hint}" if section.visual_hint else ""
-            parts.append(f"{title}{body}{('；' + item_text) if item_text else ''}{visual}")
+            visual = f"; Visual suggestion: {section.visual_hint}" if section.visual_hint else ""
+            parts.append(f"{title}{body}{('; ' + item_text) if item_text else ''}{visual}")
     if payload.visual_guidance:
         guidance = payload.visual_guidance
         if guidance.main_message:
-            parts.append(f"主信息：{guidance.main_message}")
+            parts.append(f"Main message: {guidance.main_message}")
         if guidance.composition_hint:
-            parts.append(f"构图建议：{guidance.composition_hint}")
+            parts.append(f"Composition suggestion: {guidance.composition_hint}")
         if guidance.hierarchy:
-            parts.append(f"信息层级：{' > '.join(guidance.hierarchy)}")
+            parts.append(f"Information hierarchy: {' > '.join(guidance.hierarchy)}")
         if guidance.avoid:
-            parts.append(f"避免：{'、'.join(guidance.avoid)}")
+            parts.append(f"Avoid: {'; '.join(guidance.avoid)}")
     return "\n".join(part for part in parts if part.strip())
 
 
@@ -121,9 +122,41 @@ def copy_payload_to_output(payload: CopyPayloadV2) -> dict[str, Any]:
 
 
 def _infer_output_mode(instruction: str) -> str:
-    if any(keyword in instruction for keyword in ("层级", "布局", "留白", "构图", "信息图")):
+    normalized = instruction.lower()
+    if any(
+        keyword in normalized
+        for keyword in (
+            "层级",
+            "布局",
+            "留白",
+            "构图",
+            "信息图",
+            "hierarchy",
+            "layout",
+            "whitespace",
+            "composition",
+            "infographic",
+        )
+    ):
         return "layout_brief"
-    if any(keyword in instruction for keyword in ("步骤", "规格", "卖点", "清单", "对比", "标签")):
+    if any(
+        keyword in normalized
+        for keyword in (
+            "步骤",
+            "规格",
+            "卖点",
+            "清单",
+            "对比",
+            "标签",
+            "step",
+            "spec",
+            "feature",
+            "selling point",
+            "checklist",
+            "comparison",
+            "label",
+        )
+    ):
         return "blocks"
     return "freeform"
 

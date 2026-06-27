@@ -257,17 +257,21 @@ def collect_incoming_context(
                 if not isinstance(image, dict):
                     continue
                 label = str(image.get("label") or image.get("filename") or candidate.title)
-                role = str(image.get("role") or "参考图")
+                role = str(image.get("role") or "reference")
                 filename = str(image.get("filename") or "")
-                suffix = f"，文件：{filename}" if filename else ""
-                context.append_text(node=candidate, label="参考图", text=f"参考图：{label}（角色：{role}{suffix}）")
+                suffix = f", file: {filename}" if filename else ""
+                context.append_text(
+                    node=candidate,
+                    label="reference_image",
+                    text=f"Reference image: {label} (role: {role}{suffix})",
+                )
         if candidate.node_type == WorkflowNodeType.COPY_GENERATION:
             structured_payload = output.get("structured_payload")
             if not isinstance(structured_payload, dict):
                 continue
             context.append_text(
                 node=candidate,
-                label="文案",
+                label="copy",
                 text=copy_payload_context_text(validate_copy_payload(structured_payload)),
             )
         elif candidate.node_type == WorkflowNodeType.PRODUCT_CONTEXT:
@@ -281,19 +285,25 @@ def collect_incoming_context(
                 asset for asset in workflow.product.source_assets if asset.id in product_source_asset_ids
             ]
             if product_source_assets:
-                image_labels = "、".join(asset.original_filename or "商品原图" for asset in product_source_assets)
-                context.append_text(node=candidate, label="商品图", text=f"商品图：{image_labels}")
+                image_labels = "; ".join(
+                    asset.original_filename or "source product image" for asset in product_source_assets
+                )
+                context.append_text(
+                    node=candidate,
+                    label="source_product_image",
+                    text=f"Source product image: {image_labels}",
+                )
             product_context = product_context_values(workflow.product, candidate)
             product_parts = [
-                f"商品：{product_context['name']}" if product_context["name"] else "",
-                f"类目：{product_context['category']}" if product_context["category"] else "",
-                f"价格：{product_context['price']}" if product_context["price"] else "",
-                f"描述：{product_context['source_note']}" if product_context["source_note"] else "",
+                f"Product: {product_context['name']}" if product_context["name"] else "",
+                f"Category/type: {product_context['category']}" if product_context["category"] else "",
+                f"Price: {product_context['price']}" if product_context["price"] else "",
+                f"Description: {product_context['source_note']}" if product_context["source_note"] else "",
             ]
             context.append_text(
                 node=candidate,
-                label="商品资料",
-                text="；".join(part for part in product_parts if part),
+                label="product_facts",
+                text="; ".join(part for part in product_parts if part),
             )
         else:
             summary = _output_text(output, "summary")
@@ -393,17 +403,17 @@ def image_instruction_with_context(node: WorkflowNode, text_contexts: list[str])
     compact_contexts = [item for item in text_contexts if item and item != instruction][:8]
     if not compact_contexts:
         return instruction
-    joined = "；".join(compact_contexts)
+    joined = "; ".join(compact_contexts)
     if instruction:
-        return f"{instruction}\n上游文本上下文：{joined}"
-    return f"上游文本上下文：{joined}"
+        return f"{instruction}\nUpstream text context: {joined}"
+    return f"Upstream text context: {joined}"
 
 
 def instruction_with_upstream_text(instruction: str | None, incoming_context: IncomingContext) -> str | None:
     compact_contexts = [item for item in incoming_context.text_contexts if item and item != instruction][:8]
     if not compact_contexts:
         return instruction
-    joined = "；".join(compact_contexts)
+    joined = "; ".join(compact_contexts)
     if instruction:
-        return f"{instruction}\n上游文本上下文：{joined}"
-    return f"上游文本上下文：{joined}"
+        return f"{instruction}\nUpstream text context: {joined}"
+    return f"Upstream text context: {joined}"

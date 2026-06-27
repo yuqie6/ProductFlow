@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Literal
 
 from openai import OpenAI
@@ -12,6 +13,7 @@ from productflow_backend.application.contracts import (
     ProductInput,
     ReferenceImageInput,
 )
+from productflow_backend.application.language_policy import copy_language_policy, sparse_fact_policy
 from productflow_backend.config import get_runtime_settings
 from productflow_backend.infrastructure.prompts import text_or_default
 from productflow_backend.infrastructure.provider_config import (
@@ -23,6 +25,10 @@ from productflow_backend.infrastructure.text.base import TextProvider
 
 def _optional_text(value: str) -> str | None:
     return value.strip() or None
+
+
+def _json_user_message(payload: dict[str, object]) -> list[dict[str, str]]:
+    return [{"role": "user", "content": json.dumps(payload, ensure_ascii=False, indent=2)}]
 
 
 def _parsed_output[ParsedPayloadT: BaseModel](
@@ -191,20 +197,37 @@ class OpenAITextProvider(TextProvider):
             text_format=CreativeBriefPayload,
             instructions=text_or_default(
                 self.brief_system_prompt,
-                "你是电商商品理解助手。根据商品资料提炼定位、受众、卖点、禁忌表达和视觉风格建议。",
+                (
+                    "You analyze ecommerce product facts from the JSON task data in the user message. "
+                    "Use only supplied facts and stay conservative when facts are sparse."
+                ),
             ),
-            input_payload=[
+            input_payload=_json_user_message(
                 {
-                    "role": "user",
-                    "content": (
-                        f"商品名：{product.name}\n"
-                        f"类目：{product.category or '未提供'}\n"
-                        f"价格：{product.price or '未提供'}\n"
-                        f"商品描述/补充说明：{product.source_note or '未提供'}\n"
-                        "请基于真实商品信息提炼可用于后续文案和图片生成的商品理解。"
-                    ),
-                },
-            ],
+                    "task": "extract_product_brief",
+                    "product": {
+                        "name": product.name,
+                        "category": product.category,
+                        "price": product.price,
+                        "source_note": product.source_note,
+                        "has_product_image": bool(product.image_path),
+                    },
+                    "fact_policy": {
+                        "use_only_supplied_facts": True,
+                        "if_facts_are_sparse": "Prefer conservative positioning and broad, supportable selling angles.",
+                        "do_not_invent": [
+                            "discounts",
+                            "time-limited offers",
+                            "lowest-price or bestseller claims",
+                            "certifications",
+                            "specifications",
+                            "gifts or bundle contents",
+                            "medical/effect claims",
+                            "unsupported performance promises",
+                        ],
+                    },
+                }
+            ),
             error_label="商品理解 provider",
         )
         return payload, self.brief_model
@@ -218,45 +241,66 @@ class OpenAITextProvider(TextProvider):
     ) -> tuple[CopyPayloadV2, str]:
         config = config or CopyNodeConfigV2()
         reference_images = reference_images or []
-        reference_lines = [
-            (
-                f"{index}. {reference.label or reference.filename}"
-                f"（角色：{reference.role or '参考图'}，类型：{reference.mime_type}，文件：{reference.filename}）"
-            )
+        reference_image_payload = [
+            {
+                "index": index,
+                "label": reference.label or reference.filename,
+                "role": reference.role,
+                "mime_type": reference.mime_type,
+                "filename": reference.filename,
+            }
             for index, reference in enumerate(reference_images, start=1)
         ]
-        reference_text = "\n".join(reference_lines) if reference_lines else "未连接"
         structured_payload = self._parse_structured_response(
             model=self.copy_model,
             text_format=OpenAICopyPayloadStructuredOutput,
             instructions=text_or_default(
                 self.copy_system_prompt,
-                "你是电商文案助手。根据商品资料、商品理解、节点配置和参考图上下文生成可编辑文案。",
+                (
+                    "You generate editable ecommerce copy from the JSON task data in the user message. "
+                    "The structured-output schema owns the response fields. Use only supplied facts."
+                ),
             ),
-            input_payload=[
+            input_payload=_json_user_message(
                 {
-                    "role": "user",
-                    "content": (
-                        f"商品名：{product.name}\n"
-                        f"类目：{product.category or '未提供'}\n"
-                        f"价格：{product.price or '未提供'}\n"
-                        f"商品描述/补充说明：{product.source_note or '未提供'}\n"
-                        f"参考图：{reference_text}\n"
-                        f"文案用途：{config.purpose or '未指定'}\n"
-                        f"输出模式：{config.output_mode}\n"
-                        f"渠道：{config.channel or '未指定'}\n"
-                        f"语气：{config.tone or '未指定'}\n"
-                        f"本轮文案要求：{config.instruction or '按商品和场景自由组织文案'}\n"
-                        f"可选槽位：{[slot.model_dump(mode='json') for slot in config.requested_slots]}\n"
-                        f"商品定位：{brief.positioning}\n"
-                        f"目标人群：{brief.audience}\n"
-                        f"卖点角度：{', '.join(brief.selling_angles)}\n"
-                        f"禁忌表达：{', '.join(brief.taboo_phrases) or '无'}\n"
-                        "不要为了满足固定字段编造 CTA、海报标题或固定数量卖点。"
-                        "如果场景适合自由正文、短标签块或布局说明，请按内容自然选择。"
-                    ),
-                },
-            ],
+                    "task": "generate_editable_ecommerce_copy",
+                    "product": {
+                        "name": product.name,
+                        "category": product.category,
+                        "price": product.price,
+                        "source_note": product.source_note,
+                        "has_product_image": bool(product.image_path),
+                    },
+                    "brief": {
+                        "positioning": brief.positioning,
+                        "audience": brief.audience,
+                        "selling_angles": brief.selling_angles,
+                        "taboo_phrases": brief.taboo_phrases,
+                        "poster_style_hint": brief.poster_style_hint,
+                    },
+                    "reference_images": reference_image_payload,
+                    "node_config": {
+                        "purpose": config.purpose,
+                        "output_mode": config.output_mode,
+                        "channel": config.channel,
+                        "tone": config.tone,
+                        "instruction": config.instruction,
+                        "requested_slots": [slot.model_dump(mode="json") for slot in config.requested_slots],
+                    },
+                    "language_policy": copy_language_policy(config.copy_language_hint),
+                    "fact_policy": sparse_fact_policy(),
+                    "copy_planning_policy": {
+                        "do_not_force_fixed_field_count": True,
+                        "if_requested_slots_conflict_with_sparse_facts": (
+                            "Prefer fewer, safer text blocks or layout guidance over unsupported claims."
+                        ),
+                        "freeform_vs_blocks_vs_layout_brief": (
+                            "Choose content_kind according to node_config.output_mode unless sparse facts make another "
+                            "content shape safer."
+                        ),
+                    },
+                }
+            ),
             error_label="文案 provider",
         )
         payload = structured_payload.to_copy_payload(fallback_purpose=config.purpose)

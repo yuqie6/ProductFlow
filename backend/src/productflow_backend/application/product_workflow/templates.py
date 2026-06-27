@@ -10,6 +10,11 @@ from productflow_backend.application.canvas_templates import (
     get_builtin_canvas_template,
     validate_canvas_template,
 )
+from productflow_backend.application.language_policy import (
+    TemplateLanguageHints,
+    language_hints_from_template_language,
+)
+from productflow_backend.domain.enums import WorkflowNodeType
 from productflow_backend.domain.errors import BusinessValidationError, NotFoundError
 from productflow_backend.infrastructure.db.models import Product, ProductWorkflow, WorkflowEdge, WorkflowNode
 
@@ -33,6 +38,7 @@ def materialize_product_workflow_from_template(
     *,
     product_id: str,
     template: CanvasTemplate,
+    template_language: str | None = None,
 ) -> ProductWorkflow:
     validate_canvas_template(template)
     if template.kind != "full_canvas":
@@ -59,7 +65,12 @@ def materialize_product_workflow_from_template(
     session.add(workflow)
     session.flush()
 
-    materialize_canvas_template_graph(session, workflow=workflow, template=template)
+    materialize_canvas_template_graph(
+        session,
+        workflow=workflow,
+        template=template,
+        template_language=template_language,
+    )
     session.flush()
     return workflow
 
@@ -73,13 +84,16 @@ def materialize_canvas_template_graph(
     position_y_offset: int = 0,
     existing_nodes_by_template_key: dict[str, WorkflowNode] | None = None,
     external_source_nodes_by_template_source: dict[str, WorkflowNode] | None = None,
+    template_language: str | None = None,
 ) -> dict[str, WorkflowNode]:
     validate_canvas_template(template)
+    language_hints = language_hints_from_template_language(template_language)
     nodes_by_template_key: dict[str, WorkflowNode] = dict(existing_nodes_by_template_key or {})
     for node_spec in template.nodes:
         if node_spec.key in nodes_by_template_key:
             continue
         config_json = deepcopy(node_spec.config_json)
+        _apply_template_language_hints(config_json, node_type=node_spec.node_type, language_hints=language_hints)
         if template.source == "builtin":
             config_json[TEMPLATE_METADATA_CONFIG_KEY] = {
                 "source": template.source,
@@ -124,3 +138,23 @@ def materialize_canvas_template_graph(
         )
     session.flush()
     return nodes_by_template_key
+
+
+def _apply_template_language_hints(
+    config_json: dict[str, object],
+    *,
+    node_type: WorkflowNodeType,
+    language_hints: TemplateLanguageHints,
+) -> None:
+    if (
+        node_type == WorkflowNodeType.COPY_GENERATION
+        and language_hints.copy_language_hint
+        and not config_json.get("copy_language_hint")
+    ):
+        config_json["copy_language_hint"] = language_hints.copy_language_hint
+    if (
+        node_type == WorkflowNodeType.IMAGE_GENERATION
+        and language_hints.visible_text_language_hint
+        and not config_json.get("visible_text_language_hint")
+    ):
+        config_json["visible_text_language_hint"] = language_hints.visible_text_language_hint

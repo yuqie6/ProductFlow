@@ -172,6 +172,7 @@ def create_product(
     content_type: str,
     reference_image_uploads: list[tuple[bytes, str, str]] | None = None,
     canvas_template_key: str | None = None,
+    template_language: str | None = None,
     storage: LocalStorage | None = None,
 ) -> Product:
     """创建商品，保存原始图和参考图到本地存储。"""
@@ -212,6 +213,7 @@ def create_product(
             session,
             product_id=product.id,
             template=canvas_template,
+            template_language=template_language,
         )
     session.commit()
     session.expire_all()

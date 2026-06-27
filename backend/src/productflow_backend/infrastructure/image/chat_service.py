@@ -249,12 +249,12 @@ class ImageChatService:
         recent_turns = history[-8:]
         history_lines = []
         for index, turn in enumerate(recent_turns, start=1):
-            role = "用户" if turn.role == "user" else "助手"
-            history_lines.append(f"{index}. {role}：{turn.content.strip()}")
+            role = "User" if turn.role == "user" else "Assistant"
+            history_lines.append(f"{index}. {role}: {turn.content.strip()}")
 
         history_block = ""
         if history_lines:
-            history_block = "\n".join(["以下是之前对话中已经确认的上下文：", *history_lines])
+            history_block = "\n".join(["Previous branch context:", *history_lines])
         return render_prompt_template(
             self.prompt_template,
             {

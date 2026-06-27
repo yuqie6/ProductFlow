@@ -10,6 +10,7 @@ from google import genai
 from google.genai import types
 
 from productflow_backend.application.contracts import PosterGenerationInput
+from productflow_backend.application.language_policy import image_visible_text_requirements
 from productflow_backend.config import get_runtime_settings
 from productflow_backend.domain.enums import PosterKind
 from productflow_backend.infrastructure.image.base import (
@@ -335,54 +336,55 @@ class GoogleGeminiImageProvider(ImageProvider):
                 "category": poster.category or "",
                 "price": poster.price or "",
                 "source_note": poster.source_note or "",
-                "instruction": poster.instruction or "自由生成。",
+                "instruction": poster.instruction or "Free image generation.",
                 "context_block": self._build_context_block(poster),
                 "reference_policy": (
                     settings.prompt_poster_image_reference_policy if poster_has_reference_input(poster) else ""
                 ),
+                "visible_text_language_hint": poster.visible_text_language_hint or "",
                 "size": size,
                 "kind": kind.value,
-                "kind_label": "主图" if kind == PosterKind.MAIN_IMAGE else "促销海报",
-                "kind_requirements": self._build_kind_requirements(kind),
+                "kind_label": "main image" if kind == PosterKind.MAIN_IMAGE else "promotional poster",
+                "kind_requirements": self._build_kind_requirements(
+                    kind,
+                    visible_text_language_hint=poster.visible_text_language_hint,
+                ),
             },
         )
 
     def _build_context_block(self, poster: PosterGenerationInput) -> str:
         lines: list[str] = []
         if poster.product_name:
-            lines.append(f"- 画面主体：{poster.product_name}")
+            lines.append(f"- Subject: {poster.product_name}")
         if poster.category:
-            lines.append(f"- 类目/类型：{poster.category}")
+            lines.append(f"- Category/type: {poster.category}")
         if poster.price:
-            lines.append(f"- 价格：{poster.price}")
+            lines.append(f"- Price: {poster.price}")
         if poster.source_note:
-            lines.append(f"- 补充说明：{poster.source_note}")
+            lines.append(f"- Additional notes: {poster.source_note}")
         if poster.copy_prompt_mode == "copy" and poster.structured_copy_context:
             lines.append(
-                "- 可用文案参考（仅在用户要求图片包含文字时使用，不要绘制字段名、标签名或上下文说明）：\n"
+                "- Available copy text (use only when visible text is requested or clearly useful; "
+                "do not render field names, labels, or context notes):\n"
                 f"{poster.structured_copy_context}"
             )
         if poster.reference_images or poster.source_image is not None:
             reference_paths = {str(reference.path.resolve()) for reference in poster.reference_images}
             if poster.source_image is not None:
                 reference_paths.add(str(poster.source_image.resolve()))
-            lines.append(f"- 参考图片数量：{len(reference_paths)}")
+            lines.append(f"- Reference image count: {len(reference_paths)}")
             if poster.source_image is not None:
-                lines.append("- 商品原图：第 1 张输入图片")
+                lines.append("- Source product image: input image 1")
             reference_labels = [
-                f"{reference.label or reference.filename}（角色：{reference.role or '参考图'}）"
+                f"{reference.label or reference.filename} (role: {reference.role or 'reference'})"
                 for reference in poster.reference_images
             ]
             if reference_labels:
-                lines.append(f"- 参考图：{'；'.join(reference_labels)}")
-        return "\n".join(lines) if lines else "- 无显式上游上下文。"
+                lines.append(f"- Reference images: {'; '.join(reference_labels)}")
+        return "\n".join(lines) if lines else "- No explicit upstream context."
 
-    def _build_kind_requirements(self, kind: PosterKind) -> str:
-        kind_label = "主图" if kind == PosterKind.MAIN_IMAGE else "海报/竖图"
-        return (
-            f"输出用途：{kind_label}。上游上下文只用于理解画面主体、材质、场景和文案参考；"
-            "不要把字段名、标签名、JSON key、上下文说明、品牌、水印或 UI 面板画进图片。"
-        )
+    def _build_kind_requirements(self, kind: PosterKind, *, visible_text_language_hint: str | None = None) -> str:
+        return image_visible_text_requirements(kind, visible_text_language_hint=visible_text_language_hint)
 
     def _build_reference_images_from_poster(self, poster: PosterGenerationInput) -> list[GoogleGeminiReferenceImage]:
         return [

@@ -50,6 +50,7 @@ async def create_product_endpoint(
     price: str | None = Form(default=None),
     source_note: str | None = Form(default=None),
     canvas_template_key: str | None = Form(default=None),
+    template_language: str | None = Form(default=None),
     session: Session = Depends(get_session),
 ) -> ProductDetailResponse:
     main_image = await read_validated_image_upload(image, fallback_filename="upload.bin")
@@ -75,6 +76,7 @@ async def create_product_endpoint(
         content_type=main_image.mime_type,
         reference_image_uploads=reference_payloads,
         canvas_template_key=canvas_template_key,
+        template_language=template_language,
     )
     return serialize_product_detail(product)
 

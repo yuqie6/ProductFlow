@@ -191,6 +191,46 @@ def test_product_create_materializes_full_canvas_template(configured_env: Path, 
     assert workflow_response.json()["id"] == workflow.id
 
 
+def test_product_create_template_language_writes_copy_and_image_node_hints(
+    configured_env: Path,
+    db_session,
+) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post(
+        "/api/products",
+        data={
+            "name": "越南语模板商品",
+            "canvas_template_key": "ecommerce-main-image-v1",
+            "template_language": "vi-VN",
+        },
+        files={"image": ("template-language.png", _make_demo_image_bytes(), "image/png")},
+    )
+
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+    db_session.expire_all()
+    workflow = db_session.query(ProductWorkflow).filter_by(product_id=product_id, active=True).one()
+    nodes = db_session.query(WorkflowNode).filter_by(workflow_id=workflow.id).all()
+
+    copy_nodes = [node for node in nodes if node.node_type == WorkflowNodeType.COPY_GENERATION]
+    image_nodes = [node for node in nodes if node.node_type == WorkflowNodeType.IMAGE_GENERATION]
+    assert copy_nodes
+    assert image_nodes
+    assert all(
+        node.config_json["copy_language_hint"] == "Write newly generated marketing copy in Vietnamese."
+        for node in copy_nodes
+    )
+    assert all(
+        node.config_json["visible_text_language_hint"] == "Use Vietnamese for newly generated poster text."
+        for node in image_nodes
+    )
+
+
 def test_product_create_rejects_invalid_canvas_template_key(configured_env: Path) -> None:
     from productflow_backend.presentation.api import create_app
 

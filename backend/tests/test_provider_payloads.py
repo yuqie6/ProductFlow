@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from base64 import b64encode
 from io import BytesIO
@@ -245,8 +246,8 @@ def test_prompt_settings_reach_provider_prompt_builders(configured_env: Path, mo
         PosterKind.MAIN_IMAGE,
         "1024x1024",
     )
-    assert "自定义海报 测试商品 / 强调轻便 / 主图 /" in poster_prompt
-    assert "可用文案参考" in poster_prompt
+    assert "自定义海报 测试商品 / 强调轻便 / main image /" in poster_prompt
+    assert "Available copy text" in poster_prompt
     assert "卖点：卖点一" in poster_prompt
     assert poster_prompt.endswith("自定义视觉参考规则")
 
@@ -263,7 +264,7 @@ def test_prompt_settings_reach_provider_prompt_builders(configured_env: Path, mo
         PosterKind.MAIN_IMAGE,
         "1024x1024",
     )
-    assert edit_prompt == "自定义改图 测试商品 / 改成白底，保留主体 / 主图 / 1024x1024 / 自定义视觉参考规则"
+    assert edit_prompt == "自定义改图 测试商品 / 改成白底，保留主体 / main image / 1024x1024 / 自定义视觉参考规则"
 
     chat_prompt = ImageChatService()._build_prompt(
         "改成白底",
@@ -271,7 +272,7 @@ def test_prompt_settings_reach_provider_prompt_builders(configured_env: Path, mo
         "1024x1024",
     )
     assert "自定义连续生图 1024x1024" in chat_prompt
-    assert "用户：先做一个主图" in chat_prompt
+    assert "User: 先做一个主图" in chat_prompt
     assert chat_prompt.endswith("改成白底")
 
 
@@ -328,10 +329,26 @@ def test_openai_text_provider_uses_structured_outputs_for_brief_and_copy(
     )
 
     brief, _ = provider.generate_brief(product)
-    copy, _ = provider.generate_copy(product, brief)
+    copy, _ = provider.generate_copy(
+        product,
+        brief,
+        config=CopyNodeConfigV2(
+            purpose="main_image",
+            instruction="Create conservative main-image copy from supplied facts.",
+            copy_language_hint="Write newly generated marketing copy in Vietnamese.",
+        ),
+    )
 
     assert calls[0]["text_format"] is CreativeBriefPayload
     assert calls[1]["text_format"] is OpenAICopyPayloadStructuredOutput
+    brief_input = json.loads(calls[0]["input"][0]["content"])
+    copy_input = json.loads(calls[1]["input"][0]["content"])
+    assert brief_input["product"]["name"] == "厨房置物架"
+    assert copy_input["product"]["source_note"] == "免打孔"
+    assert copy_input["node_config"]["purpose"] == "main_image"
+    assert copy_input["language_policy"]["copy_language_hint"] == "Write newly generated marketing copy in Vietnamese."
+    assert "商品名：" not in calls[0]["input"][0]["content"]
+    assert "文案用途：" not in calls[1]["input"][0]["content"]
     combined_prompt = "\n".join(
         [call["instructions"] for call in calls] + [call["input"][0]["content"] for call in calls]
     )
@@ -1074,13 +1091,13 @@ def test_openai_responses_poster_provider_uses_image_generation_tool(
     content = payload["input"][0]["content"]
     assert content[0]["type"] == "input_text"
     prompt_text = content[0]["text"]
-    assert "用户要求：背景更干净，强调收纳空间。" in prompt_text
-    assert "- 补充说明：防水牛津布，适合通勤和短途出差。" in prompt_text
-    assert "- 参考图片数量：2" in prompt_text
-    assert "- 商品原图：第 1 张输入图片" in prompt_text
-    assert "- 参考图：reference.png（角色：参考图）" in prompt_text
-    assert "视觉参考规则：" in prompt_text
-    assert "如有输入图片，以输入图片中的商品/主体作为视觉基准" in prompt_text
+    assert "User request:\n背景更干净，强调收纳空间。" in prompt_text
+    assert "- Additional notes: 防水牛津布，适合通勤和短途出差。" in prompt_text
+    assert "- Reference image count: 2" in prompt_text
+    assert "- Source product image: input image 1" in prompt_text
+    assert "- Reference images: reference.png (role: reference)" in prompt_text
+    assert "Visual reference policy:" in prompt_text
+    assert "use the actual product/subject in those images as the visual baseline" in prompt_text
     assert len([item for item in content if item["type"] == "input_image"]) == 2
     assert "/images/generations" not in str(payload)
     assert "/images/edits" not in str(payload)
@@ -2019,13 +2036,13 @@ def test_openai_images_poster_provider_uses_existing_prompt_contract_and_referen
     assert payload["size"] == "1024x1024"
     assert [image.name for image in payload["image"]] == ["images-source.png", "reference.png"]
     prompt = payload["prompt"]
-    assert "EDIT 测试商品/测试类目/9.90/防水牛津布/背景更干净/主图/1024x1024" in prompt
-    assert "- 补充说明：防水牛津布" in prompt
-    assert "- 参考图片数量：2" in prompt
-    assert "- 商品原图：第 1 张输入图片" in prompt
-    assert "- 参考图：reference.png（角色：参考图）" in prompt
+    assert "EDIT 测试商品/测试类目/9.90/防水牛津布/背景更干净/main image/1024x1024" in prompt
+    assert "- Additional notes: 防水牛津布" in prompt
+    assert "- Reference image count: 2" in prompt
+    assert "- Source product image: input image 1" in prompt
+    assert "- Reference images: reference.png (role: reference)" in prompt
     assert "保留商品主体" in prompt
-    assert "不要把字段名" in prompt
+    assert "Do not render field names" in prompt
 
 
 def test_openai_images_poster_provider_batches_count_as_images_api_n(
@@ -2124,7 +2141,7 @@ def test_default_image_prompts_are_low_pollution_context_carriers(configured_env
     assert all(term not in chat_prompt for term in ["继承已经确定", "主体", "构图与材质"])
     assert "不应注入" not in prompt
     assert "画一张蓝色抽象渐变" in prompt
-    assert "无显式上游上下文" in prompt
+    assert "No explicit upstream context" in prompt
     assert "1280x720" in chat_prompt
 
 
@@ -2142,9 +2159,32 @@ def test_openai_image_prompt_uses_structured_copy_context(configured_env: Path) 
     assert "结构化主标题" in prompt
     assert "结构化正文" in prompt
     assert "结构化卖点" in prompt
-    assert "可用文案参考" in prompt
-    assert "字段名、标签名或上下文说明" in prompt
+    assert "Available copy text" in prompt
+    assert "field names, labels, or context notes" in prompt
     assert "不应作为主输入" not in prompt
+
+
+def test_openai_image_prompt_uses_visible_text_language_hint(configured_env: Path) -> None:
+    source_path = configured_env / "language-hint-source.png"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_bytes(_make_demo_image_bytes())
+
+    prompt = OpenAIResponsesImageProvider()._build_prompt(
+        PosterGenerationInput(
+            product_name="保温杯",
+            instruction="Create a conservative main image.",
+            visible_text_language_hint="Use Vietnamese for newly generated poster text.",
+            structured_copy_context="Summary: Giữ nhiệt gọn nhẹ",
+            source_image=source_path,
+        ),
+        PosterKind.MAIN_IMAGE,
+        "1024x1024",
+    )
+
+    assert "Newly generated poster text language: Use Vietnamese for newly generated poster text." in prompt
+    assert "Preserve text already present on product/package/reference images" in prompt
+    assert "Do not translate existing package text" in prompt
+    assert "Do not invent discounts" in prompt
 
 
 def test_openai_responses_image_client_reports_completed_text_without_image(

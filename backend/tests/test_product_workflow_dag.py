@@ -282,8 +282,8 @@ def test_product_workflow_dag_runs_and_persists_artifacts(configured_env: Path) 
     assert len(image_output["filled_reference_node_ids"]) == 2
     assert image_output["size"] == "1024x1024"
     context_sources = image_output["context_sources"]
-    assert any(source["label"] == "文案" and "多功能收纳架" in source["text"] for source in context_sources)
-    assert any(source["label"] == "参考图" and "厨房风格图" in source["text"] for source in context_sources)
+    assert any(source["label"] == "copy" and "多功能收纳架" in source["text"] for source in context_sources)
+    assert any(source["label"] == "reference_image" and "厨房风格图" in source["text"] for source in context_sources)
     assert image_output["context_summary"]["reference_image_count"] >= 1
     filled_nodes = [
         node for node in run_payload["nodes"] if node["id"] in set(image_output["filled_reference_node_ids"])
@@ -722,6 +722,48 @@ def test_apply_full_canvas_template_reuses_existing_product_context_node(
         workflow_id=workflow_row.id,
         node_type=WorkflowNodeType.PRODUCT_CONTEXT,
     ).count() == 1
+
+
+def test_apply_template_group_language_writes_copy_and_image_hints(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post(
+        "/api/products",
+        data={"name": "模板语言商品"},
+        files={"image": ("apply-language.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+    original = client.get(f"/api/products/{product_id}/workflow").json()
+    original_node_ids = {node["id"] for node in original["nodes"]}
+
+    applied = client.post(
+        f"/api/products/{product_id}/workflow/template-groups",
+        json={
+            "template_key": "ecommerce-feature-infographic-v1",
+            "position_x": 720,
+            "position_y": 360,
+            "template_language": "vi-VN",
+        },
+    )
+    assert applied.status_code == 201
+    created_nodes = [node for node in applied.json()["nodes"] if node["id"] not in original_node_ids]
+    copy_nodes = [node for node in created_nodes if node["node_type"] == "copy_generation"]
+    image_nodes = [node for node in created_nodes if node["node_type"] == "image_generation"]
+    assert copy_nodes
+    assert image_nodes
+    assert all(
+        node["config_json"]["copy_language_hint"] == "Write newly generated marketing copy in Vietnamese."
+        for node in copy_nodes
+    )
+    assert all(
+        node["config_json"]["visible_text_language_hint"] == "Use Vietnamese for newly generated poster text."
+        for node in image_nodes
+    )
 
 
 @pytest.mark.parametrize(
@@ -1194,6 +1236,7 @@ def test_user_template_group_preserves_unrun_prompt_config_when_applied(configur
             "version": 2,
             "output_mode": "freeform",
             "purpose": None,
+            "copy_language_hint": None,
             "requested_slots": [],
         }
         assert template_nodes["image_generation"]["config_json"] == image_config
@@ -1215,6 +1258,7 @@ def test_user_template_group_preserves_unrun_prompt_config_when_applied(configur
         "version": 2,
         "output_mode": "freeform",
         "purpose": None,
+        "copy_language_hint": None,
         "requested_slots": [],
     }
     assert created_by_type["copy_generation"]["status"] == "idle"
@@ -1813,7 +1857,7 @@ def test_product_context_source_image_reaches_image_generation_context(
 
     assert image_output["context_summary"]["reference_image_count"] == 1
     assert any(
-        source["label"] == "商品图" and "bag.png" in source["text"]
+            source["label"] == "source_product_image" and "bag.png" in source["text"]
         for source in image_output["context_sources"]
     )
     assert image_output["context_summary"]["copy_prompt_mode"] == "copy"
@@ -1935,7 +1979,7 @@ def test_image_generation_collects_product_context_through_upstream_copy_edge(
     assert image_output["context_summary"]["reference_image_count"] == 1
     assert any("折叠露营椅" in source["text"] for source in image_output["context_sources"])
     assert any(
-        source["label"] == "商品图" and "chair.png" in source["text"]
+            source["label"] == "source_product_image" and "chair.png" in source["text"]
         for source in image_output["context_sources"]
     )
     assert len(captured_inputs) == 1
@@ -2290,7 +2334,7 @@ def test_image_generation_runs_without_product_context_edge(
         "source_note": None,
     }
     assert image_output["context_summary"]["reference_image_count"] == 0
-    assert not any(source["label"] == "商品资料" for source in image_output["context_sources"])
+    assert not any(source["label"] == "product_facts" for source in image_output["context_sources"])
     assert len(captured_inputs) == 1
     provider_input = captured_inputs[0]
     assert provider_input.product_name == ""
@@ -2401,4 +2445,4 @@ def test_copy_generation_runs_without_product_context_edge(
         "price": None,
         "source_note": None,
     }
-    assert not any(source["label"] == "商品资料" for source in copy_output["context_sources"])
+    assert not any(source["label"] == "product_facts" for source in copy_output["context_sources"])
