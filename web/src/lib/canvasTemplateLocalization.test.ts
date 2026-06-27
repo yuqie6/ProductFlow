@@ -61,6 +61,18 @@ describe("canvas template localization", () => {
     expect(localized.default_external_connections[0]?.label).toBe("Auto-connect product");
   });
 
+  it("localizes built-in template catalog content in Japanese and Vietnamese", () => {
+    const japanese = localizeCanvasTemplateSummary(builtInTemplate, "ja-JP");
+    const vietnamese = localizeCanvasTemplateSummary(builtInTemplate, "vi-VN");
+
+    expect(japanese.title).toBe("E-commerce メイン画像");
+    expect(japanese.preview_nodes.map((node) => node.title)).toEqual(["メイン画像の訴求点", "メイン画像出力"]);
+    expect(japanese.default_external_connections[0]?.label).toBe("商品を自動接続");
+    expect(vietnamese.title).toBe("Ảnh chính thương mại điện tử");
+    expect(vietnamese.preview_nodes.map((node) => node.title)).toEqual(["Lợi ích của ảnh chính", "Đầu ra ảnh chính"]);
+    expect(vietnamese.default_external_connections[0]?.label).toBe("Tự động nối sản phẩm");
+  });
+
   it("keeps user templates and Chinese locale source text unchanged", () => {
     const userTemplate = {
       ...builtInTemplate,
@@ -92,6 +104,10 @@ describe("canvas template localization", () => {
       },
     })).toBe("Main-image benefits");
     expect(localizeBuiltInTemplateLabel("主图输出", "en-US")).toBe("Main image output");
+    expect(localizeBuiltInTemplateNodeTitle("copy_generation", "Main-image benefits", "vi-VN")).toBe(
+      "Lợi ích của ảnh chính",
+    );
+    expect(localizeBuiltInTemplateLabel("Main image output", "ja-JP")).toBe("メイン画像出力");
 
     expect(localizeBuiltInTemplateNodeTitle("copy_generation", "我的文案节点", "en-US")).toBeNull();
     expect(localizeBuiltInTemplateLabel("我的输出", "en-US")).toBeNull();

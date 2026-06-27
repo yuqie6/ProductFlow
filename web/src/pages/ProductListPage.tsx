@@ -23,7 +23,7 @@ const PRODUCT_LIST_STALE_TIME_MS = 60_000;
 const RUNTIME_CONFIG_STALE_TIME_MS = 5 * 60_000;
 
 export function ProductListPage() {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
@@ -287,7 +287,7 @@ export function ProductListPage() {
                             <StatusPill status={product.workflow_state} />
                           </td>
                           <td className="px-5 py-4 font-mono text-xs text-zinc-500 dark:text-slate-400">
-                            {formatShortDate(product.updated_at)}
+                            {formatShortDate(product.updated_at, locale)}
                           </td>
                           <td className="px-5 py-4 text-right">
                             <div className="flex items-center justify-end gap-3 opacity-0 transition-opacity group-hover:opacity-100">
@@ -376,7 +376,7 @@ function ProductMobileCard({
   onOpen: () => void;
   onDelete: () => void;
 }) {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const metadata = [
     product.category,
     product.price ? formatPrice(product.price) : null,
@@ -401,7 +401,7 @@ function ProductMobileCard({
               </span>
               <span className="mt-1 flex items-center gap-1.5 text-xs text-zinc-500 dark:text-slate-400">
                 <span>{t("products.table.updated")}</span>
-                <span className="font-mono tabular-nums">{formatShortDate(product.updated_at)}</span>
+                <span className="font-mono tabular-nums">{formatShortDate(product.updated_at, locale)}</span>
               </span>
             </button>
             <StatusPill status={product.workflow_state} />

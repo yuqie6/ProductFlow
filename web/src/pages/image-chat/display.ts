@@ -37,7 +37,7 @@ export function generationTaskQueueText(task: ImageSessionGenerationTask, t: Ima
       : "";
     return t("chat.runningText", {
       providerStatus,
-      progress: task.progress_updated_at ? formatDateTime(task.progress_updated_at) : t("chat.progressJustStarted"),
+      progress: task.progress_updated_at ? formatDateTime(task.progress_updated_at, t.locale) : t("chat.progressJustStarted"),
       running: task.queue_running_count,
       queued: task.queue_queued_count,
     });

@@ -155,7 +155,7 @@ export function WorkflowNodeCard({
               <div className="font-semibold">{activityText}</div>
               {node.last_run_at ? (
                 <div className="mt-0.5 text-[10px] text-indigo-600/70 dark:text-violet-100/70">
-                  {t("detail.recent", { time: formatDateTime(node.last_run_at) })}
+                  {t("detail.recent", { time: formatDateTime(node.last_run_at, t.locale) })}
                 </div>
               ) : null}
             </div>
@@ -196,7 +196,7 @@ export function WorkflowNodeCard({
       </div>
       <div className="mt-3 flex items-center gap-2 text-[10px] text-zinc-400 dark:text-slate-300">
         <span className="min-w-0 flex-1 truncate text-left leading-tight">
-          {node.last_run_at ? t("detail.recent", { time: formatDateTime(node.last_run_at) }) : displayLabel}
+          {node.last_run_at ? t("detail.recent", { time: formatDateTime(node.last_run_at, t.locale) }) : displayLabel}
         </span>
       </div>
     </div>

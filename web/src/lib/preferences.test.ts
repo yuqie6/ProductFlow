@@ -1,14 +1,37 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_LOCALE, interpolate, resolveLocale, translate } from "./i18n";
+import {
+  DEFAULT_LOCALE,
+  LOCALES,
+  LOCALE_LABEL_KEYS,
+  interpolate,
+  resolveLocale,
+  translate,
+  translations,
+} from "./i18n";
 import { resolveTheme, resolveThemePreference } from "./theme";
 
 describe("i18n helpers", () => {
   it("resolves supported locales and falls back to Chinese", () => {
     expect(resolveLocale("en-US")).toBe("en-US");
     expect(resolveLocale("zh-CN")).toBe("zh-CN");
+    expect(resolveLocale("vi-VN")).toBe("vi-VN");
     expect(resolveLocale("fr-FR")).toBe(DEFAULT_LOCALE);
     expect(resolveLocale(null)).toBe(DEFAULT_LOCALE);
+  });
+
+  it("keeps locale selector metadata aligned with supported locales", () => {
+    const defaultKeys = Object.keys(translations[DEFAULT_LOCALE]).sort();
+
+    expect(Object.keys(LOCALE_LABEL_KEYS).sort()).toEqual([...LOCALES].sort());
+    for (const locale of LOCALES) {
+      expect(Object.keys(translations[locale]).sort()).toEqual(defaultKeys);
+    }
+    expect(translate("vi-VN", "locale.viVN")).toBe("Tiếng Việt");
+    expect(translate("vi-VN", "nav.language")).toBe("Ngôn ngữ");
+    expect(translate("vi-VN", "detail.runWorkflow")).toBe(
+      "Lưu cấu hình hiện tại rồi chạy toàn bộ quy trình trên canvas",
+    );
   });
 
   it("translates keys with interpolation", () => {
@@ -37,4 +60,3 @@ describe("theme helpers", () => {
     expect(resolveTheme("light", true)).toBe("light");
   });
 });
-

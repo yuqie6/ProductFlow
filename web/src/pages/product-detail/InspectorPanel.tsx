@@ -210,7 +210,7 @@ export function InspectorPanel({
             </div>
             {node.last_run_at ? (
               <div className="mt-2 text-[11px] text-zinc-400 dark:text-slate-400">
-                {t("detail.inspector.lastRun", { time: formatDateTime(node.last_run_at) })}
+                {t("detail.inspector.lastRun", { time: formatDateTime(node.last_run_at, t.locale) })}
               </div>
             ) : null}
           </div>
@@ -233,7 +233,7 @@ export function InspectorPanel({
                   <div className="mt-1 text-indigo-600/75 dark:text-violet-100/70">{activeRunQueueText}</div>
                 ) : null}
                 <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 text-[10px] text-indigo-600/70 dark:text-violet-100/60">
-                  <span>{t("detail.nodeRunStarted", { time: formatDateTime(activeRunContext.nodeRun.started_at) })}</span>
+                  <span>{t("detail.nodeRunStarted", { time: formatDateTime(activeRunContext.nodeRun.started_at, t.locale) })}</span>
                   {activeRunContext.run.is_cancelable ? <span>{t("detail.runCancelable")}</span> : null}
                 </div>
               </div>

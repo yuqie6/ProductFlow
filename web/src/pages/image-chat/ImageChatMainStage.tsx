@@ -41,7 +41,7 @@ export function ImageChatMainStage({
       <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center justify-between gap-3 px-5 py-4">
         {selectedRound ? (
           <div className="hidden min-w-0 max-w-[calc(100%-5.5rem)] truncate rounded-full bg-white/90 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm ring-1 ring-slate-200 backdrop-blur dark:bg-slate-950/82 dark:text-slate-200 dark:ring-slate-700 lg:block">
-            {formatDateTime(selectedRound.created_at)} · {selectedRound.model_name}
+            {formatDateTime(selectedRound.created_at, t.locale)} · {selectedRound.model_name}
           </div>
         ) : selectedPlaceholder ? (
           <div className="hidden min-w-0 max-w-[calc(100%-5.5rem)] truncate rounded-full bg-white/90 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm ring-1 ring-slate-200 backdrop-blur dark:bg-slate-950/82 dark:text-slate-200 dark:ring-slate-700 lg:block">

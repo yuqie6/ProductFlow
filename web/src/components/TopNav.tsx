@@ -1,5 +1,7 @@
 import {
   BookOpen,
+  Check,
+  ChevronDown,
   GalleryHorizontalEnd,
   Languages,
   LayoutGrid,
@@ -11,9 +13,10 @@ import {
   Sun,
   Wand2,
 } from "lucide-react";
+import type { FocusEvent, MouseEvent } from "react";
 import { Link, useLocation } from "react-router-dom";
 
-import { LOCALES, type Locale, type TranslationKey } from "../lib/i18n";
+import { LOCALES, LOCALE_LABEL_KEYS, type Locale } from "../lib/i18n";
 import { usePreferences } from "../lib/preferences";
 import { THEME_PREFERENCES, type ThemePreference } from "../lib/theme";
 
@@ -62,12 +65,6 @@ const themeIcons: Record<ThemePreference, typeof Sun> = {
   system: Monitor,
 };
 
-const localeLabelKey: Record<Locale, TranslationKey> = {
-  "zh-CN": "locale.zhCN",
-  "en-US": "locale.enUS",
-  "ja-JP": "locale.jaJP",
-};
-
 function navItemClassName(active: boolean) {
   return [
     "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-sm font-semibold transition-colors sm:w-auto sm:px-4 lg:px-5",
@@ -77,19 +74,86 @@ function navItemClassName(active: boolean) {
   ].join(" ");
 }
 
+function closeDetails(event: MouseEvent<HTMLButtonElement>) {
+  event.currentTarget.closest("details")?.removeAttribute("open");
+}
+
+function closeDetailsOnBlur(event: FocusEvent<HTMLElement>) {
+  const nextTarget = event.relatedTarget;
+  if (!nextTarget || !(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+    event.currentTarget.removeAttribute("open");
+  }
+}
+
+function LanguagePicker({ compact = false }: { compact?: boolean }) {
+  const { locale, setLocale, t } = usePreferences();
+  const selectedLabel = t(LOCALE_LABEL_KEYS[locale]);
+  const selectLocale = (event: MouseEvent<HTMLButtonElement>, nextLocale: Locale) => {
+    setLocale(nextLocale);
+    closeDetails(event);
+  };
+
+  return (
+    <details
+      onBlur={closeDetailsOnBlur}
+      className={[
+        "group relative inline-flex shrink-0 text-slate-600 dark:text-slate-300",
+        compact ? "w-[7.35rem]" : "w-36",
+      ].join(" ")}
+    >
+      <summary
+        aria-label={`${t("nav.language")}: ${selectedLabel}`}
+        title={selectedLabel}
+        className={[
+          "flex cursor-pointer list-none items-center rounded-xl border border-slate-200 bg-white shadow-sm transition-colors select-none marker:hidden hover:border-indigo-200 hover:text-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 group-open:border-indigo-200 group-open:text-indigo-700 dark:border-slate-700 dark:bg-slate-950/80 dark:hover:border-violet-400/55 dark:hover:text-violet-100 dark:focus-visible:ring-violet-400 dark:group-open:border-violet-400/55 dark:group-open:text-violet-100 [&::-webkit-details-marker]:hidden",
+          compact ? "h-11 w-[7.35rem] px-2.5" : "h-9 w-36 px-2.5",
+        ].join(" ")}
+      >
+        <Languages size={14} className="shrink-0 text-slate-400" aria-hidden="true" />
+        <span className="ml-2 min-w-0 flex-1 truncate text-left text-xs font-semibold">{selectedLabel}</span>
+        <ChevronDown
+          size={13}
+          className="ml-1 shrink-0 text-slate-400 transition-transform group-open:rotate-180"
+          aria-hidden="true"
+        />
+      </summary>
+      <div className="absolute right-0 top-full z-[70] mt-2 w-44 overflow-hidden rounded-2xl border border-slate-200 bg-white p-1.5 shadow-xl shadow-slate-900/12 dark:border-slate-700 dark:bg-slate-950 dark:shadow-black/40">
+        {LOCALES.map((item) => {
+          const active = locale === item;
+          return (
+            <button
+              key={item}
+              type="button"
+              onClick={(event) => selectLocale(event, item)}
+              aria-current={active ? "true" : undefined}
+              className={`flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm font-medium transition-colors ${
+                active
+                  ? "bg-indigo-50 text-indigo-700 dark:bg-violet-500/18 dark:text-violet-100"
+                  : "text-slate-600 hover:bg-slate-100 hover:text-slate-950 dark:text-slate-300 dark:hover:bg-slate-900 dark:hover:text-slate-100"
+              }`}
+            >
+              <span className="min-w-0 flex-1 truncate">{t(LOCALE_LABEL_KEYS[item])}</span>
+              {active ? <Check size={14} className="shrink-0" aria-hidden="true" /> : null}
+            </button>
+          );
+        })}
+      </div>
+    </details>
+  );
+}
+
 export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
   const location = useLocation();
-  const { locale, setLocale, t, themePreference, setThemePreference } = usePreferences();
+  const { t, themePreference, setThemePreference } = usePreferences();
   const CurrentThemeIcon = themeIcons[themePreference];
   const nextThemePreference =
     THEME_PREFERENCES[(THEME_PREFERENCES.indexOf(themePreference) + 1) % THEME_PREFERENCES.length];
-  const nextLocale = LOCALES[(LOCALES.indexOf(locale) + 1) % LOCALES.length];
 
   return (
     <>
-      <nav className="z-50 flex flex-col gap-3 overflow-x-hidden border-b border-slate-200 bg-white/95 px-3 py-3 shadow-[0_1px_0_rgba(15,23,42,0.03)] backdrop-blur dark:border-slate-800 dark:bg-slate-950/92 sm:px-4 lg:grid lg:min-h-14 lg:grid-cols-[minmax(180px,1fr)_auto_minmax(180px,1fr)] lg:items-center lg:gap-4 lg:px-6">
+      <nav className="z-50 flex flex-col gap-3 overflow-visible border-b border-slate-200 bg-white/95 px-3 py-3 shadow-[0_1px_0_rgba(15,23,42,0.03)] backdrop-blur dark:border-slate-800 dark:bg-slate-950/92 sm:px-4 lg:grid lg:min-h-14 lg:grid-cols-[minmax(180px,1fr)_auto_minmax(180px,1fr)] lg:items-center lg:gap-4 lg:px-6">
         <div className="flex min-w-0 items-center justify-between gap-2 text-sm">
-          <div className="flex min-w-0 max-w-[calc(100%-6.5rem)] items-center space-x-2 overflow-hidden">
+          <div className="flex min-w-0 max-w-[calc(100%-10.75rem)] items-center space-x-2 overflow-hidden">
             <button
               type="button"
               className="flex min-w-0 shrink-0 items-center text-base font-semibold text-slate-950 transition-colors hover:text-indigo-700 dark:text-slate-100 dark:hover:text-indigo-300"
@@ -108,15 +172,7 @@ export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
             ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-1 lg:hidden">
-            <button
-              type="button"
-              onClick={() => setLocale(nextLocale)}
-              aria-label={`${t("nav.language")}: ${t(localeLabelKey[locale])}`}
-              title={t(localeLabelKey[locale])}
-              className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 shadow-sm transition-colors active:scale-[0.98] hover:border-indigo-200 hover:text-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-slate-700 dark:bg-slate-950/80 dark:text-slate-300 dark:hover:border-violet-400/55 dark:hover:text-violet-100"
-            >
-              <Languages size={16} />
-            </button>
+            <LanguagePicker compact />
             <button
               type="button"
               onClick={() => setThemePreference(nextThemePreference)}
@@ -153,24 +209,7 @@ export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
         </div>
 
         <div className="hidden min-w-0 flex-wrap items-center justify-start gap-2 lg:flex lg:justify-end">
-          <div className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 dark:border-slate-800 dark:bg-slate-900">
-            <Languages size={14} className="ml-1 text-slate-400" aria-hidden="true" />
-            {LOCALES.map((item) => (
-              <button
-                key={item}
-                type="button"
-                onClick={() => setLocale(item)}
-                aria-label={`${t("nav.language")}: ${t(localeLabelKey[item])}`}
-                className={`h-7 rounded-md px-2 text-xs font-semibold transition-colors ${
-                  locale === item
-                    ? "bg-white text-indigo-700 shadow-sm dark:bg-slate-800 dark:text-indigo-300"
-                    : "text-slate-500 hover:text-slate-950 dark:text-slate-400 dark:hover:text-slate-100"
-                }`}
-              >
-                {t(localeLabelKey[item])}
-              </button>
-            ))}
-          </div>
+          <LanguagePicker />
           <div className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 dark:border-slate-800 dark:bg-slate-900">
             {THEME_PREFERENCES.map((item) => {
               const Icon = themeIcons[item];

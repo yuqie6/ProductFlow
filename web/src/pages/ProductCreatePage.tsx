@@ -8,7 +8,7 @@ import { ImageDropZone } from "../components/ImageDropZone";
 import { api, ApiError } from "../lib/api";
 import { localizeCanvasTemplateSummary } from "../lib/canvasTemplateLocalization";
 import { useI18n } from "../lib/preferences";
-import type { TranslationKey } from "../lib/i18n";
+import type { Locale, TranslationKey } from "../lib/i18n";
 import type { CanvasTemplateSummary, WorkflowNodeType } from "../lib/types";
 
 interface PreviewNode {
@@ -128,13 +128,13 @@ function canvasTemplateToPlan(template: CanvasTemplateSummary, t: ReturnType<typ
   };
 }
 
-function sortPlans(plans: CanvasPlanOption[]): CanvasPlanOption[] {
+function sortPlans(plans: CanvasPlanOption[], locale: Locale): CanvasPlanOption[] {
   return [...plans].sort((left, right) => {
     const leftIndex = stageOrder.indexOf(left.stage);
     const rightIndex = stageOrder.indexOf(right.stage);
     const normalizedLeft = leftIndex === -1 ? stageOrder.length : leftIndex;
     const normalizedRight = rightIndex === -1 ? stageOrder.length : rightIndex;
-    return normalizedLeft - normalizedRight || left.label.localeCompare(right.label, "zh-Hans-CN");
+    return normalizedLeft - normalizedRight || left.label.localeCompare(right.label, locale);
   });
 }
 
@@ -198,7 +198,7 @@ export function ProductCreatePage() {
         .filter((template) => template.kind === "full_canvas")
         .map((template) => localizeCanvasTemplateSummary(template, locale))
         .map((template) => canvasTemplateToPlan(template, t)) ?? [];
-    return [blankCanvasPlan, ...sortPlans(fullCanvasTemplates)];
+    return [blankCanvasPlan, ...sortPlans(fullCanvasTemplates, locale)];
   }, [locale, t, templatesQuery.data]);
 
   const selectedPlan =

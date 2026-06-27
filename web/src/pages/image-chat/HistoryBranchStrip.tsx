@@ -36,7 +36,7 @@ export function HistoryBranchStrip({
   const promptPreview = {
     title: branch.base_asset_id ? t("chat.branchPrompt") : t("chat.firstPrompt"),
     text: branch.prompt,
-    meta: `${t("chat.imageCount", { count: branch.candidates.length })} · ${formatDateTime(branch.created_at)}`,
+    meta: `${t("chat.imageCount", { count: branch.candidates.length })} · ${formatDateTime(branch.created_at, t.locale)}`,
   };
 
   if (variant === "mobileDrawer") {

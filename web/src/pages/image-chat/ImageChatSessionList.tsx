@@ -138,7 +138,7 @@ function ImageChatSessionCard({
             <History size={11} />
             <span>{t("chat.roundCount", { count: item.rounds_count })}</span>
           </div>
-          <div className="mt-0.5 truncate text-[11px] text-slate-400 dark:text-slate-500">{formatDateTime(item.updated_at)}</div>
+          <div className="mt-0.5 truncate text-[11px] text-slate-400 dark:text-slate-500">{formatDateTime(item.updated_at, t.locale)}</div>
         </div>
       </button>
       <button

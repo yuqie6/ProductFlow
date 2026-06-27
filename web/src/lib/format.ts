@@ -1,19 +1,21 @@
-export function formatShortDate(value: string | null | undefined): string {
+import { DEFAULT_LOCALE, type Locale } from "./i18n";
+
+export function formatShortDate(value: string | null | undefined, locale: Locale = DEFAULT_LOCALE): string {
   if (!value) {
     return "--";
   }
-  return new Intl.DateTimeFormat("zh-CN", {
+  return new Intl.DateTimeFormat(locale, {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
   }).format(new Date(value));
 }
 
-export function formatDateTime(value: string | null | undefined): string {
+export function formatDateTime(value: string | null | undefined, locale: Locale = DEFAULT_LOCALE): string {
   if (!value) {
     return "--";
   }
-  return new Intl.DateTimeFormat("zh-CN", {
+  return new Intl.DateTimeFormat(locale, {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",

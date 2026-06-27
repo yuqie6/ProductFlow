@@ -1660,7 +1660,7 @@ export function ImageChatPage() {
               label: t("gallery.meta.candidate"),
               value: `${activePreviewRound.candidate_index}/${activePreviewRound.candidate_count}`,
             },
-            { label: t("chat.generatedAt"), value: formatDateTime(activePreviewRound.created_at) },
+            { label: t("chat.generatedAt"), value: formatDateTime(activePreviewRound.created_at, t.locale) },
           ]}
           providerNotes={activePreviewRound.provider_notes}
           providerNotesTitle={t("gallery.providerNotes")}

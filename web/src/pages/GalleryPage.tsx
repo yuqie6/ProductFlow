@@ -22,7 +22,7 @@ function metadataRows(entry: GalleryEntry, locale: ReturnType<typeof useI18n>["l
         ? `${entry.candidate_index}/${entry.candidate_count}`
         : t("common.unknown"),
     ],
-    ["gallery.meta.savedAt", formatDateTime(entry.created_at)],
+    ["gallery.meta.savedAt", formatDateTime(entry.created_at, locale)],
   ] as const;
 }
 
@@ -167,7 +167,7 @@ export function GalleryPage() {
                           </div>
                           <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] font-semibold text-white/70">
                             <span>{galleryEntrySizeLabel(entry, locale)}</span>
-                            <span>{formatDateTime(entry.created_at)}</span>
+                            <span>{formatDateTime(entry.created_at, locale)}</span>
                           </div>
                         </div>
                       </div>

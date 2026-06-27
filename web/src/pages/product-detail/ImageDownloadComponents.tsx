@@ -72,7 +72,7 @@ export function PosterThumb({
       <div className="flex items-center justify-between gap-2 border-t border-zinc-100 px-2.5 py-1.5 text-[10px] text-zinc-500 dark:border-slate-800 dark:text-slate-400">
         <span className="min-w-0 truncate">
           {poster.kind === "main_image" ? t("detail.mainImage") : t("detail.promoImage")} ·{" "}
-          {formatDateTime(poster.created_at)}
+          {formatDateTime(poster.created_at, t.locale)}
         </span>
         <div className="flex shrink-0 items-center gap-1">
           {onUseAsReference ? (
@@ -145,7 +145,7 @@ export function SourceAssetThumb({
       </button>
       <div className="flex items-center justify-between gap-2 border-t border-zinc-100 px-2.5 py-1.5 text-[10px] text-zinc-500 dark:border-slate-800 dark:text-slate-400">
         <span className="min-w-0 truncate">
-          {t("detail.referenceImage")} · {formatDateTime(asset.created_at)}
+          {t("detail.referenceImage")} · {formatDateTime(asset.created_at, t.locale)}
         </span>
         <div className="flex shrink-0 items-center gap-1">
           {onUseAsReference ? (

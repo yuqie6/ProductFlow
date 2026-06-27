@@ -105,7 +105,7 @@ export function RunsPanel({ workflow, latestRun, busyRunId, onRetryRun }: RunsPa
         </div>
         {latestRun ? (
           <div className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 text-[11px] text-zinc-500 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-300">
-            {t("detail.latest", { time: formatDateTime(latestRun.started_at) })}
+            {t("detail.latest", { time: formatDateTime(latestRun.started_at, t.locale) })}
           </div>
         ) : null}
       </div>
@@ -142,11 +142,11 @@ export function RunsPanel({ workflow, latestRun, busyRunId, onRetryRun }: RunsPa
                           </span>
                         ) : null}
                         <span className="text-[11px] text-zinc-400 dark:text-slate-500">
-                          {formatDateTime(run.started_at)}
+                          {formatDateTime(run.started_at, t.locale)}
                         </span>
                         {run.finished_at ? (
                           <span className="text-[11px] text-zinc-400 dark:text-slate-500">
-                            {t("detail.finished", { time: formatDateTime(run.finished_at) })}
+                            {t("detail.finished", { time: formatDateTime(run.finished_at, t.locale) })}
                           </span>
                         ) : null}
                       </div>
@@ -225,7 +225,7 @@ export function RunsPanel({ workflow, latestRun, busyRunId, onRetryRun }: RunsPa
                                   setPromptPreview({
                                     title: `${promptItem.title} Prompt`,
                                     text: promptItem.instruction,
-                                    meta: formatDateTime(run.started_at),
+                                    meta: formatDateTime(run.started_at, t.locale),
                                   })
                                 }
                                 className="mt-2 inline-flex max-w-full items-center rounded-lg border border-zinc-200 bg-zinc-50 px-2 py-1 text-[11px] font-medium text-zinc-600 transition-colors hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-300 dark:hover:border-violet-400/50 dark:hover:bg-violet-500/12 dark:hover:text-violet-100"
