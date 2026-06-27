@@ -190,7 +190,7 @@ template = {
 
 This loses the node and edge contract, so later code cannot materialize the plan as a real workflow DAG.
 
-#### Correct
+#### Wrong
 
 ```python
 CanvasTemplate(
@@ -836,70 +836,136 @@ CreativeBriefPayload.model_validate(response_json)
 Keep normalization and malformed-shape rejection inside the application contract validators so all provider entrypoints
 and workflow runs share the same behavior.
 
-## Scenario: OpenAI-compatible text response extraction
+## Scenario: OpenAI text provider structured outputs
 
 ### 1. Scope / Trigger
 
-- Trigger: any change to `OpenAITextProvider` response parsing for `generate_brief` or `generate_copy`.
-- Some OpenAI-compatible `/v1/responses` endpoints return a server-sent-event text body even for non-streaming SDK calls.
-  In that case the SDK result may be a plain `str`, not a `Response` object.
+- Trigger: any change to `OpenAITextProvider` response handling for `generate_brief` or `generate_copy`.
+- Text provider output shape is a provider boundary contract because it feeds `CreativeBriefPayload`, `CopyPayloadV2`,
+  `creative_briefs.payload`, `copy_sets.structured_payload`, workflow node `output_json`, and frontend DTOs.
+- The OpenAI-backed text provider must use native Responses structured outputs, not prompt-only JSON formatting.
 
 ### 2. Signatures
 
-- `OpenAITextProvider._read_output_json(response: object) -> dict`.
-- Supported response text sources:
-  - `response.output_text` for normal OpenAI SDK `Response` objects.
-  - Plain string JSON returned by compatible clients.
-  - SSE `data:` records whose event/type is `response.output_text.delta`.
-  - `response.model_dump(...).output[].content[].text` as a defensive SDK-object fallback.
+- Provider methods:
+  - `OpenAITextProvider.generate_brief(product: ProductInput) -> tuple[CreativeBriefPayload, str]`.
+  - `OpenAITextProvider.generate_copy(product: ProductInput, brief: CreativeBriefPayload, config: CopyNodeConfigV2, reference_images: list[ReferenceImageInput] | None = None) -> tuple[CopyPayloadV2, str]`.
+- OpenAI SDK call shape:
+  - `client.responses.parse(model=<model>, text_format=CreativeBriefPayload, instructions=<semantic prompt>, input=<messages>)`.
+  - `client.responses.parse(model=<model>, text_format=OpenAICopyPayloadStructuredOutput, instructions=<semantic prompt>, input=<messages>)`.
+  - `OpenAICopyPayloadStructuredOutput.to_copy_payload(...) -> CopyPayloadV2`.
+- Provider-facing copy schema:
+  - `version: Literal[2]`.
+  - `purpose: str` where empty string means omitted.
+  - `summary: str`.
+  - `content_kind: Literal["freeform", "blocks", "layout_brief"]`.
+  - `freeform_text: str`, `blocks: list[...]`, and `sections: list[...]`; unused content carriers are empty string or
+    empty arrays.
+  - `visual_guidance` uses required string/list fields; empty string or empty arrays mean omitted.
+- Prompt configuration keys remain:
+  - `prompt_brief_system`
+  - `prompt_copy_system`
 
 ### 3. Contracts
 
-- The extraction step returns text only; JSON parsing and `CreativeBriefPayload` / `CopyPayloadV2` validation remain the
-  next contract boundary.
-- SSE extraction must concatenate only `response.output_text.delta` string chunks in order.
-- Empty extracted text must continue to fail as `ValueError("文案 provider 未返回 JSON 对象：<empty>")`.
-- Do not log full prompts, raw SSE payloads, provider responses, or API keys while diagnosing this path.
+- Structure belongs to Pydantic/OpenAI structured outputs. Prompt text must not be the primary structure contract.
+- `prompt_brief_system` and `prompt_copy_system` control semantic behavior, tone, and task guidance only.
+- Provider prompts must not depend on phrases such as `请输出 JSON`, `不要输出 markdown`, `请输出字段`, or
+  `请输出 v2 JSON 外壳` for correctness.
+- `OpenAITextProvider` must not silently fall back to parsing JSON text from `response.output_text`, raw strings,
+  markdown fences, SSE deltas, or embedded objects.
+- `CopyPayloadV2.content` is a discriminated union. Its direct Pydantic JSON Schema contains a union combinator under
+  `content`, and real OpenAI-compatible providers may reject that with `invalid_json_schema`.
+- For copy generation, `OpenAITextProvider` must use the flat provider-facing `OpenAICopyPayloadStructuredOutput` schema
+  that has no `oneOf`, `anyOf`, or `default` schema keys, then immediately convert and validate it as `CopyPayloadV2`.
+- OpenAI-compatible text providers that do not support `responses.parse(..., text_format=...)` / `text.format=json_schema`
+  are unsupported for the real text-provider path and should fail at the provider boundary with a stable configuration
+  message.
+- Existing `normalize_copy_payload(...)` may remain for saved payload validation, user edits, migrations, and non-OpenAI
+  test/mock providers, but it is not the OpenAI provider main path.
+- Do not log full prompts, raw provider payloads, provider responses, API keys, or base URLs while diagnosing this path.
 
 ### 4. Validation & Error Matrix
 
-- SDK `Response.output_text` contains JSON -> parse that JSON.
-- Compatible endpoint returns plain JSON string -> parse that JSON string.
-- Compatible endpoint returns SSE text with output deltas -> concatenate deltas, then parse JSON.
-- SSE text has no output-text deltas and is not JSON -> raise `ValueError` with a short snippet.
-- Extracted text is non-empty but malformed JSON -> try the existing embedded-object extraction before raising.
+- SDK response exposes `output_parsed` as `CreativeBriefPayload` -> return it directly.
+- SDK response exposes `output_parsed` as `OpenAICopyPayloadStructuredOutput` -> convert with `to_copy_payload(...)` and
+  return the resulting `CopyPayloadV2`.
+- SDK response exposes `output_parsed` as a dict -> validate it through the requested Pydantic model.
+- Direct `text_format=CopyPayloadV2` would generate a schema rejected by some providers with
+  `invalid_json_schema` and message like `oneOf is not permitted`; do not use it for the real OpenAI provider path.
+- `responses.parse` is missing on the client -> raise a stable provider capability error, not an AttributeError.
+- Provider/model rejects structured output parameters -> raise a stable provider capability/request error; do not retry by
+  prompting for JSON text.
+- Parsed payload violates `CreativeBriefPayload` / `CopyPayloadV2` -> surface Pydantic validation so workflow copy retries
+  can apply the existing provider-contract retry loop.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: `event: response.output_text.delta` chunks combine into `{"version":2,...}` and copy generation succeeds.
-- Base: official SDK object exposes `output_text`; no SSE parsing is needed.
-- Bad: reading only `getattr(response, "output_text", "")`, because a plain `str` response becomes `<empty>`.
-- Bad: parsing every SSE `data:` payload as content; lifecycle events such as `response.completed` are not text deltas.
+- Good: `generate_copy(...)` calls `responses.parse(..., text_format=OpenAICopyPayloadStructuredOutput)`, converts the
+  parsed object to `CopyPayloadV2`, and workflow persists `CopySet.structured_payload` from `model_dump(mode="json")`.
+- Good: the system prompt says how to write merchant copy, while schema enforces `summary`, `content.kind`, blocks, and
+  visual guidance shape.
+- Base: mock/test text providers can still return `CopyPayloadV2` objects directly through the shared `TextProvider`
+  interface.
+- Bad: `responses.create(...)` plus `read_json_object_from_response(...)` is reintroduced for the OpenAI provider.
+- Bad: accepting a third-party SSE/plain-string JSON response as a real-provider fallback; that keeps the old prompt-JSON
+  contract alive.
 
 ### 6. Tests Required
 
-- Provider regression with an SSE string containing multiple `response.output_text.delta` chunks, asserting
-  `_read_output_json(...)` returns the combined JSON object.
-- Keep provider payload tests covering prompt settings, scalar normalization, and workflow copy output shape green.
+- Provider regression asserts `OpenAITextProvider.generate_brief()` calls `responses.parse` with
+  `text_format is CreativeBriefPayload` and does not call `responses.create`.
+- Provider regression asserts `OpenAITextProvider.generate_copy()` calls `responses.parse` with
+  `text_format is OpenAICopyPayloadStructuredOutput` and does not call `responses.create`.
+- Schema regression asserts `to_strict_json_schema(OpenAICopyPayloadStructuredOutput)` has no `oneOf`, `anyOf`, or
+  `default` keys.
+- Prompt regression asserts provider user/system prompt text no longer contains old structure fallback phrases such as
+  `请输出 JSON`, `不要输出 markdown`, `请输出字段`, `请输出 v2 JSON 外壳`, or `content.kind 必须`.
+- Backend API E2E regression creates a product, runs the workflow through `/api/products/{id}/workflow/run`, waits for a
+  succeeded run, and asserts the copy node and product detail expose `structured_payload`.
+- Settings/help regression keeps default prompt descriptions aligned with structured-output ownership.
 
 ### 7. Wrong vs Correct
 
 #### Wrong
 
 ```python
-text = getattr(response, "output_text", "").strip()
+response = client.responses.create(...)
+payload = read_json_object_from_response(response, error_label="文案 provider")
+return normalize_copy_payload(payload)
 ```
 
-This treats compatible SSE string responses as empty output.
+This makes natural-language prompt wording responsible for the structural contract and keeps JSON text extraction as a
+runtime dependency.
+
+#### Wrong
+
+```python
+response = client.responses.parse(
+    model=copy_model,
+    text_format=CopyPayloadV2,
+    instructions=semantic_copy_prompt,
+    input=messages,
+)
+return response.output_parsed
+```
+
+This direct schema contains a union under `content` and can fail against OpenAI-compatible providers with
+`invalid_json_schema`.
 
 #### Correct
 
 ```python
-text = _response_output_text(response)
-payload = json.loads(text)
+parsed = client.responses.parse(
+    model=copy_model,
+    text_format=OpenAICopyPayloadStructuredOutput,
+    instructions=semantic_copy_prompt,
+    input=messages,
+).output_parsed
+return parsed.to_copy_payload(fallback_purpose=config.purpose)
 ```
 
-Centralize text extraction before JSON parsing so every text provider method supports the same response shapes.
+Schema enforces structure without unsupported union combinators; `CopyPayloadV2` remains the application/workflow contract.
 
 ## Scenario: Async workflow runs and deletion safety
 

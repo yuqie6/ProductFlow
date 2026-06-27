@@ -864,8 +864,8 @@ const DOC_PAGES: DocPage[] = [
             type: "table",
             headers: ["字段", "说明"],
             rows: [
-              ["商品理解系统提示词", "用于商品资料理解，要求模型输出 CreativeBrief JSON。"],
-              ["文案生成系统提示词", "用于主图/海报文案生成，要求模型输出 CopyPayloadV2 JSON；后端会兼容常见的自由文案、块状文案和布局说明变体。"],
+              ["商品理解系统提示词", "用于商品资料理解；结构化输出由后端 schema 和 provider structured output 约束。"],
+              ["文案生成系统提示词", "用于主图/海报文案生成；结构化输出由后端 schema 和 provider structured output 约束。"],
               ["海报生图提示词模板", "用于工作台 AI 生图。常用占位符包括 `instruction`、`size`、`context_block`、`reference_policy`、`kind` 等。"],
               ["工作台改图提示词模板", "用于工作台带参考图或上游上下文的改图任务。适合带上游文案或参考图上下文的场景。"],
               ["工作台视觉参考规则", "填入工作台生图模板的 `reference_policy` 占位符，用于控制视觉参考优先级规则。"],
@@ -1223,7 +1223,7 @@ const DOC_PAGES_EN: DocPage[] = [
     category: "Settings",
     icon: Settings,
     sections: [
-      { id: "prompt-settings", title: "Fields", blocks: [{ type: "table", headers: ["Field", "Description"], rows: [["Product understanding system prompt", "Used for product data understanding and asks the model to output CreativeBrief JSON."], ["Copy generation system prompt", "Used for main image/poster copy generation and asks for CopyPayloadV2 JSON. The backend accepts common freeform, block, and layout variants."], ["Poster image prompt template", "Used for workbench AI image generation. Common placeholders include `instruction`, `size`, `context_block`, `reference_policy`, and `kind`."], ["Workbench image-edit prompt template", "Used for workbench image-edit runs with reference or upstream context."], ["Workbench visual reference policy", "Fills the `reference_policy` placeholder in workbench image templates to control visual-reference priority rules."], ["Image chat prompt template", "Used for image chat. Available placeholders include `prompt`, `size`, and `history_block`."]] }, { type: "callout", title: "Keep one-off requirements out of global templates", text: "If a background, composition, or tone is needed only for this run, put it in the node requirement or image chat description. Prompt templates are better for long-term default behavior." }] },
+      { id: "prompt-settings", title: "Fields", blocks: [{ type: "table", headers: ["Field", "Description"], rows: [["Product understanding system prompt", "Used for product data understanding; structured output is enforced by backend schema and provider structured outputs."], ["Copy generation system prompt", "Used for main image/poster copy generation; structured output is enforced by backend schema and provider structured outputs."], ["Poster image prompt template", "Used for workbench AI image generation. Common placeholders include `instruction`, `size`, `context_block`, `reference_policy`, and `kind`."], ["Workbench image-edit prompt template", "Used for workbench image-edit runs with reference or upstream context."], ["Workbench visual reference policy", "Fills the `reference_policy` placeholder in workbench image templates to control visual-reference priority rules."], ["Image chat prompt template", "Used for image chat. Available placeholders include `prompt`, `size`, and `history_block`."]] }, { type: "callout", title: "Keep one-off requirements out of global templates", text: "If a background, composition, or tone is needed only for this run, put it in the node requirement or image chat description. Prompt templates are better for long-term default behavior." }] },
     ],
   },
   {
@@ -1814,11 +1814,11 @@ const HELP_DOC_JA_TRANSLATIONS: Record<string, string> = {
   "说明全局提示词模板负责哪些默认行为，以及哪些要求应该留在单次节点或文/图生图输入里。":
     "グローバルプロンプトテンプレートがどの既定動作を制御し、どの要件を単発ノードや画像生成チャット入力に残すべきかを説明します。",
   "商品理解系统提示词": "商品理解システムプロンプト",
-  "用于商品资料理解，要求模型输出 CreativeBrief JSON。":
-    "商品データ理解に使い、モデルに CreativeBrief JSON の出力を要求します。",
+  "用于商品资料理解；结构化输出由后端 schema 和 provider structured output 约束。":
+    "商品データ理解に使います。構造化出力はバックエンド schema と provider structured output で制約します。",
   "文案生成系统提示词": "コピー生成システムプロンプト",
-  "用于主图/海报文案生成，要求模型输出 CopyPayloadV2 JSON；后端会兼容常见的自由文案、块状文案和布局说明变体。":
-    "メイン画像/ポスターコピー生成に使い、モデルに CopyPayloadV2 JSON の出力を要求します。バックエンドは一般的な自由コピー、ブロックコピー、レイアウト説明のバリエーションに対応します。",
+  "用于主图/海报文案生成；结构化输出由后端 schema 和 provider structured output 约束。":
+    "メイン画像/ポスターコピー生成に使います。構造化出力はバックエンド schema と provider structured output で制約します。",
   "海报生图提示词模板": "ポスター画像生成プロンプトテンプレート",
   "用于工作台 AI 生图。常用占位符包括 `instruction`、`size`、`context_block`、`reference_policy`、`kind` 等。":
     "ワークベンチ AI 画像生成に使います。よく使うプレースホルダーには `instruction`、`size`、`context_block`、`reference_policy`、`kind` などがあります。",

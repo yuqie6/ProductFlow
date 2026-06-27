@@ -109,7 +109,10 @@ class DummyImagesAPIResponse:
 def test_prompt_settings_reach_provider_prompt_builders(configured_env: Path, monkeypatch) -> None:
     from productflow_backend.infrastructure.image.chat_service import ImageChatService, ImageChatTurn
     from productflow_backend.infrastructure.prompts import render_prompt_template
-    from productflow_backend.infrastructure.text.openai_provider import OpenAITextProvider
+    from productflow_backend.infrastructure.text.openai_provider import (
+        OpenAICopyPayloadStructuredOutput,
+        OpenAITextProvider,
+    )
 
     assert render_prompt_template(
         "示例 JSON：{\"title\":\"{title}\"}；未知：{unknown}；坏括号：{",
@@ -149,21 +152,54 @@ def test_prompt_settings_reach_provider_prompt_builders(configured_env: Path, mo
 
     text_calls: list[dict] = []
 
-    class DummyTextResponse:
-        def __init__(self, output_text: str) -> None:
-            self.output_text = output_text
+    class DummyParsedTextResponse:
+        def __init__(self, output_parsed) -> None:
+            self.output_parsed = output_parsed
 
     class DummyTextResponses:
-        def create(self, **kwargs):
+        def parse(self, **kwargs):
             text_calls.append(kwargs)
-            if len(text_calls) == 1:
-                return DummyTextResponse(
-                    '{"positioning":"入门定位","audience":"新手","selling_angles":["稳","快","省"],'
-                    '"taboo_phrases":[],"poster_style_hint":"白底"}'
-                )
-            return DummyTextResponse(
-                '{"version":2,"summary":"主标题","content":{"kind":"blocks","blocks":[{"id":"headline","text":"标题"}]}}'
+            if kwargs["text_format"] is CreativeBriefPayload:
+                return DummyParsedTextResponse(
+                    CreativeBriefPayload(
+                        positioning="入门定位",
+                        audience="新手",
+                        selling_angles=["稳", "快", "省"],
+                        taboo_phrases=[],
+                        poster_style_hint="白底",
+                    )
             )
+            return DummyParsedTextResponse(
+                OpenAICopyPayloadStructuredOutput(
+                    version=2,
+                    purpose="",
+                    summary="主标题",
+                    content_kind="blocks",
+                    freeform_text="",
+                    blocks=[
+                        {
+                            "id": "headline",
+                            "role": "",
+                            "label": "",
+                            "text": "标题",
+                            "note": "",
+                            "visual_hint": "",
+                            "priority": 0,
+                        }
+                    ],
+                    sections=[],
+                    visual_guidance={
+                        "main_message": "",
+                        "hierarchy": [],
+                        "composition_hint": "",
+                        "text_density": "",
+                        "avoid": [],
+                    },
+                )
+            )
+
+        def create(self, **kwargs):
+            raise AssertionError("text provider must use structured outputs")
 
     class DummyTextOpenAI:
         def __init__(self, **kwargs) -> None:
@@ -183,8 +219,10 @@ def test_prompt_settings_reach_provider_prompt_builders(configured_env: Path, mo
     text_provider.generate_copy(product_input, brief)
 
     assert text_calls[0]["instructions"] == "自定义商品理解提示"
+    assert text_calls[0]["text_format"] is CreativeBriefPayload
     assert text_calls[0]["input"][0]["role"] == "user"
     assert text_calls[1]["instructions"] == "自定义文案提示"
+    assert text_calls[1]["text_format"] is OpenAICopyPayloadStructuredOutput
     assert text_calls[1]["input"][0]["role"] == "user"
 
     source_path = configured_env / "prompt-provider-source.png"
@@ -233,34 +271,134 @@ def test_prompt_settings_reach_provider_prompt_builders(configured_env: Path, mo
     assert chat_prompt.endswith("改成白底")
 
 
-def test_openai_text_provider_reads_sse_text_response() -> None:
-    from productflow_backend.infrastructure.text.openai_provider import OpenAITextProvider
-
-    provider = object.__new__(OpenAITextProvider)
-    response = "\n".join(
-        [
-            'event: response.output_text.delta',
-            'data: {"type":"response.output_text.delta","delta":"{\\"version\\":2,"}',
-            "",
-            'event: response.output_text.delta',
-            'data: {"type":"response.output_text.delta","delta":"\\"summary\\":\\"促销文案\\","}',
-            "",
-            'event: response.output_text.delta',
-            (
-                'data: {"type":"response.output_text.delta","delta":"\\"content\\":'
-                '{\\"kind\\":\\"freeform\\",\\"text\\":\\"五一促销\\"}}"}'
-            ),
-            "",
-            "event: response.completed",
-            'data: {"type":"response.completed","response":{"output":[]}}',
-        ]
+def test_openai_text_provider_uses_structured_outputs_for_brief_and_copy(
+    configured_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.infrastructure.text.openai_provider import (
+        OpenAICopyPayloadStructuredOutput,
+        OpenAITextProvider,
     )
 
-    assert provider._read_output_json(response) == {
-        "version": 2,
-        "summary": "促销文案",
-        "content": {"kind": "freeform", "text": "五一促销"},
-    }
+    calls: list[dict] = []
+
+    class DummyParsedTextResponse:
+        def __init__(self, output_parsed) -> None:
+            self.output_parsed = output_parsed
+
+    class DummyTextResponses:
+        def parse(self, **kwargs):
+            calls.append(kwargs)
+            if kwargs["text_format"] is CreativeBriefPayload:
+                return DummyParsedTextResponse(
+                    CreativeBriefPayload(
+                        positioning="厨房收纳定位",
+                        audience="小户型用户",
+                        selling_angles=["省空间", "免打孔", "好清洁"],
+                        taboo_phrases=[],
+                        poster_style_hint="清爽白底",
+                    )
+            )
+            return DummyParsedTextResponse(
+                OpenAICopyPayloadStructuredOutput(
+                    version=2,
+                    purpose="",
+                    summary="台面清爽收纳",
+                    content_kind="blocks",
+                    freeform_text="",
+                    blocks=[
+                        {
+                            "id": "headline",
+                            "role": "",
+                            "label": "主信息",
+                            "text": "台面清爽收纳",
+                            "note": "",
+                            "visual_hint": "",
+                            "priority": 1,
+                        }
+                    ],
+                    sections=[],
+                    visual_guidance={
+                        "main_message": "",
+                        "hierarchy": [],
+                        "composition_hint": "",
+                        "text_density": "",
+                        "avoid": [],
+                    },
+                )
+            )
+
+        def create(self, **kwargs):
+            raise AssertionError("text provider must not use JSON-text create fallback")
+
+    class DummyTextOpenAI:
+        def __init__(self, **kwargs) -> None:
+            self.responses = DummyTextResponses()
+
+    monkeypatch.setattr("productflow_backend.infrastructure.text.openai_provider.OpenAI", DummyTextOpenAI)
+
+    provider = OpenAITextProvider()
+    product = ProductInput(
+        name="厨房置物架",
+        category="收纳",
+        price="39",
+        source_note="免打孔",
+        image_path="/tmp/a.png",
+    )
+
+    brief, _ = provider.generate_brief(product)
+    copy, _ = provider.generate_copy(product, brief)
+
+    assert calls[0]["text_format"] is CreativeBriefPayload
+    assert calls[1]["text_format"] is OpenAICopyPayloadStructuredOutput
+    combined_prompt = "\n".join(
+        [call["instructions"] for call in calls] + [call["input"][0]["content"] for call in calls]
+    )
+    for forbidden in ("请输出 JSON", "不要输出 markdown", "请输出字段", "请输出 v2 JSON 外壳", "content.kind 必须"):
+        assert forbidden not in combined_prompt
+    assert copy.summary == "台面清爽收纳"
+    assert copy.content.kind == "blocks"
+
+
+def test_openai_copy_structured_output_schema_avoids_oneof() -> None:
+    from openai.lib._pydantic import to_strict_json_schema
+
+    from productflow_backend.infrastructure.text.openai_provider import OpenAICopyPayloadStructuredOutput
+
+    def collect_keys(value) -> set[str]:
+        if isinstance(value, dict):
+            return set(value) | set().union(*(collect_keys(item) for item in value.values()))
+        if isinstance(value, list):
+            return set().union(*(collect_keys(item) for item in value))
+        return set()
+
+    schema_keys = collect_keys(to_strict_json_schema(OpenAICopyPayloadStructuredOutput))
+
+    assert "oneOf" not in schema_keys
+    assert "anyOf" not in schema_keys
+    assert "default" not in schema_keys
+
+
+def test_openai_text_provider_fails_without_structured_output_support(
+    configured_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.infrastructure.text.openai_provider import OpenAITextProvider
+
+    class DummyTextResponses:
+        pass
+
+    class DummyTextOpenAI:
+        def __init__(self, **kwargs) -> None:
+            self.responses = DummyTextResponses()
+
+    monkeypatch.setattr("productflow_backend.infrastructure.text.openai_provider.OpenAI", DummyTextOpenAI)
+
+    provider = OpenAITextProvider()
+    product = ProductInput(name="厨房置物架", category=None, price=None, source_note=None, image_path="/tmp/a.png")
+
+    with pytest.raises(RuntimeError, match="不支持 Responses structured outputs"):
+        provider.generate_brief(product)
 
 
 def test_ai_payload_normalizes_scalar_text_lists_without_swallowing_malformed_values() -> None:
@@ -534,6 +672,86 @@ def test_copy_payload_v2_drops_empty_layout_items() -> None:
 
     assert payload.content.kind == "layout_brief"
     assert [item.text for item in payload.content.sections[0].items] == ["台面乱？上墙收一收"]
+
+
+def test_product_workflow_copy_e2e_persists_structured_output(
+    configured_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StructuredTextProvider:
+        provider_name = "structured-text"
+        prompt_version = "responses-structured-test"
+
+        def generate_brief(self, product: ProductInput) -> tuple[CreativeBriefPayload, str]:
+            return (
+                CreativeBriefPayload(
+                    positioning=f"{product.name} 收纳定位",
+                    audience="小户型用户",
+                    selling_angles=["省空间", "免打孔", "好清洁"],
+                    taboo_phrases=[],
+                    poster_style_hint="清爽白底",
+                ),
+                "structured-brief",
+            )
+
+        def generate_copy(
+            self,
+            product: ProductInput,
+            brief: CreativeBriefPayload,
+            config: CopyNodeConfigV2,
+            reference_images: list[ReferenceImageInput] | None = None,
+        ) -> tuple[CopyPayloadV2, str]:
+            del brief, reference_images
+            return (
+                CopyPayloadV2(
+                    purpose=config.purpose,
+                    summary="免打孔收纳，台面更清爽",
+                    content=BlocksCopyContent(
+                        blocks=[
+                            CopyBlock(id="headline", text="免打孔收纳，台面更清爽"),
+                            CopyBlock(id="point-1", text="上墙放置，释放台面空间"),
+                        ]
+                    ),
+                ),
+                "structured-copy",
+            )
+
+    _execute_workflow_queue_inline(
+        monkeypatch,
+        dependencies=WorkflowExecutionDependencies(
+            text_provider_resolver=lambda: StructuredTextProvider(),
+        ),
+    )
+
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+
+    created = client.post(
+        "/api/products",
+        data={"name": "厨房置物架"},
+        files={"image": ("shelf.png", _make_demo_image_bytes(), "image/png")},
+    )
+    assert created.status_code == 201
+    product_id = created.json()["id"]
+
+    run_response = client.post(f"/api/products/{product_id}/workflow/run", json={})
+    assert run_response.status_code == 200
+
+    workflow = _wait_for_workflow_run(client, product_id, status="succeeded")
+    copy_node = next(node for node in workflow["nodes"] if node["node_type"] == "copy_generation")
+    payload = copy_node["output_json"]["structured_payload"]
+    assert payload["version"] == 2
+    assert payload["summary"] == "免打孔收纳，台面更清爽"
+    assert payload["content"]["kind"] == "blocks"
+    assert payload["content"]["blocks"][0]["text"] == "免打孔收纳，台面更清爽"
+
+    product_response = client.get(f"/api/products/{product_id}")
+    assert product_response.status_code == 200
+    copy_sets = product_response.json()["copy_sets"]
+    assert copy_sets[0]["structured_payload"]["summary"] == "免打孔收纳，台面更清爽"
 
 
 def test_product_workflow_copy_run_normalizes_provider_scalar_lists(configured_env: Path, monkeypatch) -> None:

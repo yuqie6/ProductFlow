@@ -1221,7 +1221,7 @@ def test_prompt_settings_api_accepts_rejects_and_resets(configured_env: Path) ->
     assert initial_items["prompt_copy_system"]["input_type"] == "textarea"
     assert initial_items["prompt_copy_system"]["secret"] is False
     assert initial_items["prompt_copy_system"]["source"] == "env_default"
-    assert "淘宝电商文案助手" in initial_items["prompt_copy_system"]["value"]
+    assert "电商文案助手" in initial_items["prompt_copy_system"]["value"]
     assert initial_items["prompt_poster_image_edit_template"]["category"] == "提示词"
     assert initial_items["prompt_poster_image_edit_template"]["input_type"] == "textarea"
     assert "显式连接的上游上下文" in initial_items["prompt_poster_image_edit_template"]["value"]
@@ -1243,7 +1243,7 @@ def test_prompt_settings_api_accepts_rejects_and_resets(configured_env: Path) ->
     assert reset.status_code == 200
     reset_items = {item["key"]: item for item in reset.json()["items"]}
     assert reset_items["prompt_copy_system"]["source"] == "env_default"
-    assert "淘宝电商文案助手" in reset_items["prompt_copy_system"]["value"]
+    assert "电商文案助手" in reset_items["prompt_copy_system"]["value"]
 
 def test_settings_api_rejects_invalid_effective_config(configured_env: Path) -> None:
     from productflow_backend.presentation.api import create_app

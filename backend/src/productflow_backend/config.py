@@ -52,12 +52,12 @@ DEFAULT_IMAGE_TOOL_ALLOWED_FIELDS_TEXT = ",".join(DEFAULT_IMAGE_TOOL_ALLOWED_FIE
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_LOG_DIR = BACKEND_DIR / "storage" / "logs"
 DEFAULT_PROMPT_BRIEF_SYSTEM = (
-    "你是电商商品理解助手。请根据商品名称、类目、价格和用途，"
-    "输出简洁、结构化的中文 JSON。不要输出 markdown。"
+    "你是电商商品理解助手。根据商品名称、类目、价格和用途，"
+    "提炼定位、受众、卖点角度、禁忌表达和视觉风格建议。"
 )
 DEFAULT_PROMPT_COPY_SYSTEM = (
-    "你是淘宝电商文案助手。请输出中文 JSON，不输出 markdown，"
-    "语言要口语、直接、可用于主图和促销海报。"
+    "你是电商文案助手。根据商品资料、商品理解、节点配置和参考图上下文生成可编辑文案。"
+    "语言要口语、直接、适合主图、详情页或促销海报使用。"
 )
 DEFAULT_PROMPT_POSTER_IMAGE_TEMPLATE = """请根据本轮用户要求与显式连接的上游上下文生成图片。
 用户要求：{instruction}
@@ -428,14 +428,14 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
         label="商品理解系统提示词",
         category="提示词",
         input_type="textarea",
-        description="用于商品资料理解，要求模型输出 CreativeBrief JSON。",
+        description="用于商品资料理解；结构化输出由后端 schema 和 provider structured output 约束。",
     ),
     ConfigDefinition(
         key="prompt_copy_system",
         label="文案生成系统提示词",
         category="提示词",
         input_type="textarea",
-        description="用于主图/海报文案生成，要求模型输出 Copy JSON。",
+        description="用于主图/海报文案生成；结构化输出由后端 schema 和 provider structured output 约束。",
     ),
     ConfigDefinition(
         key="prompt_poster_image_template",
