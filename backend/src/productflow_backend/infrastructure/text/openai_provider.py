@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Literal
 
 from openai import OpenAI
-from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ValidationError
 
 from productflow_backend.application.contracts import (
     CopyNodeConfigV2,
@@ -42,21 +42,13 @@ def _parsed_output[ParsedPayloadT: BaseModel](
 class _OpenAICopyBlockOutput(BaseModel):
     """Provider-facing copy block schema without nullable fields or unions."""
 
-    id: str = Field(description="Stable block id, for example headline or point_1.")
-    role: str = Field(description="Optional semantic role. Empty string means omitted.")
-    label: str = Field(description="Optional display label. Empty string means omitted.")
-    text: str = Field(description="Editable copy text for this block.")
-    note: str = Field(description="Optional editor note. Empty string means omitted.")
-    visual_hint: str = Field(description="Optional visual hint. Empty string means omitted.")
-    priority: int = Field(description="Optional priority. Use 0 when no priority is needed.")
-
-    @field_validator("id", "text")
-    @classmethod
-    def validate_required_text(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("文案块 id/text 不能为空")
-        return normalized
+    id: str
+    role: str
+    label: str
+    text: str
+    note: str
+    visual_hint: str
+    priority: int
 
     def to_contract_dict(self) -> dict[str, object]:
         return {
@@ -73,27 +65,11 @@ class _OpenAICopyBlockOutput(BaseModel):
 class _OpenAICopySectionOutput(BaseModel):
     """Provider-facing layout section schema without nullable fields or unions."""
 
-    id: str = Field(description="Stable section id, for example hero or details.")
-    title: str = Field(description="Optional section title. Empty string means omitted.")
-    body: str = Field(description="Optional section body. Empty string means omitted.")
-    items: list[_OpenAICopyBlockOutput] = Field(
-        description="Editable copy items inside this layout section.",
-    )
-    visual_hint: str = Field(description="Optional visual hint. Empty string means omitted.")
-
-    @field_validator("id")
-    @classmethod
-    def validate_required_text(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("文案分区 id 不能为空")
-        return normalized
-
-    @model_validator(mode="after")
-    def validate_section_content(self) -> _OpenAICopySectionOutput:
-        if not (self.title.strip() or self.body.strip() or self.items or self.visual_hint.strip()):
-            raise ValueError("文案分区不能为空")
-        return self
+    id: str
+    title: str
+    body: str
+    items: list[_OpenAICopyBlockOutput]
+    visual_hint: str
 
     def to_contract_dict(self) -> dict[str, object]:
         return {
@@ -108,13 +84,11 @@ class _OpenAICopySectionOutput(BaseModel):
 class _OpenAIVisualGuidanceOutput(BaseModel):
     """Provider-facing visual guidance schema without nullable fields or unions."""
 
-    main_message: str = Field(description="Primary visual message. Empty string means omitted.")
-    hierarchy: list[str] = Field(description="Information hierarchy from most to least important.")
-    composition_hint: str = Field(description="Composition hint. Empty string means omitted.")
-    text_density: Literal["", "none", "low", "medium", "high"] = Field(
-        description="Optional text density. Empty string means omitted.",
-    )
-    avoid: list[str] = Field(description="Visual or wording pitfalls to avoid.")
+    main_message: str
+    hierarchy: list[str]
+    composition_hint: str
+    text_density: Literal["", "none", "low", "medium", "high"]
+    avoid: list[str]
 
     def to_contract_dict(self) -> dict[str, object] | None:
         main_message = _optional_text(self.main_message)
@@ -141,40 +115,14 @@ class OpenAICopyPayloadStructuredOutput(BaseModel):
     to `CopyPayloadV2` immediately after parsing.
     """
 
-    version: Literal[2] = Field(description="Payload version. Must be 2.")
-    purpose: str = Field(description="Optional copy purpose. Empty string means omitted.")
-    summary: str = Field(description="Short editable summary of the generated copy.")
-    content_kind: Literal["freeform", "blocks", "layout_brief"] = Field(
-        description="Which content field should be used: freeform_text, blocks, or sections.",
-    )
-    freeform_text: str = Field(
-        description="Use when content_kind is freeform. Use empty string for other content kinds.",
-    )
-    blocks: list[_OpenAICopyBlockOutput] = Field(
-        description="Use when content_kind is blocks. Use an empty array for other content kinds.",
-    )
-    sections: list[_OpenAICopySectionOutput] = Field(
-        description="Use when content_kind is layout_brief. Use an empty array for other content kinds.",
-    )
-    visual_guidance: _OpenAIVisualGuidanceOutput = Field(description="Optional visual guidance object.")
-
-    @field_validator("summary")
-    @classmethod
-    def validate_summary(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("文案摘要不能为空")
-        return normalized
-
-    @model_validator(mode="after")
-    def validate_selected_content(self) -> OpenAICopyPayloadStructuredOutput:
-        if self.content_kind == "freeform" and not self.freeform_text.strip():
-            raise ValueError("自由文案不能为空")
-        if self.content_kind == "blocks" and not self.blocks:
-            raise ValueError("块状文案不能为空")
-        if self.content_kind == "layout_brief" and not self.sections:
-            raise ValueError("布局说明不能为空")
-        return self
+    version: Literal[2]
+    purpose: str
+    summary: str
+    content_kind: Literal["freeform", "blocks", "layout_brief"]
+    freeform_text: str
+    blocks: list[_OpenAICopyBlockOutput]
+    sections: list[_OpenAICopySectionOutput]
+    visual_guidance: _OpenAIVisualGuidanceOutput
 
     def to_copy_payload(self, *, fallback_purpose: str | None = None) -> CopyPayloadV2:
         if self.content_kind == "freeform":

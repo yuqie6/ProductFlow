@@ -14,7 +14,7 @@ from productflow_backend.application.admission import ensure_generation_capacity
 from productflow_backend.application.contracts import ProductInput
 from productflow_backend.application.copy_payloads import (
     normalize_copy_node_config,
-    normalize_copy_payload,
+    validate_copy_payload,
 )
 from productflow_backend.application.product_workflow import graph as product_workflow_graph
 from productflow_backend.application.product_workflow.artifacts import (
@@ -1049,7 +1049,7 @@ def _generate_copy_with_provider(
             config=config,
             reference_images=reference_images,
         )
-        return normalize_copy_payload(copy_payload.model_dump(mode="json"), fallback_purpose=config.purpose), model_name
+        return validate_copy_payload(copy_payload, fallback_purpose=config.purpose), model_name
 
     return _call_text_provider_with_payload_retry(
         generate_once,

@@ -267,7 +267,7 @@ def test_update_copy_set_payload_validation_uses_typed_business_error(db_session
     db_session.add(copy_set)
     db_session.commit()
 
-    with pytest.raises(BusinessValidationError, match="文案模型输出必须符合 CopyPayloadV2 合同"):
+    with pytest.raises(BusinessValidationError, match="文案 payload 不符合 CopyPayloadV2 合同"):
         update_copy_set(db_session, copy_set_id=copy_set.id, structured_payload={"invalid": True})
 
 

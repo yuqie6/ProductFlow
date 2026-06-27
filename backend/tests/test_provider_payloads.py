@@ -31,7 +31,7 @@ from productflow_backend.application.contracts import (
     ProductInput,
     ReferenceImageInput,
 )
-from productflow_backend.application.copy_payloads import normalize_copy_payload
+from productflow_backend.application.copy_payloads import validate_copy_payload
 from productflow_backend.application.product_workflow_dependencies import WorkflowExecutionDependencies
 from productflow_backend.application.product_workflows import run_product_workflow
 from productflow_backend.application.use_cases import (
@@ -65,6 +65,35 @@ REMOVED_COPY_OUTPUT_KEYS = [
     "poster" + "_headline",
     "c" + "ta",
 ]
+
+
+def _openai_copy_output_payload(*, summary: str = "主标题", text: str = "标题") -> dict:
+    return {
+        "version": 2,
+        "purpose": "",
+        "summary": summary,
+        "content_kind": "blocks",
+        "freeform_text": "",
+        "blocks": [
+            {
+                "id": "headline",
+                "role": "",
+                "label": "",
+                "text": text,
+                "note": "",
+                "visual_hint": "",
+                "priority": 0,
+            }
+        ],
+        "sections": [],
+        "visual_guidance": {
+            "main_message": "",
+            "hierarchy": [],
+            "composition_hint": "",
+            "text_density": "",
+            "avoid": [],
+        },
+    }
 
 
 @pytest.fixture(autouse=True)
@@ -170,32 +199,7 @@ def test_prompt_settings_reach_provider_prompt_builders(configured_env: Path, mo
                     )
             )
             return DummyParsedTextResponse(
-                OpenAICopyPayloadStructuredOutput(
-                    version=2,
-                    purpose="",
-                    summary="主标题",
-                    content_kind="blocks",
-                    freeform_text="",
-                    blocks=[
-                        {
-                            "id": "headline",
-                            "role": "",
-                            "label": "",
-                            "text": "标题",
-                            "note": "",
-                            "visual_hint": "",
-                            "priority": 0,
-                        }
-                    ],
-                    sections=[],
-                    visual_guidance={
-                        "main_message": "",
-                        "hierarchy": [],
-                        "composition_hint": "",
-                        "text_density": "",
-                        "avoid": [],
-                    },
-                )
+                OpenAICopyPayloadStructuredOutput(**_openai_copy_output_payload())
             )
 
         def create(self, **kwargs):
@@ -301,30 +305,7 @@ def test_openai_text_provider_uses_structured_outputs_for_brief_and_copy(
             )
             return DummyParsedTextResponse(
                 OpenAICopyPayloadStructuredOutput(
-                    version=2,
-                    purpose="",
-                    summary="台面清爽收纳",
-                    content_kind="blocks",
-                    freeform_text="",
-                    blocks=[
-                        {
-                            "id": "headline",
-                            "role": "",
-                            "label": "主信息",
-                            "text": "台面清爽收纳",
-                            "note": "",
-                            "visual_hint": "",
-                            "priority": 1,
-                        }
-                    ],
-                    sections=[],
-                    visual_guidance={
-                        "main_message": "",
-                        "hierarchy": [],
-                        "composition_hint": "",
-                        "text_density": "",
-                        "avoid": [],
-                    },
+                    **_openai_copy_output_payload(summary="台面清爽收纳", text="台面清爽收纳")
                 )
             )
 
@@ -459,219 +440,47 @@ def test_copy_payload_v2_supports_flexible_content() -> None:
     assert layout.content.sections[0].title == "主标题区"
 
 
-def test_copy_payload_v2_normalizes_provider_block_variants() -> None:
-    payload = normalize_copy_payload(
+def test_validate_copy_payload_accepts_strict_payload_and_fallback_purpose() -> None:
+    payload = validate_copy_payload(
         {
             "version": 2,
-            "summary": "坐标验收商品4",
+            "summary": "卖点速览",
             "content": {
                 "kind": "blocks",
                 "blocks": [
-                    {"type": "title", "text": "坐标验收商品4"},
-                    {"type": "benefit", "text": "覆盖上下架流程验收"},
-                    {"type": "benefit", "text": "节点、区域功能测试"},
-                    {"type": "benefit", "text": "方便快速识别管理"},
-                    {
-                        "type": "benefits",
-                        "items": ["自动保存", "运行前同步", "展示和数据校验"],
-                    },
+                    {"id": "headline", "text": "免打孔收纳"},
+                    {"id": "point-1", "label": "空间", "text": "台面更清爽"},
                 ],
             },
-        }
+        },
+        fallback_purpose="main_image",
     )
 
+    assert payload.purpose == "main_image"
     assert payload.content.kind == "blocks"
-    assert [block.id for block in payload.content.blocks] == [
-        "title-1",
-        "benefit-2",
-        "benefit-3",
-        "benefit-4",
-        "benefits-5",
-    ]
-    assert payload.content.blocks[0].role == "title"
-    assert payload.content.blocks[1].text == "覆盖上下架流程验收"
-    assert payload.content.blocks[4].text == "自动保存；运行前同步；展示和数据校验"
-    assert [block.text for block in payload.content.blocks[1:3]] == ["覆盖上下架流程验收", "节点、区域功能测试"]
+    assert [block.id for block in payload.content.blocks] == ["headline", "point-1"]
 
 
-def test_copy_payload_v2_normalizes_real_provider_freeform_variants() -> None:
-    items_payload = normalize_copy_payload(
-        {
-            "version": 2,
-            "summary": "小红书封面角度",
-            "content": {
-                "kind": "freeform",
-                "items": ["租房也能少打孔", "厨房浴室都能放", "双层和挂钩款按空间选"],
-            },
-        }
-    )
-    list_text_payload = normalize_copy_payload(
-        {
-            "version": 2,
-            "summary": "人群与场景",
-            "content": {
-                "kind": "freeform",
-                "text": ["租房厨房台面更清爽", "浴室洗护瓶分层收纳"],
-            },
-        }
-    )
-    dict_text_payload = normalize_copy_payload(
-        {
-            "version": 2,
-            "summary": "场景说明",
-            "content": {
-                "kind": "freeform",
-                "text": {"适合场景": ["厨房调味瓶", "浴室洗护瓶"], "注意": "不承诺适用所有墙面"},
-            },
-        }
-    )
-    chinese_key_payload = normalize_copy_payload(
-        {
-            "version": 2,
-            "summary": "细节说明",
-            "content": {
-                "kind": "freeform",
-                "短标签": "304 不锈钢",
-                "说明": "底部沥水孔减少积水，建议重物螺丝加固。",
-            },
-        }
-    )
+def test_validate_copy_payload_rejects_prompt_json_shape_repairs() -> None:
+    loose_block_payload = {
+        "version": 2,
+        "summary": "旧模型近似输出",
+        "content": {
+            "kind": "blocks",
+            "blocks": [{"type": "headline", "text": "缺 id 不再补"}],
+        },
+    }
+    visual_guidance_text_payload = {
+        "version": 2,
+        "summary": "旧模型视觉建议",
+        "content": {"kind": "freeform", "text": "一句文案"},
+        "visual_guidance": "不再把字符串转成对象",
+    }
 
-    assert items_payload.content.text == "租房也能少打孔\n厨房浴室都能放\n双层和挂钩款按空间选"
-    assert list_text_payload.content.text == "租房厨房台面更清爽\n浴室洗护瓶分层收纳"
-    assert "适合场景：厨房调味瓶\n浴室洗护瓶" in dict_text_payload.content.text
-    assert "短标签：304 不锈钢" in chinese_key_payload.content.text
-    assert "说明：底部沥水孔减少积水" in chinese_key_payload.content.text
-
-
-def test_copy_payload_v2_normalizes_real_provider_layout_variants() -> None:
-    payload = normalize_copy_payload(
-        {
-            "version": 2,
-            "summary": "多角度规划",
-            "content": {
-                "kind": "layout_brief",
-                "items": [
-                    {
-                        "order": 1,
-                        "angle": "正面主视觉",
-                        "copy": "展示置物架主体和前挡边，标题强调免打孔厨卫收纳。",
-                        "shot": "主体居中，保留墙面和台面参照。",
-                    },
-                    {
-                        "label": "底部沥水",
-                        "description": "特写底部沥水孔，说明洗护瓶和清洁工具放置更清爽。",
-                        "visual_suggestion": "使用局部放大标注。",
-                    },
-                ],
-            },
-        }
-    )
-
-    assert payload.content.kind == "layout_brief"
-    assert len(payload.content.sections) == 2
-    assert payload.content.sections[0].id == "正面主视觉-1"
-    assert payload.content.sections[0].title == "正面主视觉"
-    assert payload.content.sections[0].body == "展示置物架主体和前挡边，标题强调免打孔厨卫收纳。"
-    assert payload.content.sections[0].visual_hint == "主体居中，保留墙面和台面参照。"
-    assert payload.content.sections[1].title == "底部沥水"
-    assert payload.content.sections[1].body == "特写底部沥水孔，说明洗护瓶和清洁工具放置更清爽。"
-
-
-def test_copy_payload_v2_normalizes_visual_guidance_text() -> None:
-    payload = normalize_copy_payload(
-        {
-            "version": 2,
-            "summary": "冷灰色手机壳",
-            "content": {
-                "kind": "blocks",
-                "blocks": [{"id": "headline", "text": "适合通勤和日常搭配"}],
-            },
-            "visual_guidance": "适合搭配冷灰、黑白背景，突出简洁文艺的视觉感。",
-        }
-    )
-
-    assert payload.visual_guidance is not None
-    assert payload.visual_guidance.composition_hint == "适合搭配冷灰、黑白背景，突出简洁文艺的视觉感。"
-
-
-def test_copy_payload_v2_normalizes_layout_object_fields_to_sections() -> None:
-    payload = normalize_copy_payload(
-        {
-            "version": 2,
-            "summary": "视觉层级",
-            "content": {
-                "kind": "layout_brief",
-                "hero_area": {"title": "主标题区", "copy": "厨卫收纳，限时到手69元起"},
-                "feature_points": [
-                    {"label": "304不锈钢", "text": "厨卫潮湿环境也好打理"},
-                    {"label": "免打孔安装", "text": "也可按需螺丝加固"},
-                ],
-                "disclaimer": ["优惠以页面为准", "承重与墙面条件有关"],
-            },
-        }
-    )
-
-    assert payload.content.kind == "layout_brief"
-    assert [section.title for section in payload.content.sections] == [
-        "主标题区",
-        "feature points",
-        "disclaimer",
-    ]
-    assert payload.content.sections[0].body == "厨卫收纳，限时到手69元起"
-    assert [item.label for item in payload.content.sections[1].items] == [
-        "304不锈钢",
-        "免打孔安装",
-    ]
-    assert [item.text for item in payload.content.sections[1].items] == [
-        "厨卫潮湿环境也好打理",
-        "也可按需螺丝加固",
-    ]
-    assert payload.content.sections[2].body == "优惠以页面为准\n承重与墙面条件有关"
-
-
-def test_copy_payload_v2_drops_empty_provider_blocks() -> None:
-    payload = normalize_copy_payload(
-        {
-            "version": 2,
-            "summary": "对比维度",
-            "content": {
-                "kind": "blocks",
-                "blocks": [
-                    {"type": "compare_label", "text": "免打孔安装"},
-                    {"type": "separator", "text": ""},
-                    {"type": "compare_label", "text": "304 不锈钢"},
-                ],
-            },
-        }
-    )
-
-    assert payload.content.kind == "blocks"
-    assert [block.text for block in payload.content.blocks] == ["免打孔安装", "304 不锈钢"]
-
-
-def test_copy_payload_v2_drops_empty_layout_items() -> None:
-    payload = normalize_copy_payload(
-        {
-            "version": 2,
-            "summary": "画面节奏",
-            "content": {
-                "kind": "layout_brief",
-                "sections": [
-                    {
-                        "title": "3秒内",
-                        "items": [
-                            {"label": "空镜头", "text": ""},
-                            {"label": "钩子", "text": "台面乱？上墙收一收"},
-                        ],
-                    }
-                ],
-            },
-        }
-    )
-
-    assert payload.content.kind == "layout_brief"
-    assert [item.text for item in payload.content.sections[0].items] == ["台面乱？上墙收一收"]
+    with pytest.raises(ValidationError):
+        validate_copy_payload(loose_block_payload)
+    with pytest.raises(ValidationError):
+        validate_copy_payload(visual_guidance_text_payload)
 
 
 def test_product_workflow_copy_e2e_persists_structured_output(

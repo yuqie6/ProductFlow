@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from productflow_backend.application.contracts import BlocksCopyContent, CopyBlock, CopyPayloadV2
 from productflow_backend.application.copy_payloads import (
     copy_payload_to_output,
-    normalize_copy_payload,
+    validate_copy_payload,
 )
 from productflow_backend.application.product_workflow.context import optional_config_text
 from productflow_backend.application.time import now_utc
@@ -123,7 +123,7 @@ def copy_node_output(
 ) -> dict[str, Any]:
     if not isinstance(copy_set.structured_payload, dict):
         raise ValueError("文案版本缺少 structured_payload")
-    structured_payload = normalize_copy_payload(copy_set.structured_payload)
+    structured_payload = validate_copy_payload(copy_set.structured_payload)
     output: dict[str, Any] = {
         "copy_set_id": copy_set.id,
         "creative_brief_id": creative_brief_id,

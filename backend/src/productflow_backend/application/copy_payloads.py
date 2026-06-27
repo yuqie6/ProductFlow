@@ -54,22 +54,25 @@ def normalize_copy_slot_requests(raw_slots: Any) -> list[dict[str, Any]]:
     return normalized
 
 
-def normalize_copy_payload(raw_payload: Any, *, fallback_purpose: str | None = None) -> CopyPayloadV2:
+def validate_copy_payload(raw_payload: Any, *, fallback_purpose: str | None = None) -> CopyPayloadV2:
+    """Validate a copy payload without repairing model-output shapes."""
+
     if isinstance(raw_payload, CopyPayloadV2):
-        return raw_payload
+        payload = raw_payload
+        if fallback_purpose and not payload.purpose:
+            return payload.model_copy(update={"purpose": fallback_purpose})
+        return payload
     if not isinstance(raw_payload, dict):
-        raise ValueError("文案模型输出必须是 JSON 对象")
-    if raw_payload.get("version") == 2 or "content" in raw_payload:
-        payload = _normalize_v2_payload_dict(raw_payload)
-        if fallback_purpose and not payload.get("purpose"):
-            payload["purpose"] = fallback_purpose
-        return CopyPayloadV2.model_validate(payload)
-    raise ValueError("文案模型输出必须符合 CopyPayloadV2 合同")
+        raise ValueError("文案 payload 必须是对象")
+    payload_dict = dict(raw_payload)
+    if fallback_purpose and not payload_dict.get("purpose"):
+        payload_dict["purpose"] = fallback_purpose
+    return CopyPayloadV2.model_validate(payload_dict)
 
 
 def copy_set_structured_payload(copy_set: CopySet) -> CopyPayloadV2:
     if isinstance(copy_set.structured_payload, dict):
-        return normalize_copy_payload(copy_set.structured_payload)
+        return validate_copy_payload(copy_set.structured_payload)
     raise ValueError("文案版本缺少 structured_payload")
 
 
@@ -115,223 +118,6 @@ def copy_payload_to_output(payload: CopyPayloadV2) -> dict[str, Any]:
         "structured_payload": payload.model_dump(mode="json"),
         "summary": f"文案：{payload.summary}",
     }
-
-
-def _normalize_v2_payload_dict(raw_payload: dict[str, Any]) -> dict[str, Any]:
-    payload = dict(raw_payload)
-    payload.setdefault("version", 2)
-    visual_guidance = _string_or_none(payload.get("visual_guidance"))
-    if visual_guidance:
-        payload["visual_guidance"] = {"composition_hint": visual_guidance}
-    content = payload.get("content")
-    if not isinstance(content, dict):
-        return payload
-    content = dict(content)
-    if content.get("type") and not content.get("kind"):
-        content["kind"] = content["type"]
-    if content.get("kind") == "freeform":
-        content["text"] = _freeform_text_from_content(content)
-    if content.get("kind") == "blocks":
-        blocks = content.get("blocks")
-        if isinstance(blocks, list):
-            normalized_blocks = [
-                _normalize_block_dict(block, fallback_id=f"block-{index}", index=index)
-                for index, block in enumerate(blocks, start=1)
-            ]
-            content["blocks"] = [block for block in normalized_blocks if _normalized_block_has_text(block)]
-    elif content.get("kind") == "layout_brief":
-        sections = content.get("sections")
-        if isinstance(sections, list):
-            content["sections"] = [
-                _normalize_section_dict(section, fallback_id=f"section-{index}", index=index)
-                for index, section in enumerate(sections, start=1)
-            ]
-        else:
-            items = content.get("items")
-            if isinstance(items, list):
-                content["sections"] = [
-                    _normalize_section_dict(section, fallback_id=f"section-{index}", index=index)
-                    for index, section in enumerate(items, start=1)
-                ]
-            else:
-                sections = _layout_sections_from_object(content)
-                if sections:
-                    content["sections"] = sections
-    payload["content"] = content
-    return payload
-
-
-def _normalize_section_dict(raw_section: Any, *, fallback_id: str, index: int) -> Any:
-    if not isinstance(raw_section, dict):
-        return raw_section
-    section = dict(raw_section)
-    role = _string_or_none(section.get("type") or section.get("role"))
-    title = _string_or_none(
-        section.get("title") or section.get("label") or section.get("heading") or section.get("angle")
-    )
-    if title and not section.get("title"):
-        section["title"] = title
-    body = _section_body_text(section)
-    if body and not section.get("body"):
-        section["body"] = body
-    visual_hint = _string_or_none(
-        section.get("visual_hint")
-        or section.get("visual")
-        or section.get("visual_suggestion")
-        or section.get("visual_expression")
-        or section.get("composition")
-        or section.get("shot")
-    )
-    if visual_hint and not section.get("visual_hint"):
-        section["visual_hint"] = visual_hint
-    section.setdefault("id", _slug_id(role or section.get("title"), fallback_id=fallback_id, index=index))
-    items = section.get("items")
-    if isinstance(items, list):
-        normalized_items = [
-            _normalize_block_dict(item, fallback_id=f"{section['id']}-item-{item_index}", index=item_index)
-            for item_index, item in enumerate(items, start=1)
-        ]
-        section["items"] = [item for item in normalized_items if _normalized_block_has_text(item)]
-    return section
-
-
-def _layout_sections_from_object(content: dict[str, Any]) -> list[Any]:
-    ignored_keys = {"kind", "type"}
-    sections = []
-    for index, (key, value) in enumerate(
-        ((key, value) for key, value in content.items() if key not in ignored_keys),
-        start=1,
-    ):
-        title = _humanize_key(key)
-        if isinstance(value, dict):
-            section = dict(value)
-            section.setdefault("title", title)
-        elif isinstance(value, list) and any(isinstance(item, dict) for item in value):
-            section = {"title": title, "items": value}
-        else:
-            section = {"title": title, "body": _text_from_any(value)}
-        normalized = _normalize_section_dict(section, fallback_id=f"section-{index}", index=index)
-        if isinstance(normalized, dict) and (
-            _string_or_none(normalized.get("title"))
-            or _string_or_none(normalized.get("body"))
-            or normalized.get("items")
-            or _string_or_none(normalized.get("visual_hint"))
-        ):
-            sections.append(normalized)
-    return sections
-
-
-def _normalize_block_dict(raw_block: Any, *, fallback_id: str, index: int) -> Any:
-    if not isinstance(raw_block, dict):
-        return raw_block
-    block = dict(raw_block)
-    role = _string_or_none(block.get("role") or block.get("type"))
-    if role and not block.get("role"):
-        block["role"] = role
-    if not block.get("label"):
-        block["label"] = _string_or_none(block.get("tag") or block.get("title") or block.get("name") or role)
-    block.setdefault(
-        "id",
-        _slug_id(block.get("id") or block.get("label") or role, fallback_id=fallback_id, index=index),
-    )
-    if not _string_or_none(block.get("text")):
-        block["text"] = _block_text_from_items(block.get("items")) or _string_or_empty(
-            block.get("content") or block.get("description") or block.get("copy")
-        )
-    if block.get("items") is not None and not block.get("note"):
-        item_text = _block_text_from_items(block.get("items"))
-        if item_text:
-            block["note"] = item_text
-    return block
-
-
-def _normalized_block_has_text(block: Any) -> bool:
-    return not isinstance(block, dict) or bool(_string_or_none(block.get("text")))
-
-
-def _freeform_text_from_content(content: dict[str, Any]) -> str:
-    text = _text_from_any(content.get("text"))
-    if text:
-        return text
-    for key in ("items", "content", "copy", "body", "description", "paragraphs", "lines", "hooks"):
-        text = _text_from_any(content.get(key))
-        if text:
-            return text
-    ignored_keys = {"kind", "type"}
-    keyed_parts = []
-    for key, value in content.items():
-        if key in ignored_keys:
-            continue
-        text = _text_from_any(value)
-        if text:
-            keyed_parts.append(f"{key}：{text}")
-    return "\n".join(keyed_parts)
-
-
-def _section_body_text(section: dict[str, Any]) -> str:
-    for key in (
-        "body",
-        "copy",
-        "text",
-        "description",
-        "reason",
-        "message",
-        "content",
-        "note",
-        "caption",
-        "subtitle",
-    ):
-        text = _text_from_any(section.get(key))
-        if text:
-            return text
-    return ""
-
-
-def _block_text_from_items(items: Any) -> str:
-    return _text_from_any(items, pair_separator="；")
-
-
-def _text_from_any(value: Any, *, pair_separator: str = "\n") -> str:
-    if isinstance(value, str):
-        return value.strip()
-    if isinstance(value, list):
-        parts = []
-        for item in value:
-            text = _text_from_any(item, pair_separator=pair_separator)
-            if text:
-                parts.append(text)
-        return pair_separator.join(parts)
-    if isinstance(value, dict):
-        direct = _string_or_empty(
-            value.get("text")
-            or value.get("content")
-            or value.get("description")
-            or value.get("copy")
-            or value.get("body")
-            or value.get("label")
-        )
-        if direct:
-            return direct
-        parts = []
-        for key, item in value.items():
-            text = _text_from_any(item, pair_separator=pair_separator)
-            if text:
-                parts.append(f"{key}：{text}")
-        return pair_separator.join(parts)
-    return ""
-
-
-def _slug_id(value: Any, *, fallback_id: str, index: int) -> str:
-    text = _string_or_none(value)
-    if not text:
-        return fallback_id
-    allowed = [character.lower() for character in text if character.isalnum() or character in {"-", "_"}]
-    slug = "".join(allowed).strip("-_")
-    return f"{slug or fallback_id}-{index}"
-
-
-def _humanize_key(value: str) -> str:
-    return value.replace("_", " ").replace("-", " ").strip() or "分区"
 
 
 def _infer_output_mode(instruction: str) -> str:

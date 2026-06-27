@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from productflow_backend.application.contracts import ReferenceImageInput
-from productflow_backend.application.copy_payloads import copy_payload_context_text, normalize_copy_payload
+from productflow_backend.application.copy_payloads import copy_payload_context_text, validate_copy_payload
 from productflow_backend.application.image_generation_core import (
     normalize_image_generation_tool_options,
     unique_image_generation_references,
@@ -268,7 +268,7 @@ def collect_incoming_context(
             context.append_text(
                 node=candidate,
                 label="文案",
-                text=copy_payload_context_text(normalize_copy_payload(structured_payload)),
+                text=copy_payload_context_text(validate_copy_payload(structured_payload)),
             )
         elif candidate.node_type == WorkflowNodeType.PRODUCT_CONTEXT:
             product_source_asset_ids = source_asset_ids_from_config(output)

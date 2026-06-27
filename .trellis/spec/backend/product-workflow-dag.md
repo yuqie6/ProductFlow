@@ -773,7 +773,7 @@ artifacts, such as a newly connected empty `reference_image` slot that needs its
 - `copy_node_output(...)` exposes `structured_payload` and `summary` for copy content. It must not expose
   fixed copy-field output keys.
 - Image-generation prompt context should set `PosterGenerationInput.structured_copy_context` from
-  `copy_payload_context_text(normalize_copy_payload(copy_set.structured_payload))`.
+  `copy_payload_context_text(validate_copy_payload(copy_set.structured_payload))`.
 
 ### 4. Validation & Error Matrix
 
@@ -878,11 +878,17 @@ and workflow runs share the same behavior.
   `content`, and real OpenAI-compatible providers may reject that with `invalid_json_schema`.
 - For copy generation, `OpenAITextProvider` must use the flat provider-facing `OpenAICopyPayloadStructuredOutput` schema
   that has no `oneOf`, `anyOf`, or `default` schema keys, then immediately convert and validate it as `CopyPayloadV2`.
+- Runtime copy payload validation must be strict. User edits, workflow context assembly, image-generation copy context,
+  artifact materialization, and API serialization should call `validate_copy_payload(...)`, not provider-output shape
+  repair code.
+- Prompt-JSON-era payload repair such as filling missing block ids, mapping `type` to `kind`, turning string
+  `visual_guidance` into an object, or deriving layout sections from arbitrary object keys must not run in normal product
+  workflow paths.
 - OpenAI-compatible text providers that do not support `responses.parse(..., text_format=...)` / `text.format=json_schema`
   are unsupported for the real text-provider path and should fail at the provider boundary with a stable configuration
   message.
-- Existing `normalize_copy_payload(...)` may remain for saved payload validation, user edits, migrations, and non-OpenAI
-  test/mock providers, but it is not the OpenAI provider main path.
+- If historical compatibility is needed, keep it in an explicitly named legacy boundary or migration helper. Do not name it
+  as the normal copy payload validator, and do not call it from user-edit or provider-generated runtime paths.
 - Do not log full prompts, raw provider payloads, provider responses, API keys, or base URLs while diagnosing this path.
 
 ### 4. Validation & Error Matrix
@@ -891,6 +897,10 @@ and workflow runs share the same behavior.
 - SDK response exposes `output_parsed` as `OpenAICopyPayloadStructuredOutput` -> convert with `to_copy_payload(...)` and
   return the resulting `CopyPayloadV2`.
 - SDK response exposes `output_parsed` as a dict -> validate it through the requested Pydantic model.
+- User-edited copy payload misses required `summary` / `content`, has a block missing `id`, or passes string
+  `visual_guidance` -> reject with a stable business validation error instead of repairing it.
+- Saved workflow/copy-set payload fails `CopyPayloadV2` validation -> treat it as invalid persisted data; do not silently
+  repair shape in context/image/artifact readers.
 - Direct `text_format=CopyPayloadV2` would generate a schema rejected by some providers with
   `invalid_json_schema` and message like `oneOf is not permitted`; do not use it for the real OpenAI provider path.
 - `responses.parse` is missing on the client -> raise a stable provider capability error, not an AttributeError.
@@ -910,6 +920,8 @@ and workflow runs share the same behavior.
 - Bad: `responses.create(...)` plus `read_json_object_from_response(...)` is reintroduced for the OpenAI provider.
 - Bad: accepting a third-party SSE/plain-string JSON response as a real-provider fallback; that keeps the old prompt-JSON
   contract alive.
+- Bad: using a normalizer that accepts provider-near-miss shapes such as `blocks[].type` without `id`, `freeform.items`,
+  or string `visual_guidance` in user-edit or workflow runtime paths.
 
 ### 6. Tests Required
 
@@ -919,6 +931,9 @@ and workflow runs share the same behavior.
   `text_format is OpenAICopyPayloadStructuredOutput` and does not call `responses.create`.
 - Schema regression asserts `to_strict_json_schema(OpenAICopyPayloadStructuredOutput)` has no `oneOf`, `anyOf`, or
   `default` keys.
+- Payload validation regression asserts strict `validate_copy_payload(...)` accepts canonical `CopyPayloadV2` dicts and
+  rejects prompt-JSON-era near-miss shapes.
+- User-edit regression asserts invalid copy payloads raise typed business validation errors without shape repair.
 - Prompt regression asserts provider user/system prompt text no longer contains old structure fallback phrases such as
   `请输出 JSON`, `不要输出 markdown`, `请输出字段`, `请输出 v2 JSON 外壳`, or `content.kind 必须`.
 - Backend API E2E regression creates a product, runs the workflow through `/api/products/{id}/workflow/run`, waits for a

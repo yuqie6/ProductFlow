@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy import desc, exists, func, literal, select
 from sqlalchemy.orm import Session, selectinload
 
-from productflow_backend.application.copy_payloads import normalize_copy_payload
+from productflow_backend.application.copy_payloads import validate_copy_payload
 from productflow_backend.application.product_workflow.templates import (
     materialize_product_workflow_from_template,
     resolve_product_creation_canvas_template,
@@ -323,9 +323,9 @@ def update_copy_set(
 ) -> CopySet:
     copy_set = _get_copy_set_or_raise(session, copy_set_id)
     try:
-        payload = normalize_copy_payload(structured_payload)
+        payload = validate_copy_payload(structured_payload)
     except ValueError as exc:
-        raise BusinessValidationError(str(exc)) from exc
+        raise BusinessValidationError("文案 payload 不符合 CopyPayloadV2 合同") from exc
     copy_set.structured_payload = payload.model_dump(mode="json")
     copy_set.edited_at = now_utc()
     session.commit()

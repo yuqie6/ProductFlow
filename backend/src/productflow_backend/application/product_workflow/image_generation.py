@@ -9,7 +9,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from productflow_backend.application.contracts import PosterGenerationInput
-from productflow_backend.application.copy_payloads import copy_payload_context_text, normalize_copy_payload
+from productflow_backend.application.copy_payloads import copy_payload_context_text, validate_copy_payload
 from productflow_backend.application.image_generation_core import build_stored_image_reference_payload
 from productflow_backend.application.image_generation_failures import classify_image_generation_failure
 from productflow_backend.application.product_workflow.artifacts import (
@@ -132,7 +132,7 @@ def execute_workflow_image_generation(
     structured_copy_context = None
     if has_real_copy_context and isinstance(copy_set.structured_payload, dict):
         try:
-            structured_copy_context = copy_payload_context_text(normalize_copy_payload(copy_set.structured_payload))
+            structured_copy_context = copy_payload_context_text(validate_copy_payload(copy_set.structured_payload))
         except ValueError:
             structured_copy_context = None
 
