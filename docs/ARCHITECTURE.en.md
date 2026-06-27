@@ -108,10 +108,11 @@ Product
   -> LaunchKitVariant(platform copy blocks + image proof plan)
   -> LaunchQualityScore(readiness score + warnings)
   -> LaunchKitExport(markdown/checklist snapshot)
+  -> optional manual export edits in export_snapshot_json
   -> optional seller_feedback_json / used_at
 ```
 
-Category playbooks are DB-backed through `CategoryPlaybook` and seeded by `ensure_starter_category_playbooks`; the v1 UI does not expose admin playbook CRUD. `StoreProfile` is modeled for later shop-level defaults but is not wired into the seller UI yet. LaunchKit v1 intentionally does not call Shopee/TikTok APIs: generated copy and checklists are exported manually, and `/products` remains reachable as the advanced canvas workflow.
+Category playbooks are DB-backed through `CategoryPlaybook` and seeded by `ensure_starter_category_playbooks`; the v1 UI does not expose admin playbook CRUD. `StoreProfile` is exposed from the LaunchKit dashboard for single-admin shop defaults such as tone, target buyer, preferred CTA, warranty/shipping notes, brand rules, and prohibited claims; deterministic LaunchKit generation applies those defaults after the category playbook. LaunchKit detail also lets sellers save manual edits to generated platform blocks before copying or exporting, while preserving the original generated blocks in the export snapshot. LaunchKit v1 intentionally does not call Shopee/TikTok APIs: generated copy and checklists are exported manually, and `/products` remains reachable as the advanced canvas workflow.
 
 PostgreSQL is the source of truth for metadata and run state. Redis/Dramatiq is only responsible for dispatching background execution messages.
 

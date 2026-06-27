@@ -113,10 +113,11 @@ Product
   -> LaunchKitVariant(platform copy blocks + image proof plan)
   -> LaunchQualityScore(readiness score + warnings)
   -> LaunchKitExport(markdown/checklist snapshot)
+  -> optional manual export edits in export_snapshot_json
   -> optional seller_feedback_json / used_at
 ```
 
-Category playbook 通过 `CategoryPlaybook` 存储，并由 `ensure_starter_category_playbooks` seed；v1 UI 不提供 playbook admin CRUD。`StoreProfile` 已建模用于后续店铺级默认值，但尚未接入 seller UI。LaunchKit v1 明确不调用 Shopee/TikTok API：生成文案和 checklist 通过手动复制/Markdown 导出使用，`/products` 仍作为高级画布工作流保留。
+Category playbook 通过 `CategoryPlaybook` 存储，并由 `ensure_starter_category_playbooks` seed；v1 UI 不提供 playbook admin CRUD。`StoreProfile` 已接入 LaunchKit dashboard，用于单管理员店铺默认值，例如店铺 tone、目标买家、首选 CTA、保修/发货说明、品牌规则和禁用 claim；确定性 LaunchKit 生成会在套用类目 playbook 后应用这些默认值。LaunchKit 详情页也支持在复制或导出前保存平台文案块的手动编辑，并在 export snapshot 中保留原始生成文案。LaunchKit v1 明确不调用 Shopee/TikTok API：生成文案和 checklist 通过手动复制/Markdown 导出使用，`/products` 仍作为高级画布工作流保留。
 
 PostgreSQL 是元数据和运行状态的权威存储；Redis/Dramatiq 只负责投递后台执行消息.
 

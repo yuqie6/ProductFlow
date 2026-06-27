@@ -2,6 +2,17 @@
 
 All notable changes for ProductFlow are recorded here.
 
+## Unreleased
+
+### Added
+
+- LaunchKit manual editing for generated platform blocks before copy or Markdown export, with original generated content preserved in the export snapshot.
+- LaunchKit store profile defaults for shop tone, target buyer, preferred CTA, warranty/shipping notes, brand rules, and prohibited claims, applied during deterministic generation.
+
+### Fixed
+
+- Backend image-generation core test setup now uses the configured test environment before reading runtime image-tool settings.
+
 ## 0.1.0 - 2026-05-02
 
 Initial public self-hosted release for ProductFlow. This entry is the durable release record for `v0.1.0`.

@@ -1,33 +1,5 @@
 # TODOs
 
-## Future: Editable Generated LaunchKit Content
-
-**What:** Let sellers edit generated titles, descriptions, hooks, hashtags, and checklist items in the LaunchKit detail page before copying or exporting.
-
-**Why:** v1 generation is deterministic and manual-export first. Real sellers will still need small tone, SKU, promotion, and compliance edits before publishing to Shopee or TikTok Shop.
-
-**Pros:** Makes LaunchKit useful beyond one-shot generation, improves seller trust, and creates cleaner feedback about what sections needed edits.
-
-**Cons:** Adds content persistence, dirty-state UX, export snapshot invalidation, and version/history questions. It should not blur v1 into marketplace API integration.
-
-**Context:** Current LaunchKit detail supports copying generated blocks and Markdown export, but generated content is read-only.
-
-**Depends on / blocked by:** Stable generated content schema and a decision on whether edits overwrite variants or create revision records.
-
-## Future: Store Profile UI and Generator Inputs
-
-**What:** Add a seller/store profile screen and wire StoreProfile defaults into LaunchKit generation.
-
-**Why:** Many constraints repeat across products: shop tone, banned claims, warranty/shipping defaults, target buyer, and preferred CTA patterns.
-
-**Pros:** Less repeated seller input, more consistent generated copy, and a better path toward paid workspace value.
-
-**Cons:** Adds profile setup UX and precedence rules between store defaults, product notes, and category playbooks.
-
-**Context:** StoreProfile is already modeled, but the v1 LaunchKit flow does not expose or consume it.
-
-**Depends on / blocked by:** Real seller validation of which store-level fields matter most.
-
 ## Future: AI Provider-backed LaunchKit Generation
 
 **What:** Add optional AI provider generation behind strict structured JSON schemas, safety guardrails, and deterministic fallback.
@@ -57,6 +29,18 @@
 **Depends on / blocked by:** LaunchKit CategoryPlaybook model, seed data, payload schema versioning, and at least one validation cycle with real seller SKUs.
 
 ## Completed
+
+### LaunchKit store profile defaults
+
+**Completed:** 2026-06-21
+
+Added a LaunchKit dashboard store profile panel and wired StoreProfile defaults into deterministic generation. Sellers can set shop tone, target buyer, preferred CTA, warranty/shipping notes, brand rules, and prohibited claims once, then have those constraints applied to new LaunchKit output. This keeps v1 manual-export first while reducing repeated seller inputs.
+
+### Editable generated LaunchKit content
+
+**Completed:** 2026-06-21
+
+Added manual editing for generated LaunchKit platform blocks before copying or exporting. Saved edits update the manual export snapshot used by copy/Markdown actions, mark seller feedback as edited, and preserve the first generated blocks as originals for comparison and future feedback analysis.
 
 ### LaunchKit Vietnam seller foundation
 

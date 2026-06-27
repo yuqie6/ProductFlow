@@ -22,7 +22,7 @@ class StoredReference:
     original_filename: str = "reference.png"
 
 
-def test_image_generation_core_normalizes_ids_tool_options_and_reference_payload() -> None:
+def test_image_generation_core_normalizes_ids_tool_options_and_reference_payload(configured_env: Path) -> None:
     assert unique_image_generation_ids(["ref-1", "ref-2", "ref-1"]) == ["ref-1", "ref-2"]
     assert normalize_image_generation_tool_options(
         {
