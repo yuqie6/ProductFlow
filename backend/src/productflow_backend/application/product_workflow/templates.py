@@ -14,6 +14,7 @@ from productflow_backend.application.language_policy import (
     TemplateLanguageHints,
     language_hints_from_template_language,
 )
+from productflow_backend.application.product_workflow.node_config import normalize_workflow_node_config
 from productflow_backend.domain.enums import WorkflowNodeType
 from productflow_backend.domain.errors import BusinessValidationError, NotFoundError
 from productflow_backend.infrastructure.db.models import Product, ProductWorkflow, WorkflowEdge, WorkflowNode
@@ -100,6 +101,7 @@ def materialize_canvas_template_graph(
                 "template_key": template.key,
                 "node_key": node_spec.key,
             }
+        config_json = normalize_workflow_node_config(node_spec.node_type, config_json)
         node = WorkflowNode(
             workflow_id=workflow.id,
             node_type=node_spec.node_type,

@@ -1198,6 +1198,7 @@ def test_user_template_group_preserves_unrun_prompt_config_when_applied(configur
         "instruction": "未运行文案提示词：突出便携、防水和礼盒场景",
         "tone": "高级克制",
         "channel": "详情页主图",
+        "adapter_options": {"preserve": True},
     }
     image_config = {
         "instruction": "未运行生图提示词：生成浅灰背景上的礼盒套装主图，光线柔和，主体居中",

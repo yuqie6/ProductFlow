@@ -44,6 +44,7 @@ backend/
 │   │   │   ├── graph.py                  # workflow graph loading, defaults, lookup, ordering
 │   │   │   ├── image_generation.py       # image_generation node executor
 │   │   │   ├── mutations.py              # workflow graph/edit use cases
+│   │   │   ├── node_config.py             # shared workflow node config normalization
 │   │   │   ├── query.py                  # narrow workflow query service for execution hot paths
 │   │   │   ├── run_state.py              # workflow run/node-run state transitions
 │   │   │   ├── templates.py              # canvas template materialization helpers
@@ -128,6 +129,9 @@ Put workflow rules and orchestration in `backend/src/productflow_backend/applica
   - `application/product_workflow/mutations.py` owns workflow graph/edit use cases: create/update/delete nodes and edges,
     upload/bind reference images, edit generated copy, normalize the product-context singleton, and shared node patch
     semantics such as title/config normalization plus failed-node repair reset.
+  - `application/product_workflow/node_config.py` is the write-time normalization owner for workflow node `config_json`.
+    Runtime node create/update, reusable-template extraction after artifact sanitization, built-in copy config construction,
+    and template materialization call it directly. `application/product_workflows.py` keeps exporting the public function.
   - `application/product_workflow/execution.py` owns workflow run kickoff/execution, selected-node planning, and node
     dispatch. Keep node-specific provider/render orchestration in cohesive owner modules instead of growing this file
     back into a full execution monolith.

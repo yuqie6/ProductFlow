@@ -30,11 +30,11 @@ from productflow_backend.application.product_workflow.mutations import (
     duplicate_workflow_node_group,
     get_or_create_product_workflow,
     materialize_node_group_template_to_workflow,
-    normalize_workflow_node_config,
     update_workflow_copy_set,
     update_workflow_node,
     upload_workflow_node_image,
 )
+from productflow_backend.application.product_workflow.node_config import normalize_workflow_node_config
 from productflow_backend.application.product_workflow.user_templates import (
     archive_user_canvas_template,
     create_user_canvas_template_from_workflow_nodes,

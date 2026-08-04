@@ -62,6 +62,16 @@
   real `workflow_nodes` row and each edge spec into a real `workflow_edges` row.
 - Node specs may include `config_json` with default instructions, prompt hints, image size, or tool options. Keep these as
   editable workflow-node config, not separate local UI state.
+- `application/product_workflow/node_config.py::normalize_workflow_node_config(...)` is the single write-time owner for
+  workflow node config. Runtime create/update, reusable-template extraction after artifact sanitization, built-in copy
+  config construction, and template materialization must call it directly; the `application/product_workflows.py` facade
+  continues exporting the same public function name.
+- Copy normalization must use `normalize_copy_node_config(...)` for known v2 fields and retain non-artifact extension
+  fields from the input. Image normalization must keep the existing size, `visible_text_language_hint`, and `tool_options`
+  rules. Reference-image and product-context configs are shallow-copied unchanged.
+- Template materialization applies language hints and built-in `_canvas_template` metadata before the shared normalizer,
+  then persists the normalized config. Built-in purpose inference remains template seed policy; copy output-mode inference
+  belongs to the shared copy config contract. A template that requires a different valid mode must declare it explicitly.
 - Only `image_generation` node specs may declare `size`.
 - `output_slots` document which `reference_image` nodes receive generated material and how the UI should label those
   outputs.
@@ -133,6 +143,8 @@
 - User template save containing `product_context` -> `BusinessValidationError("节点组模板不能包含商品资料节点")`.
 - User template save with unknown artifact-shaped config keys ->
   `BusinessValidationError("模板配置包含不可复用的产物数据")`.
+- Invalid copy slots or image size at a workflow-node write boundary -> the underlying normalization `ValueError` is
+  converted to `BusinessValidationError` with the existing validation message.
 - Archived or missing user template key -> `BusinessValidationError("画布模板不存在")`.
 
 ### 5. Good/Base/Bad Cases
@@ -175,7 +187,9 @@
   node update endpoints.
 - User-template tests must cover create/list/rename/archive/apply, application of `user:{id}` as real workflow rows, hiding
   archived templates from the catalog, stripping known artifact config fields, rejecting unknown artifact-shaped config
-  keys, and ignoring existing `output_json` / run outputs.
+  keys, preserving safe extension fields, and ignoring existing `output_json` / run outputs.
+- Direct node-config tests must cover copy/image/reference normalization, invalid copy slots and image size, language-hint
+  trimming, image tool-option filtering, safe extension fields, facade export compatibility, and runtime/template adapters.
 
 ### 7. Wrong vs Correct
 

@@ -13,10 +13,8 @@ from productflow_backend.application.canvas_templates import (
     CanvasTemplateScenario,
     CanvasTemplateScenarioMetadata,
 )
-from productflow_backend.application.copy_payloads import normalize_copy_node_config
-from productflow_backend.application.image_generation_core import normalize_image_generation_tool_options
 from productflow_backend.application.product_workflow import graph as product_workflow_graph
-from productflow_backend.application.product_workflow.context import image_size_from_config
+from productflow_backend.application.product_workflow.node_config import normalize_workflow_node_config
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.enums import WorkflowNodeType
 from productflow_backend.domain.errors import BusinessValidationError, NotFoundError
@@ -303,36 +301,7 @@ def _selected_internal_edges(
 
 def extract_reusable_node_config(node: WorkflowNode) -> dict[str, Any]:
     reusable_config = _sanitize_reusable_config(node.config_json or {})
-    return _normalize_template_node_config(node.node_type, reusable_config)
-
-
-def _normalize_template_node_config(node_type: WorkflowNodeType, config_json: dict[str, Any]) -> dict[str, Any]:
-    config = dict(config_json)
-    if node_type == WorkflowNodeType.IMAGE_GENERATION:
-        try:
-            normalized_size = image_size_from_config(config)
-        except ValueError as exc:
-            raise BusinessValidationError(str(exc)) from exc
-        if normalized_size is not None:
-            config["size"] = normalized_size
-        if "visible_text_language_hint" in config:
-            value = config.get("visible_text_language_hint")
-            hint = value.strip() if isinstance(value, str) else ""
-            if hint:
-                config["visible_text_language_hint"] = hint
-            else:
-                config.pop("visible_text_language_hint", None)
-        if "tool_options" in config:
-            raw_tool_options = config.get("tool_options")
-            config["tool_options"] = normalize_image_generation_tool_options(
-                raw_tool_options if isinstance(raw_tool_options, dict) else None
-            )
-    if node_type == WorkflowNodeType.COPY_GENERATION:
-        try:
-            config = normalize_copy_node_config(config).model_dump(mode="json")
-        except ValueError as exc:
-            raise BusinessValidationError(str(exc)) from exc
-    return config
+    return normalize_workflow_node_config(node.node_type, reusable_config)
 
 
 def _sanitize_reusable_config(value: Any, *, path: tuple[str, ...] = ()) -> Any:

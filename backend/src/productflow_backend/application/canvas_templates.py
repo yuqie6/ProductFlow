@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from productflow_backend.application.product_workflow.node_config import normalize_workflow_node_config
 from productflow_backend.domain.enums import WorkflowNodeType
 from productflow_backend.domain.errors import BusinessValidationError
 from productflow_backend.domain.workflow_rules import WorkflowRuleEdge, WorkflowRuleNode, topological_node_ids
@@ -300,63 +301,9 @@ def _node(
 
 def _copy_node_config(config: dict[str, Any], *, instruction_seed: str | None) -> dict[str, Any]:
     instruction = str(config.get("instruction") or instruction_seed or "")
-    output_mode = config.get("output_mode")
-    if output_mode not in {"freeform", "blocks", "layout_brief"}:
-        output_mode = _infer_copy_output_mode(instruction)
-    next_config = {
-        **config,
-        "version": 2,
-        "instruction": instruction,
-        "output_mode": output_mode,
-    }
+    next_config = {**config, "instruction": instruction}
     next_config.setdefault("purpose", _infer_copy_purpose(instruction))
-    next_config.setdefault("requested_slots", [])
-    return next_config
-
-
-def _infer_copy_output_mode(instruction: str) -> str:
-    if any(
-        keyword in instruction.lower()
-        for keyword in (
-            "层级",
-            "布局",
-            "留白",
-            "构图",
-            "信息图",
-            "视觉",
-            "hierarchy",
-            "layout",
-            "whitespace",
-            "composition",
-            "infographic",
-            "visual",
-        )
-    ):
-        return "layout_brief"
-    if any(
-        keyword in instruction.lower()
-        for keyword in (
-            "卖点",
-            "规格",
-            "尺寸",
-            "步骤",
-            "清单",
-            "对比",
-            "标签",
-            "参数",
-            "selling point",
-            "feature",
-            "spec",
-            "size",
-            "step",
-            "checklist",
-            "comparison",
-            "label",
-            "parameter",
-        )
-    ):
-        return "blocks"
-    return "freeform"
+    return normalize_workflow_node_config(WorkflowNodeType.COPY_GENERATION, next_config)
 
 
 def _infer_copy_purpose(instruction: str) -> str:
@@ -1097,6 +1044,7 @@ BUILTIN_CANVAS_TEMPLATES: tuple[CanvasTemplate, ...] = (
                 title="卖点提炼",
                 x=340,
                 y=92,
+                config_json={"output_mode": "layout_brief"},
                 instruction_seed=_FEATURE_INFOGRAPHIC_COPY,
             ),
             _node(
