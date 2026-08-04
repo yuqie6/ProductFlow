@@ -158,8 +158,9 @@ This layer receives a SQLAlchemy `Session` from callers. It is allowed to call i
 
 `application/image_generation_core.py` owns provider-agnostic image generation helpers that are shared by product workflow
 image nodes and continuous image-session generation: reference id/path de-duplication, stored image reference payload
-construction, provider tool option normalization, and provider output metadata augmentation. It must not know workflow
-node IDs, image-session round IDs, HTTP schemas, queue delivery, or concrete provider clients.
+construction, provider tool option normalization, and provider output metadata augmentation plus safe projection. Other
+application and presentation modules consume that projection instead of reading internal `_productflow` keys directly.
+It must not know workflow node IDs, image-session round IDs, HTTP schemas, queue delivery, or concrete provider clients.
 
 ### Domain layer
 

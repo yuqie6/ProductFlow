@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -21,6 +21,39 @@ class StoredImageReference(Protocol):
 class ImageGenerationReferencePayload:
     source_image: Path | None
     reference_images: list[ReferenceImageInput]
+
+
+@dataclass(frozen=True, slots=True)
+class ImageGenerationProviderMetadata:
+    actual_image_size: str | None = None
+    notes: tuple[str, ...] = ()
+
+
+def extract_image_generation_provider_metadata(
+    provider_output_json: Mapping[str, Any] | None,
+) -> ImageGenerationProviderMetadata:
+    if not isinstance(provider_output_json, Mapping):
+        return ImageGenerationProviderMetadata()
+    metadata = provider_output_json.get("_productflow")
+    if not isinstance(metadata, Mapping):
+        return ImageGenerationProviderMetadata()
+
+    raw_actual_size = metadata.get("actual_image_size")
+    actual_image_size = raw_actual_size.strip() if isinstance(raw_actual_size, str) else None
+    if not actual_image_size:
+        actual_image_size = None
+
+    raw_notes = metadata.get("notes")
+    messages: list[str] = []
+    if isinstance(raw_notes, list):
+        for note in raw_notes:
+            if not isinstance(note, Mapping):
+                continue
+            raw_message = note.get("message")
+            message = raw_message.strip() if isinstance(raw_message, str) else ""
+            if message:
+                messages.append(message)
+    return ImageGenerationProviderMetadata(actual_image_size=actual_image_size, notes=tuple(messages))
 
 
 def unique_image_generation_ids(ids: list[str] | None) -> list[str]:

@@ -10,7 +10,10 @@ from sqlalchemy.orm import Session
 
 from productflow_backend.application.contracts import PosterGenerationInput
 from productflow_backend.application.copy_payloads import copy_payload_context_text, validate_copy_payload
-from productflow_backend.application.image_generation_core import build_stored_image_reference_payload
+from productflow_backend.application.image_generation_core import (
+    build_stored_image_reference_payload,
+    extract_image_generation_provider_metadata,
+)
 from productflow_backend.application.image_generation_failures import classify_image_generation_failure
 from productflow_backend.application.product_workflow.artifacts import (
     GeneratedWorkflowImage,
@@ -235,15 +238,11 @@ def execute_workflow_image_generation(
             "provider_response_id": generated_image.provider_response_id,
             "provider_response_status": generated_image.provider_response_status,
         }
-        if isinstance(generated_image.provider_output_json, dict):
-            metadata = generated_image.provider_output_json.get("_productflow")
-            if isinstance(metadata, dict):
-                actual_size = metadata.get("actual_size")
-                notes = metadata.get("notes")
-                if isinstance(actual_size, str):
-                    provider_result["actual_size"] = actual_size
-                if isinstance(notes, list):
-                    provider_result["notes"] = [item for item in notes if isinstance(item, str)][:4]
+        metadata = extract_image_generation_provider_metadata(generated_image.provider_output_json)
+        if metadata.actual_image_size is not None:
+            provider_result["actual_size"] = metadata.actual_image_size
+        if metadata.notes:
+            provider_result["notes"] = list(metadata.notes[:4])
         safe_provider_result = {key: value for key, value in provider_result.items() if value is not None}
         if safe_provider_result:
             provider_results.append(safe_provider_result)

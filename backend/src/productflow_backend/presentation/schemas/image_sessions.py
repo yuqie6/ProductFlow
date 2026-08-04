@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from productflow_backend.application.image_generation_core import extract_image_generation_provider_metadata
 from productflow_backend.application.image_sessions import ImageSessionStatusSnapshot
 from productflow_backend.domain.durable_generation_tasks import IMAGE_SESSION_GENERATION_TASK_CONTRACT
 from productflow_backend.domain.enums import ImageSessionAssetKind, JobStatus
@@ -198,34 +199,11 @@ def serialize_image_session_asset(asset: ImageSessionAsset) -> ImageSessionAsset
 
 
 def extract_provider_notes(provider_output_json: dict | None) -> list[str]:
-    if not isinstance(provider_output_json, dict):
-        return []
-    metadata = provider_output_json.get("_productflow")
-    if not isinstance(metadata, dict):
-        return []
-    notes = metadata.get("notes")
-    if not isinstance(notes, list):
-        return []
-    messages: list[str] = []
-    for note in notes:
-        if not isinstance(note, dict):
-            continue
-        message = note.get("message")
-        if isinstance(message, str) and message.strip():
-            messages.append(message.strip())
-    return messages[:3]
+    return list(extract_image_generation_provider_metadata(provider_output_json).notes[:3])
 
 
 def extract_actual_image_size(provider_output_json: dict | None) -> str | None:
-    if not isinstance(provider_output_json, dict):
-        return None
-    metadata = provider_output_json.get("_productflow")
-    if not isinstance(metadata, dict):
-        return None
-    actual_size = metadata.get("actual_image_size")
-    if isinstance(actual_size, str) and actual_size.strip():
-        return actual_size.strip()
-    return None
+    return extract_image_generation_provider_metadata(provider_output_json).actual_image_size
 
 
 def serialize_image_session_round(round_item: ImageSessionRound) -> ImageSessionRoundResponse:

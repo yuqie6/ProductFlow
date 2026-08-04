@@ -824,8 +824,11 @@ def test_image_generation_without_copy_link_uses_image_edit_prompt_mode(
                     provider_response_status="completed",
                     provider_output_json={
                         "_productflow": {
-                            "actual_size": "800x800",
-                            "notes": ["accepted quality", "normalized size"],
+                            "actual_image_size": "800x800",
+                            "notes": [
+                                {"kind": "quality", "message": "accepted quality"},
+                                {"kind": "size", "message": "normalized size"},
+                            ],
                         },
                         "raw": {"hidden": True},
                     },
