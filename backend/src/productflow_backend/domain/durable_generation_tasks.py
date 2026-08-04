@@ -10,6 +10,12 @@ from productflow_backend.domain.enums import JobStatus, WorkflowNodeStatus, Work
 QUEUE_UNAVAILABLE_DETAIL = "任务队列暂不可用，请稍后重试"
 
 
+class WorkflowRunDeliveryState(StrEnum):
+    NONE = "none"
+    RUNNING = "running"
+    QUEUED = "queued"
+
+
 @dataclass(frozen=True, slots=True)
 class DurableGenerationTaskContract:
     """Shared executable contract for DB-durable generation work.
@@ -87,6 +93,26 @@ IMAGE_SESSION_GENERATION_TASK_CONTRACT = DurableGenerationTaskContract(
     status_snapshot_source="ImageSessionStatusSnapshot",
     recovery_entrypoint="recover_unfinished_image_session_generation_tasks",
 )
+
+
+def classify_workflow_run_delivery(
+    run_status: WorkflowRunStatus | str,
+    node_run_statuses: Sequence[WorkflowNodeStatus | str],
+) -> WorkflowRunDeliveryState:
+    if not WORKFLOW_RUN_GENERATION_TASK_CONTRACT.is_active(run_status):
+        return WorkflowRunDeliveryState.NONE
+
+    statuses = tuple(node_run_statuses)
+    if any(WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_running(status) for status in statuses):
+        return WorkflowRunDeliveryState.RUNNING
+    if any(WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_queued(status) for status in statuses):
+        return WorkflowRunDeliveryState.QUEUED
+    if statuses and all(
+        WORKFLOW_RUN_GENERATION_TASK_CONTRACT.has_status(status, (WorkflowNodeStatus.SUCCEEDED,))
+        for status in statuses
+    ):
+        return WorkflowRunDeliveryState.QUEUED
+    return WorkflowRunDeliveryState.NONE
 
 
 def assert_actor_uses_durable_generation_contract(

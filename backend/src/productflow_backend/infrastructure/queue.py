@@ -14,6 +14,8 @@ from productflow_backend.config import get_runtime_settings, get_settings
 from productflow_backend.domain.durable_generation_tasks import (
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
     WORKFLOW_RUN_GENERATION_TASK_CONTRACT,
+    WorkflowRunDeliveryState,
+    classify_workflow_run_delivery,
 )
 from productflow_backend.domain.enums import JobStatus, WorkflowNodeStatus
 from productflow_backend.infrastructure.db.models import (
@@ -135,12 +137,16 @@ def recover_unfinished_workflow_runs(
             ).all()
         )
         for run in runs:
+            delivery_state = classify_workflow_run_delivery(
+                run.status,
+                [node_run.status for node_run in run.node_runs],
+            )
             running_node_runs = [
                 node_run
                 for node_run in run.node_runs
                 if WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_running(node_run.status)
             ]
-            if running_node_runs:
+            if delivery_state == WorkflowRunDeliveryState.RUNNING:
                 stale_node_runs = [
                     node_run
                     for node_run in running_node_runs
@@ -159,9 +165,7 @@ def recover_unfinished_workflow_runs(
                 runs_to_enqueue.append(run.id)
                 continue
 
-            if any(
-                WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_queued(node_run.status) for node_run in run.node_runs
-            ) or (run.node_runs and all(node_run.status == WorkflowNodeStatus.SUCCEEDED for node_run in run.node_runs)):
+            if delivery_state == WorkflowRunDeliveryState.QUEUED:
                 queued_runs += 1
                 runs_to_enqueue.append(run.id)
 

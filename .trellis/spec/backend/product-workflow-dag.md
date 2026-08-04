@@ -1059,7 +1059,11 @@ Schema enforces structure without unsupported union combinators; `CopyPayloadV2`
   owns a queued/running node run in the retry plan.
 - Run responses and lightweight status responses expose `is_retryable`, `is_cancelable`, `queue_active_count`,
   `queue_running_count`, `queue_queued_count`, `queue_max_concurrent_tasks`, `queued_ahead_count`, and `queue_position`.
-  Queue position for workflow runs is derived from queued node-run state, not Redis delivery metadata.
+  Workflow-run delivery classification is derived from the run plus its node-run statuses, not Redis metadata: inactive
+  runs are excluded; any running node-run classifies the run as running; otherwise any queued node-run classifies it as
+  queued; a non-empty all-succeeded node-run set also classifies as queued because the scheduler still needs to finalize
+  the run. Queue position is exposed only for the derived queued state, using the earliest queued node-run timestamp or
+  the run timestamp for all-succeeded finalization.
 - API startup must call workflow run recovery for active runs with no node currently running, so a run committed before a
   Redis send or process restart is sent again.
 - Worker startup may reset stale `workflow_node_runs.status = 'running'` rows back to `queued` before re-enqueueing their

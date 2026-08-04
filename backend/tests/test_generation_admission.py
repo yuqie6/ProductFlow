@@ -10,7 +10,7 @@ from productflow_backend.application.image_sessions import create_image_session,
 from productflow_backend.application.product_workflows import start_product_workflow_run
 from productflow_backend.application.use_cases import create_product
 from productflow_backend.domain.enums import JobStatus, WorkflowNodeStatus
-from productflow_backend.infrastructure.db.models import AppSetting, WorkflowNode, WorkflowNodeRun
+from productflow_backend.infrastructure.db.models import AppSetting, WorkflowNode, WorkflowNodeRun, WorkflowRun
 
 
 def _set_generation_cap(db_session, value: int) -> None:
@@ -36,6 +36,7 @@ def test_generation_cap_accepts_and_queues_workflow_run_creation(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from productflow_backend.application.admission import get_workflow_run_queue_metadata
     from productflow_backend.presentation.api import create_app
 
     sent_run_ids: list[str] = []
@@ -53,6 +54,16 @@ def test_generation_cap_accepts_and_queues_workflow_run_creation(
     busy_node_run.status = WorkflowNodeStatus.RUNNING
     busy_node.status = WorkflowNodeStatus.RUNNING
     db_session.commit()
+    busy_run = db_session.get(WorkflowRun, busy.run_id)
+    assert busy_run is not None
+    assert any(node_run.status == WorkflowNodeStatus.QUEUED for node_run in busy_run.node_runs)
+
+    busy_metadata = get_workflow_run_queue_metadata(db_session, busy_run)
+    assert busy_metadata.overview.running_count == 1
+    assert busy_metadata.overview.queued_count == 0
+    assert busy_metadata.queue_position is None
+    assert busy_metadata.queued_ahead_count is None
+
     workflow_target = _create_product(db_session, "工作流限流商品")
     _set_generation_cap(db_session, 1)
 

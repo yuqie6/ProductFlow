@@ -11,8 +11,9 @@ from productflow_backend.config import get_runtime_settings
 from productflow_backend.domain.durable_generation_tasks import (
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
     WORKFLOW_RUN_GENERATION_TASK_CONTRACT,
+    WorkflowRunDeliveryState,
+    classify_workflow_run_delivery,
 )
-from productflow_backend.domain.enums import WorkflowNodeStatus
 from productflow_backend.infrastructure.db.models import ImageSessionGenerationTask, WorkflowNodeRun, WorkflowRun
 
 GENERATION_CAPACITY_LOCK_KEY = 42630001
@@ -31,6 +32,10 @@ class GenerationTaskQueueMetadata:
     overview: GenerationQueueOverview
     queued_ahead_count: int | None
     queue_position: int | None
+
+
+def _workflow_run_delivery_state(run: WorkflowRun) -> WorkflowRunDeliveryState:
+    return classify_workflow_run_delivery(run.status, [node_run.status for node_run in run.node_runs])
 
 
 def _active_async_task_count(session: Session) -> int:
@@ -79,19 +84,10 @@ def _workflow_run_queue_status_counts(session: Session) -> tuple[int, int]:
     running_count = 0
     queued_count = 0
     for run in runs:
-        has_running_node_run = any(
-            WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_running(node_run.status) for node_run in run.node_runs
-        )
-        if has_running_node_run:
+        delivery_state = _workflow_run_delivery_state(run)
+        if delivery_state == WorkflowRunDeliveryState.RUNNING:
             running_count += 1
-            continue
-        has_queued_node_run = any(
-            WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_queued(node_run.status) for node_run in run.node_runs
-        )
-        if has_queued_node_run:
-            queued_count += 1
-            continue
-        if run.node_runs and all(node_run.status == WorkflowNodeStatus.SUCCEEDED for node_run in run.node_runs):
+        elif delivery_state == WorkflowRunDeliveryState.QUEUED:
             queued_count += 1
     return running_count, queued_count
 
@@ -121,26 +117,21 @@ def get_generation_queue_overview(session: Session) -> GenerationQueueOverview:
 def get_queued_generation_positions(session: Session) -> dict[str, int]:
     queued_items: list[tuple[datetime, str, str]] = []
     workflow_run_queued_at: dict[str, datetime] = {}
-    for run_id, started_at in session.execute(
-        select(WorkflowRun.id, WorkflowNodeRun.started_at)
-        .join(WorkflowNodeRun, WorkflowNodeRun.workflow_run_id == WorkflowRun.id)
-        .where(
-            WorkflowRun.status.in_(WORKFLOW_RUN_GENERATION_TASK_CONTRACT.active_statuses),
-            WorkflowNodeRun.status.in_(WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_queued_statuses),
-        )
-    ).all():
-        current = workflow_run_queued_at.get(run_id)
-        if current is None or started_at < current:
-            workflow_run_queued_at[run_id] = started_at
     for run in session.scalars(
         select(WorkflowRun)
         .options(selectinload(WorkflowRun.node_runs))
         .where(WorkflowRun.status.in_(WORKFLOW_RUN_GENERATION_TASK_CONTRACT.active_statuses))
     ):
-        if run.id in workflow_run_queued_at:
+        if _workflow_run_delivery_state(run) != WorkflowRunDeliveryState.QUEUED:
             continue
-        if run.node_runs and all(node_run.status == WorkflowNodeStatus.SUCCEEDED for node_run in run.node_runs):
-            workflow_run_queued_at[run.id] = run.started_at
+        workflow_run_queued_at[run.id] = min(
+            (
+                node_run.started_at
+                for node_run in run.node_runs
+                if WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_queued(node_run.status)
+            ),
+            default=run.started_at,
+        )
     queued_items.extend(
         (started_at, "product_workflow", run_id) for run_id, started_at in workflow_run_queued_at.items()
     )
@@ -166,10 +157,7 @@ def get_workflow_run_queue_metadata(
     overview = overview or get_generation_queue_overview(session)
     queued_ahead_count: int | None = None
     queue_position: int | None = None
-    has_queued_work = any(
-        WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_queued(node_run.status) for node_run in run.node_runs
-    ) or (bool(run.node_runs) and all(node_run.status == WorkflowNodeStatus.SUCCEEDED for node_run in run.node_runs))
-    if WORKFLOW_RUN_GENERATION_TASK_CONTRACT.is_active(run.status) and has_queued_work:
+    if _workflow_run_delivery_state(run) == WorkflowRunDeliveryState.QUEUED:
         positions = queued_positions or get_queued_generation_positions(session)
         queue_position = positions.get(run.id)
         if queue_position is not None:

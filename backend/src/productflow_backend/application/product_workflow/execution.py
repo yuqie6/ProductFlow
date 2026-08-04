@@ -54,7 +54,11 @@ from productflow_backend.application.product_workflow_dependencies import (
 )
 from productflow_backend.application.queue_submission import enqueue_or_mark_failed
 from productflow_backend.application.time import now_utc
-from productflow_backend.domain.durable_generation_tasks import WORKFLOW_RUN_GENERATION_TASK_CONTRACT
+from productflow_backend.domain.durable_generation_tasks import (
+    WORKFLOW_RUN_GENERATION_TASK_CONTRACT,
+    WorkflowRunDeliveryState,
+    classify_workflow_run_delivery,
+)
 from productflow_backend.domain.enums import (
     CopyStatus,
     WorkflowNodeStatus,
@@ -123,15 +127,9 @@ def _active_workflow_run_for_nodes(workflow: ProductWorkflow, node_ids: set[str]
 
 
 def _workflow_run_should_enqueue(run: WorkflowRun) -> bool:
-    if not WORKFLOW_RUN_GENERATION_TASK_CONTRACT.is_running(run.status):
-        return False
-    if any(WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_running(node_run.status) for node_run in run.node_runs):
-        return False
-    has_queued_node_run = any(
-        WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_queued(node_run.status) for node_run in run.node_runs
-    )
-    return has_queued_node_run or (
-        bool(run.node_runs) and all(node_run.status == WorkflowNodeStatus.SUCCEEDED for node_run in run.node_runs)
+    return (
+        classify_workflow_run_delivery(run.status, [node_run.status for node_run in run.node_runs])
+        == WorkflowRunDeliveryState.QUEUED
     )
 
 

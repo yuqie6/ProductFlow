@@ -7,7 +7,9 @@ from productflow_backend.domain.durable_generation_tasks import (
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
     QUEUE_UNAVAILABLE_DETAIL,
     WORKFLOW_RUN_GENERATION_TASK_CONTRACT,
+    WorkflowRunDeliveryState,
     assert_actor_uses_durable_generation_contract,
+    classify_workflow_run_delivery,
 )
 from productflow_backend.domain.enums import JobStatus, WorkflowNodeStatus, WorkflowRunStatus
 from productflow_backend.domain.errors import QueueUnavailableError
@@ -29,6 +31,36 @@ def test_durable_generation_task_contract_keeps_workflow_and_image_models_separa
     assert IMAGE_SESSION_GENERATION_TASK_CONTRACT.is_running(JobStatus.RUNNING)
     assert IMAGE_SESSION_GENERATION_TASK_CONTRACT.is_terminal(JobStatus.FAILED)
     assert IMAGE_SESSION_GENERATION_TASK_CONTRACT.is_terminal(JobStatus.CANCELLED)
+
+
+@pytest.mark.parametrize(
+    ("run_status", "node_run_statuses", "expected"),
+    [
+        (WorkflowRunStatus.SUCCEEDED, [WorkflowNodeStatus.QUEUED], WorkflowRunDeliveryState.NONE),
+        (WorkflowRunStatus.CANCELLED, [WorkflowNodeStatus.RUNNING], WorkflowRunDeliveryState.NONE),
+        (WorkflowRunStatus.RUNNING, [], WorkflowRunDeliveryState.NONE),
+        (WorkflowRunStatus.RUNNING, [WorkflowNodeStatus.FAILED], WorkflowRunDeliveryState.NONE),
+        (
+            WorkflowRunStatus.RUNNING,
+            [WorkflowNodeStatus.SUCCEEDED, WorkflowNodeStatus.FAILED],
+            WorkflowRunDeliveryState.NONE,
+        ),
+        (WorkflowRunStatus.RUNNING, [WorkflowNodeStatus.QUEUED], WorkflowRunDeliveryState.QUEUED),
+        (WorkflowRunStatus.RUNNING, [WorkflowNodeStatus.SUCCEEDED], WorkflowRunDeliveryState.QUEUED),
+        (
+            WorkflowRunStatus.RUNNING,
+            [WorkflowNodeStatus.QUEUED, WorkflowNodeStatus.RUNNING],
+            WorkflowRunDeliveryState.RUNNING,
+        ),
+        ("running", ["succeeded", "succeeded"], WorkflowRunDeliveryState.QUEUED),
+    ],
+)
+def test_classify_workflow_run_delivery(
+    run_status: WorkflowRunStatus | str,
+    node_run_statuses: list[WorkflowNodeStatus | str],
+    expected: WorkflowRunDeliveryState,
+) -> None:
+    assert classify_workflow_run_delivery(run_status, node_run_statuses) == expected
 
 
 def test_durable_generation_task_contract_matches_worker_actor_retry_policy(configured_env) -> None:
