@@ -13,6 +13,7 @@ from productflow_backend.application.image_generation_core import (
     normalize_image_generation_tool_options,
     unique_image_generation_references,
 )
+from productflow_backend.application.product_workflow.query import WorkflowQueryService
 from productflow_backend.config import normalize_image_generation_size
 from productflow_backend.domain.enums import (
     PosterKind,
@@ -356,8 +357,9 @@ def reference_image_inputs_for_copy(
         and edge.source_node_id in nodes_by_id
         and nodes_by_id[edge.source_node_id].node_type == WorkflowNodeType.REFERENCE_IMAGE
     ]
-    inputs: list[ReferenceImageInput] = []
-    seen_asset_ids: set[str] = set()
+    reference_descriptors: list[tuple[list[str], str | None, str]] = []
+    unique_asset_ids: list[str] = []
+    queued_asset_ids: set[str] = set()
     for reference_node in reference_nodes:
         asset_ids = list(
             dict.fromkeys(
@@ -369,10 +371,26 @@ def reference_image_inputs_for_copy(
         )
         if not asset_ids:
             continue
-        assets = list(session.scalars(select(SourceAsset).where(SourceAsset.id.in_(asset_ids))))
         role = optional_config_text(reference_node.config_json or {}, "role")
         label = optional_config_text(reference_node.config_json or {}, "label") or reference_node.title
-        for asset in assets:
+        reference_descriptors.append((asset_ids, role, label))
+        for asset_id in asset_ids:
+            if asset_id not in queued_asset_ids:
+                queued_asset_ids.add(asset_id)
+                unique_asset_ids.append(asset_id)
+    if not unique_asset_ids:
+        return []
+
+    assets_by_id = {
+        asset.id: asset for asset in WorkflowQueryService(session).source_assets_by_ids(unique_asset_ids)
+    }
+    inputs: list[ReferenceImageInput] = []
+    seen_asset_ids: set[str] = set()
+    for asset_ids, role, label in reference_descriptors:
+        for asset_id in asset_ids:
+            asset = assets_by_id.get(asset_id)
+            if asset is None:
+                continue
             if asset.product_id != workflow.product_id or asset.id in seen_asset_ids:
                 continue
             seen_asset_ids.add(asset.id)

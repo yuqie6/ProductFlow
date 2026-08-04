@@ -535,6 +535,10 @@ returns the normal `ProductWorkflow`.
 - `copy_generation` nodes must collect connected upstream `reference_image` slots and pass their asset paths plus
   role/label metadata to the text provider. Text-only providers should include concise reference metadata in the prompt;
   multimodal-capable providers may also attach image payloads/paths.
+- `reference_image_inputs_for_copy(...)` must collect ordered reference-node descriptors and globally unique asset ids,
+  then load those assets with one `WorkflowQueryService.source_assets_by_ids(...)` call. It performs no SourceAsset query
+  when no ids are present. Provider inputs are rebuilt in reference-node encounter order and each node's configured asset
+  order; a shared asset keeps the first node's role/label. Missing and other-product assets remain excluded.
 - A generated `copy_generation` output is editable through `PATCH /api/workflow-nodes/{node_id}/copy`. The endpoint
   updates the underlying `CopySet.structured_payload`, then rewrites the node output so downstream image nodes read the
   edited v2 copy through the existing `copy_set_id`. Structured-payload edits must not re-derive or overwrite
@@ -688,6 +692,9 @@ returns the normal `ProductWorkflow`.
   another regression binds from a `poster_variant_id` and asserts the poster materializes or maps to a reference SourceAsset.
 - API/provider regression connects a `reference_image` node into `copy_generation` and asserts the reference label/role
   reaches generated copy/provider input.
+- Query regression covers one and multiple upstream reference nodes with exactly one SourceAsset SELECT, zero ids with no
+  SourceAsset SELECT, configured ordering, shared-asset de-duplication, other-product/missing filtering, role/label, and
+  resolved storage paths.
 - API regression edits a generated copy node through `PATCH /api/workflow-nodes/{node_id}/copy` and asserts both the
   persisted `CopySet` and node output summary fields are updated.
 - API regression for selected-node runs creates successful upstream outputs, runs a downstream node, and asserts upstream
