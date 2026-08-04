@@ -78,6 +78,7 @@ backend/
     ├── test_storage_upload_validation.py
     ├── test_provider_payloads.py
     ├── test_queue_recovery.py
+    ├── test_live_workflow_recovery.py       # opt-in PostgreSQL/Redis workflow recovery delivery gate
     ├── test_logging_behavior.py
     └── test_migrations_database_constraints.py
 ```

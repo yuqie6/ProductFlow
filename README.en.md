@@ -420,12 +420,20 @@ Prompt templates:
 | Start development API | `just backend-run` | `bash scripts/with_dev_env.sh bash -lc 'uv run --directory backend uvicorn productflow_backend.main:app --reload --host 0.0.0.0 --port "${APP_PORT:-29282}"'` |
 | Start Dramatiq worker | `just backend-worker` | `bash scripts/with_dev_env.sh uv run --directory backend dramatiq --processes 2 --threads 4 productflow_backend.workers` |
 | Run backend pytest | `just backend-test` | `uv run --directory backend pytest` |
+| Verify PostgreSQL/Redis recovery delivery | `just backend-test-live-recovery` | See the isolation notes below |
 | Start Vite dev server | `just web-dev` | `bash scripts/with_dev_env.sh bash -lc 'web_port="${WEB_PORT:-29283}"; api_target="${VITE_DEV_PROXY_TARGET:-http://127.0.0.1:${APP_PORT:-29282}}"; VITE_API_BASE_URL= VITE_DEV_PROXY_TARGET="$api_target" pnpm --dir web dev -- --host 0.0.0.0 --port "$web_port" --strictPort'` |
 | Run frontend lint | no just wrapper | `pnpm --dir web lint` |
 | Run frontend unit tests | no just wrapper | `pnpm --dir web test:run` |
 | TypeScript check + Vite build | `just web-build` | `pnpm --dir web build` |
 | Release dry run | `just release-dry-run` | `DRY_RUN=1 bash scripts/release.sh` |
 | Production update | `just release` | `bash scripts/release.sh` |
+
+`just backend-test-live-recovery` is an explicit opt-in dependency integration gate and requires `.env` and `.env.dev`
+to be configured as described in the local development section. It starts only the Compose PostgreSQL and Redis services,
+reads the base connections from `.env.dev`, creates and drops a random PostgreSQL database for each run, and cleans only
+Redis DB 15. It does not start a worker, call a provider, or read/write the development business database or Redis DB 0.
+Normal `just backend-test` continues to use SQLite; the live test is reported as skipped and does not connect to external
+dependencies.
 
 `just release` / `bash scripts/release.sh` is the Docker Compose production update entrypoint. It first runs `docker compose config --quiet`, then attempts to stop legacy user-level systemd services that may occupy ports `29280/29281` (`productflow-backend.service`, `productflow-worker.service`, `productflow-web.service`), then runs `docker compose up -d --build --remove-orphans` and checks backend `/healthz`, web `/healthz`, and web proxy `/api/healthz`. This process does not delete Docker volumes; do not use `docker compose down -v` for normal updates. To reuse files from an old systemd production setup, set `STORAGE_HOST_PATH=/home/cot/ProductFlow-release/shared/storage` in `.env` first. If you have already manually moved old services away, you can temporarily run `LEGACY_SYSTEMD_ACTION=skip bash scripts/release.sh`, or `LEGACY_SYSTEMD_ACTION=skip just release`.
 

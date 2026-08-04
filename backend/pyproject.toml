@@ -37,6 +37,9 @@ packages = ["src/productflow_backend"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = [
+  "live_dependencies: opt-in tests that use isolated live PostgreSQL and Redis resources",
+]
 
 [tool.ruff]
 line-length = 120

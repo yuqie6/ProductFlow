@@ -497,6 +497,7 @@ Preserve these semantics when editing durable task code.
 - Duplicate-message regression for each durable model: terminal and currently-running messages do not call providers.
 - Recovery regression for each durable model: queued/stale-running DB rows are handled according to the owning recovery
   rules.
+- Workflow recovery, broker binding, or session-cache changes must also pass the live recovery gate defined below.
 - Admission/status regression: active/running counts and status snapshots are derived from durable DB rows.
 
 #### 7. Wrong vs Correct
@@ -536,6 +537,77 @@ Correct:
 @dramatiq.actor(max_retries=0)
 def run_generation_task(task_id: str) -> None:
     execute_generation_task(task_id)
+```
+
+#### Scenario: Live workflow recovery delivery gate
+
+##### 1. Scope / Trigger
+
+- Trigger: changing `recover_unfinished_workflow_runs(...)`, workflow actor binding, Redis broker construction, or the
+  cached settings/engine/session factory used by recovery.
+- The gate verifies recovery delivery only. It must not start a worker, execute a provider, or replace SQLite unit tests.
+
+##### 2. Signatures
+
+- Command: `just backend-test-live-recovery`.
+- Explicit switch: `PRODUCTFLOW_RUN_LIVE_RECOVERY=1`.
+- Pytest marker: `live_dependencies`.
+- Test: `backend/tests/test_live_workflow_recovery.py`.
+
+##### 3. Contracts
+
+- The command starts only Compose services `productflow-postgres` and `productflow-redis`, then reads base connections
+  through `.env.dev` without printing credentials.
+- Each run creates a random PostgreSQL database on the configured server and builds schema with
+  `Base.metadata.create_all(...)`. It never writes the database named by the base `DATABASE_URL`.
+- Redis uses DB 15. Setup and teardown may call `FLUSHDB` only through a client whose resolved `db` is 15; DB 0 is never
+  selected.
+- Settings, engine, session-factory, broker, global Dramatiq broker, and worker-module state are reset before actors bind.
+- The test persists one active workflow run with one queued node run, calls the production recovery function, consumes
+  and acknowledges the real `run_product_workflow_run(run_id)` message, and leaves durable state active/queued.
+- Teardown closes the consumer, clears Redis DB 15, disconnects the broker, disposes cached engines, and drops the random
+  database even when an assertion fails.
+
+##### 4. Validation & Error Matrix
+
+- Switch missing or not `1` -> test is reported as skipped before fixtures or external connections run.
+- Missing base connection env -> live gate fails with the missing variable name and no credential value.
+- Non-PostgreSQL `DATABASE_URL` or non-Redis `REDIS_URL` -> live gate fails before creating isolated resources.
+- Recovery summary, persisted state, actor name, or message args mismatch -> test fails and teardown still runs.
+- Redis DB 15 not empty after cleanup or temporary database still present after drop -> teardown fails the gate.
+
+##### 5. Good/Base/Bad Cases
+
+- Good: `just backend-test-live-recovery` passes against healthy Compose dependencies and removes both isolated resources.
+- Base: `just backend-test` reports the live test as skipped and completes entirely on the existing SQLite fixtures.
+- Bad: pointing the test at the development business database, flushing Redis DB 0, mocking enqueue/recovery, or starting
+  a worker/provider to prove delivery.
+
+##### 6. Tests Required
+
+- Assert `queued_runs=1`, `stale_running_runs=0`, and `enqueued_runs=1`.
+- Reload PostgreSQL rows and assert the workflow run remains `running` and its node run remains `queued`.
+- Consume one Redis message and assert actor name, positional run-id args, empty kwargs, acknowledgment, and empty queue.
+- After the command, verify no `productflow_live_recovery_*` database remains and Redis DB 15 has zero keys.
+- Run `uv run --directory backend ruff check .`, `just backend-test`, `just backend-test-live-recovery`, and
+  `git diff --check` when this gate or its production path changes.
+
+##### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+broker = RedisBroker(url=base_redis_url)
+broker.client.flushdb()
+recover_unfinished_workflow_runs()  # Uses the configured business database.
+```
+
+Correct:
+
+```python
+temporary_database_url = base_database_url.set(database=random_database_name)
+isolated_redis_url = redis_url_for_database(base_redis_url, 15)
+# Reset runtime caches, bind actors, run recovery, then clean both isolated resources.
 ```
 
 #### Scenario: Durable async continuous image-session generation

@@ -414,12 +414,18 @@ ProductFlow 把文本和图片能力分开配置。基础设施配置（数据�
 | 启动开发 API | `just backend-run` | `bash scripts/with_dev_env.sh bash -lc 'uv run --directory backend uvicorn productflow_backend.main:app --reload --host 0.0.0.0 --port "${APP_PORT:-29282}"'` |
 | 启动 Dramatiq worker | `just backend-worker` | `bash scripts/with_dev_env.sh uv run --directory backend dramatiq --processes 2 --threads 4 productflow_backend.workers` |
 | 运行 backend pytest | `just backend-test` | `uv run --directory backend pytest` |
+| 验证 PostgreSQL/Redis 恢复投递 | `just backend-test-live-recovery` | 见下方隔离说明 |
 | 启动 Vite 开发服务器 | `just web-dev` | `bash scripts/with_dev_env.sh bash -lc 'web_port="${WEB_PORT:-29283}"; api_target="${VITE_DEV_PROXY_TARGET:-http://127.0.0.1:${APP_PORT:-29282}}"; VITE_API_BASE_URL= VITE_DEV_PROXY_TARGET="$api_target" pnpm --dir web dev -- --host 0.0.0.0 --port "$web_port" --strictPort'` |
 | 运行前端 lint | 无 just 包装 | `pnpm --dir web lint` |
 | 运行前端单测 | 无 just 包装 | `pnpm --dir web test:run` |
 | TypeScript 检查 + Vite build | `just web-build` | `pnpm --dir web build` |
 | 发布 dry run | `just release-dry-run` | `DRY_RUN=1 bash scripts/release.sh` |
 | 生产更新 | `just release` | `bash scripts/release.sh` |
+
+`just backend-test-live-recovery` 是显式 opt-in 的依赖集成门禁，需要先按本地开发章节配置 `.env` 与 `.env.dev`。
+命令只启动 Compose 的 PostgreSQL 与 Redis，从 `.env.dev` 读取基础连接，为每次运行创建并删除随机 PostgreSQL database，并且只清理 Redis DB 15。
+它不启动 worker，不执行 provider 请求，也不读写开发业务 database 或 Redis DB 0。普通 `just backend-test`
+继续使用 SQLite；live test 会显示为 skipped，且不会连接外部依赖。
 
 `just release` / `bash scripts/release.sh` 是 Docker Compose 生产更新入口。流程包括 `docker compose config --quiet`、停止可能占用 `29280/29281` 的 legacy user-level systemd 服务、`docker compose up -d --build --remove-orphans`，以及 backend `/healthz`、web `/healthz`、web 代理 `/api/healthz` 检查。该流程不会删除 Docker volumes；普通更新不要执行 `docker compose down -v`。复用旧 systemd 生产文件时，在 `.env` 中设置 `STORAGE_HOST_PATH=/home/cot/ProductFlow-release/shared/storage`。已手动迁走旧服务时，可临时执行 `LEGACY_SYSTEMD_ACTION=skip bash scripts/release.sh`，或使用 `LEGACY_SYSTEMD_ACTION=skip just release`。
 
