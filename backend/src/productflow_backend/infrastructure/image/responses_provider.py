@@ -13,7 +13,6 @@ from urllib.parse import urlsplit, urlunsplit
 from openai import OpenAI
 
 from productflow_backend.application.contracts import PosterGenerationInput
-from productflow_backend.application.language_policy import image_visible_text_requirements
 from productflow_backend.config import (
     IMAGE_TOOL_FIELD_KEYS,
     filter_image_tool_options,
@@ -28,7 +27,7 @@ from productflow_backend.infrastructure.image.base import (
     image_dimensions_from_bytes,
     parse_size,
 )
-from productflow_backend.infrastructure.prompts import render_prompt_template
+from productflow_backend.infrastructure.prompts import render_poster_image_prompt
 from productflow_backend.infrastructure.provider_config import (
     ResolvedImageProviderConfig,
     resolve_image_provider_config,
@@ -168,10 +167,6 @@ def build_responses_reference_images_from_poster(poster: PosterGenerationInput) 
     for reference in poster.reference_images:
         add_path(reference.path, mime_type=reference.mime_type, filename=reference.filename)
     return references
-
-
-def poster_has_reference_input(poster: PosterGenerationInput) -> bool:
-    return poster.source_image is not None or bool(poster.reference_images)
 
 
 def _mime_type_from_output_format(value: Any) -> str | None:
@@ -774,61 +769,11 @@ class OpenAIResponsesImageProvider(ImageProvider):
         kind: PosterKind,
         size: str,
     ) -> str:
-        copy_mode = poster.copy_prompt_mode == "copy"
-        template = self.poster_image_template if copy_mode else self.poster_image_edit_template
-        context_block = self._build_context_block(poster)
-        return render_prompt_template(
-            template,
-            {
-                "product_name": poster.product_name,
-                "category": poster.category or "",
-                "price": poster.price or "",
-                "source_note": poster.source_note or "",
-                "instruction": poster.instruction or "Free image generation.",
-                "context_block": context_block,
-                "reference_policy": self.poster_image_reference_policy if poster_has_reference_input(poster) else "",
-                "visible_text_language_hint": poster.visible_text_language_hint or "",
-                "size": size,
-                "kind": kind.value,
-                "kind_label": "main image" if kind == PosterKind.MAIN_IMAGE else "promotional poster",
-                "kind_requirements": self._build_kind_requirements(
-                    kind,
-                    visible_text_language_hint=poster.visible_text_language_hint,
-                ),
-            },
+        return render_poster_image_prompt(
+            poster,
+            kind,
+            size,
+            image_template=self.poster_image_template,
+            edit_template=self.poster_image_edit_template,
+            reference_policy=self.poster_image_reference_policy,
         )
-
-    def _build_context_block(self, poster: PosterGenerationInput) -> str:
-        lines: list[str] = []
-        if poster.product_name:
-            lines.append(f"- Subject: {poster.product_name}")
-        if poster.category:
-            lines.append(f"- Category/type: {poster.category}")
-        if poster.price:
-            lines.append(f"- Price: {poster.price}")
-        if poster.source_note:
-            lines.append(f"- Additional notes: {poster.source_note}")
-        if poster.copy_prompt_mode == "copy" and poster.structured_copy_context:
-            lines.append(
-                "- Available copy text (use only when visible text is requested or clearly useful; "
-                "do not render field names, labels, or context notes):\n"
-                f"{poster.structured_copy_context}"
-            )
-        if poster.reference_images or poster.source_image is not None:
-            reference_paths = {str(reference.path.resolve()) for reference in poster.reference_images}
-            if poster.source_image is not None:
-                reference_paths.add(str(poster.source_image.resolve()))
-            reference_count = len(reference_paths)
-            lines.append(f"- Reference image count: {reference_count}")
-            if poster.source_image is not None:
-                lines.append("- Source product image: input image 1")
-            reference_labels = [
-                f"{reference.label or reference.filename} (role: {reference.role or 'reference'})"
-                for reference in poster.reference_images
-            ]
-            if reference_labels:
-                lines.append(f"- Reference images: {'; '.join(reference_labels)}")
-        return "\n".join(lines) if lines else "- No explicit upstream context."
-
-    def _build_kind_requirements(self, kind: PosterKind, *, visible_text_language_hint: str | None = None) -> str:
-        return image_visible_text_requirements(kind, visible_text_language_hint=visible_text_language_hint)

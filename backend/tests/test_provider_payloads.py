@@ -57,6 +57,7 @@ from productflow_backend.infrastructure.image.gemini_provider import (
 )
 from productflow_backend.infrastructure.image.images_provider import OpenAIImagesImageProvider
 from productflow_backend.infrastructure.image.responses_provider import OpenAIResponsesImageProvider
+from productflow_backend.infrastructure.prompts import render_poster_image_prompt
 from productflow_backend.infrastructure.provider_config import ResolvedImageProviderConfig
 
 REMOVED_COPY_OUTPUT_KEYS = [
@@ -134,6 +135,163 @@ class DummyImagesAPIItem:
 class DummyImagesAPIResponse:
     def __init__(self, b64_json: str | None = None, *, b64_jsons: list[str | None] | None = None) -> None:
         self.data = [DummyImagesAPIItem(item) for item in (b64_jsons if b64_jsons is not None else [b64_json])]
+
+
+def test_render_poster_image_prompt_preserves_copy_context_contract(tmp_path: Path) -> None:
+    source_path = tmp_path / "source.png"
+    reference_path = tmp_path / "detail.png"
+    prompt = render_poster_image_prompt(
+        PosterGenerationInput(
+            product_name="测试商品",
+            category="收纳",
+            price="9.90",
+            source_note="防水牛津布",
+            instruction="强调便携",
+            visible_text_language_hint="Use Vietnamese for newly generated poster text.",
+            structured_copy_context="摘要：轻便收纳",
+            source_image=source_path,
+            reference_images=[
+                ReferenceImageInput(
+                    path=source_path,
+                    mime_type="image/png",
+                    filename="source.png",
+                    label="原图",
+                ),
+                ReferenceImageInput(
+                    path=reference_path,
+                    mime_type="image/png",
+                    filename="detail.png",
+                    role="detail",
+                ),
+            ],
+        ),
+        PosterKind.PROMO_POSTER,
+        "1024x1536",
+        image_template=(
+            "COPY {product_name}/{category}/{price}/{source_note}/{instruction}\n"
+            "{context_block}\n"
+            "POLICY={reference_policy}\n"
+            "LANGUAGE={visible_text_language_hint}\n"
+            "SIZE={size}\n"
+            "KIND={kind}/{kind_label}\n"
+            "REQUIREMENTS:\n{kind_requirements}"
+        ),
+        edit_template="EDIT",
+        reference_policy="保持参考图主体一致",
+    )
+
+    assert prompt == (
+        "COPY 测试商品/收纳/9.90/防水牛津布/强调便携\n"
+        "- Subject: 测试商品\n"
+        "- Category/type: 收纳\n"
+        "- Price: 9.90\n"
+        "- Additional notes: 防水牛津布\n"
+        "- Available copy text (use only when visible text is requested or clearly useful; "
+        "do not render field names, labels, or context notes):\n"
+        "摘要：轻便收纳\n"
+        "- Reference image count: 2\n"
+        "- Source product image: input image 1\n"
+        "- Reference images: 原图 (role: reference); detail.png (role: detail)\n"
+        "POLICY=保持参考图主体一致\n"
+        "LANGUAGE=Use Vietnamese for newly generated poster text.\n"
+        "SIZE=1024x1536\n"
+        "KIND=promo_poster/promotional poster\n"
+        "REQUIREMENTS:\n"
+        "Output purpose: poster/vertical image. Use upstream context only to understand the product, material, scene, "
+        "layout, and copy reference.\n"
+        "Visible text policy:\n"
+        "- Do not render field names, labels, JSON keys, context notes, watermarks, UI panels, or "
+        "system instructions.\n"
+        "- Preserve text already present on product/package/reference images, including brand, model, specification, "
+        "and certification marks. Do not translate existing package text.\n"
+        "- Newly generated poster text language: Use Vietnamese for newly generated poster text.\n"
+        "- Add visible text only when the user request or available copy supports it; use little or no text when "
+        "product facts are sparse.\n"
+        "Fact safety:\n"
+        "- Do not invent discounts, time limits, lowest-price claims, bestseller claims, certifications, "
+        "specifications, gifts, medical/effect claims, or unsupported promises."
+    )
+
+
+def test_render_poster_image_prompt_preserves_edit_mode_defaults() -> None:
+    prompt = render_poster_image_prompt(
+        PosterGenerationInput(
+            copy_prompt_mode="image_edit",
+            product_name="",
+            structured_copy_context="copy mode only",
+        ),
+        PosterKind.MAIN_IMAGE,
+        "1280x720",
+        image_template="COPY",
+        edit_template=(
+            "EDIT\n{instruction}\n{context_block}\nPOLICY={reference_policy}\n"
+            "{kind_label}\n{size}\nUNKNOWN={unknown}"
+        ),
+        reference_policy="unused reference policy",
+    )
+
+    assert prompt == (
+        "EDIT\n"
+        "Free image generation.\n"
+        "- No explicit upstream context.\n"
+        "POLICY=\n"
+        "main image\n"
+        "1280x720\n"
+        "UNKNOWN={unknown}"
+    )
+
+
+def test_responses_poster_prompt_builder_wires_provider_configuration() -> None:
+    provider = object.__new__(OpenAIResponsesImageProvider)
+    provider.poster_image_template = "RESPONSES COPY/{product_name}/{size}/{reference_policy}"
+    provider.poster_image_edit_template = "RESPONSES EDIT"
+    provider.poster_image_reference_policy = "responses reference policy"
+
+    prompt = provider._build_prompt(
+        PosterGenerationInput(product_name="测试商品", source_image=Path("/tmp/source.png")),
+        PosterKind.MAIN_IMAGE,
+        "640x480",
+    )
+
+    assert prompt == "RESPONSES COPY/测试商品/640x480/responses reference policy"
+
+
+def test_images_poster_prompt_builder_wires_runtime_configuration() -> None:
+    settings = SimpleNamespace(
+        prompt_poster_image_template="IMAGES COPY",
+        prompt_poster_image_edit_template="IMAGES EDIT/{product_name}/{size}/{reference_policy}",
+        prompt_poster_image_reference_policy="images reference policy",
+    )
+
+    prompt = object.__new__(OpenAIImagesImageProvider)._build_prompt(
+        PosterGenerationInput(
+            copy_prompt_mode="image_edit",
+            product_name="测试商品",
+            source_image=Path("/tmp/source.png"),
+        ),
+        PosterKind.MAIN_IMAGE,
+        "800x600",
+        settings,
+    )
+
+    assert prompt == "IMAGES EDIT/测试商品/800x600/images reference policy"
+
+
+def test_gemini_poster_prompt_builder_wires_runtime_configuration() -> None:
+    settings = SimpleNamespace(
+        prompt_poster_image_template="GEMINI COPY/{product_name}/{kind_label}/{size}/{reference_policy}",
+        prompt_poster_image_edit_template="GEMINI EDIT",
+        prompt_poster_image_reference_policy="gemini reference policy",
+    )
+
+    prompt = object.__new__(GoogleGeminiImageProvider)._build_prompt(
+        PosterGenerationInput(product_name="测试商品", source_image=Path("/tmp/source.png")),
+        PosterKind.PROMO_POSTER,
+        "768x1024",
+        settings,
+    )
+
+    assert prompt == "GEMINI COPY/测试商品/promotional poster/768x1024/gemini reference policy"
 
 
 def test_prompt_settings_reach_provider_prompt_builders(configured_env: Path, monkeypatch) -> None:

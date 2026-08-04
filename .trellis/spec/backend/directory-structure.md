@@ -190,6 +190,9 @@ Put adapter code under `backend/src/productflow_backend/infrastructure/`:
   `infrastructure/image/base.py`, `infrastructure/image/factory.py`.
 - Provider implementations stay behind those factories, for example `text/openai_provider.py`,
   `text/mock_provider.py`, `image/responses_provider.py`, and `image/mock_provider.py`.
+- Operator-editable prompt rendering lives in `infrastructure/prompts.py`. Its `render_poster_image_prompt(...)` function
+  owns the shared poster variable, context, reference-policy, and kind-requirement projection for the Responses, Images,
+  and Gemini adapters; those adapters retain runtime configuration wiring and provider-specific wire behavior.
 - Continuous image chat generation is adapted in `infrastructure/image/chat_service.py`, which is called by
   `application/image_sessions.py` rather than directly from route handlers.
 
