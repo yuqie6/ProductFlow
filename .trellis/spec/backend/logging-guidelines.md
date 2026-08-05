@@ -309,3 +309,21 @@ print(f"run failed: {provider_payload}")
 ```python
 logger.warning("工作流运行失败: run_id=%s failed_node_id=%s reason=%s", run_id, node_id, reason)
 ```
+## Scenario: Storage compensation logging
+### 1. Scope / Trigger
+- Trigger: local-storage cleanup fails while compensating a rolled-back write or cleaning a database-first delete.
+- Applies to `application/storage_compensation.py` and application use cases that call its helpers.
+### 2. Contracts
+- Use `logger = logging.getLogger(__name__)` and `logger.exception(...)`.
+- Include a relative storage path for write compensation, or the product/session/source-asset target for post-commit
+  cleanup.
+- Do not log uploaded bytes, data URLs, prompts, secrets, or raw provider payloads.
+- Compensation logging is diagnostic; durable database state remains the source of truth for whether the mutation
+  committed.
+### 3. Validation & Error Matrix
+- Compensation delete fails -> log the exception and re-raise the original mutation exception.
+- Database-first delete cleanup fails -> log the exception and return the committed success result.
+- Cleanup succeeds -> do not emit a noisy success log.
+### 4. Tests Required
+- Assert cleanup failure logs include the target identifier/path.
+- Assert the original write/commit exception remains the raised exception.

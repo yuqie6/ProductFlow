@@ -38,6 +38,7 @@ from productflow_backend.application.product_workflow_dependencies import (
     default_workflow_execution_dependencies,
 )
 from productflow_backend.application.runtime_settings import get_runtime_settings
+from productflow_backend.application.storage_compensation import StorageWriteCompensation
 from productflow_backend.application.time import now_utc
 from productflow_backend.config import parse_image_tool_allowed_fields
 from productflow_backend.domain.enums import PosterKind, SourceAssetKind
@@ -111,6 +112,8 @@ def execute_workflow_image_generation(
     workflow: ProductWorkflow,
     node: WorkflowNode,
     dependencies: WorkflowExecutionDependencies | None = None,
+    storage: LocalStorage | None = None,
+    storage_writes: StorageWriteCompensation | None = None,
 ) -> dict[str, object]:
     dependencies = dependencies or default_workflow_execution_dependencies()
     product = workflow.product
@@ -141,7 +144,7 @@ def execute_workflow_image_generation(
             structured_copy_context = None
 
     settings = get_runtime_settings(session)
-    storage = LocalStorage()
+    storage = storage or LocalStorage()
     reference_assets = reference_assets_for_image_generation(
         session,
         workflow,
@@ -209,6 +212,8 @@ def execute_workflow_image_generation(
             content,
             suffix=infer_extension(mime_type),
         )
+        if storage_writes is not None:
+            storage_writes.track(storage, relative_path)
         poster = PosterVariant(
             product_id=product.id,
             copy_set_id=copy_set.id,
@@ -225,6 +230,8 @@ def execute_workflow_image_generation(
 
         filename = f"reference-{generated_image.target_index}{infer_extension(mime_type)}"
         reference_path = storage.save_reference_upload(product.id, filename, content)
+        if storage_writes is not None:
+            storage_writes.track(storage, reference_path)
         asset = SourceAsset(
             product_id=product.id,
             kind=SourceAssetKind.REFERENCE_IMAGE,

@@ -1408,3 +1408,47 @@ migration file.
   `_load_database_config_overrides()` tolerates missing `app_settings` during fresh startup.
 - Reading or writing absolute storage paths in the database. Persist relative paths and resolve them through
   `LocalStorage`.
+## Scenario: Application storage write compensation
+### 1. Scope / Trigger
+- Trigger: a use case writes a new local-storage file and then flushes, mutates, or commits SQLAlchemy rows.
+- Applies to product source/reference uploads, workflow reference/poster writes, ProductWorkflow image-generation artifacts,
+  ImageSession reference uploads, ImageSession generated candidates, and generated-image writeback to products.
+### 2. Signatures
+- `application/storage_compensation.py::StorageWriteCompensation` records `(LocalStorage, relative_path)` pairs.
+- `compensate_storage_writes(session)` owns rollback plus reverse-order cleanup for a mutation whose commit is inside the
+  context.
+- `best_effort_storage_delete(delete, target=...)` owns post-commit cleanup logging.
+- `LocalStorage._save_with_variants(...)` cleans a partially written original when preview/thumbnail warming fails before
+  a relative path is returned.
+### 3. Contracts
+- The application use case remains the transaction owner; the storage adapter does not inspect ORM state.
+- Track a path immediately after its save method returns.
+- On any exception before a successful commit, call `session.rollback()` and remove only paths tracked by the current use
+  case, in reverse order.
+- A compensation cleanup failure is logged and does not replace the triggering exception.
+- After a database delete has committed, storage deletion is best effort. A storage `OSError` or `ValueError` is logged,
+  while the use case preserves the committed database result.
+- Do not delete an entire product/session tree as compensation for an individual write.
+### 4. Validation & Error Matrix
+- Second file save fails -> earlier files are deleted and the database transaction is rolled back.
+- Template initialization, flush, or commit fails after a save -> tracked files are deleted and the original exception
+  propagates.
+- LocalStorage variant warming fails -> original and any generated variants are deleted, then the original storage
+  exception propagates.
+- Post-commit file deletion fails -> database row/tree deletion remains successful and an operator-visible exception log
+  includes the target id/path.
+### 5. Good / Base / Bad Cases
+- Good: create product tracks the original and every reference path before template materialization and commit.
+- Good: workflow node execution tracks every poster/reference path and cleans them when node finalization or commit
+  fails.
+- Base: successful commit leaves tracked paths untouched.
+- Bad: calling `storage.delete_*` after commit without catching/logging expected storage errors.
+- Bad: tracking a whole product/session directory for a single failed save.
+### 6. Tests Required
+- Failure injection for second save, template/flush failure, and commit failure asserts database rollback and no new files.
+- Workflow node failure/cancel/commit regression asserts generated artifacts are removed.
+- Delete failure regression asserts committed rows are gone and the cleanup target is logged.
+- LocalStorage variant-warm failure regression asserts original and variants are removed.
+### 7. Explicit Non-Goals
+- No distributed transaction, outbox, object-storage migration, repository/Unit of Work conversion, or orphan-repair
+  daemon is introduced by this contract.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import mimetypes
 import shutil
 from pathlib import Path
@@ -9,6 +10,8 @@ from uuid import uuid4
 from PIL import Image, ImageOps, UnidentifiedImageError, features
 
 from productflow_backend.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 ImageVariantName = Literal["original", "preview", "thumbnail"]
 
@@ -35,9 +38,7 @@ class LocalStorage:
     ) -> str:
         suffix = Path(filename).suffix.lower() or ".bin"
         relative = Path("products") / product_id / "source" / f"{uuid4()}{suffix}"
-        self._write_relative(relative, content)
-        self._warm_image_variants(relative.as_posix())
-        return relative.as_posix()
+        return self._save_with_variants(relative, content)
 
     def save_reference_upload(
         self,
@@ -47,9 +48,7 @@ class LocalStorage:
     ) -> str:
         suffix = Path(filename).suffix.lower() or ".bin"
         relative = Path("products") / product_id / "reference" / f"{uuid4()}{suffix}"
-        self._write_relative(relative, content)
-        self._warm_image_variants(relative.as_posix())
-        return relative.as_posix()
+        return self._save_with_variants(relative, content)
 
     def save_generated_image(
         self,
@@ -59,9 +58,7 @@ class LocalStorage:
         suffix: str = ".png",
     ) -> str:
         relative = Path("products") / product_id / "posters" / f"{poster_kind}-{uuid4()}{suffix}"
-        self._write_relative(relative, content)
-        self._warm_image_variants(relative.as_posix())
-        return relative.as_posix()
+        return self._save_with_variants(relative, content)
 
     def save_image_session_reference(
         self,
@@ -71,9 +68,7 @@ class LocalStorage:
     ) -> str:
         suffix = Path(filename).suffix.lower() or ".bin"
         relative = Path("image_sessions") / session_id / "reference" / f"{uuid4()}{suffix}"
-        self._write_relative(relative, content)
-        self._warm_image_variants(relative.as_posix())
-        return relative.as_posix()
+        return self._save_with_variants(relative, content)
 
     def save_image_session_generated(
         self,
@@ -82,9 +77,7 @@ class LocalStorage:
         suffix: str = ".png",
     ) -> str:
         relative = Path("image_sessions") / session_id / "generated" / f"{uuid4()}{suffix}"
-        self._write_relative(relative, content)
-        self._warm_image_variants(relative.as_posix())
-        return relative.as_posix()
+        return self._save_with_variants(relative, content)
 
     def resolve(self, relative_path: str) -> Path:
         """相对路径转绝对路径，防路径穿越攻击。"""
@@ -135,6 +128,19 @@ class LocalStorage:
         product_root = self.resolve((Path("products") / product_id).as_posix())
         if product_root.exists():
             shutil.rmtree(product_root)
+
+    def _save_with_variants(self, relative: Path, content: bytes) -> str:
+        relative_path = relative.as_posix()
+        try:
+            self._write_relative(relative, content)
+            self._warm_image_variants(relative_path)
+        except BaseException:
+            try:
+                self.delete_image_with_variants(relative_path)
+            except (OSError, ValueError):
+                logger.exception("文件派生失败后的本地清理失败: path=%s", relative_path)
+            raise
+        return relative_path
 
     def _write_relative(self, relative: Path, content: bytes) -> None:
         destination = self.root / relative

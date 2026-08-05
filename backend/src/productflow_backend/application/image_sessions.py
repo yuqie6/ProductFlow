@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from base64 import b64encode
 from collections.abc import Callable
-from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, cast
@@ -38,6 +37,11 @@ from productflow_backend.application.image_session_dependencies import (
 )
 from productflow_backend.application.queue_submission import enqueue_or_mark_failed
 from productflow_backend.application.runtime_settings import get_runtime_settings
+from productflow_backend.application.storage_compensation import (
+    StorageWriteCompensation,
+    best_effort_storage_delete,
+    compensate_storage_writes,
+)
 from productflow_backend.application.time import now_utc
 from productflow_backend.config import normalize_image_generation_size
 from productflow_backend.domain.durable_generation_tasks import (
@@ -447,7 +451,10 @@ def delete_image_session(
     storage = storage or LocalStorage()
     session.delete(image_session)
     session.commit()
-    storage.delete_image_session_tree(image_session_id)
+    best_effort_storage_delete(
+        lambda: storage.delete_image_session_tree(image_session_id),
+        target=f"image_session_id={image_session_id}",
+    )
 
 
 def add_image_session_reference_images(
@@ -459,19 +466,23 @@ def add_image_session_reference_images(
 ) -> ImageSession:
     image_session = _get_image_session_or_raise(session, image_session_id)
     storage = storage or LocalStorage()
-    for content, filename, mime_type in reference_image_uploads:
-        relative_path = storage.save_image_session_reference(image_session.id, filename, content)
-        session.add(
-            ImageSessionAsset(
-                session_id=image_session.id,
-                kind=ImageSessionAssetKind.REFERENCE_UPLOAD,
-                original_filename=filename,
-                mime_type=mime_type or "application/octet-stream",
-                storage_path=relative_path,
+    with compensate_storage_writes(session) as storage_writes:
+        for content, filename, mime_type in reference_image_uploads:
+            relative_path = storage_writes.track(
+                storage,
+                storage.save_image_session_reference(image_session.id, filename, content),
             )
-        )
-    image_session.updated_at = now_utc()
-    session.commit()
+            session.add(
+                ImageSessionAsset(
+                    session_id=image_session.id,
+                    kind=ImageSessionAssetKind.REFERENCE_UPLOAD,
+                    original_filename=filename,
+                    mime_type=mime_type or "application/octet-stream",
+                    storage_path=relative_path,
+                )
+            )
+        image_session.updated_at = now_utc()
+        session.commit()
     session.expire_all()
     return _get_image_session_or_raise(session, image_session.id)
 
@@ -495,7 +506,10 @@ def delete_image_session_reference_image(
     session.delete(asset)
     image_session.updated_at = now_utc()
     session.commit()
-    storage.delete_image_with_variants(storage_path)
+    best_effort_storage_delete(
+        lambda: storage.delete_image_with_variants(storage_path),
+        target=f"image_session_asset_id={asset_id} path={storage_path}",
+    )
     session.expire_all()
     return _get_image_session_or_raise(session, image_session.id)
 
@@ -574,7 +588,7 @@ def _execute_image_session_round_generation(
     pending_provider_results = []
 
     for candidate_index in range(completed_candidates + 1, generation_count + 1):
-        relative_path: str | None = None
+        storage_writes = StorageWriteCompensation()
         try:
             _raise_if_image_generation_task_cancelled(session, generation_task_id)
             if generation_task_id is not None:
@@ -631,10 +645,13 @@ def _execute_image_session_round_generation(
                     )
             _raise_if_image_generation_task_cancelled(session, generation_task_id)
 
-            relative_path = storage.save_image_session_generated(
-                image_session.id,
-                result.bytes_data,
-                suffix=infer_extension(result.mime_type),
+            relative_path = storage_writes.track(
+                storage,
+                storage.save_image_session_generated(
+                    image_session.id,
+                    result.bytes_data,
+                    suffix=infer_extension(result.mime_type),
+                ),
             )
             _raise_if_image_generation_task_cancelled(session, generation_task_id)
             asset = ImageSessionAsset(
@@ -721,9 +738,7 @@ def _execute_image_session_round_generation(
             completed_candidates += 1
         except BaseException as exc:  # noqa: BLE001
             session.rollback()
-            if relative_path is not None:
-                with suppress(ValueError, OSError):
-                    storage.delete_image_with_variants(relative_path)
+            storage_writes.cleanup()
             if isinstance(exc, ImageSessionGenerationCancelledError):
                 raise
             if isinstance(exc, (KeyboardInterrupt, SystemExit)):
@@ -1360,32 +1375,39 @@ def attach_image_session_asset_to_product(
     storage = storage or LocalStorage()
     image_bytes = storage.resolve(asset.storage_path).read_bytes()
 
-    if target == "reference":
-        relative_path = storage.save_reference_upload(product.id, asset.original_filename, image_bytes)
-        session.add(
-            SourceAsset(
-                product_id=product.id,
-                kind=SourceAssetKind.REFERENCE_IMAGE,
-                original_filename=asset.original_filename,
-                mime_type=asset.mime_type,
-                storage_path=relative_path,
+    with compensate_storage_writes(session) as storage_writes:
+        if target == "reference":
+            relative_path = storage_writes.track(
+                storage,
+                storage.save_reference_upload(product.id, asset.original_filename, image_bytes),
             )
-        )
-    else:
-        for current_source in _get_product_original_assets(product):
-            current_source.kind = SourceAssetKind.REFERENCE_IMAGE
-        session.flush()
-        relative_path = storage.save_product_upload(product.id, asset.original_filename, image_bytes)
-        session.add(
-            SourceAsset(
-                product_id=product.id,
-                kind=SourceAssetKind.ORIGINAL_IMAGE,
-                original_filename=asset.original_filename,
-                mime_type=asset.mime_type,
-                storage_path=relative_path,
+            session.add(
+                SourceAsset(
+                    product_id=product.id,
+                    kind=SourceAssetKind.REFERENCE_IMAGE,
+                    original_filename=asset.original_filename,
+                    mime_type=asset.mime_type,
+                    storage_path=relative_path,
+                )
             )
-        )
-    product.updated_at = now_utc()
-    session.commit()
+        else:
+            for current_source in _get_product_original_assets(product):
+                current_source.kind = SourceAssetKind.REFERENCE_IMAGE
+            session.flush()
+            relative_path = storage_writes.track(
+                storage,
+                storage.save_product_upload(product.id, asset.original_filename, image_bytes),
+            )
+            session.add(
+                SourceAsset(
+                    product_id=product.id,
+                    kind=SourceAssetKind.ORIGINAL_IMAGE,
+                    original_filename=asset.original_filename,
+                    mime_type=asset.mime_type,
+                    storage_path=relative_path,
+                )
+            )
+        product.updated_at = now_utc()
+        session.commit()
     session.expire_all()
     return _get_product_or_raise(session, product.id)

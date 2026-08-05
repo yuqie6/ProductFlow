@@ -11,6 +11,10 @@ from productflow_backend.application.product_workflow.templates import (
     materialize_product_workflow_from_template,
     resolve_product_creation_canvas_template,
 )
+from productflow_backend.application.storage_compensation import (
+    best_effort_storage_delete,
+    compensate_storage_writes,
+)
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.durable_generation_tasks import WORKFLOW_RUN_GENERATION_TASK_CONTRACT
 from productflow_backend.domain.enums import (
@@ -189,44 +193,51 @@ def create_product(
     """创建商品，保存原始图和参考图到本地存储。"""
     canvas_template = resolve_product_creation_canvas_template(canvas_template_key)
     storage = storage or LocalStorage()
-    product = Product(
-        name=_normalize_required_text(name, field_name="商品名", max_length=255),
-        category=_normalize_optional_text(category, field_name="类目", max_length=120),
-        price=_normalize_price(price),
-        source_note=_normalize_optional_text(source_note, field_name="备注", max_length=4000),
-    )
-    session.add(product)
-    session.flush()
-
-    relative_path = storage.save_product_upload(product.id, filename, image_bytes)
-    session.add(
-        SourceAsset(
-            product_id=product.id,
-            kind=SourceAssetKind.ORIGINAL_IMAGE,
-            original_filename=filename,
-            mime_type=content_type or "application/octet-stream",
-            storage_path=relative_path,
+    with compensate_storage_writes(session) as storage_writes:
+        product = Product(
+            name=_normalize_required_text(name, field_name="商品名", max_length=255),
+            category=_normalize_optional_text(category, field_name="类目", max_length=120),
+            price=_normalize_price(price),
+            source_note=_normalize_optional_text(source_note, field_name="备注", max_length=4000),
         )
-    )
-    for reference_bytes, reference_filename, reference_content_type in reference_image_uploads or []:
-        reference_path = storage.save_reference_upload(product.id, reference_filename, reference_bytes)
+        session.add(product)
+        session.flush()
+
+        relative_path = storage_writes.track(
+            storage,
+            storage.save_product_upload(product.id, filename, image_bytes),
+        )
         session.add(
             SourceAsset(
                 product_id=product.id,
-                kind=SourceAssetKind.REFERENCE_IMAGE,
-                original_filename=reference_filename,
-                mime_type=reference_content_type or "application/octet-stream",
-                storage_path=reference_path,
+                kind=SourceAssetKind.ORIGINAL_IMAGE,
+                original_filename=filename,
+                mime_type=content_type or "application/octet-stream",
+                storage_path=relative_path,
             )
         )
-    if canvas_template is not None:
-        materialize_product_workflow_from_template(
-            session,
-            product_id=product.id,
-            template=canvas_template,
-            template_language=template_language,
-        )
-    session.commit()
+        for reference_bytes, reference_filename, reference_content_type in reference_image_uploads or []:
+            reference_path = storage_writes.track(
+                storage,
+                storage.save_reference_upload(product.id, reference_filename, reference_bytes),
+            )
+            session.add(
+                SourceAsset(
+                    product_id=product.id,
+                    kind=SourceAssetKind.REFERENCE_IMAGE,
+                    original_filename=reference_filename,
+                    mime_type=reference_content_type or "application/octet-stream",
+                    storage_path=reference_path,
+                )
+            )
+        if canvas_template is not None:
+            materialize_product_workflow_from_template(
+                session,
+                product_id=product.id,
+                template=canvas_template,
+                template_language=template_language,
+            )
+        session.commit()
     session.expire_all()
     return _get_product_or_raise(session, product.id)
 
@@ -240,18 +251,22 @@ def add_reference_images(
 ) -> Product:
     product = _get_product_or_raise(session, product_id)
     storage = storage or LocalStorage()
-    for reference_bytes, reference_filename, reference_content_type in reference_image_uploads:
-        reference_path = storage.save_reference_upload(product.id, reference_filename, reference_bytes)
-        session.add(
-            SourceAsset(
-                product_id=product.id,
-                kind=SourceAssetKind.REFERENCE_IMAGE,
-                original_filename=reference_filename,
-                mime_type=reference_content_type or "application/octet-stream",
-                storage_path=reference_path,
+    with compensate_storage_writes(session) as storage_writes:
+        for reference_bytes, reference_filename, reference_content_type in reference_image_uploads:
+            reference_path = storage_writes.track(
+                storage,
+                storage.save_reference_upload(product.id, reference_filename, reference_bytes),
             )
-        )
-    session.commit()
+            session.add(
+                SourceAsset(
+                    product_id=product.id,
+                    kind=SourceAssetKind.REFERENCE_IMAGE,
+                    original_filename=reference_filename,
+                    mime_type=reference_content_type or "application/octet-stream",
+                    storage_path=reference_path,
+                )
+            )
+        session.commit()
     session.expire_all()
     return _get_product_or_raise(session, product.id)
 
@@ -275,7 +290,10 @@ def delete_reference_image(
     product.updated_at = now_utc()
     session.delete(asset)
     session.commit()
-    storage.delete_image_with_variants(storage_path)
+    best_effort_storage_delete(
+        lambda: storage.delete_image_with_variants(storage_path),
+        target=f"source_asset_id={asset_id} path={storage_path}",
+    )
     session.expire_all()
     return _get_product_or_raise(session, product_id)
 
@@ -334,7 +352,10 @@ def delete_product(
     storage = storage or LocalStorage()
     session.delete(product)
     session.commit()
-    storage.delete_product_tree(product_id)
+    best_effort_storage_delete(
+        lambda: storage.delete_product_tree(product_id),
+        target=f"product_id={product_id}",
+    )
 
 
 def update_copy_set(

@@ -22,6 +22,7 @@ from productflow_backend.application.product_workflow.user_templates import (
     extract_reusable_node_config,
     get_canvas_template,
 )
+from productflow_backend.application.storage_compensation import compensate_storage_writes
 from productflow_backend.application.time import now_utc
 from productflow_backend.application.use_cases import update_copy_set
 from productflow_backend.domain.durable_generation_tasks import WORKFLOW_RUN_GENERATION_TASK_CONTRACT
@@ -492,37 +493,41 @@ def upload_workflow_node_image(
         raise BusinessValidationError("只有参考图节点可以上传图片")
     workflow = product_workflow_graph.get_workflow_or_raise(session, node.workflow_id)
     storage = storage or LocalStorage()
-    relative_path = storage.save_reference_upload(workflow.product_id, filename, image_bytes)
-    asset = SourceAsset(
-        product_id=workflow.product_id,
-        kind=SourceAssetKind.REFERENCE_IMAGE,
-        original_filename=filename,
-        mime_type=content_type or "application/octet-stream",
-        storage_path=relative_path,
-    )
-    session.add(asset)
-    session.flush()
+    with compensate_storage_writes(session) as storage_writes:
+        relative_path = storage_writes.track(
+            storage,
+            storage.save_reference_upload(workflow.product_id, filename, image_bytes),
+        )
+        asset = SourceAsset(
+            product_id=workflow.product_id,
+            kind=SourceAssetKind.REFERENCE_IMAGE,
+            original_filename=filename,
+            mime_type=content_type or "application/octet-stream",
+            storage_path=relative_path,
+        )
+        session.add(asset)
+        session.flush()
 
-    config = dict(node.config_json or {})
-    if role is not None:
-        config["role"] = role.strip() or "reference"
-    if label is not None:
-        config["label"] = label.strip() or filename
-    config["source_asset_ids"] = [asset.id]
-    config.pop("source_poster_variant_id", None)
-    node.config_json = config
-    node.output_json = image_asset_output(
-        [asset],
-        summary="已替换参考图",
-        role=optional_config_text(config, "role"),
-        label=optional_config_text(config, "label"),
-    )
-    node.status = WorkflowNodeStatus.SUCCEEDED
-    node.failure_reason = None
-    node.last_run_at = now_utc()
-    workflow.updated_at = now_utc()
-    workflow.product.updated_at = now_utc()
-    session.commit()
+        config = dict(node.config_json or {})
+        if role is not None:
+            config["role"] = role.strip() or "reference"
+        if label is not None:
+            config["label"] = label.strip() or filename
+        config["source_asset_ids"] = [asset.id]
+        config.pop("source_poster_variant_id", None)
+        node.config_json = config
+        node.output_json = image_asset_output(
+            [asset],
+            summary="已替换参考图",
+            role=optional_config_text(config, "role"),
+            label=optional_config_text(config, "label"),
+        )
+        node.status = WorkflowNodeStatus.SUCCEEDED
+        node.failure_reason = None
+        node.last_run_at = now_utc()
+        workflow.updated_at = now_utc()
+        workflow.product.updated_at = now_utc()
+        session.commit()
     session.expire_all()
     return product_workflow_graph.get_workflow_or_raise(session, workflow.id)
 
@@ -537,7 +542,7 @@ def bind_workflow_node_image(
 ) -> ProductWorkflow:
     """把已有商品图片绑定到参考图节点。
 
-    SourceAsset 直接复用已有行；PosterVariant 优先复用同一次工作流生成时已经填充的 SourceAsset，
+    SourceAsset 直接复用已有行；PosterVariant 优先复用已有 lineage 的 SourceAsset，
     找不到时再把海报文件复制成新的 reference SourceAsset。
     """
     if bool(source_asset_id) == bool(poster_variant_id):
@@ -548,46 +553,50 @@ def bind_workflow_node_image(
         raise BusinessValidationError("只有参考图节点可以填充图片")
     workflow = product_workflow_graph.get_workflow_or_raise(session, node.workflow_id)
 
-    source_poster_variant_id: str | None = None
-    if source_asset_id:
-        asset = session.get(SourceAsset, source_asset_id)
-        if asset is None or asset.product_id != workflow.product_id:
-            raise NotFoundError("源图不存在")
-        if asset.kind != SourceAssetKind.REFERENCE_IMAGE:
-            raise BusinessValidationError("只能绑定参考图素材")
-        if asset.source_poster_variant_id:
-            poster = session.get(PosterVariant, asset.source_poster_variant_id)
-            if poster is not None and poster.product_id == workflow.product_id:
-                source_poster_variant_id = poster.id
-    else:
-        poster = session.get(PosterVariant, poster_variant_id)
-        if poster is None or poster.product_id != workflow.product_id:
-            raise NotFoundError("海报不存在")
-        source_poster_variant_id = poster.id
-        asset = source_asset_for_poster_variant(session, workflow=workflow, poster_variant_id=poster.id)
-        if asset is None:
-            storage = storage or LocalStorage()
-            try:
-                content = storage.resolve(poster.storage_path).read_bytes()
-            except (OSError, ValueError) as exc:
-                raise BusinessValidationError("海报文件不存在") from exc
-            filename = f"poster-{poster.id}{infer_extension(poster.mime_type)}"
-            reference_path = storage.save_reference_upload(workflow.product_id, filename, content)
-            asset = SourceAsset(
-                product_id=workflow.product_id,
-                kind=SourceAssetKind.REFERENCE_IMAGE,
-                original_filename=filename,
-                mime_type=poster.mime_type,
-                storage_path=reference_path,
-                source_poster_variant_id=poster.id,
-            )
-            session.add(asset)
-            session.flush()
+    storage = storage or LocalStorage()
+    with compensate_storage_writes(session) as storage_writes:
+        source_poster_variant_id: str | None = None
+        if source_asset_id:
+            asset = session.get(SourceAsset, source_asset_id)
+            if asset is None or asset.product_id != workflow.product_id:
+                raise NotFoundError("源图不存在")
+            if asset.kind != SourceAssetKind.REFERENCE_IMAGE:
+                raise BusinessValidationError("只能绑定参考图素材")
+            if asset.source_poster_variant_id:
+                poster = session.get(PosterVariant, asset.source_poster_variant_id)
+                if poster is not None and poster.product_id == workflow.product_id:
+                    source_poster_variant_id = poster.id
+        else:
+            poster = session.get(PosterVariant, poster_variant_id)
+            if poster is None or poster.product_id != workflow.product_id:
+                raise NotFoundError("海报不存在")
+            source_poster_variant_id = poster.id
+            asset = source_asset_for_poster_variant(session, workflow=workflow, poster_variant_id=poster.id)
+            if asset is None:
+                try:
+                    content = storage.resolve(poster.storage_path).read_bytes()
+                except (OSError, ValueError) as exc:
+                    raise BusinessValidationError("海报文件不存在") from exc
+                filename = f"poster-{poster.id}{infer_extension(poster.mime_type)}"
+                reference_path = storage_writes.track(
+                    storage,
+                    storage.save_reference_upload(workflow.product_id, filename, content),
+                )
+                asset = SourceAsset(
+                    product_id=workflow.product_id,
+                    kind=SourceAssetKind.REFERENCE_IMAGE,
+                    original_filename=filename,
+                    mime_type=poster.mime_type,
+                    storage_path=reference_path,
+                    source_poster_variant_id=poster.id,
+                )
+                session.add(asset)
+                session.flush()
 
-    fill_reference_node(node, asset, source_poster_variant_id=source_poster_variant_id)
-    workflow.updated_at = now_utc()
-    workflow.product.updated_at = now_utc()
-    session.commit()
+        fill_reference_node(node, asset, source_poster_variant_id=source_poster_variant_id)
+        workflow.updated_at = now_utc()
+        workflow.product.updated_at = now_utc()
+        session.commit()
     session.expire_all()
     return product_workflow_graph.get_workflow_or_raise(session, workflow.id)
 

@@ -261,3 +261,6 @@ and the runtime config definitions in `config.py`, then update tests and fronten
 - Importing OpenAI, Pillow renderer details, Redis/Dramatiq, or storage path manipulation directly from route modules.
 - Changing enum string values without updating SQLAlchemy models/migrations, Pydantic schemas/tests, and
   `web/src/lib/types.ts`.
+  - `application/storage_compensation.py` owns the narrow application-side contract for tracking newly written storage
+    paths across a SQLAlchemy mutation, rolling them back on failure, and logging best-effort post-commit cleanup errors.
+    It must not inspect ORM models or grow into a repository/Unit of Work abstraction.

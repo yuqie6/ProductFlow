@@ -54,6 +54,7 @@ from productflow_backend.application.product_workflow_dependencies import (
     default_workflow_execution_dependencies,
 )
 from productflow_backend.application.queue_submission import enqueue_or_mark_failed
+from productflow_backend.application.storage_compensation import StorageWriteCompensation
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.durable_generation_tasks import (
     WORKFLOW_RUN_GENERATION_TASK_CONTRACT,
@@ -539,6 +540,8 @@ def _execute_workflow_node_run(
     node_run = session.get(WorkflowNodeRun, node_run_id)
     if node_run is None:
         return
+    storage = LocalStorage() if node.node_type == WorkflowNodeType.IMAGE_GENERATION else None
+    storage_writes = StorageWriteCompensation()
     try:
         logger.info(
             "开始执行工作流节点: run_id=%s node_id=%s node_type=%s",
@@ -546,9 +549,50 @@ def _execute_workflow_node_run(
             node.id,
             node.node_type.value,
         )
-        output = _execute_node(session, workflow_id=workflow.id, node=node, dependencies=dependencies)
+        output = _execute_node(
+            session,
+            workflow_id=workflow.id,
+            node=node,
+            dependencies=dependencies,
+            storage=storage,
+            storage_writes=storage_writes,
+        )
+
+        session.refresh(run)
+        node_run = session.get(WorkflowNodeRun, node_run_id)
+        if node_run is None:
+            session.rollback()
+            storage_writes.cleanup()
+            return
+        session.refresh(node_run)
+        if run.status == WorkflowRunStatus.CANCELLED:
+            session.rollback()
+            storage_writes.cleanup()
+            return
+        if not WORKFLOW_RUN_GENERATION_TASK_CONTRACT.is_running(run.status):
+            session.rollback()
+            storage_writes.cleanup()
+            return
+        if not WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_running(node_run.status):
+            session.rollback()
+            storage_writes.cleanup()
+            return
+
+        node.output_json = output
+        node.status = WorkflowNodeStatus.SUCCEEDED
+        node.failure_reason = None
+        node.last_run_at = now_utc()
+        node_run.status = WorkflowNodeStatus.SUCCEEDED
+        node_run.output_json = output
+        node_run.copy_set_id = output.get("copy_set_id")
+        poster_ids = poster_variant_ids_from_output(output)
+        node_run.poster_variant_id = poster_ids[0] if poster_ids else output.get("poster_variant_id")
+        node_run.finished_at = now_utc()
+        workflow.updated_at = now_utc()
+        session.commit()
     except TimeLimitExceeded as exc:
         session.rollback()
+        storage_writes.cleanup()
         _mark_node_run_failed_and_schedule(
             session,
             node_run_id=node_run_id,
@@ -558,6 +602,7 @@ def _execute_workflow_node_run(
         return
     except Exception as exc:  # noqa: BLE001
         session.rollback()
+        storage_writes.cleanup()
         _mark_node_run_failed_and_schedule(
             session,
             node_run_id=node_run_id,
@@ -565,35 +610,6 @@ def _execute_workflow_node_run(
             schedule_after_finish=schedule_after_finish,
         )
         return
-
-    session.refresh(run)
-    node_run = session.get(WorkflowNodeRun, node_run_id)
-    if node_run is None:
-        session.rollback()
-        return
-    session.refresh(node_run)
-    if run.status == WorkflowRunStatus.CANCELLED:
-        session.rollback()
-        return
-    if not WORKFLOW_RUN_GENERATION_TASK_CONTRACT.is_running(run.status):
-        session.rollback()
-        return
-    if not WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_running(node_run.status):
-        session.rollback()
-        return
-
-    node.output_json = output
-    node.status = WorkflowNodeStatus.SUCCEEDED
-    node.failure_reason = None
-    node.last_run_at = now_utc()
-    node_run.status = WorkflowNodeStatus.SUCCEEDED
-    node_run.output_json = output
-    node_run.copy_set_id = output.get("copy_set_id")
-    poster_ids = poster_variant_ids_from_output(output)
-    node_run.poster_variant_id = poster_ids[0] if poster_ids else output.get("poster_variant_id")
-    node_run.finished_at = now_utc()
-    workflow.updated_at = now_utc()
-    session.commit()
     logger.info("工作流节点执行成功: run_id=%s node_id=%s", run.id, node.id)
     if schedule_after_finish:
         _enqueue_workflow_run_safely(run.id)
@@ -879,6 +895,8 @@ def _execute_node(
     workflow_id: str,
     node: WorkflowNode,
     dependencies: WorkflowExecutionDependencies | None = None,
+    storage: LocalStorage | None = None,
+    storage_writes: StorageWriteCompensation | None = None,
 ) -> dict[str, Any]:
     workflow = product_workflow_graph.get_workflow_or_raise(session, workflow_id)
     product = workflow.product
@@ -890,7 +908,14 @@ def _execute_node(
     if node.node_type == WorkflowNodeType.COPY_GENERATION:
         return _execute_copy_generation(session, workflow=workflow, node=node, dependencies=dependencies)
     if node.node_type == WorkflowNodeType.IMAGE_GENERATION:
-        return execute_workflow_image_generation(session, workflow=workflow, node=node, dependencies=dependencies)
+        return execute_workflow_image_generation(
+            session,
+            workflow=workflow,
+            node=node,
+            dependencies=dependencies,
+            storage=storage,
+            storage_writes=storage_writes,
+        )
     raise BusinessValidationError("工作流节点类型不支持")
 
 

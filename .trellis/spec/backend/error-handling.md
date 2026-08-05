@@ -574,3 +574,11 @@ plain and user-readable; do not return stack traces or provider secrets.
   `BusinessError` subclasses and leave parser/provider/internal `ValueError`s inside their owner boundaries.
 - Adding new string-suffix status checks for converted business errors; add or reuse a typed `BusinessError` subclass
   instead.
+## Storage Compensation Errors
+Application mutations that create local-storage files must keep the original exception visible after database rollback
+and best-effort file compensation. A cleanup `OSError` or `ValueError` is logged by
+`application/storage_compensation.py::StorageWriteCompensation.cleanup()` and must not replace the triggering database,
+business, or provider exception.
+Database-first delete use cases use `best_effort_storage_delete(...)` after commit. Expected storage deletion failures are
+operator-visible log events; they do not turn an already committed database deletion into a request failure. Do not expose
+filesystem paths, tracebacks, or storage exception strings through user-facing `detail` fields.
