@@ -20,6 +20,7 @@ from productflow_backend.domain.durable_generation_tasks import (
     WORKFLOW_RUN_GENERATION_TASK_CONTRACT,
     assert_actor_uses_durable_generation_contract,
 )
+from productflow_backend.infrastructure.image.chat_service import ImageChatService
 from productflow_backend.infrastructure.logging import (
     cleanup_old_logs,
     configure_logging,
@@ -77,7 +78,7 @@ def run_image_session_generation_task(task_id: str) -> None:
     """连续生图 worker：执行失败落库为通用安全错误。"""
     token = set_image_session_generation_task_id(task_id)
     try:
-        execute_image_session_generation_task(task_id)
+        execute_image_session_generation_task(task_id, chat_service_factory=ImageChatService)
     finally:
         reset_image_session_generation_task_id(token)
 

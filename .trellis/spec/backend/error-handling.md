@@ -470,6 +470,85 @@ image-session task rows for async product flows.
 during fresh startup by returning `{}` for SQLAlchemy errors. Infrastructure settings such as `DATABASE_URL` and
 `REDIS_URL` remain environment-backed and are resolved before database-backed runtime overrides.
 
+### Scenario: ImageSession chat-service dependency seam
+
+#### 1. Scope / Trigger
+
+- Trigger: changing ImageSession provider construction, chat-service test seams, or provider output-shape error handling.
+- Applies to `application/image_sessions.py`, `application/image_session_dependencies.py`,
+  `infrastructure/image/chat_service.py` and `workers.py`.
+
+#### 2. Signatures
+
+- `ImageSessionChatService.generate(...) -> GeneratedChatImage` accepts prompt, size, history, manual references,
+  previous response ID, tool options and an optional progress callback.
+- `ImageSessionChatService.generate_many(...) -> list[GeneratedChatImage]` accepts the existing candidate count and
+  tool options.
+- `execute_image_session_generation_task(task_id, *, chat_service_factory=None) -> None` accepts an optional factory for
+  explicit fake injection; the durable task stores only the task ID.
+- `workers.run_image_session_generation_task(task_id)` passes the concrete `ImageChatService` factory.
+
+#### 3. Contracts
+
+- `application/image_session_dependencies.py` owns `ImageChatTurn`, `GeneratedChatImage`,
+  `ImageSessionChatService`, `ImageSessionChatServiceFactory`, and `ImageSessionProviderFailure`.
+- Existing imports of `ImageChatTurn` and `GeneratedChatImage` from `infrastructure.image.chat_service` remain compatible.
+- `ImageSessionProviderFailure.safe_reason` is safe for task persistence. Its optional failure decision is reused by the
+  existing task retry handler; no second retry state machine belongs in the adapter.
+- `IMAGE_SESSION_TEXT_OUTPUT_FAILURE_REASON` is the application-owned safe reason for a provider response that contains
+  text but no image generation result.
+- The compatibility default factory preserves direct legacy callers. The worker remains the production composition root.
+
+#### 4. Validation & Error Matrix
+
+- Responses text-only output -> `ImageSessionProviderFailure` at the chat-service boundary; preserve safe reason and the
+  existing default retryable/unknown behavior.
+- Rate limit, quota, connection, timeout, provider 5xx, content policy, unsupported parameters, bad request and unknown
+  errors -> existing `classify_image_generation_failure` path, with no provider-specific string comparison in the
+  ImageSession application module.
+- Partial candidate failure -> existing partial-success template, candidate group and committed rows remain unchanged.
+- Factory omitted -> existing production adapter through the compatibility resolver.
+- Factory supplied -> executor uses the supplied service for the full invocation and does not construct another service.
+
+#### 5. Good / Base / Bad Cases
+
+- Good: worker passes `ImageChatService`, tests pass a fake factory, and the executor still persists the same round and
+  progress metadata.
+- Base: a typed provider-output failure reaches the existing durable failure/retry handler with a safe reason.
+- Bad: importing `responses_provider` constants into `application/image_sessions.py` or matching provider messages there.
+- Bad: persisting a factory in the durable task or adding factory fields to the queue message.
+- Bad: replacing the existing classifier with a new provider-specific retry implementation in the chat adapter.
+
+#### 6. Tests Required
+
+- Fake service success: assert task/round/asset metadata and one factory construction.
+- Typed provider-output failure: assert safe terminal reason and retryability after the existing attempt cap.
+- Rate limit: assert `rate_limit`, `retry_later`, safe progress metadata and re-enqueue before the cap.
+- Partial failure/retry: assert one generation group, candidate indexes resume without duplicate rows, and prior storage
+  remains.
+- Adapter test: assert the Responses provider message becomes `ImageSessionProviderFailure` before application handling.
+- Worker composition test: assert the actor passes `ImageChatService` as the factory.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+service = ImageChatService()
+if str(exc) == PROVIDER_TEXT_OUTPUT_MESSAGE:
+    safe_reason = str(exc)
+```
+
+Correct:
+
+```python
+service = (chat_service_factory or default_image_session_chat_service_factory)()
+if isinstance(exc, ImageSessionProviderFailure):
+    safe_reason = exc.safe_reason
+else:
+    safe_reason = classify_image_generation_failure(exc, generic_message=GENERIC_IMAGE_GENERATION_FAILURE).reason
+```
+
 ---
 
 ## API Error Shape

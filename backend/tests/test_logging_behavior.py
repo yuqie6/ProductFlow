@@ -355,6 +355,7 @@ def test_request_id_middleware_preserves_http_exception_body_header_and_context_
 
 
 def test_worker_actors_set_and_clear_log_context(monkeypatch: pytest.MonkeyPatch, configured_env: Path) -> None:
+    from productflow_backend.infrastructure.image.chat_service import ImageChatService
     from productflow_backend.infrastructure.logging import current_log_context
     from productflow_backend.workers import (
         run_image_session_generation_task,
@@ -372,8 +373,9 @@ def test_worker_actors_set_and_clear_log_context(monkeypatch: pytest.MonkeyPatch
         assert workflow_node_run_id == "workflow-node-run-1"
         observed.append(current_log_context())
 
-    def capture_image_task_context(task_id: str) -> None:
+    def capture_image_task_context(task_id: str, **kwargs) -> None:
         assert task_id == "image-task-1"
+        assert kwargs["chat_service_factory"] is ImageChatService
         observed.append(current_log_context())
 
     monkeypatch.setattr("productflow_backend.workers.execute_product_workflow_run", capture_workflow_context)
@@ -415,6 +417,7 @@ def test_worker_actors_clear_log_context_when_execution_raises(
     monkeypatch: pytest.MonkeyPatch,
     configured_env: Path,
 ) -> None:
+    from productflow_backend.infrastructure.image.chat_service import ImageChatService
     from productflow_backend.infrastructure.logging import current_log_context
     from productflow_backend.workers import (
         run_image_session_generation_task,
@@ -433,8 +436,9 @@ def test_worker_actors_clear_log_context_when_execution_raises(
         assert current_log_context()["workflow_run_id"] == "-"
         raise RuntimeError("workflow node failed")
 
-    def raise_image_task_error(task_id: str) -> None:
+    def raise_image_task_error(task_id: str, **kwargs) -> None:
         assert task_id == "image-task-error"
+        assert kwargs["chat_service_factory"] is ImageChatService
         assert current_log_context()["image_session_generation_task_id"] == "image-task-error"
         raise RuntimeError("image task failed")
 

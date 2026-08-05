@@ -30,6 +30,12 @@ from productflow_backend.application.image_generation_failures import (
     ImageGenerationFailureDecision,
     classify_image_generation_failure,
 )
+from productflow_backend.application.image_session_dependencies import (
+    ImageChatTurn,
+    ImageSessionChatServiceFactory,
+    ImageSessionProviderFailure,
+    default_image_session_chat_service_factory,
+)
 from productflow_backend.application.queue_submission import enqueue_or_mark_failed
 from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.application.time import now_utc
@@ -51,8 +57,6 @@ from productflow_backend.infrastructure.db.models import (
 )
 from productflow_backend.infrastructure.db.session import get_session_factory
 from productflow_backend.infrastructure.image.base import infer_extension
-from productflow_backend.infrastructure.image.chat_service import ImageChatService, ImageChatTurn
-from productflow_backend.infrastructure.image.responses_provider import PROVIDER_TEXT_OUTPUT_MESSAGE
 from productflow_backend.infrastructure.queue import (
     enqueue_image_session_generation_task,
     enqueue_image_session_generation_task_later,
@@ -508,6 +512,7 @@ def _execute_image_session_round_generation(
     tool_options: dict[str, Any] | None = None,
     storage: LocalStorage | None = None,
     generation_task_id: str | None = None,
+    chat_service_factory: ImageSessionChatServiceFactory | None = None,
 ) -> ImageSessionRoundGenerationResult:
     """执行一轮生图，调用 AI 并保存结果到会话。"""
     image_session = _get_image_session_or_raise(session, image_session_id)
@@ -515,7 +520,7 @@ def _execute_image_session_round_generation(
     generation_task = session.get(ImageSessionGenerationTask, generation_task_id) if generation_task_id else None
     normalized_prompt = _normalize_generation_prompt(prompt)
     normalized_tool_options = _normalize_tool_options(tool_options)
-    service = ImageChatService()
+    service = (chat_service_factory or default_image_session_chat_service_factory)()
     normalized_size, normalized_base_asset_id, normalized_reference_ids = _validate_generation_request(
         image_session,
         session=session,
@@ -725,17 +730,21 @@ def _execute_image_session_round_generation(
                 raise
             if generation_task_id is None:
                 raise
-            failure_decision = (
-                None
-                if str(exc) == PROVIDER_TEXT_OUTPUT_MESSAGE
-                else classify_image_generation_failure(exc, generic_message=GENERIC_IMAGE_GENERATION_FAILURE)
-            )
+            if isinstance(exc, ImageSessionProviderFailure):
+                failure_decision = exc.failure_decision
+                safe_reason = exc.safe_reason
+            else:
+                failure_decision = classify_image_generation_failure(
+                    exc,
+                    generic_message=GENERIC_IMAGE_GENERATION_FAILURE,
+                )
+                safe_reason = failure_decision.reason
             raise ImageSessionGenerationExecutionError(
                 completed_candidates=completed_candidates,
                 requested_candidates=generation_count,
                 generation_group_id=generation_group_id if completed_candidates else None,
                 timed_out=isinstance(exc, TimeLimitExceeded),
-                safe_reason=str(exc) if str(exc) == PROVIDER_TEXT_OUTPUT_MESSAGE else failure_decision.reason,
+                safe_reason=safe_reason,
                 failure_decision=failure_decision,
             ) from exc
     session.expire_all()
@@ -756,6 +765,7 @@ def generate_image_session_round(
     generation_count: int = 1,
     tool_options: dict[str, Any] | None = None,
     storage: LocalStorage | None = None,
+    chat_service_factory: ImageSessionChatServiceFactory | None = None,
 ) -> ImageSession:
     """兼容同步调用的薄封装；HTTP route 不再使用。"""
     return _execute_image_session_round_generation(
@@ -768,6 +778,7 @@ def generate_image_session_round(
         generation_count=generation_count,
         tool_options=tool_options,
         storage=storage,
+        chat_service_factory=chat_service_factory,
     ).image_session
 
 
@@ -1257,7 +1268,11 @@ def _handle_image_generation_task_failure_safely(
         )
 
 
-def execute_image_session_generation_task(task_id: str) -> None:
+def execute_image_session_generation_task(
+    task_id: str,
+    *,
+    chat_service_factory: ImageSessionChatServiceFactory | None = None,
+) -> None:
     """Worker entry: queued -> running -> succeeded/failed; duplicate terminal messages no-op."""
     session_factory = get_session_factory()
     session = session_factory()
@@ -1281,6 +1296,7 @@ def execute_image_session_generation_task(task_id: str) -> None:
                 generation_count=task.generation_count,
                 tool_options=task.tool_options,
                 generation_task_id=task_id,
+                chat_service_factory=chat_service_factory,
             )
         except ImageSessionGenerationExecutionError as exc:
             session.rollback()

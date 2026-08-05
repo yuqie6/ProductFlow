@@ -1228,20 +1228,24 @@ def test_image_session_worker_surfaces_completed_text_without_image_reason(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from productflow_backend.application.image_session_dependencies import (
+        IMAGE_SESSION_TEXT_OUTPUT_FAILURE_REASON,
+        ImageSessionProviderFailure,
+    )
     from productflow_backend.application.image_sessions import (
         create_image_session,
         create_image_session_generation_task,
         execute_image_session_generation_task,
     )
-    from productflow_backend.infrastructure.image.responses_provider import PROVIDER_TEXT_OUTPUT_MESSAGE
 
-    def fail_with_text_output(*args, **kwargs) -> None:
-        raise RuntimeError(PROVIDER_TEXT_OUTPUT_MESSAGE)
+    class FakeTextOnlyChatService:
+        provider_kind = "fake"
 
-    monkeypatch.setattr(
-        "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
-        fail_with_text_output,
-    )
+        def generate(self, **kwargs):
+            raise ImageSessionProviderFailure(IMAGE_SESSION_TEXT_OUTPUT_FAILURE_REASON)
+
+        def generate_many(self, **kwargs):
+            raise AssertionError("text-only fake should use generate")
 
     image_session = create_image_session(db_session, title="provider text only")
     result = create_image_session_generation_task(
@@ -1251,14 +1255,24 @@ def test_image_session_worker_surfaces_completed_text_without_image_reason(
         size="1024x1024",
     )
 
-    execute_image_session_generation_task(result.task.id)
+    sent: list[str] = []
+    monkeypatch.setattr(
+        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
+        lambda task_id: sent.append(task_id),
+    )
+    for _ in range(3):
+        execute_image_session_generation_task(
+            result.task.id,
+            chat_service_factory=FakeTextOnlyChatService,
+        )
 
     db_session.expire_all()
     task = db_session.get(ImageSessionGenerationTask, result.task.id)
     assert task is not None
     assert task.status == "failed"
-    assert task.failure_reason == PROVIDER_TEXT_OUTPUT_MESSAGE
+    assert task.failure_reason == IMAGE_SESSION_TEXT_OUTPUT_FAILURE_REASON
     assert task.is_retryable is True
+    assert sent == [result.task.id, result.task.id]
 
 
 def test_image_session_worker_partial_retry_continues_remaining_candidates_without_duplicates(

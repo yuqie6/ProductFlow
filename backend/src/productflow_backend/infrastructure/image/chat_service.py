@@ -1,15 +1,19 @@
 from __future__ import annotations
 
-from base64 import b64encode
 from collections.abc import Callable
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from io import BytesIO
 from textwrap import shorten
-from typing import Any, Literal
+from typing import Any
 
 from PIL import Image, ImageDraw
 
+from productflow_backend.application.image_session_dependencies import (
+    IMAGE_SESSION_TEXT_OUTPUT_FAILURE_REASON,
+    GeneratedChatImage,
+    ImageChatTurn,
+    ImageSessionProviderFailure,
+)
 from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.infrastructure.image.base import parse_size
 from productflow_backend.infrastructure.image.gemini_provider import (
@@ -18,6 +22,7 @@ from productflow_backend.infrastructure.image.gemini_provider import (
 )
 from productflow_backend.infrastructure.image.images_provider import ImagesReferenceImage, OpenAIImagesClient
 from productflow_backend.infrastructure.image.responses_provider import (
+    PROVIDER_TEXT_OUTPUT_MESSAGE,
     OpenAIResponsesImageClient,
     ResponsesReferenceImage,
     build_responses_reference_images_from_data_urls,
@@ -28,38 +33,6 @@ from productflow_backend.infrastructure.provider_config import (
     ResolvedImageProviderConfig,
     resolve_image_provider_config,
 )
-
-
-@dataclass(slots=True)
-class ImageChatTurn:
-    """生图对话中的一轮：用户输入或 AI 回复（含历史图片）。"""
-
-    role: Literal["user", "assistant"]
-    content: str
-    image_data_url: str | None = None
-
-
-@dataclass(slots=True)
-class GeneratedChatImage:
-    """AI 生成的图片结果。"""
-
-    bytes_data: bytes
-    mime_type: str
-    model_name: str
-    provider_name: str
-    prompt_version: str
-    size: str
-    generated_at: datetime
-    provider_response_id: str | None = None
-    previous_response_id: str | None = None
-    image_generation_call_id: str | None = None
-    provider_request_json: dict | None = None
-    provider_output_json: dict | None = None
-
-    @property
-    def data_url(self) -> str:
-        encoded = b64encode(self.bytes_data).decode("utf-8")
-        return f"data:{self.mime_type};base64,{encoded}"
 
 
 class ImageChatService:
@@ -222,14 +195,19 @@ class ImageChatService:
         client = OpenAIResponsesImageClient(self.provider_config)
         history_for_prompt = [] if previous_response_id else history
         history_for_images = [] if previous_response_id else history
-        result = client.generate_image(
-            prompt=self._build_prompt(prompt=prompt, history=history_for_prompt, size=size),
-            size=size,
-            reference_images=self._collect_reference_images(history_for_images, manual_reference_images),
-            previous_response_id=previous_response_id,
-            tool_options=tool_options,
-            progress_callback=progress_callback,
-        )
+        try:
+            result = client.generate_image(
+                prompt=self._build_prompt(prompt=prompt, history=history_for_prompt, size=size),
+                size=size,
+                reference_images=self._collect_reference_images(history_for_images, manual_reference_images),
+                previous_response_id=previous_response_id,
+                tool_options=tool_options,
+                progress_callback=progress_callback,
+            )
+        except RuntimeError as exc:
+            if str(exc) == PROVIDER_TEXT_OUTPUT_MESSAGE:
+                raise ImageSessionProviderFailure(IMAGE_SESSION_TEXT_OUTPUT_FAILURE_REASON) from exc
+            raise
         return GeneratedChatImage(
             bytes_data=result.bytes_data,
             mime_type=result.mime_type,

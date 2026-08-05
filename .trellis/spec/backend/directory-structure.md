@@ -153,6 +153,9 @@ Put workflow rules and orchestration in `backend/src/productflow_backend/applica
     provider resolution and poster renderer construction. Default resolvers call the infrastructure provider factories
     directly; tests that need fake providers should pass `WorkflowExecutionDependencies` rather than patching the
     `product_workflows.py` facade.
+  - `application/image_session_dependencies.py` owns the narrow ImageSession chat-service protocol, factory type,
+    provider-neutral generated-image records and typed provider-output failures. The worker composes the concrete
+    `ImageChatService`; ImageSession application code consumes the protocol instead of constructing the adapter.
   - `application/product_workflow/context.py` owns product/incoming context collection, config parsing, upstream text
     assembly, reference input collection, and downstream reference target discovery.
   - `application/product_workflow/artifacts.py` owns workflow artifact summaries and materialization helpers such as
