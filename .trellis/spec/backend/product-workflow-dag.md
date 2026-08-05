@@ -1087,6 +1087,8 @@ Schema enforces structure without unsupported union combinators; `CopyPayloadV2`
   the run timestamp for all-succeeded finalization.
 - API startup must call workflow run recovery for active runs with no node currently running, so a run committed before a
   Redis send or process restart is sent again.
+- `application/durable_recovery.py` owns the workflow recovery state machine. `presentation/api.py` and `workers.py` pass
+  `infrastructure.queue.enqueue_workflow_run` explicitly; recovery does not import the queue adapter.
 - Worker startup may reset stale `workflow_node_runs.status = 'running'` rows back to `queued` before re-enqueueing their
   parent run. Do not reset recent running nodes on API startup because another worker may still be executing them.
 - Duplicate kickoff for the same active node set must return the existing active workflow/run state or be caught by the

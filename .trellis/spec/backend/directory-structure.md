@@ -50,6 +50,7 @@ backend/
 │   │   │   ├── templates.py              # canvas template materialization helpers
 │   │   │   └── user_templates.py         # user-saved canvas template use cases
 │   │   ├── queue_submission.py           # durable task enqueue failure handling helper
+│   │   ├── durable_recovery.py           # durable DB recovery state machine and delivery summary
 │   │   └── use_cases.py                 # product/copy/poster workflow use cases
 │   ├── presentation/
 │   │   ├── api.py                       # FastAPI app factory, middleware, router registration
@@ -78,6 +79,7 @@ backend/
     ├── test_storage_upload_validation.py
     ├── test_provider_payloads.py
     ├── test_queue_recovery.py
+    ├── test_queue_composition.py
     ├── test_live_workflow_recovery.py       # opt-in PostgreSQL/Redis workflow recovery delivery gate
     ├── test_logging_behavior.py
     └── test_migrations_database_constraints.py
@@ -120,6 +122,9 @@ Put workflow rules and orchestration in `backend/src/productflow_backend/applica
 - `application/time.py` is the shared application timestamp helper for timezone-aware UTC values.
 - `application/queue_submission.py` owns the small shared helper for "durable row persisted, queue delivery failed"
   handling. Submit use cases use it to mark the persisted task failed and raise `QueueUnavailableError`.
+- `application/durable_recovery.py` owns startup recovery queries, queued/stale state transitions, recovery summaries,
+  and the commit-before-delivery boundary for workflow runs and image-session generation tasks. It receives a narrow
+  `enqueue` callable from the API or worker composition root.
 - Product workflow application logic is split by executable boundary:
   - `application/product_workflows.py` is the stable facade for route/queue/worker imports. Keep existing public use-case
     names available there while implementations live in cohesive submodules. Do not export private `_...` helpers or
@@ -180,7 +185,7 @@ still belongs in `presentation/errors.py`.
 `backend/src/productflow_backend/domain/workflow_rules.py` owns DB-free workflow graph business rules such as topological
 ordering, selected-node execution planning, and missing-upstream decisions. `domain/durable_generation_tasks.py` owns the
 DB-free durable generation task contract and derived workflow-run delivery classification shared by application
-submit/execution code, infrastructure queue recovery, presentation status serializers, and worker actor assertions.
+submit/execution code, application recovery, presentation status serializers, and worker actor assertions.
 Application modules adapt ORM rows into the small domain rule/contract shapes before applying those rules; SQLAlchemy
 artifact existence checks stay in application/query services.
 
@@ -190,7 +195,8 @@ Put adapter code under `backend/src/productflow_backend/infrastructure/`:
 
 - Database models/session setup: `infrastructure/db/models.py`, `infrastructure/db/session.py`.
 - Local file storage and image variants: `infrastructure/storage.py`.
-- Queue setup and enqueue helpers: `infrastructure/queue.py`.
+- Queue setup and enqueue adapters: `infrastructure/queue.py`. It composes fixed Dramatiq messages and does not import
+  worker actors or durable recovery state.
 - Provider interfaces and factories: `infrastructure/text/base.py`, `infrastructure/text/factory.py`,
   `infrastructure/image/base.py`, `infrastructure/image/factory.py`.
 - Provider implementations stay behind those factories, for example `text/openai_provider.py`,

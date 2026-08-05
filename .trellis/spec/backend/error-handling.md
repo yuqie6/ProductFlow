@@ -214,7 +214,7 @@ or byte-size checks in individual route handlers.
 
 ## Queue and Durable Task Errors
 
-Application submit use cases create durable work first, then enqueue through `infrastructure/queue.py`:
+Application submit use cases create durable work first, then enqueue through the `infrastructure/queue.py` adapter:
 
 - `application/product_workflow/execution.py::submit_product_workflow_run(...)` creates/reuses `WorkflowRun` rows,
   enqueues when `_workflow_run_should_enqueue(...)` says delivery is needed, and marks enqueue failures through
@@ -240,6 +240,17 @@ Public-demo durable generation entrypoints persist queued work before provider e
 For idempotent routes that can return an already-active `WorkflowRun`, check/reuse the existing active record before
 creating another durable run. The global cap protects provider/worker execution, not durable backlog creation; submissions
 must remain able to create queued work and re-enqueue stranded active workflow runs while all running slots are occupied.
+
+Startup recovery follows the same durable-delivery boundary:
+
+- `application/durable_recovery.py` owns recovery queries, stale-state transitions, database commits, summaries, and
+  recovery logging.
+- `presentation/api.py` and the Dramatiq CLI branch in `workers.py` pass the corresponding queue adapter through the
+  required `enqueue` callable. Recovery does not import `infrastructure/queue.py`.
+- `infrastructure/queue.py` owns Redis broker setup and fixed Dramatiq `Message` composition. It does not import worker
+  actors, ORM models, or recovery state rules.
+- Recovery commits eligible durable state before delivery. A Redis/Dramatiq exception is logged and excluded from the
+  successful enqueue count; it does not turn a failed delivery into a success or undo a committed stale reset.
 
 When a worker sees the running cap is reached, leave the durable task queued, do not call the provider, and schedule a
 delayed delivery retry. Do not leak queue, Redis, provider, or filesystem exception strings to users. Provider messages may
@@ -302,7 +313,8 @@ file paths, or tracebacks must fall back to the generic queue/provider failure d
   provider supports it. Each provider status response should refresh task progress while generation is still working.
 - Provider progress metadata fields are nullable because queued, legacy, failed-before-provider, and capacity-waiting tasks
   may not have provider state. Writers are `application/image_sessions.py` worker progress helpers and
-  `infrastructure/queue.py` recovery helpers; readers are image-session status/detail serializers and recovery queries.
+  `application/durable_recovery.py` recovery helpers; readers are image-session status/detail serializers and recovery
+  queries.
   Serializers must pass through `None` for missing old rows rather than inventing placeholder values.
 - `progress_metadata` is a compact backend-owned snapshot for UI/debug display. Current keys are optional and may include
   `provider_response`, `candidate_index`, `candidate_count`, `generated_asset_id`, and `round_id`; code that reads it must
@@ -454,8 +466,9 @@ call_provider()
 Provider-specific API errors are handled inside application/provider code and persisted on durable workflow or
 image-session task rows for async product flows.
 
-`config.py::_load_database_config_overrides()` intentionally tolerates missing `app_settings` tables during fresh startup
-by returning `{}` for operational/programming SQLAlchemy errors, but it re-raises unexpected non-SQLAlchemy exceptions.
+`infrastructure/runtime_config_store.py::load_runtime_overrides()` intentionally tolerates a missing `app_settings` table
+during fresh startup by returning `{}` for SQLAlchemy errors. Infrastructure settings such as `DATABASE_URL` and
+`REDIS_URL` remain environment-backed and are resolved before database-backed runtime overrides.
 
 ---
 

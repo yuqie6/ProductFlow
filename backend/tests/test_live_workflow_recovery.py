@@ -15,6 +15,7 @@ from dramatiq.brokers.redis import RedisBroker
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.engine import URL, make_url
 
+from productflow_backend.application.durable_recovery import recover_unfinished_workflow_runs
 from productflow_backend.config import get_settings
 from productflow_backend.domain.enums import WorkflowNodeStatus, WorkflowNodeType, WorkflowRunStatus
 from productflow_backend.infrastructure.db.models import (
@@ -26,7 +27,7 @@ from productflow_backend.infrastructure.db.models import (
     WorkflowRun,
 )
 from productflow_backend.infrastructure.db.session import get_engine, get_session_factory
-from productflow_backend.infrastructure.queue import get_broker, recover_unfinished_workflow_runs
+from productflow_backend.infrastructure.queue import enqueue_workflow_run, get_broker
 
 LIVE_RECOVERY_SWITCH = "PRODUCTFLOW_RUN_LIVE_RECOVERY"
 WORKERS_MODULE = "productflow_backend.workers"
@@ -187,7 +188,7 @@ def test_recover_queued_workflow_run_through_postgres_and_redis(
         run_id = workflow_run.id
         node_run_id = node_run.id
 
-    summary = recover_unfinished_workflow_runs()
+    summary = recover_unfinished_workflow_runs(enqueue=enqueue_workflow_run)
 
     assert summary.queued_runs == 1
     assert summary.stale_running_runs == 0

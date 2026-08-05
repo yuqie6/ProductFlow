@@ -3,18 +3,15 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import pytest
-
+from productflow_backend.application.durable_recovery import recover_unfinished_image_session_generation_tasks
 from productflow_backend.application.image_sessions import create_image_session, create_image_session_generation_task
 from productflow_backend.domain.enums import JobStatus
 from productflow_backend.infrastructure.db.models import AppSetting
-from productflow_backend.infrastructure.queue import recover_unfinished_image_session_generation_tasks
 
 
 def test_recover_unfinished_image_session_generation_tasks_requeues_queued_tasks(
     db_session,
     configured_env: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     image_session = create_image_session(db_session, title="queued 恢复")
     result = create_image_session_generation_task(
@@ -24,12 +21,7 @@ def test_recover_unfinished_image_session_generation_tasks_requeues_queued_tasks
         size="1024x1024",
     )
     sent: list[str] = []
-    monkeypatch.setattr(
-        "productflow_backend.infrastructure.queue.enqueue_image_session_generation_task",
-        lambda task_id: sent.append(task_id),
-    )
-
-    summary = recover_unfinished_image_session_generation_tasks()
+    summary = recover_unfinished_image_session_generation_tasks(enqueue=sent.append)
 
     assert summary.queued_tasks == 1
     assert summary.stale_running_tasks == 0
@@ -40,7 +32,6 @@ def test_recover_unfinished_image_session_generation_tasks_requeues_queued_tasks
 def test_recover_unfinished_image_session_generation_tasks_resets_stale_running_tasks(
     db_session,
     configured_env: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     image_session = create_image_session(db_session, title="running 恢复")
     result = create_image_session_generation_task(
@@ -54,12 +45,8 @@ def test_recover_unfinished_image_session_generation_tasks_resets_stale_running_
     result.task.progress_updated_at = datetime.now(UTC) - timedelta(hours=2)
     db_session.commit()
     sent: list[str] = []
-    monkeypatch.setattr(
-        "productflow_backend.infrastructure.queue.enqueue_image_session_generation_task",
-        lambda task_id: sent.append(task_id),
-    )
-
     summary = recover_unfinished_image_session_generation_tasks(
+        enqueue=sent.append,
         reset_stale_running=True,
         stale_running_after=timedelta(minutes=30),
     )
@@ -77,7 +64,6 @@ def test_recover_unfinished_image_session_generation_tasks_resets_stale_running_
 def test_recover_unfinished_image_session_generation_tasks_uses_progress_heartbeat_for_stale_running(
     db_session,
     configured_env: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     image_session = create_image_session(db_session, title="heartbeat 恢复")
     result = create_image_session_generation_task(
@@ -91,12 +77,8 @@ def test_recover_unfinished_image_session_generation_tasks_uses_progress_heartbe
     result.task.progress_updated_at = datetime.now(UTC) - timedelta(minutes=5)
     db_session.commit()
     sent: list[str] = []
-    monkeypatch.setattr(
-        "productflow_backend.infrastructure.queue.enqueue_image_session_generation_task",
-        lambda task_id: sent.append(task_id),
-    )
-
     summary = recover_unfinished_image_session_generation_tasks(
+        enqueue=sent.append,
         reset_stale_running=True,
         stale_running_after=timedelta(minutes=30),
     )
@@ -111,7 +93,6 @@ def test_recover_unfinished_image_session_generation_tasks_uses_progress_heartbe
 def test_recover_unfinished_image_session_generation_tasks_fails_stale_partial_task(
     db_session,
     configured_env: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     image_session = create_image_session(db_session, title="partial heartbeat 恢复")
     result = create_image_session_generation_task(
@@ -128,12 +109,8 @@ def test_recover_unfinished_image_session_generation_tasks_fails_stale_partial_t
     result.task.result_generation_group_id = "group-partial"
     db_session.commit()
     sent: list[str] = []
-    monkeypatch.setattr(
-        "productflow_backend.infrastructure.queue.enqueue_image_session_generation_task",
-        lambda task_id: sent.append(task_id),
-    )
-
     summary = recover_unfinished_image_session_generation_tasks(
+        enqueue=sent.append,
         reset_stale_running=True,
         stale_running_after=timedelta(minutes=30),
     )
@@ -152,7 +129,6 @@ def test_recover_unfinished_image_session_generation_tasks_fails_stale_partial_t
 def test_recover_unfinished_image_session_generation_tasks_uses_runtime_stale_cutoff_by_default(
     db_session,
     configured_env: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     image_session = create_image_session(db_session, title="runtime cutoff 恢复")
     result = create_image_session_generation_task(
@@ -165,12 +141,10 @@ def test_recover_unfinished_image_session_generation_tasks_uses_runtime_stale_cu
     result.task.started_at = datetime.now(UTC) - timedelta(minutes=60)
     db_session.commit()
     sent: list[str] = []
-    monkeypatch.setattr(
-        "productflow_backend.infrastructure.queue.enqueue_image_session_generation_task",
-        lambda task_id: sent.append(task_id),
+    default_summary = recover_unfinished_image_session_generation_tasks(
+        enqueue=sent.append,
+        reset_stale_running=True,
     )
-
-    default_summary = recover_unfinished_image_session_generation_tasks(reset_stale_running=True)
     db_session.refresh(result.task)
 
     assert default_summary.stale_running_tasks == 0
@@ -181,7 +155,10 @@ def test_recover_unfinished_image_session_generation_tasks_uses_runtime_stale_cu
     db_session.add(AppSetting(key="image_session_stale_running_after_minutes", value="30"))
     db_session.commit()
 
-    override_summary = recover_unfinished_image_session_generation_tasks(reset_stale_running=True)
+    override_summary = recover_unfinished_image_session_generation_tasks(
+        enqueue=sent.append,
+        reset_stale_running=True,
+    )
     db_session.refresh(result.task)
 
     assert override_summary.stale_running_tasks == 1
@@ -189,3 +166,27 @@ def test_recover_unfinished_image_session_generation_tasks_uses_runtime_stale_cu
     assert sent == [result.task.id]
     assert result.task.status == JobStatus.QUEUED
     assert result.task.started_at is None
+
+
+def test_recover_unfinished_image_session_generation_tasks_counts_delivery_failure_without_faking_success(
+    db_session,
+    configured_env: Path,
+) -> None:
+    image_session = create_image_session(db_session, title="delivery 失败恢复")
+    result = create_image_session_generation_task(
+        db_session,
+        image_session_id=image_session.id,
+        prompt="delivery 失败不应虚报成功",
+        size="1024x1024",
+    )
+
+    def fail_enqueue(_: str) -> None:
+        raise RuntimeError("redis unavailable")
+
+    summary = recover_unfinished_image_session_generation_tasks(enqueue=fail_enqueue)
+
+    assert summary.queued_tasks == 1
+    assert summary.stale_running_tasks == 0
+    assert summary.enqueued_tasks == 0
+    db_session.refresh(result.task)
+    assert result.task.status == JobStatus.QUEUED

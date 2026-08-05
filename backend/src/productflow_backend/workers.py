@@ -5,6 +5,10 @@ from pathlib import Path
 
 import dramatiq
 
+from productflow_backend.application.durable_recovery import (
+    recover_unfinished_image_session_generation_tasks,
+    recover_unfinished_workflow_runs,
+)
 from productflow_backend.application.image_sessions import execute_image_session_generation_task
 from productflow_backend.application.product_workflows import (
     execute_product_workflow_node_run,
@@ -27,9 +31,9 @@ from productflow_backend.infrastructure.logging import (
     set_workflow_run_id,
 )
 from productflow_backend.infrastructure.queue import (
+    enqueue_image_session_generation_task,
+    enqueue_workflow_run,
     get_broker,
-    recover_unfinished_image_session_generation_tasks,
-    recover_unfinished_workflow_runs,
 )
 
 configure_logging()
@@ -91,5 +95,8 @@ def _running_under_dramatiq_cli() -> bool:
 
 if _running_under_dramatiq_cli():
     cleanup_old_logs()
-    recover_unfinished_workflow_runs(reset_stale_running=True)
-    recover_unfinished_image_session_generation_tasks(reset_stale_running=True)
+    recover_unfinished_workflow_runs(enqueue=enqueue_workflow_run, reset_stale_running=True)
+    recover_unfinished_image_session_generation_tasks(
+        enqueue=enqueue_image_session_generation_task,
+        reset_stale_running=True,
+    )

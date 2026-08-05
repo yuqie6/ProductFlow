@@ -13,6 +13,7 @@ from helpers import (
     _make_demo_image_bytes,
 )
 
+from productflow_backend.application.durable_recovery import recover_unfinished_workflow_runs
 from productflow_backend.application.use_cases import (
     create_product,
     delete_product,
@@ -32,7 +33,6 @@ from productflow_backend.infrastructure.db.models import (
 )
 from productflow_backend.infrastructure.db.session import get_session_factory
 from productflow_backend.infrastructure.image.base import GeneratedImagePayload
-from productflow_backend.infrastructure.queue import recover_unfinished_workflow_runs
 
 
 class _SlowWorkflowImageProvider:
@@ -532,7 +532,6 @@ def test_workflow_run_retry_rejects_non_retryable_failed_run(
 def test_recover_unfinished_workflow_runs_requeues_queued_runs(
     db_session,
     configured_env: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from productflow_backend.application.product_workflows import start_product_workflow_run
 
@@ -548,12 +547,7 @@ def test_recover_unfinished_workflow_runs_requeues_queued_runs(
     )
     kickoff = start_product_workflow_run(db_session, product_id=product.id)
     sent_run_ids: list[str] = []
-    monkeypatch.setattr(
-        "productflow_backend.infrastructure.queue.enqueue_workflow_run",
-        lambda run_id: sent_run_ids.append(run_id),
-    )
-
-    summary = recover_unfinished_workflow_runs()
+    summary = recover_unfinished_workflow_runs(enqueue=sent_run_ids.append)
 
     assert summary.queued_runs == 1
     assert summary.stale_running_runs == 0
@@ -564,7 +558,6 @@ def test_recover_unfinished_workflow_runs_requeues_queued_runs(
 def test_recover_unfinished_workflow_runs_resets_stale_running_node_runs(
     db_session,
     configured_env: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from productflow_backend.application.product_workflows import start_product_workflow_run
 
@@ -589,12 +582,11 @@ def test_recover_unfinished_workflow_runs_resets_stale_running_node_runs(
     db_session.commit()
 
     sent_run_ids: list[str] = []
-    monkeypatch.setattr(
-        "productflow_backend.infrastructure.queue.enqueue_workflow_run",
-        lambda run_id: sent_run_ids.append(run_id),
+    summary = recover_unfinished_workflow_runs(
+        enqueue=sent_run_ids.append,
+        reset_stale_running=True,
+        stale_running_after=timedelta(minutes=30),
     )
-
-    summary = recover_unfinished_workflow_runs(reset_stale_running=True, stale_running_after=timedelta(minutes=30))
     db_session.refresh(node_run)
     db_session.refresh(node)
 

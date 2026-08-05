@@ -7,6 +7,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from productflow_backend.application.durable_recovery import (
+    recover_unfinished_image_session_generation_tasks,
+    recover_unfinished_workflow_runs,
+)
 from productflow_backend.config import get_settings
 from productflow_backend.infrastructure.logging import (
     cleanup_old_logs,
@@ -20,8 +24,8 @@ from productflow_backend.infrastructure.provider_config import (
     provider_config_tables_available,
 )
 from productflow_backend.infrastructure.queue import (
-    recover_unfinished_image_session_generation_tasks,
-    recover_unfinished_workflow_runs,
+    enqueue_image_session_generation_task,
+    enqueue_workflow_run,
 )
 from productflow_backend.presentation.errors import register_exception_handlers
 from productflow_backend.presentation.routes.auth import router as auth_router
@@ -46,8 +50,8 @@ def create_app() -> FastAPI:
         cleanup_old_logs(settings)
         if provider_config_tables_available():
             ensure_provider_config_bootstrapped()
-        recover_unfinished_workflow_runs()
-        recover_unfinished_image_session_generation_tasks()
+        recover_unfinished_workflow_runs(enqueue=enqueue_workflow_run)
+        recover_unfinished_image_session_generation_tasks(enqueue=enqueue_image_session_generation_task)
         yield
 
     app = FastAPI(title="ProductFlow API", version="0.1.0", lifespan=lifespan)

@@ -415,6 +415,107 @@ Durable task creation and workers are designed to avoid duplicate active work an
 
 Preserve these semantics when editing durable task code.
 
+### Scenario: Durable recovery and queue composition boundary
+
+#### 1. Scope / Trigger
+
+- Trigger: changing startup recovery, Dramatiq enqueue adapters, worker composition, or imports among application,
+  infrastructure queue, and worker modules.
+- This is an application + infrastructure contract. PostgreSQL durable rows remain authoritative state and Redis/Dramatiq
+  remains delivery infrastructure.
+
+#### 2. Signatures
+
+- Recovery owners: `application/durable_recovery.py::recover_unfinished_workflow_runs(...)` and
+  `application/durable_recovery.py::recover_unfinished_image_session_generation_tasks(...)`.
+- Recovery delivery dependency: a required `enqueue: Callable[[str], None]` argument.
+- Queue adapters: `infrastructure/queue.py::enqueue_workflow_run(...)`,
+  `enqueue_workflow_node_run(...)`, and `enqueue_image_session_generation_task(...)`, plus their delayed variants.
+- Composition roots: `presentation/api.py` lifespan and the Dramatiq CLI branch in `workers.py`.
+
+#### 3. Contracts
+
+- `application/durable_recovery.py` owns ORM queries, durable state classification, stale-state transitions, transaction
+  commits, recovery summaries, and recovery logging.
+- `infrastructure/queue.py` owns the Redis broker singleton and known actor message composition. It does not import
+  `workers`, recovery modules, ORM models, or durable state classifiers.
+- Queue adapters construct `dramatiq.Message` with queue `default`, the existing actor name, one positional durable ID,
+  empty kwargs/options, and the existing delay value for delayed delivery.
+- API startup recovers queued work without resetting recent running work. Worker startup may reset stale running work by
+  passing `reset_stale_running=True`.
+- Both composition roots pass the queue adapter explicitly. Recovery does not discover or import its delivery adapter.
+- Recovery commits durable state transitions before attempting delivery. A delivery exception is logged and excluded from
+  the successful enqueue count; it does not fabricate delivery success or roll back an already committed stale reset.
+- Worker actors keep `max_retries=0`; application retry, capacity, duplicate-delivery, and terminal no-op behavior stay
+  in their existing execution owners.
+
+#### 4. Validation & Error Matrix
+
+- Importing `application.durable_recovery` -> queue and worker modules remain absent from `sys.modules`.
+- Importing `infrastructure.queue` or application execution -> worker module remains absent from `sys.modules`.
+- AST graph scan -> no strongly connected component contains queue together with worker or application modules.
+- Synchronous sender -> one message with the existing actor name, queue, ID args, empty kwargs/options, and no delay.
+- Delayed sender -> the same message contract with the supplied delay in milliseconds.
+- Queued recovery with successful delivery -> summary counts the durable row and one enqueue.
+- Queued recovery with delivery failure -> summary reports zero successful enqueues and leaves the durable row queued.
+- Stale running recovery -> only the worker recovery path resets eligible rows before delivery.
+
+#### 5. Good / Base / Bad Cases
+
+- Good: API lifespan and worker CLI call the same application recovery state machine with different explicit delivery
+  adapters and reset policy.
+- Base: application unit tests use a list append or failing callable and do not import worker actors.
+- Bad: recovery imports `infrastructure.queue` to find its sender, or queue imports `workers` to call an actor method.
+- Bad: treating a successful database query as successful Redis delivery, or changing durable state after delivery failure
+  has been reported.
+- Bad: replacing actor names with a second registry that can drift from the decorators in `workers.py`.
+
+#### 6. Tests Required
+
+- Recovery unit tests cover queued, stale running, fresh heartbeat, partial-success timeout, duplicate/terminal no-op,
+  and delivery failure summary behavior.
+- Queue composition tests cover all synchronous and delayed sender variants and assert exact Dramatiq message metadata.
+- Import subprocess tests cover application recovery, queue, and application execution without worker loading.
+- AST regression asserts the queue/worker/application strong-connected-component boundary.
+- `test_live_workflow_recovery.py` consumes the real Redis message and verifies the registered worker actor contract.
+- Run `just backend-test` and `just backend-test-live-recovery` after changing this boundary.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+def recover_unfinished_workflow_runs() -> None:
+    from productflow_backend.infrastructure.queue import enqueue_workflow_run
+
+    # Database state ownership and delivery lookup are coupled.
+    enqueue_workflow_run(run_id)
+```
+
+Correct:
+
+```python
+def recover_unfinished_workflow_runs(*, enqueue: Callable[[str], None]) -> None:
+    commit_recovery_state()
+    enqueue(run_id)
+```
+
+Wrong:
+
+```python
+from productflow_backend.workers import run_product_workflow_run
+
+run_product_workflow_run.send(run_id)
+```
+
+Correct:
+
+```python
+broker.enqueue(
+    Message(queue_name="default", actor_name="run_product_workflow_run", args=(run_id,), kwargs={}, options={})
+)
+```
+
 ### Scenario: Durable generation task contract
 
 #### 1. Scope / Trigger
