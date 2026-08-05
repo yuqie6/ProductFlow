@@ -74,7 +74,7 @@ class ResolvedImageProviderConfig:
     gemini_output_mime_type: str | None = None
 
 
-def ensure_provider_config_bootstrapped(session: Session | None = None) -> None:
+def ensure_provider_config_bootstrapped(session: Session | None = None, *, commit: bool = True) -> None:
     """Create provider profiles and bindings from legacy effective settings once."""
 
     if session is None:
@@ -155,7 +155,10 @@ def ensure_provider_config_bootstrapped(session: Session | None = None) -> None:
             config={},
         )
 
-    session.commit()
+    if commit:
+        session.commit()
+    else:
+        session.flush()
 
 
 def list_provider_profiles(session: Session) -> list[ProviderProfile]:
@@ -178,6 +181,7 @@ def create_provider_profile(
     default_models: dict[str, Any] | None = None,
     config: dict[str, Any] | None = None,
     enabled: bool = True,
+    commit: bool = True,
 ) -> ProviderProfile:
     provider_type = _normalize_provider_type(provider_type)
     normalized_capabilities = _dedupe_ordered(capabilities)
@@ -196,8 +200,11 @@ def create_provider_profile(
         enabled=enabled,
     )
     session.add(profile)
-    session.commit()
-    session.refresh(profile)
+    if commit:
+        session.commit()
+        session.refresh(profile)
+    else:
+        session.flush()
     return profile
 
 
@@ -213,6 +220,7 @@ def update_provider_profile(
     default_models: dict[str, Any] | None = None,
     config: dict[str, Any] | None = None,
     enabled: bool | None = None,
+    commit: bool = True,
 ) -> ProviderProfile:
     profile = session.get(ProviderProfile, profile_id)
     if profile is None or profile.archived_at is not None:
@@ -250,12 +258,15 @@ def update_provider_profile(
         profile.config_json = config
     if enabled is not None:
         profile.enabled = enabled
-    session.commit()
-    session.refresh(profile)
+    if commit:
+        session.commit()
+        session.refresh(profile)
+    else:
+        session.flush()
     return profile
 
 
-def archive_provider_profile(session: Session, profile_id: str) -> ProviderProfile:
+def archive_provider_profile(session: Session, profile_id: str, *, commit: bool = True) -> ProviderProfile:
     profile = session.get(ProviderProfile, profile_id)
     if profile is None or profile.archived_at is not None:
         raise ValueError("供应商不存在")
@@ -266,8 +277,11 @@ def archive_provider_profile(session: Session, profile_id: str) -> ProviderProfi
         raise ValueError("供应商仍被文案或图片配置使用，不能归档")
     profile.archived_at = datetime.now(UTC)
     profile.enabled = False
-    session.commit()
-    session.refresh(profile)
+    if commit:
+        session.commit()
+        session.refresh(profile)
+    else:
+        session.flush()
     return profile
 
 

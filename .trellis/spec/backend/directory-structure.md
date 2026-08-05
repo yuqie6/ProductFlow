@@ -122,6 +122,9 @@ Put workflow rules and orchestration in `backend/src/productflow_backend/applica
 - `application/time.py` is the shared application timestamp helper for timezone-aware UTC values.
 - `application/queue_submission.py` owns the small shared helper for "durable row persisted, queue delivery failed"
   handling. Submit use cases use it to mark the persisted task failed and raise `QueueUnavailableError`.
+- `application/settings.py` owns runtime settings and provider profile/binding use cases, including validation,
+  bootstrap/mutation transactions, settings import/export preparation, and read projections. The settings route keeps
+  authentication, DTO conversion, and HTTP response serialization only.
 - `application/durable_recovery.py` owns startup recovery queries, queued/stale state transitions, recovery summaries,
   and the commit-before-delivery boundary for workflow runs and image-session generation tasks. It receives a narrow
   `enqueue` callable from the API or worker composition root.

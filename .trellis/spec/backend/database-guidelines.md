@@ -308,6 +308,8 @@ between the DB-free configuration module, application composition points, and in
 - `productflow_backend.config.Settings`: environment/default settings only.
 - `infrastructure.runtime_config_store.load_runtime_overrides(session: Session | None = None) -> dict[str, str]`.
 - `application.runtime_settings.get_runtime_settings(session: Session | None = None) -> Settings`.
+- `application.settings`: settings/provider-config read projections, validation, bootstrap, mutation transactions, and
+  import/export application use cases.
 - `infrastructure.provider_config.resolve_text_provider_config(session: Session | None = None)`.
 - `infrastructure.provider_config.resolve_image_provider_config(session: Session | None = None)`.
 - `config.normalize_image_generation_size(..., max_dimension: int | None = None)` and
@@ -326,6 +328,11 @@ between the DB-free configuration module, application composition points, and in
   pure helpers explicitly.
 - `GET /api/settings/provider-config`, settings export, and provider list queries are read-only. Startup bootstrap and
   provider mutations/resolvers may invoke `ensure_provider_config_bootstrapped` explicitly.
+- `presentation/routes/settings.py` must not query `AppSetting`, `ProviderProfile`, or `ProviderBinding`, import
+  `infrastructure.provider_config`, or commit a settings/provider transaction. It maps application views to HTTP DTOs.
+- Settings/provider mutations use one application-owned transaction. Infrastructure provider helpers expose an explicit
+  `commit=False` path for composition inside that transaction; their compatibility default remains available to resolver
+  and startup callers.
 
 ### 4. Validation & Error Matrix
 
@@ -352,6 +359,8 @@ between the DB-free configuration module, application composition points, and in
 - Resolver ownership regression: pass a `Session`, block session-factory creation, and assert the caller session is not closed.
 - HTTP regression: assert provider config/export reads return empty data without inserting profiles or bindings, while
   lifespan bootstrap and legacy merge tests remain green.
+- Layer regression: assert the settings route delegates mutation/import operations to `application.settings` and contains
+  no ORM/provider-config query or commit calls.
 - Pure helper regression: pass explicit image max dimension and allowed fields, including an empty allowed-field tuple.
 
 ### 7. Wrong vs Correct

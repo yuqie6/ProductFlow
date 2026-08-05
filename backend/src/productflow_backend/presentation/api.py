@@ -11,6 +11,7 @@ from productflow_backend.application.durable_recovery import (
     recover_unfinished_image_session_generation_tasks,
     recover_unfinished_workflow_runs,
 )
+from productflow_backend.application.settings import bootstrap_provider_config_if_available
 from productflow_backend.config import get_settings
 from productflow_backend.infrastructure.logging import (
     cleanup_old_logs,
@@ -18,10 +19,6 @@ from productflow_backend.infrastructure.logging import (
     new_request_id,
     reset_request_id,
     set_request_id,
-)
-from productflow_backend.infrastructure.provider_config import (
-    ensure_provider_config_bootstrapped,
-    provider_config_tables_available,
 )
 from productflow_backend.infrastructure.queue import (
     enqueue_image_session_generation_task,
@@ -48,8 +45,7 @@ def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         cleanup_old_logs(settings)
-        if provider_config_tables_available():
-            ensure_provider_config_bootstrapped()
+        bootstrap_provider_config_if_available()
         recover_unfinished_workflow_runs(enqueue=enqueue_workflow_run)
         recover_unfinished_image_session_generation_tasks(enqueue=enqueue_image_session_generation_task)
         yield

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import os
 import subprocess
 import sys
@@ -17,6 +18,36 @@ from productflow_backend.config import (
 from productflow_backend.infrastructure import provider_config, runtime_config_store
 from productflow_backend.infrastructure.db.models import AppSetting
 from productflow_backend.infrastructure.provider_config import resolve_text_provider_config
+
+
+def test_settings_route_delegates_business_state_to_application_boundary() -> None:
+    route_path = Path(__file__).resolve().parents[1] / "src/productflow_backend/presentation/routes/settings.py"
+    tree = ast.parse(route_path.read_text(encoding="utf-8"))
+    imports = {
+        node.module or ""
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+    }
+    imported_names = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+    }
+
+    assert "productflow_backend.infrastructure.provider_config" not in imports
+    assert "productflow_backend.infrastructure.db.models" not in imports
+    assert "sqlalchemy" not in imports
+    assert "commit" not in {
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "session"
+    }
+    assert "update_runtime_settings" in imported_names
+    assert "apply_settings_import" in imported_names
 
 
 def test_config_import_does_not_initialize_database_modules() -> None:
