@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -33,6 +34,7 @@ from productflow_backend.domain.enums import (
 from productflow_backend.infrastructure.db.models import (
     CopySet,
     PosterVariant,
+    Product,
     ProductWorkflow,
     SourceAsset,
     WorkflowEdge,
@@ -657,6 +659,153 @@ def test_product_status_filter_uses_database_pagination_before_eager_loading(db_
         assert payload["total"] == len(expected_ids)
         assert {item["id"] for item in payload["items"]} == expected_ids
         assert {item["workflow_state"] for item in payload["items"]} == {status.value}
+
+
+def test_product_name_search_is_literal_case_insensitive_and_composes_with_status(
+    db_session,
+    configured_env: Path,
+) -> None:
+    draft_match = Product(name="Alpha Studio Lamp")
+    copy_match = Product(name="alpha Copy Lamp")
+    literal_match = Product(name="100%_Cotton Tote")
+    unrelated = Product(name="Walnut Shelf")
+    db_session.add_all([draft_match, copy_match, literal_match, unrelated])
+    db_session.flush()
+
+    copy_set = CopySet(
+        product_id=copy_match.id,
+        status=CopyStatus.CONFIRMED,
+        structured_payload={
+            "version": 2,
+            "summary": "Alpha lamp copy",
+            "content": {"kind": "blocks", "blocks": [{"id": "headline", "text": "Alpha"}]},
+        },
+        model_structured_payload={
+            "version": 2,
+            "summary": "Alpha lamp copy",
+            "content": {"kind": "blocks", "blocks": [{"id": "headline", "text": "Alpha"}]},
+        },
+        provider_name="test",
+        model_name="test",
+        prompt_version="test",
+    )
+    db_session.add(copy_set)
+    db_session.flush()
+    copy_match.current_confirmed_copy_set_id = copy_set.id
+    db_session.commit()
+    db_session.expire_all()
+
+    matches, total = list_products(db_session, status=None, page=1, page_size=1, q="  ALPHA  ")
+    second_page, second_total = list_products(db_session, status=None, page=2, page_size=1, q="alpha")
+    literal_matches, literal_total = list_products(db_session, status=None, page=1, page_size=20, q="%_")
+    blank_matches, blank_total = list_products(db_session, status=None, page=1, page_size=20, q="   ")
+    draft_matches, draft_total = list_products(
+        db_session,
+        status=ProductWorkflowState.DRAFT,
+        page=1,
+        page_size=20,
+        q="alpha",
+    )
+    copy_matches, copy_total = list_products(
+        db_session,
+        status=ProductWorkflowState.COPY_READY,
+        page=1,
+        page_size=20,
+        q="alpha",
+    )
+
+    assert total == second_total == 2
+    assert len(matches) == len(second_page) == 1
+    assert matches[0].id != second_page[0].id
+    assert literal_total == 1
+    assert [product.id for product in literal_matches] == [literal_match.id]
+    assert blank_total == 4
+    assert {product.id for product in blank_matches} == {
+        draft_match.id,
+        copy_match.id,
+        literal_match.id,
+        unrelated.id,
+    }
+    assert draft_total == 1
+    assert [product.id for product in draft_matches] == [draft_match.id]
+    assert copy_total == 1
+    assert [product.id for product in copy_matches] == [copy_match.id]
+
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+    response = client.get("/api/products", params={"status": "copy_ready", "q": " ALPHA "})
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert [item["id"] for item in response.json()["items"]] == [copy_match.id]
+
+    too_long = client.get("/api/products", params={"q": "x" * 101})
+    assert too_long.status_code == 422
+
+
+def test_product_list_sort_is_stable_and_runs_before_pagination(db_session, configured_env: Path) -> None:
+    base_time = datetime(2025, 1, 1, tzinfo=UTC)
+    alpha = Product(
+        id="00000000-0000-0000-0000-000000000001",
+        name="Alpha Lamp",
+        created_at=base_time + timedelta(days=2),
+        updated_at=base_time + timedelta(days=1),
+    )
+    alpha_peer = Product(
+        id="00000000-0000-0000-0000-000000000002",
+        name="Alpha Lamp",
+        created_at=base_time + timedelta(days=2),
+        updated_at=base_time + timedelta(days=1),
+    )
+    bravo = Product(
+        name="bravo Shelf",
+        created_at=base_time + timedelta(days=3),
+        updated_at=base_time + timedelta(days=2),
+    )
+    zulu = Product(
+        name="Zulu Camera",
+        created_at=base_time + timedelta(days=1),
+        updated_at=base_time + timedelta(days=3),
+    )
+    db_session.add_all([alpha, alpha_peer, bravo, zulu])
+    db_session.commit()
+
+    updated, updated_total = list_products(db_session, status=None, page=1, page_size=3)
+    updated_second_page, updated_second_total = list_products(db_session, status=None, page=2, page_size=3)
+    created, created_total = list_products(
+        db_session,
+        status=None,
+        page=1,
+        page_size=4,
+        sort="created_desc",
+    )
+    named, named_total = list_products(
+        db_session,
+        status=None,
+        page=1,
+        page_size=4,
+        sort="name_asc",
+    )
+
+    assert updated_total == updated_second_total == created_total == named_total == 4
+    assert [product.id for product in updated] == [zulu.id, bravo.id, alpha_peer.id]
+    assert [product.id for product in updated_second_page] == [alpha.id]
+    assert [product.id for product in created] == [bravo.id, alpha_peer.id, alpha.id, zulu.id]
+    assert [product.id for product in named] == [alpha.id, alpha_peer.id, bravo.id, zulu.id]
+
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+    response = client.get("/api/products", params={"sort": "name_asc", "page_size": 3})
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["items"]] == [alpha.id, alpha_peer.id, bravo.id]
+
+    invalid = client.get("/api/products", params={"sort": "unknown"})
+    assert invalid.status_code == 422
 
 
 def test_product_reference_image_can_be_deleted(configured_env: Path, db_session) -> None:

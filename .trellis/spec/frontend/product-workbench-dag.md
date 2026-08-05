@@ -512,6 +512,75 @@ const structureBusy = layoutMutationBusy || workflowActive;
 Use persisted workflow activity to control polling and unsafe structural mutations. Use node status plus submission
 pending state for individual node run actions, while keeping layout dragging independent from provider execution.
 
+## Scenario: Product-list workflow summary boundary
+
+### 1. Scope / Trigger
+
+- Trigger: adding workflow status, progress, output summaries, or workflow-derived filters to the product list.
+- Product workflows are user-editable DAGs. A list-level summary must preserve that variability instead of projecting a
+  fixed sequence onto every product.
+
+### 2. Signatures
+
+- Existing summary field: `ProductSummary.workflow_state: "draft" | "copy_ready" | "poster_ready" | "failed"`.
+- Existing compatibility query: `api.listProducts({ status? })` / `GET /api/products?status=...`.
+- Current product-list URL state: `page`, `q`, and `sort`; it does not include workflow state.
+- Current sort values: `updated_desc`, `created_desc`, and `name_asc`.
+
+### 3. Contracts
+
+- Do not turn `workflow_state` into a fixed step rail, percentage, active-node claim, or mutually exclusive artifact
+  selector.
+- The scalar has priority semantics and cannot describe overlapping copy/poster presence plus run failure. It also lacks
+  active-workflow identity, latest run, failed node, repeated node outputs, and retry state.
+- Product workflows may add, remove, reorder, or repeat nodes, including multiple image-generation nodes.
+- Until a dedicated summary DTO exists, the product list should use factual product fields such as thumbnail, name,
+  source filename, created time, and updated time. Workflow inspection remains in the product detail workbench.
+- A future filter/summary contract must identify the active workflow and define how latest-run and node-output facts are
+  reduced. Add that backend/frontend contract and tests in one task.
+
+### 4. Validation & Error Matrix
+
+- Workflow omits copy generation -> a fixed `素材 / 文案 / 成图` rail would be false; omit the rail.
+- Workflow contains two image-generation nodes -> a single `已有成图` step loses which node/output exists; omit the
+  scalar presentation.
+- Product has poster output plus a failed run -> `workflow_state` precedence may report `poster_ready`; do not present it
+  as complete run health.
+- Product has copy and poster artifacts simultaneously -> do not expose them as mutually exclusive segmented options.
+- Summary/filter requested without a new DTO contract -> keep list workflow-neutral and route users to product detail.
+
+### 5. Good/Base/Bad Cases
+
+- Good: list rows show factual product identity and timestamps, then open the DAG workbench for workflow state.
+- Base: the central API client retains optional `status` for compatibility while `ProductListPage` does not send it.
+- Bad: label `workflow_state="copy_ready"` as “已有文案” and imply no image exists; the scalar predicate includes
+  additional precedence conditions.
+- Bad: render three progress segments for every product regardless of its persisted node graph.
+
+### 6. Tests Required
+
+- Product-list browser regression asserting no workflow-status group or output-status column is rendered.
+- Existing backend state-predicate tests continue to prove scalar compatibility for API callers.
+- A future summary DTO requires DAG cases with omitted nodes, repeated image nodes, overlapping artifacts, and failed runs.
+- Keep real responsive screenshots for the list and detail workbench when their boundary changes.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```tsx
+const completedSteps = product.workflow_state === "poster_ready" ? 3 : 1;
+return <ProgressRail steps={["素材", "文案", "成图"]} completed={completedSteps} />;
+```
+
+Correct:
+
+```tsx
+return <Link to={`/products/${product.id}`}>{product.name}</Link>;
+```
+
+Open the persisted workflow graph before making node-level claims.
+
 ## Scenario: Autosaved direct image workbench
 
 ### 1. Scope / Trigger

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import desc, exists, func, literal, select
 from sqlalchemy.orm import Session, selectinload
@@ -31,6 +31,9 @@ from productflow_backend.infrastructure.db.models import (
     WorkflowRun,
 )
 from productflow_backend.infrastructure.storage import LocalStorage
+
+ProductListSort = Literal["updated_desc", "created_desc", "name_asc"]
+DEFAULT_PRODUCT_LIST_SORT: ProductListSort = "updated_desc"
 
 
 def _normalize_required_text(value: str, *, field_name: str, max_length: int) -> str:
@@ -81,6 +84,14 @@ def _product_query():
         )
         .order_by(desc(Product.updated_at))
     )
+
+
+def _product_sort_order(sort: ProductListSort):
+    if sort == "created_desc":
+        return Product.created_at.desc(), Product.id.desc()
+    if sort == "name_asc":
+        return func.lower(Product.name).asc(), Product.name.asc(), Product.id.asc()
+    return Product.updated_at.desc(), Product.id.desc()
 
 
 def _get_product_or_raise(session: Session, product_id: str) -> Product:
@@ -275,18 +286,27 @@ def list_products(
     status: ProductWorkflowState | None,
     page: int,
     page_size: int,
+    q: str | None = None,
+    sort: ProductListSort = DEFAULT_PRODUCT_LIST_SORT,
 ) -> tuple[list[Product], int]:
     page = max(page, 1)
     page_size = min(max(page_size, 1), 100)
     start = (page - 1) * page_size
-    if status is None:
-        total = session.scalar(select(func.count()).select_from(Product)) or 0
-        products = session.scalars(_product_query().offset(start).limit(page_size)).all()
-        return list(products), total
+    filters = []
+    if status is not None:
+        filters.append(_product_status_filter(status))
+    normalized_q = q.strip() if q else ""
+    if normalized_q:
+        filters.append(Product.name.icontains(normalized_q, autoescape=True))
 
-    status_filter = _product_status_filter(status)
-    total = session.scalar(select(func.count()).select_from(Product).where(status_filter)) or 0
-    products = session.scalars(_product_query().where(status_filter).offset(start).limit(page_size)).all()
+    count_query = select(func.count()).select_from(Product)
+    product_query = _product_query().order_by(None).order_by(*_product_sort_order(sort))
+    if filters:
+        count_query = count_query.where(*filters)
+        product_query = product_query.where(*filters)
+
+    total = session.scalar(count_query) or 0
+    products = session.scalars(product_query.offset(start).limit(page_size)).all()
     return list(products), total
 
 

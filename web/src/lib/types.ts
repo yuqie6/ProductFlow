@@ -1,4 +1,5 @@
 export type ProductWorkflowState = "draft" | "copy_ready" | "poster_ready" | "failed";
+export type ProductListSort = "updated_desc" | "created_desc" | "name_asc";
 export type CopyStatus = "draft" | "confirmed";
 export type PosterKind = "main_image" | "promo_poster";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";

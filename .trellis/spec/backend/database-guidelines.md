@@ -105,26 +105,99 @@ helper with `selectinload(...)` instead of relying on accidental lazy loading. C
 - `_image_session_query()` in `application/image_sessions.py` loads assets, rounds, generated assets, and product source
   assets.
 
-### Pagination and limits
+### Scenario: Product list search, sorting, and database pagination
 
-Product listing uses database-level pagination in `application/use_cases.py::list_products` with `offset`/`limit` and a
-separate count query. The route `presentation/routes/products.py::list_products_endpoint` constrains `page >= 1` and
-`1 <= page_size <= 100` using FastAPI `Query`.
+#### 1. Scope / Trigger
 
-`list_products(status=...)` must also stay database-filtered before eager loading and pagination. Its SQL predicate must
-match `derive_product_state(product)`:
+- Trigger: changing `GET /api/products`, `application/use_cases.py::list_products`, product-list search, status
+  compatibility, sorting, count behavior, or pagination.
+- The query must stay database-backed because the list may exceed one page and the response `total` describes the
+  filtered dataset rather than the loaded slice.
 
-- `poster_ready`: has at least one poster variant.
-- `failed`: no poster variants, and the active product workflow has either a failed `WorkflowRun` or a failed
-  `WorkflowNode`.
-- `copy_ready`: has `Product.current_confirmed_copy_set_id`, no poster variants, and no active-workflow failed run/node.
-- `draft`: no confirmed copy set, no poster variants, and no active-workflow failed run/node.
+#### 2. Signatures
 
-The state precedence is `poster_ready` > `failed` > `copy_ready` > `draft`. Poster completion wins over failure, and
-failed runs/nodes on inactive workflows do not affect product state.
+- Sort type: `ProductListSort = Literal["updated_desc", "created_desc", "name_asc"]`.
+- Default: `DEFAULT_PRODUCT_LIST_SORT = "updated_desc"`.
+- Use case:
 
-Keep the response shape unchanged. If product state semantics change, update both `derive_product_state(...)` and the SQL
-status filter together, then add a query behavior test. Do not reintroduce full-table product loads for list pages.
+```python
+list_products(
+    session: Session,
+    *,
+    status: ProductWorkflowState | None,
+    page: int,
+    page_size: int,
+    q: str | None = None,
+    sort: ProductListSort = DEFAULT_PRODUCT_LIST_SORT,
+) -> tuple[list[Product], int]
+```
+
+- Route: `GET /api/products?page=&page_size=&q=&sort=&status=`.
+
+#### 3. Contracts
+
+- The route constrains `page >= 1`, `1 <= page_size <= 100`, `len(q) <= 100`, and the three literal sort values.
+- `q` is trimmed. A blank value applies no search predicate; a nonblank value uses
+  `Product.name.icontains(q, autoescape=True)` so `%` and `_` remain literal.
+- Count and item queries use the same filter list. Search and legacy `status` combine with `AND`.
+- Sorting is applied to the item query before `offset` and `limit`:
+  - `updated_desc`: `updated_at DESC, id DESC`
+  - `created_desc`: `created_at DESC, id DESC`
+  - `name_asc`: `lower(name) ASC, name ASC, id ASC`
+- Every order includes an ID tie-breaker so page boundaries stay stable when primary values match.
+- The existing status predicate must match `derive_product_state(product)`:
+  - `poster_ready`: at least one poster variant.
+  - `failed`: no poster variant and a failed run/node on the active workflow.
+  - `copy_ready`: confirmed copy, no poster, and no active-workflow failure.
+  - `draft`: no confirmed copy, no poster, and no active-workflow failure.
+- State precedence remains `poster_ready` > `failed` > `copy_ready` > `draft`. Inactive-workflow failures do not affect
+  the scalar state.
+- Keep eager loading and `ProductListResponse` unchanged. Do not load the full table and sort/filter in Python.
+
+#### 4. Validation & Error Matrix
+
+- `page < 1` -> route `422`.
+- `page_size < 1` or `page_size > 100` -> route `422`.
+- unknown `sort` -> route `422` from the literal query type.
+- `q` longer than 100 characters -> route `422`.
+- blank/whitespace `q` -> same rows and total as an omitted query.
+- no matching product -> `200` with `items=[]` and `total=0`.
+- requested page beyond the result set -> `200` with an empty page; the frontend may canonicalize its URL afterward.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: `q=lamp&sort=name_asc&page=2` filters and orders in SQL, then returns the second stable page plus the full filtered
+  count.
+- Good: two products with equal `updated_at` retain deterministic ordering through `id DESC`.
+- Base: omitted `q`, `sort`, and `status` returns the first page ordered by recent update.
+- Bad: fetch 100 products, sort them in Python, and slice 12 rows; later database rows can never reach the requested page.
+- Bad: use `order_by(Product.created_at.desc())` without a tie-breaker; equal timestamps can move between pages.
+
+#### 6. Tests Required
+
+- Use-case regression for trimmed/case-insensitive name search, blank search, and literal `%/_`.
+- Use-case regression that filtered `total` and page slices use the same search/status predicates.
+- Sorting regression for all three values, including equal-primary-value tie-breakers and pagination-before/after ordering.
+- Route regression for serialization and the 100-character `q` boundary.
+- Existing state-predicate tests must stay green when `derive_product_state(...)` changes.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+products = session.scalars(_product_query()).all()
+products = sorted(products, key=lambda product: product.name.lower())
+return products[start : start + page_size], len(products)
+```
+
+Correct:
+
+```python
+product_query = _product_query().order_by(None).order_by(*_product_sort_order(sort))
+product_query = product_query.where(*filters).offset(start).limit(page_size)
+products = session.scalars(product_query).all()
+```
 
 ### Runtime settings registry
 

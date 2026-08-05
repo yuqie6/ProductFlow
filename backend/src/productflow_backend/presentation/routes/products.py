@@ -7,6 +7,8 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from productflow_backend.application.use_cases import (
+    DEFAULT_PRODUCT_LIST_SORT,
+    ProductListSort,
     add_reference_images,
     confirm_copy_set,
     create_product,
@@ -84,11 +86,13 @@ async def create_product_endpoint(
 @router.get("/products", response_model=ProductListResponse)
 def list_products_endpoint(
     status: ProductWorkflowState | None = None,
+    q: str | None = Query(default=None, max_length=100),
+    sort: ProductListSort = Query(default=DEFAULT_PRODUCT_LIST_SORT),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     session: Session = Depends(get_session),
 ) -> ProductListResponse:
-    items, total = list_products(session, status=status, page=page, page_size=page_size)
+    items, total = list_products(session, status=status, page=page, page_size=page_size, q=q, sort=sort)
     return ProductListResponse(
         items=[serialize_product_summary(item) for item in items],
         total=total,

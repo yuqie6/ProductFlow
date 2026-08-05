@@ -18,6 +18,7 @@ import type {
   ImageToolOptions,
   ProductDetail,
   ProductHistory,
+  ProductListSort,
   ProviderBinding,
   ProviderBindingUpdateRequest,
   ProviderConfigResponse,
@@ -25,6 +26,7 @@ import type {
   ProviderProfileCreateRequest,
   ProviderProfileUpdateRequest,
   ProductWorkflow,
+  ProductWorkflowState,
   ProductWorkflowStatus,
   ProductWritebackResponse,
   ProductListResponse,
@@ -98,10 +100,28 @@ export const api = {
   destroySession(): Promise<{ ok: boolean }> {
     return request("/api/auth/session", { method: "DELETE" });
   },
-  listProducts(input?: { page?: number; page_size?: number }): Promise<ProductListResponse> {
-    const page = input?.page ?? 1;
-    const pageSize = input?.page_size ?? 20;
-    return request(`/api/products?page=${encodeURIComponent(page)}&page_size=${encodeURIComponent(pageSize)}`);
+  listProducts(input?: {
+    page?: number;
+    page_size?: number;
+    status?: ProductWorkflowState;
+    q?: string;
+    sort?: ProductListSort;
+  }): Promise<ProductListResponse> {
+    const params = new URLSearchParams({
+      page: String(input?.page ?? 1),
+      page_size: String(input?.page_size ?? 20),
+    });
+    if (input?.status) {
+      params.set("status", input.status);
+    }
+    const query = input?.q?.trim();
+    if (query) {
+      params.set("q", query);
+    }
+    if (input?.sort && input.sort !== "updated_desc") {
+      params.set("sort", input.sort);
+    }
+    return request(`/api/products?${params.toString()}`);
   },
   getProduct(productId: string): Promise<ProductDetail> {
     return request(`/api/products/${productId}`);

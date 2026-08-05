@@ -73,6 +73,13 @@ text colors. The app uses a root `dark` class from `PreferencesProvider`, so Tai
 path for component-level theme variants. Existing examples include `TopNav.tsx`, `ProductListPage.tsx`,
 `ProductCreatePage.tsx`, and `SettingsPage.tsx`.
 
+`web/src/index.css` also contains root dark compatibility selectors for common light utilities and form elements. These
+selectors have higher specificity than ordinary Tailwind `dark:*` utilities. When a page needs custom dark colors while
+retaining base classes such as `bg-white`, `bg-slate-50`, `text-slate-*`, or an `input`, use a page-local important dark
+utility such as `dark:!bg-[#111316]`, `dark:!text-[#f1f2f4]`, or `dark:!border-[#292c32]`. Verify the computed result in a
+real dark-mode screenshot; a successful build alone does not prove that the intended token won the cascade. Keep the
+override on the affected page instead of changing the global compatibility palette for an isolated surface.
+
 When adding image preview or canvas surfaces, keep images inspectable in both themes. Dark variants should change chrome
 and empty/loading/error states, not tint or obscure product thumbnails.
 

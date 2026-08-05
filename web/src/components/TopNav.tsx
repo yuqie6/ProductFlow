@@ -67,7 +67,7 @@ const themeIcons: Record<ThemePreference, typeof Sun> = {
 
 function navItemClassName(active: boolean) {
   return [
-    "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-sm font-semibold transition-colors sm:w-auto sm:px-4 lg:px-5",
+    "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-sm font-semibold transition-colors sm:w-auto sm:px-4 xl:px-5",
     active
       ? "bg-white text-indigo-700 shadow-sm ring-1 ring-indigo-100 dark:bg-slate-800 dark:text-indigo-300 dark:ring-slate-700"
       : "text-slate-500 hover:bg-white/70 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800/80 dark:hover:text-slate-100",
@@ -153,7 +153,7 @@ export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
     <>
       <nav className="z-50 flex flex-col gap-3 overflow-visible border-b border-slate-200 bg-white/95 px-3 py-3 shadow-[0_1px_0_rgba(15,23,42,0.03)] backdrop-blur dark:border-slate-800 dark:bg-slate-950/92 sm:px-4 lg:grid lg:min-h-14 lg:grid-cols-[minmax(180px,1fr)_auto_minmax(180px,1fr)] lg:items-center lg:gap-4 lg:px-6">
         <div className="flex min-w-0 items-center justify-between gap-2 text-sm">
-          <div className="flex min-w-0 max-w-[calc(100%-10.75rem)] items-center space-x-2 overflow-hidden">
+          <div className="flex min-w-0 max-w-[calc(100%-10.75rem)] items-center space-x-2 overflow-hidden lg:max-w-none">
             <button
               type="button"
               className="flex min-w-0 shrink-0 items-center text-base font-semibold text-slate-950 transition-colors hover:text-indigo-700 dark:text-slate-100 dark:hover:text-indigo-300"
@@ -208,7 +208,31 @@ export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
           </div>
         </div>
 
-        <div className="hidden min-w-0 flex-wrap items-center justify-start gap-2 lg:flex lg:justify-end">
+        <div className="hidden min-w-0 items-center justify-end gap-2 lg:flex xl:hidden">
+          <LanguagePicker compact />
+          <button
+            type="button"
+            onClick={() => setThemePreference(nextThemePreference)}
+            aria-label={`${t("nav.theme")}: ${t(`theme.${themePreference}`)}`}
+            title={t(`theme.${themePreference}`)}
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition-colors hover:border-indigo-200 hover:text-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-slate-700 dark:bg-slate-950/80 dark:text-slate-300 dark:hover:border-violet-400/55 dark:hover:text-violet-100 dark:focus-visible:ring-violet-400"
+          >
+            <CurrentThemeIcon size={15} />
+          </button>
+          {onLogout ? (
+            <button
+              type="button"
+              onClick={onLogout}
+              aria-label={t("nav.logout")}
+              title={t("nav.logout")}
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100 dark:focus-visible:ring-violet-400"
+            >
+              <LogOut size={15} />
+            </button>
+          ) : null}
+        </div>
+
+        <div className="hidden min-w-0 flex-wrap items-center justify-start gap-2 xl:flex xl:justify-end">
           <LanguagePicker />
           <div className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 dark:border-slate-800 dark:bg-slate-900">
             {THEME_PREFERENCES.map((item) => {
