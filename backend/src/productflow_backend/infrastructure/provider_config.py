@@ -159,13 +159,11 @@ def ensure_provider_config_bootstrapped(session: Session | None = None) -> None:
 
 
 def list_provider_profiles(session: Session) -> list[ProviderProfile]:
-    ensure_provider_config_bootstrapped(session)
     query = select(ProviderProfile).order_by(ProviderProfile.created_at, ProviderProfile.name)
     return list(session.scalars(query).all())
 
 
 def list_provider_bindings(session: Session) -> list[ProviderBinding]:
-    ensure_provider_config_bootstrapped(session)
     return list(session.scalars(select(ProviderBinding).order_by(ProviderBinding.purpose)).all())
 
 
@@ -368,8 +366,9 @@ def normalize_provider_binding_model_settings(*, purpose: str, model_settings: d
     return _normalize_binding_model_settings(purpose=purpose, model_settings=model_settings)
 
 
-def resolve_text_provider_config() -> ResolvedTextProviderConfig:
-    session = get_session_factory()()
+def resolve_text_provider_config(session: Session | None = None) -> ResolvedTextProviderConfig:
+    owns_session = session is None
+    session = session or get_session_factory()()
     try:
         ensure_provider_config_bootstrapped(session)
         binding = _require_binding(session, TEXT_PURPOSE)
@@ -405,11 +404,13 @@ def resolve_text_provider_config() -> ResolvedTextProviderConfig:
             base_url=profile.base_url,
         )
     finally:
-        session.close()
+        if owns_session:
+            session.close()
 
 
-def resolve_image_provider_config() -> ResolvedImageProviderConfig:
-    session = get_session_factory()()
+def resolve_image_provider_config(session: Session | None = None) -> ResolvedImageProviderConfig:
+    owns_session = session is None
+    session = session or get_session_factory()()
     try:
         ensure_provider_config_bootstrapped(session)
         binding = _require_binding(session, IMAGE_PURPOSE)
@@ -461,7 +462,8 @@ def resolve_image_provider_config() -> ResolvedImageProviderConfig:
             ),
         )
     finally:
-        session.close()
+        if owns_session:
+            session.close()
 
 
 def _provider_config_exists(session: Session) -> bool:

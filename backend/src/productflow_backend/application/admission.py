@@ -7,7 +7,7 @@ from enum import StrEnum
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from productflow_backend.config import get_runtime_settings
+from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.domain.durable_generation_tasks import (
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
     WORKFLOW_RUN_GENERATION_TASK_CONTRACT,
@@ -110,7 +110,7 @@ def get_generation_queue_overview(session: Session) -> GenerationQueueOverview:
         active_count=running_count + queued_count,
         running_count=running_count,
         queued_count=queued_count,
-        max_concurrent_tasks=get_runtime_settings().generation_max_concurrent_tasks,
+        max_concurrent_tasks=get_runtime_settings(session).generation_max_concurrent_tasks,
     )
 
 
@@ -207,7 +207,7 @@ def generation_running_capacity_available(session: Session) -> bool:
     """Serialize worker claim checks and return whether one more task may enter provider execution."""
 
     _lock_generation_capacity(session)
-    limit = get_runtime_settings().generation_max_concurrent_tasks
+    limit = get_runtime_settings(session).generation_max_concurrent_tasks
     return _running_async_task_count(session) < limit
 
 

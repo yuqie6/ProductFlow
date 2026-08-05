@@ -11,13 +11,13 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from productflow_backend import __version__
+from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.application.time import now_utc
 from productflow_backend.config import (
     CONFIG_DEFINITION_BY_KEY,
     CONFIG_DEFINITIONS,
     RUNTIME_CONFIG_KEYS,
     build_settings_with_overrides,
-    get_runtime_settings,
     get_settings,
     normalize_config_values,
     normalize_image_generation_size,
@@ -119,15 +119,23 @@ def _public_value(value: Any, *, secret: bool) -> str | int | bool | None:
 
 def _validate_runtime_settings(overrides: dict[str, str]) -> None:
     settings = build_settings_with_overrides(overrides)
-    normalize_image_generation_size(settings.image_main_image_size, label="主图尺寸")
-    normalize_image_generation_size(settings.image_promo_poster_size, label="促销海报尺寸")
+    normalize_image_generation_size(
+        settings.image_main_image_size,
+        label="主图尺寸",
+        max_dimension=settings.image_generation_max_dimension,
+    )
+    normalize_image_generation_size(
+        settings.image_promo_poster_size,
+        label="促销海报尺寸",
+        max_dimension=settings.image_generation_max_dimension,
+    )
     if not settings.allowed_image_mime_types:
         raise ValueError("允许图片 MIME 不能为空")
 
 
 def _serialize_config(session: Session) -> ConfigResponse:
     db_values = _load_database_values(session)
-    settings = get_runtime_settings()
+    settings = get_runtime_settings(session)
     items: list[ConfigItemResponse] = []
     for definition in CONFIG_DEFINITIONS:
         source = "database" if definition.key in db_values else "env_default"
@@ -205,8 +213,7 @@ def _export_config_value(value: Any, *, input_type: str) -> str | int | bool | l
 
 
 def _build_settings_export_document(session: Session) -> SettingsExportDocument:
-    ensure_provider_config_bootstrapped(session)
-    settings = get_runtime_settings()
+    settings = get_runtime_settings(session)
     runtime_config = {
         definition.key: _export_config_value(getattr(settings, definition.key), input_type=definition.input_type)
         for definition in CONFIG_DEFINITIONS
@@ -481,7 +488,6 @@ def get_config_endpoint(session: Session = Depends(get_session)) -> ConfigRespon
     dependencies=[Depends(require_settings_unlocked)],
 )
 def get_provider_config_endpoint(session: Session = Depends(get_session)) -> ProviderConfigResponse:
-    ensure_provider_config_bootstrapped(session)
     return _serialize_provider_config(session)
 
 
@@ -518,6 +524,8 @@ def import_settings_endpoint(
 ) -> SettingsImportCommitResponse:
     try:
         bundle = _build_settings_import_bundle(payload)
+        # Runtime settings checks may have opened a read transaction on this request session.
+        session.rollback()
         _apply_settings_import_bundle(session, bundle)
     except ValueError as exc:
         session.rollback()
@@ -635,8 +643,8 @@ def update_provider_binding_endpoint(
 
 
 @router.get("/runtime", response_model=RuntimeConfigResponse)
-def get_runtime_config_endpoint() -> RuntimeConfigResponse:
-    settings = get_runtime_settings()
+def get_runtime_config_endpoint(session: Session = Depends(get_session)) -> RuntimeConfigResponse:
+    settings = get_runtime_settings(session)
     return RuntimeConfigResponse(
         image_generation_max_dimension=settings.image_generation_max_dimension,
         image_tool_allowed_fields=list(parse_image_tool_allowed_fields(settings.image_tool_allowed_fields)),

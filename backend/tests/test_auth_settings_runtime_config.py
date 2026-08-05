@@ -11,10 +11,10 @@ from helpers import (
 )
 from sqlalchemy import select
 
+from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.config import (
     CONFIG_DEFINITION_BY_KEY,
     RUNTIME_CONFIG_KEYS,
-    get_runtime_settings,
     get_settings,
     normalize_config_values,
 )
@@ -25,6 +25,7 @@ from productflow_backend.infrastructure.db.models import (
 )
 from productflow_backend.infrastructure.db.session import get_session_factory
 from productflow_backend.infrastructure.provider_config import (
+    ensure_provider_config_bootstrapped,
     resolve_image_provider_config,
     resolve_text_provider_config,
 )
@@ -486,6 +487,7 @@ def test_settings_import_rejects_unknown_version_and_rolls_back_invalid_bindings
     from productflow_backend.presentation.api import create_app
 
     app = create_app()
+    ensure_provider_config_bootstrapped()
     client = TestClient(app)
     _login(client)
     _unlock_settings(client)
@@ -568,6 +570,31 @@ def test_provider_bootstrap_runs_on_app_startup(configured_env: Path) -> None:
     assert {binding.purpose for binding in bindings} == {"text", "image"}
 
 
+def test_provider_config_reads_do_not_bootstrap_or_write(configured_env: Path) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    app = create_app()
+    client = TestClient(app)
+    _login(client)
+    _unlock_settings(client)
+
+    provider_config = client.get("/api/settings/provider-config")
+    export = client.get("/api/settings/export")
+
+    assert provider_config.status_code == 200
+    assert provider_config.json() == {"profiles": [], "bindings": []}
+    assert export.status_code == 200
+    assert export.json()["provider_profiles"] == []
+    assert export.json()["provider_bindings"] == []
+
+    session = get_session_factory()()
+    try:
+        assert session.scalars(select(ProviderProfile)).all() == []
+        assert session.scalars(select(ProviderBinding)).all() == []
+    finally:
+        session.close()
+
+
 def test_provider_bootstrap_merges_matching_legacy_text_and_image_config(configured_env: Path) -> None:
     from productflow_backend.presentation.api import create_app
 
@@ -594,6 +621,7 @@ def test_provider_bootstrap_merges_matching_legacy_text_and_image_config(configu
         session.close()
 
     app = create_app()
+    ensure_provider_config_bootstrapped()
     client = TestClient(app)
     _login(client)
     _unlock_settings(client)
@@ -658,6 +686,7 @@ def test_provider_bootstrap_splits_different_legacy_connections(configured_env: 
         session.close()
 
     app = create_app()
+    ensure_provider_config_bootstrapped()
     client = TestClient(app)
     _login(client)
     _unlock_settings(client)
@@ -678,6 +707,7 @@ def test_provider_config_api_masks_keys_preserves_blank_update_and_validates_bin
     from productflow_backend.presentation.api import create_app
 
     app = create_app()
+    ensure_provider_config_bootstrapped()
     client = TestClient(app)
     _login(client)
     _unlock_settings(client)

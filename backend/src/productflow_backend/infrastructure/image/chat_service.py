@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 from PIL import Image, ImageDraw
 
-from productflow_backend.config import get_runtime_settings
+from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.infrastructure.image.base import parse_size
 from productflow_backend.infrastructure.image.gemini_provider import (
     GoogleGeminiImageClient,

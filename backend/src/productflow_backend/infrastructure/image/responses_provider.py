@@ -13,10 +13,10 @@ from urllib.parse import urlsplit, urlunsplit
 from openai import OpenAI
 
 from productflow_backend.application.contracts import PosterGenerationInput
+from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.config import (
     IMAGE_TOOL_FIELD_KEYS,
     filter_image_tool_options,
-    get_runtime_settings,
     parse_image_tool_allowed_fields,
 )
 from productflow_backend.domain.enums import PosterKind

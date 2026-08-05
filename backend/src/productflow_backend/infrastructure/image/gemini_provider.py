@@ -10,7 +10,7 @@ from google import genai
 from google.genai import types
 
 from productflow_backend.application.contracts import PosterGenerationInput
-from productflow_backend.config import get_runtime_settings
+from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.domain.enums import PosterKind
 from productflow_backend.infrastructure.image.base import (
     GeneratedImagePayload,

@@ -10,7 +10,8 @@ from dramatiq.brokers.redis import RedisBroker
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 
-from productflow_backend.config import get_runtime_settings, get_settings
+from productflow_backend.application.runtime_settings import get_runtime_settings
+from productflow_backend.config import get_settings
 from productflow_backend.domain.durable_generation_tasks import (
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
     WORKFLOW_RUN_GENERATION_TASK_CONTRACT,

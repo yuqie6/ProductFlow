@@ -14,6 +14,7 @@ from productflow_backend.application.image_generation_core import (
     unique_image_generation_references,
 )
 from productflow_backend.application.product_workflow.query import WorkflowQueryService
+from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.config import normalize_image_generation_size
 from productflow_backend.domain.enums import (
     PosterKind,
@@ -182,18 +183,25 @@ def poster_kind_from_config(config: dict[str, Any]) -> PosterKind:
         raise BusinessValidationError("生图节点包含不支持的图片类型") from exc
 
 
-def image_size_from_config(config: dict[str, Any]) -> str | None:
+def image_size_from_config(config: dict[str, Any], *, max_dimension: int | None = None) -> str | None:
     raw = config.get("size")
     if raw is None or (isinstance(raw, str) and not raw.strip()):
         return None
-    return normalize_image_generation_size(raw, label="生图尺寸")
+    resolved_max_dimension = max_dimension
+    if resolved_max_dimension is None:
+        resolved_max_dimension = int(get_runtime_settings().image_generation_max_dimension)
+    return normalize_image_generation_size(raw, label="生图尺寸", max_dimension=resolved_max_dimension)
 
 
-def image_tool_options_from_config(config: dict[str, Any]) -> dict[str, Any] | None:
+def image_tool_options_from_config(
+    config: dict[str, Any],
+    *,
+    allowed_fields: tuple[str, ...] | None = None,
+) -> dict[str, Any] | None:
     raw = config.get("tool_options")
     if not isinstance(raw, dict):
         return None
-    return normalize_image_generation_tool_options(raw)
+    return normalize_image_generation_tool_options(raw, allowed_fields=allowed_fields)
 
 
 class IncomingContext:

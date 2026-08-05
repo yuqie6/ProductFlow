@@ -16,8 +16,10 @@ and SQLite in tests. The main database files are:
 - `backend/tests/conftest.py`
 - `backend/tests/test_migrations_database_constraints.py`
 
-The runtime `Settings.database_url` comes from environment variables; common business/runtime settings can be overridden
-through the `app_settings` table and loaded by `get_runtime_settings()` in `backend/src/productflow_backend/config.py`.
+The runtime `Settings.database_url` comes from environment variables. Common business/runtime settings can be overridden
+through the `app_settings` table and loaded through the application boundary
+`backend/src/productflow_backend/application/runtime_settings.py::get_runtime_settings`; the database query is owned by
+`backend/src/productflow_backend/infrastructure/runtime_config_store.py`.
 
 ---
 
@@ -212,6 +214,89 @@ For runtime settings:
 - UI/API metadata, allowed values, min/max, and secret masking live in `CONFIG_DEFINITIONS`.
 - Database rows override only keys in `RUNTIME_CONFIG_KEYS`.
 - Reset deletes the database row and falls back to the env/default `Settings` value.
+- `config.py` remains database-free; callers that already own a `Session` pass it to `get_runtime_settings(session)` so one
+  application operation can use one runtime snapshot.
+- Read-only provider/settings endpoints do not bootstrap provider rows; startup and mutation/resolution paths own explicit
+  bootstrap behavior.
+
+## Scenario: Runtime settings and provider configuration boundary
+
+### 1. Scope / Trigger
+
+This contract applies when changing environment settings, `app_settings` overrides, provider profile/binding resolution,
+settings serialization/export, provider bootstrap, or image/tool option normalization. It protects the dependency boundary
+between the DB-free configuration module, application composition points, and infrastructure persistence.
+
+### 2. Signatures
+
+- `productflow_backend.config.Settings`: environment/default settings only.
+- `infrastructure.runtime_config_store.load_runtime_overrides(session: Session | None = None) -> dict[str, str]`.
+- `application.runtime_settings.get_runtime_settings(session: Session | None = None) -> Settings`.
+- `infrastructure.provider_config.resolve_text_provider_config(session: Session | None = None)`.
+- `infrastructure.provider_config.resolve_image_provider_config(session: Session | None = None)`.
+- `config.normalize_image_generation_size(..., max_dimension: int | None = None)` and
+  `config.filter_image_tool_options(..., allowed_fields: tuple[str, ...] | None = None)` are pure helpers.
+
+### 3. Contracts
+
+- Importing `config.py` must not import ORM models/session infrastructure, create an engine, or query `AppSetting`.
+- `get_runtime_settings(session)` reads only `RUNTIME_CONFIG_KEYS`; env-only values such as `DATABASE_URL`, `REDIS_URL`,
+  `SESSION_SECRET`, `ADMIN_ACCESS_KEY`, and `SETTINGS_ACCESS_TOKEN` never come from `app_settings`.
+- A supplied `Session` is caller-owned: runtime settings and provider resolvers must not create or close another session.
+  Without a session, the infrastructure helper owns and closes its fallback session.
+- Missing `app_settings` or a SQLAlchemy read failure falls back to env/default settings. Invalid effective values still
+  raise the existing configuration validation error.
+- Runtime-dependent image limits and allowed tool fields are obtained at an application composition point and passed to
+  pure helpers explicitly.
+- `GET /api/settings/provider-config`, settings export, and provider list queries are read-only. Startup bootstrap and
+  provider mutations/resolvers may invoke `ensure_provider_config_bootstrapped` explicitly.
+
+### 4. Validation & Error Matrix
+
+- Missing `app_settings` table -> env/default `Settings`; the import and request path remain usable.
+- Runtime row with an env-only key -> ignored by the runtime override query.
+- Invalid runtime override after merge -> `ValueError` from `build_settings_with_overrides`; settings mutation keeps its
+  existing HTTP 400 mapping and does not persist the invalid bundle.
+- Provider list/export on an empty database -> empty response and no bootstrap rows.
+- Resolver without an existing binding -> preserve the existing provider configuration error contract; a resolver may
+  explicitly bootstrap first when legacy settings need migration.
+
+### 5. Good / Base / Bad Cases
+
+- Good: a route with a `Session` calls `get_runtime_settings(session)` once and passes explicit values to pure validators.
+- Base: a worker or provider constructor without a session uses the application boundary's owned-session fallback.
+- Bad: `config.py` imports `infrastructure.db.session` or performs an `AppSetting` query while constructing a default.
+- Bad: a read-only provider GET calls `ensure_provider_config_bootstrapped` through a list helper and inserts mock rows.
+
+### 6. Tests Required
+
+- Import-order regression: import `config` alone and after `db.session`; assert no engine creation and no config/session SCC.
+- Application boundary regression: assert env fallback, allowed override, env-only exclusion, missing-table fallback, and
+  supplied-session reuse.
+- Resolver ownership regression: pass a `Session`, block session-factory creation, and assert the caller session is not closed.
+- HTTP regression: assert provider config/export reads return empty data without inserting profiles or bindings, while
+  lifespan bootstrap and legacy merge tests remain green.
+- Pure helper regression: pass explicit image max dimension and allowed fields, including an empty allowed-field tuple.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+# config.py reaches through the DB layer while being imported by db.session.
+def get_runtime_settings() -> Settings:
+    from productflow_backend.infrastructure.db.session import get_session_factory
+    ...
+```
+
+Correct:
+
+```python
+# Application composition owns the effective snapshot and infrastructure owns the query.
+settings = get_runtime_settings(session)
+size = normalize_image_generation_size(raw_size, max_dimension=settings.image_generation_max_dimension)
+provider = resolve_image_provider_config(session=session)
+```
 
 ## Scenario: Provider profile and purpose binding configuration
 

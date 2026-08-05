@@ -37,8 +37,9 @@ from productflow_backend.application.product_workflow_dependencies import (
     WorkflowExecutionDependencies,
     default_workflow_execution_dependencies,
 )
+from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.application.time import now_utc
-from productflow_backend.config import get_runtime_settings
+from productflow_backend.config import parse_image_tool_allowed_fields
 from productflow_backend.domain.enums import PosterKind, SourceAssetKind
 from productflow_backend.domain.errors import BusinessValidationError
 from productflow_backend.infrastructure.db.models import (
@@ -139,6 +140,7 @@ def execute_workflow_image_generation(
         except ValueError:
             structured_copy_context = None
 
+    settings = get_runtime_settings(session)
     storage = LocalStorage()
     reference_assets = reference_assets_for_image_generation(
         session,
@@ -158,8 +160,14 @@ def execute_workflow_image_generation(
         source_note=product_context["source_note"],
         instruction=image_instruction_with_context(node, incoming_context.text_contexts),
         visible_text_language_hint=optional_config_text(node.config_json, "visible_text_language_hint"),
-        image_size=image_size_from_config(node.config_json),
-        tool_options=image_tool_options_from_config(node.config_json),
+        image_size=image_size_from_config(
+            node.config_json,
+            max_dimension=settings.image_generation_max_dimension,
+        ),
+        tool_options=image_tool_options_from_config(
+            node.config_json,
+            allowed_fields=parse_image_tool_allowed_fields(settings.image_tool_allowed_fields),
+        ),
         structured_copy_context=structured_copy_context,
         source_image=reference_payload.source_image,
         reference_images=reference_payload.reference_images,
@@ -168,10 +176,9 @@ def execute_workflow_image_generation(
     filled_source_asset_ids: list[str] = []
     filled_reference_node_ids: list[str] = []
     provider_results: list[dict[str, object]] = []
-    settings = get_runtime_settings()
     kind = poster_kind_from_config(node.config_json)
     image_provider_config = (
-        None if settings.poster_generation_mode == "generated" else resolve_image_provider_config()
+        None if settings.poster_generation_mode == "generated" else resolve_image_provider_config(session=session)
     )
     poster_generation_mode = effective_workflow_image_generation_mode(
         settings.poster_generation_mode,
@@ -254,7 +261,10 @@ def execute_workflow_image_generation(
         "filled_reference_node_ids": filled_reference_node_ids,
         "provider_results": provider_results,
         "target_count": len(downstream_nodes),
-        "size": image_size_from_config(node.config_json),
+        "size": image_size_from_config(
+            node.config_json,
+            max_dimension=settings.image_generation_max_dimension,
+        ),
         "instruction": optional_config_text(node.config_json, "instruction"),
         "context_summary": {
             "product_context": product_context,

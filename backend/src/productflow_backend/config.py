@@ -9,8 +9,6 @@ from typing import Any, Literal
 
 from pydantic import Field, ValidationError, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
 
 ConfigInputType = Literal["text", "password", "number", "boolean", "select", "multi_select", "textarea"]
 IMAGE_SIZE_PATTERN = re.compile(r"^\d+x\d+$")
@@ -107,10 +105,11 @@ class ConfigDefinition:
 
 
 class Settings(BaseSettings):
-    """应用配置：环境变量 + 数据库覆盖。
+    """基础环境配置：环境变量 + 默认值。
 
-    基础设施配置（数据库 / Redis / Secret 等）仅从环境变量读取，
-    业务配置可在运行时通过 app_settings 表覆盖。历史 text/image provider 字段仅作为供应商迁移输入。
+    运行时 app_settings 覆盖由 application.runtime_settings 组装，
+    基础设施配置（数据库 / Redis / Secret 等）仅从环境变量读取。
+    历史 text/image provider 字段仅作为供应商迁移输入。
     """
 
     model_config = SettingsConfigDict(
@@ -571,10 +570,6 @@ def normalize_image_size(value: Any, *, label: str = "图片尺寸") -> str:
     return normalized
 
 
-def _runtime_image_generation_max_dimension() -> int:
-    return int(get_runtime_settings().image_generation_max_dimension)
-
-
 def _image_generation_max_dimension_multiple(max_dimension: int) -> int:
     return max_dimension - (max_dimension % IMAGE_GENERATION_DIMENSION_MULTIPLE)
 
@@ -602,7 +597,7 @@ def normalize_image_generation_size(
 ) -> str:
     """校验并校准生图尺寸，包含格式、正数和运行时安全边界。"""
     normalized = normalize_image_size(value, label=label)
-    resolved_max_dimension = int(max_dimension or _runtime_image_generation_max_dimension())
+    resolved_max_dimension = int(max_dimension or DEFAULT_IMAGE_GENERATION_MAX_DIMENSION)
     if (
         resolved_max_dimension < IMAGE_GENERATION_MIN_MAX_DIMENSION
         or resolved_max_dimension > IMAGE_GENERATION_MAX_MAX_DIMENSION
@@ -657,9 +652,7 @@ def filter_image_tool_options(
     if not tool_options:
         return None
     resolved_allowed_fields = (
-        allowed_fields
-        if allowed_fields is not None
-        else parse_image_tool_allowed_fields(get_runtime_settings().image_tool_allowed_fields)
+        allowed_fields if allowed_fields is not None else DEFAULT_IMAGE_TOOL_ALLOWED_FIELDS
     )
     selected_fields = set(resolved_allowed_fields)
     normalized = {
@@ -728,36 +721,3 @@ def build_settings_with_overrides(overrides: Mapping[str, str]) -> Settings:
         field = ".".join(str(part) for part in first_error.get("loc", []))
         message = first_error.get("msg") or str(exc)
         raise ValueError(f"配置校验失败 {field}: {message}") from exc
-
-
-def _load_database_config_overrides() -> dict[str, str]:
-    try:
-        from productflow_backend.infrastructure.db.models import AppSetting
-        from productflow_backend.infrastructure.db.session import get_session_factory
-
-        session = get_session_factory()()
-        try:
-            rows = session.scalars(select(AppSetting).where(AppSetting.key.in_(RUNTIME_CONFIG_KEYS))).all()
-            return {row.key: row.value for row in rows}
-        finally:
-            session.close()
-    except Exception as exc:  # noqa: BLE001
-        if exc.__class__.__name__ in {"OperationalError", "ProgrammingError"}:
-            return {}
-        if isinstance(exc, SQLAlchemyError):
-            return {}
-        raise
-
-
-def get_runtime_settings() -> Settings:
-    """Settings with database overrides applied.
-
-    If a key does not exist in the database, env/default Settings remains the
-    fallback. Missing app_settings table is tolerated so fresh databases can
-    still start before migrations have run.
-    """
-
-    overrides = _load_database_config_overrides()
-    if not overrides:
-        return get_settings()
-    return build_settings_with_overrides(overrides)

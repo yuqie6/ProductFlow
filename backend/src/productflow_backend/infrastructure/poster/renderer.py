@@ -6,7 +6,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 from productflow_backend.application.contracts import PosterGenerationInput
-from productflow_backend.config import get_runtime_settings
+from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.domain.enums import PosterKind
 
 

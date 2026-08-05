@@ -31,6 +31,7 @@ from productflow_backend.application.image_generation_failures import (
     classify_image_generation_failure,
 )
 from productflow_backend.application.queue_submission import enqueue_or_mark_failed
+from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.application.time import now_utc
 from productflow_backend.config import normalize_image_generation_size
 from productflow_backend.domain.durable_generation_tasks import (
@@ -285,6 +286,7 @@ def _build_branch_generation_context(
 def _validate_generation_request(
     image_session: ImageSession,
     *,
+    session: Session | None = None,
     size: str,
     base_asset_id: str | None,
     selected_reference_asset_ids: list[str] | None,
@@ -295,7 +297,10 @@ def _validate_generation_request(
 ) -> tuple[str, str | None, list[str]]:
     if not 1 <= generation_count <= max_generation_count:
         raise BusinessValidationError(f"一次生成数量必须在 1-{max_generation_count} 张之间")
-    normalized_size = normalize_image_generation_size(size)
+    normalized_size = normalize_image_generation_size(
+        size,
+        max_dimension=int(get_runtime_settings(session).image_generation_max_dimension),
+    )
     selected_reference_ids = _unique_ids(selected_reference_asset_ids)
     if (1 if base_asset_id else 0) + len(selected_reference_ids) > MAX_BRANCH_CONTEXT_IMAGES:
         raise BusinessValidationError("本轮最多选择 6 张图片上下文（含分支基图）")
@@ -513,6 +518,7 @@ def _execute_image_session_round_generation(
     service = ImageChatService()
     normalized_size, normalized_base_asset_id, normalized_reference_ids = _validate_generation_request(
         image_session,
+        session=session,
         size=size,
         base_asset_id=base_asset_id,
         selected_reference_asset_ids=selected_reference_asset_ids,
@@ -782,6 +788,7 @@ def create_image_session_generation_task(
     normalized_tool_options = _normalize_tool_options(tool_options)
     normalized_size, normalized_base_asset_id, normalized_reference_ids = _validate_generation_request(
         image_session,
+        session=session,
         size=size,
         base_asset_id=base_asset_id,
         selected_reference_asset_ids=selected_reference_asset_ids,

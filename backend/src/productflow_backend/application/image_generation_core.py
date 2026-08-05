@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from productflow_backend.application.contracts import ReferenceImageInput
-from productflow_backend.config import filter_image_tool_options
+from productflow_backend.application.runtime_settings import get_runtime_settings
+from productflow_backend.config import filter_image_tool_options, parse_image_tool_allowed_fields
 from productflow_backend.infrastructure.image.base import image_dimensions_from_bytes
 
 
@@ -67,8 +68,15 @@ def unique_image_generation_ids(ids: list[str] | None) -> list[str]:
     return values
 
 
-def normalize_image_generation_tool_options(tool_options: dict[str, Any] | None) -> dict[str, Any] | None:
-    normalized = filter_image_tool_options(tool_options)
+def normalize_image_generation_tool_options(
+    tool_options: dict[str, Any] | None,
+    *,
+    allowed_fields: tuple[str, ...] | None = None,
+) -> dict[str, Any] | None:
+    resolved_allowed_fields = allowed_fields
+    if resolved_allowed_fields is None:
+        resolved_allowed_fields = parse_image_tool_allowed_fields(get_runtime_settings().image_tool_allowed_fields)
+    normalized = filter_image_tool_options(tool_options, allowed_fields=resolved_allowed_fields)
     if not normalized:
         return None
     normalized.pop("n", None)

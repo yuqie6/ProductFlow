@@ -14,7 +14,7 @@ from productflow_backend.application.contracts import (
     ReferenceImageInput,
 )
 from productflow_backend.application.language_policy import copy_language_policy, sparse_fact_policy
-from productflow_backend.config import get_runtime_settings
+from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.infrastructure.prompts import text_or_default
 from productflow_backend.infrastructure.provider_config import (
     ResolvedTextProviderConfig,

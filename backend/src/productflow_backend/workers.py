@@ -10,7 +10,7 @@ from productflow_backend.application.product_workflows import (
     execute_product_workflow_node_run,
     execute_product_workflow_run,
 )
-from productflow_backend.config import get_runtime_settings
+from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.domain.durable_generation_tasks import (
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
     WORKFLOW_RUN_GENERATION_TASK_CONTRACT,
