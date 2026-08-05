@@ -17,7 +17,6 @@ from productflow_backend.domain.enums import (
     CopyStatus,
     SourceAssetKind,
     WorkflowNodeStatus,
-    WorkflowNodeType,
 )
 from productflow_backend.infrastructure.db.models import (
     CopySet,
@@ -140,70 +139,16 @@ def source_asset_for_poster_variant(
     workflow: ProductWorkflow,
     poster_variant_id: str,
 ) -> SourceAsset | None:
-    """Find the reference SourceAsset that was created alongside a workflow poster."""
-    asset = session.scalar(
+    """Find the newest column-backed reference SourceAsset for a workflow poster."""
+    return session.scalar(
         select(SourceAsset)
         .where(
             SourceAsset.product_id == workflow.product_id,
             SourceAsset.kind == SourceAssetKind.REFERENCE_IMAGE,
             SourceAsset.source_poster_variant_id == poster_variant_id,
         )
-        .order_by(SourceAsset.created_at.desc())
+        .order_by(SourceAsset.created_at.desc(), SourceAsset.id.desc())
     )
-    if asset is not None:
-        return asset
-
-    for node in workflow.nodes:
-        if node.node_type != WorkflowNodeType.IMAGE_GENERATION:
-            continue
-        output = node.output_json or {}
-        raw_poster_ids = output.get("generated_poster_variant_ids")
-        raw_source_asset_ids = output.get("filled_source_asset_ids")
-        poster_ids = (
-            [item for item in raw_poster_ids if isinstance(item, str)] if isinstance(raw_poster_ids, list) else []
-        )
-        source_asset_ids = (
-            [item for item in raw_source_asset_ids if isinstance(item, str)]
-            if isinstance(raw_source_asset_ids, list)
-            else []
-        )
-        for poster_id, source_asset_id in zip(poster_ids, source_asset_ids, strict=False):
-            if poster_id != poster_variant_id:
-                continue
-            asset = session.get(SourceAsset, source_asset_id)
-            if (
-                asset is not None
-                and asset.product_id == workflow.product_id
-                and asset.kind == SourceAssetKind.REFERENCE_IMAGE
-            ):
-                asset.source_poster_variant_id = poster_variant_id
-                session.flush()
-                return asset
-    for node in workflow.nodes:
-        if node.node_type != WorkflowNodeType.REFERENCE_IMAGE:
-            continue
-        output = node.output_json or {}
-        if output.get("source_poster_variant_id") != poster_variant_id:
-            continue
-        raw_source_asset_ids = output.get("source_asset_ids")
-        source_asset_ids = (
-            [item for item in raw_source_asset_ids if isinstance(item, str)]
-            if isinstance(raw_source_asset_ids, list)
-            else []
-        )
-        source_asset_id = source_asset_ids[0] if source_asset_ids else None
-        if source_asset_id is None:
-            continue
-        asset = session.get(SourceAsset, source_asset_id)
-        if (
-            asset is not None
-            and asset.product_id == workflow.product_id
-            and asset.kind == SourceAssetKind.REFERENCE_IMAGE
-        ):
-            asset.source_poster_variant_id = poster_variant_id
-            session.flush()
-            return asset
-    return None
 
 
 def fill_reference_node(

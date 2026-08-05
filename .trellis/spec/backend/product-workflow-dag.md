@@ -524,9 +524,10 @@ returns the normal `ProductWorkflow`.
   SourceAsset-backed requests directly bind the existing same-product `reference_image` SourceAsset without creating a
   duplicate upload. If that SourceAsset has `source_poster_variant_id`, preserve that poster-source metadata in the filled
   reference node output. PosterVariant-backed requests first look for a same-product `reference_image` SourceAsset whose
-  `source_poster_variant_id` matches the poster, then fall back to workflow output pairings from
-  `generated_poster_variant_ids` / `filled_source_asset_ids`; if none exists, copy/materialize the poster file into a new
-  `reference_image` SourceAsset named `poster-{poster_variant_id}.*` with `source_poster_variant_id` set, then bind it.
+  `source_poster_variant_id` matches the poster. Historical workflow output pairings from
+  `generated_poster_variant_ids` / `filled_source_asset_ids` are migration input only; runtime binding does not scan or
+  repair them. If no column-backed asset exists, copy/materialize the poster file into a new `reference_image` SourceAsset
+  named `poster-{poster_variant_id}.*` with `source_poster_variant_id` set, then bind it.
   The filename convention is legacy compatibility only; current de-duplication should use explicit
   `source_poster_variant_id` so a user-uploaded reference image with the same filename is not hidden or rebound as a poster
   copy.
@@ -658,9 +659,9 @@ returns the normal `ProductWorkflow`.
 - Base: selected-node execution planning is a DB-free domain rule fed by an application/query-layer reusable-edge
   decision. The domain rule decides which missing upstream node types are required; the query layer decides whether an
   existing `CopySet`, `PosterVariant`, or `SourceAsset` actually belongs to the workflow product.
-- Base: image-node reusable artifact detection must accept both `poster_variant_ids` and
-  `generated_poster_variant_ids` in node `output_json`, then validate those IDs against first-class `PosterVariant` rows
-  for the same product before skipping an upstream image node.
+- Base: image-node reusable artifact detection must read both `poster_variant_ids` and
+  `generated_poster_variant_ids` through the shared `poster_variant_ids_from_output(...)` compatibility helper, then
+  validate those IDs against first-class `PosterVariant` rows for the same product before skipping an upstream image node.
 - Bad: add an edge from an image node back to a copy node; the cycle validator rejects it before commit.
 
 ### 6. Tests Required

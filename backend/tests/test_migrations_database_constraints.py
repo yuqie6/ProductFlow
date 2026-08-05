@@ -62,6 +62,18 @@ def test_workflow_run_model_has_retryability_and_progress_metadata() -> None:
     assert table.c.progress_metadata.nullable
 
 
+def test_source_asset_model_matches_poster_lineage_contract() -> None:
+    table = SourceAsset.__table__
+    assert table.c.source_poster_variant_id.type.length == 36
+    assert table.c.source_poster_variant_id.nullable
+    assert "ix_source_assets_source_poster_variant_id" in {index.name for index in table.indexes}
+    foreign_keys = {fk.parent.name: fk for fk in table.foreign_keys}
+    lineage_fk = foreign_keys["source_poster_variant_id"]
+    assert lineage_fk.constraint.name == "fk_source_assets_source_poster_variant_id"
+    assert lineage_fk.target_fullname == "poster_variants.id"
+    assert lineage_fk.ondelete == "SET NULL"
+
+
 def test_gallery_entry_model_matches_migration_contract() -> None:
     table = ImageGalleryEntry.__table__
     assert table.c.id.type.length == 36
@@ -126,6 +138,224 @@ def test_alembic_upgrade_head_supports_sqlite(tmp_path: Path, monkeypatch) -> No
     command.upgrade(config, "head")
 
     assert database_path.exists()
+    get_settings.cache_clear()
+
+
+def test_source_asset_poster_lineage_migration_supports_sqlite(tmp_path: Path, monkeypatch) -> None:
+    database_path = tmp_path / "source-asset-poster-lineage.db"
+    storage_root = tmp_path / "storage"
+    monkeypatch.setenv("ADMIN_ACCESS_KEY", "super-secret-admin-key")
+    monkeypatch.setenv("SESSION_SECRET", "super-secret-session-key-123")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path}")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/9")
+    monkeypatch.setenv("STORAGE_ROOT", str(storage_root))
+    get_settings.cache_clear()
+
+    backend_dir = Path(__file__).resolve().parents[1]
+    config = Config(str(backend_dir / "alembic.ini"))
+    config.set_main_option("script_location", str(backend_dir / "alembic"))
+    command.upgrade(config, "20260627_0029")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    now = "2026-08-06 00:00:00"
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                "INSERT INTO products (id, name, created_at, updated_at) VALUES "
+                "('product-1', 'lineage product', :now, :now), "
+                "('product-2', 'other product', :now, :now)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO copy_sets "
+                "(id, product_id, creative_brief_id, status, provider_name, model_name, prompt_version, "
+                "edited_at, confirmed_at, created_at, updated_at, structured_payload, model_structured_payload) "
+                "VALUES "
+                "('copy-1', 'product-1', NULL, 'draft', 'test', 'test', 'test', NULL, NULL, :now, :now, NULL, NULL), "
+                "('copy-2', 'product-2', NULL, 'draft', 'test', 'test', 'test', NULL, NULL, :now, :now, NULL, NULL)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO poster_variants "
+                "(id, product_id, copy_set_id, kind, template_name, mime_type, storage_path, width, height, "
+                "created_at) "
+                "VALUES (:id, :product_id, :copy_set_id, 'promo_poster', 'test', 'image/png', :storage_path, 1, 1, "
+                ":now)"
+            ),
+            [
+                {
+                    "id": poster_id,
+                    "product_id": product_id,
+                    "copy_set_id": copy_set_id,
+                    "storage_path": f"{poster_id}.png",
+                    "now": now,
+                }
+                for poster_id, product_id, copy_set_id in (
+                    ("poster-normal", "product-1", "copy-1"),
+                    ("poster-legacy", "product-1", "copy-1"),
+                    ("poster-duplicate", "product-1", "copy-1"),
+                    ("poster-reference", "product-1", "copy-1"),
+                    ("poster-ambiguous-a", "product-1", "copy-1"),
+                    ("poster-ambiguous-b", "product-1", "copy-1"),
+                    ("poster-missing-source", "product-1", "copy-1"),
+                    ("poster-existing", "product-1", "copy-1"),
+                    ("poster-other", "product-2", "copy-2"),
+                )
+            ],
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO source_assets "
+                "(id, product_id, kind, original_filename, mime_type, storage_path, created_at, "
+                "source_poster_variant_id) "
+                "VALUES (:id, :product_id, :kind, :filename, 'image/png', :storage_path, :created_at, :poster_id)"
+            ),
+            [
+                {
+                    "id": asset_id,
+                    "product_id": product_id,
+                    "kind": kind,
+                    "filename": f"{asset_id}.png",
+                    "storage_path": f"{asset_id}.png",
+                    "created_at": created_at,
+                    "poster_id": poster_id,
+                }
+                for asset_id, product_id, kind, created_at, poster_id in (
+                    ("asset-normal", "product-1", "reference_image", now, None),
+                    ("asset-legacy", "product-1", "reference_image", now, None),
+                    ("asset-duplicate-old", "product-1", "reference_image", "2026-08-06 00:00:01", None),
+                    ("asset-duplicate-new", "product-1", "reference_image", "2026-08-06 00:00:02", None),
+                    ("asset-reference", "product-1", "reference_image", now, None),
+                    ("asset-ambiguous", "product-1", "reference_image", now, None),
+                    ("asset-existing", "product-1", "reference_image", now, "poster-existing"),
+                    ("asset-invalid", "product-1", "reference_image", now, "missing-poster"),
+                    ("asset-cross-product", "product-1", "reference_image", now, "poster-other"),
+                    ("asset-original", "product-1", "original_image", now, "poster-normal"),
+                )
+            ],
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO product_workflows "
+                "(id, product_id, title, active, created_at, updated_at) "
+                "VALUES ('workflow-1', 'product-1', 'lineage workflow', 1, :now, :now)"
+            ),
+            {"now": now},
+        )
+        node_rows = [
+            (
+                "node-image-1",
+                "image_generation",
+                {
+                    "generated_poster_variant_ids": [
+                        "poster-normal",
+                        "poster-duplicate",
+                        "poster-missing-source",
+                        "poster-ambiguous-a",
+                    ],
+                    "filled_source_asset_ids": [
+                        "asset-normal",
+                        "asset-duplicate-old",
+                        "asset-not-found",
+                        "asset-ambiguous",
+                    ],
+                },
+            ),
+            (
+                "node-image-2",
+                "image_generation",
+                {
+                    "generated_poster_variant_ids": ["poster-duplicate", "poster-ambiguous-b", "poster-orphan"],
+                    "filled_source_asset_ids": ["asset-duplicate-new", "asset-ambiguous", "asset-not-found"],
+                },
+            ),
+            (
+                "node-legacy",
+                "image_generation",
+                {"poster_variant_ids": ["poster-legacy"], "filled_source_asset_ids": ["asset-legacy"]},
+            ),
+            (
+                "node-reference",
+                "reference_image",
+                {"source_poster_variant_id": "poster-reference", "source_asset_ids": ["asset-reference"]},
+            ),
+        ]
+        connection.execute(
+            sa.text(
+                "INSERT INTO workflow_nodes "
+                "(id, workflow_id, node_type, title, position_x, position_y, config_json, status, output_json, "
+                "failure_reason, last_run_at, created_at, updated_at) "
+                "VALUES (:id, 'workflow-1', :node_type, :id, 0, 0, '{}', 'succeeded', :output_json, "
+                "NULL, NULL, :now, :now)"
+            ),
+            [
+                {"id": node_id, "node_type": node_type, "output_json": json.dumps(output), "now": now}
+                for node_id, node_type, output in node_rows
+            ],
+        )
+
+    engine.dispose()
+    command.upgrade(config, "head")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    inspector = sa.inspect(engine)
+    indexes = {index["name"]: index for index in inspector.get_indexes("source_assets")}
+    assert indexes["ix_source_assets_source_poster_variant_id"]["column_names"] == ["source_poster_variant_id"]
+    foreign_keys = {
+        tuple(foreign_key["constrained_columns"]): foreign_key
+        for foreign_key in inspector.get_foreign_keys("source_assets")
+    }
+    lineage_fk = foreign_keys[("source_poster_variant_id",)]
+    assert lineage_fk["name"] == "fk_source_assets_source_poster_variant_id"
+    assert lineage_fk["referred_table"] == "poster_variants"
+    assert lineage_fk["options"]["ondelete"] == "SET NULL"
+
+    with engine.connect() as connection:
+        lineage = dict(
+            connection.execute(
+                sa.text("SELECT id, source_poster_variant_id FROM source_assets")
+            ).all()
+        )
+    assert lineage["asset-normal"] == "poster-normal"
+    assert lineage["asset-legacy"] == "poster-legacy"
+    assert lineage["asset-duplicate-new"] == "poster-duplicate"
+    assert lineage["asset-duplicate-old"] is None
+    assert lineage["asset-reference"] == "poster-reference"
+    assert lineage["asset-ambiguous"] is None
+    assert lineage["asset-existing"] == "poster-existing"
+    assert lineage["asset-invalid"] is None
+    assert lineage["asset-cross-product"] is None
+    assert lineage["asset-original"] is None
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+        connection.execute(sa.text("DELETE FROM poster_variants WHERE id = 'poster-normal'"))
+        remaining_lineage = connection.execute(
+            sa.text("SELECT source_poster_variant_id FROM source_assets WHERE id = 'asset-normal'")
+        ).scalar_one()
+        assert remaining_lineage is None
+        assert (
+            connection.execute(sa.text("SELECT COUNT(*) FROM source_assets WHERE id = 'asset-normal'")).scalar_one()
+            == 1
+        )
+
+    engine.dispose()
+    command.downgrade(config, "20260627_0029")
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    inspector = sa.inspect(engine)
+    assert "source_poster_variant_id" in {column["name"] for column in inspector.get_columns("source_assets")}
+    assert "ix_source_assets_source_poster_variant_id" in {
+        index["name"] for index in inspector.get_indexes("source_assets")
+    }
+    assert not any(
+        tuple(foreign_key["constrained_columns"]) == ("source_poster_variant_id",)
+        for foreign_key in inspector.get_foreign_keys("source_assets")
+    )
+    engine.dispose()
     get_settings.cache_clear()
 
 

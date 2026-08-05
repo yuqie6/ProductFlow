@@ -165,6 +165,20 @@ def source_asset_ids_from_config(config: dict[str, Any]) -> list[str]:
     return [single] if isinstance(single, str) else []
 
 
+def poster_variant_ids_from_output(output: dict[str, Any]) -> list[str]:
+    """Read canonical poster ids while keeping the historical output alias compatible."""
+    for key in ("generated_poster_variant_ids", "poster_variant_ids"):
+        if key not in output:
+            continue
+        raw_ids = output[key]
+        if isinstance(raw_ids, list):
+            return [item for item in raw_ids if isinstance(item, str)]
+        if isinstance(raw_ids, str):
+            return [raw_ids]
+        return []
+    return []
+
+
 def optional_config_text(config: dict[str, Any], key: str) -> str | None:
     value = config.get(key)
     if not isinstance(value, str):
@@ -255,11 +269,7 @@ def collect_incoming_context(
                     context.image_asset_ids.extend(item for item in raw_ids if isinstance(item, str))
                 elif isinstance(raw_ids, str):
                     context.image_asset_ids.append(raw_ids)
-            raw_poster_ids = output.get("poster_variant_ids")
-            if isinstance(raw_poster_ids, list):
-                context.poster_variant_ids.extend(item for item in raw_poster_ids if isinstance(item, str))
-            elif isinstance(raw_poster_ids, str):
-                context.poster_variant_ids.append(raw_poster_ids)
+            context.poster_variant_ids.extend(poster_variant_ids_from_output(output))
             raw_images = output.get("images")
             images = raw_images if isinstance(raw_images, list) else []
             for image in images:

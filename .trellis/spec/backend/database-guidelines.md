@@ -84,6 +84,82 @@ Relationships are defined on models and use explicit cascades where child record
 - `Product.current_confirmed_copy_set_id` uses a named foreign key (`fk_products_current_confirmed_copy_set_id`) and
   `post_update=True` to handle the cycle with `CopySet`.
 
+### Scenario: Poster/source lineage authority
+
+#### 1. Scope / Trigger
+
+- Trigger: changing `SourceAsset.source_poster_variant_id`, poster binding, generated/reference workflow output lineage,
+  or the migration that imports historical poster/source pairings.
+- The persisted SourceAsset column is the runtime authority. Workflow `output_json` is an execution artifact and is not a
+  read-path repair source.
+
+#### 2. Signatures
+
+- `SourceAsset.source_poster_variant_id`: nullable `String(36)` with named FK
+  `fk_source_assets_source_poster_variant_id` to `poster_variants.id`, `ON DELETE SET NULL`, and index
+  `ix_source_assets_source_poster_variant_id`.
+- `source_asset_for_poster_variant(session, workflow, poster_variant_id) -> SourceAsset | None`: product-scoped,
+  reference-kind-only, column-backed query ordered by `created_at DESC, id DESC`; it does not scan nodes or flush.
+- `poster_variant_ids_from_output(output) -> list[str]`: canonical `generated_poster_variant_ids` reader with the
+  historical `poster_variant_ids` fallback, shared by context collection and execution/reuse checks.
+- Alembic `20260806_0030_add_source_asset_poster_lineage_fk.py`: backfills old node output pairings, validates existing
+  column values, then adds the FK.
+
+#### 3. Contracts
+
+- Poster deletion preserves the reference SourceAsset row and storage metadata, and sets only its lineage column to null.
+- Backfill reads image-generation positional pairs and reference-node `source_poster_variant_id` plus the first
+  `source_asset_ids` entry. It accepts mapping or JSON-string values and ignores malformed/non-string ids.
+- Existing valid same-product reference lineage wins over JSON. Dangling, cross-product, and non-reference existing values
+  are cleared before the FK is created.
+- A source asset listed for multiple posters remains unresolved. Multiple candidates for one poster select the newest asset
+  by `created_at`, then `id`; missing or ambiguous data remains null.
+- The workflow output fields and historical aliases remain readable; the compatibility helper never writes SourceAsset
+  rows.
+
+#### 4. Validation & Error Matrix
+
+- Poster id absent from `poster_variants` -> migration candidate skipped; existing invalid column value cleared.
+- Source asset absent, wrong product, or not `reference_image` -> candidate skipped; no runtime repair is attempted.
+- Poster deletion -> database sets `source_poster_variant_id` to `NULL`; SourceAsset and file remain.
+- Bind poster with no column-backed reference asset -> materialize one reference asset from poster storage and set the FK.
+- Bind poster with a column-backed reference asset -> reuse the newest matching row without an implicit update/flush.
+
+#### 5. Good / Base / Bad Cases
+
+- Good: valid old image-node pair is backfilled and later poster binding finds it through the indexed column.
+- Base: duplicate historical candidates resolve deterministically without deleting either SourceAsset row.
+- Base: a user-uploaded reference image with a matching filename but null lineage is not treated as poster-derived.
+- Bad: traverse `workflow.nodes` in `source_asset_for_poster_variant` and update/flush a row during a read.
+- Bad: add a new poster-id output alias at one execution call site without updating `poster_variant_ids_from_output`.
+
+#### 6. Tests Required
+
+- Model contract asserts nullable FK name, target, `SET NULL`, and lineage index.
+- SQLite migration fixture asserts normal/legacy pairing, duplicate selection, missing/orphan/ambiguous handling, FK
+  deletion, and downgrade preservation.
+- PostgreSQL live fixture upgrades an isolated database from the prior head, verifies backfill and delete behavior, and
+  downgrades the new FK.
+- Application tests assert helper column-only behavior with zero `before_flush` events and alias canonical/fallback reads.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+asset = source_asset_for_poster_variant(session, workflow=workflow, poster_variant_id=poster_id)
+# helper scans output_json and repairs SourceAsset when the column misses
+```
+
+Correct:
+
+```python
+asset = session.scalar(
+    select(SourceAsset).where(SourceAsset.source_poster_variant_id == poster_id)
+)
+# historical JSON is consumed only by the one-time Alembic backfill
+```
+
 ---
 
 ## Query Patterns

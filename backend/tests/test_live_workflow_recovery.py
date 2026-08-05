@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import sys
 from collections.abc import Iterator
@@ -11,10 +12,12 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import uuid4
 
 import pytest
+from alembic.config import Config
 from dramatiq.brokers.redis import RedisBroker
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.engine import URL, make_url
 
+from alembic import command
 from productflow_backend.application.durable_recovery import recover_unfinished_workflow_runs
 from productflow_backend.config import get_settings
 from productflow_backend.domain.enums import WorkflowNodeStatus, WorkflowNodeType, WorkflowRunStatus
@@ -217,3 +220,107 @@ def test_recover_queued_workflow_run_through_postgres_and_redis(
         broker.join(workers.run_product_workflow_run.queue_name, timeout=5_000)
     finally:
         consumer.close()
+
+
+def test_poster_source_lineage_migration_through_postgres(monkeypatch: pytest.MonkeyPatch) -> None:
+    base_database_url = _required_environment("DATABASE_URL")
+    with _temporary_postgres_database(base_database_url) as temporary_database_url:
+        with monkeypatch.context() as environment:
+            environment.setenv("DATABASE_URL", temporary_database_url.render_as_string(hide_password=False))
+            get_settings.cache_clear()
+
+            backend_dir = Path(__file__).resolve().parents[1]
+            config = Config(str(backend_dir / "alembic.ini"))
+            config.set_main_option("script_location", str(backend_dir / "alembic"))
+            command.upgrade(config, "20260627_0029")
+
+            engine = create_engine(temporary_database_url, future=True)
+            now = "2026-08-06 00:00:00+00"
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "INSERT INTO products (id, name, created_at, updated_at) "
+                        "VALUES ('product-live', 'live lineage product', :now, :now)"
+                    ),
+                    {"now": now},
+                )
+                connection.execute(
+                    text(
+                        "INSERT INTO copy_sets "
+                        "(id, product_id, creative_brief_id, status, provider_name, model_name, prompt_version, "
+                        "edited_at, confirmed_at, created_at, updated_at, structured_payload, "
+                        "model_structured_payload) "
+                        "VALUES ('copy-live', 'product-live', NULL, 'draft', 'test', 'test', 'test', NULL, NULL, "
+                        ":now, :now, NULL, NULL)"
+                    ),
+                    {"now": now},
+                )
+                connection.execute(
+                    text(
+                        "INSERT INTO poster_variants "
+                        "(id, product_id, copy_set_id, kind, template_name, mime_type, storage_path, width, height, "
+                        "created_at) VALUES ('poster-live', 'product-live', 'copy-live', 'promo_poster', 'test', "
+                        "'image/png', 'poster.png', 1, 1, :now)"
+                    ),
+                    {"now": now},
+                )
+                connection.execute(
+                    text(
+                        "INSERT INTO source_assets "
+                        "(id, product_id, kind, original_filename, mime_type, storage_path, created_at, "
+                        "source_poster_variant_id) VALUES ('asset-live', 'product-live', 'reference_image', "
+                        "'reference.png', 'image/png', 'reference.png', :now, NULL)"
+                    ),
+                    {"now": now},
+                )
+                connection.execute(
+                    text(
+                        "INSERT INTO product_workflows "
+                        "(id, product_id, title, active, created_at, updated_at) "
+                        "VALUES ('workflow-live', 'product-live', 'live lineage workflow', TRUE, :now, :now)"
+                    ),
+                    {"now": now},
+                )
+                connection.execute(
+                    text(
+                        "INSERT INTO workflow_nodes "
+                        "(id, workflow_id, node_type, title, position_x, position_y, config_json, status, output_json, "
+                        "failure_reason, last_run_at, created_at, updated_at) VALUES "
+                        "('node-live', 'workflow-live', 'image_generation', 'live lineage node', 0, 0, '{}', "
+                        "'succeeded', :output_json, NULL, NULL, :now, :now)"
+                    ),
+                    {
+                        "now": now,
+                        "output_json": json.dumps(
+                            {
+                                "generated_poster_variant_ids": ["poster-live"],
+                                "filled_source_asset_ids": ["asset-live"],
+                            }
+                        ),
+                    },
+                )
+            engine.dispose()
+
+            get_settings.cache_clear()
+            command.upgrade(config, "head")
+
+            engine = create_engine(temporary_database_url, future=True)
+            with engine.begin() as connection:
+                lineage = connection.execute(
+                    text("SELECT source_poster_variant_id FROM source_assets WHERE id = 'asset-live'")
+                ).scalar_one()
+                assert lineage == "poster-live"
+                connection.execute(text("DELETE FROM poster_variants WHERE id = 'poster-live'"))
+                assert (
+                    connection.execute(
+                        text("SELECT source_poster_variant_id FROM source_assets WHERE id = 'asset-live'")
+                    ).scalar_one()
+                    is None
+                )
+            engine.dispose()
+
+            get_settings.cache_clear()
+            command.downgrade(config, "20260627_0029")
+            get_settings.cache_clear()
+
+        get_settings.cache_clear()

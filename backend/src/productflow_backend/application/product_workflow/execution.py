@@ -27,6 +27,7 @@ from productflow_backend.application.product_workflow.context import (
     find_source_asset,
     instruction_with_upstream_text,
     optional_config_text,
+    poster_variant_ids_from_output,
     product_context_values,
     reference_image_inputs_for_copy,
     source_asset_ids_from_config,
@@ -588,10 +589,7 @@ def _execute_workflow_node_run(
     node_run.status = WorkflowNodeStatus.SUCCEEDED
     node_run.output_json = output
     node_run.copy_set_id = output.get("copy_set_id")
-    if isinstance(output.get("generated_poster_variant_ids"), list):
-        poster_ids = output["generated_poster_variant_ids"]
-    else:
-        poster_ids = output.get("poster_variant_ids") if isinstance(output.get("poster_variant_ids"), list) else []
+    poster_ids = poster_variant_ids_from_output(output)
     node_run.poster_variant_id = poster_ids[0] if poster_ids else output.get("poster_variant_id")
     node_run.finished_at = now_utc()
     workflow.updated_at = now_utc()
@@ -807,9 +805,7 @@ def _node_has_reusable_output(
                 image_node=node,
                 reference_node=target_node,
             )
-        poster_ids = output.get("poster_variant_ids")
-        if not isinstance(poster_ids, list):
-            poster_ids = output.get("generated_poster_variant_ids")
+        poster_ids = poster_variant_ids_from_output(output)
         filled_ids = output.get("filled_source_asset_ids")
         source_asset_ids = source_asset_ids_from_config(output)
         if isinstance(filled_ids, list):

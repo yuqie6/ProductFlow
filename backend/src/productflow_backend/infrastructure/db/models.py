@@ -326,6 +326,7 @@ class SourceAsset(Base):
             postgresql_where=text("kind = 'original_image'"),
             sqlite_where=text("kind = 'original_image'"),
         ),
+        Index("ix_source_assets_source_poster_variant_id", "source_poster_variant_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -334,7 +335,15 @@ class SourceAsset(Base):
     original_filename: Mapped[str] = mapped_column(String(255))
     mime_type: Mapped[str] = mapped_column(String(100))
     storage_path: Mapped[str] = mapped_column(String(500))
-    source_poster_variant_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    source_poster_variant_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "poster_variants.id",
+            ondelete="SET NULL",
+            name="fk_source_assets_source_poster_variant_id",
+        ),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     product: Mapped[Product] = relationship(back_populates="source_assets", foreign_keys=[product_id])
