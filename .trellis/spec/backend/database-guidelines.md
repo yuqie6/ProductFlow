@@ -1452,3 +1452,22 @@ migration file.
 ### 7. Explicit Non-Goals
 - No distributed transaction, outbox, object-storage migration, repository/Unit of Work conversion, or orphan-repair
   daemon is introduced by this contract.
+## Scenario: Product list read projection
+### 1. Scope / Trigger
+- Trigger: changing product list pagination, search, status filtering, sorting, or the Product summary serializer.
+- Applies to `application/use_cases.py::list_products`, the Product list endpoint, and Product summary state derivation.
+### 2. Contracts
+- `_product_query()` remains the detail/history aggregate query.
+- `list_products()` uses a purpose-specific list query that loads only source assets, copy sets, poster variants, and
+  active workflow nodes/runs needed by the list summary and `derive_product_state`.
+- The list query does not eager-load creative briefs or the confirmed-copy relationship used only by detail serializers.
+- Count, filtering, sorting, offset/limit pagination, ORM return shape, and API response shape remain unchanged.
+### 3. Validation & Error Matrix
+- List query -> one paginated Product SELECT plus only the summary/state relationship loads.
+- Detail query -> `_product_query()` still loads the relationships required by `serialize_product_detail` and history reads.
+- Invalid list sort/search parameters -> existing presentation validation and response status remain unchanged.
+### 4. Tests Required
+- Query event regression asserts no creative-brief SELECT and one copy-set SELECT for the list path.
+- Existing list search, status, sort, pagination, and detail serialization tests remain green.
+### 5. Explicit Non-Goals
+- No repository, generic projection framework, DTO redesign, schema change, or relocation of workflow status rules.

@@ -90,6 +90,16 @@ def _product_query():
     )
 
 
+def _product_list_query():
+    return select(Product).options(
+        selectinload(Product.source_assets),
+        selectinload(Product.copy_sets),
+        selectinload(Product.poster_variants),
+        selectinload(Product.workflows).selectinload(ProductWorkflow.nodes),
+        selectinload(Product.workflows).selectinload(ProductWorkflow.runs),
+    )
+
+
 def _product_sort_order(sort: ProductListSort):
     if sort == "created_desc":
         return Product.created_at.desc(), Product.id.desc()
@@ -318,7 +328,7 @@ def list_products(
         filters.append(Product.name.icontains(normalized_q, autoescape=True))
 
     count_query = select(func.count()).select_from(Product)
-    product_query = _product_query().order_by(None).order_by(*_product_sort_order(sort))
+    product_query = _product_list_query().order_by(*_product_sort_order(sort))
     if filters:
         count_query = count_query.where(*filters)
         product_query = product_query.where(*filters)

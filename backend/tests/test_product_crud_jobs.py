@@ -578,10 +578,13 @@ def test_product_status_filter_uses_database_pagination_before_eager_loading(db_
     } == expected_state_by_product_id
 
     product_selects: list[str] = []
+    list_selects: list[str] = []
 
     @event.listens_for(db_session.bind, "before_cursor_execute")
     def record_product_query(conn, cursor, statement, parameters, context, executemany):
         normalized_statement = " ".join(statement.lower().split())
+        if normalized_statement.startswith("select"):
+            list_selects.append(normalized_statement)
         if (
             normalized_statement.startswith("select products.id")
             and "from products" in normalized_statement
@@ -590,6 +593,7 @@ def test_product_status_filter_uses_database_pagination_before_eager_loading(db_
             product_selects.append(normalized_statement)
 
     try:
+        db_session.expire_all()
         products, total = list_products(
             db_session,
             status=ProductWorkflowState.DRAFT,
@@ -605,6 +609,8 @@ def test_product_status_filter_uses_database_pagination_before_eager_loading(db_
     assert len(product_selects) == 1
     assert "exists" in product_selects[0]
     assert "limit" in product_selects[0]
+    assert not any("creative_briefs" in statement for statement in list_selects)
+    assert sum("from copy_sets" in statement for statement in list_selects) == 1
 
     draft_products, draft_total = list_products(
         db_session,
