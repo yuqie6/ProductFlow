@@ -153,12 +153,12 @@ export function ProductListSurface({
           </div>
         ) : null}
 
-        <div role="row" className="hidden min-h-[38px] grid-cols-[minmax(320px,1fr)_130px_150px_78px] items-center border-b border-slate-200 bg-slate-50 text-[11px] font-medium text-slate-400 lg:grid xl:grid-cols-[minmax(300px,1.05fr)_minmax(220px,.8fr)_130px_150px_78px] dark:!border-[#292c32] dark:!bg-[#17191d] dark:!text-[#737780]">
-          <div role="columnheader" className="px-[18px]">{t("products.table.product")}</div>
-          <div role="columnheader" className="hidden px-[18px] xl:block">{t("products.table.sourceFile")}</div>
-          <div role="columnheader" className="px-[18px]">{t("products.table.created")}</div>
-          <div role="columnheader" className="px-[18px]">{t("products.table.updated")}</div>
-          <div role="columnheader" className="px-3 text-center">{t("products.table.actions")}</div>
+        <div className="hidden min-h-[38px] grid-cols-[minmax(320px,1fr)_130px_150px_78px] items-center border-b border-slate-200 bg-slate-50 text-[11px] font-medium text-slate-400 lg:grid xl:grid-cols-[minmax(300px,1.05fr)_minmax(220px,.8fr)_130px_150px_78px] dark:!border-[#292c32] dark:!bg-[#17191d] dark:!text-[#737780]">
+          <div className="px-[18px]">{t("products.table.product")}</div>
+          <div className="hidden px-[18px] xl:block">{t("products.table.sourceFile")}</div>
+          <div className="px-[18px]">{t("products.table.created")}</div>
+          <div className="px-[18px]">{t("products.table.updated")}</div>
+          <div className="px-3 text-center">{t("products.table.actions")}</div>
         </div>
 
         {isLoading ? (
@@ -175,7 +175,7 @@ export function ProductListSurface({
             }
           />
         ) : products.length ? (
-          <div className="divide-y divide-slate-200 dark:!divide-[#292c32]">
+          <div role="list" aria-label={t("products.listTitle")} className="divide-y divide-slate-200 dark:!divide-[#292c32]">
             {products.map((product) => (
               <ProductRow
                 key={product.id}
@@ -276,7 +276,7 @@ function ProductRow({
   const updatedTime = formatTime(product.updated_at, locale);
 
   return (
-    <article role="row" className="group relative isolate grid min-h-[112px] grid-cols-[minmax(0,1fr)_70px] items-center transition-colors hover:bg-slate-50 focus-within:bg-slate-50 lg:min-h-[88px] lg:grid-cols-[minmax(320px,1fr)_130px_150px_78px] xl:grid-cols-[minmax(300px,1.05fr)_minmax(220px,.8fr)_130px_150px_78px] dark:hover:!bg-[#181b21] dark:focus-within:!bg-[#181b21]">
+    <article role="listitem" className="group relative isolate grid min-h-[112px] grid-cols-[minmax(0,1fr)_70px] items-center transition-colors hover:bg-slate-50 focus-within:bg-slate-50 lg:min-h-[88px] lg:grid-cols-[minmax(320px,1fr)_130px_150px_78px] xl:grid-cols-[minmax(300px,1.05fr)_minmax(220px,.8fr)_130px_150px_78px] dark:hover:!bg-[#181b21] dark:focus-within:!bg-[#181b21]">
       <span className="pointer-events-none absolute top-3 bottom-3 left-[-1px] z-[2] w-0.5 rounded-r-sm bg-transparent transition-colors group-hover:bg-indigo-600 group-focus-within:bg-indigo-600 dark:group-hover:!bg-[#7b83e6] dark:group-focus-within:!bg-[#7b83e6]" aria-hidden="true" />
       <Link
         to={`/products/${product.id}`}
@@ -284,7 +284,7 @@ function ProductRow({
         className="absolute inset-0 z-[1] outline-none focus-visible:shadow-[inset_0_0_0_2px_rgb(79_70_229)] dark:focus-visible:!shadow-[inset_0_0_0_2px_#7b83e6]"
       />
 
-      <div role="cell" className="relative z-0 col-start-1 row-start-1 flex min-w-0 items-center gap-3 px-3 py-3 pr-2 sm:gap-3.5 md:px-[18px] lg:gap-3.5">
+      <div className="relative z-0 col-start-1 row-start-1 flex min-w-0 items-center gap-3 px-3 py-3 pr-2 sm:gap-3.5 md:px-[18px] lg:gap-3.5">
         <ProductThumbnail product={product} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold text-slate-950 transition-colors group-hover:text-indigo-700 group-focus-within:text-indigo-700 sm:text-[15px] dark:!text-[#f1f2f4] dark:group-hover:!text-[#aeb2ff] dark:group-focus-within:!text-[#aeb2ff]" title={product.name}>
@@ -317,23 +317,23 @@ function ProductRow({
         </div>
       </div>
 
-      <div role="cell" className="relative z-0 hidden min-w-0 px-[18px] text-xs text-slate-500 xl:col-start-2 xl:row-start-1 xl:block dark:!text-[#a4a8b0]">
+      <div className="relative z-0 hidden min-w-0 px-[18px] text-xs text-slate-500 xl:col-start-2 xl:row-start-1 xl:block dark:!text-[#a4a8b0]">
         <span className="block truncate" title={product.source_image_filename ?? undefined}>
           {product.source_image_filename ?? "--"}
         </span>
       </div>
 
-      <div role="cell" className="relative z-0 hidden min-w-0 px-[18px] text-xs tabular-nums text-slate-500 lg:col-start-2 lg:row-start-1 lg:block xl:col-start-3 dark:!text-[#a4a8b0]">
+      <div className="relative z-0 hidden min-w-0 px-[18px] text-xs tabular-nums text-slate-500 lg:col-start-2 lg:row-start-1 lg:block xl:col-start-3 dark:!text-[#a4a8b0]">
         <span className="block">{createdDate}</span>
         <span className="mt-0.5 block text-slate-400 dark:!text-[#737780]">{createdTime}</span>
       </div>
 
-      <div role="cell" className="relative z-0 hidden min-w-0 px-[18px] text-xs tabular-nums text-slate-500 lg:col-start-3 lg:row-start-1 lg:block xl:col-start-4 dark:!text-[#a4a8b0]">
+      <div className="relative z-0 hidden min-w-0 px-[18px] text-xs tabular-nums text-slate-500 lg:col-start-3 lg:row-start-1 lg:block xl:col-start-4 dark:!text-[#a4a8b0]">
         <span className="block">{updatedDate}</span>
         <span className="mt-0.5 block text-slate-400 dark:!text-[#737780]">{updatedTime}</span>
       </div>
 
-      <div role="cell" className="pointer-events-none relative z-10 col-start-2 row-start-1 flex h-full items-center justify-end gap-0 pr-2 lg:col-start-4 lg:gap-1 lg:pr-3 xl:col-start-5">
+      <div className="pointer-events-none relative z-10 col-start-2 row-start-1 flex h-full items-center justify-end gap-0 pr-2 lg:col-start-4 lg:gap-1 lg:pr-3 xl:col-start-5">
         <button
           type="button"
           onClick={onDelete}
