@@ -384,7 +384,7 @@ def resolve_text_provider_config(session: Session | None = None) -> ResolvedText
     owns_session = session is None
     session = session or get_session_factory()()
     try:
-        ensure_provider_config_bootstrapped(session)
+        ensure_provider_config_bootstrapped(session, commit=owns_session)
         binding = _require_binding(session, TEXT_PURPOSE)
         kind = binding.provider_kind
         if kind == "mock":
@@ -426,7 +426,7 @@ def resolve_image_provider_config(session: Session | None = None) -> ResolvedIma
     owns_session = session is None
     session = session or get_session_factory()()
     try:
-        ensure_provider_config_bootstrapped(session)
+        ensure_provider_config_bootstrapped(session, commit=owns_session)
         binding = _require_binding(session, IMAGE_PURPOSE)
         kind = binding.provider_kind
         if kind == "mock":

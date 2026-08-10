@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import Session
 
 from productflow_backend.application.runtime_settings import get_runtime_settings
@@ -16,8 +16,11 @@ from productflow_backend.config import (
     normalize_image_generation_size,
 )
 from productflow_backend.infrastructure import provider_config, runtime_config_store
-from productflow_backend.infrastructure.db.models import AppSetting
-from productflow_backend.infrastructure.provider_config import resolve_text_provider_config
+from productflow_backend.infrastructure.db.models import AppSetting, ProviderBinding
+from productflow_backend.infrastructure.provider_config import (
+    resolve_image_provider_config,
+    resolve_text_provider_config,
+)
 
 
 def test_settings_route_delegates_business_state_to_application_boundary() -> None:
@@ -128,6 +131,7 @@ def test_runtime_settings_falls_back_to_env_when_app_settings_table_is_missing(
     session = Session(engine)
     try:
         settings = get_runtime_settings(session)
+        assert session.scalar(text("SELECT 1")) == 1
     finally:
         session.close()
         engine.dispose()
@@ -159,6 +163,36 @@ def test_provider_resolver_reuses_supplied_session_without_closing_it(
 
     assert resolved.provider_kind == "mock"
     assert close_calls == 0
+
+
+def test_provider_resolver_leaves_borrowed_session_transaction_to_caller(
+    configured_env: Path,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_get_session_factory():
+        raise AssertionError("supplied session should avoid opening an owned session")
+
+    monkeypatch.setattr(provider_config, "get_session_factory", fail_get_session_factory)
+    bind = db_session.get_bind()
+    for resolver in (resolve_text_provider_config, resolve_image_provider_config):
+        db_session.add(AppSetting(key="deletion_enabled", value="true"))
+
+        resolved = resolver(session=db_session)
+
+        assert resolved.provider_kind == "mock"
+        assert set(db_session.scalars(select(ProviderBinding.purpose)).all()) == {"text", "image"}
+        db_session.rollback()
+
+        with Session(bind) as verification_session:
+            assert verification_session.get(AppSetting, "deletion_enabled") is None
+            assert verification_session.scalars(select(ProviderBinding)).all() == []
+
+    resolve_text_provider_config(session=db_session)
+    db_session.commit()
+
+    with Session(bind) as verification_session:
+        assert set(verification_session.scalars(select(ProviderBinding.purpose)).all()) == {"text", "image"}
 
 
 def test_config_helpers_use_explicit_runtime_limits() -> None:

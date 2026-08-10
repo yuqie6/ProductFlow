@@ -24,7 +24,8 @@ def load_runtime_overrides(session: Session | None = None) -> dict[str, str]:
 
 def _load_runtime_overrides(session: Session) -> dict[str, str]:
     try:
-        rows = session.scalars(select(AppSetting).where(AppSetting.key.in_(RUNTIME_CONFIG_KEYS))).all()
+        with session.begin_nested():
+            rows = session.scalars(select(AppSetting).where(AppSetting.key.in_(RUNTIME_CONFIG_KEYS))).all()
     except SQLAlchemyError:
         return {}
     return {row.key: row.value for row in rows}

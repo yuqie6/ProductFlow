@@ -320,10 +320,12 @@ between the DB-free configuration module, application composition points, and in
 - Importing `config.py` must not import ORM models/session infrastructure, create an engine, or query `AppSetting`.
 - `get_runtime_settings(session)` reads only `RUNTIME_CONFIG_KEYS`; env-only values such as `DATABASE_URL`, `REDIS_URL`,
   `SESSION_SECRET`, `ADMIN_ACCESS_KEY`, and `SETTINGS_ACCESS_TOKEN` never come from `app_settings`.
-- A supplied `Session` is caller-owned: runtime settings and provider resolvers must not create or close another session.
-  Without a session, the infrastructure helper owns and closes its fallback session.
+- A supplied `Session` is caller-owned: runtime settings and provider resolvers must not create a second session, close the
+  supplied session, or commit/roll back the caller's outer transaction. Without a session, the infrastructure helper owns
+  and closes its fallback session.
 - Missing `app_settings` or a SQLAlchemy read failure falls back to env/default settings. Invalid effective values still
-  raise the existing configuration validation error.
+  raise the existing configuration validation error. A tolerated read failure on a supplied PostgreSQL session must be
+  isolated in a nested transaction so the caller can continue using its outer transaction after fallback.
 - Runtime-dependent image limits and allowed tool fields are obtained at an application composition point and passed to
   pure helpers explicitly.
 - `GET /api/settings/provider-config`, settings export, and provider list queries are read-only. Startup bootstrap and
@@ -355,8 +357,10 @@ between the DB-free configuration module, application composition points, and in
 
 - Import-order regression: import `config` alone and after `db.session`; assert no engine creation and no config/session SCC.
 - Application boundary regression: assert env fallback, allowed override, env-only exclusion, missing-table fallback, and
-  supplied-session reuse.
-- Resolver ownership regression: pass a `Session`, block session-factory creation, and assert the caller session is not closed.
+  supplied-session reuse. The live PostgreSQL gate must execute another query on the same session after fallback.
+- Resolver ownership regression: pass a `Session`, block session-factory creation, and assert the caller session is not
+  closed or committed. Rolling back must remove pending caller data and bootstrap rows; an explicit caller commit must
+  persist the bootstrap rows.
 - HTTP regression: assert provider config/export reads return empty data without inserting profiles or bindings, while
   lifespan bootstrap and legacy merge tests remain green.
 - Layer regression: assert the settings route delegates mutation/import operations to `application.settings` and contains

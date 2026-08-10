@@ -19,6 +19,7 @@ from sqlalchemy.engine import URL, make_url
 
 from alembic import command
 from productflow_backend.application.durable_recovery import recover_unfinished_workflow_runs
+from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.config import get_settings
 from productflow_backend.domain.enums import WorkflowNodeStatus, WorkflowNodeType, WorkflowRunStatus
 from productflow_backend.infrastructure.db.models import (
@@ -220,6 +221,19 @@ def test_recover_queued_workflow_run_through_postgres_and_redis(
         broker.join(workers.run_product_workflow_run.queue_name, timeout=5_000)
     finally:
         consumer.close()
+
+
+def test_runtime_settings_fallback_preserves_postgres_transaction(
+    live_recovery_dependencies: tuple[RedisBroker, ModuleType],
+) -> None:
+    session_factory = get_session_factory()
+
+    with session_factory() as session:
+        session.execute(text("SET LOCAL search_path TO pg_catalog"))
+
+        get_runtime_settings(session)
+
+        assert session.scalar(text("SELECT 1")) == 1
 
 
 def test_poster_source_lineage_migration_through_postgres(monkeypatch: pytest.MonkeyPatch) -> None:
