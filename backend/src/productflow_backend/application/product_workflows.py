@@ -41,6 +41,11 @@ from productflow_backend.application.product_workflow.user_templates import (
     list_canvas_templates,
     rename_user_canvas_template,
 )
+from productflow_backend.application.product_workflow.v2_runs import (
+    V2WorkflowNodeRunSubmission,
+    get_v2_workflow_node_run,
+    submit_v2_workflow_node_run,
+)
 
 if TYPE_CHECKING:
     from productflow_backend.application.product_workflow.graph import ProductWorkflowStatusSnapshot
@@ -57,6 +62,7 @@ def get_product_workflow_status(session, product_id: str) -> ProductWorkflowStat
 
 __all__ = [
     "WorkflowRunKickoff",
+    "V2WorkflowNodeRunSubmission",
     "AppliedWorkflowTemplateGroup",
     "apply_node_group_template_to_workflow",
     "archive_user_canvas_template",
@@ -72,6 +78,7 @@ __all__ = [
     "execute_product_workflow_node_run",
     "get_or_create_product_workflow",
     "get_product_workflow_status",
+    "get_v2_workflow_node_run",
     "latest_workflow_runs",
     "list_canvas_templates",
     "mark_workflow_run_enqueue_failed",
@@ -82,6 +89,7 @@ __all__ = [
     "run_product_workflow",
     "start_product_workflow_run",
     "submit_product_workflow_run",
+    "submit_v2_workflow_node_run",
     "update_workflow_copy_set",
     "update_workflow_node",
     "upload_workflow_node_image",

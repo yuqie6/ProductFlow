@@ -15,7 +15,12 @@ from productflow_backend.domain.enums import PosterKind
 from productflow_backend.infrastructure.image.base import (
     GeneratedImagePayload,
     ImageProvider,
+    WorkflowGeneratedImage,
+    WorkflowImageReference,
+    WorkflowImageRequest,
+    WorkflowImageResult,
     image_dimensions_from_bytes,
+    map_generation_spec_to_pixel_size,
     parse_size,
 )
 from productflow_backend.infrastructure.image.responses_provider import build_responses_reference_images_from_poster
@@ -322,6 +327,51 @@ class GoogleGeminiImageProvider(ImageProvider):
         )
         return payload, result.model_name
 
+    def generate_workflow_image(self, request: WorkflowImageRequest) -> WorkflowImageResult:
+        size = map_generation_spec_to_pixel_size(request.generation_spec)
+        result = GoogleGeminiImageClient(self.provider_config).generate_image(
+            prompt=request.compiled_prompt,
+            size=size,
+            reference_images=[_gemini_reference(reference) for reference in request.references],
+        )
+        output_metadata = result.provider_output_json.get("_productflow")
+        output_metadata = output_metadata if isinstance(output_metadata, dict) else {}
+        notes = [dict(note) for note in output_metadata.get("notes", []) if isinstance(note, dict)]
+        if request.references:
+            notes.append(
+                {
+                    "kind": "reference_fidelity_prompt_only",
+                    "requested": request.generation_spec.reference_fidelity,
+                    "message": "Gemini adapter 没有独立 reference_fidelity 参数，参考保真要求仅写入编译提示词。",
+                }
+            )
+        if request.generation_spec.background_intent != "auto":
+            notes.append(
+                {
+                    "kind": "background_prompt_only",
+                    "requested": request.generation_spec.background_intent,
+                    "message": "Gemini adapter 没有独立 background 参数，背景要求仅写入编译提示词。",
+                }
+            )
+        image_config = result.provider_request_json.get("image_config")
+        image_config = image_config if isinstance(image_config, dict) else {}
+        effective_parameters = {
+            "adapter": "google_gemini_image",
+            "model": result.model_name,
+            "reference_image_count": len(request.references),
+            **image_config,
+            "notes": notes,
+        }
+        return WorkflowImageResult(
+            images=(WorkflowGeneratedImage(bytes_data=result.bytes_data, mime_type=result.mime_type),),
+            model=result.model_name,
+            provider_response_id=result.provider_response_id,
+            provider_status="completed",
+            effective_parameters=effective_parameters,
+            provider_request_json=result.provider_request_json,
+            provider_output_json=result.provider_output_json,
+        )
+
     def _build_prompt(self, poster: PosterGenerationInput, kind: PosterKind, size: str, settings: Any) -> str:
         return render_poster_image_prompt(
             poster,
@@ -341,3 +391,11 @@ class GoogleGeminiImageProvider(ImageProvider):
             )
             for reference in build_responses_reference_images_from_poster(poster)
         ]
+
+
+def _gemini_reference(reference: WorkflowImageReference) -> GoogleGeminiReferenceImage:
+    return GoogleGeminiReferenceImage(
+        bytes_data=reference.bytes_data,
+        mime_type=reference.mime_type,
+        filename=reference.filename,
+    )

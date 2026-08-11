@@ -291,7 +291,8 @@ for _, storage_path in deleted_media:
 - Versioned columns: `products.current_fact_set_version_id`; `product_workflows.schema_version`, `revision`, and
   `source_draft_revision_id`; `workflow_nodes.schema_version`, `node_key`, `folder_id`, and `bound_image_asset_id`;
   `workflow_edges.edge_key`.
-- Migration head: `20260811_0032`, based on `20260811_0031`.
+- Draft foundation migration: `20260811_0032`, based on `20260811_0031`; later migrations may add executable v2
+  artifacts without changing these foundation semantics.
 
 #### 3. Contracts
 
@@ -348,6 +349,91 @@ latest_revision = session.scalar(select(func.max(ProductWorkflow.revision)).wher
 ```
 
 The product row lock serializes revision allocation for one product; unique constraints remain the concurrency backstop.
+
+### Scenario: Immutable visual, prompt, and image-generation lineage
+
+#### 1. Scope / Trigger
+
+- Trigger: ORM/migration changes to VisualSystem versions, Prompt Artifact versions, confirmed visual exceptions,
+  canonical image generation records, or deletion of assets/products referenced by those rows.
+
+#### 2. Signatures
+
+- Migration `20260812_0033`, based on `20260811_0032`, creates:
+  - `visual_systems`, `visual_system_versions`, `visual_system_version_references`;
+  - `image_prompt_artifacts`, `image_prompt_artifact_versions`,
+    `image_prompt_artifact_version_references`;
+  - `visual_exceptions`;
+  - `workflow_image_generation_records`, `workflow_image_generation_references`.
+- Nullable bindings added to existing rows:
+  - `workflow_draft_revisions.visual_system_version_id` with named `SET NULL` FK;
+  - `product_workflows.visual_system_version_id` with named `RESTRICT` FK;
+  - `workflow_nodes.current_prompt_artifact_version_id` with named `SET NULL` FK.
+
+#### 3. Contracts
+
+- Version rows are append-only. `(visual_system_id, version)` and `(artifact_id, version)` are unique; both payload hashes
+  are 64 characters and both schema versions are fixed at 1.
+- A Draft-created VisualSystemVersion has at most one `source_draft_revision_id`. A prompt-generated artifact version has
+  at most one `source_node_run_id`. These unique lineage columns make confirmation/run retries observable and prevent
+  duplicate success artifacts.
+- Reference rows preserve stable ProductImageAsset IDs, role/purpose, label where applicable, and deterministic position.
+  Version/record deletion cascades into owned references; asset deletion remains `RESTRICT`.
+- One successful image node run owns one generation record through unique `workflow_node_run_id`. The record separately
+  stores requested spec, effective provider parameters, actual decoded media, compiled prompt/hash, fixed visual/prompt
+  versions, result asset, and provider identifiers.
+- `VisualSystem` has no seed migration or built-in rows. Confirmation is the only creator in this rollout.
+- Downgrade drops only 0033 tables and binding columns. It never opens, moves, rewrites, or deletes storage files and does
+  not rewrite existing v1 workflow/node/run rows.
+
+#### 4. Validation & Error Matrix
+
+- Version `<= 0`, schema version other than 1, negative reference position, or malformed hash -> named check constraint.
+- Duplicate version, source run/revision, reference position, or record per node run -> named unique constraint.
+- Delete an asset used as visual reference, prompt evidence, generation result, or generation input -> application
+  `ConflictError` before the database `RESTRICT` backstop.
+- Delete a product that owns a visual reference still consumed by another product -> `ConflictError` before product or
+  reference rows are removed.
+- Delete a product whose Draft-created visual version has no external consumer -> cascade product-owned rows, then remove
+  the orphan visual version/identity and prune only unreferenced MediaObjects.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: two image reruns point to two immutable generation records and assets while the node current pointer references
+  only the newest asset.
+- Good: another product consumes a fixed VisualSystemVersion, keeping that identity/version and its references alive.
+- Base: deleting the only owning product removes its unshared VisualSystem identity after workflow/Draft cascades.
+- Bad: store evidence IDs only inside prompt JSON or provider metadata; deletion checks and foreign keys cannot protect
+  that lineage.
+- Bad: cascade an asset FK from a historical generation record; the run would remain while its evidence disappears.
+
+#### 6. Tests Required
+
+- ORM inspection asserts every named FK, delete rule, unique/check constraint, nullable binding, and lack of built-in rows.
+- SQLite migration tests perform populated upgrade/downgrade/re-upgrade and retain v1 sentinel values.
+- Isolated PostgreSQL 16 tests perform `0032 -> 0033 -> 0032 -> 0033`, write real confirmed visual/prompt/generation rows,
+  inspect constraints, and compare the generated file SHA-256 before/after downgrade.
+- Application tests cover every asset-reference `409`, shared-visual product deletion, unshared cascade cleanup, and storage
+  compensation on generation commit failure.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+session.delete(asset)
+session.commit()  # waits for an opaque FK error or destroys lineage through a cascade
+```
+
+Correct:
+
+```python
+ensure_product_image_asset_not_referenced(session, asset_id=asset.id)
+session.delete(asset)
+session.flush()  # RESTRICT remains the concurrent-write backstop
+```
+
+The application returns a specific conflict reason; database constraints still protect races between the check and flush.
 
 ### Session ownership
 

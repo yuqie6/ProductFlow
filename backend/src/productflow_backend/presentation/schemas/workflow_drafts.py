@@ -11,6 +11,7 @@ from productflow_backend.application.workflow_drafts.contracts import (
     WORKFLOW_DRAFT_MAX_TOTAL_IMAGES,
     WORKFLOW_DRAFT_MIN_IMAGE_TYPES,
     WORKFLOW_DRAFT_MIN_IMAGES_PER_TYPE,
+    GenerationSpec,
     WorkflowDraftPayloadV1,
     parse_workflow_draft_payload,
 )
@@ -18,7 +19,7 @@ from productflow_backend.application.workflow_drafts.materialization import (
     ActiveV2WorkflowSnapshot,
     WorkflowMaterializationResult,
 )
-from productflow_backend.domain.enums import WorkflowDraftStatus, WorkflowNodeStatus, WorkflowNodeType
+from productflow_backend.domain.enums import WorkflowDraftStatus, WorkflowNodeStatus
 from productflow_backend.infrastructure.db.models import (
     ProductWorkflow,
     WorkflowDraft,
@@ -26,6 +27,7 @@ from productflow_backend.infrastructure.db.models import (
     WorkflowEdge,
     WorkflowFolder,
     WorkflowNode,
+    WorkflowNodeRun,
 )
 
 
@@ -79,6 +81,7 @@ class WorkflowDraftRevisionResponse(BaseModel):
     source_artifact_step_id: str | None
     confirmed_at: datetime | None
     fact_set_version_id: str | None
+    visual_system_version_id: str | None
     created_at: datetime
 
 
@@ -110,17 +113,27 @@ class WorkflowFolderV2Response(BaseModel):
     updated_at: datetime
 
 
+WorkflowNodeTypeV2Value = Literal[
+    "product_context",
+    "reference_image",
+    "prompt_generation",
+    "image_generation",
+]
+WorkflowRunnableNodeTypeV2Value = Literal["prompt_generation", "image_generation"]
+
+
 class WorkflowNodeV2Response(BaseModel):
     id: str
     workflow_id: str
     schema_version: Literal[2]
     key: str
-    node_type: WorkflowNodeType
+    node_type: WorkflowNodeTypeV2Value
     title: str
     position_x: int
     position_y: int
     folder_id: str | None
     bound_image_asset_id: str | None
+    current_prompt_artifact_version_id: str | None
     config_json: dict[str, object]
     status: WorkflowNodeStatus
     output_json: dict[str, object] | None
@@ -148,6 +161,7 @@ class ProductWorkflowV2Response(BaseModel):
     schema_version: Literal[2]
     revision: int
     source_draft_revision_id: str
+    visual_system_version_id: str
     materialization_id: str
     folders: list[WorkflowFolderV2Response]
     nodes: list[WorkflowNodeV2Response]
@@ -168,6 +182,46 @@ class WorkflowMaterializationResponse(BaseModel):
     reveal_events_url: str
 
 
+class WorkflowActualMediaResponse(BaseModel):
+    mime_type: Literal["image/png", "image/jpeg", "image/webp"]
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+    byte_size: int = Field(gt=0)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class WorkflowNodeRunV2Response(BaseModel):
+    id: str
+    schema_version: Literal[2]
+    workflow_run_id: str
+    node_id: str
+    node_type: WorkflowRunnableNodeTypeV2Value
+    status: WorkflowNodeStatus
+    output_json: dict[str, object] | None
+    failure_reason: str | None
+    visual_system_version_id: str
+    prompt_artifact_version_id: str | None
+    generation_record_id: str | None
+    result_asset_id: str | None
+    requested_spec: GenerationSpec | None
+    effective_parameters: dict[str, object] | None
+    actual_media: WorkflowActualMediaResponse | None
+    compiled_prompt: str | None
+    compiled_prompt_hash: str | None
+    reference_asset_ids: list[str]
+    provider_name: str | None
+    provider_model: str | None
+    provider_response_id: str | None
+    provider_status: str | None
+    started_at: datetime
+    finished_at: datetime | None
+
+
+class SubmitWorkflowNodeRunV2Response(BaseModel):
+    created: bool
+    node_run: WorkflowNodeRunV2Response
+
+
 def serialize_workflow_draft_revision(revision: WorkflowDraftRevision) -> WorkflowDraftRevisionResponse:
     return WorkflowDraftRevisionResponse(
         id=revision.id,
@@ -180,6 +234,7 @@ def serialize_workflow_draft_revision(revision: WorkflowDraftRevision) -> Workfl
         source_artifact_step_id=revision.source_artifact_step_id,
         confirmed_at=revision.confirmed_at,
         fact_set_version_id=revision.fact_set_version.id if revision.fact_set_version is not None else None,
+        visual_system_version_id=revision.visual_system_version_id,
         created_at=revision.created_at,
     )
 
@@ -226,12 +281,13 @@ def serialize_workflow_node_v2(node: WorkflowNode) -> WorkflowNodeV2Response:
         workflow_id=node.workflow_id,
         schema_version=node.schema_version,
         key=node.node_key,
-        node_type=node.node_type,
+        node_type=node.node_type.value,
         title=node.title,
         position_x=node.position_x,
         position_y=node.position_y,
         folder_id=node.folder_id,
         bound_image_asset_id=node.bound_image_asset_id,
+        current_prompt_artifact_version_id=node.current_prompt_artifact_version_id,
         config_json=node.config_json or {},
         status=node.status,
         output_json=node.output_json,
@@ -271,6 +327,7 @@ def serialize_product_workflow_v2(workflow: ProductWorkflow) -> ProductWorkflowV
         schema_version=workflow.schema_version,
         revision=workflow.revision,
         source_draft_revision_id=workflow.source_draft_revision_id,
+        visual_system_version_id=workflow.visual_system_version_id,
         materialization_id=workflow.materialization.id,
         folders=[serialize_workflow_folder_v2(folder) for folder in workflow.folders],
         nodes=[serialize_workflow_node_v2(node) for node in workflow.nodes],
@@ -296,15 +353,78 @@ def serialize_materialization(result: WorkflowMaterializationResult) -> Workflow
     )
 
 
+def serialize_workflow_node_run_v2(node_run: WorkflowNodeRun) -> WorkflowNodeRunV2Response:
+    workflow = node_run.workflow_run.workflow
+    if workflow.schema_version != 2 or node_run.node.schema_version != 2:
+        raise ValueError("v2 node run projection 收到了 schema-v1 运行")
+    if workflow.visual_system_version_id is None:
+        raise ValueError("v2 node run projection 缺少 VisualSystemVersion")
+
+    prompt_version = node_run.prompt_artifact_version
+    generation = node_run.image_generation_record
+    prompt_artifact_version_id = (
+        prompt_version.id
+        if prompt_version is not None
+        else generation.prompt_artifact_version_id
+        if generation is not None
+        else node_run.node.current_prompt_artifact_version_id
+    )
+    if generation is not None:
+        reference_asset_ids = [reference.asset_id for reference in generation.references]
+        provider_name = generation.provider_name
+        provider_model = generation.provider_model
+        provider_response_id = generation.provider_response_id
+    elif prompt_version is not None:
+        reference_asset_ids = [reference.asset_id for reference in prompt_version.references]
+        provider_name = prompt_version.provider_name
+        provider_model = prompt_version.provider_model
+        provider_response_id = prompt_version.provider_response_id
+    else:
+        reference_asset_ids = []
+        provider_name = None
+        provider_model = None
+        provider_response_id = None
+
+    return WorkflowNodeRunV2Response(
+        id=node_run.id,
+        schema_version=2,
+        workflow_run_id=node_run.workflow_run_id,
+        node_id=node_run.node_id,
+        node_type=node_run.node.node_type.value,
+        status=node_run.status,
+        output_json=node_run.output_json,
+        failure_reason=node_run.failure_reason,
+        visual_system_version_id=workflow.visual_system_version_id,
+        prompt_artifact_version_id=prompt_artifact_version_id,
+        generation_record_id=generation.id if generation is not None else None,
+        result_asset_id=generation.result_asset_id if generation is not None else None,
+        requested_spec=generation.requested_spec_json if generation is not None else None,
+        effective_parameters=generation.effective_parameters_json if generation is not None else None,
+        actual_media=generation.actual_media_json if generation is not None else None,
+        compiled_prompt=generation.compiled_prompt if generation is not None else None,
+        compiled_prompt_hash=generation.compiled_prompt_hash if generation is not None else None,
+        reference_asset_ids=reference_asset_ids,
+        provider_name=provider_name,
+        provider_model=provider_model,
+        provider_response_id=provider_response_id,
+        provider_status=generation.provider_status if generation is not None else None,
+        started_at=node_run.started_at,
+        finished_at=node_run.finished_at,
+    )
+
+
 __all__ = [
     "ActiveProductWorkflowV2Response",
     "AppendWorkflowDraftRevisionRequest",
     "ConfirmWorkflowDraftRequest",
     "CreateWorkflowDraftRequest",
     "MaterializeWorkflowDraftRequest",
+    "SubmitWorkflowNodeRunV2Response",
     "WorkflowDraftResponse",
     "WorkflowMaterializationResponse",
+    "WorkflowNodeRunV2Response",
     "serialize_active_v2_workflow",
     "serialize_materialization",
     "serialize_workflow_draft",
+    "serialize_workflow_node_run_v2",
 ]

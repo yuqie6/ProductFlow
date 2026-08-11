@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
-from sqlalchemy import desc, exists, func, literal, select
+from sqlalchemy import delete, desc, exists, func, literal, select
 from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.copy_payloads import validate_copy_payload
@@ -31,7 +31,7 @@ from productflow_backend.domain.enums import (
     WorkflowNodeStatus,
     WorkflowRunStatus,
 )
-from productflow_backend.domain.errors import BusinessValidationError, NotFoundError
+from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     CopySet,
     MediaObject,
@@ -40,6 +40,12 @@ from productflow_backend.infrastructure.db.models import (
     ProductImageAsset,
     ProductWorkflow,
     SourceAsset,
+    VisualSystem,
+    VisualSystemVersion,
+    VisualSystemVersionReference,
+    WorkflowDraft,
+    WorkflowDraftRevision,
+    WorkflowImageGenerationRecord,
     WorkflowNode,
     WorkflowRun,
 )
@@ -467,8 +473,13 @@ def delete_product(
         *(asset.storage_path for asset in product.source_assets),
         *(poster.storage_path for poster in product.poster_variants),
     }
+    removable_visual_versions = _prepare_visual_system_cleanup_for_product(
+        session,
+        product_id=product_id,
+    )
     session.delete(product)
     session.flush()
+    _delete_owned_visual_system_versions(session, removable_visual_versions)
     deleted_media = prune_unreferenced_media_objects(session, media_ids)
     retained_legacy_paths = set(
         session.scalars(select(MediaObject.storage_path).where(MediaObject.storage_path.in_(legacy_paths))).all()
@@ -485,6 +496,100 @@ def delete_product(
         lambda: storage.remove_empty_product_directories(product_id),
         target=f"product_id={product_id} empty_directories",
     )
+
+
+def _prepare_visual_system_cleanup_for_product(
+    session: Session,
+    *,
+    product_id: str,
+) -> list[tuple[str, str]]:
+    source_versions = list(
+        session.scalars(
+            select(VisualSystemVersion)
+            .join(
+                WorkflowDraftRevision,
+                WorkflowDraftRevision.id == VisualSystemVersion.source_draft_revision_id,
+            )
+            .join(WorkflowDraft, WorkflowDraft.id == WorkflowDraftRevision.draft_id)
+            .options(selectinload(VisualSystemVersion.references))
+            .where(WorkflowDraft.product_id == product_id)
+        )
+    )
+    source_version_ids = {version.id for version in source_versions}
+    referenced_version_ids = set(
+        session.scalars(
+            select(VisualSystemVersionReference.visual_system_version_id)
+            .join(ProductImageAsset, ProductImageAsset.id == VisualSystemVersionReference.asset_id)
+            .where(ProductImageAsset.product_id == product_id)
+        )
+    )
+    if referenced_version_ids - source_version_ids:
+        raise ConflictError("商品图片仍被其他视觉体系版本引用，不能删除商品")
+
+    removable: list[tuple[str, str]] = []
+    for version in source_versions:
+        has_external_consumer = any(
+            (
+                session.scalar(
+                    select(ProductWorkflow.id)
+                    .where(
+                        ProductWorkflow.visual_system_version_id == version.id,
+                        ProductWorkflow.product_id != product_id,
+                    )
+                    .limit(1)
+                ),
+                session.scalar(
+                    select(WorkflowDraftRevision.id)
+                    .join(WorkflowDraft, WorkflowDraft.id == WorkflowDraftRevision.draft_id)
+                    .where(
+                        WorkflowDraftRevision.visual_system_version_id == version.id,
+                        WorkflowDraft.product_id != product_id,
+                    )
+                    .limit(1)
+                ),
+                session.scalar(
+                    select(WorkflowImageGenerationRecord.id)
+                    .where(
+                        WorkflowImageGenerationRecord.visual_system_version_id == version.id,
+                        WorkflowImageGenerationRecord.product_id != product_id,
+                    )
+                    .limit(1)
+                ),
+            )
+        )
+        if has_external_consumer:
+            if version.id in referenced_version_ids:
+                raise ConflictError("商品视觉体系仍被其他商品使用，不能删除其参考图片")
+            continue
+        removable.append((version.id, version.visual_system_id))
+    removable_version_ids = {version_id for version_id, _ in removable}
+    for version in source_versions:
+        if version.id not in removable_version_ids:
+            continue
+        for reference in version.references:
+            session.delete(reference)
+    session.flush()
+    return removable
+
+
+def _delete_owned_visual_system_versions(
+    session: Session,
+    versions: list[tuple[str, str]],
+) -> None:
+    if not versions:
+        return
+    version_ids = {version_id for version_id, _ in versions}
+    visual_system_ids = {visual_system_id for _, visual_system_id in versions}
+    session.execute(delete(VisualSystemVersion).where(VisualSystemVersion.id.in_(version_ids)))
+    for visual_system_id in visual_system_ids:
+        remaining_version_id = session.scalar(
+            select(VisualSystemVersion.id)
+            .where(VisualSystemVersion.visual_system_id == visual_system_id)
+            .limit(1)
+        )
+        if remaining_version_id is None:
+            session.execute(delete(VisualSystem).where(VisualSystem.id == visual_system_id))
+    session.flush()
 
 
 def update_copy_set(

@@ -23,8 +23,15 @@ from productflow_backend.application.workflow_drafts.service import (
 from productflow_backend.domain.enums import WorkflowDraftStatus, WorkflowRevealEventKind
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError
 from productflow_backend.infrastructure.db.models import (
+    ImagePromptArtifact,
+    ImagePromptArtifactVersion,
+    ImagePromptArtifactVersionReference,
     ProductFactSetVersion,
     ProductWorkflow,
+    VisualException,
+    VisualSystem,
+    VisualSystemVersion,
+    VisualSystemVersionReference,
     WorkflowDraftRevision,
     WorkflowEdge,
     WorkflowFolder,
@@ -46,11 +53,17 @@ def _create_product_with_reference(db_session, *, name: str = "硬质刀具收�
     )
 
 
-def _create_confirmed_draft(db_session, *, product_id: str, reference_asset_id: str):
+def _create_confirmed_draft(
+    db_session,
+    *,
+    product_id: str,
+    reference_asset_id: str,
+    payload: dict | None = None,
+):
     draft = create_workflow_draft(
         db_session,
         product_id=product_id,
-        payload=make_workflow_draft_payload(reference_asset_id=reference_asset_id),
+        payload=payload or make_workflow_draft_payload(reference_asset_id=reference_asset_id),
         ready_for_confirmation=True,
         source_turn_id="turn-1",
         source_artifact_step_id="artifact-1",
@@ -61,6 +74,160 @@ def _create_confirmed_draft(db_session, *, product_id: str, reference_asset_id: 
         draft_id=draft.id,
         expected_draft_version=1,
     )
+
+
+def test_confirmation_creates_one_immutable_visual_system_version_and_can_reuse_it(db_session) -> None:
+    product = _create_product_with_reference(db_session)
+    reference_asset_id = product.image_assets[0].id
+    first = _create_confirmed_draft(
+        db_session,
+        product_id=product.id,
+        reference_asset_id=reference_asset_id,
+    )
+    first_revision = first.current_revision
+    assert first_revision is not None
+    visual_version = first_revision.visual_system_version
+    assert visual_version is not None
+    assert visual_version.source_draft_revision_id == first_revision.id
+    assert visual_version.version == 1
+    assert visual_version.visual_system.name == "工业极简视觉体系"
+    assert [reference.asset_id for reference in visual_version.references] == [reference_asset_id]
+    assert db_session.scalar(select(func.count()).select_from(VisualSystem)) == 1
+    assert db_session.scalar(select(func.count()).select_from(VisualSystemVersion)) == 1
+    assert db_session.scalar(select(func.count()).select_from(VisualSystemVersionReference)) == 1
+
+    reused_payload = make_workflow_draft_payload(reference_asset_id=reference_asset_id)
+    reused_payload["visual_system"] = {
+        "mode": "confirmed_version",
+        "version_id": visual_version.id,
+    }
+    reused = _create_confirmed_draft(
+        db_session,
+        product_id=product.id,
+        reference_asset_id=reference_asset_id,
+        payload=reused_payload,
+    )
+    assert reused.current_revision is not None
+    assert reused.current_revision.visual_system_version_id == visual_version.id
+    assert db_session.scalar(select(func.count()).select_from(VisualSystem)) == 1
+    assert db_session.scalar(select(func.count()).select_from(VisualSystemVersion)) == 1
+
+
+def test_confirmation_counts_reused_visual_references_toward_reference_limit(db_session) -> None:
+    source_product = create_canonical_product(
+        db_session,
+        name="视觉体系来源商品",
+        category="工业收纳",
+        price="299.00",
+        source_note="六张视觉参考图",
+        image_uploads=[
+            (_make_demo_image_bytes(), f"visual-reference-{index}.png", "image/png")
+            for index in range(6)
+        ],
+    )
+    source_asset_ids = [asset.id for asset in source_product.image_assets]
+    source_payload = make_workflow_draft_payload(reference_asset_id=source_asset_ids[0])
+    source_payload["visual_system"]["payload"]["reference_assets"] = [
+        {
+            "asset_id": asset_id,
+            "role": f"visual-reference-{index}",
+            "label": f"视觉参考 {index}",
+        }
+        for index, asset_id in enumerate(source_asset_ids, start=1)
+    ]
+    source_draft = _create_confirmed_draft(
+        db_session,
+        product_id=source_product.id,
+        reference_asset_id=source_asset_ids[0],
+        payload=source_payload,
+    )
+    assert source_draft.current_revision is not None
+    visual_version_id = source_draft.current_revision.visual_system_version_id
+    assert visual_version_id is not None
+
+    consumer_product = _create_product_with_reference(db_session, name="视觉体系使用商品")
+    consumer_asset_id = consumer_product.image_assets[0].id
+    consumer_payload = make_workflow_draft_payload(reference_asset_id=consumer_asset_id)
+    consumer_payload["visual_system"] = {
+        "mode": "confirmed_version",
+        "version_id": visual_version_id,
+    }
+    consumer_draft = create_workflow_draft(
+        db_session,
+        product_id=consumer_product.id,
+        payload=consumer_payload,
+        ready_for_confirmation=True,
+    )
+
+    with pytest.raises(BusinessValidationError, match="不同图片资产不能超过 6 张"):
+        confirm_workflow_draft_revision(
+            db_session,
+            product_id=consumer_product.id,
+            draft_id=consumer_draft.id,
+            expected_draft_version=1,
+        )
+
+    db_session.expire_all()
+    persisted = get_workflow_draft_or_raise(
+        db_session,
+        product_id=consumer_product.id,
+        draft_id=consumer_draft.id,
+    )
+    assert persisted.status == WorkflowDraftStatus.AWAITING_CONFIRMATION
+    assert persisted.current_revision is not None
+    assert persisted.current_revision.visual_system_version_id is None
+
+
+def test_confirmation_validates_confirmed_visual_version_locked_fields(db_session) -> None:
+    product = _create_product_with_reference(db_session)
+    reference_asset_id = product.image_assets[0].id
+    confirmed = _create_confirmed_draft(
+        db_session,
+        product_id=product.id,
+        reference_asset_id=reference_asset_id,
+    )
+    assert confirmed.current_revision is not None
+    visual_version_id = confirmed.current_revision.visual_system_version_id
+    assert visual_version_id is not None
+
+    payload = make_workflow_draft_payload(reference_asset_id=reference_asset_id)
+    payload["visual_system"] = {"mode": "confirmed_version", "version_id": visual_version_id}
+    payload["visual_exceptions"] = [
+        {
+            "key": "spacing-exception",
+            "scope": {"type": "workflow"},
+            "overrides": [
+                {
+                    "field": "spacing",
+                    "value": {
+                        "min_edge_whitespace_percent": 20,
+                        "principles": ["压缩留白"],
+                    },
+                }
+            ],
+            "reason": "测试未锁定字段",
+        }
+    ]
+    draft = create_workflow_draft(
+        db_session,
+        product_id=product.id,
+        payload=payload,
+        ready_for_confirmation=True,
+    )
+
+    with pytest.raises(BusinessValidationError, match="locked_fields"):
+        confirm_workflow_draft_revision(
+            db_session,
+            product_id=product.id,
+            draft_id=draft.id,
+            expected_draft_version=1,
+        )
+
+    persisted = get_workflow_draft_or_raise(db_session, product_id=product.id, draft_id=draft.id)
+    assert persisted.status == WorkflowDraftStatus.AWAITING_CONFIRMATION
+    assert persisted.current_revision is not None
+    assert persisted.current_revision.fact_set_version is None
+    assert persisted.current_revision.visual_system_version_id is None
 
 
 def test_confirmed_revision_and_fact_set_remain_immutable_when_new_information_arrives(db_session) -> None:
@@ -175,11 +342,25 @@ def test_materialization_creates_complete_v2_workflow_and_is_idempotent(db_sessi
     assert result.workflow.schema_version == 2
     assert result.workflow.revision == 1
     assert result.workflow.active is True
+    assert result.workflow.visual_system_version_id == draft.current_revision.visual_system_version_id
     assert len(result.workflow.folders) == 1
     assert len(result.workflow.nodes) == 5
     assert len(result.workflow.edges) == 4
     reference_node = next(node for node in result.workflow.nodes if node.node_type.value == "reference_image")
+    prompt_node = next(node for node in result.workflow.nodes if node.node_type.value == "prompt_generation")
     assert reference_node.bound_image_asset_id == product.image_assets[0].id
+    assert prompt_node.current_prompt_artifact_version_id is not None
+    assert "prompt_plan" not in prompt_node.config_json
+    assert "visual_system" not in prompt_node.config_json
+    assert len(result.workflow.prompt_artifacts) == 1
+    prompt_artifact = result.workflow.prompt_artifacts[0]
+    assert prompt_artifact.image_type_key == "hero"
+    assert len(prompt_artifact.versions) == 1
+    assert prompt_artifact.versions[0].id == prompt_node.current_prompt_artifact_version_id
+    assert prompt_artifact.versions[0].payload_json["design_goal"] == "展示完整产品构成与收纳秩序"
+    assert [reference.asset_id for reference in prompt_artifact.versions[0].references] == [
+        product.image_assets[0].id
+    ]
     assert all(node.schema_version == 2 and node.node_key for node in result.workflow.nodes)
     assert all(edge.edge_key for edge in result.workflow.edges)
     events = result.materialization.reveal_events
@@ -232,30 +413,77 @@ def test_materialization_creates_complete_v2_workflow_and_is_idempotent(db_sessi
         )
 
 
-def test_materialization_rejects_cross_product_assets_without_writing_a_workflow(db_session) -> None:
-    product = _create_product_with_reference(db_session, name="商品 A")
-    other = _create_product_with_reference(db_session, name="商品 B")
+def test_materialization_persists_confirmed_visual_exceptions(db_session) -> None:
+    product = _create_product_with_reference(db_session)
+    reference_asset_id = product.image_assets[0].id
+    payload = make_workflow_draft_payload(reference_asset_id=reference_asset_id)
+    payload["visual_exceptions"] = [
+        {
+            "key": "hero-quality-exception",
+            "scope": {"type": "image_plan", "key": "hero-2"},
+            "overrides": [
+                {
+                    "field": "quality",
+                    "value": {
+                        "resolution": "高清",
+                        "commercial_grade": "商品详情页",
+                        "realism": "照片级",
+                        "minimum_quality": "standard",
+                    },
+                }
+            ],
+            "reason": "第二张用于快速预览",
+        }
+    ]
     draft = _create_confirmed_draft(
         db_session,
         product_id=product.id,
-        reference_asset_id=other.image_assets[0].id,
+        reference_asset_id=reference_asset_id,
+        payload=payload,
+    )
+
+    result = materialize_workflow_draft(
+        db_session,
+        product_id=product.id,
+        draft_id=draft.id,
+        expected_draft_version=1,
+        expected_workflow_revision=0,
+        idempotency_key="visual-exception",
+    )
+
+    assert len(result.workflow.visual_exceptions) == 1
+    exception = result.workflow.visual_exceptions[0]
+    assert exception.exception_key == "hero-quality-exception"
+    assert exception.scope_type == "image_plan"
+    assert exception.scope_key == "hero-2"
+    assert exception.overrides_json[0]["field"] == "quality"
+
+
+def test_confirmation_rejects_cross_product_assets_without_writing_confirmed_state(db_session) -> None:
+    product = _create_product_with_reference(db_session, name="商品 A")
+    other = _create_product_with_reference(db_session, name="商品 B")
+    draft = create_workflow_draft(
+        db_session,
+        product_id=product.id,
+        payload=make_workflow_draft_payload(reference_asset_id=other.image_assets[0].id),
+        ready_for_confirmation=True,
     )
 
     with pytest.raises(BusinessValidationError, match="其他商品"):
-        materialize_workflow_draft(
+        confirm_workflow_draft_revision(
             db_session,
             product_id=product.id,
             draft_id=draft.id,
             expected_draft_version=1,
-            expected_workflow_revision=0,
-            idempotency_key="cross-product",
         )
 
+    assert db_session.scalar(select(func.count()).select_from(ProductFactSetVersion)) == 0
+    assert db_session.scalar(select(func.count()).select_from(VisualSystem)) == 0
     assert db_session.scalar(
         select(func.count()).select_from(ProductWorkflow).where(ProductWorkflow.product_id == product.id)
     ) == 0
     persisted = get_workflow_draft_or_raise(db_session, product_id=product.id, draft_id=draft.id)
-    assert persisted.status == WorkflowDraftStatus.CONFIRMED
+    assert persisted.status == WorkflowDraftStatus.AWAITING_CONFIRMATION
 
 
 def test_materialization_does_not_modify_an_active_v1_workflow(db_session) -> None:
@@ -296,15 +524,44 @@ def test_materialization_does_not_modify_an_active_v1_workflow(db_session) -> No
 
 @pytest.mark.parametrize(
     "failing_model",
-    [WorkflowFolder, WorkflowNode, WorkflowEdge, WorkflowRevealEvent],
-    ids=["folder", "node", "edge", "event"],
+    [
+        ImagePromptArtifact,
+        ImagePromptArtifactVersion,
+        ImagePromptArtifactVersionReference,
+        VisualException,
+        WorkflowFolder,
+        WorkflowNode,
+        WorkflowEdge,
+        WorkflowRevealEvent,
+    ],
+    ids=["prompt", "prompt-version", "prompt-reference", "visual-exception", "folder", "node", "edge", "event"],
 )
 def test_materialization_rolls_back_every_write_stage(db_session, monkeypatch, failing_model) -> None:
     product = _create_product_with_reference(db_session)
+    payload = make_workflow_draft_payload(reference_asset_id=product.image_assets[0].id)
+    payload["visual_exceptions"] = [
+        {
+            "key": "quality-exception",
+            "scope": {"type": "image_plan", "key": "hero-2"},
+            "overrides": [
+                {
+                    "field": "quality",
+                    "value": {
+                        "resolution": "高清",
+                        "commercial_grade": "商品详情页",
+                        "realism": "照片级",
+                        "minimum_quality": "standard",
+                    },
+                }
+            ],
+            "reason": "第二张用于快速预览",
+        }
+    ]
     draft = _create_confirmed_draft(
         db_session,
         product_id=product.id,
         reference_asset_id=product.image_assets[0].id,
+        payload=payload,
     )
     original_flush = db_session.flush
 
@@ -336,6 +593,12 @@ def test_materialization_rolls_back_every_write_stage(db_session, monkeypatch, f
     assert db_session.scalar(select(func.count()).select_from(WorkflowMaterialization)) == 0
     assert db_session.scalar(select(func.count()).select_from(WorkflowMaterializationKey)) == 0
     assert db_session.scalar(select(func.count()).select_from(WorkflowRevealEvent)) == 0
+    assert db_session.scalar(select(func.count()).select_from(ImagePromptArtifact)) == 0
+    assert db_session.scalar(select(func.count()).select_from(ImagePromptArtifactVersion)) == 0
+    assert db_session.scalar(select(func.count()).select_from(ImagePromptArtifactVersionReference)) == 0
+    assert db_session.scalar(select(func.count()).select_from(VisualException)) == 0
+    assert db_session.scalar(select(func.count()).select_from(VisualSystem)) == 1
+    assert db_session.scalar(select(func.count()).select_from(VisualSystemVersion)) == 1
     persisted = get_workflow_draft_or_raise(db_session, product_id=product.id, draft_id=draft.id)
     assert persisted.status == WorkflowDraftStatus.CONFIRMED
     assert persisted.final_workflow_id is None
@@ -499,3 +762,49 @@ def test_deleting_materialized_product_cascades_draft_and_reveal_state(db_sessio
     assert db_session.scalar(select(func.count()).select_from(ProductFactSetVersion)) == 0
     assert db_session.scalar(select(func.count()).select_from(WorkflowMaterializationKey)) == 0
     assert db_session.scalar(select(func.count()).select_from(WorkflowRevealEvent)) == 0
+    assert db_session.scalar(select(func.count()).select_from(ImagePromptArtifactVersion)) == 0
+    assert db_session.scalar(select(func.count()).select_from(VisualSystemVersion)) == 0
+    assert db_session.scalar(select(func.count()).select_from(VisualSystem)) == 0
+
+
+def test_product_delete_rejects_visual_system_with_cross_product_consumer(db_session) -> None:
+    product = _create_product_with_reference(db_session, name="视觉体系来源商品")
+    draft = _create_confirmed_draft(
+        db_session,
+        product_id=product.id,
+        reference_asset_id=product.image_assets[0].id,
+    )
+    result = materialize_workflow_draft(
+        db_session,
+        product_id=product.id,
+        draft_id=draft.id,
+        expected_draft_version=1,
+        expected_workflow_revision=0,
+        idempotency_key="shared-visual-source",
+    )
+    visual_system_version_id = result.workflow.visual_system_version_id
+    assert visual_system_version_id is not None
+    consumer_product = _create_product_with_reference(db_session, name="视觉体系使用商品")
+    consumer_workflow = ProductWorkflow(
+        product_id=consumer_product.id,
+        title="共享视觉体系使用方",
+        active=True,
+        schema_version=2,
+        revision=1,
+        visual_system_version_id=visual_system_version_id,
+    )
+    db_session.add(consumer_workflow)
+    db_session.commit()
+
+    with pytest.raises(ConflictError, match="其他商品"):
+        delete_product(db_session, product_id=product.id)
+
+    db_session.expire_all()
+    assert db_session.get(type(product), product.id) is not None
+    assert db_session.get(ProductWorkflow, consumer_workflow.id) is not None
+    assert db_session.get(VisualSystemVersion, visual_system_version_id) is not None
+    assert db_session.scalar(
+        select(func.count())
+        .select_from(VisualSystemVersionReference)
+        .where(VisualSystemVersionReference.visual_system_version_id == visual_system_version_id)
+    ) == 1

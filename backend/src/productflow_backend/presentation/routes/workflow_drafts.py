@@ -7,6 +7,10 @@ from fastapi import APIRouter, Depends, Header, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
+from productflow_backend.application.product_workflows import (
+    get_v2_workflow_node_run,
+    submit_v2_workflow_node_run,
+)
 from productflow_backend.application.workflow_drafts.materialization import (
     get_active_v2_workflow_snapshot,
     list_workflow_reveal_events,
@@ -27,11 +31,14 @@ from productflow_backend.presentation.schemas.workflow_drafts import (
     ConfirmWorkflowDraftRequest,
     CreateWorkflowDraftRequest,
     MaterializeWorkflowDraftRequest,
+    SubmitWorkflowNodeRunV2Response,
     WorkflowDraftResponse,
     WorkflowMaterializationResponse,
+    WorkflowNodeRunV2Response,
     serialize_active_v2_workflow,
     serialize_materialization,
     serialize_workflow_draft,
+    serialize_workflow_node_run_v2,
 )
 
 router = APIRouter(prefix="/api/v2", tags=["workflow-drafts"], dependencies=[Depends(require_admin)])
@@ -43,6 +50,35 @@ def get_active_v2_workflow_endpoint(
     session: Session = Depends(get_session),
 ) -> ActiveProductWorkflowV2Response:
     return serialize_active_v2_workflow(get_active_v2_workflow_snapshot(session, product_id=product_id))
+
+
+@router.post(
+    "/workflow-nodes/{node_id}/run",
+    response_model=SubmitWorkflowNodeRunV2Response,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def submit_v2_workflow_node_run_endpoint(
+    node_id: str,
+    session: Session = Depends(get_session),
+) -> SubmitWorkflowNodeRunV2Response:
+    submission = submit_v2_workflow_node_run(session, node_id=node_id)
+    return SubmitWorkflowNodeRunV2Response(
+        created=submission.created,
+        node_run=serialize_workflow_node_run_v2(submission.node_run),
+    )
+
+
+@router.get(
+    "/workflow-node-runs/{node_run_id}",
+    response_model=WorkflowNodeRunV2Response,
+)
+def get_v2_workflow_node_run_endpoint(
+    node_run_id: str,
+    session: Session = Depends(get_session),
+) -> WorkflowNodeRunV2Response:
+    return serialize_workflow_node_run_v2(
+        get_v2_workflow_node_run(session, node_run_id=node_run_id)
+    )
 
 
 @router.post(

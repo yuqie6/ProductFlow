@@ -29,6 +29,63 @@ def test_workflow_draft_payload_rejects_unknown_fields() -> None:
         WorkflowDraftPayloadV1.model_validate(payload)
 
 
+def test_workflow_draft_payload_rejects_loose_visual_and_prompt_payloads() -> None:
+    visual_payload = make_workflow_draft_payload()
+    visual_payload["visual_system"]["payload"] = {"style": "professional_industrial"}
+    with pytest.raises(ValidationError):
+        WorkflowDraftPayloadV1.model_validate(visual_payload)
+
+    prompt_payload = make_workflow_draft_payload()
+    prompt_payload["prompt_plans"][0]["payload"] = {"design_goal": "松散提示词"}
+    with pytest.raises(ValidationError):
+        WorkflowDraftPayloadV1.model_validate(prompt_payload)
+
+
+def test_workflow_draft_payload_validates_prompt_evidence_and_per_image_plans() -> None:
+    unknown_fact = make_workflow_draft_payload()
+    unknown_fact["prompt_plans"][0]["payload"]["fact_keys"] = ["unknown_fact"]
+    with pytest.raises(ValidationError, match="fact_keys 必须引用"):
+        WorkflowDraftPayloadV1.model_validate(unknown_fact)
+
+    missing_image = make_workflow_draft_payload()
+    missing_image["prompt_plans"][0]["payload"]["images"].pop()
+    with pytest.raises(ValidationError, match="必须与图片类型的 image plan 一一对应"):
+        WorkflowDraftPayloadV1.model_validate(missing_image)
+
+
+def test_workflow_draft_payload_requires_confirmed_exception_for_locked_field_override() -> None:
+    payload = make_workflow_draft_payload()
+    payload["visual_exceptions"] = [
+        {
+            "key": "hero-color-exception",
+            "scope": {"type": "image_plan", "key": "hero-2"},
+            "overrides": [
+                {
+                    "field": "colors",
+                    "value": [{"role": "background", "value": "#FFFFFF", "label": "纯白背景"}],
+                }
+            ],
+            "reason": "平台白底图要求",
+        }
+    ]
+    assert WorkflowDraftPayloadV1.model_validate(payload).visual_exceptions[0].scope.key == "hero-2"
+
+    unlocked = deepcopy(payload)
+    unlocked["visual_exceptions"][0]["overrides"] = [
+        {
+            "field": "spacing",
+            "value": {"min_edge_whitespace_percent": 10, "principles": ["紧凑构图"]},
+        }
+    ]
+    with pytest.raises(ValidationError, match="只能覆盖 VisualSystem locked_fields"):
+        WorkflowDraftPayloadV1.model_validate(unlocked)
+
+    invalid_value = deepcopy(payload)
+    invalid_value["visual_exceptions"][0]["overrides"][0]["value"] = "#FFFFFF"
+    with pytest.raises(ValidationError):
+        WorkflowDraftPayloadV1.model_validate(invalid_value)
+
+
 def test_workflow_draft_payload_rejects_quantity_that_does_not_match_image_plans() -> None:
     payload = make_workflow_draft_payload()
     payload["image_types"][0]["quantity"] = 1

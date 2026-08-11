@@ -246,8 +246,8 @@ return api.createProduct({
 
 #### 1. Scope / Trigger
 
-- Trigger: changing WorkflowDraft requests/responses, v2 workflow projections, reveal-event playback, or the separation
-  between legacy and v2 canvas node types.
+- Trigger: changing WorkflowDraft requests/responses, strict visual/prompt payloads, v2 workflow/node-run projections,
+  reveal-event playback, or the separation between legacy and v2 canvas node types.
 
 #### 2. Signatures
 
@@ -256,15 +256,27 @@ return api.createProduct({
 - Central API methods: `getActiveProductWorkflowV2`, `createWorkflowDraft`, `getWorkflowDraft`,
   `appendWorkflowDraftRevision`, `confirmWorkflowDraft`, `materializeWorkflowDraft`, and
   `workflowRevealEventsUrl`.
+- Node execution methods:
+  - `runWorkflowNodeV2(nodeId: string): Promise<SubmitWorkflowNodeRunV2Result>`;
+  - `getWorkflowNodeRunV2(nodeRunId: string): Promise<WorkflowNodeRunV2>`.
+- Strict DTOs include `WorkflowVisualSystemPayloadV1`, discriminated `WorkflowVisualFieldOverride`,
+  `WorkflowImagePromptPayloadV1`, `WorkflowGenerationSpec`, `WorkflowActualMedia`, and `WorkflowNodeRunV2`.
 
 #### 3. Contracts
 
 - `WorkflowDraftPayloadV1.schema_version` and reveal event `schema_version` are literal `1`; materialized workflow and node
   schema versions are literal `2`.
-- DTO fields retain backend `snake_case`. Flexible artifact values use recursive `JsonValue`; materialized node config and
-  output use `Record<string, unknown>` until the prompt/image execution child defines narrower payloads.
+- DTO fields retain backend `snake_case`. VisualSystem and Prompt Artifact payloads mirror the backend strict schema;
+  avoid replacing them with `Record<string, JsonValue>`. Materialized node config/output remain open JSON because their
+  exact shape is node-type and run-state dependent.
 - The Draft response supplies `limits` for image-type, per-type, total-image, and reference-asset counts. UI code reads
   these values and does not duplicate backend numeric limits.
+- Draft revisions expose nullable `visual_system_version_id`; materialized workflows expose a required fixed version ID;
+  prompt nodes expose nullable `current_prompt_artifact_version_id` and image nodes use `bound_image_asset_id` as their
+  current result pointer.
+- `WorkflowNodeRunV2` keeps `requested_spec`, provider-specific `effective_parameters`, and decoded `actual_media`
+  separate. `actual_media` has a PNG/JPEG/WEBP MIME union plus positive width, height, byte size, and SHA-256. The DTO does
+  not contain storage paths or raw provider request/output objects.
 - V1 components continue accepting `WorkflowNodeType`; v2 components explicitly accept `WorkflowNodeTypeV2` or the full
   v2 DTO. Do not widen the legacy union to make prompt nodes compile in old rendering/execution paths.
 - `workflowRevealEventsUrl(materializationId, after?)` owns the SSE path and replay cursor. Consumers first load the complete
@@ -275,6 +287,10 @@ return api.createProduct({
 - Backend `422` for a strict Draft shape -> surface `ApiError.detail`; do not coerce unknown fields locally.
 - Backend `409` for stale revisions, active v1, or idempotency drift -> refresh the corresponding Draft/workflow state
   before a deliberate retry.
+- Backend `409` for a v1 node sent to v2 run APIs, an inactive workflow, or a non-runnable v2 context/reference node ->
+  surface `ApiError.detail`; do not fall back to the legacy run endpoint.
+- A repeated run submit for the same queued/running node may return `created: false` with the existing `node_run`; callers
+  poll that stable ID instead of submitting again.
 - Empty v2 query -> handle `workflow: null` and `latest_revision`; do not call a legacy endpoint to fill it.
 - SSE disconnect -> reconnect with EventSource `Last-Event-ID` behavior or rebuild the URL with `after`; the committed
   workflow remains the recovery source.
@@ -283,14 +299,21 @@ return api.createProduct({
 
 - Good: use response `limits.max_images_per_type` to configure the count control and submit the chosen quantity in the
   complete Draft payload.
+- Good: display requested settings, adapter-effective settings, and decoded output metadata from their three dedicated
+  fields without inferring one from another.
 - Base: render no v2 canvas when `workflow` is null while retaining `latest_revision` for the materialization command.
+- Base: a queued/running node query has null generation evidence; successful prompt runs may expose only a Prompt Artifact
+  version while successful image runs expose the full generation evidence.
 - Bad: add `prompt_generation` to legacy `WorkflowNodeType` and let old switch/maps silently accept an unsupported node.
 - Bad: treat reveal SSE as the only source of workflow entities and lose the canvas after a reload.
+- Bad: derive actual dimensions from `requested_spec.aspect_ratio` or expose provider raw JSON so UI code depends on one
+  provider's response shape.
 
 #### 6. Tests Required
 
-- API helper tests assert exact materialization JSON fields and reveal URL cursor construction.
-- TypeScript build must verify distinct v1/v2 node unions and literal schema versions.
+- API helper tests assert exact materialization/run paths, methods, JSON fields, and reveal URL cursor construction.
+- TypeScript build must verify distinct v1/v2 node unions, literal schema versions, strict visual/prompt fields, and typed
+  requested/actual generation evidence.
 - Run `pnpm --dir web test:run`, `pnpm --dir web lint`, and `just web-build` after DTO changes.
 - UI integration work must test reconnect/reload against the complete workflow query when reveal animation is implemented.
 
@@ -310,6 +333,8 @@ Correct:
 export type WorkflowNodeTypeV2 = "product_context" | "reference_image" |
   "prompt_generation" | "image_generation";
 const maxPerType = draft.limits.max_images_per_type;
+const run = await api.runWorkflowNodeV2(nodeId);
+const evidence = await api.getWorkflowNodeRunV2(run.node_run.id);
 ```
 
 ### Scenario: Settings migration API typing

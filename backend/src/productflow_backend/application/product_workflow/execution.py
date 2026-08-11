@@ -49,6 +49,7 @@ from productflow_backend.application.product_workflow.run_state import (
     workflow_run_failure_context,
     workflow_run_failure_progress_metadata,
 )
+from productflow_backend.application.product_workflow.v2_execution import execute_v2_workflow_node_run
 from productflow_backend.application.product_workflow_dependencies import (
     WorkflowExecutionDependencies,
     default_workflow_execution_dependencies,
@@ -57,6 +58,7 @@ from productflow_backend.application.queue_submission import enqueue_or_mark_fai
 from productflow_backend.application.storage_compensation import StorageWriteCompensation
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.durable_generation_tasks import (
+    QUEUE_UNAVAILABLE_DETAIL,
     WORKFLOW_RUN_GENERATION_TASK_CONTRACT,
     WorkflowRunDeliveryState,
     classify_workflow_run_delivery,
@@ -67,7 +69,7 @@ from productflow_backend.domain.enums import (
     WorkflowNodeType,
     WorkflowRunStatus,
 )
-from productflow_backend.domain.errors import BusinessError, BusinessValidationError, NotFoundError
+from productflow_backend.domain.errors import BusinessError, BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.domain.workflow_rules import (
     WorkflowRuleEdge,
     WorkflowRuleNode,
@@ -414,14 +416,45 @@ def execute_product_workflow_node_run(
     session_factory = get_session_factory()
     session = session_factory()
     try:
+        node_run = session.get(WorkflowNodeRun, node_run_id)
+        if node_run is None:
+            return
+        run_id = node_run.workflow_run_id
+        node_id = node_run.node_id
+        workflow_schema_version = node_run.workflow_run.workflow.schema_version
         try:
-            _execute_workflow_node_run(session, node_run_id=node_run_id, dependencies=dependencies)
+            if workflow_schema_version == 1:
+                _execute_workflow_node_run(session, node_run_id=node_run_id, dependencies=dependencies)
+            elif workflow_schema_version == 2:
+                execute_v2_workflow_node_run(
+                    session,
+                    node_run_id=node_run_id,
+                    dependencies=dependencies,
+                )
+            else:
+                raise ConflictError("工作流 schema version 不受支持")
         except TimeLimitExceeded as exc:
             session.rollback()
-            _mark_node_run_failed_and_schedule(session, node_run_id=node_run_id, exc=exc)
+            if workflow_schema_version == 2:
+                mark_workflow_run_failed(
+                    session,
+                    run_id=run_id,
+                    failed_node_id=node_id,
+                    **workflow_run_failure_context(exc),
+                )
+            else:
+                _mark_node_run_failed_and_schedule(session, node_run_id=node_run_id, exc=exc)
         except Exception as exc:  # noqa: BLE001
             session.rollback()
-            _mark_node_run_failed_and_schedule(session, node_run_id=node_run_id, exc=exc)
+            if workflow_schema_version == 2:
+                mark_workflow_run_failed(
+                    session,
+                    run_id=run_id,
+                    failed_node_id=node_id,
+                    **workflow_run_failure_context(exc),
+                )
+            else:
+                _mark_node_run_failed_and_schedule(session, node_run_id=node_run_id, exc=exc)
     finally:
         session.close()
 
@@ -452,6 +485,19 @@ def _execute_product_workflow_run(
         return
     if not WORKFLOW_RUN_GENERATION_TASK_CONTRACT.is_running(run.status):
         return
+    workflow = session.get(ProductWorkflow, run.workflow_id)
+    if workflow is None:
+        raise NotFoundError("工作流不存在")
+    if workflow.schema_version == 2:
+        _dispatch_v2_workflow_run(
+            session,
+            run=run,
+            workflow=workflow,
+            dispatch_node_run=dispatch_node_run,
+        )
+        return
+    if workflow.schema_version != 1:
+        raise ConflictError("工作流 schema version 不受支持")
     workflow = queries.get_workflow_or_raise(run.workflow_id)
     rule_nodes = _workflow_rule_nodes(workflow)
     rule_edges = _workflow_rule_edges(workflow)
@@ -513,6 +559,59 @@ def _execute_product_workflow_run(
         return
 
 
+def _dispatch_v2_workflow_run(
+    session: Session,
+    *,
+    run: WorkflowRun,
+    workflow: ProductWorkflow,
+    dispatch_node_run: Callable[[str], None],
+) -> None:
+    if not workflow.active:
+        raise ConflictError("只能调度 active schema-v2 工作流")
+    node_runs = list(run.node_runs)
+    if len(node_runs) != 1:
+        raise ConflictError("schema-v2 单节点运行必须且只能包含一个 WorkflowNodeRun")
+    node_run = node_runs[0]
+    node = session.get(WorkflowNode, node_run.node_id)
+    if node is None or node.workflow_id != workflow.id:
+        raise ConflictError("schema-v2 节点运行引用了无效节点")
+    if node.schema_version != 2 or node.node_type not in {
+        WorkflowNodeType.PROMPT_GENERATION,
+        WorkflowNodeType.IMAGE_GENERATION,
+    }:
+        raise ConflictError("schema-v2 单节点运行包含不支持的节点")
+    if WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_queued(node_run.status):
+        try:
+            dispatch_node_run(node_run.id)
+        except Exception:  # noqa: BLE001
+            logger.exception("schema-v2 工作流节点运行入队失败: workflow_node_run_id=%s", node_run.id)
+            mark_workflow_run_failed(
+                session,
+                run_id=run.id,
+                failed_node_id=node.id,
+                reason=QUEUE_UNAVAILABLE_DETAIL,
+            )
+        return
+    if WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_running(node_run.status):
+        return
+    if node_run.status == WorkflowNodeStatus.SUCCEEDED:
+        run.status = WorkflowRunStatus.SUCCEEDED
+        run.failure_reason = None
+        run.finished_at = node_run.finished_at or now_utc()
+        workflow.updated_at = now_utc()
+        session.commit()
+        return
+    if node_run.status == WorkflowNodeStatus.FAILED:
+        mark_workflow_run_failed(
+            session,
+            run_id=run.id,
+            failed_node_id=node.id,
+            reason=node_run.failure_reason or "schema-v2 节点运行失败",
+        )
+        return
+    raise ConflictError("schema-v2 节点运行状态无法调度")
+
+
 def _execute_workflow_node_run(
     session: Session,
     *,
@@ -529,6 +628,8 @@ def _execute_workflow_node_run(
         return
     if not WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_queued(node_run.status):
         return
+    if run.workflow.schema_version != 1 or node_run.node.schema_version != 1:
+        raise ConflictError("schema-v1 executor 拒绝处理 schema-v2 工作流或节点")
     workflow = queries.get_workflow_or_raise(run.workflow_id)
     node = queries.get_node_or_raise(node_run.node_id)
     claim = claim_workflow_node_run(session, node_run_id=node_run.id, node_id=node.id)

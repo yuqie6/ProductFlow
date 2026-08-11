@@ -17,12 +17,17 @@ from productflow_backend.application.time import now_utc
 from productflow_backend.domain.enums import MediaVerificationStatus, ProductImageOriginType
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
+    ImagePromptArtifactVersionReference,
     ImageSessionAsset,
     MediaObject,
     PosterVariant,
     Product,
     ProductImageAsset,
     SourceAsset,
+    VisualSystemVersionReference,
+    WorkflowImageGenerationRecord,
+    WorkflowImageGenerationReference,
+    WorkflowNode,
     new_id,
 )
 from productflow_backend.infrastructure.storage import LocalStorage
@@ -350,14 +355,7 @@ def delete_product_image_asset(
     storage: LocalStorage | None = None,
 ) -> str:
     asset = get_product_image_asset(session, asset_id)
-    if session.scalar(select(Product.id).where(Product.cover_image_asset_id == asset_id).limit(1)) is not None:
-        raise ConflictError("商品图片仍被设为封面，不能删除")
-    if session.scalar(select(ProductImageAsset.id).where(ProductImageAsset.parent_asset_id == asset_id).limit(1)):
-        raise ConflictError("商品图片仍有派生图片，不能删除")
-    if session.scalar(select(SourceAsset.id).where(SourceAsset.canonical_asset_id == asset_id).limit(1)):
-        raise ConflictError("商品图片仍被旧源素材归档引用，不能删除")
-    if session.scalar(select(PosterVariant.id).where(PosterVariant.canonical_asset_id == asset_id).limit(1)):
-        raise ConflictError("商品图片仍被旧海报归档引用，不能删除")
+    ensure_product_image_asset_not_referenced(session, asset_id=asset_id)
 
     product_id = asset.product_id
     media = asset.media_object
@@ -390,18 +388,11 @@ def delete_legacy_source_with_canonical_asset(
     if source_asset.canonical_asset_id is None:
         return False
     asset = get_product_image_asset(session, source_asset.canonical_asset_id)
-    if session.scalar(select(Product.id).where(Product.cover_image_asset_id == asset.id).limit(1)) is not None:
-        raise ConflictError("商品图片仍被设为封面，不能删除")
-    if session.scalar(select(ProductImageAsset.id).where(ProductImageAsset.parent_asset_id == asset.id).limit(1)):
-        raise ConflictError("商品图片仍有派生图片，不能删除")
-    if session.scalar(
-        select(SourceAsset.id)
-        .where(SourceAsset.canonical_asset_id == asset.id, SourceAsset.id != source_asset.id)
-        .limit(1)
-    ):
-        raise ConflictError("商品图片仍被其他旧源素材归档引用，不能删除")
-    if session.scalar(select(PosterVariant.id).where(PosterVariant.canonical_asset_id == asset.id).limit(1)):
-        raise ConflictError("商品图片仍被旧海报归档引用，不能删除")
+    ensure_product_image_asset_not_referenced(
+        session,
+        asset_id=asset.id,
+        excluded_source_asset_id=source_asset.id,
+    )
 
     product_id = source_asset.product_id
     media = asset.media_object
@@ -421,6 +412,57 @@ def delete_legacy_source_with_canonical_asset(
             target=f"media_object_id={media.id} path={storage_path}",
         )
     return True
+
+
+def ensure_product_image_asset_not_referenced(
+    session: Session,
+    *,
+    asset_id: str,
+    excluded_source_asset_id: str | None = None,
+) -> None:
+    if session.scalar(select(Product.id).where(Product.cover_image_asset_id == asset_id).limit(1)) is not None:
+        raise ConflictError("商品图片仍被设为封面，不能删除")
+    if session.scalar(select(ProductImageAsset.id).where(ProductImageAsset.parent_asset_id == asset_id).limit(1)):
+        raise ConflictError("商品图片仍有派生图片，不能删除")
+
+    source_query = select(SourceAsset.id).where(SourceAsset.canonical_asset_id == asset_id)
+    if excluded_source_asset_id is not None:
+        source_query = source_query.where(SourceAsset.id != excluded_source_asset_id)
+    if session.scalar(source_query.limit(1)):
+        message = (
+            "商品图片仍被其他旧源素材归档引用，不能删除"
+            if excluded_source_asset_id is not None
+            else "商品图片仍被旧源素材归档引用，不能删除"
+        )
+        raise ConflictError(message)
+    if session.scalar(select(PosterVariant.id).where(PosterVariant.canonical_asset_id == asset_id).limit(1)):
+        raise ConflictError("商品图片仍被旧海报归档引用，不能删除")
+    if session.scalar(select(WorkflowNode.id).where(WorkflowNode.bound_image_asset_id == asset_id).limit(1)):
+        raise ConflictError("商品图片仍被工作流节点绑定，不能删除")
+    if session.scalar(
+        select(VisualSystemVersionReference.id)
+        .where(VisualSystemVersionReference.asset_id == asset_id)
+        .limit(1)
+    ):
+        raise ConflictError("商品图片仍被视觉体系版本引用，不能删除")
+    if session.scalar(
+        select(ImagePromptArtifactVersionReference.id)
+        .where(ImagePromptArtifactVersionReference.asset_id == asset_id)
+        .limit(1)
+    ):
+        raise ConflictError("商品图片仍被提示词版本作为证据引用，不能删除")
+    if session.scalar(
+        select(WorkflowImageGenerationRecord.id)
+        .where(WorkflowImageGenerationRecord.result_asset_id == asset_id)
+        .limit(1)
+    ):
+        raise ConflictError("商品图片仍被工作流生成历史作为结果引用，不能删除")
+    if session.scalar(
+        select(WorkflowImageGenerationReference.id)
+        .where(WorkflowImageGenerationReference.asset_id == asset_id)
+        .limit(1)
+    ):
+        raise ConflictError("商品图片仍被工作流生成历史作为参考图引用，不能删除")
 
 
 def verify_pending_media_objects(

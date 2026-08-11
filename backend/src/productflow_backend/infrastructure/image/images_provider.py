@@ -20,8 +20,13 @@ from productflow_backend.domain.enums import PosterKind
 from productflow_backend.infrastructure.image.base import (
     GeneratedImagePayload,
     ImageProvider,
+    WorkflowGeneratedImage,
+    WorkflowImageReference,
+    WorkflowImageRequest,
+    WorkflowImageResult,
     decode_b64_image,
     image_dimensions_from_bytes,
+    map_generation_spec_to_openai_size,
     parse_size,
 )
 from productflow_backend.infrastructure.image.responses_provider import build_responses_reference_images_from_poster
@@ -347,6 +352,68 @@ class OpenAIImagesImageProvider(ImageProvider):
     ) -> tuple[GeneratedImagePayload, str]:
         return self.generate_poster_images(poster=poster, kind=kind, count=1)[0]
 
+    def generate_workflow_image(self, request: WorkflowImageRequest) -> WorkflowImageResult:
+        size = map_generation_spec_to_openai_size(request.generation_spec)
+        quality = {
+            "draft": "low",
+            "standard": "medium",
+            "high": "high",
+        }[request.generation_spec.quality_intent]
+        client = OpenAIImagesClient(self.provider_config)
+        if request.references:
+            operation = "edit"
+            results = client.edit(
+                image=[_images_reference(reference) for reference in request.references],
+                prompt=request.compiled_prompt,
+                size=size,
+                quality=quality,
+                n=1,
+            )
+        else:
+            operation = "generation"
+            results = client.generate(
+                prompt=request.compiled_prompt,
+                size=size,
+                quality=quality,
+                n=1,
+            )
+        if len(results) != 1:
+            raise RuntimeError("schema-v2 单图生成要求 Images API 恰好返回一张图片")
+        result = results[0]
+        output_metadata = result.provider_output_json.get("_productflow")
+        output_metadata = output_metadata if isinstance(output_metadata, dict) else {}
+        notes = [dict(note) for note in output_metadata.get("notes", []) if isinstance(note, dict)]
+        if request.references:
+            notes.append(
+                {
+                    "kind": "reference_fidelity_prompt_only",
+                    "requested": request.generation_spec.reference_fidelity,
+                    "message": "Images API 没有独立 reference_fidelity 参数，参考保真要求仅写入编译提示词。",
+                }
+            )
+        if request.generation_spec.background_intent != "auto":
+            notes.append(
+                {
+                    "kind": "background_prompt_only",
+                    "requested": request.generation_spec.background_intent,
+                    "message": "当前 Images API adapter 没有发送 background 参数，背景要求仅写入编译提示词。",
+                }
+            )
+        effective_parameters = _images_effective_parameters(
+            result,
+            operation=operation,
+            reference_count=len(request.references),
+            notes=notes,
+        )
+        return WorkflowImageResult(
+            images=(WorkflowGeneratedImage(bytes_data=result.bytes_data, mime_type=result.mime_type),),
+            model=result.model_name,
+            provider_status="completed",
+            effective_parameters=effective_parameters,
+            provider_request_json=result.provider_request_json,
+            provider_output_json=result.provider_output_json,
+        )
+
     def generate_poster_images(
         self,
         poster: PosterGenerationInput,
@@ -450,3 +517,39 @@ class OpenAIImagesImageProvider(ImageProvider):
             )
             for index, reference in enumerate(build_responses_reference_images_from_poster(poster), start=1)
         ]
+
+
+def _images_reference(reference: WorkflowImageReference) -> ImagesReferenceImage:
+    return ImagesReferenceImage(
+        bytes_data=reference.bytes_data,
+        mime_type=reference.mime_type,
+        filename=reference.filename,
+    )
+
+
+def _images_effective_parameters(
+    result: ImagesAPIResult,
+    *,
+    operation: str,
+    reference_count: int,
+    notes: list[dict[str, Any]],
+) -> dict[str, Any]:
+    request_json = result.provider_request_json
+    effective = {
+        key: value
+        for key, value in request_json.items()
+        if key in {"model", "size", "n", "quality", "style", "image_count"}
+    }
+    effective_reference_count = reference_count
+    output_metadata = result.provider_output_json.get("_productflow")
+    if isinstance(output_metadata, dict):
+        effective_count = output_metadata.get("effective_image_count")
+        if isinstance(effective_count, int):
+            effective_reference_count = effective_count
+    return {
+        "adapter": "openai_images",
+        "operation": operation,
+        "reference_image_count": effective_reference_count,
+        **effective,
+        "notes": notes,
+    }

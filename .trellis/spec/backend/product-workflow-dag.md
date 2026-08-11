@@ -1515,3 +1515,129 @@ result = materialize_workflow_draft(
 ```
 
 The command validates lineage and owns one commit/rollback boundary for the full replacement.
+
+---
+
+## Scenario: VisualSystem, Prompt Artifact, and schema-v2 single-image node execution
+
+### 1. Scope / Trigger
+
+- Trigger: changes to strict visual or prompt payloads, VisualSystem confirmation/reuse, prompt/image node execution,
+  provider-neutral generation settings, v2 node-run APIs, or canonical generation history.
+- This scenario applies only to materialized workflow/node `schema_version = 2`. Legacy `copy_generation`, batched
+  `image_generation`, downstream result slots, and legacy artifact writes remain isolated in the v1 executor.
+
+### 2. Signatures
+
+- Strict contracts in `application/workflow_drafts/contracts.py`:
+  - `VisualSystemDraftPayload`, `VisualExceptionPlan`, `ImagePromptPayloadV1`, and `GenerationSpec`;
+  - every model is frozen and uses `extra="forbid"` through `StrictArtifactModel`.
+- Confirmation/materialization:
+  - `confirm_workflow_draft_revision(...)` fixes `WorkflowDraftRevision.visual_system_version_id`;
+  - `materialize_workflow_draft(...)` fixes `ProductWorkflow.visual_system_version_id`, creates one
+    `ImagePromptArtifact` per image type, and binds each prompt node to an initial immutable version.
+- Runtime:
+  - `submit_v2_workflow_node_run(session, *, node_id, enqueue=None) -> V2WorkflowNodeRunSubmission`;
+  - `get_v2_workflow_node_run(session, *, node_run_id) -> WorkflowNodeRun`;
+  - `execute_v2_workflow_node_run(session, *, node_run_id, dependencies=None, storage=None) -> None`;
+  - `PromptGenerationProvider.generate_prompt(PromptGenerationRequest) -> PromptGenerationResult`;
+  - `ImageProvider.generate_workflow_image(WorkflowImageRequest) -> WorkflowImageResult`.
+- HTTP:
+  - `POST /api/v2/workflow-nodes/{node_id}/run -> 202 SubmitWorkflowNodeRunV2Response`;
+  - `GET /api/v2/workflow-node-runs/{node_run_id} -> WorkflowNodeRunV2Response`.
+
+### 3. Contracts
+
+- No VisualSystem rows are built in or seeded. Draft mode creates a user-owned stable identity plus immutable version;
+  `confirmed_version` resolves the exact supplied version ID and never follows a latest-version pointer.
+- `locked_fields` and discriminated override value schemas define the only fields a confirmed `VisualException` may
+  replace. Scope is exactly workflow, image type, or image plan, with key requirements enforced by the scope type.
+- A saved VisualSystemVersion may be consumed by another product. Its version-owned reference assets are authorized
+  across products for prompt-generation input; ordinary Draft references and Prompt evidence still require current-product
+  ownership. Draft references plus saved-version references are de-duplicated and capped at six during confirmation.
+- Each image type owns one `ImagePromptArtifact`. Its immutable payload contains shared rules and the complete ordered
+  per-image plan list. A prompt run appends one version and atomically moves only the prompt node's current pointer.
+- OpenAI prompt generation sends actual `input_image` content parts next to stable asset metadata. Data URLs exist only
+  while constructing the provider request and are never persisted in versions, node outputs, logs, or run DTOs.
+- A v2 run contains exactly one `WorkflowNodeRun` and can target only `prompt_generation` or `image_generation`. Duplicate
+  submit while that node is queued/running returns the existing run and does not enqueue or invoke the provider twice.
+- Each image node run calls the adapter once, requires exactly one returned image, stages one MediaObject plus one
+  ProductImageAsset, appends one generation record, and moves the node's `bound_image_asset_id`. A rerun leaves the prior
+  asset, node run, generation record, compiled prompt, and reference rows intact.
+- Generation evidence has three independent sources:
+  - `requested_spec_json`: the exact provider-neutral `GenerationSpec` read before provider invocation;
+  - `effective_parameters_json`: parameters the adapter actually sent after mapping/fallback plus explicit notes;
+  - `actual_media_json`: MIME, width, height, byte size, and SHA-256 decoded from returned bytes.
+- Provider request/output metadata is recursively JSON-checked and removes inline image values before persistence. The v2
+  node-run API exposes evidence fields and provider identifiers, but not raw provider request/output or storage paths.
+- Prompt/image success never creates `CreativeBrief`, `CopySet`, `SourceAsset`, or `PosterVariant`. Worker and scheduler
+  dispatch by workflow schema, and each executor rejects the other schema again at its own entry.
+- Direct canonical asset deletion returns `409` while any node binding, VisualSystem reference, Prompt evidence,
+  generation result, or generation reference exists. Product deletion removes owned unused VisualSystem versions; an
+  external product consumer that needs a source-product visual reference blocks deletion before any partial mutation.
+
+### 4. Validation & Error Matrix
+
+- Unknown visual/prompt field, invalid override value, duplicate business key, or prompt/image-plan mismatch -> strict
+  Draft validation error / HTTP `422` or application `400` according to the entrypoint.
+- Missing VisualSystemVersion, payload/hash drift, unknown variant, unlocked exception field, or combined references over
+  six -> confirmation failure; revision remains awaiting confirmation with no fact/visual binding.
+- Missing/cross-product ordinary asset, unreadable media, unsupported MIME, or image node without an explicit upstream
+  reference asset -> non-retryable input conflict; no provider result is persisted.
+- Provider changes image-plan order, facts, evidence, or visual variant outside supplied inputs -> non-retryable
+  `provider_contract` failure; prompt current version remains unchanged.
+- Provider returns zero/multiple images, non-image bytes, or non-JSON metadata -> failed run; no canonical asset or
+  generation record remains. A staged file is removed by `StorageWriteCompensation` when commit fails.
+- Queue delivery failure -> run, node run, and node become failed with the stable queue-unavailable message. Startup
+  recovery redispatches the one queued v2 node run.
+- v1 node submitted to the v2 API/executor, or v2 node sent through the legacy runtime -> `ConflictError` / HTTP `409`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: one image type requests two images; materialization creates one prompt node/artifact and two independently
+  runnable image nodes.
+- Good: product B reuses product A's fixed VisualSystemVersion; prompt input includes B's product reference and A's saved
+  visual reference, and a subsequent prompt version may retain that visual asset as evidence.
+- Good: rerun one image node with another provider; the current asset changes while both generation records retain their
+  provider metadata and the same immutable prompt/visual version IDs.
+- Base: an adapter cannot send a requested field; omit it from effective fields and append a mapping/fallback note while
+  actual dimensions continue to come only from decoded bytes.
+- Bad: copy VisualSystem or prompt payload JSON into every node config and let later edits silently diverge.
+- Bad: set effective/actual dimensions from `GenerationSpec`, keep only the newest asset, or truncate a multi-image
+  provider response to the first image.
+
+### 6. Tests Required
+
+- Contract tests cover strict unknown-field rejection, locked override types, visual/prompt reference ownership and limit,
+  per-type artifact cardinality, and image-plan equality.
+- Prompt tests inspect the actual OpenAI content-part array, exercise cross-product saved visual references across two
+  consecutive prompt runs, and assert no data URL/base64 or legacy artifact rows are persisted.
+- Image tests cover every adapter mapping, exact-one-result rejection, actual byte inspection, metadata sanitization,
+  rerun history, provider switching, commit compensation, and zero legacy writes.
+- Queue/API tests cover idempotent submit, schema dispatch/rejection, queue failure, scheduler recovery, strict evidence
+  DTOs, and absence of raw provider/storage fields.
+- Migration verification runs SQLite constraints plus isolated PostgreSQL 16
+  `20260811_0032 -> 20260812_0033 -> 20260811_0032 -> 20260812_0033`, with real v1 sentinel rows, real v2 writes, and an
+  unchanged storage-file hash across downgrade.
+- Run `just backend-test`, `uv run --directory backend ruff check .`, `pnpm --dir web test:run`, `pnpm --dir web lint`,
+  and `just web-build` before commit.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+images = provider.generate_many(prompt, count=node.config_json["count"])
+node.output_json = {"images": [image.url for image in images]}
+```
+
+Correct:
+
+```python
+result = provider.generate_workflow_image(request)
+generated = _validate_workflow_image_result(result)  # exactly one
+_persist_image_result(session, prepared=prepared, result=result, generated_image=generated, ...)
+```
+
+The persisted result is a canonical ProductImageAsset plus immutable generation lineage; the image node carries only its
+current asset pointer.

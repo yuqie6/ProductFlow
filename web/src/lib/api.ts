@@ -44,9 +44,11 @@ import type {
   SettingsImportCommitResponse,
   SettingsImportPreviewResponse,
   SessionState,
+  SubmitWorkflowNodeRunV2Result,
   UpdateUserTemplateGroupInput,
   WorkflowDraft,
   WorkflowMaterializationResult,
+  WorkflowNodeRunV2,
 } from "./types";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ?? "";
@@ -430,6 +432,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify(input),
     });
+  },
+  runWorkflowNodeV2(nodeId: string): Promise<SubmitWorkflowNodeRunV2Result> {
+    return request(`/api/v2/workflow-nodes/${nodeId}/run`, {
+      method: "POST",
+    });
+  },
+  getWorkflowNodeRunV2(nodeRunId: string): Promise<WorkflowNodeRunV2> {
+    return request(`/api/v2/workflow-node-runs/${nodeRunId}`);
   },
   workflowRevealEventsUrl(materializationId: string, after?: number): string {
     const path = `/api/v2/workflow-materializations/${materializationId}/reveal-events`;

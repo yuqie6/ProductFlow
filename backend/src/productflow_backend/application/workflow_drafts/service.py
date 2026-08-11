@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.time import now_utc
 from productflow_backend.application.workflow_drafts.contracts import (
+    WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS,
+    VisualSystemDraftPayload,
     WorkflowDraftPayloadV1,
     parse_workflow_draft_payload,
     workflow_draft_payload_hash,
@@ -19,6 +21,10 @@ from productflow_backend.domain.errors import BusinessValidationError, ConflictE
 from productflow_backend.infrastructure.db.models import (
     Product,
     ProductFactSetVersion,
+    ProductImageAsset,
+    VisualSystem,
+    VisualSystemVersion,
+    VisualSystemVersionReference,
     WorkflowDraft,
     WorkflowDraftRevision,
 )
@@ -27,6 +33,7 @@ from productflow_backend.infrastructure.db.models import (
 def workflow_draft_query():
     return select(WorkflowDraft).options(
         selectinload(WorkflowDraft.revisions).selectinload(WorkflowDraftRevision.fact_set_version),
+        selectinload(WorkflowDraft.revisions).selectinload(WorkflowDraftRevision.visual_system_version),
         selectinload(WorkflowDraft.current_revision),
         selectinload(WorkflowDraft.final_workflow),
     )
@@ -166,6 +173,8 @@ def confirm_workflow_draft_revision(
         if revision.confirmed_at is not None:
             if revision.fact_set_version is None:
                 raise ConflictError("已确认 WorkflowDraft 缺少商品事实版本")
+            if revision.visual_system_version is None:
+                raise ConflictError("已确认 WorkflowDraft 缺少视觉体系版本")
             session.commit()
             return get_workflow_draft_or_raise(session, product_id=product_id, draft_id=draft_id)
         if draft.status != WorkflowDraftStatus.AWAITING_CONFIRMATION:
@@ -178,6 +187,12 @@ def confirm_workflow_draft_revision(
             raise BusinessValidationError("WorkflowDraft 仍有缺失的必要商品事实")
         if any(fact.status == ProductFactStatus.CONFLICTED for fact in artifact.facts):
             raise BusinessValidationError("WorkflowDraft 仍有未解决的商品事实冲突")
+        validate_workflow_draft_reference_assets(session, product_id=product_id, artifact=artifact)
+        visual_system_version = _resolve_visual_system_version(
+            session,
+            revision=revision,
+            artifact=artifact,
+        )
 
         next_fact_version = (
             session.scalar(
@@ -207,6 +222,7 @@ def confirm_workflow_draft_revision(
         )
         session.add(fact_set)
         session.flush()
+        revision.visual_system_version_id = visual_system_version.id
         revision.confirmed_at = now_utc()
         draft.status = WorkflowDraftStatus.CONFIRMED
         draft.updated_at = now_utc()
@@ -228,6 +244,115 @@ def parse_workflow_draft_payload_or_raise(
         raise BusinessValidationError("WorkflowDraft payload 不符合 schema version 1") from exc
 
 
+def validate_workflow_draft_reference_assets(
+    session: Session,
+    *,
+    product_id: str,
+    artifact: WorkflowDraftPayloadV1,
+) -> None:
+    asset_ids = artifact.referenced_asset_ids()
+    assets = list(session.scalars(select(ProductImageAsset).where(ProductImageAsset.id.in_(asset_ids))))
+    assets_by_id = {asset.id: asset for asset in assets}
+    if set(assets_by_id) != asset_ids:
+        raise BusinessValidationError("WorkflowDraft 引用了不存在的商品图片资产")
+    if any(asset.product_id != product_id for asset in assets):
+        raise BusinessValidationError("WorkflowDraft 引用了其他商品的图片资产")
+
+
+def _resolve_visual_system_version(
+    session: Session,
+    *,
+    revision: WorkflowDraftRevision,
+    artifact: WorkflowDraftPayloadV1,
+) -> VisualSystemVersion:
+    plan = artifact.visual_system
+    if plan.mode == "draft":
+        payload = plan.payload
+        assert payload is not None
+        payload_json = payload.model_dump(mode="json")
+        payload_hash = _json_hash(payload_json)
+        version = session.scalar(
+            select(VisualSystemVersion).where(VisualSystemVersion.source_draft_revision_id == revision.id)
+        )
+        if version is None:
+            visual_system = VisualSystem(name=payload.name)
+            session.add(visual_system)
+            session.flush()
+            version = VisualSystemVersion(
+                visual_system_id=visual_system.id,
+                version=1,
+                schema_version=1,
+                payload_json=payload_json,
+                payload_hash=payload_hash,
+                source_markdown=plan.source_markdown,
+                source_draft_revision_id=revision.id,
+            )
+            session.add(version)
+            session.flush()
+            for position, reference in enumerate(payload.reference_assets):
+                session.add(
+                    VisualSystemVersionReference(
+                        visual_system_version_id=version.id,
+                        asset_id=reference.asset_id,
+                        role=reference.role,
+                        label=reference.label,
+                        position=position,
+                    )
+                )
+        elif version.payload_hash != payload_hash:
+            raise ConflictError("WorkflowDraft revision 已绑定不同的视觉体系内容")
+    else:
+        assert plan.version_id is not None
+        version = session.get(VisualSystemVersion, plan.version_id)
+        if version is None:
+            raise BusinessValidationError("WorkflowDraft 引用的视觉体系版本不存在")
+
+    visual_payload = _parse_and_verify_visual_system_version(version)
+    _validate_visual_usage(
+        artifact=artifact,
+        visual_payload=visual_payload,
+        visual_reference_asset_ids={reference.asset_id for reference in version.references},
+    )
+    return version
+
+
+def _parse_and_verify_visual_system_version(version: VisualSystemVersion) -> VisualSystemDraftPayload:
+    try:
+        payload = VisualSystemDraftPayload.model_validate(version.payload_json)
+    except ValidationError as exc:
+        raise ConflictError("视觉体系版本 payload 不符合 schema version 1") from exc
+    if _json_hash(payload.model_dump(mode="json")) != version.payload_hash:
+        raise ConflictError("视觉体系版本 payload hash 不一致")
+    return payload
+
+
+def _validate_visual_usage(
+    *,
+    artifact: WorkflowDraftPayloadV1,
+    visual_payload: VisualSystemDraftPayload,
+    visual_reference_asset_ids: set[str],
+) -> None:
+    variant_keys = {variant.key for variant in visual_payload.variants}
+    if any(
+        prompt.payload.visual_variant_key is not None
+        and prompt.payload.visual_variant_key not in variant_keys
+        for prompt in artifact.prompt_plans
+    ):
+        raise BusinessValidationError("提示词引用了视觉体系版本中不存在的视觉变体")
+    locked_fields = set(visual_payload.locked_fields)
+    if any(
+        override.field not in locked_fields
+        for exception in artifact.visual_exceptions
+        for override in exception.overrides
+    ):
+        raise BusinessValidationError("视觉例外只能覆盖 VisualSystem locked_fields")
+    referenced_asset_ids = artifact.referenced_asset_ids() | visual_reference_asset_ids
+    if len(referenced_asset_ids) > WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS:
+        raise BusinessValidationError(
+            f"WorkflowDraft 与视觉体系引用的不同图片资产不能超过 {WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS} 张"
+        )
+
+
 def _get_product_or_raise(session: Session, product_id: str, *, for_update: bool = False) -> Product:
     statement = select(Product).where(Product.id == product_id)
     if for_update:
@@ -243,6 +368,9 @@ def _get_draft_for_update(session: Session, *, product_id: str, draft_id: str) -
         select(WorkflowDraft)
         .options(
             selectinload(WorkflowDraft.current_revision).selectinload(WorkflowDraftRevision.fact_set_version),
+            selectinload(WorkflowDraft.current_revision).selectinload(
+                WorkflowDraftRevision.visual_system_version
+            ),
         )
         .where(WorkflowDraft.id == draft_id, WorkflowDraft.product_id == product_id)
         .with_for_update()
@@ -301,5 +429,6 @@ __all__ = [
     "create_workflow_draft",
     "get_workflow_draft_or_raise",
     "parse_workflow_draft_payload_or_raise",
+    "validate_workflow_draft_reference_assets",
     "workflow_draft_query",
 ]

@@ -23,8 +23,13 @@ from productflow_backend.domain.enums import PosterKind
 from productflow_backend.infrastructure.image.base import (
     GeneratedImagePayload,
     ImageProvider,
+    WorkflowGeneratedImage,
+    WorkflowImageReference,
+    WorkflowImageRequest,
+    WorkflowImageResult,
     decode_b64_image,
     image_dimensions_from_bytes,
+    map_generation_spec_to_openai_size,
     parse_size,
 )
 from productflow_backend.infrastructure.prompts import render_poster_image_prompt
@@ -763,6 +768,68 @@ class OpenAIResponsesImageProvider(ImageProvider):
             self.model,
         )
 
+    def generate_workflow_image(self, request: WorkflowImageRequest) -> WorkflowImageResult:
+        size = map_generation_spec_to_openai_size(request.generation_spec)
+        requested_options = _workflow_responses_tool_options(request)
+        result = self.client.generate_image(
+            prompt=request.compiled_prompt,
+            size=size,
+            reference_images=[_responses_reference(reference) for reference in request.references],
+            tool_options=requested_options,
+        )
+        output_metadata = result.provider_output_json.get("_productflow")
+        output_metadata = output_metadata if isinstance(output_metadata, dict) else {}
+        effective_tool = output_metadata.get("effective_image_tool")
+        if not isinstance(effective_tool, dict) or not effective_tool:
+            request_tools = result.provider_request_json.get("tools")
+            effective_tool = (
+                dict(request_tools[0])
+                if isinstance(request_tools, list) and request_tools and isinstance(request_tools[0], dict)
+                else {"size": size}
+            )
+        notes = [dict(note) for note in output_metadata.get("notes", []) if isinstance(note, dict)]
+        for key, value in requested_options.items():
+            if key not in effective_tool:
+                notes.append(
+                    {
+                        "kind": "parameter_not_sent",
+                        "field": key,
+                        "requested": value,
+                        "message": f"Responses adapter 未发送 {key}，当前 provider 配置未开放该字段。",
+                    }
+                )
+        if request.generation_spec.reference_fidelity == "medium" and request.references:
+            notes.append(
+                {
+                    "kind": "reference_fidelity_mapped",
+                    "requested": "medium",
+                    "effective": "high",
+                    "message": "Responses image tool 不支持 medium input_fidelity，已映射为 high。",
+                }
+            )
+        effective_parameters = {
+            "adapter": "openai_responses",
+            "model": result.model_name,
+            "reference_image_count": len(request.references),
+            **{key: value for key, value in effective_tool.items() if key != "type"},
+            "notes": notes,
+        }
+        status = str(result.provider_output_json.get("status", "") or "completed")
+        return WorkflowImageResult(
+            images=(
+                WorkflowGeneratedImage(
+                    bytes_data=result.bytes_data,
+                    mime_type=result.mime_type,
+                ),
+            ),
+            model=result.model_name,
+            provider_response_id=result.provider_response_id,
+            provider_status=status,
+            effective_parameters=effective_parameters,
+            provider_request_json=result.provider_request_json,
+            provider_output_json=result.provider_output_json,
+        )
+
     def _build_prompt(
         self,
         poster: PosterGenerationInput,
@@ -777,3 +844,27 @@ class OpenAIResponsesImageProvider(ImageProvider):
             edit_template=self.poster_image_edit_template,
             reference_policy=self.poster_image_reference_policy,
         )
+
+
+def _responses_reference(reference: WorkflowImageReference) -> ResponsesReferenceImage:
+    return ResponsesReferenceImage(
+        bytes_data=reference.bytes_data,
+        mime_type=reference.mime_type,
+        filename=reference.filename,
+    )
+
+
+def _workflow_responses_tool_options(request: WorkflowImageRequest) -> dict[str, Any]:
+    spec = request.generation_spec
+    options: dict[str, Any] = {
+        "quality": {"draft": "low", "standard": "medium", "high": "high"}[spec.quality_intent],
+        "output_format": "png",
+        "background": spec.background_intent,
+    }
+    if request.references:
+        options["input_fidelity"] = {
+            "low": "low",
+            "medium": "high",
+            "high": "high",
+        }[spec.reference_fidelity]
+    return options

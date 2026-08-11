@@ -32,6 +32,17 @@ BusinessKey = Annotated[
 NonEmptyText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 EntityId = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=36)]
 HexColor = Annotated[str, StringConstraints(pattern=r"^#[0-9A-Fa-f]{6}$")]
+VisualLockedField = Literal[
+    "style",
+    "colors",
+    "typography",
+    "spacing",
+    "decorations",
+    "photography",
+    "quality",
+    "product_fidelity",
+    "prohibitions",
+]
 
 
 class StrictArtifactModel(BaseModel):
@@ -71,10 +82,99 @@ class ReferenceBindingPlan(StrictArtifactModel):
     label: NonEmptyText
 
 
+class VisualColor(StrictArtifactModel):
+    role: BusinessKey
+    value: HexColor
+    label: NonEmptyText
+
+
+class VisualTypeScale(StrictArtifactModel):
+    headline: float = Field(gt=0, le=20)
+    subtitle: float = Field(gt=0, le=20)
+    body: float = Field(gt=0, le=20)
+
+
+class VisualTypography(StrictArtifactModel):
+    title_font: NonEmptyText
+    body_font: NonEmptyText
+    scale: VisualTypeScale
+
+
+class VisualSpacing(StrictArtifactModel):
+    min_edge_whitespace_percent: float = Field(ge=0, le=80)
+    principles: list[NonEmptyText] = Field(min_length=1)
+
+
+class VisualDecorations(StrictArtifactModel):
+    elements: list[NonEmptyText] = Field(default_factory=list)
+    icon_style: NonEmptyText
+
+
+class VisualPhotography(StrictArtifactModel):
+    lighting: NonEmptyText
+    depth_of_field: NonEmptyText
+    camera_parameters: list[NonEmptyText] = Field(default_factory=list)
+
+
+class VisualQuality(StrictArtifactModel):
+    resolution: NonEmptyText
+    commercial_grade: NonEmptyText
+    realism: NonEmptyText
+    minimum_quality: Literal["draft", "standard", "high"] = "high"
+
+
+class VisualProductFidelity(StrictArtifactModel):
+    preserve_shape: bool = True
+    preserve_proportions: bool = True
+    preserve_materials: bool = True
+    requirements: list[NonEmptyText] = Field(default_factory=list)
+
+
+class VisualVariant(StrictArtifactModel):
+    key: BusinessKey
+    title: NonEmptyText
+    guidance: list[NonEmptyText] = Field(min_length=1)
+
+
+class VisualReferenceAsset(StrictArtifactModel):
+    asset_id: EntityId
+    role: NonEmptyText
+    label: NonEmptyText
+
+
+class VisualSystemDraftPayload(StrictArtifactModel):
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
+    style: list[NonEmptyText] = Field(min_length=1)
+    colors: list[VisualColor] = Field(min_length=1)
+    typography: VisualTypography
+    spacing: VisualSpacing
+    decorations: VisualDecorations
+    photography: VisualPhotography
+    quality: VisualQuality
+    product_fidelity: VisualProductFidelity
+    locked_fields: list[VisualLockedField] = Field(min_length=1)
+    variants: list[VisualVariant] = Field(default_factory=list)
+    prohibitions: list[NonEmptyText] = Field(default_factory=list)
+    reference_assets: list[VisualReferenceAsset] = Field(
+        default_factory=list,
+        max_length=WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS,
+    )
+
+    @model_validator(mode="after")
+    def validate_unique_values(self) -> VisualSystemDraftPayload:
+        _require_unique_values([color.role for color in self.colors], label="视觉颜色 role")
+        _require_unique_keys(self.variants, label="视觉变体")
+        _require_unique_values(self.locked_fields, label="视觉体系 locked_fields")
+        reference_keys = [(reference.asset_id, reference.role) for reference in self.reference_assets]
+        if len(reference_keys) != len(set(reference_keys)):
+            raise ValueError("视觉参考资产和 role 不能重复")
+        return self
+
+
 class VisualSystemPlan(StrictArtifactModel):
     mode: Literal["draft", "confirmed_version"]
     version_id: EntityId | None = None
-    payload: dict[str, JsonValue] | None = None
+    payload: VisualSystemDraftPayload | None = None
     source_markdown: str | None = None
 
     @model_validator(mode="after")
@@ -89,6 +189,92 @@ class VisualSystemPlan(StrictArtifactModel):
                 raise ValueError("confirmed_version 视觉体系必须引用 version_id")
             if self.payload is not None:
                 raise ValueError("confirmed_version 视觉体系不能内嵌 draft payload")
+            if self.source_markdown is not None:
+                raise ValueError("confirmed_version 视觉体系不能重复保存 source_markdown")
+        return self
+
+
+class VisualStyleOverride(StrictArtifactModel):
+    field: Literal["style"]
+    value: list[NonEmptyText] = Field(min_length=1)
+
+
+class VisualColorsOverride(StrictArtifactModel):
+    field: Literal["colors"]
+    value: list[VisualColor] = Field(min_length=1)
+
+
+class VisualTypographyOverride(StrictArtifactModel):
+    field: Literal["typography"]
+    value: VisualTypography
+
+
+class VisualSpacingOverride(StrictArtifactModel):
+    field: Literal["spacing"]
+    value: VisualSpacing
+
+
+class VisualDecorationsOverride(StrictArtifactModel):
+    field: Literal["decorations"]
+    value: VisualDecorations
+
+
+class VisualPhotographyOverride(StrictArtifactModel):
+    field: Literal["photography"]
+    value: VisualPhotography
+
+
+class VisualQualityOverride(StrictArtifactModel):
+    field: Literal["quality"]
+    value: VisualQuality
+
+
+class VisualProductFidelityOverride(StrictArtifactModel):
+    field: Literal["product_fidelity"]
+    value: VisualProductFidelity
+
+
+class VisualProhibitionsOverride(StrictArtifactModel):
+    field: Literal["prohibitions"]
+    value: list[NonEmptyText]
+
+
+VisualFieldOverride = Annotated[
+    VisualStyleOverride
+    | VisualColorsOverride
+    | VisualTypographyOverride
+    | VisualSpacingOverride
+    | VisualDecorationsOverride
+    | VisualPhotographyOverride
+    | VisualQualityOverride
+    | VisualProductFidelityOverride
+    | VisualProhibitionsOverride,
+    Field(discriminator="field"),
+]
+
+
+class VisualExceptionScope(StrictArtifactModel):
+    type: Literal["workflow", "image_type", "image_plan"]
+    key: BusinessKey | None = None
+
+    @model_validator(mode="after")
+    def validate_scope_key(self) -> VisualExceptionScope:
+        if self.type == "workflow" and self.key is not None:
+            raise ValueError("workflow 视觉例外不能指定 scope key")
+        if self.type != "workflow" and self.key is None:
+            raise ValueError("图片类型或逐图视觉例外必须指定 scope key")
+        return self
+
+
+class VisualExceptionPlan(StrictArtifactModel):
+    key: BusinessKey
+    scope: VisualExceptionScope
+    overrides: list[VisualFieldOverride] = Field(min_length=1)
+    reason: NonEmptyText
+
+    @model_validator(mode="after")
+    def validate_unique_fields(self) -> VisualExceptionPlan:
+        _require_unique_values([override.field for override in self.overrides], label="视觉例外 override field")
         return self
 
 
@@ -163,11 +349,82 @@ class ImageTypePlan(StrictArtifactModel):
         return self
 
 
+class PromptProductFidelity(StrictArtifactModel):
+    complex_structure: bool
+    product_present: bool = True
+    picture_in_picture: Literal["none", "allowed", "required"] = "none"
+    requirements: list[NonEmptyText] = Field(min_length=1)
+
+
+class PromptComposition(StrictArtifactModel):
+    viewpoint: NonEmptyText
+    product_share_percent: float = Field(gt=0, le=100)
+    layout: NonEmptyText
+    copy_regions: list[NonEmptyText] = Field(default_factory=list)
+
+
+class PromptContentElements(StrictArtifactModel):
+    focus: list[NonEmptyText] = Field(min_length=1)
+    selling_points: list[NonEmptyText] = Field(default_factory=list)
+    background: NonEmptyText
+    decorations: list[NonEmptyText] = Field(default_factory=list)
+
+
+class PromptTextContent(StrictArtifactModel):
+    headline: str | None = None
+    subtitle: str | None = None
+    body: str | None = None
+
+    @model_validator(mode="after")
+    def normalize_blank_text(self) -> PromptTextContent:
+        for field_name in ("headline", "subtitle", "body"):
+            value = getattr(self, field_name)
+            if value is not None and not value.strip():
+                object.__setattr__(self, field_name, None)
+        return self
+
+
+class PromptAtmosphere(StrictArtifactModel):
+    keywords: list[NonEmptyText] = Field(min_length=1)
+    lighting: NonEmptyText
+
+
+class PerImagePromptPlan(StrictArtifactModel):
+    image_plan_key: BusinessKey
+    instruction: NonEmptyText
+    viewpoint: str | None = None
+    composition_adjustments: list[NonEmptyText] = Field(default_factory=list)
+    lighting: str | None = None
+
+
+class ImagePromptPayloadV1(StrictArtifactModel):
+    schema_version: Literal[1] = 1
+    shared_rules: list[NonEmptyText] = Field(min_length=1)
+    design_goal: NonEmptyText
+    product_fidelity: PromptProductFidelity
+    creative_boundary: list[NonEmptyText] = Field(default_factory=list)
+    composition: PromptComposition
+    content: PromptContentElements
+    text: PromptTextContent
+    atmosphere: PromptAtmosphere
+    visual_variant_key: BusinessKey | None = None
+    fact_keys: list[BusinessKey] = Field(default_factory=list)
+    evidence_asset_ids: list[EntityId] = Field(default_factory=list)
+    images: list[PerImagePromptPlan] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_unique_values(self) -> ImagePromptPayloadV1:
+        _require_unique_values(self.fact_keys, label="提示词 fact_keys")
+        _require_unique_values(self.evidence_asset_ids, label="提示词 evidence_asset_ids")
+        _require_unique_values([image.image_plan_key for image in self.images], label="提示词逐图计划 key")
+        return self
+
+
 class PromptPlan(StrictArtifactModel):
     key: BusinessKey
     image_type_key: BusinessKey
     title: NonEmptyText
-    payload: dict[str, JsonValue] = Field(min_length=1)
+    payload: ImagePromptPayloadV1
 
 
 class WorkflowFolderPlan(StrictArtifactModel):
@@ -232,6 +489,7 @@ class WorkflowDraftPayloadV1(StrictArtifactModel):
         max_length=WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS,
     )
     visual_system: VisualSystemPlan
+    visual_exceptions: list[VisualExceptionPlan] = Field(default_factory=list)
     prompt_plans: list[PromptPlan] = Field(min_length=WORKFLOW_DRAFT_MIN_IMAGE_TYPES)
     image_types: list[ImageTypePlan] = Field(min_length=WORKFLOW_DRAFT_MIN_IMAGE_TYPES)
     folders: list[WorkflowFolderPlan] = Field(default_factory=list)
@@ -274,6 +532,21 @@ class WorkflowDraftPayloadV1(StrictArtifactModel):
             prompt = prompt_by_image_type[image_type.key]
             if image_type.prompt_plan_key != prompt.key:
                 raise ValueError("图片类型 prompt_plan_key 与提示词计划不一致")
+            prompt_image_keys = {image.image_plan_key for image in prompt.payload.images}
+            image_plan_keys_for_type = {image.key for image in image_type.images}
+            if prompt_image_keys != image_plan_keys_for_type:
+                raise ValueError("提示词逐图计划必须与图片类型的 image plan 一一对应")
+            if not set(prompt.payload.fact_keys).issubset(fact_keys):
+                raise ValueError("提示词 fact_keys 必须引用 Draft 已有商品事实")
+
+        if self.visual_system.mode == "draft":
+            visual_payload = self.visual_system.payload
+            assert visual_payload is not None
+            visual_variant_keys = {variant.key for variant in visual_payload.variants}
+            for prompt in self.prompt_plans:
+                variant_key = prompt.payload.visual_variant_key
+                if variant_key is not None and variant_key not in visual_variant_keys:
+                    raise ValueError("提示词引用了不存在的视觉变体")
 
         image_plan_keys: set[str] = set()
         image_plan_type_by_key: dict[str, str] = {}
@@ -283,6 +556,22 @@ class WorkflowDraftPayloadV1(StrictArtifactModel):
                     raise ValueError("逐图计划 key 在整个 Draft 内不能重复")
                 image_plan_keys.add(image.key)
                 image_plan_type_by_key[image.key] = image_type.key
+
+        _require_unique_keys(self.visual_exceptions, label="视觉例外")
+        locked_fields = (
+            set(self.visual_system.payload.locked_fields)
+            if self.visual_system.mode == "draft" and self.visual_system.payload is not None
+            else None
+        )
+        for exception in self.visual_exceptions:
+            if exception.scope.type == "image_type" and exception.scope.key not in image_type_keys:
+                raise ValueError("视觉例外引用了不存在的图片类型")
+            if exception.scope.type == "image_plan" and exception.scope.key not in image_plan_keys:
+                raise ValueError("视觉例外引用了不存在的逐图计划")
+            if locked_fields is not None and any(
+                override.field not in locked_fields for override in exception.overrides
+            ):
+                raise ValueError("视觉例外只能覆盖 VisualSystem locked_fields")
 
         product_nodes = [node for node in self.nodes if node.node_type == WorkflowNodeType.PRODUCT_CONTEXT]
         if len(product_nodes) != 1:
@@ -354,10 +643,16 @@ class WorkflowDraftPayloadV1(StrictArtifactModel):
             )
             if required_pair not in edges_by_pair:
                 raise ValueError("每个 image_generation 节点必须连接对应图片类型的 prompt_generation 节点")
+        if len(self.referenced_asset_ids()) > WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS:
+            raise ValueError(f"WorkflowDraft 引用的不同图片资产不能超过 {WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS} 张")
         return self
 
     def referenced_asset_ids(self) -> set[str]:
         asset_ids = {binding.asset_id for binding in self.reference_bindings}
+        if self.visual_system.mode == "draft" and self.visual_system.payload is not None:
+            asset_ids.update(reference.asset_id for reference in self.visual_system.payload.reference_assets)
+        for prompt in self.prompt_plans:
+            asset_ids.update(prompt.payload.evidence_asset_ids)
         for fact in self.facts:
             asset_ids.update(fact.evidence_asset_ids)
             for conflict in fact.conflicts:

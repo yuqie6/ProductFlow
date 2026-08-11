@@ -412,11 +412,84 @@ export interface WorkflowDraftReferenceBinding {
   label: string;
 }
 
+export type WorkflowVisualLockedField =
+  | "style"
+  | "colors"
+  | "typography"
+  | "spacing"
+  | "decorations"
+  | "photography"
+  | "quality"
+  | "product_fidelity"
+  | "prohibitions";
+
+export interface WorkflowVisualColor {
+  role: string;
+  value: string;
+  label: string;
+}
+
+export interface WorkflowVisualTypography {
+  title_font: string;
+  body_font: string;
+  scale: {
+    headline: number;
+    subtitle: number;
+    body: number;
+  };
+}
+
+export interface WorkflowVisualSpacing {
+  min_edge_whitespace_percent: number;
+  principles: string[];
+}
+
+export interface WorkflowVisualDecorations {
+  elements: string[];
+  icon_style: string;
+}
+
+export interface WorkflowVisualPhotography {
+  lighting: string;
+  depth_of_field: string;
+  camera_parameters: string[];
+}
+
+export interface WorkflowVisualQuality {
+  resolution: string;
+  commercial_grade: string;
+  realism: string;
+  minimum_quality: "draft" | "standard" | "high";
+}
+
+export interface WorkflowVisualProductFidelity {
+  preserve_shape: boolean;
+  preserve_proportions: boolean;
+  preserve_materials: boolean;
+  requirements: string[];
+}
+
+export interface WorkflowVisualSystemPayloadV1 {
+  name: string;
+  style: string[];
+  colors: WorkflowVisualColor[];
+  typography: WorkflowVisualTypography;
+  spacing: WorkflowVisualSpacing;
+  decorations: WorkflowVisualDecorations;
+  photography: WorkflowVisualPhotography;
+  quality: WorkflowVisualQuality;
+  product_fidelity: WorkflowVisualProductFidelity;
+  locked_fields: WorkflowVisualLockedField[];
+  variants: Array<{ key: string; title: string; guidance: string[] }>;
+  prohibitions: string[];
+  reference_assets: Array<{ asset_id: string; role: string; label: string }>;
+}
+
 export type WorkflowDraftVisualSystem =
   | {
       mode: "draft";
       version_id?: null;
-      payload: Record<string, JsonValue>;
+      payload: WorkflowVisualSystemPayloadV1;
       source_markdown?: string | null;
     }
   | {
@@ -425,6 +498,26 @@ export type WorkflowDraftVisualSystem =
       payload?: null;
       source_markdown?: string | null;
     };
+
+export type WorkflowVisualFieldOverride =
+  | { field: "style"; value: string[] }
+  | { field: "colors"; value: WorkflowVisualColor[] }
+  | { field: "typography"; value: WorkflowVisualTypography }
+  | { field: "spacing"; value: WorkflowVisualSpacing }
+  | { field: "decorations"; value: WorkflowVisualDecorations }
+  | { field: "photography"; value: WorkflowVisualPhotography }
+  | { field: "quality"; value: WorkflowVisualQuality }
+  | { field: "product_fidelity"; value: WorkflowVisualProductFidelity }
+  | { field: "prohibitions"; value: string[] };
+
+export interface WorkflowVisualExceptionPlan {
+  key: string;
+  scope:
+    | { type: "workflow"; key?: null }
+    | { type: "image_type" | "image_plan"; key: string };
+  overrides: WorkflowVisualFieldOverride[];
+  reason: string;
+}
 
 export interface WorkflowGenerationSpec {
   aspect_ratio: string;
@@ -467,7 +560,58 @@ export interface WorkflowDraftPromptPlan {
   key: string;
   image_type_key: string;
   title: string;
-  payload: Record<string, JsonValue>;
+  payload: WorkflowImagePromptPayloadV1;
+}
+
+export interface WorkflowPromptProductFidelity {
+  complex_structure: boolean;
+  product_present: boolean;
+  picture_in_picture: "none" | "allowed" | "required";
+  requirements: string[];
+}
+
+export interface WorkflowPromptComposition {
+  viewpoint: string;
+  product_share_percent: number;
+  layout: string;
+  copy_regions: string[];
+}
+
+export interface WorkflowPromptContentElements {
+  focus: string[];
+  selling_points: string[];
+  background: string;
+  decorations: string[];
+}
+
+export interface WorkflowPromptTextContent {
+  headline: string | null;
+  subtitle: string | null;
+  body: string | null;
+}
+
+export interface WorkflowPerImagePromptPlan {
+  image_plan_key: string;
+  instruction: string;
+  viewpoint: string | null;
+  composition_adjustments: string[];
+  lighting: string | null;
+}
+
+export interface WorkflowImagePromptPayloadV1 {
+  schema_version: 1;
+  shared_rules: string[];
+  design_goal: string;
+  product_fidelity: WorkflowPromptProductFidelity;
+  creative_boundary: string[];
+  composition: WorkflowPromptComposition;
+  content: WorkflowPromptContentElements;
+  text: WorkflowPromptTextContent;
+  atmosphere: { keywords: string[]; lighting: string };
+  visual_variant_key: string | null;
+  fact_keys: string[];
+  evidence_asset_ids: string[];
+  images: WorkflowPerImagePromptPlan[];
 }
 
 export interface WorkflowDraftFolderPlan {
@@ -510,6 +654,7 @@ export interface WorkflowDraftPayloadV1 {
   missing_fact_keys: string[];
   reference_bindings: WorkflowDraftReferenceBinding[];
   visual_system: WorkflowDraftVisualSystem;
+  visual_exceptions: WorkflowVisualExceptionPlan[];
   prompt_plans: WorkflowDraftPromptPlan[];
   image_types: WorkflowDraftImageTypePlan[];
   folders: WorkflowDraftFolderPlan[];
@@ -537,6 +682,7 @@ export interface WorkflowDraftRevision {
   source_artifact_step_id: string | null;
   confirmed_at: string | null;
   fact_set_version_id: string | null;
+  visual_system_version_id: string | null;
   created_at: string;
 }
 
@@ -590,6 +736,7 @@ export interface WorkflowNodeV2 {
   position_y: number;
   folder_id: string | null;
   bound_image_asset_id: string | null;
+  current_prompt_artifact_version_id: string | null;
   config_json: Record<string, unknown>;
   status: WorkflowNodeStatus;
   output_json: Record<string, unknown> | null;
@@ -617,6 +764,7 @@ export interface ProductWorkflowV2 {
   schema_version: 2;
   revision: number;
   source_draft_revision_id: string;
+  visual_system_version_id: string;
   materialization_id: string;
   folders: WorkflowFolderV2[];
   nodes: WorkflowNodeV2[];
@@ -641,6 +789,46 @@ export interface MaterializeWorkflowDraftInput {
   expected_draft_version: number;
   expected_workflow_revision: number;
   idempotency_key: string;
+}
+
+export interface WorkflowActualMedia {
+  mime_type: "image/png" | "image/jpeg" | "image/webp";
+  width: number;
+  height: number;
+  byte_size: number;
+  sha256: string;
+}
+
+export interface WorkflowNodeRunV2 {
+  id: string;
+  schema_version: 2;
+  workflow_run_id: string;
+  node_id: string;
+  node_type: WorkflowNodeTypeV2;
+  status: WorkflowNodeStatus;
+  output_json: Record<string, JsonValue> | null;
+  failure_reason: string | null;
+  visual_system_version_id: string;
+  prompt_artifact_version_id: string | null;
+  generation_record_id: string | null;
+  result_asset_id: string | null;
+  requested_spec: WorkflowGenerationSpec | null;
+  effective_parameters: Record<string, JsonValue> | null;
+  actual_media: WorkflowActualMedia | null;
+  compiled_prompt: string | null;
+  compiled_prompt_hash: string | null;
+  reference_asset_ids: string[];
+  provider_name: string | null;
+  provider_model: string | null;
+  provider_response_id: string | null;
+  provider_status: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface SubmitWorkflowNodeRunV2Result {
+  created: boolean;
+  node_run: WorkflowNodeRunV2;
 }
 
 export interface WorkflowRevealEvent {

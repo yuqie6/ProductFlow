@@ -48,4 +48,39 @@ describe("workflow draft API contract", () => {
       }),
     );
   });
+
+  it("submits exactly one v2 workflow node run through the dedicated endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+      json: async () => ({ created: true, node_run: { id: "node-run-1" } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.runWorkflowNodeV2("node-1");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v2/workflow-nodes/node-1/run",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "include",
+      }),
+    );
+  });
+
+  it("queries requested, effective, and actual node-run evidence by stable id", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: "node-run-1", status: "succeeded" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.getWorkflowNodeRunV2("node-run-1");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v2/workflow-node-runs/node-run-1",
+      expect.objectContaining({ credentials: "include" }),
+    );
+  });
 });

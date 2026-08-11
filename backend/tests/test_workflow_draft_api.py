@@ -32,8 +32,22 @@ def _sse_events(response) -> list[dict]:
     return events
 
 
-def test_workflow_draft_api_materializes_v2_and_replays_reveal_events(configured_env) -> None:
+def test_workflow_draft_api_materializes_v2_and_replays_reveal_events(configured_env, monkeypatch) -> None:
+    from productflow_backend.application.product_workflow.execution import execute_product_workflow_node_run
+    from productflow_backend.application.product_workflow.v2_runs import submit_v2_workflow_node_run
     from productflow_backend.presentation.api import create_app
+    from productflow_backend.presentation.routes import workflow_drafts as workflow_draft_routes
+
+    enqueued_node_run_ids: list[str] = []
+
+    def submit_without_redis(session, *, node_id: str):
+        return submit_v2_workflow_node_run(
+            session,
+            node_id=node_id,
+            enqueue=enqueued_node_run_ids.append,
+        )
+
+    monkeypatch.setattr(workflow_draft_routes, "submit_v2_workflow_node_run", submit_without_redis)
 
     client = TestClient(create_app())
     _login(client)
@@ -81,6 +95,8 @@ def test_workflow_draft_api_materializes_v2_and_replays_reveal_events(configured
     assert confirmed.status_code == 200, confirmed.text
     assert confirmed.json()["status"] == "confirmed"
     assert confirmed.json()["current_revision"]["fact_set_version_id"]
+    visual_system_version_id = confirmed.json()["current_revision"]["visual_system_version_id"]
+    assert visual_system_version_id
 
     materialized = client.post(
         f"/api/v2/products/{product_id}/workflow-drafts/{draft['id']}/materialize",
@@ -96,6 +112,7 @@ def test_workflow_draft_api_materializes_v2_and_replays_reveal_events(configured
     assert materialization["created"] is True
     assert workflow["schema_version"] == 2
     assert workflow["revision"] == 1
+    assert workflow["visual_system_version_id"] == visual_system_version_id
     assert len(workflow["folders"]) == 1
     assert len(workflow["nodes"]) == 5
     assert len(workflow["edges"]) == 4
@@ -104,11 +121,70 @@ def test_workflow_draft_api_materializes_v2_and_replays_reveal_events(configured
         for node in workflow["nodes"]
         if node["node_type"] == "reference_image"
     )
+    prompt_node = next(node for node in workflow["nodes"] if node["node_type"] == "prompt_generation")
+    assert prompt_node["current_prompt_artifact_version_id"]
+    image_node = next(
+        node
+        for node in workflow["nodes"]
+        if node["node_type"] == "image_generation" and node["config_json"]["image_plan_key"] == "hero-1"
+    )
+    assert image_node["current_prompt_artifact_version_id"] is None
+
+    submitted_prompt = client.post(f"/api/v2/workflow-nodes/{prompt_node['id']}/run")
+    assert submitted_prompt.status_code == 202, submitted_prompt.text
+    prompt_submission = submitted_prompt.json()
+    assert prompt_submission["created"] is True
+    prompt_node_run_id = prompt_submission["node_run"]["id"]
+    assert prompt_submission["node_run"]["status"] == "queued"
+    assert prompt_submission["node_run"]["visual_system_version_id"] == visual_system_version_id
+
+    duplicate_prompt = client.post(f"/api/v2/workflow-nodes/{prompt_node['id']}/run")
+    assert duplicate_prompt.status_code == 202
+    assert duplicate_prompt.json()["created"] is False
+    assert duplicate_prompt.json()["node_run"]["id"] == prompt_node_run_id
+    assert enqueued_node_run_ids == [prompt_node_run_id]
+
+    execute_product_workflow_node_run(prompt_node_run_id)
+    completed_prompt = client.get(f"/api/v2/workflow-node-runs/{prompt_node_run_id}")
+    assert completed_prompt.status_code == 200, completed_prompt.text
+    completed_prompt_payload = completed_prompt.json()
+    assert completed_prompt_payload["status"] == "succeeded"
+    assert completed_prompt_payload["prompt_artifact_version_id"] != prompt_node[
+        "current_prompt_artifact_version_id"
+    ]
+    assert completed_prompt_payload["generation_record_id"] is None
+    assert completed_prompt_payload["reference_asset_ids"] == [reference_asset_id]
+
+    submitted_image = client.post(f"/api/v2/workflow-nodes/{image_node['id']}/run")
+    assert submitted_image.status_code == 202, submitted_image.text
+    image_node_run_id = submitted_image.json()["node_run"]["id"]
+    execute_product_workflow_node_run(image_node_run_id)
+    completed_image = client.get(f"/api/v2/workflow-node-runs/{image_node_run_id}")
+    assert completed_image.status_code == 200, completed_image.text
+    completed_image_payload = completed_image.json()
+    assert completed_image_payload["status"] == "succeeded"
+    assert completed_image_payload["generation_record_id"]
+    assert completed_image_payload["result_asset_id"]
+    assert completed_image_payload["requested_spec"] == image_node["config_json"]["generation_spec"]
+    assert completed_image_payload["effective_parameters"]["adapter"] == "mock"
+    assert completed_image_payload["actual_media"]["mime_type"] == "image/png"
+    assert completed_image_payload["actual_media"]["width"] > 0
+    assert completed_image_payload["actual_media"]["height"] > 0
+    assert completed_image_payload["compiled_prompt"]
+    assert completed_image_payload["reference_asset_ids"] == [reference_asset_id]
+    assert "provider_request_json" not in completed_image_payload
 
     queried = client.get(f"/api/v2/products/{product_id}/workflow")
     assert queried.status_code == 200
     assert queried.json()["latest_revision"] == 1
     assert queried.json()["workflow"]["id"] == workflow["id"]
+    refreshed_nodes = queried.json()["workflow"]["nodes"]
+    refreshed_prompt = next(node for node in refreshed_nodes if node["id"] == prompt_node["id"])
+    refreshed_image = next(node for node in refreshed_nodes if node["id"] == image_node["id"])
+    assert refreshed_prompt["current_prompt_artifact_version_id"] == completed_prompt_payload[
+        "prompt_artifact_version_id"
+    ]
+    assert refreshed_image["bound_image_asset_id"] == completed_image_payload["result_asset_id"]
 
     legacy_query = client.get(f"/api/products/{product_id}/workflow")
     legacy_run = client.post(f"/api/products/{product_id}/workflow/run", json={})

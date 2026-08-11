@@ -10,7 +10,6 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from productflow_backend.application.admission import generation_running_capacity_available
-from productflow_backend.application.product_workflow import graph as product_workflow_graph
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.durable_generation_tasks import WORKFLOW_RUN_GENERATION_TASK_CONTRACT
 from productflow_backend.domain.enums import WorkflowNodeStatus, WorkflowRunStatus
@@ -205,10 +204,11 @@ def mark_workflow_run_failed(
         return
     now = now_utc()
     if failed_node_id is not None:
-        failed_node = product_workflow_graph.get_node_or_raise(session, failed_node_id)
-        failed_node.status = WorkflowNodeStatus.FAILED
-        failed_node.failure_reason = reason
-        failed_node.last_run_at = now
+        failed_node = session.get(WorkflowNode, failed_node_id)
+        if failed_node is not None:
+            failed_node.status = WorkflowNodeStatus.FAILED
+            failed_node.failure_reason = reason
+            failed_node.last_run_at = now
     for node_run in persisted_run.node_runs:
         if node_run.node_id == failed_node_id:
             node_run.status = WorkflowNodeStatus.FAILED

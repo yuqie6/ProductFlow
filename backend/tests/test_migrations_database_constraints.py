@@ -26,6 +26,9 @@ from productflow_backend.domain.enums import (
 from productflow_backend.infrastructure.db.models import (
     CopySet,
     ImageGalleryEntry,
+    ImagePromptArtifact,
+    ImagePromptArtifactVersion,
+    ImagePromptArtifactVersionReference,
     ImageSessionAsset,
     ImageSessionGenerationTask,
     MediaObject,
@@ -36,9 +39,15 @@ from productflow_backend.infrastructure.db.models import (
     ProductWorkflow,
     SourceAsset,
     UserCanvasTemplate,
+    VisualException,
+    VisualSystem,
+    VisualSystemVersion,
+    VisualSystemVersionReference,
     WorkflowDraft,
     WorkflowDraftRevision,
     WorkflowFolder,
+    WorkflowImageGenerationRecord,
+    WorkflowImageGenerationReference,
     WorkflowMaterialization,
     WorkflowMaterializationKey,
     WorkflowNode,
@@ -163,6 +172,157 @@ def test_workflow_draft_models_match_atomic_materialization_contract() -> None:
     assert "uq_workflow_reveal_events_materialization_sequence" in {
         constraint.name for constraint in reveal_table.constraints if isinstance(constraint, sa.UniqueConstraint)
     }
+
+
+def test_prompt_visual_image_models_match_database_contract() -> None:
+    visual_system_table = VisualSystem.__table__
+    assert {index.name for index in visual_system_table.indexes} == {"ix_visual_systems_archived_at"}
+
+    visual_version_table = VisualSystemVersion.__table__
+    assert {
+        constraint.name
+        for constraint in visual_version_table.constraints
+        if isinstance(constraint, sa.UniqueConstraint)
+    } == {
+        "uq_visual_system_versions_system_version",
+        "uq_visual_system_versions_source_draft_revision_id",
+    }
+    assert {
+        constraint.name
+        for constraint in visual_version_table.constraints
+        if isinstance(constraint, sa.CheckConstraint)
+    } == {
+        "ck_visual_system_versions_positive_version",
+        "ck_visual_system_versions_schema_version",
+        "ck_visual_system_versions_payload_hash",
+    }
+    visual_version_fks = {fk.parent.name: fk for fk in visual_version_table.foreign_keys}
+    assert visual_version_fks["visual_system_id"].ondelete == "CASCADE"
+    assert visual_version_fks["source_draft_revision_id"].ondelete == "SET NULL"
+
+    visual_reference_table = VisualSystemVersionReference.__table__
+    assert {
+        constraint.name
+        for constraint in visual_reference_table.constraints
+        if isinstance(constraint, sa.UniqueConstraint)
+    } == {
+        "uq_visual_system_version_references_position",
+        "uq_visual_system_version_references_asset_role",
+    }
+    visual_reference_fks = {fk.parent.name: fk for fk in visual_reference_table.foreign_keys}
+    assert visual_reference_fks["visual_system_version_id"].ondelete == "CASCADE"
+    assert visual_reference_fks["asset_id"].ondelete == "RESTRICT"
+
+    draft_revision_visual_fk = next(
+        fk
+        for fk in WorkflowDraftRevision.__table__.foreign_keys
+        if fk.parent.name == "visual_system_version_id"
+    )
+    assert draft_revision_visual_fk.constraint.name == "fk_workflow_draft_revisions_visual_system_version_id"
+    assert draft_revision_visual_fk.ondelete == "SET NULL"
+    workflow_visual_fk = next(
+        fk for fk in ProductWorkflow.__table__.foreign_keys if fk.parent.name == "visual_system_version_id"
+    )
+    assert workflow_visual_fk.constraint.name == "fk_product_workflows_visual_system_version_id"
+    assert workflow_visual_fk.ondelete == "RESTRICT"
+
+    prompt_table = ImagePromptArtifact.__table__
+    assert {
+        constraint.name for constraint in prompt_table.constraints if isinstance(constraint, sa.UniqueConstraint)
+    } == {"uq_image_prompt_artifacts_workflow_type"}
+    prompt_workflow_fk = next(fk for fk in prompt_table.foreign_keys if fk.parent.name == "workflow_id")
+    assert prompt_workflow_fk.ondelete == "CASCADE"
+
+    prompt_version_table = ImagePromptArtifactVersion.__table__
+    assert {
+        constraint.name
+        for constraint in prompt_version_table.constraints
+        if isinstance(constraint, sa.UniqueConstraint)
+    } == {
+        "uq_image_prompt_artifact_versions_artifact_version",
+        "uq_image_prompt_artifact_versions_source_node_run_id",
+    }
+    assert {
+        constraint.name
+        for constraint in prompt_version_table.constraints
+        if isinstance(constraint, sa.CheckConstraint)
+    } == {
+        "ck_image_prompt_artifact_versions_positive_version",
+        "ck_image_prompt_artifact_versions_schema_version",
+        "ck_image_prompt_artifact_versions_payload_hash",
+    }
+    prompt_version_fks = {fk.parent.name: fk for fk in prompt_version_table.foreign_keys}
+    assert prompt_version_fks["artifact_id"].ondelete == "CASCADE"
+    assert prompt_version_fks["source_draft_revision_id"].ondelete == "SET NULL"
+    assert prompt_version_fks["source_node_run_id"].ondelete == "SET NULL"
+
+    prompt_reference_table = ImagePromptArtifactVersionReference.__table__
+    assert {
+        constraint.name
+        for constraint in prompt_reference_table.constraints
+        if isinstance(constraint, sa.UniqueConstraint)
+    } == {
+        "uq_image_prompt_artifact_version_references_position",
+        "uq_image_prompt_artifact_version_references_asset_purpose",
+    }
+    prompt_reference_fks = {fk.parent.name: fk for fk in prompt_reference_table.foreign_keys}
+    assert prompt_reference_fks["prompt_artifact_version_id"].ondelete == "CASCADE"
+    assert prompt_reference_fks["asset_id"].ondelete == "RESTRICT"
+
+    current_prompt_fk = next(
+        fk
+        for fk in WorkflowNode.__table__.foreign_keys
+        if fk.parent.name == "current_prompt_artifact_version_id"
+    )
+    assert current_prompt_fk.constraint.name == "fk_workflow_nodes_current_prompt_artifact_version_id"
+    assert current_prompt_fk.ondelete == "SET NULL"
+
+    exception_table = VisualException.__table__
+    assert {
+        constraint.name
+        for constraint in exception_table.constraints
+        if isinstance(constraint, sa.UniqueConstraint)
+    } == {"uq_visual_exceptions_workflow_key"}
+    assert {
+        constraint.name
+        for constraint in exception_table.constraints
+        if isinstance(constraint, sa.CheckConstraint)
+    } == {"ck_visual_exceptions_scope"}
+    exception_fks = {fk.parent.name: fk for fk in exception_table.foreign_keys}
+    assert exception_fks["workflow_id"].ondelete == "CASCADE"
+    assert exception_fks["source_draft_revision_id"].ondelete == "SET NULL"
+
+    generation_table = WorkflowImageGenerationRecord.__table__
+    assert {
+        constraint.name
+        for constraint in generation_table.constraints
+        if isinstance(constraint, sa.UniqueConstraint)
+    } == {"uq_workflow_image_generation_records_node_run_id"}
+    assert {
+        constraint.name
+        for constraint in generation_table.constraints
+        if isinstance(constraint, sa.CheckConstraint)
+    } == {"ck_workflow_image_generation_records_prompt_hash"}
+    for column_name in ("requested_spec_json", "effective_parameters_json", "actual_media_json"):
+        assert not generation_table.c[column_name].nullable
+    generation_fks = {fk.parent.name: fk for fk in generation_table.foreign_keys}
+    assert generation_fks["workflow_node_run_id"].ondelete == "CASCADE"
+    assert generation_fks["result_asset_id"].ondelete == "RESTRICT"
+    assert generation_fks["visual_system_version_id"].ondelete == "RESTRICT"
+    assert generation_fks["prompt_artifact_version_id"].ondelete == "RESTRICT"
+
+    generation_reference_table = WorkflowImageGenerationReference.__table__
+    assert {
+        constraint.name
+        for constraint in generation_reference_table.constraints
+        if isinstance(constraint, sa.UniqueConstraint)
+    } == {
+        "uq_workflow_image_generation_references_position",
+        "uq_workflow_image_generation_references_asset_role",
+    }
+    generation_reference_fks = {fk.parent.name: fk for fk in generation_reference_table.foreign_keys}
+    assert generation_reference_fks["generation_record_id"].ondelete == "CASCADE"
+    assert generation_reference_fks["asset_id"].ondelete == "RESTRICT"
 
 
 def test_canonical_image_asset_models_match_database_contract() -> None:
@@ -381,13 +541,15 @@ def test_workflow_draft_migration_round_trips_sqlite_without_mutating_v1_rows(tm
     with engine.connect() as connection:
         workflow = connection.execute(
             sa.text(
-                "SELECT id, active, schema_version, revision, source_draft_revision_id "
+                "SELECT id, active, schema_version, revision, source_draft_revision_id, "
+                "visual_system_version_id "
                 "FROM product_workflows WHERE id = 'legacy-workflow'"
             )
         ).mappings().one()
         node = connection.execute(
             sa.text(
-                "SELECT id, schema_version, node_key, folder_id, bound_image_asset_id "
+                "SELECT id, schema_version, node_key, folder_id, bound_image_asset_id, "
+                "current_prompt_artifact_version_id "
                 "FROM workflow_nodes WHERE id = 'legacy-node'"
             )
         ).mappings().one()
@@ -397,6 +559,7 @@ def test_workflow_draft_migration_round_trips_sqlite_without_mutating_v1_rows(tm
             "schema_version": 1,
             "revision": 1,
             "source_draft_revision_id": None,
+            "visual_system_version_id": None,
         }
         assert dict(node) == {
             "id": "legacy-node",
@@ -404,6 +567,7 @@ def test_workflow_draft_migration_round_trips_sqlite_without_mutating_v1_rows(tm
             "node_key": None,
             "folder_id": None,
             "bound_image_asset_id": None,
+            "current_prompt_artifact_version_id": None,
         }
         assert {
             "workflow_drafts",
@@ -413,7 +577,17 @@ def test_workflow_draft_migration_round_trips_sqlite_without_mutating_v1_rows(tm
             "workflow_materializations",
             "workflow_materialization_keys",
             "workflow_reveal_events",
+            "visual_systems",
+            "visual_system_versions",
+            "visual_system_version_references",
+            "image_prompt_artifacts",
+            "image_prompt_artifact_versions",
+            "image_prompt_artifact_version_references",
+            "visual_exceptions",
+            "workflow_image_generation_records",
+            "workflow_image_generation_references",
         }.issubset(sa.inspect(connection).get_table_names())
+        assert connection.scalar(sa.text("SELECT count(*) FROM visual_systems")) == 0
     engine.dispose()
 
     command.downgrade(config, "20260811_0031")

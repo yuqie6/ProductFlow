@@ -18,14 +18,20 @@ from productflow_backend.application.workflow_drafts.contracts import (
     WorkflowNodePlan,
     workflow_draft_payload_hash,
 )
-from productflow_backend.application.workflow_drafts.service import parse_workflow_draft_payload_or_raise
+from productflow_backend.application.workflow_drafts.service import (
+    parse_workflow_draft_payload_or_raise,
+    validate_workflow_draft_reference_assets,
+)
 from productflow_backend.domain.enums import WorkflowDraftStatus, WorkflowNodeType, WorkflowRevealEventKind
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
+    ImagePromptArtifact,
+    ImagePromptArtifactVersion,
+    ImagePromptArtifactVersionReference,
     Product,
     ProductFactSetVersion,
-    ProductImageAsset,
     ProductWorkflow,
+    VisualException,
     WorkflowDraft,
     WorkflowDraftRevision,
     WorkflowEdge,
@@ -54,7 +60,10 @@ def v2_workflow_query():
     return select(ProductWorkflow).options(
         selectinload(ProductWorkflow.folders),
         selectinload(ProductWorkflow.nodes),
+        selectinload(ProductWorkflow.nodes).selectinload(WorkflowNode.current_prompt_artifact_version),
         selectinload(ProductWorkflow.edges),
+        selectinload(ProductWorkflow.prompt_artifacts).selectinload(ImagePromptArtifact.versions),
+        selectinload(ProductWorkflow.visual_exceptions),
         selectinload(ProductWorkflow.materialization).selectinload(WorkflowMaterialization.reveal_events),
     )
 
@@ -126,7 +135,10 @@ def materialize_workflow_draft(
 
         requested_revision = session.scalar(
             select(WorkflowDraftRevision)
-            .options(selectinload(WorkflowDraftRevision.fact_set_version))
+            .options(
+                selectinload(WorkflowDraftRevision.fact_set_version),
+                selectinload(WorkflowDraftRevision.visual_system_version),
+            )
             .where(
                 WorkflowDraftRevision.draft_id == draft.id,
                 WorkflowDraftRevision.version == expected_draft_version,
@@ -160,7 +172,20 @@ def materialize_workflow_draft(
             raise ConflictError("商品当前事实版本与 confirmed WorkflowDraft 不一致")
 
         artifact = _parse_and_verify_revision(requested_revision)
-        _validate_reference_assets(session, product_id=product_id, artifact=artifact)
+        validate_workflow_draft_reference_assets(session, product_id=product_id, artifact=artifact)
+        visual_system_version = requested_revision.visual_system_version
+        if visual_system_version is None:
+            raise ConflictError("confirmed WorkflowDraft revision 缺少视觉体系版本")
+        if (
+            artifact.visual_system.mode == "confirmed_version"
+            and artifact.visual_system.version_id != visual_system_version.id
+        ):
+            raise ConflictError("WorkflowDraft 视觉体系版本绑定不一致")
+        if (
+            artifact.visual_system.mode == "draft"
+            and visual_system_version.source_draft_revision_id != requested_revision.id
+        ):
+            raise ConflictError("WorkflowDraft draft 视觉体系来源不一致")
 
         active_workflow = session.scalar(
             select(ProductWorkflow)
@@ -195,10 +220,24 @@ def materialize_workflow_draft(
             schema_version=2,
             revision=latest_revision + 1,
             source_draft_revision_id=requested_revision.id,
+            visual_system_version_id=visual_system_version.id,
         )
         session.add(workflow)
         session.flush()
 
+        prompt_versions_by_plan = _materialize_prompt_artifacts(
+            session,
+            workflow=workflow,
+            artifact=artifact,
+            draft_revision=requested_revision,
+        )
+        _materialize_visual_exceptions(
+            session,
+            workflow=workflow,
+            artifact=artifact,
+            draft_revision=requested_revision,
+        )
+        session.flush()
         folders_by_key = _materialize_folders(session, workflow=workflow, artifact=artifact)
         session.flush()
         nodes_by_key = _materialize_nodes(
@@ -208,6 +247,7 @@ def materialize_workflow_draft(
             fact_set=fact_set,
             draft_revision=requested_revision,
             folders_by_key=folders_by_key,
+            prompt_versions_by_plan=prompt_versions_by_plan,
         )
         session.flush()
         edges_by_key = _materialize_edges(
@@ -313,19 +353,67 @@ def _parse_and_verify_revision(revision: WorkflowDraftRevision) -> WorkflowDraft
     return artifact
 
 
-def _validate_reference_assets(
+def _materialize_prompt_artifacts(
     session: Session,
     *,
-    product_id: str,
+    workflow: ProductWorkflow,
     artifact: WorkflowDraftPayloadV1,
+    draft_revision: WorkflowDraftRevision,
+) -> dict[str, ImagePromptArtifactVersion]:
+    versions_by_plan: dict[str, ImagePromptArtifactVersion] = {}
+    for prompt_plan in artifact.prompt_plans:
+        prompt_artifact = ImagePromptArtifact(
+            workflow_id=workflow.id,
+            image_type_key=prompt_plan.image_type_key,
+            title=prompt_plan.title,
+        )
+        session.add(prompt_artifact)
+        session.flush()
+        payload_json = prompt_plan.payload.model_dump(mode="json")
+        version = ImagePromptArtifactVersion(
+            artifact_id=prompt_artifact.id,
+            version=1,
+            schema_version=1,
+            payload_json=payload_json,
+            payload_hash=_json_hash(payload_json),
+            source_draft_revision_id=draft_revision.id,
+        )
+        session.add(version)
+        session.flush()
+        for position, asset_id in enumerate(prompt_plan.payload.evidence_asset_ids):
+            session.add(
+                ImagePromptArtifactVersionReference(
+                    prompt_artifact_version_id=version.id,
+                    asset_id=asset_id,
+                    purpose="evidence",
+                    position=position,
+                )
+            )
+        versions_by_plan[prompt_plan.key] = version
+    return versions_by_plan
+
+
+def _materialize_visual_exceptions(
+    session: Session,
+    *,
+    workflow: ProductWorkflow,
+    artifact: WorkflowDraftPayloadV1,
+    draft_revision: WorkflowDraftRevision,
 ) -> None:
-    asset_ids = artifact.referenced_asset_ids()
-    assets = list(session.scalars(select(ProductImageAsset).where(ProductImageAsset.id.in_(asset_ids))))
-    assets_by_id = {asset.id: asset for asset in assets}
-    if set(assets_by_id) != asset_ids:
-        raise BusinessValidationError("WorkflowDraft 引用了不存在的商品图片资产")
-    if any(asset.product_id != product_id for asset in assets):
-        raise BusinessValidationError("WorkflowDraft 引用了其他商品的图片资产")
+    assert draft_revision.confirmed_at is not None
+    for exception in artifact.visual_exceptions:
+        session.add(
+            VisualException(
+                workflow_id=workflow.id,
+                source_draft_revision_id=draft_revision.id,
+                exception_key=exception.key,
+                scope_type=exception.scope.type,
+                scope_key=exception.scope.key,
+                overrides_json=[override.model_dump(mode="json") for override in exception.overrides],
+                reason=exception.reason,
+                confirmed_at=draft_revision.confirmed_at,
+            )
+        )
 
 
 def _materialize_folders(
@@ -360,6 +448,7 @@ def _materialize_nodes(
     fact_set: ProductFactSetVersion,
     draft_revision: WorkflowDraftRevision,
     folders_by_key: dict[str, WorkflowFolder],
+    prompt_versions_by_plan: dict[str, ImagePromptArtifactVersion],
 ) -> dict[str, WorkflowNode]:
     references_by_key = {plan.key: plan for plan in artifact.reference_bindings}
     prompts_by_key = {plan.key: plan for plan in artifact.prompt_plans}
@@ -369,15 +458,15 @@ def _materialize_nodes(
     images_by_key = {image.key: image for image_type in artifact.image_types for image in image_type.images}
     nodes_by_key: dict[str, WorkflowNode] = {}
     for plan in artifact.nodes:
-        config_json, bound_asset_id = _resolved_node_config(
+        config_json, bound_asset_id, prompt_version_id = _resolved_node_config(
             plan,
-            artifact=artifact,
             fact_set=fact_set,
             draft_revision=draft_revision,
             references_by_key=references_by_key,
             prompts_by_key=prompts_by_key,
             image_type_by_image_key=image_type_by_image_key,
             images_by_key=images_by_key,
+            prompt_versions_by_plan=prompt_versions_by_plan,
         )
         node = WorkflowNode(
             workflow_id=workflow.id,
@@ -389,6 +478,7 @@ def _materialize_nodes(
             position_y=plan.position_y,
             folder_id=folders_by_key[plan.folder_key].id if plan.folder_key is not None else None,
             bound_image_asset_id=bound_asset_id,
+            current_prompt_artifact_version_id=prompt_version_id,
             config_json=config_json,
         )
         session.add(node)
@@ -399,17 +489,17 @@ def _materialize_nodes(
 def _resolved_node_config(
     plan: WorkflowNodePlan,
     *,
-    artifact: WorkflowDraftPayloadV1,
     fact_set: ProductFactSetVersion,
     draft_revision: WorkflowDraftRevision,
     references_by_key: dict[str, Any],
     prompts_by_key: dict[str, Any],
     image_type_by_image_key: dict[str, Any],
     images_by_key: dict[str, Any],
-) -> tuple[dict[str, Any], str | None]:
+    prompt_versions_by_plan: dict[str, ImagePromptArtifactVersion],
+) -> tuple[dict[str, Any], str | None, str | None]:
     base = {"contract_version": 2, "source_draft_revision_id": draft_revision.id}
     if plan.node_type == WorkflowNodeType.PRODUCT_CONTEXT:
-        return {**base, "fact_set_version_id": fact_set.id}, None
+        return {**base, "fact_set_version_id": fact_set.id}, None, None
     if isinstance(plan, ReferenceImageNodePlan):
         reference = references_by_key[plan.reference_key]
         return {
@@ -417,16 +507,14 @@ def _resolved_node_config(
             "reference_key": reference.key,
             "role": reference.role,
             "label": reference.label,
-        }, reference.asset_id
+        }, reference.asset_id, None
     if isinstance(plan, PromptGenerationNodePlan):
         prompt = prompts_by_key[plan.prompt_plan_key]
         return {
             **base,
             "prompt_plan_key": prompt.key,
             "image_type_key": prompt.image_type_key,
-            "prompt_plan": prompt.model_dump(mode="json"),
-            "visual_system": artifact.visual_system.model_dump(mode="json"),
-        }, None
+        }, None, prompt_versions_by_plan[prompt.key].id
     if isinstance(plan, ImageGenerationNodePlan):
         image = images_by_key[plan.image_plan_key]
         image_type = image_type_by_image_key[plan.image_plan_key]
@@ -438,7 +526,7 @@ def _resolved_node_config(
             "variation_instruction": image.variation_instruction,
             "generation_spec": image.generation_spec.model_dump(mode="json"),
             "delivery_spec": image.delivery_spec.model_dump(mode="json") if image.delivery_spec else None,
-        }, None
+        }, None, None
     raise BusinessValidationError("WorkflowDraft 包含不支持的 v2 节点类型")
 
 
@@ -546,7 +634,14 @@ def _load_materialization_result(
             selectinload(WorkflowMaterialization.reveal_events),
             selectinload(WorkflowMaterialization.workflow).selectinload(ProductWorkflow.folders),
             selectinload(WorkflowMaterialization.workflow).selectinload(ProductWorkflow.nodes),
+            selectinload(WorkflowMaterialization.workflow)
+            .selectinload(ProductWorkflow.nodes)
+            .selectinload(WorkflowNode.current_prompt_artifact_version),
             selectinload(WorkflowMaterialization.workflow).selectinload(ProductWorkflow.edges),
+            selectinload(WorkflowMaterialization.workflow)
+            .selectinload(ProductWorkflow.prompt_artifacts)
+            .selectinload(ImagePromptArtifact.versions),
+            selectinload(WorkflowMaterialization.workflow).selectinload(ProductWorkflow.visual_exceptions),
         )
         .where(WorkflowMaterialization.id == materialization_id)
     )
@@ -582,6 +677,11 @@ def _materialization_request_hash(
         "expected_workflow_revision": expected_workflow_revision,
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _json_hash(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
