@@ -357,7 +357,12 @@ def test_product_workflow_dag_runs_and_persists_artifacts(configured_env: Path) 
         json={"start_node_id": isolated_image_node["id"]},
     )
     assert direct_run.status_code == 200
-    direct_payload = _wait_for_workflow_run(client, product_id, status="failed")
+    direct_run_id = next(
+        run["id"]
+        for run in direct_run.json()["runs"]
+        if any(node_run["node_id"] == isolated_image_node["id"] for node_run in run["node_runs"])
+    )
+    direct_payload = _wait_for_workflow_run(client, product_id, run_id=direct_run_id, status="failed")
     assert direct_payload["runs"][0]["status"] == "failed"
     assert "至少一个图片/参考图节点" in direct_payload["runs"][0]["failure_reason"]
     direct_node = next(node for node in direct_payload["nodes"] if node["id"] == isolated_image_node["id"])
