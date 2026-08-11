@@ -51,6 +51,10 @@ backend/
 │   │   │   └── user_templates.py         # user-saved canvas template use cases
 │   │   ├── queue_submission.py           # durable task enqueue failure handling helper
 │   │   ├── durable_recovery.py           # durable DB recovery state machine and delivery summary
+│   │   ├── agent_conversations.py        # Agent conversation/Turn PostgreSQL projection state
+│   │   ├── agent_control.py              # Agent start/control/state projection orchestration
+│   │   ├── agent_sync.py                 # browser-independent Agent Turn polling and recovery
+│   │   ├── agent_tools.py                # scoped ProductFlow context/assets/tool effects
 │   │   └── use_cases.py                 # product/copy/poster workflow use cases
 │   ├── presentation/
 │   │   ├── api.py                       # FastAPI app factory, middleware, router registration
@@ -65,6 +69,7 @@ backend/
 │       ├── db/session.py                # engine/session factory dependencies
 │       ├── storage.py                   # LocalStorage and image variants
 │       ├── queue.py                     # Dramatiq broker and enqueue helpers
+│       ├── agent_service.py             # internal Go Agent control/SSE HTTP client
 │       ├── text/                        # text provider interfaces/factories/implementations
 │       ├── image/                       # image provider interfaces/factories/implementations
 │       └── poster/renderer.py           # Pillow template poster renderer
@@ -84,6 +89,10 @@ backend/
     ├── test_logging_behavior.py
     └── test_migrations_database_constraints.py
 ```
+
+The repository root also contains `agent-service/`, an independently built Go module. It embeds a fixed
+`third_party/agent-harness` source snapshot and owns conversation-scoped SQLite journals; ProductFlow business models stay
+in the Python backend. Follow `workflow-agent-service.md` for that cross-service boundary.
 
 ---
 

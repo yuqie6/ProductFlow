@@ -12,6 +12,15 @@ backend-run-prod:
 backend-worker:
     bash scripts/with_dev_env.sh uv run --directory backend dramatiq --processes 2 --threads 4 productflow_backend.workers
 
+agent-service-run:
+    bash scripts/with_dev_env.sh bash -lc 'cd agent-service && go run ./cmd/productflow-agent-service'
+
+agent-service-test:
+    bash scripts/with_dev_env.sh bash -lc 'cd agent-service && go test ./...'
+
+agent-service-test-live:
+    PRODUCTFLOW_RUN_LIVE_AGENT=1 bash scripts/with_dev_env.sh bash -lc 'cd agent-service && go test -run TestLiveProviderTwoTurnTranscript -count=1 ./internal/app'
+
 backend-migrate:
     bash scripts/with_dev_env.sh uv run --directory backend alembic upgrade head
 

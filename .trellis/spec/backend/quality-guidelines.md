@@ -68,7 +68,7 @@ Use the root `justfile` where possible so local env loading and ports match the 
 
 #### 5. Good/Base/Bad Cases
 
-- Good: `docker compose up -d --build` starts all five services, API health is OK, and web `/api/healthz` returns backend health.
+- Good: `docker compose up -d --build` starts all six services, backend and Agent health are OK, and web `/api/healthz` returns backend health.
 - Good: `STORAGE_HOST_PATH=/home/cot/ProductFlow-release/shared/storage docker compose up -d --build` bind-mounts old
   production files while API/worker still run with `STORAGE_ROOT=/app/storage`.
 - Base: local development starts only `productflow-postgres` and `productflow-redis`, while host `just` commands run API/worker/web.
@@ -82,7 +82,8 @@ Use the root `justfile` where possible so local env loading and ports match the 
 - Run `docker compose config --quiet` after Compose/env edits.
 - For storage-related Compose changes, render config with `STORAGE_HOST_PATH` both unset and set; assert backend/worker
   mount `/app/storage`, keep `STORAGE_ROOT=/app/storage`, and do not expose `STORAGE_HOST_PATH` in container env.
-- Build container images with `docker compose build productflow-backend productflow-web` or a full `docker compose up -d --build` smoke.
+- Build affected container images, including `productflow-agent-service` after Go/snapshot changes, or run a full
+  `docker compose up -d --build` smoke.
 - Smoke a disposable or safe project with direct API health, web health, and web `/api/healthz` proxy checks when practical.
 - Keep normal backend/frontend gates green when Dockerfiles or docs depend on package commands: backend tests/ruff and frontend lint/test/build.
 
@@ -427,10 +428,13 @@ Preserve these semantics when editing durable task code.
 #### 2. Signatures
 
 - Recovery owners: `application/durable_recovery.py::recover_unfinished_workflow_runs(...)` and
-  `application/durable_recovery.py::recover_unfinished_image_session_generation_tasks(...)`.
+  `application/durable_recovery.py::recover_unfinished_image_session_generation_tasks(...)`; Agent Turn projection
+  recovery is owned separately by `application/agent_sync.py::recover_unfinished_agent_turn_syncs(...)` because the
+  harness SQLite journal remains the transcript authority.
 - Recovery delivery dependency: a required `enqueue: Callable[[str], None]` argument.
 - Queue adapters: `infrastructure/queue.py::enqueue_workflow_run(...)`,
-  `enqueue_workflow_node_run(...)`, and `enqueue_image_session_generation_task(...)`, plus their delayed variants.
+  `enqueue_workflow_node_run(...)`, `enqueue_image_session_generation_task(...)`, and `enqueue_agent_turn_sync(...)`, plus
+  their delayed variants.
 - Composition roots: `presentation/api.py` lifespan and the Dramatiq CLI branch in `workers.py`.
 
 #### 3. Contracts

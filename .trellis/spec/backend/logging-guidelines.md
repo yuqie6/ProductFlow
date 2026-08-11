@@ -227,6 +227,8 @@ Never log secrets or full request payloads that may contain secrets:
 - Raw provider responses if they can include prompts, base64 images, credentials, provider request bodies, or provider
   response payloads.
 - Upload bytes, multipart bodies, image base64 strings, and generated data URLs.
+- Agent internal/provider bearer tokens, complete Agent Turn inputs, required artifact bodies, harness transcript or
+  reasoning items, and image ToolResult content. Persist safe IDs/statuses in PostgreSQL projections instead.
 
 The settings API already hides secret values in `presentation/routes/settings.py::_public_value(...)`; keep logs at least as
 strict as API responses.

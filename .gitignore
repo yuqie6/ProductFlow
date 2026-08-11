@@ -29,6 +29,7 @@ web/dist/
 .env.dev
 backend/storage-dev/
 backend/backend/storage-dev/
+agent-service/data/
 
 # Project Trellis/Codex helpers are source-controlled. Ignore only local state,
 # runtime output, caches, and per-developer workspace records.

@@ -24,6 +24,9 @@ from sqlalchemy import Enum as SqlEnum
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from productflow_backend.domain.enums import (
+    AgentConversationStatus,
+    AgentToolMutationStatus,
+    AgentTurnStatus,
     CopyStatus,
     ImageSessionAssetKind,
     JobStatus,
@@ -253,6 +256,11 @@ class Product(Base, TimestampMixin):
         back_populates="product",
         cascade="all, delete-orphan",
         foreign_keys="WorkflowDraft.product_id",
+    )
+    agent_conversations: Mapped[list[AgentConversation]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+        foreign_keys="AgentConversation.product_id",
     )
 
 
@@ -518,6 +526,11 @@ class WorkflowDraft(Base, TimestampMixin):
         foreign_keys=[final_workflow_id],
         post_update=True,
     )
+    agent_conversation: Mapped[AgentConversation | None] = relationship(
+        back_populates="workflow_draft",
+        foreign_keys="AgentConversation.workflow_draft_id",
+        uselist=False,
+    )
 
 
 class WorkflowDraftRevision(Base):
@@ -570,6 +583,174 @@ class WorkflowDraftRevision(Base):
     visual_system_version: Mapped[VisualSystemVersion | None] = relationship(
         foreign_keys=[visual_system_version_id]
     )
+    agent_turn_projection: Mapped[AgentTurnProjection | None] = relationship(
+        back_populates="workflow_draft_revision",
+        foreign_keys="AgentTurnProjection.workflow_draft_revision_id",
+        uselist=False,
+    )
+
+
+class AgentConversation(Base, TimestampMixin):
+    """ProductFlow 对一个隔离 agent-harness run 的业务作用域绑定。"""
+
+    __tablename__ = "agent_conversations"
+    __table_args__ = (
+        UniqueConstraint("workflow_draft_id", name="uq_agent_conversations_workflow_draft_id"),
+        UniqueConstraint("harness_run_id", name="uq_agent_conversations_harness_run_id"),
+        Index("ix_agent_conversations_product_status", "product_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    product_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("products.id", ondelete="CASCADE", name="fk_agent_conversations_product_id"),
+    )
+    workflow_draft_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "workflow_drafts.id",
+            ondelete="CASCADE",
+            name="fk_agent_conversations_workflow_draft_id",
+        ),
+    )
+    harness_run_id: Mapped[str] = mapped_column(String(120))
+    status: Mapped[AgentConversationStatus] = mapped_column(
+        enum_value_column(AgentConversationStatus),
+        default=AgentConversationStatus.COLLECTING,
+    )
+
+    product: Mapped[Product] = relationship(
+        back_populates="agent_conversations",
+        foreign_keys=[product_id],
+    )
+    workflow_draft: Mapped[WorkflowDraft] = relationship(
+        back_populates="agent_conversation",
+        foreign_keys=[workflow_draft_id],
+    )
+    turns: Mapped[list[AgentTurnProjection]] = relationship(
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="AgentTurnProjection.created_at",
+    )
+    tool_mutations: Mapped[list[AgentToolMutation]] = relationship(
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+    )
+
+
+class AgentTurnProjection(Base, TimestampMixin):
+    """浏览器和 worker 使用的 harness Turn 有界投影，不保存 transcript。"""
+
+    __tablename__ = "agent_turn_projections"
+    __table_args__ = (
+        UniqueConstraint(
+            "conversation_id",
+            "idempotency_key",
+            name="uq_agent_turn_projections_conversation_key",
+        ),
+        UniqueConstraint("harness_turn_id", name="uq_agent_turn_projections_harness_turn_id"),
+        UniqueConstraint(
+            "workflow_draft_revision_id",
+            name="uq_agent_turn_projections_workflow_draft_revision_id",
+        ),
+        CheckConstraint("length(request_hash) = 64", name="ck_agent_turn_projections_request_hash"),
+        Index(
+            "ix_agent_turn_projections_conversation_created",
+            "conversation_id",
+            "created_at",
+            "id",
+        ),
+        Index("ix_agent_turn_projections_status", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    conversation_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "agent_conversations.id",
+            ondelete="CASCADE",
+            name="fk_agent_turn_projections_conversation_id",
+        ),
+    )
+    harness_turn_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(String(200))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    input_text: Mapped[str] = mapped_column(Text)
+    input_asset_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    status: Mapped[AgentTurnStatus] = mapped_column(
+        enum_value_column(AgentTurnStatus),
+        default=AgentTurnStatus.QUEUED,
+    )
+    resume_required: Mapped[bool] = mapped_column(Boolean, default=False)
+    output_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    question_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    artifact_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    artifact_step_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    workflow_draft_revision_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "workflow_draft_revisions.id",
+            ondelete="SET NULL",
+            name="fk_agent_turn_projections_workflow_draft_revision_id",
+        ),
+        nullable=True,
+    )
+    sync_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    conversation: Mapped[AgentConversation] = relationship(back_populates="turns")
+    workflow_draft_revision: Mapped[WorkflowDraftRevision | None] = relationship(
+        back_populates="agent_turn_projection",
+        foreign_keys=[workflow_draft_revision_id],
+    )
+
+
+class AgentToolMutation(Base, TimestampMixin):
+    """ProductFlow 内部工具副作用的幂等账本。"""
+
+    __tablename__ = "agent_tool_mutations"
+    __table_args__ = (
+        UniqueConstraint(
+            "conversation_id",
+            "tool_name",
+            "idempotency_key",
+            name="uq_agent_tool_mutations_conversation_tool_key",
+        ),
+        CheckConstraint("length(request_hash) = 64", name="ck_agent_tool_mutations_request_hash"),
+        Index("ix_agent_tool_mutations_asset_id", "asset_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    conversation_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "agent_conversations.id",
+            ondelete="CASCADE",
+            name="fk_agent_tool_mutations_conversation_id",
+        ),
+    )
+    tool_name: Mapped[str] = mapped_column(String(120))
+    idempotency_key: Mapped[str] = mapped_column(String(200))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    asset_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "product_image_assets.id",
+            ondelete="RESTRICT",
+            name="fk_agent_tool_mutations_asset_id",
+        ),
+    )
+    expected_display_name: Mapped[str] = mapped_column(String(255))
+    target_display_name: Mapped[str] = mapped_column(String(255))
+    status: Mapped[AgentToolMutationStatus] = mapped_column(
+        enum_value_column(AgentToolMutationStatus),
+        default=AgentToolMutationStatus.PREPARED,
+    )
+    result_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+    conversation: Mapped[AgentConversation] = relationship(back_populates="tool_mutations")
+    asset: Mapped[ProductImageAsset] = relationship()
 
 
 class ProductWorkflow(Base, TimestampMixin):

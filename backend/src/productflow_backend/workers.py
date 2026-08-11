@@ -5,6 +5,10 @@ from pathlib import Path
 
 import dramatiq
 
+from productflow_backend.application.agent_sync import (
+    execute_agent_turn_sync,
+    recover_unfinished_agent_turn_syncs,
+)
 from productflow_backend.application.durable_recovery import (
     recover_unfinished_image_session_generation_tasks,
     recover_unfinished_workflow_runs,
@@ -32,6 +36,8 @@ from productflow_backend.infrastructure.logging import (
     set_workflow_run_id,
 )
 from productflow_backend.infrastructure.queue import (
+    enqueue_agent_turn_sync,
+    enqueue_agent_turn_sync_later,
     enqueue_image_session_generation_task,
     enqueue_workflow_run,
     get_broker,
@@ -83,6 +89,17 @@ def run_image_session_generation_task(task_id: str) -> None:
         reset_image_session_generation_task_id(token)
 
 
+@dramatiq.actor(max_retries=0, time_limit=PRODUCT_WORKFLOW_WORKER_FAILSAFE_TIME_LIMIT_MS)
+def run_agent_turn_sync(projection_id: str) -> None:
+    execute_agent_turn_sync(
+        projection_id,
+        enqueue_later=lambda target_id, delay_ms: enqueue_agent_turn_sync_later(
+            target_id,
+            delay_ms=delay_ms,
+        ),
+    )
+
+
 assert_actor_uses_durable_generation_contract(WORKFLOW_RUN_GENERATION_TASK_CONTRACT, run_product_workflow_run)
 assert_actor_uses_durable_generation_contract(
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
@@ -101,3 +118,4 @@ if _running_under_dramatiq_cli():
         enqueue=enqueue_image_session_generation_task,
         reset_stale_running=True,
     )
+    recover_unfinished_agent_turn_syncs(enqueue=enqueue_agent_turn_sync)

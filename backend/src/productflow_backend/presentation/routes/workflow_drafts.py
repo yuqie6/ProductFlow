@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Header, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
+from productflow_backend.application.agent_conversations import mark_agent_conversation_completed_for_draft
 from productflow_backend.application.product_workflows import (
     get_v2_workflow_node_run,
     submit_v2_workflow_node_run,
@@ -155,6 +156,11 @@ def confirm_workflow_draft_endpoint(
         product_id=product_id,
         draft_id=draft_id,
         expected_draft_version=payload.expected_draft_version,
+    )
+    mark_agent_conversation_completed_for_draft(
+        session,
+        product_id=product_id,
+        workflow_draft_id=draft_id,
     )
     return serialize_workflow_draft(draft)
 

@@ -132,6 +132,12 @@ class Settings(BaseSettings):
     redis_url: str
     storage_root: Path = Path("./backend/storage")
 
+    agent_service_base_url: str | None = None
+    agent_service_internal_token: str | None = Field(default=None, min_length=32)
+    agent_service_connect_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+    agent_service_read_timeout_seconds: float = Field(default=90.0, gt=0, le=3600)
+    agent_turn_sync_poll_seconds: float = Field(default=1.0, gt=0, le=60)
+
     log_dir: Path = DEFAULT_LOG_DIR
     log_level: str = "INFO"
     log_max_bytes: int = 10 * 1024 * 1024
@@ -211,6 +217,8 @@ class Settings(BaseSettings):
         return normalize_image_generation_size(value, max_dimension=max_dimension)
 
     @field_validator(
+        "agent_service_base_url",
+        "agent_service_internal_token",
         "image_tool_model",
         "image_tool_quality",
         "image_tool_output_format",

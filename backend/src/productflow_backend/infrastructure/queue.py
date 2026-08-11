@@ -14,6 +14,7 @@ from productflow_backend.domain.durable_generation_tasks import (
 
 DEFAULT_DRAMATIQ_QUEUE_NAME = "default"
 WORKFLOW_NODE_RUN_ACTOR_NAME = "run_product_workflow_node_run"
+AGENT_TURN_SYNC_ACTOR_NAME = "run_agent_turn_sync"
 
 
 @lru_cache(maxsize=1)
@@ -62,3 +63,11 @@ def enqueue_image_session_generation_task(task_id: str) -> None:
 
 def enqueue_image_session_generation_task_later(task_id: str, *, delay_ms: int) -> None:
     _enqueue_actor(IMAGE_SESSION_GENERATION_TASK_CONTRACT.actor_name, task_id, delay_ms=delay_ms)
+
+
+def enqueue_agent_turn_sync(projection_id: str) -> None:
+    _enqueue_actor(AGENT_TURN_SYNC_ACTOR_NAME, projection_id)
+
+
+def enqueue_agent_turn_sync_later(projection_id: str, *, delay_ms: int) -> None:
+    _enqueue_actor(AGENT_TURN_SYNC_ACTOR_NAME, projection_id, delay_ms=delay_ms)

@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from productflow_backend.application.agent_sync import recover_unfinished_agent_turn_syncs
 from productflow_backend.application.durable_recovery import (
     recover_unfinished_image_session_generation_tasks,
     recover_unfinished_workflow_runs,
@@ -21,10 +22,13 @@ from productflow_backend.infrastructure.logging import (
     set_request_id,
 )
 from productflow_backend.infrastructure.queue import (
+    enqueue_agent_turn_sync,
     enqueue_image_session_generation_task,
     enqueue_workflow_run,
 )
 from productflow_backend.presentation.errors import register_exception_handlers
+from productflow_backend.presentation.routes.agent_conversations import router as agent_conversations_router
+from productflow_backend.presentation.routes.agent_internal import router as agent_internal_router
 from productflow_backend.presentation.routes.auth import router as auth_router
 from productflow_backend.presentation.routes.gallery import router as gallery_router
 from productflow_backend.presentation.routes.generation_queue import router as generation_queue_router
@@ -49,6 +53,7 @@ def create_app() -> FastAPI:
         bootstrap_provider_config_if_available()
         recover_unfinished_workflow_runs(enqueue=enqueue_workflow_run)
         recover_unfinished_image_session_generation_tasks(enqueue=enqueue_image_session_generation_task)
+        recover_unfinished_agent_turn_syncs(enqueue=enqueue_agent_turn_sync)
         yield
 
     app = FastAPI(title="ProductFlow API", version="0.1.0", lifespan=lifespan)
@@ -73,6 +78,8 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     app.include_router(auth_router)
+    app.include_router(agent_internal_router)
+    app.include_router(agent_conversations_router)
     app.include_router(generation_queue_router)
     app.include_router(gallery_router)
     app.include_router(products_router)

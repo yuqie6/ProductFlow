@@ -41,3 +41,9 @@ class QueueUnavailableError(BusinessError):
     """Durable queue delivery failed after the database task state was persisted."""
 
     status_code: ClassVar[int] = 503
+
+
+class AgentServiceUnavailableError(BusinessError):
+    """工作流 Agent 内部服务不可用或返回了无法信任的响应。"""
+
+    status_code: ClassVar[int] = 503

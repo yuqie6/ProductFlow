@@ -90,6 +90,40 @@ class WorkflowDraftStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class AgentConversationStatus(StrEnum):
+    """工作流 Agent 会话在 ProductFlow 侧的业务投影状态。"""
+
+    COLLECTING = "collecting"
+    AWAITING_CONFIRMATION = "awaiting_confirmation"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELED = "canceled"
+    UNKNOWN = "unknown"
+
+
+class AgentTurnStatus(StrEnum):
+    """agent-harness Turn 状态的无损 ProductFlow 投影。"""
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    REQUIRES_INPUT = "requires_input"
+    AWAITING_CONFIRMATION = "awaiting_confirmation"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCEL_REQUESTED = "cancel_requested"
+    CANCELED = "canceled"
+    UNKNOWN = "unknown"
+
+
+class AgentToolMutationStatus(StrEnum):
+    """Agent 可对账业务副作用在 ProductFlow 侧的持久化结果。"""
+
+    PREPARED = "prepared"
+    APPLIED = "applied"
+    FAILED = "failed"
+    UNKNOWN = "unknown"
+
+
 class ProductFactStatus(StrEnum):
     """草案中单条商品事实的确认状态。"""
 

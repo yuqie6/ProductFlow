@@ -6,24 +6,28 @@ Current architecture health, completed cleanup, and remaining risks are tracked 
 
 ## 1. System Overview
 
-ProductFlow consists of the frontend, backend API, background worker, PostgreSQL, Redis, and local file storage:
+ProductFlow consists of the frontend, backend API, workflow Agent service, background worker, PostgreSQL, Redis, and local file storage:
 
 ```text
 React/Vite web
   -> FastAPI backend
-    -> PostgreSQL metadata
+    -> PostgreSQL metadata and Agent projections
     -> Redis/Dramatiq queue
     -> local storage files
     -> text provider / image provider
+    -> ProductFlow Agent service (internal bearer HTTP/SSE)
+      -> Responses API provider
+      -> per-conversation SQLite journal
+      -> scoped FastAPI internal tool APIs
   -> Dramatiq worker
-    -> same database, queue, storage and providers
+    -> same database, queue, storage, providers and Agent service
 ```
 
-The default self-hosted path is driven by the root `docker-compose.yml`. `docker compose up -d --build` builds and starts PostgreSQL, Redis, the FastAPI backend, the Dramatiq worker, and the nginx-served Web static site. API/worker containers connect to dependencies through `productflow-postgres:5432` and `productflow-redis:6379`, and share persistent storage mounted at `/app/storage`. When `STORAGE_HOST_PATH` is not set, storage uses the Docker named volume `productflow-storage`. When migrating from an older systemd production environment, you can set the host-only variable `STORAGE_HOST_PATH=/home/cot/ProductFlow-release/shared/storage` to bind-mount an existing host storage directory to `/app/storage`; the runtime container still keeps `STORAGE_ROOT=/app/storage`. The backend container runs Alembic migrations before starting `uvicorn`.
+The default self-hosted path is driven by the root `docker-compose.yml`. `docker compose up -d --build` builds and starts six services: PostgreSQL, Redis, the FastAPI backend, the Dramatiq worker, the workflow Agent service, and the nginx-served Web static site. API/worker containers connect to dependencies through `productflow-postgres:5432` and `productflow-redis:6379`, and share persistent storage mounted at `/app/storage`. When `STORAGE_HOST_PATH` is not set, storage uses the Docker named volume `productflow-storage`. When migrating from an older systemd production environment, you can set the host-only variable `STORAGE_HOST_PATH=/home/cot/ProductFlow-release/shared/storage` to bind-mount an existing host storage directory to `/app/storage`; the runtime container still keeps `STORAGE_ROOT=/app/storage`. The Agent service has no published host port, and the `productflow-agent-data` volume persists its `/data` directory. The worker starts after backend and Agent health checks pass. The backend container runs Alembic migrations before starting `uvicorn`.
 
 The production update entrypoint is `just release`, which calls `scripts/release.sh` to validate Compose configuration, stop legacy user-level systemd services (`productflow-backend.service`, `productflow-worker.service`, `productflow-web.service`, used to free old release ports 29280/29281), run `docker compose up -d --build --remove-orphans`, and perform HTTP health checks. `just release-dry-run` only validates configuration and prints the plan; it does not stop old services, build, or start containers. Normal updates do not delete Docker volumes.
 
-Local hot-reload development is still driven by the root `justfile`: you can start only `productflow-postgres` and `productflow-redis`, then run the API, worker, and frontend separately with `just backend-run`, `just backend-worker`, and `just web-dev`. The development environment uses `STORAGE_ROOT=./backend/storage-dev` from `.env.dev`, isolated from production Compose storage. Do not start local development processes by shell-sourcing production `.env`.
+Local hot-reload development is still driven by the root `justfile`: you can start only `productflow-postgres` and `productflow-redis`, then run the API, Agent service, worker, and frontend separately with `just backend-run`, `just agent-service-run`, `just backend-worker`, and `just web-dev`. The development environment uses `STORAGE_ROOT=./backend/storage-dev` from `.env.dev`, isolated from production Compose storage. Do not start local development processes by shell-sourcing production `.env`.
 
 ## 2. Backend Layering
 
@@ -37,6 +41,8 @@ Backend code lives under `backend/src/productflow_backend/` and is organized by 
 - `config.py`: environment configuration, runtime configuration definitions, and database override reading.
 
 The route layer only handles input adaptation, authentication, error mapping, and serialization. Provider calls, job state changes, and workflow progression stay inside application/infrastructure boundaries.
+
+The root `agent-service/` directory is an independent Go module. It creates an isolated agent-harness service, SQLite journal, and empty workspace for each conversation, and owns native multimodal Turns, token-level event replay, question/answer/resume/cancel control, and the required workflow-draft artifact. FastAPI modules `application/agent_conversations.py`, `agent_control.py`, `agent_sync.py`, and `agent_tools.py` own PostgreSQL projections, control orchestration, Dramatiq synchronization, and ProductFlow tool boundaries; `infrastructure/agent_service.py` owns the internal HTTP/SSE client. Browsers only call the session-authenticated FastAPI endpoints.
 
 ## 3. Frontend Structure
 
@@ -55,6 +61,8 @@ The frontend uses TanStack Query for server state. The product detail page and i
 Do not reintroduce active polling for complete `ImageSessionDetailResponse` or complete `ProductWorkflowResponse`; those payloads include image history, node configuration, artifact references, and run records, and high-frequency refresh increases frontend render cost and backend serialization work.
 
 The product detail page is currently the ProductFlow workbench: the canvas handles nodes, edges, zoom, pan, node dragging, box selection, and multi-select. On desktop, the right sidebar handles Details, Runs, Library, and Templates. On mobile, a bottom toolbar carries the workflow run entrypoint plus Single node, Templates, Details, Runs, and Library entrypoints, and a bottom sheet renders those panel contents. The mobile canvas has local `browse` / `edit` / `select` interaction modes: `browse` handles one-finger pan, node tap selection, and two-finger pinch zoom; `edit` allows touch/pen node dragging and edge creation; `select` toggles multi-select by tapping nodes. Canvas zoom ratio and desktop sidebar width are browser-local preferences, while mobile mode and sheet openness are page-local UI state. Workflow nodes, edges, run state, and artifacts remain database-backed.
+
+The workflow Agent conversation entry screen, streamed message presentation, confirmation-to-canvas transition animation, and right-sidebar conversation continuation have not been connected to the frontend yet. This phase only provides the conversation, Turn, Question, control, and SSE APIs required by those interactions.
 
 ## 4. Main Data Model Lines
 
@@ -89,6 +97,18 @@ ProductWorkflow
   -> WorkflowNodeRun
 ```
 
+Workflow Agent design chain:
+
+```text
+Product -> WorkflowDraft
+  -> AgentConversation
+    -> AgentTurnProjection(bounded PostgreSQL UI/recovery state)
+    -> harness run/transcript/events(per-conversation SQLite journal)
+  -> WorkflowDraftRevision(required artifact from an awaiting-confirmation Turn)
+```
+
+PostgreSQL does not store the Agent transcript, reasoning, token deltas, image bytes, or artifact body. Event replay after a browser reconnect comes from the Agent SQLite journal. PostgreSQL retains only bounded conversation/Turn projections, synchronization state, and the related `WorkflowDraftRevision`.
+
 Canvas template chain:
 
 ```text
@@ -118,19 +138,22 @@ Canvas template boundaries:
 
 ## 5. Async Jobs and Recovery
 
-There are currently two background execution entrypoints:
+There are currently two generation entrypoints and one Agent projection-synchronization entrypoint:
 
 1. `WorkflowRun`: used for product DAG workflow execution.
 2. `ImageSessionGenerationTask`: used for iterative image generation.
+3. `AgentTurnProjection`: `run_agent_turn_sync` mirrors agent-harness Turn state and attaches the required workflow-draft artifact; the Go Agent service owns model execution and transcript persistence.
 
 Shared principles:
 
 - Database records are persisted first; Redis messages are only recoverable dispatch attempts.
 - A workflow may have multiple disjoint running runs; database constraints ensure one node has at most one queued/running
   `WorkflowNodeRun` at a time.
-- If enqueue fails, the newly created run/task is marked failed to avoid stuck active state.
-- API startup recovers queued unfinished tasks/workflows.
-- Worker startup can reset stale running state and re-dispatch work.
+- If workflow or iterative-image enqueue fails, the newly created run/task is marked failed to avoid stuck active state.
+- API startup recovers queued workflows, iterative-image tasks, and synchronizable Agent Turns.
+- Worker startup can reset stale running generation state and re-dispatch generation tasks and synchronizable Agent Turns.
+- After an Agent Question is answered, the Turn remains `queued` with `resume_required=true`; only an explicit resume restarts execution and polling.
+- The agent-harness `unknown` state is projected unchanged. ProductFlow does not infer success or automatically replay an effect with an ambiguous outcome.
 - Workflow runs and iterative image-generation tasks serialize `is_retryable` / `is_cancelable`, and the frontend uses those flags to show retry and cancel actions.
 - Image-generation failures are classified into user-readable categories covering provider quota/rate limit, content policy, network interruption, request timeout, provider service errors, and unsupported parameters.
 - Iterative image generation no longer treats a user-configurable hard total timeout as product semantics. Running tasks persist `progress_updated_at`, completed candidate count, current candidate, and provider response state; stale-running recovery uses the latest progress heartbeat for idle detection and only falls back to `started_at` for older rows.
@@ -142,8 +165,10 @@ Shared principles:
 
 Related entrypoints:
 
-- `productflow_backend.infrastructure.queue.recover_unfinished_workflow_runs`
-- `productflow_backend.infrastructure.queue.recover_unfinished_image_session_generation_tasks`
+- `productflow_backend.application.durable_recovery.recover_unfinished_workflow_runs`
+- `productflow_backend.application.durable_recovery.recover_unfinished_image_session_generation_tasks`
+- `productflow_backend.application.agent_sync.recover_unfinished_agent_turn_syncs`
+- `productflow_backend.infrastructure.queue.run_agent_turn_sync`
 - `productflow_backend.workers`
 
 ## 6. Provider Architecture
@@ -171,6 +196,8 @@ Provider selection is controlled by `provider_profiles`, `provider_bindings`, an
 `TEXT_*` / `IMAGE_*` environment values are only first-migration input; runtime resolvers read interface kind,
 connection data, and models from provider profiles and purpose bindings. Routes do not directly depend on concrete SDKs.
 
+The workflow Agent uses the Responses API through agent-harness in the Go service. Its current provider connection is controlled by the env-only `AGENT_PROVIDER_API_KEY`, `AGENT_PROVIDER_BASE_URL`, `AGENT_PROVIDER_MODEL`, and reasoning/text/service-tier options. It has not been integrated with `provider_profiles` / `provider_bindings` yet. These values only enter the Agent container and are never echoed through browser APIs.
+
 ## 7. Poster Generation
 
 Posters have two modes:
@@ -187,7 +214,7 @@ Both modes target two artifact types:
 
 Configuration is split into two categories:
 
-1. Env-only infrastructure configuration: `DATABASE_URL`, `REDIS_URL`, `SESSION_SECRET`, `ADMIN_ACCESS_KEY`, `SETTINGS_ACCESS_TOKEN`, and similar values. These must be available before the application can access the database, or they protect the secondary unlock for the settings page, so runtime DB overrides are not supported.
+1. Env-only infrastructure configuration: `DATABASE_URL`, `REDIS_URL`, `SESSION_SECRET`, `ADMIN_ACCESS_KEY`, `SETTINGS_ACCESS_TOKEN`, `AGENT_SERVICE_INTERNAL_TOKEN`, the Agent service address, Agent provider connection values, and similar settings. These must be available at process startup, for internal-service authentication, or before database access, so runtime DB overrides are not supported.
 2. Runtime business configuration: provider, model, image size, upload limits, task retry, global generation concurrency limit, poster mode, prompt templates, login-gate switch, business deletion switch, and similar values. They can be provided as defaults by `.env` / `.env.dev`, or written to `app_settings` through `/api/settings` after login and settings-page unlock.
 
 Secret configuration values are not echoed back in API responses.
@@ -221,5 +248,7 @@ The current security model is "single-admin self-hosted":
 - CORS is controlled by `BACKEND_CORS_ORIGINS`.
 - Uploaded files have MIME, size, pixel, and count limits.
 - Provider API keys are stored in env or database configuration, and APIs do not echo secrets.
+- FastAPI and the Agent service protect their internal control and tool APIs with the independent `AGENT_SERVICE_INTERNAL_TOKEN`; browsers cannot connect directly to the Agent service.
+- Agent tool scope for product, Draft, conversation, and run is bound by server-side closures. The model cannot submit those IDs to change its operating scope.
 
 Currently not provided: multi-user isolation, object-level permissions, audit logs, or production WAF configuration.

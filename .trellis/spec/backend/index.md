@@ -21,6 +21,7 @@ These files document the backend conventions that are actually present in this r
 | [Error Handling](./error-handling.md) | ValueError-to-HTTP mapping, upload errors, auth, queue/provider boundaries | Filled |
 | [Quality Guidelines](./quality-guidelines.md) | Ruff/pytest tooling, tests, required/forbidden backend patterns | Filled |
 | [Logging Guidelines](./logging-guidelines.md) | Current minimal logging reality and safe logging extension rules | Filled |
+| [Workflow Agent Service](./workflow-agent-service.md) | Scoped Go service, Turn projections, tools, SSE, and recovery | Filled |
 
 ---
 
@@ -35,6 +36,7 @@ Before backend changes, read:
    - API/business failures/uploads: `./error-handling.md`
    - observability/logging: `./logging-guidelines.md`
    - product workbench DAG: `./product-workflow-dag.md`
+   - workflow Agent service, Turn APIs, or Agent tools: `./workflow-agent-service.md`
 
 If a backend change affects frontend API contracts, also read `../frontend/type-safety.md` and
 `../frontend/state-management.md`.

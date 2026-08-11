@@ -102,7 +102,27 @@ wait_for_health() {
   done
 
   echo "[release] ${label} health check failed after $((attempts * delay_seconds))s: ${url}" >&2
-  echo "[release] 可用 docker compose ps 和 docker compose logs productflow-backend productflow-worker productflow-web 排查" >&2
+  echo "[release] 可用 docker compose ps 和 docker compose logs productflow-backend productflow-worker productflow-agent-service productflow-web 排查" >&2
+  return 1
+}
+
+wait_for_agent_health() {
+  local attempts="${1:-60}"
+  local delay_seconds="${2:-2}"
+
+  echo "[release] 等待 agent service /healthz（Compose 内部网络）"
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    local body=""
+    if body="$(docker compose exec -T productflow-agent-service wget -qO- http://127.0.0.1:29284/healthz 2>/dev/null)" &&
+      grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"' <<<"$body"; then
+      echo "[release] agent service /healthz OK: $body"
+      return 0
+    fi
+    sleep "$delay_seconds"
+  done
+
+  echo "[release] agent service health check failed after $((attempts * delay_seconds))s" >&2
+  echo "[release] 可用 docker compose ps 和 docker compose logs productflow-agent-service 排查" >&2
   return 1
 }
 
@@ -113,8 +133,9 @@ if [[ "$dry_run" == "1" ]]; then
   2. docker compose up -d --build --remove-orphans
   3. docker compose ps
   4. curl http://127.0.0.1:${backend_port}/healthz
-  5. curl http://127.0.0.1:${web_port}/healthz
-  6. curl http://127.0.0.1:${web_port}/api/healthz
+  5. docker compose exec -T productflow-agent-service wget -qO- http://127.0.0.1:29284/healthz
+  6. curl http://127.0.0.1:${web_port}/healthz
+  7. curl http://127.0.0.1:${web_port}/api/healthz
 
 [release] dry-run 不会删除 Docker volumes；实际 release 也不会执行 docker compose down -v。
 EOF
@@ -130,6 +151,7 @@ echo "[release] 当前 Compose 服务状态"
 docker compose ps
 
 wait_for_health "backend /healthz" "http://127.0.0.1:${backend_port}/healthz" '"status"[[:space:]]*:[[:space:]]*"ok"'
+wait_for_agent_health
 wait_for_health "web /healthz" "http://127.0.0.1:${web_port}/healthz" '^ok$'
 wait_for_health "web proxy /api/healthz" "http://127.0.0.1:${web_port}/api/healthz" '"status"[[:space:]]*:[[:space:]]*"ok"'
 
