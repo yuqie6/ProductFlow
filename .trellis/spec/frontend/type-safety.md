@@ -242,6 +242,76 @@ return api.createProduct({
 
 ## Local Types
 
+### Scenario: WorkflowDraft and schema-v2 workflow DTOs
+
+#### 1. Scope / Trigger
+
+- Trigger: changing WorkflowDraft requests/responses, v2 workflow projections, reveal-event playback, or the separation
+  between legacy and v2 canvas node types.
+
+#### 2. Signatures
+
+- Legacy `WorkflowNodeType` remains the four-value v1 union and excludes `prompt_generation`.
+- `WorkflowNodeTypeV2` is `product_context | reference_image | prompt_generation | image_generation`.
+- Central API methods: `getActiveProductWorkflowV2`, `createWorkflowDraft`, `getWorkflowDraft`,
+  `appendWorkflowDraftRevision`, `confirmWorkflowDraft`, `materializeWorkflowDraft`, and
+  `workflowRevealEventsUrl`.
+
+#### 3. Contracts
+
+- `WorkflowDraftPayloadV1.schema_version` and reveal event `schema_version` are literal `1`; materialized workflow and node
+  schema versions are literal `2`.
+- DTO fields retain backend `snake_case`. Flexible artifact values use recursive `JsonValue`; materialized node config and
+  output use `Record<string, unknown>` until the prompt/image execution child defines narrower payloads.
+- The Draft response supplies `limits` for image-type, per-type, total-image, and reference-asset counts. UI code reads
+  these values and does not duplicate backend numeric limits.
+- V1 components continue accepting `WorkflowNodeType`; v2 components explicitly accept `WorkflowNodeTypeV2` or the full
+  v2 DTO. Do not widen the legacy union to make prompt nodes compile in old rendering/execution paths.
+- `workflowRevealEventsUrl(materializationId, after?)` owns the SSE path and replay cursor. Consumers first load the complete
+  v2 workflow; reveal events control presentation order only.
+
+#### 4. Validation & Error Matrix
+
+- Backend `422` for a strict Draft shape -> surface `ApiError.detail`; do not coerce unknown fields locally.
+- Backend `409` for stale revisions, active v1, or idempotency drift -> refresh the corresponding Draft/workflow state
+  before a deliberate retry.
+- Empty v2 query -> handle `workflow: null` and `latest_revision`; do not call a legacy endpoint to fill it.
+- SSE disconnect -> reconnect with EventSource `Last-Event-ID` behavior or rebuild the URL with `after`; the committed
+  workflow remains the recovery source.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: use response `limits.max_images_per_type` to configure the count control and submit the chosen quantity in the
+  complete Draft payload.
+- Base: render no v2 canvas when `workflow` is null while retaining `latest_revision` for the materialization command.
+- Bad: add `prompt_generation` to legacy `WorkflowNodeType` and let old switch/maps silently accept an unsupported node.
+- Bad: treat reveal SSE as the only source of workflow entities and lose the canvas after a reload.
+
+#### 6. Tests Required
+
+- API helper tests assert exact materialization JSON fields and reveal URL cursor construction.
+- TypeScript build must verify distinct v1/v2 node unions and literal schema versions.
+- Run `pnpm --dir web test:run`, `pnpm --dir web lint`, and `just web-build` after DTO changes.
+- UI integration work must test reconnect/reload against the complete workflow query when reveal animation is implemented.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+
+```ts
+export type WorkflowNodeType = "product_context" | "reference_image" | "copy_generation" |
+  "prompt_generation" | "image_generation";
+const maxPerType = 6;
+```
+
+Correct:
+
+```ts
+export type WorkflowNodeTypeV2 = "product_context" | "reference_image" |
+  "prompt_generation" | "image_generation";
+const maxPerType = draft.limits.max_images_per_type;
+```
+
 ### Scenario: Settings migration API typing
 
 #### 1. Scope / Trigger

@@ -1390,3 +1390,128 @@ if copy_set is None:
     copy_set = _create_context_copy_set(session, product=product, product_context=context, node=node)
 targets = downstream_reference_nodes
 ```
+
+---
+
+## Scenario: WorkflowDraft v1 and atomic schema-v2 materialization
+
+### 1. Scope / Trigger
+
+- Trigger: changes to WorkflowDraft artifact fields, product fact confirmation, schema-v2 workflow persistence,
+  Draft materialization, reveal events, or `/api/v2/.../workflow-drafts` endpoints.
+- This contract creates a complete persisted v2 DAG from one confirmed Draft revision. Prompt compilation, image
+  execution, Agent transport, and React reveal animation have separate owners.
+- Existing schema-v1 workflows keep their historical rows and old execution path until the legacy retirement task.
+
+### 2. Signatures
+
+- Artifact: `WorkflowDraftPayloadV1` in `application/workflow_drafts/contracts.py`, with `schema_version: Literal[1]`.
+- Lifecycle commands:
+  - `create_workflow_draft(session, *, product_id, payload, ready_for_confirmation, source_turn_id=None,
+    source_artifact_step_id=None) -> WorkflowDraft`
+  - `append_workflow_draft_revision(session, *, product_id, draft_id, expected_draft_version, payload,
+    ready_for_confirmation, source_turn_id=None, source_artifact_step_id=None) -> WorkflowDraft`
+  - `confirm_workflow_draft_revision(session, *, product_id, draft_id, expected_draft_version) -> WorkflowDraft`
+- Materialization command:
+  - `materialize_workflow_draft(session, *, product_id, draft_id, expected_draft_version,
+    expected_workflow_revision, idempotency_key) -> WorkflowMaterializationResult`
+- Read commands:
+  - `get_active_v2_workflow_snapshot(session, *, product_id) -> ActiveV2WorkflowSnapshot`
+  - `list_workflow_reveal_events(session, *, materialization_id, after) -> list[WorkflowRevealEvent]`
+- HTTP boundaries:
+  - `GET /api/v2/products/{product_id}/workflow`
+  - `POST /api/v2/products/{product_id}/workflow-drafts`
+  - `GET /api/v2/products/{product_id}/workflow-drafts/{draft_id}`
+  - `POST /api/v2/products/{product_id}/workflow-drafts/{draft_id}/revisions|confirm|materialize`
+  - `GET /api/v2/workflow-materializations/{materialization_id}/reveal-events`
+
+### 3. Contracts
+
+- Pydantic models are frozen and use `extra="forbid"`. Business keys use lowercase ASCII letters, digits, `_`, and `-`;
+  Draft revisions persist the full canonical JSON snapshot and SHA-256 hash.
+- A Draft has at least one image type and one canonical reference binding. It accepts at most six reference assets, one to
+  six planned images per type, and no more than thirty planned images in total.
+- Every image type owns exactly one prompt plan and one `prompt_generation` node. Every planned image owns exactly one
+  `image_generation` node. Every reference binding owns exactly one `reference_image` node. The graph owns exactly one
+  `product_context` node.
+- Typed edges allow only the declared product/reference/prompt/image data flows. Every prompt receives a direct product
+  context edge, every planned image receives its type prompt edge, duplicate pairs/self-edges are rejected, and the graph
+  must remain acyclic.
+- Revisions are append-only. Confirming a revision creates one immutable `ProductFactSetVersion`, marks facts confirmed,
+  and moves `Product.current_fact_set_version_id`; later information creates another revision and fact version.
+- Materialization locks the product and Draft, validates both expected versions, re-parses the stored artifact, verifies
+  its hash and all `ProductImageAsset` ownership, then writes workflow/folders/nodes/edges/materialization/key mappings/
+  reveal events and active-workflow changes in one transaction.
+- One Draft revision maps to one workflow. Every successful product-scoped idempotency key is persisted in
+  `WorkflowMaterializationKey`; a repeated key must carry the same normalized request hash. A new key for an already
+  materialized revision is bound to that existing result.
+- An active schema-v1 workflow blocks v2 materialization with `409` and remains unchanged. Old query/edit/run entrypoints
+  reject schema-v2 workflows and nodes with `409`.
+- `GET /api/v2/products/{product_id}/workflow` is read-only. Missing v2 state returns
+  `{ "latest_revision": 0, "workflow": null }` and never calls the v1 get-or-create helper.
+- Reveal rows are committed before SSE starts. SSE uses sequence as `id`, kind as `event`, supports `Last-Event-ID` and
+  `after` by taking the larger cursor, and performs no writes while replaying.
+
+### 4. Validation & Error Matrix
+
+- Unknown request/artifact field or invalid Pydantic shape -> HTTP `422` at the API boundary.
+- Stored or application-provided artifact cannot be parsed as Draft v1 -> `BusinessValidationError` / HTTP `400`.
+- Missing required fact, unresolved conflict, missing asset, or cross-product asset -> `BusinessValidationError` /
+  HTTP `400`; no workflow rows are committed.
+- Stale Draft/workflow revision, unconfirmed Draft, fact lineage drift, active v1 workflow, or reused key with another
+  request hash -> `ConflictError` / HTTP `409`.
+- Missing product, Draft, or materialization -> `NotFoundError` / HTTP `404`.
+- Folder/node/edge/materialization/key/event flush or commit failure -> rollback the complete transaction; the previous
+  active workflow and confirmed Draft remain retryable.
+- Invalid or negative SSE cursor -> HTTP `400`/`422` according to whether it came from `Last-Event-ID` or query parsing.
+
+### 5. Good/Base/Bad Cases
+
+- Good: confirm revision 2, materialize with expected Draft 2 and workflow revision 1, then atomically receive active v2
+  revision 2 plus deterministic reveal events.
+- Good: retry a successful request with the same key and request hash, or use a new key for the same Draft revision; both
+  return the same workflow without adding DAG rows.
+- Base: query a product with only a v1 workflow through the v2 endpoint and receive an empty v2 projection without
+  modifying the v1 workflow.
+- Bad: update a confirmed revision's JSON/hash in place after the user has confirmed it.
+- Bad: deactivate the current workflow, commit, and create the replacement DAG in later transactions.
+- Bad: emit transient reveal deltas before the full workflow transaction commits.
+
+### 6. Tests Required
+
+- Artifact unit tests cover unknown fields, quantity boundaries, unique keys/orders, plan/node cardinality, typed edges,
+  required product/prompt edges, references, and DAG cycles.
+- Application tests cover append-only confirmation, fact lineage, artifact-origin retry, product-scoped idempotency aliases,
+  stale versions, cross-product assets, active-v1 rejection, replacement rollback, and product deletion cascades.
+- Failure-injection tests raise during folder, node, edge, and reveal-event flushes and assert zero partial rows plus the
+  unchanged previous active workflow.
+- API tests cover the empty read, full lifecycle/projection, strict request rejection, v1 guards, SSE cursor replay, and
+  replay read-only behavior.
+- Migration tests run upgrade/downgrade/re-upgrade on SQLite and an isolated PostgreSQL database containing a real v1
+  workflow. Run full backend tests and Ruff after contract changes.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+legacy = get_or_create_product_workflow(session, product_id)
+legacy.active = False
+session.commit()
+create_v2_nodes_in_separate_transactions(session, draft.payload_json)
+```
+
+Correct:
+
+```python
+result = materialize_workflow_draft(
+    session,
+    product_id=product_id,
+    draft_id=draft_id,
+    expected_draft_version=draft_version,
+    expected_workflow_revision=workflow_revision,
+    idempotency_key=request_id,
+)
+```
+
+The command validates lineage and owns one commit/rollback boundary for the full replacement.

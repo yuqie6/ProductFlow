@@ -277,6 +277,78 @@ for _, storage_path in deleted_media:
 
 ## Query Patterns
 
+### Scenario: Append-only workflow drafts and atomic v2 persistence
+
+#### 1. Scope / Trigger
+
+- Trigger: migrations or ORM relationships for `ProductFactSetVersion`, `WorkflowDraft`, schema-v2 `ProductWorkflow`,
+  `WorkflowFolder`, materialization keys, or reveal events.
+
+#### 2. Signatures
+
+- New owned tables: `product_fact_set_versions`, `workflow_drafts`, `workflow_draft_revisions`, `workflow_folders`,
+  `workflow_materializations`, `workflow_materialization_keys`, and `workflow_reveal_events`.
+- Versioned columns: `products.current_fact_set_version_id`; `product_workflows.schema_version`, `revision`, and
+  `source_draft_revision_id`; `workflow_nodes.schema_version`, `node_key`, `folder_id`, and `bound_image_asset_id`;
+  `workflow_edges.edge_key`.
+- Migration head: `20260811_0032`, based on `20260811_0031`.
+
+#### 3. Contracts
+
+- Draft revision `(draft_id, version)` and optional Agent artifact origin are unique. Persisted payload hashes have exactly
+  64 characters; schema version is fixed at 1.
+- Product fact `(product_id, version)`, v2 workflow `(product_id, revision)`, folder/node/edge business keys, one
+  materialization per Draft revision/workflow, product-scoped materialization keys, and reveal sequence are unique.
+- Existing workflows/nodes receive `schema_version=1`; existing workflows receive `revision=1`. New materialized rows use
+  schema version 2 and stable business keys.
+- `Product.current_fact_set_version_id`, Draft current/final pointers, and workflow Draft lineage use named foreign keys
+  with explicit `SET NULL`; owned rows use `CASCADE`; bound canonical image assets use `RESTRICT`.
+- PostgreSQL extends native `workflownodetype` inside Alembic's autocommit block before inserting the new enum value.
+  Downgrade leaves `prompt_generation` in that native enum because PostgreSQL cannot safely remove an enum value in place.
+- Application materialization owns the transaction. Helpers may flush for generated IDs but never commit.
+
+#### 4. Validation & Error Matrix
+
+- Duplicate Draft/workflow version, business key, Draft revision materialization, or product idempotency key -> database
+  integrity error; the application maps concurrent materialization conflicts to HTTP `409`.
+- Non-positive versions/sequences, invalid schema versions, or malformed hashes -> check-constraint failure.
+- Delete a canonical asset bound to a v2 reference node -> `RESTRICT` until the workflow/reference is removed.
+- Delete a product -> cascade all owned Draft, fact, workflow, materialization-key, and reveal rows while current pointers
+  are safely nulled during ORM deletion.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: upgrade a populated v1 database and retain the active workflow/node with schema version 1 and null v2 keys.
+- Base: downgrade from 0032 removes all new tables/columns while retaining the original v1 workflow rows.
+- Bad: allocate a workflow revision from wall-clock order or `count(*)`; concurrent writers can collide or reorder.
+- Bad: commit the active-workflow deactivation before all replacement rows and reveal events exist.
+
+#### 6. Tests Required
+
+- ORM inspection asserts named foreign keys, delete rules, indexes, unique/check constraints, enum values, and nullability.
+- SQLite migration fixture inserts v1 rows at 0031, upgrades to head, downgrades, re-upgrades, and checks data retention.
+- Isolated PostgreSQL migration repeats the populated round trip and checks the native enum plus all seven new tables.
+- Application rollback tests assert previous active state after injected folder/node/edge/event failures.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+next_revision = session.scalar(select(func.count(ProductWorkflow.id))) + 1
+session.commit()
+```
+
+Correct:
+
+```python
+product = session.scalar(select(Product).where(Product.id == product_id).with_for_update())
+latest_revision = session.scalar(select(func.max(ProductWorkflow.revision)).where(...)) or 0
+# Create every replacement row and commit once in the owning use case.
+```
+
+The product row lock serializes revision allocation for one product; unique constraints remain the concurrency backstop.
+
 ### Session ownership
 
 Routes receive a `Session` through `presentation/deps.py::get_session`, which wraps
