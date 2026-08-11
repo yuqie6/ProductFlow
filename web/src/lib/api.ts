@@ -2,6 +2,7 @@ import type {
   ApplyWorkflowTemplateGroupInput,
   CanvasTemplateSummary,
   CanvasTemplateListResponse,
+  CanonicalProductDetail,
   ConfigResponse,
   ConfigUpdateRequest,
   CopySet,
@@ -12,6 +13,7 @@ import type {
   GenerationQueueOverview,
   CreateUserTemplateGroupInput,
   CreateProductInput,
+  CreateCanonicalProductInput,
   ImageSessionDetail,
   ImageSessionListResponse,
   ImageSessionStatus,
@@ -30,6 +32,8 @@ import type {
   ProductWorkflowStatus,
   ProductWritebackResponse,
   ProductListResponse,
+  ProductImageAsset,
+  ProductImageAssetListResponse,
   RuntimeConfig,
   SettingsLockState,
   SettingsExportPayload,
@@ -222,6 +226,54 @@ export const api = {
       body: formData,
     });
   },
+  async createCanonicalProduct(input: CreateCanonicalProductInput): Promise<CanonicalProductDetail> {
+    const formData = new FormData();
+    formData.set("name", input.name);
+    input.images.forEach((image) => {
+      formData.append("images", image);
+    });
+    if (input.category) {
+      formData.set("category", input.category);
+    }
+    if (input.price) {
+      formData.set("price", input.price);
+    }
+    if (input.source_note) {
+      formData.set("source_note", input.source_note);
+    }
+    return request("/api/v2/products", {
+      method: "POST",
+      body: formData,
+    });
+  },
+  getCanonicalProduct(productId: string): Promise<CanonicalProductDetail> {
+    return request(`/api/v2/products/${productId}`);
+  },
+  listProductImageAssets(productId: string): Promise<ProductImageAssetListResponse> {
+    return request(`/api/v2/products/${productId}/image-assets`);
+  },
+  async addCanonicalProductImages(productId: string, images: File[]): Promise<ProductImageAssetListResponse> {
+    const formData = new FormData();
+    images.forEach((image) => {
+      formData.append("images", image);
+    });
+    return request(`/api/v2/products/${productId}/image-assets`, {
+      method: "POST",
+      body: formData,
+    });
+  },
+  deleteProductImageAsset(assetId: string): Promise<void> {
+    return request(`/api/v2/product-image-assets/${assetId}`, { method: "DELETE" });
+  },
+  setProductCover(productId: string, assetId: string): Promise<CanonicalProductDetail> {
+    return request(`/api/v2/products/${productId}/cover`, {
+      method: "PUT",
+      body: JSON.stringify({ asset_id: assetId }),
+    });
+  },
+  clearProductCover(productId: string): Promise<CanonicalProductDetail> {
+    return request(`/api/v2/products/${productId}/cover`, { method: "DELETE" });
+  },
   async addReferenceImages(productId: string, files: File[]): Promise<ProductDetail> {
     const formData = new FormData();
     files.forEach((file) => {
@@ -311,6 +363,16 @@ export const api = {
     return request(`/api/image-sessions/${sessionId}/assets/${assetId}/attach-to-product`, {
       method: "POST",
       body: JSON.stringify(input),
+    });
+  },
+  attachImageSessionAssetToProductCanonical(
+    sessionId: string,
+    assetId: string,
+    productId: string,
+  ): Promise<ProductImageAsset> {
+    return request(`/api/v2/image-sessions/${sessionId}/assets/${assetId}/attach-to-product`, {
+      method: "POST",
+      body: JSON.stringify({ product_id: productId }),
     });
   },
   listGalleryEntries(): Promise<GalleryEntryListResponse> {

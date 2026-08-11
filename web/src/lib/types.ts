@@ -5,6 +5,12 @@ export type PosterKind = "main_image" | "promo_poster";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 export type SourceAssetKind = "original_image" | "reference_image" | "processed_product_image";
 export type ImageSessionAssetKind = "reference_upload" | "generated_image";
+export type MediaVerificationStatus = "verified" | "legacy_pending" | "missing";
+export type ProductImageOriginType =
+  | "upload"
+  | "workflow_generation"
+  | "image_session_attach"
+  | "legacy_import";
 export type WorkflowNodeType =
   | "product_context"
   | "reference_image"
@@ -175,6 +181,43 @@ export interface ProductDetail {
   updated_at: string;
 }
 
+export interface ProductImageAsset {
+  id: string;
+  product_id: string;
+  media_object_id: string;
+  origin_type: ProductImageOriginType;
+  display_name: string;
+  original_filename: string;
+  parent_asset_id: string | null;
+  source_image_session_asset_id: string | null;
+  mime_type: string;
+  byte_size: number | null;
+  width: number | null;
+  height: number | null;
+  verification_status: MediaVerificationStatus;
+  download_url: string;
+  preview_url: string;
+  thumbnail_url: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProductImageAssetListResponse {
+  items: ProductImageAsset[];
+}
+
+export interface CanonicalProductDetail {
+  id: string;
+  name: string;
+  category: string | null;
+  price: string | null;
+  source_note: string | null;
+  cover_image_asset_id: string | null;
+  image_assets: ProductImageAsset[];
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ProductHistory {
   copy_sets: CopySet[];
   poster_variants: PosterVariant[];
@@ -189,6 +232,14 @@ export interface CreateProductInput {
   template_language?: string;
   file: File;
   referenceFiles?: File[];
+}
+
+export interface CreateCanonicalProductInput {
+  name: string;
+  category?: string;
+  price?: string;
+  source_note?: string;
+  images: File[];
 }
 
 export interface WorkflowNode {
