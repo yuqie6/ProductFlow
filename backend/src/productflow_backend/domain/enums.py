@@ -74,7 +74,47 @@ class WorkflowNodeType(StrEnum):
     PRODUCT_CONTEXT = "product_context"
     REFERENCE_IMAGE = "reference_image"
     COPY_GENERATION = "copy_generation"
+    PROMPT_GENERATION = "prompt_generation"
     IMAGE_GENERATION = "image_generation"
+
+
+class WorkflowDraftStatus(StrEnum):
+    """Agent 工作流草案从收集到物化的持久化状态。"""
+
+    COLLECTING = "collecting"
+    AWAITING_CONFIRMATION = "awaiting_confirmation"
+    CONFIRMED = "confirmed"
+    MATERIALIZING = "materializing"
+    READY = "ready"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class ProductFactStatus(StrEnum):
+    """草案中单条商品事实的确认状态。"""
+
+    OBSERVED = "observed"
+    USER_DECLARED = "user_declared"
+    CONFIRMED = "confirmed"
+    CONFLICTED = "conflicted"
+
+
+class ProductFactSourceType(StrEnum):
+    """草案商品事实的来源类型。"""
+
+    USER = "user"
+    IMAGE_OBSERVATION = "image_observation"
+    AGENT_INFERENCE = "agent_inference"
+    LEGACY_PRODUCT = "legacy_product"
+
+
+class WorkflowRevealEventKind(StrEnum):
+    """已物化工作流在前端逐步揭示时使用的只读事件类型。"""
+
+    FOLDER = "folder"
+    NODE = "node"
+    EDGE = "edge"
+    COMPLETED = "completed"
 
 
 class WorkflowNodeStatus(StrEnum):

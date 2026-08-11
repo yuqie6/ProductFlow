@@ -12,7 +12,7 @@ from productflow_backend.application.admission import (
     get_workflow_run_queue_metadata,
 )
 from productflow_backend.domain.enums import WorkflowNodeType, WorkflowRunStatus
-from productflow_backend.domain.errors import NotFoundError
+from productflow_backend.domain.errors import ConflictError, NotFoundError
 from productflow_backend.domain.workflow_rules import WorkflowRuleEdge, WorkflowRuleNode, topological_node_ids
 from productflow_backend.infrastructure.db.models import (
     Product,
@@ -25,6 +25,13 @@ from productflow_backend.infrastructure.db.models import (
 
 DEFAULT_WORKFLOW_TITLE = "商品创意工作流"
 DEFAULT_IMAGE_SIZE = "1024x1024"
+LEGACY_WORKFLOW_SCHEMA_VERSION = 1
+
+
+def ensure_legacy_workflow(workflow: ProductWorkflow) -> ProductWorkflow:
+    if workflow.schema_version != LEGACY_WORKFLOW_SCHEMA_VERSION:
+        raise ConflictError("schema-v2 工作流不能通过旧画布查询、编辑或运行入口处理")
+    return workflow
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +62,7 @@ def workflow_status_query():
             ProductWorkflow.product_id,
             ProductWorkflow.title,
             ProductWorkflow.active,
+            ProductWorkflow.schema_version,
             ProductWorkflow.created_at,
             ProductWorkflow.updated_at,
         ),
@@ -82,6 +90,7 @@ def get_workflow_or_raise(session: Session, workflow_id: str) -> ProductWorkflow
     workflow = session.scalar(workflow_query().where(ProductWorkflow.id == workflow_id))
     if workflow is None:
         raise NotFoundError("工作流不存在")
+    ensure_legacy_workflow(workflow)
     attach_workflow_run_queue_metadata(session, workflow.runs)
     return workflow
 
@@ -91,6 +100,7 @@ def get_active_workflow(session: Session, product_id: str) -> ProductWorkflow | 
         workflow_query().where(ProductWorkflow.product_id == product_id, ProductWorkflow.active.is_(True))
     )
     if workflow is not None:
+        ensure_legacy_workflow(workflow)
         attach_workflow_run_queue_metadata(session, workflow.runs)
     return workflow
 
@@ -114,6 +124,7 @@ def get_active_workflow_status(session: Session, product_id: str) -> ProductWork
     if workflow is None:
         get_product_or_raise(session, product_id)
         raise NotFoundError("工作流不存在")
+    ensure_legacy_workflow(workflow)
     nodes = list(
         session.scalars(
             select(WorkflowNode)
@@ -201,6 +212,8 @@ def get_node_or_raise(session: Session, node_id: str) -> WorkflowNode:
     node = session.get(WorkflowNode, node_id)
     if node is None:
         raise NotFoundError("工作流节点不存在")
+    if node.schema_version != LEGACY_WORKFLOW_SCHEMA_VERSION:
+        raise ConflictError("schema-v2 节点不能通过旧画布编辑或运行入口处理")
     return node
 
 
@@ -208,6 +221,10 @@ def get_edge_or_raise(session: Session, edge_id: str) -> WorkflowEdge:
     edge = session.get(WorkflowEdge, edge_id)
     if edge is None:
         raise NotFoundError("工作流连线不存在")
+    workflow = session.get(ProductWorkflow, edge.workflow_id)
+    if workflow is None:
+        raise NotFoundError("工作流不存在")
+    ensure_legacy_workflow(workflow)
     return edge
 
 
@@ -275,6 +292,7 @@ def default_title_for_type(node_type: WorkflowNodeType) -> str:
         WorkflowNodeType.PRODUCT_CONTEXT: "商品",
         WorkflowNodeType.REFERENCE_IMAGE: "参考图",
         WorkflowNodeType.COPY_GENERATION: "文案",
+        WorkflowNodeType.PROMPT_GENERATION: "提示词",
         WorkflowNodeType.IMAGE_GENERATION: "生图",
     }[node_type]
 

@@ -17,8 +17,10 @@ from productflow_backend.domain.enums import (
     PosterKind,
     ProductImageOriginType,
     SourceAssetKind,
+    WorkflowDraftStatus,
     WorkflowNodeStatus,
     WorkflowNodeType,
+    WorkflowRevealEventKind,
     WorkflowRunStatus,
 )
 from productflow_backend.infrastructure.db.models import (
@@ -29,11 +31,19 @@ from productflow_backend.infrastructure.db.models import (
     MediaObject,
     PosterVariant,
     Product,
+    ProductFactSetVersion,
     ProductImageAsset,
+    ProductWorkflow,
     SourceAsset,
     UserCanvasTemplate,
+    WorkflowDraft,
+    WorkflowDraftRevision,
+    WorkflowFolder,
+    WorkflowMaterialization,
+    WorkflowMaterializationKey,
     WorkflowNode,
     WorkflowNodeRun,
+    WorkflowRevealEvent,
     WorkflowRun,
     new_id,
     utcnow,
@@ -62,6 +72,97 @@ def test_sqlalchemy_enum_columns_use_database_values() -> None:
     assert ProductImageAsset.__table__.c.origin_type.type.enums == [
         member.value for member in ProductImageOriginType
     ]
+    assert WorkflowDraft.__table__.c.status.type.enums == [member.value for member in WorkflowDraftStatus]
+    assert WorkflowRevealEvent.__table__.c.kind.type.enums == [
+        member.value for member in WorkflowRevealEventKind
+    ]
+
+
+def test_workflow_draft_models_match_atomic_materialization_contract() -> None:
+    fact_table = ProductFactSetVersion.__table__
+    fact_unique_constraints = {
+        constraint.name for constraint in fact_table.constraints if isinstance(constraint, sa.UniqueConstraint)
+    }
+    assert fact_unique_constraints == {
+        "uq_product_fact_set_versions_product_version",
+        "uq_product_fact_set_versions_source_draft_revision_id",
+    }
+    assert {constraint.name for constraint in fact_table.constraints if isinstance(constraint, sa.CheckConstraint)} == {
+        "ck_product_fact_set_versions_positive_version",
+        "ck_product_fact_set_versions_payload_hash",
+    }
+
+    draft_table = WorkflowDraft.__table__
+    assert {index.name for index in draft_table.indexes} == {"ix_workflow_drafts_product_status"}
+    draft_fks = {fk.parent.name: fk for fk in draft_table.foreign_keys}
+    assert draft_fks["product_id"].constraint.name == "fk_workflow_drafts_product_id"
+    assert draft_fks["product_id"].ondelete == "CASCADE"
+    assert draft_fks["current_revision_id"].constraint.name == "fk_workflow_drafts_current_revision_id"
+    assert draft_fks["current_revision_id"].ondelete == "SET NULL"
+    assert draft_fks["final_workflow_id"].constraint.name == "fk_workflow_drafts_final_workflow_id"
+    assert draft_fks["final_workflow_id"].ondelete == "SET NULL"
+
+    revision_table = WorkflowDraftRevision.__table__
+    revision_unique_constraints = {
+        constraint.name for constraint in revision_table.constraints if isinstance(constraint, sa.UniqueConstraint)
+    }
+    assert revision_unique_constraints == {
+        "uq_workflow_draft_revisions_draft_version",
+        "uq_workflow_draft_revisions_artifact_origin",
+    }
+    assert revision_table.c.payload_hash.type.length == 64
+    assert revision_table.c.confirmed_at.nullable
+
+    workflow_table = ProductWorkflow.__table__
+    assert {index.name for index in workflow_table.indexes} == {
+        "uq_product_workflows_one_active_per_product",
+        "uq_product_workflows_product_v2_revision",
+    }
+    assert not workflow_table.c.schema_version.nullable
+    assert not workflow_table.c.revision.nullable
+    source_revision_fk = next(
+        fk for fk in workflow_table.foreign_keys if fk.parent.name == "source_draft_revision_id"
+    )
+    assert source_revision_fk.constraint.name == "fk_product_workflows_source_draft_revision_id"
+    assert source_revision_fk.ondelete == "SET NULL"
+
+    folder_table = WorkflowFolder.__table__
+    folder_unique_constraints = {
+        constraint.name for constraint in folder_table.constraints if isinstance(constraint, sa.UniqueConstraint)
+    }
+    assert folder_unique_constraints == {"uq_workflow_folders_workflow_key"}
+    assert "parent_id" not in folder_table.c
+
+    node_table = WorkflowNode.__table__
+    node_fks = {fk.parent.name: fk for fk in node_table.foreign_keys}
+    assert node_fks["folder_id"].constraint.name == "fk_workflow_nodes_folder_id"
+    assert node_fks["folder_id"].ondelete == "SET NULL"
+    assert node_fks["bound_image_asset_id"].constraint.name == "fk_workflow_nodes_bound_image_asset_id"
+    assert node_fks["bound_image_asset_id"].ondelete == "RESTRICT"
+    assert "uq_workflow_nodes_workflow_key" in {
+        constraint.name for constraint in node_table.constraints if isinstance(constraint, sa.UniqueConstraint)
+    }
+
+    materialization_table = WorkflowMaterialization.__table__
+    assert {
+        constraint.name
+        for constraint in materialization_table.constraints
+        if isinstance(constraint, sa.UniqueConstraint)
+    } == {
+        "uq_workflow_materializations_product_idempotency",
+        "uq_workflow_materializations_draft_revision_id",
+        "uq_workflow_materializations_workflow_id",
+    }
+    materialization_key_table = WorkflowMaterializationKey.__table__
+    assert {
+        constraint.name
+        for constraint in materialization_key_table.constraints
+        if isinstance(constraint, sa.UniqueConstraint)
+    } == {"uq_workflow_materialization_keys_product_key"}
+    reveal_table = WorkflowRevealEvent.__table__
+    assert "uq_workflow_reveal_events_materialization_sequence" in {
+        constraint.name for constraint in reveal_table.constraints if isinstance(constraint, sa.UniqueConstraint)
+    }
 
 
 def test_canonical_image_asset_models_match_database_contract() -> None:
@@ -222,6 +323,120 @@ def test_alembic_upgrade_head_supports_sqlite(tmp_path: Path, monkeypatch) -> No
     command.upgrade(config, "head")
 
     assert database_path.exists()
+    get_settings.cache_clear()
+
+
+def test_workflow_draft_migration_round_trips_sqlite_without_mutating_v1_rows(tmp_path: Path, monkeypatch) -> None:
+    database_path = tmp_path / "workflow-draft-roundtrip.db"
+    storage_root = tmp_path / "storage"
+    monkeypatch.setenv("ADMIN_ACCESS_KEY", "super-secret-admin-key")
+    monkeypatch.setenv("SESSION_SECRET", "super-secret-session-key-123")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path}")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/9")
+    monkeypatch.setenv("STORAGE_ROOT", str(storage_root))
+    get_settings.cache_clear()
+
+    backend_dir = Path(__file__).resolve().parents[1]
+    config = Config(str(backend_dir / "alembic.ini"))
+    config.set_main_option("script_location", str(backend_dir / "alembic"))
+    command.upgrade(config, "20260811_0031")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                "INSERT INTO products "
+                "(id, name, category, price, source_note, current_confirmed_copy_set_id, "
+                "cover_image_asset_id, created_at, updated_at) "
+                "VALUES (:id, :name, NULL, NULL, NULL, NULL, NULL, :created_at, :updated_at)"
+            ),
+            {
+                "id": "legacy-product",
+                "name": "历史商品",
+                "created_at": "2026-08-11 00:00:00",
+                "updated_at": "2026-08-11 00:00:00",
+            },
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO product_workflows "
+                "(id, product_id, title, active, created_at, updated_at) "
+                "VALUES ('legacy-workflow', 'legacy-product', '历史工作流', 1, "
+                "'2026-08-11 00:00:00', '2026-08-11 00:00:00')"
+            )
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO workflow_nodes "
+                "(id, workflow_id, node_type, title, position_x, position_y, config_json, status, "
+                "output_json, failure_reason, last_run_at, created_at, updated_at) "
+                "VALUES ('legacy-node', 'legacy-workflow', 'product_context', '商品', 0, 0, '{}', 'idle', "
+                "NULL, NULL, NULL, '2026-08-11 00:00:00', '2026-08-11 00:00:00')"
+            )
+        )
+    engine.dispose()
+
+    command.upgrade(config, "head")
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    with engine.connect() as connection:
+        workflow = connection.execute(
+            sa.text(
+                "SELECT id, active, schema_version, revision, source_draft_revision_id "
+                "FROM product_workflows WHERE id = 'legacy-workflow'"
+            )
+        ).mappings().one()
+        node = connection.execute(
+            sa.text(
+                "SELECT id, schema_version, node_key, folder_id, bound_image_asset_id "
+                "FROM workflow_nodes WHERE id = 'legacy-node'"
+            )
+        ).mappings().one()
+        assert dict(workflow) == {
+            "id": "legacy-workflow",
+            "active": 1,
+            "schema_version": 1,
+            "revision": 1,
+            "source_draft_revision_id": None,
+        }
+        assert dict(node) == {
+            "id": "legacy-node",
+            "schema_version": 1,
+            "node_key": None,
+            "folder_id": None,
+            "bound_image_asset_id": None,
+        }
+        assert {
+            "workflow_drafts",
+            "workflow_draft_revisions",
+            "product_fact_set_versions",
+            "workflow_folders",
+            "workflow_materializations",
+            "workflow_materialization_keys",
+            "workflow_reveal_events",
+        }.issubset(sa.inspect(connection).get_table_names())
+    engine.dispose()
+
+    command.downgrade(config, "20260811_0031")
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    with engine.connect() as connection:
+        inspector = sa.inspect(connection)
+        assert "workflow_drafts" not in inspector.get_table_names()
+        assert "schema_version" not in {column["name"] for column in inspector.get_columns("product_workflows")}
+        assert "node_key" not in {column["name"] for column in inspector.get_columns("workflow_nodes")}
+        assert connection.scalar(
+            sa.text("SELECT active FROM product_workflows WHERE id = 'legacy-workflow'")
+        ) == 1
+        assert connection.scalar(sa.text("SELECT title FROM workflow_nodes WHERE id = 'legacy-node'")) == "商品"
+    engine.dispose()
+
+    command.upgrade(config, "head")
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    with engine.connect() as connection:
+        assert connection.scalar(
+            sa.text("SELECT schema_version FROM product_workflows WHERE id = 'legacy-workflow'")
+        ) == 1
+        assert connection.scalar(sa.text("SELECT schema_version FROM workflow_nodes WHERE id = 'legacy-node'")) == 1
+    engine.dispose()
     get_settings.cache_clear()
 
 

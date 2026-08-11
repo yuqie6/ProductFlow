@@ -237,6 +237,11 @@ def create_workflow_node(
     position_y: int,
     config_json: dict[str, Any] | None,
 ) -> ProductWorkflow:
+    if node_type == WorkflowNodeType.PROMPT_GENERATION:
+        existing = product_workflow_graph.get_active_workflow(session, product_id)
+        if existing is None:
+            product_workflow_graph.get_product_or_raise(session, product_id)
+        raise BusinessValidationError("提示词节点只能通过 confirmed WorkflowDraft 物化为 schema-v2 工作流")
     workflow = get_or_create_product_workflow(session, product_id)
     if node_type == WorkflowNodeType.PRODUCT_CONTEXT and any(
         node.node_type == WorkflowNodeType.PRODUCT_CONTEXT for node in workflow.nodes
