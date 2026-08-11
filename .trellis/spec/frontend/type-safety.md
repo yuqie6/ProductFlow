@@ -78,6 +78,87 @@ Form uploads build `FormData` in API methods such as `createProduct(...)`, `addR
 `addImageSessionReferenceImages(...)`. The fetch wrapper omits `Content-Type` for `FormData` so the browser can set the
 multipart boundary.
 
+### Scenario: Canonical product image DTOs
+
+#### 1. Scope / Trigger
+
+- Trigger: changing `/api/v2/products`, `/api/v2/product-image-assets`, canonical cover operations, or canonical
+  ImageSession attach.
+
+#### 2. Signatures
+
+- `api.createCanonicalProduct(input: CreateCanonicalProductInput): Promise<CanonicalProductDetail>`.
+- `api.getCanonicalProduct(productId: string): Promise<CanonicalProductDetail>`.
+- `api.listProductImageAssets(productId: string): Promise<ProductImageAssetListResponse>`.
+- `api.addCanonicalProductImages(productId: string, images: File[]): Promise<ProductImageAssetListResponse>`.
+- `api.setProductCover(...)`, `api.clearProductCover(...)`, and `api.deleteProductImageAsset(...)` own cover/delete calls.
+- `api.attachImageSessionAssetToProductCanonical(sessionId, assetId, productId): Promise<ProductImageAsset>`.
+
+#### 3. Contracts
+
+- `CanonicalProductDetail.image_assets` uses `ProductImageAsset[]`; `cover_image_asset_id` is separate and nullable.
+- `ProductImageAsset` mirrors backend snake_case fields, including `media_object_id`, `origin_type`,
+  `parent_asset_id`, `source_image_session_asset_id`, and `verification_status`.
+- `MediaVerificationStatus` is `"verified" | "legacy_pending" | "missing"`.
+- `ProductImageOriginType` is `"upload" | "workflow_generation" | "image_session_attach" | "legacy_import"`.
+- DTOs expose download/preview/thumbnail URLs and measured metadata. They never expose `storage_path`.
+- `api.createCanonicalProduct` and `api.addCanonicalProductImages` own repeated `images` FormData fields. Page code must
+  not reconstruct canonical endpoints or multipart names.
+- `api.attachImageSessionAssetToProductCanonical` has only `product_id`; setting a cover is a separate API call.
+
+#### 4. Validation & Error Matrix
+
+- Empty or more than six multipart images -> backend validation error through `ApiError.detail`.
+- Declared MIME does not match PNG/JPEG/WEBP bytes -> backend validation error through `ApiError.detail`.
+- Cover asset belongs to another product or points to missing media -> backend `400` through `ApiError.detail`.
+- Deleting an asset still used as cover, legacy archive target, or derivative parent -> backend `409` through
+  `ApiError.detail`.
+- Downloading a missing canonical media object -> backend `404`.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: page code passes `File[]` to `api.createCanonicalProduct`; the API helper appends repeated `images` fields and
+  allows the browser to set the multipart boundary.
+- Base: a product with no selected cover uses `cover_image_asset_id: null`; callers do not infer a cover from array order.
+- Bad: a page builds `/api/v2/...` URLs or multipart bodies directly and drifts from the central API/type contract.
+- Bad: UI treats `media_object_id` as the selectable product image identity; product-facing references use
+  `ProductImageAsset.id`.
+
+#### 6. Tests Required
+
+- Keep `web/src/lib/types.ts` and backend Pydantic models synchronized.
+- Backend API tests assert multipart field names, response ordering, shared-media attach, status codes, and absence of
+  `storage_path`.
+- Run `pnpm --dir web test:run`, `pnpm --dir web lint`, and `just web-build` after changes.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+
+```ts
+const body = new FormData();
+body.append("file", image);
+fetch(`/api/v2/products/${productId}/image-assets`, { method: "POST", body });
+```
+
+Correct:
+
+```ts
+await api.addCanonicalProductImages(productId, images);
+```
+
+Wrong:
+
+```ts
+const cover = product.image_assets[0];
+```
+
+Correct:
+
+```ts
+const cover = product.image_assets.find((asset) => asset.id === product.cover_image_asset_id) ?? null;
+```
+
 ### Scenario: Create-product API input typing
 
 #### 1. Scope / Trigger

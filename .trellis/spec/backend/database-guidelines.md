@@ -160,6 +160,119 @@ asset = session.scalar(
 # historical JSON is consumed only by the one-time Alembic backfill
 ```
 
+### Scenario: Canonical image assets and shared media ownership
+
+#### 1. Scope / Trigger
+
+- Trigger: changing product image uploads, ImageSession image persistence/attach, cover selection, image deletion, media
+  verification, or legacy SourceAsset/PosterVariant/ImageSessionAsset migration.
+- `ProductImageAsset.id` is the logical product-image identity for v2 APIs. `MediaObject.id` owns one immutable physical
+  image file and may be referenced by both ImageSessionAsset and ProductImageAsset.
+
+#### 2. Signatures
+
+- `MediaObject`: unique `storage_path`, actual `mime_type`, byte size, width, height, SHA-256,
+  `verification_status`, and optional `verified_at`.
+- `ProductImageAsset`: product FK, media FK, origin, display/original names, optional parent asset, and optional source
+  ImageSessionAsset lineage.
+- `products.cover_image_asset_id`: named `ON DELETE SET NULL` FK to ProductImageAsset; application code validates that
+  cover and product belong together.
+- Compatibility columns remain nullable during the bounded v1 rollout:
+  `source_assets.canonical_asset_id`, `poster_variants.canonical_asset_id`, and
+  `image_session_assets.media_object_id`.
+- Operational verifier: `just backend-verify-media --batch-size <1..1000> [--after <media-id>] [--dry-run]`.
+- Canonical HTTP boundaries:
+  - `POST /api/v2/products` with repeated multipart `images` fields;
+  - `GET|POST /api/v2/products/{product_id}/image-assets`;
+  - `PUT|DELETE /api/v2/products/{product_id}/cover`;
+  - `DELETE|GET /api/v2/product-image-assets/{asset_id}` (download uses `/download`);
+  - `POST /api/v2/image-sessions/{session_id}/assets/{asset_id}/attach-to-product`.
+
+#### 3. Contracts
+
+- New media writes must be `verified` and contain positive byte size/width/height, a 64-character SHA-256, and
+  `verified_at`. The database check constraint rejects incomplete verified rows.
+- Migration-created media is `legacy_pending`; migration never opens, moves, rewrites, or deletes storage files.
+  `missing` records retain logical lineage and are unavailable through the download route.
+- New files use `media/<uuid-prefix>/<media-id>.<actual-extension>`. Original filenames remain on logical assets and do
+  not determine the physical extension.
+- ImageSession attach reuses `media_object_id`; it never reads and rewrites bytes. `(product_id,
+  source_image_session_asset_id)` makes attach idempotent.
+- Product/ImageSession deletion removes a MediaObject and its file only after both ProductImageAsset and
+  ImageSessionAsset references are gone. Never delete a whole product/session tree when it can contain a shared media
+  path; remove known unreferenced files and empty directories only.
+- v2 product and generation helpers write MediaObject/ProductImageAsset only. Existing v1 product/workflow endpoints
+  continue their old SourceAsset/PosterVariant path until the archive/freeze task; do not add request-level dual write.
+- Preview and thumbnail files are rebuildable storage variants and never receive business asset IDs.
+- Legacy verification counters report successful conditional state transitions. If another verifier already changed a
+  row after selection, this run still reports it as processed and does not count it again as verified or missing.
+- Alembic Core backfill tables must declare native enum columns with the same PostgreSQL enum type used by the created
+  table. Declaring those lightweight columns as `String` makes Psycopg bind text parameters that PostgreSQL rejects for
+  native enum columns.
+
+#### 4. Validation & Error Matrix
+
+- Verified row with incomplete measured metadata -> database check violation.
+- Invalid/declared-type-mismatched PNG/JPEG/WEBP bytes -> `BusinessValidationError`; any already-written media file is
+  removed through `StorageWriteCompensation`.
+- Cover points at another product or a `missing` media -> `BusinessValidationError`.
+- Delete an asset used as cover, parent of a derivative, or compatibility archive target -> `ConflictError` / HTTP 409;
+  database `RESTRICT` remains the concurrency backstop.
+- Delete one side of shared ImageSession/Product ownership -> logical row is removed, media row/file remains.
+- Last logical owner deleted -> media row commits first, then file and variants are removed best effort.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: attach one generated ImageSession asset twice to the same product; both requests return the same
+  ProductImageAsset and no media bytes are copied.
+- Base: migrate a product with one original SourceAsset, one paired poster/source, one orphan poster, and one gallery
+  ImageSessionAsset; the original becomes the initial cover and the paired rows share one canonical asset ID.
+- Bad: use `delete_product_tree(...)` or `delete_image_session_tree(...)` after media paths can live under `media/`; this
+  can remove a file still referenced by another business context.
+- Bad: count every selected legacy row as verified before checking the conditional update row count; concurrent verifier
+  runs then publish duplicate success statistics.
+
+#### 6. Tests Required
+
+- ORM/migration tests assert enum values, named FKs, delete rules, indexes, verified metadata check, and nullable
+  compatibility columns.
+- SQLite and isolated PostgreSQL fixtures cover paired poster/source, orphan poster, original cover, ImageSession/gallery
+  media, populated downgrade, and re-upgrade.
+- Application/API tests cover single-file writes, compensation, idempotent shared attach, cover-if-empty, 409 deletion,
+  shared-context deletion, and absence of `storage_path` in DTOs.
+- Run `just backend-test`, `pnpm --dir web test:run`, `pnpm --dir web lint`, and `just web-build` after changing the
+  contract.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+# PostgreSQL receives a varchar bind for a native enum column during backfill.
+sa.column("verification_status", sa.String(length=40))
+```
+
+Correct:
+
+```python
+sa.column("verification_status", MEDIA_VERIFICATION_STATUS)
+```
+
+Wrong:
+
+```python
+storage.delete_image_session_tree(image_session_id)
+```
+
+Correct:
+
+```python
+deleted_media = prune_unreferenced_media_objects(session, media_ids)
+session.commit()
+for _, storage_path in deleted_media:
+    storage.delete_image_with_variants(storage_path)
+```
+
 ---
 
 ## Query Patterns

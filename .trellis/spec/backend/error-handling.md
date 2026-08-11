@@ -37,6 +37,8 @@ Current typed errors:
 - `BusinessValidationError`: explicit `400` for valid HTTP requests that are invalid for the current workflow state or
   selected resource.
 - `NotFoundError`: explicit `404` for missing domain/application resources.
+- `ConflictError`: explicit `409` when a requested mutation would violate a durable business reference, such as deleting
+  an image still used as a cover, archive target, or derivative parent.
 - `ResourceBusyError`: explicit `429` for future hard resource boundaries that cannot be represented as durable queued
   work. Current durable generation submissions should queue instead of using this error for a full running-capacity slot.
 - `QueueUnavailableError`: explicit `503` when a durable task row was created but Redis/Dramatiq delivery failed.
@@ -121,6 +123,8 @@ unlock, upload validation, and download/file serving. Do not import FastAPI `HTT
 - `BusinessValidationError("海报文件不存在")` -> `400`, `{"detail": "海报文件不存在"}`.
 - `BusinessValidationError("工作流连线引用了不存在的节点")` -> `400`,
   `{"detail": "工作流连线引用了不存在的节点"}`.
+- `ConflictError("商品图片仍被设为封面，不能删除")` -> `409`,
+  `{"detail": "商品图片仍被设为封面，不能删除"}`.
 - `BusinessError("请选择一张图片")` -> `400`, `{"detail": "请选择一张图片"}`.
 - `QueueUnavailableError("任务队列暂不可用，请稍后重试")` -> `503`,
   `{"detail": "任务队列暂不可用，请稍后重试"}`.
