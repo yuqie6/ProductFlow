@@ -16,6 +16,11 @@ export type WorkflowNodeType =
   | "reference_image"
   | "copy_generation"
   | "image_generation";
+export type WorkflowNodeTypeV2 =
+  | "product_context"
+  | "reference_image"
+  | "prompt_generation"
+  | "image_generation";
 export type WorkflowNodeStatus = "idle" | "queued" | "running" | "succeeded" | "failed" | "cancelled";
 export type WorkflowNodeRunStatusValue = WorkflowNodeStatus;
 export type WorkflowRunStatus = "running" | "succeeded" | "failed" | "cancelled";
@@ -370,6 +375,283 @@ export interface ProductWorkflowStatus {
   runs: WorkflowRunStatusSummary[];
   created_at: string;
   updated_at: string;
+}
+
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+export type ProductFactStatus = "observed" | "user_declared" | "confirmed" | "conflicted";
+export type ProductFactSourceType = "user" | "image_observation" | "agent_inference" | "legacy_product";
+export type WorkflowDraftStatus =
+  | "collecting"
+  | "awaiting_confirmation"
+  | "confirmed"
+  | "materializing"
+  | "ready"
+  | "failed"
+  | "cancelled";
+
+export interface WorkflowDraftFactConflict {
+  value: JsonValue;
+  source_type: ProductFactSourceType;
+  evidence_asset_ids: string[];
+}
+
+export interface WorkflowDraftProductFact {
+  key: string;
+  value: JsonValue;
+  source_type: ProductFactSourceType;
+  status: ProductFactStatus;
+  requires_confirmation: boolean;
+  evidence_asset_ids: string[];
+  conflicts: WorkflowDraftFactConflict[];
+}
+
+export interface WorkflowDraftReferenceBinding {
+  key: string;
+  asset_id: string;
+  role: string;
+  label: string;
+}
+
+export type WorkflowDraftVisualSystem =
+  | {
+      mode: "draft";
+      version_id?: null;
+      payload: Record<string, JsonValue>;
+      source_markdown?: string | null;
+    }
+  | {
+      mode: "confirmed_version";
+      version_id: string;
+      payload?: null;
+      source_markdown?: string | null;
+    };
+
+export interface WorkflowGenerationSpec {
+  aspect_ratio: string;
+  resolution_tier: "standard" | "high" | "ultra";
+  quality_intent: "draft" | "standard" | "high";
+  reference_fidelity: "low" | "medium" | "high";
+  background_intent: "auto" | "opaque" | "transparent";
+  text_policy: "none" | "allow" | "required";
+  text_language?: string | null;
+}
+
+export interface WorkflowDeliverySpec {
+  width: number;
+  height: number;
+  format: "png" | "jpeg" | "webp";
+  max_byte_size?: number | null;
+  fit: "contain" | "cover";
+  background_color?: string | null;
+  crop_anchor?: "center" | "top" | "bottom" | "left" | "right" | null;
+}
+
+export interface WorkflowDraftPlannedImage {
+  key: string;
+  order: number;
+  variation_instruction?: string | null;
+  generation_spec: WorkflowGenerationSpec;
+  delivery_spec?: WorkflowDeliverySpec | null;
+}
+
+export interface WorkflowDraftImageTypePlan {
+  key: string;
+  title: string;
+  order: number;
+  quantity: number;
+  prompt_plan_key: string;
+  images: WorkflowDraftPlannedImage[];
+}
+
+export interface WorkflowDraftPromptPlan {
+  key: string;
+  image_type_key: string;
+  title: string;
+  payload: Record<string, JsonValue>;
+}
+
+export interface WorkflowDraftFolderPlan {
+  key: string;
+  title: string;
+  order: number;
+  position_x: number;
+  position_y: number;
+  width: number;
+  height: number;
+}
+
+interface WorkflowDraftNodePlanBase {
+  key: string;
+  title: string;
+  position_x: number;
+  position_y: number;
+  folder_key?: string | null;
+}
+
+export type WorkflowDraftNodePlan =
+  | (WorkflowDraftNodePlanBase & { node_type: "product_context" })
+  | (WorkflowDraftNodePlanBase & { node_type: "reference_image"; reference_key: string })
+  | (WorkflowDraftNodePlanBase & { node_type: "prompt_generation"; prompt_plan_key: string })
+  | (WorkflowDraftNodePlanBase & { node_type: "image_generation"; image_plan_key: string });
+
+export interface WorkflowDraftEdgePlan {
+  key: string;
+  source_node_key: string;
+  target_node_key: string;
+  source_handle?: string | null;
+  target_handle?: string | null;
+}
+
+export interface WorkflowDraftPayloadV1 {
+  schema_version: 1;
+  title: string;
+  facts: WorkflowDraftProductFact[];
+  required_fact_keys: string[];
+  missing_fact_keys: string[];
+  reference_bindings: WorkflowDraftReferenceBinding[];
+  visual_system: WorkflowDraftVisualSystem;
+  prompt_plans: WorkflowDraftPromptPlan[];
+  image_types: WorkflowDraftImageTypePlan[];
+  folders: WorkflowDraftFolderPlan[];
+  nodes: WorkflowDraftNodePlan[];
+  edges: WorkflowDraftEdgePlan[];
+  confirmation_summary: string;
+}
+
+export interface WorkflowDraftLimits {
+  min_image_types: number;
+  min_images_per_type: number;
+  max_images_per_type: number;
+  max_total_images: number;
+  max_reference_assets: number;
+}
+
+export interface WorkflowDraftRevision {
+  id: string;
+  draft_id: string;
+  version: number;
+  schema_version: 1;
+  payload: WorkflowDraftPayloadV1;
+  payload_hash: string;
+  source_turn_id: string | null;
+  source_artifact_step_id: string | null;
+  confirmed_at: string | null;
+  fact_set_version_id: string | null;
+  created_at: string;
+}
+
+export interface WorkflowDraft {
+  id: string;
+  product_id: string;
+  status: WorkflowDraftStatus;
+  current_revision_id: string;
+  current_revision: WorkflowDraftRevision;
+  revisions: WorkflowDraftRevision[];
+  final_workflow_id: string | null;
+  limits: WorkflowDraftLimits;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateWorkflowDraftInput {
+  payload: WorkflowDraftPayloadV1;
+  ready_for_confirmation?: boolean;
+  source_turn_id?: string | null;
+  source_artifact_step_id?: string | null;
+}
+
+export interface AppendWorkflowDraftRevisionInput extends CreateWorkflowDraftInput {
+  expected_draft_version: number;
+}
+
+export interface WorkflowFolderV2 {
+  id: string;
+  workflow_id: string;
+  key: string;
+  title: string;
+  order: number;
+  position_x: number;
+  position_y: number;
+  width: number;
+  height: number;
+  config_json: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkflowNodeV2 {
+  id: string;
+  workflow_id: string;
+  schema_version: 2;
+  key: string;
+  node_type: WorkflowNodeTypeV2;
+  title: string;
+  position_x: number;
+  position_y: number;
+  folder_id: string | null;
+  bound_image_asset_id: string | null;
+  config_json: Record<string, unknown>;
+  status: WorkflowNodeStatus;
+  output_json: Record<string, unknown> | null;
+  failure_reason: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkflowEdgeV2 {
+  id: string;
+  workflow_id: string;
+  key: string;
+  source_node_id: string;
+  target_node_id: string;
+  source_handle: string | null;
+  target_handle: string | null;
+  created_at: string;
+}
+
+export interface ProductWorkflowV2 {
+  id: string;
+  product_id: string;
+  title: string;
+  active: boolean;
+  schema_version: 2;
+  revision: number;
+  source_draft_revision_id: string;
+  materialization_id: string;
+  folders: WorkflowFolderV2[];
+  nodes: WorkflowNodeV2[];
+  edges: WorkflowEdgeV2[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ActiveProductWorkflowV2 {
+  latest_revision: number;
+  workflow: ProductWorkflowV2 | null;
+}
+
+export interface WorkflowMaterializationResult {
+  id: string;
+  created: boolean;
+  workflow: ProductWorkflowV2;
+  reveal_events_url: string;
+}
+
+export interface MaterializeWorkflowDraftInput {
+  expected_draft_version: number;
+  expected_workflow_revision: number;
+  idempotency_key: string;
+}
+
+export interface WorkflowRevealEvent {
+  schema_version: 1;
+  materialization_id: string;
+  sequence: number;
+  kind: "folder" | "node" | "edge" | "completed";
+  entity_type: string | null;
+  entity_id: string | null;
+  payload: Record<string, JsonValue>;
+  created_at: string;
 }
 
 export interface CanvasTemplateScenarioMetadata {

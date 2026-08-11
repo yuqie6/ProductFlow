@@ -1,4 +1,6 @@
 import type {
+  ActiveProductWorkflowV2,
+  AppendWorkflowDraftRevisionInput,
   ApplyWorkflowTemplateGroupInput,
   CanvasTemplateSummary,
   CanvasTemplateListResponse,
@@ -14,6 +16,7 @@ import type {
   CreateUserTemplateGroupInput,
   CreateProductInput,
   CreateCanonicalProductInput,
+  CreateWorkflowDraftInput,
   ImageSessionDetail,
   ImageSessionListResponse,
   ImageSessionStatus,
@@ -28,6 +31,7 @@ import type {
   ProviderProfileCreateRequest,
   ProviderProfileUpdateRequest,
   ProductWorkflow,
+  MaterializeWorkflowDraftInput,
   ProductWorkflowState,
   ProductWorkflowStatus,
   ProductWritebackResponse,
@@ -41,6 +45,8 @@ import type {
   SettingsImportPreviewResponse,
   SessionState,
   UpdateUserTemplateGroupInput,
+  WorkflowDraft,
+  WorkflowMaterializationResult,
 } from "./types";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ?? "";
@@ -386,6 +392,48 @@ export const api = {
   },
   getProductWorkflow(productId: string): Promise<ProductWorkflow> {
     return request(`/api/products/${productId}/workflow`);
+  },
+  getActiveProductWorkflowV2(productId: string): Promise<ActiveProductWorkflowV2> {
+    return request(`/api/v2/products/${productId}/workflow`);
+  },
+  createWorkflowDraft(productId: string, input: CreateWorkflowDraftInput): Promise<WorkflowDraft> {
+    return request(`/api/v2/products/${productId}/workflow-drafts`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  getWorkflowDraft(productId: string, draftId: string): Promise<WorkflowDraft> {
+    return request(`/api/v2/products/${productId}/workflow-drafts/${draftId}`);
+  },
+  appendWorkflowDraftRevision(
+    productId: string,
+    draftId: string,
+    input: AppendWorkflowDraftRevisionInput,
+  ): Promise<WorkflowDraft> {
+    return request(`/api/v2/products/${productId}/workflow-drafts/${draftId}/revisions`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  confirmWorkflowDraft(productId: string, draftId: string, expectedDraftVersion: number): Promise<WorkflowDraft> {
+    return request(`/api/v2/products/${productId}/workflow-drafts/${draftId}/confirm`, {
+      method: "POST",
+      body: JSON.stringify({ expected_draft_version: expectedDraftVersion }),
+    });
+  },
+  materializeWorkflowDraft(
+    productId: string,
+    draftId: string,
+    input: MaterializeWorkflowDraftInput,
+  ): Promise<WorkflowMaterializationResult> {
+    return request(`/api/v2/products/${productId}/workflow-drafts/${draftId}/materialize`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  workflowRevealEventsUrl(materializationId: string, after?: number): string {
+    const path = `/api/v2/workflow-materializations/${materializationId}/reveal-events`;
+    return toApiUrl(after && after > 0 ? `${path}?after=${after}` : path);
   },
   getProductWorkflowStatus(productId: string): Promise<ProductWorkflowStatus> {
     return request(`/api/products/${productId}/workflow/status`);
