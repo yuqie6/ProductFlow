@@ -6,11 +6,20 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
+from productflow_backend.application.media_assets import (
+    clear_product_cover,
+    delete_product_image_asset,
+    get_product_image_asset,
+    list_product_image_assets,
+    set_product_cover,
+)
 from productflow_backend.application.use_cases import (
     DEFAULT_PRODUCT_LIST_SORT,
     ProductListSort,
+    add_canonical_product_images,
     add_reference_images,
     confirm_copy_set,
+    create_canonical_product,
     create_product,
     delete_product,
     delete_reference_image,
@@ -19,20 +28,25 @@ from productflow_backend.application.use_cases import (
     list_products,
     update_copy_set,
 )
-from productflow_backend.domain.enums import ProductWorkflowState
+from productflow_backend.domain.enums import MediaVerificationStatus, ProductWorkflowState
 from productflow_backend.infrastructure.db.models import PosterVariant, SourceAsset
 from productflow_backend.infrastructure.storage import ImageVariantName
 from productflow_backend.presentation.deps import get_session, require_admin, require_deletion_enabled
 from productflow_backend.presentation.image_variants import serve_image_variant
 from productflow_backend.presentation.schemas.products import (
+    CanonicalProductDetailResponse,
     CopySetResponse,
     CopySetUpdateRequest,
     ProductDetailResponse,
     ProductHistoryResponse,
+    ProductImageAssetListResponse,
     ProductListResponse,
+    SetProductCoverRequest,
+    serialize_canonical_product_detail,
     serialize_copy_set,
     serialize_poster_variant,
     serialize_product_detail,
+    serialize_product_image_asset,
     serialize_product_summary,
 )
 from productflow_backend.presentation.upload_validation import (
@@ -41,6 +55,116 @@ from productflow_backend.presentation.upload_validation import (
 )
 
 router = APIRouter(prefix="/api", tags=["products"], dependencies=[Depends(require_admin)])
+
+
+@router.post("/v2/products", response_model=CanonicalProductDetailResponse, status_code=status.HTTP_201_CREATED)
+async def create_canonical_product_endpoint(
+    name: str = Form(...),
+    images: list[UploadFile] = File(...),
+    category: str | None = Form(default=None),
+    price: str | None = Form(default=None),
+    source_note: str | None = Form(default=None),
+    session: Session = Depends(get_session),
+) -> CanonicalProductDetailResponse:
+    validate_reference_image_count(len(images))
+    image_payloads: list[tuple[bytes, str, str]] = []
+    for image in images:
+        validated = await read_validated_image_upload(image, fallback_filename="reference.bin")
+        image_payloads.append((validated.content, validated.filename, validated.mime_type))
+    product = create_canonical_product(
+        session,
+        name=name,
+        category=category,
+        price=price,
+        source_note=source_note,
+        image_uploads=image_payloads,
+    )
+    return serialize_canonical_product_detail(product)
+
+
+@router.get("/v2/products/{product_id}", response_model=CanonicalProductDetailResponse)
+def get_canonical_product_endpoint(
+    product_id: str,
+    session: Session = Depends(get_session),
+) -> CanonicalProductDetailResponse:
+    return serialize_canonical_product_detail(get_product_detail(session, product_id))
+
+
+@router.get("/v2/products/{product_id}/image-assets", response_model=ProductImageAssetListResponse)
+def list_product_image_assets_endpoint(
+    product_id: str,
+    session: Session = Depends(get_session),
+) -> ProductImageAssetListResponse:
+    assets = list_product_image_assets(session, product_id)
+    return ProductImageAssetListResponse(items=[serialize_product_image_asset(asset) for asset in assets])
+
+
+@router.post(
+    "/v2/products/{product_id}/image-assets",
+    response_model=ProductImageAssetListResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_canonical_product_images_endpoint(
+    product_id: str,
+    images: list[UploadFile] = File(...),
+    session: Session = Depends(get_session),
+) -> ProductImageAssetListResponse:
+    validate_reference_image_count(len(images))
+    image_payloads: list[tuple[bytes, str, str]] = []
+    for image in images:
+        validated = await read_validated_image_upload(image, fallback_filename="image.bin")
+        image_payloads.append((validated.content, validated.filename, validated.mime_type))
+    assets = add_canonical_product_images(session, product_id=product_id, image_uploads=image_payloads)
+    return ProductImageAssetListResponse(items=[serialize_product_image_asset(asset) for asset in assets])
+
+
+@router.put("/v2/products/{product_id}/cover", response_model=CanonicalProductDetailResponse)
+def set_product_cover_endpoint(
+    product_id: str,
+    payload: SetProductCoverRequest,
+    session: Session = Depends(get_session),
+) -> CanonicalProductDetailResponse:
+    set_product_cover(session, product_id=product_id, asset_id=payload.asset_id)
+    return serialize_canonical_product_detail(get_product_detail(session, product_id))
+
+
+@router.delete("/v2/products/{product_id}/cover", response_model=CanonicalProductDetailResponse)
+def clear_product_cover_endpoint(
+    product_id: str,
+    session: Session = Depends(get_session),
+) -> CanonicalProductDetailResponse:
+    clear_product_cover(session, product_id=product_id)
+    return serialize_canonical_product_detail(get_product_detail(session, product_id))
+
+
+@router.delete(
+    "/v2/product-image-assets/{asset_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_deletion_enabled)],
+)
+def delete_product_image_asset_endpoint(
+    asset_id: str,
+    session: Session = Depends(get_session),
+) -> None:
+    delete_product_image_asset(session, asset_id=asset_id)
+
+
+@router.get("/v2/product-image-assets/{asset_id}/download")
+def download_product_image_asset_endpoint(
+    asset_id: str,
+    variant: ImageVariantName = Query(default="original"),
+    session: Session = Depends(get_session),
+) -> FileResponse:
+    asset = get_product_image_asset(session, asset_id)
+    if asset.media_object.verification_status == MediaVerificationStatus.MISSING:
+        raise HTTPException(status_code=404, detail="商品图片文件不存在")
+    return serve_image_variant(
+        storage_path=asset.media_object.storage_path,
+        original_filename=asset.original_filename,
+        mime_type=asset.media_object.mime_type,
+        variant=variant,
+        missing_file_detail="商品图片文件不存在",
+    )
 
 
 @router.post("/products", response_model=ProductDetailResponse, status_code=status.HTTP_201_CREATED)

@@ -35,6 +35,12 @@ from productflow_backend.application.image_session_dependencies import (
     ImageSessionProviderFailure,
     default_image_session_chat_service_factory,
 )
+from productflow_backend.application.media_assets import (
+    ensure_image_session_asset_media,
+    get_product_image_asset,
+    prune_unreferenced_media_objects,
+    stage_verified_media_object,
+)
 from productflow_backend.application.queue_submission import enqueue_or_mark_failed
 from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.application.storage_compensation import (
@@ -48,7 +54,12 @@ from productflow_backend.domain.durable_generation_tasks import (
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
     QUEUE_UNAVAILABLE_DETAIL,
 )
-from productflow_backend.domain.enums import ImageSessionAssetKind, JobStatus, SourceAssetKind
+from productflow_backend.domain.enums import (
+    ImageSessionAssetKind,
+    JobStatus,
+    ProductImageOriginType,
+    SourceAssetKind,
+)
 from productflow_backend.domain.errors import BusinessValidationError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     ImageSession,
@@ -56,6 +67,7 @@ from productflow_backend.infrastructure.db.models import (
     ImageSessionGenerationTask,
     ImageSessionRound,
     Product,
+    ProductImageAsset,
     SourceAsset,
     new_id,
 )
@@ -128,7 +140,7 @@ def _image_session_query():
     return (
         select(ImageSession)
         .options(
-            selectinload(ImageSession.assets),
+            selectinload(ImageSession.assets).selectinload(ImageSessionAsset.media_object),
             selectinload(ImageSession.rounds).selectinload(ImageSessionRound.generated_asset),
             selectinload(ImageSession.generation_tasks),
         )
@@ -448,12 +460,35 @@ def delete_image_session(
     storage: LocalStorage | None = None,
 ) -> None:
     image_session = _get_image_session_or_raise(session, image_session_id)
+    session.expire(image_session, ["assets", "rounds", "generation_tasks"])
+    image_session_assets = list(image_session.assets)
     storage = storage or LocalStorage()
+    asset_ids = [asset.id for asset in image_session_assets]
+    media_ids = {asset.media_object_id for asset in image_session_assets if asset.media_object_id is not None}
+    legacy_paths = [asset.storage_path for asset in image_session_assets if asset.media_object_id is None]
+    if asset_ids:
+        session.execute(
+            update(ProductImageAsset)
+            .where(ProductImageAsset.source_image_session_asset_id.in_(asset_ids))
+            .values(source_image_session_asset_id=None)
+        )
     session.delete(image_session)
+    session.flush()
+    deleted_media = prune_unreferenced_media_objects(session, media_ids)
     session.commit()
+    for media_id, storage_path in deleted_media:
+        best_effort_storage_delete(
+            lambda path=storage_path: storage.delete_image_with_variants(path),
+            target=f"media_object_id={media_id} path={storage_path}",
+        )
+    for storage_path in legacy_paths:
+        best_effort_storage_delete(
+            lambda path=storage_path: storage.delete_image_with_variants(path),
+            target=f"image_session_id={image_session_id} legacy_path={storage_path}",
+        )
     best_effort_storage_delete(
-        lambda: storage.delete_image_session_tree(image_session_id),
-        target=f"image_session_id={image_session_id}",
+        lambda: storage.remove_empty_image_session_directories(image_session_id),
+        target=f"image_session_id={image_session_id} empty_directories",
     )
 
 
@@ -468,17 +503,22 @@ def add_image_session_reference_images(
     storage = storage or LocalStorage()
     with compensate_storage_writes(session) as storage_writes:
         for content, filename, mime_type in reference_image_uploads:
-            relative_path = storage_writes.track(
-                storage,
-                storage.save_image_session_reference(image_session.id, filename, content),
+            media = stage_verified_media_object(
+                session,
+                content=content,
+                filename=filename,
+                expected_mime_type=mime_type,
+                storage=storage,
+                storage_writes=storage_writes,
             )
             session.add(
                 ImageSessionAsset(
                     session_id=image_session.id,
                     kind=ImageSessionAssetKind.REFERENCE_UPLOAD,
                     original_filename=filename,
-                    mime_type=mime_type or "application/octet-stream",
-                    storage_path=relative_path,
+                    mime_type=media.mime_type,
+                    storage_path=media.storage_path,
+                    media_object=media,
                 )
             )
         image_session.updated_at = now_utc()
@@ -503,13 +543,22 @@ def delete_image_session_reference_image(
 
     storage = storage or LocalStorage()
     storage_path = asset.storage_path
+    media_id = asset.media_object_id
+    session.execute(
+        update(ProductImageAsset)
+        .where(ProductImageAsset.source_image_session_asset_id == asset.id)
+        .values(source_image_session_asset_id=None)
+    )
     session.delete(asset)
     image_session.updated_at = now_utc()
+    session.flush()
+    deleted_media = prune_unreferenced_media_objects(session, {media_id} if media_id is not None else set())
     session.commit()
-    best_effort_storage_delete(
-        lambda: storage.delete_image_with_variants(storage_path),
-        target=f"image_session_asset_id={asset_id} path={storage_path}",
-    )
+    if media_id is None or deleted_media:
+        best_effort_storage_delete(
+            lambda: storage.delete_image_with_variants(storage_path),
+            target=f"image_session_asset_id={asset_id} path={storage_path}",
+        )
     session.expire_all()
     return _get_image_session_or_raise(session, image_session.id)
 
@@ -645,24 +694,26 @@ def _execute_image_session_round_generation(
                     )
             _raise_if_image_generation_task_cancelled(session, generation_task_id)
 
-            relative_path = storage_writes.track(
-                storage,
-                storage.save_image_session_generated(
-                    image_session.id,
-                    result.bytes_data,
-                    suffix=infer_extension(result.mime_type),
-                ),
+            original_filename = (
+                f"generated-{now_utc().strftime('%Y%m%d-%H%M%S')}"
+                f"-{candidate_index}{infer_extension(result.mime_type)}"
+            )
+            media = stage_verified_media_object(
+                session,
+                content=result.bytes_data,
+                filename=original_filename,
+                expected_mime_type=result.mime_type,
+                storage=storage,
+                storage_writes=storage_writes,
             )
             _raise_if_image_generation_task_cancelled(session, generation_task_id)
             asset = ImageSessionAsset(
                 session_id=image_session.id,
                 kind=ImageSessionAssetKind.GENERATED_IMAGE,
-                original_filename=(
-                    f"generated-{now_utc().strftime('%Y%m%d-%H%M%S')}"
-                    f"-{candidate_index}{infer_extension(result.mime_type)}"
-                ),
-                mime_type=result.mime_type,
-                storage_path=relative_path,
+                original_filename=original_filename,
+                mime_type=media.mime_type,
+                storage_path=media.storage_path,
+                media_object=media,
             )
             session.add(asset)
             session.flush()
@@ -1411,3 +1462,49 @@ def attach_image_session_asset_to_product(
         session.commit()
     session.expire_all()
     return _get_product_or_raise(session, product.id)
+
+
+def attach_image_session_asset_to_product_canonical(
+    session: Session,
+    *,
+    image_session_id: str,
+    asset_id: str,
+    product_id: str,
+    storage: LocalStorage | None = None,
+) -> ProductImageAsset:
+    """把 ImageChat 结果作为商品逻辑资产附加，不复制媒体 bytes。"""
+    image_session = _get_image_session_or_raise(session, image_session_id)
+    asset = session.scalar(
+        select(ImageSessionAsset)
+        .where(ImageSessionAsset.id == asset_id, ImageSessionAsset.session_id == image_session.id)
+        .with_for_update()
+    )
+    if asset is None:
+        raise NotFoundError("会话图片不存在")
+    if asset.kind != ImageSessionAssetKind.GENERATED_IMAGE:
+        raise BusinessValidationError("只有生成结果可以附加到商品")
+    product = session.get(Product, product_id)
+    if product is None:
+        raise NotFoundError("商品不存在")
+
+    media = ensure_image_session_asset_media(session, asset=asset, storage=storage)
+    existing = session.scalar(
+        select(ProductImageAsset).where(
+            ProductImageAsset.product_id == product_id,
+            ProductImageAsset.source_image_session_asset_id == asset.id,
+        )
+    )
+    if existing is None:
+        existing = ProductImageAsset(
+            product_id=product.id,
+            media_object_id=media.id,
+            origin_type=ProductImageOriginType.IMAGE_SESSION_ATTACH,
+            display_name=asset.original_filename,
+            original_filename=asset.original_filename,
+            source_image_session_asset_id=asset.id,
+        )
+        session.add(existing)
+        product.updated_at = now_utc()
+    session.commit()
+    session.expire_all()
+    return get_product_image_asset(session, existing.id)

@@ -5,7 +5,21 @@ from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, text
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy import Enum as SqlEnum
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -13,7 +27,9 @@ from productflow_backend.domain.enums import (
     CopyStatus,
     ImageSessionAssetKind,
     JobStatus,
+    MediaVerificationStatus,
     PosterKind,
+    ProductImageOriginType,
     SourceAssetKind,
     WorkflowNodeStatus,
     WorkflowNodeType,
@@ -117,6 +133,37 @@ class UserCanvasTemplate(Base, TimestampMixin):
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class MediaObject(Base):
+    """不可变的实际图片文件及其核验元数据。"""
+
+    __tablename__ = "media_objects"
+    __table_args__ = (
+        UniqueConstraint("storage_path", name="uq_media_objects_storage_path"),
+        CheckConstraint(
+            "verification_status != 'verified' OR "
+            "(byte_size > 0 AND width > 0 AND height > 0 AND sha256 IS NOT NULL "
+            "AND length(sha256) = 64 AND verified_at IS NOT NULL)",
+            name="ck_media_objects_verified_metadata",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    storage_path: Mapped[str] = mapped_column(String(500))
+    mime_type: Mapped[str] = mapped_column(String(100))
+    byte_size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    verification_status: Mapped[MediaVerificationStatus] = mapped_column(
+        enum_value_column(MediaVerificationStatus)
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    product_assets: Mapped[list[ProductImageAsset]] = relationship(back_populates="media_object")
+    image_session_assets: Mapped[list[ImageSessionAsset]] = relationship(back_populates="media_object")
+
+
 class Product(Base, TimestampMixin):
     __tablename__ = "products"
 
@@ -135,11 +182,30 @@ class Product(Base, TimestampMixin):
         ),
         nullable=True,
     )
+    cover_image_asset_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "product_image_assets.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_products_cover_image_asset_id",
+        ),
+        nullable=True,
+    )
 
     source_assets: Mapped[list[SourceAsset]] = relationship(
         back_populates="product",
         cascade="all, delete-orphan",
         foreign_keys="SourceAsset.product_id",
+    )
+    image_assets: Mapped[list[ProductImageAsset]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+        foreign_keys="ProductImageAsset.product_id",
+    )
+    cover_image_asset: Mapped[ProductImageAsset | None] = relationship(
+        foreign_keys=[cover_image_asset_id],
+        post_update=True,
     )
     creative_briefs: Mapped[list[CreativeBrief]] = relationship(
         back_populates="product",
@@ -161,6 +227,70 @@ class Product(Base, TimestampMixin):
     workflows: Mapped[list[ProductWorkflow]] = relationship(
         back_populates="product",
         cascade="all, delete-orphan",
+    )
+
+
+class ProductImageAsset(Base, TimestampMixin):
+    """商品作用域内的逻辑图片；实际文件由 MediaObject 持有。"""
+
+    __tablename__ = "product_image_assets"
+    __table_args__ = (
+        Index("ix_product_image_assets_product_created", "product_id", "created_at", "id"),
+        Index("ix_product_image_assets_media_object_id", "media_object_id"),
+        Index("ix_product_image_assets_parent_asset_id", "parent_asset_id"),
+        Index("ix_product_image_assets_source_image_session_asset_id", "source_image_session_asset_id"),
+        Index(
+            "uq_product_image_assets_product_session_asset",
+            "product_id",
+            "source_image_session_asset_id",
+            unique=True,
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    product_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("products.id", ondelete="CASCADE", name="fk_product_image_assets_product_id"),
+    )
+    media_object_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("media_objects.id", ondelete="RESTRICT", name="fk_product_image_assets_media_object_id"),
+    )
+    origin_type: Mapped[ProductImageOriginType] = mapped_column(enum_value_column(ProductImageOriginType))
+    display_name: Mapped[str] = mapped_column(String(255))
+    original_filename: Mapped[str] = mapped_column(String(255))
+    parent_asset_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "product_image_assets.id",
+            ondelete="RESTRICT",
+            name="fk_product_image_assets_parent_asset_id",
+        ),
+        nullable=True,
+    )
+    source_image_session_asset_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "image_session_assets.id",
+            ondelete="SET NULL",
+            name="fk_product_image_assets_source_image_session_asset_id",
+        ),
+        nullable=True,
+    )
+
+    product: Mapped[Product] = relationship(back_populates="image_assets", foreign_keys=[product_id])
+    media_object: Mapped[MediaObject] = relationship(back_populates="product_assets")
+    parent_asset: Mapped[ProductImageAsset | None] = relationship(
+        back_populates="child_assets",
+        foreign_keys=[parent_asset_id],
+        remote_side=[id],
+    )
+    child_assets: Mapped[list[ProductImageAsset]] = relationship(
+        back_populates="parent_asset",
+        foreign_keys=[parent_asset_id],
+    )
+    source_image_session_asset: Mapped[ImageSessionAsset | None] = relationship(
+        foreign_keys=[source_image_session_asset_id]
     )
 
 
@@ -327,6 +457,7 @@ class SourceAsset(Base):
             sqlite_where=text("kind = 'original_image'"),
         ),
         Index("ix_source_assets_source_poster_variant_id", "source_poster_variant_id"),
+        Index("ix_source_assets_canonical_asset_id", "canonical_asset_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -344,9 +475,19 @@ class SourceAsset(Base):
         ),
         nullable=True,
     )
+    canonical_asset_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "product_image_assets.id",
+            ondelete="RESTRICT",
+            name="fk_source_assets_canonical_asset_id",
+        ),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     product: Mapped[Product] = relationship(back_populates="source_assets", foreign_keys=[product_id])
+    canonical_asset: Mapped[ProductImageAsset | None] = relationship(foreign_keys=[canonical_asset_id])
 
 
 class CreativeBrief(Base):
@@ -401,6 +542,7 @@ class PosterVariant(Base):
     """已生成的海报变体，关联文案和存储路径。"""
 
     __tablename__ = "poster_variants"
+    __table_args__ = (Index("ix_poster_variants_canonical_asset_id", "canonical_asset_id"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     product_id: Mapped[str] = mapped_column(String(36), ForeignKey("products.id", ondelete="CASCADE"))
@@ -411,10 +553,20 @@ class PosterVariant(Base):
     storage_path: Mapped[str] = mapped_column(String(500))
     width: Mapped[int] = mapped_column()
     height: Mapped[int] = mapped_column()
+    canonical_asset_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "product_image_assets.id",
+            ondelete="RESTRICT",
+            name="fk_poster_variants_canonical_asset_id",
+        ),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     product: Mapped[Product] = relationship(back_populates="poster_variants")
     copy_set: Mapped[CopySet] = relationship(back_populates="poster_variants")
+    canonical_asset: Mapped[ProductImageAsset | None] = relationship(foreign_keys=[canonical_asset_id])
 
 
 class ImageSession(Base, TimestampMixin):
@@ -432,7 +584,11 @@ class ImageSession(Base, TimestampMixin):
     rounds: Mapped[list[ImageSessionRound]] = relationship(
         back_populates="session",
         cascade="all, delete-orphan",
-        order_by="ImageSessionRound.created_at",
+        order_by=lambda: (
+            ImageSessionRound.created_at,
+            ImageSessionRound.candidate_index,
+            ImageSessionRound.id,
+        ),
     )
     generation_tasks: Mapped[list[ImageSessionGenerationTask]] = relationship(
         back_populates="session",
@@ -443,6 +599,7 @@ class ImageSession(Base, TimestampMixin):
 
 class ImageSessionAsset(Base):
     __tablename__ = "image_session_assets"
+    __table_args__ = (Index("ix_image_session_assets_media_object_id", "media_object_id"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     session_id: Mapped[str] = mapped_column(String(36), ForeignKey("image_sessions.id", ondelete="CASCADE"))
@@ -450,9 +607,19 @@ class ImageSessionAsset(Base):
     original_filename: Mapped[str] = mapped_column(String(255))
     mime_type: Mapped[str] = mapped_column(String(100))
     storage_path: Mapped[str] = mapped_column(String(500))
+    media_object_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "media_objects.id",
+            ondelete="RESTRICT",
+            name="fk_image_session_assets_media_object_id",
+        ),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     session: Mapped[ImageSession] = relationship(back_populates="assets")
+    media_object: Mapped[MediaObject | None] = relationship(back_populates="image_session_assets")
     generated_in_round: Mapped[ImageSessionRound | None] = relationship(
         back_populates="generated_asset",
         foreign_keys="ImageSessionRound.generated_asset_id",

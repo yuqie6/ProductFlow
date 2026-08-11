@@ -4,13 +4,15 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from productflow_backend.application.copy_payloads import copy_set_structured_payload
 from productflow_backend.application.use_cases import derive_product_state
 from productflow_backend.domain.enums import (
     CopyStatus,
+    MediaVerificationStatus,
     PosterKind,
+    ProductImageOriginType,
     ProductWorkflowState,
     SourceAssetKind,
 )
@@ -19,6 +21,7 @@ from productflow_backend.infrastructure.db.models import (
     CreativeBrief,
     PosterVariant,
     Product,
+    ProductImageAsset,
     SourceAsset,
 )
 from productflow_backend.presentation.image_variants import build_image_urls
@@ -114,6 +117,49 @@ class ProductDetailResponse(BaseModel):
     updated_at: datetime
 
 
+class ProductImageAssetResponse(BaseModel):
+    id: str
+    product_id: str
+    media_object_id: str
+    origin_type: ProductImageOriginType
+    display_name: str
+    original_filename: str
+    parent_asset_id: str | None = None
+    source_image_session_asset_id: str | None = None
+    mime_type: str
+    byte_size: int | None = None
+    width: int | None = None
+    height: int | None = None
+    verification_status: MediaVerificationStatus
+    download_url: str
+    preview_url: str
+    thumbnail_url: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ProductImageAssetListResponse(BaseModel):
+    items: list[ProductImageAssetResponse]
+
+
+class CanonicalProductDetailResponse(BaseModel):
+    id: str
+    name: str
+    category: str | None = None
+    price: Decimal | None = None
+    source_note: str | None = None
+    cover_image_asset_id: str | None = None
+    image_assets: list[ProductImageAssetResponse]
+    created_at: datetime
+    updated_at: datetime
+
+
+class SetProductCoverRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    asset_id: str = Field(min_length=1)
+
+
 class ProductHistoryResponse(BaseModel):
     copy_sets: list[CopySetResponse]
     poster_variants: list[PosterVariantResponse]
@@ -177,6 +223,44 @@ def serialize_poster_variant(poster: PosterVariant) -> PosterVariantResponse:
         height=poster.height,
         **urls,
         created_at=poster.created_at,
+    )
+
+
+def serialize_product_image_asset(asset: ProductImageAsset) -> ProductImageAssetResponse:
+    urls = build_image_urls(f"/api/v2/product-image-assets/{asset.id}/download")
+    media = asset.media_object
+    return ProductImageAssetResponse(
+        id=asset.id,
+        product_id=asset.product_id,
+        media_object_id=asset.media_object_id,
+        origin_type=asset.origin_type,
+        display_name=asset.display_name,
+        original_filename=asset.original_filename,
+        parent_asset_id=asset.parent_asset_id,
+        source_image_session_asset_id=asset.source_image_session_asset_id,
+        mime_type=media.mime_type,
+        byte_size=media.byte_size,
+        width=media.width,
+        height=media.height,
+        verification_status=media.verification_status,
+        **urls,
+        created_at=asset.created_at,
+        updated_at=asset.updated_at,
+    )
+
+
+def serialize_canonical_product_detail(product: Product) -> CanonicalProductDetailResponse:
+    image_assets = sorted(product.image_assets, key=lambda asset: (asset.created_at, asset.id))
+    return CanonicalProductDetailResponse(
+        id=product.id,
+        name=product.name,
+        category=product.category,
+        price=product.price,
+        source_note=product.source_note,
+        cover_image_asset_id=product.cover_image_asset_id,
+        image_assets=[serialize_product_image_asset(asset) for asset in image_assets],
+        created_at=product.created_at,
+        updated_at=product.updated_at,
     )
 
 

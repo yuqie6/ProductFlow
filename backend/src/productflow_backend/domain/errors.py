@@ -25,6 +25,12 @@ class NotFoundError(BusinessError):
     status_code: ClassVar[int] = 404
 
 
+class ConflictError(BusinessError):
+    """Requested mutation conflicts with an existing durable business reference."""
+
+    status_code: ClassVar[int] = 409
+
+
 class ResourceBusyError(BusinessError):
     """Global provider/worker resource capacity is currently exhausted."""
 

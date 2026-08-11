@@ -13,7 +13,9 @@ from productflow_backend.domain.enums import (
     CopyStatus,
     ImageSessionAssetKind,
     JobStatus,
+    MediaVerificationStatus,
     PosterKind,
+    ProductImageOriginType,
     SourceAssetKind,
     WorkflowNodeStatus,
     WorkflowNodeType,
@@ -24,7 +26,10 @@ from productflow_backend.infrastructure.db.models import (
     ImageGalleryEntry,
     ImageSessionAsset,
     ImageSessionGenerationTask,
+    MediaObject,
     PosterVariant,
+    Product,
+    ProductImageAsset,
     SourceAsset,
     UserCanvasTemplate,
     WorkflowNode,
@@ -51,6 +56,85 @@ def test_sqlalchemy_enum_columns_use_database_values() -> None:
     assert WorkflowNode.__table__.c.status.type.enums == [member.value for member in WorkflowNodeStatus]
     assert WorkflowNodeRun.__table__.c.status.type.enums == [member.value for member in WorkflowNodeStatus]
     assert WorkflowRun.__table__.c.status.type.enums == [member.value for member in WorkflowRunStatus]
+    assert MediaObject.__table__.c.verification_status.type.enums == [
+        member.value for member in MediaVerificationStatus
+    ]
+    assert ProductImageAsset.__table__.c.origin_type.type.enums == [
+        member.value for member in ProductImageOriginType
+    ]
+
+
+def test_canonical_image_asset_models_match_database_contract() -> None:
+    media_table = MediaObject.__table__
+    assert media_table.c.id.type.length == 36
+    assert media_table.c.storage_path.type.length == 500
+    assert not media_table.c.storage_path.nullable
+    assert media_table.c.mime_type.type.length == 100
+    assert not media_table.c.mime_type.nullable
+    assert media_table.c.byte_size.nullable
+    assert media_table.c.width.nullable
+    assert media_table.c.height.nullable
+    assert media_table.c.sha256.type.length == 64
+    assert media_table.c.sha256.nullable
+    assert not media_table.c.verification_status.nullable
+    assert media_table.c.verified_at.nullable
+    unique_constraint_names = {
+        constraint.name for constraint in media_table.constraints if isinstance(constraint, sa.UniqueConstraint)
+    }
+    assert unique_constraint_names == {
+        "uq_media_objects_storage_path"
+    }
+    check_constraint_names = {
+        constraint.name for constraint in media_table.constraints if isinstance(constraint, sa.CheckConstraint)
+    }
+    assert check_constraint_names == {
+        "ck_media_objects_verified_metadata"
+    }
+
+    asset_table = ProductImageAsset.__table__
+    assert asset_table.c.id.type.length == 36
+    assert not asset_table.c.product_id.nullable
+    assert not asset_table.c.media_object_id.nullable
+    assert not asset_table.c.origin_type.nullable
+    assert not asset_table.c.display_name.nullable
+    assert not asset_table.c.original_filename.nullable
+    assert asset_table.c.parent_asset_id.nullable
+    assert asset_table.c.source_image_session_asset_id.nullable
+    assert {index.name for index in asset_table.indexes} == {
+        "ix_product_image_assets_product_created",
+        "ix_product_image_assets_media_object_id",
+        "ix_product_image_assets_parent_asset_id",
+        "ix_product_image_assets_source_image_session_asset_id",
+        "uq_product_image_assets_product_session_asset",
+    }
+    asset_foreign_keys = {fk.parent.name: fk for fk in asset_table.foreign_keys}
+    assert asset_foreign_keys["product_id"].constraint.name == "fk_product_image_assets_product_id"
+    assert asset_foreign_keys["product_id"].ondelete == "CASCADE"
+    assert asset_foreign_keys["media_object_id"].constraint.name == "fk_product_image_assets_media_object_id"
+    assert asset_foreign_keys["media_object_id"].ondelete == "RESTRICT"
+    assert asset_foreign_keys["parent_asset_id"].constraint.name == "fk_product_image_assets_parent_asset_id"
+    assert asset_foreign_keys["parent_asset_id"].ondelete == "RESTRICT"
+    assert (
+        asset_foreign_keys["source_image_session_asset_id"].constraint.name
+        == "fk_product_image_assets_source_image_session_asset_id"
+    )
+    assert asset_foreign_keys["source_image_session_asset_id"].ondelete == "SET NULL"
+
+    product_table = Product.__table__
+    assert product_table.c.cover_image_asset_id.nullable
+    cover_fk = next(fk for fk in product_table.foreign_keys if fk.parent.name == "cover_image_asset_id")
+    assert cover_fk.constraint.name == "fk_products_cover_image_asset_id"
+    assert cover_fk.ondelete == "SET NULL"
+
+    for table, column_name, constraint_name in (
+        (SourceAsset.__table__, "canonical_asset_id", "fk_source_assets_canonical_asset_id"),
+        (PosterVariant.__table__, "canonical_asset_id", "fk_poster_variants_canonical_asset_id"),
+        (ImageSessionAsset.__table__, "media_object_id", "fk_image_session_assets_media_object_id"),
+    ):
+        assert table.c[column_name].nullable
+        foreign_key = next(fk for fk in table.foreign_keys if fk.parent.name == column_name)
+        assert foreign_key.constraint.name == constraint_name
+        assert foreign_key.ondelete == "RESTRICT"
 
 
 def test_workflow_run_model_has_retryability_and_progress_metadata() -> None:
@@ -355,6 +439,212 @@ def test_source_asset_poster_lineage_migration_supports_sqlite(tmp_path: Path, m
         tuple(foreign_key["constrained_columns"]) == ("source_poster_variant_id",)
         for foreign_key in inspector.get_foreign_keys("source_assets")
     )
+    engine.dispose()
+    get_settings.cache_clear()
+
+
+def test_canonical_image_asset_migration_backfills_and_downgrades_sqlite(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    database_path = tmp_path / "canonical-image-assets.db"
+    storage_root = tmp_path / "storage"
+    monkeypatch.setenv("ADMIN_ACCESS_KEY", "super-secret-admin-key")
+    monkeypatch.setenv("SESSION_SECRET", "super-secret-session-key-123")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path}")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/9")
+    monkeypatch.setenv("STORAGE_ROOT", str(storage_root))
+    get_settings.cache_clear()
+
+    backend_dir = Path(__file__).resolve().parents[1]
+    config = Config(str(backend_dir / "alembic.ini"))
+    config.set_main_option("script_location", str(backend_dir / "alembic"))
+    command.upgrade(config, "20260806_0030")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    now = "2026-08-11 00:00:00"
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                "INSERT INTO products (id, name, created_at, updated_at) "
+                "VALUES "
+                "('product-1', 'canonical product', :now, :now), "
+                "('product-2', 'cross-lineage product', :now, :now)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO copy_sets "
+                "(id, product_id, creative_brief_id, status, provider_name, model_name, prompt_version, "
+                "edited_at, confirmed_at, created_at, updated_at, structured_payload, model_structured_payload) "
+                "VALUES "
+                "('copy-1', 'product-1', NULL, 'draft', 'test', 'test', 'test', NULL, NULL, :now, :now, NULL, NULL)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO poster_variants "
+                "(id, product_id, copy_set_id, kind, template_name, mime_type, storage_path, width, height, "
+                "created_at) VALUES "
+                "('poster-paired', 'product-1', 'copy-1', 'promo_poster', 'paired', 'image/png', "
+                "'products/product-1/posters/poster-paired.png', 1200, 1200, :now), "
+                "('poster-orphan', 'product-1', 'copy-1', 'main_image', 'orphan', 'image/webp', "
+                "'products/product-1/posters/poster-orphan.webp', 1200, 1200, :now)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO source_assets "
+                "(id, product_id, kind, original_filename, mime_type, storage_path, source_poster_variant_id, "
+                "created_at) VALUES "
+                "('asset-original', 'product-1', 'original_image', 'front.png', 'image/png', "
+                "'products/product-1/source/front.png', NULL, :now), "
+                "('asset-reference', 'product-1', 'reference_image', 'generated.png', 'image/png', "
+                "'products/product-1/references/generated.png', 'poster-paired', :now), "
+                "('asset-cross', 'product-2', 'reference_image', 'cross.png', 'image/png', "
+                "'products/product-2/references/cross.png', 'poster-paired', :now)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO image_sessions (id, title, created_at, updated_at) "
+                "VALUES ('session-1', 'legacy session', :now, :now)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO image_session_assets "
+                "(id, session_id, kind, original_filename, mime_type, storage_path, created_at) "
+                "VALUES ('session-asset-1', 'session-1', 'generated_image', 'candidate.jpg', 'image/jpeg', "
+                "'image_sessions/session-1/generated/candidate.jpg', :now)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO image_gallery_entries "
+                "(id, image_session_asset_id, image_session_round_id, created_at) "
+                "VALUES ('gallery-entry-1', 'session-asset-1', NULL, :now)"
+            ),
+            {"now": now},
+        )
+
+    engine.dispose()
+    command.upgrade(config, "head")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    inspector = sa.inspect(engine)
+    assert {"media_objects", "product_image_assets"} <= set(inspector.get_table_names())
+    product_columns = {column["name"]: column for column in inspector.get_columns("products")}
+    assert product_columns["cover_image_asset_id"]["nullable"] is True
+    for table_name, column_name in (
+        ("source_assets", "canonical_asset_id"),
+        ("poster_variants", "canonical_asset_id"),
+        ("image_session_assets", "media_object_id"),
+    ):
+        columns = {column["name"]: column for column in inspector.get_columns(table_name)}
+        assert columns[column_name]["nullable"] is True
+
+    asset_indexes = {index["name"]: index for index in inspector.get_indexes("product_image_assets")}
+    assert asset_indexes["ix_product_image_assets_product_created"]["column_names"] == [
+        "product_id",
+        "created_at",
+        "id",
+    ]
+    assert bool(asset_indexes["uq_product_image_assets_product_session_asset"]["unique"])
+    asset_foreign_keys = {
+        tuple(foreign_key["constrained_columns"]): foreign_key
+        for foreign_key in inspector.get_foreign_keys("product_image_assets")
+    }
+    assert asset_foreign_keys[("product_id",)]["options"]["ondelete"] == "CASCADE"
+    assert asset_foreign_keys[("media_object_id",)]["options"]["ondelete"] == "RESTRICT"
+    assert asset_foreign_keys[("parent_asset_id",)]["options"]["ondelete"] == "RESTRICT"
+    assert asset_foreign_keys[("source_image_session_asset_id",)]["options"]["ondelete"] == "SET NULL"
+
+    with engine.connect() as connection:
+        source_mapping = dict(
+            connection.execute(sa.text("SELECT id, canonical_asset_id FROM source_assets")).all()
+        )
+        poster_mapping = dict(
+            connection.execute(sa.text("SELECT id, canonical_asset_id FROM poster_variants")).all()
+        )
+        session_media_id = connection.execute(
+            sa.text("SELECT media_object_id FROM image_session_assets WHERE id = 'session-asset-1'")
+        ).scalar_one()
+        gallery_media_id = connection.execute(
+            sa.text(
+                "SELECT image_session_assets.media_object_id "
+                "FROM image_gallery_entries "
+                "JOIN image_session_assets "
+                "ON image_session_assets.id = image_gallery_entries.image_session_asset_id "
+                "WHERE image_gallery_entries.id = 'gallery-entry-1'"
+            )
+        ).scalar_one()
+        cover_asset_id = connection.execute(
+            sa.text("SELECT cover_image_asset_id FROM products WHERE id = 'product-1'")
+        ).scalar_one()
+        assets = {
+            row["id"]: row
+            for row in connection.execute(
+                sa.text(
+                    "SELECT id, product_id, media_object_id, origin_type, display_name, original_filename "
+                    "FROM product_image_assets"
+                )
+            ).mappings()
+        }
+        media_rows = connection.execute(
+            sa.text(
+                "SELECT id, storage_path, mime_type, byte_size, width, height, sha256, verification_status, "
+                "verified_at FROM media_objects"
+            )
+        ).mappings().all()
+
+    assert source_mapping == {
+        "asset-cross": "asset-cross",
+        "asset-original": "asset-original",
+        "asset-reference": "asset-reference",
+    }
+    assert poster_mapping["poster-paired"] == "asset-reference"
+    assert poster_mapping["poster-orphan"] == "poster-orphan"
+    assert cover_asset_id == "asset-original"
+    assert assets["asset-original"]["origin_type"] == "upload"
+    assert assets["asset-reference"]["origin_type"] == "workflow_generation"
+    assert assets["asset-cross"]["origin_type"] == "legacy_import"
+    assert assets["poster-orphan"]["origin_type"] == "legacy_import"
+    assert assets["poster-orphan"]["original_filename"] == "poster-orphan.webp"
+    assert session_media_id in {row["id"] for row in media_rows}
+    assert gallery_media_id == session_media_id
+    assert len(media_rows) == 5
+    assert all(row["verification_status"] == "legacy_pending" for row in media_rows)
+    assert all(row["byte_size"] is None for row in media_rows)
+    assert all(row["width"] is None for row in media_rows)
+    assert all(row["height"] is None for row in media_rows)
+    assert all(row["sha256"] is None for row in media_rows)
+    assert all(row["verified_at"] is None for row in media_rows)
+
+    engine.dispose()
+    command.downgrade(config, "20260806_0030")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    inspector = sa.inspect(engine)
+    assert "media_objects" not in inspector.get_table_names()
+    assert "product_image_assets" not in inspector.get_table_names()
+    assert "cover_image_asset_id" not in {column["name"] for column in inspector.get_columns("products")}
+    assert "canonical_asset_id" not in {column["name"] for column in inspector.get_columns("source_assets")}
+    assert "canonical_asset_id" not in {column["name"] for column in inspector.get_columns("poster_variants")}
+    assert "media_object_id" not in {
+        column["name"] for column in inspector.get_columns("image_session_assets")
+    }
+    with engine.connect() as connection:
+        assert connection.execute(sa.text("SELECT COUNT(*) FROM source_assets")).scalar_one() == 3
+        assert connection.execute(sa.text("SELECT COUNT(*) FROM poster_variants")).scalar_one() == 2
+        assert connection.execute(sa.text("SELECT COUNT(*) FROM image_session_assets")).scalar_one() == 1
+        assert connection.execute(sa.text("SELECT COUNT(*) FROM image_gallery_entries")).scalar_one() == 1
     engine.dispose()
     get_settings.cache_clear()
 

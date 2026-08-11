@@ -7,6 +7,12 @@ from sqlalchemy import desc, exists, func, literal, select
 from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.copy_payloads import validate_copy_payload
+from productflow_backend.application.media_assets import (
+    delete_legacy_source_with_canonical_asset,
+    list_product_image_assets,
+    prune_unreferenced_media_objects,
+    stage_product_image_asset,
+)
 from productflow_backend.application.product_workflow.templates import (
     materialize_product_workflow_from_template,
     resolve_product_creation_canvas_template,
@@ -19,6 +25,7 @@ from productflow_backend.application.time import now_utc
 from productflow_backend.domain.durable_generation_tasks import WORKFLOW_RUN_GENERATION_TASK_CONTRACT
 from productflow_backend.domain.enums import (
     CopyStatus,
+    ProductImageOriginType,
     ProductWorkflowState,
     SourceAssetKind,
     WorkflowNodeStatus,
@@ -27,8 +34,10 @@ from productflow_backend.domain.enums import (
 from productflow_backend.domain.errors import BusinessValidationError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     CopySet,
+    MediaObject,
     PosterVariant,
     Product,
+    ProductImageAsset,
     ProductWorkflow,
     SourceAsset,
     WorkflowNode,
@@ -79,6 +88,8 @@ def _product_query():
         select(Product)
         .options(
             selectinload(Product.source_assets),
+            selectinload(Product.image_assets).selectinload(ProductImageAsset.media_object),
+            selectinload(Product.cover_image_asset).selectinload(ProductImageAsset.media_object),
             selectinload(Product.creative_briefs),
             selectinload(Product.copy_sets),
             selectinload(Product.poster_variants),
@@ -93,6 +104,8 @@ def _product_query():
 def _product_list_query():
     return select(Product).options(
         selectinload(Product.source_assets),
+        selectinload(Product.image_assets).selectinload(ProductImageAsset.media_object),
+        selectinload(Product.cover_image_asset).selectinload(ProductImageAsset.media_object),
         selectinload(Product.copy_sets),
         selectinload(Product.poster_variants),
         selectinload(Product.workflows).selectinload(ProductWorkflow.nodes),
@@ -252,6 +265,91 @@ def create_product(
     return _get_product_or_raise(session, product.id)
 
 
+def create_canonical_product(
+    session: Session,
+    *,
+    name: str,
+    category: str | None,
+    price: str | None,
+    source_note: str | None,
+    image_uploads: list[tuple[bytes, str, str]],
+    storage: LocalStorage | None = None,
+) -> Product:
+    """创建只使用 MediaObject/ProductImageAsset 的 v2 商品。"""
+    if not image_uploads:
+        raise BusinessValidationError("至少上传一张商品参考图")
+    if len(image_uploads) > 6:
+        raise BusinessValidationError("商品参考图最多上传 6 张")
+    storage = storage or LocalStorage()
+    with compensate_storage_writes(session) as storage_writes:
+        product = Product(
+            name=_normalize_required_text(name, field_name="商品名", max_length=255),
+            category=_normalize_optional_text(category, field_name="类目", max_length=120),
+            price=_normalize_price(price),
+            source_note=_normalize_optional_text(source_note, field_name="备注", max_length=4000),
+        )
+        session.add(product)
+        session.flush()
+        image_assets = [
+            stage_product_image_asset(
+                session,
+                product=product,
+                content=image_bytes,
+                filename=filename,
+                expected_mime_type=mime_type,
+                display_name=filename,
+                origin_type=ProductImageOriginType.UPLOAD,
+                storage=storage,
+                storage_writes=storage_writes,
+            )
+            for image_bytes, filename, mime_type in image_uploads
+        ]
+        session.flush()
+        product.cover_image_asset_id = image_assets[0].id
+        session.commit()
+    session.expire_all()
+    return _get_product_or_raise(session, product.id)
+
+
+def add_canonical_product_images(
+    session: Session,
+    *,
+    product_id: str,
+    image_uploads: list[tuple[bytes, str, str]],
+    storage: LocalStorage | None = None,
+) -> list[ProductImageAsset]:
+    if not image_uploads:
+        raise BusinessValidationError("至少上传一张商品图片")
+    if len(image_uploads) > 6:
+        raise BusinessValidationError("单次最多上传 6 张商品图片")
+    product = _get_product_or_raise(session, product_id)
+    storage = storage or LocalStorage()
+    with compensate_storage_writes(session) as storage_writes:
+        assets = [
+            stage_product_image_asset(
+                session,
+                product=product,
+                content=image_bytes,
+                filename=filename,
+                expected_mime_type=mime_type,
+                display_name=filename,
+                origin_type=ProductImageOriginType.UPLOAD,
+                storage=storage,
+                storage_writes=storage_writes,
+            )
+            for image_bytes, filename, mime_type in image_uploads
+        ]
+        session.flush()
+        if product.cover_image_asset_id is None:
+            product.cover_image_asset_id = assets[0].id
+        product.updated_at = now_utc()
+        asset_ids = [asset.id for asset in assets]
+        session.commit()
+    session.expire_all()
+    assets_by_id = {asset.id: asset for asset in list_product_image_assets(session, product_id)}
+    return [assets_by_id[asset_id] for asset_id in asset_ids]
+
+
 def add_reference_images(
     session: Session,
     *,
@@ -296,6 +394,9 @@ def delete_reference_image(
     product_id = asset.product_id
     storage_path = asset.storage_path
     storage = storage or LocalStorage()
+    if delete_legacy_source_with_canonical_asset(session, source_asset=asset, storage=storage):
+        session.expire_all()
+        return _get_product_or_raise(session, product_id)
     product = _get_product_or_raise(session, product_id)
     product.updated_at = now_utc()
     session.delete(asset)
@@ -360,11 +461,29 @@ def delete_product(
     if active_workflow_run is not None:
         raise BusinessValidationError("商品工作流运行中，稍后删除")
     storage = storage or LocalStorage()
+    session.expire(product, ["image_assets", "source_assets", "poster_variants"])
+    media_ids = {asset.media_object_id for asset in product.image_assets}
+    legacy_paths = {
+        *(asset.storage_path for asset in product.source_assets),
+        *(poster.storage_path for poster in product.poster_variants),
+    }
     session.delete(product)
+    session.flush()
+    deleted_media = prune_unreferenced_media_objects(session, media_ids)
+    retained_legacy_paths = set(
+        session.scalars(select(MediaObject.storage_path).where(MediaObject.storage_path.in_(legacy_paths))).all()
+    )
     session.commit()
+    cleanup_paths = {storage_path for _, storage_path in deleted_media}
+    cleanup_paths.update(legacy_paths - retained_legacy_paths)
+    for storage_path in sorted(cleanup_paths):
+        best_effort_storage_delete(
+            lambda path=storage_path: storage.delete_image_with_variants(path),
+            target=f"product_id={product_id} path={storage_path}",
+        )
     best_effort_storage_delete(
-        lambda: storage.delete_product_tree(product_id),
-        target=f"product_id={product_id}",
+        lambda: storage.remove_empty_product_directories(product_id),
+        target=f"product_id={product_id} empty_directories",
     )
 
 

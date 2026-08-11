@@ -99,6 +99,9 @@ class FailingStorage:
     ) -> str:
         return self._save("save_generated_image", product_id, poster_kind, content, suffix=suffix)
 
+    def save_media_image(self, media_id: str, filename: str, content: bytes) -> str:
+        return self._save("save_media_image", media_id, filename, content)
+
     def save_image_session_reference(self, session_id: str, filename: str, content: bytes) -> str:
         return self._save("save_image_session_reference", session_id, filename, content)
 
@@ -424,11 +427,16 @@ def test_image_session_delete_failures_keep_committed_database_results(
     assert f"image_session_asset_id={reference_asset.id}" in caplog.text
 
     caplog.clear()
+    add_image_session_reference_images(
+        db_session,
+        image_session_id=image_session.id,
+        reference_image_uploads=[(_make_demo_image_bytes(), "remaining.png", "image/png")],
+    )
     with _capture_storage_logs(caplog):
         delete_image_session(db_session, image_session_id=image_session.id, storage=failing_storage)
 
     assert db_session.get(type(image_session), image_session.id) is None
-    assert f"image_session_id={image_session.id}" in caplog.text
+    assert "media_object_id=" in caplog.text
 
 
 def test_local_storage_cleans_original_when_variant_warming_fails(

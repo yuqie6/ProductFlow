@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from productflow_backend.application.image_sessions import (
     add_image_session_reference_images,
     attach_image_session_asset_to_product,
+    attach_image_session_asset_to_product_canonical,
     cancel_image_session_generation_task,
     create_image_session,
     delete_image_session,
@@ -23,6 +24,7 @@ from productflow_backend.infrastructure.storage import ImageVariantName
 from productflow_backend.presentation.deps import get_session, require_admin, require_deletion_enabled
 from productflow_backend.presentation.image_variants import serve_image_variant
 from productflow_backend.presentation.schemas.image_sessions import (
+    AttachCanonicalImageSessionAssetRequest,
     AttachImageSessionAssetRequest,
     CreateImageSessionRequest,
     GenerateImageSessionRoundRequest,
@@ -35,12 +37,35 @@ from productflow_backend.presentation.schemas.image_sessions import (
     serialize_image_session_status,
     serialize_image_session_summary,
 )
+from productflow_backend.presentation.schemas.products import (
+    ProductImageAssetResponse,
+    serialize_product_image_asset,
+)
 from productflow_backend.presentation.upload_validation import (
     read_validated_image_upload,
     validate_reference_image_count,
 )
 
 router = APIRouter(prefix="/api", tags=["image-sessions"], dependencies=[Depends(require_admin)])
+
+
+@router.post(
+    "/v2/image-sessions/{image_session_id}/assets/{asset_id}/attach-to-product",
+    response_model=ProductImageAssetResponse,
+)
+def attach_image_session_asset_to_product_canonical_endpoint(
+    image_session_id: str,
+    asset_id: str,
+    payload: AttachCanonicalImageSessionAssetRequest,
+    session: Session = Depends(get_session),
+) -> ProductImageAssetResponse:
+    asset = attach_image_session_asset_to_product_canonical(
+        session,
+        image_session_id=image_session_id,
+        asset_id=asset_id,
+        product_id=payload.product_id,
+    )
+    return serialize_product_image_asset(asset)
 
 
 @router.get("/image-sessions", response_model=ImageSessionListResponse)

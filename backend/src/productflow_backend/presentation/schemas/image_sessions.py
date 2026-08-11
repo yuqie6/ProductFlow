@@ -181,6 +181,12 @@ class AttachImageSessionAssetRequest(BaseModel):
     target: Literal["reference", "main_source"]
 
 
+class AttachCanonicalImageSessionAssetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product_id: str = Field(min_length=1)
+
+
 class ProductWritebackResponse(BaseModel):
     product_id: str
     message: str

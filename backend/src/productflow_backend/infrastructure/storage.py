@@ -3,9 +3,10 @@ from __future__ import annotations
 import logging
 import mimetypes
 import shutil
+from io import BytesIO
 from pathlib import Path
 from typing import Literal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from PIL import Image, ImageOps, UnidentifiedImageError, features
 
@@ -19,6 +20,12 @@ _VARIANT_MAX_EDGE: dict[ImageVariantName, int] = {
     "original": 0,
     "preview": 1600,
     "thumbnail": 320,
+}
+
+_IMAGE_FORMAT_EXTENSIONS = {
+    "PNG": ".png",
+    "JPEG": ".jpg",
+    "WEBP": ".webp",
 }
 
 
@@ -58,6 +65,24 @@ class LocalStorage:
         suffix: str = ".png",
     ) -> str:
         relative = Path("products") / product_id / "posters" / f"{poster_kind}-{uuid4()}{suffix}"
+        return self._save_with_variants(relative, content)
+
+    def save_media_image(self, media_id: str, filename: str, content: bytes) -> str:
+        """按真实图片格式写入独立 media 命名空间。"""
+        del filename  # 原始文件名属于逻辑资产，物理路径只由 media identity 和真实格式决定。
+        try:
+            normalized_media_id = str(UUID(media_id))
+        except ValueError as exc:
+            raise ValueError("媒体 ID 必须是 UUID") from exc
+        try:
+            with Image.open(BytesIO(content)) as image:
+                extension = _IMAGE_FORMAT_EXTENSIONS.get(image.format or "")
+                image.verify()
+        except (OSError, UnidentifiedImageError) as exc:
+            raise ValueError("媒体内容不是可解码图片") from exc
+        if extension is None:
+            raise ValueError("媒体内容仅支持 PNG、JPEG 或 WEBP")
+        relative = Path("media") / normalized_media_id[:2] / f"{normalized_media_id}{extension}"
         return self._save_with_variants(relative, content)
 
     def save_image_session_reference(
@@ -129,6 +154,12 @@ class LocalStorage:
         if product_root.exists():
             shutil.rmtree(product_root)
 
+    def remove_empty_product_directories(self, product_id: str) -> None:
+        self._remove_empty_tree(Path("products") / product_id)
+
+    def remove_empty_image_session_directories(self, session_id: str) -> None:
+        self._remove_empty_tree(Path("image_sessions") / session_id)
+
     def _save_with_variants(self, relative: Path, content: bytes) -> str:
         relative_path = relative.as_posix()
         try:
@@ -162,6 +193,21 @@ class LocalStorage:
             variant_dir.rmdir()
         except OSError:
             return
+
+    def _remove_empty_tree(self, relative_root: Path) -> None:
+        root = self.resolve(relative_root.as_posix())
+        if not root.exists():
+            return
+        directories = sorted(
+            (path for path in root.rglob("*") if path.is_dir()),
+            key=lambda path: len(path.parts),
+            reverse=True,
+        )
+        for directory in [*directories, root]:
+            try:
+                directory.rmdir()
+            except OSError:
+                continue
 
     def _variant_output_suffix(self) -> str:
         if features.check("webp"):

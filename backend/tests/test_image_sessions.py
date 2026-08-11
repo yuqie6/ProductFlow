@@ -682,8 +682,8 @@ def test_image_session_generation_cancel_after_file_save_does_not_persist_round_
         def __getattr__(self, name: str):
             return getattr(self.inner, name)
 
-        def save_image_session_generated(self, session_id: str, content: bytes, suffix: str = ".png") -> str:
-            relative_path = self.inner.save_image_session_generated(session_id, content, suffix=suffix)
+        def save_media_image(self, media_id: str, filename: str, content: bytes) -> str:
+            relative_path = self.inner.save_media_image(media_id, filename, content)
             self.saved_relative_path = relative_path
             task = db_session.get(ImageSessionGenerationTask, task_id)
             assert task is not None
@@ -2317,7 +2317,8 @@ def test_image_session_can_be_deleted_with_files(configured_env: Path, db_sessio
     assert asset_paths
     assert all(path.exists() for path in asset_paths)
     session_root = Path(configured_env) / "image_sessions" / session_id
-    assert session_root.exists()
+    assert not session_root.exists()
+    assert all("media" in path.parts for path in asset_paths)
 
     _enable_deletion(client)
     deleted = client.delete(f"/api/image-sessions/{session_id}")

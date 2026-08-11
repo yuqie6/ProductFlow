@@ -18,6 +18,23 @@ class ImageSessionAssetKind(StrEnum):
     GENERATED_IMAGE = "generated_image"
 
 
+class MediaVerificationStatus(StrEnum):
+    """媒体对象的实际文件核验状态。"""
+
+    VERIFIED = "verified"
+    LEGACY_PENDING = "legacy_pending"
+    MISSING = "missing"
+
+
+class ProductImageOriginType(StrEnum):
+    """商品图片进入商品命名空间的来源。"""
+
+    UPLOAD = "upload"
+    WORKFLOW_GENERATION = "workflow_generation"
+    IMAGE_SESSION_ATTACH = "image_session_attach"
+    LEGACY_IMPORT = "legacy_import"
+
+
 class JobStatus(StrEnum):
     """连续生图任务状态：排队 -> 运行中 -> 成功/失败/取消。"""
 
