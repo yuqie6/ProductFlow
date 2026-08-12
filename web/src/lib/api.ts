@@ -4,6 +4,7 @@ import type {
   ApplyWorkflowTemplateGroupInput,
   CanvasTemplateSummary,
   CanvasTemplateListResponse,
+  CanonicalProductCreateResponse,
   CanonicalProductDetail,
   ConfigResponse,
   ConfigUpdateRequest,
@@ -12,6 +13,13 @@ import type {
   DuplicateWorkflowNodeGroupInput,
   GalleryEntry,
   GalleryEntryListResponse,
+  GalleryAsset,
+  GalleryAssetPage,
+  GalleryAssetSort,
+  GalleryBootstrap,
+  GalleryDeleteFolderResult,
+  GalleryDirectoryKind,
+  GalleryFolderMutation,
   GenerationQueueOverview,
   CreateUserTemplateGroupInput,
   CreateProductInput,
@@ -48,6 +56,7 @@ import type {
   UpdateUserTemplateGroupInput,
   WorkflowDraft,
   WorkflowMaterializationResult,
+  WorkflowReferenceBindingResult,
   WorkflowNodeRunV2,
 } from "./types";
 
@@ -234,7 +243,7 @@ export const api = {
       body: formData,
     });
   },
-  async createCanonicalProduct(input: CreateCanonicalProductInput): Promise<CanonicalProductDetail> {
+  async createCanonicalProduct(input: CreateCanonicalProductInput): Promise<CanonicalProductCreateResponse> {
     const formData = new FormData();
     formData.set("name", input.name);
     input.images.forEach((image) => {
@@ -259,6 +268,102 @@ export const api = {
   },
   listProductImageAssets(productId: string): Promise<ProductImageAssetListResponse> {
     return request(`/api/v2/products/${productId}/image-assets`);
+  },
+  getProductImageLibrary(productId: string): Promise<GalleryBootstrap> {
+    return request(`/api/v2/products/${productId}/image-library`);
+  },
+  listGalleryAssets(
+    productId: string,
+    input: {
+      directory_kind: GalleryDirectoryKind;
+      directory_key?: string | null;
+      q?: string;
+      sort?: GalleryAssetSort;
+      after?: string | null;
+      limit?: number;
+    },
+  ): Promise<GalleryAssetPage> {
+    const params = new URLSearchParams({
+      directory_kind: input.directory_kind,
+      sort: input.sort ?? "created_desc",
+      limit: String(input.limit ?? 50),
+    });
+    if (input.directory_key) {
+      params.set("directory_key", input.directory_key);
+    }
+    if (input.q?.trim()) {
+      params.set("q", input.q.trim());
+    }
+    if (input.after) {
+      params.set("after", input.after);
+    }
+    return request(`/api/v2/products/${productId}/image-assets?${params.toString()}`);
+  },
+  getGalleryAsset(productId: string, assetId: string): Promise<GalleryAsset> {
+    return request(`/api/v2/products/${productId}/image-assets/${assetId}`);
+  },
+  createGalleryFolder(productId: string, name: string): Promise<GalleryFolderMutation> {
+    return request(`/api/v2/products/${productId}/image-folders`, {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+  },
+  renameGalleryFolder(
+    productId: string,
+    folderId: string,
+    input: { expected_name: string; name: string },
+  ): Promise<GalleryFolderMutation> {
+    return request(`/api/v2/products/${productId}/image-folders/${folderId}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    });
+  },
+  deleteGalleryFolder(productId: string, folderId: string, expectedName: string): Promise<GalleryDeleteFolderResult> {
+    const params = new URLSearchParams({ expected_name: expectedName });
+    return request(`/api/v2/products/${productId}/image-folders/${folderId}?${params.toString()}`, {
+      method: "DELETE",
+    });
+  },
+  renameGalleryAsset(
+    productId: string,
+    assetId: string,
+    input: { expected_display_name: string; display_name: string },
+  ): Promise<GalleryAsset> {
+    return request(`/api/v2/products/${productId}/image-assets/${assetId}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    });
+  },
+  moveGalleryAssets(
+    productId: string,
+    input: {
+      items: Array<{ asset_id: string; expected_folder_id: string | null }>;
+      folder_id: string | null;
+    },
+  ): Promise<GalleryAssetPage> {
+    return request(`/api/v2/products/${productId}/image-assets/move`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  async downloadGalleryArchive(productId: string, assetIds: string[]): Promise<Blob> {
+    const response = await fetch(toApiUrl(`/api/v2/products/${productId}/image-assets/download-archive`), {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ asset_ids: assetIds }),
+    });
+    if (!response.ok) {
+      let detail = response.statusText || "请求失败";
+      try {
+        const payload = (await response.json()) as { detail?: string };
+        detail = payload.detail ?? detail;
+      } catch {
+        // Keep the status text when the server does not return JSON.
+      }
+      throw new ApiError(response.status, detail);
+    }
+    return response.blob();
   },
   async addCanonicalProductImages(productId: string, images: File[]): Promise<ProductImageAssetListResponse> {
     const formData = new FormData();
@@ -397,6 +502,21 @@ export const api = {
   },
   getActiveProductWorkflowV2(productId: string): Promise<ActiveProductWorkflowV2> {
     return request(`/api/v2/products/${productId}/workflow`);
+  },
+  bindWorkflowReferenceAsset(
+    productId: string,
+    workflowId: string,
+    nodeId: string,
+    input: {
+      asset_id: string;
+      expected_workflow_revision: number;
+      expected_bound_asset_id: string | null;
+    },
+  ): Promise<WorkflowReferenceBindingResult> {
+    return request(`/api/v2/products/${productId}/workflows/${workflowId}/reference-nodes/${nodeId}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    });
   },
   createWorkflowDraft(productId: string, input: CreateWorkflowDraftInput): Promise<WorkflowDraft> {
     return request(`/api/v2/products/${productId}/workflow-drafts`, {

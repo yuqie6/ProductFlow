@@ -11,6 +11,16 @@ export type ProductImageOriginType =
   | "workflow_generation"
   | "image_session_attach"
   | "legacy_import";
+export type GalleryDirectoryKind =
+  | "all"
+  | "recent_generated"
+  | "uploads"
+  | "generated"
+  | "image_type"
+  | "source"
+  | "unorganized"
+  | "user_folder";
+export type GalleryAssetSort = "created_desc" | "created_asc" | "name_asc" | "name_desc";
 export type WorkflowNodeType =
   | "product_context"
   | "reference_image"
@@ -193,6 +203,8 @@ export interface ProductImageAsset {
   origin_type: ProductImageOriginType;
   display_name: string;
   original_filename: string;
+  image_type_key: string | null;
+  user_folder_id: string | null;
   parent_asset_id: string | null;
   source_image_session_asset_id: string | null;
   mime_type: string;
@@ -211,6 +223,75 @@ export interface ProductImageAssetListResponse {
   items: ProductImageAsset[];
 }
 
+export interface GalleryGenerationSummary {
+  workflow_id: string;
+  node_id: string;
+  node_run_id: string;
+  prompt_artifact_version_id: string;
+  visual_system_version_id: string;
+}
+
+export interface GalleryAsset extends ProductImageAsset {
+  user_folder_name: string | null;
+  image_type_title: string | null;
+  generation: GalleryGenerationSummary | null;
+}
+
+export interface GalleryAssetPage {
+  items: GalleryAsset[];
+  next_cursor: string | null;
+}
+
+export interface GallerySystemDirectory {
+  kind: GalleryDirectoryKind;
+  count: number;
+}
+
+export interface GalleryImageTypeDirectory {
+  directory_key: string;
+  image_type_key: string | null;
+  title: string;
+  count: number;
+}
+
+export interface GalleryOriginDirectory {
+  origin_type: ProductImageOriginType;
+  count: number;
+}
+
+export interface GalleryFolder {
+  id: string;
+  name: string;
+  sort_order: number;
+  count: number;
+}
+
+export interface GalleryBootstrap {
+  product_id: string;
+  cover_image_asset_id: string | null;
+  system_directories: GallerySystemDirectory[];
+  image_types: GalleryImageTypeDirectory[];
+  origins: GalleryOriginDirectory[];
+  user_folders: GalleryFolder[];
+  unorganized_count: number;
+}
+
+export interface GalleryFolderMutation {
+  id: string;
+  name: string;
+  sort_order: number;
+}
+
+export interface GalleryDeleteFolderResult {
+  folder_id: string;
+  moved_to_unorganized_count: number;
+}
+
+export interface GalleryDirectorySelection {
+  kind: GalleryDirectoryKind;
+  key: string | null;
+}
+
 export interface CanonicalProductDetail {
   id: string;
   name: string;
@@ -218,9 +299,13 @@ export interface CanonicalProductDetail {
   price: string | null;
   source_note: string | null;
   cover_image_asset_id: string | null;
-  image_assets: ProductImageAsset[];
   created_at: string;
   updated_at: string;
+}
+
+export interface CanonicalProductCreateResponse {
+  product: CanonicalProductDetail;
+  created_assets: ProductImageAsset[];
 }
 
 export interface ProductHistory {
@@ -776,6 +861,13 @@ export interface ProductWorkflowV2 {
 export interface ActiveProductWorkflowV2 {
   latest_revision: number;
   workflow: ProductWorkflowV2 | null;
+}
+
+export interface WorkflowReferenceBindingResult {
+  changed: boolean;
+  previous_asset_id: string | null;
+  affected_node_ids: string[];
+  reference_node: WorkflowNodeV2;
 }
 
 export interface WorkflowMaterializationResult {
