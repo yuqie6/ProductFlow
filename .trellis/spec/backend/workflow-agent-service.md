@@ -118,6 +118,61 @@ execute uses the harness invocation idempotency key; reconcile distinguishes `ap
 The service has no tools for deleting assets, changing covers, creating missing brand material, writing individual DAG
 nodes, or materializing a Draft. Gallery folder tools are added only after the gallery folder domain exists.
 
+### Scenario: Strict tools with no arguments
+
+#### 1. Scope / Trigger
+
+- Applies when a ProductFlow or harness tool is strict and accepts no arguments, such as
+  `get_product_workflow_context_v1`.
+
+#### 2. Signatures
+
+- The JSON Schema `parameters` object is
+  `{"type":"object","properties":{},"required":[],"additionalProperties":false}`.
+
+#### 3. Contracts
+
+- `properties` and `required` remain explicit empty containers; omitting either is not an equivalent wire contract for
+  all OpenAI-compatible Responses providers.
+- The handler continues to receive and validate an empty JSON object. This schema requirement does not add optional or
+  placeholder model arguments.
+
+#### 4. Validation & Error Matrix
+
+- Complete strict empty-object schema -> provider accepts the tool declaration.
+- Missing explicit `properties` or `required` -> a compatible gateway may reject the complete Responses request before
+  model execution; some gateways surface that upstream validation failure as HTTP 502.
+- Non-empty tool arguments -> ProductFlow strict decoding rejects the call.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: a no-argument read tool declares both empty containers and sets `additionalProperties=false`.
+- Base: a tool with real arguments declares its normal properties and required field list.
+- Bad: a strict no-argument tool declares only `type=object` and `additionalProperties=false`.
+
+#### 6. Tests Required
+
+- Unit-test the registered tool schema, including strict mode and all four empty-object fields.
+- Run the opt-in live two-Turn provider gate when changing tool schemas or provider wiring; it must use the full tool set,
+  not a reduced probe set.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+
+```go
+map[string]any{"type": "object", "additionalProperties": false}
+```
+
+Correct:
+
+```go
+map[string]any{
+    "type": "object", "properties": map[string]any{},
+    "required": []string{}, "additionalProperties": false,
+}
+```
+
 ## Failure And Logging Rules
 
 - Syntactic/business rejection maps to stable `400`/`404`/`409` responses. Network failures, malformed upstream state,

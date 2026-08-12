@@ -226,7 +226,12 @@ func (tool *renameAssetTool) Reconcile(ctx context.Context, invocation durable.I
 }
 
 func emptyObjectSchema() map[string]any {
-	return map[string]any{"type": "object", "additionalProperties": false}
+	return map[string]any{
+		"type":                 "object",
+		"properties":           map[string]any{},
+		"required":             []string{},
+		"additionalProperties": false,
+	}
 }
 
 func decodeStrictObject(raw json.RawMessage, target any) error {
