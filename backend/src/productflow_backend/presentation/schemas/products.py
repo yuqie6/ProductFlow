@@ -7,6 +7,10 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from productflow_backend.application.copy_payloads import copy_set_structured_payload
+from productflow_backend.application.gallery_assets import (
+    GalleryAssetRecord,
+    GalleryBootstrap,
+)
 from productflow_backend.application.use_cases import derive_product_state
 from productflow_backend.domain.enums import (
     CopyStatus,
@@ -124,6 +128,8 @@ class ProductImageAssetResponse(BaseModel):
     origin_type: ProductImageOriginType
     display_name: str
     original_filename: str
+    image_type_key: str | None = None
+    user_folder_id: str | None = None
     parent_asset_id: str | None = None
     source_image_session_asset_id: str | None = None
     mime_type: str
@@ -142,6 +148,110 @@ class ProductImageAssetListResponse(BaseModel):
     items: list[ProductImageAssetResponse]
 
 
+class GalleryGenerationSummaryResponse(BaseModel):
+    workflow_id: str
+    node_id: str
+    node_run_id: str
+    prompt_artifact_version_id: str
+    visual_system_version_id: str
+
+
+class GalleryAssetResponse(ProductImageAssetResponse):
+    user_folder_name: str | None = None
+    image_type_title: str | None = None
+    generation: GalleryGenerationSummaryResponse | None = None
+
+
+class GalleryAssetPageResponse(BaseModel):
+    items: list[GalleryAssetResponse]
+    next_cursor: str | None = None
+
+
+class GallerySystemDirectoryResponse(BaseModel):
+    kind: str
+    count: int
+
+
+class GalleryImageTypeResponse(BaseModel):
+    directory_key: str
+    image_type_key: str | None = None
+    title: str
+    count: int
+
+
+class GalleryOriginResponse(BaseModel):
+    origin_type: ProductImageOriginType
+    count: int
+
+
+class GalleryFolderResponse(BaseModel):
+    id: str
+    name: str
+    sort_order: int
+    count: int
+
+
+class CreateGalleryFolderRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+
+
+class RenameGalleryFolderRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_name: str = Field(min_length=1, max_length=120)
+    name: str = Field(min_length=1, max_length=120)
+
+
+class RenameGalleryAssetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_display_name: str = Field(min_length=1, max_length=255)
+    display_name: str = Field(min_length=1, max_length=255)
+
+
+class GalleryAssetMoveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    asset_id: str = Field(min_length=1, max_length=36)
+    expected_folder_id: str | None = Field(default=None, max_length=36)
+
+
+class MoveGalleryAssetsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[GalleryAssetMoveRequest] = Field(min_length=1, max_length=100)
+    folder_id: str | None = Field(default=None, max_length=36)
+
+
+class DownloadGalleryArchiveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    asset_ids: list[str] = Field(min_length=1, max_length=100)
+
+
+class GalleryFolderMutationResponse(BaseModel):
+    id: str
+    name: str
+    sort_order: int
+
+
+class DeleteGalleryFolderResponse(BaseModel):
+    folder_id: str
+    moved_to_unorganized_count: int
+
+
+class GalleryBootstrapResponse(BaseModel):
+    product_id: str
+    cover_image_asset_id: str | None = None
+    system_directories: list[GallerySystemDirectoryResponse]
+    image_types: list[GalleryImageTypeResponse]
+    origins: list[GalleryOriginResponse]
+    user_folders: list[GalleryFolderResponse]
+    unorganized_count: int
+
+
 class CanonicalProductDetailResponse(BaseModel):
     id: str
     name: str
@@ -149,9 +259,13 @@ class CanonicalProductDetailResponse(BaseModel):
     price: Decimal | None = None
     source_note: str | None = None
     cover_image_asset_id: str | None = None
-    image_assets: list[ProductImageAssetResponse]
     created_at: datetime
     updated_at: datetime
+
+
+class CanonicalProductCreateResponse(BaseModel):
+    product: CanonicalProductDetailResponse
+    created_assets: list[ProductImageAssetResponse]
 
 
 class SetProductCoverRequest(BaseModel):
@@ -236,6 +350,8 @@ def serialize_product_image_asset(asset: ProductImageAsset) -> ProductImageAsset
         origin_type=asset.origin_type,
         display_name=asset.display_name,
         original_filename=asset.original_filename,
+        image_type_key=asset.image_type_key,
+        user_folder_id=asset.user_folder_id,
         parent_asset_id=asset.parent_asset_id,
         source_image_session_asset_id=asset.source_image_session_asset_id,
         mime_type=media.mime_type,
@@ -249,8 +365,62 @@ def serialize_product_image_asset(asset: ProductImageAsset) -> ProductImageAsset
     )
 
 
+def serialize_gallery_asset(record: GalleryAssetRecord) -> GalleryAssetResponse:
+    asset_payload = serialize_product_image_asset(record.asset).model_dump()
+    generation = (
+        GalleryGenerationSummaryResponse(
+            workflow_id=record.generation.workflow_id,
+            node_id=record.generation.node_id,
+            node_run_id=record.generation.node_run_id,
+            prompt_artifact_version_id=record.generation.prompt_artifact_version_id,
+            visual_system_version_id=record.generation.visual_system_version_id,
+        )
+        if record.generation is not None
+        else None
+    )
+    return GalleryAssetResponse(
+        **asset_payload,
+        user_folder_name=record.asset.user_folder.name if record.asset.user_folder is not None else None,
+        image_type_title=record.image_type_title,
+        generation=generation,
+    )
+
+
+def serialize_gallery_bootstrap(bootstrap: GalleryBootstrap) -> GalleryBootstrapResponse:
+    return GalleryBootstrapResponse(
+        product_id=bootstrap.product_id,
+        cover_image_asset_id=bootstrap.cover_image_asset_id,
+        system_directories=[
+            GallerySystemDirectoryResponse(kind=item.kind.value, count=item.count)
+            for item in bootstrap.system_directories
+        ],
+        image_types=[
+            GalleryImageTypeResponse(
+                directory_key=item.directory_key,
+                image_type_key=item.image_type_key,
+                title=item.title,
+                count=item.count,
+            )
+            for item in bootstrap.image_types
+        ],
+        origins=[
+            GalleryOriginResponse(origin_type=item.origin_type, count=item.count)
+            for item in bootstrap.origins
+        ],
+        user_folders=[
+            GalleryFolderResponse(
+                id=item.id,
+                name=item.name,
+                sort_order=item.sort_order,
+                count=item.count,
+            )
+            for item in bootstrap.user_folders
+        ],
+        unorganized_count=bootstrap.unorganized_count,
+    )
+
+
 def serialize_canonical_product_detail(product: Product) -> CanonicalProductDetailResponse:
-    image_assets = sorted(product.image_assets, key=lambda asset: (asset.created_at, asset.id))
     return CanonicalProductDetailResponse(
         id=product.id,
         name=product.name,
@@ -258,7 +428,6 @@ def serialize_canonical_product_detail(product: Product) -> CanonicalProductDeta
         price=product.price,
         source_note=product.source_note,
         cover_image_asset_id=product.cover_image_asset_id,
-        image_assets=[serialize_product_image_asset(asset) for asset in image_assets],
         created_at=product.created_at,
         updated_at=product.updated_at,
     )

@@ -24,6 +24,7 @@ from productflow_backend.domain.enums import (
     WorkflowRunStatus,
 )
 from productflow_backend.infrastructure.db.models import (
+    AgentToolMutation,
     CopySet,
     ImageGalleryEntry,
     ImagePromptArtifact,
@@ -34,6 +35,7 @@ from productflow_backend.infrastructure.db.models import (
     MediaObject,
     PosterVariant,
     Product,
+    ProductAssetFolder,
     ProductFactSetVersion,
     ProductImageAsset,
     ProductWorkflow,
@@ -63,6 +65,210 @@ MODEL_LEGACY_COPY_COLUMNS = [
     for suffix in ("title", "selling" + "_points", "poster" + "_headline", "c" + "ta")
 ]
 LEGACY_COPY_COLUMNS = ["title", "selling" + "_points", "poster" + "_headline", "c" + "ta"]
+
+
+def _configure_sqlite_alembic(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    filename: str,
+) -> tuple[Path, Config]:
+    database_path = tmp_path / filename
+    monkeypatch.setenv("ADMIN_ACCESS_KEY", "super-secret-admin-key")
+    monkeypatch.setenv("SESSION_SECRET", "super-secret-session-key-123")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path}")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/9")
+    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path / "storage"))
+    get_settings.cache_clear()
+
+    backend_dir = Path(__file__).resolve().parents[1]
+    config = Config(str(backend_dir / "alembic.ini"))
+    config.set_main_option("script_location", str(backend_dir / "alembic"))
+    return database_path, config
+
+
+def _insert_gallery_migration_fixture(
+    connection: sa.Connection,
+    *,
+    duplicate_generation_result: bool = False,
+) -> None:
+    now = "2026-08-12 14:00:00"
+    connection.execute(
+        sa.text(
+            "INSERT INTO products (id, name, created_at, updated_at) "
+            "VALUES ('product-gallery', '图库迁移商品', :now, :now)"
+        ),
+        {"now": now},
+    )
+    connection.execute(
+        sa.text(
+            "INSERT INTO media_objects "
+            "(id, storage_path, mime_type, byte_size, width, height, sha256, verification_status, "
+            "created_at, verified_at) VALUES "
+            "('media-generated', 'products/product-gallery/generated.png', 'image/png', NULL, NULL, NULL, "
+            "NULL, 'legacy_pending', :now, NULL), "
+            "('media-upload', 'products/product-gallery/upload.png', 'image/png', NULL, NULL, NULL, "
+            "NULL, 'legacy_pending', :now, NULL)"
+        ),
+        {"now": now},
+    )
+    connection.execute(
+        sa.text(
+            "INSERT INTO product_image_assets "
+            "(id, product_id, media_object_id, origin_type, display_name, original_filename, "
+            "parent_asset_id, source_image_session_asset_id, created_at, updated_at) VALUES "
+            "('asset-generated', 'product-gallery', 'media-generated', 'workflow_generation', "
+            "'生成主图', 'generated.png', NULL, NULL, :now, :now), "
+            "('asset-upload', 'product-gallery', 'media-upload', 'upload', "
+            "'上传参考', 'upload.png', NULL, NULL, :now, :now)"
+        ),
+        {"now": now},
+    )
+    connection.execute(
+        sa.text(
+            "INSERT INTO product_workflows "
+            "(id, product_id, title, active, schema_version, revision, created_at, updated_at) "
+            "VALUES ('workflow-gallery', 'product-gallery', '图库迁移工作流', :active, 2, 1, :now, :now)"
+        ),
+        {"active": True, "now": now},
+    )
+    connection.execute(
+        sa.text(
+            "INSERT INTO workflow_nodes "
+            "(id, workflow_id, schema_version, node_key, node_type, title, position_x, position_y, "
+            "config_json, status, output_json, failure_reason, last_run_at, folder_id, "
+            "bound_image_asset_id, current_prompt_artifact_version_id, created_at, updated_at) "
+            "VALUES ('node-image', 'workflow-gallery', 2, 'image.hero.1', 'image_generation', '商品主图', "
+            "0, 0, '{}', 'succeeded', '{}', NULL, :now, NULL, 'asset-generated', NULL, :now, :now)"
+        ),
+        {"now": now},
+    )
+    connection.execute(
+        sa.text(
+            "INSERT INTO workflow_runs "
+            "(id, workflow_id, status, started_at, finished_at, failure_reason, is_retryable, progress_metadata) "
+            "VALUES ('run-image-1', 'workflow-gallery', 'succeeded', :now, :now, NULL, :is_retryable, NULL)"
+        ),
+        {"is_retryable": False, "now": now},
+    )
+    connection.execute(
+        sa.text(
+            "INSERT INTO workflow_node_runs "
+            "(id, workflow_run_id, node_id, status, output_json, failure_reason, copy_set_id, "
+            "poster_variant_id, started_at, finished_at) "
+            "VALUES ('node-run-image-1', 'run-image-1', 'node-image', 'succeeded', '{}', NULL, NULL, NULL, "
+            ":now, :now)"
+        ),
+        {"now": now},
+    )
+    connection.execute(
+        sa.text(
+            "INSERT INTO visual_systems (id, name, archived_at, created_at, updated_at) "
+            "VALUES ('visual-system-gallery', '迁移视觉体系', NULL, :now, :now)"
+        ),
+        {"now": now},
+    )
+    connection.execute(
+        sa.text(
+            "INSERT INTO visual_system_versions "
+            "(id, visual_system_id, version, schema_version, payload_json, payload_hash, source_markdown, "
+            "source_draft_revision_id, created_at) VALUES "
+            "('visual-version-gallery', 'visual-system-gallery', 1, 1, '{}', :hash, NULL, NULL, :now)"
+        ),
+        {"hash": "v" * 64, "now": now},
+    )
+    connection.execute(
+        sa.text(
+            "INSERT INTO image_prompt_artifacts "
+            "(id, workflow_id, image_type_key, title, created_at, updated_at) VALUES "
+            "('prompt-artifact-gallery', 'workflow-gallery', 'hero', '商品主图', :now, :now)"
+        ),
+        {"now": now},
+    )
+    connection.execute(
+        sa.text(
+            "INSERT INTO image_prompt_artifact_versions "
+            "(id, artifact_id, version, schema_version, payload_json, payload_hash, source_draft_revision_id, "
+            "source_node_run_id, provider_name, provider_model, provider_response_id, created_at) VALUES "
+            "('prompt-version-gallery', 'prompt-artifact-gallery', 1, 1, '{}', :hash, NULL, NULL, "
+            "NULL, NULL, NULL, :now)"
+        ),
+        {"hash": "p" * 64, "now": now},
+    )
+    generation_rows = [
+        {
+            "id": "generation-gallery-1",
+            "node_run_id": "node-run-image-1",
+            "created_at": now,
+        }
+    ]
+    if duplicate_generation_result:
+        connection.execute(
+            sa.text(
+                "INSERT INTO workflow_runs "
+                "(id, workflow_id, status, started_at, finished_at, failure_reason, is_retryable, progress_metadata) "
+                "VALUES ('run-image-2', 'workflow-gallery', 'succeeded', :now, :now, NULL, :is_retryable, NULL)"
+            ),
+            {"is_retryable": False, "now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO workflow_node_runs "
+                "(id, workflow_run_id, node_id, status, output_json, failure_reason, copy_set_id, "
+                "poster_variant_id, started_at, finished_at) "
+                "VALUES ('node-run-image-2', 'run-image-2', 'node-image', 'succeeded', '{}', NULL, NULL, NULL, "
+                ":now, :now)"
+            ),
+            {"now": now},
+        )
+        generation_rows.append(
+            {
+                "id": "generation-gallery-2",
+                "node_run_id": "node-run-image-2",
+                "created_at": now,
+            }
+        )
+    connection.execute(
+        sa.text(
+            "INSERT INTO workflow_image_generation_records "
+            "(id, workflow_node_run_id, product_id, workflow_id, node_id, result_asset_id, "
+            "visual_system_version_id, prompt_artifact_version_id, requested_spec_json, "
+            "effective_parameters_json, actual_media_json, compiled_prompt, compiled_prompt_hash, "
+            "provider_name, provider_model, provider_response_id, provider_status, provider_request_json, "
+            "provider_output_json, created_at) VALUES "
+            "(:id, :node_run_id, 'product-gallery', 'workflow-gallery', 'node-image', 'asset-generated', "
+            "'visual-version-gallery', 'prompt-version-gallery', '{}', '{}', '{}', 'prompt', :hash, "
+            "'test', 'test-model', NULL, 'succeeded', NULL, NULL, :created_at)"
+        ),
+        [dict(row, hash="g" * 64) for row in generation_rows],
+    )
+    connection.execute(
+        sa.text(
+            "INSERT INTO workflow_drafts "
+            "(id, product_id, status, current_revision_id, final_workflow_id, created_at, updated_at) "
+            "VALUES ('draft-gallery', 'product-gallery', 'collecting', NULL, NULL, :now, :now)"
+        ),
+        {"now": now},
+    )
+    connection.execute(
+        sa.text(
+            "INSERT INTO agent_conversations "
+            "(id, product_id, workflow_draft_id, harness_run_id, status, created_at, updated_at) "
+            "VALUES ('conversation-gallery', 'product-gallery', 'draft-gallery', 'run-gallery', "
+            "'collecting', :now, :now)"
+        ),
+        {"now": now},
+    )
+    connection.execute(
+        sa.text(
+            "INSERT INTO agent_tool_mutations "
+            "(id, conversation_id, tool_name, idempotency_key, request_hash, asset_id, "
+            "expected_display_name, target_display_name, status, result_json, created_at, updated_at) VALUES "
+            "('mutation-gallery', 'conversation-gallery', 'rename_product_image_asset_v1', 'rename-key', "
+            ":hash, 'asset-upload', '上传参考', '用户参考图', 'applied', '{}', :now, :now)"
+        ),
+        {"hash": "m" * 64, "now": now},
+    )
 
 
 def test_sqlalchemy_enum_columns_use_database_values() -> None:
@@ -297,7 +503,10 @@ def test_prompt_visual_image_models_match_database_contract() -> None:
         constraint.name
         for constraint in generation_table.constraints
         if isinstance(constraint, sa.UniqueConstraint)
-    } == {"uq_workflow_image_generation_records_node_run_id"}
+    } == {
+        "uq_workflow_image_generation_records_node_run_id",
+        "uq_workflow_image_generation_records_result_asset_id",
+    }
     assert {
         constraint.name
         for constraint in generation_table.constraints
@@ -359,10 +568,16 @@ def test_canonical_image_asset_models_match_database_contract() -> None:
     assert not asset_table.c.origin_type.nullable
     assert not asset_table.c.display_name.nullable
     assert not asset_table.c.original_filename.nullable
+    assert asset_table.c.image_type_key.nullable
+    assert asset_table.c.image_type_key.type.length == 80
+    assert asset_table.c.user_folder_id.nullable
     assert asset_table.c.parent_asset_id.nullable
     assert asset_table.c.source_image_session_asset_id.nullable
     assert {index.name for index in asset_table.indexes} == {
         "ix_product_image_assets_product_created",
+        "ix_product_image_assets_product_folder_created",
+        "ix_product_image_assets_product_type_created",
+        "ix_product_image_assets_product_origin_created",
         "ix_product_image_assets_media_object_id",
         "ix_product_image_assets_parent_asset_id",
         "ix_product_image_assets_source_image_session_asset_id",
@@ -373,6 +588,8 @@ def test_canonical_image_asset_models_match_database_contract() -> None:
     assert asset_foreign_keys["product_id"].ondelete == "CASCADE"
     assert asset_foreign_keys["media_object_id"].constraint.name == "fk_product_image_assets_media_object_id"
     assert asset_foreign_keys["media_object_id"].ondelete == "RESTRICT"
+    assert asset_foreign_keys["user_folder_id"].constraint.name == "fk_product_image_assets_user_folder_id"
+    assert asset_foreign_keys["user_folder_id"].ondelete == "SET NULL"
     assert asset_foreign_keys["parent_asset_id"].constraint.name == "fk_product_image_assets_parent_asset_id"
     assert asset_foreign_keys["parent_asset_id"].ondelete == "RESTRICT"
     assert (
@@ -387,6 +604,26 @@ def test_canonical_image_asset_models_match_database_contract() -> None:
     assert cover_fk.constraint.name == "fk_products_cover_image_asset_id"
     assert cover_fk.ondelete == "SET NULL"
 
+    folder_table = ProductAssetFolder.__table__
+    assert "parent_id" not in folder_table.c
+    assert not folder_table.c.product_id.nullable
+    assert not folder_table.c.name.nullable
+    assert not folder_table.c.sort_order.nullable
+    assert {
+        constraint.name
+        for constraint in folder_table.constraints
+        if isinstance(constraint, sa.UniqueConstraint)
+    } == {"uq_product_asset_folders_product_name"}
+    assert {
+        constraint.name
+        for constraint in folder_table.constraints
+        if isinstance(constraint, sa.CheckConstraint)
+    } == {"ck_product_asset_folders_non_negative_sort_order"}
+    assert {index.name for index in folder_table.indexes} == {"ix_product_asset_folders_product_sort"}
+    folder_product_fk = next(fk for fk in folder_table.foreign_keys if fk.parent.name == "product_id")
+    assert folder_product_fk.constraint.name == "fk_product_asset_folders_product_id"
+    assert folder_product_fk.ondelete == "CASCADE"
+
     for table, column_name, constraint_name in (
         (SourceAsset.__table__, "canonical_asset_id", "fk_source_assets_canonical_asset_id"),
         (PosterVariant.__table__, "canonical_asset_id", "fk_poster_variants_canonical_asset_id"),
@@ -396,6 +633,15 @@ def test_canonical_image_asset_models_match_database_contract() -> None:
         foreign_key = next(fk for fk in table.foreign_keys if fk.parent.name == column_name)
         assert foreign_key.constraint.name == constraint_name
         assert foreign_key.ondelete == "RESTRICT"
+
+    mutation_table = AgentToolMutation.__table__
+    assert mutation_table.c.asset_id.nullable
+    assert mutation_table.c.expected_display_name.nullable
+    assert mutation_table.c.target_display_name.nullable
+    assert not mutation_table.c.prepared_json.nullable
+    mutation_asset_fk = next(fk for fk in mutation_table.foreign_keys if fk.parent.name == "asset_id")
+    assert mutation_asset_fk.constraint.name == "fk_agent_tool_mutations_asset_id"
+    assert mutation_asset_fk.ondelete == "SET NULL"
 
 
 def test_workflow_run_model_has_retryability_and_progress_metadata() -> None:
@@ -483,6 +729,247 @@ def test_alembic_upgrade_head_supports_sqlite(tmp_path: Path, monkeypatch) -> No
     command.upgrade(config, "head")
 
     assert database_path.exists()
+    get_settings.cache_clear()
+
+
+def test_product_gallery_explorer_migration_round_trips_sqlite(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path, config = _configure_sqlite_alembic(
+        tmp_path,
+        monkeypatch,
+        filename="product-gallery-explorer-roundtrip.db",
+    )
+    command.upgrade(config, "20260812_0034")
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    with engine.begin() as connection:
+        _insert_gallery_migration_fixture(connection)
+    engine.dispose()
+
+    command.upgrade(config, "20260812_0035")
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    inspector = sa.inspect(engine)
+    assert "product_asset_folders" in inspector.get_table_names()
+    asset_columns = {column["name"]: column for column in inspector.get_columns("product_image_assets")}
+    assert asset_columns["image_type_key"]["nullable"] is True
+    assert asset_columns["user_folder_id"]["nullable"] is True
+    asset_indexes = {index["name"]: index for index in inspector.get_indexes("product_image_assets")}
+    assert asset_indexes["ix_product_image_assets_product_folder_created"]["column_names"] == [
+        "product_id",
+        "user_folder_id",
+        "created_at",
+        "id",
+    ]
+    assert asset_indexes["ix_product_image_assets_product_type_created"]["column_names"] == [
+        "product_id",
+        "image_type_key",
+        "created_at",
+        "id",
+    ]
+    assert asset_indexes["ix_product_image_assets_product_origin_created"]["column_names"] == [
+        "product_id",
+        "origin_type",
+        "created_at",
+        "id",
+    ]
+    folder_foreign_keys = {
+        tuple(foreign_key["constrained_columns"]): foreign_key
+        for foreign_key in inspector.get_foreign_keys("product_asset_folders")
+    }
+    assert folder_foreign_keys[("product_id",)]["options"]["ondelete"] == "CASCADE"
+    asset_foreign_keys = {
+        tuple(foreign_key["constrained_columns"]): foreign_key
+        for foreign_key in inspector.get_foreign_keys("product_image_assets")
+    }
+    assert asset_foreign_keys[("user_folder_id",)]["options"]["ondelete"] == "SET NULL"
+    generation_uniques = {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("workflow_image_generation_records")
+    }
+    assert "uq_workflow_image_generation_records_result_asset_id" in generation_uniques
+
+    with engine.connect() as connection:
+        image_types = dict(
+            connection.execute(
+                sa.text("SELECT id, image_type_key FROM product_image_assets ORDER BY id")
+            ).all()
+        )
+        mutation = connection.execute(
+            sa.text(
+                "SELECT asset_id, expected_display_name, target_display_name, prepared_json "
+                "FROM agent_tool_mutations WHERE id = 'mutation-gallery'"
+            )
+        ).mappings().one()
+    assert image_types == {"asset-generated": "hero", "asset-upload": None}
+    assert mutation["asset_id"] == "asset-upload"
+    assert mutation["expected_display_name"] == "上传参考"
+    assert mutation["target_display_name"] == "用户参考图"
+    prepared_json = mutation["prepared_json"]
+    if isinstance(prepared_json, str):
+        prepared_json = json.loads(prepared_json)
+    assert prepared_json == {
+        "schema_version": 1,
+        "operation": "rename_asset",
+        "scope": {
+            "conversation_id": "conversation-gallery",
+            "product_id": "product-gallery",
+        },
+        "before": {"asset_id": "asset-upload", "display_name": "上传参考"},
+        "target": {"asset_id": "asset-upload", "display_name": "用户参考图"},
+    }
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+        connection.execute(
+            sa.text(
+                "INSERT INTO product_asset_folders "
+                "(id, product_id, name, sort_order, created_at, updated_at) "
+                "VALUES ('folder-gallery', 'product-gallery', '已整理', 0, :now, :now)"
+            ),
+            {"now": "2026-08-12 15:00:00"},
+        )
+        connection.execute(
+            sa.text(
+                "UPDATE product_image_assets SET user_folder_id = 'folder-gallery' "
+                "WHERE id = 'asset-upload'"
+            )
+        )
+        connection.execute(sa.text("DELETE FROM product_asset_folders WHERE id = 'folder-gallery'"))
+        assert connection.scalar(
+            sa.text("SELECT user_folder_id FROM product_image_assets WHERE id = 'asset-upload'")
+        ) is None
+    engine.dispose()
+
+    command.downgrade(config, "20260812_0034")
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    inspector = sa.inspect(engine)
+    assert "product_asset_folders" not in inspector.get_table_names()
+    assert {"image_type_key", "user_folder_id"}.isdisjoint(
+        {column["name"] for column in inspector.get_columns("product_image_assets")}
+    )
+    assert "prepared_json" not in {
+        column["name"] for column in inspector.get_columns("agent_tool_mutations")
+    }
+    with engine.connect() as connection:
+        assert connection.scalar(
+            sa.text("SELECT display_name FROM product_image_assets WHERE id = 'asset-upload'")
+        ) == "上传参考"
+        assert connection.scalar(
+            sa.text("SELECT target_display_name FROM agent_tool_mutations WHERE id = 'mutation-gallery'")
+        ) == "用户参考图"
+        assert connection.scalar(sa.text("SELECT COUNT(*) FROM media_objects")) == 2
+    engine.dispose()
+
+    command.upgrade(config, "20260812_0035")
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    with engine.connect() as connection:
+        assert connection.scalar(
+            sa.text("SELECT image_type_key FROM product_image_assets WHERE id = 'asset-generated'")
+        ) == "hero"
+        assert connection.scalar(sa.text("SELECT COUNT(*) FROM media_objects")) == 2
+    engine.dispose()
+    get_settings.cache_clear()
+
+
+def test_product_gallery_explorer_migration_rejects_unsafe_downgrade(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path, config = _configure_sqlite_alembic(
+        tmp_path,
+        monkeypatch,
+        filename="product-gallery-explorer-unsafe-downgrade.db",
+    )
+    command.upgrade(config, "20260812_0034")
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    with engine.begin() as connection:
+        _insert_gallery_migration_fixture(connection)
+    engine.dispose()
+    command.upgrade(config, "20260812_0035")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                "INSERT INTO product_asset_folders "
+                "(id, product_id, name, sort_order, created_at, updated_at) "
+                "VALUES ('folder-blocking', 'product-gallery', '不可丢弃', 0, :now, :now)"
+            ),
+            {"now": "2026-08-12 16:00:00"},
+        )
+    engine.dispose()
+    with pytest.raises(RuntimeError, match="user folders exist"):
+        command.downgrade(config, "20260812_0034")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    with engine.begin() as connection:
+        connection.execute(sa.text("DELETE FROM product_asset_folders WHERE id = 'folder-blocking'"))
+        connection.execute(
+            sa.text(
+                "INSERT INTO agent_tool_mutations "
+                "(id, conversation_id, tool_name, idempotency_key, request_hash, asset_id, "
+                "expected_display_name, target_display_name, prepared_json, status, result_json, "
+                "created_at, updated_at) VALUES "
+                "('mutation-folder-v2', 'conversation-gallery', 'create_product_image_folder_v1', "
+                "'folder-key', :hash, NULL, NULL, NULL, :prepared, 'applied', '{}', :now, :now)"
+            ),
+            {
+                "hash": "n" * 64,
+                "prepared": json.dumps(
+                    {
+                        "schema_version": 1,
+                        "operation": "create_folder",
+                        "scope": {"product_id": "product-gallery"},
+                        "before": None,
+                        "target": {"folder_id": "folder-v2", "name": "Agent 整理"},
+                    }
+                ),
+                "now": "2026-08-12 16:01:00",
+            },
+        )
+    engine.dispose()
+    with pytest.raises(RuntimeError, match="v2-only mutation ledger rows exist"):
+        command.downgrade(config, "20260812_0034")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    inspector = sa.inspect(engine)
+    assert "product_asset_folders" in inspector.get_table_names()
+    with engine.connect() as connection:
+        assert connection.scalar(sa.text("SELECT COUNT(*) FROM media_objects")) == 2
+        assert connection.scalar(
+            sa.text("SELECT COUNT(*) FROM agent_tool_mutations WHERE id = 'mutation-folder-v2'")
+        ) == 1
+    engine.dispose()
+    get_settings.cache_clear()
+
+
+def test_product_gallery_explorer_migration_rejects_duplicate_generation_results(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path, config = _configure_sqlite_alembic(
+        tmp_path,
+        monkeypatch,
+        filename="product-gallery-explorer-duplicate-generation.db",
+    )
+    command.upgrade(config, "20260812_0034")
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    with engine.begin() as connection:
+        _insert_gallery_migration_fixture(connection, duplicate_generation_result=True)
+    engine.dispose()
+
+    with pytest.raises(RuntimeError, match="duplicate result_asset_id asset-generated"):
+        command.upgrade(config, "20260812_0035")
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    inspector = sa.inspect(engine)
+    assert "product_asset_folders" not in inspector.get_table_names()
+    with engine.connect() as connection:
+        assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260812_0034"
+        assert connection.scalar(
+            sa.text("SELECT COUNT(*) FROM workflow_image_generation_records")
+        ) == 2
+    engine.dispose()
     get_settings.cache_clear()
 
 

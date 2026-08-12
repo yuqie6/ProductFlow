@@ -34,11 +34,17 @@ class AgentAssetMetadataResponse(BaseModel):
     display_name: str
     original_filename: str
     origin_type: str
+    image_type_key: str | None
+    image_type_title: str | None
+    user_folder_id: str | None
+    user_folder_name: str | None
     mime_type: Literal["image/png", "image/jpeg", "image/webp"]
-    byte_size: int = Field(gt=0)
-    width: int = Field(gt=0)
-    height: int = Field(gt=0)
-    verification_status: Literal["verified"]
+    byte_size: int | None = Field(default=None, gt=0)
+    width: int | None = Field(default=None, gt=0)
+    height: int | None = Field(default=None, gt=0)
+    verification_status: Literal["verified", "legacy_pending", "missing"]
+    parent_asset_id: str | None
+    generation: dict[str, str] | None
     created_at: str
 
 
@@ -81,6 +87,78 @@ class AgentAssetRenameResultResponse(BaseModel):
 class AgentAssetRenameReconcileResponse(BaseModel):
     state: Literal["applied", "not_applied", "conflict", "unknown"]
     result: AgentAssetRenameResultResponse | None = None
+    detail: str | None = None
+
+
+class PrepareAgentFolderCreateRequest(StrictAgentRequest):
+    name: str = Field(min_length=1, max_length=120)
+
+
+class AgentFolderCreatePreparedRequest(StrictAgentRequest):
+    folder_id: str = Field(min_length=1, max_length=36)
+    name: str = Field(min_length=1, max_length=120)
+
+
+class AgentFolderCreateResultResponse(BaseModel):
+    folder_id: str
+    name: str
+    sort_order: int = Field(ge=0)
+    applied: bool
+
+
+class AgentFolderCreateReconcileResponse(BaseModel):
+    state: Literal["applied", "not_applied", "conflict", "unknown"]
+    result: AgentFolderCreateResultResponse | None = None
+    detail: str | None = None
+
+
+class PrepareAgentFolderRenameRequest(StrictAgentRequest):
+    folder_id: str = Field(min_length=1, max_length=36)
+    target_name: str = Field(min_length=1, max_length=120)
+
+
+class AgentFolderRenamePreparedRequest(StrictAgentRequest):
+    folder_id: str = Field(min_length=1, max_length=36)
+    expected_name: str = Field(min_length=1, max_length=120)
+    target_name: str = Field(min_length=1, max_length=120)
+
+
+class AgentFolderRenameResultResponse(BaseModel):
+    folder_id: str
+    name: str
+    applied: bool
+
+
+class AgentFolderRenameReconcileResponse(BaseModel):
+    state: Literal["applied", "not_applied", "conflict", "unknown"]
+    result: AgentFolderRenameResultResponse | None = None
+    detail: str | None = None
+
+
+class PrepareAgentAssetMoveRequest(StrictAgentRequest):
+    asset_ids: list[str] = Field(min_length=1, max_length=100)
+    target_folder_id: str | None = Field(max_length=36)
+
+
+class AgentAssetMoveItemRequest(StrictAgentRequest):
+    asset_id: str = Field(min_length=1, max_length=36)
+    expected_folder_id: str | None = Field(max_length=36)
+
+
+class AgentAssetMovePreparedRequest(StrictAgentRequest):
+    moves: list[AgentAssetMoveItemRequest] = Field(min_length=1, max_length=100)
+    target_folder_id: str | None = Field(max_length=36)
+
+
+class AgentAssetMoveResultResponse(BaseModel):
+    asset_ids: list[str]
+    folder_id: str | None
+    applied: bool
+
+
+class AgentAssetMoveReconcileResponse(BaseModel):
+    state: Literal["applied", "not_applied", "conflict", "unknown"]
+    result: AgentAssetMoveResultResponse | None = None
     detail: str | None = None
 
 

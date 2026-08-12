@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from productflow_backend.application.product_workflow.v2_reference_bindings import V2ReferenceBindingResult
 from productflow_backend.application.workflow_drafts.contracts import (
     WORKFLOW_DRAFT_MAX_IMAGES_PER_TYPE,
     WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS,
@@ -68,6 +69,12 @@ class MaterializeWorkflowDraftRequest(StrictRequestModel):
     expected_draft_version: int = Field(ge=1)
     expected_workflow_revision: int = Field(ge=0)
     idempotency_key: str = Field(min_length=1, max_length=120)
+
+
+class BindWorkflowReferenceAssetRequest(StrictRequestModel):
+    asset_id: str = Field(min_length=1, max_length=36)
+    expected_workflow_revision: int = Field(ge=1)
+    expected_bound_asset_id: str | None = Field(max_length=36)
 
 
 class WorkflowDraftRevisionResponse(BaseModel):
@@ -222,6 +229,13 @@ class SubmitWorkflowNodeRunV2Response(BaseModel):
     node_run: WorkflowNodeRunV2Response
 
 
+class BindWorkflowReferenceAssetResponse(BaseModel):
+    changed: bool
+    previous_asset_id: str | None
+    affected_node_ids: list[str]
+    reference_node: WorkflowNodeV2Response
+
+
 def serialize_workflow_draft_revision(revision: WorkflowDraftRevision) -> WorkflowDraftRevisionResponse:
     return WorkflowDraftRevisionResponse(
         id=revision.id,
@@ -353,6 +367,15 @@ def serialize_materialization(result: WorkflowMaterializationResult) -> Workflow
     )
 
 
+def serialize_reference_binding(result: V2ReferenceBindingResult) -> BindWorkflowReferenceAssetResponse:
+    return BindWorkflowReferenceAssetResponse(
+        changed=result.changed,
+        previous_asset_id=result.previous_asset_id,
+        affected_node_ids=list(result.affected_node_ids),
+        reference_node=serialize_workflow_node_v2(result.reference_node),
+    )
+
+
 def serialize_workflow_node_run_v2(node_run: WorkflowNodeRun) -> WorkflowNodeRunV2Response:
     workflow = node_run.workflow_run.workflow
     if workflow.schema_version != 2 or node_run.node.schema_version != 2:
@@ -416,6 +439,8 @@ def serialize_workflow_node_run_v2(node_run: WorkflowNodeRun) -> WorkflowNodeRun
 __all__ = [
     "ActiveProductWorkflowV2Response",
     "AppendWorkflowDraftRevisionRequest",
+    "BindWorkflowReferenceAssetRequest",
+    "BindWorkflowReferenceAssetResponse",
     "ConfirmWorkflowDraftRequest",
     "CreateWorkflowDraftRequest",
     "MaterializeWorkflowDraftRequest",
@@ -425,6 +450,7 @@ __all__ = [
     "WorkflowNodeRunV2Response",
     "serialize_active_v2_workflow",
     "serialize_materialization",
+    "serialize_reference_binding",
     "serialize_workflow_draft",
     "serialize_workflow_node_run_v2",
 ]

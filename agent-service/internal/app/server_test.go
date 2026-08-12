@@ -339,6 +339,36 @@ func TestPersistedScopeRejectsProductDrift(t *testing.T) {
 	}
 }
 
+func TestManagerRejectsProductFlowToolContractDriftBeforeCreatingJournal(t *testing.T) {
+	for _, contract := range []map[string]any{
+		{"schema_version": 1, "tool_contract_version": 1},
+		{"schema_version": 2, "tool_contract_version": 2},
+	} {
+		t.Run(fmt.Sprintf("schema-%v-tools-%v", contract["schema_version"], contract["tool_contract_version"]), func(t *testing.T) {
+			productFlow := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writeFixtureJSON(writer, contract)
+			}))
+			t.Cleanup(productFlow.Close)
+			client, err := productflow.NewClient(productFlow.URL, testInternalToken, productFlow.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			dataRoot := t.TempDir()
+			manager, err := NewManager(ManagerConfig{DataRoot: dataRoot, ProductFlow: client})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = manager.Close() })
+			if _, err := manager.Get(t.Context(), testConversationID); err == nil || !strings.Contains(err.Error(), "contract mismatch") {
+				t.Fatalf("manager contract drift error = %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(dataRoot, "conversations")); !os.IsNotExist(err) {
+				t.Fatalf("contract drift created conversation data: %v", err)
+			}
+		})
+	}
+}
+
 type httpResult struct {
 	status int
 	body   []byte
@@ -437,7 +467,7 @@ func newProductFlowFixture(t *testing.T, png []byte, productID string) *httptest
 					"type": "object", "additionalProperties": false,
 					"properties": map[string]any{"title": map[string]any{"type": "string"}}, "required": []string{"title"},
 				},
-				"tool_contract_version": 1,
+				"tool_contract_version": 2,
 			})
 		default:
 			matchedAsset := false

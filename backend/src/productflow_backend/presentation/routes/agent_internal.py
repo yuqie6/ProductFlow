@@ -6,27 +6,50 @@ from sqlalchemy.orm import Session
 from productflow_backend.application.agent_tools import (
     AGENT_ASSET_LIST_DEFAULT_LIMIT,
     AGENT_ASSET_LIST_MAX_LIMIT,
+    apply_agent_asset_move,
     apply_agent_asset_rename,
+    apply_agent_folder_create,
+    apply_agent_folder_rename,
     get_agent_contract,
     get_agent_product_context,
     inspect_agent_product_assets,
     list_agent_product_assets,
+    prepare_agent_asset_move,
     prepare_agent_asset_rename,
+    prepare_agent_folder_create,
+    prepare_agent_folder_rename,
     read_agent_product_asset_content,
+    reconcile_agent_asset_move,
     reconcile_agent_asset_rename,
+    reconcile_agent_folder_create,
+    reconcile_agent_folder_rename,
 )
+from productflow_backend.application.gallery_assets import GalleryAssetSort, GalleryDirectoryKind
+from productflow_backend.application.gallery_mutations import GalleryAssetMove
 from productflow_backend.presentation.deps import get_session, require_agent_service
 from productflow_backend.presentation.schemas.agent_conversations import (
     AgentAssetListResponse,
     AgentAssetMetadataResponse,
+    AgentAssetMovePreparedRequest,
+    AgentAssetMoveReconcileResponse,
+    AgentAssetMoveResultResponse,
     AgentAssetRenamePreparedRequest,
     AgentAssetRenamePreparedResponse,
     AgentAssetRenameReconcileResponse,
     AgentAssetRenameResultResponse,
     AgentContractResponse,
+    AgentFolderCreatePreparedRequest,
+    AgentFolderCreateReconcileResponse,
+    AgentFolderCreateResultResponse,
+    AgentFolderRenamePreparedRequest,
+    AgentFolderRenameReconcileResponse,
+    AgentFolderRenameResultResponse,
     InspectAgentAssetsRequest,
     InspectAgentAssetsResponse,
+    PrepareAgentAssetMoveRequest,
     PrepareAgentAssetRenameRequest,
+    PrepareAgentFolderCreateRequest,
+    PrepareAgentFolderRenameRequest,
 )
 
 router = APIRouter(
@@ -55,7 +78,10 @@ def get_agent_product_context_endpoint(
 @router.get("/{conversation_id}/assets", response_model=AgentAssetListResponse)
 def list_agent_product_assets_endpoint(
     conversation_id: str,
+    directory_kind: GalleryDirectoryKind = Query(default=GalleryDirectoryKind.ALL),
+    directory_key: str | None = Query(default=None, max_length=120),
     query: str = Query(default="", max_length=255),
+    sort: GalleryAssetSort = Query(default=GalleryAssetSort.CREATED_DESC),
     after: str = Query(default="", max_length=1024),
     limit: int = Query(default=AGENT_ASSET_LIST_DEFAULT_LIMIT, ge=1, le=AGENT_ASSET_LIST_MAX_LIMIT),
     session: Session = Depends(get_session),
@@ -63,7 +89,10 @@ def list_agent_product_assets_endpoint(
     page = list_agent_product_assets(
         session,
         conversation_id=conversation_id,
+        directory_kind=directory_kind,
+        directory_key=directory_key,
         query=query,
+        sort=sort,
         after=after,
         limit=limit,
     )
@@ -177,4 +206,219 @@ def reconcile_agent_asset_rename_endpoint(
             else None
         ),
         detail=result.detail,
+    )
+
+
+@router.post(
+    "/{conversation_id}/folder-creates/prepare",
+    response_model=AgentFolderCreatePreparedRequest,
+)
+def prepare_agent_folder_create_endpoint(
+    conversation_id: str,
+    payload: PrepareAgentFolderCreateRequest,
+    session: Session = Depends(get_session),
+) -> AgentFolderCreatePreparedRequest:
+    prepared = prepare_agent_folder_create(
+        session,
+        conversation_id=conversation_id,
+        name=payload.name,
+    )
+    return AgentFolderCreatePreparedRequest(folder_id=prepared.folder_id, name=prepared.name)
+
+
+@router.post("/{conversation_id}/folder-creates", response_model=AgentFolderCreateResultResponse)
+def apply_agent_folder_create_endpoint(
+    conversation_id: str,
+    payload: AgentFolderCreatePreparedRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
+    session: Session = Depends(get_session),
+) -> AgentFolderCreateResultResponse:
+    return AgentFolderCreateResultResponse.model_validate(
+        apply_agent_folder_create(
+            session,
+            conversation_id=conversation_id,
+            idempotency_key=idempotency_key,
+            folder_id=payload.folder_id,
+            name=payload.name,
+        )
+    )
+
+
+@router.post(
+    "/{conversation_id}/folder-creates/reconcile",
+    response_model=AgentFolderCreateReconcileResponse,
+)
+def reconcile_agent_folder_create_endpoint(
+    conversation_id: str,
+    payload: AgentFolderCreatePreparedRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
+    session: Session = Depends(get_session),
+) -> AgentFolderCreateReconcileResponse:
+    reconciled = reconcile_agent_folder_create(
+        session,
+        conversation_id=conversation_id,
+        idempotency_key=idempotency_key,
+        folder_id=payload.folder_id,
+        name=payload.name,
+    )
+    return AgentFolderCreateReconcileResponse(
+        state=reconciled.state,
+        result=(
+            AgentFolderCreateResultResponse.model_validate(reconciled.result)
+            if reconciled.result is not None
+            else None
+        ),
+        detail=reconciled.detail,
+    )
+
+
+@router.post(
+    "/{conversation_id}/folder-renames/prepare",
+    response_model=AgentFolderRenamePreparedRequest,
+)
+def prepare_agent_folder_rename_endpoint(
+    conversation_id: str,
+    payload: PrepareAgentFolderRenameRequest,
+    session: Session = Depends(get_session),
+) -> AgentFolderRenamePreparedRequest:
+    prepared = prepare_agent_folder_rename(
+        session,
+        conversation_id=conversation_id,
+        folder_id=payload.folder_id,
+        target_name=payload.target_name,
+    )
+    return AgentFolderRenamePreparedRequest(
+        folder_id=prepared.folder_id,
+        expected_name=prepared.expected_name,
+        target_name=prepared.target_name,
+    )
+
+
+@router.post("/{conversation_id}/folder-renames", response_model=AgentFolderRenameResultResponse)
+def apply_agent_folder_rename_endpoint(
+    conversation_id: str,
+    payload: AgentFolderRenamePreparedRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
+    session: Session = Depends(get_session),
+) -> AgentFolderRenameResultResponse:
+    return AgentFolderRenameResultResponse.model_validate(
+        apply_agent_folder_rename(
+            session,
+            conversation_id=conversation_id,
+            idempotency_key=idempotency_key,
+            folder_id=payload.folder_id,
+            expected_name=payload.expected_name,
+            target_name=payload.target_name,
+        )
+    )
+
+
+@router.post(
+    "/{conversation_id}/folder-renames/reconcile",
+    response_model=AgentFolderRenameReconcileResponse,
+)
+def reconcile_agent_folder_rename_endpoint(
+    conversation_id: str,
+    payload: AgentFolderRenamePreparedRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
+    session: Session = Depends(get_session),
+) -> AgentFolderRenameReconcileResponse:
+    reconciled = reconcile_agent_folder_rename(
+        session,
+        conversation_id=conversation_id,
+        idempotency_key=idempotency_key,
+        folder_id=payload.folder_id,
+        expected_name=payload.expected_name,
+        target_name=payload.target_name,
+    )
+    return AgentFolderRenameReconcileResponse(
+        state=reconciled.state,
+        result=(
+            AgentFolderRenameResultResponse.model_validate(reconciled.result)
+            if reconciled.result is not None
+            else None
+        ),
+        detail=reconciled.detail,
+    )
+
+
+@router.post(
+    "/{conversation_id}/asset-moves/prepare",
+    response_model=AgentAssetMovePreparedRequest,
+)
+def prepare_agent_asset_move_endpoint(
+    conversation_id: str,
+    payload: PrepareAgentAssetMoveRequest,
+    session: Session = Depends(get_session),
+) -> AgentAssetMovePreparedRequest:
+    prepared = prepare_agent_asset_move(
+        session,
+        conversation_id=conversation_id,
+        asset_ids=payload.asset_ids,
+        target_folder_id=payload.target_folder_id,
+    )
+    return AgentAssetMovePreparedRequest(
+        moves=[
+            {"asset_id": move.asset_id, "expected_folder_id": move.expected_folder_id}
+            for move in prepared.moves
+        ],
+        target_folder_id=prepared.target_folder_id,
+    )
+
+
+@router.post("/{conversation_id}/asset-moves", response_model=AgentAssetMoveResultResponse)
+def apply_agent_asset_move_endpoint(
+    conversation_id: str,
+    payload: AgentAssetMovePreparedRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
+    session: Session = Depends(get_session),
+) -> AgentAssetMoveResultResponse:
+    return AgentAssetMoveResultResponse.model_validate(
+        apply_agent_asset_move(
+            session,
+            conversation_id=conversation_id,
+            idempotency_key=idempotency_key,
+            moves=[
+                GalleryAssetMove(
+                    asset_id=move.asset_id,
+                    expected_folder_id=move.expected_folder_id,
+                )
+                for move in payload.moves
+            ],
+            target_folder_id=payload.target_folder_id,
+        )
+    )
+
+
+@router.post(
+    "/{conversation_id}/asset-moves/reconcile",
+    response_model=AgentAssetMoveReconcileResponse,
+)
+def reconcile_agent_asset_move_endpoint(
+    conversation_id: str,
+    payload: AgentAssetMovePreparedRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
+    session: Session = Depends(get_session),
+) -> AgentAssetMoveReconcileResponse:
+    reconciled = reconcile_agent_asset_move(
+        session,
+        conversation_id=conversation_id,
+        idempotency_key=idempotency_key,
+        moves=[
+            GalleryAssetMove(
+                asset_id=move.asset_id,
+                expected_folder_id=move.expected_folder_id,
+            )
+            for move in payload.moves
+        ],
+        target_folder_id=payload.target_folder_id,
+    )
+    return AgentAssetMoveReconcileResponse(
+        state=reconciled.state,
+        result=(
+            AgentAssetMoveResultResponse.model_validate(reconciled.result)
+            if reconciled.result is not None
+            else None
+        ),
+        detail=reconciled.detail,
     )

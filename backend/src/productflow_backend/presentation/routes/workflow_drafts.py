@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from productflow_backend.application.agent_conversations import mark_agent_conversation_completed_for_draft
 from productflow_backend.application.product_workflows import (
+    bind_v2_reference_node_asset,
     get_v2_workflow_node_run,
     submit_v2_workflow_node_run,
 )
@@ -29,6 +30,8 @@ from productflow_backend.presentation.deps import get_session, require_admin
 from productflow_backend.presentation.schemas.workflow_drafts import (
     ActiveProductWorkflowV2Response,
     AppendWorkflowDraftRevisionRequest,
+    BindWorkflowReferenceAssetRequest,
+    BindWorkflowReferenceAssetResponse,
     ConfirmWorkflowDraftRequest,
     CreateWorkflowDraftRequest,
     MaterializeWorkflowDraftRequest,
@@ -38,6 +41,7 @@ from productflow_backend.presentation.schemas.workflow_drafts import (
     WorkflowNodeRunV2Response,
     serialize_active_v2_workflow,
     serialize_materialization,
+    serialize_reference_binding,
     serialize_workflow_draft,
     serialize_workflow_node_run_v2,
 )
@@ -51,6 +55,29 @@ def get_active_v2_workflow_endpoint(
     session: Session = Depends(get_session),
 ) -> ActiveProductWorkflowV2Response:
     return serialize_active_v2_workflow(get_active_v2_workflow_snapshot(session, product_id=product_id))
+
+
+@router.patch(
+    "/products/{product_id}/workflows/{workflow_id}/reference-nodes/{node_id}",
+    response_model=BindWorkflowReferenceAssetResponse,
+)
+def bind_v2_reference_node_asset_endpoint(
+    product_id: str,
+    workflow_id: str,
+    node_id: str,
+    payload: BindWorkflowReferenceAssetRequest,
+    session: Session = Depends(get_session),
+) -> BindWorkflowReferenceAssetResponse:
+    result = bind_v2_reference_node_asset(
+        session,
+        product_id=product_id,
+        workflow_id=workflow_id,
+        node_id=node_id,
+        asset_id=payload.asset_id,
+        expected_workflow_revision=payload.expected_workflow_revision,
+        expected_bound_asset_id=payload.expected_bound_asset_id,
+    )
+    return serialize_reference_binding(result)
 
 
 @router.post(

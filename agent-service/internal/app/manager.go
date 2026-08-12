@@ -16,6 +16,8 @@ import (
 
 var canonicalUUID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
+const productFlowToolContractVersion = 2
+
 type ManagerConfig struct {
 	DataRoot    string
 	Provider    agenttask.ProviderConfig
@@ -83,6 +85,12 @@ func (manager *Manager) Get(ctx context.Context, conversationID string) (*Conver
 	contract, err := manager.config.ProductFlow.Contract(ctx, conversationID)
 	if err != nil {
 		return nil, err
+	}
+	if contract.SchemaVersion != 1 || contract.ToolContractVersion != productFlowToolContractVersion {
+		return nil, fmt.Errorf(
+			"ProductFlow Agent contract mismatch: schema_version=%d tool_contract_version=%d, want 1/%d",
+			contract.SchemaVersion, contract.ToolContractVersion, productFlowToolContractVersion,
+		)
 	}
 	scope := Scope{
 		SchemaVersion: scopeSchemaVersion, ConversationID: contract.ConversationID,

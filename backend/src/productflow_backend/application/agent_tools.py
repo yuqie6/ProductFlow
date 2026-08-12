@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -15,8 +13,23 @@ from productflow_backend.application.agent_conversations import (
     AGENT_MAX_INPUT_ASSETS,
     get_agent_conversation_by_id_or_raise,
 )
+from productflow_backend.application.gallery_assets import (
+    GalleryAssetRecord,
+    GalleryAssetSort,
+    GalleryDirectoryKind,
+    list_gallery_assets,
+)
+from productflow_backend.application.gallery_mutations import (
+    GALLERY_MOVE_MAX_ASSETS,
+    GalleryAssetMove,
+    normalize_gallery_display_name,
+    normalize_gallery_folder_name,
+    stage_create_gallery_folder,
+    stage_move_gallery_assets,
+    stage_rename_gallery_asset,
+    stage_rename_gallery_folder,
+)
 from productflow_backend.application.media_assets import inspect_image_bytes
-from productflow_backend.application.time import now_utc
 from productflow_backend.application.workflow_drafts.contracts import WorkflowDraftPayloadV1
 from productflow_backend.domain.enums import AgentToolMutationStatus, MediaVerificationStatus
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
@@ -24,16 +37,21 @@ from productflow_backend.infrastructure.db.models import (
     AgentConversation,
     AgentToolMutation,
     Product,
+    ProductAssetFolder,
     ProductImageAsset,
+    new_id,
 )
 from productflow_backend.infrastructure.storage import LocalStorage
 
-AGENT_TOOL_CONTRACT_VERSION = 1
+AGENT_TOOL_CONTRACT_VERSION = 2
 AGENT_ASSET_LIST_DEFAULT_LIMIT = 50
 AGENT_ASSET_LIST_MAX_LIMIT = 100
 AGENT_ASSET_MAX_BYTES = 20 * 1024 * 1024
 AGENT_CONTEXT_MAX_BYTES = 512 * 1024
 RENAME_ASSET_TOOL_NAME = "rename_product_image_asset_v1"
+CREATE_FOLDER_TOOL_NAME = "create_product_image_folder_v1"
+RENAME_FOLDER_TOOL_NAME = "rename_product_image_folder_v1"
+MOVE_ASSETS_TOOL_NAME = "move_product_image_assets_v1"
 
 WORKFLOW_AGENT_SYSTEM_PROMPT = """你是 ProductFlow 的商品工作流设计 Agent。
 你的作用域固定为当前 conversation、商品和 WorkflowDraft。
@@ -43,7 +61,8 @@ WORKFLOW_AGENT_SYSTEM_PROMPT = """你是 ProductFlow 的商品工作流设计 Ag
 2. 信息不足时使用 ask_user 提出直接影响成图或文案的少量问题，例如价格、风格、文字语种和禁用内容；不要重复询问已有事实。
 3. 商品外观必须以用户提供的已核验参考图为依据。
    图库列表只提供元数据；仅在确有需要时 inspect 明确选中的图片，单次最多 6 张。
-4. 可以为整理而修改资产显示名，不得删除素材、修改封面、臆造 Logo 或逐节点写入画布。
+4. 可以创建或重命名一层图片文件夹、修改资产显示名、把图片移动到文件夹或未整理目录。
+   不得删除素材或文件夹、修改封面、原始文件名、图片类型、生成血缘、臆造 Logo 或逐节点写入画布。
 5. 用户确认需求后，提交完整的 propose_workflow_draft artifact。
    每个图片类型由一个提示词计划表达；同类型数量用于候选抽取，不拆成多个提示词节点。
    不同角度或不同信息任务应建为不同图片类型。
@@ -73,10 +92,32 @@ class AgentAssetRenamePrepared:
 
 
 @dataclass(frozen=True, slots=True)
-class AgentAssetRenameReconcileResult:
+class AgentFolderCreatePrepared:
+    folder_id: str
+    name: str
+
+
+@dataclass(frozen=True, slots=True)
+class AgentFolderRenamePrepared:
+    folder_id: str
+    expected_name: str
+    target_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class AgentAssetMovePrepared:
+    moves: tuple[GalleryAssetMove, ...]
+    target_folder_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class AgentToolReconcileResult:
     state: str
     result: dict[str, Any] | None = None
     detail: str | None = None
+
+
+AgentAssetRenameReconcileResult = AgentToolReconcileResult
 
 
 def get_agent_contract(session: Session, conversation_id: str) -> dict[str, Any]:
@@ -145,50 +186,27 @@ def list_agent_product_assets(
     session: Session,
     *,
     conversation_id: str,
+    directory_kind: GalleryDirectoryKind = GalleryDirectoryKind.ALL,
+    directory_key: str | None = None,
     query: str = "",
+    sort: GalleryAssetSort = GalleryAssetSort.CREATED_DESC,
     after: str = "",
     limit: int = AGENT_ASSET_LIST_DEFAULT_LIMIT,
 ) -> AgentAssetPage:
     conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
-    if limit < 1 or limit > AGENT_ASSET_LIST_MAX_LIMIT:
-        raise BusinessValidationError(
-            f"图库分页 limit 必须在 1 到 {AGENT_ASSET_LIST_MAX_LIMIT} 之间"
-        )
-    normalized_query = query.strip()
-    if len(normalized_query) > 255:
-        raise BusinessValidationError("图库搜索词不能超过 255 个字符")
-    cursor = _decode_asset_cursor(after) if after.strip() else None
-    statement = (
-        select(ProductImageAsset)
-        .options(selectinload(ProductImageAsset.media_object))
-        .where(ProductImageAsset.product_id == conversation.product_id)
+    page = list_gallery_assets(
+        session,
+        product_id=conversation.product_id,
+        directory_kind=directory_kind,
+        directory_key=directory_key,
+        query=query,
+        sort=sort,
+        after=after,
+        limit=limit,
     )
-    if normalized_query:
-        statement = statement.where(ProductImageAsset.display_name.ilike(f"%{normalized_query}%"))
-    if cursor is not None:
-        statement = statement.where(
-            or_(
-                ProductImageAsset.created_at > cursor[0],
-                and_(
-                    ProductImageAsset.created_at == cursor[0],
-                    ProductImageAsset.id > cursor[1],
-                ),
-            )
-        )
-    assets = list(
-        session.scalars(
-            statement.order_by(ProductImageAsset.created_at.asc(), ProductImageAsset.id.asc()).limit(limit + 1)
-        ).all()
-    )
-    has_more = len(assets) > limit
-    page_assets = assets[:limit]
     return AgentAssetPage(
-        items=[agent_asset_metadata(asset) for asset in page_assets],
-        next_cursor=(
-            _encode_asset_cursor(page_assets[-1].created_at, page_assets[-1].id)
-            if has_more and page_assets
-            else None
-        ),
+        items=[agent_gallery_asset_metadata(record) for record in page.items],
+        next_cursor=page.next_cursor,
     )
 
 
@@ -258,15 +276,11 @@ def prepare_agent_asset_rename(
     target_display_name: str,
 ) -> AgentAssetRenamePrepared:
     conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
-    normalized_target = _normalize_display_name(target_display_name)
-    assets = _load_scoped_assets(
-        session,
-        product_id=conversation.product_id,
-        asset_ids=[asset_id.strip()],
-    )
+    normalized_target = normalize_gallery_display_name(target_display_name)
+    asset = _get_scoped_asset(session, product_id=conversation.product_id, asset_id=asset_id)
     return AgentAssetRenamePrepared(
-        asset_id=assets[0].id,
-        expected_display_name=assets[0].display_name,
+        asset_id=asset.id,
+        expected_display_name=asset.display_name,
         target_display_name=normalized_target,
     )
 
@@ -286,66 +300,49 @@ def apply_agent_asset_rename(
         expected_display_name=expected_display_name,
         target_display_name=target_display_name,
     )
-    request_hash = _rename_request_hash(conversation_id=conversation_id, prepared=prepared)
     conversation = _get_conversation_for_update(session, conversation_id)
-    existing = session.scalar(
-        select(AgentToolMutation).where(
-            AgentToolMutation.conversation_id == conversation.id,
-            AgentToolMutation.tool_name == RENAME_ASSET_TOOL_NAME,
-            AgentToolMutation.idempotency_key == normalized_key,
-        )
+    prepared_json = _prepared_document(
+        conversation,
+        operation="rename_asset",
+        before={"asset_id": prepared.asset_id, "display_name": prepared.expected_display_name},
+        target={"asset_id": prepared.asset_id, "display_name": prepared.target_display_name},
     )
-    if existing is not None:
-        if existing.request_hash != request_hash:
-            raise ConflictError("同一工具 idempotency key 不能提交不同的重命名请求")
-        if existing.status != AgentToolMutationStatus.APPLIED or existing.result_json is None:
-            raise ConflictError("工具副作用账本未处于 applied 状态")
+    request_hash = _tool_request_hash(tool_name=RENAME_ASSET_TOOL_NAME, prepared_json=prepared_json)
+    replay = _replay_existing_mutation(
+        session,
+        conversation_id=conversation.id,
+        tool_name=RENAME_ASSET_TOOL_NAME,
+        idempotency_key=normalized_key,
+        request_hash=request_hash,
+    )
+    if replay is not None:
         session.commit()
-        return dict(existing.result_json)
-
-    asset = _get_scoped_asset_for_update(
+        return replay
+    applied = prepared.expected_display_name != prepared.target_display_name
+    asset = stage_rename_gallery_asset(
         session,
         product_id=conversation.product_id,
         asset_id=prepared.asset_id,
+        expected_display_name=prepared.expected_display_name,
+        display_name=prepared.target_display_name,
     )
-    if asset.display_name not in {prepared.expected_display_name, prepared.target_display_name}:
-        raise ConflictError("图片显示名已被其他操作修改")
-    applied = asset.display_name != prepared.target_display_name
-    if applied:
-        asset.display_name = prepared.target_display_name
-        asset.updated_at = now_utc()
     result = {
         "asset_id": asset.id,
         "display_name": prepared.target_display_name,
         "applied": applied,
     }
-    mutation = AgentToolMutation(
+    return _commit_tool_mutation(
+        session,
         conversation_id=conversation.id,
         tool_name=RENAME_ASSET_TOOL_NAME,
         idempotency_key=normalized_key,
         request_hash=request_hash,
+        prepared_json=prepared_json,
+        result=result,
         asset_id=asset.id,
         expected_display_name=prepared.expected_display_name,
         target_display_name=prepared.target_display_name,
-        status=AgentToolMutationStatus.APPLIED,
-        result_json=result,
     )
-    session.add(mutation)
-    try:
-        session.commit()
-    except IntegrityError:
-        session.rollback()
-        existing = session.scalar(
-            select(AgentToolMutation).where(
-                AgentToolMutation.conversation_id == conversation_id,
-                AgentToolMutation.tool_name == RENAME_ASSET_TOOL_NAME,
-                AgentToolMutation.idempotency_key == normalized_key,
-            )
-        )
-        if existing is not None and existing.request_hash == request_hash and existing.result_json is not None:
-            return dict(existing.result_json)
-        raise ConflictError("重命名工具请求与已有副作用账本冲突") from None
-    return result
 
 
 def reconcile_agent_asset_rename(
@@ -356,58 +353,393 @@ def reconcile_agent_asset_rename(
     asset_id: str,
     expected_display_name: str,
     target_display_name: str,
-) -> AgentAssetRenameReconcileResult:
+) -> AgentToolReconcileResult:
     normalized_key = _normalize_tool_idempotency_key(idempotency_key)
     prepared = _normalize_rename_prepared(
         asset_id=asset_id,
         expected_display_name=expected_display_name,
         target_display_name=target_display_name,
     )
-    request_hash = _rename_request_hash(conversation_id=conversation_id, prepared=prepared)
     conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
-    asset = _get_scoped_asset_for_update(
+    prepared_json = _prepared_document(
+        conversation,
+        operation="rename_asset",
+        before={"asset_id": prepared.asset_id, "display_name": prepared.expected_display_name},
+        target={"asset_id": prepared.asset_id, "display_name": prepared.target_display_name},
+    )
+    request_hash = _tool_request_hash(tool_name=RENAME_ASSET_TOOL_NAME, prepared_json=prepared_json)
+    ledger_result = _reconcile_from_ledger(
         session,
-        product_id=conversation.product_id,
-        asset_id=prepared.asset_id,
+        conversation_id=conversation.id,
+        tool_name=RENAME_ASSET_TOOL_NAME,
+        idempotency_key=normalized_key,
+        request_hash=request_hash,
     )
-    mutation = session.scalar(
-        select(AgentToolMutation).where(
-            AgentToolMutation.conversation_id == conversation.id,
-            AgentToolMutation.tool_name == RENAME_ASSET_TOOL_NAME,
-            AgentToolMutation.idempotency_key == normalized_key,
-        )
-    )
-    if mutation is not None:
-        if mutation.request_hash != request_hash:
-            return AgentAssetRenameReconcileResult(
-                state="conflict",
-                detail="工具幂等键已绑定其他请求",
-            )
-        if mutation.status == AgentToolMutationStatus.UNKNOWN:
-            return AgentAssetRenameReconcileResult(state="unknown", detail="副作用结果仍不明确")
-        if (
-            mutation.status == AgentToolMutationStatus.APPLIED
-            and mutation.result_json is not None
-            and asset.display_name == prepared.target_display_name
-        ):
-            return AgentAssetRenameReconcileResult(
-                state="applied",
-                result=dict(mutation.result_json),
-                detail="重命名副作用已提交",
-            )
-        return AgentAssetRenameReconcileResult(
-            state="conflict",
-            detail="图片当前名称与副作用账本不一致",
-        )
+    if ledger_result is not None:
+        return ledger_result
+    asset = _get_scoped_asset(session, product_id=conversation.product_id, asset_id=prepared.asset_id)
     if asset.display_name == prepared.expected_display_name:
-        return AgentAssetRenameReconcileResult(
+        return AgentToolReconcileResult(
             state="not_applied",
             detail="图片仍处于副作用执行前状态",
         )
-    return AgentAssetRenameReconcileResult(
+    return AgentToolReconcileResult(
         state="conflict",
         detail="图片名称既非预期旧值，且不存在匹配的副作用账本",
     )
+
+
+def prepare_agent_folder_create(
+    session: Session,
+    *,
+    conversation_id: str,
+    name: str,
+) -> AgentFolderCreatePrepared:
+    conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
+    normalized_name = normalize_gallery_folder_name(name)
+    existing = session.scalar(
+        select(ProductAssetFolder.id).where(
+            ProductAssetFolder.product_id == conversation.product_id,
+            ProductAssetFolder.name == normalized_name,
+        )
+    )
+    if existing is not None:
+        raise ConflictError("当前商品已存在同名文件夹")
+    return AgentFolderCreatePrepared(folder_id=new_id(), name=normalized_name)
+
+
+def apply_agent_folder_create(
+    session: Session,
+    *,
+    conversation_id: str,
+    idempotency_key: str,
+    folder_id: str,
+    name: str,
+) -> dict[str, Any]:
+    normalized_key = _normalize_tool_idempotency_key(idempotency_key)
+    prepared = _normalize_folder_create_prepared(folder_id=folder_id, name=name)
+    conversation = _get_conversation_for_update(session, conversation_id)
+    prepared_json = _prepared_document(
+        conversation,
+        operation="create_folder",
+        before={"folder_id": prepared.folder_id, "exists": False},
+        target={"folder_id": prepared.folder_id, "name": prepared.name},
+    )
+    request_hash = _tool_request_hash(tool_name=CREATE_FOLDER_TOOL_NAME, prepared_json=prepared_json)
+    replay = _replay_existing_mutation(
+        session,
+        conversation_id=conversation.id,
+        tool_name=CREATE_FOLDER_TOOL_NAME,
+        idempotency_key=normalized_key,
+        request_hash=request_hash,
+    )
+    if replay is not None:
+        session.commit()
+        return replay
+    folder = stage_create_gallery_folder(
+        session,
+        product_id=conversation.product_id,
+        folder_id=prepared.folder_id,
+        name=prepared.name,
+    )
+    result = {
+        "folder_id": folder.id,
+        "name": folder.name,
+        "sort_order": folder.sort_order,
+        "applied": True,
+    }
+    return _commit_tool_mutation(
+        session,
+        conversation_id=conversation.id,
+        tool_name=CREATE_FOLDER_TOOL_NAME,
+        idempotency_key=normalized_key,
+        request_hash=request_hash,
+        prepared_json=prepared_json,
+        result=result,
+    )
+
+
+def reconcile_agent_folder_create(
+    session: Session,
+    *,
+    conversation_id: str,
+    idempotency_key: str,
+    folder_id: str,
+    name: str,
+) -> AgentToolReconcileResult:
+    normalized_key = _normalize_tool_idempotency_key(idempotency_key)
+    prepared = _normalize_folder_create_prepared(folder_id=folder_id, name=name)
+    conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
+    prepared_json = _prepared_document(
+        conversation,
+        operation="create_folder",
+        before={"folder_id": prepared.folder_id, "exists": False},
+        target={"folder_id": prepared.folder_id, "name": prepared.name},
+    )
+    request_hash = _tool_request_hash(tool_name=CREATE_FOLDER_TOOL_NAME, prepared_json=prepared_json)
+    ledger_result = _reconcile_from_ledger(
+        session,
+        conversation_id=conversation.id,
+        tool_name=CREATE_FOLDER_TOOL_NAME,
+        idempotency_key=normalized_key,
+        request_hash=request_hash,
+    )
+    if ledger_result is not None:
+        return ledger_result
+    folder = session.scalar(
+        select(ProductAssetFolder).where(
+            ProductAssetFolder.id == prepared.folder_id,
+            ProductAssetFolder.product_id == conversation.product_id,
+        )
+    )
+    if folder is None:
+        return AgentToolReconcileResult(state="not_applied", detail="文件夹尚未创建")
+    return AgentToolReconcileResult(state="conflict", detail="稳定文件夹 ID 已存在但缺少匹配账本")
+
+
+def prepare_agent_folder_rename(
+    session: Session,
+    *,
+    conversation_id: str,
+    folder_id: str,
+    target_name: str,
+) -> AgentFolderRenamePrepared:
+    conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
+    folder = _get_scoped_folder(session, product_id=conversation.product_id, folder_id=folder_id)
+    return AgentFolderRenamePrepared(
+        folder_id=folder.id,
+        expected_name=folder.name,
+        target_name=normalize_gallery_folder_name(target_name),
+    )
+
+
+def apply_agent_folder_rename(
+    session: Session,
+    *,
+    conversation_id: str,
+    idempotency_key: str,
+    folder_id: str,
+    expected_name: str,
+    target_name: str,
+) -> dict[str, Any]:
+    normalized_key = _normalize_tool_idempotency_key(idempotency_key)
+    prepared = _normalize_folder_rename_prepared(
+        folder_id=folder_id,
+        expected_name=expected_name,
+        target_name=target_name,
+    )
+    conversation = _get_conversation_for_update(session, conversation_id)
+    prepared_json = _prepared_document(
+        conversation,
+        operation="rename_folder",
+        before={"folder_id": prepared.folder_id, "name": prepared.expected_name},
+        target={"folder_id": prepared.folder_id, "name": prepared.target_name},
+    )
+    request_hash = _tool_request_hash(tool_name=RENAME_FOLDER_TOOL_NAME, prepared_json=prepared_json)
+    replay = _replay_existing_mutation(
+        session,
+        conversation_id=conversation.id,
+        tool_name=RENAME_FOLDER_TOOL_NAME,
+        idempotency_key=normalized_key,
+        request_hash=request_hash,
+    )
+    if replay is not None:
+        session.commit()
+        return replay
+    folder = stage_rename_gallery_folder(
+        session,
+        product_id=conversation.product_id,
+        folder_id=prepared.folder_id,
+        expected_name=prepared.expected_name,
+        name=prepared.target_name,
+    )
+    result = {
+        "folder_id": folder.id,
+        "name": folder.name,
+        "applied": prepared.expected_name != prepared.target_name,
+    }
+    return _commit_tool_mutation(
+        session,
+        conversation_id=conversation.id,
+        tool_name=RENAME_FOLDER_TOOL_NAME,
+        idempotency_key=normalized_key,
+        request_hash=request_hash,
+        prepared_json=prepared_json,
+        result=result,
+    )
+
+
+def reconcile_agent_folder_rename(
+    session: Session,
+    *,
+    conversation_id: str,
+    idempotency_key: str,
+    folder_id: str,
+    expected_name: str,
+    target_name: str,
+) -> AgentToolReconcileResult:
+    normalized_key = _normalize_tool_idempotency_key(idempotency_key)
+    prepared = _normalize_folder_rename_prepared(
+        folder_id=folder_id,
+        expected_name=expected_name,
+        target_name=target_name,
+    )
+    conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
+    prepared_json = _prepared_document(
+        conversation,
+        operation="rename_folder",
+        before={"folder_id": prepared.folder_id, "name": prepared.expected_name},
+        target={"folder_id": prepared.folder_id, "name": prepared.target_name},
+    )
+    request_hash = _tool_request_hash(tool_name=RENAME_FOLDER_TOOL_NAME, prepared_json=prepared_json)
+    ledger_result = _reconcile_from_ledger(
+        session,
+        conversation_id=conversation.id,
+        tool_name=RENAME_FOLDER_TOOL_NAME,
+        idempotency_key=normalized_key,
+        request_hash=request_hash,
+    )
+    if ledger_result is not None:
+        return ledger_result
+    folder = _get_scoped_folder(
+        session,
+        product_id=conversation.product_id,
+        folder_id=prepared.folder_id,
+    )
+    if folder.name == prepared.expected_name:
+        return AgentToolReconcileResult(state="not_applied", detail="文件夹仍处于改名前状态")
+    return AgentToolReconcileResult(state="conflict", detail="文件夹名称已变化且缺少匹配账本")
+
+
+def prepare_agent_asset_move(
+    session: Session,
+    *,
+    conversation_id: str,
+    asset_ids: list[str],
+    target_folder_id: str | None,
+) -> AgentAssetMovePrepared:
+    conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
+    normalized_ids = _normalize_move_asset_ids(asset_ids)
+    normalized_target = _normalize_optional_id(target_folder_id, field_name="目标文件夹 ID")
+    if normalized_target is not None:
+        _get_scoped_folder(
+            session,
+            product_id=conversation.product_id,
+            folder_id=normalized_target,
+        )
+    assets = _load_scoped_asset_metadata(
+        session,
+        product_id=conversation.product_id,
+        asset_ids=normalized_ids,
+    )
+    by_id = {asset.id: asset for asset in assets}
+    return AgentAssetMovePrepared(
+        moves=tuple(
+            GalleryAssetMove(asset_id=asset_id, expected_folder_id=by_id[asset_id].user_folder_id)
+            for asset_id in normalized_ids
+        ),
+        target_folder_id=normalized_target,
+    )
+
+
+def apply_agent_asset_move(
+    session: Session,
+    *,
+    conversation_id: str,
+    idempotency_key: str,
+    moves: list[GalleryAssetMove],
+    target_folder_id: str | None,
+) -> dict[str, Any]:
+    normalized_key = _normalize_tool_idempotency_key(idempotency_key)
+    prepared = _normalize_asset_move_prepared(moves=moves, target_folder_id=target_folder_id)
+    conversation = _get_conversation_for_update(session, conversation_id)
+    before = {
+        "moves": [
+            {"asset_id": move.asset_id, "folder_id": move.expected_folder_id}
+            for move in prepared.moves
+        ]
+    }
+    target = {
+        "asset_ids": [move.asset_id for move in prepared.moves],
+        "folder_id": prepared.target_folder_id,
+    }
+    prepared_json = _prepared_document(conversation, operation="move_assets", before=before, target=target)
+    request_hash = _tool_request_hash(tool_name=MOVE_ASSETS_TOOL_NAME, prepared_json=prepared_json)
+    replay = _replay_existing_mutation(
+        session,
+        conversation_id=conversation.id,
+        tool_name=MOVE_ASSETS_TOOL_NAME,
+        idempotency_key=normalized_key,
+        request_hash=request_hash,
+    )
+    if replay is not None:
+        session.commit()
+        return replay
+    assets = stage_move_gallery_assets(
+        session,
+        product_id=conversation.product_id,
+        moves=list(prepared.moves),
+        folder_id=prepared.target_folder_id,
+    )
+    result = {
+        "asset_ids": [asset.id for asset in assets],
+        "folder_id": prepared.target_folder_id,
+        "applied": any(
+            move.expected_folder_id != prepared.target_folder_id for move in prepared.moves
+        ),
+    }
+    return _commit_tool_mutation(
+        session,
+        conversation_id=conversation.id,
+        tool_name=MOVE_ASSETS_TOOL_NAME,
+        idempotency_key=normalized_key,
+        request_hash=request_hash,
+        prepared_json=prepared_json,
+        result=result,
+    )
+
+
+def reconcile_agent_asset_move(
+    session: Session,
+    *,
+    conversation_id: str,
+    idempotency_key: str,
+    moves: list[GalleryAssetMove],
+    target_folder_id: str | None,
+) -> AgentToolReconcileResult:
+    normalized_key = _normalize_tool_idempotency_key(idempotency_key)
+    prepared = _normalize_asset_move_prepared(moves=moves, target_folder_id=target_folder_id)
+    conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
+    before = {
+        "moves": [
+            {"asset_id": move.asset_id, "folder_id": move.expected_folder_id}
+            for move in prepared.moves
+        ]
+    }
+    target = {
+        "asset_ids": [move.asset_id for move in prepared.moves],
+        "folder_id": prepared.target_folder_id,
+    }
+    prepared_json = _prepared_document(conversation, operation="move_assets", before=before, target=target)
+    request_hash = _tool_request_hash(tool_name=MOVE_ASSETS_TOOL_NAME, prepared_json=prepared_json)
+    ledger_result = _reconcile_from_ledger(
+        session,
+        conversation_id=conversation.id,
+        tool_name=MOVE_ASSETS_TOOL_NAME,
+        idempotency_key=normalized_key,
+        request_hash=request_hash,
+    )
+    if ledger_result is not None:
+        return ledger_result
+    assets = _load_scoped_asset_metadata(
+        session,
+        product_id=conversation.product_id,
+        asset_ids=[move.asset_id for move in prepared.moves],
+    )
+    current = {asset.id: asset.user_folder_id for asset in assets}
+    if all(current[move.asset_id] == move.expected_folder_id for move in prepared.moves):
+        return AgentToolReconcileResult(state="not_applied", detail="图片仍处于移动前目录")
+    return AgentToolReconcileResult(state="conflict", detail="图片目录已变化且缺少匹配账本")
 
 
 def agent_asset_metadata(asset: ProductImageAsset) -> dict[str, Any]:
@@ -417,13 +749,36 @@ def agent_asset_metadata(asset: ProductImageAsset) -> dict[str, Any]:
         "display_name": asset.display_name,
         "original_filename": asset.original_filename,
         "origin_type": asset.origin_type.value,
+        "image_type_key": asset.image_type_key,
+        "image_type_title": None,
+        "user_folder_id": asset.user_folder_id,
+        "user_folder_name": asset.user_folder.name if asset.user_folder is not None else None,
         "mime_type": media.mime_type,
         "byte_size": media.byte_size,
         "width": media.width,
         "height": media.height,
         "verification_status": media.verification_status.value,
+        "parent_asset_id": asset.parent_asset_id,
+        "generation": None,
         "created_at": asset.created_at.isoformat(),
     }
+
+
+def agent_gallery_asset_metadata(record: GalleryAssetRecord) -> dict[str, Any]:
+    metadata = agent_asset_metadata(record.asset)
+    metadata["image_type_title"] = record.image_type_title
+    metadata["generation"] = (
+        {
+            "workflow_id": record.generation.workflow_id,
+            "node_id": record.generation.node_id,
+            "node_run_id": record.generation.node_run_id,
+            "prompt_artifact_version_id": record.generation.prompt_artifact_version_id,
+            "visual_system_version_id": record.generation.visual_system_version_id,
+        }
+        if record.generation is not None
+        else None
+    )
+    return metadata
 
 
 def _load_scoped_assets(
@@ -436,7 +791,10 @@ def _load_scoped_assets(
     assets = list(
         session.scalars(
             select(ProductImageAsset)
-            .options(selectinload(ProductImageAsset.media_object))
+            .options(
+                selectinload(ProductImageAsset.media_object),
+                selectinload(ProductImageAsset.user_folder),
+            )
             .where(
                 ProductImageAsset.product_id == product_id,
                 ProductImageAsset.id.in_(normalized_ids),
@@ -450,20 +808,61 @@ def _load_scoped_assets(
     return assets
 
 
-def _get_scoped_asset_for_update(
+def _load_scoped_asset_metadata(
+    session: Session,
+    *,
+    product_id: str,
+    asset_ids: list[str],
+) -> list[ProductImageAsset]:
+    assets = list(
+        session.scalars(
+            select(ProductImageAsset)
+            .options(
+                selectinload(ProductImageAsset.media_object),
+                selectinload(ProductImageAsset.user_folder),
+            )
+            .where(
+                ProductImageAsset.product_id == product_id,
+                ProductImageAsset.id.in_(asset_ids),
+            )
+        )
+    )
+    if len(assets) != len(asset_ids):
+        raise NotFoundError("商品图片不存在")
+    return assets
+
+
+def _get_scoped_asset(
     session: Session,
     *,
     product_id: str,
     asset_id: str,
 ) -> ProductImageAsset:
+    normalized_id = _normalize_required_id(asset_id, field_name="商品图片 ID")
     asset = session.scalar(
         select(ProductImageAsset)
-        .where(ProductImageAsset.id == asset_id, ProductImageAsset.product_id == product_id)
-        .with_for_update()
+        .options(selectinload(ProductImageAsset.media_object), selectinload(ProductImageAsset.user_folder))
+        .where(ProductImageAsset.id == normalized_id, ProductImageAsset.product_id == product_id)
     )
     if asset is None:
         raise NotFoundError("商品图片不存在")
     return asset
+
+
+def _get_scoped_folder(
+    session: Session,
+    *,
+    product_id: str,
+    folder_id: str,
+) -> ProductAssetFolder:
+    normalized_id = _normalize_required_id(folder_id, field_name="文件夹 ID")
+    folder = session.scalar(
+        select(ProductAssetFolder)
+        .where(ProductAssetFolder.id == normalized_id, ProductAssetFolder.product_id == product_id)
+    )
+    if folder is None:
+        raise NotFoundError("商品图片文件夹不存在")
+    return folder
 
 
 def _get_conversation_for_update(session: Session, conversation_id: str) -> AgentConversation:
@@ -486,15 +885,6 @@ def _normalize_explicit_asset_ids(values: list[str]) -> list[str]:
     return normalized
 
 
-def _normalize_display_name(value: str) -> str:
-    normalized = value.strip()
-    if not normalized:
-        raise BusinessValidationError("图片显示名不能为空")
-    if len(normalized) > 255:
-        raise BusinessValidationError("图片显示名不能超过 255 个字符")
-    return normalized
-
-
 def _normalize_tool_idempotency_key(value: str) -> str:
     normalized = value.strip()
     if not normalized:
@@ -502,6 +892,19 @@ def _normalize_tool_idempotency_key(value: str) -> str:
     if len(normalized.encode("utf-8")) > 200:
         raise BusinessValidationError("工具 idempotency key 不能超过 200 bytes")
     return normalized
+
+
+def _normalize_required_id(value: str, *, field_name: str) -> str:
+    normalized = value.strip()
+    if not normalized or len(normalized) > 36:
+        raise BusinessValidationError(f"{field_name}无效")
+    return normalized
+
+
+def _normalize_optional_id(value: str | None, *, field_name: str) -> str | None:
+    if value is None:
+        return None
+    return _normalize_required_id(value, field_name=field_name)
 
 
 def _normalize_rename_prepared(
@@ -514,71 +917,237 @@ def _normalize_rename_prepared(
     if not normalized_asset_id:
         raise BusinessValidationError("商品图片 ID 不能为空")
     return AgentAssetRenamePrepared(
-        asset_id=normalized_asset_id,
-        expected_display_name=_normalize_display_name(expected_display_name),
-        target_display_name=_normalize_display_name(target_display_name),
+        asset_id=_normalize_required_id(normalized_asset_id, field_name="商品图片 ID"),
+        expected_display_name=normalize_gallery_display_name(expected_display_name),
+        target_display_name=normalize_gallery_display_name(target_display_name),
     )
 
 
-def _rename_request_hash(
+def _normalize_folder_create_prepared(*, folder_id: str, name: str) -> AgentFolderCreatePrepared:
+    return AgentFolderCreatePrepared(
+        folder_id=_normalize_required_id(folder_id, field_name="文件夹 ID"),
+        name=normalize_gallery_folder_name(name),
+    )
+
+
+def _normalize_folder_rename_prepared(
     *,
-    conversation_id: str,
-    prepared: AgentAssetRenamePrepared,
-) -> str:
-    payload = {
+    folder_id: str,
+    expected_name: str,
+    target_name: str,
+) -> AgentFolderRenamePrepared:
+    return AgentFolderRenamePrepared(
+        folder_id=_normalize_required_id(folder_id, field_name="文件夹 ID"),
+        expected_name=normalize_gallery_folder_name(expected_name),
+        target_name=normalize_gallery_folder_name(target_name),
+    )
+
+
+def _normalize_move_asset_ids(values: list[str]) -> list[str]:
+    if not 1 <= len(values) <= GALLERY_MOVE_MAX_ASSETS:
+        raise BusinessValidationError(f"单次必须移动 1 到 {GALLERY_MOVE_MAX_ASSETS} 张图片")
+    normalized = [_normalize_required_id(value, field_name="商品图片 ID") for value in values]
+    if len(set(normalized)) != len(normalized):
+        raise BusinessValidationError("移动列表不能包含重复图片 ID")
+    return normalized
+
+
+def _normalize_asset_move_prepared(
+    *,
+    moves: list[GalleryAssetMove],
+    target_folder_id: str | None,
+) -> AgentAssetMovePrepared:
+    normalized_ids = _normalize_move_asset_ids([move.asset_id for move in moves])
+    normalized_moves = tuple(
+        GalleryAssetMove(
+            asset_id=asset_id,
+            expected_folder_id=_normalize_optional_id(
+                move.expected_folder_id,
+                field_name="expected folder ID",
+            ),
+        )
+        for asset_id, move in zip(normalized_ids, moves, strict=True)
+    )
+    return AgentAssetMovePrepared(
+        moves=normalized_moves,
+        target_folder_id=_normalize_optional_id(target_folder_id, field_name="目标文件夹 ID"),
+    )
+
+
+def _prepared_document(
+    conversation: AgentConversation,
+    *,
+    operation: str,
+    before: dict[str, Any],
+    target: dict[str, Any],
+) -> dict[str, Any]:
+    return {
         "schema_version": 1,
-        "conversation_id": conversation_id,
-        "tool_name": RENAME_ASSET_TOOL_NAME,
-        "asset_id": prepared.asset_id,
-        "expected_display_name": prepared.expected_display_name,
-        "target_display_name": prepared.target_display_name,
+        "operation": operation,
+        "scope": {
+            "conversation_id": conversation.id,
+            "product_id": conversation.product_id,
+        },
+        "before": before,
+        "target": target,
     }
+
+
+def _tool_request_hash(*, tool_name: str, prepared_json: dict[str, Any]) -> str:
+    payload = {"tool_name": tool_name, "prepared": prepared_json}
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _encode_asset_cursor(created_at: datetime, asset_id: str) -> str:
-    normalized_created_at = created_at if created_at.tzinfo is not None else created_at.replace(tzinfo=UTC)
-    payload = json.dumps(
-        {"created_at": normalized_created_at.isoformat(), "id": asset_id},
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode()
-    return base64.urlsafe_b64encode(payload).decode().rstrip("=")
+def _get_tool_mutation(
+    session: Session,
+    *,
+    conversation_id: str,
+    tool_name: str,
+    idempotency_key: str,
+) -> AgentToolMutation | None:
+    return session.scalar(
+        select(AgentToolMutation).where(
+            AgentToolMutation.conversation_id == conversation_id,
+            AgentToolMutation.tool_name == tool_name,
+            AgentToolMutation.idempotency_key == idempotency_key,
+        )
+    )
 
 
-def _decode_asset_cursor(value: str) -> tuple[datetime, str]:
+def _replay_existing_mutation(
+    session: Session,
+    *,
+    conversation_id: str,
+    tool_name: str,
+    idempotency_key: str,
+    request_hash: str,
+) -> dict[str, Any] | None:
+    mutation = _get_tool_mutation(
+        session,
+        conversation_id=conversation_id,
+        tool_name=tool_name,
+        idempotency_key=idempotency_key,
+    )
+    if mutation is None:
+        return None
+    if mutation.request_hash != request_hash:
+        raise ConflictError("同一工具 idempotency key 不能提交不同请求")
+    if mutation.status != AgentToolMutationStatus.APPLIED or mutation.result_json is None:
+        raise ConflictError("工具副作用账本未处于 applied 状态")
+    return dict(mutation.result_json)
+
+
+def _reconcile_from_ledger(
+    session: Session,
+    *,
+    conversation_id: str,
+    tool_name: str,
+    idempotency_key: str,
+    request_hash: str,
+) -> AgentToolReconcileResult | None:
+    mutation = _get_tool_mutation(
+        session,
+        conversation_id=conversation_id,
+        tool_name=tool_name,
+        idempotency_key=idempotency_key,
+    )
+    if mutation is None:
+        return None
+    if mutation.request_hash != request_hash:
+        return AgentToolReconcileResult(state="conflict", detail="工具幂等键已绑定其他请求")
+    if mutation.status == AgentToolMutationStatus.APPLIED and mutation.result_json is not None:
+        return AgentToolReconcileResult(
+            state="applied",
+            result=dict(mutation.result_json),
+            detail="工具副作用已提交",
+        )
+    if mutation.status == AgentToolMutationStatus.UNKNOWN:
+        return AgentToolReconcileResult(state="unknown", detail="副作用结果仍不明确")
+    return AgentToolReconcileResult(state="unknown", detail="副作用账本尚未形成终态")
+
+
+def _commit_tool_mutation(
+    session: Session,
+    *,
+    conversation_id: str,
+    tool_name: str,
+    idempotency_key: str,
+    request_hash: str,
+    prepared_json: dict[str, Any],
+    result: dict[str, Any],
+    asset_id: str | None = None,
+    expected_display_name: str | None = None,
+    target_display_name: str | None = None,
+) -> dict[str, Any]:
+    session.add(
+        AgentToolMutation(
+            conversation_id=conversation_id,
+            tool_name=tool_name,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+            asset_id=asset_id,
+            expected_display_name=expected_display_name,
+            target_display_name=target_display_name,
+            prepared_json=prepared_json,
+            status=AgentToolMutationStatus.APPLIED,
+            result_json=result,
+        )
+    )
     try:
-        padded = value.strip() + "=" * (-len(value.strip()) % 4)
-        raw = base64.b64decode(padded, altchars=b"-_", validate=True)
-        decoded = json.loads(raw)
-        if not isinstance(decoded, dict) or set(decoded) != {"created_at", "id"}:
-            raise ValueError
-        created_at = datetime.fromisoformat(decoded["created_at"])
-        asset_id = decoded["id"]
-        if created_at.tzinfo is None or not isinstance(asset_id, str) or not asset_id:
-            raise ValueError
-        return created_at, asset_id
-    except (TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise BusinessValidationError("图库分页 cursor 无效") from exc
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        existing = _get_tool_mutation(
+            session,
+            conversation_id=conversation_id,
+            tool_name=tool_name,
+            idempotency_key=idempotency_key,
+        )
+        if (
+            existing is not None
+            and existing.request_hash == request_hash
+            and existing.status == AgentToolMutationStatus.APPLIED
+            and existing.result_json is not None
+        ):
+            return dict(existing.result_json)
+        raise ConflictError("工具请求与现有对象或副作用账本冲突") from None
+    return result
 
 
 __all__ = [
     "AGENT_ASSET_LIST_DEFAULT_LIMIT",
     "AGENT_ASSET_LIST_MAX_LIMIT",
     "AGENT_TOOL_CONTRACT_VERSION",
+    "CREATE_FOLDER_TOOL_NAME",
+    "MOVE_ASSETS_TOOL_NAME",
+    "RENAME_FOLDER_TOOL_NAME",
     "RENAME_ASSET_TOOL_NAME",
     "AgentAssetContent",
     "AgentAssetPage",
     "AgentAssetRenamePrepared",
     "AgentAssetRenameReconcileResult",
+    "AgentAssetMovePrepared",
+    "AgentFolderCreatePrepared",
+    "AgentFolderRenamePrepared",
+    "AgentToolReconcileResult",
     "agent_asset_metadata",
+    "agent_gallery_asset_metadata",
+    "apply_agent_asset_move",
     "apply_agent_asset_rename",
+    "apply_agent_folder_create",
+    "apply_agent_folder_rename",
     "get_agent_contract",
     "get_agent_product_context",
     "inspect_agent_product_assets",
     "list_agent_product_assets",
+    "prepare_agent_asset_move",
     "prepare_agent_asset_rename",
+    "prepare_agent_folder_create",
+    "prepare_agent_folder_rename",
     "read_agent_product_asset_content",
+    "reconcile_agent_asset_move",
     "reconcile_agent_asset_rename",
+    "reconcile_agent_folder_create",
+    "reconcile_agent_folder_rename",
 ]

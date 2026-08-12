@@ -19,20 +19,31 @@ from productflow_backend.application.agent_conversations import (
     project_agent_turn_state,
     reserve_agent_turn,
 )
+from productflow_backend.application.agent_cutover import inspect_agent_catalog_cutover
 from productflow_backend.application.agent_sync import (
     execute_agent_turn_sync,
     recover_unfinished_agent_turn_syncs,
 )
 from productflow_backend.application.agent_tools import (
+    apply_agent_asset_move,
     apply_agent_asset_rename,
+    apply_agent_folder_create,
+    apply_agent_folder_rename,
     get_agent_contract,
     get_agent_product_context,
     inspect_agent_product_assets,
     list_agent_product_assets,
+    prepare_agent_asset_move,
     prepare_agent_asset_rename,
+    prepare_agent_folder_create,
+    prepare_agent_folder_rename,
     read_agent_product_asset_content,
+    reconcile_agent_asset_move,
     reconcile_agent_asset_rename,
+    reconcile_agent_folder_create,
+    reconcile_agent_folder_rename,
 )
+from productflow_backend.application.gallery_mutations import rename_gallery_asset
 from productflow_backend.application.use_cases import create_canonical_product
 from productflow_backend.application.workflow_drafts.service import create_workflow_draft
 from productflow_backend.config import get_settings
@@ -45,6 +56,7 @@ from productflow_backend.infrastructure.agent_service import (
     AgentServiceArtifact,
     AgentServiceQuestion,
     AgentServiceQuestionOption,
+    AgentServiceRequestError,
     AgentServiceTurnState,
 )
 from productflow_backend.infrastructure.db.models import (
@@ -312,6 +324,7 @@ def test_agent_read_tools_are_bounded_and_rename_is_reconcilable(db_session) -> 
     assert contract["workflow_draft_id"] == draft.id
     assert contract["current_draft_version"] == 1
     assert contract["workflow_draft_schema"]["additionalProperties"] is False
+    assert contract["tool_contract_version"] == 2
 
     context = get_agent_product_context(db_session, conversation.id)
     assert context["product"]["name"] == product.name
@@ -399,6 +412,23 @@ def test_agent_read_tools_are_bounded_and_rename_is_reconcilable(db_session) -> 
     )
     assert after.state == "applied"
     assert after.result == renamed
+    rename_gallery_asset(
+        db_session,
+        product_id=product.id,
+        asset_id=asset.id,
+        expected_display_name="商品正面参考图",
+        display_name="用户后续改名",
+    )
+    replayed_after_later_change = reconcile_agent_asset_rename(
+        db_session,
+        conversation_id=conversation.id,
+        idempotency_key="rename-1",
+        asset_id=prepared.asset_id,
+        expected_display_name=prepared.expected_display_name,
+        target_display_name=prepared.target_display_name,
+    )
+    assert replayed_after_later_change.state == "applied"
+    assert replayed_after_later_change.result == renamed
     ambiguous = reconcile_agent_asset_rename(
         db_session,
         conversation_id=conversation.id,
@@ -418,6 +448,208 @@ def test_agent_read_tools_are_bounded_and_rename_is_reconcilable(db_session) -> 
             expected_display_name=prepared.expected_display_name,
             target_display_name="另一名称",
         )
+
+
+def test_agent_folder_and_move_tools_share_atomic_gallery_mutations(db_session) -> None:
+    product, first_asset, draft, _ = _create_product_and_draft(db_session, image_count=2)
+    conversation = create_agent_conversation(
+        db_session,
+        product_id=product.id,
+        workflow_draft_id=draft.id,
+    )
+    second_asset = next(asset for asset in product.image_assets if asset.id != first_asset.id)
+
+    prepared_folder = prepare_agent_folder_create(
+        db_session,
+        conversation_id=conversation.id,
+        name="  核心参考  ",
+    )
+    assert prepared_folder.name == "核心参考"
+    assert reconcile_agent_folder_create(
+        db_session,
+        conversation_id=conversation.id,
+        idempotency_key="folder-create-1",
+        folder_id=prepared_folder.folder_id,
+        name=prepared_folder.name,
+    ).state == "not_applied"
+    created_folder = apply_agent_folder_create(
+        db_session,
+        conversation_id=conversation.id,
+        idempotency_key="folder-create-1",
+        folder_id=prepared_folder.folder_id,
+        name=prepared_folder.name,
+    )
+    assert created_folder["folder_id"] == prepared_folder.folder_id
+    assert created_folder["name"] == "核心参考"
+
+    prepared_move = prepare_agent_asset_move(
+        db_session,
+        conversation_id=conversation.id,
+        asset_ids=[first_asset.id, second_asset.id],
+        target_folder_id=prepared_folder.folder_id,
+    )
+    assert [move.expected_folder_id for move in prepared_move.moves] == [None, None]
+    moved = apply_agent_asset_move(
+        db_session,
+        conversation_id=conversation.id,
+        idempotency_key="move-1",
+        moves=list(prepared_move.moves),
+        target_folder_id=prepared_move.target_folder_id,
+    )
+    assert moved == {
+        "asset_ids": [first_asset.id, second_asset.id],
+        "folder_id": prepared_folder.folder_id,
+        "applied": True,
+    }
+    assert reconcile_agent_asset_move(
+        db_session,
+        conversation_id=conversation.id,
+        idempotency_key="move-1",
+        moves=list(prepared_move.moves),
+        target_folder_id=prepared_move.target_folder_id,
+    ).state == "applied"
+
+    prepared_rename = prepare_agent_folder_rename(
+        db_session,
+        conversation_id=conversation.id,
+        folder_id=prepared_folder.folder_id,
+        target_name="精选参考",
+    )
+    renamed = apply_agent_folder_rename(
+        db_session,
+        conversation_id=conversation.id,
+        idempotency_key="folder-rename-1",
+        folder_id=prepared_rename.folder_id,
+        expected_name=prepared_rename.expected_name,
+        target_name=prepared_rename.target_name,
+    )
+    assert renamed["name"] == "精选参考"
+    reconciled_rename = reconcile_agent_folder_rename(
+        db_session,
+        conversation_id=conversation.id,
+        idempotency_key="folder-rename-1",
+        folder_id=prepared_rename.folder_id,
+        expected_name=prepared_rename.expected_name,
+        target_name=prepared_rename.target_name,
+    )
+    assert reconciled_rename.state == "applied"
+    assert reconciled_rename.result == renamed
+
+    stale_move = prepare_agent_asset_move(
+        db_session,
+        conversation_id=conversation.id,
+        asset_ids=[first_asset.id, second_asset.id],
+        target_folder_id=None,
+    )
+    first_asset.user_folder_id = None
+    db_session.commit()
+    with pytest.raises(ConflictError, match="所在文件夹"):
+        apply_agent_asset_move(
+            db_session,
+            conversation_id=conversation.id,
+            idempotency_key="move-stale",
+            moves=list(stale_move.moves),
+            target_folder_id=stale_move.target_folder_id,
+        )
+    db_session.expire_all()
+    assert db_session.get(type(second_asset), second_asset.id).user_folder_id == prepared_folder.folder_id
+    assert db_session.scalar(
+        select(func.count()).select_from(AgentToolMutation).where(AgentToolMutation.idempotency_key == "move-stale")
+    ) == 0
+
+
+def test_agent_catalog_cutover_cross_checks_projection_and_harness_state(db_session) -> None:
+    product, _, draft, _ = _create_product_and_draft(db_session)
+    conversation = create_agent_conversation(
+        db_session,
+        product_id=product.id,
+        workflow_draft_id=draft.id,
+    )
+
+    def projection(key: str, status: AgentTurnStatus, harness_turn_id: str | None):
+        item = AgentTurnProjection(
+            conversation_id=conversation.id,
+            harness_turn_id=harness_turn_id,
+            idempotency_key=key,
+            request_hash="a" * 64,
+            input_text=key,
+            input_asset_ids_json=[],
+            status=status,
+        )
+        db_session.add(item)
+        db_session.flush()
+        return item
+
+    unbound = projection("unbound", AgentTurnStatus.QUEUED, None)
+    stale_running = projection("stale-running", AgentTurnStatus.RUNNING, "harness-succeeded")
+    requires_input = projection("requires-input", AgentTurnStatus.REQUIRES_INPUT, "harness-question")
+    unsynced_artifact = projection(
+        "unsynced-artifact",
+        AgentTurnStatus.AWAITING_CONFIRMATION,
+        "harness-awaiting",
+    )
+    synced_artifact = projection(
+        "synced-artifact",
+        AgentTurnStatus.AWAITING_CONFIRMATION,
+        "harness-synced",
+    )
+    synced_artifact.workflow_draft_revision_id = draft.current_revision_id
+    db_session.commit()
+
+    class Gateway:
+        states = {
+            "harness-succeeded": AgentTurnStatus.SUCCEEDED,
+            "harness-question": AgentTurnStatus.REQUIRES_INPUT,
+            "harness-awaiting": AgentTurnStatus.AWAITING_CONFIRMATION,
+        }
+
+        def get_turn(self, *, conversation_id: str, turn_id: str):
+            assert conversation_id == conversation.id
+            return type("TurnState", (), {"status": self.states[turn_id]})()
+
+    summary = inspect_agent_catalog_cutover(db_session, gateway=Gateway())
+    assert summary.checked_turns == 4
+    assert {blocker.projection_id for blocker in summary.blockers} == {
+        unbound.id,
+        requires_input.id,
+        unsynced_artifact.id,
+    }
+    assert stale_running.id not in {blocker.projection_id for blocker in summary.blockers}
+    assert synced_artifact.id not in {blocker.projection_id for blocker in summary.blockers}
+    assert summary.ready is False
+
+
+def test_agent_catalog_cutover_blocks_when_harness_cannot_be_verified(db_session) -> None:
+    product, _, draft, _ = _create_product_and_draft(db_session)
+    conversation = create_agent_conversation(
+        db_session,
+        product_id=product.id,
+        workflow_draft_id=draft.id,
+    )
+    projection = AgentTurnProjection(
+        conversation_id=conversation.id,
+        harness_turn_id="harness-unavailable",
+        idempotency_key="unavailable",
+        request_hash="b" * 64,
+        input_text="unavailable",
+        input_asset_ids_json=[],
+        status=AgentTurnStatus.UNKNOWN,
+    )
+    db_session.add(projection)
+    db_session.commit()
+
+    class Gateway:
+        def get_turn(self, **_kwargs):
+            raise AgentServiceRequestError(
+                status_code=None,
+                code="unavailable",
+                safe_message="Agent 服务暂时不可用",
+            )
+
+    summary = inspect_agent_catalog_cutover(db_session, gateway=Gateway())
+    assert summary.ready is False
+    assert summary.blockers[0].projection_id == projection.id
+    assert "unavailable" in summary.blockers[0].reason
 
 
 def test_internal_agent_routes_require_service_token_and_never_need_browser_session(
@@ -450,6 +682,7 @@ def test_internal_agent_routes_require_service_token_and_never_need_browser_sess
     contract = client.get(contract_path, headers=headers)
     assert contract.status_code == 200, contract.text
     assert contract.json()["conversation_id"] == conversation.id
+    assert contract.json()["tool_contract_version"] == 2
     assets = client.get(
         f"/api/internal/v1/agent-conversations/{conversation.id}/assets?limit=10",
         headers=headers,
@@ -486,6 +719,55 @@ def test_internal_agent_routes_require_service_token_and_never_need_browser_sess
     )
     assert reconciled.status_code == 200, reconciled.text
     assert reconciled.json()["state"] == "applied"
+
+    invalid_folder = client.post(
+        f"/api/internal/v1/agent-conversations/{conversation.id}/folder-creates/prepare",
+        headers=headers,
+        json={"name": "Agent 整理", "unknown": True},
+    )
+    assert invalid_folder.status_code == 422
+    prepared_folder = client.post(
+        f"/api/internal/v1/agent-conversations/{conversation.id}/folder-creates/prepare",
+        headers=headers,
+        json={"name": "Agent 整理"},
+    )
+    assert prepared_folder.status_code == 200, prepared_folder.text
+    created_folder = client.post(
+        f"/api/internal/v1/agent-conversations/{conversation.id}/folder-creates",
+        headers={**headers, "Idempotency-Key": "internal-folder-create-1"},
+        json=prepared_folder.json(),
+    )
+    assert created_folder.status_code == 200, created_folder.text
+    folder_id = created_folder.json()["folder_id"]
+
+    prepared_move = client.post(
+        f"/api/internal/v1/agent-conversations/{conversation.id}/asset-moves/prepare",
+        headers=headers,
+        json={"asset_ids": [asset.id], "target_folder_id": folder_id},
+    )
+    assert prepared_move.status_code == 200, prepared_move.text
+    moved = client.post(
+        f"/api/internal/v1/agent-conversations/{conversation.id}/asset-moves",
+        headers={**headers, "Idempotency-Key": "internal-move-1"},
+        json=prepared_move.json(),
+    )
+    assert moved.status_code == 200, moved.text
+    assert moved.json()["asset_ids"] == [asset.id]
+    assert moved.json()["folder_id"] == folder_id
+
+    prepared_folder_rename = client.post(
+        f"/api/internal/v1/agent-conversations/{conversation.id}/folder-renames/prepare",
+        headers=headers,
+        json={"folder_id": folder_id, "target_name": "已整理参考"},
+    )
+    assert prepared_folder_rename.status_code == 200, prepared_folder_rename.text
+    renamed_folder = client.post(
+        f"/api/internal/v1/agent-conversations/{conversation.id}/folder-renames",
+        headers={**headers, "Idempotency-Key": "internal-folder-rename-1"},
+        json=prepared_folder_rename.json(),
+    )
+    assert renamed_folder.status_code == 200, renamed_folder.text
+    assert renamed_folder.json()["name"] == "已整理参考"
 
 
 class _FakeAgentGateway:

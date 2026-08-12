@@ -39,16 +39,22 @@ type Contract struct {
 }
 
 type AssetMetadata struct {
-	ID                 string `json:"id"`
-	DisplayName        string `json:"display_name"`
-	OriginalFilename   string `json:"original_filename"`
-	OriginType         string `json:"origin_type"`
-	MIMEType           string `json:"mime_type"`
-	ByteSize           int64  `json:"byte_size"`
-	Width              int    `json:"width"`
-	Height             int    `json:"height"`
-	VerificationStatus string `json:"verification_status"`
-	CreatedAt          string `json:"created_at"`
+	ID                 string          `json:"id"`
+	DisplayName        string          `json:"display_name"`
+	OriginalFilename   string          `json:"original_filename"`
+	OriginType         string          `json:"origin_type"`
+	ImageTypeKey       *string         `json:"image_type_key"`
+	ImageTypeTitle     *string         `json:"image_type_title"`
+	UserFolderID       *string         `json:"user_folder_id"`
+	UserFolderName     *string         `json:"user_folder_name"`
+	MIMEType           string          `json:"mime_type"`
+	ByteSize           *int64          `json:"byte_size"`
+	Width              *int            `json:"width"`
+	Height             *int            `json:"height"`
+	VerificationStatus string          `json:"verification_status"`
+	ParentAssetID      *string         `json:"parent_asset_id"`
+	Generation         json.RawMessage `json:"generation"`
+	CreatedAt          string          `json:"created_at"`
 }
 
 type AssetList struct {
@@ -72,6 +78,27 @@ type RenameResult struct {
 	AssetID     string `json:"asset_id"`
 	DisplayName string `json:"display_name"`
 	Applied     bool   `json:"applied"`
+}
+
+type FolderCreatePrepared struct {
+	FolderID string `json:"folder_id"`
+	Name     string `json:"name"`
+}
+
+type FolderRenamePrepared struct {
+	FolderID     string `json:"folder_id"`
+	ExpectedName string `json:"expected_name"`
+	TargetName   string `json:"target_name"`
+}
+
+type AssetMoveItem struct {
+	AssetID          string  `json:"asset_id"`
+	ExpectedFolderID *string `json:"expected_folder_id"`
+}
+
+type AssetMovePrepared struct {
+	Moves          []AssetMoveItem `json:"moves"`
+	TargetFolderID *string         `json:"target_folder_id"`
 }
 
 type ReconcileResult struct {
@@ -117,16 +144,21 @@ func (client *Client) ProductContext(ctx context.Context, conversationID string)
 
 func (client *Client) ListAssets(
 	ctx context.Context,
-	conversationID, query, cursor string,
+	conversationID, directoryKind, directoryKey, query, sort, cursor string,
 	limit int,
 ) (AssetList, error) {
 	values := url.Values{}
+	values.Set("directory_kind", strings.TrimSpace(directoryKind))
+	if strings.TrimSpace(directoryKey) != "" {
+		values.Set("directory_key", strings.TrimSpace(directoryKey))
+	}
 	if strings.TrimSpace(query) != "" {
 		values.Set("query", strings.TrimSpace(query))
 	}
 	if strings.TrimSpace(cursor) != "" {
 		values.Set("after", strings.TrimSpace(cursor))
 	}
+	values.Set("sort", strings.TrimSpace(sort))
 	values.Set("limit", strconv.Itoa(limit))
 	path := client.conversationPath(conversationID) + "/assets?" + values.Encode()
 	var result AssetList
@@ -215,6 +247,118 @@ func (client *Client) ReconcileRename(
 		prepared,
 		&result,
 		idempotencyKey,
+	)
+	return result, err
+}
+
+func (client *Client) PrepareFolderCreate(
+	ctx context.Context,
+	conversationID, name string,
+) (FolderCreatePrepared, error) {
+	var result FolderCreatePrepared
+	err := client.json(
+		ctx, http.MethodPost, client.conversationPath(conversationID)+"/folder-creates/prepare",
+		map[string]any{"name": name}, &result, "",
+	)
+	return result, err
+}
+
+func (client *Client) ExecuteFolderCreate(
+	ctx context.Context,
+	conversationID, idempotencyKey string,
+	prepared FolderCreatePrepared,
+) (json.RawMessage, error) {
+	return client.executeMutation(ctx, conversationID, "folder-creates", idempotencyKey, prepared)
+}
+
+func (client *Client) ReconcileFolderCreate(
+	ctx context.Context,
+	conversationID, idempotencyKey string,
+	prepared FolderCreatePrepared,
+) (ReconcileResult, error) {
+	return client.reconcileMutation(ctx, conversationID, "folder-creates", idempotencyKey, prepared)
+}
+
+func (client *Client) PrepareFolderRename(
+	ctx context.Context,
+	conversationID, folderID, targetName string,
+) (FolderRenamePrepared, error) {
+	var result FolderRenamePrepared
+	err := client.json(
+		ctx, http.MethodPost, client.conversationPath(conversationID)+"/folder-renames/prepare",
+		map[string]any{"folder_id": folderID, "target_name": targetName}, &result, "",
+	)
+	return result, err
+}
+
+func (client *Client) ExecuteFolderRename(
+	ctx context.Context,
+	conversationID, idempotencyKey string,
+	prepared FolderRenamePrepared,
+) (json.RawMessage, error) {
+	return client.executeMutation(ctx, conversationID, "folder-renames", idempotencyKey, prepared)
+}
+
+func (client *Client) ReconcileFolderRename(
+	ctx context.Context,
+	conversationID, idempotencyKey string,
+	prepared FolderRenamePrepared,
+) (ReconcileResult, error) {
+	return client.reconcileMutation(ctx, conversationID, "folder-renames", idempotencyKey, prepared)
+}
+
+func (client *Client) PrepareAssetMove(
+	ctx context.Context,
+	conversationID string,
+	assetIDs []string,
+	targetFolderID *string,
+) (AssetMovePrepared, error) {
+	var result AssetMovePrepared
+	err := client.json(
+		ctx, http.MethodPost, client.conversationPath(conversationID)+"/asset-moves/prepare",
+		map[string]any{"asset_ids": assetIDs, "target_folder_id": targetFolderID}, &result, "",
+	)
+	return result, err
+}
+
+func (client *Client) ExecuteAssetMove(
+	ctx context.Context,
+	conversationID, idempotencyKey string,
+	prepared AssetMovePrepared,
+) (json.RawMessage, error) {
+	return client.executeMutation(ctx, conversationID, "asset-moves", idempotencyKey, prepared)
+}
+
+func (client *Client) ReconcileAssetMove(
+	ctx context.Context,
+	conversationID, idempotencyKey string,
+	prepared AssetMovePrepared,
+) (ReconcileResult, error) {
+	return client.reconcileMutation(ctx, conversationID, "asset-moves", idempotencyKey, prepared)
+}
+
+func (client *Client) executeMutation(
+	ctx context.Context,
+	conversationID, operation, idempotencyKey string,
+	prepared any,
+) (json.RawMessage, error) {
+	var result json.RawMessage
+	err := client.json(
+		ctx, http.MethodPost, client.conversationPath(conversationID)+"/"+operation,
+		prepared, &result, idempotencyKey,
+	)
+	return result, err
+}
+
+func (client *Client) reconcileMutation(
+	ctx context.Context,
+	conversationID, operation, idempotencyKey string,
+	prepared any,
+) (ReconcileResult, error) {
+	var result ReconcileResult
+	err := client.json(
+		ctx, http.MethodPost, client.conversationPath(conversationID)+"/"+operation+"/reconcile",
+		prepared, &result, idempotencyKey,
 	)
 	return result, err
 }

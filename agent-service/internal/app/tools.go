@@ -17,11 +17,15 @@ import (
 
 const (
 	productContextToolName = "get_product_workflow_context_v1"
-	listAssetsToolName     = "list_product_image_assets_v1"
+	listAssetsToolName     = "list_product_image_assets_v2"
 	inspectAssetsToolName  = "inspect_product_image_assets_v1"
+	createFolderToolName   = "create_product_image_folder_v1"
+	renameFolderToolName   = "rename_product_image_folder_v1"
 	renameAssetToolName    = "rename_product_image_asset_v1"
+	moveAssetsToolName     = "move_product_image_assets_v1"
 	maxInspectedAssets     = 6
-	maxListedAssets        = 50
+	maxListedAssets        = 100
+	maxMovedAssets         = 100
 )
 
 func scopedReadTools(client *productflow.Client, scope Scope) []agenttask.Tool {
@@ -45,29 +49,41 @@ func scopedReadTools(client *productflow.Client, scope Scope) []agenttask.Tool {
 			Parameters: map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
-					"query": map[string]any{"type": "string", "maxLength": 120},
-					"after": map[string]any{"type": "string", "maxLength": 200},
+					"directory_kind": map[string]any{
+						"type": "string", "enum": []string{
+							"all", "recent_generated", "uploads", "generated", "image_type", "source", "unorganized", "user_folder",
+						},
+					},
+					"directory_key": map[string]any{"type": "string", "maxLength": 120},
+					"query":         map[string]any{"type": "string", "maxLength": 255},
+					"sort": map[string]any{
+						"type": "string", "enum": []string{"created_desc", "created_asc", "name_asc", "name_desc"},
+					},
+					"after": map[string]any{"type": "string", "maxLength": 1024},
 					"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": maxListedAssets},
 				},
-				"required": []string{"query", "after", "limit"},
+				"required": []string{"directory_kind", "directory_key", "query", "sort", "after", "limit"},
 			},
 			Strict: true,
 			Handler: func(ctx context.Context, raw json.RawMessage) (string, error) {
 				var arguments struct {
-					Query string `json:"query"`
-					After string `json:"after"`
-					Limit int    `json:"limit"`
+					DirectoryKind string `json:"directory_kind"`
+					DirectoryKey  string `json:"directory_key"`
+					Query         string `json:"query"`
+					Sort          string `json:"sort"`
+					After         string `json:"after"`
+					Limit         int    `json:"limit"`
 				}
 				if err := decodeStrictObject(raw, &arguments); err != nil {
 					return "", err
 				}
-				if arguments.Limit == 0 {
-					arguments.Limit = 20
-				}
 				if arguments.Limit < 1 || arguments.Limit > maxListedAssets {
 					return "", fmt.Errorf("limit must be between 1 and %d", maxListedAssets)
 				}
-				result, err := client.ListAssets(ctx, scope.ConversationID, arguments.Query, arguments.After, arguments.Limit)
+				result, err := client.ListAssets(
+					ctx, scope.ConversationID, arguments.DirectoryKind, arguments.DirectoryKey,
+					arguments.Query, arguments.Sort, arguments.After, arguments.Limit,
+				)
 				if err != nil {
 					return "", err
 				}
@@ -145,19 +161,150 @@ func scopedReadTools(client *productflow.Client, scope Scope) []agenttask.Tool {
 }
 
 func scopedDurableTools(client *productflow.Client, scope Scope) []agenttask.DurableTool {
-	tool := &renameAssetTool{client: client, scope: scope}
-	return []agenttask.DurableTool{{
-		Description: "Rename one image asset's display name within this conversation's product. The asset file and lineage are unchanged.",
-		Parameters: map[string]any{
-			"type": "object", "additionalProperties": false,
-			"properties": map[string]any{
-				"asset_id":     map[string]any{"type": "string", "minLength": 1, "maxLength": 64},
-				"display_name": map[string]any{"type": "string", "minLength": 1, "maxLength": 255},
+	return []agenttask.DurableTool{
+		{
+			Description: "Create one top-level image folder in this conversation's product gallery.",
+			Parameters: map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 120},
+				},
+				"required": []string{"name"},
 			},
-			"required": []string{"asset_id", "display_name"},
+			Tool: &createFolderTool{client: client, scope: scope},
 		},
-		Tool: tool,
-	}}
+		{
+			Description: "Rename one top-level image folder in this conversation's product gallery.",
+			Parameters: map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"folder_id": map[string]any{"type": "string", "minLength": 1, "maxLength": 36},
+					"name":      map[string]any{"type": "string", "minLength": 1, "maxLength": 120},
+				},
+				"required": []string{"folder_id", "name"},
+			},
+			Tool: &renameFolderTool{client: client, scope: scope},
+		},
+		{
+			Description: "Rename one image asset's display name within this conversation's product. The asset file and lineage are unchanged.",
+			Parameters: map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"asset_id":     map[string]any{"type": "string", "minLength": 1, "maxLength": 36},
+					"display_name": map[string]any{"type": "string", "minLength": 1, "maxLength": 255},
+				},
+				"required": []string{"asset_id", "display_name"},
+			},
+			Tool: &renameAssetTool{client: client, scope: scope},
+		},
+		{
+			Description: "Move one or more image assets to one top-level folder, or to the unorganized directory when folder_id is null.",
+			Parameters: map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"asset_ids": map[string]any{
+						"type": "array", "minItems": 1, "maxItems": maxMovedAssets,
+						"items": map[string]any{"type": "string", "minLength": 1, "maxLength": 36},
+					},
+					"folder_id": map[string]any{"type": []string{"string", "null"}, "maxLength": 36},
+				},
+				"required": []string{"asset_ids", "folder_id"},
+			},
+			Tool: &moveAssetsTool{client: client, scope: scope},
+		},
+	}
+}
+
+type createFolderTool struct {
+	client *productflow.Client
+	scope  Scope
+}
+
+func (*createFolderTool) Name() string                { return createFolderToolName }
+func (*createFolderTool) Effect() durable.EffectClass { return durable.EffectReconcilable }
+
+func (tool *createFolderTool) Prepare(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	var arguments struct {
+		Name string `json:"name"`
+	}
+	if err := decodeStrictObject(raw, &arguments); err != nil {
+		return nil, err
+	}
+	arguments.Name = strings.TrimSpace(arguments.Name)
+	if arguments.Name == "" || utf8.RuneCountInString(arguments.Name) > 120 {
+		return nil, errors.New("a folder name of at most 120 characters is required")
+	}
+	prepared, err := tool.client.PrepareFolderCreate(ctx, tool.scope.ConversationID, arguments.Name)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(prepared)
+}
+
+func (tool *createFolderTool) Execute(ctx context.Context, invocation durable.Invocation) (json.RawMessage, error) {
+	var prepared productflow.FolderCreatePrepared
+	if err := json.Unmarshal(invocation.Prepared, &prepared); err != nil {
+		return nil, fmt.Errorf("decode prepared folder create: %w", err)
+	}
+	result, err := tool.client.ExecuteFolderCreate(ctx, tool.scope.ConversationID, invocation.IdempotencyKey, prepared)
+	return durableExecutionResult(result, err, "folder create")
+}
+
+func (tool *createFolderTool) Reconcile(ctx context.Context, invocation durable.Invocation) (durable.ReconcileResult, error) {
+	var prepared productflow.FolderCreatePrepared
+	if err := json.Unmarshal(invocation.Prepared, &prepared); err != nil {
+		return durable.ReconcileResult{}, fmt.Errorf("decode prepared folder create: %w", err)
+	}
+	result, err := tool.client.ReconcileFolderCreate(ctx, tool.scope.ConversationID, invocation.IdempotencyKey, prepared)
+	return durableReconcileResult(result, err)
+}
+
+type renameFolderTool struct {
+	client *productflow.Client
+	scope  Scope
+}
+
+func (*renameFolderTool) Name() string                { return renameFolderToolName }
+func (*renameFolderTool) Effect() durable.EffectClass { return durable.EffectReconcilable }
+
+func (tool *renameFolderTool) Prepare(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	var arguments struct {
+		FolderID string `json:"folder_id"`
+		Name     string `json:"name"`
+	}
+	if err := decodeStrictObject(raw, &arguments); err != nil {
+		return nil, err
+	}
+	arguments.FolderID = strings.TrimSpace(arguments.FolderID)
+	arguments.Name = strings.TrimSpace(arguments.Name)
+	if arguments.FolderID == "" || arguments.Name == "" || utf8.RuneCountInString(arguments.Name) > 120 {
+		return nil, errors.New("folder_id and a folder name of at most 120 characters are required")
+	}
+	prepared, err := tool.client.PrepareFolderRename(
+		ctx, tool.scope.ConversationID, arguments.FolderID, arguments.Name,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(prepared)
+}
+
+func (tool *renameFolderTool) Execute(ctx context.Context, invocation durable.Invocation) (json.RawMessage, error) {
+	var prepared productflow.FolderRenamePrepared
+	if err := json.Unmarshal(invocation.Prepared, &prepared); err != nil {
+		return nil, fmt.Errorf("decode prepared folder rename: %w", err)
+	}
+	result, err := tool.client.ExecuteFolderRename(ctx, tool.scope.ConversationID, invocation.IdempotencyKey, prepared)
+	return durableExecutionResult(result, err, "folder rename")
+}
+
+func (tool *renameFolderTool) Reconcile(ctx context.Context, invocation durable.Invocation) (durable.ReconcileResult, error) {
+	var prepared productflow.FolderRenamePrepared
+	if err := json.Unmarshal(invocation.Prepared, &prepared); err != nil {
+		return durable.ReconcileResult{}, fmt.Errorf("decode prepared folder rename: %w", err)
+	}
+	result, err := tool.client.ReconcileFolderRename(ctx, tool.scope.ConversationID, invocation.IdempotencyKey, prepared)
+	return durableReconcileResult(result, err)
 }
 
 type renameAssetTool struct {
@@ -194,6 +341,73 @@ func (tool *renameAssetTool) Execute(ctx context.Context, invocation durable.Inv
 		return nil, fmt.Errorf("decode prepared rename: %w", err)
 	}
 	result, err := tool.client.ExecuteRename(ctx, tool.scope.ConversationID, invocation.IdempotencyKey, prepared)
+	return durableExecutionResult(result, err, "asset rename")
+}
+
+func (tool *renameAssetTool) Reconcile(ctx context.Context, invocation durable.Invocation) (durable.ReconcileResult, error) {
+	var prepared productflow.RenamePrepared
+	if err := json.Unmarshal(invocation.Prepared, &prepared); err != nil {
+		return durable.ReconcileResult{}, fmt.Errorf("decode prepared rename: %w", err)
+	}
+	result, err := tool.client.ReconcileRename(ctx, tool.scope.ConversationID, invocation.IdempotencyKey, prepared)
+	return durableReconcileResult(result, err)
+}
+
+type moveAssetsTool struct {
+	client *productflow.Client
+	scope  Scope
+}
+
+func (*moveAssetsTool) Name() string                { return moveAssetsToolName }
+func (*moveAssetsTool) Effect() durable.EffectClass { return durable.EffectReconcilable }
+
+func (tool *moveAssetsTool) Prepare(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	var arguments struct {
+		AssetIDs []string `json:"asset_ids"`
+		FolderID *string  `json:"folder_id"`
+	}
+	if err := decodeStrictObject(raw, &arguments); err != nil {
+		return nil, err
+	}
+	assetIDs, err := strictUniqueIDs(arguments.AssetIDs, maxMovedAssets)
+	if err != nil {
+		return nil, err
+	}
+	if arguments.FolderID != nil {
+		normalized := strings.TrimSpace(*arguments.FolderID)
+		if normalized == "" {
+			return nil, errors.New("folder_id cannot be empty")
+		}
+		arguments.FolderID = &normalized
+	}
+	prepared, err := tool.client.PrepareAssetMove(
+		ctx, tool.scope.ConversationID, assetIDs, arguments.FolderID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(prepared)
+}
+
+func (tool *moveAssetsTool) Execute(ctx context.Context, invocation durable.Invocation) (json.RawMessage, error) {
+	var prepared productflow.AssetMovePrepared
+	if err := json.Unmarshal(invocation.Prepared, &prepared); err != nil {
+		return nil, fmt.Errorf("decode prepared asset move: %w", err)
+	}
+	result, err := tool.client.ExecuteAssetMove(ctx, tool.scope.ConversationID, invocation.IdempotencyKey, prepared)
+	return durableExecutionResult(result, err, "asset move")
+}
+
+func (tool *moveAssetsTool) Reconcile(ctx context.Context, invocation durable.Invocation) (durable.ReconcileResult, error) {
+	var prepared productflow.AssetMovePrepared
+	if err := json.Unmarshal(invocation.Prepared, &prepared); err != nil {
+		return durable.ReconcileResult{}, fmt.Errorf("decode prepared asset move: %w", err)
+	}
+	result, err := tool.client.ReconcileAssetMove(ctx, tool.scope.ConversationID, invocation.IdempotencyKey, prepared)
+	return durableReconcileResult(result, err)
+}
+
+func durableExecutionResult(result json.RawMessage, err error, operation string) (json.RawMessage, error) {
 	if err == nil {
 		return result, nil
 	}
@@ -204,15 +418,10 @@ func (tool *renameAssetTool) Execute(ctx context.Context, invocation durable.Inv
 		}
 		return nil, err
 	}
-	return nil, fmt.Errorf("%w: rename outcome requires reconciliation: %v", durable.ErrOutcomeUnknown, err)
+	return nil, fmt.Errorf("%w: %s outcome requires reconciliation: %v", durable.ErrOutcomeUnknown, operation, err)
 }
 
-func (tool *renameAssetTool) Reconcile(ctx context.Context, invocation durable.Invocation) (durable.ReconcileResult, error) {
-	var prepared productflow.RenamePrepared
-	if err := json.Unmarshal(invocation.Prepared, &prepared); err != nil {
-		return durable.ReconcileResult{}, fmt.Errorf("decode prepared rename: %w", err)
-	}
-	result, err := tool.client.ReconcileRename(ctx, tool.scope.ConversationID, invocation.IdempotencyKey, prepared)
+func durableReconcileResult(result productflow.ReconcileResult, err error) (durable.ReconcileResult, error) {
 	if err != nil {
 		return durable.ReconcileResult{State: durable.ReconcileUnknown, Detail: err.Error()}, nil
 	}
@@ -261,6 +470,26 @@ func uniqueAssetIDs(values []string) ([]string, error) {
 			seen[value] = true
 			result = append(result, value)
 		}
+	}
+	return result, nil
+}
+
+func strictUniqueIDs(values []string, maximum int) ([]string, error) {
+	if len(values) == 0 || len(values) > maximum {
+		return nil, fmt.Errorf("asset_ids must contain between 1 and %d values", maximum)
+	}
+	seen := make(map[string]bool, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil, errors.New("asset_ids cannot contain empty values")
+		}
+		if seen[value] {
+			return nil, errors.New("asset_ids cannot contain duplicate values")
+		}
+		seen[value] = true
+		result = append(result, value)
 	}
 	return result, nil
 }

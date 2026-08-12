@@ -491,20 +491,30 @@ def test_canonical_product_api_exposes_assets_without_storage_paths(configured_e
 
     assert created.status_code == 201, created.text
     payload = created.json()
-    assert payload["name"] == "API 商品"
-    assert payload["price"] == "88.00"
-    assert len(payload["image_assets"]) == 2
-    assert payload["cover_image_asset_id"] == payload["image_assets"][0]["id"]
-    assert all(asset["verification_status"] == "verified" for asset in payload["image_assets"])
+    product_payload = payload["product"]
+    created_assets = payload["created_assets"]
+    assert product_payload["name"] == "API 商品"
+    assert product_payload["price"] == "88.00"
+    assert "image_assets" not in product_payload
+    assert len(created_assets) == 2
+    assert product_payload["cover_image_asset_id"] == created_assets[0]["id"]
+    assert all(asset["verification_status"] == "verified" for asset in created_assets)
     assert "storage_path" not in created.text
-    product_id = payload["id"]
-    first_asset_id = payload["image_assets"][0]["id"]
+    product_id = product_payload["id"]
+    first_asset_id = created_assets[0]["id"]
 
     listed = client.get(f"/api/v2/products/{product_id}/image-assets")
     assert listed.status_code == 200
     assert [asset["id"] for asset in listed.json()["items"]] == [
-        asset["id"] for asset in payload["image_assets"]
+        asset["id"] for asset in reversed(created_assets)
     ]
+    assert listed.json()["next_cursor"] is None
+    bootstrap = client.get(f"/api/v2/products/{product_id}/image-library")
+    assert bootstrap.status_code == 200
+    assert bootstrap.json()["unorganized_count"] == 2
+    detail = client.get(f"/api/v2/products/{product_id}/image-assets/{first_asset_id}")
+    assert detail.status_code == 200
+    assert detail.json()["id"] == first_asset_id
     downloaded = client.get(f"/api/v2/product-image-assets/{first_asset_id}/download")
     assert downloaded.status_code == 200
     assert downloaded.headers["content-type"] == "image/png"
@@ -557,7 +567,7 @@ def test_canonical_image_session_attach_api_keeps_shared_media_after_session_del
         files={"images": ("reference.png", _make_demo_image_bytes(), "image/png")},
     )
     assert product_response.status_code == 201
-    product_id = product_response.json()["id"]
+    product_id = product_response.json()["product"]["id"]
     session_response = client.post("/api/image-sessions", json={"title": "共享写回"})
     assert session_response.status_code == 201
     image_session_id = session_response.json()["id"]
@@ -592,8 +602,11 @@ def test_canonical_image_session_attach_api_keeps_shared_media_after_session_del
     assert deleted_session.status_code == 204
     product_after_delete = client.get(f"/api/v2/products/{product_id}")
     assert product_after_delete.status_code == 200
+    assert "image_assets" not in product_after_delete.json()
+    gallery_after_delete = client.get(f"/api/v2/products/{product_id}/image-assets")
+    assert gallery_after_delete.status_code == 200
     attached_after_delete = next(
-        asset for asset in product_after_delete.json()["image_assets"] if asset["id"] == attached.json()["id"]
+        asset for asset in gallery_after_delete.json()["items"] if asset["id"] == attached.json()["id"]
     )
     assert attached_after_delete["source_image_session_asset_id"] is None
     assert client.get(attached_after_delete["download_url"]).status_code == 200

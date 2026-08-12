@@ -41,6 +41,10 @@ from productflow_backend.application.product_workflow.user_templates import (
     list_canvas_templates,
     rename_user_canvas_template,
 )
+from productflow_backend.application.product_workflow.v2_reference_bindings import (
+    V2ReferenceBindingResult,
+    bind_v2_reference_node_asset,
+)
 from productflow_backend.application.product_workflow.v2_runs import (
     V2WorkflowNodeRunSubmission,
     get_v2_workflow_node_run,
@@ -63,10 +67,12 @@ def get_product_workflow_status(session, product_id: str) -> ProductWorkflowStat
 __all__ = [
     "WorkflowRunKickoff",
     "V2WorkflowNodeRunSubmission",
+    "V2ReferenceBindingResult",
     "AppliedWorkflowTemplateGroup",
     "apply_node_group_template_to_workflow",
     "archive_user_canvas_template",
     "bind_workflow_node_image",
+    "bind_v2_reference_node_asset",
     "create_user_canvas_template_from_workflow_nodes",
     "cancel_product_workflow_run",
     "create_workflow_edge",

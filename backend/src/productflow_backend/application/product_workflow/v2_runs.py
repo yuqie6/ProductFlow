@@ -9,6 +9,9 @@ from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.admission import ensure_generation_capacity
 from productflow_backend.application.product_workflow.run_state import mark_workflow_run_failed
+from productflow_backend.application.product_workflow.v2_staleness import (
+    ensure_image_prompt_references_current,
+)
 from productflow_backend.application.queue_submission import enqueue_or_mark_failed
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.durable_generation_tasks import WORKFLOW_RUN_GENERATION_TASK_CONTRACT
@@ -103,6 +106,7 @@ def _get_v2_runnable_node(session: Session, *, node_id: str) -> WorkflowNode:
         select(WorkflowNode)
         .options(selectinload(WorkflowNode.workflow))
         .where(WorkflowNode.id == node_id)
+        .with_for_update()
     )
     if node is None:
         raise NotFoundError("工作流节点不存在")
@@ -113,6 +117,8 @@ def _get_v2_runnable_node(session: Session, *, node_id: str) -> WorkflowNode:
         raise ConflictError("只能运行 active schema-v2 工作流")
     if node.node_type not in V2_RUNNABLE_NODE_TYPES:
         raise ConflictError("schema-v2 只允许运行提示词或图片生成节点")
+    if node.node_type == WorkflowNodeType.IMAGE_GENERATION:
+        ensure_image_prompt_references_current(session, image_node=node)
     return node
 
 

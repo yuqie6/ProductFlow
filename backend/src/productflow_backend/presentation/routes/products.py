@@ -5,12 +5,33 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
+from starlette.background import BackgroundTask
 
+from productflow_backend.application.gallery_archives import (
+    build_gallery_archive,
+    cleanup_gallery_archive,
+)
+from productflow_backend.application.gallery_assets import (
+    GALLERY_DEFAULT_LIMIT,
+    GALLERY_MAX_LIMIT,
+    GalleryAssetSort,
+    GalleryDirectoryKind,
+    get_gallery_asset_detail,
+    get_gallery_bootstrap,
+    list_gallery_assets,
+)
+from productflow_backend.application.gallery_mutations import (
+    GalleryAssetMove,
+    create_gallery_folder,
+    delete_gallery_folder,
+    move_gallery_assets,
+    rename_gallery_asset,
+    rename_gallery_folder,
+)
 from productflow_backend.application.media_assets import (
     clear_product_cover,
     delete_product_image_asset,
     get_product_image_asset,
-    list_product_image_assets,
     set_product_cover,
 )
 from productflow_backend.application.use_cases import (
@@ -19,7 +40,7 @@ from productflow_backend.application.use_cases import (
     add_canonical_product_images,
     add_reference_images,
     confirm_copy_set,
-    create_canonical_product,
+    create_canonical_product_with_assets,
     create_product,
     delete_product,
     delete_reference_image,
@@ -34,16 +55,29 @@ from productflow_backend.infrastructure.storage import ImageVariantName
 from productflow_backend.presentation.deps import get_session, require_admin, require_deletion_enabled
 from productflow_backend.presentation.image_variants import serve_image_variant
 from productflow_backend.presentation.schemas.products import (
+    CanonicalProductCreateResponse,
     CanonicalProductDetailResponse,
     CopySetResponse,
     CopySetUpdateRequest,
+    CreateGalleryFolderRequest,
+    DeleteGalleryFolderResponse,
+    DownloadGalleryArchiveRequest,
+    GalleryAssetPageResponse,
+    GalleryAssetResponse,
+    GalleryBootstrapResponse,
+    GalleryFolderMutationResponse,
+    MoveGalleryAssetsRequest,
     ProductDetailResponse,
     ProductHistoryResponse,
     ProductImageAssetListResponse,
     ProductListResponse,
+    RenameGalleryAssetRequest,
+    RenameGalleryFolderRequest,
     SetProductCoverRequest,
     serialize_canonical_product_detail,
     serialize_copy_set,
+    serialize_gallery_asset,
+    serialize_gallery_bootstrap,
     serialize_poster_variant,
     serialize_product_detail,
     serialize_product_image_asset,
@@ -57,7 +91,7 @@ from productflow_backend.presentation.upload_validation import (
 router = APIRouter(prefix="/api", tags=["products"], dependencies=[Depends(require_admin)])
 
 
-@router.post("/v2/products", response_model=CanonicalProductDetailResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/v2/products", response_model=CanonicalProductCreateResponse, status_code=status.HTTP_201_CREATED)
 async def create_canonical_product_endpoint(
     name: str = Form(...),
     images: list[UploadFile] = File(...),
@@ -65,13 +99,13 @@ async def create_canonical_product_endpoint(
     price: str | None = Form(default=None),
     source_note: str | None = Form(default=None),
     session: Session = Depends(get_session),
-) -> CanonicalProductDetailResponse:
+) -> CanonicalProductCreateResponse:
     validate_reference_image_count(len(images))
     image_payloads: list[tuple[bytes, str, str]] = []
     for image in images:
         validated = await read_validated_image_upload(image, fallback_filename="reference.bin")
         image_payloads.append((validated.content, validated.filename, validated.mime_type))
-    product = create_canonical_product(
+    creation = create_canonical_product_with_assets(
         session,
         name=name,
         category=category,
@@ -79,7 +113,10 @@ async def create_canonical_product_endpoint(
         source_note=source_note,
         image_uploads=image_payloads,
     )
-    return serialize_canonical_product_detail(product)
+    return CanonicalProductCreateResponse(
+        product=serialize_canonical_product_detail(creation.product),
+        created_assets=[serialize_product_image_asset(asset) for asset in creation.created_assets],
+    )
 
 
 @router.get("/v2/products/{product_id}", response_model=CanonicalProductDetailResponse)
@@ -90,13 +127,182 @@ def get_canonical_product_endpoint(
     return serialize_canonical_product_detail(get_product_detail(session, product_id))
 
 
-@router.get("/v2/products/{product_id}/image-assets", response_model=ProductImageAssetListResponse)
-def list_product_image_assets_endpoint(
+@router.get("/v2/products/{product_id}/image-library", response_model=GalleryBootstrapResponse)
+def get_product_image_library_endpoint(
     product_id: str,
     session: Session = Depends(get_session),
-) -> ProductImageAssetListResponse:
-    assets = list_product_image_assets(session, product_id)
-    return ProductImageAssetListResponse(items=[serialize_product_image_asset(asset) for asset in assets])
+) -> GalleryBootstrapResponse:
+    return serialize_gallery_bootstrap(get_gallery_bootstrap(session, product_id=product_id))
+
+
+@router.post(
+    "/v2/products/{product_id}/image-folders",
+    response_model=GalleryFolderMutationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_product_image_folder_endpoint(
+    product_id: str,
+    payload: CreateGalleryFolderRequest,
+    session: Session = Depends(get_session),
+) -> GalleryFolderMutationResponse:
+    folder = create_gallery_folder(session, product_id=product_id, name=payload.name)
+    return GalleryFolderMutationResponse(id=folder.id, name=folder.name, sort_order=folder.sort_order)
+
+
+@router.patch(
+    "/v2/products/{product_id}/image-folders/{folder_id}",
+    response_model=GalleryFolderMutationResponse,
+)
+def rename_product_image_folder_endpoint(
+    product_id: str,
+    folder_id: str,
+    payload: RenameGalleryFolderRequest,
+    session: Session = Depends(get_session),
+) -> GalleryFolderMutationResponse:
+    folder = rename_gallery_folder(
+        session,
+        product_id=product_id,
+        folder_id=folder_id,
+        expected_name=payload.expected_name,
+        name=payload.name,
+    )
+    return GalleryFolderMutationResponse(id=folder.id, name=folder.name, sort_order=folder.sort_order)
+
+
+@router.delete(
+    "/v2/products/{product_id}/image-folders/{folder_id}",
+    response_model=DeleteGalleryFolderResponse,
+)
+def delete_product_image_folder_endpoint(
+    product_id: str,
+    folder_id: str,
+    expected_name: str = Query(min_length=1, max_length=120),
+    session: Session = Depends(get_session),
+) -> DeleteGalleryFolderResponse:
+    moved_count = delete_gallery_folder(
+        session,
+        product_id=product_id,
+        folder_id=folder_id,
+        expected_name=expected_name,
+    )
+    return DeleteGalleryFolderResponse(
+        folder_id=folder_id,
+        moved_to_unorganized_count=moved_count,
+    )
+
+
+@router.post(
+    "/v2/products/{product_id}/image-assets/move",
+    response_model=GalleryAssetPageResponse,
+)
+def move_product_image_assets_endpoint(
+    product_id: str,
+    payload: MoveGalleryAssetsRequest,
+    session: Session = Depends(get_session),
+) -> GalleryAssetPageResponse:
+    assets = move_gallery_assets(
+        session,
+        product_id=product_id,
+        moves=[
+            GalleryAssetMove(
+                asset_id=item.asset_id,
+                expected_folder_id=item.expected_folder_id,
+            )
+            for item in payload.items
+        ],
+        folder_id=payload.folder_id,
+    )
+    return GalleryAssetPageResponse(
+        items=[
+            serialize_gallery_asset(
+                get_gallery_asset_detail(session, product_id=product_id, asset_id=asset.id)
+            )
+            for asset in assets
+        ],
+        next_cursor=None,
+    )
+
+
+@router.post("/v2/products/{product_id}/image-assets/download-archive")
+def download_product_image_archive_endpoint(
+    product_id: str,
+    payload: DownloadGalleryArchiveRequest,
+    session: Session = Depends(get_session),
+) -> FileResponse:
+    archive = build_gallery_archive(
+        session,
+        product_id=product_id,
+        asset_ids=payload.asset_ids,
+    )
+    return FileResponse(
+        path=archive.path,
+        filename=archive.filename,
+        media_type="application/zip",
+        background=BackgroundTask(cleanup_gallery_archive, archive),
+    )
+
+
+@router.get("/v2/products/{product_id}/image-assets", response_model=GalleryAssetPageResponse)
+def list_product_image_assets_endpoint(
+    product_id: str,
+    directory_kind: GalleryDirectoryKind = Query(default=GalleryDirectoryKind.ALL),
+    directory_key: str | None = Query(default=None, max_length=120),
+    q: str = Query(default="", max_length=255),
+    sort: GalleryAssetSort = Query(default=GalleryAssetSort.CREATED_DESC),
+    after: str = Query(default="", max_length=4096),
+    limit: int = Query(default=GALLERY_DEFAULT_LIMIT, ge=1, le=GALLERY_MAX_LIMIT),
+    session: Session = Depends(get_session),
+) -> GalleryAssetPageResponse:
+    page = list_gallery_assets(
+        session,
+        product_id=product_id,
+        directory_kind=directory_kind,
+        directory_key=directory_key,
+        query=q,
+        sort=sort,
+        after=after,
+        limit=limit,
+    )
+    return GalleryAssetPageResponse(
+        items=[serialize_gallery_asset(record) for record in page.items],
+        next_cursor=page.next_cursor,
+    )
+
+
+@router.get(
+    "/v2/products/{product_id}/image-assets/{asset_id}",
+    response_model=GalleryAssetResponse,
+)
+def get_product_image_asset_detail_endpoint(
+    product_id: str,
+    asset_id: str,
+    session: Session = Depends(get_session),
+) -> GalleryAssetResponse:
+    return serialize_gallery_asset(
+        get_gallery_asset_detail(session, product_id=product_id, asset_id=asset_id)
+    )
+
+
+@router.patch(
+    "/v2/products/{product_id}/image-assets/{asset_id}",
+    response_model=GalleryAssetResponse,
+)
+def rename_product_image_asset_endpoint(
+    product_id: str,
+    asset_id: str,
+    payload: RenameGalleryAssetRequest,
+    session: Session = Depends(get_session),
+) -> GalleryAssetResponse:
+    rename_gallery_asset(
+        session,
+        product_id=product_id,
+        asset_id=asset_id,
+        expected_display_name=payload.expected_display_name,
+        display_name=payload.display_name,
+    )
+    return serialize_gallery_asset(
+        get_gallery_asset_detail(session, product_id=product_id, asset_id=asset_id)
+    )
 
 
 @router.post(

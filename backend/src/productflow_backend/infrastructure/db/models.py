@@ -218,6 +218,11 @@ class Product(Base, TimestampMixin):
         cascade="all, delete-orphan",
         foreign_keys="ProductImageAsset.product_id",
     )
+    asset_folders: Mapped[list[ProductAssetFolder]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+        order_by="ProductAssetFolder.sort_order, ProductAssetFolder.name, ProductAssetFolder.id",
+    )
     cover_image_asset: Mapped[ProductImageAsset | None] = relationship(
         foreign_keys=[cover_image_asset_id],
         post_update=True,
@@ -264,12 +269,55 @@ class Product(Base, TimestampMixin):
     )
 
 
+class ProductAssetFolder(Base, TimestampMixin):
+    """商品图库中的一层用户文件夹。"""
+
+    __tablename__ = "product_asset_folders"
+    __table_args__ = (
+        UniqueConstraint("product_id", "name", name="uq_product_asset_folders_product_name"),
+        CheckConstraint("sort_order >= 0", name="ck_product_asset_folders_non_negative_sort_order"),
+        Index("ix_product_asset_folders_product_sort", "product_id", "sort_order", "name", "id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    product_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("products.id", ondelete="CASCADE", name="fk_product_asset_folders_product_id"),
+    )
+    name: Mapped[str] = mapped_column(String(120))
+    sort_order: Mapped[int] = mapped_column(Integer)
+
+    product: Mapped[Product] = relationship(back_populates="asset_folders")
+    assets: Mapped[list[ProductImageAsset]] = relationship(back_populates="user_folder")
+
+
 class ProductImageAsset(Base, TimestampMixin):
     """商品作用域内的逻辑图片；实际文件由 MediaObject 持有。"""
 
     __tablename__ = "product_image_assets"
     __table_args__ = (
         Index("ix_product_image_assets_product_created", "product_id", "created_at", "id"),
+        Index(
+            "ix_product_image_assets_product_folder_created",
+            "product_id",
+            "user_folder_id",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_product_image_assets_product_type_created",
+            "product_id",
+            "image_type_key",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_product_image_assets_product_origin_created",
+            "product_id",
+            "origin_type",
+            "created_at",
+            "id",
+        ),
         Index("ix_product_image_assets_media_object_id", "media_object_id"),
         Index("ix_product_image_assets_parent_asset_id", "parent_asset_id"),
         Index("ix_product_image_assets_source_image_session_asset_id", "source_image_session_asset_id"),
@@ -293,6 +341,16 @@ class ProductImageAsset(Base, TimestampMixin):
     origin_type: Mapped[ProductImageOriginType] = mapped_column(enum_value_column(ProductImageOriginType))
     display_name: Mapped[str] = mapped_column(String(255))
     original_filename: Mapped[str] = mapped_column(String(255))
+    image_type_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    user_folder_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "product_asset_folders.id",
+            ondelete="SET NULL",
+            name="fk_product_image_assets_user_folder_id",
+        ),
+        nullable=True,
+    )
     parent_asset_id: Mapped[str | None] = mapped_column(
         String(36),
         ForeignKey(
@@ -313,6 +371,7 @@ class ProductImageAsset(Base, TimestampMixin):
     )
 
     product: Mapped[Product] = relationship(back_populates="image_assets", foreign_keys=[product_id])
+    user_folder: Mapped[ProductAssetFolder | None] = relationship(back_populates="assets")
     media_object: Mapped[MediaObject] = relationship(back_populates="product_assets")
     parent_asset: Mapped[ProductImageAsset | None] = relationship(
         back_populates="child_assets",
@@ -733,16 +792,18 @@ class AgentToolMutation(Base, TimestampMixin):
     tool_name: Mapped[str] = mapped_column(String(120))
     idempotency_key: Mapped[str] = mapped_column(String(200))
     request_hash: Mapped[str] = mapped_column(String(64))
-    asset_id: Mapped[str] = mapped_column(
+    asset_id: Mapped[str | None] = mapped_column(
         String(36),
         ForeignKey(
             "product_image_assets.id",
-            ondelete="RESTRICT",
+            ondelete="SET NULL",
             name="fk_agent_tool_mutations_asset_id",
         ),
+        nullable=True,
     )
-    expected_display_name: Mapped[str] = mapped_column(String(255))
-    target_display_name: Mapped[str] = mapped_column(String(255))
+    expected_display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    target_display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    prepared_json: Mapped[dict[str, Any]] = mapped_column(JSON)
     status: Mapped[AgentToolMutationStatus] = mapped_column(
         enum_value_column(AgentToolMutationStatus),
         default=AgentToolMutationStatus.PREPARED,
@@ -750,7 +811,7 @@ class AgentToolMutation(Base, TimestampMixin):
     result_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     conversation: Mapped[AgentConversation] = relationship(back_populates="tool_mutations")
-    asset: Mapped[ProductImageAsset] = relationship()
+    asset: Mapped[ProductImageAsset | None] = relationship()
 
 
 class ProductWorkflow(Base, TimestampMixin):
@@ -1342,6 +1403,10 @@ class WorkflowImageGenerationRecord(Base):
         UniqueConstraint(
             "workflow_node_run_id",
             name="uq_workflow_image_generation_records_node_run_id",
+        ),
+        UniqueConstraint(
+            "result_asset_id",
+            name="uq_workflow_image_generation_records_result_asset_id",
         ),
         CheckConstraint(
             "length(compiled_prompt_hash) = 64",

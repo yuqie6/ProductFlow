@@ -18,7 +18,8 @@ def _create_canonical_product(client: TestClient, *, name: str = "硬质刀具�
         files=[("images", ("product.png", _make_demo_image_bytes(), "image/png"))],
     )
     assert response.status_code == 201, response.text
-    return response.json()
+    payload = response.json()
+    return {**payload["product"], "created_assets": payload["created_assets"]}
 
 
 def _sse_events(response) -> list[dict]:
@@ -53,7 +54,7 @@ def test_workflow_draft_api_materializes_v2_and_replays_reveal_events(configured
     _login(client)
     product = _create_canonical_product(client)
     product_id = product["id"]
-    reference_asset_id = product["image_assets"][0]["id"]
+    reference_asset_id = product["created_assets"][0]["id"]
 
     empty = client.get(f"/api/v2/products/{product_id}/workflow")
     assert empty.status_code == 200
@@ -186,6 +187,45 @@ def test_workflow_draft_api_materializes_v2_and_replays_reveal_events(configured
     ]
     assert refreshed_image["bound_image_asset_id"] == completed_image_payload["result_asset_id"]
 
+    uploaded_replacement = client.post(
+        f"/api/v2/products/{product_id}/image-assets",
+        files=[("images", ("replacement.png", _make_demo_image_bytes(), "image/png"))],
+    )
+    assert uploaded_replacement.status_code == 201, uploaded_replacement.text
+    replacement_asset_id = uploaded_replacement.json()["items"][0]["id"]
+    bind_url = (
+        f"/api/v2/products/{product_id}/workflows/{workflow['id']}"
+        f"/reference-nodes/{next(node['id'] for node in workflow['nodes'] if node['node_type'] == 'reference_image')}"
+    )
+    invalid_bind = client.patch(
+        bind_url,
+        json={
+            "asset_id": replacement_asset_id,
+            "expected_workflow_revision": workflow["revision"],
+            "expected_bound_asset_id": reference_asset_id,
+            "unknown": True,
+        },
+    )
+    assert invalid_bind.status_code == 422
+    rebound = client.patch(
+        bind_url,
+        json={
+            "asset_id": replacement_asset_id,
+            "expected_workflow_revision": workflow["revision"],
+            "expected_bound_asset_id": reference_asset_id,
+        },
+    )
+    assert rebound.status_code == 200, rebound.text
+    rebound_payload = rebound.json()
+    assert rebound_payload["changed"] is True
+    assert rebound_payload["previous_asset_id"] == reference_asset_id
+    assert rebound_payload["reference_node"]["bound_image_asset_id"] == replacement_asset_id
+    assert prompt_node["id"] in rebound_payload["affected_node_ids"]
+    assert image_node["id"] in rebound_payload["affected_node_ids"]
+    stale_image_run = client.post(f"/api/v2/workflow-nodes/{image_node['id']}/run")
+    assert stale_image_run.status_code == 409
+    assert "重新生成提示词" in stale_image_run.json()["detail"]
+
     legacy_query = client.get(f"/api/products/{product_id}/workflow")
     legacy_run = client.post(f"/api/products/{product_id}/workflow/run", json={})
     legacy_patch = client.patch(
@@ -239,7 +279,7 @@ def test_workflow_draft_api_returns_409_for_idempotency_key_parameter_drift(conf
     client = TestClient(create_app())
     _login(client)
     product = _create_canonical_product(client)
-    payload = make_workflow_draft_payload(reference_asset_id=product["image_assets"][0]["id"])
+    payload = make_workflow_draft_payload(reference_asset_id=product["created_assets"][0]["id"])
     created = client.post(
         f"/api/v2/products/{product['id']}/workflow-drafts",
         json={"payload": payload, "ready_for_confirmation": True},
@@ -327,7 +367,7 @@ def test_workflow_draft_requests_reject_unknown_fields_and_bad_sse_cursor(config
     client = TestClient(create_app())
     _login(client)
     product = _create_canonical_product(client)
-    payload = make_workflow_draft_payload(reference_asset_id=product["image_assets"][0]["id"])
+    payload = make_workflow_draft_payload(reference_asset_id=product["created_assets"][0]["id"])
     invalid = client.post(
         f"/api/v2/products/{product['id']}/workflow-drafts",
         json={"payload": payload, "ready_for_confirmation": True, "unknown": True},

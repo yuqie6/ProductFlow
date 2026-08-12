@@ -17,6 +17,9 @@ from productflow_backend.application.product_workflow.run_state import (
     requeue_workflow_node_run_after_capacity_wait,
     workflow_run_failure_context,
 )
+from productflow_backend.application.product_workflow.v2_staleness import (
+    ensure_image_prompt_references_current,
+)
 from productflow_backend.application.product_workflow_dependencies import (
     WorkflowExecutionDependencies,
     default_workflow_execution_dependencies,
@@ -92,6 +95,7 @@ class PreparedImageGeneration:
     node_run_id: str
     product_id: str
     workflow_id: str
+    image_type_key: str
     image_plan_key: str
     prompt_artifact_version_id: str
     visual_system_version_id: str
@@ -335,24 +339,7 @@ def _prepare_image_generation(
     except ValidationError as exc:
         raise ConflictError("图片节点 GenerationSpec 不符合 schema") from exc
 
-    prompt_nodes = list(
-        session.scalars(
-            select(WorkflowNode)
-            .options(selectinload(WorkflowNode.current_prompt_artifact_version))
-            .where(
-                WorkflowNode.workflow_id == workflow.id,
-                WorkflowNode.node_type == WorkflowNodeType.PROMPT_GENERATION,
-            )
-        )
-    )
-    matching_prompt_nodes = [
-        prompt_node
-        for prompt_node in prompt_nodes
-        if prompt_node.config_json.get("prompt_plan_key") == prompt_plan_key
-    ]
-    if len(matching_prompt_nodes) != 1:
-        raise ConflictError("图片节点必须且只能解析到一个提示词节点")
-    prompt_node = matching_prompt_nodes[0]
+    prompt_node = ensure_image_prompt_references_current(session, image_node=node)
     prompt_version = prompt_node.current_prompt_artifact_version
     if prompt_version is None:
         raise ConflictError("图片节点上游提示词节点缺少 current version")
@@ -414,6 +401,7 @@ def _prepare_image_generation(
         node_run_id=node_run.id,
         product_id=workflow.product_id,
         workflow_id=workflow.id,
+        image_type_key=image_type_key,
         image_plan_key=image_plan_key,
         prompt_artifact_version_id=prompt_version.id,
         visual_system_version_id=visual_version.id,
@@ -661,6 +649,12 @@ def _load_prompt_references(
             .order_by(ImagePromptArtifactVersionReference.position)
         )
     )
+    prompt_output = prompt_node.output_json if isinstance(prompt_node.output_json, dict) else {}
+    superseded_reference_asset_ids = {
+        value
+        for value in prompt_output.get("superseded_reference_asset_ids", [])
+        if isinstance(value, str) and value
+    }
     candidates.extend(
         (
             reference.asset_id,
@@ -669,6 +663,7 @@ def _load_prompt_references(
             reference.asset_id not in visual_reference_asset_ids,
         )
         for reference in prompt_references
+        if reference.asset_id not in superseded_reference_asset_ids
     )
     candidates.extend(
         (reference.asset_id, reference.role, reference.label, False) for reference in visual_references
@@ -964,6 +959,7 @@ def _persist_image_result(
         origin_type=ProductImageOriginType.WORKFLOW_GENERATION,
         storage=storage,
         storage_writes=storage_writes,
+        image_type_key=prepared.image_type_key,
     )
     session.flush()
     actual_media = {

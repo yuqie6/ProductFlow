@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
@@ -9,7 +10,7 @@ from sqlalchemy.orm import Session, selectinload
 from productflow_backend.application.copy_payloads import validate_copy_payload
 from productflow_backend.application.media_assets import (
     delete_legacy_source_with_canonical_asset,
-    list_product_image_assets,
+    get_product_image_assets_by_ids,
     prune_unreferenced_media_objects,
     stage_product_image_asset,
 )
@@ -55,6 +56,12 @@ ProductListSort = Literal["updated_desc", "created_desc", "name_asc"]
 DEFAULT_PRODUCT_LIST_SORT: ProductListSort = "updated_desc"
 
 
+@dataclass(frozen=True, slots=True)
+class CanonicalProductCreation:
+    product: Product
+    created_assets: list[ProductImageAsset]
+
+
 def _normalize_required_text(value: str, *, field_name: str, max_length: int) -> str:
     normalized = value.strip()
     if not normalized:
@@ -94,8 +101,6 @@ def _product_query():
         select(Product)
         .options(
             selectinload(Product.source_assets),
-            selectinload(Product.image_assets).selectinload(ProductImageAsset.media_object),
-            selectinload(Product.cover_image_asset).selectinload(ProductImageAsset.media_object),
             selectinload(Product.creative_briefs),
             selectinload(Product.copy_sets),
             selectinload(Product.poster_variants),
@@ -110,8 +115,6 @@ def _product_query():
 def _product_list_query():
     return select(Product).options(
         selectinload(Product.source_assets),
-        selectinload(Product.image_assets).selectinload(ProductImageAsset.media_object),
-        selectinload(Product.cover_image_asset).selectinload(ProductImageAsset.media_object),
         selectinload(Product.copy_sets),
         selectinload(Product.poster_variants),
         selectinload(Product.workflows).selectinload(ProductWorkflow.nodes),
@@ -282,6 +285,28 @@ def create_canonical_product(
     storage: LocalStorage | None = None,
 ) -> Product:
     """创建只使用 MediaObject/ProductImageAsset 的 v2 商品。"""
+    return create_canonical_product_with_assets(
+        session,
+        name=name,
+        category=category,
+        price=price,
+        source_note=source_note,
+        image_uploads=image_uploads,
+        storage=storage,
+    ).product
+
+
+def create_canonical_product_with_assets(
+    session: Session,
+    *,
+    name: str,
+    category: str | None,
+    price: str | None,
+    source_note: str | None,
+    image_uploads: list[tuple[bytes, str, str]],
+    storage: LocalStorage | None = None,
+) -> CanonicalProductCreation:
+    """创建 canonical 商品并仅返回本次创建的有界图片集合。"""
     if not image_uploads:
         raise BusinessValidationError("至少上传一张商品参考图")
     if len(image_uploads) > 6:
@@ -312,9 +337,17 @@ def create_canonical_product(
         ]
         session.flush()
         product.cover_image_asset_id = image_assets[0].id
+        asset_ids = [asset.id for asset in image_assets]
         session.commit()
     session.expire_all()
-    return _get_product_or_raise(session, product.id)
+    return CanonicalProductCreation(
+        product=_get_product_or_raise(session, product.id),
+        created_assets=get_product_image_assets_by_ids(
+            session,
+            product_id=product.id,
+            asset_ids=asset_ids,
+        ),
+    )
 
 
 def add_canonical_product_images(
@@ -352,8 +385,11 @@ def add_canonical_product_images(
         asset_ids = [asset.id for asset in assets]
         session.commit()
     session.expire_all()
-    assets_by_id = {asset.id: asset for asset in list_product_image_assets(session, product_id)}
-    return [assets_by_id[asset_id] for asset_id in asset_ids]
+    return get_product_image_assets_by_ids(
+        session,
+        product_id=product_id,
+        asset_ids=asset_ids,
+    )
 
 
 def add_reference_images(
@@ -467,8 +503,12 @@ def delete_product(
     if active_workflow_run is not None:
         raise BusinessValidationError("商品工作流运行中，稍后删除")
     storage = storage or LocalStorage()
-    session.expire(product, ["image_assets", "source_assets", "poster_variants"])
-    media_ids = {asset.media_object_id for asset in product.image_assets}
+    session.expire(product, ["source_assets", "poster_variants"])
+    media_ids = set(
+        session.scalars(
+            select(ProductImageAsset.media_object_id).where(ProductImageAsset.product_id == product_id)
+        )
+    )
     legacy_paths = {
         *(asset.storage_path for asset in product.source_assets),
         *(poster.storage_path for poster in product.poster_variants),

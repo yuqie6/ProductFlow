@@ -18,12 +18,19 @@ from productflow_backend.application.product_workflow.execution import (
     execute_product_workflow_run,
 )
 from productflow_backend.application.product_workflow.v2_execution import execute_v2_workflow_node_run
+from productflow_backend.application.product_workflow.v2_reference_bindings import (
+    bind_v2_reference_node_asset,
+)
 from productflow_backend.application.product_workflow.v2_runs import (
     get_v2_workflow_node_run,
     submit_v2_workflow_node_run,
 )
 from productflow_backend.application.product_workflow_dependencies import WorkflowExecutionDependencies
-from productflow_backend.application.use_cases import create_canonical_product, delete_product
+from productflow_backend.application.use_cases import (
+    add_canonical_product_images,
+    create_canonical_product,
+    delete_product,
+)
 from productflow_backend.application.workflow_drafts.contracts import (
     GenerationSpec,
     ImagePromptPayloadV1,
@@ -35,7 +42,7 @@ from productflow_backend.application.workflow_drafts.service import (
     create_workflow_draft,
 )
 from productflow_backend.domain.enums import WorkflowNodeStatus, WorkflowNodeType, WorkflowRunStatus
-from productflow_backend.domain.errors import ConflictError, QueueUnavailableError
+from productflow_backend.domain.errors import ConflictError, NotFoundError, QueueUnavailableError
 from productflow_backend.infrastructure.db.models import (
     CopySet,
     CreativeBrief,
@@ -604,6 +611,7 @@ def test_image_node_creates_one_canonical_asset_and_preserves_rerun_history(db_s
     assert persisted_node is not None and persisted_node.status == WorkflowNodeStatus.SUCCEEDED
     assert first_record is not None
     assert persisted_node.bound_image_asset_id == first_record.result_asset_id
+    assert db_session.get(ProductImageAsset, first_record.result_asset_id).image_type_key == "hero"
     assert first_record.requested_spec_json == image_node.config_json["generation_spec"]
     assert first_record.effective_parameters_json == {
         "adapter": "recording",
@@ -660,6 +668,175 @@ def test_image_node_creates_one_canonical_asset_and_preserves_rerun_history(db_s
     assert db_session.scalar(select(func.count()).select_from(CopySet)) == 0
     assert db_session.scalar(select(func.count()).select_from(SourceAsset)) == 0
     assert db_session.scalar(select(func.count()).select_from(PosterVariant)) == 0
+
+
+def test_v2_reference_rebind_stales_downstream_until_prompt_is_regenerated(db_session) -> None:
+    product, workflow = _create_materialized_workflow(db_session)
+    original_reference_id = product.image_assets[0].id
+    replacement = add_canonical_product_images(
+        db_session,
+        product_id=product.id,
+        image_uploads=[
+            (_png_bytes(color=(20, 160, 80), size=(72, 72)), "replacement.png", "image/png")
+        ],
+    )[0]
+    reference_node = next(
+        node for node in workflow.nodes if node.node_type == WorkflowNodeType.REFERENCE_IMAGE
+    )
+    prompt_node = next(
+        node for node in workflow.nodes if node.node_type == WorkflowNodeType.PROMPT_GENERATION
+    )
+    image_nodes = [
+        node for node in workflow.nodes if node.node_type == WorkflowNodeType.IMAGE_GENERATION
+    ]
+    first_image_node = image_nodes[0]
+    initial_prompt_version_id = prompt_node.current_prompt_artifact_version_id
+
+    _, initial_image_run = _queue_single_node_run(
+        db_session,
+        workflow=workflow,
+        node=first_image_node,
+    )
+    execute_v2_workflow_node_run(
+        db_session,
+        node_run_id=initial_image_run.id,
+        dependencies=WorkflowExecutionDependencies(
+            image_provider_resolver=lambda: RecordingImageProvider(
+                image_bytes=_png_bytes(color=(220, 40, 40), size=(80, 64))
+            )
+        ),
+    )
+    db_session.expire_all()
+    previous_result_id = db_session.get(WorkflowNode, first_image_node.id).bound_image_asset_id
+    assert previous_result_id is not None
+    previous_record_count = db_session.scalar(
+        select(func.count()).select_from(WorkflowImageGenerationRecord)
+    )
+
+    result = bind_v2_reference_node_asset(
+        db_session,
+        product_id=product.id,
+        workflow_id=workflow.id,
+        node_id=reference_node.id,
+        asset_id=replacement.id,
+        expected_workflow_revision=workflow.revision,
+        expected_bound_asset_id=original_reference_id,
+    )
+    assert result.changed is True
+    assert result.previous_asset_id == original_reference_id
+    assert set(result.affected_node_ids) == {prompt_node.id, *(node.id for node in image_nodes)}
+
+    db_session.expire_all()
+    rebound_reference = db_session.get(WorkflowNode, reference_node.id)
+    stale_prompt = db_session.get(WorkflowNode, prompt_node.id)
+    stale_image = db_session.get(WorkflowNode, first_image_node.id)
+    persisted_workflow = db_session.get(ProductWorkflow, workflow.id)
+    assert rebound_reference.bound_image_asset_id == replacement.id
+    assert stale_prompt.status == WorkflowNodeStatus.IDLE
+    assert stale_prompt.current_prompt_artifact_version_id == initial_prompt_version_id
+    assert stale_prompt.output_json["references_stale"] is True
+    assert stale_prompt.output_json["superseded_reference_asset_ids"] == [original_reference_id]
+    assert stale_image.status == WorkflowNodeStatus.IDLE
+    assert stale_image.bound_image_asset_id == previous_result_id
+    assert persisted_workflow.revision == workflow.revision == 1
+    assert db_session.get(ProductImageAsset, previous_result_id) is not None
+    assert db_session.scalar(
+        select(func.count()).select_from(WorkflowImageGenerationRecord)
+    ) == previous_record_count
+
+    with pytest.raises(ConflictError, match="请先重新生成提示词"):
+        submit_v2_workflow_node_run(
+            db_session,
+            node_id=first_image_node.id,
+            enqueue=lambda _: None,
+        )
+
+    prompt_provider = RecordingPromptProvider(include_all_reference_evidence=True)
+    _, prompt_node_run = _queue_single_node_run(
+        db_session,
+        workflow=persisted_workflow,
+        node=stale_prompt,
+    )
+    execute_v2_workflow_node_run(
+        db_session,
+        node_run_id=prompt_node_run.id,
+        dependencies=WorkflowExecutionDependencies(
+            prompt_generation_provider_resolver=lambda: prompt_provider,
+        ),
+    )
+    assert len(prompt_provider.requests) == 1
+    assert replacement.id in {
+        reference.asset_id for reference in prompt_provider.requests[0].reference_images
+    }
+    db_session.expire_all()
+    refreshed_prompt = db_session.get(WorkflowNode, prompt_node.id)
+    assert refreshed_prompt.status == WorkflowNodeStatus.SUCCEEDED
+    assert refreshed_prompt.current_prompt_artifact_version_id != initial_prompt_version_id
+    assert refreshed_prompt.output_json.get("references_stale") is None
+    assert refreshed_prompt.output_json.get("superseded_reference_asset_ids") is None
+
+    submission = submit_v2_workflow_node_run(
+        db_session,
+        node_id=first_image_node.id,
+        enqueue=lambda _: None,
+    )
+    assert submission.created is True
+
+
+def test_v2_reference_rebind_rejects_active_downstream_and_scope_mismatch(db_session) -> None:
+    product, workflow = _create_materialized_workflow(db_session)
+    replacement = add_canonical_product_images(
+        db_session,
+        product_id=product.id,
+        image_uploads=[(_make_demo_image_bytes(), "replacement.png", "image/png")],
+    )[0]
+    other = create_canonical_product(
+        db_session,
+        name="其他商品",
+        category=None,
+        price=None,
+        source_note=None,
+        image_uploads=[(_make_demo_image_bytes(), "other.png", "image/png")],
+    )
+    reference_node = next(
+        node for node in workflow.nodes if node.node_type == WorkflowNodeType.REFERENCE_IMAGE
+    )
+    prompt_node = next(
+        node for node in workflow.nodes if node.node_type == WorkflowNodeType.PROMPT_GENERATION
+    )
+    original_reference_id = reference_node.bound_image_asset_id
+    _queue_single_node_run(db_session, workflow=workflow, node=prompt_node)
+
+    with pytest.raises(ConflictError, match="正在运行"):
+        bind_v2_reference_node_asset(
+            db_session,
+            product_id=product.id,
+            workflow_id=workflow.id,
+            node_id=reference_node.id,
+            asset_id=replacement.id,
+            expected_workflow_revision=workflow.revision,
+            expected_bound_asset_id=original_reference_id,
+        )
+    with pytest.raises(NotFoundError, match="商品图片不存在"):
+        bind_v2_reference_node_asset(
+            db_session,
+            product_id=product.id,
+            workflow_id=workflow.id,
+            node_id=reference_node.id,
+            asset_id=other.image_assets[0].id,
+            expected_workflow_revision=workflow.revision,
+            expected_bound_asset_id=original_reference_id,
+        )
+    with pytest.raises(ConflictError, match="revision 已变化"):
+        bind_v2_reference_node_asset(
+            db_session,
+            product_id=product.id,
+            workflow_id=workflow.id,
+            node_id=reference_node.id,
+            asset_id=replacement.id,
+            expected_workflow_revision=workflow.revision + 1,
+            expected_bound_asset_id=original_reference_id,
+        )
 
 
 def test_image_rerun_commit_failure_cleans_new_file_and_preserves_previous_result(
