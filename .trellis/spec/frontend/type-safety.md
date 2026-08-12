@@ -82,23 +82,31 @@ multipart boundary.
 
 #### 1. Scope / Trigger
 
-- Trigger: changing `/api/v2/products`, `/api/v2/product-image-assets`, canonical cover operations, or canonical
-  ImageSession attach.
+- Trigger: changing `/api/v2/products`, product-scoped image-library routes, `/api/v2/product-image-assets`, canonical
+  cover operations, or canonical ImageSession attach.
 
 #### 2. Signatures
 
-- `api.createCanonicalProduct(input: CreateCanonicalProductInput): Promise<CanonicalProductDetail>`.
+- `api.createCanonicalProduct(input: CreateCanonicalProductInput): Promise<CanonicalProductCreateResponse>`.
 - `api.getCanonicalProduct(productId: string): Promise<CanonicalProductDetail>`.
-- `api.listProductImageAssets(productId: string): Promise<ProductImageAssetListResponse>`.
+- `api.getProductImageLibrary(productId: string): Promise<GalleryBootstrap>`.
+- `api.listGalleryAssets(productId, input): Promise<GalleryAssetPage>` owns paginated directory/search/sort reads.
+- `api.getGalleryAsset(productId, assetId): Promise<GalleryAsset>` owns an explicit canonical asset detail read.
 - `api.addCanonicalProductImages(productId: string, images: File[]): Promise<ProductImageAssetListResponse>`.
 - `api.setProductCover(...)`, `api.clearProductCover(...)`, and `api.deleteProductImageAsset(...)` own cover/delete calls.
 - `api.attachImageSessionAssetToProductCanonical(sessionId, assetId, productId): Promise<ProductImageAsset>`.
 
 #### 3. Contracts
 
-- `CanonicalProductDetail.image_assets` uses `ProductImageAsset[]`; `cover_image_asset_id` is separate and nullable.
+- `CanonicalProductDetail` is bounded product metadata and has no `image_assets` array. `cover_image_asset_id` is
+  separate and nullable.
+- `CanonicalProductCreateResponse` contains `{product, created_assets}`. `created_assets` is only the current upload
+  batch and is bounded by the six-image creation limit.
 - `ProductImageAsset` mirrors backend snake_case fields, including `media_object_id`, `origin_type`,
-  `parent_asset_id`, `source_image_session_asset_id`, and `verification_status`.
+  `image_type_key`, `user_folder_id`, `parent_asset_id`, `source_image_session_asset_id`, and `verification_status`.
+- `GalleryAsset` extends the canonical asset with nullable folder/type labels and bounded generation identifiers.
+- Product-library pages use `GalleryAssetPage.items` plus opaque `next_cursor`; UI code must not use the legacy
+  unbounded asset-list method to implement search, sorting, directories, or counts.
 - `MediaVerificationStatus` is `"verified" | "legacy_pending" | "missing"`.
 - `ProductImageOriginType` is `"upload" | "workflow_generation" | "image_session_attach" | "legacy_import"`.
 - DTOs expose download/preview/thumbnail URLs and measured metadata. They never expose `storage_path`.
@@ -119,7 +127,8 @@ multipart boundary.
 
 - Good: page code passes `File[]` to `api.createCanonicalProduct`; the API helper appends repeated `images` fields and
   allows the browser to set the multipart boundary.
-- Base: a product with no selected cover uses `cover_image_asset_id: null`; callers do not infer a cover from array order.
+- Base: a product with no selected cover uses `cover_image_asset_id: null`; callers do not infer a cover from gallery
+  page order.
 - Bad: a page builds `/api/v2/...` URLs or multipart bodies directly and drifts from the central API/type contract.
 - Bad: UI treats `media_object_id` as the selectable product image identity; product-facing references use
   `ProductImageAsset.id`.
@@ -150,13 +159,15 @@ await api.addCanonicalProductImages(productId, images);
 Wrong:
 
 ```ts
-const cover = product.image_assets[0];
+const cover = loadedAssets[0];
 ```
 
 Correct:
 
 ```ts
-const cover = product.image_assets.find((asset) => asset.id === product.cover_image_asset_id) ?? null;
+const cover = product.cover_image_asset_id
+  ? await api.getGalleryAsset(product.id, product.cover_image_asset_id)
+  : null;
 ```
 
 ### Scenario: Create-product API input typing

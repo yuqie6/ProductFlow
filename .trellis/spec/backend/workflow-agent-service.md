@@ -9,14 +9,14 @@
 - `application/agent_conversations.py` owns PostgreSQL conversation and Turn projection state.
 - `application/agent_control.py` owns start, answer, cancel, resume, and harness-state projection orchestration.
 - `application/agent_sync.py` owns browser-independent polling, restart recovery, and required-artifact attachment.
-- `application/agent_tools.py` owns scope-bound product context, asset metadata/content reads, and reconcilable asset
-  display-name changes.
+- `application/agent_tools.py` owns scope-bound product context, gallery metadata/content reads, and reconcilable
+  folder/asset organization changes.
 - `infrastructure/agent_service.py` owns the FastAPI-to-Go HTTP/SSE client.
 - `presentation/routes/agent_conversations.py` exposes session-authenticated browser APIs.
 - `presentation/routes/agent_internal.py` exposes bearer-authenticated ProductFlow tool APIs to the Go service.
 
-The initial implementation is single-instance and single-merchant. Multi-instance journal coordination, gallery folders,
-workflow materialization, and the frontend Agent conversation are separate tasks.
+The service is single-instance and single-merchant. Multi-instance journal coordination, workflow materialization, and
+the frontend Agent conversation are separate tasks.
 
 ## Service And Scope Contract
 
@@ -70,7 +70,9 @@ not store token deltas; reconnect replay comes from the harness SQLite journal.
 - sync error and timestamps.
 
 It does not store the harness transcript, reasoning items, image bytes, image URLs, data URLs, or the artifact body.
-`AgentToolMutation` stores the idempotency ledger for reconcilable ProductFlow mutations.
+`AgentToolMutation` stores the idempotency ledger for reconcilable ProductFlow mutations. Its generic `prepared_json`
+binds operation, scope, expected-before state, and target state; rename compatibility columns remain nullable for old
+rows and current rename diagnostics.
 
 Migration changes must preserve native PostgreSQL enums, SQLite test compatibility, product/Draft cascade behavior,
 artifact revision `SET NULL`, and complete enum removal on downgrade.
@@ -105,18 +107,40 @@ associated Agent conversation `completed`.
 Read tools are bound to the conversation closure and expose no scope IDs in their schemas:
 
 - `get_product_workflow_context_v1`
-- `list_product_image_assets_v1`
+- `list_product_image_assets_v2`
 - `inspect_product_image_assets_v1`
 
-Asset listing returns bounded metadata pages without URLs or storage paths. Inspect accepts explicit IDs only, returns at
-most six images, and revalidates file byte count, MIME type, dimensions, and SHA-256 against verified media metadata.
+Asset listing accepts the product-gallery directory, search, sort, and cursor contract and returns at most 100 metadata
+rows without URLs, storage paths, or bytes. Inspect accepts explicit IDs only, returns at most six images, and revalidates
+file byte count, MIME type, dimensions, and SHA-256 against verified media metadata.
 
-`rename_product_image_asset_v1` is a reconcilable durable effect. Prepare records the expected and target display names;
-execute uses the harness invocation idempotency key; reconcile distinguishes `applied`, `not_applied`, `conflict`, and
-`unknown` from the ProductFlow mutation ledger and current asset state.
+The current reconcilable durable tools are:
+
+- `create_product_image_folder_v1`;
+- `rename_product_image_folder_v1`;
+- `rename_product_image_asset_v1`;
+- `move_product_image_assets_v1`.
+
+Prepare captures stable object IDs plus expected-before and target state. Execute uses the harness invocation idempotency
+key. Reconcile distinguishes `applied`, `not_applied`, `conflict`, and `unknown` from the generic ProductFlow mutation
+ledger and current object state. An applied ledger result remains replayable after a later rename, move, or folder delete.
 
 The service has no tools for deleting assets, changing covers, creating missing brand material, writing individual DAG
-nodes, or materializing a Draft. Gallery folder tools are added only after the gallery folder domain exists.
+nodes, or materializing a Draft. It cannot change original filenames, media bytes, origin, cover relations, reference
+bindings, or generation lineage through gallery organization tools.
+
+## Tool Catalog V2 Cutover
+
+- The ProductFlow contract wire remains schema version 1 and declares `tool_contract_version=2`. The Go manager checks
+  both values before opening a conversation service. There is no v1/v2 catalog switch inside one process.
+- Existing completed Turns remain durable transcript history. A new Turn opens against the current v2 catalog. A pending
+  old Turn whose execution envelope contains the old catalog fails with an explicit durable contract-drift conflict.
+- Release freezes browser/backend/worker ingress before the cutover check, then cross-checks every nonterminal projected
+  Turn with the old Agent service. `queued`, `running`, `requires_input`, `cancel_requested`, and `unknown` block release.
+- `awaiting_confirmation` is safe only when its WorkflowDraft artifact revision is already attached. A missing harness
+  Turn ID, an unreachable Agent service, or an unrecognized harness status blocks release.
+- The cutover gate runs from the candidate backend image while the old PostgreSQL and Agent service remain available.
+  Failure restores frozen ingress; success deploys backend and Agent service from the same repository version.
 
 ### Scenario: Strict tools with no arguments
 

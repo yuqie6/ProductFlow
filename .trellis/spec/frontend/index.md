@@ -22,6 +22,7 @@ These files document the frontend conventions that are actually present in this 
 | [Quality Guidelines](./quality-guidelines.md) | TypeScript build gate, API centralization, UI review checklist | Filled |
 | [Type Safety](./type-safety.md) | Strict TS, DTO mirroring, ApiError, runtime validation reality | Filled |
 | [Product Workbench DAG](./product-workbench-dag.md) | Product detail DAG workbench UI, API DTOs, and cache contracts | Filled |
+| [Product Image Explorer](./product-image-explorer.md) | Product-scoped canonical image browsing, organization, and responsive layout | Filled |
 
 ---
 
@@ -37,6 +38,7 @@ Before frontend changes, read:
    - state/cache behavior: `./state-management.md`
    - API DTOs/types: `./type-safety.md`
    - product workbench DAG: `./product-workbench-dag.md`
+   - product image explorer, gallery queries, folders, or responsive inspector behavior: `./product-image-explorer.md`
 
 If a frontend change consumes or changes backend API contracts, also read `../backend/error-handling.md`,
 `../backend/database-guidelines.md`, or `../backend/directory-structure.md` as relevant.
