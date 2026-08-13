@@ -645,3 +645,89 @@ onClick={() => runWorkflowMutation.mutate(selectedNode.id)}
 ```tsx
 onClick={() => void handleRunWorkflow(selectedNode.id)} // flushes selected draft first
 ```
+
+## Scenario: Schema-v2 folder projection and recipe workbench
+
+### 1. Scope / Trigger
+
+- Trigger: changing `/products/:productId/workflow-v2`, `V2WorkflowCanvas`, folder projection/local navigation, recipe
+  library actions, or schema-v2 canvas preference restoration.
+
+### 2. Signatures
+
+- Route: `/products/:productId/workflow-v2` loads `GET /api/v2/products/{product_id}/workflow` without creating a DAG.
+- Components: `ProductWorkflowV2Page` owns queries/mutations, `V2WorkflowWorkbench` owns layout/actions, and
+  `V2WorkflowCanvas` owns ReactFlow projection and drag commits.
+- Pure helpers: `projectGlobalGraph`, `buildLocalFolderGraph`, `deriveFolderBounds`, `deriveFolderSummary`,
+  `parseWorkflowCanvasState`, `isWorkflowCanvasViewportCompatible`, and `resolveRecipeVersionSource`.
+
+### 3. Contracts
+
+- Global view replaces each non-empty folder's members with one synthetic `folder:{folder_id}` node. Internal edges are
+  hidden; cross-boundary edges map real endpoints to synthetic endpoints and aggregate by projected source/target while
+  retaining sorted `original_edge_ids`.
+- Local view renders only folder members and real edges whose two endpoints are members. IDs, endpoint IDs, and handles
+  remain unchanged. Returning to global view never writes graph data.
+- Folder bounds, member count, node types, aggregate status, preview asset IDs, and inbound/outbound counts are derived
+  from the latest workflow DTO. Synthetic IDs and projected edges are never sent to backend mutations or recipe APIs.
+- A folder is `succeeded` only when it has at least one runnable member and every runnable member succeeded. Otherwise its
+  aggregate status comes from incomplete runnable members; one succeeded member must not hide an idle sibling.
+- Selection is scoped to the current projection. Global view retains only ungrouped real-node IDs; local view retains
+  only members of the open folder. Moving a selected node across that boundary or changing views removes the hidden ID.
+- Dragging a folder submits one delta; dragging real selected nodes submits one exact layout batch. The server-returned
+  complete workflow replaces query cache data. A `409` triggers a refetch before another structural edit.
+- Canvas preference key is `productflow.workflowV2.canvasState.v1:{workflow_id}`. It stores only current folder ID plus
+  global/per-folder viewports. Parsing rejects malformed/non-finite/out-of-range values and removes deleted folder IDs.
+  Viewports saved for another responsive layout or a width difference greater than 1.4 are ignored and `fitView` runs.
+- A full recipe always appends from the complete workflow. A fragment appends from current selection, then current open
+  folder; with neither source available its append action is disabled. This mirrors the backend immutable recipe-kind
+  contract.
+- With no active v2 workflow, the canvas stays empty and recipe listing/application remains available. The route does not
+  import schema-v1 mutation, built-in template catalog, or `UserCanvasTemplate` APIs.
+
+### 4. Validation & Error Matrix
+
+- Workflow query failure -> canvas error state with retry; recipe query remains independently usable.
+- Stale folder stored locally -> reconcile to global view and delete its viewport entry.
+- Desktop viewport opened on mobile, mobile viewport opened on desktop, or incompatible width ratio -> ignore persisted
+  transform and fit current graph.
+- Recipe fragment append without selection/open folder -> disabled action; do not submit a guaranteed-invalid source.
+- Structural `409` -> display backend detail, refetch workflow, and retain server authority.
+
+### 5. Good/Base/Bad Cases
+
+- Good: a 15-type, two-image-per-type workflow renders as 15 folder cards plus ungrouped nodes; opening one folder shows
+  its prompt and image nodes with original internal edges.
+- Good: drag a folder once; every member moves by the same delta, `edit_version` increments, and refresh preserves layout.
+- Base: open the desktop canvas on a 390 px viewport; incompatible saved transform is discarded and all folders remain
+  reachable without horizontal document overflow.
+- Bad: nest real node cards inside a ReactFlow folder node, persist folder bounds, or use projected edge IDs as business
+  edge IDs.
+- Bad: enable appending a fragment from a complete workflow when no fragment source is selected.
+
+### 6. Tests Required
+
+- Pure graph tests cover 15 folders, projected edge provenance/aggregation, complete-versus-partial aggregate status,
+  local real-edge identity, and visible-node selection scope in global/local views.
+- Preference tests cover malformed JSON, finite zoom bounds, deleted folders, legacy viewport data, and responsive
+  compatibility.
+- Recipe-source tests cover full recipe precedence, selection-before-folder fragment source, and disabled no-source state.
+- Run frontend tests, lint, type-check/build, then inspect real desktop and 390 px browser screenshots plus
+  `innerWidth/clientWidth/scrollWidth`, console errors, folder counts, local edge counts, and persisted drag coordinates.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```ts
+api.appendWorkflowRecipeVersion({ source_type: openFolderId ? "folder" : "workflow" });
+```
+
+Correct:
+
+```ts
+const source = resolveRecipeVersionSource(recipe.kind, workflow, openFolderId, selectedNodeIds);
+if (source) api.appendWorkflowRecipeVersion(source);
+```
+
+The visible context selects a source only within the immutable recipe kind.

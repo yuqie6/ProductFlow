@@ -1641,3 +1641,111 @@ _persist_image_result(session, prepared=prepared, result=result, generated_image
 
 The persisted result is a canonical ProductImageAsset plus immutable generation lineage; the image node carries only its
 current asset pointer.
+
+## Scenario: Schema-v2 canvas folders and user workflow recipes
+
+### 1. Scope / Trigger
+
+- Trigger: changing schema-v2 folder membership/layout, `ProductWorkflow.edit_version`, recipe extraction/versioning,
+  recipe application, or the version-zero WorkflowDraft state.
+- These contracts apply to materialized schema-v2 workflows. Schema-v1 workflow mutation and `UserCanvasTemplate`
+  remain separate compatibility paths.
+
+### 2. Signatures
+
+- Database authority:
+  - `ProductWorkflow.edit_version >= 0` covers canvas layout, folder title, and membership changes;
+  - `WorkflowFolder` stores `workflow_id`, stable `folder_key`, title, and sort order; it has no geometry, config, status,
+    ports, or execution rows;
+  - `WorkflowRecipe` is a stable identity and `WorkflowRecipeVersion` is an append-only schema-v1 snapshot;
+  - `WorkflowDraftRecipeSeed` binds one version-zero Draft to one immutable recipe version and optional fragment base
+    workflow revision.
+- Canvas APIs under `/api/v2/products/{product_id}/workflows/{workflow_id}`:
+  - `POST /folders`, `PATCH /folders/{folder_id}`, `PUT /folders/{folder_id}/members`,
+    `DELETE /folders/{folder_id}`, `POST /folders/{folder_id}/translate`, and `PATCH /layout`;
+  - every request carries `expected_edit_version`; every response returns `changed`, latest `edit_version`, sorted
+    `dissolved_folder_ids`, and the complete latest workflow.
+- Recipe APIs:
+  - list/detail current recipes, create from `workflow|folder|selection`, append a version, archive with expected version,
+    and apply to a product with an idempotency key.
+
+### 3. Contracts
+
+- Node `position_x/position_y` is the only persisted canvas geometry. Folder bounds are derived from members in the
+  frontend. Translating a folder adds one delta to every member in one locked transaction.
+- A folder must contain at least one schema-v2 node. Exact-set member replacement may move nodes across folders; any
+  emptied source folder is deleted in the same transaction and its nodes remain. Folder IDs are never valid members, so
+  nested folders cannot be represented by the backend contract.
+- Successful canvas changes increment `edit_version` once. No-op rename, zero translation, or unchanged layout/member
+  sets keep the version unchanged. `revision` remains the complete Draft materialization sequence.
+- Alembic `20260813_0036` removes persisted folder geometry after deleting empty schema-v2 folders. Empty schema-v1
+  folders remain. Downgrade fails while any recipe/recipe-version/recipe-seed data exists; operators must export or remove
+  that data explicitly before retrying.
+- `RecipePayloadV1` is built from typed Draft lineage through a whitelist. It uses recipe-local keys and may contain graph
+  shape, relative positions, image types/counts, generation/delivery specs, prompt field shape, reference roles, boundary
+  requirements, and visual requirements. Product facts, asset/entity IDs, prompt prose, outputs, cover state, provider
+  data, and run history are rejected recursively. Limits are 128 nodes, 256 edges, 32 folders, and 512 KiB canonical JSON.
+- Recipe kind is immutable. A `workflow_recipe` version must be extracted from a complete workflow; a `recipe_fragment`
+  version must come from a folder or non-empty selection.
+- Applying a recipe creates a collecting Draft with no revision, an immutable seed, and one Agent conversation. It does
+  not create workflow/folder/node/edge rows. The first strict artifact appends Draft version 1 from expected version 0;
+  confirmation and materialization still require a positive revision.
+- `preferred_visual_system_version_id` is a suggestion retained by the recipe version. Its `RESTRICT` reference means a
+  source product cannot be deleted while a saved recipe still depends on that product-owned visual version.
+
+### 4. Validation & Error Matrix
+
+- Missing/inactive/schema-v1 workflow, cross-workflow node/folder, or stale `expected_edit_version` -> `404` or `409`;
+  the mutation rolls back.
+- Empty create set, duplicate node IDs, invalid title, nested/non-v2 member, or empty layout batch -> validation failure.
+- Recipe source kind differs from immutable recipe kind, recipe version is stale/archived, or source Draft/visual hash
+  drifts -> `400`/`409`; no version is appended.
+- Forbidden key or any current entity ID appears anywhere in the extracted payload -> fail-closed validation and full
+  transaction rollback.
+- Same product/idempotency key with the same recipe request -> return the existing Draft/conversation; the same key with
+  different recipe/version input -> `409`.
+- Downgrade with saved recipe data -> explicit runtime failure before destructive table drops.
+
+### 5. Good/Base/Bad Cases
+
+- Good: move the last member from folder A into folder B; one response reports A as dissolved, keeps every node, and
+  increments `edit_version` once.
+- Good: save a full recipe from product A, apply it to product B, let the Agent bind B's facts and references, then confirm
+  and materialize version 1.
+- Base: archive a recipe identity; existing immutable versions and Draft seeds remain readable while default listing no
+  longer returns the recipe.
+- Bad: persist a second folder rectangle, treat a folder as an executable node, or increment workflow `revision` for a
+  drag operation.
+- Bad: copy `config_json`, asset IDs, completed prompts, or image outputs into a recipe and attempt to sanitize them with
+  string replacement.
+
+### 6. Tests Required
+
+- Folder application/API tests cover CRUD, cross-folder moves, automatic dissolution, no-ops, translation, batch layout,
+  stale edit version, duplicate/unknown/cross-workflow/v1 inputs, and complete response serialization.
+- Recipe tests cover full/folder/selection extraction, local key allocation, boundary summaries, recursive leak rejection,
+  append-only versions, archive, idempotent application, version-zero artifact sync, and cross-product materialization.
+- Migration tests retain an empty schema-v1 folder, remove an empty schema-v2 folder, preserve member folders, perform a
+  safe round trip, reject unsafe downgrade, and upgrade SQLite to head.
+- Run the isolated PostgreSQL canvas/recipe gate because row locks, partial unique indexes, enum storage, and transaction
+  rollback cannot be established by SQLite alone.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+folder.position_x += delta_x
+workflow.revision += 1
+```
+
+Correct:
+
+```python
+for node in locked_members:
+    node.position_x += delta_x
+    node.position_y += delta_y
+workflow.edit_version += 1
+```
+
+The backend persists one coordinate system and one canvas edit sequence; folder cards remain a derived projection.

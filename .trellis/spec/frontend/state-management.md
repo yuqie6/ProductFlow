@@ -95,6 +95,13 @@ canvas ergonomics rather than global app chrome:
 - Workflow inspector width: `productflow.workflow.inspectorWidth`, read and written by `ProductDetailPage.tsx`.
 - Workflow snap-to-grid toggle: `productflow.workflow.snapToGrid`, read and written by `ProductDetailPage.tsx`.
 
+The schema-v2 workbench owns a separate workflow-scoped canvas preference:
+
+- `productflow.workflowV2.canvasState.v1:{workflow_id}` stores the open folder ID and global/per-folder ReactFlow
+  viewports. The parser accepts only schema version 1, finite coordinates, zoom `0.05..4`, and bounded optional surface
+  dimensions. Reconciliation removes deleted folders. Viewport restore also checks desktop/mobile layout class and saved
+  width compatibility so a desktop transform cannot hide the graph on mobile.
+
 Keep additional durable local preferences rare and owner-scoped. When a page adds one, document the storage key and owner
 here or in the feature-specific spec, and add focused helper tests when parsing/clamping behavior is non-trivial.
 

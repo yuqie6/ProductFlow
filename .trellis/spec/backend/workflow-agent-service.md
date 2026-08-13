@@ -197,6 +197,71 @@ map[string]any{
 }
 ```
 
+## Scenario: Recipe-seeded version-zero Agent Drafts
+
+### 1. Scope / Trigger
+
+- Trigger: reading Agent context for a Draft created by workflow-recipe application or attaching the first required
+  `propose_workflow_draft` artifact to a Draft with no current revision.
+
+### 2. Signatures
+
+- `get_agent_contract(...)` returns `current_draft_version=0` when `WorkflowDraft.current_revision_id` is null.
+- `get_product_workflow_context_v1` returns `workflow_draft.payload=null` plus `workflow_recipe_seed` containing the fixed
+  recipe version, strict payload, preferred visual version ID, and optional base workflow structure.
+- `append_workflow_draft_revision(..., expected_draft_version=0)` and artifact synchronization create version 1 only while
+  the Draft still has no current revision.
+
+### 3. Contracts
+
+- A recipe is structural guidance. The Agent must re-evaluate target-product facts, inspect explicitly selected reference
+  assets as needed, write target-specific prompt content, and select or create an appropriate VisualSystem before
+  proposing a complete Draft.
+- Recipe application itself persists no placeholder revision and no partial DAG. Confirmation and materialization remain
+  unavailable until a strict version-1 artifact exists.
+- Fragment context includes the exact materialized base workflow ID/revision recorded in the seed and a bounded graph
+  summary. If that lineage is missing, belongs to another product, or is not schema-v2, context loading fails explicitly.
+- Product facts, Draft payload, recipe seed, and optional base graph share the ProductFlow
+  `AGENT_CONTEXT_MAX_BYTES=512 KiB` output budget. The tool returns an explicit conflict instead of truncating JSON.
+
+### 4. Validation & Error Matrix
+
+- Recipe payload schema/hash drift -> context tool conflict; the Agent never receives unverified seed data.
+- First artifact uses expected version other than 0, or another writer already created version 1 -> optimistic conflict.
+- Seed base workflow is missing/cross-product/schema-v1 -> conflict requiring application state repair or a fresh apply.
+- Combined context exceeds 512 KiB -> explicit bounded-output conflict; no silent field removal.
+
+### 5. Good/Base/Bad Cases
+
+- Good: apply a full recipe to another product, read version-zero context, ask for missing facts, and attach one complete
+  target-specific version-1 artifact.
+- Base: apply a fragment to a product with an active schema-v2 workflow; the Agent receives the fixed base revision and
+  decides how the fragment integrates.
+- Bad: submit the recipe payload itself as a WorkflowDraft or fabricate asset IDs for missing Logo/certification inputs.
+
+### 6. Tests Required
+
+- Assert the contract and context expose version 0, null Draft payload, verified recipe seed, and optional base workflow.
+- Assert artifact replay is idempotent and a second expected-version-zero write conflicts after version 1 exists.
+- Complete the cross-product path through confirmation and materialization, proving apply alone created no workflow.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+draft = create_workflow_draft(payload=recipe_version.payload_json)
+```
+
+Correct:
+
+```python
+draft = WorkflowDraft(product_id=target_product_id, status=WorkflowDraftStatus.COLLECTING)
+seed = WorkflowDraftRecipeSeed(workflow_draft_id=draft.id, recipe_version_id=recipe_version.id, ...)
+```
+
+The Agent supplies the first complete product-specific artifact after reading the immutable seed.
+
 ## Failure And Logging Rules
 
 - Syntactic/business rejection maps to stable `400`/`404`/`409` responses. Network failures, malformed upstream state,
