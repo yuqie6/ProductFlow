@@ -55,9 +55,14 @@ import type {
   SubmitWorkflowNodeRunV2Result,
   UpdateUserTemplateGroupInput,
   WorkflowDraft,
+  WorkflowCanvasMutationResult,
   WorkflowMaterializationResult,
   WorkflowReferenceBindingResult,
   WorkflowNodeRunV2,
+  WorkflowRecipe,
+  WorkflowRecipeApplicationResult,
+  WorkflowRecipeSourceInput,
+  WorkflowRecipeSummary,
 } from "./types";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ?? "";
@@ -502,6 +507,115 @@ export const api = {
   },
   getActiveProductWorkflowV2(productId: string): Promise<ActiveProductWorkflowV2> {
     return request(`/api/v2/products/${productId}/workflow`);
+  },
+  createWorkflowFolder(
+    productId: string,
+    workflowId: string,
+    input: { title: string; node_ids: string[]; expected_edit_version: number },
+  ): Promise<WorkflowCanvasMutationResult> {
+    return request(`/api/v2/products/${productId}/workflows/${workflowId}/folders`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  renameWorkflowFolder(
+    productId: string,
+    workflowId: string,
+    folderId: string,
+    input: { title: string; expected_edit_version: number },
+  ): Promise<WorkflowCanvasMutationResult> {
+    return request(`/api/v2/products/${productId}/workflows/${workflowId}/folders/${folderId}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    });
+  },
+  setWorkflowFolderMembers(
+    productId: string,
+    workflowId: string,
+    folderId: string,
+    input: { node_ids: string[]; expected_edit_version: number },
+  ): Promise<WorkflowCanvasMutationResult> {
+    return request(`/api/v2/products/${productId}/workflows/${workflowId}/folders/${folderId}/members`, {
+      method: "PUT",
+      body: JSON.stringify(input),
+    });
+  },
+  dissolveWorkflowFolder(
+    productId: string,
+    workflowId: string,
+    folderId: string,
+    expectedEditVersion: number,
+  ): Promise<WorkflowCanvasMutationResult> {
+    const params = new URLSearchParams({ expected_edit_version: String(expectedEditVersion) });
+    return request(`/api/v2/products/${productId}/workflows/${workflowId}/folders/${folderId}?${params}`, {
+      method: "DELETE",
+    });
+  },
+  translateWorkflowFolder(
+    productId: string,
+    workflowId: string,
+    folderId: string,
+    input: { delta_x: number; delta_y: number; expected_edit_version: number },
+  ): Promise<WorkflowCanvasMutationResult> {
+    return request(`/api/v2/products/${productId}/workflows/${workflowId}/folders/${folderId}/translate`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  updateWorkflowNodeLayoutV2(
+    productId: string,
+    workflowId: string,
+    input: {
+      positions: Array<{ node_id: string; position_x: number; position_y: number }>;
+      expected_edit_version: number;
+    },
+  ): Promise<WorkflowCanvasMutationResult> {
+    return request(`/api/v2/products/${productId}/workflows/${workflowId}/layout`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    });
+  },
+  listWorkflowRecipes(includeArchived = false): Promise<WorkflowRecipeSummary[]> {
+    const params = new URLSearchParams({ include_archived: String(includeArchived) });
+    return request(`/api/v2/workflow-recipes?${params}`);
+  },
+  getWorkflowRecipe(recipeId: string): Promise<WorkflowRecipe> {
+    return request(`/api/v2/workflow-recipes/${recipeId}`);
+  },
+  createWorkflowRecipe(
+    productId: string,
+    workflowId: string,
+    input: WorkflowRecipeSourceInput,
+  ): Promise<WorkflowRecipe> {
+    return request(`/api/v2/products/${productId}/workflows/${workflowId}/recipes`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  appendWorkflowRecipeVersion(
+    productId: string,
+    workflowId: string,
+    recipeId: string,
+    input: WorkflowRecipeSourceInput & { expected_recipe_version: number },
+  ): Promise<WorkflowRecipe> {
+    return request(`/api/v2/products/${productId}/workflows/${workflowId}/recipes/${recipeId}/versions`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  archiveWorkflowRecipe(recipeId: string, expectedRecipeVersion: number): Promise<{ changed: boolean; recipe: WorkflowRecipe }> {
+    const params = new URLSearchParams({ expected_recipe_version: String(expectedRecipeVersion) });
+    return request(`/api/v2/workflow-recipes/${recipeId}?${params}`, { method: "DELETE" });
+  },
+  applyWorkflowRecipe(
+    productId: string,
+    recipeId: string,
+    input: { expected_recipe_version: number; idempotency_key: string },
+  ): Promise<WorkflowRecipeApplicationResult> {
+    return request(`/api/v2/products/${productId}/workflow-recipes/${recipeId}/apply`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
   },
   bindWorkflowReferenceAsset(
     productId: string,

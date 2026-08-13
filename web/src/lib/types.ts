@@ -775,13 +775,29 @@ export interface WorkflowDraft {
   id: string;
   product_id: string;
   status: WorkflowDraftStatus;
-  current_revision_id: string;
-  current_revision: WorkflowDraftRevision;
+  current_revision_id: string | null;
+  current_revision: WorkflowDraftRevision | null;
+  current_version: number;
   revisions: WorkflowDraftRevision[];
   final_workflow_id: string | null;
+  recipe_seed: WorkflowDraftRecipeSeed | null;
   limits: WorkflowDraftLimits;
   created_at: string;
   updated_at: string;
+}
+
+export interface WorkflowDraftRecipeSeed {
+  id: string;
+  workflow_draft_id: string;
+  recipe_version_id: string;
+  recipe_id: string;
+  recipe_version: number;
+  recipe_title: string;
+  product_id: string;
+  base_workflow_id: string | null;
+  base_workflow_revision: number | null;
+  schema_version: 1;
+  created_at: string;
 }
 
 export interface CreateWorkflowDraftInput {
@@ -801,11 +817,6 @@ export interface WorkflowFolderV2 {
   key: string;
   title: string;
   order: number;
-  position_x: number;
-  position_y: number;
-  width: number;
-  height: number;
-  config_json: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
@@ -848,6 +859,7 @@ export interface ProductWorkflowV2 {
   active: boolean;
   schema_version: 2;
   revision: number;
+  edit_version: number;
   source_draft_revision_id: string;
   visual_system_version_id: string;
   materialization_id: string;
@@ -856,6 +868,133 @@ export interface ProductWorkflowV2 {
   edges: WorkflowEdgeV2[];
   created_at: string;
   updated_at: string;
+}
+
+export interface WorkflowCanvasMutationResult {
+  changed: boolean;
+  edit_version: number;
+  dissolved_folder_ids: string[];
+  workflow: ProductWorkflowV2;
+}
+
+export type WorkflowRecipeKind = "workflow_recipe" | "recipe_fragment";
+export type WorkflowRecipeSourceType = "workflow" | "folder" | "selection";
+
+export interface WorkflowRecipePayloadV1 {
+  schema_version: 1;
+  folders: Array<{ key: string; title: string; order: number }>;
+  nodes: Array<{
+    key: string;
+    node_type: WorkflowNodeTypeV2;
+    position_x: number;
+    position_y: number;
+    folder_key: string | null;
+    reference_requirement_key?: string;
+    image_type_key?: string;
+    image_plan_key?: string;
+  }>;
+  edges: Array<{
+    key: string;
+    source_node_key: string;
+    target_node_key: string;
+    source_handle: string | null;
+    target_handle: string | null;
+  }>;
+  boundary_requirements: Array<{
+    key: string;
+    direction: "inbound" | "outbound";
+    local_node_key: string;
+    external_node_type: WorkflowNodeTypeV2;
+    role: string;
+  }>;
+  reference_requirements: Array<{ key: string; role: string; label: string; required: boolean }>;
+  image_types: Array<{
+    key: string;
+    title: string;
+    order: number;
+    default_quantity: number;
+    images: Array<{
+      key: string;
+      order: number;
+      generation_spec: WorkflowGenerationSpec;
+      delivery_spec: WorkflowDeliverySpec | null;
+    }>;
+  }>;
+  prompt_shapes: Array<{
+    image_type_key: string;
+    product_present: boolean;
+    picture_in_picture: "none" | "allowed" | "required";
+    product_share_percent: number;
+    text_slots: Array<"headline" | "subtitle" | "body">;
+    fact_keys: string[];
+    visual_variant_key: string | null;
+    per_image_slots: Array<{
+      image_plan_key: string;
+      viewpoint: boolean;
+      composition_adjustments: boolean;
+      lighting: boolean;
+    }>;
+  }>;
+  visual_requirements: {
+    required_locked_fields: string[];
+    required_variant_keys: string[];
+  };
+}
+
+export interface WorkflowRecipeVersion {
+  id: string;
+  recipe_id: string;
+  version: number;
+  schema_version: 1;
+  title: string;
+  description: string | null;
+  payload: WorkflowRecipePayloadV1;
+  payload_hash: string;
+  preferred_visual_system_version_id: string | null;
+  created_at: string;
+}
+
+export interface WorkflowRecipeSummary {
+  id: string;
+  kind: WorkflowRecipeKind;
+  current_version_id: string;
+  current_version: WorkflowRecipeVersion;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkflowRecipe extends WorkflowRecipeSummary {
+  versions: WorkflowRecipeVersion[];
+}
+
+export interface AgentConversation {
+  id: string;
+  product_id: string;
+  workflow_draft_id: string;
+  harness_run_id: string;
+  status: "collecting" | "awaiting_confirmation" | "completed" | "failed" | "canceled" | "unknown";
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkflowRecipeApplicationResult {
+  created: boolean;
+  recipe_id: string;
+  recipe_version_id: string;
+  recipe_version: number;
+  draft: WorkflowDraft;
+  conversation: AgentConversation;
+}
+
+export interface WorkflowRecipeSourceInput {
+  source_type: WorkflowRecipeSourceType;
+  folder_id?: string | null;
+  node_ids?: string[];
+  expected_edit_version: number;
+  title: string;
+  description?: string | null;
+  preferred_visual_system_version_id?: string | null;
 }
 
 export interface ActiveProductWorkflowV2 {
