@@ -21,6 +21,17 @@ def test_workflow_draft_payload_accepts_one_prompt_per_type_and_one_node_per_ima
     assert payload.referenced_asset_ids() == {"00000000-0000-0000-0000-000000000001"}
 
 
+def test_workflow_draft_folder_geometry_is_deprecated_and_empty_folders_are_rejected() -> None:
+    schema = WorkflowDraftPayloadV1.model_json_schema()
+    folder_schema = schema["$defs"]["WorkflowFolderPlan"]["properties"]
+    assert all(folder_schema[field]["deprecated"] is True for field in ("position_x", "position_y", "width", "height"))
+
+    payload = make_workflow_draft_payload()
+    payload["folders"].append({"key": "empty-folder", "title": "空文件夹", "order": 1})
+    with pytest.raises(ValidationError, match="必须至少包含一个工作流节点"):
+        WorkflowDraftPayloadV1.model_validate(payload)
+
+
 def test_workflow_draft_payload_rejects_unknown_fields() -> None:
     payload = make_workflow_draft_payload()
     payload["agent_commentary"] = "不属于 artifact 合同"

@@ -5,6 +5,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from productflow_backend.application.product_workflow.folders import (
+    WorkflowCanvasMutationResult,
+    WorkflowNodePosition,
+)
 from productflow_backend.application.product_workflow.v2_reference_bindings import V2ReferenceBindingResult
 from productflow_backend.application.workflow_drafts.contracts import (
     WORKFLOW_DRAFT_MAX_IMAGES_PER_TYPE,
@@ -58,7 +62,7 @@ class CreateWorkflowDraftRequest(StrictRequestModel):
 
 
 class AppendWorkflowDraftRevisionRequest(CreateWorkflowDraftRequest):
-    expected_draft_version: int = Field(ge=1)
+    expected_draft_version: int = Field(ge=0)
 
 
 class ConfirmWorkflowDraftRequest(StrictRequestModel):
@@ -75,6 +79,39 @@ class BindWorkflowReferenceAssetRequest(StrictRequestModel):
     asset_id: str = Field(min_length=1, max_length=36)
     expected_workflow_revision: int = Field(ge=1)
     expected_bound_asset_id: str | None = Field(max_length=36)
+
+
+class CreateWorkflowFolderRequest(StrictRequestModel):
+    title: str = Field(min_length=1, max_length=255)
+    node_ids: list[str] = Field(min_length=1)
+    expected_edit_version: int = Field(ge=0)
+
+
+class RenameWorkflowFolderRequest(StrictRequestModel):
+    title: str = Field(min_length=1, max_length=255)
+    expected_edit_version: int = Field(ge=0)
+
+
+class SetWorkflowFolderMembersRequest(StrictRequestModel):
+    node_ids: list[str]
+    expected_edit_version: int = Field(ge=0)
+
+
+class TranslateWorkflowFolderRequest(StrictRequestModel):
+    delta_x: int
+    delta_y: int
+    expected_edit_version: int = Field(ge=0)
+
+
+class WorkflowNodePositionRequest(StrictRequestModel):
+    node_id: str = Field(min_length=1, max_length=36)
+    position_x: int
+    position_y: int
+
+
+class UpdateWorkflowNodeLayoutRequest(StrictRequestModel):
+    positions: list[WorkflowNodePositionRequest] = Field(min_length=1)
+    expected_edit_version: int = Field(ge=0)
 
 
 class WorkflowDraftRevisionResponse(BaseModel):
@@ -96,13 +133,29 @@ class WorkflowDraftResponse(BaseModel):
     id: str
     product_id: str
     status: WorkflowDraftStatus
-    current_revision_id: str
-    current_revision: WorkflowDraftRevisionResponse
+    current_revision_id: str | None
+    current_revision: WorkflowDraftRevisionResponse | None
+    current_version: int
     revisions: list[WorkflowDraftRevisionResponse]
     final_workflow_id: str | None
+    recipe_seed: WorkflowDraftRecipeSeedResponse | None
     limits: WorkflowDraftLimitsResponse
     created_at: datetime
     updated_at: datetime
+
+
+class WorkflowDraftRecipeSeedResponse(BaseModel):
+    id: str
+    workflow_draft_id: str
+    recipe_version_id: str
+    recipe_id: str
+    recipe_version: int
+    recipe_title: str
+    product_id: str
+    base_workflow_id: str | None
+    base_workflow_revision: int | None
+    schema_version: Literal[1]
+    created_at: datetime
 
 
 class WorkflowFolderV2Response(BaseModel):
@@ -111,11 +164,6 @@ class WorkflowFolderV2Response(BaseModel):
     key: str
     title: str
     order: int
-    position_x: int
-    position_y: int
-    width: int
-    height: int
-    config_json: dict[str, object]
     created_at: datetime
     updated_at: datetime
 
@@ -167,6 +215,7 @@ class ProductWorkflowV2Response(BaseModel):
     active: bool
     schema_version: Literal[2]
     revision: int
+    edit_version: int
     source_draft_revision_id: str
     visual_system_version_id: str
     materialization_id: str
@@ -187,6 +236,13 @@ class WorkflowMaterializationResponse(BaseModel):
     created: bool
     workflow: ProductWorkflowV2Response
     reveal_events_url: str
+
+
+class WorkflowCanvasMutationResponse(BaseModel):
+    changed: bool
+    edit_version: int
+    dissolved_folder_ids: list[str]
+    workflow: ProductWorkflowV2Response
 
 
 class WorkflowActualMediaResponse(BaseModel):
@@ -254,16 +310,38 @@ def serialize_workflow_draft_revision(revision: WorkflowDraftRevision) -> Workfl
 
 
 def serialize_workflow_draft(draft: WorkflowDraft) -> WorkflowDraftResponse:
-    if draft.current_revision is None or draft.current_revision_id is None:
-        raise ValueError("WorkflowDraft 缺少 current revision")
+    current_revision = draft.current_revision
+    seed = draft.recipe_seed
     return WorkflowDraftResponse(
         id=draft.id,
         product_id=draft.product_id,
         status=draft.status,
         current_revision_id=draft.current_revision_id,
-        current_revision=serialize_workflow_draft_revision(draft.current_revision),
+        current_revision=(
+            serialize_workflow_draft_revision(current_revision)
+            if current_revision is not None
+            else None
+        ),
+        current_version=current_revision.version if current_revision is not None else 0,
         revisions=[serialize_workflow_draft_revision(revision) for revision in draft.revisions],
         final_workflow_id=draft.final_workflow_id,
+        recipe_seed=(
+            WorkflowDraftRecipeSeedResponse(
+                id=seed.id,
+                workflow_draft_id=seed.workflow_draft_id,
+                recipe_version_id=seed.recipe_version_id,
+                recipe_id=seed.recipe_version.recipe_id,
+                recipe_version=seed.recipe_version.version,
+                recipe_title=seed.recipe_version.title,
+                product_id=seed.product_id,
+                base_workflow_id=seed.base_workflow_id,
+                base_workflow_revision=seed.base_workflow_revision,
+                schema_version=seed.schema_version,
+                created_at=seed.created_at,
+            )
+            if seed is not None
+            else None
+        ),
         limits=WorkflowDraftLimitsResponse(),
         created_at=draft.created_at,
         updated_at=draft.updated_at,
@@ -277,11 +355,6 @@ def serialize_workflow_folder_v2(folder: WorkflowFolder) -> WorkflowFolderV2Resp
         key=folder.folder_key,
         title=folder.title,
         order=folder.sort_order,
-        position_x=folder.position_x,
-        position_y=folder.position_y,
-        width=folder.width,
-        height=folder.height,
-        config_json=folder.config_json or {},
         created_at=folder.created_at,
         updated_at=folder.updated_at,
     )
@@ -340,6 +413,7 @@ def serialize_product_workflow_v2(workflow: ProductWorkflow) -> ProductWorkflowV
         active=workflow.active,
         schema_version=workflow.schema_version,
         revision=workflow.revision,
+        edit_version=workflow.edit_version,
         source_draft_revision_id=workflow.source_draft_revision_id,
         visual_system_version_id=workflow.visual_system_version_id,
         materialization_id=workflow.materialization.id,
@@ -373,6 +447,30 @@ def serialize_reference_binding(result: V2ReferenceBindingResult) -> BindWorkflo
         previous_asset_id=result.previous_asset_id,
         affected_node_ids=list(result.affected_node_ids),
         reference_node=serialize_workflow_node_v2(result.reference_node),
+    )
+
+
+def to_workflow_node_positions(
+    items: list[WorkflowNodePositionRequest],
+) -> tuple[WorkflowNodePosition, ...]:
+    return tuple(
+        WorkflowNodePosition(
+            node_id=item.node_id,
+            position_x=item.position_x,
+            position_y=item.position_y,
+        )
+        for item in items
+    )
+
+
+def serialize_canvas_mutation(
+    result: WorkflowCanvasMutationResult,
+) -> WorkflowCanvasMutationResponse:
+    return WorkflowCanvasMutationResponse(
+        changed=result.changed,
+        edit_version=result.workflow.edit_version,
+        dissolved_folder_ids=list(result.dissolved_folder_ids),
+        workflow=serialize_product_workflow_v2(result.workflow),
     )
 
 
@@ -441,16 +539,24 @@ __all__ = [
     "AppendWorkflowDraftRevisionRequest",
     "BindWorkflowReferenceAssetRequest",
     "BindWorkflowReferenceAssetResponse",
+    "CreateWorkflowFolderRequest",
     "ConfirmWorkflowDraftRequest",
     "CreateWorkflowDraftRequest",
     "MaterializeWorkflowDraftRequest",
+    "RenameWorkflowFolderRequest",
+    "SetWorkflowFolderMembersRequest",
     "SubmitWorkflowNodeRunV2Response",
     "WorkflowDraftResponse",
+    "TranslateWorkflowFolderRequest",
+    "UpdateWorkflowNodeLayoutRequest",
+    "WorkflowCanvasMutationResponse",
     "WorkflowMaterializationResponse",
     "WorkflowNodeRunV2Response",
     "serialize_active_v2_workflow",
     "serialize_materialization",
+    "serialize_canvas_mutation",
     "serialize_reference_binding",
     "serialize_workflow_draft",
     "serialize_workflow_node_run_v2",
+    "to_workflow_node_positions",
 ]

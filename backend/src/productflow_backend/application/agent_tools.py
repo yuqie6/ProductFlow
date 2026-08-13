@@ -31,6 +31,7 @@ from productflow_backend.application.gallery_mutations import (
 )
 from productflow_backend.application.media_assets import inspect_image_bytes
 from productflow_backend.application.workflow_drafts.contracts import WorkflowDraftPayloadV1
+from productflow_backend.application.workflow_recipes.service import parse_recipe_payload_or_raise
 from productflow_backend.domain.enums import AgentToolMutationStatus, MediaVerificationStatus
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
@@ -39,6 +40,8 @@ from productflow_backend.infrastructure.db.models import (
     Product,
     ProductAssetFolder,
     ProductImageAsset,
+    ProductWorkflow,
+    WorkflowDraftRecipeSeed,
     new_id,
 )
 from productflow_backend.infrastructure.storage import LocalStorage
@@ -68,6 +71,8 @@ WORKFLOW_AGENT_SYSTEM_PROMPT = """你是 ProductFlow 的商品工作流设计 Ag
    不同角度或不同信息任务应建为不同图片类型。
 6. 最终草案必须满足工具提供的 JSON Schema，并引用当前商品真实存在的资产 ID。
    不要在文本中输出 base64、data URL、存储路径或内部 URL。
+7. 如果上下文包含 workflow_recipe_seed，recipe 只表示可复用结构和要求。
+   必须针对当前商品重新核对事实、选择参考图、生成提示词和视觉体系；不得把 recipe payload 直接作为 WorkflowDraft 提交。
 """
 
 
@@ -124,15 +129,13 @@ def get_agent_contract(session: Session, conversation_id: str) -> dict[str, Any]
     conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
     draft = conversation.workflow_draft
     current_revision = draft.current_revision
-    if current_revision is None:
-        raise ConflictError("WorkflowDraft 缺少 current revision")
     return {
         "schema_version": 1,
         "conversation_id": conversation.id,
         "product_id": conversation.product_id,
         "workflow_draft_id": conversation.workflow_draft_id,
         "harness_run_id": conversation.harness_run_id,
-        "current_draft_version": current_revision.version,
+        "current_draft_version": current_revision.version if current_revision is not None else 0,
         "system_prompt": WORKFLOW_AGENT_SYSTEM_PROMPT,
         "workflow_draft_schema": WorkflowDraftPayloadV1.model_json_schema(),
         "tool_contract_version": AGENT_TOOL_CONTRACT_VERSION,
@@ -150,8 +153,7 @@ def get_agent_product_context(session: Session, conversation_id: str) -> dict[st
         raise NotFoundError("商品不存在")
     draft = conversation.workflow_draft
     revision = draft.current_revision
-    if revision is None:
-        raise ConflictError("WorkflowDraft 缺少 current revision")
+    recipe_seed = _load_recipe_seed_context(session, draft.recipe_seed)
     payload: dict[str, Any] = {
         "schema_version": 1,
         "product": {
@@ -172,14 +174,86 @@ def get_agent_product_context(session: Session, conversation_id: str) -> dict[st
         "workflow_draft": {
             "id": draft.id,
             "status": draft.status.value,
-            "version": revision.version,
-            "payload": revision.payload_json,
+            "version": revision.version if revision is not None else 0,
+            "payload": revision.payload_json if revision is not None else None,
         },
+        "workflow_recipe_seed": recipe_seed,
     }
     encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
     if len(encoded) > AGENT_CONTEXT_MAX_BYTES:
         raise ConflictError("商品与 WorkflowDraft 上下文超过 Agent 工具输出上限")
     return payload
+
+
+def _load_recipe_seed_context(
+    session: Session,
+    seed: WorkflowDraftRecipeSeed | None,
+) -> dict[str, Any] | None:
+    if seed is None:
+        return None
+    recipe_version = seed.recipe_version
+    recipe_payload = parse_recipe_payload_or_raise(recipe_version)
+    base_workflow = None
+    if seed.base_workflow_id is not None:
+        workflow = session.scalar(
+            select(ProductWorkflow)
+            .options(
+                selectinload(ProductWorkflow.folders),
+                selectinload(ProductWorkflow.nodes),
+                selectinload(ProductWorkflow.edges),
+            )
+            .where(ProductWorkflow.id == seed.base_workflow_id)
+        )
+        if workflow is None or workflow.product_id != seed.product_id or workflow.schema_version != 2:
+            raise ConflictError("recipe seed base workflow 不可用")
+        base_workflow = {
+            "id": workflow.id,
+            "revision": workflow.revision,
+            "edit_version": workflow.edit_version,
+            "folders": [
+                {
+                    "id": folder.id,
+                    "key": folder.folder_key,
+                    "title": folder.title,
+                    "order": folder.sort_order,
+                }
+                for folder in workflow.folders
+            ],
+            "nodes": [
+                {
+                    "id": node.id,
+                    "key": node.node_key,
+                    "node_type": node.node_type.value,
+                    "position_x": node.position_x,
+                    "position_y": node.position_y,
+                    "folder_id": node.folder_id,
+                }
+                for node in workflow.nodes
+            ],
+            "edges": [
+                {
+                    "id": edge.id,
+                    "key": edge.edge_key,
+                    "source_node_id": edge.source_node_id,
+                    "target_node_id": edge.target_node_id,
+                    "source_handle": edge.source_handle,
+                    "target_handle": edge.target_handle,
+                }
+                for edge in workflow.edges
+            ],
+        }
+    return {
+        "schema_version": seed.schema_version,
+        "recipe_id": recipe_version.recipe_id,
+        "recipe_version_id": recipe_version.id,
+        "recipe_version": recipe_version.version,
+        "recipe_kind": recipe_version.recipe.kind.value,
+        "title": recipe_version.title,
+        "description": recipe_version.description,
+        "preferred_visual_system_version_id": recipe_version.preferred_visual_system_version_id,
+        "payload": recipe_payload.model_dump(mode="json"),
+        "base_workflow": base_workflow,
+    }
 
 
 def list_agent_product_assets(

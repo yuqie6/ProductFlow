@@ -90,6 +90,13 @@ class WorkflowDraftStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class WorkflowRecipeKind(StrEnum):
+    """用户主动保存的完整工作流配方或局部片段。"""
+
+    WORKFLOW_RECIPE = "workflow_recipe"
+    RECIPE_FRAGMENT = "recipe_fragment"
+
+
 class AgentConversationStatus(StrEnum):
     """工作流 Agent 会话在 ProductFlow 侧的业务投影状态。"""
 

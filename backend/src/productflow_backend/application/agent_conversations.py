@@ -25,6 +25,7 @@ from productflow_backend.infrastructure.db.models import (
     Product,
     ProductImageAsset,
     WorkflowDraft,
+    WorkflowDraftRecipeSeed,
     WorkflowDraftRevision,
     new_id,
 )
@@ -51,7 +52,10 @@ class AgentTurnReservation:
 
 def agent_conversation_query():
     return select(AgentConversation).options(
-        selectinload(AgentConversation.workflow_draft).selectinload(WorkflowDraft.current_revision)
+        selectinload(AgentConversation.workflow_draft).selectinload(WorkflowDraft.current_revision),
+        selectinload(AgentConversation.workflow_draft)
+        .selectinload(WorkflowDraft.recipe_seed)
+        .selectinload(WorkflowDraftRecipeSeed.recipe_version),
     )
 
 
@@ -399,9 +403,7 @@ def attach_agent_workflow_draft_artifact(
         raise ConflictError("Agent turn projection 已绑定其他 artifact step")
     conversation = projection.conversation
     draft = conversation.workflow_draft
-    if draft.current_revision is None:
-        raise ConflictError("WorkflowDraft 缺少 current revision")
-    expected_version = draft.current_revision.version
+    expected_version = draft.current_revision.version if draft.current_revision is not None else 0
     draft_id = draft.id
     append_workflow_draft_revision(
         session,

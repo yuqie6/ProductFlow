@@ -20,6 +20,7 @@ from productflow_backend.domain.enums import (
     WorkflowDraftStatus,
     WorkflowNodeStatus,
     WorkflowNodeType,
+    WorkflowRecipeKind,
     WorkflowRevealEventKind,
     WorkflowRunStatus,
 )
@@ -46,6 +47,7 @@ from productflow_backend.infrastructure.db.models import (
     VisualSystemVersion,
     VisualSystemVersionReference,
     WorkflowDraft,
+    WorkflowDraftRecipeSeed,
     WorkflowDraftRevision,
     WorkflowFolder,
     WorkflowImageGenerationRecord,
@@ -54,6 +56,8 @@ from productflow_backend.infrastructure.db.models import (
     WorkflowMaterializationKey,
     WorkflowNode,
     WorkflowNodeRun,
+    WorkflowRecipe,
+    WorkflowRecipeVersion,
     WorkflowRevealEvent,
     WorkflowRun,
     new_id,
@@ -288,6 +292,7 @@ def test_sqlalchemy_enum_columns_use_database_values() -> None:
         member.value for member in ProductImageOriginType
     ]
     assert WorkflowDraft.__table__.c.status.type.enums == [member.value for member in WorkflowDraftStatus]
+    assert WorkflowRecipe.__table__.c.kind.type.enums == [member.value for member in WorkflowRecipeKind]
     assert WorkflowRevealEvent.__table__.c.kind.type.enums == [
         member.value for member in WorkflowRevealEventKind
     ]
@@ -335,6 +340,12 @@ def test_workflow_draft_models_match_atomic_materialization_contract() -> None:
     }
     assert not workflow_table.c.schema_version.nullable
     assert not workflow_table.c.revision.nullable
+    assert not workflow_table.c.edit_version.nullable
+    assert "ck_product_workflows_non_negative_edit_version" in {
+        constraint.name
+        for constraint in workflow_table.constraints
+        if isinstance(constraint, sa.CheckConstraint)
+    }
     source_revision_fk = next(
         fk for fk in workflow_table.foreign_keys if fk.parent.name == "source_draft_revision_id"
     )
@@ -347,6 +358,25 @@ def test_workflow_draft_models_match_atomic_materialization_contract() -> None:
     }
     assert folder_unique_constraints == {"uq_workflow_folders_workflow_key"}
     assert "parent_id" not in folder_table.c
+    assert {"position_x", "position_y", "width", "height", "config_json"}.isdisjoint(folder_table.c)
+
+    recipe_table = WorkflowRecipe.__table__
+    assert {index.name for index in recipe_table.indexes} == {"ix_workflow_recipes_archived_at"}
+    recipe_version_table = WorkflowRecipeVersion.__table__
+    assert {
+        constraint.name
+        for constraint in recipe_version_table.constraints
+        if isinstance(constraint, sa.UniqueConstraint)
+    } == {"uq_workflow_recipe_versions_recipe_version"}
+    seed_table = WorkflowDraftRecipeSeed.__table__
+    assert {
+        constraint.name
+        for constraint in seed_table.constraints
+        if isinstance(constraint, sa.UniqueConstraint)
+    } == {
+        "uq_workflow_draft_recipe_seeds_draft_id",
+        "uq_workflow_draft_recipe_seeds_product_key",
+    }
 
     node_table = WorkflowNode.__table__
     node_fks = {fk.parent.name: fk for fk in node_table.foreign_keys}
@@ -729,6 +759,144 @@ def test_alembic_upgrade_head_supports_sqlite(tmp_path: Path, monkeypatch) -> No
     command.upgrade(config, "head")
 
     assert database_path.exists()
+    get_settings.cache_clear()
+
+
+def test_canvas_recipe_migration_preserves_member_folders_and_round_trips_sqlite(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path, config = _configure_sqlite_alembic(
+        tmp_path,
+        monkeypatch,
+        filename="canvas-recipes-roundtrip.db",
+    )
+    command.upgrade(config, "20260812_0035")
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    now = "2026-08-13 10:00:00"
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                "INSERT INTO products (id, name, created_at, updated_at) "
+                "VALUES ('product-canvas', '画布迁移商品', :now, :now)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO product_workflows "
+                "(id, product_id, title, active, schema_version, revision, created_at, updated_at) "
+                "VALUES "
+                "('workflow-canvas', 'product-canvas', '画布迁移工作流', :active, 2, 1, :now, :now), "
+                "('workflow-v1', 'product-canvas', '旧版工作流', :inactive, 1, 1, :now, :now)"
+            ),
+            {"active": True, "inactive": False, "now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO workflow_folders "
+                "(id, workflow_id, folder_key, title, sort_order, position_x, position_y, width, height, "
+                "config_json, created_at, updated_at) VALUES "
+                "('folder-member', 'workflow-canvas', 'member-folder', '有成员', 0, 120, 80, 900, 600, "
+                "'{}', :now, :now), "
+                "('folder-empty', 'workflow-canvas', 'empty-folder', '空文件夹', 1, 900, 80, 640, 420, "
+                "'{}', :now, :now), "
+                "('folder-v1-empty', 'workflow-v1', 'v1-empty-folder', '旧版空文件夹', 0, 0, 0, 640, 420, "
+                "'{}', :now, :now)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO workflow_nodes "
+                "(id, workflow_id, schema_version, node_key, node_type, title, position_x, position_y, "
+                "config_json, status, output_json, failure_reason, last_run_at, folder_id, "
+                "bound_image_asset_id, current_prompt_artifact_version_id, created_at, updated_at) "
+                "VALUES ('node-canvas', 'workflow-canvas', 2, 'node-canvas', 'product_context', '商品信息', "
+                "180, 140, '{}', 'idle', NULL, NULL, NULL, 'folder-member', NULL, NULL, :now, :now)"
+            ),
+            {"now": now},
+        )
+    engine.dispose()
+
+    command.upgrade(config, "20260813_0036")
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    inspector = sa.inspect(engine)
+    workflow_columns = {column["name"]: column for column in inspector.get_columns("product_workflows")}
+    folder_columns = {column["name"] for column in inspector.get_columns("workflow_folders")}
+    assert workflow_columns["edit_version"]["nullable"] is False
+    assert {"position_x", "position_y", "width", "height", "config_json"}.isdisjoint(folder_columns)
+    assert {
+        "workflow_recipes",
+        "workflow_recipe_versions",
+        "workflow_draft_recipe_seeds",
+    } <= set(inspector.get_table_names())
+    with engine.connect() as connection:
+        assert connection.scalar(
+            sa.text("SELECT edit_version FROM product_workflows WHERE id = 'workflow-canvas'")
+        ) == 0
+        assert connection.execute(
+            sa.text("SELECT id FROM workflow_folders ORDER BY id")
+        ).scalars().all() == ["folder-member", "folder-v1-empty"]
+        assert connection.scalar(
+            sa.text("SELECT folder_id FROM workflow_nodes WHERE id = 'node-canvas'")
+        ) == "folder-member"
+    engine.dispose()
+
+    command.downgrade(config, "20260812_0035")
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    inspector = sa.inspect(engine)
+    folder_columns = {column["name"] for column in inspector.get_columns("workflow_folders")}
+    assert {"position_x", "position_y", "width", "height", "config_json"} <= folder_columns
+    assert "edit_version" not in {
+        column["name"] for column in inspector.get_columns("product_workflows")
+    }
+    with engine.connect() as connection:
+        restored = connection.execute(
+            sa.text(
+                "SELECT position_x, position_y, width, height, config_json "
+                "FROM workflow_folders WHERE id = 'folder-member'"
+            )
+        ).mappings().one()
+    assert restored["position_x"] == 0
+    assert restored["position_y"] == 0
+    assert restored["width"] == 640
+    assert restored["height"] == 420
+    assert restored["config_json"] in ({}, "{}")
+    engine.dispose()
+    get_settings.cache_clear()
+
+
+def test_canvas_recipe_migration_rejects_downgrade_with_saved_recipe_data(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path, config = _configure_sqlite_alembic(
+        tmp_path,
+        monkeypatch,
+        filename="canvas-recipes-unsafe-downgrade.db",
+    )
+    command.upgrade(config, "20260813_0036")
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                "INSERT INTO workflow_recipes "
+                "(id, kind, current_version_id, archived_at, created_at, updated_at) "
+                "VALUES ('recipe-saved', 'workflow_recipe', NULL, NULL, :now, :now)"
+            ),
+            {"now": "2026-08-13 11:00:00"},
+        )
+    engine.dispose()
+
+    with pytest.raises(RuntimeError, match="saved recipe data exists"):
+        command.downgrade(config, "20260812_0035")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    with engine.begin() as connection:
+        connection.execute(sa.text("DELETE FROM workflow_recipes WHERE id = 'recipe-saved'"))
+    engine.dispose()
+    command.downgrade(config, "20260812_0035")
     get_settings.cache_clear()
 
 

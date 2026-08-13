@@ -43,6 +43,9 @@ backend-test-live-recovery:
 backend-test-live-gallery-migration:
     PRODUCTFLOW_RUN_LIVE_GALLERY_MIGRATION=1 bash scripts/with_dev_env.sh uv run --directory backend pytest -q -m live_dependencies tests/test_live_gallery_migration.py
 
+backend-test-live-canvas-recipes:
+    PRODUCTFLOW_RUN_LIVE_CANVAS_RECIPE=1 bash scripts/with_dev_env.sh uv run --directory backend pytest -q -m live_dependencies tests/test_live_canvas_recipes.py
+
 web-install:
     pnpm --dir web install
 

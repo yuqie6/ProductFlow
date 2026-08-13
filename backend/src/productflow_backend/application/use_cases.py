@@ -48,6 +48,7 @@ from productflow_backend.infrastructure.db.models import (
     WorkflowDraftRevision,
     WorkflowImageGenerationRecord,
     WorkflowNode,
+    WorkflowRecipeVersion,
     WorkflowRun,
 )
 from productflow_backend.infrastructure.storage import LocalStorage
@@ -593,6 +594,11 @@ def _prepare_visual_system_cleanup_for_product(
                         WorkflowImageGenerationRecord.visual_system_version_id == version.id,
                         WorkflowImageGenerationRecord.product_id != product_id,
                     )
+                    .limit(1)
+                ),
+                session.scalar(
+                    select(WorkflowRecipeVersion.id)
+                    .where(WorkflowRecipeVersion.preferred_visual_system_version_id == version.id)
                     .limit(1)
                 ),
             )

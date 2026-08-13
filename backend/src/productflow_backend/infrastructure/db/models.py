@@ -37,6 +37,7 @@ from productflow_backend.domain.enums import (
     WorkflowDraftStatus,
     WorkflowNodeStatus,
     WorkflowNodeType,
+    WorkflowRecipeKind,
     WorkflowRevealEventKind,
     WorkflowRunStatus,
 )
@@ -261,6 +262,11 @@ class Product(Base, TimestampMixin):
         back_populates="product",
         cascade="all, delete-orphan",
         foreign_keys="WorkflowDraft.product_id",
+    )
+    workflow_draft_recipe_seeds: Mapped[list[WorkflowDraftRecipeSeed]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+        foreign_keys="WorkflowDraftRecipeSeed.product_id",
     )
     agent_conversations: Mapped[list[AgentConversation]] = relationship(
         back_populates="product",
@@ -590,6 +596,12 @@ class WorkflowDraft(Base, TimestampMixin):
         foreign_keys="AgentConversation.workflow_draft_id",
         uselist=False,
     )
+    recipe_seed: Mapped[WorkflowDraftRecipeSeed | None] = relationship(
+        back_populates="workflow_draft",
+        cascade="all, delete-orphan",
+        foreign_keys="WorkflowDraftRecipeSeed.workflow_draft_id",
+        uselist=False,
+    )
 
 
 class WorkflowDraftRevision(Base):
@@ -814,6 +826,172 @@ class AgentToolMutation(Base, TimestampMixin):
     asset: Mapped[ProductImageAsset | None] = relationship()
 
 
+class WorkflowRecipe(Base, TimestampMixin):
+    """用户保存配方的稳定身份。"""
+
+    __tablename__ = "workflow_recipes"
+    __table_args__ = (Index("ix_workflow_recipes_archived_at", "archived_at"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    kind: Mapped[WorkflowRecipeKind] = mapped_column(enum_value_column(WorkflowRecipeKind))
+    current_version_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "workflow_recipe_versions.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_workflow_recipes_current_version_id",
+        ),
+        nullable=True,
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    versions: Mapped[list[WorkflowRecipeVersion]] = relationship(
+        back_populates="recipe",
+        cascade="all, delete-orphan",
+        foreign_keys="WorkflowRecipeVersion.recipe_id",
+        order_by="WorkflowRecipeVersion.version",
+    )
+    current_version: Mapped[WorkflowRecipeVersion | None] = relationship(
+        foreign_keys=[current_version_id],
+        post_update=True,
+    )
+
+
+class WorkflowRecipeVersion(Base):
+    """配方的 append-only 严格快照。"""
+
+    __tablename__ = "workflow_recipe_versions"
+    __table_args__ = (
+        UniqueConstraint("recipe_id", "version", name="uq_workflow_recipe_versions_recipe_version"),
+        CheckConstraint("version > 0", name="ck_workflow_recipe_versions_positive_version"),
+        CheckConstraint("schema_version = 1", name="ck_workflow_recipe_versions_schema_version"),
+        CheckConstraint("length(payload_hash) = 64", name="ck_workflow_recipe_versions_payload_hash"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    recipe_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "workflow_recipes.id",
+            ondelete="CASCADE",
+            name="fk_workflow_recipe_versions_recipe_id",
+        ),
+    )
+    version: Mapped[int] = mapped_column(Integer)
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    title: Mapped[str] = mapped_column(String(255))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    payload_hash: Mapped[str] = mapped_column(String(64))
+    preferred_visual_system_version_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "visual_system_versions.id",
+            ondelete="RESTRICT",
+            name="fk_workflow_recipe_versions_preferred_visual_system_version_id",
+        ),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    recipe: Mapped[WorkflowRecipe] = relationship(
+        back_populates="versions",
+        foreign_keys=[recipe_id],
+    )
+    preferred_visual_system_version: Mapped[VisualSystemVersion | None] = relationship(
+        foreign_keys=[preferred_visual_system_version_id]
+    )
+    draft_seeds: Mapped[list[WorkflowDraftRecipeSeed]] = relationship(
+        back_populates="recipe_version",
+        foreign_keys="WorkflowDraftRecipeSeed.recipe_version_id",
+    )
+
+
+class WorkflowDraftRecipeSeed(Base):
+    """把配方应用到目标商品后供 Agent 重建 Draft 的不可变种子。"""
+
+    __tablename__ = "workflow_draft_recipe_seeds"
+    __table_args__ = (
+        UniqueConstraint("workflow_draft_id", name="uq_workflow_draft_recipe_seeds_draft_id"),
+        UniqueConstraint(
+            "product_id",
+            "idempotency_key",
+            name="uq_workflow_draft_recipe_seeds_product_key",
+        ),
+        CheckConstraint("schema_version = 1", name="ck_workflow_draft_recipe_seeds_schema_version"),
+        CheckConstraint("length(request_hash) = 64", name="ck_workflow_draft_recipe_seeds_request_hash"),
+        CheckConstraint(
+            "(base_workflow_id IS NULL AND base_workflow_revision IS NULL) OR "
+            "(base_workflow_id IS NOT NULL AND base_workflow_revision > 0)",
+            name="ck_workflow_draft_recipe_seeds_base_workflow",
+        ),
+        Index(
+            "ix_workflow_draft_recipe_seeds_product_created",
+            "product_id",
+            "created_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    workflow_draft_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "workflow_drafts.id",
+            ondelete="CASCADE",
+            name="fk_workflow_draft_recipe_seeds_draft_id",
+        ),
+    )
+    recipe_version_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "workflow_recipe_versions.id",
+            ondelete="RESTRICT",
+            name="fk_workflow_draft_recipe_seeds_recipe_version_id",
+        ),
+    )
+    product_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "products.id",
+            ondelete="CASCADE",
+            name="fk_workflow_draft_recipe_seeds_product_id",
+        ),
+    )
+    base_workflow_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "product_workflows.id",
+            ondelete="RESTRICT",
+            name="fk_workflow_draft_recipe_seeds_base_workflow_id",
+        ),
+        nullable=True,
+    )
+    base_workflow_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    idempotency_key: Mapped[str] = mapped_column(String(120))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    workflow_draft: Mapped[WorkflowDraft] = relationship(
+        back_populates="recipe_seed",
+        foreign_keys=[workflow_draft_id],
+    )
+    recipe_version: Mapped[WorkflowRecipeVersion] = relationship(
+        back_populates="draft_seeds",
+        foreign_keys=[recipe_version_id],
+    )
+    product: Mapped[Product] = relationship(
+        back_populates="workflow_draft_recipe_seeds",
+        foreign_keys=[product_id],
+    )
+    base_workflow: Mapped[ProductWorkflow | None] = relationship(
+        back_populates="recipe_seeds",
+        foreign_keys=[base_workflow_id],
+    )
+
+
 class ProductWorkflow(Base, TimestampMixin):
     """商品创意工作流：一个商品可以保留多个历史 DAG，当前使用 active=True 的工作流。"""
 
@@ -836,6 +1014,7 @@ class ProductWorkflow(Base, TimestampMixin):
         ),
         CheckConstraint("schema_version IN (1, 2)", name="ck_product_workflows_schema_version"),
         CheckConstraint("revision > 0", name="ck_product_workflows_positive_revision"),
+        CheckConstraint("edit_version >= 0", name="ck_product_workflows_non_negative_edit_version"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -844,6 +1023,7 @@ class ProductWorkflow(Base, TimestampMixin):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     schema_version: Mapped[int] = mapped_column(Integer, default=1)
     revision: Mapped[int] = mapped_column(Integer, default=1)
+    edit_version: Mapped[int] = mapped_column(Integer, default=0)
     source_draft_revision_id: Mapped[str | None] = mapped_column(
         String(36),
         ForeignKey(
@@ -905,6 +1085,10 @@ class ProductWorkflow(Base, TimestampMixin):
         cascade="all, delete-orphan",
         uselist=False,
     )
+    recipe_seeds: Mapped[list[WorkflowDraftRecipeSeed]] = relationship(
+        back_populates="base_workflow",
+        foreign_keys="WorkflowDraftRecipeSeed.base_workflow_id",
+    )
 
 
 class WorkflowFolder(Base, TimestampMixin):
@@ -914,7 +1098,6 @@ class WorkflowFolder(Base, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("workflow_id", "folder_key", name="uq_workflow_folders_workflow_key"),
         CheckConstraint("sort_order >= 0", name="ck_workflow_folders_non_negative_order"),
-        CheckConstraint("width > 0 AND height > 0", name="ck_workflow_folders_positive_size"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -925,11 +1108,6 @@ class WorkflowFolder(Base, TimestampMixin):
     folder_key: Mapped[str] = mapped_column(String(80))
     title: Mapped[str] = mapped_column(String(255))
     sort_order: Mapped[int] = mapped_column(Integer)
-    position_x: Mapped[int] = mapped_column(Integer, default=0)
-    position_y: Mapped[int] = mapped_column(Integer, default=0)
-    width: Mapped[int] = mapped_column(Integer)
-    height: Mapped[int] = mapped_column(Integer)
-    config_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
     workflow: Mapped[ProductWorkflow] = relationship(back_populates="folders")
     nodes: Mapped[list[WorkflowNode]] = relationship(back_populates="folder")

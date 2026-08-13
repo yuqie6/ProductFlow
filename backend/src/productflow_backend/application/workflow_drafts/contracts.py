@@ -431,10 +431,10 @@ class WorkflowFolderPlan(StrictArtifactModel):
     key: BusinessKey
     title: NonEmptyText
     order: int = Field(ge=0)
-    position_x: int = 0
-    position_y: int = 0
-    width: int = Field(default=640, ge=240, le=4000)
-    height: int = Field(default=420, ge=180, le=4000)
+    position_x: int = Field(default=0, deprecated=True)
+    position_y: int = Field(default=0, deprecated=True)
+    width: int = Field(default=640, ge=240, le=4000, deprecated=True)
+    height: int = Field(default=420, ge=180, le=4000, deprecated=True)
 
 
 class WorkflowNodePlanBase(StrictArtifactModel):
@@ -579,6 +579,10 @@ class WorkflowDraftPayloadV1(StrictArtifactModel):
         for node in self.nodes:
             if node.folder_key is not None and node.folder_key not in folder_keys:
                 raise ValueError("工作流节点引用了不存在的文件夹")
+        member_folder_keys = {node.folder_key for node in self.nodes if node.folder_key is not None}
+        empty_folder_keys = sorted(folder_keys - member_folder_keys)
+        if empty_folder_keys:
+            raise ValueError(f"文件夹必须至少包含一个工作流节点: {', '.join(empty_folder_keys)}")
 
         reference_nodes = [node for node in self.nodes if isinstance(node, ReferenceImageNodePlan)]
         if {node.reference_key for node in reference_nodes} != reference_keys:

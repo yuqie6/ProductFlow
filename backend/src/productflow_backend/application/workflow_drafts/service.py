@@ -26,6 +26,7 @@ from productflow_backend.infrastructure.db.models import (
     VisualSystemVersion,
     VisualSystemVersionReference,
     WorkflowDraft,
+    WorkflowDraftRecipeSeed,
     WorkflowDraftRevision,
 )
 
@@ -36,6 +37,9 @@ def workflow_draft_query():
         selectinload(WorkflowDraft.revisions).selectinload(WorkflowDraftRevision.visual_system_version),
         selectinload(WorkflowDraft.current_revision),
         selectinload(WorkflowDraft.final_workflow),
+        selectinload(WorkflowDraft.recipe_seed).selectinload(
+            WorkflowDraftRecipeSeed.recipe_version
+        ),
     )
 
 
@@ -124,15 +128,23 @@ def append_workflow_draft_revision(
             session.commit()
             return get_workflow_draft_or_raise(session, product_id=product_id, draft_id=draft_id)
 
-        current_revision = _current_revision_or_raise(draft)
-        if current_revision.version != expected_draft_version:
-            raise ConflictError("WorkflowDraft version 已变化，请基于最新 revision 重试")
+        current_revision = draft.current_revision
+        if current_revision is None:
+            if expected_draft_version != 0:
+                raise ConflictError("WorkflowDraft version 已变化，请基于最新 revision 重试")
+            if draft.recipe_seed is None or draft.status != WorkflowDraftStatus.COLLECTING:
+                raise ConflictError("只有 collecting recipe seed Draft 可以从 version 0 追加首次 revision")
+            next_version = 1
+        else:
+            if current_revision.version != expected_draft_version:
+                raise ConflictError("WorkflowDraft version 已变化，请基于最新 revision 重试")
+            next_version = current_revision.version + 1
         if draft.status in {WorkflowDraftStatus.CANCELLED, WorkflowDraftStatus.MATERIALIZING}:
             raise ConflictError("当前 WorkflowDraft 状态不允许追加 revision")
 
         revision = WorkflowDraftRevision(
             draft_id=draft.id,
-            version=current_revision.version + 1,
+            version=next_version,
             schema_version=artifact.schema_version,
             payload_json=payload_json,
             payload_hash=payload_hash,
@@ -371,6 +383,7 @@ def _get_draft_for_update(session: Session, *, product_id: str, draft_id: str) -
             selectinload(WorkflowDraft.current_revision).selectinload(
                 WorkflowDraftRevision.visual_system_version
             ),
+            selectinload(WorkflowDraft.recipe_seed),
         )
         .where(WorkflowDraft.id == draft_id, WorkflowDraft.product_id == product_id)
         .with_for_update()

@@ -429,11 +429,6 @@ def _materialize_folders(
             folder_key=folder_plan.key,
             title=folder_plan.title,
             sort_order=folder_plan.order,
-            position_x=folder_plan.position_x,
-            position_y=folder_plan.position_y,
-            width=folder_plan.width,
-            height=folder_plan.height,
-            config_json={},
         )
         session.add(folder)
         folders_by_key[folder_plan.key] = folder

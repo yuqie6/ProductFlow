@@ -10,8 +10,14 @@ from sqlalchemy.orm import Session
 from productflow_backend.application.agent_conversations import mark_agent_conversation_completed_for_draft
 from productflow_backend.application.product_workflows import (
     bind_v2_reference_node_asset,
+    create_workflow_folder,
+    dissolve_workflow_folder,
     get_v2_workflow_node_run,
+    rename_workflow_folder,
+    set_workflow_folder_members,
     submit_v2_workflow_node_run,
+    translate_workflow_folder,
+    update_workflow_node_layout,
 )
 from productflow_backend.application.workflow_drafts.materialization import (
     get_active_v2_workflow_snapshot,
@@ -34,16 +40,24 @@ from productflow_backend.presentation.schemas.workflow_drafts import (
     BindWorkflowReferenceAssetResponse,
     ConfirmWorkflowDraftRequest,
     CreateWorkflowDraftRequest,
+    CreateWorkflowFolderRequest,
     MaterializeWorkflowDraftRequest,
+    RenameWorkflowFolderRequest,
+    SetWorkflowFolderMembersRequest,
     SubmitWorkflowNodeRunV2Response,
+    TranslateWorkflowFolderRequest,
+    UpdateWorkflowNodeLayoutRequest,
+    WorkflowCanvasMutationResponse,
     WorkflowDraftResponse,
     WorkflowMaterializationResponse,
     WorkflowNodeRunV2Response,
     serialize_active_v2_workflow,
+    serialize_canvas_mutation,
     serialize_materialization,
     serialize_reference_binding,
     serialize_workflow_draft,
     serialize_workflow_node_run_v2,
+    to_workflow_node_positions,
 )
 
 router = APIRouter(prefix="/api/v2", tags=["workflow-drafts"], dependencies=[Depends(require_admin)])
@@ -78,6 +92,142 @@ def bind_v2_reference_node_asset_endpoint(
         expected_bound_asset_id=payload.expected_bound_asset_id,
     )
     return serialize_reference_binding(result)
+
+
+@router.post(
+    "/products/{product_id}/workflows/{workflow_id}/folders",
+    response_model=WorkflowCanvasMutationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_workflow_folder_endpoint(
+    product_id: str,
+    workflow_id: str,
+    payload: CreateWorkflowFolderRequest,
+    session: Session = Depends(get_session),
+) -> WorkflowCanvasMutationResponse:
+    return serialize_canvas_mutation(
+        create_workflow_folder(
+            session,
+            product_id=product_id,
+            workflow_id=workflow_id,
+            title=payload.title,
+            node_ids=payload.node_ids,
+            expected_edit_version=payload.expected_edit_version,
+        )
+    )
+
+
+@router.patch(
+    "/products/{product_id}/workflows/{workflow_id}/folders/{folder_id}",
+    response_model=WorkflowCanvasMutationResponse,
+)
+def rename_workflow_folder_endpoint(
+    product_id: str,
+    workflow_id: str,
+    folder_id: str,
+    payload: RenameWorkflowFolderRequest,
+    session: Session = Depends(get_session),
+) -> WorkflowCanvasMutationResponse:
+    return serialize_canvas_mutation(
+        rename_workflow_folder(
+            session,
+            product_id=product_id,
+            workflow_id=workflow_id,
+            folder_id=folder_id,
+            title=payload.title,
+            expected_edit_version=payload.expected_edit_version,
+        )
+    )
+
+
+@router.put(
+    "/products/{product_id}/workflows/{workflow_id}/folders/{folder_id}/members",
+    response_model=WorkflowCanvasMutationResponse,
+)
+def set_workflow_folder_members_endpoint(
+    product_id: str,
+    workflow_id: str,
+    folder_id: str,
+    payload: SetWorkflowFolderMembersRequest,
+    session: Session = Depends(get_session),
+) -> WorkflowCanvasMutationResponse:
+    return serialize_canvas_mutation(
+        set_workflow_folder_members(
+            session,
+            product_id=product_id,
+            workflow_id=workflow_id,
+            folder_id=folder_id,
+            node_ids=payload.node_ids,
+            expected_edit_version=payload.expected_edit_version,
+        )
+    )
+
+
+@router.delete(
+    "/products/{product_id}/workflows/{workflow_id}/folders/{folder_id}",
+    response_model=WorkflowCanvasMutationResponse,
+)
+def dissolve_workflow_folder_endpoint(
+    product_id: str,
+    workflow_id: str,
+    folder_id: str,
+    expected_edit_version: int = Query(ge=0),
+    session: Session = Depends(get_session),
+) -> WorkflowCanvasMutationResponse:
+    return serialize_canvas_mutation(
+        dissolve_workflow_folder(
+            session,
+            product_id=product_id,
+            workflow_id=workflow_id,
+            folder_id=folder_id,
+            expected_edit_version=expected_edit_version,
+        )
+    )
+
+
+@router.post(
+    "/products/{product_id}/workflows/{workflow_id}/folders/{folder_id}/translate",
+    response_model=WorkflowCanvasMutationResponse,
+)
+def translate_workflow_folder_endpoint(
+    product_id: str,
+    workflow_id: str,
+    folder_id: str,
+    payload: TranslateWorkflowFolderRequest,
+    session: Session = Depends(get_session),
+) -> WorkflowCanvasMutationResponse:
+    return serialize_canvas_mutation(
+        translate_workflow_folder(
+            session,
+            product_id=product_id,
+            workflow_id=workflow_id,
+            folder_id=folder_id,
+            delta_x=payload.delta_x,
+            delta_y=payload.delta_y,
+            expected_edit_version=payload.expected_edit_version,
+        )
+    )
+
+
+@router.patch(
+    "/products/{product_id}/workflows/{workflow_id}/layout",
+    response_model=WorkflowCanvasMutationResponse,
+)
+def update_workflow_node_layout_endpoint(
+    product_id: str,
+    workflow_id: str,
+    payload: UpdateWorkflowNodeLayoutRequest,
+    session: Session = Depends(get_session),
+) -> WorkflowCanvasMutationResponse:
+    return serialize_canvas_mutation(
+        update_workflow_node_layout(
+            session,
+            product_id=product_id,
+            workflow_id=workflow_id,
+            positions=to_workflow_node_positions(payload.positions),
+            expected_edit_version=payload.expected_edit_version,
+        )
+    )
 
 
 @router.post(
