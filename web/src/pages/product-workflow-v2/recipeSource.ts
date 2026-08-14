@@ -3,11 +3,16 @@ import type {
   WorkflowRecipeKind,
   WorkflowRecipeSourceType,
 } from "../../lib/types";
+import type { TranslateFunction } from "../../lib/preferences";
 
 export interface RecipeVersionSource {
   source_type: WorkflowRecipeSourceType;
   folder_id?: string | null;
   node_ids?: string[];
+}
+
+export interface RecipeSourceSelection extends RecipeVersionSource {
+  label: string;
 }
 
 export function resolveRecipeVersionSource(
@@ -27,4 +32,24 @@ export function resolveRecipeVersionSource(
     return { source_type: "folder", folder_id: openFolderId };
   }
   return null;
+}
+
+export function labelRecipeVersionSource(
+  source: RecipeVersionSource,
+  workflow: ProductWorkflowV2,
+  t: TranslateFunction,
+): RecipeSourceSelection {
+  if (source.source_type === "selection") {
+    return {
+      ...source,
+      label: t("workflowV2.recipe.sourceSelection", { count: source.node_ids?.length ?? 0 }),
+    };
+  }
+  if (source.source_type === "folder") {
+    const title = workflow.folders.find((folder) => folder.id === source.folder_id)?.title
+      ?? source.folder_id
+      ?? "";
+    return { ...source, label: t("workflowV2.recipe.sourceFolder", { title }) };
+  }
+  return { ...source, label: t("workflowV2.recipe.sourceFull") };
 }

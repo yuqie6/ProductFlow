@@ -933,6 +933,51 @@ export interface WorkflowNodeV2 {
   updated_at: string;
 }
 
+export interface WorkflowPromptArtifactVersionV2 {
+  artifact_id: string;
+  artifact_title: string;
+  image_type_key: string;
+  version_id: string;
+  version: number;
+  schema_version: 1;
+  payload: WorkflowImagePromptPayloadV1;
+  created_at: string;
+}
+
+export interface WorkflowNodeDetailV2 {
+  workflow_id: string;
+  workflow_revision: number;
+  workflow_edit_version: number;
+  source_draft_revision_id: string;
+  visual_system_version_id: string;
+  node: WorkflowNodeV2;
+  prompt_artifact: WorkflowPromptArtifactVersionV2 | null;
+}
+
+export type UpdateWorkflowNodeV2Input =
+  | {
+      node_type: "reference_image";
+      expected_edit_version: number;
+      title: string;
+      role: string;
+      label: string;
+    }
+  | {
+      node_type: "prompt_generation";
+      expected_edit_version: number;
+      expected_prompt_artifact_version_id: string;
+      title: string;
+      prompt_payload: WorkflowImagePromptPayloadV1;
+    }
+  | {
+      node_type: "image_generation";
+      expected_edit_version: number;
+      title: string;
+      variation_instruction: string | null;
+      generation_spec: WorkflowGenerationSpec;
+      delivery_spec: WorkflowDeliverySpec | null;
+    };
+
 export interface WorkflowEdgeV2 {
   id: string;
   workflow_id: string;
@@ -1248,6 +1293,10 @@ export interface WorkflowNodeRunV2 {
 export interface SubmitWorkflowNodeRunV2Result {
   created: boolean;
   node_run: WorkflowNodeRunV2;
+}
+
+export interface WorkflowNodeRunListV2Response {
+  items: WorkflowNodeRunV2[];
 }
 
 export interface WorkflowRevealEvent {

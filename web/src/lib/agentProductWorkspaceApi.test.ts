@@ -15,11 +15,19 @@ describe("Agent product workspace API", () => {
 
     await api.getAgentProductWorkspaceOptions();
     await api.getAgentWorkbench("product/1");
+    await api.getActiveProductWorkflowV2("product-1");
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       "/api/v2/agent-product-workspaces/options",
       "/api/v2/products/product%2F1/agent-workbench",
+      "/api/v2/products/product-1/workflow",
     ]);
+    expect(fetchMock.mock.calls.map(([url]) => url)).not.toContain(
+      "/api/products/product-1/workflow",
+    );
+    expect(fetchMock.mock.calls.map(([url]) => url)).not.toContain(
+      "/api/workflow/canvas-templates",
+    );
   });
 
   it("owns the multipart field names and keeps one stable idempotency header", async () => {

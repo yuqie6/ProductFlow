@@ -27,7 +27,8 @@ import {
   type WorkflowCanvasViewport,
 } from "./product-workflow-v2/canvasState";
 import { visibleRealNodeIds } from "./product-workflow-v2/graph";
-import { V2WorkflowWorkbench, type RecipeSourceSelection } from "./product-workflow-v2/V2WorkflowWorkbench";
+import { V2WorkflowWorkbench } from "./product-workflow-v2/V2WorkflowWorkbench";
+import type { RecipeSourceSelection } from "./product-workflow-v2/recipeSource";
 import { WorkflowRecipeDialog, WorkflowTextDialog } from "./product-workflow-v2/WorkflowDialogs";
 
 type TextDialogState =

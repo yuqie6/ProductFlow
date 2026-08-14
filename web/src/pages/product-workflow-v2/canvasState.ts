@@ -91,6 +91,12 @@ export function isWorkflowCanvasViewportCompatible(
   return savedWideLayout === currentWideLayout && widthRatio <= 1.4;
 }
 
+export function workflowCanvasFitMinZoom(surfaceWidth: number): number {
+  if (surfaceWidth < 480) return 0.24;
+  if (surfaceWidth < 720) return 0.32;
+  return 0.55;
+}
+
 function parseViewport(value: unknown): WorkflowCanvasViewport | null {
   if (!isRecord(value)) {
     return null;

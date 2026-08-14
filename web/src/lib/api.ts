@@ -71,6 +71,9 @@ import type {
   WorkflowMaterializationResult,
   WorkflowReferenceBindingResult,
   WorkflowNodeRunV2,
+  WorkflowNodeRunListV2Response,
+  WorkflowNodeDetailV2,
+  UpdateWorkflowNodeV2Input,
   WorkflowRecipe,
   WorkflowRecipeApplicationResult,
   WorkflowRecipeSourceInput,
@@ -735,6 +738,29 @@ export const api = {
       body: JSON.stringify(input),
     });
   },
+  getWorkflowNodeDetailV2(
+    productId: string,
+    workflowId: string,
+    nodeId: string,
+  ): Promise<WorkflowNodeDetailV2> {
+    return request(
+      `/api/v2/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(nodeId)}`,
+    );
+  },
+  updateWorkflowNodeV2(
+    productId: string,
+    workflowId: string,
+    nodeId: string,
+    input: UpdateWorkflowNodeV2Input,
+  ): Promise<WorkflowCanvasMutationResult> {
+    return request(
+      `/api/v2/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(nodeId)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(input),
+      },
+    );
+  },
   listWorkflowRecipes(includeArchived = false): Promise<WorkflowRecipeSummary[]> {
     const params = new URLSearchParams({ include_archived: String(includeArchived) });
     return request(`/api/v2/workflow-recipes?${params}`);
@@ -828,12 +854,21 @@ export const api = {
     });
   },
   runWorkflowNodeV2(nodeId: string): Promise<SubmitWorkflowNodeRunV2Result> {
-    return request(`/api/v2/workflow-nodes/${nodeId}/run`, {
+    return request(`/api/v2/workflow-nodes/${encodeURIComponent(nodeId)}/run`, {
       method: "POST",
     });
   },
   getWorkflowNodeRunV2(nodeRunId: string): Promise<WorkflowNodeRunV2> {
-    return request(`/api/v2/workflow-node-runs/${nodeRunId}`);
+    return request(`/api/v2/workflow-node-runs/${encodeURIComponent(nodeRunId)}`);
+  },
+  listWorkflowNodeRunsV2(nodeId: string, limit = 20): Promise<WorkflowNodeRunListV2Response> {
+    const params = new URLSearchParams({ limit: String(limit) });
+    return request(`/api/v2/workflow-nodes/${encodeURIComponent(nodeId)}/runs?${params}`);
+  },
+  cancelWorkflowNodeRunV2(nodeRunId: string): Promise<WorkflowNodeRunV2> {
+    return request(`/api/v2/workflow-node-runs/${encodeURIComponent(nodeRunId)}/cancel`, {
+      method: "POST",
+    });
   },
   createDeliveryRendition(
     sourceAssetId: string,

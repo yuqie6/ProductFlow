@@ -8,6 +8,7 @@ import type {
 } from "../../lib/types";
 import {
   buildLocalFolderGraph,
+  buildAutoLayoutNodePositions,
   deriveFolderBounds,
   deriveFolderSummary,
   folderSyntheticNodeId,
@@ -143,7 +144,7 @@ describe("schema-v2 workflow graph projection", () => {
     const bounds = deriveFolderBounds(members);
     const summary = deriveFolderSummary(workflow, "folder-0");
 
-    expect(bounds).toEqual({ x: 388, y: -32, width: 664, height: 460 });
+    expect(bounds).toEqual({ x: 388, y: -32, width: 652, height: 520 });
     expect(summary).toMatchObject({
       member_count: 3,
       node_types: ["prompt_generation", "image_generation"],
@@ -174,5 +175,25 @@ describe("schema-v2 workflow graph projection", () => {
       "image-4-1",
       "prompt-4",
     ]);
+  });
+
+  it("auto-layouts folders as compounds while returning one batch of real node positions", () => {
+    const workflow = makeWorkflow();
+    const folderMembers = workflow.nodes.filter((node) => node.folder_id === "folder-0");
+    const beforeOffset = {
+      x: folderMembers[1].position_x - folderMembers[0].position_x,
+      y: folderMembers[1].position_y - folderMembers[0].position_y,
+    };
+
+    const positions = buildAutoLayoutNodePositions(workflow, null);
+    const positionById = new Map(positions.map((position) => [position.node_id, position]));
+    const prompt = positionById.get(folderMembers[0].id)!;
+    const image = positionById.get(folderMembers[1].id)!;
+
+    expect(positions.length).toBe(workflow.nodes.length);
+    expect(image.position_x - prompt.position_x).toBe(beforeOffset.x);
+    expect(image.position_y - prompt.position_y).toBe(beforeOffset.y);
+    expect(positionById.get("product")!.position_x % 24).toBe(0);
+    expect(positionById.get("product")!.position_y % 24).toBe(0);
   });
 });

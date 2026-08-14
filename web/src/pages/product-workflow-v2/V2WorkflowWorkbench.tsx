@@ -1,18 +1,10 @@
 import {
-  ArrowLeft,
-  ChevronDown,
-  FolderInput,
   FolderOpen,
-  FolderPlus,
   FileOutput,
   Images,
   Library,
   Loader2,
-  MoreHorizontal,
   PackageOpen,
-  Pencil,
-  Save,
-  Trash2,
 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
@@ -23,23 +15,20 @@ import type {
   ProductWorkflowV2,
   WorkflowNodeV2,
   WorkflowRecipeApplicationResult,
-  WorkflowRecipeSourceType,
   WorkflowRecipeSummary,
 } from "../../lib/types";
 import { ProductImageExplorer } from "../product-detail/image-explorer/ProductImageExplorer";
 import type { WorkflowCanvasStateV1, WorkflowCanvasViewport } from "./canvasState";
 import { DeliveryRenditionPanel } from "./DeliveryRenditionPanel";
 import { RecipeLibraryPanel } from "./RecipeLibraryPanel";
-import { resolveRecipeVersionSource } from "./recipeSource";
+import {
+  labelRecipeVersionSource,
+  resolveRecipeVersionSource,
+  type RecipeSourceSelection,
+} from "./recipeSource";
 import { shouldOpenArtifactsForSelection } from "./sidePanel";
 import { V2WorkflowCanvas } from "./V2WorkflowCanvas";
-
-export interface RecipeSourceSelection {
-  source_type: WorkflowRecipeSourceType;
-  folder_id?: string | null;
-  node_ids?: string[];
-  label: string;
-}
+import { V2WorkflowCommandBar } from "./V2WorkflowCommandBar";
 
 interface V2WorkflowWorkbenchProps {
   product: ProductDetail;
@@ -133,7 +122,7 @@ export function V2WorkflowWorkbench({
       openFolder?.id ?? null,
       selectedNodeIds,
     );
-    return source && workflow ? withRecipeSourceLabel(source, workflow, t) : null;
+    return source && workflow ? labelRecipeVersionSource(source, workflow, t) : null;
   };
 
   const bindReference = useCallback((node: WorkflowNodeV2) => {
@@ -149,84 +138,19 @@ export function V2WorkflowWorkbench({
 
   return (
     <main className="flex min-h-0 flex-1 flex-col bg-slate-100 pb-[calc(4.5rem+env(safe-area-inset-bottom))] dark:!bg-[#080b10] lg:pb-0">
-      <header className="flex min-h-[58px] flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-3 py-2 dark:border-slate-800 dark:!bg-[#0d1118] sm:px-4">
-        <div className="flex min-w-0 items-center gap-2">
-          {openFolder ? (
-            <button type="button" onClick={() => onOpenFolder(null)} disabled={structureBusy} className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-slate-200 text-slate-600 hover:border-indigo-300 hover:text-indigo-700 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:border-violet-400 dark:hover:text-violet-200" aria-label={t("workflowV2.canvas.back")} title={t("workflowV2.canvas.back")}>
-              <ArrowLeft size={16} />
-            </button>
-          ) : null}
-          <div className="min-w-0">
-            <div className="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-slate-950 dark:text-slate-100">
-              <span className="truncate">{workflow?.title ?? t("workflowV2.canvas.title")}</span>
-              {openFolder ? <><span className="text-slate-300 dark:text-slate-700">/</span><span className="truncate text-indigo-700 dark:text-violet-300">{openFolder.title}</span></> : null}
-            </div>
-            <div className="mt-0.5 text-[10px] font-medium text-slate-400 dark:text-slate-500">
-              {workflow ? t("workflowV2.canvas.version", { revision: workflow.revision, editVersion: workflow.edit_version }) : t("workflowV2.canvas.noWorkflowShort")}
-            </div>
-          </div>
-        </div>
-
-        <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-1.5">
-          {selectedNodeIds.length ? (
-            <span className="hidden rounded-md bg-indigo-50 px-2 py-1.5 text-[11px] font-semibold text-indigo-700 dark:bg-violet-500/15 dark:text-violet-200 sm:inline-flex">
-              {t("workflowV2.canvas.selected", { count: selectedNodeIds.length })}
-            </span>
-          ) : null}
-
-          {workflow && selectedNodeIds.length ? (
-            <button type="button" onClick={onCreateFolder} disabled={structureBusy} className="inline-flex h-9 items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 hover:border-indigo-300 hover:text-indigo-700 disabled:opacity-40 dark:border-slate-700 dark:!bg-slate-900 dark:text-slate-200 dark:hover:border-violet-400 dark:hover:text-violet-200" title={t("workflowV2.folder.create")}>
-              <FolderPlus size={14} /> <span className="hidden sm:inline">{t("workflowV2.folder.create")}</span>
-            </button>
-          ) : null}
-
-          {workflow && selectedNodeIds.length ? (
-            <label className="relative">
-              <span className="sr-only">{t("workflowV2.folder.move")}</span>
-              <FolderInput size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
-              <select
-                value=""
-                disabled={structureBusy}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  if (value === "__ungrouped__") onMoveSelection(null);
-                  else if (value) onMoveSelection(value);
-                }}
-                className="h-9 max-w-[170px] appearance-none rounded-md border border-slate-200 bg-white py-0 pl-8 pr-7 text-xs font-semibold text-slate-700 outline-none hover:border-indigo-300 disabled:opacity-40 dark:border-slate-700 dark:!bg-slate-900 dark:text-slate-200"
-                aria-label={t("workflowV2.folder.move")}
-              >
-                <option value="">{t("workflowV2.folder.move")}</option>
-                {openFolder && selectedNodes.some((node) => node.folder_id === openFolder.id) ? <option value="__ungrouped__">{t("workflowV2.folder.ungroup")}</option> : null}
-                {workflow.folders.filter((folder) => folder.id !== openFolder?.id).map((folder) => <option key={folder.id} value={folder.id}>{folder.title}</option>)}
-              </select>
-              <ChevronDown size={13} className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-slate-400" />
-            </label>
-          ) : null}
-
-          {workflow ? (
-            <details className="group relative">
-              <summary className="flex h-9 cursor-pointer list-none items-center gap-1.5 rounded-md bg-slate-950 px-2.5 text-xs font-semibold text-white marker:hidden hover:bg-indigo-700 dark:bg-violet-500 dark:hover:bg-violet-400 [&::-webkit-details-marker]:hidden">
-                <Save size={14} /> <span className="hidden sm:inline">{t("workflowV2.recipe.save")}</span><ChevronDown size={12} className="transition-transform group-open:rotate-180" />
-              </summary>
-              <div className="absolute right-0 top-full z-40 mt-1.5 w-52 overflow-hidden rounded-md border border-slate-200 bg-white p-1.5 shadow-xl dark:border-slate-700 dark:!bg-[#10151d]">
-                <RecipeSourceButton label={t("workflowV2.recipe.saveFull")} onClick={() => onSaveRecipe({ source_type: "workflow", label: t("workflowV2.recipe.sourceFull") })} />
-                {openFolder ? <RecipeSourceButton label={t("workflowV2.recipe.saveFolder")} onClick={() => onSaveRecipe({ source_type: "folder", folder_id: openFolder.id, label: t("workflowV2.recipe.sourceFolder", { title: openFolder.title }) })} /> : null}
-                {selectedNodeIds.length ? <RecipeSourceButton label={t("workflowV2.recipe.saveSelection")} onClick={() => onSaveRecipe({ source_type: "selection", node_ids: selectedNodeIds, label: t("workflowV2.recipe.sourceSelection", { count: selectedNodeIds.length }) })} /> : null}
-              </div>
-            </details>
-          ) : null}
-
-          {openFolder ? (
-            <details className="group relative">
-              <summary className="flex h-9 w-9 cursor-pointer list-none items-center justify-center rounded-md border border-slate-200 text-slate-600 marker:hidden hover:border-indigo-300 hover:text-indigo-700 dark:border-slate-700 dark:text-slate-300 [&::-webkit-details-marker]:hidden" aria-label={t("workflowV2.folder.actions")} title={t("workflowV2.folder.actions")}><MoreHorizontal size={16} /></summary>
-              <div className="absolute right-0 top-full z-40 mt-1.5 w-44 overflow-hidden rounded-md border border-slate-200 bg-white p-1.5 shadow-xl dark:border-slate-700 dark:!bg-[#10151d]">
-                <button type="button" onClick={onRenameFolder} className="flex h-9 w-full items-center gap-2 rounded px-2.5 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"><Pencil size={13} />{t("workflowV2.folder.rename")}</button>
-                <button type="button" onClick={onDissolveFolder} className="flex h-9 w-full items-center gap-2 rounded px-2.5 text-left text-xs font-medium text-red-600 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-500/10"><Trash2 size={13} />{t("workflowV2.folder.dissolve")}</button>
-              </div>
-            </details>
-          ) : null}
-        </div>
-      </header>
+      <V2WorkflowCommandBar
+        workflow={workflow}
+        openFolderId={openFolder?.id ?? null}
+        selectedNodeIds={selectedNodeIds}
+        structureBusy={structureBusy}
+        variant="header"
+        onOpenFolder={onOpenFolder}
+        onCreateFolder={onCreateFolder}
+        onMoveSelection={onMoveSelection}
+        onSaveRecipe={onSaveRecipe}
+        onRenameFolder={onRenameFolder}
+        onDissolveFolder={onDissolveFolder}
+      />
 
       <div className="grid min-h-0 flex-1 grid-rows-[minmax(420px,58svh)_minmax(360px,auto)] lg:grid-cols-[minmax(0,1fr)_380px] lg:grid-rows-1">
         <section className="relative min-h-0 overflow-hidden border-b border-slate-200 bg-slate-50 dark:border-slate-800 dark:!bg-[#080b10] lg:border-b-0 lg:border-r" aria-label={t("workflowV2.canvas.ariaLabel")}>
@@ -316,28 +240,6 @@ export function V2WorkflowWorkbench({
       </div>
     </main>
   );
-}
-
-function withRecipeSourceLabel(
-  source: Omit<RecipeSourceSelection, "label">,
-  workflow: ProductWorkflowV2,
-  t: ReturnType<typeof useI18n>["t"],
-): RecipeSourceSelection {
-  if (source.source_type === "selection") {
-    return {
-      ...source,
-      label: t("workflowV2.recipe.sourceSelection", { count: source.node_ids?.length ?? 0 }),
-    };
-  }
-  if (source.source_type === "folder") {
-    const title = workflow.folders.find((folder) => folder.id === source.folder_id)?.title ?? source.folder_id ?? "";
-    return { ...source, label: t("workflowV2.recipe.sourceFolder", { title }) };
-  }
-  return { ...source, label: t("workflowV2.recipe.sourceFull") };
-}
-
-function RecipeSourceButton({ label, onClick }: { label: string; onClick: () => void }) {
-  return <button type="button" onClick={onClick} className="flex h-9 w-full items-center gap-2 rounded px-2.5 text-left text-xs font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"><Save size={13} />{label}</button>;
 }
 
 function SideTab({ active, icon, label, onClick }: { active: boolean; icon: React.ReactNode; label: string; onClick: () => void }) {

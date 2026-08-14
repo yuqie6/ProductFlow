@@ -7,8 +7,8 @@ import type {
   WorkflowNodeV2,
 } from "../../lib/types";
 
-export const V2_NODE_WIDTH = 260;
-export const V2_NODE_HEIGHT = 176;
+export const V2_NODE_WIDTH = 248;
+export const V2_NODE_HEIGHT = 236;
 export const V2_FOLDER_PADDING = 32;
 
 export interface FolderBounds {
@@ -66,6 +66,12 @@ export interface LocalFolderGraph {
   folder: WorkflowFolderV2;
   nodes: WorkflowNodeV2[];
   edges: WorkflowEdgeV2[];
+}
+
+export interface WorkflowNodeLayoutPositionV2 {
+  node_id: string;
+  position_x: number;
+  position_y: number;
 }
 
 const STATUS_PRIORITY: Record<WorkflowNodeStatus, number> = {
@@ -238,6 +244,118 @@ export function projectGlobalGraph(workflow: ProductWorkflowV2): GlobalGraphProj
     nodes,
     edges: [...directEdges, ...projectedByPair.values()].sort((left, right) => left.id.localeCompare(right.id)),
   };
+}
+
+export function buildAutoLayoutNodePositions(
+  workflow: ProductWorkflowV2,
+  openFolderId: string | null,
+): WorkflowNodeLayoutPositionV2[] {
+  const projected = openFolderId
+    ? (() => {
+        const local = buildLocalFolderGraph(workflow, openFolderId);
+        return {
+          nodes: local.nodes.map((node) => ({
+            id: node.id,
+            x: node.position_x,
+            y: node.position_y,
+            height: V2_NODE_HEIGHT,
+            memberIds: [node.id],
+          })),
+          edges: local.edges.map((edge) => ({ source: edge.source_node_id, target: edge.target_node_id })),
+        };
+      })()
+    : (() => {
+        const global = projectGlobalGraph(workflow);
+        return {
+          nodes: global.nodes.map((item) => item.kind === "folder" ? {
+            id: item.id,
+            x: item.position.x,
+            y: item.position.y,
+            height: 210,
+            memberIds: item.member_ids,
+          } : {
+            id: item.id,
+            x: item.position.x,
+            y: item.position.y,
+            height: V2_NODE_HEIGHT,
+            memberIds: [item.node.id],
+          }),
+          edges: global.edges.map((edge) => ({ source: edge.source, target: edge.target })),
+        };
+      })();
+
+  const nodeById = new Map(projected.nodes.map((node) => [node.id, node]));
+  const inDegree = new Map(projected.nodes.map((node) => [node.id, 0]));
+  const adjacency = new Map(projected.nodes.map((node) => [node.id, [] as string[]]));
+  for (const edge of projected.edges) {
+    if (!nodeById.has(edge.source) || !nodeById.has(edge.target)) continue;
+    adjacency.get(edge.source)!.push(edge.target);
+    inDegree.set(edge.target, (inDegree.get(edge.target) ?? 0) + 1);
+  }
+
+  const depth = new Map(projected.nodes.map((node) => [node.id, 0]));
+  const queue = projected.nodes
+    .filter((node) => inDegree.get(node.id) === 0)
+    .sort((left, right) => left.y - right.y || left.x - right.x)
+    .map((node) => node.id);
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const nodeId = queue[cursor];
+    for (const targetId of adjacency.get(nodeId) ?? []) {
+      depth.set(targetId, Math.max(depth.get(targetId) ?? 0, (depth.get(nodeId) ?? 0) + 1));
+      const remaining = (inDegree.get(targetId) ?? 1) - 1;
+      inDegree.set(targetId, remaining);
+      if (remaining === 0) queue.push(targetId);
+    }
+  }
+
+  const layers = new Map<number, typeof projected.nodes>();
+  for (const node of projected.nodes) {
+    const nodeDepth = depth.get(node.id) ?? 0;
+    const layer = layers.get(nodeDepth) ?? [];
+    layer.push(node);
+    layers.set(nodeDepth, layer);
+  }
+
+  const projectedPositions = new Map<string, { x: number; y: number }>();
+  for (const [layerDepth, layer] of [...layers.entries()].sort(([left], [right]) => left - right)) {
+    layer.sort((left, right) => left.y - right.y || left.x - right.x);
+    const totalHeight = layer.reduce((sum, node) => sum + node.height, 0) + Math.max(0, layer.length - 1) * 72;
+    let nextY = Math.max(72, 360 - totalHeight / 2);
+    for (const node of layer) {
+      projectedPositions.set(node.id, {
+        x: snapLayoutCoordinate(72 + layerDepth * 420),
+        y: snapLayoutCoordinate(nextY),
+      });
+      nextY += node.height + 72;
+    }
+  }
+
+  const currentNodeById = new Map(workflow.nodes.map((node) => [node.id, node]));
+  const nextRealPositions = new Map<string, { x: number; y: number }>();
+  for (const projectedNode of projected.nodes) {
+    const target = projectedPositions.get(projectedNode.id);
+    if (!target) continue;
+    const deltaX = target.x - projectedNode.x;
+    const deltaY = target.y - projectedNode.y;
+    for (const memberId of projectedNode.memberIds) {
+      const member = currentNodeById.get(memberId);
+      if (!member) continue;
+      nextRealPositions.set(memberId, {
+        x: Math.round(member.position_x + deltaX),
+        y: Math.round(member.position_y + deltaY),
+      });
+    }
+  }
+
+  return workflow.nodes.flatMap((node) => {
+    const position = nextRealPositions.get(node.id);
+    if (!position || (position.x === node.position_x && position.y === node.position_y)) return [];
+    return [{ node_id: node.id, position_x: position.x, position_y: position.y }];
+  });
+}
+
+function snapLayoutCoordinate(value: number): number {
+  return Math.round(value / 24) * 24;
 }
 
 export function buildLocalFolderGraph(

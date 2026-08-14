@@ -1,27 +1,32 @@
 import {
   Background,
   BackgroundVariant,
+  ControlButton,
   Controls,
   Handle,
   MiniMap,
   Position,
   ReactFlow,
   SelectionMode,
+  useReactFlow,
   useNodesState,
+  useViewport,
 } from "@xyflow/react";
 import type {
   Edge,
   Node,
+  NodeMouseHandler,
   NodeProps,
+  OnMoveEnd,
   OnNodeDrag,
+  OnSelectionChangeFunc,
   Viewport,
 } from "@xyflow/react";
 import {
   Box,
-  Braces,
-  Database,
+  Focus,
   FolderOpen,
-  Image as ImageIcon,
+  Grid,
   Images,
   Link2,
   Loader2,
@@ -31,6 +36,7 @@ import {
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "../../lib/api";
+import { sanitizeFilenamePart, type DownloadableImage } from "../../lib/image-downloads";
 import { useI18n } from "../../lib/preferences";
 import type {
   ProductWorkflowV2,
@@ -38,9 +44,15 @@ import type {
   WorkflowNodeTypeV2,
   WorkflowNodeV2,
 } from "../../lib/types";
-import { isWorkflowCanvasViewportCompatible, type WorkflowCanvasViewport } from "./canvasState";
+import { WorkflowNodePresentationCard } from "../product-detail/WorkflowNodeCard";
+import {
+  isWorkflowCanvasViewportCompatible,
+  workflowCanvasFitMinZoom,
+  type WorkflowCanvasViewport,
+} from "./canvasState";
 import {
   buildLocalFolderGraph,
+  buildAutoLayoutNodePositions,
   deriveFolderSummary,
   folderSyntheticNodeId,
   projectGlobalGraph,
@@ -51,6 +63,11 @@ import {
 
 const FOLDER_CARD_WIDTH = 340;
 const FOLDER_CARD_HEIGHT = 210;
+const V2_SNAP_GRID: [number, number] = [24, 24];
+const V2_MULTI_SELECTION_KEYS = ["Control", "Meta", "Shift"];
+const V2_PAN_BUTTONS = [0, 1];
+const V2_PRO_OPTIONS = { hideAttribution: true };
+const V2_CONTROL_FIT_VIEW_OPTIONS = { padding: 0.22, duration: 180, maxZoom: 1.05 };
 
 interface WorkflowNodeData extends Record<string, unknown> {
   kind: "node";
@@ -113,13 +130,6 @@ const statusClasses: Record<WorkflowNodeStatus, string> = {
   cancelled: "bg-slate-400",
 };
 
-const nodeIcon = {
-  product_context: Database,
-  reference_image: ImageIcon,
-  prompt_generation: Braces,
-  image_generation: Sparkles,
-} satisfies Record<WorkflowNodeTypeV2, typeof Database>;
-
 function nodeTypeLabel(type: WorkflowNodeTypeV2, t: ReturnType<typeof useI18n>["t"]): string {
   const keys = {
     product_context: "workflowV2.node.productContext",
@@ -154,23 +164,27 @@ function assetThumbnailUrl(assetId: string): string {
   return api.toApiUrl(`/api/v2/product-image-assets/${assetId}/download?variant=thumbnail`);
 }
 
-const WorkflowNodeCard = memo(function WorkflowNodeCard({ data, selected }: NodeProps<Node<WorkflowNodeData>>) {
+function nodeImage(node: WorkflowNodeV2): DownloadableImage | null {
+  const assetId = nodeAssetId(node);
+  if (!assetId) {
+    return null;
+  }
+  return {
+    previewUrl: assetThumbnailUrl(assetId),
+    downloadUrl: api.toApiUrl(`/api/v2/product-image-assets/${assetId}/download`),
+    filename: `${sanitizeFilenamePart(node.title, node.key || "workflow-image")}.png`,
+    alt: node.title,
+  };
+}
+
+const WorkflowNodeCard = memo(function WorkflowNodeCard({ data, selected, dragging }: NodeProps<Node<WorkflowNodeData>>) {
   const { t } = useI18n();
   const { node } = data;
-  const Icon = nodeIcon[node.node_type];
-  const assetId = nodeAssetId(node);
   const runnable = node.node_type === "prompt_generation" || node.node_type === "image_generation";
   const active = node.status === "queued" || node.status === "running";
 
   return (
-    <div
-      className={`relative h-[176px] w-[260px] overflow-hidden rounded-lg border bg-white shadow-sm transition-[border-color,box-shadow] dark:!bg-[#11151d] ${data.revealActive ? "animate-spring-pop-in" : ""} ${
-        selected
-          ? "border-indigo-500 shadow-[0_0_0_3px_rgba(99,102,241,0.16)] dark:border-violet-400"
-          : "border-slate-200 dark:border-slate-700"
-      }`}
-      data-workflow-node-id={node.id}
-    >
+    <div className="relative w-[248px]">
       {data.inputHandleIds.map((handleId, index) => (
         <Handle
           key={`target:${handleId}`}
@@ -191,46 +205,28 @@ const WorkflowNodeCard = memo(function WorkflowNodeCard({ data, selected }: Node
           className="!h-2.5 !w-2.5 !border-2 !border-white !bg-indigo-500 dark:!border-slate-900"
         />
       ))}
-
-      <div className="flex h-12 items-center gap-2 border-b border-slate-100 px-3 dark:border-slate-800">
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-200">
-          <Icon size={15} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-[11px] font-medium text-slate-400 dark:text-slate-500">
-            {nodeTypeLabel(node.node_type, t)}
-          </div>
-          <div className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100" title={node.title}>
-            {node.title}
-          </div>
-        </div>
-        <span className={`h-2 w-2 shrink-0 rounded-full ${statusClasses[node.status]}`} title={nodeStatusLabel(node.status, t)} />
-      </div>
-
-      <div className="flex h-[124px] min-h-0">
-        {assetId ? (
-          <div className="h-full w-[104px] shrink-0 border-r border-slate-100 bg-slate-100 dark:border-slate-800 dark:bg-slate-950">
-            <img
-              src={assetThumbnailUrl(assetId)}
-              alt={node.title}
-              className="h-full w-full object-cover"
-              loading="lazy"
-              draggable={false}
-            />
-          </div>
-        ) : null}
-        <div className="flex min-w-0 flex-1 flex-col p-3">
-          <div className="truncate text-[11px] font-medium text-slate-500 dark:text-slate-400">
-            {nodeStatusLabel(node.status, t)}
-          </div>
-          <div className="mt-1 line-clamp-2 break-words text-[11px] leading-4 text-slate-400 dark:text-slate-500">
-            {node.failure_reason ?? node.key}
-          </div>
-          <div className="mt-auto flex justify-end gap-1.5">
+      <WorkflowNodePresentationCard
+        id={node.id}
+        kind={node.node_type}
+        title={node.title}
+        label={nodeTypeLabel(node.node_type, t)}
+        status={node.status}
+        statusLabel={nodeStatusLabel(node.status, t)}
+        image={nodeImage(node)}
+        imageWaiting={node.node_type === "image_generation" && active}
+        waitingLabel={nodeStatusLabel(node.status, t)}
+        activityText={active ? nodeStatusLabel(node.status, t) : null}
+        failureReason={node.failure_reason}
+        primarySelected={selected}
+        dragging={dragging}
+        revealActive={data.revealActive}
+        onSelect={() => undefined}
+        actions={(
+          <>
             {node.node_type === "reference_image" ? (
               <button
                 type="button"
-                className="nodrag nopan inline-flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:border-indigo-300 hover:text-indigo-700 disabled:opacity-40 dark:border-slate-700 dark:!bg-slate-900 dark:text-slate-300 dark:hover:border-violet-400 dark:hover:text-violet-200"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition-colors hover:border-indigo-300 hover:text-indigo-700 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-violet-400 dark:hover:text-violet-200"
                 onClick={(event) => {
                   event.stopPropagation();
                   data.onBindReference(node);
@@ -245,7 +241,7 @@ const WorkflowNodeCard = memo(function WorkflowNodeCard({ data, selected }: Node
             {runnable ? (
               <button
                 type="button"
-                className="nodrag nopan inline-flex h-8 w-8 items-center justify-center rounded-md bg-slate-950 text-white hover:bg-indigo-700 disabled:opacity-40 dark:bg-violet-500 dark:hover:bg-violet-400"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-slate-950 text-white transition-colors hover:bg-indigo-700 disabled:opacity-40 dark:bg-violet-500 dark:hover:bg-violet-400"
                 onClick={(event) => {
                   event.stopPropagation();
                   data.onRun(node);
@@ -254,12 +250,16 @@ const WorkflowNodeCard = memo(function WorkflowNodeCard({ data, selected }: Node
                 aria-label={t("workflowV2.node.run")}
                 title={t("workflowV2.node.run")}
               >
-                {data.runBusy || active ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} fill="currentColor" />}
+                {data.runBusy || active ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Play size={14} fill="currentColor" />
+                )}
               </button>
             ) : null}
-          </div>
-        </div>
-      </div>
+          </>
+        )}
+      />
     </div>
   );
 });
@@ -522,14 +522,26 @@ export function V2WorkflowCanvas({
   onFolderTranslate,
   onViewportChange,
 }: V2WorkflowCanvasProps) {
+  const { t } = useI18n();
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
   const [surfaceSize, setSurfaceSize] = useState(() => ({
     width: typeof window === "undefined" ? 1440 : window.innerWidth,
     height: typeof window === "undefined" ? 900 : window.innerHeight,
   }));
+  const [snapToGrid, setSnapToGrid] = useState(false);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   useEffect(() => {
-    const updateSurfaceSize = () => setSurfaceSize({ width: window.innerWidth, height: window.innerHeight });
-    window.addEventListener("resize", updateSurfaceSize);
-    return () => window.removeEventListener("resize", updateSurfaceSize);
+    const surface = surfaceRef.current;
+    if (!surface || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (!entry) return;
+      setSurfaceSize({
+        width: Math.max(1, Math.round(entry.contentRect.width)),
+        height: Math.max(1, Math.round(entry.contentRect.height)),
+      });
+    });
+    observer.observe(surface);
+    return () => observer.disconnect();
   }, []);
   const restoredViewport = isWorkflowCanvasViewportCompatible(viewport, surfaceSize.width) ? viewport : null;
   const layoutMode = surfaceSize.width >= 1024 ? "wide" : "compact";
@@ -608,9 +620,55 @@ export function V2WorkflowCanvas({
   }, [onFolderTranslate, onLayoutCommit, workflow.nodes]);
 
   const defaultViewport: Viewport | undefined = restoredViewport ?? undefined;
+  const includeHiddenNodes = Boolean(revealVisibility);
+  const fitMinZoom = workflowCanvasFitMinZoom(surfaceSize.width);
+  const fitViewOptions = useMemo(() => ({
+    ...V2_CONTROL_FIT_VIEW_OPTIONS,
+    includeHiddenNodes,
+    minZoom: fitMinZoom,
+  }), [fitMinZoom, includeHiddenNodes]);
+  const commitAutoLayout = useCallback(() => {
+    const positions = buildAutoLayoutNodePositions(workflow, openFolderId);
+    if (positions.length) onLayoutCommit(positions);
+  }, [onLayoutCommit, openFolderId, workflow]);
+  const persistViewport = useCallback((nextViewport: Viewport) => {
+    onViewportChange({
+      ...nextViewport,
+      surface_width: surfaceSize.width,
+      surface_height: surfaceSize.height,
+    });
+  }, [onViewportChange, surfaceSize.height, surfaceSize.width]);
+  const handleNodeDoubleClick = useCallback<NodeMouseHandler<WorkflowCanvasNode>>((_event, node) => {
+    if (node.data.kind === "folder") {
+      onOpenFolder(node.data.projection.folder.id);
+    }
+  }, [onOpenFolder]);
+  const handleSelectionChange = useCallback<OnSelectionChangeFunc<WorkflowCanvasNode, WorkflowCanvasEdge>>(
+    ({ nodes: selectedNodes }) => {
+      const nodeIds = selectedNodes.filter(isRealNode).map((node) => node.data.node.id);
+      setSelectedNodeIds((current) => (
+        current.length === nodeIds.length && current.every((nodeId, index) => nodeId === nodeIds[index])
+          ? current
+          : nodeIds
+      ));
+      onSelectionChange(nodeIds);
+    },
+    [onSelectionChange],
+  );
+  const handlePaneClick = useCallback(() => {
+    setSelectedNodeIds((current) => current.length ? [] : current);
+    onSelectionChange([]);
+  }, [onSelectionChange]);
+  const handleMoveEnd = useCallback<OnMoveEnd>((_event, nextViewport) => {
+    persistViewport(nextViewport);
+  }, [persistViewport]);
+  const toggleSnapToGrid = useCallback(() => {
+    setSnapToGrid((current) => !current);
+  }, []);
 
   return (
-    <ReactFlow<WorkflowCanvasNode, WorkflowCanvasEdge>
+    <div ref={surfaceRef} className="h-full min-h-0 w-full overflow-hidden">
+      <ReactFlow<WorkflowCanvasNode, WorkflowCanvasEdge>
       key={`${workflow.id}:${openFolderId ?? "global"}:${layoutMode}:${restoredViewport ? "restore" : "fit"}`}
       nodes={nodes}
       edges={graphEdges}
@@ -618,52 +676,125 @@ export function V2WorkflowCanvas({
       onNodesChange={onNodesChange}
       onNodeDragStart={handleNodeDragStart}
       onNodeDragStop={handleNodeDragStop}
-      onNodeDoubleClick={(_event, node) => {
-        if (node.data.kind === "folder") {
-          onOpenFolder(node.data.projection.folder.id);
-        }
-      }}
-      onSelectionChange={({ nodes: selectedNodes }) => {
-        onSelectionChange(selectedNodes.filter(isRealNode).map((node) => node.data.node.id));
-      }}
-      onPaneClick={() => onSelectionChange([])}
-      onMoveEnd={(_event, nextViewport) => onViewportChange({
-        ...nextViewport,
-        surface_width: surfaceSize.width,
-        surface_height: surfaceSize.height,
-      })}
+      onNodeDoubleClick={handleNodeDoubleClick}
+      onSelectionChange={handleSelectionChange}
+      onPaneClick={handlePaneClick}
+      onMoveEnd={handleMoveEnd}
       defaultViewport={defaultViewport}
       fitView={!restoredViewport}
-      fitViewOptions={{
-        padding: 0.22,
-        maxZoom: 1.05,
-        duration: 180,
-        includeHiddenNodes: Boolean(revealVisibility),
-      }}
+      fitViewOptions={fitViewOptions}
       minZoom={0.12}
       maxZoom={2}
       nodesDraggable={!structureBusy}
       nodesConnectable={false}
       edgesReconnectable={false}
+      snapToGrid={snapToGrid}
+      snapGrid={V2_SNAP_GRID}
       selectionMode={SelectionMode.Partial}
       selectionOnDrag
-      multiSelectionKeyCode={["Control", "Meta", "Shift"]}
-      panOnDrag={[0, 1]}
+      multiSelectionKeyCode={V2_MULTI_SELECTION_KEYS}
+      panOnDrag={V2_PAN_BUTTONS}
       deleteKeyCode={null}
       className="bg-transparent"
-      proOptions={{ hideAttribution: true }}
+      proOptions={V2_PRO_OPTIONS}
     >
       <Background variant={BackgroundVariant.Dots} gap={28} size={1.4} color="#94a3b8" />
-      <Controls position="bottom-left" showInteractive={false} />
+      <V2CanvasControls
+        selectedNodeIds={selectedNodeIds}
+        snapToGrid={snapToGrid}
+        structureBusy={structureBusy}
+        fitMinZoom={fitMinZoom}
+        onToggleSnapToGrid={toggleSnapToGrid}
+        onAutoLayout={commitAutoLayout}
+        onViewportCommit={persistViewport}
+      />
       <MiniMap
         position="bottom-right"
-        className="hidden border border-slate-200 bg-white/90 shadow-sm dark:border-slate-700 dark:!bg-slate-950/90 sm:block"
+        aria-label={t("detail.canvasMiniMap")}
+        className="hidden !m-4 overflow-hidden rounded-xl border border-slate-200 bg-white/90 shadow-lg dark:border-slate-700 dark:!bg-slate-950/90 sm:block"
         nodeColor={(node) => node.data?.kind === "folder" ? "#6366f1" : "#94a3b8"}
         nodeBorderRadius={6}
         pannable
         zoomable
       />
-    </ReactFlow>
+      </ReactFlow>
+    </div>
+  );
+}
+
+function V2CanvasControls({
+  selectedNodeIds,
+  snapToGrid,
+  structureBusy,
+  fitMinZoom,
+  onToggleSnapToGrid,
+  onAutoLayout,
+  onViewportCommit,
+}: {
+  selectedNodeIds: string[];
+  snapToGrid: boolean;
+  structureBusy: boolean;
+  fitMinZoom: number;
+  onToggleSnapToGrid: () => void;
+  onAutoLayout: () => void;
+  onViewportCommit: (viewport: Viewport) => void;
+}) {
+  const { t } = useI18n();
+  const { zoom } = useViewport();
+  const reactFlow = useReactFlow<WorkflowCanvasNode, WorkflowCanvasEdge>();
+  const commitAfterAction = () => window.setTimeout(() => onViewportCommit(reactFlow.getViewport()), 240);
+  const fitSelection = () => {
+    const selectedNodes = selectedNodeIds
+      .filter((nodeId) => reactFlow.getNode(nodeId))
+      .map((nodeId) => ({ id: nodeId }));
+    if (!selectedNodes.length) return;
+    void reactFlow.fitView({ nodes: selectedNodes, padding: 0.22, duration: 180, maxZoom: 1.05 })
+      .then(() => onViewportCommit(reactFlow.getViewport()));
+  };
+  return (
+    <Controls
+      position="top-left"
+      orientation="horizontal"
+      showInteractive={false}
+      fitViewOptions={{ ...V2_CONTROL_FIT_VIEW_OPTIONS, minZoom: fitMinZoom }}
+      onZoomIn={commitAfterAction}
+      onZoomOut={commitAfterAction}
+      onFitView={commitAfterAction}
+      aria-label={t("detail.canvasControls")}
+      className="workflow-canvas-controls nopan nodrag nowheel z-30 !m-0 translate-x-3 translate-y-3 lg:translate-x-4 lg:translate-y-4"
+    >
+      <ControlButton
+        onClick={() => void reactFlow.zoomTo(1).then(() => onViewportCommit(reactFlow.getViewport()))}
+        aria-label={t("detail.resetZoom")}
+        title={t("detail.resetZoom")}
+      >
+        <span className="text-[11px] tabular-nums">{Math.round(zoom * 100)}%</span>
+      </ControlButton>
+      <ControlButton
+        onClick={fitSelection}
+        disabled={!selectedNodeIds.length}
+        aria-label={t("detail.fitSelection")}
+        title={t("detail.fitSelection")}
+      >
+        <Focus size={13} />
+      </ControlButton>
+      <ControlButton
+        onClick={onToggleSnapToGrid}
+        aria-label={t("detail.snapToGrid")}
+        title={t("detail.snapToGrid")}
+        className={snapToGrid ? "!bg-indigo-50 dark:!bg-violet-500/20" : ""}
+      >
+        <Grid size={13} className={snapToGrid ? "text-indigo-600 dark:text-violet-300" : ""} />
+      </ControlButton>
+      <ControlButton
+        onClick={onAutoLayout}
+        disabled={structureBusy}
+        aria-label={t("detail.autoLayout")}
+        title={t("detail.autoLayout")}
+      >
+        {structureBusy ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+      </ControlButton>
+    </Controls>
   );
 }
 

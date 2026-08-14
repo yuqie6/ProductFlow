@@ -3,19 +3,14 @@ import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
-  ChevronLeft,
-  ChevronRight,
   CircleDot,
   Check,
-  Eye,
   FileText,
   Hand,
   Image as ImageIcon,
   ImagePlus,
   Layers3,
   Loader2,
-  Maximize2,
-  Minimize2,
   MousePointer2,
   Move,
   Play,
@@ -40,16 +35,17 @@ import type {
   WorkflowNode,
   WorkflowNodeType,
 } from "../lib/types";
-import {
-  ADD_NODE_OPTIONS,
-  MAX_INSPECTOR_WIDTH,
-  MIN_INSPECTOR_WIDTH,
-} from "./product-detail/constants";
+import { ADD_NODE_OPTIONS } from "./product-detail/constants";
 import { ImagePreviewModal } from "./product-detail/ImagePreviewModal";
 import { ImagesPanel } from "./product-detail/ImagesPanel";
 import { InspectorPanel } from "./product-detail/InspectorPanel";
 import { RunsPanel } from "./product-detail/RunsPanel";
-import { SidebarTabButton } from "./product-detail/SidebarTabButton";
+import { ProductWorkbenchCanvasChromeToggle } from "./product-detail/ProductWorkbenchCanvasChromeToggle";
+import {
+  ProductWorkbenchInspector,
+  type ProductWorkbenchInspectorTool,
+  useProductWorkbenchInspectorState,
+} from "./product-detail/ProductWorkbenchInspector";
 import { TemplateGroupsPanel } from "./product-detail/TemplateGroupsPanel";
 import { WorkflowCanvas } from "./product-detail/WorkflowCanvas";
 import type { NodePositionCommitInput, WorkflowCanvasHandle } from "./product-detail/WorkflowCanvas";
@@ -93,7 +89,6 @@ import type {
   WorkflowCanvasActionTarget,
 } from "./product-detail/workflowActions";
 import {
-  clamp,
   getWorkflowNodeCancelableRun,
   getWorkflowNodeRunActionState,
   hasActiveWorkflow,
@@ -133,7 +128,6 @@ export function ProductDetailPage() {
   const { productId = "" } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const previousBodyUserSelectRef = useRef<string | null>(null);
   const workflowCanvasRef = useRef<WorkflowCanvasHandle | null>(null);
   const wasWorkflowActiveRef = useRef(false);
   const workflowHistorySignatureRef = useRef<string | null>(null);
@@ -159,7 +153,9 @@ export function ProductDetailPage() {
   const [templateSaveDescription, setTemplateSaveDescription] = useState("");
   const [templateSaveOpen, setTemplateSaveOpen] = useState(false);
   const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarTab>("details");
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const inspector = useProductWorkbenchInspectorState();
+  const sidebarCollapsed = inspector.collapsed;
+  const inspectorWidth = inspector.width;
   const [topChromeCollapsed, setTopChromeCollapsed] = useState(false);
   const [mobileDetailsSheetOpen, setMobileDetailsSheetOpen] = useState(false);
   const [mobileCanvasMode, setMobileCanvasMode] = useState<CanvasInteractionMode>("browse");
@@ -184,9 +180,6 @@ export function ProductDetailPage() {
   const [draftDirty, setDraftDirty] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [notice, setNotice] = useState("");
-  const [inspectorWidth, setInspectorWidth] = useState(() =>
-    clamp(readStoredNumber("productflow.workflow.inspectorWidth", 360), MIN_INSPECTOR_WIDTH, MAX_INSPECTOR_WIDTH),
-  );
   const [previewImage, setPreviewImage] = useState<DownloadableImage | null>(
     null,
   );
@@ -335,12 +328,6 @@ export function ProductDetailPage() {
   ]);
 
   useEffect(() => {
-    return () => {
-      restoreBodyUserSelect();
-    };
-  }, []);
-
-  useEffect(() => {
     if (!previewImage) {
       return;
     }
@@ -352,21 +339,6 @@ export function ProductDetailPage() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [previewImage]);
-
-  const disableBodyUserSelect = () => {
-    if (previousBodyUserSelectRef.current === null) {
-      previousBodyUserSelectRef.current = document.body.style.userSelect;
-    }
-    document.body.style.userSelect = "none";
-  };
-
-  const restoreBodyUserSelect = () => {
-    if (previousBodyUserSelectRef.current === null) {
-      return;
-    }
-    document.body.style.userSelect = previousBodyUserSelectRef.current;
-    previousBodyUserSelectRef.current = null;
-  };
 
   const refreshProductArtifacts = async () => {
     await queryClient.invalidateQueries({ queryKey: ["product", productId] });
@@ -991,7 +963,7 @@ export function ProductDetailPage() {
       setTemplateSaveDescription("");
       await queryClient.invalidateQueries({ queryKey: ["canvas-templates"] });
       setActiveSidebarTab("templates");
-      setSidebarCollapsed(false);
+      inspector.setCollapsed(false);
     },
     onError: (mutationError) => {
       setError(
@@ -1417,28 +1389,7 @@ export function ProductDetailPage() {
 
   const openSidebarTab = (tab: SidebarTab) => {
     setActiveSidebarTab(tab);
-    setSidebarCollapsed(false);
-  };
-
-  const startInspectorResize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    disableBodyUserSelect();
-    const startX = event.clientX;
-    const startWidth = inspectorWidth;
-    const onMove = (moveEvent: PointerEvent) => {
-      const next = clamp(startWidth + startX - moveEvent.clientX, MIN_INSPECTOR_WIDTH, MAX_INSPECTOR_WIDTH);
-      setInspectorWidth(next);
-      window.localStorage.setItem("productflow.workflow.inspectorWidth", String(next));
-    };
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onUp);
-      restoreBodyUserSelect();
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onUp);
+    inspector.setCollapsed(false);
   };
 
   const layoutMutationBusy =
@@ -2026,6 +1977,15 @@ export function ProductDetailPage() {
       ) : null}
     </>
   );
+  const desktopInspectorTools: ProductWorkbenchInspectorTool[] = sidebarTabItems.map((item) => ({
+    id: item.key,
+    label: item.label,
+    title: item.key === "runs" ? t("detail.runsTitle") : item.label,
+    icon: item.icon,
+    content: activeSidebarTab === item.key ? renderSidebarPanelContent() : null,
+    contentKey: `${item.key}-${selectedNode?.id ?? ""}`,
+    separatorBefore: item.key === "details" ? renderToolbarViewDivider() : undefined,
+  }));
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-white text-sm text-zinc-900 dark:bg-[#060a12] dark:text-slate-100">
@@ -2061,17 +2021,12 @@ export function ProductDetailPage() {
               paddingRight: mobileCanvasControlsActive ? 0 : (sidebarCollapsed ? 96 : 72 + inspectorWidth + 24),
             }}
           >
-            <div data-canvas-control className="pointer-events-none absolute right-3 top-3 z-30 lg:right-4 lg:top-4">
-              <button
-                type="button"
-                onClick={() => setTopChromeCollapsed((collapsed) => !collapsed)}
-                className="pointer-events-auto inline-flex h-11 w-11 items-center justify-center rounded-xl border border-zinc-200 bg-white/90 text-zinc-600 shadow-sm backdrop-blur transition-colors active:scale-[0.98] hover:bg-white hover:text-zinc-900 dark:border-slate-700/80 dark:bg-[#151f33]/92 dark:text-slate-300 dark:shadow-black/20 dark:hover:bg-[#1a2740] dark:hover:text-white lg:h-9 lg:w-9 lg:rounded-lg"
-                aria-label={topChromeCollapsed ? t("detail.restoreCanvas") : t("detail.maximizeCanvas")}
-                title={topChromeCollapsed ? t("detail.restoreCanvas") : t("detail.maximizeCanvas")}
-              >
-                {topChromeCollapsed ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-              </button>
-            </div>
+            <ProductWorkbenchCanvasChromeToggle
+              collapsed={topChromeCollapsed}
+              maximizeLabel={t("detail.maximizeCanvas")}
+              restoreLabel={t("detail.restoreCanvas")}
+              onToggle={() => setTopChromeCollapsed((collapsed) => !collapsed)}
+            />
             <WorkflowCanvas
               ref={workflowCanvasRef}
               workflow={workflow}
@@ -2175,119 +2130,23 @@ export function ProductDetailPage() {
             ) : null}
           </section>
 
-          {sidebarCollapsed ? (
-            <div
-              data-canvas-control
-              className="absolute right-6 top-20 z-30 hidden w-[72px] flex-col items-center gap-2 rounded-[24px] shadow-2xl glass-inspector p-2 pb-3 lg:flex"
-            >
-              {renderWorkflowToolbarButtons()}
-              <SidebarTabButton active={false} label={t("detail.tabSingleNode")} title={t("detail.tabSingleNode")} icon={<Plus size={17} />} onClick={() => openSidebarTab("singleNode")} />
-              <SidebarTabButton active={false} label={t("detail.tabTemplates")} title={t("detail.tabTemplates")} icon={<Layers3 size={17} />} onClick={() => openSidebarTab("templates")} />
-              {renderToolbarViewDivider()}
-              <SidebarTabButton active={false} label={t("detail.tabDetails")} title={t("detail.tabDetails")} icon={<Eye size={17} />} onClick={() => openSidebarTab("details")} />
-              <SidebarTabButton active={false} label={t("detail.tabRuns")} title={t("detail.runsTitle")} icon={<CircleDot size={17} />} onClick={() => openSidebarTab("runs")} />
-              <SidebarTabButton active={false} label={t("detail.tabImages")} title={t("detail.tabImages")} icon={<ImageIcon size={17} />} onClick={() => openSidebarTab("images")} />
-
-              <div className="mt-auto flex w-full justify-center border-t border-slate-200/40 pt-2 dark:border-white/5">
-                <button
-                  type="button"
-                  onClick={() => setSidebarCollapsed(false)}
-                  className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 transition-all hover:scale-105 hover:bg-white/40 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-white/5 dark:hover:text-slate-200"
-                  title={t("detail.expandSidebar")}
-                  aria-label={t("detail.expandSidebar")}
-                >
-                  <ChevronLeft size={16} />
-                </button>
-              </div>
-            </div>
-          ) : (
-          <div
-            data-canvas-control
-            className="absolute right-6 top-20 bottom-6 z-30 hidden rounded-[28px] shadow-[0_24px_50px_rgba(15,23,42,0.18)] dark:shadow-[0_32px_64px_rgba(0,0,0,0.45)] glass-inspector lg:flex animate-spring-slide-in"
-            style={{ width: 72 + inspectorWidth }}
-            >
-            <div
-              role="separator"
-              aria-label={t("detail.resizeSidebar")}
-              onPointerDown={startInspectorResize}
-              className="group absolute left-0 top-0 z-30 flex h-full w-2.5 cursor-col-resize items-center justify-center"
-            >
-              <div className="h-12 w-[4px] rounded-full bg-slate-300 opacity-40 transition-all duration-300 group-hover:h-20 group-hover:opacity-100 dark:bg-slate-700 animate-handle-glow" />
-            </div>
-
-            <div className="flex w-[72px] shrink-0 flex-col items-center gap-2 border-r border-slate-200/40 bg-white/5 px-2 py-4 dark:border-white/5 dark:bg-black/10">
-              {renderWorkflowToolbarButtons()}
-              <SidebarTabButton
-                active={activeSidebarTab === "singleNode"}
-                label={t("detail.tabSingleNode")}
-                title={t("detail.tabSingleNode")}
-                icon={<Plus size={17} />}
-                onClick={() => openSidebarTab("singleNode")}
-              />
-              <SidebarTabButton
-                active={activeSidebarTab === "templates"}
-                label={t("detail.tabTemplates")}
-                title={t("detail.tabTemplates")}
-                icon={<Layers3 size={17} />}
-                onClick={() => openSidebarTab("templates")}
-              />
-              {renderToolbarViewDivider()}
-              <SidebarTabButton
-                active={activeSidebarTab === "details"}
-                label={t("detail.tabDetails")}
-                title={t("detail.tabDetails")}
-                icon={<Eye size={17} />}
-                onClick={() => openSidebarTab("details")}
-              />
-              <SidebarTabButton
-                active={activeSidebarTab === "runs"}
-                label={t("detail.tabRuns")}
-                title={t("detail.runsTitle")}
-                icon={<CircleDot size={17} />}
-                onClick={() => openSidebarTab("runs")}
-              />
-              <SidebarTabButton
-                active={activeSidebarTab === "images"}
-                label={t("detail.tabImages")}
-                title={t("detail.tabImages")}
-                icon={<ImageIcon size={17} />}
-                onClick={() => openSidebarTab("images")}
-              />
-
-              <div className="mt-auto flex w-full justify-center border-t border-slate-200/40 pt-2 dark:border-white/5">
-                <button
-                  type="button"
-                  onClick={() => setSidebarCollapsed(true)}
-                  className="btn-secondary-spring inline-flex h-9 w-9 items-center justify-center rounded-xl"
-                  title={t("detail.collapseSidebar")}
-                  aria-label={t("detail.collapseSidebar")}
-                >
-                  <ChevronRight size={16} />
-                </button>
-              </div>
-            </div>
-
-            <aside
-              className="relative flex shrink-0 flex-col bg-transparent"
-              style={{ width: inspectorWidth }}
-            >
-              <div className="flex h-12 shrink-0 items-center justify-between border-b border-slate-200/50 px-4 dark:border-slate-800">
-                <div className="flex items-center">
-                  <span className="mr-2 text-indigo-600 dark:text-violet-400">{activeSidebarTabItem.icon}</span>
-                  <span className="text-[11px] font-bold uppercase tracking-widest text-slate-700 dark:text-slate-200">
-                    {activeSidebarTabItem.label}
-                  </span>
-                </div>
-              </div>
-              <div
-                key={`${activeSidebarTab}-${selectedNode?.id ?? ""}`}
-                className="min-h-0 flex-1 overflow-y-auto p-4 animate-spring-slide-in"
-              >
-                {renderSidebarPanelContent()}
-              </div>
-            </aside>
-          </div>
-          )}
+          <ProductWorkbenchInspector
+            workflowAvailable
+            tools={desktopInspectorTools}
+            activeToolId={activeSidebarTab}
+            onToolChange={(toolId) => openSidebarTab(toolId as SidebarTab)}
+            collapsed={sidebarCollapsed}
+            onCollapsedChange={inspector.setCollapsed}
+            width={inspectorWidth}
+            onResizeStart={inspector.startResize}
+            ariaLabel={t("detail.canvasControls")}
+            resizeLabel={t("detail.resizeSidebar")}
+            collapseLabel={t("detail.collapseSidebar")}
+            expandLabel={t("detail.expandSidebar")}
+            desktopOnly
+            railBefore={renderWorkflowToolbarButtons()}
+            desktopPositionClassName="lg:bottom-6 lg:left-auto lg:right-6 lg:top-20"
+          />
         </div>
       </main>
 

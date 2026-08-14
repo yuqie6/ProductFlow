@@ -24,8 +24,8 @@ const ProductCreatePage = lazy(() =>
 const AgentProductCreatePage = lazy(() =>
   import("./pages/AgentProductCreatePage").then((module) => ({ default: module.AgentProductCreatePage })),
 );
-const ProductDetailPage = lazy(() =>
-  import("./pages/ProductDetailPage").then((module) => ({ default: module.ProductDetailPage })),
+const ProductWorkbenchPage = lazy(() =>
+  import("./pages/ProductWorkbenchPage").then((module) => ({ default: module.ProductWorkbenchPage })),
 );
 const ProductWorkflowV2Page = lazy(() =>
   import("./pages/ProductWorkflowV2Page").then((module) => ({ default: module.ProductWorkflowV2Page })),
@@ -107,7 +107,7 @@ function AppRoutes() {
         />
         <Route
           path="/products/:productId"
-          element={authenticated ? <ProductDetailPage /> : <Navigate to="/login" replace />}
+          element={authenticated ? <ProductWorkbenchPage /> : <Navigate to="/login" replace />}
         />
         <Route path="*" element={<Navigate to={authenticated ? "/products" : "/login"} replace />} />
       </Routes>

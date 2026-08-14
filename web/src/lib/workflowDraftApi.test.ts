@@ -130,6 +130,66 @@ describe("workflow draft API contract", () => {
     );
   });
 
+  it("lists and cancels v2 node runs through stable encoded ids", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ items: [] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.listWorkflowNodeRunsV2("node/1", 12);
+    await api.cancelWorkflowNodeRunV2("run/1");
+
+    expect(fetchMock.mock.calls[0]).toEqual([
+      "/api/v2/workflow-nodes/node%2F1/runs?limit=12",
+      expect.objectContaining({ credentials: "include" }),
+    ]);
+    expect(fetchMock.mock.calls[1]).toEqual([
+      "/api/v2/workflow-node-runs/run%2F1/cancel",
+      expect.objectContaining({ method: "POST", credentials: "include" }),
+    ]);
+  });
+
+  it("reads and updates a v2 node through the scoped typed endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ workflow_edit_version: 4, node: { id: "node/1" } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const update = {
+      node_type: "image_generation" as const,
+      expected_edit_version: 4,
+      title: "首屏海报图 1",
+      variation_instruction: "保持结构，调整光位",
+      generation_spec: {
+        aspect_ratio: "1:1",
+        resolution_tier: "high" as const,
+        quality_intent: "high" as const,
+        reference_fidelity: "high" as const,
+        background_intent: "opaque" as const,
+        text_policy: "required" as const,
+        text_language: "zh-CN",
+      },
+      delivery_spec: null,
+    };
+
+    await api.getWorkflowNodeDetailV2("product/1", "workflow/1", "node/1");
+    await api.updateWorkflowNodeV2("product/1", "workflow/1", "node/1", update);
+
+    const url = "/api/v2/products/product%2F1/workflows/workflow%2F1/nodes/node%2F1";
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(url);
+    expect(fetchMock.mock.calls[1]).toEqual([
+      url,
+      expect.objectContaining({
+        method: "PATCH",
+        credentials: "include",
+        body: JSON.stringify(update),
+      }),
+    ]);
+  });
+
   it("creates, lists, reads, and retries delivery renditions through stable asset and job ids", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

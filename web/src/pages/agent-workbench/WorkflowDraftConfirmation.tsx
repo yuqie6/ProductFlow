@@ -9,6 +9,7 @@ import {
   Palette,
   RefreshCw,
   ScanSearch,
+  X,
 } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -37,6 +38,7 @@ interface WorkflowDraftConfirmationProps {
   error: string | null;
   conflictDetected?: boolean;
   onConfirm: (revision: WorkflowDraftRevision) => void;
+  onClose?: () => void;
 }
 
 const factStatusKeys = {
@@ -66,6 +68,7 @@ export function WorkflowDraftConfirmation({
   error,
   conflictDetected = false,
   onConfirm,
+  onClose,
 }: WorkflowDraftConfirmationProps) {
   const { t } = useI18n();
   const revision = draft.current_revision;
@@ -98,19 +101,33 @@ export function WorkflowDraftConfirmation({
               {payload.confirmation_summary}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => onConfirm(revision)}
-            disabled={busy || unresolved || !actionAllowed || conflictDetected}
-            className="inline-flex h-11 shrink-0 items-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-45 dark:bg-cyan-400 dark:text-[#061018] dark:hover:bg-cyan-300"
-          >
-            {busy ? <Loader2 size={16} className="animate-spin" /> : retrying ? <RefreshCw size={16} /> : <Check size={16} />}
-            {busy
-              ? t("workflowConfirmation.building")
-              : retrying
-                ? t("workflowConfirmation.retryBuild")
-                : t("workflowConfirmation.confirmAndBuild")}
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            {onClose ? (
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={busy}
+                aria-label={t("workflowConfirmation.returnToConversation")}
+                title={t("workflowConfirmation.returnToConversation")}
+                className="inline-flex h-11 w-11 items-center justify-center rounded-md border border-zinc-200 text-zinc-500 hover:border-zinc-400 hover:text-zinc-950 disabled:opacity-40 dark:border-slate-700 dark:text-slate-400 dark:hover:border-slate-500 dark:hover:text-white"
+              >
+                <X size={18} />
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => onConfirm(revision)}
+              disabled={busy || unresolved || !actionAllowed}
+              className="inline-flex h-11 shrink-0 items-center gap-2 rounded-md bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-45 dark:bg-cyan-400 dark:text-[#061018] dark:hover:bg-cyan-300"
+            >
+              {busy ? <Loader2 size={16} className="animate-spin" /> : retrying ? <RefreshCw size={16} /> : <Check size={16} />}
+              {busy
+                ? t("workflowConfirmation.building")
+                : retrying
+                  ? t("workflowConfirmation.retryBuild")
+                  : t("workflowConfirmation.confirmAndBuild")}
+            </button>
+          </div>
         </div>
         <div className="mt-4 grid grid-cols-2 gap-px overflow-hidden rounded-md border border-zinc-200 bg-zinc-200 dark:border-slate-700 dark:bg-slate-700 sm:grid-cols-4">
           <SummaryMetric label={t("workflowConfirmation.metric.imageTypes")} value={payload.image_types.length} />

@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Bot, CircleAlert, Loader2, Pause, Play, RotateCw, X } from "lucide-react";
+import { Bot, CircleAlert, ListChecks, Loader2, Pause, Play, RotateCw, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -32,6 +32,8 @@ interface AgentConversationPanelProps {
   workflowDraft: WorkflowDraft;
   className?: string;
   onArtifactProposed?: () => void;
+  reviewDraftAvailable?: boolean;
+  onReviewDraft?: () => void;
 }
 
 export function AgentConversationPanel({
@@ -41,6 +43,8 @@ export function AgentConversationPanel({
   workflowDraft,
   className = "",
   onArtifactProposed,
+  reviewDraftAvailable = false,
+  onReviewDraft,
 }: AgentConversationPanelProps) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
@@ -258,6 +262,17 @@ export function AgentConversationPanel({
           <h2 className="truncate text-sm font-semibold text-zinc-950 dark:text-white">{t("agentWorkbench.agent")}</h2>
           <p className="truncate text-xs text-zinc-500 dark:text-slate-400">{productName}</p>
         </div>
+        {reviewDraftAvailable && onReviewDraft ? (
+          <button
+            type="button"
+            onClick={onReviewDraft}
+            aria-label={t("agentWorkbench.reviewDraft")}
+            title={t("agentWorkbench.reviewDraft")}
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-blue-200 bg-blue-50 text-blue-700 hover:border-blue-400 hover:bg-blue-100 dark:border-cyan-400/25 dark:bg-cyan-400/10 dark:text-cyan-200 dark:hover:border-cyan-400/50"
+          >
+            <ListChecks size={16} />
+          </button>
+        ) : null}
         {agent.activeTurn ? (
           <>
             <span

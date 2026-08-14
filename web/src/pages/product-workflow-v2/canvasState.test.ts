@@ -5,6 +5,7 @@ import {
   isWorkflowCanvasViewportCompatible,
   parseWorkflowCanvasState,
   reconcileWorkflowCanvasState,
+  workflowCanvasFitMinZoom,
   workflowCanvasStateStorageKey,
 } from "./canvasState";
 
@@ -82,5 +83,11 @@ describe("schema-v2 workflow canvas preference", () => {
       surface_width: 1440,
       surface_height: 900,
     });
+  });
+
+  it("allows compact canvases to fit the complete graph without changing desktop readability", () => {
+    expect(workflowCanvasFitMinZoom(390)).toBe(0.24);
+    expect(workflowCanvasFitMinZoom(600)).toBe(0.32);
+    expect(workflowCanvasFitMinZoom(889)).toBe(0.55);
   });
 });
