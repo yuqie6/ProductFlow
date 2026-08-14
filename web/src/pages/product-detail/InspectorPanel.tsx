@@ -40,6 +40,7 @@ import { IMAGE_PREVIEW_SURFACE_CLASS_NAME } from "./constants";
 import { DownloadLink } from "./ImageDownloadComponents";
 import { getNodeImageDownload } from "./imageDownloads";
 import { workflowNodeDisplayLabel, workflowNodeDisplayTitle } from "./nodeDisplay";
+import { SaveStatusBadge } from "./SaveStatusBadge";
 import type { NodeConfigDraft, SaveStatus } from "./types";
 import {
   type WorkflowNodeRunActionState,
@@ -54,20 +55,6 @@ import {
 import { TextArea } from "./TextArea";
 
 type TFunction = (key: TranslationKey, params?: TranslationParams) => string;
-
-const SAVE_STATUS_LABEL_KEYS: Record<SaveStatus, TranslationKey> = {
-  idle: "detail.inspector.saveIdle",
-  saving: "detail.inspector.saving",
-  saved: "detail.inspector.saved",
-  failed: "detail.inspector.saveFailed",
-};
-
-const SAVE_STATUS_CLASS_NAMES: Record<SaveStatus, string> = {
-  idle: "border-zinc-200 bg-zinc-50 text-zinc-500 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-300",
-  saving: "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-400/35 dark:bg-blue-500/12 dark:text-blue-200",
-  saved: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-400/35 dark:bg-emerald-500/12 dark:text-emerald-200",
-  failed: "border-red-200 bg-red-50 text-red-700 dark:border-red-400/35 dark:bg-red-500/12 dark:text-red-200",
-};
 
 const ADD_COPY_FIELD_BUTTON_CLASS_NAME =
   "copy-add-field inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold";
@@ -195,18 +182,7 @@ export function InspectorPanel({
                 )}
                 {workflowNodeStatusLabel(node, t)}
               </span>
-              <span
-                className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${SAVE_STATUS_CLASS_NAMES[saveStatus]}`}
-              >
-                {saveStatus === "saving" ? (
-                  <Loader2 size={11} className="mr-1 animate-spin" />
-                ) : saveStatus === "saved" ? (
-                  <CheckCircle2 size={11} className="mr-1" />
-                ) : saveStatus === "failed" ? (
-                  <XCircle size={11} className="mr-1" />
-                ) : null}
-                {t(SAVE_STATUS_LABEL_KEYS[saveStatus])}
-              </span>
+              <SaveStatusBadge status={saveStatus} />
             </div>
             {node.last_run_at ? (
               <div className="mt-2 text-[11px] text-zinc-400 dark:text-slate-400">

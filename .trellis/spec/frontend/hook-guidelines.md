@@ -6,7 +6,9 @@
 
 ## Overview
 
-There are no custom hook modules in `web/src/` today. Hooks are used directly inside page components and `AppRoutes()`.
+Most hooks are used directly inside page components and `AppRoutes()`. Cohesive page-local controllers may be extracted
+when they own a repeated interaction contract; `product-workflow-v2/useV2NodeDraftAutosave.ts` is the typed node-editor
+example.
 Server state uses TanStack Query; local UI/form state uses React's built-in hooks.
 
 Real hook-heavy files:
@@ -228,6 +230,92 @@ Correct:
 ```tsx
 useQuery({ queryKey: ["product-workflow-status", productId], refetchInterval: 1200 });
 ```
+
+## Scenario: Versioned schema-v2 node autosave and transition flush
+
+### 1. Scope / Trigger
+
+- Trigger: editing `useV2NodeDraftAutosave`, a schema-v2 reference/image editor, node selection, inspector tool changes,
+  workflow/node run actions, folder navigation, layout persistence, or recipe extraction.
+- Prompt Artifact payloads are excluded because each successful payload edit creates an immutable artifact version.
+
+### 2. Signatures
+
+- Hook: `useV2NodeDraftAutosave<T>({ serverValue, serverEditVersion, disabled?, debounceMs?, normalize?, validate,
+  save, onStateChange? })`.
+- Editor boundary: `V2NodeInspectorFlush = () => Promise<number | null>`.
+- `flush(forceRetry?)` resolves to the latest authoritative workflow `edit_version`.
+- `ProductWorkflowV2CanvasPanel.onBeforeWorkflowAction` uses the same return value before structure commands and runs.
+
+### 3. Contracts
+
+- Keep `draft`, the last accepted server baseline, and the latest `edit_version` separate. A newer server snapshot advances
+  the version and baseline without replacing a genuinely dirty local draft.
+- Normalize before validation and submission so backend trimming cannot leave a visually dirty draft after success.
+- Debounce ordinary reference/image drafts by 700ms. Serialize saves; a second edit made during a request is saved in the
+  next loop with the returned `edit_version`, never in parallel with the first request.
+- A failed or invalid unchanged draft is blocked. Automatic timers do not retry it indefinitely; editing clears the block,
+  and the explicit save button calls `flush(true)` for one deliberate retry.
+- Async save callbacks may update local state only while the editor is mounted. The mounted flag must be restored in every
+  effect setup because development `React.StrictMode` replays setup and cleanup before the live effect remains active.
+- Node selection, active inspector-tool changes, node/workflow runs, folder navigation, layout/folder mutations, and recipe
+  extraction await the registered flush. A structure mutation sends the version returned by flush, not the workflow prop
+  captured before saving.
+- Selecting another node while Details is already active still flushes. Treating “same sidebar tool” as a no-op loses
+  dirty prompt drafts because the selected node changes underneath the same tool.
+- Structure-command failure resets the local canvas projection to server positions. A rejected pre-command flush must not
+  leave a moved node looking persisted.
+- Prompt editors use an explicit “save new version” action. While dirty, their registered transition boundary rejects;
+  discard restores the current artifact, and a failed submit preserves the complete local payload.
+
+### 4. Validation & Error Matrix
+
+| Condition | Behavior |
+|---|---|
+| Valid ordinary draft after debounce | One typed save; status becomes saved; baseline/version advance |
+| User edits during a pending save | Await current save, then submit latest draft with returned version |
+| Invalid required field or Generation/DeliverySpec | Status failed; transition/command rejects; no API request |
+| API failure or `409` | Preserve local draft, expose `ApiError.detail`, block automatic retry; refresh server authority on `409` |
+| Explicit retry without another edit | `flush(true)` makes one new attempt |
+| Dirty Prompt Artifact during selection/tool/run/structure action | Reject action and keep the same prompt node/editor |
+| Server refresh while local draft is clean | Replace draft/baseline and advance version |
+| Server refresh while local draft is dirty | Preserve draft, advance server baseline/version for the later save |
+
+### 5. Good/Base/Bad Cases
+
+- Good: edit image title, immediately drag a node, save metadata once, then send layout with the returned edit version.
+- Good: edit a prompt, click another image node, remain on the prompt with a visible save/discard decision.
+- Base: select a different clean node; flush resolves immediately and Details opens the next node.
+- Bad: run debounce and transition saves concurrently with the same stale `expected_edit_version`.
+- Bad: skip flush because the destination tool is also `details`.
+- Bad: debounce the structured prompt payload and create one immutable version per keystroke.
+
+### 6. Tests Required
+
+- Pure tests cover draft extraction, normalization, strict GenerationSpec/DeliverySpec parsing, required fields, and
+  readable fact formatting.
+- Existing API tests remain authoritative for typed payload paths and optimistic concurrency.
+- Real-browser checks edit and restore an ordinary node, block a dirty prompt selection change, and verify no document,
+  inspector, or ratio-picker overflow at 1440x900, 1024x768, and 390x844.
+- Run `pnpm --dir web test:run`, `pnpm --dir web lint`, and `pnpm --dir web build`.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```ts
+if (tool === currentTool) return true;
+setSelectedNodeIds(nextIds);
+```
+
+Correct:
+
+```ts
+const editVersion = await flushInspector();
+await mutateStructure(editVersion ?? workflow.edit_version);
+```
+
+The destination tool name does not determine whether the selected editor is about to change.
 
 ---
 

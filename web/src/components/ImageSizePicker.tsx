@@ -10,6 +10,7 @@ import {
   resolveImageSize,
 } from "../lib/imageSizes";
 import { useI18n } from "../lib/preferences";
+import { ImageRatioFrame } from "./ImageRatioFrame";
 
 interface ImageSizePickerProps {
   value: string;
@@ -32,19 +33,6 @@ function resolveCustomDraft(width: string, height: string, maxDimension?: number
     return null;
   }
   return resolveImageSize(Number(width), Number(height), maxDimension);
-}
-
-function frameClassName(aspect: string): string {
-  if (aspect === "1:1") {
-    return "h-8 w-8";
-  }
-  if (aspect === "2:3" || aspect === "9:16") {
-    return "h-10 w-7";
-  }
-  if (aspect === "3:2" || aspect === "16:9") {
-    return "h-7 w-10";
-  }
-  return "h-8 w-8";
 }
 
 export function ImageSizePicker({ value, presets, onChange, disabled = false, maxDimension }: ImageSizePickerProps) {
@@ -89,11 +77,7 @@ export function ImageSizePicker({ value, presets, onChange, disabled = false, ma
                   : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-950/62 dark:text-slate-300 dark:hover:border-violet-400/50 dark:hover:text-violet-100"
               }`}
             >
-              <span
-                className={`mb-1.5 flex items-center justify-center rounded-sm border-2 border-current text-[10px] font-black leading-none ${frameClassName(option.aspect)}`}
-              >
-                {display.tierLabel}
-              </span>
+              <ImageRatioFrame aspectRatio={option.aspect} label={display.tierLabel} className="mb-1.5" />
               <span>{display.aspectLabel}</span>
               <span className="mt-0.5 text-[10px] font-medium text-slate-400 dark:text-slate-500">{display.dimensionLabel}</span>
             </button>

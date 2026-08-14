@@ -36,6 +36,7 @@ import { V2WorkflowCommandBar } from "./V2WorkflowCommandBar";
 import { WorkflowTextDialog } from "./WorkflowDialogs";
 
 type CanvasStateUpdate = WorkflowCanvasStateV1 | ((current: WorkflowCanvasStateV1) => WorkflowCanvasStateV1);
+type StructureOperation = (expectedEditVersion: number) => Promise<WorkflowCanvasMutationResult>;
 const COMPACT_WORKFLOW_CANVAS_MEDIA_QUERY = "(max-width: 1023px)";
 type TextDialogState =
   | { kind: "create-folder" }
@@ -58,10 +59,10 @@ interface ProductWorkflowV2CanvasPanelProps {
   onToggleTopChrome: () => void;
   onRefetchWorkflow: () => Promise<unknown>;
   onCanvasContextChange: (context: ProductWorkflowV2CanvasContext) => void;
-  onOpenSidebarTool: (tool: "details" | "runs" | "library") => void;
-  onBeforeRunWorkflow: () => Promise<void>;
+  onOpenSidebarTool: (tool: "details" | "runs" | "library") => Promise<boolean>;
+  onBeforeWorkflowAction: () => Promise<number | null>;
   onReferenceNodeChange: (nodeId: string | null) => void;
-  onSaveRecipe: (source: RecipeSourceSelection) => void;
+  onSaveRecipe: (source: RecipeSourceSelection) => void | Promise<void>;
 }
 
 export function ProductWorkflowV2CanvasPanel({
@@ -76,7 +77,7 @@ export function ProductWorkflowV2CanvasPanel({
   onRefetchWorkflow,
   onCanvasContextChange,
   onOpenSidebarTool,
-  onBeforeRunWorkflow,
+  onBeforeWorkflowAction,
   onReferenceNodeChange,
   onSaveRecipe,
 }: ProductWorkflowV2CanvasPanelProps) {
@@ -88,6 +89,7 @@ export function ProductWorkflowV2CanvasPanel({
   const [dissolveFolder, setDissolveFolder] = useState<{ id: string; title: string } | null>(null);
   const [currentRun, setCurrentRun] = useState<{ id: string; nodeId: string } | null>(null);
   const [operationError, setOperationError] = useState<string | null>(null);
+  const [canvasResetVersion, setCanvasResetVersion] = useState(0);
   const [canvasRenderable, setCanvasRenderable] = useState(false);
   const [mobileCanvasMode, setMobileCanvasMode] = useState<CanvasInteractionMode>("browse");
   const [mobileCanvasControlsActive, setMobileCanvasControlsActive] = useState(() => (
@@ -96,8 +98,12 @@ export function ProductWorkflowV2CanvasPanel({
       && window.matchMedia(COMPACT_WORKFLOW_CANVAS_MEDIA_QUERY).matches
   ));
   const loadedCanvasWorkflowRef = useRef<string | null>(null);
+  const workflowRef = useRef(workflow);
+  const selectionTransitionSequenceRef = useRef(0);
   const canvasSurfaceRef = useRef<HTMLDivElement | null>(null);
   const previousActiveWorkflowRunIdsRef = useRef<Set<string>>(new Set());
+
+  workflowRef.current = workflow;
 
   const openFolder = workflow.folders.find((folder) => folder.id === canvasState.open_folder_id) ?? null;
   const mobileCanvasModeItems: WorkflowCanvasMobileModeItem[] = [
@@ -263,10 +269,14 @@ export function ProductWorkflowV2CanvasPanel({
   }, [productId, queryClient]);
 
   const structureMutation = useMutation({
-    mutationFn: (operation: () => Promise<WorkflowCanvasMutationResult>) => operation(),
+    mutationFn: async (operation: StructureOperation) => {
+      const flushedEditVersion = await onBeforeWorkflowAction();
+      return operation(flushedEditVersion ?? workflowRef.current.edit_version);
+    },
     onSuccess: acceptCanvasMutation,
     onError: async (error) => {
       setOperationError(errorDetail(error, t("workflowV2.error.structure")));
+      setCanvasResetVersion((version) => version + 1);
       if (error instanceof ApiError && error.status === 409) {
         await onRefetchWorkflow();
       }
@@ -274,7 +284,7 @@ export function ProductWorkflowV2CanvasPanel({
   });
   const workflowRunMutation = useMutation({
     mutationFn: async () => {
-      await onBeforeRunWorkflow();
+      await onBeforeWorkflowAction();
       return api.runWorkflowV2(productId, workflow.id);
     },
     onMutate: () => setOperationError(null),
@@ -290,7 +300,7 @@ export function ProductWorkflowV2CanvasPanel({
         ["active-product-workflow-v2", productId],
         { latest_revision: result.workflow.revision, workflow: result.workflow },
       );
-      onOpenSidebarTool("runs");
+      await onOpenSidebarTool("runs");
       await onRefetchWorkflow();
     },
     onError: (error) => {
@@ -299,7 +309,7 @@ export function ProductWorkflowV2CanvasPanel({
   });
   const nodeRunMutation = useMutation({
     mutationFn: async (node: WorkflowNodeV2) => {
-      await onBeforeRunWorkflow();
+      await onBeforeWorkflowAction();
       return api.runWorkflowNodeV2(node.id);
     },
     onMutate: () => {
@@ -325,9 +335,9 @@ export function ProductWorkflowV2CanvasPanel({
         .filter((node) => node.folder_id === folderId)
         .map((node) => node.id);
       const nodeIds = Array.from(new Set([...targetIds, ...selectedNodeIds]));
-      structureMutation.mutate(() => api.setWorkflowFolderMembers(productId, workflow.id, folderId, {
+      structureMutation.mutate((expectedEditVersion) => api.setWorkflowFolderMembers(productId, workflow.id, folderId, {
         node_ids: nodeIds,
-        expected_edit_version: workflow.edit_version,
+        expected_edit_version: expectedEditVersion,
       }));
       return;
     }
@@ -338,9 +348,9 @@ export function ProductWorkflowV2CanvasPanel({
     const remainingIds = workflow.nodes
       .filter((node) => node.folder_id === openFolder.id && !selected.has(node.id))
       .map((node) => node.id);
-    structureMutation.mutate(() => api.setWorkflowFolderMembers(productId, workflow.id, openFolder.id, {
+    structureMutation.mutate((expectedEditVersion) => api.setWorkflowFolderMembers(productId, workflow.id, openFolder.id, {
       node_ids: remainingIds,
-      expected_edit_version: workflow.edit_version,
+      expected_edit_version: expectedEditVersion,
     }), { onSuccess: () => setSelectedNodeIds([]) });
   };
 
@@ -355,22 +365,59 @@ export function ProductWorkflowV2CanvasPanel({
     });
   }, [persistCanvasState, viewportFolderId]);
 
-  const selectNodes = useCallback((nodeIds: string[]) => {
-    const keepCanvasVisible = mobileCanvasControlsActive && mobileCanvasMode === "select";
-    if (
-      !keepCanvasVisible
-      && nodeIds.length === 1
-      && (selectedNodeIds.length !== 1 || selectedNodeIds[0] !== nodeIds[0])
-    ) {
+  const openCanvasFolder = useCallback((folderId: string | null) => {
+    const sequence = ++selectionTransitionSequenceRef.current;
+    void (async () => {
+      try {
+        await onBeforeWorkflowAction();
+      } catch {
+        return;
+      }
+      if (sequence !== selectionTransitionSequenceRef.current) {
+        return;
+      }
+      persistCanvasState((current) => ({ ...current, open_folder_id: folderId }));
+      setSelectedNodeIds([]);
       onReferenceNodeChange(null);
-      onOpenSidebarTool("details");
+    })();
+  }, [onBeforeWorkflowAction, onReferenceNodeChange, persistCanvasState]);
+
+  const selectNodes = useCallback((nodeIds: string[]) => {
+    if (
+      selectedNodeIds.length === nodeIds.length
+      && selectedNodeIds.every((nodeId, index) => nodeId === nodeIds[index])
+    ) {
+      return;
     }
-    setSelectedNodeIds((current) => (
-      current.length === nodeIds.length && current.every((nodeId, index) => nodeId === nodeIds[index])
-        ? current
-        : nodeIds
-    ));
-  }, [mobileCanvasControlsActive, mobileCanvasMode, onOpenSidebarTool, onReferenceNodeChange, selectedNodeIds]);
+    const sequence = ++selectionTransitionSequenceRef.current;
+    void (async () => {
+      const keepCanvasVisible = mobileCanvasControlsActive && mobileCanvasMode === "select";
+      try {
+        if (!keepCanvasVisible && nodeIds.length === 1) {
+          const accepted = await onOpenSidebarTool("details");
+          if (!accepted) {
+            return;
+          }
+        } else {
+          await onBeforeWorkflowAction();
+        }
+      } catch {
+        return;
+      }
+      if (sequence !== selectionTransitionSequenceRef.current) {
+        return;
+      }
+      onReferenceNodeChange(null);
+      setSelectedNodeIds(nodeIds);
+    })();
+  }, [
+    mobileCanvasControlsActive,
+    mobileCanvasMode,
+    onBeforeWorkflowAction,
+    onOpenSidebarTool,
+    onReferenceNodeChange,
+    selectedNodeIds,
+  ]);
 
   const runningNodeId = currentRun?.nodeId ?? (
     nodeRunMutation.isPending ? nodeRunMutation.variables?.id ?? null : null
@@ -411,6 +458,7 @@ export function ProductWorkflowV2CanvasPanel({
           {canvasRenderable ? (
             <V2WorkflowCanvas
               workflow={workflow}
+              resetVersion={canvasResetVersion}
               revealVisibility={revealVisibility ?? undefined}
               openFolderId={openFolder?.id ?? null}
               viewport={openFolder
@@ -421,27 +469,27 @@ export function ProductWorkflowV2CanvasPanel({
               selectedNodeIds={selectedNodeIds}
               mobileInteractionMode={mobileCanvasControlsActive ? mobileCanvasMode : "edit"}
               mobileCanvasControlsActive={mobileCanvasControlsActive}
-              onOpenFolder={(folderId) => {
-                persistCanvasState((current) => ({ ...current, open_folder_id: folderId }));
-                setSelectedNodeIds([]);
-              }}
+              onOpenFolder={openCanvasFolder}
               onRunNode={(node) => nodeRunMutation.mutate(node)}
               onBindReference={(node) => {
-                onReferenceNodeChange(node.id);
-                onOpenSidebarTool("library");
+                void (async () => {
+                  if (await onOpenSidebarTool("library")) {
+                    onReferenceNodeChange(node.id);
+                  }
+                })();
               }}
               onSelectionChange={selectNodes}
               onLayoutCommit={(positions) => {
-                structureMutation.mutate(() => api.updateWorkflowNodeLayoutV2(productId, workflow.id, {
+                structureMutation.mutate((expectedEditVersion) => api.updateWorkflowNodeLayoutV2(productId, workflow.id, {
                   positions,
-                  expected_edit_version: workflow.edit_version,
+                  expected_edit_version: expectedEditVersion,
                 }));
               }}
               onFolderTranslate={(folderId, deltaX, deltaY) => {
-                structureMutation.mutate(() => api.translateWorkflowFolder(productId, workflow.id, folderId, {
+                structureMutation.mutate((expectedEditVersion) => api.translateWorkflowFolder(productId, workflow.id, folderId, {
                   delta_x: deltaX,
                   delta_y: deltaY,
-                  expected_edit_version: workflow.edit_version,
+                  expected_edit_version: expectedEditVersion,
                 }));
               }}
               onViewportChange={updateViewport}
@@ -456,13 +504,10 @@ export function ProductWorkflowV2CanvasPanel({
             workflowRunBusy={workflowRunBusy}
             variant="overlay"
             activityLabel={activityLabel}
-            onOpenFolder={(folderId) => {
-              persistCanvasState((current) => ({ ...current, open_folder_id: folderId }));
-              setSelectedNodeIds([]);
-            }}
+            onOpenFolder={openCanvasFolder}
             onCreateFolder={() => setTextDialog({ kind: "create-folder" })}
             onMoveSelection={moveSelection}
-            onSaveRecipe={onSaveRecipe}
+            onSaveRecipe={(source) => void onSaveRecipe(source)}
             onRenameFolder={() => {
               if (openFolder) {
                 setTextDialog({
@@ -515,16 +560,16 @@ export function ProductWorkflowV2CanvasPanel({
             return;
           }
           if (textDialog.kind === "create-folder") {
-            structureMutation.mutate(() => api.createWorkflowFolder(productId, workflow.id, {
+            structureMutation.mutate((expectedEditVersion) => api.createWorkflowFolder(productId, workflow.id, {
               title,
               node_ids: selectedNodeIds,
-              expected_edit_version: workflow.edit_version,
+              expected_edit_version: expectedEditVersion,
             }), { onSuccess: () => { setTextDialog(null); setSelectedNodeIds([]); } });
             return;
           }
-          structureMutation.mutate(() => api.renameWorkflowFolder(productId, workflow.id, textDialog.folderId, {
+          structureMutation.mutate((expectedEditVersion) => api.renameWorkflowFolder(productId, workflow.id, textDialog.folderId, {
             title,
-            expected_edit_version: workflow.edit_version,
+            expected_edit_version: expectedEditVersion,
           }), { onSuccess: () => setTextDialog(null) });
         }}
       />
@@ -543,11 +588,11 @@ export function ProductWorkflowV2CanvasPanel({
             return;
           }
           structureMutation.mutate(
-            () => api.dissolveWorkflowFolder(
+            (expectedEditVersion) => api.dissolveWorkflowFolder(
               productId,
               workflow.id,
               dissolveFolder.id,
-              workflow.edit_version,
+              expectedEditVersion,
             ),
             {
               onSuccess: () => {

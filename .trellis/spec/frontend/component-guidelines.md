@@ -190,14 +190,18 @@ preview-sized assets, explicit download actions should use download URLs, and ro
 
 ### 1. Scope / Trigger
 
-- Trigger: editing continuous image chat size controls, workflow `image_generation` inspector controls, runtime
-  built-in preset display behavior, or frontend helpers that parse `WIDTHxHEIGHT`.
+- Trigger: editing continuous image chat size controls, schema-v1 workflow pixel-size controls, schema-v2
+  `GenerationSpec.aspect_ratio`, runtime built-in preset display behavior, or frontend helpers that parse `WIDTHxHEIGHT`.
 - Goal: keep the visual size picker, custom dimensions, and backend image-size contract aligned across every image
   generation surface.
 
 ### 2. Signatures
 
 - Shared component: `ImageSizePicker({ value, onChange, presets, disabled?, maxDimension? })`.
+- Shared ratio components: `ImageAspectRatioPicker({ value, onChange, presets?, disabled? })` and
+  `ImageRatioFrame({ aspectRatio, label?, className? })`.
+- Ratio helpers: `parseAspectRatio`, `formatAspectRatio`, and `aspectRatioFrameSize` in
+  `web/src/components/ImageRatioFrame.tsx`.
 - Shared helpers live under `web/src/lib/imageSizes.ts`.
 - Runtime max dimension comes from `api.getRuntimeConfig()` and is passed into `buildImageSizeOptions(maxDimension)` and
   `ImageSizePicker({ maxDimension })`.
@@ -207,8 +211,11 @@ preview-sized assets, explicit download actions should use download URLs, and ro
 
 ### 3. Contracts
 
-- Continuous image chat and workflow image-generation inspector must use the same shared picker instead of duplicating
-  separate button/input implementations.
+- Continuous image chat and schema-v1 workflow image-generation inspector must use the same shared pixel-size picker
+  instead of duplicating separate button/input implementations.
+- `ImageSizePicker` owns provider-facing `WIDTHxHEIGHT` values. Schema-v2 `GenerationSpec` owns a provider-neutral
+  `W:H` intent and must use `ImageAspectRatioPicker`; do not invent pixel dimensions or copy provider size limits into
+  the v2 node DTO. Both pickers reuse `ImageRatioFrame` for stable visual proportions.
 - Continuous image chat and workflow image-generation inspector must use the same shared `ImageToolControls` component for
   provider image-tool parameters. Keep compaction/normalization in shared helpers under `web/src/lib/`, not inside one
   page, so the workbench node and image chat submit the same payload shape.
@@ -226,6 +233,9 @@ preview-sized assets, explicit download actions should use download URLs, and ro
 
 - Invalid local text such as missing width/height -> keep the custom inputs visible and avoid emitting a malformed size.
 - Existing value not found in presets -> show it as custom dimensions when parseable.
+- Existing schema-v2 ratio not found in the nine common presets -> keep it selected in the custom ratio editor.
+- Schema-v2 ratio side outside `1..999`, zero, missing side, or non-integer -> do not emit a new value; typed node save
+  remains blocked until the draft is valid.
 - Custom inputs with uppercase separators or oversized values -> normalize/calibrate in the shared helper before emitting.
 - Custom inputs with either side not divisible by 16 -> normalize/calibrate in the shared helper before emitting.
 - Backend rejection still remains authoritative; frontend validation only improves UX.
@@ -234,6 +244,8 @@ preview-sized assets, explicit download actions should use download URLs, and ro
 
 - Good: `3840x2160` from workflow node config opens the inspector with custom dimensions `3840` and `2160`, then submits
   `3840x2160` unchanged.
+- Good: schema-v2 `21:9` remains `21:9`, is shown in the custom ratio editor, and submits through `GenerationSpec` without
+  adding a global runtime-config field.
 - Base: `1024x1024`, `2048x2048`, and `3840x3840` appear as preset buttons when present in the derived presets.
 - Bad: `ImageChatPage` accepts custom dimensions while `InspectorPanel` still exposes a raw text field.
 - Bad: `ImageChatPage` supports provider quality/format/fidelity fields while `InspectorPanel` has a separate partial
@@ -243,11 +255,15 @@ preview-sized assets, explicit download actions should use download URLs, and ro
 - Bad: one image generation entry uses a combined settings page while another uses `生成设置 / 高级`; product workflow
   image nodes and image-session generation should both use `ImageGenerationSettingsTabs` to keep common
   size/count/prompt controls separate from advanced provider tool options.
+- Bad: put workflow-scoped aspect ratio, quality intent, reference fidelity, background intent, or image-text language in
+  `SettingsPage`. Settings owns provider profiles/capabilities; the v2 node owns these generation intentions.
 - Bad: a custom value is auto-reset because it is not one of the built-in preset buttons.
 
 ### 6. Tests Required
 
 - Shared helper tests should cover default presets, custom labels, calibration, and invalid strings.
+- Ratio helper tests cover portrait/square/landscape frames, custom formatting, malformed ratios, and the backend
+  `1..999` side bounds. `GenerationSpec` tests cover enum and text-policy/language cross-field validation.
 - When picker state behavior changes, add or update component-level tests before relying on manual visual review.
 - `just web-build`, `pnpm --dir web lint`, and `pnpm --dir web test:run` remain required for frontend changes.
 
@@ -272,6 +288,15 @@ This creates a second workflow-only size UI and bypasses the shared custom/prese
 ```
 
 Pages provide data and mutations; the shared picker owns only presentational size selection state.
+
+For schema-v2 generation intent, use:
+
+```tsx
+<ImageAspectRatioPicker
+  value={generationSpec.aspect_ratio}
+  onChange={(aspectRatio) => updateGenerationSpec({ aspect_ratio: aspectRatio })}
+/>
+```
 
 ---
 

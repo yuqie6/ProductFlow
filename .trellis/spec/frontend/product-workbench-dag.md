@@ -753,10 +753,13 @@ The visible context selects a source only within the immutable recipe kind.
   pan-key, zoom-key, and click-distance policy.
 - `ProductWorkflowV2CanvasPanel` composes the shared canvas controls with v2 graph/folder commands.
 - `V2NodeInspector` and `V2NodeRunsPanel` consume typed v2 detail/edit/run APIs.
+- `ImageAspectRatioPicker`, `ImageRatioFrame`, `ImageGenerationSettingsTabs`, compact form fields, prompt preview, image
+  preview/download, and `SaveStatusBadge` are shared presentation primitives used by the typed v2 inspector.
 - `api.runWorkflowV2`, `getWorkflowRunV2`, `listWorkflowRunsV2`, `cancelWorkflowRunV2`, and `retryWorkflowRunV2` use the
   product/workflow-scoped v2 run routes. `runWorkflowNodeV2` remains the node-toolbar command.
 - `V2NodeInspector.onFlushRegistration` exposes the currently mounted editor's async save boundary to the workbench;
-  `ProductWorkflowV2CanvasPanel.onBeforeRunWorkflow` awaits that boundary before either run submission.
+  the boundary returns `Promise<number | null>`. `ProductWorkflowV2CanvasPanel.onBeforeWorkflowAction` awaits it before
+  node selection, folder navigation, either run submission, structure mutation, or recipe extraction.
 
 ### 3. Contracts
 
@@ -773,6 +776,20 @@ The visible context selects a source only within the immutable recipe kind.
   image nodes edit variation, GenerationSpec, DeliverySpec, and delivery renditions.
 - Node mutations refresh the complete active v2 workflow and exact node-detail/run queries. A `409` refreshes server
   authority before another deliberate edit.
+- Reference metadata, image title/variation, `GenerationSpec`, and optional `DeliverySpec` use typed 700ms debounce
+  autosave with serialized requests. Invalid or failed unchanged drafts stop retrying until the user edits or explicitly
+  retries. Prompt Artifact payloads retain an explicit save-new-version action and reject navigation while dirty.
+- The transition boundary applies when the selected node changes inside the already-active Details tool. Sidebar tool
+  equality cannot bypass flush. A failed selection, run, folder, layout, or recipe precondition keeps the current editor
+  and its local draft visible.
+- Structure mutations consume the edit version returned by flush. If a layout/folder mutation fails before persistence,
+  reset the local ReactFlow projection to the authoritative workflow coordinates.
+- The image editor uses the provider-neutral `GenerationSpec` vocabulary. Provider profiles, allowed image-tool fields,
+  models, secrets, and runtime maximum dimensions stay in Settings; workflow aspect ratio and quality/fidelity/text intent
+  do not create duplicate global configuration.
+- Product context presents product fields and confirmed facts with readable labels/status/source. Reference/image output
+  surfaces reuse canonical preview/download helpers. Normal inspector content does not render raw `config_json`, UUIDs,
+  evidence ID arrays, provider payloads, or JSON-formatted fact values.
 - The canvas measures its actual rendered surface. Incompatible persisted viewports are discarded. Fit-view readability
   floors are `0.24` below 480 px, `0.32` below 720 px, and `0.55` otherwise, so compact canvases keep the complete local
   graph reachable.
@@ -808,6 +825,9 @@ The visible context selects a source only within the immutable recipe kind.
 - No workflow history on a legacy product -> read-only transition state; opening the URL creates no default DAG.
 - Node detail/edit/run failure -> `ApiError.detail` in the owning inspector panel; other canvas and Agent state remains.
 - Inspector flush rejection -> no workflow/node run request is sent and the editor error remains visible.
+- Dirty Prompt Artifact -> node/tool/folder/run/structure/recipe transition is rejected until save-new-version or discard.
+- Invalid/failed ordinary autosave -> automatic retry stops; local draft remains; edit or explicit retry is available.
+- Structure command rejected after an optimistic canvas move -> reset visible positions to the server projection.
 - Active workflow run -> full-run and structure commands are disabled from persisted run state; Runs continues polling and
   supports workflow-level cancel.
 - Failed retryable workflow run -> Runs exposes retry; a successful response inserts the new run and preserves the source
@@ -821,6 +841,9 @@ The visible context selects a source only within the immutable recipe kind.
   the panel preserves its stored size.
 - Good: edit an image node, immediately invoke complete run, await one typed save, submit one workflow run, and open Runs
   with the workflow and nested node rows visible.
+- Good: edit a prompt, click another node while Details is already selected, retain the prompt draft and show the explicit
+  save/discard decision instead of switching nodes.
+- Good: select a custom `21:9` ratio, preserve it in the visual custom-ratio editor, and save only the typed node intent.
 - Good: retry a partially failed run; the new card contains only failed/blocked nodes while the source card retains its
   successful branch evidence.
 - Base: open a four-node folder at 390 px; fit-view shows all real nodes inside the measured canvas and the Canvas/Agent
@@ -838,6 +861,9 @@ The visible context selects a source only within the immutable recipe kind.
   authority for full-run idempotency, cancel, retry, and nested node-run response shape.
 - Browser checks cover the complete-run icon, empty Runs state, full/partial status cards, retry/cancel controls, node
   evidence, and 44 px compact controls without horizontal overflow at 1440x900, 1024x768, and 390x844.
+- Node-editor checks cover strict ratio/spec parsing, normalized reference/image drafts, readable facts, prompt preview,
+  debounce save/restore, dirty-prompt transition blocking, canonical reference preview, and absence of raw UUID/JSON in
+  product context. Measure document, inspector, and ratio-picker scroll widths in all three target viewports.
 - Pure canvas-policy tests assert desktop drag/connect/modifier behavior, compact browse/edit/select behavior, lock and
   read-only behavior, and additive selection semantics. Real-browser selection checks must enter a folder, select a node,
   return to the global canvas, and assert that both owner state and `.react-flow__node.selected` are cleared without a
@@ -878,6 +904,22 @@ await api.runWorkflowV2(productId, workflow.id);
 ```
 
 One user command owns one persisted workflow run. The server scheduler determines dependency order and retry scope.
+
+Wrong:
+
+```ts
+if (tool === activeTool) return true;
+setSelectedNodeIds(nextNodeIds);
+```
+
+Correct:
+
+```ts
+const accepted = await onOpenSidebarTool("details");
+if (accepted) setSelectedNodeIds(nextNodeIds);
+```
+
+Changing nodes inside one inspector tool still replaces the mounted editor and therefore requires the same flush gate.
 
 The route composes schema-v2 behavior through the shared workbench shell and presentation primitives.
 

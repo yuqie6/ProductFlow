@@ -62,10 +62,12 @@ export function parseWorkflowDeliverySpec(value: unknown): WorkflowDeliverySpec 
     width: width as number,
     height: height as number,
     format: format as WorkflowDeliverySpec["format"],
-    max_byte_size: maxByteSize as number | null | undefined,
+    max_byte_size: typeof maxByteSize === "number" ? maxByteSize : null,
     fit: fit as WorkflowDeliverySpec["fit"],
-    background_color: backgroundColor as string | null | undefined,
-    crop_anchor: cropAnchor as WorkflowDeliverySpec["crop_anchor"],
+    background_color: typeof backgroundColor === "string" ? backgroundColor : null,
+    crop_anchor: typeof cropAnchor === "string"
+      ? cropAnchor as NonNullable<WorkflowDeliverySpec["crop_anchor"]>
+      : null,
   };
 }
 

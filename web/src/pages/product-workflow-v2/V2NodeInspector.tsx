@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
-  CheckCircle2,
   CircleDot,
+  Eye,
   FileText,
   Image as ImageIcon,
   Link2,
@@ -10,10 +10,15 @@ import {
   Package,
   Play,
   Save,
+  Undo2,
   XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { CompactInput, CompactNumberInput, CompactSelect } from "../../components/CompactFormFields";
+import { ImageAspectRatioPicker } from "../../components/ImageAspectRatioPicker";
+import { ImageGenerationSettingsTabs, type ImageGenerationSettingsTab } from "../../components/ImageGenerationSettingsTabs";
+import { PromptPreviewDialog, type PromptPreview } from "../../components/PromptPreviewDialog";
 import { SelectField } from "../../components/SelectField";
 import { ApiError, api } from "../../lib/api";
 import { formatDateTime } from "../../lib/format";
@@ -23,6 +28,7 @@ import type {
   CanonicalProductDetail,
   ProductWorkflowV2,
   UpdateWorkflowNodeV2Input,
+  WorkflowCanvasMutationResult,
   WorkflowDeliverySpec,
   WorkflowDraftProductFact,
   WorkflowGenerationSpec,
@@ -32,19 +38,47 @@ import type {
   WorkflowNodeTypeV2,
   WorkflowNodeV2,
 } from "../../lib/types";
+import { IMAGE_PREVIEW_SURFACE_CLASS_NAME } from "../product-detail/constants";
+import { DownloadLink } from "../product-detail/ImageDownloadComponents";
+import { SaveStatusBadge } from "../product-detail/SaveStatusBadge";
 import { TextArea } from "../product-detail/TextArea";
+import type { SaveStatus } from "../product-detail/types";
 import { statusClass } from "../product-detail/utils";
 import { DeliveryRenditionPanel } from "./DeliveryRenditionPanel";
+import { parseWorkflowDeliverySpec } from "./deliveryRenditions";
+import { parseWorkflowGenerationSpec } from "./generationSpec";
+import { workflowNodeDownloadableImage } from "./nodeImages";
+import {
+  defaultDeliverySpec,
+  formatFactValue,
+  humanizeFactKey,
+  imageEditorDraft,
+  normalizeImageDraft,
+  normalizeReferenceDraft,
+  referenceEditorDraft,
+  validateImageDraft,
+  validateReferenceDraft,
+  type ImageEditorDraft,
+  type ReferenceEditorDraft,
+} from "./nodeEditorDrafts";
+import { useV2NodeDraftAutosave, type V2NodeDraftAutosave } from "./useV2NodeDraftAutosave";
+
+export type V2NodeInspectorFlush = () => Promise<number | null>;
 
 interface V2NodeInspectorProps {
   product: CanonicalProductDetail;
   workflow: ProductWorkflowV2;
   node: WorkflowNodeV2 | null;
   facts: WorkflowDraftProductFact[];
-  onBindReference: (node: WorkflowNodeV2) => void;
+  onBindReference: (node: WorkflowNodeV2) => void | Promise<void>;
   onPreviewImage: (image: DownloadableImage) => void;
   onWorkflowChanged: () => Promise<unknown>;
-  onFlushRegistration?: (flush: (() => Promise<void>) | null) => void;
+  onFlushRegistration?: (flush: V2NodeInspectorFlush | null) => void;
+}
+
+interface EditorSaveState {
+  status: SaveStatus;
+  error: string | null;
 }
 
 const ACTIVE_RUN_STATUSES = new Set(["queued", "running"]);
@@ -70,6 +104,12 @@ const SELECT_OPTION_LABEL_KEYS = {
   left: "agentWorkbench.nodeEditor.option.left",
   right: "agentWorkbench.nodeEditor.option.right",
 } as const;
+const FACT_STATUS_LABEL_KEYS = {
+  observed: "workflowConfirmation.factStatus.observed",
+  user_declared: "workflowConfirmation.factStatus.userDeclared",
+  confirmed: "workflowConfirmation.factStatus.confirmed",
+  conflicted: "workflowConfirmation.factStatus.conflicted",
+} as const;
 
 export function V2NodeInspector({
   product,
@@ -83,11 +123,21 @@ export function V2NodeInspector({
 }: V2NodeInspectorProps) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
-  const editorFlushRef = useRef<() => Promise<void>>(async () => undefined);
-  const registerEditorFlush = useCallback((flush: (() => Promise<void>) | null) => {
-    editorFlushRef.current = flush ?? (async () => undefined);
+  const [editorSaveState, setEditorSaveState] = useState<EditorSaveState>({ status: "idle", error: null });
+  const editorFlushRef = useRef<V2NodeInspectorFlush>(async () => null);
+  const registerEditorFlush = useCallback((flush: V2NodeInspectorFlush | null) => {
+    editorFlushRef.current = flush ?? (async () => null);
     onFlushRegistration?.(flush);
   }, [onFlushRegistration]);
+  const updateEditorSaveState = useCallback((status: SaveStatus, error: string | null) => {
+    setEditorSaveState((current) => current.status === status && current.error === error
+      ? current
+      : { status, error });
+  }, []);
+
+  useEffect(() => {
+    setEditorSaveState({ status: "idle", error: null });
+  }, [node?.id]);
   const detailQuery = useQuery({
     queryKey: ["v2-workflow-node-detail", product.id, workflow.id, node?.id],
     queryFn: () => api.getWorkflowNodeDetailV2(product.id, workflow.id, node!.id),
@@ -114,7 +164,13 @@ export function V2NodeInspector({
   const updateMutation = useMutation({
     mutationFn: (input: UpdateWorkflowNodeV2Input) =>
       api.updateWorkflowNodeV2(product.id, workflow.id, node!.id, input),
-    onSuccess: refreshNodeViews,
+    onSuccess: async (result) => {
+      queryClient.setQueryData(
+        ["active-product-workflow-v2", product.id],
+        { latest_revision: result.workflow.revision, workflow: result.workflow },
+      );
+      await refreshNodeViews();
+    },
     onError: (error) => {
       if (error instanceof ApiError && error.status === 409) {
         void refreshNodeViews();
@@ -176,15 +232,7 @@ export function V2NodeInspector({
                 {ACTIVE_RUN_STATUSES.has(node.status) ? <Loader2 size={10} className="mr-1 animate-spin" /> : null}
                 {t(`detail.nodeStatus.${node.status}`)}
               </span>
-              {updateMutation.isPending ? (
-                <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700 dark:border-blue-400/30 dark:bg-blue-500/10 dark:text-blue-200">
-                  <Loader2 size={10} className="mr-1 animate-spin" />{t("detail.inspector.saving")}
-                </span>
-              ) : updateMutation.isSuccess ? (
-                <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:border-emerald-400/30 dark:bg-emerald-500/10 dark:text-emerald-200">
-                  <CheckCircle2 size={10} className="mr-1" />{t("agentWorkbench.nodeEditor.saved")}
-                </span>
-              ) : null}
+              {node.node_type !== "product_context" ? <SaveStatusBadge status={editorSaveState.status} /> : null}
             </div>
           </div>
         </div>
@@ -227,10 +275,10 @@ export function V2NodeInspector({
         ) : null}
       </section>
 
-      {mutationError ? (
+      {editorSaveState.error || mutationError ? (
         <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs leading-5 text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200">
           <AlertCircle size={13} className="mr-1.5 inline" />
-          {errorDetail(mutationError, t("agentWorkbench.nodeEditor.loadFailed"))}
+          {editorSaveState.error ?? errorDetail(mutationError, t("agentWorkbench.nodeEditor.loadFailed"))}
         </div>
       ) : null}
       {node.failure_reason ? (
@@ -240,32 +288,42 @@ export function V2NodeInspector({
       ) : null}
 
       {node.node_type === "product_context" ? (
-        <ProductContextEditor product={product} detail={detail} facts={facts} />
+        <ProductContextEditor product={product} facts={facts} />
       ) : node.node_type === "reference_image" ? (
         <ReferenceNodeEditor
-          key={`${node.id}:${detail.workflow_edit_version}`}
+          key={node.id}
           detail={detail}
+          node={node}
+          workflowEditVersion={workflow.edit_version}
           busy={updateMutation.isPending}
           onBind={() => onBindReference(node)}
           onSave={(input) => updateMutation.mutateAsync(input)}
           onFlushRegistration={registerEditorFlush}
+          onSaveStateChange={updateEditorSaveState}
+          onPreviewImage={onPreviewImage}
         />
       ) : node.node_type === "prompt_generation" && detail.prompt_artifact ? (
         <PromptNodeEditor
           key={`${node.id}:${detail.prompt_artifact.version_id}`}
           detail={detail}
+          workflowEditVersion={workflow.edit_version}
           busy={updateMutation.isPending}
           onSave={(input) => updateMutation.mutateAsync(input)}
           onFlushRegistration={registerEditorFlush}
+          onSaveStateChange={updateEditorSaveState}
         />
       ) : node.node_type === "image_generation" ? (
         <>
           <ImageNodeEditor
-            key={`${node.id}:${detail.workflow_edit_version}`}
+            key={node.id}
             detail={detail}
+            node={node}
+            workflowEditVersion={workflow.edit_version}
             busy={updateMutation.isPending}
             onSave={(input) => updateMutation.mutateAsync(input)}
             onFlushRegistration={registerEditorFlush}
+            onSaveStateChange={updateEditorSaveState}
+            onPreviewImage={onPreviewImage}
           />
           <section className="config-bubble overflow-hidden rounded-2xl shadow-sm">
             <SectionHeading title={t("workflowV2.sidebar.artifacts")} />
@@ -281,11 +339,9 @@ export function V2NodeInspector({
 
 function ProductContextEditor({
   product,
-  detail,
   facts,
 }: {
   product: CanonicalProductDetail;
-  detail: WorkflowNodeDetailV2;
   facts: WorkflowDraftProductFact[];
 }) {
   const { t } = useI18n();
@@ -298,11 +354,9 @@ function ProductContextEditor({
         </span>
       </div>
       <dl className="mt-3 grid gap-2 text-xs">
-        <ReadOnlyRow label={t("agentWorkbench.nodeEditor.nodeName")} value={product.name} />
+        <ReadOnlyRow label={t("detail.inspector.productName")} value={product.name} />
         <ReadOnlyRow label={t("detail.inspector.category")} value={product.category || t("agentWorkbench.nodeEditor.noValue")} />
         <ReadOnlyRow label={t("detail.inspector.price")} value={product.price || t("agentWorkbench.nodeEditor.noValue")} />
-        <ReadOnlyRow label={t("agentWorkbench.nodeEditor.sourceDraft")} value={detail.source_draft_revision_id} mono />
-        <ReadOnlyRow label={t("agentWorkbench.nodeEditor.visualSystem")} value={detail.visual_system_version_id} mono />
       </dl>
       <div className="mt-5 border-t border-zinc-200 pt-4 dark:border-slate-700">
         <SectionTitle title={t("agentWorkbench.nodeEditor.productFacts")} />
@@ -310,13 +364,26 @@ function ProductContextEditor({
           <div className="mt-2 divide-y divide-zinc-100 dark:divide-slate-800">
             {facts.map((fact) => (
               <div key={fact.key} className="py-2.5">
-                <div className="flex min-w-0 items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate text-xs font-semibold text-zinc-800 dark:text-slate-100">{fact.key}</span>
-                  <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-500 dark:bg-slate-800 dark:text-slate-300">
+                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  <span className="min-w-0 flex-1 text-xs font-semibold text-zinc-800 dark:text-slate-100">{humanizeFactKey(fact.key)}</span>
+                  <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${fact.status === "conflicted" ? "bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-200" : "bg-zinc-100 text-zinc-500 dark:bg-slate-800 dark:text-slate-300"}`}>
+                    {t(FACT_STATUS_LABEL_KEYS[fact.status])}
+                  </span>
+                  <span className="shrink-0 rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-cyan-400/10 dark:text-cyan-200">
                     {factSourceLabel(fact.source_type, t)}
                   </span>
                 </div>
-                <div className="mt-1 break-words text-xs leading-5 text-zinc-600 dark:text-slate-300">{formatFactValue(fact.value)}</div>
+                <div className="mt-1 break-words text-xs leading-5 text-zinc-600 dark:text-slate-300">
+                  {formatFactValue(fact.value, t("agentWorkbench.nodeEditor.noValue"), {
+                    true: t("agentWorkbench.nodeEditor.factTrue"),
+                    false: t("agentWorkbench.nodeEditor.factFalse"),
+                  })}
+                </div>
+                {fact.requires_confirmation ? (
+                  <div className="mt-1 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                    {t("workflowConfirmation.requiresConfirmation")}
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>
@@ -330,80 +397,174 @@ function ProductContextEditor({
 
 function ReferenceNodeEditor({
   detail,
+  node,
+  workflowEditVersion,
   busy,
   onBind,
   onSave,
   onFlushRegistration,
+  onSaveStateChange,
+  onPreviewImage,
 }: {
   detail: WorkflowNodeDetailV2;
+  node: WorkflowNodeV2;
+  workflowEditVersion: number;
   busy: boolean;
-  onBind: () => void;
-  onSave: (input: UpdateWorkflowNodeV2Input) => Promise<unknown>;
-  onFlushRegistration: (flush: (() => Promise<void>) | null) => void;
+  onBind: () => void | Promise<void>;
+  onSave: (input: UpdateWorkflowNodeV2Input) => Promise<WorkflowCanvasMutationResult>;
+  onFlushRegistration: (flush: V2NodeInspectorFlush | null) => void;
+  onSaveStateChange: (status: SaveStatus, error: string | null) => void;
+  onPreviewImage: (image: DownloadableImage) => void;
 }) {
   const { t } = useI18n();
-  const node = detail.node;
-  const [title, setTitle] = useState(node.title);
-  const [role, setRole] = useState(textConfig(node.config_json.role));
-  const [label, setLabel] = useState(textConfig(node.config_json.label));
-  const dirty = title !== node.title
-    || role !== textConfig(node.config_json.role)
-    || label !== textConfig(node.config_json.label);
-  return (
-    <EditorForm onSubmit={() => onSave({
+  const editor = useV2NodeDraftAutosave<ReferenceEditorDraft>({
+    serverValue: referenceEditorDraft(node),
+    serverEditVersion: Math.max(detail.workflow_edit_version, workflowEditVersion),
+    disabled: busy,
+    normalize: normalizeReferenceDraft,
+    validate: (draft) => validateReferenceDraft(draft, t("agentWorkbench.nodeEditor.invalidDraft")),
+    save: (draft, expectedEditVersion) => onSave({
       node_type: "reference_image",
-      expected_edit_version: detail.workflow_edit_version,
-      title,
-      role,
-      label,
-    })} busy={busy} dirty={dirty} onFlushRegistration={onFlushRegistration}>
-      <TextInput label={t("agentWorkbench.nodeEditor.nodeName")} value={title} onChange={setTitle} />
-      <TextInput label={t("agentWorkbench.nodeEditor.referenceRole")} value={role} onChange={setRole} />
-      <TextInput label={t("agentWorkbench.nodeEditor.referenceLabel")} value={label} onChange={setLabel} />
+      expected_edit_version: expectedEditVersion,
+      title: draft.title,
+      role: draft.role,
+      label: draft.label,
+    }),
+    onStateChange: onSaveStateChange,
+  });
+  const image = workflowNodeDownloadableImage(node);
+  return (
+    <AutosaveEditorForm editor={editor} busy={busy} onFlushRegistration={onFlushRegistration}>
+      {image ? <NodeImagePreview image={image} onPreview={onPreviewImage} /> : null}
+      <TextInput
+        label={t("agentWorkbench.nodeEditor.nodeName")}
+        value={editor.draft.title}
+        maxLength={255}
+        onChange={(title) => editor.update({ ...editor.draft, title })}
+      />
+      <TextInput
+        label={t("agentWorkbench.nodeEditor.referenceRole")}
+        value={editor.draft.role}
+        maxLength={120}
+        onChange={(role) => editor.update({ ...editor.draft, role })}
+      />
+      <TextInput
+        label={t("agentWorkbench.nodeEditor.referenceLabel")}
+        value={editor.draft.label}
+        maxLength={255}
+        onChange={(label) => editor.update({ ...editor.draft, label })}
+      />
       <button
         type="button"
-        onClick={onBind}
+        onClick={() => void onBind()}
         className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50 px-3 text-xs font-semibold text-indigo-700 hover:border-indigo-300 hover:bg-indigo-100 dark:border-violet-400/35 dark:bg-violet-500/10 dark:text-violet-100 dark:hover:bg-violet-500/15"
       >
         <Link2 size={14} />{t("agentWorkbench.nodeEditor.bindReference")}
       </button>
-    </EditorForm>
+    </AutosaveEditorForm>
   );
 }
 
 function PromptNodeEditor({
   detail,
+  workflowEditVersion,
   busy,
   onSave,
   onFlushRegistration,
+  onSaveStateChange,
 }: {
   detail: WorkflowNodeDetailV2;
+  workflowEditVersion: number;
   busy: boolean;
-  onSave: (input: UpdateWorkflowNodeV2Input) => Promise<unknown>;
-  onFlushRegistration: (flush: (() => Promise<void>) | null) => void;
+  onSave: (input: UpdateWorkflowNodeV2Input) => Promise<WorkflowCanvasMutationResult>;
+  onFlushRegistration: (flush: V2NodeInspectorFlush | null) => void;
+  onSaveStateChange: (status: SaveStatus, error: string | null) => void;
 }) {
   const { t } = useI18n();
   const artifact = detail.prompt_artifact!;
   const [title, setTitle] = useState(detail.node.title);
   const [payload, setPayload] = useState<WorkflowImagePromptPayloadV1>(artifact.payload);
+  const [saveState, setSaveState] = useState<EditorSaveState>({ status: "idle", error: null });
+  const [promptPreview, setPromptPreview] = useState<PromptPreview | null>(null);
   const patchPayload = (patch: Partial<WorkflowImagePromptPayloadV1>) => setPayload((current) => ({ ...current, ...patch }));
   const dirty = title !== detail.node.title || !sameJson(payload, artifact.payload);
+  const submit = async () => {
+    if (!dirty || busy) {
+      return;
+    }
+    const normalizedTitle = title.trim();
+    if (!normalizedTitle || title.length > 255) {
+      const error = new Error(t("agentWorkbench.nodeEditor.invalidDraft"));
+      setSaveState({ status: "failed", error: error.message });
+      throw error;
+    }
+    setTitle(normalizedTitle);
+    setSaveState({ status: "saving", error: null });
+    try {
+      await onSave({
+        node_type: "prompt_generation",
+        expected_edit_version: Math.max(detail.workflow_edit_version, workflowEditVersion),
+        expected_prompt_artifact_version_id: artifact.version_id,
+        title: normalizedTitle,
+        prompt_payload: payload,
+      });
+      setSaveState({ status: "saved", error: null });
+    } catch (error) {
+      const message = errorDetail(error, t("agentWorkbench.nodeEditor.loadFailed"));
+      setSaveState({ status: "failed", error: message });
+      throw error;
+    }
+  };
+  const discard = () => {
+    setTitle(detail.node.title);
+    setPayload(artifact.payload);
+    setSaveState({ status: "saved", error: null });
+  };
+
+  useEffect(() => {
+    if (dirty && saveState.status === "saved") {
+      setSaveState({ status: "idle", error: null });
+    }
+  }, [dirty, saveState.status]);
+
+  useEffect(() => {
+    onSaveStateChange(saveState.status, saveState.error);
+  }, [onSaveStateChange, saveState.error, saveState.status]);
+
+  useEffect(() => {
+    const flush: V2NodeInspectorFlush = async () => {
+      if (dirty) {
+        const error = new Error(t("agentWorkbench.nodeEditor.unsavedPrompt"));
+        setSaveState({ status: "failed", error: error.message });
+        throw error;
+      }
+      return Math.max(detail.workflow_edit_version, workflowEditVersion);
+    };
+    onFlushRegistration(flush);
+    return () => onFlushRegistration(null);
+  }, [detail.workflow_edit_version, dirty, onFlushRegistration, t, workflowEditVersion]);
 
   return (
-    <EditorForm onSubmit={() => onSave({
-      node_type: "prompt_generation",
-      expected_edit_version: detail.workflow_edit_version,
-      expected_prompt_artifact_version_id: artifact.version_id,
-      title,
-      prompt_payload: payload,
-    })} busy={busy} dirty={dirty} onFlushRegistration={onFlushRegistration}>
+    <PromptEditorForm busy={busy} dirty={dirty} onSubmit={submit} onDiscard={discard}>
       <div className="flex items-center justify-between gap-2">
         <SectionTitle title={t("workflowConfirmation.section.prompts")} />
         <span className="rounded-full bg-indigo-50 px-2 py-1 text-[10px] font-semibold text-indigo-700 dark:bg-violet-500/15 dark:text-violet-200">
           {t("agentWorkbench.nodeEditor.promptVersion", { version: artifact.version })}
         </span>
       </div>
-      <TextInput label={t("agentWorkbench.nodeEditor.nodeName")} value={title} onChange={setTitle} />
+      <TextInput label={t("agentWorkbench.nodeEditor.nodeName")} value={title} maxLength={255} onChange={setTitle} />
+      <button
+        type="button"
+        onClick={() => setPromptPreview({
+          title: title || detail.node.title,
+          text: formatPromptArtifactPreview(payload, t),
+          meta: t("agentWorkbench.nodeEditor.promptVersion", { version: artifact.version }),
+        })}
+        className="inline-flex h-9 w-full items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 transition-colors hover:border-slate-300 hover:text-slate-950 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-300 dark:hover:border-violet-400/45 dark:hover:bg-violet-500/12 dark:hover:text-white"
+      >
+        <Eye size={13} className="mr-1.5" />
+        {t("agentWorkbench.nodeEditor.previewPrompt")}
+      </button>
       <TextArea label={t("workflowConfirmation.designGoal")} value={payload.design_goal} onChange={(design_goal) => patchPayload({ design_goal })} minRows={3} />
       <LineListField label={t("workflowConfirmation.sharedRules")} value={payload.shared_rules} onChange={(shared_rules) => patchPayload({ shared_rules })} />
       <LineListField label={t("workflowConfirmation.creativeBoundary")} value={payload.creative_boundary} onChange={(creative_boundary) => patchPayload({ creative_boundary })} />
@@ -445,7 +606,9 @@ function PromptNodeEditor({
       <FieldGroup title={t("workflowConfirmation.perImageInstructions")}>
         {payload.images.map((image, index) => (
           <div key={image.image_plan_key} className="border-t border-zinc-200 pt-3 first:border-t-0 first:pt-0 dark:border-slate-700">
-            <div className="mb-2 text-xs font-semibold text-zinc-800 dark:text-slate-100">{image.image_plan_key}</div>
+            <div className="mb-2 text-xs font-semibold text-zinc-800 dark:text-slate-100">
+              {t("agentWorkbench.nodeEditor.perImageNumber", { number: index + 1 })}
+            </div>
             <TextArea label={t("agentWorkbench.nodeEditor.instruction")} value={image.instruction} onChange={(instruction) => setPayload((current) => ({ ...current, images: current.images.map((item, itemIndex) => itemIndex === index ? { ...item, instruction } : item) }))} minRows={3} />
             <div className="mt-2">
               <TextInput label={t("agentWorkbench.nodeEditor.viewpoint")} value={image.viewpoint ?? ""} onChange={(viewpoint) => setPayload((current) => ({ ...current, images: current.images.map((item, itemIndex) => itemIndex === index ? { ...item, viewpoint: nullableText(viewpoint) } : item) }))} />
@@ -463,125 +626,337 @@ function PromptNodeEditor({
       <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-[11px] leading-5 text-zinc-500 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-400">
         {t("agentWorkbench.nodeEditor.immutableLineage")}
       </div>
-    </EditorForm>
+      {promptPreview ? <PromptPreviewDialog preview={promptPreview} onClose={() => setPromptPreview(null)} /> : null}
+    </PromptEditorForm>
   );
 }
 
 function ImageNodeEditor({
   detail,
+  node,
+  workflowEditVersion,
   busy,
   onSave,
   onFlushRegistration,
+  onSaveStateChange,
+  onPreviewImage,
 }: {
   detail: WorkflowNodeDetailV2;
+  node: WorkflowNodeV2;
+  workflowEditVersion: number;
   busy: boolean;
-  onSave: (input: UpdateWorkflowNodeV2Input) => Promise<unknown>;
-  onFlushRegistration: (flush: (() => Promise<void>) | null) => void;
+  onSave: (input: UpdateWorkflowNodeV2Input) => Promise<WorkflowCanvasMutationResult>;
+  onFlushRegistration: (flush: V2NodeInspectorFlush | null) => void;
+  onSaveStateChange: (status: SaveStatus, error: string | null) => void;
+  onPreviewImage: (image: DownloadableImage) => void;
 }) {
   const { t } = useI18n();
-  const parsedGeneration = parseGenerationSpec(detail.node.config_json.generation_spec);
-  const parsedDelivery = parseDeliverySpec(detail.node.config_json.delivery_spec);
-  const [title, setTitle] = useState(detail.node.title);
-  const [variation, setVariation] = useState(textConfig(detail.node.config_json.variation_instruction));
-  const [generation, setGeneration] = useState<WorkflowGenerationSpec | null>(parsedGeneration);
-  const [delivery, setDelivery] = useState<WorkflowDeliverySpec | null>(parsedDelivery);
-
-  if (!generation) {
+  const serverDraft = imageEditorDraft(node);
+  if (!serverDraft) {
     return <PanelState icon={<AlertCircle size={20} />} text={t("agentWorkbench.nodeEditor.loadFailed")} />;
   }
-  const dirty = title !== detail.node.title
-    || variation !== textConfig(detail.node.config_json.variation_instruction)
-    || !sameJson(generation, parsedGeneration)
-    || !sameJson(delivery, parsedDelivery);
-
   return (
-    <EditorForm onSubmit={() => onSave({
-      node_type: "image_generation",
-      expected_edit_version: detail.workflow_edit_version,
-      title,
-      variation_instruction: nullableText(variation),
-      generation_spec: generation,
-      delivery_spec: delivery,
-    })} busy={busy} dirty={dirty} onFlushRegistration={onFlushRegistration}>
-      <TextInput label={t("agentWorkbench.nodeEditor.nodeName")} value={title} onChange={setTitle} />
-      <TextArea label={t("workflowConfirmation.variation")} value={variation} onChange={setVariation} minRows={3} />
-      <FieldGroup title={t("agentWorkbench.nodeEditor.generationSettings")}>
-        <TextInput label={t("agentWorkbench.nodeEditor.aspectRatio")} value={generation.aspect_ratio} onChange={(aspect_ratio) => setGeneration({ ...generation, aspect_ratio })} />
-        <div className="grid gap-2 sm:grid-cols-2">
-          <SelectInput label={t("agentWorkbench.nodeEditor.resolution")} value={generation.resolution_tier} options={["standard", "high", "ultra"]} onChange={(resolution_tier) => setGeneration({ ...generation, resolution_tier: resolution_tier as WorkflowGenerationSpec["resolution_tier"] })} />
-          <SelectInput label={t("agentWorkbench.nodeEditor.quality")} value={generation.quality_intent} options={["draft", "standard", "high"]} onChange={(quality_intent) => setGeneration({ ...generation, quality_intent: quality_intent as WorkflowGenerationSpec["quality_intent"] })} />
-          <SelectInput label={t("agentWorkbench.nodeEditor.referenceFidelity")} value={generation.reference_fidelity} options={["low", "medium", "high"]} onChange={(reference_fidelity) => setGeneration({ ...generation, reference_fidelity: reference_fidelity as WorkflowGenerationSpec["reference_fidelity"] })} />
-          <SelectInput label={t("agentWorkbench.nodeEditor.backgroundIntent")} value={generation.background_intent} options={["auto", "opaque", "transparent"]} onChange={(background_intent) => setGeneration({ ...generation, background_intent: background_intent as WorkflowGenerationSpec["background_intent"] })} />
-        </div>
-        <SelectInput label={t("agentWorkbench.nodeEditor.textPolicy")} value={generation.text_policy} options={["none", "allow", "required"]} onChange={(text_policy) => setGeneration({ ...generation, text_policy: text_policy as WorkflowGenerationSpec["text_policy"], text_language: text_policy === "none" ? null : generation.text_language })} />
-        {generation.text_policy !== "none" ? (
-          <TextInput label={t("agentWorkbench.nodeEditor.textLanguage")} value={generation.text_language ?? ""} onChange={(text_language) => setGeneration({ ...generation, text_language: nullableText(text_language) })} />
-        ) : null}
-      </FieldGroup>
-
-      <FieldGroup title={t("workflowConfirmation.deliverySpec")}>
-        <CheckboxField
-          label={t("agentWorkbench.nodeEditor.deliveryEnabled")}
-          checked={delivery !== null}
-          onChange={(enabled) => setDelivery(enabled ? defaultDeliverySpec() : null)}
-        />
-        {delivery ? (
-          <>
-            <div className="grid grid-cols-2 gap-2">
-              <NumberInput label={t("agentWorkbench.nodeEditor.width")} value={delivery.width} min={1} onChange={(width) => setDelivery({ ...delivery, width })} />
-              <NumberInput label={t("agentWorkbench.nodeEditor.height")} value={delivery.height} min={1} onChange={(height) => setDelivery({ ...delivery, height })} />
-              <SelectInput label={t("agentWorkbench.nodeEditor.format")} value={delivery.format} options={["png", "jpeg", "webp"]} onChange={(format) => setDelivery({ ...delivery, format: format as WorkflowDeliverySpec["format"] })} />
-              <SelectInput label={t("agentWorkbench.nodeEditor.fit")} value={delivery.fit} options={["contain", "cover"]} onChange={(fit) => setDelivery({ ...delivery, fit: fit as WorkflowDeliverySpec["fit"], crop_anchor: fit === "contain" ? null : delivery.crop_anchor })} />
-            </div>
-            <OptionalNumberInput label={t("agentWorkbench.nodeEditor.maxBytes")} value={delivery.max_byte_size ?? null} min={1} onChange={(max_byte_size) => setDelivery({ ...delivery, max_byte_size })} />
-            <TextInput label={t("agentWorkbench.nodeEditor.backgroundColor")} value={delivery.background_color ?? ""} onChange={(background_color) => setDelivery({ ...delivery, background_color: nullableText(background_color) })} />
-            {delivery.fit === "cover" ? (
-              <SelectInput label={t("agentWorkbench.nodeEditor.cropAnchor")} value={delivery.crop_anchor ?? "center"} options={["center", "top", "bottom", "left", "right"]} onChange={(crop_anchor) => setDelivery({ ...delivery, crop_anchor: crop_anchor as NonNullable<WorkflowDeliverySpec["crop_anchor"]> })} />
-            ) : null}
-          </>
-        ) : null}
-      </FieldGroup>
-    </EditorForm>
+    <ImageNodeEditorFields
+      detail={detail}
+      node={node}
+      serverDraft={serverDraft}
+      workflowEditVersion={workflowEditVersion}
+      busy={busy}
+      onSave={onSave}
+      onFlushRegistration={onFlushRegistration}
+      onSaveStateChange={onSaveStateChange}
+      onPreviewImage={onPreviewImage}
+    />
   );
 }
 
-function EditorForm({
+function ImageNodeEditorFields({
+  detail,
+  node,
+  serverDraft,
+  workflowEditVersion,
+  busy,
+  onSave,
+  onFlushRegistration,
+  onSaveStateChange,
+  onPreviewImage,
+}: {
+  detail: WorkflowNodeDetailV2;
+  node: WorkflowNodeV2;
+  serverDraft: ImageEditorDraft;
+  workflowEditVersion: number;
+  busy: boolean;
+  onSave: (input: UpdateWorkflowNodeV2Input) => Promise<WorkflowCanvasMutationResult>;
+  onFlushRegistration: (flush: V2NodeInspectorFlush | null) => void;
+  onSaveStateChange: (status: SaveStatus, error: string | null) => void;
+  onPreviewImage: (image: DownloadableImage) => void;
+}) {
+  const { t } = useI18n();
+  const [settingsTab, setSettingsTab] = useState<ImageGenerationSettingsTab>("basic");
+  const editor = useV2NodeDraftAutosave<ImageEditorDraft>({
+    serverValue: serverDraft,
+    serverEditVersion: Math.max(detail.workflow_edit_version, workflowEditVersion),
+    disabled: busy,
+    normalize: normalizeImageDraft,
+    validate: (draft) => validateImageDraft(draft, t("agentWorkbench.nodeEditor.invalidDraft")),
+    save: (draft, expectedEditVersion) => onSave({
+      node_type: "image_generation",
+      expected_edit_version: expectedEditVersion,
+      title: draft.title,
+      variation_instruction: nullableText(draft.variation),
+      generation_spec: parseWorkflowGenerationSpec(draft.generation)!,
+      delivery_spec: draft.delivery ? parseWorkflowDeliverySpec(draft.delivery) : null,
+    }),
+    onStateChange: onSaveStateChange,
+  });
+  const { generation, delivery } = editor.draft;
+  const image = workflowNodeDownloadableImage(node);
+  const patchGeneration = (patch: Partial<WorkflowGenerationSpec>) => editor.update({
+    ...editor.draft,
+    generation: { ...generation, ...patch },
+  });
+  const patchDelivery = (patch: Partial<WorkflowDeliverySpec>) => {
+    if (delivery) {
+      editor.update({ ...editor.draft, delivery: { ...delivery, ...patch } });
+    }
+  };
+
+  return (
+    <AutosaveEditorForm editor={editor} busy={busy} onFlushRegistration={onFlushRegistration}>
+      {image ? <NodeImagePreview image={image} onPreview={onPreviewImage} /> : null}
+      <TextInput
+        label={t("agentWorkbench.nodeEditor.nodeName")}
+        value={editor.draft.title}
+        maxLength={255}
+        onChange={(title) => editor.update({ ...editor.draft, title })}
+      />
+      <TextArea
+        label={t("workflowConfirmation.variation")}
+        value={editor.draft.variation}
+        onChange={(variation) => editor.update({ ...editor.draft, variation })}
+        minRows={3}
+        maxRows={12}
+      />
+      <FieldGroup title={t("agentWorkbench.nodeEditor.generationSettings")}>
+        <ImageGenerationSettingsTabs
+          value={settingsTab}
+          onChange={setSettingsTab}
+          basic={(
+            <div className="space-y-4">
+              <div>
+                <div className="mb-2 text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                  {t("agentWorkbench.nodeEditor.aspectRatio")}
+                </div>
+                <ImageAspectRatioPicker
+                  value={generation.aspect_ratio}
+                  onChange={(aspect_ratio) => patchGeneration({ aspect_ratio })}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <CompactSelect
+                  label={t("agentWorkbench.nodeEditor.resolution")}
+                  value={generation.resolution_tier}
+                  options={selectOptions(["standard", "high", "ultra"], t)}
+                  onChange={(resolution_tier) => patchGeneration({ resolution_tier: resolution_tier as WorkflowGenerationSpec["resolution_tier"] })}
+                />
+                <CompactSelect
+                  label={t("agentWorkbench.nodeEditor.quality")}
+                  value={generation.quality_intent}
+                  options={selectOptions(["draft", "standard", "high"], t)}
+                  onChange={(quality_intent) => patchGeneration({ quality_intent: quality_intent as WorkflowGenerationSpec["quality_intent"] })}
+                />
+              </div>
+            </div>
+          )}
+          advanced={(
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-2">
+                <CompactSelect
+                  label={t("agentWorkbench.nodeEditor.referenceFidelity")}
+                  value={generation.reference_fidelity}
+                  options={selectOptions(["low", "medium", "high"], t)}
+                  onChange={(reference_fidelity) => patchGeneration({ reference_fidelity: reference_fidelity as WorkflowGenerationSpec["reference_fidelity"] })}
+                />
+                <CompactSelect
+                  label={t("agentWorkbench.nodeEditor.backgroundIntent")}
+                  value={generation.background_intent}
+                  options={selectOptions(["auto", "opaque", "transparent"], t)}
+                  onChange={(background_intent) => patchGeneration({ background_intent: background_intent as WorkflowGenerationSpec["background_intent"] })}
+                />
+              </div>
+              <CompactSelect
+                label={t("agentWorkbench.nodeEditor.textPolicy")}
+                value={generation.text_policy}
+                options={selectOptions(["none", "allow", "required"], t)}
+                onChange={(textPolicy) => patchGeneration({
+                  text_policy: textPolicy as WorkflowGenerationSpec["text_policy"],
+                  text_language: textPolicy === "none" ? null : generation.text_language,
+                })}
+              />
+              {generation.text_policy !== "none" ? (
+                <CompactInput
+                  label={t("agentWorkbench.nodeEditor.textLanguage")}
+                  value={generation.text_language ?? ""}
+                  maxLength={80}
+                  onChange={(text_language) => patchGeneration({ text_language: text_language || null })}
+                />
+              ) : null}
+
+              <fieldset className="space-y-3 border-t border-zinc-200 pt-4 dark:border-slate-700">
+                <legend className="mb-1 text-xs font-semibold text-zinc-800 dark:text-slate-100">
+                  {t("workflowConfirmation.deliverySpec")}
+                </legend>
+                <CheckboxField
+                  label={t("agentWorkbench.nodeEditor.deliveryEnabled")}
+                  checked={delivery !== null}
+                  onChange={(enabled) => editor.update({
+                    ...editor.draft,
+                    delivery: enabled ? defaultDeliverySpec() : null,
+                  })}
+                />
+                {delivery ? (
+                  <>
+                    <div className="grid grid-cols-2 gap-2">
+                      <CompactNumberInput label={t("agentWorkbench.nodeEditor.width")} value={delivery.width} min={1} max={16384} onChange={(width) => width !== null && patchDelivery({ width })} />
+                      <CompactNumberInput label={t("agentWorkbench.nodeEditor.height")} value={delivery.height} min={1} max={16384} onChange={(height) => height !== null && patchDelivery({ height })} />
+                      <CompactSelect label={t("agentWorkbench.nodeEditor.format")} value={delivery.format} options={selectOptions(["png", "jpeg", "webp"], t)} onChange={(format) => patchDelivery({ format: format as WorkflowDeliverySpec["format"] })} />
+                      <CompactSelect
+                        label={t("agentWorkbench.nodeEditor.fit")}
+                        value={delivery.fit}
+                        options={selectOptions(["contain", "cover"], t)}
+                        onChange={(fitValue) => {
+                          const fit = fitValue as WorkflowDeliverySpec["fit"];
+                          patchDelivery({
+                            fit,
+                            crop_anchor: fit === "contain" ? null : delivery.crop_anchor,
+                            background_color: fit === "cover" ? null : delivery.background_color,
+                          });
+                        }}
+                      />
+                    </div>
+                    <CompactNumberInput label={t("agentWorkbench.nodeEditor.maxBytes")} value={delivery.max_byte_size ?? null} min={1} optional onChange={(max_byte_size) => patchDelivery({ max_byte_size })} />
+                    {delivery.fit === "contain" ? (
+                      <CompactInput label={t("agentWorkbench.nodeEditor.backgroundColor")} value={delivery.background_color ?? ""} maxLength={7} placeholder="#FFFFFF" onChange={(background_color) => patchDelivery({ background_color: nullableText(background_color) })} />
+                    ) : (
+                      <CompactSelect label={t("agentWorkbench.nodeEditor.cropAnchor")} value={delivery.crop_anchor ?? "center"} options={selectOptions(["center", "top", "bottom", "left", "right"], t)} onChange={(crop_anchor) => patchDelivery({ crop_anchor: crop_anchor as NonNullable<WorkflowDeliverySpec["crop_anchor"]> })} />
+                    )}
+                  </>
+                ) : null}
+              </fieldset>
+            </div>
+          )}
+        />
+      </FieldGroup>
+    </AutosaveEditorForm>
+  );
+}
+
+function AutosaveEditorForm<T>({
   children,
   busy,
-  dirty,
-  onSubmit,
+  editor,
   onFlushRegistration,
 }: {
   children: React.ReactNode;
   busy: boolean;
-  dirty: boolean;
-  onSubmit: () => Promise<unknown>;
-  onFlushRegistration: (flush: (() => Promise<void>) | null) => void;
+  editor: V2NodeDraftAutosave<T>;
+  onFlushRegistration: (flush: V2NodeInspectorFlush | null) => void;
 }) {
   const { t } = useI18n();
   useEffect(() => {
-    const flush = async () => {
-      if (dirty) {
-        await onSubmit();
-      }
-    };
-    onFlushRegistration(flush);
+    onFlushRegistration(editor.flush);
     return () => onFlushRegistration(null);
-  }, [dirty, onFlushRegistration, onSubmit]);
+  }, [editor.flush, onFlushRegistration]);
   return (
     <form
       className="config-bubble space-y-4 rounded-2xl p-4 shadow-sm"
       onSubmit={(event) => {
         event.preventDefault();
-        void onSubmit();
+        void editor.flush(true).catch(() => undefined);
       }}
     >
       {children}
-      <button type="submit" disabled={busy} className="btn-primary-spring inline-flex h-10 w-full items-center justify-center rounded-xl px-3 text-xs font-semibold">
-        {busy ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <Save size={14} className="mr-1.5" />}
-        {t("detail.save")}
-      </button>
+      {editor.dirty || editor.status === "failed" ? (
+        <div className="grid grid-cols-2 gap-2 border-t border-zinc-200 pt-4 dark:border-slate-700">
+          <button
+            type="button"
+            onClick={editor.discard}
+            disabled={busy}
+            className="btn-secondary-spring inline-flex h-10 items-center justify-center rounded-xl px-3 text-xs font-semibold"
+          >
+            <Undo2 size={14} className="mr-1.5" />
+            {t("settings.discard")}
+          </button>
+          <button type="submit" disabled={busy} className="btn-primary-spring inline-flex h-10 items-center justify-center rounded-xl px-3 text-xs font-semibold">
+            {busy || editor.status === "saving" ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <Save size={14} className="mr-1.5" />}
+            {t("detail.save")}
+          </button>
+        </div>
+      ) : null}
     </form>
+  );
+}
+
+function PromptEditorForm({
+  children,
+  busy,
+  dirty,
+  onSubmit,
+  onDiscard,
+}: {
+  children: React.ReactNode;
+  busy: boolean;
+  dirty: boolean;
+  onSubmit: () => Promise<unknown>;
+  onDiscard: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <form
+      className="config-bubble space-y-4 rounded-2xl p-4 shadow-sm"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void onSubmit().catch(() => undefined);
+      }}
+    >
+      {children}
+      <div className="grid grid-cols-2 gap-2 border-t border-zinc-200 pt-4 dark:border-slate-700">
+        <button
+          type="button"
+          onClick={onDiscard}
+          disabled={busy || !dirty}
+          className="btn-secondary-spring inline-flex h-10 items-center justify-center rounded-xl px-3 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Undo2 size={14} className="mr-1.5" />
+          {t("settings.discard")}
+        </button>
+        <button
+          type="submit"
+          disabled={busy || !dirty}
+          className="btn-primary-spring inline-flex h-10 items-center justify-center rounded-xl px-3 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {busy ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <Save size={14} className="mr-1.5" />}
+          {t("agentWorkbench.nodeEditor.savePromptVersion")}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function NodeImagePreview({ image, onPreview }: { image: DownloadableImage; onPreview: (image: DownloadableImage) => void }) {
+  const { t } = useI18n();
+  return (
+    <div className="relative overflow-hidden rounded-xl border border-zinc-200 dark:border-slate-700">
+      <button
+        type="button"
+        onClick={() => onPreview(image)}
+        className={`block aspect-[4/3] w-full ${IMAGE_PREVIEW_SURFACE_CLASS_NAME}`}
+        aria-label={t("detail.previewImage", { alt: image.alt })}
+      >
+        <img src={image.previewUrl} alt={image.alt} className="h-full w-full object-contain" />
+      </button>
+      <DownloadLink image={image} variant="overlay" />
+    </div>
   );
 }
 
@@ -602,11 +977,21 @@ function SectionTitle({ title }: { title: string }) {
   return <h4 className="text-xs font-semibold text-zinc-800 dark:text-slate-100">{title}</h4>;
 }
 
-function TextInput({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+function TextInput({
+  label,
+  value,
+  maxLength,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  maxLength?: number;
+  onChange: (value: string) => void;
+}) {
   return (
     <label className="block">
       <span className="mb-1.5 block text-[10px] font-semibold text-zinc-500 dark:text-slate-400">{label}</span>
-      <input value={value} onChange={(event) => onChange(event.target.value)} className="input-premium h-10 w-full px-3 text-xs outline-none" />
+      <input value={value} maxLength={maxLength} onChange={(event) => onChange(event.target.value)} className="input-premium h-10 w-full px-3 text-xs outline-none" />
     </label>
   );
 }
@@ -616,15 +1001,6 @@ function NumberInput({ label, value, min, max, onChange }: { label: string; valu
     <label className="block">
       <span className="mb-1.5 block text-[10px] font-semibold text-zinc-500 dark:text-slate-400">{label}</span>
       <input type="number" value={value} min={min} max={max} onChange={(event) => onChange(Number(event.target.value))} className="input-premium h-10 w-full px-3 text-xs outline-none" />
-    </label>
-  );
-}
-
-function OptionalNumberInput({ label, value, min, onChange }: { label: string; value: number | null; min?: number; onChange: (value: number | null) => void }) {
-  return (
-    <label className="block">
-      <span className="mb-1.5 block text-[10px] font-semibold text-zinc-500 dark:text-slate-400">{label}</span>
-      <input type="number" value={value ?? ""} min={min} onChange={(event) => onChange(event.target.value ? Number(event.target.value) : null)} className="input-premium h-10 w-full px-3 text-xs outline-none" />
     </label>
   );
 }
@@ -654,6 +1030,10 @@ function selectOptionLabel(option: string, t: ReturnType<typeof useI18n>["t"]): 
   }
   const key = SELECT_OPTION_LABEL_KEYS[option as keyof typeof SELECT_OPTION_LABEL_KEYS];
   return key ? t(key) : option;
+}
+
+function selectOptions(options: readonly string[], t: ReturnType<typeof useI18n>["t"]) {
+  return options.map((option) => ({ value: option, label: selectOptionLabel(option, t) }));
 }
 
 function CheckboxField({ label, checked, onChange }: { label: string; checked: boolean; onChange: (checked: boolean) => void }) {
@@ -715,55 +1095,8 @@ function factSourceLabel(source: WorkflowDraftProductFact["source_type"], t: Ret
   return t(keys[source]);
 }
 
-function parseGenerationSpec(value: unknown): WorkflowGenerationSpec | null {
-  if (!isRecord(value)) return null;
-  const candidate = value as Partial<WorkflowGenerationSpec>;
-  if (
-    typeof candidate.aspect_ratio !== "string"
-    || !["standard", "high", "ultra"].includes(candidate.resolution_tier ?? "")
-    || !["draft", "standard", "high"].includes(candidate.quality_intent ?? "")
-    || !["low", "medium", "high"].includes(candidate.reference_fidelity ?? "")
-    || !["auto", "opaque", "transparent"].includes(candidate.background_intent ?? "")
-    || !["none", "allow", "required"].includes(candidate.text_policy ?? "")
-  ) return null;
-  return candidate as WorkflowGenerationSpec;
-}
-
-function parseDeliverySpec(value: unknown): WorkflowDeliverySpec | null {
-  if (value == null) return null;
-  if (!isRecord(value)) return null;
-  const candidate = value as Partial<WorkflowDeliverySpec>;
-  if (
-    typeof candidate.width !== "number"
-    || typeof candidate.height !== "number"
-    || !["png", "jpeg", "webp"].includes(candidate.format ?? "")
-    || !["contain", "cover"].includes(candidate.fit ?? "")
-  ) return null;
-  return candidate as WorkflowDeliverySpec;
-}
-
-function defaultDeliverySpec(): WorkflowDeliverySpec {
-  return {
-    width: 1200,
-    height: 1200,
-    format: "png",
-    max_byte_size: null,
-    fit: "contain",
-    background_color: null,
-    crop_anchor: null,
-  };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function sameJson(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
-}
-
-function textConfig(value: unknown): string {
-  return typeof value === "string" ? value : "";
 }
 
 function nullableText(value: string): string | null {
@@ -775,10 +1108,56 @@ function splitLines(value: string): string[] {
   return value.split("\n").map((item) => item.trim()).filter(Boolean);
 }
 
-function formatFactValue(value: WorkflowDraftProductFact["value"]): string {
-  if (typeof value === "string") return value;
-  if (value === null) return "null";
-  return JSON.stringify(value);
+function formatPromptArtifactPreview(
+  payload: WorkflowImagePromptPayloadV1,
+  t: ReturnType<typeof useI18n>["t"],
+): string {
+  const lines: string[] = [];
+  const section = (title: string, values: string[]) => {
+    const visible = values.map((value) => value.trim()).filter(Boolean);
+    if (!visible.length) return;
+    if (lines.length) lines.push("");
+    lines.push(`## ${title}`, ...visible);
+  };
+  const bullets = (values: string[]) => values.map((value) => `- ${value}`);
+
+  section(t("workflowConfirmation.designGoal"), [payload.design_goal]);
+  section(t("workflowConfirmation.sharedRules"), bullets(payload.shared_rules));
+  section(t("workflowConfirmation.productFidelity"), [
+    ...bullets(payload.product_fidelity.requirements),
+    `${t("agentWorkbench.nodeEditor.productPresent")}: ${payload.product_fidelity.product_present ? t("agentWorkbench.nodeEditor.factTrue") : t("agentWorkbench.nodeEditor.factFalse")}`,
+  ]);
+  section(t("workflowConfirmation.creativeBoundary"), bullets(payload.creative_boundary));
+  section(t("workflowConfirmation.composition"), [
+    `${t("agentWorkbench.nodeEditor.viewpoint")}: ${payload.composition.viewpoint}`,
+    `${t("agentWorkbench.nodeEditor.productShare")}: ${payload.composition.product_share_percent}%`,
+    payload.composition.layout,
+    ...bullets(payload.composition.copy_regions),
+  ]);
+  section(t("workflowConfirmation.content"), [
+    ...bullets(payload.content.focus),
+    ...bullets(payload.content.selling_points),
+    payload.content.background,
+    ...bullets(payload.content.decorations),
+  ]);
+  section(t("workflowConfirmation.textContent"), [
+    payload.text.headline ? `${t("agentWorkbench.nodeEditor.headline")}: ${payload.text.headline}` : "",
+    payload.text.subtitle ? `${t("agentWorkbench.nodeEditor.subtitle")}: ${payload.text.subtitle}` : "",
+    payload.text.body ? `${t("agentWorkbench.nodeEditor.body")}: ${payload.text.body}` : "",
+  ]);
+  section(t("workflowConfirmation.atmosphere"), [
+    ...bullets(payload.atmosphere.keywords),
+    payload.atmosphere.lighting,
+  ]);
+  payload.images.forEach((image, index) => {
+    section(t("agentWorkbench.nodeEditor.perImageNumber", { number: index + 1 }), [
+      image.instruction,
+      image.viewpoint ? `${t("agentWorkbench.nodeEditor.viewpoint")}: ${image.viewpoint}` : "",
+      ...bullets(image.composition_adjustments),
+      image.lighting ? `${t("agentWorkbench.nodeEditor.lighting")}: ${image.lighting}` : "",
+    ]);
+  });
+  return lines.join("\n");
 }
 
 function errorDetail(error: unknown, fallback: string): string {

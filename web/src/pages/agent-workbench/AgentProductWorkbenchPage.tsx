@@ -32,7 +32,10 @@ import {
   type RecipeSourceSelection,
 } from "../product-workflow-v2/recipeSource";
 import { WorkflowRecipeDialog } from "../product-workflow-v2/WorkflowDialogs";
-import { V2NodeInspector } from "../product-workflow-v2/V2NodeInspector";
+import {
+  V2NodeInspector,
+  type V2NodeInspectorFlush,
+} from "../product-workflow-v2/V2NodeInspector";
 import { V2NodeRunsPanel } from "../product-workflow-v2/V2NodeRunsPanel";
 import { AgentConversationPanel } from "./AgentConversationPanel";
 import {
@@ -70,7 +73,7 @@ const EMPTY_CANVAS_CONTEXT: ProductWorkflowV2CanvasContext = {
   openFolderId: null,
   selectedNodeIds: [],
 };
-const EMPTY_INSPECTOR_FLUSH = async () => undefined;
+const EMPTY_INSPECTOR_FLUSH: V2NodeInspectorFlush = async () => null;
 
 export function AgentProductWorkbenchPage({
   bootstrap,
@@ -92,7 +95,11 @@ export function AgentProductWorkbenchPage({
   const [recipeError, setRecipeError] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<DownloadableImage | null>(null);
   const recipeApplyKeysRef = useRef(new Map<string, string>());
-  const inspectorFlushRef = useRef<() => Promise<void>>(EMPTY_INSPECTOR_FLUSH);
+  const inspectorFlushRef = useRef<V2NodeInspectorFlush>(EMPTY_INSPECTOR_FLUSH);
+  const sidebarTransitionSequenceRef = useRef(0);
+  const sidebarToolRef = useRef<AgentSidebarToolId>(sidebarTool);
+
+  sidebarToolRef.current = sidebarTool;
 
   const bootstrapSnapshot = useMemo<ActiveProductWorkflowV2>(() => ({
     latest_revision: bootstrap.latest_workflow_revision,
@@ -151,13 +158,34 @@ export function AgentProductWorkbenchPage({
         : next
     ));
   }, []);
-  const openSidebarTool = useCallback((tool: "details" | "runs" | "library") => {
-    setSidebarTool(tool);
-  }, []);
-  const registerInspectorFlush = useCallback((flush: (() => Promise<void>) | null) => {
+  const registerInspectorFlush = useCallback((flush: V2NodeInspectorFlush | null) => {
     inspectorFlushRef.current = flush ?? EMPTY_INSPECTOR_FLUSH;
   }, []);
   const flushInspector = useCallback(() => inspectorFlushRef.current(), []);
+  const requestSidebarTool = useCallback(async (
+    tool: AgentSidebarToolId,
+    flushWhenActive = false,
+  ): Promise<boolean> => {
+    if (!flushWhenActive && tool === sidebarToolRef.current) {
+      return true;
+    }
+    const sequence = ++sidebarTransitionSequenceRef.current;
+    try {
+      await flushInspector();
+    } catch {
+      return false;
+    }
+    if (sequence !== sidebarTransitionSequenceRef.current) {
+      return false;
+    }
+    sidebarToolRef.current = tool;
+    setSidebarTool(tool);
+    return true;
+  }, [flushInspector]);
+  const openSidebarTool = useCallback(
+    (tool: "details" | "runs" | "library") => requestSidebarTool(tool, true),
+    [requestSidebarTool],
+  );
   const updateReferenceNode = useCallback((nodeId: string | null) => {
     setReferenceNodeId(nodeId);
   }, []);
@@ -220,11 +248,12 @@ export function AgentProductWorkbenchPage({
       if (!workflow) {
         throw new Error(t("workflowV2.canvas.noWorkflowShort"));
       }
+      const flushedEditVersion = await flushInspector();
       const input = {
         source_type: operation.source.source_type,
         folder_id: operation.source.folder_id,
         node_ids: operation.source.node_ids,
-        expected_edit_version: workflow.edit_version,
+        expected_edit_version: flushedEditVersion ?? workflow.edit_version,
         title: operation.title,
         description: operation.description,
       };
@@ -258,6 +287,7 @@ export function AgentProductWorkbenchPage({
             : current,
         );
         await onRefetchBootstrap();
+        sidebarToolRef.current = "agent";
         setSidebarTool("agent");
       } else {
         await queryClient.invalidateQueries({ queryKey: ["workflow-recipes"] });
@@ -322,9 +352,10 @@ export function AgentProductWorkbenchPage({
           workflow={workflow}
           node={selectedNode}
           facts={bootstrap.workflow_draft.current_revision?.payload.facts ?? []}
-          onBindReference={(node) => {
-            setReferenceNodeId(node.id);
-            setSidebarTool("library");
+          onBindReference={async (node) => {
+            if (await requestSidebarTool("library")) {
+              setReferenceNodeId(node.id);
+            }
           }}
           onPreviewImage={setPreviewImage}
           onWorkflowChanged={refetchWorkflow}
@@ -446,7 +477,7 @@ export function AgentProductWorkbenchPage({
       <AgentWorkbenchShell
         workflowAvailable={Boolean(workflow)}
         activeSidebarTool={sidebarTool}
-        onSidebarToolChange={(toolId) => setSidebarTool(toolId as AgentSidebarToolId)}
+        onSidebarToolChange={(toolId) => requestSidebarTool(toolId as AgentSidebarToolId)}
         sidebarTools={sidebarTools}
         canvasContent={workflow ? (
           <ProductWorkflowV2CanvasPanel
@@ -461,9 +492,14 @@ export function AgentProductWorkbenchPage({
             onRefetchWorkflow={refetchWorkflow}
             onCanvasContextChange={handleCanvasContextChange}
             onOpenSidebarTool={openSidebarTool}
-            onBeforeRunWorkflow={flushInspector}
+            onBeforeWorkflowAction={flushInspector}
             onReferenceNodeChange={updateReferenceNode}
-            onSaveRecipe={(source) => {
+            onSaveRecipe={async (source) => {
+              try {
+                await flushInspector();
+              } catch {
+                return;
+              }
               setRecipeError(null);
               setRecipeDialog({ kind: "create", source });
             }}

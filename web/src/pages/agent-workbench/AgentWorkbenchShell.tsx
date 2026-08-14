@@ -25,7 +25,7 @@ interface AgentWorkbenchShellProps {
   agentContent: ReactNode;
   sidebarTools?: AgentWorkbenchSidebarTool[];
   activeSidebarTool?: string;
-  onSidebarToolChange?: (toolId: string) => void;
+  onSidebarToolChange?: (toolId: string) => boolean | Promise<boolean>;
   confirmationContent?: ReactNode;
 }
 
@@ -117,10 +117,13 @@ export function AgentWorkbenchShell({
     }
   }, [activeSidebarTool, inspector.setCollapsed, workflowAvailable]);
 
-  const selectSidebarTool = (toolId: string) => {
+  const selectSidebarTool = async (toolId: string) => {
+    const accepted = await onSidebarToolChange?.(toolId);
+    if (accepted === false) {
+      return;
+    }
     inspector.setCollapsed(false);
     setMobileView("agent");
-    onSidebarToolChange?.(toolId);
   };
 
   const regions = deriveAgentWorkbenchRegionState({

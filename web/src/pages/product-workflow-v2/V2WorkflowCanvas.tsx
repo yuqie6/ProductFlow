@@ -25,8 +25,7 @@ import {
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 
-import { api } from "../../lib/api";
-import { sanitizeFilenamePart, type DownloadableImage } from "../../lib/image-downloads";
+import type { DownloadableImage } from "../../lib/image-downloads";
 import { useI18n } from "../../lib/preferences";
 import type {
   ProductWorkflowV2,
@@ -65,9 +64,11 @@ import {
   V2_NODE_WIDTH,
   type GlobalFolderNode,
 } from "./graph";
+import { workflowAssetThumbnailUrl, workflowNodeDownloadableImage } from "./nodeImages";
 
 const FOLDER_CARD_WIDTH = 340;
 const FOLDER_CARD_HEIGHT = 210;
+const assetThumbnailUrl = workflowAssetThumbnailUrl;
 const V2_SNAP_GRID: [number, number] = [24, 24];
 const V2_PRO_OPTIONS = { hideAttribution: true };
 const V2_CONTROL_FIT_VIEW_OPTIONS = { padding: 0.22, duration: 180, maxZoom: 1.05 };
@@ -111,6 +112,7 @@ export interface WorkflowRevealVisibility {
 
 interface V2WorkflowCanvasProps {
   workflow: ProductWorkflowV2;
+  resetVersion?: number;
   revealVisibility?: WorkflowRevealVisibility;
   openFolderId: string | null;
   viewport: WorkflowCanvasViewport | null;
@@ -159,29 +161,8 @@ function nodeStatusLabel(status: WorkflowNodeStatus, t: ReturnType<typeof useI18
   return t(keys[status]);
 }
 
-function nodeAssetId(node: WorkflowNodeV2): string | null {
-  if (node.bound_image_asset_id) {
-    return node.bound_image_asset_id;
-  }
-  const resultAssetId = node.output_json?.result_asset_id;
-  return typeof resultAssetId === "string" && resultAssetId ? resultAssetId : null;
-}
-
-function assetThumbnailUrl(assetId: string): string {
-  return api.toApiUrl(`/api/v2/product-image-assets/${assetId}/download?variant=thumbnail`);
-}
-
 function nodeImage(node: WorkflowNodeV2): DownloadableImage | null {
-  const assetId = nodeAssetId(node);
-  if (!assetId) {
-    return null;
-  }
-  return {
-    previewUrl: assetThumbnailUrl(assetId),
-    downloadUrl: api.toApiUrl(`/api/v2/product-image-assets/${assetId}/download`),
-    filename: `${sanitizeFilenamePart(node.title, node.key || "workflow-image")}.png`,
-    alt: node.title,
-  };
+  return workflowNodeDownloadableImage(node, "thumbnail");
 }
 
 const WorkflowNodeCard = memo(function WorkflowNodeCard({
@@ -535,6 +516,7 @@ function isRealNode(node: WorkflowCanvasNode): node is Node<WorkflowNodeData, "w
 
 export function V2WorkflowCanvas({
   workflow,
+  resetVersion = 0,
   revealVisibility,
   openFolderId,
   viewport,
@@ -597,7 +579,7 @@ export function V2WorkflowCanvas({
     locked: structureBusy,
     connectionEditing: false,
   });
-  const graphIdentity = `${workflow.id}:${openFolderId ?? "global"}:${workflow.edit_version}`;
+  const graphIdentity = `${workflow.id}:${openFolderId ?? "global"}:${workflow.edit_version}:${resetVersion}`;
   const selectionScope = `${workflow.id}:${openFolderId ?? "global"}`;
   const graphNodes = useMemo(
     () => toCanvasNodes(workflow, openFolderId, {

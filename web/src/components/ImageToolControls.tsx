@@ -1,8 +1,7 @@
 import { DEFAULT_IMAGE_TOOL_ALLOWED_FIELDS } from "../lib/imageToolOptions";
 import { useI18n } from "../lib/preferences";
 import type { ImageToolOptionKey, ImageToolOptions } from "../lib/types";
-import type { SelectFieldOption } from "./SelectField";
-import { SelectField } from "./SelectField";
+import { CompactInput, CompactSelect } from "./CompactFormFields";
 
 interface ImageToolControlsProps {
   value: ImageToolOptions;
@@ -142,57 +141,5 @@ export function ImageToolControls({
         ) : null}
       </div>
     </div>
-  );
-}
-
-function CompactInput({
-  label,
-  value,
-  placeholder,
-  inputMode,
-  onChange,
-}: {
-  label: string;
-  value: string | number;
-  placeholder?: string;
-  inputMode?: "text" | "numeric";
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label className="block">
-      <span className="mb-1 block text-[11px] font-semibold text-slate-500">{label}</span>
-      <input
-        value={value}
-        inputMode={inputMode}
-        placeholder={placeholder}
-        onChange={(event) => onChange(event.target.value)}
-        className="h-9 w-full rounded-lg border border-slate-200 bg-slate-50 px-2 text-xs text-slate-900 outline-none transition-colors placeholder:text-slate-400 focus:border-indigo-500 focus:bg-white focus:ring-2 focus:ring-indigo-100"
-      />
-    </label>
-  );
-}
-
-function CompactSelect({
-  label,
-  value,
-  onChange,
-  options,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  options: SelectFieldOption[];
-}) {
-  return (
-    <label className="block">
-      <span className="mb-1 block text-[11px] font-semibold text-slate-500">{label}</span>
-      <SelectField
-        value={value}
-        options={options}
-        onChange={onChange}
-        radius="lg"
-        visualSize="sm"
-      />
-    </label>
   );
 }
