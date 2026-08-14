@@ -1707,8 +1707,9 @@ state; each image node still persists exactly one canonical ProductImageAsset pl
 
 ### 1. Scope / Trigger
 
-- Trigger: changing schema-v2 folder membership/layout, `ProductWorkflow.edit_version`, recipe extraction/versioning,
-  recipe application, or the version-zero WorkflowDraft state.
+- Trigger: changing schema-v2 folder membership/layout, typed node/edge structure commands,
+  `ProductWorkflow.edit_version`, recipe extraction/versioning, recipe application, or the version-zero WorkflowDraft
+  state.
 - These contracts apply to materialized schema-v2 workflows. Schema-v1 workflow mutation and `UserCanvasTemplate`
   remain separate compatibility paths.
 
@@ -1724,6 +1725,8 @@ state; each image node still persists exactly one canonical ProductImageAsset pl
 - Canvas APIs under `/api/v2/products/{product_id}/workflows/{workflow_id}`:
   - `POST /folders`, `PATCH /folders/{folder_id}`, `PUT /folders/{folder_id}/members`,
     `DELETE /folders/{folder_id}`, `POST /folders/{folder_id}/translate`, and `PATCH /layout`;
+  - `POST /reference-nodes`, `POST /nodes/{node_id}/duplicate`, `DELETE /nodes/{node_id}`,
+    `POST /edges`, and `DELETE /edges/{edge_id}`;
   - every request carries `expected_edit_version`; every response returns `changed`, latest `edit_version`, sorted
     `dissolved_folder_ids`, and the complete latest workflow.
 - Recipe APIs:
@@ -1739,13 +1742,30 @@ state; each image node still persists exactly one canonical ProductImageAsset pl
   nested folders cannot be represented by the backend contract.
 - Successful canvas changes increment `edit_version` once. No-op rename, zero translation, or unchanged layout/member
   sets keep the version unchanged. `revision` remains the complete Draft materialization sequence.
+- Typed structure commands lock and validate the complete current graph in one transaction. They reject inactive/schema-v1
+  workflows, stale edit versions, duplicate edges, unsupported node-type pairs, cycles, missing lineage, and any topology
+  change while a `WorkflowRun` for the workflow remains `running`, including the all-node-runs-terminal finalization
+  window.
+- Reference creation is the only standalone node-create contract. Duplicate preserves a reference binding, creates one
+  image variant with a matching Prompt Artifact image plan, or copies one prompt node plus its complete image group and
+  internal lineage. Product context remains a singleton and cannot be copied or deleted. Reference nodes remain capped at
+  six; image nodes remain capped at six per type and thirty per workflow.
+- Server-owned handles are `facts -> facts`, `asset -> reference`, `prompt -> prompt`, and `image -> reference` for the
+  supported type pairs. Product-context-to-prompt and matching-prompt-to-image lineage edges cannot be deleted. Optional
+  edge changes reset reachable runnable nodes to idle and clear their failure state.
+- Deleting one image node appends a Prompt Artifact version without that image plan. Deleting the final image deletes its
+  prompt group; deleting a prompt deletes the complete owned image group. Connected edges and node-run rows are removed,
+  and empty folders dissolve in the same transaction. A bound `ProductImageAsset` remains in the product gallery after
+  its node is deleted.
 - Alembic `20260813_0036` removes persisted folder geometry after deleting empty schema-v2 folders. Empty schema-v1
   folders remain. Downgrade fails while any recipe/recipe-version/recipe-seed data exists; operators must export or remove
   that data explicitly before retrying.
-- `RecipePayloadV1` is built from typed Draft lineage through a whitelist. It uses recipe-local keys and may contain graph
-  shape, relative positions, image types/counts, generation/delivery specs, prompt field shape, reference roles, boundary
-  requirements, and visual requirements. Product facts, asset/entity IDs, prompt prose, outputs, cover state, provider
-  data, and run history are rejected recursively. Limits are 128 nodes, 256 edges, 32 folders, and 512 KiB canonical JSON.
+- `RecipePayloadV1` is built through a whitelist from the current runtime nodes, folders, edges, current Prompt Artifact
+  versions, and current Generation/DeliverySpec values. Source Draft and VisualSystem hashes remain lineage-integrity
+  gates; they do not replace edited runtime graph authority. Recipe-local keys may represent graph shape, relative
+  positions, image types/counts, generation/delivery specs, prompt field shape, reference roles, boundary requirements,
+  and visual requirements. Product facts, asset/entity IDs, prompt prose, outputs, cover state, provider data, and run
+  history are rejected recursively. Limits are 128 nodes, 256 edges, 32 folders, and 512 KiB canonical JSON.
 - Recipe kind is immutable. A `workflow_recipe` version must be extracted from a complete workflow; a `recipe_fragment`
   version must come from a folder or non-empty selection.
 - Applying a recipe creates a collecting Draft with no revision, an immutable seed, and one Agent conversation. It does
@@ -1759,6 +1779,10 @@ state; each image node still persists exactly one canonical ProductImageAsset pl
 - Missing/inactive/schema-v1 workflow, cross-workflow node/folder, or stale `expected_edit_version` -> `404` or `409`;
   the mutation rolls back.
 - Empty create set, duplicate node IDs, invalid title, nested/non-v2 member, or empty layout batch -> validation failure.
+- Any running workflow run during node/edge create, duplicate, or delete -> `409`; no graph, Prompt Artifact, status, or
+  edit-version change is committed.
+- Unsupported node pair, duplicate edge, cycle, protected-lineage deletion, orphaned prompt/image group, or reference/image
+  capacity overflow -> `400`/`409`; the complete structure mutation rolls back.
 - Recipe source kind differs from immutable recipe kind, recipe version is stale/archived, or source Draft/visual hash
   drifts -> `400`/`409`; no version is appended.
 - Forbidden key or any current entity ID appears anywhere in the extracted payload -> fail-closed validation and full
@@ -1771,6 +1795,12 @@ state; each image node still persists exactly one canonical ProductImageAsset pl
 
 - Good: move the last member from folder A into folder B; one response reports A as dissolved, keeps every node, and
   increments `edit_version` once.
+- Good: duplicate an image node; one new image plan is appended to a new immutable Prompt Artifact version, the new node
+  receives canonical lineage edges, and the source image asset/output history is not copied.
+- Good: delete an image node whose generated asset is in the gallery; the node and its graph lineage disappear while the
+  canonical gallery asset remains available.
+- Good: edit runtime generation specs and the current Prompt Artifact, duplicate a prompt group, and save a recipe; the
+  saved version reflects the current graph rather than the original Draft topology.
 - Good: save a full recipe from product A, apply it to product B, let the Agent bind B's facts and references, then confirm
   and materialize version 1.
 - Base: archive a recipe identity; existing immutable versions and Draft seeds remain readable while default listing no
@@ -1784,8 +1814,12 @@ state; each image node still persists exactly one canonical ProductImageAsset pl
 
 - Folder application/API tests cover CRUD, cross-folder moves, automatic dissolution, no-ops, translation, batch layout,
   stale edit version, duplicate/unknown/cross-workflow/v1 inputs, and complete response serialization.
-- Recipe tests cover full/folder/selection extraction, local key allocation, boundary summaries, recursive leak rejection,
-  append-only versions, archive, idempotent application, version-zero artifact sync, and cross-product materialization.
+- Graph-command application/API tests cover standalone reference creation, all supported duplicate/delete paths, exact
+  edge pairs, cycle/duplicate/lineage rejection, capacity limits, active workflow-run locking, rollback, edit-version
+  increments, folder dissolution, and gallery-asset retention after node deletion.
+- Recipe tests cover full/folder/selection extraction, current runtime Prompt Artifact and generation-spec changes,
+  duplicated groups, local key allocation, boundary summaries, recursive leak rejection, append-only versions, archive,
+  idempotent application, version-zero artifact sync, and cross-product materialization.
 - Migration tests retain an empty schema-v1 folder, remove an empty schema-v2 folder, preserve member folders, perform a
   safe round trip, reject unsafe downgrade, and upgrade SQLite to head.
 - Run the isolated PostgreSQL canvas/recipe gate because row locks, partial unique indexes, enum storage, and transaction
@@ -1810,6 +1844,28 @@ workflow.edit_version += 1
 ```
 
 The backend persists one coordinate system and one canvas edit sequence; folder cards remain a derived projection.
+
+Wrong:
+
+```python
+recipe_payload = extract_recipe_payload(source_draft.payload_json)
+```
+
+Correct:
+
+```python
+recipe_payload = extract_recipe_payload(
+    workflow=current_runtime_workflow,
+    visual_system_payload=visual_system_payload,
+    source_type=source_type,
+    folder_id=folder_id,
+    node_ids=node_ids,
+    forbidden_entity_ids=forbidden_entity_ids,
+)
+```
+
+Source Draft and visual hashes verify lineage. The saved recipe structure and generation intent come from the current
+runtime workflow so manual canvas edits are preserved.
 
 ## Scenario: Deterministic delivery renditions
 

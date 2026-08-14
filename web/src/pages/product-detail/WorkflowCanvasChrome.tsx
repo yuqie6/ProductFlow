@@ -39,6 +39,7 @@ export function WorkflowCanvasNodePort({
   label,
   connectable,
   visualState = "idle",
+  visualScale = 1,
 }: {
   id?: string | null;
   type: "source" | "target";
@@ -46,6 +47,7 @@ export function WorkflowCanvasNodePort({
   label: string;
   connectable: boolean;
   visualState?: WorkflowCanvasPortVisualState;
+  visualScale?: number;
 }) {
   return (
     <Handle
@@ -53,7 +55,12 @@ export function WorkflowCanvasNodePort({
       type={type}
       position={type === "source" ? Position.Right : Position.Left}
       isConnectable={connectable}
-      style={{ top: typeof top === "number" ? `${top}%` : top }}
+      style={{
+        top: typeof top === "number" ? `${top}%` : top,
+        transform: visualScale === 1
+          ? undefined
+          : `translate(${type === "source" ? "50%" : "-50%"}, -50%) scale(${visualScale})`,
+      }}
       className={`${type === "source" ? SOURCE_PORT_CLASS_NAME : TARGET_PORT_CLASS_NAME} ${
         PORT_STATE_CLASS_NAMES[visualState]
       } ${type === "source" ? "!right-[-10px]" : "!left-[-9px]"}`}

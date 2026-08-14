@@ -933,6 +933,22 @@ export interface WorkflowNodeV2 {
   updated_at: string;
 }
 
+export interface CreateReferenceWorkflowNodeV2Input {
+  expected_edit_version: number;
+  title: string;
+  role: string;
+  label: string;
+  position_x: number;
+  position_y: number;
+  folder_id?: string | null;
+}
+
+export interface CreateWorkflowEdgeV2Input {
+  expected_edit_version: number;
+  source_node_id: string;
+  target_node_id: string;
+}
+
 export interface WorkflowPromptArtifactVersionV2 {
   artifact_id: string;
   artifact_title: string;

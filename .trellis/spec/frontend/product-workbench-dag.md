@@ -752,6 +752,9 @@ The visible context selects a source only within the immutable recipe kind.
   compact browse/edit/select tabs. `workflowCanvasInteraction` owns the schema-neutral drag, connect, lasso, modifier,
   pan-key, zoom-key, and click-distance policy.
 - `ProductWorkflowV2CanvasPanel` composes the shared canvas controls with v2 graph/folder commands.
+- `V2AddNodePanel` owns the Add inspector tool and opens the typed standalone reference-node dialog.
+- `v2WorkflowHistory` describes reversible server command records and version-identity invalidation; it never stores raw
+  workflow JSON snapshots.
 - `V2NodeInspector` and `V2NodeRunsPanel` consume typed v2 detail/edit/run APIs.
 - `ImageAspectRatioPicker`, `ImageRatioFrame`, `ImageGenerationSettingsTabs`, compact form fields, prompt preview, image
   preview/download, and `SaveStatusBadge` are shared presentation primitives used by the typed v2 inspector.
@@ -801,9 +804,20 @@ The visible context selects a source only within the immutable recipe kind.
   without moving nodes, edit enables persisted node dragging, and select toggles an additive controlled selection while
   keeping the canvas visible. Returning from a folder or completing a parent-owned structure command clears both command
   context and ReactFlow highlights through the controlled selection prop.
-- V2 single-node create/delete/connect/undo controls remain unavailable until typed structure commands enforce v2 folder,
-  Prompt Artifact, one-image-per-node, and lineage invariants. Shared ports remain visible for topology readability, but
-  `connectionEditing: false` keeps them non-connectable until those commands exist.
+- The shared inspector rail keeps Agent, Add, Details, Runs, Library, and user Recipes. Add creates one standalone
+  reference node in the current folder. NodeToolbar duplicates reference/image/prompt-group nodes and confirms typed
+  deletion; product context has no duplicate/delete actions.
+- Shared ports are connectable only in an editable canvas. Exact semantic handles are `facts`, `asset`, `reference`,
+  `prompt`, and `image`; a drop on another visible handle is rejected before any request. Folder projection nodes never
+  become connection endpoints. Client validation supplies immediate feedback, while the typed backend command remains the
+  topology authority.
+- EdgeToolbar exposes deletion only for real optional edges. Product-context-to-prompt and owning-prompt-to-image lineage
+  edges are visibly protected; projected global-folder edges are summaries and cannot be mutated directly.
+- Session history records persisted layout changes, standalone reference creation, node/group duplication, and optional
+  edge creation/deletion. Undo and redo replay typed server commands with the latest accepted edit version. Arbitrary node
+  deletion and folder membership operations clear history because their full Prompt Artifact/lineage state is not safely
+  reconstructible. A workflow switch or externally observed `edit_version` change clears history; a locally accepted
+  mutation version preserves it.
 - The complete-workflow command awaits the registered inspector flush and makes exactly one workflow-run API request. It
   never enumerates nodes in the browser. The existing node toolbar and inspector run action keep the single-node API and
   await the same flush boundary.
@@ -828,6 +842,8 @@ The visible context selects a source only within the immutable recipe kind.
 - Dirty Prompt Artifact -> node/tool/folder/run/structure/recipe transition is rejected until save-new-version or discard.
 - Invalid/failed ordinary autosave -> automatic retry stops; local draft remains; edit or explicit retry is available.
 - Structure command rejected after an optimistic canvas move -> reset visible positions to the server projection.
+- Wrong semantic handle, duplicate edge, self-edge, cycle, folder endpoint, or unsupported node pair -> mark the target
+  invalid and send no create-edge request. A backend conflict still refreshes server authority.
 - Active workflow run -> full-run and structure commands are disabled from persisted run state; Runs continues polling and
   supports workflow-level cancel.
 - Failed retryable workflow run -> Runs exposes retry; a successful response inserts the new run and preserves the source
@@ -846,6 +862,11 @@ The visible context selects a source only within the immutable recipe kind.
 - Good: select a custom `21:9` ratio, preserve it in the visual custom-ratio editor, and save only the typed node intent.
 - Good: retry a partially failed run; the new card contains only failed/blocked nodes while the source card retains its
   successful branch evidence.
+- Good: create a reference node from Add, undo it, redo it, and keep the new server-assigned node ID in the redo record.
+- Good: drag from a reference `asset` port to an image `reference` port; valid-target styling appears and one typed edge
+  command is submitted. Dropping the same source on `prompt` remains invalid.
+- Good: receive an external workflow refresh with another edit version; clear local undo/redo so no stale command is
+  replayed against unrelated graph state.
 - Base: open a four-node folder at 390 px; fit-view shows all real nodes inside the measured canvas and the Canvas/Agent
   segmented control remains usable.
 - Bad: create a second simplified node card, fixed sidebar tab strip, canvas page header, or Agent-owned gallery component.
@@ -868,6 +889,11 @@ The visible context selects a source only within the immutable recipe kind.
   read-only behavior, and additive selection semantics. Real-browser selection checks must enter a folder, select a node,
   return to the global canvas, and assert that both owner state and `.react-flow__node.selected` are cleared without a
   React maximum-update-depth error.
+- Graph/history tests assert exact handle pairs, duplicate/cycle rejection, lineage protection, local-versus-external
+  edit-version invalidation, and server-assigned IDs across create/duplicate/edge undo/redo.
+- Real-browser structure checks create one reference node through Add, verify the node card and default metadata, run
+  undo/redo/undo with node-count and edit-version assertions, and require zero runtime errors at 1440x900, 1024x768, and
+  390x844.
 - Run frontend tests, lint, and production build after any shared inspector, node-card, or route-owner change.
 
 ### 7. Wrong vs Correct

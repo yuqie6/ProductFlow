@@ -12,8 +12,13 @@ from productflow_backend.application.product_workflows import (
     bind_v2_reference_node_asset,
     cancel_v2_workflow_node_run,
     cancel_v2_workflow_run,
+    create_v2_reference_node,
+    create_v2_workflow_edge,
     create_workflow_folder,
+    delete_v2_workflow_edge,
+    delete_v2_workflow_node,
     dissolve_workflow_folder,
+    duplicate_v2_workflow_node,
     get_v2_workflow_node_detail,
     get_v2_workflow_node_run,
     get_v2_workflow_run,
@@ -50,8 +55,11 @@ from productflow_backend.presentation.schemas.workflow_drafts import (
     BindWorkflowReferenceAssetRequest,
     BindWorkflowReferenceAssetResponse,
     ConfirmWorkflowDraftRequest,
+    CreateReferenceWorkflowNodeV2Request,
     CreateWorkflowDraftRequest,
+    CreateWorkflowEdgeV2Request,
     CreateWorkflowFolderRequest,
+    DuplicateWorkflowNodeV2Request,
     MaterializeWorkflowDraftRequest,
     RenameWorkflowFolderRequest,
     SetWorkflowFolderMembersRequest,
@@ -162,6 +170,123 @@ def update_v2_workflow_node_endpoint(
     else:
         raise BusinessValidationError("不支持的 schema-v2 节点编辑请求")
     return serialize_canvas_mutation(result)
+
+
+@router.post(
+    "/products/{product_id}/workflows/{workflow_id}/reference-nodes",
+    response_model=WorkflowCanvasMutationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_v2_reference_node_endpoint(
+    product_id: str,
+    workflow_id: str,
+    payload: CreateReferenceWorkflowNodeV2Request,
+    session: Session = Depends(get_session),
+) -> WorkflowCanvasMutationResponse:
+    return serialize_canvas_mutation(
+        create_v2_reference_node(
+            session,
+            product_id=product_id,
+            workflow_id=workflow_id,
+            expected_edit_version=payload.expected_edit_version,
+            title=payload.title,
+            role=payload.role,
+            label=payload.label,
+            position_x=payload.position_x,
+            position_y=payload.position_y,
+            folder_id=payload.folder_id,
+        )
+    )
+
+
+@router.post(
+    "/products/{product_id}/workflows/{workflow_id}/nodes/{node_id}/duplicate",
+    response_model=WorkflowCanvasMutationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def duplicate_v2_workflow_node_endpoint(
+    product_id: str,
+    workflow_id: str,
+    node_id: str,
+    payload: DuplicateWorkflowNodeV2Request,
+    session: Session = Depends(get_session),
+) -> WorkflowCanvasMutationResponse:
+    return serialize_canvas_mutation(
+        duplicate_v2_workflow_node(
+            session,
+            product_id=product_id,
+            workflow_id=workflow_id,
+            node_id=node_id,
+            expected_edit_version=payload.expected_edit_version,
+        )
+    )
+
+
+@router.delete(
+    "/products/{product_id}/workflows/{workflow_id}/nodes/{node_id}",
+    response_model=WorkflowCanvasMutationResponse,
+)
+def delete_v2_workflow_node_endpoint(
+    product_id: str,
+    workflow_id: str,
+    node_id: str,
+    expected_edit_version: int = Query(ge=0),
+    session: Session = Depends(get_session),
+) -> WorkflowCanvasMutationResponse:
+    return serialize_canvas_mutation(
+        delete_v2_workflow_node(
+            session,
+            product_id=product_id,
+            workflow_id=workflow_id,
+            node_id=node_id,
+            expected_edit_version=expected_edit_version,
+        )
+    )
+
+
+@router.post(
+    "/products/{product_id}/workflows/{workflow_id}/edges",
+    response_model=WorkflowCanvasMutationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_v2_workflow_edge_endpoint(
+    product_id: str,
+    workflow_id: str,
+    payload: CreateWorkflowEdgeV2Request,
+    session: Session = Depends(get_session),
+) -> WorkflowCanvasMutationResponse:
+    return serialize_canvas_mutation(
+        create_v2_workflow_edge(
+            session,
+            product_id=product_id,
+            workflow_id=workflow_id,
+            source_node_id=payload.source_node_id,
+            target_node_id=payload.target_node_id,
+            expected_edit_version=payload.expected_edit_version,
+        )
+    )
+
+
+@router.delete(
+    "/products/{product_id}/workflows/{workflow_id}/edges/{edge_id}",
+    response_model=WorkflowCanvasMutationResponse,
+)
+def delete_v2_workflow_edge_endpoint(
+    product_id: str,
+    workflow_id: str,
+    edge_id: str,
+    expected_edit_version: int = Query(ge=0),
+    session: Session = Depends(get_session),
+) -> WorkflowCanvasMutationResponse:
+    return serialize_canvas_mutation(
+        delete_v2_workflow_edge(
+            session,
+            product_id=product_id,
+            workflow_id=workflow_id,
+            edge_id=edge_id,
+            expected_edit_version=expected_edit_version,
+        )
+    )
 
 
 @router.patch(

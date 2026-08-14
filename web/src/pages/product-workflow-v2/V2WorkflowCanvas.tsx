@@ -1,11 +1,21 @@
 import {
+  BaseEdge,
+  ConnectionLineType,
+  ConnectionMode,
+  EdgeToolbar,
   MiniMap,
   ReactFlow,
   SelectionMode,
+  getBezierPath,
+  useConnection,
   useNodesState,
+  useViewport,
 } from "@xyflow/react";
 import type {
+  Connection,
   Edge,
+  EdgeProps,
+  IsValidConnection,
   Node,
   NodeMouseHandler,
   NodeProps,
@@ -16,11 +26,13 @@ import type {
 } from "@xyflow/react";
 import {
   Box,
+  CopyPlus,
   FolderOpen,
   Images,
   Link2,
   Loader2,
   Play,
+  Trash2,
 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
@@ -39,6 +51,7 @@ import {
   WorkflowCanvasNodePort,
   WorkflowCanvasNodeToolbar,
   WorkflowCanvasNodeToolbarButton,
+  type WorkflowCanvasPortVisualState,
 } from "../product-detail/WorkflowCanvasChrome";
 import { WorkflowNodePresentationCard } from "../product-detail/WorkflowNodeCard";
 import type { CanvasInteractionMode } from "../product-detail/types";
@@ -59,6 +72,9 @@ import {
   buildAutoLayoutNodePositions,
   deriveFolderSummary,
   folderSyntheticNodeId,
+  getV2ConnectionHandles,
+  isV2WorkflowConnectionValid,
+  isV2WorkflowLineageEdge,
   projectGlobalGraph,
   V2_NODE_HEIGHT,
   V2_NODE_WIDTH,
@@ -79,9 +95,13 @@ interface WorkflowNodeData extends Record<string, unknown> {
   revealActive: boolean;
   runBusy: boolean;
   structureBusy: boolean;
+  canMutate: boolean;
   onRun: (node: WorkflowNodeV2) => void;
   onBindReference: (node: WorkflowNodeV2) => void;
+  onDuplicate: (node: WorkflowNodeV2) => void;
+  onDelete: (node: WorkflowNodeV2) => void;
   onSelectNode: (nodeId: string, event: ReactMouseEvent<HTMLElement>) => void;
+  workflow: ProductWorkflowV2;
   inputHandleIds: string[];
   outputHandleIds: string[];
 }
@@ -102,7 +122,18 @@ type WorkflowCanvasEdge = Edge<{
   projected: boolean;
   originalEdgeIds: string[];
   count: number;
-}>;
+  protected: boolean;
+  structureBusy: boolean;
+  deleteLabel: string;
+  protectedLabel: string;
+  onDelete: (edgeId: string) => void;
+  deletionEnabled: boolean;
+}, "workflow-edge-v2">;
+
+type ConnectionHandleSnapshot = {
+  inProgress: boolean;
+  fromHandle: { id?: string | null; nodeId: string; type: "source" | "target" } | null;
+};
 
 export interface WorkflowRevealVisibility {
   folderIds: ReadonlySet<string>;
@@ -122,6 +153,10 @@ interface V2WorkflowCanvasProps {
   onOpenFolder: (folderId: string) => void;
   onRunNode: (node: WorkflowNodeV2) => void;
   onBindReference: (node: WorkflowNodeV2) => void;
+  onDuplicateNode?: (node: WorkflowNodeV2) => void;
+  onDeleteNode?: (node: WorkflowNodeV2) => void;
+  onConnectionCreate?: (sourceNodeId: string, targetNodeId: string) => void;
+  onEdgeDelete?: (edgeId: string) => void;
   onSelectionChange: (nodeIds: string[]) => void;
   onLayoutCommit: (positions: Array<{ node_id: string; position_x: number; position_y: number }>) => void;
   onFolderTranslate: (folderId: string, deltaX: number, deltaY: number) => void;
@@ -165,6 +200,39 @@ function nodeImage(node: WorkflowNodeV2): DownloadableImage | null {
   return workflowNodeDownloadableImage(node, "thumbnail");
 }
 
+function nodeHandleIds(nodeType: WorkflowNodeTypeV2): { input: string[]; output: string[] } {
+  if (nodeType === "product_context") return { input: [], output: ["facts"] };
+  if (nodeType === "reference_image") return { input: [], output: ["asset"] };
+  if (nodeType === "prompt_generation") return { input: ["facts", "reference"], output: ["prompt"] };
+  return { input: ["facts", "reference", "prompt"], output: ["image"] };
+}
+
+function getConnectionHandleVisualState(
+  workflow: ProductWorkflowV2,
+  node: WorkflowNodeV2,
+  handleId: string,
+  handleType: "source" | "target",
+  connection: ConnectionHandleSnapshot,
+): WorkflowCanvasPortVisualState {
+  if (!connection.inProgress || !connection.fromHandle) return "idle";
+  const from = connection.fromHandle;
+  if (from.nodeId === node.id && from.type === handleType && from.id === handleId) return "origin";
+  if (from.type === handleType) return "idle";
+
+  const sourceNodeId = handleType === "target" ? from.nodeId : node.id;
+  const targetNodeId = handleType === "target" ? node.id : from.nodeId;
+  const source = workflow.nodes.find((candidate) => candidate.id === sourceNodeId);
+  const target = workflow.nodes.find((candidate) => candidate.id === targetNodeId);
+  if (!source || !target) return "invalid-target";
+  const handles = getV2ConnectionHandles(source.node_type, target.node_type);
+  const candidateMatches = handleType === "target"
+    ? handles?.target === handleId && (!from.id || handles.source === from.id)
+    : handles?.source === handleId && (!from.id || handles.target === from.id);
+  return candidateMatches && isV2WorkflowConnectionValid(workflow, sourceNodeId, targetNodeId)
+    ? "valid-target"
+    : "invalid-target";
+}
+
 const WorkflowNodeCard = memo(function WorkflowNodeCard({
   data,
   selected,
@@ -175,10 +243,22 @@ const WorkflowNodeCard = memo(function WorkflowNodeCard({
   const { node } = data;
   const runnable = node.node_type === "prompt_generation" || node.node_type === "image_generation";
   const active = node.status === "queued" || node.status === "running";
+  const { zoom } = useViewport();
+  const portVisualScale = Math.min(4.25, Math.max(1, 1 / zoom));
+  const connection = useConnection<WorkflowCanvasNode, ConnectionHandleSnapshot>((snapshot) => ({
+    inProgress: snapshot.inProgress,
+    fromHandle: snapshot.fromHandle
+      ? {
+          id: snapshot.fromHandle.id,
+          nodeId: snapshot.fromHandle.nodeId,
+          type: snapshot.fromHandle.type,
+        }
+      : null,
+  }));
 
   return (
     <div className="relative w-[248px]">
-      <WorkflowCanvasNodeToolbar visible={selected && (node.node_type === "reference_image" || runnable)}>
+      <WorkflowCanvasNodeToolbar visible={selected}>
         {node.node_type === "reference_image" ? (
           <WorkflowCanvasNodeToolbarButton
             label={t("workflowV2.node.bindReference")}
@@ -201,6 +281,25 @@ const WorkflowNodeCard = memo(function WorkflowNodeCard({
             )}
           </WorkflowCanvasNodeToolbarButton>
         ) : null}
+        {data.canMutate && node.node_type !== "product_context" ? (
+          <WorkflowCanvasNodeToolbarButton
+            label={t("detail.duplicate")}
+            disabled={data.structureBusy || active}
+            onClick={() => data.onDuplicate(node)}
+          >
+            <CopyPlus size={16} aria-hidden="true" />
+          </WorkflowCanvasNodeToolbarButton>
+        ) : null}
+        {data.canMutate && node.node_type !== "product_context" ? (
+          <WorkflowCanvasNodeToolbarButton
+            label={t("detail.delete")}
+            disabled={data.structureBusy || active}
+            destructive
+            onClick={() => data.onDelete(node)}
+          >
+            <Trash2 size={16} aria-hidden="true" />
+          </WorkflowCanvasNodeToolbarButton>
+        ) : null}
       </WorkflowCanvasNodeToolbar>
       {data.inputHandleIds.map((handleId, index) => (
         <WorkflowCanvasNodePort
@@ -210,6 +309,14 @@ const WorkflowNodeCard = memo(function WorkflowNodeCard({
           top={((index + 1) / (data.inputHandleIds.length + 1)) * 100}
           label={`${t("detail.inputHandle")}: ${handleId}`}
           connectable={isConnectable}
+          visualScale={portVisualScale}
+          visualState={getConnectionHandleVisualState(
+            data.workflow,
+            node,
+            handleId,
+            "target",
+            connection,
+          )}
         />
       ))}
       {data.outputHandleIds.map((handleId, index) => (
@@ -220,6 +327,14 @@ const WorkflowNodeCard = memo(function WorkflowNodeCard({
           top={((index + 1) / (data.outputHandleIds.length + 1)) * 100}
           label={`${t("detail.outputHandle")}: ${handleId}`}
           connectable={isConnectable}
+          visualScale={portVisualScale}
+          visualState={getConnectionHandleVisualState(
+            data.workflow,
+            node,
+            handleId,
+            "source",
+            connection,
+          )}
         />
       ))}
       <WorkflowNodePresentationCard
@@ -249,7 +364,6 @@ const WorkflowNodeCard = memo(function WorkflowNodeCard({
 const WorkflowFolderCard = memo(function WorkflowFolderCard({
   data,
   selected,
-  isConnectable,
 }: NodeProps<Node<WorkflowFolderData>>) {
   const { t } = useI18n();
   const { projection } = data;
@@ -264,19 +378,6 @@ const WorkflowFolderCard = memo(function WorkflowFolderCard({
       }`}
       data-workflow-folder-id={folder.id}
     >
-      <WorkflowCanvasNodePort
-        type="target"
-        top="50%"
-        label={t("detail.inputHandle")}
-        connectable={isConnectable}
-      />
-      <WorkflowCanvasNodePort
-        type="source"
-        top="50%"
-        label={t("detail.outputHandle")}
-        connectable={isConnectable}
-      />
-
       <div className="flex h-14 items-center gap-3 border-b border-slate-100 px-4 dark:border-slate-800">
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-indigo-50 text-indigo-700 dark:bg-violet-500/15 dark:text-violet-200">
           <Box size={17} />
@@ -339,9 +440,97 @@ const WorkflowFolderCard = memo(function WorkflowFolderCard({
   );
 });
 
+const WorkflowCanvasEdgeCard = memo(function WorkflowCanvasEdgeCard({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  selected,
+  data,
+}: EdgeProps<WorkflowCanvasEdge>) {
+  const [edgePath, labelX, labelY] = getBezierPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+  });
+  const [hovered, setHovered] = useState(false);
+  const projected = data?.projected ?? false;
+  const protectedEdge = data?.protected ?? false;
+  const deleteDisabled = protectedEdge || Boolean(data?.structureBusy);
+  const label = protectedEdge ? data?.protectedLabel : data?.deleteLabel;
+
+  return (
+    <>
+      <BaseEdge
+        id={id}
+        path={edgePath}
+        style={{
+          stroke: projected ? "#6366f1" : selected ? "#4f46e5" : hovered ? "#64748b" : "#94a3b8",
+          strokeWidth: projected ? 2.2 : selected ? 2.2 : 1.8,
+          transition: "stroke 0.15s ease, stroke-width 0.15s ease",
+        }}
+      />
+      <path
+        d={edgePath}
+        fill="none"
+        stroke="transparent"
+        strokeWidth={15}
+        className={projected ? "pointer-events-none" : "cursor-pointer"}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+      />
+      {!projected && data?.deletionEnabled ? (
+        <EdgeToolbar
+          edgeId={id}
+          x={labelX}
+          y={labelY}
+          isVisible
+          className={`nodrag nowheel nopan transition-all duration-200 ${
+            hovered || selected
+              ? "pointer-events-auto scale-100 opacity-100"
+              : "pointer-events-none scale-75 opacity-0"
+          }`}
+          onMouseEnter={() => setHovered(true)}
+          onMouseLeave={() => setHovered(false)}
+        >
+          <button
+            type="button"
+            className="nodrag nowheel nopan flex h-7 w-7 items-center justify-center rounded-full border border-slate-200 bg-white/95 text-slate-500 shadow-sm transition-colors hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-800 dark:bg-[#0f1726]/95 dark:text-slate-400 dark:hover:border-red-900/50 dark:hover:bg-red-950/30 dark:hover:text-red-200"
+            onClick={(event) => {
+              event.stopPropagation();
+              if (!deleteDisabled) data?.onDelete(id);
+            }}
+            disabled={deleteDisabled}
+            title={label}
+            aria-label={label}
+          >
+            <Trash2 size={13} strokeWidth={2.2} />
+          </button>
+        </EdgeToolbar>
+      ) : data && data.count > 1 ? (
+        <EdgeToolbar edgeId={id} x={labelX} y={labelY} isVisible className="nodrag nopan nowheel">
+          <span className="rounded-full border border-indigo-200 bg-white px-2 py-0.5 text-[10px] font-bold text-indigo-700 shadow-sm dark:border-violet-400/40 dark:bg-slate-900 dark:text-violet-200">
+            {data.count}
+          </span>
+        </EdgeToolbar>
+      ) : null}
+    </>
+  );
+});
+
 const nodeTypes = {
   "workflow-node-v2": WorkflowNodeCard,
   "workflow-folder-v2": WorkflowFolderCard,
+};
+
+const edgeTypes = {
+  "workflow-edge-v2": WorkflowCanvasEdgeCard,
 };
 
 function toCanvasNodes(
@@ -349,26 +538,29 @@ function toCanvasNodes(
   openFolderId: string | null,
   options: Pick<
     V2WorkflowCanvasProps,
-    "structureBusy" | "runningNodeId" | "onOpenFolder" | "onRunNode" | "onBindReference" | "revealVisibility"
+    | "structureBusy"
+    | "runningNodeId"
+    | "onOpenFolder"
+    | "onRunNode"
+    | "onBindReference"
+    | "onDuplicateNode"
+    | "onDeleteNode"
+    | "revealVisibility"
   > & {
     selectedNodeIds: string[];
     onSelectNode: (nodeId: string, event: ReactMouseEvent<HTMLElement>) => void;
   },
 ): WorkflowCanvasNode[] {
   const revealVisibility = options.revealVisibility;
-  const handleIds = (nodeId: string, direction: "input" | "output"): string[] => {
-    const edgeHandleIds = workflow.edges.flatMap((edge) => {
-      if (direction === "input" && edge.target_node_id === nodeId && edge.target_handle) return [edge.target_handle];
-      if (direction === "output" && edge.source_node_id === nodeId && edge.source_handle) return [edge.source_handle];
-      return [];
-    });
-    return Array.from(new Set([direction, ...edgeHandleIds])).sort();
-  };
-  if (openFolderId) {
-    return buildLocalFolderGraph(workflow, openFolderId).nodes.map((node) => ({
+  const toRealCanvasNode = (
+    node: WorkflowNodeV2,
+    position: { x: number; y: number },
+  ): Node<WorkflowNodeData, "workflow-node-v2"> => {
+    const handles = nodeHandleIds(node.node_type);
+    return {
       id: node.id,
       type: "workflow-node-v2",
-      position: { x: node.position_x, y: node.position_y },
+      position,
       width: V2_NODE_WIDTH,
       height: V2_NODE_HEIGHT,
       selected: options.selectedNodeIds.includes(node.id),
@@ -379,13 +571,22 @@ function toCanvasNodes(
         revealActive: Boolean(revealVisibility),
         runBusy: options.runningNodeId === node.id,
         structureBusy: options.structureBusy,
+        canMutate: Boolean(options.onDuplicateNode && options.onDeleteNode),
         onRun: options.onRunNode,
         onBindReference: options.onBindReference,
+        onDuplicate: options.onDuplicateNode ?? (() => undefined),
+        onDelete: options.onDeleteNode ?? (() => undefined),
         onSelectNode: options.onSelectNode,
-        inputHandleIds: handleIds(node.id, "input"),
-        outputHandleIds: handleIds(node.id, "output"),
+        workflow,
+        inputHandleIds: handles.input,
+        outputHandleIds: handles.output,
       },
-    }));
+    };
+  };
+  if (openFolderId) {
+    return buildLocalFolderGraph(workflow, openFolderId).nodes.map(
+      (node) => toRealCanvasNode(node, { x: node.position_x, y: node.position_y }),
+    );
   }
   const fullProjection = projectGlobalGraph(workflow);
   const visibleWorkflow = revealVisibility
@@ -418,47 +619,33 @@ function toCanvasNodes(
       ] as const;
     }),
   );
-  return fullProjection.nodes.map((item): WorkflowCanvasNode => item.kind === "folder" ? {
-    id: item.id,
-    type: "workflow-folder-v2",
-    position: item.position,
-    width: FOLDER_CARD_WIDTH,
-    height: FOLDER_CARD_HEIGHT,
-    selected: false,
-    hidden: Boolean(revealVisibility && !revealVisibility.folderIds.has(item.folder.id)),
-    data: {
-      kind: "folder",
-      projection: revealVisibility
-        ? {
-            ...item,
-            member_ids: item.member_ids.filter((nodeId) => revealVisibility.nodeIds.has(nodeId)),
-            summary: visibleFolderSummary.get(item.folder.id) ?? item.summary,
-          }
-        : item,
-      revealActive: Boolean(revealVisibility),
-      structureBusy: options.structureBusy,
-      onOpen: options.onOpenFolder,
-    },
-  } : {
-    id: item.id,
-    type: "workflow-node-v2",
-    position: item.position,
-    width: V2_NODE_WIDTH,
-    height: V2_NODE_HEIGHT,
-    selected: options.selectedNodeIds.includes(item.node.id),
-    hidden: Boolean(revealVisibility && !revealVisibility.nodeIds.has(item.node.id)),
-    data: {
-      kind: "node",
-      node: item.node,
-      revealActive: Boolean(revealVisibility),
-      runBusy: options.runningNodeId === item.node.id,
-      structureBusy: options.structureBusy,
-      onRun: options.onRunNode,
-      onBindReference: options.onBindReference,
-      onSelectNode: options.onSelectNode,
-      inputHandleIds: handleIds(item.node.id, "input"),
-      outputHandleIds: handleIds(item.node.id, "output"),
-    },
+  return fullProjection.nodes.map((item): WorkflowCanvasNode => {
+    if (item.kind === "node") {
+      return toRealCanvasNode(item.node, item.position);
+    }
+    return {
+      id: item.id,
+      type: "workflow-folder-v2",
+      position: item.position,
+      width: FOLDER_CARD_WIDTH,
+      height: FOLDER_CARD_HEIGHT,
+      selected: false,
+      hidden: Boolean(revealVisibility && !revealVisibility.folderIds.has(item.folder.id)),
+      connectable: false,
+      data: {
+        kind: "folder",
+        projection: revealVisibility
+          ? {
+              ...item,
+              member_ids: item.member_ids.filter((nodeId) => revealVisibility.nodeIds.has(nodeId)),
+              summary: visibleFolderSummary.get(item.folder.id) ?? item.summary,
+            }
+          : item,
+        revealActive: Boolean(revealVisibility),
+        structureBusy: options.structureBusy,
+        onOpen: options.onOpenFolder,
+      },
+    };
   });
 }
 
@@ -466,6 +653,13 @@ function toCanvasEdges(
   workflow: ProductWorkflowV2,
   openFolderId: string | null,
   revealVisibility?: WorkflowRevealVisibility,
+  options?: {
+    structureBusy: boolean;
+    deleteLabel: string;
+    protectedLabel: string;
+    onDelete: (edgeId: string) => void;
+    deletionEnabled: boolean;
+  },
 ): WorkflowCanvasEdge[] {
   if (openFolderId) {
     return buildLocalFolderGraph(workflow, openFolderId).edges.map((edge) => ({
@@ -474,10 +668,20 @@ function toCanvasEdges(
       target: edge.target_node_id,
       sourceHandle: edge.source_handle,
       targetHandle: edge.target_handle,
-      type: "smoothstep",
+      type: "workflow-edge-v2",
       hidden: Boolean(revealVisibility && !revealVisibility.edgeIds.has(edge.id)),
       style: { stroke: "#94a3b8", strokeWidth: 1.8 },
-      data: { projected: false, originalEdgeIds: [edge.id], count: 1 },
+      data: {
+        projected: false,
+        originalEdgeIds: [edge.id],
+        count: 1,
+        protected: isV2WorkflowLineageEdge(workflow, edge),
+        structureBusy: options?.structureBusy ?? false,
+        deleteLabel: options?.deleteLabel ?? "",
+        protectedLabel: options?.protectedLabel ?? "",
+        onDelete: options?.onDelete ?? (() => undefined),
+        deletionEnabled: options?.deletionEnabled ?? false,
+      },
     }));
   }
   return projectGlobalGraph(workflow).edges.map((edge) => {
@@ -485,26 +689,32 @@ function toCanvasEdges(
       ? edge.original_edge_ids.filter((edgeId) => revealVisibility.edgeIds.has(edgeId))
       : edge.original_edge_ids;
     const count = revealedEdgeIds.length;
+    const originalEdge = edge.projected
+      ? null
+      : workflow.edges.find((candidate) => candidate.id === edge.original_edge_ids[0]) ?? null;
     return {
       id: edge.id,
       source: edge.source,
       target: edge.target,
       sourceHandle: edge.source_handle,
       targetHandle: edge.target_handle,
-      type: "smoothstep",
+      type: "workflow-edge-v2",
       hidden: Boolean(revealVisibility && count === 0),
-      label: count > 1 ? String(count) : undefined,
       animated: edge.projected && count > 1,
       style: {
         stroke: edge.projected ? "#6366f1" : "#94a3b8",
         strokeWidth: edge.projected ? 2.2 : 1.8,
       },
-      labelStyle: { fill: "#475569", fontSize: 11, fontWeight: 700 },
-      labelBgStyle: { fill: "#ffffff", fillOpacity: 0.92 },
       data: {
         projected: edge.projected,
         originalEdgeIds: revealedEdgeIds,
         count,
+        protected: Boolean(originalEdge && isV2WorkflowLineageEdge(workflow, originalEdge)),
+        structureBusy: options?.structureBusy ?? false,
+        deleteLabel: options?.deleteLabel ?? "",
+        protectedLabel: options?.protectedLabel ?? "",
+        onDelete: options?.onDelete ?? (() => undefined),
+        deletionEnabled: options?.deletionEnabled ?? false,
       },
     };
   });
@@ -526,6 +736,10 @@ export function V2WorkflowCanvas({
   onOpenFolder,
   onRunNode,
   onBindReference,
+  onDuplicateNode,
+  onDeleteNode,
+  onConnectionCreate,
+  onEdgeDelete,
   onSelectionChange,
   onLayoutCommit,
   onFolderTranslate,
@@ -577,7 +791,7 @@ export function V2WorkflowCanvas({
     compact: mobileCanvasControlsActive,
     mode: mobileInteractionMode,
     locked: structureBusy,
-    connectionEditing: false,
+    connectionEditing: Boolean(onConnectionCreate),
   });
   const graphIdentity = `${workflow.id}:${openFolderId ?? "global"}:${workflow.edit_version}:${resetVersion}`;
   const selectionScope = `${workflow.id}:${openFolderId ?? "global"}`;
@@ -588,12 +802,16 @@ export function V2WorkflowCanvas({
       onOpenFolder,
       onRunNode,
       onBindReference,
+      onDuplicateNode,
+      onDeleteNode,
       revealVisibility,
       selectedNodeIds,
       onSelectNode: selectNodeFromPointer,
     }),
     [
       onBindReference,
+      onDeleteNode,
+      onDuplicateNode,
       onOpenFolder,
       onRunNode,
       openFolderId,
@@ -606,8 +824,14 @@ export function V2WorkflowCanvas({
     ],
   );
   const graphEdges = useMemo(
-    () => toCanvasEdges(workflow, openFolderId, revealVisibility),
-    [openFolderId, revealVisibility, workflow],
+    () => toCanvasEdges(workflow, openFolderId, revealVisibility, {
+      structureBusy,
+      deleteLabel: t("detail.deleteEdge"),
+      protectedLabel: t("workflowV2.edge.protected"),
+      onDelete: onEdgeDelete ?? (() => undefined),
+      deletionEnabled: Boolean(onEdgeDelete),
+    }),
+    [onEdgeDelete, openFolderId, revealVisibility, structureBusy, t, workflow],
   );
   const [nodes, setNodes, onNodesChange] = useNodesState<WorkflowCanvasNode>(graphNodes);
   const previousIdentityRef = useRef(graphIdentity);
@@ -725,6 +949,36 @@ export function V2WorkflowCanvas({
   const toggleSnapToGrid = useCallback(() => {
     setSnapToGrid((current) => !current);
   }, []);
+  const handleConnect = useCallback((connection: Connection) => {
+    if (
+      onConnectionCreate
+      && connection.source
+      && connection.target
+      && isV2WorkflowConnectionValid(
+        workflow,
+        connection.source,
+        connection.target,
+        connection.sourceHandle,
+        connection.targetHandle,
+      )
+    ) {
+      onConnectionCreate(connection.source, connection.target);
+    }
+  }, [onConnectionCreate, workflow]);
+  const isValidConnection = useCallback<IsValidConnection<WorkflowCanvasEdge>>(
+    (connection) => Boolean(
+      connection.source
+      && connection.target
+      && isV2WorkflowConnectionValid(
+        workflow,
+        connection.source,
+        connection.target,
+        connection.sourceHandle,
+        connection.targetHandle,
+      ),
+    ),
+    [workflow],
+  );
 
   return (
     <div ref={surfaceRef} className="h-full min-h-0 w-full overflow-hidden">
@@ -733,6 +987,7 @@ export function V2WorkflowCanvas({
         nodes={nodes}
         edges={graphEdges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
         onNodeDragStart={handleNodeDragStart}
         onNodeDragStop={handleNodeDragStop}
@@ -769,6 +1024,13 @@ export function V2WorkflowCanvas({
         noDragClassName="nodrag"
         noPanClassName="nopan"
         deleteKeyCode={null}
+        connectOnClick={false}
+        connectionMode={ConnectionMode.Strict}
+        connectionLineType={ConnectionLineType.Bezier}
+        connectionLineStyle={{ stroke: "#2563eb", strokeWidth: 2, strokeDasharray: "6 4" }}
+        autoPanOnConnect
+        onConnect={handleConnect}
+        isValidConnection={isValidConnection}
         className="bg-transparent"
         proOptions={V2_PRO_OPTIONS}
       >

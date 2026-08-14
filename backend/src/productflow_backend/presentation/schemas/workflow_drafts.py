@@ -6,10 +6,8 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from productflow_backend.application.agent_product_intake import WorkflowIntakeV1, parse_workflow_intake
-from productflow_backend.application.product_workflow.folders import (
-    WorkflowCanvasMutationResult,
-    WorkflowNodePosition,
-)
+from productflow_backend.application.product_workflow.folders import WorkflowNodePosition
+from productflow_backend.application.product_workflow.v2_canvas_mutations import WorkflowCanvasMutationResult
 from productflow_backend.application.product_workflow.v2_node_editing import V2WorkflowNodeDetail
 from productflow_backend.application.product_workflow.v2_reference_bindings import V2ReferenceBindingResult
 from productflow_backend.application.workflow_drafts.contracts import (
@@ -118,6 +116,26 @@ class WorkflowNodePositionRequest(StrictRequestModel):
 class UpdateWorkflowNodeLayoutRequest(StrictRequestModel):
     positions: list[WorkflowNodePositionRequest] = Field(min_length=1)
     expected_edit_version: int = Field(ge=0)
+
+
+class CreateReferenceWorkflowNodeV2Request(StrictRequestModel):
+    expected_edit_version: int = Field(ge=0)
+    title: str = Field(min_length=1, max_length=255)
+    role: str = Field(min_length=1, max_length=120)
+    label: str = Field(min_length=1, max_length=255)
+    position_x: int
+    position_y: int
+    folder_id: str | None = Field(default=None, max_length=36)
+
+
+class DuplicateWorkflowNodeV2Request(StrictRequestModel):
+    expected_edit_version: int = Field(ge=0)
+
+
+class CreateWorkflowEdgeV2Request(StrictRequestModel):
+    expected_edit_version: int = Field(ge=0)
+    source_node_id: str = Field(min_length=1, max_length=36)
+    target_node_id: str = Field(min_length=1, max_length=36)
 
 
 class UpdateReferenceWorkflowNodeV2Request(StrictRequestModel):
@@ -686,9 +704,12 @@ __all__ = [
     "AppendWorkflowDraftRevisionRequest",
     "BindWorkflowReferenceAssetRequest",
     "BindWorkflowReferenceAssetResponse",
+    "CreateReferenceWorkflowNodeV2Request",
+    "CreateWorkflowEdgeV2Request",
     "CreateWorkflowFolderRequest",
     "ConfirmWorkflowDraftRequest",
     "CreateWorkflowDraftRequest",
+    "DuplicateWorkflowNodeV2Request",
     "MaterializeWorkflowDraftRequest",
     "RenameWorkflowFolderRequest",
     "SetWorkflowFolderMembersRequest",

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Boxes, CircleAlert, CircleDot, Eye, FolderOpen, Images, Workflow, X } from "lucide-react";
+import { Boxes, CircleAlert, CircleDot, Eye, FolderOpen, Images, Plus, Workflow, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -24,7 +24,9 @@ import { ProductImageExplorer } from "../product-detail/image-explorer/ProductIm
 import {
   ProductWorkflowV2CanvasPanel,
   type ProductWorkflowV2CanvasContext,
+  type V2CreateReferenceControl,
 } from "../product-workflow-v2/ProductWorkflowV2CanvasPanel";
+import { V2AddNodePanel } from "../product-workflow-v2/V2AddNodePanel";
 import { RecipeLibraryPanel } from "../product-workflow-v2/RecipeLibraryPanel";
 import {
   labelRecipeVersionSource,
@@ -47,7 +49,7 @@ import { useWorkflowReveal } from "./useWorkflowReveal";
 import { WorkflowDraftConfirmation } from "./WorkflowDraftConfirmation";
 
 export type AgentV2WorkbenchBootstrap = Extract<AgentWorkbenchBootstrap, { mode: "agent_v2" }>;
-type AgentSidebarToolId = "agent" | "details" | "runs" | "library" | "recipes";
+type AgentSidebarToolId = "agent" | "add" | "details" | "runs" | "library" | "recipes";
 type RecipeDialogState =
   | { kind: "create"; source: RecipeSourceSelection }
   | { kind: "append"; source: RecipeSourceSelection; recipe: WorkflowRecipeSummary }
@@ -74,6 +76,10 @@ const EMPTY_CANVAS_CONTEXT: ProductWorkflowV2CanvasContext = {
   selectedNodeIds: [],
 };
 const EMPTY_INSPECTOR_FLUSH: V2NodeInspectorFlush = async () => null;
+const EMPTY_CREATE_REFERENCE_CONTROL: V2CreateReferenceControl = {
+  request: () => undefined,
+  busy: true,
+};
 
 export function AgentProductWorkbenchPage({
   bootstrap,
@@ -96,6 +102,9 @@ export function AgentProductWorkbenchPage({
   const [previewImage, setPreviewImage] = useState<DownloadableImage | null>(null);
   const recipeApplyKeysRef = useRef(new Map<string, string>());
   const inspectorFlushRef = useRef<V2NodeInspectorFlush>(EMPTY_INSPECTOR_FLUSH);
+  const [createReferenceControl, setCreateReferenceControl] = useState<V2CreateReferenceControl>(
+    EMPTY_CREATE_REFERENCE_CONTROL,
+  );
   const sidebarTransitionSequenceRef = useRef(0);
   const sidebarToolRef = useRef<AgentSidebarToolId>(sidebarTool);
 
@@ -160,6 +169,9 @@ export function AgentProductWorkbenchPage({
   }, []);
   const registerInspectorFlush = useCallback((flush: V2NodeInspectorFlush | null) => {
     inspectorFlushRef.current = flush ?? EMPTY_INSPECTOR_FLUSH;
+  }, []);
+  const registerCreateReference = useCallback((control: V2CreateReferenceControl | null) => {
+    setCreateReferenceControl(control ?? EMPTY_CREATE_REFERENCE_CONTROL);
   }, []);
   const flushInspector = useCallback(() => inspectorFlushRef.current(), []);
   const requestSidebarTool = useCallback(async (
@@ -343,6 +355,17 @@ export function AgentProductWorkbenchPage({
     : null;
   const sidebarTools: AgentWorkbenchSidebarTool[] = workflow ? [
     {
+      id: "add",
+      label: t("workflowV2.sidebar.add"),
+      icon: <Plus size={17} />,
+      content: (
+        <V2AddNodePanel
+          busy={createReferenceControl.busy}
+          onCreateReference={createReferenceControl.request}
+        />
+      ),
+    },
+    {
       id: "details",
       label: t("detail.tabDetails"),
       icon: <Eye size={17} />,
@@ -494,6 +517,7 @@ export function AgentProductWorkbenchPage({
             onOpenSidebarTool={openSidebarTool}
             onBeforeWorkflowAction={flushInspector}
             onReferenceNodeChange={updateReferenceNode}
+            onCreateReferenceRegistration={registerCreateReference}
             onSaveRecipe={async (source) => {
               try {
                 await flushInspector();

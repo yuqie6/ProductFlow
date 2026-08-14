@@ -90,6 +90,107 @@ const NODE_TYPE_ORDER: WorkflowNodeTypeV2[] = [
   "image_generation",
 ];
 
+const V2_CONNECTION_HANDLES: Partial<
+  Record<WorkflowNodeTypeV2, Partial<Record<WorkflowNodeTypeV2, { source: string; target: string }>>>
+> = {
+  product_context: {
+    prompt_generation: { source: "facts", target: "facts" },
+    image_generation: { source: "facts", target: "facts" },
+  },
+  reference_image: {
+    prompt_generation: { source: "asset", target: "reference" },
+    image_generation: { source: "asset", target: "reference" },
+  },
+  prompt_generation: {
+    image_generation: { source: "prompt", target: "prompt" },
+  },
+  image_generation: {
+    image_generation: { source: "image", target: "reference" },
+  },
+};
+
+export interface V2ConnectionHandles {
+  source: string;
+  target: string;
+}
+
+export function getV2ConnectionHandles(
+  sourceType: WorkflowNodeTypeV2,
+  targetType: WorkflowNodeTypeV2,
+): V2ConnectionHandles | null {
+  return V2_CONNECTION_HANDLES[sourceType]?.[targetType] ?? null;
+}
+
+export function isV2WorkflowConnectionValid(
+  workflow: ProductWorkflowV2,
+  sourceNodeId: string,
+  targetNodeId: string,
+  sourceHandle?: string | null,
+  targetHandle?: string | null,
+): boolean {
+  if (sourceNodeId === targetNodeId || sourceNodeId.startsWith("folder:") || targetNodeId.startsWith("folder:")) {
+    return false;
+  }
+  const source = workflow.nodes.find((node) => node.id === sourceNodeId);
+  const target = workflow.nodes.find((node) => node.id === targetNodeId);
+  const handles = source && target
+    ? getV2ConnectionHandles(source.node_type, target.node_type)
+    : null;
+  if (!source || !target || !handles) {
+    return false;
+  }
+  if (
+    (sourceHandle !== undefined && sourceHandle !== handles.source)
+    || (targetHandle !== undefined && targetHandle !== handles.target)
+  ) {
+    return false;
+  }
+  if (workflow.edges.some(
+    (edge) => edge.source_node_id === sourceNodeId && edge.target_node_id === targetNodeId,
+  )) {
+    return false;
+  }
+
+  const outgoing = new Map<string, string[]>();
+  for (const edge of workflow.edges) {
+    const targets = outgoing.get(edge.source_node_id) ?? [];
+    targets.push(edge.target_node_id);
+    outgoing.set(edge.source_node_id, targets);
+  }
+  const pending = [targetNodeId];
+  const visited = new Set<string>();
+  while (pending.length) {
+    const nodeId = pending.pop()!;
+    if (nodeId === sourceNodeId) {
+      return false;
+    }
+    if (visited.has(nodeId)) {
+      continue;
+    }
+    visited.add(nodeId);
+    pending.push(...(outgoing.get(nodeId) ?? []));
+  }
+  return true;
+}
+
+export function isV2WorkflowLineageEdge(
+  workflow: ProductWorkflowV2,
+  edge: Pick<WorkflowEdgeV2, "source_node_id" | "target_node_id">,
+): boolean {
+  const source = workflow.nodes.find((node) => node.id === edge.source_node_id);
+  const target = workflow.nodes.find((node) => node.id === edge.target_node_id);
+  if (!source || !target) {
+    return false;
+  }
+  if (source.node_type === "product_context" && target.node_type === "prompt_generation") {
+    return true;
+  }
+  return source.node_type === "prompt_generation"
+    && target.node_type === "image_generation"
+    && typeof source.config_json.prompt_plan_key === "string"
+    && source.config_json.prompt_plan_key === target.config_json.prompt_plan_key;
+}
+
 export function folderSyntheticNodeId(folderId: string): string {
   return `folder:${folderId}`;
 }

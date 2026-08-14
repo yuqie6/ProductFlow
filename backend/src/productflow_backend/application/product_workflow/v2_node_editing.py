@@ -8,7 +8,12 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from productflow_backend.application.product_workflow.folders import WorkflowCanvasMutationResult
+from productflow_backend.application.product_workflow.v2_canvas_mutations import (
+    V2_WORKFLOW_SCHEMA_VERSION,
+    WorkflowCanvasMutationResult,
+    reject_active_v2_node_runs,
+    run_v2_canvas_mutation,
+)
 from productflow_backend.application.time import now_utc
 from productflow_backend.application.workflow_drafts.contracts import (
     DeliverySpec,
@@ -16,7 +21,6 @@ from productflow_backend.application.workflow_drafts.contracts import (
     ImagePromptPayloadV1,
     VisualSystemDraftPayload,
 )
-from productflow_backend.application.workflow_drafts.materialization import v2_workflow_query
 from productflow_backend.domain.enums import WorkflowNodeStatus, WorkflowNodeType
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
@@ -28,11 +32,7 @@ from productflow_backend.infrastructure.db.models import (
     ProductWorkflow,
     VisualSystemVersion,
     WorkflowNode,
-    WorkflowNodeRun,
 )
-
-V2_WORKFLOW_SCHEMA_VERSION = 2
-_ACTIVE_NODE_STATUSES = {WorkflowNodeStatus.QUEUED, WorkflowNodeStatus.RUNNING}
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,24 +187,12 @@ def update_v2_prompt_node(
             )
             or 0
         ) + 1
-        version = ImagePromptArtifactVersion(
-            artifact_id=snapshot.artifact.id,
-            version=next_version_number,
-            schema_version=1,
-            payload_json=next_payload_json,
-            payload_hash=_json_hash(next_payload_json),
+        version = append_v2_prompt_artifact_version(
+            session,
+            artifact=snapshot.artifact,
+            payload=payload,
+            version_number=next_version_number,
         )
-        session.add(version)
-        session.flush()
-        for position, asset_id in enumerate(payload.evidence_asset_ids):
-            session.add(
-                ImagePromptArtifactVersionReference(
-                    prompt_artifact_version_id=version.id,
-                    asset_id=asset_id,
-                    purpose="evidence",
-                    position=position,
-                )
-            )
 
         node.current_prompt_artifact_version_id = version.id
         node.status = WorkflowNodeStatus.SUCCEEDED
@@ -289,20 +277,7 @@ def _update_v2_node(
     expected_edit_version: int,
     mutate,
 ) -> WorkflowCanvasMutationResult:
-    try:
-        workflow = session.scalar(
-            select(ProductWorkflow)
-            .where(
-                ProductWorkflow.id == workflow_id,
-                ProductWorkflow.product_id == product_id,
-            )
-            .with_for_update()
-        )
-        if workflow is None:
-            raise NotFoundError("商品工作流不存在")
-        _ensure_active_v2_workflow(workflow)
-        if workflow.edit_version != expected_edit_version:
-            raise ConflictError("工作流 edit version 已变化，请刷新后重试")
+    def canvas_mutation(workflow: ProductWorkflow) -> tuple[bool, set[str]]:
         node = session.scalar(
             select(WorkflowNode)
             .where(WorkflowNode.id == node_id, WorkflowNode.workflow_id == workflow.id)
@@ -313,20 +288,16 @@ def _update_v2_node(
         _ensure_v2_node(node)
         changed = mutate(workflow, node)
         if changed:
-            changed_at = now_utc()
-            workflow.edit_version += 1
-            workflow.updated_at = changed_at
-            node.updated_at = changed_at
-        session.commit()
-        session.expire_all()
-        return WorkflowCanvasMutationResult(
-            workflow=_reload_workflow(session, workflow.id),
-            changed=changed,
-            dissolved_folder_ids=(),
-        )
-    except Exception:
-        session.rollback()
-        raise
+            node.updated_at = now_utc()
+        return changed, set()
+
+    return run_v2_canvas_mutation(
+        session,
+        product_id=product_id,
+        workflow_id=workflow_id,
+        expected_edit_version=expected_edit_version,
+        mutate=canvas_mutation,
+    )
 
 
 def _ensure_active_v2_workflow(workflow: ProductWorkflow) -> None:
@@ -360,7 +331,7 @@ def _prompt_snapshot(node: WorkflowNode) -> V2PromptArtifactSnapshot:
     artifact = version.artifact
     if artifact.workflow_id != node.workflow_id:
         raise ConflictError("提示词节点绑定了其他工作流的 Prompt Artifact")
-    payload = _parse_prompt_payload(version)
+    payload = parse_v2_prompt_payload(version)
     return V2PromptArtifactSnapshot(artifact=artifact, version=version, payload=payload)
 
 
@@ -390,11 +361,11 @@ def _locked_prompt_snapshot(
     return V2PromptArtifactSnapshot(
         artifact=artifact,
         version=version,
-        payload=_parse_prompt_payload(version),
+        payload=parse_v2_prompt_payload(version),
     )
 
 
-def _parse_prompt_payload(version: ImagePromptArtifactVersion) -> ImagePromptPayloadV1:
+def parse_v2_prompt_payload(version: ImagePromptArtifactVersion) -> ImagePromptPayloadV1:
     try:
         payload = ImagePromptPayloadV1.model_validate(version.payload_json)
     except ValidationError as exc:
@@ -402,6 +373,45 @@ def _parse_prompt_payload(version: ImagePromptArtifactVersion) -> ImagePromptPay
     if _json_hash(payload.model_dump(mode="json")) != version.payload_hash:
         raise ConflictError("Prompt Artifact version payload hash 不一致")
     return payload
+
+
+def append_v2_prompt_artifact_version(
+    session: Session,
+    *,
+    artifact: ImagePromptArtifact,
+    payload: ImagePromptPayloadV1,
+    version_number: int | None = None,
+) -> ImagePromptArtifactVersion:
+    resolved_version = version_number
+    if resolved_version is None:
+        resolved_version = (
+            session.scalar(
+                select(func.max(ImagePromptArtifactVersion.version)).where(
+                    ImagePromptArtifactVersion.artifact_id == artifact.id
+                )
+            )
+            or 0
+        ) + 1
+    payload_json = payload.model_dump(mode="json")
+    version = ImagePromptArtifactVersion(
+        artifact_id=artifact.id,
+        version=resolved_version,
+        schema_version=1,
+        payload_json=payload_json,
+        payload_hash=_json_hash(payload_json),
+    )
+    session.add(version)
+    session.flush()
+    for position, asset_id in enumerate(payload.evidence_asset_ids):
+        session.add(
+            ImagePromptArtifactVersionReference(
+                prompt_artifact_version_id=version.id,
+                asset_id=asset_id,
+                purpose="evidence",
+                position=position,
+            )
+        )
+    return version
 
 
 def _validate_prompt_payload_for_workflow(
@@ -512,26 +522,7 @@ def _mark_nodes_stale_after_reference_change(nodes: list[WorkflowNode]) -> None:
 
 
 def _reject_active_runs(session: Session, node_ids: set[str]) -> None:
-    if not node_ids:
-        return
-    active_run_id = session.scalar(
-        select(WorkflowNodeRun.id)
-        .where(
-            WorkflowNodeRun.node_id.in_(sorted(node_ids)),
-            WorkflowNodeRun.status.in_(_ACTIVE_NODE_STATUSES),
-        )
-        .order_by(WorkflowNodeRun.id)
-        .with_for_update()
-    )
-    if active_run_id is not None:
-        raise ConflictError("受影响的工作流节点正在运行")
-
-
-def _reload_workflow(session: Session, workflow_id: str) -> ProductWorkflow:
-    workflow = session.scalar(v2_workflow_query().where(ProductWorkflow.id == workflow_id))
-    if workflow is None:
-        raise NotFoundError("商品工作流不存在")
-    return workflow
+    reject_active_v2_node_runs(session, node_ids)
 
 
 def _json_hash(payload: dict[str, object]) -> str:
@@ -542,7 +533,9 @@ def _json_hash(payload: dict[str, object]) -> str:
 __all__ = [
     "V2PromptArtifactSnapshot",
     "V2WorkflowNodeDetail",
+    "append_v2_prompt_artifact_version",
     "get_v2_workflow_node_detail",
+    "parse_v2_prompt_payload",
     "update_v2_image_node",
     "update_v2_prompt_node",
     "update_v2_reference_node",

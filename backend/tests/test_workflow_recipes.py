@@ -18,7 +18,16 @@ from productflow_backend.application.agent_conversations import (
 from productflow_backend.application.agent_tools import get_agent_contract, get_agent_product_context
 from productflow_backend.application.canvas_templates import BUILTIN_CANVAS_TEMPLATES
 from productflow_backend.application.product_workflow.folders import WorkflowNodePosition, update_workflow_node_layout
+from productflow_backend.application.product_workflow.v2_graph_commands import (
+    create_v2_reference_node,
+    duplicate_v2_workflow_node,
+)
+from productflow_backend.application.product_workflow.v2_node_editing import (
+    update_v2_image_node,
+    update_v2_prompt_node,
+)
 from productflow_backend.application.use_cases import create_canonical_product, delete_product
+from productflow_backend.application.workflow_drafts.contracts import GenerationSpec, ImagePromptPayloadV1
 from productflow_backend.application.workflow_drafts.materialization import materialize_workflow_draft
 from productflow_backend.application.workflow_drafts.service import (
     append_workflow_draft_revision,
@@ -36,10 +45,11 @@ from productflow_backend.application.workflow_recipes.service import (
     create_workflow_recipe,
     list_workflow_recipes,
 )
-from productflow_backend.domain.enums import AgentTurnStatus
+from productflow_backend.domain.enums import AgentTurnStatus, WorkflowNodeType
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
+    ImagePromptArtifactVersion,
     Product,
     ProductWorkflow,
     UserCanvasTemplate,
@@ -143,6 +153,119 @@ def test_full_workflow_recipe_uses_local_keys_and_excludes_current_product_conte
     assert payload["prompt_shapes"][0]["text_slots"] == ["headline", "subtitle"]
     assert payload["prompt_shapes"][0]["fact_keys"] == ["product_name"]
     assert payload["reference_requirements"][0]["role"] == "product_identity"
+
+
+def test_recipe_extracts_current_runtime_nodes_prompt_and_generation_specs(db_session) -> None:
+    product, workflow, _ = _materialize_recipe_source(db_session)
+    original_prompt = next(node for node in workflow.nodes if node.node_type == WorkflowNodeType.PROMPT_GENERATION)
+    original_image_ids = {
+        node.id
+        for node in workflow.nodes
+        if node.node_type == WorkflowNodeType.IMAGE_GENERATION
+        and node.config_json.get("prompt_plan_key") == original_prompt.config_json.get("prompt_plan_key")
+    }
+
+    duplicated_type = duplicate_v2_workflow_node(
+        db_session,
+        product_id=product.id,
+        workflow_id=workflow.id,
+        node_id=original_prompt.id,
+        expected_edit_version=0,
+    )
+    workflow = duplicated_type.workflow
+    original_image = next(node for node in workflow.nodes if node.id in original_image_ids)
+    duplicated_image_result = duplicate_v2_workflow_node(
+        db_session,
+        product_id=product.id,
+        workflow_id=workflow.id,
+        node_id=original_image.id,
+        expected_edit_version=1,
+    )
+    workflow = duplicated_image_result.workflow
+    duplicated_image = next(
+        node
+        for node in workflow.nodes
+        if node.node_type == WorkflowNodeType.IMAGE_GENERATION
+        and node.config_json.get("prompt_plan_key") == original_prompt.config_json.get("prompt_plan_key")
+        and node.id not in original_image_ids
+    )
+    current_prompt = next(node for node in workflow.nodes if node.id == original_prompt.id)
+    prompt_version = db_session.get(ImagePromptArtifactVersion, current_prompt.current_prompt_artifact_version_id)
+    assert prompt_version is not None
+    current_prompt_payload = ImagePromptPayloadV1.model_validate(prompt_version.payload_json)
+    current_prompt_payload = current_prompt_payload.model_copy(
+        update={
+            "composition": current_prompt_payload.composition.model_copy(
+                update={"product_share_percent": 61.0}
+            )
+        }
+    )
+    prompt_updated = update_v2_prompt_node(
+        db_session,
+        product_id=product.id,
+        workflow_id=workflow.id,
+        node_id=current_prompt.id,
+        expected_edit_version=2,
+        expected_prompt_artifact_version_id=prompt_version.id,
+        title="当前运行时提示词",
+        payload=current_prompt_payload,
+    )
+    workflow = prompt_updated.workflow
+    duplicated_image = next(node for node in workflow.nodes if node.id == duplicated_image.id)
+    generation_spec = GenerationSpec.model_validate(duplicated_image.config_json["generation_spec"]).model_copy(
+        update={"aspect_ratio": "4:5"}
+    )
+    image_updated = update_v2_image_node(
+        db_session,
+        product_id=product.id,
+        workflow_id=workflow.id,
+        node_id=duplicated_image.id,
+        expected_edit_version=3,
+        title=duplicated_image.title,
+        variation_instruction=duplicated_image.config_json.get("variation_instruction"),
+        generation_spec=generation_spec,
+        delivery_spec=None,
+    )
+    workflow = image_updated.workflow
+    reference_created = create_v2_reference_node(
+        db_session,
+        product_id=product.id,
+        workflow_id=workflow.id,
+        expected_edit_version=4,
+        title="新增材质参考",
+        role="material_detail",
+        label="表面纹理",
+        position_x=640,
+        position_y=720,
+    )
+    workflow = reference_created.workflow
+
+    recipe = create_workflow_recipe(
+        db_session,
+        product_id=product.id,
+        workflow_id=workflow.id,
+        source_type="workflow",
+        folder_id=None,
+        node_ids=[],
+        expected_edit_version=5,
+        title="当前运行时配方",
+        description=None,
+    )
+
+    payload = recipe.current_version.payload_json
+    assert len(payload["nodes"]) == len(workflow.nodes)
+    assert sorted(image_type["default_quantity"] for image_type in payload["image_types"]) == [2, 3]
+    assert any(
+        image["generation_spec"]["aspect_ratio"] == "4:5"
+        for image_type in payload["image_types"]
+        for image in image_type["images"]
+    )
+    assert any(shape["product_share_percent"] == 61.0 for shape in payload["prompt_shapes"])
+    assert any(image_type["title"] == "当前运行时提示词" for image_type in payload["image_types"])
+    assert {item["role"] for item in payload["reference_requirements"]} == {
+        "material_detail",
+        "product_identity",
+    }
 
 
 def test_recipe_fragments_keep_internal_edges_and_summarize_boundaries(db_session) -> None:

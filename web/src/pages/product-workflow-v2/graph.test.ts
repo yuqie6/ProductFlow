@@ -12,6 +12,9 @@ import {
   deriveFolderBounds,
   deriveFolderSummary,
   folderSyntheticNodeId,
+  getV2ConnectionHandles,
+  isV2WorkflowConnectionValid,
+  isV2WorkflowLineageEdge,
   projectGlobalGraph,
   visibleRealNodeIds,
 } from "./graph";
@@ -195,5 +198,60 @@ describe("schema-v2 workflow graph projection", () => {
     expect(image.position_y - prompt.position_y).toBe(beforeOffset.y);
     expect(positionById.get("product")!.position_x % 24).toBe(0);
     expect(positionById.get("product")!.position_y % 24).toBe(0);
+  });
+
+  it("validates typed connections, duplicate pairs, synthetic folders, and cycles", () => {
+    const workflow = makeWorkflow();
+    const prompt = workflow.nodes.find((node) => node.id === "prompt-0")!;
+    const firstImage = workflow.nodes.find((node) => node.id === "image-0-0")!;
+    const secondImage = workflow.nodes.find((node) => node.id === "image-0-1")!;
+
+    expect(getV2ConnectionHandles("product_context", "prompt_generation")).toEqual({
+      source: "facts",
+      target: "facts",
+    });
+    expect(getV2ConnectionHandles("image_generation", "reference_image")).toBeNull();
+    expect(isV2WorkflowConnectionValid(workflow, firstImage.id, secondImage.id)).toBe(true);
+    expect(isV2WorkflowConnectionValid(
+      workflow,
+      firstImage.id,
+      secondImage.id,
+      "image",
+      "reference",
+    )).toBe(true);
+    expect(isV2WorkflowConnectionValid(
+      workflow,
+      firstImage.id,
+      secondImage.id,
+      "image",
+      "prompt",
+    )).toBe(false);
+    expect(isV2WorkflowConnectionValid(workflow, prompt.id, firstImage.id)).toBe(false);
+    expect(isV2WorkflowConnectionValid(workflow, firstImage.id, firstImage.id)).toBe(false);
+    expect(isV2WorkflowConnectionValid(workflow, folderSyntheticNodeId("folder-0"), firstImage.id)).toBe(false);
+
+    workflow.edges.push(makeEdge("image-chain", firstImage.id, secondImage.id));
+    expect(isV2WorkflowConnectionValid(workflow, secondImage.id, firstImage.id)).toBe(false);
+  });
+
+  it("identifies only the required context and prompt lineage edges", () => {
+    const workflow = makeWorkflow();
+    const prompt = workflow.nodes.find((node) => node.id === "prompt-0")!;
+    const image = workflow.nodes.find((node) => node.id === "image-0-0")!;
+    prompt.config_json.prompt_plan_key = "plan-0";
+    image.config_json.prompt_plan_key = "plan-0";
+
+    expect(isV2WorkflowLineageEdge(workflow, {
+      source_node_id: "product",
+      target_node_id: prompt.id,
+    })).toBe(true);
+    expect(isV2WorkflowLineageEdge(workflow, {
+      source_node_id: prompt.id,
+      target_node_id: image.id,
+    })).toBe(true);
+    expect(isV2WorkflowLineageEdge(workflow, {
+      source_node_id: image.id,
+      target_node_id: "image-0-1",
+    })).toBe(false);
   });
 });

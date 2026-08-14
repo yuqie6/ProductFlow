@@ -9,6 +9,8 @@ import {
   Play,
   Save,
   Trash2,
+  Redo2,
+  Undo2,
   Workflow,
 } from "lucide-react";
 
@@ -35,6 +37,10 @@ interface V2WorkflowCommandBarProps {
   onRenameFolder: () => void;
   onDissolveFolder: () => void;
   onRunWorkflow?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
+  onUndo?: () => void;
+  onRedo?: () => void;
 }
 
 export function V2WorkflowCommandBar({
@@ -52,6 +58,10 @@ export function V2WorkflowCommandBar({
   onRenameFolder,
   onDissolveFolder,
   onRunWorkflow,
+  canUndo = false,
+  canRedo = false,
+  onUndo,
+  onRedo,
 }: V2WorkflowCommandBarProps) {
   const { t } = useI18n();
   const openFolder = workflow?.folders.find((folder) => folder.id === openFolderId) ?? null;
@@ -112,6 +122,24 @@ export function V2WorkflowCommandBar({
 
   const actions = workflow ? (
     <div className="flex min-w-max items-center justify-end gap-1.5">
+      {onUndo ? (
+        <CommandIconButton
+          label={t("workflowV2.history.undo")}
+          disabled={structureBusy || !canUndo}
+          onClick={onUndo}
+        >
+          <Undo2 size={15} />
+        </CommandIconButton>
+      ) : null}
+      {onRedo ? (
+        <CommandIconButton
+          label={t("workflowV2.history.redo")}
+          disabled={structureBusy || !canRedo}
+          onClick={onRedo}
+        >
+          <Redo2 size={15} />
+        </CommandIconButton>
+      ) : null}
       {onRunWorkflow ? (
         <CommandIconButton
           label={t(workflowRunBusy ? "detail.workflowRunning" : "detail.runWorkflow")}

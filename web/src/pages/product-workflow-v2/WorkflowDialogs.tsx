@@ -97,6 +97,119 @@ export function WorkflowTextDialog({
   );
 }
 
+interface WorkflowReferenceNodeDialogProps {
+  open: boolean;
+  busy?: boolean;
+  error?: string | null;
+  onClose: () => void;
+  onSubmit: (input: { title: string; role: string; label: string }) => void;
+}
+
+export function WorkflowReferenceNodeDialog({
+  open,
+  busy = false,
+  error,
+  onClose,
+  onSubmit,
+}: WorkflowReferenceNodeDialogProps) {
+  const { t } = useI18n();
+  const headingId = useId();
+  const titleId = useId();
+  const roleId = useId();
+  const labelId = useId();
+  const [title, setTitle] = useState("");
+  const [role, setRole] = useState("");
+  const [label, setLabel] = useState("");
+
+  useEffect(() => {
+    if (open) {
+      setTitle(t("workflowV2.reference.defaultTitle"));
+      setRole(t("workflowV2.reference.defaultRole"));
+      setLabel(t("workflowV2.reference.defaultLabel"));
+    }
+  }, [open, t]);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) onClose();
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [busy, onClose, open]);
+
+  if (!open) return null;
+  const normalized = { title: title.trim(), role: role.trim(), label: label.trim() };
+  const valid = Boolean(normalized.title && normalized.role && normalized.label);
+
+  return (
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm" onMouseDown={(event) => {
+      if (event.target === event.currentTarget && !busy) onClose();
+    }}>
+      <form
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={headingId}
+        className="w-full max-w-md overflow-hidden rounded-lg border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:!bg-[#10151d]"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (valid) onSubmit(normalized);
+        }}
+      >
+        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 dark:border-slate-800">
+          <h2 id={headingId} className="text-base font-semibold text-slate-950 dark:text-slate-100">{t("workflowV2.reference.create")}</h2>
+          <button type="button" onClick={onClose} disabled={busy} className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label={t("workflowV2.dialog.close")} title={t("workflowV2.dialog.close")}>
+            <X size={16} />
+          </button>
+        </div>
+        <div className="space-y-4 px-5 py-5">
+          <ReferenceField id={titleId} label={t("workflowV2.reference.titleField")} value={title} maxLength={255} autoFocus onChange={setTitle} />
+          <ReferenceField id={roleId} label={t("workflowV2.reference.roleField")} value={role} maxLength={120} onChange={setRole} />
+          <ReferenceField id={labelId} label={t("workflowV2.reference.labelField")} value={label} maxLength={255} onChange={setLabel} />
+          {error ? <p role="alert" className="text-xs text-red-600 dark:text-red-300">{error}</p> : null}
+        </div>
+        <div className="flex justify-end gap-2 border-t border-slate-100 bg-slate-50 px-5 py-3 dark:border-slate-800 dark:!bg-slate-950/50">
+          <button type="button" onClick={onClose} disabled={busy} className="h-9 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:!bg-slate-900 dark:text-slate-200">{t("common.cancel")}</button>
+          <button type="submit" disabled={!valid || busy} className="inline-flex h-9 min-w-20 items-center justify-center rounded-md bg-slate-950 px-3 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50 dark:bg-violet-500 dark:hover:bg-violet-400">
+            {busy ? <Loader2 size={14} className="mr-2 animate-spin" /> : null}
+            {t("workflowV2.dialog.confirm")}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function ReferenceField({
+  id,
+  label,
+  value,
+  maxLength,
+  autoFocus = false,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  maxLength: number;
+  autoFocus?: boolean;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div>
+      <label htmlFor={id} className="text-xs font-semibold text-slate-600 dark:text-slate-300">{label}</label>
+      <input
+        id={id}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        maxLength={maxLength}
+        autoFocus={autoFocus}
+        className="mt-2 h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15 dark:border-slate-700 dark:!bg-slate-950"
+      />
+    </div>
+  );
+}
+
 interface WorkflowRecipeDialogProps {
   open: boolean;
   heading: string;

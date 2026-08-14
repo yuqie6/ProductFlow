@@ -16,6 +16,8 @@ import type {
   ConfigUpdateRequest,
   CopySet,
   CopySetUpdateRequest,
+  CreateReferenceWorkflowNodeV2Input,
+  CreateWorkflowEdgeV2Input,
   DuplicateWorkflowNodeGroupInput,
   GalleryEntry,
   GalleryEntryListResponse,
@@ -673,6 +675,64 @@ export const api = {
   },
   getActiveProductWorkflowV2(productId: string): Promise<ActiveProductWorkflowV2> {
     return request(`/api/v2/products/${productId}/workflow`);
+  },
+  createWorkflowReferenceNodeV2(
+    productId: string,
+    workflowId: string,
+    input: CreateReferenceWorkflowNodeV2Input,
+  ): Promise<WorkflowCanvasMutationResult> {
+    return request(`/api/v2/products/${productId}/workflows/${workflowId}/reference-nodes`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  duplicateWorkflowNodeV2(
+    productId: string,
+    workflowId: string,
+    nodeId: string,
+    expectedEditVersion: number,
+  ): Promise<WorkflowCanvasMutationResult> {
+    return request(
+      `/api/v2/products/${productId}/workflows/${workflowId}/nodes/${encodeURIComponent(nodeId)}/duplicate`,
+      {
+        method: "POST",
+        body: JSON.stringify({ expected_edit_version: expectedEditVersion }),
+      },
+    );
+  },
+  deleteWorkflowNodeV2(
+    productId: string,
+    workflowId: string,
+    nodeId: string,
+    expectedEditVersion: number,
+  ): Promise<WorkflowCanvasMutationResult> {
+    const params = new URLSearchParams({ expected_edit_version: String(expectedEditVersion) });
+    return request(
+      `/api/v2/products/${productId}/workflows/${workflowId}/nodes/${encodeURIComponent(nodeId)}?${params}`,
+      { method: "DELETE" },
+    );
+  },
+  createWorkflowEdgeV2(
+    productId: string,
+    workflowId: string,
+    input: CreateWorkflowEdgeV2Input,
+  ): Promise<WorkflowCanvasMutationResult> {
+    return request(`/api/v2/products/${productId}/workflows/${workflowId}/edges`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  deleteWorkflowEdgeV2(
+    productId: string,
+    workflowId: string,
+    edgeId: string,
+    expectedEditVersion: number,
+  ): Promise<WorkflowCanvasMutationResult> {
+    const params = new URLSearchParams({ expected_edit_version: String(expectedEditVersion) });
+    return request(
+      `/api/v2/products/${productId}/workflows/${workflowId}/edges/${encodeURIComponent(edgeId)}?${params}`,
+      { method: "DELETE" },
+    );
   },
   createWorkflowFolder(
     productId: string,

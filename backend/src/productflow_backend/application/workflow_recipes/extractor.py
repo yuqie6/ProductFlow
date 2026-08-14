@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Collection, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import ValidationError
 
 from productflow_backend.application.workflow_drafts.contracts import (
-    ImageGenerationNodePlan,
-    PromptGenerationNodePlan,
-    ReferenceImageNodePlan,
+    DeliverySpec,
+    GenerationSpec,
+    ImagePromptPayloadV1,
     VisualSystemDraftPayload,
-    WorkflowDraftPayloadV1,
 )
 from productflow_backend.application.workflow_recipes.contracts import (
     RecipeBoundaryRequirement,
@@ -30,7 +32,7 @@ from productflow_backend.application.workflow_recipes.contracts import (
     recipe_payload_json,
 )
 from productflow_backend.domain.enums import WorkflowNodeType
-from productflow_backend.domain.errors import BusinessValidationError, NotFoundError
+from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import ProductWorkflow, WorkflowEdge, WorkflowNode
 
 RecipeSourceType = Literal["workflow", "folder", "selection"]
@@ -70,10 +72,20 @@ _FORBIDDEN_EXACT_KEYS = {
 _FORBIDDEN_KEY_MARKERS = ("output", "failure", "history", "provider", "cover")
 
 
+@dataclass(frozen=True, slots=True)
+class _RuntimePromptGroup:
+    prompt_plan_key: str
+    image_type_key: str
+    title: str
+    order: int
+    prompt_node: WorkflowNode
+    image_nodes: tuple[WorkflowNode, ...]
+    prompt_payload: ImagePromptPayloadV1
+
+
 def extract_recipe_payload(
     *,
     workflow: ProductWorkflow,
-    source_artifact: WorkflowDraftPayloadV1,
     visual_system_payload: VisualSystemDraftPayload,
     source_type: RecipeSourceType,
     folder_id: str | None,
@@ -101,13 +113,13 @@ def extract_recipe_payload(
     min_x = min(node.position_x for node in sorted_nodes)
     min_y = min(node.position_y for node in sorted_nodes)
 
-    source_node_plans = {node.key: node for node in source_artifact.nodes}
-    source_image_types = {image_type.key: image_type for image_type in source_artifact.image_types}
-    source_prompts = {prompt.key: prompt for prompt in source_artifact.prompt_plans}
     runtime_by_id = {node.id: node for node in workflow.nodes}
-    runtime_plan_by_id = {
-        node.id: _source_node_plan(node, source_node_plans)
-        for node in workflow.nodes
+    runtime_groups = _runtime_prompt_groups(workflow)
+    group_by_prompt_node_id = {group.prompt_node.id: group for group in runtime_groups}
+    group_by_image_node_id = {
+        node.id: group
+        for group in runtime_groups
+        for node in group.image_nodes
     }
 
     selected_folder_ids = sorted(
@@ -119,78 +131,84 @@ def extract_recipe_payload(
         for index, candidate_id in enumerate(selected_folder_ids, start=1)
     }
 
-    relevant_type_keys, selected_image_plan_keys = _relevant_image_plans(
+    relevant_group_keys, selected_image_plan_keys = _relevant_runtime_image_plans(
         sorted_nodes,
-        runtime_plan_by_id,
-        source_image_types=source_image_types,
+        group_by_prompt_node_id=group_by_prompt_node_id,
+        group_by_image_node_id=group_by_image_node_id,
     )
+    ordered_groups = [
+        group
+        for group in runtime_groups
+        if group.prompt_plan_key in relevant_group_keys
+    ]
     type_key_map = {
-        type_key: f"image_type_{index}"
-        for index, type_key in enumerate(
-            sorted(relevant_type_keys, key=lambda key: (source_image_types[key].order, key)),
-            start=1,
-        )
+        group.prompt_plan_key: f"image_type_{index}"
+        for index, group in enumerate(ordered_groups, start=1)
     }
     image_key_map: dict[str, str] = {}
     image_counter = 0
     recipe_image_types: list[RecipeImageType] = []
     prompt_shapes: list[RecipePromptShape] = []
-    for source_type_key in sorted(
-        relevant_type_keys,
-        key=lambda key: (source_image_types[key].order, key),
-    ):
-        image_type = source_image_types[source_type_key]
+    for group in ordered_groups:
         included_images = [
-            image
-            for image in sorted(image_type.images, key=lambda item: (item.order, item.key))
-            if image.key in selected_image_plan_keys[source_type_key]
+            image_node
+            for image_node in group.image_nodes
+            if _required_config_text(image_node, "image_plan_key", label="图片节点")
+            in selected_image_plan_keys[group.prompt_plan_key]
         ]
         recipe_images: list[RecipePlannedImage] = []
-        for new_order, image in enumerate(included_images):
+        for new_order, image_node in enumerate(included_images):
             image_counter += 1
             recipe_key = f"image_{image_counter}"
-            image_key_map[image.key] = recipe_key
+            image_plan_key = _required_config_text(image_node, "image_plan_key", label="图片节点")
+            image_key_map[image_plan_key] = recipe_key
             recipe_images.append(
                 RecipePlannedImage(
                     key=recipe_key,
                     order=new_order,
-                    generation_spec=image.generation_spec,
-                    delivery_spec=image.delivery_spec,
+                    generation_spec=_runtime_generation_spec(image_node),
+                    delivery_spec=_runtime_delivery_spec(image_node),
                 )
             )
         recipe_image_types.append(
             RecipeImageType(
-                key=type_key_map[source_type_key],
-                title=image_type.title,
+                key=type_key_map[group.prompt_plan_key],
+                title=group.title,
                 order=len(recipe_image_types),
                 default_quantity=len(recipe_images),
                 images=recipe_images,
             )
         )
-        prompt = source_prompts[image_type.prompt_plan_key]
+        prompt_images_by_key = {
+            prompt_image.image_plan_key: prompt_image
+            for prompt_image in group.prompt_payload.images
+        }
         prompt_shapes.append(
             RecipePromptShape(
-                image_type_key=type_key_map[source_type_key],
-                product_present=prompt.payload.product_fidelity.product_present,
-                picture_in_picture=prompt.payload.product_fidelity.picture_in_picture,
-                product_share_percent=prompt.payload.composition.product_share_percent,
+                image_type_key=type_key_map[group.prompt_plan_key],
+                product_present=group.prompt_payload.product_fidelity.product_present,
+                picture_in_picture=group.prompt_payload.product_fidelity.picture_in_picture,
+                product_share_percent=group.prompt_payload.composition.product_share_percent,
                 text_slots=[
                     field_name
                     for field_name in ("headline", "subtitle", "body")
-                    if getattr(prompt.payload.text, field_name) is not None
+                    if getattr(group.prompt_payload.text, field_name) is not None
                 ],
-                fact_keys=prompt.payload.fact_keys,
-                visual_variant_key=prompt.payload.visual_variant_key,
+                fact_keys=group.prompt_payload.fact_keys,
+                visual_variant_key=group.prompt_payload.visual_variant_key,
                 per_image_slots=[
                     {
-                        "image_plan_key": image_key_map[source_image.key],
-                        "viewpoint": source_prompt_image.viewpoint is not None,
-                        "composition_adjustments": bool(source_prompt_image.composition_adjustments),
-                        "lighting": source_prompt_image.lighting is not None,
+                        "image_plan_key": image_key_map[image_plan_key],
+                        "viewpoint": prompt_images_by_key[image_plan_key].viewpoint is not None,
+                        "composition_adjustments": bool(
+                            prompt_images_by_key[image_plan_key].composition_adjustments
+                        ),
+                        "lighting": prompt_images_by_key[image_plan_key].lighting is not None,
                     }
-                    for source_image in included_images
-                    for source_prompt_image in prompt.payload.images
-                    if source_prompt_image.image_plan_key == source_image.key
+                    for image_node in included_images
+                    for image_plan_key in [
+                        _required_config_text(image_node, "image_plan_key", label="图片节点")
+                    ]
                 ],
             )
         )
@@ -221,7 +239,6 @@ def extract_recipe_payload(
 
     recipe_nodes = []
     for node in sorted_nodes:
-        plan = runtime_plan_by_id[node.id]
         common = {
             "key": node_key_map[node.id],
             "position_x": node.position_x - min_x,
@@ -230,28 +247,33 @@ def extract_recipe_payload(
         }
         if node.node_type == WorkflowNodeType.PRODUCT_CONTEXT:
             recipe_nodes.append(RecipeProductContextNode(**common))
-        elif isinstance(plan, ReferenceImageNodePlan):
+        elif node.node_type == WorkflowNodeType.REFERENCE_IMAGE:
             recipe_nodes.append(
                 RecipeReferenceImageNode(
                     **common,
                     reference_requirement_key=reference_key_by_node_id[node.id],
                 )
             )
-        elif isinstance(plan, PromptGenerationNodePlan):
-            source_prompt = source_prompts[plan.prompt_plan_key]
+        elif node.node_type == WorkflowNodeType.PROMPT_GENERATION:
+            group = group_by_prompt_node_id.get(node.id)
+            if group is None:
+                raise ConflictError("提示词节点无法解析到当前 Prompt Artifact")
             recipe_nodes.append(
                 RecipePromptGenerationNode(
                     **common,
-                    image_type_key=type_key_map[source_prompt.image_type_key],
+                    image_type_key=type_key_map[group.prompt_plan_key],
                 )
             )
-        elif isinstance(plan, ImageGenerationNodePlan):
-            source_type_key = _image_type_key_for_plan(plan.image_plan_key, source_image_types)
+        elif node.node_type == WorkflowNodeType.IMAGE_GENERATION:
+            group = group_by_image_node_id.get(node.id)
+            if group is None:
+                raise ConflictError("图片节点无法解析到当前 Prompt Artifact")
+            image_plan_key = _required_config_text(node, "image_plan_key", label="图片节点")
             recipe_nodes.append(
                 RecipeImageGenerationNode(
                     **common,
-                    image_type_key=type_key_map[source_type_key],
-                    image_plan_key=image_key_map[plan.image_plan_key],
+                    image_type_key=type_key_map[group.prompt_plan_key],
+                    image_plan_key=image_key_map[image_plan_key],
                 )
             )
         else:
@@ -291,14 +313,7 @@ def extract_recipe_payload(
     folders = [
         RecipeFolder(
             key=folder_key_map[source_folder_id],
-            title=_folder_recipe_title(
-                source_folder_id,
-                sorted_nodes=sorted_nodes,
-                runtime_plan_by_id=runtime_plan_by_id,
-                source_image_types=source_image_types,
-                source_prompts=source_prompts,
-                fallback_index=index,
-            ),
+            title=_runtime_folder_title(workflow, source_folder_id),
             order=index - 1,
         )
         for index, source_folder_id in enumerate(selected_folder_ids, start=1)
@@ -396,60 +411,153 @@ def _select_nodes(
     return selected
 
 
-def _source_node_plan(node: WorkflowNode, source_node_plans: Mapping[str, Any]):
-    if node.node_key is None or node.node_key not in source_node_plans:
-        raise BusinessValidationError("schema-v2 节点无法追溯到 source Draft")
-    plan = source_node_plans[node.node_key]
-    if plan.node_type != node.node_type:
-        raise BusinessValidationError("schema-v2 节点类型与 source Draft 不一致")
-    return plan
+def _runtime_prompt_groups(workflow: ProductWorkflow) -> tuple[_RuntimePromptGroup, ...]:
+    version_by_id = {
+        version.id: (artifact, version)
+        for artifact in workflow.prompt_artifacts
+        for version in artifact.versions
+    }
+    prompt_nodes = [
+        node for node in workflow.nodes if node.node_type == WorkflowNodeType.PROMPT_GENERATION
+    ]
+    image_nodes = [
+        node for node in workflow.nodes if node.node_type == WorkflowNodeType.IMAGE_GENERATION
+    ]
+    groups: list[_RuntimePromptGroup] = []
+    prompt_plan_keys: set[str] = set()
+    image_type_keys: set[str] = set()
+    grouped_image_ids: set[str] = set()
+    for prompt_node in prompt_nodes:
+        prompt_plan_key = _required_config_text(prompt_node, "prompt_plan_key", label="提示词节点")
+        image_type_key = _required_config_text(prompt_node, "image_type_key", label="提示词节点")
+        if prompt_plan_key in prompt_plan_keys:
+            raise ConflictError("同一 prompt plan 不能关联多个提示词节点")
+        if image_type_key in image_type_keys:
+            raise ConflictError("同一图片类型不能关联多个提示词节点")
+        prompt_plan_keys.add(prompt_plan_key)
+        image_type_keys.add(image_type_key)
+
+        version_id = prompt_node.current_prompt_artifact_version_id
+        resolved = version_by_id.get(version_id or "")
+        if resolved is None:
+            raise ConflictError("提示词节点缺少 current Prompt Artifact version")
+        artifact, version = resolved
+        if artifact.workflow_id != workflow.id or artifact.image_type_key != image_type_key:
+            raise ConflictError("提示词节点与当前 Prompt Artifact lineage 不一致")
+        try:
+            prompt_payload = ImagePromptPayloadV1.model_validate(version.payload_json)
+        except ValidationError as exc:
+            raise ConflictError("current Prompt Artifact payload 不符合 schema version 1") from exc
+        if _json_hash(prompt_payload.model_dump(mode="json")) != version.payload_hash:
+            raise ConflictError("current Prompt Artifact payload hash 不一致")
+
+        group_images = [
+            node
+            for node in image_nodes
+            if node.config_json.get("prompt_plan_key") == prompt_plan_key
+        ]
+        if not group_images:
+            raise ConflictError("提示词节点没有对应的图片节点")
+        group_type_orders = {
+            _required_config_int(node, "image_type_order", label="图片节点")
+            for node in group_images
+        }
+        if len(group_type_orders) != 1:
+            raise ConflictError("同一图片类型的运行时 order 不一致")
+        for image_node in group_images:
+            if _required_config_text(image_node, "image_type_key", label="图片节点") != image_type_key:
+                raise ConflictError("图片节点与提示词节点的 image type 不一致")
+            _runtime_generation_spec(image_node)
+            _runtime_delivery_spec(image_node)
+        ordered_images = tuple(
+            sorted(
+                group_images,
+                key=lambda node: (
+                    _required_config_int(node, "image_plan_order", label="图片节点"),
+                    _required_config_text(node, "image_plan_key", label="图片节点"),
+                    node.id,
+                ),
+            )
+        )
+        image_plan_keys = [
+            _required_config_text(node, "image_plan_key", label="图片节点")
+            for node in ordered_images
+        ]
+        image_plan_orders = [
+            _required_config_int(node, "image_plan_order", label="图片节点")
+            for node in ordered_images
+        ]
+        if len(image_plan_keys) != len(set(image_plan_keys)) or len(image_plan_orders) != len(set(image_plan_orders)):
+            raise ConflictError("同一图片类型的运行时图片计划 key/order 不能重复")
+        if set(image_plan_keys) != {item.image_plan_key for item in prompt_payload.images}:
+            raise ConflictError("图片节点与 current Prompt Artifact 逐图计划不一致")
+        grouped_image_ids.update(node.id for node in ordered_images)
+        groups.append(
+            _RuntimePromptGroup(
+                prompt_plan_key=prompt_plan_key,
+                image_type_key=image_type_key,
+                title=artifact.title,
+                order=next(iter(group_type_orders)),
+                prompt_node=prompt_node,
+                image_nodes=ordered_images,
+                prompt_payload=prompt_payload,
+            )
+        )
+    if grouped_image_ids != {node.id for node in image_nodes}:
+        raise ConflictError("图片节点无法解析到唯一的当前 Prompt Artifact")
+    return tuple(sorted(groups, key=lambda group: (group.order, group.image_type_key, group.prompt_node.id)))
 
 
-def _relevant_image_plans(
+def _relevant_runtime_image_plans(
     selected_nodes: Sequence[WorkflowNode],
-    runtime_plan_by_id: Mapping[str, Any],
     *,
-    source_image_types: Mapping[str, Any],
+    group_by_prompt_node_id: Mapping[str, _RuntimePromptGroup],
+    group_by_image_node_id: Mapping[str, _RuntimePromptGroup],
 ) -> tuple[set[str], dict[str, set[str]]]:
-    selected_images_by_type: dict[str, set[str]] = {}
-    prompt_type_keys: set[str] = set()
+    selected_images_by_group: dict[str, set[str]] = {}
+    prompt_group_keys: set[str] = set()
     for node in selected_nodes:
-        plan = runtime_plan_by_id[node.id]
-        if isinstance(plan, PromptGenerationNodePlan):
-            prompt_type_key = _prompt_image_type_key(plan.prompt_plan_key, source_image_types)
-            prompt_type_keys.add(prompt_type_key)
-        elif isinstance(plan, ImageGenerationNodePlan):
-            type_key = _image_type_key_for_plan(plan.image_plan_key, source_image_types)
-            selected_images_by_type.setdefault(type_key, set()).add(plan.image_plan_key)
-    relevant = set(selected_images_by_type) | prompt_type_keys
+        if node.node_type == WorkflowNodeType.PROMPT_GENERATION:
+            group = group_by_prompt_node_id.get(node.id)
+            if group is None:
+                raise ConflictError("提示词节点无法解析到当前 Prompt Artifact")
+            prompt_group_keys.add(group.prompt_plan_key)
+        elif node.node_type == WorkflowNodeType.IMAGE_GENERATION:
+            group = group_by_image_node_id.get(node.id)
+            if group is None:
+                raise ConflictError("图片节点无法解析到当前 Prompt Artifact")
+            selected_images_by_group.setdefault(group.prompt_plan_key, set()).add(
+                _required_config_text(node, "image_plan_key", label="图片节点")
+            )
+    relevant = set(selected_images_by_group) | prompt_group_keys
     included: dict[str, set[str]] = {}
-    for type_key in relevant:
-        included[type_key] = selected_images_by_type.get(type_key) or {
-            image.key for image in source_image_types[type_key].images
+    all_groups: dict[str, _RuntimePromptGroup] = {}
+    for group in [*group_by_prompt_node_id.values(), *group_by_image_node_id.values()]:
+        all_groups[group.prompt_plan_key] = group
+    for group_key in relevant:
+        group = all_groups[group_key]
+        included[group_key] = selected_images_by_group.get(group_key) or {
+            _required_config_text(node, "image_plan_key", label="图片节点")
+            for node in group.image_nodes
         }
     return relevant, included
 
 
-def _prompt_image_type_key(prompt_plan_key: str, source_image_types: Mapping[str, Any]) -> str:
-    matches = [
-        image_type.key
-        for image_type in source_image_types.values()
-        if image_type.prompt_plan_key == prompt_plan_key
-    ]
-    if len(matches) != 1:
-        raise BusinessValidationError("source Draft 提示词计划无法映射到唯一图片类型")
-    return matches[0]
+def _runtime_generation_spec(node: WorkflowNode) -> GenerationSpec:
+    try:
+        return GenerationSpec.model_validate(node.config_json.get("generation_spec"))
+    except ValidationError as exc:
+        raise ConflictError("图片节点 GenerationSpec 不符合当前合同") from exc
 
 
-def _image_type_key_for_plan(image_plan_key: str, source_image_types: Mapping[str, Any]) -> str:
-    matches = [
-        image_type.key
-        for image_type in source_image_types.values()
-        if any(image.key == image_plan_key for image in image_type.images)
-    ]
-    if len(matches) != 1:
-        raise BusinessValidationError("source Draft 图片计划无法映射到唯一图片类型")
-    return matches[0]
+def _runtime_delivery_spec(node: WorkflowNode) -> DeliverySpec | None:
+    value = node.config_json.get("delivery_spec")
+    if value is None:
+        return None
+    try:
+        return DeliverySpec.model_validate(value)
+    except ValidationError as exc:
+        raise ConflictError("图片节点 DeliverySpec 不符合当前合同") from exc
 
 
 def _reference_requirement_nodes(
@@ -512,40 +620,28 @@ def _folder_order(workflow: ProductWorkflow, folder_id: str) -> tuple[int, str]:
     return folder.sort_order, folder.id
 
 
-def _folder_recipe_title(
-    folder_id: str,
-    *,
-    sorted_nodes: Sequence[WorkflowNode],
-    runtime_plan_by_id: Mapping[str, Any],
-    source_image_types: Mapping[str, Any],
-    source_prompts: Mapping[str, Any],
-    fallback_index: int,
-) -> str:
-    titles: list[str] = []
-    has_product_context = False
-    has_reference = False
-    for node in sorted_nodes:
-        if node.folder_id != folder_id:
-            continue
-        plan = runtime_plan_by_id[node.id]
-        if isinstance(plan, PromptGenerationNodePlan):
-            titles.append(source_image_types[source_prompts[plan.prompt_plan_key].image_type_key].title)
-        elif isinstance(plan, ImageGenerationNodePlan):
-            titles.append(source_image_types[_image_type_key_for_plan(plan.image_plan_key, source_image_types)].title)
-        elif isinstance(plan, ReferenceImageNodePlan):
-            has_reference = True
-        else:
-            has_product_context = True
-    unique_titles = list(dict.fromkeys(titles))
-    if len(unique_titles) == 1:
-        return unique_titles[0]
-    if len(unique_titles) > 1:
-        return " / ".join(unique_titles)[:255]
-    if has_product_context:
-        return "商品信息"
-    if has_reference:
-        return "参考素材"
-    return f"节点组 {fallback_index}"
+def _runtime_folder_title(workflow: ProductWorkflow, folder_id: str) -> str:
+    folder = next((candidate for candidate in workflow.folders if candidate.id == folder_id), None)
+    if folder is None:
+        raise ConflictError("节点引用了不存在的 runtime 文件夹")
+    title = folder.title.strip()
+    if not title:
+        raise ConflictError("runtime 文件夹标题不能为空")
+    return title[:255]
+
+
+def _required_config_text(node: WorkflowNode, key: str, *, label: str) -> str:
+    value = node.config_json.get(key) if isinstance(node.config_json, dict) else None
+    if not isinstance(value, str) or not value.strip():
+        raise ConflictError(f"{label}缺少 {key}")
+    return value.strip()
+
+
+def _required_config_int(node: WorkflowNode, key: str, *, label: str) -> int:
+    value = node.config_json.get(key) if isinstance(node.config_json, dict) else None
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ConflictError(f"{label}缺少 {key}")
+    return value
 
 
 def _config_text(node: WorkflowNode, key: str, *, fallback: str) -> str:
@@ -553,6 +649,11 @@ def _config_text(node: WorkflowNode, key: str, *, fallback: str) -> str:
     if isinstance(value, str) and value.strip():
         return value.strip()[:255]
     return fallback
+
+
+def _json_hash(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 __all__ = [

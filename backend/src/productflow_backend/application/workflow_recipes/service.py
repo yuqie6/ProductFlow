@@ -486,7 +486,6 @@ def _extract_from_source(
     entity_ids = _source_entity_ids(session, workflow=workflow)
     return extract_recipe_payload(
         workflow=workflow,
-        source_artifact=source_artifact,
         visual_system_payload=visual_payload,
         source_type=source_type,
         folder_id=folder_id,

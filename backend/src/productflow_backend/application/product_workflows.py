@@ -14,7 +14,6 @@ from productflow_backend.application.product_workflow.execution import (
     submit_product_workflow_run,
 )
 from productflow_backend.application.product_workflow.folders import (
-    WorkflowCanvasMutationResult,
     WorkflowNodePosition,
     create_workflow_folder,
     dissolve_workflow_folder,
@@ -50,6 +49,14 @@ from productflow_backend.application.product_workflow.user_templates import (
     create_user_canvas_template_from_workflow_nodes,
     list_canvas_templates,
     rename_user_canvas_template,
+)
+from productflow_backend.application.product_workflow.v2_canvas_mutations import WorkflowCanvasMutationResult
+from productflow_backend.application.product_workflow.v2_graph_commands import (
+    create_v2_reference_node,
+    create_v2_workflow_edge,
+    delete_v2_workflow_edge,
+    delete_v2_workflow_node,
+    duplicate_v2_workflow_node,
 )
 from productflow_backend.application.product_workflow.v2_node_editing import (
     V2PromptArtifactSnapshot,
@@ -113,10 +120,15 @@ __all__ = [
     "create_workflow_edge",
     "create_workflow_folder",
     "create_workflow_node",
+    "create_v2_reference_node",
+    "create_v2_workflow_edge",
     "delete_workflow_edge",
     "delete_workflow_node",
+    "delete_v2_workflow_edge",
+    "delete_v2_workflow_node",
     "dissolve_workflow_folder",
     "duplicate_workflow_node_group",
+    "duplicate_v2_workflow_node",
     "execute_product_workflow_run",
     "execute_product_workflow_node_run",
     "get_or_create_product_workflow",

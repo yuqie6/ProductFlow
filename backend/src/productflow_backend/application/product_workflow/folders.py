@@ -6,8 +6,12 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from productflow_backend.application.product_workflow.v2_canvas_mutations import (
+    V2_WORKFLOW_SCHEMA_VERSION,
+    WorkflowCanvasMutationResult,
+    run_v2_canvas_mutation,
+)
 from productflow_backend.application.time import now_utc
-from productflow_backend.application.workflow_drafts.materialization import v2_workflow_query
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     ProductWorkflow,
@@ -16,21 +20,12 @@ from productflow_backend.infrastructure.db.models import (
     new_id,
 )
 
-V2_WORKFLOW_SCHEMA_VERSION = 2
-
 
 @dataclass(frozen=True, slots=True)
 class WorkflowNodePosition:
     node_id: str
     position_x: int
     position_y: int
-
-
-@dataclass(frozen=True, slots=True)
-class WorkflowCanvasMutationResult:
-    workflow: ProductWorkflow
-    changed: bool
-    dissolved_folder_ids: tuple[str, ...]
 
 
 def create_workflow_folder(
@@ -69,7 +64,7 @@ def create_workflow_folder(
         for node in nodes:
             node.folder_id = folder.id
             node.updated_at = changed_at
-        dissolved = _delete_empty_folders(
+        dissolved = delete_empty_workflow_folders(
             session,
             workflow_id=workflow.id,
             folder_ids=source_folder_ids,
@@ -162,7 +157,7 @@ def set_workflow_folder_members(
                 node.folder_id = folder.id
                 node.updated_at = changed_at
 
-        dissolved = _delete_empty_folders(
+        dissolved = delete_empty_workflow_folders(
             session,
             workflow_id=workflow.id,
             folder_ids=source_folder_ids,
@@ -309,45 +304,13 @@ def _run_canvas_mutation(
     expected_edit_version: int,
     mutate,
 ) -> WorkflowCanvasMutationResult:
-    try:
-        workflow = session.scalar(
-            select(ProductWorkflow)
-            .where(
-                ProductWorkflow.id == workflow_id,
-                ProductWorkflow.product_id == product_id,
-            )
-            .with_for_update()
-        )
-        if workflow is None:
-            raise NotFoundError("商品工作流不存在")
-        if workflow.schema_version != V2_WORKFLOW_SCHEMA_VERSION:
-            raise ConflictError("画布文件夹只支持 schema-v2 工作流")
-        if not workflow.active:
-            raise ConflictError("只能修改 active schema-v2 工作流")
-        if workflow.edit_version != expected_edit_version:
-            raise ConflictError("工作流 edit version 已变化，请刷新后重试")
-
-        changed, dissolved_folder_ids = mutate(workflow)
-        if changed:
-            workflow.edit_version += 1
-            workflow.updated_at = now_utc()
-        session.commit()
-        session.expire_all()
-        return WorkflowCanvasMutationResult(
-            workflow=_reload_workflow(session, workflow.id),
-            changed=changed,
-            dissolved_folder_ids=tuple(sorted(dissolved_folder_ids)),
-        )
-    except Exception:
-        session.rollback()
-        raise
-
-
-def _reload_workflow(session: Session, workflow_id: str) -> ProductWorkflow:
-    workflow = session.scalar(v2_workflow_query().where(ProductWorkflow.id == workflow_id))
-    if workflow is None:
-        raise NotFoundError("商品工作流不存在")
-    return workflow
+    return run_v2_canvas_mutation(
+        session,
+        product_id=product_id,
+        workflow_id=workflow_id,
+        expected_edit_version=expected_edit_version,
+        mutate=mutate,
+    )
 
 
 def _normalize_folder_title(title: str) -> str:
@@ -413,7 +376,7 @@ def _lock_folder(
     return folder
 
 
-def _delete_empty_folders(
+def delete_empty_workflow_folders(
     session: Session,
     *,
     workflow_id: str,
@@ -449,6 +412,7 @@ __all__ = [
     "WorkflowCanvasMutationResult",
     "WorkflowNodePosition",
     "create_workflow_folder",
+    "delete_empty_workflow_folders",
     "dissolve_workflow_folder",
     "rename_workflow_folder",
     "set_workflow_folder_members",
