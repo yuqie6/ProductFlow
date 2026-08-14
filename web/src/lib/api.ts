@@ -112,20 +112,69 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (!response.ok) {
-    let detail = "请求失败";
-    try {
-      const payload = (await response.json()) as { detail?: string };
-      detail = payload.detail ?? detail;
-    } catch {
-      detail = response.statusText || detail;
-    }
-    throw new ApiError(response.status, detail);
+    throw await responseApiError(response);
   }
 
   if (response.status === 204) {
     return undefined as T;
   }
   return (await response.json()) as T;
+}
+
+async function responseApiError(response: Response): Promise<ApiError> {
+  let detail = "请求失败";
+  try {
+    const payload = (await response.json()) as { detail?: string };
+    detail = payload.detail ?? detail;
+  } catch {
+    detail = response.statusText || detail;
+  }
+  return new ApiError(response.status, detail);
+}
+
+async function streamText(
+  path: string,
+  input: {
+    signal?: AbortSignal;
+    headers?: Record<string, string>;
+    onChunk: (chunk: string) => void;
+  },
+): Promise<void> {
+  const response = await fetch(toApiUrl(path), {
+    credentials: "include",
+    headers: { Accept: "text/event-stream", ...input.headers },
+    signal: input.signal,
+  });
+  if (!response.ok) {
+    throw await responseApiError(response);
+  }
+  if (!response.body) {
+    const body = await response.text();
+    if (body) input.onChunk(body);
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value, { stream: true });
+      if (chunk) input.onChunk(chunk);
+    }
+    const remainder = decoder.decode();
+    if (remainder) input.onChunk(remainder);
+  } catch (error) {
+    try {
+      await reader.cancel(error);
+    } catch {
+      // Preserve the original stream or parser failure.
+    }
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 export const api = {
@@ -807,8 +856,23 @@ export const api = {
     });
   },
   workflowRevealEventsUrl(materializationId: string, after?: number): string {
-    const path = `/api/v2/workflow-materializations/${materializationId}/reveal-events`;
+    const path = `/api/v2/workflow-materializations/${encodeURIComponent(materializationId)}/reveal-events`;
     return toApiUrl(after && after > 0 ? `${path}?after=${after}` : path);
+  },
+  streamWorkflowRevealEvents(
+    materializationId: string,
+    input: {
+      after?: number;
+      signal?: AbortSignal;
+      onChunk: (chunk: string) => void;
+    },
+  ): Promise<void> {
+    const after = input.after ?? 0;
+    return streamText(api.workflowRevealEventsUrl(materializationId, after), {
+      signal: input.signal,
+      headers: after > 0 ? { "Last-Event-ID": String(after) } : undefined,
+      onChunk: input.onChunk,
+    });
   },
   getProductWorkflowStatus(productId: string): Promise<ProductWorkflowStatus> {
     return request(`/api/products/${productId}/workflow/status`);

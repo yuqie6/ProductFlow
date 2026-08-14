@@ -41,6 +41,7 @@ import type {
 import { isWorkflowCanvasViewportCompatible, type WorkflowCanvasViewport } from "./canvasState";
 import {
   buildLocalFolderGraph,
+  deriveFolderSummary,
   folderSyntheticNodeId,
   projectGlobalGraph,
   V2_NODE_HEIGHT,
@@ -54,6 +55,7 @@ const FOLDER_CARD_HEIGHT = 210;
 interface WorkflowNodeData extends Record<string, unknown> {
   kind: "node";
   node: WorkflowNodeV2;
+  revealActive: boolean;
   runBusy: boolean;
   structureBusy: boolean;
   onRun: (node: WorkflowNodeV2) => void;
@@ -65,6 +67,7 @@ interface WorkflowNodeData extends Record<string, unknown> {
 interface WorkflowFolderData extends Record<string, unknown> {
   kind: "folder";
   projection: GlobalFolderNode;
+  revealActive: boolean;
   structureBusy: boolean;
   onOpen: (folderId: string) => void;
 }
@@ -79,8 +82,15 @@ type WorkflowCanvasEdge = Edge<{
   count: number;
 }>;
 
+export interface WorkflowRevealVisibility {
+  folderIds: ReadonlySet<string>;
+  nodeIds: ReadonlySet<string>;
+  edgeIds: ReadonlySet<string>;
+}
+
 interface V2WorkflowCanvasProps {
   workflow: ProductWorkflowV2;
+  revealVisibility?: WorkflowRevealVisibility;
   openFolderId: string | null;
   viewport: WorkflowCanvasViewport | null;
   structureBusy: boolean;
@@ -154,7 +164,7 @@ const WorkflowNodeCard = memo(function WorkflowNodeCard({ data, selected }: Node
 
   return (
     <div
-      className={`relative h-[176px] w-[260px] overflow-hidden rounded-lg border bg-white shadow-sm transition-[border-color,box-shadow] dark:!bg-[#11151d] ${
+      className={`relative h-[176px] w-[260px] overflow-hidden rounded-lg border bg-white shadow-sm transition-[border-color,box-shadow] dark:!bg-[#11151d] ${data.revealActive ? "animate-spring-pop-in" : ""} ${
         selected
           ? "border-indigo-500 shadow-[0_0_0_3px_rgba(99,102,241,0.16)] dark:border-violet-400"
           : "border-slate-200 dark:border-slate-700"
@@ -261,7 +271,7 @@ const WorkflowFolderCard = memo(function WorkflowFolderCard({ data, selected }: 
 
   return (
     <div
-      className={`relative h-[210px] w-[340px] overflow-hidden rounded-lg border bg-white shadow-md transition-[border-color,box-shadow] dark:!bg-[#10151c] ${
+      className={`relative h-[210px] w-[340px] overflow-hidden rounded-lg border bg-white shadow-md transition-[border-color,box-shadow] dark:!bg-[#10151c] ${data.revealActive ? "animate-spring-pop-in" : ""} ${
         selected
           ? "border-indigo-500 shadow-[0_0_0_3px_rgba(99,102,241,0.16)] dark:border-violet-400"
           : "border-slate-300 dark:border-slate-700"
@@ -341,8 +351,9 @@ const nodeTypes = {
 function toCanvasNodes(
   workflow: ProductWorkflowV2,
   openFolderId: string | null,
-  options: Pick<V2WorkflowCanvasProps, "structureBusy" | "runningNodeId" | "onOpenFolder" | "onRunNode" | "onBindReference">,
+  options: Pick<V2WorkflowCanvasProps, "structureBusy" | "runningNodeId" | "onOpenFolder" | "onRunNode" | "onBindReference" | "revealVisibility">,
 ): WorkflowCanvasNode[] {
+  const revealVisibility = options.revealVisibility;
   const handleIds = (nodeId: string, direction: "input" | "output"): string[] => {
     const edgeHandleIds = workflow.edges.flatMap((edge) => {
       if (direction === "input" && edge.target_node_id === nodeId && edge.target_handle) return [edge.target_handle];
@@ -358,9 +369,11 @@ function toCanvasNodes(
       position: { x: node.position_x, y: node.position_y },
       width: V2_NODE_WIDTH,
       height: V2_NODE_HEIGHT,
+      hidden: Boolean(revealVisibility && !revealVisibility.nodeIds.has(node.id)),
       data: {
         kind: "node",
         node,
+        revealActive: Boolean(revealVisibility),
         runBusy: options.runningNodeId === node.id,
         structureBusy: options.structureBusy,
         onRun: options.onRunNode,
@@ -370,15 +383,54 @@ function toCanvasNodes(
       },
     }));
   }
-  return projectGlobalGraph(workflow).nodes.map((item): WorkflowCanvasNode => item.kind === "folder" ? {
+  const fullProjection = projectGlobalGraph(workflow);
+  const visibleWorkflow = revealVisibility
+    ? {
+        ...workflow,
+        nodes: workflow.nodes.filter((node) => revealVisibility.nodeIds.has(node.id)),
+        edges: workflow.edges.filter(
+          (edge) =>
+            revealVisibility.edgeIds.has(edge.id) &&
+            revealVisibility.nodeIds.has(edge.source_node_id) &&
+            revealVisibility.nodeIds.has(edge.target_node_id),
+        ),
+      }
+    : workflow;
+  const visibleFolderSummary = new Map(
+    workflow.folders.map((folder) => {
+      const memberCount = visibleWorkflow.nodes.filter((node) => node.folder_id === folder.id).length;
+      return [
+        folder.id,
+        memberCount
+          ? deriveFolderSummary(visibleWorkflow, folder.id)
+          : {
+              member_count: 0,
+              node_types: [],
+              status: "idle" as const,
+              preview_asset_ids: [],
+              inbound_edge_count: 0,
+              outbound_edge_count: 0,
+            },
+      ] as const;
+    }),
+  );
+  return fullProjection.nodes.map((item): WorkflowCanvasNode => item.kind === "folder" ? {
     id: item.id,
     type: "workflow-folder-v2",
     position: item.position,
     width: FOLDER_CARD_WIDTH,
     height: FOLDER_CARD_HEIGHT,
+    hidden: Boolean(revealVisibility && !revealVisibility.folderIds.has(item.folder.id)),
     data: {
       kind: "folder",
-      projection: item,
+      projection: revealVisibility
+        ? {
+            ...item,
+            member_ids: item.member_ids.filter((nodeId) => revealVisibility.nodeIds.has(nodeId)),
+            summary: visibleFolderSummary.get(item.folder.id) ?? item.summary,
+          }
+        : item,
+      revealActive: Boolean(revealVisibility),
       structureBusy: options.structureBusy,
       onOpen: options.onOpenFolder,
     },
@@ -388,9 +440,11 @@ function toCanvasNodes(
     position: item.position,
     width: V2_NODE_WIDTH,
     height: V2_NODE_HEIGHT,
+    hidden: Boolean(revealVisibility && !revealVisibility.nodeIds.has(item.node.id)),
     data: {
       kind: "node",
       node: item.node,
+      revealActive: Boolean(revealVisibility),
       runBusy: options.runningNodeId === item.node.id,
       structureBusy: options.structureBusy,
       onRun: options.onRunNode,
@@ -401,7 +455,11 @@ function toCanvasNodes(
   });
 }
 
-function toCanvasEdges(workflow: ProductWorkflowV2, openFolderId: string | null): WorkflowCanvasEdge[] {
+function toCanvasEdges(
+  workflow: ProductWorkflowV2,
+  openFolderId: string | null,
+  revealVisibility?: WorkflowRevealVisibility,
+): WorkflowCanvasEdge[] {
   if (openFolderId) {
     return buildLocalFolderGraph(workflow, openFolderId).edges.map((edge) => ({
       id: edge.id,
@@ -410,31 +468,39 @@ function toCanvasEdges(workflow: ProductWorkflowV2, openFolderId: string | null)
       sourceHandle: edge.source_handle,
       targetHandle: edge.target_handle,
       type: "smoothstep",
+      hidden: Boolean(revealVisibility && !revealVisibility.edgeIds.has(edge.id)),
       style: { stroke: "#94a3b8", strokeWidth: 1.8 },
       data: { projected: false, originalEdgeIds: [edge.id], count: 1 },
     }));
   }
-  return projectGlobalGraph(workflow).edges.map((edge) => ({
-    id: edge.id,
-    source: edge.source,
-    target: edge.target,
-    sourceHandle: edge.source_handle,
-    targetHandle: edge.target_handle,
-    type: "smoothstep",
-    label: edge.count > 1 ? String(edge.count) : undefined,
-    animated: edge.projected && edge.count > 1,
-    style: {
-      stroke: edge.projected ? "#6366f1" : "#94a3b8",
-      strokeWidth: edge.projected ? 2.2 : 1.8,
-    },
-    labelStyle: { fill: "#475569", fontSize: 11, fontWeight: 700 },
-    labelBgStyle: { fill: "#ffffff", fillOpacity: 0.92 },
-    data: {
-      projected: edge.projected,
-      originalEdgeIds: edge.original_edge_ids,
-      count: edge.count,
-    },
-  }));
+  return projectGlobalGraph(workflow).edges.map((edge) => {
+    const revealedEdgeIds = revealVisibility
+      ? edge.original_edge_ids.filter((edgeId) => revealVisibility.edgeIds.has(edgeId))
+      : edge.original_edge_ids;
+    const count = revealedEdgeIds.length;
+    return {
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      sourceHandle: edge.source_handle,
+      targetHandle: edge.target_handle,
+      type: "smoothstep",
+      hidden: Boolean(revealVisibility && count === 0),
+      label: count > 1 ? String(count) : undefined,
+      animated: edge.projected && count > 1,
+      style: {
+        stroke: edge.projected ? "#6366f1" : "#94a3b8",
+        strokeWidth: edge.projected ? 2.2 : 1.8,
+      },
+      labelStyle: { fill: "#475569", fontSize: 11, fontWeight: 700 },
+      labelBgStyle: { fill: "#ffffff", fillOpacity: 0.92 },
+      data: {
+        projected: edge.projected,
+        originalEdgeIds: revealedEdgeIds,
+        count,
+      },
+    };
+  });
 }
 
 function isRealNode(node: WorkflowCanvasNode): node is Node<WorkflowNodeData, "workflow-node-v2"> {
@@ -443,6 +509,7 @@ function isRealNode(node: WorkflowCanvasNode): node is Node<WorkflowNodeData, "w
 
 export function V2WorkflowCanvas({
   workflow,
+  revealVisibility,
   openFolderId,
   viewport,
   structureBusy,
@@ -474,10 +541,14 @@ export function V2WorkflowCanvas({
       onOpenFolder,
       onRunNode,
       onBindReference,
+      revealVisibility,
     }),
-    [onBindReference, onOpenFolder, onRunNode, openFolderId, runningNodeId, structureBusy, workflow],
+    [onBindReference, onOpenFolder, onRunNode, openFolderId, revealVisibility, runningNodeId, structureBusy, workflow],
   );
-  const graphEdges = useMemo(() => toCanvasEdges(workflow, openFolderId), [openFolderId, workflow]);
+  const graphEdges = useMemo(
+    () => toCanvasEdges(workflow, openFolderId, revealVisibility),
+    [openFolderId, revealVisibility, workflow],
+  );
   const [nodes, setNodes, onNodesChange] = useNodesState<WorkflowCanvasNode>(graphNodes);
   const previousIdentityRef = useRef(graphIdentity);
   const dragStartRef = useRef(new Map<string, { x: number; y: number }>());
@@ -563,7 +634,12 @@ export function V2WorkflowCanvas({
       })}
       defaultViewport={defaultViewport}
       fitView={!restoredViewport}
-      fitViewOptions={{ padding: 0.22, maxZoom: 1.05, duration: 180 }}
+      fitViewOptions={{
+        padding: 0.22,
+        maxZoom: 1.05,
+        duration: 180,
+        includeHiddenNodes: Boolean(revealVisibility),
+      }}
       minZoom={0.12}
       maxZoom={2}
       nodesDraggable={!structureBusy}

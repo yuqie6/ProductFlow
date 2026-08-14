@@ -14,6 +14,52 @@ describe("workflow draft API contract", () => {
     expect(api.workflowRevealEventsUrl("materialization-1", 8)).toBe(
       "/api/v2/workflow-materializations/materialization-1/reveal-events?after=8",
     );
+    expect(api.workflowRevealEventsUrl("materialization/1", 8)).toContain("materialization%2F1");
+  });
+
+  it("streams reveal bytes with credentials and both replay cursor forms", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      body: null,
+      text: async () => "id: 9\n\n",
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const chunks: string[] = [];
+
+    await api.streamWorkflowRevealEvents("materialization-1", {
+      after: 8,
+      onChunk: (chunk) => chunks.push(chunk),
+    });
+
+    expect(chunks).toEqual(["id: 9\n\n"]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v2/workflow-materializations/materialization-1/reveal-events?after=8",
+      expect.objectContaining({
+        credentials: "include",
+        headers: { Accept: "text/event-stream", "Last-Event-ID": "8" },
+      }),
+    );
+  });
+
+  it("confirms the exact draft revision currently under review", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: "draft-1", current_version: 4 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.confirmWorkflowDraft("product-1", "draft-1", 4);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v2/products/product-1/workflow-drafts/draft-1/confirm",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "include",
+        body: JSON.stringify({ expected_draft_version: 4 }),
+      }),
+    );
   });
 
   it("sends explicit draft and workflow revisions to the materialization endpoint", async () => {
