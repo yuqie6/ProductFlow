@@ -25,6 +25,8 @@ import type {
   CreateProductInput,
   CreateCanonicalProductInput,
   CreateWorkflowDraftInput,
+  DeliveryRenditionJob,
+  DeliveryRenditionJobListResponse,
   ImageSessionDetail,
   ImageSessionListResponse,
   ImageSessionStatus,
@@ -55,6 +57,7 @@ import type {
   SubmitWorkflowNodeRunV2Result,
   UpdateUserTemplateGroupInput,
   WorkflowDraft,
+  WorkflowDeliverySpec,
   WorkflowCanvasMutationResult,
   WorkflowMaterializationResult,
   WorkflowReferenceBindingResult,
@@ -674,6 +677,26 @@ export const api = {
   },
   getWorkflowNodeRunV2(nodeRunId: string): Promise<WorkflowNodeRunV2> {
     return request(`/api/v2/workflow-node-runs/${nodeRunId}`);
+  },
+  createDeliveryRendition(
+    sourceAssetId: string,
+    deliverySpec: WorkflowDeliverySpec,
+  ): Promise<DeliveryRenditionJob> {
+    return request(`/api/v2/product-image-assets/${encodeURIComponent(sourceAssetId)}/renditions`, {
+      method: "POST",
+      body: JSON.stringify(deliverySpec),
+    });
+  },
+  listDeliveryRenditions(sourceAssetId: string): Promise<DeliveryRenditionJobListResponse> {
+    return request(`/api/v2/product-image-assets/${encodeURIComponent(sourceAssetId)}/renditions`);
+  },
+  getDeliveryRenditionJob(jobId: string): Promise<DeliveryRenditionJob> {
+    return request(`/api/v2/delivery-rendition-jobs/${encodeURIComponent(jobId)}`);
+  },
+  retryDeliveryRenditionJob(jobId: string): Promise<DeliveryRenditionJob> {
+    return request(`/api/v2/delivery-rendition-jobs/${encodeURIComponent(jobId)}/retry`, {
+      method: "POST",
+    });
   },
   workflowRevealEventsUrl(materializationId: string, after?: number): string {
     const path = `/api/v2/workflow-materializations/${materializationId}/reveal-events`;

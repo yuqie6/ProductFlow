@@ -30,6 +30,7 @@ function asset(id: string, verificationStatus: GalleryAsset["verification_status
     user_folder_name: null,
     image_type_title: null,
     generation: null,
+    rendition: null,
     parent_asset_id: null,
     source_image_session_asset_id: null,
     mime_type: "image/png",

@@ -3,6 +3,7 @@ export type ProductListSort = "updated_desc" | "created_desc" | "name_asc";
 export type CopyStatus = "draft" | "confirmed";
 export type PosterKind = "main_image" | "promo_poster";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+export type DeliveryRenditionStatus = Exclude<JobStatus, "cancelled">;
 export type SourceAssetKind = "original_image" | "reference_image" | "processed_product_image";
 export type ImageSessionAssetKind = "reference_upload" | "generated_image";
 export type MediaVerificationStatus = "verified" | "legacy_pending" | "missing";
@@ -231,10 +232,18 @@ export interface GalleryGenerationSummary {
   visual_system_version_id: string;
 }
 
+export interface GalleryRenditionSummary {
+  job_id: string;
+  source_asset_id: string;
+  delivery_spec: WorkflowDeliverySpec;
+  status: DeliveryRenditionStatus;
+}
+
 export interface GalleryAsset extends ProductImageAsset {
   user_folder_name: string | null;
   image_type_title: string | null;
   generation: GalleryGenerationSummary | null;
+  rendition: GalleryRenditionSummary | null;
 }
 
 export interface GalleryAssetPage {
@@ -622,6 +631,26 @@ export interface WorkflowDeliverySpec {
   fit: "contain" | "cover";
   background_color?: string | null;
   crop_anchor?: "center" | "top" | "bottom" | "left" | "right" | null;
+}
+
+export interface DeliveryRenditionJob {
+  id: string;
+  product_id: string;
+  source_asset_id: string;
+  result_asset: ProductImageAsset | null;
+  delivery_spec: WorkflowDeliverySpec;
+  status: DeliveryRenditionStatus;
+  attempts: number;
+  is_retryable: boolean;
+  failure_reason: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  updated_at: string;
+}
+
+export interface DeliveryRenditionJobListResponse {
+  items: DeliveryRenditionJob[];
 }
 
 export interface WorkflowDraftPlannedImage {

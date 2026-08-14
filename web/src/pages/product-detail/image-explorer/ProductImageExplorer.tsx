@@ -91,6 +91,13 @@ export function ProductImageExplorer({
       await queryClient.invalidateQueries({ queryKey: ["active-product-workflow-v2", productId] });
     },
   });
+  const sourceMutation = useMutation({
+    mutationFn: (asset: GalleryAsset) => {
+      if (!asset.rendition) throw new Error(t("detail.library.sourceUnavailable"));
+      return api.getGalleryAsset(productId, asset.rendition.source_asset_id);
+    },
+    onSuccess: (asset) => onPreviewImage(toDownloadableImage(asset)),
+  });
 
   const loadedAssetsById = useMemo(
     () => new Map(explorer.assets.map((asset) => [asset.id, asset])),
@@ -105,8 +112,11 @@ export function ProductImageExplorer({
     explorer.moveAssetsMutation,
     explorer.archiveMutation,
     referenceMutation,
+    sourceMutation,
   ].some((mutation) => mutation.isPending);
-  const operationError = explorer.operationError ?? (referenceMutation.error instanceof Error ? referenceMutation.error : null);
+  const operationError = explorer.operationError
+    ?? (referenceMutation.error instanceof Error ? referenceMutation.error : null)
+    ?? (sourceMutation.error instanceof Error ? sourceMutation.error : null);
 
   const currentDirectoryLabel = bootstrap
     ? directoryLabel(bootstrap, explorer.directory, t)
@@ -309,7 +319,9 @@ export function ProductImageExplorer({
               onRename={(asset) => setDialog({ kind: "rename-asset", asset })}
               onMove={(asset) => setDialog({ kind: "move-assets", assets: [asset] })}
               onUseAsReference={referenceTarget ? (asset) => referenceMutation.mutate(asset) : undefined}
+              onViewSource={(asset) => sourceMutation.mutate(asset)}
               referenceBusy={referenceMutation.isPending}
+              sourceBusy={sourceMutation.isPending}
             />
           ) : (
             <ImageAssetList
@@ -320,7 +332,9 @@ export function ProductImageExplorer({
               onRename={(asset) => setDialog({ kind: "rename-asset", asset })}
               onMove={(asset) => setDialog({ kind: "move-assets", assets: [asset] })}
               onUseAsReference={referenceTarget ? (asset) => referenceMutation.mutate(asset) : undefined}
+              onViewSource={(asset) => sourceMutation.mutate(asset)}
               referenceBusy={referenceMutation.isPending}
+              sourceBusy={sourceMutation.isPending}
             />
           )}
 
@@ -341,6 +355,15 @@ export function ProductImageExplorer({
       {typeof document === "undefined" ? dialogs : createPortal(dialogs, document.body)}
     </div>
   );
+}
+
+function toDownloadableImage(asset: GalleryAsset): DownloadableImage {
+  return {
+    previewUrl: api.toApiUrl(asset.preview_url),
+    downloadUrl: api.toApiUrl(asset.download_url),
+    filename: asset.original_filename,
+    alt: asset.display_name,
+  };
 }
 
 function directoryLabel(

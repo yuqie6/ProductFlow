@@ -4,6 +4,7 @@ import {
   FolderInput,
   FolderOpen,
   FolderPlus,
+  FileOutput,
   Images,
   Library,
   Loader2,
@@ -27,8 +28,10 @@ import type {
 } from "../../lib/types";
 import { ProductImageExplorer } from "../product-detail/image-explorer/ProductImageExplorer";
 import type { WorkflowCanvasStateV1, WorkflowCanvasViewport } from "./canvasState";
+import { DeliveryRenditionPanel } from "./DeliveryRenditionPanel";
 import { RecipeLibraryPanel } from "./RecipeLibraryPanel";
 import { resolveRecipeVersionSource } from "./recipeSource";
+import { shouldOpenArtifactsForSelection } from "./sidePanel";
 import { V2WorkflowCanvas } from "./V2WorkflowCanvas";
 
 export interface RecipeSourceSelection {
@@ -75,7 +78,7 @@ interface V2WorkflowWorkbenchProps {
   onArchiveRecipe: (recipe: WorkflowRecipeSummary) => void;
 }
 
-type SidePanel = "recipes" | "library";
+type SidePanel = "recipes" | "library" | "artifacts";
 
 export function V2WorkflowWorkbench({
   product,
@@ -120,6 +123,9 @@ export function V2WorkflowWorkbench({
     const selected = new Set(selectedNodeIds);
     return workflow?.nodes.filter((node) => selected.has(node.id)) ?? [];
   }, [selectedNodeIds, workflow?.nodes]);
+  const selectedImageNode = selectedNodes.length === 1 && selectedNodes[0].node_type === "image_generation"
+    ? selectedNodes[0]
+    : null;
   const appendSource = (recipe: WorkflowRecipeSummary) => {
     const source = resolveRecipeVersionSource(
       recipe.kind,
@@ -134,6 +140,12 @@ export function V2WorkflowWorkbench({
     setSidePanel("library");
     onBindReference(node);
   }, [onBindReference]);
+  const selectNodes = useCallback((nodeIds: string[]) => {
+    if (shouldOpenArtifactsForSelection(selectedNodeIds, nodeIds, workflow?.nodes ?? [])) {
+      setSidePanel("artifacts");
+    }
+    onSelectionChange(nodeIds);
+  }, [onSelectionChange, selectedNodeIds, workflow?.nodes]);
 
   return (
     <main className="flex min-h-0 flex-1 flex-col bg-slate-100 pb-[calc(4.5rem+env(safe-area-inset-bottom))] dark:!bg-[#080b10] lg:pb-0">
@@ -232,7 +244,7 @@ export function V2WorkflowWorkbench({
               onOpenFolder={onOpenFolder}
               onRunNode={onRunNode}
               onBindReference={bindReference}
-              onSelectionChange={onSelectionChange}
+              onSelectionChange={selectNodes}
               onLayoutCommit={onLayoutCommit}
               onFolderTranslate={onFolderTranslate}
               onViewportChange={onViewportChange}
@@ -255,9 +267,10 @@ export function V2WorkflowWorkbench({
               <button type="button" onClick={onCancelReference} className="shrink-0 font-semibold hover:underline">{t("workflowV2.reference.cancel")}</button>
             </div>
           ) : null}
-          <div className="grid grid-cols-2 border-b border-slate-200 bg-white p-1.5 dark:border-slate-800 dark:!bg-[#0d1118]">
+          <div className="grid grid-cols-3 border-b border-slate-200 bg-white p-1.5 dark:border-slate-800 dark:!bg-[#0d1118]">
             <SideTab active={sidePanel === "recipes"} icon={<Library size={14} />} label={t("workflowV2.sidebar.recipes")} onClick={() => setSidePanel("recipes")} />
             <SideTab active={sidePanel === "library"} icon={<Images size={14} />} label={t("workflowV2.sidebar.library")} onClick={() => setSidePanel("library")} />
+            <SideTab active={sidePanel === "artifacts"} icon={<FileOutput size={14} />} label={t("workflowV2.sidebar.artifacts")} onClick={() => setSidePanel("artifacts")} />
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
             {sidePanel === "recipes" ? (
@@ -276,7 +289,7 @@ export function V2WorkflowWorkbench({
                 }}
                 onArchive={onArchiveRecipe}
               />
-            ) : (
+            ) : sidePanel === "library" ? (
               <div className="p-3">
                 <ProductImageExplorer
                   productId={product.id}
@@ -291,6 +304,12 @@ export function V2WorkflowWorkbench({
                   } : undefined}
                 />
               </div>
+            ) : (
+              <DeliveryRenditionPanel
+                productId={product.id}
+                node={selectedImageNode}
+                onPreviewImage={onPreviewImage}
+              />
             )}
           </div>
         </aside>

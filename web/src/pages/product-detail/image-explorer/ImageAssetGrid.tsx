@@ -22,7 +22,9 @@ interface ImageAssetCollectionProps {
   onRename: (asset: GalleryAsset) => void;
   onMove: (asset: GalleryAsset) => void;
   onUseAsReference?: (asset: GalleryAsset) => void;
+  onViewSource?: (asset: GalleryAsset) => void;
   referenceBusy?: boolean;
+  sourceBusy?: boolean;
 }
 
 export function ImageAssetGrid(props: ImageAssetCollectionProps) {
@@ -65,8 +67,15 @@ export function ImageAssetList(props: ImageAssetCollectionProps) {
               )}
             </button>
             <div className="min-w-0 flex-1">
-              <div className="truncate text-xs font-medium text-slate-900 dark:text-slate-100" title={asset.display_name}>
-                {asset.display_name}
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span className="min-w-0 flex-1 truncate text-xs font-medium text-slate-900 dark:text-slate-100" title={asset.display_name}>
+                  {asset.display_name}
+                </span>
+                {asset.rendition ? (
+                  <span className="shrink-0 rounded bg-slate-100 px-1 py-0.5 text-[9px] font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-300">
+                    {asset.rendition.delivery_spec.format.toUpperCase()}
+                  </span>
+                ) : null}
               </div>
               <div className="mt-1 truncate text-[10px] text-slate-400">
                 {assetPixelSize(asset)} · {formatAssetByteSize(asset.byte_size)} · {formatDateTime(asset.created_at, t.locale)}
@@ -78,7 +87,9 @@ export function ImageAssetList(props: ImageAssetCollectionProps) {
               onRename={props.onRename}
               onMove={props.onMove}
               onUseAsReference={props.onUseAsReference}
+              onViewSource={props.onViewSource}
               referenceBusy={props.referenceBusy}
+              sourceBusy={props.sourceBusy}
             />
           </div>
         );
@@ -95,7 +106,9 @@ function ImageAssetCard({
   onRename,
   onMove,
   onUseAsReference,
+  onViewSource,
   referenceBusy,
+  sourceBusy,
 }: ImageAssetCollectionProps & { asset: GalleryAsset }) {
   const { t } = useI18n();
   const readable = assetCanReadMedia(asset);
@@ -137,6 +150,11 @@ function ImageAssetCard({
         <div className="absolute left-1.5 top-1.5">
           <SelectionButton asset={asset} selected={selected} onToggle={onToggleSelected} />
         </div>
+        {asset.rendition ? (
+          <span className="absolute bottom-1.5 right-1.5 max-w-[calc(100%-0.75rem)] truncate rounded bg-slate-950/80 px-1.5 py-1 text-[9px] font-semibold text-white backdrop-blur">
+            {asset.rendition.delivery_spec.width} x {asset.rendition.delivery_spec.height} {asset.rendition.delivery_spec.format.toUpperCase()}
+          </span>
+        ) : null}
       </div>
       <div className="flex h-[52px] min-w-0 items-center gap-1 px-2 py-1.5">
         <div className="min-w-0 flex-1">
@@ -153,7 +171,9 @@ function ImageAssetCard({
           onRename={onRename}
           onMove={onMove}
           onUseAsReference={onUseAsReference}
+          onViewSource={onViewSource}
           referenceBusy={referenceBusy}
+          sourceBusy={sourceBusy}
         />
       </div>
     </article>

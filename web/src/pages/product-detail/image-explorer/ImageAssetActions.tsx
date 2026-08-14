@@ -1,4 +1,4 @@
-import { Download, Eye, MoreHorizontal, MoveRight, Pencil, RefreshCw } from "lucide-react";
+import { ArrowUpLeft, Download, Eye, MoreHorizontal, MoveRight, Pencil, RefreshCw } from "lucide-react";
 
 import { api } from "../../../lib/api";
 import { useI18n } from "../../../lib/preferences";
@@ -11,7 +11,9 @@ interface ImageAssetActionsProps {
   onRename: (asset: GalleryAsset) => void;
   onMove: (asset: GalleryAsset) => void;
   onUseAsReference?: (asset: GalleryAsset) => void;
+  onViewSource?: (asset: GalleryAsset) => void;
   referenceBusy?: boolean;
+  sourceBusy?: boolean;
 }
 
 export function ImageAssetActions({
@@ -20,7 +22,9 @@ export function ImageAssetActions({
   onRename,
   onMove,
   onUseAsReference,
+  onViewSource,
   referenceBusy = false,
+  sourceBusy = false,
 }: ImageAssetActionsProps) {
   const { t } = useI18n();
   const readable = assetCanReadMedia(asset);
@@ -48,6 +52,14 @@ export function ImageAssetActions({
         ) : null}
         <ActionButton icon={<Pencil size={13} />} label={t("detail.library.renameAsset")} onClick={() => onRename(asset)} />
         <ActionButton icon={<MoveRight size={13} />} label={t("detail.library.move")} onClick={() => onMove(asset)} />
+        {asset.rendition && onViewSource ? (
+          <ActionButton
+            icon={<ArrowUpLeft size={13} />}
+            label={t("detail.library.viewSource")}
+            onClick={() => onViewSource(asset)}
+            disabled={sourceBusy}
+          />
+        ) : null}
         {onUseAsReference ? (
           <ActionButton
             icon={<RefreshCw size={13} />}
