@@ -10,6 +10,7 @@ import type {
   ProductWorkflowV2,
   WorkflowCanvasMutationResult,
   WorkflowNodeV2,
+  WorkflowRunListV2Response,
 } from "../../lib/types";
 import { ProductWorkbenchCanvasChromeToggle } from "../product-detail/ProductWorkbenchCanvasChromeToggle";
 import {
@@ -57,7 +58,8 @@ interface ProductWorkflowV2CanvasPanelProps {
   onToggleTopChrome: () => void;
   onRefetchWorkflow: () => Promise<unknown>;
   onCanvasContextChange: (context: ProductWorkflowV2CanvasContext) => void;
-  onOpenSidebarTool: (tool: "details" | "library") => void;
+  onOpenSidebarTool: (tool: "details" | "runs" | "library") => void;
+  onBeforeRunWorkflow: () => Promise<void>;
   onReferenceNodeChange: (nodeId: string | null) => void;
   onSaveRecipe: (source: RecipeSourceSelection) => void;
 }
@@ -74,6 +76,7 @@ export function ProductWorkflowV2CanvasPanel({
   onRefetchWorkflow,
   onCanvasContextChange,
   onOpenSidebarTool,
+  onBeforeRunWorkflow,
   onReferenceNodeChange,
   onSaveRecipe,
 }: ProductWorkflowV2CanvasPanelProps) {
@@ -94,6 +97,7 @@ export function ProductWorkflowV2CanvasPanel({
   ));
   const loadedCanvasWorkflowRef = useRef<string | null>(null);
   const canvasSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const previousActiveWorkflowRunIdsRef = useRef<Set<string>>(new Set());
 
   const openFolder = workflow.folders.find((folder) => folder.id === canvasState.open_folder_id) ?? null;
   const mobileCanvasModeItems: WorkflowCanvasMobileModeItem[] = [
@@ -201,6 +205,39 @@ export function ProductWorkflowV2CanvasPanel({
       return !status || status === "queued" || status === "running" ? 1_000 : false;
     },
   });
+  const workflowRunsQueryKey = ["v2-workflow-runs", productId, workflow.id] as const;
+  const workflowRunsQuery = useQuery({
+    queryKey: workflowRunsQueryKey,
+    queryFn: () => api.listWorkflowRunsV2(productId, workflow.id),
+    refetchInterval: (query) => query.state.data?.items.some((run) => run.status === "running")
+      ? 1_200
+      : false,
+  });
+  const activeWorkflowRun = workflowRunsQuery.data?.items.find((run) => run.status === "running") ?? null;
+
+  useEffect(() => {
+    const result = workflowRunsQuery.data;
+    if (!result) {
+      return;
+    }
+    queryClient.setQueryData<ActiveProductWorkflowV2>(
+      ["active-product-workflow-v2", productId],
+      { latest_revision: result.workflow.revision, workflow: result.workflow },
+    );
+    const activeIds = new Set(
+      result.items.filter((run) => run.status === "running").map((run) => run.id),
+    );
+    if (previousActiveWorkflowRunIdsRef.current.size > 0 && activeIds.size === 0) {
+      void onRefetchWorkflow();
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["product-image-library", productId] }),
+        queryClient.invalidateQueries({ queryKey: ["product-image-library-assets", productId] }),
+        queryClient.invalidateQueries({ queryKey: ["product", productId] }),
+        queryClient.invalidateQueries({ queryKey: ["products"] }),
+      ]);
+    }
+    previousActiveWorkflowRunIdsRef.current = activeIds;
+  }, [onRefetchWorkflow, productId, queryClient, workflowRunsQuery.data]);
 
   useEffect(() => {
     const status = runQuery.data?.status;
@@ -235,8 +272,36 @@ export function ProductWorkflowV2CanvasPanel({
       }
     },
   });
+  const workflowRunMutation = useMutation({
+    mutationFn: async () => {
+      await onBeforeRunWorkflow();
+      return api.runWorkflowV2(productId, workflow.id);
+    },
+    onMutate: () => setOperationError(null),
+    onSuccess: async (result) => {
+      queryClient.setQueryData<WorkflowRunListV2Response>(workflowRunsQueryKey, (current) => ({
+        workflow: result.workflow,
+        items: [
+          result.workflow_run,
+          ...(current?.items ?? []).filter((run) => run.id !== result.workflow_run.id),
+        ],
+      }));
+      queryClient.setQueryData<ActiveProductWorkflowV2>(
+        ["active-product-workflow-v2", productId],
+        { latest_revision: result.workflow.revision, workflow: result.workflow },
+      );
+      onOpenSidebarTool("runs");
+      await onRefetchWorkflow();
+    },
+    onError: (error) => {
+      setOperationError(errorDetail(error, t("workflowV2.error.runWorkflow")));
+    },
+  });
   const nodeRunMutation = useMutation({
-    mutationFn: (node: WorkflowNodeV2) => api.runWorkflowNodeV2(node.id),
+    mutationFn: async (node: WorkflowNodeV2) => {
+      await onBeforeRunWorkflow();
+      return api.runWorkflowNodeV2(node.id);
+    },
     onMutate: () => {
       setOperationError(null);
       setCurrentRun(null);
@@ -310,7 +375,8 @@ export function ProductWorkflowV2CanvasPanel({
   const runningNodeId = currentRun?.nodeId ?? (
     nodeRunMutation.isPending ? nodeRunMutation.variables?.id ?? null : null
   );
-  const busy = structureMutation.isPending || interactionLocked;
+  const workflowRunBusy = workflowRunMutation.isPending || Boolean(activeWorkflowRun);
+  const busy = structureMutation.isPending || interactionLocked || workflowRunBusy;
 
   return (
     <>
@@ -387,6 +453,7 @@ export function ProductWorkflowV2CanvasPanel({
             openFolderId={openFolder?.id ?? null}
             selectedNodeIds={selectedNodeIds}
             structureBusy={busy}
+            workflowRunBusy={workflowRunBusy}
             variant="overlay"
             activityLabel={activityLabel}
             onOpenFolder={(folderId) => {
@@ -410,6 +477,7 @@ export function ProductWorkflowV2CanvasPanel({
                 setDissolveFolder({ id: openFolder.id, title: openFolder.title });
               }
             }}
+            onRunWorkflow={() => workflowRunMutation.mutate()}
           />
 
           <div

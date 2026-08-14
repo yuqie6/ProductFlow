@@ -6,6 +6,7 @@ import {
   Loader2,
   MoreHorizontal,
   Pencil,
+  Play,
   Save,
   Trash2,
   Workflow,
@@ -24,6 +25,7 @@ interface V2WorkflowCommandBarProps {
   openFolderId: string | null;
   selectedNodeIds: string[];
   structureBusy: boolean;
+  workflowRunBusy?: boolean;
   variant: "header" | "overlay";
   activityLabel?: string | null;
   onOpenFolder: (folderId: string | null) => void;
@@ -32,6 +34,7 @@ interface V2WorkflowCommandBarProps {
   onSaveRecipe: (source: RecipeSourceSelection) => void;
   onRenameFolder: () => void;
   onDissolveFolder: () => void;
+  onRunWorkflow?: () => void;
 }
 
 export function V2WorkflowCommandBar({
@@ -39,6 +42,7 @@ export function V2WorkflowCommandBar({
   openFolderId,
   selectedNodeIds,
   structureBusy,
+  workflowRunBusy = false,
   variant,
   activityLabel,
   onOpenFolder,
@@ -47,6 +51,7 @@ export function V2WorkflowCommandBar({
   onSaveRecipe,
   onRenameFolder,
   onDissolveFolder,
+  onRunWorkflow,
 }: V2WorkflowCommandBarProps) {
   const { t } = useI18n();
   const openFolder = workflow?.folders.find((folder) => folder.id === openFolderId) ?? null;
@@ -107,6 +112,16 @@ export function V2WorkflowCommandBar({
 
   const actions = workflow ? (
     <div className="flex min-w-max items-center justify-end gap-1.5">
+      {onRunWorkflow ? (
+        <CommandIconButton
+          label={t(workflowRunBusy ? "detail.workflowRunning" : "detail.runWorkflow")}
+          disabled={structureBusy || workflowRunBusy}
+          onClick={onRunWorkflow}
+        >
+          {workflowRunBusy ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />}
+        </CommandIconButton>
+      ) : null}
+
       {selectedNodeIds.length ? (
         <span className="hidden rounded-md bg-indigo-50 px-2 py-1.5 text-[11px] font-semibold text-indigo-700 dark:bg-violet-500/15 dark:text-violet-200 md:inline-flex">
           {t("workflowV2.canvas.selected", { count: selectedNodeIds.length })}

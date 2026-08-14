@@ -555,6 +555,42 @@ def test_recover_unfinished_workflow_runs_requeues_queued_runs(
     assert sent_run_ids == [kickoff.run_id]
 
 
+def test_recover_unfinished_workflow_runs_requeues_terminal_nodes_for_finalization(
+    db_session,
+    configured_env: Path,
+) -> None:
+    from productflow_backend.application.product_workflows import start_product_workflow_run
+
+    product = create_product(
+        db_session,
+        name="恢复待终结工作流",
+        category=None,
+        price=None,
+        source_note=None,
+        image_bytes=_make_demo_image_bytes(),
+        filename="workflow.png",
+        content_type="image/png",
+    )
+    kickoff = start_product_workflow_run(db_session, product_id=product.id)
+    node_runs = list(
+        db_session.scalars(
+            sa.select(WorkflowNodeRun).where(WorkflowNodeRun.workflow_run_id == kickoff.run_id)
+        )
+    )
+    assert node_runs
+    for index, node_run in enumerate(node_runs):
+        node_run.status = WorkflowNodeStatus.SUCCEEDED if index == 0 else WorkflowNodeStatus.FAILED
+    db_session.commit()
+
+    sent_run_ids: list[str] = []
+    summary = recover_unfinished_workflow_runs(enqueue=sent_run_ids.append)
+
+    assert summary.queued_runs == 1
+    assert summary.stale_running_runs == 0
+    assert summary.enqueued_runs == 1
+    assert sent_run_ids == [kickoff.run_id]
+
+
 def test_recover_unfinished_workflow_runs_resets_stale_running_node_runs(
     db_session,
     configured_env: Path,

@@ -11,14 +11,19 @@ from productflow_backend.application.agent_conversations import mark_agent_conve
 from productflow_backend.application.product_workflows import (
     bind_v2_reference_node_asset,
     cancel_v2_workflow_node_run,
+    cancel_v2_workflow_run,
     create_workflow_folder,
     dissolve_workflow_folder,
     get_v2_workflow_node_detail,
     get_v2_workflow_node_run,
+    get_v2_workflow_run,
     list_v2_workflow_node_runs,
+    list_v2_workflow_runs,
     rename_workflow_folder,
+    retry_v2_workflow_run,
     set_workflow_folder_members,
     submit_v2_workflow_node_run,
+    submit_v2_workflow_run,
     translate_workflow_folder,
     update_v2_image_node,
     update_v2_prompt_node,
@@ -51,6 +56,7 @@ from productflow_backend.presentation.schemas.workflow_drafts import (
     RenameWorkflowFolderRequest,
     SetWorkflowFolderMembersRequest,
     SubmitWorkflowNodeRunV2Response,
+    SubmitWorkflowRunV2Response,
     TranslateWorkflowFolderRequest,
     UpdateImageWorkflowNodeV2Request,
     UpdatePromptWorkflowNodeV2Request,
@@ -63,13 +69,17 @@ from productflow_backend.presentation.schemas.workflow_drafts import (
     WorkflowNodeDetailV2Response,
     WorkflowNodeRunListV2Response,
     WorkflowNodeRunV2Response,
+    WorkflowRunDetailV2Response,
+    WorkflowRunListV2Response,
     serialize_active_v2_workflow,
     serialize_canvas_mutation,
     serialize_materialization,
+    serialize_product_workflow_v2,
     serialize_reference_binding,
     serialize_workflow_draft,
     serialize_workflow_node_detail_v2,
     serialize_workflow_node_run_v2,
+    serialize_workflow_run_v2,
     to_workflow_node_positions,
 )
 
@@ -310,6 +320,118 @@ def update_workflow_node_layout_endpoint(
             positions=to_workflow_node_positions(payload.positions),
             expected_edit_version=payload.expected_edit_version,
         )
+    )
+
+
+@router.post(
+    "/products/{product_id}/workflows/{workflow_id}/runs",
+    response_model=SubmitWorkflowRunV2Response,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def submit_v2_workflow_run_endpoint(
+    product_id: str,
+    workflow_id: str,
+    session: Session = Depends(get_session),
+) -> SubmitWorkflowRunV2Response:
+    submission = submit_v2_workflow_run(
+        session,
+        product_id=product_id,
+        workflow_id=workflow_id,
+    )
+    return SubmitWorkflowRunV2Response(
+        created=submission.created,
+        workflow_run=serialize_workflow_run_v2(submission.run),
+        workflow=serialize_product_workflow_v2(submission.run.workflow),
+    )
+
+
+@router.get(
+    "/products/{product_id}/workflows/{workflow_id}/runs",
+    response_model=WorkflowRunListV2Response,
+)
+def list_v2_workflow_runs_endpoint(
+    product_id: str,
+    workflow_id: str,
+    limit: int = Query(default=20, ge=1, le=50),
+    session: Session = Depends(get_session),
+) -> WorkflowRunListV2Response:
+    result = list_v2_workflow_runs(
+        session,
+        product_id=product_id,
+        workflow_id=workflow_id,
+        limit=limit,
+    )
+    return WorkflowRunListV2Response(
+        items=[serialize_workflow_run_v2(run) for run in result.runs],
+        workflow=serialize_product_workflow_v2(result.workflow),
+    )
+
+
+@router.get(
+    "/products/{product_id}/workflows/{workflow_id}/runs/{run_id}",
+    response_model=WorkflowRunDetailV2Response,
+)
+def get_v2_workflow_run_endpoint(
+    product_id: str,
+    workflow_id: str,
+    run_id: str,
+    session: Session = Depends(get_session),
+) -> WorkflowRunDetailV2Response:
+    run = get_v2_workflow_run(
+        session,
+        product_id=product_id,
+        workflow_id=workflow_id,
+        run_id=run_id,
+    )
+    return WorkflowRunDetailV2Response(
+        workflow_run=serialize_workflow_run_v2(run),
+        workflow=serialize_product_workflow_v2(run.workflow),
+    )
+
+
+@router.post(
+    "/products/{product_id}/workflows/{workflow_id}/runs/{run_id}/cancel",
+    response_model=WorkflowRunDetailV2Response,
+)
+def cancel_v2_workflow_run_endpoint(
+    product_id: str,
+    workflow_id: str,
+    run_id: str,
+    session: Session = Depends(get_session),
+) -> WorkflowRunDetailV2Response:
+    run = cancel_v2_workflow_run(
+        session,
+        product_id=product_id,
+        workflow_id=workflow_id,
+        run_id=run_id,
+    )
+    return WorkflowRunDetailV2Response(
+        workflow_run=serialize_workflow_run_v2(run),
+        workflow=serialize_product_workflow_v2(run.workflow),
+    )
+
+
+@router.post(
+    "/products/{product_id}/workflows/{workflow_id}/runs/{run_id}/retry",
+    response_model=SubmitWorkflowRunV2Response,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def retry_v2_workflow_run_endpoint(
+    product_id: str,
+    workflow_id: str,
+    run_id: str,
+    session: Session = Depends(get_session),
+) -> SubmitWorkflowRunV2Response:
+    submission = retry_v2_workflow_run(
+        session,
+        product_id=product_id,
+        workflow_id=workflow_id,
+        run_id=run_id,
+    )
+    return SubmitWorkflowRunV2Response(
+        created=submission.created,
+        workflow_run=serialize_workflow_run_v2(submission.run),
+        workflow=serialize_product_workflow_v2(submission.run.workflow),
     )
 
 

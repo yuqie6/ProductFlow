@@ -28,7 +28,8 @@ from productflow_backend.application.workflow_drafts.materialization import (
     ActiveV2WorkflowSnapshot,
     WorkflowMaterializationResult,
 )
-from productflow_backend.domain.enums import WorkflowDraftStatus, WorkflowNodeStatus
+from productflow_backend.domain.durable_generation_tasks import WORKFLOW_RUN_GENERATION_TASK_CONTRACT
+from productflow_backend.domain.enums import WorkflowDraftStatus, WorkflowNodeStatus, WorkflowRunStatus
 from productflow_backend.infrastructure.db.models import (
     ProductWorkflow,
     WorkflowDraft,
@@ -37,6 +38,7 @@ from productflow_backend.infrastructure.db.models import (
     WorkflowFolder,
     WorkflowNode,
     WorkflowNodeRun,
+    WorkflowRun,
 )
 
 
@@ -348,6 +350,34 @@ class WorkflowNodeRunListV2Response(BaseModel):
     items: list[WorkflowNodeRunV2Response]
 
 
+class WorkflowRunV2Response(BaseModel):
+    id: str
+    schema_version: Literal[2]
+    workflow_id: str
+    status: WorkflowRunStatus
+    failure_reason: str | None
+    is_retryable: bool
+    is_cancelable: bool
+    progress_metadata: dict[str, object] | None
+    started_at: datetime
+    finished_at: datetime | None
+    node_runs: list[WorkflowNodeRunV2Response]
+
+
+class WorkflowRunDetailV2Response(BaseModel):
+    workflow_run: WorkflowRunV2Response
+    workflow: ProductWorkflowV2Response
+
+
+class SubmitWorkflowRunV2Response(WorkflowRunDetailV2Response):
+    created: bool
+
+
+class WorkflowRunListV2Response(BaseModel):
+    items: list[WorkflowRunV2Response]
+    workflow: ProductWorkflowV2Response
+
+
 class BindWorkflowReferenceAssetResponse(BaseModel):
     changed: bool
     previous_asset_id: str | None
@@ -630,6 +660,27 @@ def serialize_workflow_node_run_v2(node_run: WorkflowNodeRun) -> WorkflowNodeRun
     )
 
 
+def serialize_workflow_run_v2(run: WorkflowRun) -> WorkflowRunV2Response:
+    if run.workflow.schema_version != 2:
+        raise ValueError("v2 workflow run projection 收到了 schema-v1 运行")
+    return WorkflowRunV2Response(
+        id=run.id,
+        schema_version=2,
+        workflow_id=run.workflow_id,
+        status=run.status,
+        failure_reason=run.failure_reason,
+        is_retryable=run.status == WorkflowRunStatus.FAILED and run.is_retryable,
+        is_cancelable=WORKFLOW_RUN_GENERATION_TASK_CONTRACT.is_active(run.status),
+        progress_metadata=run.progress_metadata,
+        started_at=run.started_at,
+        finished_at=run.finished_at,
+        node_runs=[
+            serialize_workflow_node_run_v2(node_run)
+            for node_run in sorted(run.node_runs, key=lambda item: (item.started_at, item.id))
+        ],
+    )
+
+
 __all__ = [
     "ActiveProductWorkflowV2Response",
     "AppendWorkflowDraftRevisionRequest",
@@ -642,6 +693,7 @@ __all__ = [
     "RenameWorkflowFolderRequest",
     "SetWorkflowFolderMembersRequest",
     "SubmitWorkflowNodeRunV2Response",
+    "SubmitWorkflowRunV2Response",
     "UpdateWorkflowNodeV2Request",
     "WorkflowDraftResponse",
     "TranslateWorkflowFolderRequest",
@@ -650,6 +702,9 @@ __all__ = [
     "WorkflowMaterializationResponse",
     "WorkflowNodeRunV2Response",
     "WorkflowNodeRunListV2Response",
+    "WorkflowRunDetailV2Response",
+    "WorkflowRunListV2Response",
+    "WorkflowRunV2Response",
     "WorkflowNodeDetailV2Response",
     "serialize_workflow_node_detail_v2",
     "serialize_active_v2_workflow",
@@ -658,5 +713,6 @@ __all__ = [
     "serialize_reference_binding",
     "serialize_workflow_draft",
     "serialize_workflow_node_run_v2",
+    "serialize_workflow_run_v2",
     "to_workflow_node_positions",
 ]

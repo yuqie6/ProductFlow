@@ -12,7 +12,7 @@ import {
   Save,
   XCircle,
 } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { SelectField } from "../../components/SelectField";
 import { ApiError, api } from "../../lib/api";
@@ -44,6 +44,7 @@ interface V2NodeInspectorProps {
   onBindReference: (node: WorkflowNodeV2) => void;
   onPreviewImage: (image: DownloadableImage) => void;
   onWorkflowChanged: () => Promise<unknown>;
+  onFlushRegistration?: (flush: (() => Promise<void>) | null) => void;
 }
 
 const ACTIVE_RUN_STATUSES = new Set(["queued", "running"]);
@@ -78,9 +79,15 @@ export function V2NodeInspector({
   onBindReference,
   onPreviewImage,
   onWorkflowChanged,
+  onFlushRegistration,
 }: V2NodeInspectorProps) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
+  const editorFlushRef = useRef<() => Promise<void>>(async () => undefined);
+  const registerEditorFlush = useCallback((flush: (() => Promise<void>) | null) => {
+    editorFlushRef.current = flush ?? (async () => undefined);
+    onFlushRegistration?.(flush);
+  }, [onFlushRegistration]);
   const detailQuery = useQuery({
     queryKey: ["v2-workflow-node-detail", product.id, workflow.id, node?.id],
     queryFn: () => api.getWorkflowNodeDetailV2(product.id, workflow.id, node!.id),
@@ -115,7 +122,10 @@ export function V2NodeInspector({
     },
   });
   const runMutation = useMutation({
-    mutationFn: () => api.runWorkflowNodeV2(node!.id),
+    mutationFn: async () => {
+      await editorFlushRef.current();
+      return api.runWorkflowNodeV2(node!.id);
+    },
     onSuccess: async (result) => {
       queryClient.setQueryData<{ items: WorkflowNodeRunV2[] }>(runsQueryKey, (current) => ({
         items: [result.node_run, ...(current?.items ?? []).filter((item) => item.id !== result.node_run.id)],
@@ -237,14 +247,16 @@ export function V2NodeInspector({
           detail={detail}
           busy={updateMutation.isPending}
           onBind={() => onBindReference(node)}
-          onSave={(input) => updateMutation.mutate(input)}
+          onSave={(input) => updateMutation.mutateAsync(input)}
+          onFlushRegistration={registerEditorFlush}
         />
       ) : node.node_type === "prompt_generation" && detail.prompt_artifact ? (
         <PromptNodeEditor
           key={`${node.id}:${detail.prompt_artifact.version_id}`}
           detail={detail}
           busy={updateMutation.isPending}
-          onSave={(input) => updateMutation.mutate(input)}
+          onSave={(input) => updateMutation.mutateAsync(input)}
+          onFlushRegistration={registerEditorFlush}
         />
       ) : node.node_type === "image_generation" ? (
         <>
@@ -252,7 +264,8 @@ export function V2NodeInspector({
             key={`${node.id}:${detail.workflow_edit_version}`}
             detail={detail}
             busy={updateMutation.isPending}
-            onSave={(input) => updateMutation.mutate(input)}
+            onSave={(input) => updateMutation.mutateAsync(input)}
+            onFlushRegistration={registerEditorFlush}
           />
           <section className="config-bubble overflow-hidden rounded-2xl shadow-sm">
             <SectionHeading title={t("workflowV2.sidebar.artifacts")} />
@@ -320,17 +333,22 @@ function ReferenceNodeEditor({
   busy,
   onBind,
   onSave,
+  onFlushRegistration,
 }: {
   detail: WorkflowNodeDetailV2;
   busy: boolean;
   onBind: () => void;
-  onSave: (input: UpdateWorkflowNodeV2Input) => void;
+  onSave: (input: UpdateWorkflowNodeV2Input) => Promise<unknown>;
+  onFlushRegistration: (flush: (() => Promise<void>) | null) => void;
 }) {
   const { t } = useI18n();
   const node = detail.node;
   const [title, setTitle] = useState(node.title);
   const [role, setRole] = useState(textConfig(node.config_json.role));
   const [label, setLabel] = useState(textConfig(node.config_json.label));
+  const dirty = title !== node.title
+    || role !== textConfig(node.config_json.role)
+    || label !== textConfig(node.config_json.label);
   return (
     <EditorForm onSubmit={() => onSave({
       node_type: "reference_image",
@@ -338,7 +356,7 @@ function ReferenceNodeEditor({
       title,
       role,
       label,
-    })} busy={busy}>
+    })} busy={busy} dirty={dirty} onFlushRegistration={onFlushRegistration}>
       <TextInput label={t("agentWorkbench.nodeEditor.nodeName")} value={title} onChange={setTitle} />
       <TextInput label={t("agentWorkbench.nodeEditor.referenceRole")} value={role} onChange={setRole} />
       <TextInput label={t("agentWorkbench.nodeEditor.referenceLabel")} value={label} onChange={setLabel} />
@@ -357,16 +375,19 @@ function PromptNodeEditor({
   detail,
   busy,
   onSave,
+  onFlushRegistration,
 }: {
   detail: WorkflowNodeDetailV2;
   busy: boolean;
-  onSave: (input: UpdateWorkflowNodeV2Input) => void;
+  onSave: (input: UpdateWorkflowNodeV2Input) => Promise<unknown>;
+  onFlushRegistration: (flush: (() => Promise<void>) | null) => void;
 }) {
   const { t } = useI18n();
   const artifact = detail.prompt_artifact!;
   const [title, setTitle] = useState(detail.node.title);
   const [payload, setPayload] = useState<WorkflowImagePromptPayloadV1>(artifact.payload);
   const patchPayload = (patch: Partial<WorkflowImagePromptPayloadV1>) => setPayload((current) => ({ ...current, ...patch }));
+  const dirty = title !== detail.node.title || !sameJson(payload, artifact.payload);
 
   return (
     <EditorForm onSubmit={() => onSave({
@@ -375,7 +396,7 @@ function PromptNodeEditor({
       expected_prompt_artifact_version_id: artifact.version_id,
       title,
       prompt_payload: payload,
-    })} busy={busy}>
+    })} busy={busy} dirty={dirty} onFlushRegistration={onFlushRegistration}>
       <div className="flex items-center justify-between gap-2">
         <SectionTitle title={t("workflowConfirmation.section.prompts")} />
         <span className="rounded-full bg-indigo-50 px-2 py-1 text-[10px] font-semibold text-indigo-700 dark:bg-violet-500/15 dark:text-violet-200">
@@ -450,10 +471,12 @@ function ImageNodeEditor({
   detail,
   busy,
   onSave,
+  onFlushRegistration,
 }: {
   detail: WorkflowNodeDetailV2;
   busy: boolean;
-  onSave: (input: UpdateWorkflowNodeV2Input) => void;
+  onSave: (input: UpdateWorkflowNodeV2Input) => Promise<unknown>;
+  onFlushRegistration: (flush: (() => Promise<void>) | null) => void;
 }) {
   const { t } = useI18n();
   const parsedGeneration = parseGenerationSpec(detail.node.config_json.generation_spec);
@@ -466,6 +489,10 @@ function ImageNodeEditor({
   if (!generation) {
     return <PanelState icon={<AlertCircle size={20} />} text={t("agentWorkbench.nodeEditor.loadFailed")} />;
   }
+  const dirty = title !== detail.node.title
+    || variation !== textConfig(detail.node.config_json.variation_instruction)
+    || !sameJson(generation, parsedGeneration)
+    || !sameJson(delivery, parsedDelivery);
 
   return (
     <EditorForm onSubmit={() => onSave({
@@ -475,7 +502,7 @@ function ImageNodeEditor({
       variation_instruction: nullableText(variation),
       generation_spec: generation,
       delivery_spec: delivery,
-    })} busy={busy}>
+    })} busy={busy} dirty={dirty} onFlushRegistration={onFlushRegistration}>
       <TextInput label={t("agentWorkbench.nodeEditor.nodeName")} value={title} onChange={setTitle} />
       <TextArea label={t("workflowConfirmation.variation")} value={variation} onChange={setVariation} minRows={3} />
       <FieldGroup title={t("agentWorkbench.nodeEditor.generationSettings")}>
@@ -521,19 +548,32 @@ function ImageNodeEditor({
 function EditorForm({
   children,
   busy,
+  dirty,
   onSubmit,
+  onFlushRegistration,
 }: {
   children: React.ReactNode;
   busy: boolean;
-  onSubmit: () => void;
+  dirty: boolean;
+  onSubmit: () => Promise<unknown>;
+  onFlushRegistration: (flush: (() => Promise<void>) | null) => void;
 }) {
   const { t } = useI18n();
+  useEffect(() => {
+    const flush = async () => {
+      if (dirty) {
+        await onSubmit();
+      }
+    };
+    onFlushRegistration(flush);
+    return () => onFlushRegistration(null);
+  }, [dirty, onFlushRegistration, onSubmit]);
   return (
     <form
       className="config-bubble space-y-4 rounded-2xl p-4 shadow-sm"
       onSubmit={(event) => {
         event.preventDefault();
-        onSubmit();
+        void onSubmit();
       }}
     >
       {children}
@@ -716,6 +756,10 @@ function defaultDeliverySpec(): WorkflowDeliverySpec {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function sameJson(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function textConfig(value: unknown): string {

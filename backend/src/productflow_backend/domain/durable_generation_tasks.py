@@ -122,7 +122,10 @@ def classify_workflow_run_delivery(
     if any(WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_queued(status) for status in statuses):
         return WorkflowRunDeliveryState.QUEUED
     if statuses and all(
-        WORKFLOW_RUN_GENERATION_TASK_CONTRACT.has_status(status, (WorkflowNodeStatus.SUCCEEDED,))
+        WORKFLOW_RUN_GENERATION_TASK_CONTRACT.has_status(
+            status,
+            (WorkflowNodeStatus.SUCCEEDED, WorkflowNodeStatus.FAILED),
+        )
         for status in statuses
     ):
         return WorkflowRunDeliveryState.QUEUED

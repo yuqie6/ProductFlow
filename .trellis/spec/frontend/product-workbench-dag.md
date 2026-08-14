@@ -753,6 +753,10 @@ The visible context selects a source only within the immutable recipe kind.
   pan-key, zoom-key, and click-distance policy.
 - `ProductWorkflowV2CanvasPanel` composes the shared canvas controls with v2 graph/folder commands.
 - `V2NodeInspector` and `V2NodeRunsPanel` consume typed v2 detail/edit/run APIs.
+- `api.runWorkflowV2`, `getWorkflowRunV2`, `listWorkflowRunsV2`, `cancelWorkflowRunV2`, and `retryWorkflowRunV2` use the
+  product/workflow-scoped v2 run routes. `runWorkflowNodeV2` remains the node-toolbar command.
+- `V2NodeInspector.onFlushRegistration` exposes the currently mounted editor's async save boundary to the workbench;
+  `ProductWorkflowV2CanvasPanel.onBeforeRunWorkflow` awaits that boundary before either run submission.
 
 ### 3. Contracts
 
@@ -783,6 +787,17 @@ The visible context selects a source only within the immutable recipe kind.
 - V2 single-node create/delete/connect/undo controls remain unavailable until typed structure commands enforce v2 folder,
   Prompt Artifact, one-image-per-node, and lineage invariants. Shared ports remain visible for topology readability, but
   `connectionEditing: false` keeps them non-connectable until those commands exist.
+- The complete-workflow command awaits the registered inspector flush and makes exactly one workflow-run API request. It
+  never enumerates nodes in the browser. The existing node toolbar and inspector run action keep the single-node API and
+  await the same flush boundary.
+- The v2 run query polls while any workflow run is active and refreshes the authoritative workflow, product cover, and
+  image-library caches after the active set becomes terminal. Persisted workflow activity disables unsafe structure and
+  duplicate full-run commands while leaving navigation and run inspection available.
+- Runs is workflow-oriented: each card represents one `WorkflowRun`, labels full versus node scope, nests its ordered
+  `WorkflowNodeRun` records, and exposes result previews/evidence per node. Cancel and retry act on the workflow run; failed
+  and blocked nodes remain visible rather than being flattened into separate top-level history entries.
+- Generic validation/workbench instances render the full-run icon only when an actual callback is supplied. No disabled or
+  decorative command may imply runnable behavior without an owner.
 
 ### 4. Validation & Error Matrix
 
@@ -792,6 +807,11 @@ The visible context selects a source only within the immutable recipe kind.
 - V1 history -> lazy legacy ProductDetail page with its existing tools and editor intact.
 - No workflow history on a legacy product -> read-only transition state; opening the URL creates no default DAG.
 - Node detail/edit/run failure -> `ApiError.detail` in the owning inspector panel; other canvas and Agent state remains.
+- Inspector flush rejection -> no workflow/node run request is sent and the editor error remains visible.
+- Active workflow run -> full-run and structure commands are disabled from persisted run state; Runs continues polling and
+  supports workflow-level cancel.
+- Failed retryable workflow run -> Runs exposes retry; a successful response inserts the new run and preserves the source
+  run as history. Non-retryable and non-failed runs expose no retry control.
 
 ### 5. Good/Base/Bad Cases
 
@@ -799,6 +819,10 @@ The visible context selects a source only within the immutable recipe kind.
   return to the same Agent conversation without remounting it.
 - Good: collapse and resize the shared inspector on both v1 and v2 pages; the canvas uses the released width and restoring
   the panel preserves its stored size.
+- Good: edit an image node, immediately invoke complete run, await one typed save, submit one workflow run, and open Runs
+  with the workflow and nested node rows visible.
+- Good: retry a partially failed run; the new card contains only failed/blocked nodes while the source card retains its
+  successful branch evidence.
 - Base: open a four-node folder at 390 px; fit-view shows all real nodes inside the measured canvas and the Canvas/Agent
   segmented control remains usable.
 - Bad: create a second simplified node card, fixed sidebar tab strip, canvas page header, or Agent-owned gallery component.
@@ -810,6 +834,10 @@ The visible context selects a source only within the immutable recipe kind.
 - Shell tests assert one Agent/canvas mount, confirmation inertness, compact visibility, and lazy non-Agent tool content.
 - Node API tests cover typed paths and payloads. Browser checks exercise Details, Runs, Library, Recipes, collapse, resize,
   maximize/restore, dark mode, and Agent DOM identity at 1440, 1024, and 390 px.
+- Run API tests assert encoded product/workflow/run paths and one workflow-level request. Backend API coverage remains the
+  authority for full-run idempotency, cancel, retry, and nested node-run response shape.
+- Browser checks cover the complete-run icon, empty Runs state, full/partial status cards, retry/cancel controls, node
+  evidence, and 44 px compact controls without horizontal overflow at 1440x900, 1024x768, and 390x844.
 - Pure canvas-policy tests assert desktop drag/connect/modifier behavior, compact browse/edit/select behavior, lock and
   read-only behavior, and additive selection semantics. Real-browser selection checks must enter a folder, select a node,
   return to the global canvas, and assert that both owner state and `.react-flow__node.selected` are cleared without a
@@ -835,6 +863,21 @@ return (
   />
 );
 ```
+
+Wrong:
+
+```ts
+await Promise.all(workflow.nodes.filter(isRunnable).map((node) => api.runWorkflowNodeV2(node.id)));
+```
+
+Correct:
+
+```ts
+await flushInspector();
+await api.runWorkflowV2(productId, workflow.id);
+```
+
+One user command owns one persisted workflow run. The server scheduler determines dependency order and retry scope.
 
 The route composes schema-v2 behavior through the shared workbench shell and presentation primitives.
 

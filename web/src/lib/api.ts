@@ -64,6 +64,7 @@ import type {
   SubmitAgentTurnInput,
   SubmitAgentTurnResponse,
   SubmitWorkflowNodeRunV2Result,
+  SubmitWorkflowRunV2Result,
   UpdateUserTemplateGroupInput,
   WorkflowDraft,
   WorkflowDeliverySpec,
@@ -72,6 +73,8 @@ import type {
   WorkflowReferenceBindingResult,
   WorkflowNodeRunV2,
   WorkflowNodeRunListV2Response,
+  WorkflowRunDetailV2Response,
+  WorkflowRunListV2Response,
   WorkflowNodeDetailV2,
   UpdateWorkflowNodeV2Input,
   WorkflowRecipe,
@@ -869,6 +872,51 @@ export const api = {
     return request(`/api/v2/workflow-node-runs/${encodeURIComponent(nodeRunId)}/cancel`, {
       method: "POST",
     });
+  },
+  runWorkflowV2(productId: string, workflowId: string): Promise<SubmitWorkflowRunV2Result> {
+    return request(
+      `/api/v2/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/runs`,
+      { method: "POST" },
+    );
+  },
+  getWorkflowRunV2(
+    productId: string,
+    workflowId: string,
+    runId: string,
+  ): Promise<WorkflowRunDetailV2Response> {
+    return request(
+      `/api/v2/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/runs/${encodeURIComponent(runId)}`,
+    );
+  },
+  listWorkflowRunsV2(
+    productId: string,
+    workflowId: string,
+    limit = 20,
+  ): Promise<WorkflowRunListV2Response> {
+    const params = new URLSearchParams({ limit: String(limit) });
+    return request(
+      `/api/v2/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/runs?${params}`,
+    );
+  },
+  cancelWorkflowRunV2(
+    productId: string,
+    workflowId: string,
+    runId: string,
+  ): Promise<WorkflowRunDetailV2Response> {
+    return request(
+      `/api/v2/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/runs/${encodeURIComponent(runId)}/cancel`,
+      { method: "POST" },
+    );
+  },
+  retryWorkflowRunV2(
+    productId: string,
+    workflowId: string,
+    runId: string,
+  ): Promise<SubmitWorkflowRunV2Result> {
+    return request(
+      `/api/v2/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/runs/${encodeURIComponent(runId)}/retry`,
+      { method: "POST" },
+    );
   },
   createDeliveryRendition(
     sourceAssetId: string,

@@ -45,11 +45,11 @@ def test_durable_generation_task_contract_keeps_workflow_and_image_models_separa
         (WorkflowRunStatus.SUCCEEDED, [WorkflowNodeStatus.QUEUED], WorkflowRunDeliveryState.NONE),
         (WorkflowRunStatus.CANCELLED, [WorkflowNodeStatus.RUNNING], WorkflowRunDeliveryState.NONE),
         (WorkflowRunStatus.RUNNING, [], WorkflowRunDeliveryState.NONE),
-        (WorkflowRunStatus.RUNNING, [WorkflowNodeStatus.FAILED], WorkflowRunDeliveryState.NONE),
+        (WorkflowRunStatus.RUNNING, [WorkflowNodeStatus.FAILED], WorkflowRunDeliveryState.QUEUED),
         (
             WorkflowRunStatus.RUNNING,
             [WorkflowNodeStatus.SUCCEEDED, WorkflowNodeStatus.FAILED],
-            WorkflowRunDeliveryState.NONE,
+            WorkflowRunDeliveryState.QUEUED,
         ),
         (WorkflowRunStatus.RUNNING, [WorkflowNodeStatus.QUEUED], WorkflowRunDeliveryState.QUEUED),
         (WorkflowRunStatus.RUNNING, [WorkflowNodeStatus.SUCCEEDED], WorkflowRunDeliveryState.QUEUED),

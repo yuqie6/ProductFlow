@@ -34,21 +34,53 @@ def _sse_events(response) -> list[dict]:
 
 
 def test_workflow_draft_api_materializes_v2_and_replays_reveal_events(configured_env, monkeypatch) -> None:
-    from productflow_backend.application.product_workflow.execution import execute_product_workflow_node_run
-    from productflow_backend.application.product_workflow.v2_runs import submit_v2_workflow_node_run
+    from productflow_backend.application.product_workflow.execution import (
+        execute_product_workflow_node_run,
+        execute_product_workflow_run,
+    )
+    from productflow_backend.application.product_workflow.run_state import mark_workflow_run_failed
+    from productflow_backend.application.product_workflow.v2_runs import (
+        retry_v2_workflow_run as retry_v2_workflow_run_application,
+    )
+    from productflow_backend.application.product_workflow.v2_runs import (
+        submit_v2_workflow_node_run,
+        submit_v2_workflow_run,
+    )
     from productflow_backend.presentation.api import create_app
     from productflow_backend.presentation.routes import workflow_drafts as workflow_draft_routes
 
-    enqueued_node_run_ids: list[str] = []
+    enqueued_run_ids: list[str] = []
+    enqueued_full_run_ids: list[str] = []
 
     def submit_without_redis(session, *, node_id: str):
         return submit_v2_workflow_node_run(
             session,
             node_id=node_id,
-            enqueue=enqueued_node_run_ids.append,
+            enqueue=enqueued_run_ids.append,
         )
 
     monkeypatch.setattr(workflow_draft_routes, "submit_v2_workflow_node_run", submit_without_redis)
+
+    def submit_full_without_redis(session, *, product_id: str, workflow_id: str):
+        return submit_v2_workflow_run(
+            session,
+            product_id=product_id,
+            workflow_id=workflow_id,
+            enqueue=enqueued_full_run_ids.append,
+        )
+
+    monkeypatch.setattr(workflow_draft_routes, "submit_v2_workflow_run", submit_full_without_redis)
+
+    def retry_full_without_redis(session, *, product_id: str, workflow_id: str, run_id: str):
+        return retry_v2_workflow_run_application(
+            session,
+            product_id=product_id,
+            workflow_id=workflow_id,
+            run_id=run_id,
+            enqueue=enqueued_full_run_ids.append,
+        )
+
+    monkeypatch.setattr(workflow_draft_routes, "retry_v2_workflow_run", retry_full_without_redis)
 
     client = TestClient(create_app())
     _login(client)
@@ -143,9 +175,11 @@ def test_workflow_draft_api_materializes_v2_and_replays_reveal_events(configured
     assert duplicate_prompt.status_code == 202
     assert duplicate_prompt.json()["created"] is False
     assert duplicate_prompt.json()["node_run"]["id"] == prompt_node_run_id
-    assert enqueued_node_run_ids == [prompt_node_run_id]
+    prompt_workflow_run_id = prompt_submission["node_run"]["workflow_run_id"]
+    assert enqueued_run_ids == [prompt_workflow_run_id]
 
     execute_product_workflow_node_run(prompt_node_run_id)
+    execute_product_workflow_run(prompt_workflow_run_id)
     completed_prompt = client.get(f"/api/v2/workflow-node-runs/{prompt_node_run_id}")
     assert completed_prompt.status_code == 200, completed_prompt.text
     completed_prompt_payload = completed_prompt.json()
@@ -160,6 +194,7 @@ def test_workflow_draft_api_materializes_v2_and_replays_reveal_events(configured
     assert submitted_image.status_code == 202, submitted_image.text
     image_node_run_id = submitted_image.json()["node_run"]["id"]
     execute_product_workflow_node_run(image_node_run_id)
+    execute_product_workflow_run(submitted_image.json()["node_run"]["workflow_run_id"])
     completed_image = client.get(f"/api/v2/workflow-node-runs/{image_node_run_id}")
     assert completed_image.status_code == 200, completed_image.text
     completed_image_payload = completed_image.json()
@@ -175,9 +210,71 @@ def test_workflow_draft_api_materializes_v2_and_replays_reveal_events(configured
     assert completed_image_payload["reference_asset_ids"] == [reference_asset_id]
     assert "provider_request_json" not in completed_image_payload
 
+    submitted_full = client.post(f"/api/v2/products/{product_id}/workflows/{workflow['id']}/runs")
+    assert submitted_full.status_code == 202, submitted_full.text
+    full_payload = submitted_full.json()
+    full_run_id = full_payload["workflow_run"]["id"]
+    assert full_payload["created"] is True
+    assert full_payload["workflow"]["id"] == workflow["id"]
+    assert len(full_payload["workflow_run"]["node_runs"]) == 3
+    assert enqueued_full_run_ids == [full_run_id]
+
+    duplicate_full = client.post(f"/api/v2/products/{product_id}/workflows/{workflow['id']}/runs")
+    assert duplicate_full.status_code == 202, duplicate_full.text
+    assert duplicate_full.json()["created"] is False
+    assert duplicate_full.json()["workflow_run"]["id"] == full_run_id
+    queried_full = client.get(
+        f"/api/v2/products/{product_id}/workflows/{workflow['id']}/runs/{full_run_id}"
+    )
+    listed_full = client.get(f"/api/v2/products/{product_id}/workflows/{workflow['id']}/runs")
+    assert queried_full.status_code == 200, queried_full.text
+    assert queried_full.json()["workflow_run"]["id"] == full_run_id
+    assert listed_full.status_code == 200, listed_full.text
+    assert listed_full.json()["items"][0]["id"] == full_run_id
+    cancelled_full = client.post(
+        f"/api/v2/products/{product_id}/workflows/{workflow['id']}/runs/{full_run_id}/cancel"
+    )
+    assert cancelled_full.status_code == 200, cancelled_full.text
+    assert cancelled_full.json()["workflow_run"]["status"] == "cancelled"
+
     image_runs = client.get(f"/api/v2/workflow-nodes/{image_node['id']}/runs", params={"limit": 1})
     assert image_runs.status_code == 200, image_runs.text
-    assert [item["id"] for item in image_runs.json()["items"]] == [image_node_run_id]
+    full_image_node_run_id = next(
+        item["id"]
+        for item in full_payload["workflow_run"]["node_runs"]
+        if item["node_id"] == image_node["id"]
+    )
+    assert [item["id"] for item in image_runs.json()["items"]] == [full_image_node_run_id]
+
+    retry_source_response = client.post(
+        f"/api/v2/products/{product_id}/workflows/{workflow['id']}/runs"
+    )
+    assert retry_source_response.status_code == 202, retry_source_response.text
+    retry_source_run_id = retry_source_response.json()["workflow_run"]["id"]
+    failure_session = get_session_factory()()
+    try:
+        mark_workflow_run_failed(
+            failure_session,
+            run_id=retry_source_run_id,
+            failed_node_id=None,
+            reason="API retry source failure",
+        )
+    finally:
+        failure_session.close()
+    retried_full = client.post(
+        f"/api/v2/products/{product_id}/workflows/{workflow['id']}/runs/{retry_source_run_id}/retry"
+    )
+    assert retried_full.status_code == 202, retried_full.text
+    retried_full_payload = retried_full.json()
+    retried_full_run_id = retried_full_payload["workflow_run"]["id"]
+    assert retried_full_payload["created"] is True
+    assert retried_full_payload["workflow_run"]["progress_metadata"]["source_run_id"] == retry_source_run_id
+    assert retried_full_payload["workflow_run"]["progress_metadata"]["manual_retry"] is True
+    assert enqueued_full_run_ids[-1] == retried_full_run_id
+    cancelled_retry = client.post(
+        f"/api/v2/products/{product_id}/workflows/{workflow['id']}/runs/{retried_full_run_id}/cancel"
+    )
+    assert cancelled_retry.status_code == 200, cancelled_retry.text
 
     submitted_for_cancel = client.post(f"/api/v2/workflow-nodes/{prompt_node['id']}/run")
     assert submitted_for_cancel.status_code == 202, submitted_for_cancel.text

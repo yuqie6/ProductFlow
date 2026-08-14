@@ -176,12 +176,15 @@ def mark_workflow_node_run_failed(
     node_run.finished_at = now
     current_metadata = run.progress_metadata if isinstance(run.progress_metadata, dict) else {}
     if current_metadata.get("last_failure_retryable") is not False or not is_retryable:
-        run.progress_metadata = workflow_run_failure_progress_metadata(
-            reason=reason,
-            retryable=is_retryable,
-            retry_hint=retry_hint,
-            failure_category=failure_category,
-        )
+        run.progress_metadata = {
+            **current_metadata,
+            **workflow_run_failure_progress_metadata(
+                reason=reason,
+                retryable=is_retryable,
+                retry_hint=retry_hint,
+                failure_category=failure_category,
+            ),
+        }
     run.workflow.updated_at = now
     session.commit()
     return run.id
@@ -235,12 +238,18 @@ def mark_workflow_run_failed(
     persisted_run.status = WorkflowRunStatus.FAILED
     persisted_run.failure_reason = reason
     persisted_run.is_retryable = is_retryable
-    persisted_run.progress_metadata = workflow_run_failure_progress_metadata(
-        reason=reason,
-        retryable=is_retryable,
-        retry_hint=retry_hint,
-        failure_category=failure_category,
+    current_metadata = (
+        persisted_run.progress_metadata if isinstance(persisted_run.progress_metadata, dict) else {}
     )
+    persisted_run.progress_metadata = {
+        **current_metadata,
+        **workflow_run_failure_progress_metadata(
+            reason=reason,
+            retryable=is_retryable,
+            retry_hint=retry_hint,
+            failure_category=failure_category,
+        ),
+    }
     persisted_run.finished_at = now
     persisted_run.workflow.updated_at = now
     session.commit()

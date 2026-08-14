@@ -70,6 +70,7 @@ const EMPTY_CANVAS_CONTEXT: ProductWorkflowV2CanvasContext = {
   openFolderId: null,
   selectedNodeIds: [],
 };
+const EMPTY_INSPECTOR_FLUSH = async () => undefined;
 
 export function AgentProductWorkbenchPage({
   bootstrap,
@@ -91,6 +92,7 @@ export function AgentProductWorkbenchPage({
   const [recipeError, setRecipeError] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<DownloadableImage | null>(null);
   const recipeApplyKeysRef = useRef(new Map<string, string>());
+  const inspectorFlushRef = useRef<() => Promise<void>>(EMPTY_INSPECTOR_FLUSH);
 
   const bootstrapSnapshot = useMemo<ActiveProductWorkflowV2>(() => ({
     latest_revision: bootstrap.latest_workflow_revision,
@@ -149,9 +151,13 @@ export function AgentProductWorkbenchPage({
         : next
     ));
   }, []);
-  const openSidebarTool = useCallback((tool: "details" | "library") => {
+  const openSidebarTool = useCallback((tool: "details" | "runs" | "library") => {
     setSidebarTool(tool);
   }, []);
+  const registerInspectorFlush = useCallback((flush: (() => Promise<void>) | null) => {
+    inspectorFlushRef.current = flush ?? EMPTY_INSPECTOR_FLUSH;
+  }, []);
+  const flushInspector = useCallback(() => inspectorFlushRef.current(), []);
   const updateReferenceNode = useCallback((nodeId: string | null) => {
     setReferenceNodeId(nodeId);
   }, []);
@@ -322,6 +328,7 @@ export function AgentProductWorkbenchPage({
           }}
           onPreviewImage={setPreviewImage}
           onWorkflowChanged={refetchWorkflow}
+          onFlushRegistration={registerInspectorFlush}
         />
       ),
     },
@@ -332,6 +339,7 @@ export function AgentProductWorkbenchPage({
       content: (
         <V2NodeRunsPanel
           product={bootstrap.product}
+          workflow={workflow}
           node={selectedNode}
           onPreviewImage={setPreviewImage}
           onWorkflowChanged={refetchWorkflow}
@@ -453,6 +461,7 @@ export function AgentProductWorkbenchPage({
             onRefetchWorkflow={refetchWorkflow}
             onCanvasContextChange={handleCanvasContextChange}
             onOpenSidebarTool={openSidebarTool}
+            onBeforeRunWorkflow={flushInspector}
             onReferenceNodeChange={updateReferenceNode}
             onSaveRecipe={(source) => {
               setRecipeError(null);

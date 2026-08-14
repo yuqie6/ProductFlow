@@ -1518,12 +1518,12 @@ The command validates lineage and owns one commit/rollback boundary for the full
 
 ---
 
-## Scenario: VisualSystem, Prompt Artifact, and schema-v2 single-image node execution
+## Scenario: VisualSystem, Prompt Artifact, and schema-v2 DAG execution
 
 ### 1. Scope / Trigger
 
 - Trigger: changes to strict visual or prompt payloads, VisualSystem confirmation/reuse, prompt/image node execution,
-  provider-neutral generation settings, v2 node-run APIs, or canonical generation history.
+  provider-neutral generation settings, v2 node/workflow-run APIs, DAG scheduling, or canonical generation history.
 - This scenario applies only to materialized workflow/node `schema_version = 2`. Legacy `copy_generation`, batched
   `image_generation`, downstream result slots, and legacy artifact writes remain isolated in the v1 executor.
 
@@ -1538,15 +1538,23 @@ The command validates lineage and owns one commit/rollback boundary for the full
     `ImagePromptArtifact` per image type, and binds each prompt node to an initial immutable version.
 - Runtime:
   - `submit_v2_workflow_node_run(session, *, node_id, enqueue=None) -> V2WorkflowNodeRunSubmission`;
+  - `submit_v2_workflow_run(session, *, product_id, workflow_id, enqueue=None) -> V2WorkflowRunSubmission`;
+  - `get_v2_workflow_run(...)`, `list_v2_workflow_runs(...)`, `cancel_v2_workflow_run(...)`, and
+    `retry_v2_workflow_run(...)` own workflow-level inspection and control;
   - `get_v2_workflow_node_run(session, *, node_run_id) -> WorkflowNodeRun`;
   - `list_v2_workflow_node_runs(session, *, node_id, limit=20) -> tuple[WorkflowNodeRun, ...]`;
   - `cancel_v2_workflow_node_run(session, *, node_run_id) -> WorkflowNodeRun`;
   - `get_v2_workflow_node_detail(...) -> V2WorkflowNodeDetail`;
   - typed `update_v2_reference_node`, `update_v2_prompt_node`, and `update_v2_image_node` commands;
-  - `execute_v2_workflow_node_run(session, *, node_run_id, dependencies=None, storage=None) -> None`;
+  - `execute_v2_workflow_node_run(session, *, node_run_id, dependencies=None, storage=None) -> bool` persists one node
+    outcome and tells the worker whether to enqueue the shared workflow scheduler;
+  - `_execute_product_workflow_run(...)` schedules both schema-v1 and schema-v2 runs from persisted DAG state;
   - `PromptGenerationProvider.generate_prompt(PromptGenerationRequest) -> PromptGenerationResult`;
   - `ImageProvider.generate_workflow_image(WorkflowImageRequest) -> WorkflowImageResult`.
 - HTTP:
+  - `POST /api/v2/products/{product_id}/workflows/{workflow_id}/runs -> 202 SubmitWorkflowRunV2Response`;
+  - `GET /api/v2/products/{product_id}/workflows/{workflow_id}/runs[/{run_id}]`;
+  - `POST /api/v2/products/{product_id}/workflows/{workflow_id}/runs/{run_id}/cancel|retry`;
   - `POST /api/v2/workflow-nodes/{node_id}/run -> 202 SubmitWorkflowNodeRunV2Response`;
   - `GET /api/v2/workflow-node-runs/{node_run_id} -> WorkflowNodeRunV2Response`;
   - `GET /api/v2/workflow-nodes/{node_id}/runs` and `POST /api/v2/workflow-node-runs/{node_run_id}/cancel`;
@@ -1565,8 +1573,21 @@ The command validates lineage and owns one commit/rollback boundary for the full
   per-image plan list. A prompt run appends one version and atomically moves only the prompt node's current pointer.
 - OpenAI prompt generation sends actual `input_image` content parts next to stable asset metadata. Data URLs exist only
   while constructing the provider request and are never persisted in versions, node outputs, logs, or run DTOs.
-- A v2 run contains exactly one `WorkflowNodeRun` and can target only `prompt_generation` or `image_generation`. Duplicate
-  submit while that node is queued/running returns the existing run and does not enqueue or invoke the provider twice.
+- A workflow-scoped v2 submission creates one `WorkflowRun` with one `WorkflowNodeRun` for every runnable
+  `prompt_generation` and `image_generation` node. Product-context and reference nodes remain persisted context and never
+  receive synthetic execution rows. A node-scoped submission keeps one node run inside one workflow run.
+- `progress_metadata.run_scope` distinguishes `workflow` and `node`. Repeating an identical active submission returns the
+  existing run. Any active run that overlaps only part of the requested node set returns `409`, including the window where
+  an overlapping node run has already succeeded but its owning workflow run is still active.
+- The shared scheduler reads real edges. In-run dependencies wait for success, independent ready branches dispatch in the
+  same wave, and dependencies outside a partial/retry run are treated as reusable persisted context. A failed upstream
+  marks only its queued descendants as `上游节点失败`; independent branches continue.
+- Prompt/image executors finish only their own node run. They enqueue the workflow scheduler after success or failure; the
+  scheduler alone sets the workflow run terminal state. Duplicate node delivery remains safe through the atomic queued to
+  running claim.
+- Manual retry requires a failed retryable run and creates a new workflow-scoped run containing failed and blocked nodes
+  only. Successful branch rows and artifacts remain history. Retry metadata preserves `source_run_id`, `manual_retry`, and
+  failure classification across later failures.
 - Each image node run calls the adapter once, requires exactly one returned image, stages one MediaObject plus one
   ProductImageAsset, appends one generation record, and moves the node's `bound_image_asset_id`. A rerun leaves the prior
   asset, node run, generation record, compiled prompt, and reference rows intact.
@@ -1585,8 +1606,10 @@ The command validates lineage and owns one commit/rollback boundary for the full
   Image edits retain materialization lineage/config keys; generation changes reset the node while delivery-only changes keep
   the successful source asset and status. One successful command increments `workflow.edit_version` exactly once; no-op
   submissions keep it unchanged.
-- Run history listing is bounded to 1..50 records and validates active schema-v2 ownership. Cancellation uses the existing
-  workflow-run cancellation state transition, preserving node-run history and the stable cancelled failure reason.
+- Workflow and node history listings are bounded to 1..50 records and validate schema-v2 ownership. Cancellation uses the
+  existing workflow-run transition, preserves node-run history, and writes the stable cancelled reason. Startup recovery
+  re-enqueues active runs with queued nodes and active runs whose node rows are all terminal but whose workflow row still
+  needs finalization.
 - Direct canonical asset deletion returns `409` while any node binding, VisualSystem reference, Prompt evidence,
   generation result, or generation reference exists. Product deletion removes owned unused VisualSystem versions; an
   external product consumer that needs a source-product visual reference blocks deletion before any partial mutation.
@@ -1603,8 +1626,15 @@ The command validates lineage and owns one commit/rollback boundary for the full
   `provider_contract` failure; prompt current version remains unchanged.
 - Provider returns zero/multiple images, non-image bytes, or non-JSON metadata -> failed run; no canonical asset or
   generation record remains. A staged file is removed by `StorageWriteCompensation` when commit fails.
-- Queue delivery failure -> run, node run, and node become failed with the stable queue-unavailable message. Startup
-  recovery redispatches the one queued v2 node run.
+- Initial workflow queue delivery failure -> the run and its queued node rows become failed with the stable
+  queue-unavailable message. Node dispatch failure fails the owning run and prevents already dispatched work from
+  persisting after the run becomes terminal.
+- Active overlap -> idempotent response only when scope and complete node set match; partial overlap -> HTTP `409` without
+  adding run rows.
+- Prompt/image failure -> that node row fails; queued descendants become blocked, independent branches remain runnable,
+  and finalization copies the strongest retryability metadata to the workflow run.
+- Cancelled, succeeded, non-retryable, or otherwise non-failed source passed to retry -> HTTP `400`/`409`; no retry run is
+  created.
 - v1 node submitted to the v2 API/executor, or v2 node sent through the legacy runtime -> `ConflictError` / HTTP `409`.
 - Stale workflow edit version, stale Prompt Artifact version, inactive workflow, type/request mismatch, or queued/running
   target node -> `409`; the complete edit transaction rolls back.
@@ -1619,8 +1649,13 @@ The command validates lineage and owns one commit/rollback boundary for the full
   visual reference, and a subsequent prompt version may retain that visual asset as evidence.
 - Good: rerun one image node with another provider; the current asset changes while both generation records retain their
   provider metadata and the same immutable prompt/visual version IDs.
+- Good: submit a prompt with two image descendants; the scheduler dispatches the prompt once, then dispatches both images
+  in parallel inside the same workflow run.
+- Good: one branch fails while another succeeds; retry creates a new run for the failed branch and its blocked descendants
+  without rerunning the successful branch.
 - Base: an adapter cannot send a requested field; omit it from effective fields and append a mapping/fallback note while
   actual dimensions continue to come only from decoded bytes.
+- Bad: loop over runnable nodes in the browser and call the node-run endpoint to simulate one complete workflow run.
 - Bad: copy VisualSystem or prompt payload JSON into every node config and let later edits silently diverge.
 - Bad: set effective/actual dimensions from `GenerationSpec`, keep only the newest asset, or truncate a multi-image
   provider response to the first image.
@@ -1633,8 +1668,10 @@ The command validates lineage and owns one commit/rollback boundary for the full
   consecutive prompt runs, and assert no data URL/base64 or legacy artifact rows are persisted.
 - Image tests cover every adapter mapping, exact-one-result rejection, actual byte inspection, metadata sanitization,
   rerun history, provider switching, commit compensation, and zero legacy writes.
-- Queue/API tests cover idempotent submit, schema dispatch/rejection, queue failure, scheduler recovery, strict evidence
-  DTOs, and absence of raw provider/storage fields.
+- Queue/API tests cover full-run and node-run idempotency, partial overlap, schema dispatch/rejection, queue failure,
+  workflow-level get/list/cancel/retry, strict evidence DTOs, and absence of raw provider/storage fields.
+- Scheduler tests cover prompt-to-image waits, image-to-image order, parallel ready branches, blocked descendants,
+  successful-branch exclusion on retry, duplicate delivery, all-terminal recovery, and terminal workflow finalization.
 - Node-edit tests cover immutable prompt append, no-op behavior, stale workflow/artifact versions, prompt-plan drift,
   generation-versus-delivery state changes, reference staleness, title-only active-run conflicts, and rollback.
 - Node-run API tests cover bounded ordered history and cancellation through the persisted run state machine.
@@ -1649,20 +1686,22 @@ The command validates lineage and owns one commit/rollback boundary for the full
 Wrong:
 
 ```python
-images = provider.generate_many(prompt, count=node.config_json["count"])
-node.output_json = {"images": [image.url for image in images]}
+for node in runnable_nodes:
+    submit_v2_workflow_node_run(session, node_id=node.id)
 ```
 
 Correct:
 
 ```python
-result = provider.generate_workflow_image(request)
-generated = _validate_workflow_image_result(result)  # exactly one
-_persist_image_result(session, prepared=prepared, result=result, generated_image=generated, ...)
+submission = submit_v2_workflow_run(
+    session,
+    product_id=product_id,
+    workflow_id=workflow_id,
+)
 ```
 
-The persisted result is a canonical ProductImageAsset plus immutable generation lineage; the image node carries only its
-current asset pointer.
+The workflow-level submission persists one run before queue delivery. The shared scheduler owns dependency waves and final
+state; each image node still persists exactly one canonical ProductImageAsset plus immutable generation lineage.
 
 ## Scenario: Schema-v2 canvas folders and user workflow recipes
 

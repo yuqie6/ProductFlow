@@ -18,7 +18,7 @@ from productflow_backend.application.media_assets import inspect_image_bytes, st
 from productflow_backend.application.product_workflow.run_state import (
     WorkflowSafeExecutionError,
     claim_workflow_node_run,
-    mark_workflow_run_failed,
+    mark_workflow_node_run_failed,
     requeue_workflow_node_run_after_capacity_wait,
     workflow_run_failure_context,
 )
@@ -121,24 +121,24 @@ def execute_v2_workflow_node_run(
     node_run_id: str,
     dependencies: WorkflowExecutionDependencies | None = None,
     storage: LocalStorage | None = None,
-) -> None:
+) -> bool:
     node_run = session.get(WorkflowNodeRun, node_run_id)
     if node_run is None:
         raise NotFoundError("工作流节点运行不存在")
     run = node_run.workflow_run
     workflow = run.workflow
     node = node_run.node
-    _ensure_v2_single_node_run(session, workflow=workflow, run=run, node=node)
+    _ensure_v2_node_run(workflow=workflow, node=node)
     if node.node_type not in {WorkflowNodeType.PROMPT_GENERATION, WorkflowNodeType.IMAGE_GENERATION}:
         raise ConflictError("schema-v2 executor 只处理提示词或图片生成节点")
     if node_run.status != WorkflowNodeStatus.QUEUED:
-        return
+        return False
 
     claim = claim_workflow_node_run(session, node_run_id=node_run.id, node_id=node.id)
     if not claim.claimed:
         if claim.should_requeue:
             requeue_workflow_node_run_after_capacity_wait(node_run.id)
-        return
+        return False
 
     resolved_dependencies = dependencies or default_workflow_execution_dependencies()
     resolved_storage = storage or LocalStorage()
@@ -185,30 +185,21 @@ def execute_v2_workflow_node_run(
         session.rollback()
         storage_writes.cleanup()
         failure = workflow_run_failure_context(exc)
-        mark_workflow_run_failed(
+        mark_workflow_node_run_failed(
             session,
-            run_id=run.id,
-            failed_node_id=node.id,
+            node_run_id=node_run.id,
             **failure,
         )
+    return True
 
 
-def _ensure_v2_single_node_run(
-    session: Session,
+def _ensure_v2_node_run(
     *,
     workflow: ProductWorkflow,
-    run: WorkflowRun,
     node: WorkflowNode,
 ) -> None:
     if workflow.schema_version != V2_WORKFLOW_SCHEMA_VERSION or node.schema_version != V2_WORKFLOW_SCHEMA_VERSION:
         raise ConflictError("schema-v2 executor 拒绝处理 schema-v1 工作流或节点")
-    if not workflow.active:
-        raise ConflictError("只能运行 active schema-v2 工作流")
-    node_run_count = session.scalar(
-        select(func.count()).select_from(WorkflowNodeRun).where(WorkflowNodeRun.workflow_run_id == run.id)
-    )
-    if node_run_count != 1:
-        raise ConflictError("schema-v2 单节点运行必须且只能包含一个 WorkflowNodeRun")
 
 
 def _prepare_prompt_generation(
@@ -352,6 +343,10 @@ def _prepare_image_generation(
     except ValidationError as exc:
         raise ConflictError("图片节点 GenerationSpec 不符合 schema") from exc
     prompt_node = ensure_image_prompt_references_current(session, image_node=node)
+    session.refresh(
+        prompt_node,
+        attribute_names=["current_prompt_artifact_version_id", "current_prompt_artifact_version"],
+    )
     prompt_version = prompt_node.current_prompt_artifact_version
     if prompt_version is None:
         raise ConflictError("图片节点上游提示词节点缺少 current version")
@@ -482,7 +477,13 @@ def _load_image_references(
     image_node: WorkflowNode,
     storage: LocalStorage,
 ) -> list[WorkflowImageReference]:
-    nodes = list(session.scalars(select(WorkflowNode).where(WorkflowNode.workflow_id == workflow.id)))
+    nodes = list(
+        session.scalars(
+            select(WorkflowNode)
+            .where(WorkflowNode.workflow_id == workflow.id)
+            .execution_options(populate_existing=True)
+        )
+    )
     nodes_by_id = {node.id: node for node in nodes}
     edges = list(session.scalars(select(WorkflowEdge).where(WorkflowEdge.workflow_id == workflow.id)))
     incoming_by_target: dict[str, list[str]] = {}
@@ -868,9 +869,6 @@ def _persist_prompt_result(
     node_run.status = WorkflowNodeStatus.SUCCEEDED
     node_run.output_json = output
     node_run.finished_at = now
-    run.status = WorkflowRunStatus.SUCCEEDED
-    run.failure_reason = None
-    run.finished_at = now
     run.workflow.updated_at = now
     session.commit()
 
@@ -1056,9 +1054,6 @@ def _persist_image_result(
     node_run.status = WorkflowNodeStatus.SUCCEEDED
     node_run.output_json = output
     node_run.finished_at = now
-    run.status = WorkflowRunStatus.SUCCEEDED
-    run.failure_reason = None
-    run.finished_at = now
     workflow.updated_at = now
     product.updated_at = now
     _fill_empty_product_cover_from_current_v2_results(

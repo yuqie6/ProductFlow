@@ -18,13 +18,19 @@ from productflow_backend.application.product_workflow.execution import (
     execute_product_workflow_node_run,
     execute_product_workflow_run,
 )
-from productflow_backend.application.product_workflow.v2_execution import execute_v2_workflow_node_run
+from productflow_backend.application.product_workflow.v2_execution import (
+    execute_v2_workflow_node_run as execute_v2_workflow_node_only,
+)
 from productflow_backend.application.product_workflow.v2_reference_bindings import (
     bind_v2_reference_node_asset,
 )
 from productflow_backend.application.product_workflow.v2_runs import (
+    cancel_v2_workflow_run,
     get_v2_workflow_node_run,
+    get_v2_workflow_run,
+    retry_v2_workflow_run,
     submit_v2_workflow_node_run,
+    submit_v2_workflow_run,
 )
 from productflow_backend.application.product_workflow_dependencies import WorkflowExecutionDependencies
 from productflow_backend.application.use_cases import (
@@ -56,6 +62,7 @@ from productflow_backend.infrastructure.db.models import (
     SourceAsset,
     VisualSystemVersion,
     VisualSystemVersionReference,
+    WorkflowEdge,
     WorkflowImageGenerationRecord,
     WorkflowImageGenerationReference,
     WorkflowNode,
@@ -303,6 +310,27 @@ def _queue_single_node_run(db_session, *, workflow, node):
     return run, node_run
 
 
+def execute_v2_workflow_node_run(db_session, *, node_run_id, dependencies=None, storage=None):
+    """Run one v2 node and let the shared scheduler own WorkflowRun finalization."""
+
+    changed = execute_v2_workflow_node_only(
+        db_session,
+        node_run_id=node_run_id,
+        dependencies=dependencies,
+        storage=storage,
+    )
+    if not changed:
+        return
+    node_run = db_session.get(WorkflowNodeRun, node_run_id)
+    assert node_run is not None
+    workflow_execution._execute_product_workflow_run(
+        db_session,
+        run_id=node_run.workflow_run_id,
+        enqueue_node_run=lambda _: pytest.fail("terminal single-node run must not dispatch another node"),
+        return_after_dispatch=False,
+    )
+
+
 def test_openai_prompt_provider_sends_native_multimodal_content_parts() -> None:
     artifact = make_workflow_draft_payload()
     current_prompt = ImagePromptPayloadV1.model_validate(artifact["prompt_plans"][0]["payload"])
@@ -536,23 +564,23 @@ def test_prompt_node_rejects_provider_plan_drift_without_switching_current_versi
 def test_v2_node_run_submission_is_durable_and_idempotent(db_session) -> None:
     _, workflow = _create_materialized_workflow(db_session)
     prompt_node = next(node for node in workflow.nodes if node.node_type == WorkflowNodeType.PROMPT_GENERATION)
-    enqueued_node_run_ids: list[str] = []
+    enqueued_run_ids: list[str] = []
 
     first = submit_v2_workflow_node_run(
         db_session,
         node_id=prompt_node.id,
-        enqueue=enqueued_node_run_ids.append,
+        enqueue=enqueued_run_ids.append,
     )
     second = submit_v2_workflow_node_run(
         db_session,
         node_id=prompt_node.id,
-        enqueue=enqueued_node_run_ids.append,
+        enqueue=enqueued_run_ids.append,
     )
 
     assert first.created is True
     assert second.created is False
     assert second.node_run.id == first.node_run.id
-    assert enqueued_node_run_ids == [first.node_run.id]
+    assert enqueued_run_ids == [first.node_run.workflow_run_id]
     assert db_session.scalar(select(func.count()).select_from(WorkflowRun)) == 1
     assert db_session.scalar(select(func.count()).select_from(WorkflowNodeRun)) == 1
     queried = get_v2_workflow_node_run(db_session, node_run_id=first.node_run.id)
@@ -564,6 +592,7 @@ def test_v2_node_run_submission_is_durable_and_idempotent(db_session) -> None:
         first.node_run.id,
         dependencies=WorkflowExecutionDependencies(prompt_generation_provider_resolver=lambda: provider),
     )
+    execute_product_workflow_run(first.node_run.workflow_run_id)
 
     db_session.expire_all()
     completed = get_v2_workflow_node_run(db_session, node_run_id=first.node_run.id)
@@ -631,6 +660,381 @@ def test_v2_workflow_scheduler_marks_queue_delivery_failure_on_run_and_node(db_s
     assert failed.failure_reason == "任务队列暂不可用，请稍后重试"
     assert failed.workflow_run.status == WorkflowRunStatus.FAILED
     assert failed.workflow_run.failure_reason == failed.failure_reason
+
+
+def test_v2_full_workflow_submission_is_one_durable_run_and_rejects_partial_overlap(db_session) -> None:
+    product, workflow = _create_materialized_workflow(db_session)
+    enqueued_run_ids: list[str] = []
+
+    first = submit_v2_workflow_run(
+        db_session,
+        product_id=product.id,
+        workflow_id=workflow.id,
+        enqueue=enqueued_run_ids.append,
+    )
+    duplicate = submit_v2_workflow_run(
+        db_session,
+        product_id=product.id,
+        workflow_id=workflow.id,
+        enqueue=enqueued_run_ids.append,
+    )
+
+    runnable_node_ids = {
+        node.id
+        for node in workflow.nodes
+        if node.node_type in {WorkflowNodeType.PROMPT_GENERATION, WorkflowNodeType.IMAGE_GENERATION}
+    }
+    assert first.created is True
+    assert duplicate.created is False
+    assert duplicate.run.id == first.run.id
+    assert enqueued_run_ids == [first.run.id]
+    assert {node_run.node_id for node_run in first.run.node_runs} == runnable_node_ids
+    assert db_session.scalar(select(func.count()).select_from(WorkflowRun)) == 1
+
+    for node_run in first.run.node_runs:
+        node_run.status = WorkflowNodeStatus.SUCCEEDED
+    db_session.commit()
+    duplicate_after_nodes_finished = submit_v2_workflow_run(
+        db_session,
+        product_id=product.id,
+        workflow_id=workflow.id,
+        enqueue=enqueued_run_ids.append,
+    )
+    assert duplicate_after_nodes_finished.created is False
+    assert duplicate_after_nodes_finished.run.id == first.run.id
+    with pytest.raises(ConflictError, match="相关节点已有运行中的任务"):
+        submit_v2_workflow_node_run(
+            db_session,
+            node_id=next(iter(runnable_node_ids)),
+            enqueue=lambda _: None,
+        )
+
+    cancel_v2_workflow_run(
+        db_session,
+        product_id=product.id,
+        workflow_id=workflow.id,
+        run_id=first.run.id,
+    )
+    prompt_node = next(node for node in workflow.nodes if node.node_type == WorkflowNodeType.PROMPT_GENERATION)
+    partial = submit_v2_workflow_node_run(db_session, node_id=prompt_node.id, enqueue=lambda _: None)
+    with pytest.raises(ConflictError, match="相关节点已有运行中的任务"):
+        submit_v2_workflow_run(
+            db_session,
+            product_id=product.id,
+            workflow_id=workflow.id,
+            enqueue=lambda _: None,
+        )
+    cancel_v2_workflow_run(
+        db_session,
+        product_id=product.id,
+        workflow_id=workflow.id,
+        run_id=partial.node_run.workflow_run_id,
+    )
+
+
+def test_v2_full_workflow_scheduler_waits_for_prompt_and_dispatches_images_in_parallel(db_session) -> None:
+    product, workflow = _create_materialized_workflow(db_session)
+    submission = submit_v2_workflow_run(
+        db_session,
+        product_id=product.id,
+        workflow_id=workflow.id,
+        enqueue=lambda _: None,
+    )
+    node_runs_by_node_id = {node_run.node_id: node_run for node_run in submission.run.node_runs}
+    prompt_node = next(node for node in workflow.nodes if node.node_type == WorkflowNodeType.PROMPT_GENERATION)
+    image_nodes = [node for node in workflow.nodes if node.node_type == WorkflowNodeType.IMAGE_GENERATION]
+    dispatched: list[str] = []
+
+    workflow_execution._execute_product_workflow_run(
+        db_session,
+        run_id=submission.run.id,
+        enqueue_node_run=dispatched.append,
+    )
+    assert dispatched == [node_runs_by_node_id[prompt_node.id].id]
+
+    prompt_provider = RecordingPromptProvider()
+    execute_v2_workflow_node_only(
+        db_session,
+        node_run_id=node_runs_by_node_id[prompt_node.id].id,
+        dependencies=WorkflowExecutionDependencies(
+            prompt_generation_provider_resolver=lambda: prompt_provider,
+        ),
+    )
+    db_session.expire_all()
+    db_session.refresh(submission.run)
+    assert submission.run.status == WorkflowRunStatus.RUNNING
+
+    dispatched.clear()
+    workflow_execution._execute_product_workflow_run(
+        db_session,
+        run_id=submission.run.id,
+        enqueue_node_run=dispatched.append,
+    )
+    assert set(dispatched) == {node_runs_by_node_id[node.id].id for node in image_nodes}
+
+    image_provider = RecordingImageProvider(image_bytes=_png_bytes(color=(80, 120, 180), size=(80, 64)))
+    for image_node in image_nodes:
+        execute_v2_workflow_node_only(
+            db_session,
+            node_run_id=node_runs_by_node_id[image_node.id].id,
+            dependencies=WorkflowExecutionDependencies(image_provider_resolver=lambda: image_provider),
+        )
+    workflow_execution._execute_product_workflow_run(
+        db_session,
+        run_id=submission.run.id,
+        enqueue_node_run=lambda _: pytest.fail("completed workflow must not dispatch another node"),
+    )
+
+    persisted = get_v2_workflow_run(
+        db_session,
+        product_id=product.id,
+        workflow_id=workflow.id,
+        run_id=submission.run.id,
+    )
+    assert persisted.status == WorkflowRunStatus.SUCCEEDED
+    assert all(node_run.status == WorkflowNodeStatus.SUCCEEDED for node_run in persisted.node_runs)
+    assert len(prompt_provider.requests) == 1
+    assert len(image_provider.requests) == len(image_nodes)
+
+
+def test_v2_full_workflow_scheduler_preserves_image_to_image_order(db_session) -> None:
+    product, workflow = _create_materialized_workflow(db_session)
+    image_nodes = sorted(
+        (node for node in workflow.nodes if node.node_type == WorkflowNodeType.IMAGE_GENERATION),
+        key=lambda node: node.config_json["image_plan_key"],
+    )
+    upstream_image, downstream_image = image_nodes
+    db_session.add(
+        WorkflowEdge(
+            workflow_id=workflow.id,
+            edge_key="generated-image-reference",
+            source_node_id=upstream_image.id,
+            target_node_id=downstream_image.id,
+            source_handle="image",
+            target_handle="reference",
+        )
+    )
+    db_session.commit()
+    db_session.expire_all()
+    workflow = db_session.get(ProductWorkflow, workflow.id)
+    submission = submit_v2_workflow_run(
+        db_session,
+        product_id=product.id,
+        workflow_id=workflow.id,
+        enqueue=lambda _: None,
+    )
+    node_runs = {node_run.node_id: node_run for node_run in submission.run.node_runs}
+    prompt_node = next(node for node in workflow.nodes if node.node_type == WorkflowNodeType.PROMPT_GENERATION)
+
+    first_dispatch: list[str] = []
+    workflow_execution._execute_product_workflow_run(
+        db_session,
+        run_id=submission.run.id,
+        enqueue_node_run=first_dispatch.append,
+    )
+    assert first_dispatch == [node_runs[prompt_node.id].id]
+    execute_v2_workflow_node_only(
+        db_session,
+        node_run_id=node_runs[prompt_node.id].id,
+        dependencies=WorkflowExecutionDependencies(
+            prompt_generation_provider_resolver=lambda: RecordingPromptProvider(),
+        ),
+    )
+    db_session.expire_all()
+
+    second_dispatch: list[str] = []
+    workflow_execution._execute_product_workflow_run(
+        db_session,
+        run_id=submission.run.id,
+        enqueue_node_run=second_dispatch.append,
+    )
+    assert second_dispatch == [node_runs[upstream_image.id].id]
+    image_provider = RecordingImageProvider(image_bytes=_png_bytes(color=(40, 80, 160), size=(72, 72)))
+    execute_v2_workflow_node_only(
+        db_session,
+        node_run_id=node_runs[upstream_image.id].id,
+        dependencies=WorkflowExecutionDependencies(image_provider_resolver=lambda: image_provider),
+    )
+    db_session.expire_all()
+
+    third_dispatch: list[str] = []
+    workflow_execution._execute_product_workflow_run(
+        db_session,
+        run_id=submission.run.id,
+        enqueue_node_run=third_dispatch.append,
+    )
+    assert third_dispatch == [node_runs[downstream_image.id].id]
+    execute_v2_workflow_node_only(
+        db_session,
+        node_run_id=node_runs[downstream_image.id].id,
+        dependencies=WorkflowExecutionDependencies(image_provider_resolver=lambda: image_provider),
+    )
+    workflow_execution._execute_product_workflow_run(
+        db_session,
+        run_id=submission.run.id,
+        enqueue_node_run=lambda _: pytest.fail("completed workflow must not dispatch another node"),
+    )
+
+    db_session.expire_all()
+    persisted_downstream = db_session.get(WorkflowNode, downstream_image.id)
+    persisted_upstream = db_session.get(WorkflowNode, upstream_image.id)
+    assert db_session.get(WorkflowRun, submission.run.id).status == WorkflowRunStatus.SUCCEEDED
+    assert persisted_upstream.bound_image_asset_id in {
+        reference.asset_id for reference in image_provider.requests[1].references
+    }
+    assert persisted_downstream.bound_image_asset_id is not None
+
+
+def test_v2_full_workflow_failure_blocks_dependents_and_retry_excludes_succeeded_branch(db_session) -> None:
+    from productflow_backend.application.product_workflow.run_state import mark_workflow_node_run_failed
+
+    product, workflow = _create_materialized_workflow(db_session, include_scene_before_hero=True)
+    submission = submit_v2_workflow_run(
+        db_session,
+        product_id=product.id,
+        workflow_id=workflow.id,
+        enqueue=lambda _: None,
+    )
+    node_runs = {node_run.node_id: node_run for node_run in submission.run.node_runs}
+    prompt_nodes = {
+        node.config_json["image_type_key"]: node
+        for node in workflow.nodes
+        if node.node_type == WorkflowNodeType.PROMPT_GENERATION
+    }
+    image_nodes = {
+        node.config_json["image_type_key"]: node
+        for node in workflow.nodes
+        if node.node_type == WorkflowNodeType.IMAGE_GENERATION
+    }
+    initial_dispatch: list[str] = []
+    workflow_execution._execute_product_workflow_run(
+        db_session,
+        run_id=submission.run.id,
+        enqueue_node_run=initial_dispatch.append,
+    )
+    assert set(initial_dispatch) == {
+        node_runs[prompt_nodes["hero"].id].id,
+        node_runs[prompt_nodes["scene"].id].id,
+    }
+
+    mark_workflow_node_run_failed(
+        db_session,
+        node_run_id=node_runs[prompt_nodes["hero"].id].id,
+        reason="主图提示词生成失败",
+    )
+    execute_v2_workflow_node_only(
+        db_session,
+        node_run_id=node_runs[prompt_nodes["scene"].id].id,
+        dependencies=WorkflowExecutionDependencies(
+            prompt_generation_provider_resolver=lambda: RecordingPromptProvider(),
+        ),
+    )
+    db_session.expire_all()
+    next_dispatch: list[str] = []
+    workflow_execution._execute_product_workflow_run(
+        db_session,
+        run_id=submission.run.id,
+        enqueue_node_run=next_dispatch.append,
+    )
+    assert next_dispatch == [node_runs[image_nodes["scene"].id].id]
+    execute_v2_workflow_node_only(
+        db_session,
+        node_run_id=node_runs[image_nodes["scene"].id].id,
+        dependencies=WorkflowExecutionDependencies(
+            image_provider_resolver=lambda: RecordingImageProvider(
+                image_bytes=_png_bytes(color=(30, 90, 150), size=(64, 64))
+            ),
+        ),
+    )
+    workflow_execution._execute_product_workflow_run(
+        db_session,
+        run_id=submission.run.id,
+        enqueue_node_run=lambda _: pytest.fail("failed workflow has no further ready node"),
+    )
+
+    failed = get_v2_workflow_run(
+        db_session,
+        product_id=product.id,
+        workflow_id=workflow.id,
+        run_id=submission.run.id,
+    )
+    assert failed.status == WorkflowRunStatus.FAILED
+    assert failed.progress_metadata["run_scope"] == "workflow"
+    assert node_runs[image_nodes["scene"].id].status == WorkflowNodeStatus.SUCCEEDED
+    hero_image_node_ids = {
+        node.id
+        for node in workflow.nodes
+        if node.node_type == WorkflowNodeType.IMAGE_GENERATION
+        and node.config_json["image_type_key"] == "hero"
+    }
+    assert all(
+        next(item for item in failed.node_runs if item.node_id == node_id).failure_reason == "上游节点失败"
+        for node_id in hero_image_node_ids
+    )
+
+    retry = retry_v2_workflow_run(
+        db_session,
+        product_id=product.id,
+        workflow_id=workflow.id,
+        run_id=failed.id,
+        enqueue=lambda _: None,
+    )
+    assert retry.created is True
+    assert {node_run.node_id for node_run in retry.run.node_runs} == {
+        prompt_nodes["hero"].id,
+        *hero_image_node_ids,
+    }
+    assert retry.run.progress_metadata["source_run_id"] == failed.id
+    assert retry.run.progress_metadata["manual_retry"] is True
+
+    retry_prompt_run = next(
+        node_run for node_run in retry.run.node_runs if node_run.node_id == prompt_nodes["hero"].id
+    )
+    mark_workflow_node_run_failed(
+        db_session,
+        node_run_id=retry_prompt_run.id,
+        reason="重试仍然失败",
+    )
+    db_session.expire_all()
+    persisted_retry = get_v2_workflow_run(
+        db_session,
+        product_id=product.id,
+        workflow_id=workflow.id,
+        run_id=retry.run.id,
+    )
+    assert persisted_retry.progress_metadata["source_run_id"] == failed.id
+    assert persisted_retry.progress_metadata["manual_retry"] is True
+
+
+def test_v2_full_workflow_cancel_and_durable_recovery_use_workflow_run(db_session, configured_env) -> None:
+    from productflow_backend.application.durable_recovery import recover_unfinished_workflow_runs
+
+    product, workflow = _create_materialized_workflow(db_session)
+    submission = submit_v2_workflow_run(
+        db_session,
+        product_id=product.id,
+        workflow_id=workflow.id,
+        enqueue=lambda _: None,
+    )
+    recovered_run_ids: list[str] = []
+    summary = recover_unfinished_workflow_runs(enqueue=recovered_run_ids.append)
+    assert summary.queued_runs == 1
+    assert recovered_run_ids == [submission.run.id]
+
+    cancelled = cancel_v2_workflow_run(
+        db_session,
+        product_id=product.id,
+        workflow_id=workflow.id,
+        run_id=submission.run.id,
+    )
+    assert cancelled.status == WorkflowRunStatus.CANCELLED
+    assert all(node_run.failure_reason == "已取消" for node_run in cancelled.node_runs)
+    assert cancel_v2_workflow_run(
+        db_session,
+        product_id=product.id,
+        workflow_id=workflow.id,
+        run_id=submission.run.id,
+    ).status == WorkflowRunStatus.CANCELLED
 
 
 def test_v1_and_v2_node_executors_reject_the_other_schema(db_session) -> None:

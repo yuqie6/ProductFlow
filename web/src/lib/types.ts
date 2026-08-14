@@ -1299,6 +1299,34 @@ export interface WorkflowNodeRunListV2Response {
   items: WorkflowNodeRunV2[];
 }
 
+export interface WorkflowRunV2 {
+  id: string;
+  schema_version: 2;
+  workflow_id: string;
+  status: WorkflowRunStatus;
+  failure_reason: string | null;
+  is_retryable: boolean;
+  is_cancelable: boolean;
+  progress_metadata: Record<string, JsonValue> | null;
+  started_at: string;
+  finished_at: string | null;
+  node_runs: WorkflowNodeRunV2[];
+}
+
+export interface WorkflowRunDetailV2Response {
+  workflow_run: WorkflowRunV2;
+  workflow: ProductWorkflowV2;
+}
+
+export interface SubmitWorkflowRunV2Result extends WorkflowRunDetailV2Response {
+  created: boolean;
+}
+
+export interface WorkflowRunListV2Response {
+  items: WorkflowRunV2[];
+  workflow: ProductWorkflowV2;
+}
+
 export interface WorkflowRevealEvent {
   schema_version: 1;
   materialization_id: string;

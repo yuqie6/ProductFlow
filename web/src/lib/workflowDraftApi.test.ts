@@ -151,6 +151,44 @@ describe("workflow draft API contract", () => {
     ]);
   });
 
+  it("submits one scoped v2 workflow run and exposes workflow-level controls", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ items: [] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.runWorkflowV2("product/1", "workflow/1");
+    await api.getWorkflowRunV2("product/1", "workflow/1", "run/1");
+    await api.listWorkflowRunsV2("product/1", "workflow/1", 12);
+    await api.cancelWorkflowRunV2("product/1", "workflow/1", "run/1");
+    await api.retryWorkflowRunV2("product/1", "workflow/1", "run/1");
+
+    expect(fetchMock.mock.calls).toEqual([
+      [
+        "/api/v2/products/product%2F1/workflows/workflow%2F1/runs",
+        expect.objectContaining({ method: "POST", credentials: "include" }),
+      ],
+      [
+        "/api/v2/products/product%2F1/workflows/workflow%2F1/runs/run%2F1",
+        expect.objectContaining({ credentials: "include" }),
+      ],
+      [
+        "/api/v2/products/product%2F1/workflows/workflow%2F1/runs?limit=12",
+        expect.objectContaining({ credentials: "include" }),
+      ],
+      [
+        "/api/v2/products/product%2F1/workflows/workflow%2F1/runs/run%2F1/cancel",
+        expect.objectContaining({ method: "POST", credentials: "include" }),
+      ],
+      [
+        "/api/v2/products/product%2F1/workflows/workflow%2F1/runs/run%2F1/retry",
+        expect.objectContaining({ method: "POST", credentials: "include" }),
+      ],
+    ]);
+  });
+
   it("reads and updates a v2 node through the scoped typed endpoint", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
