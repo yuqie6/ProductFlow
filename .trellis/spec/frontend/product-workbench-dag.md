@@ -731,3 +731,95 @@ if (source) api.appendWorkflowRecipeVersion(source);
 ```
 
 The visible context selects a source only within the immutable recipe kind.
+
+## Scenario: Delivery rendition inspector and gallery lineage
+
+### 1. Scope / Trigger
+
+- Trigger: changing `DeliveryRenditionPanel`, DeliverySpec parsing, workbench side-panel selection, rendition polling,
+  gallery rendition badges, source navigation, or rendition query invalidation.
+- The UI presents a deterministic export attached to a generated source. It does not add a canvas node, selection
+  workflow, or delivery checklist.
+
+### 2. Signatures
+
+- Types: `WorkflowDeliverySpec`, `DeliveryRenditionStatus`, `DeliveryRenditionJob`, and
+  `GalleryRenditionSummary` in `web/src/lib/types.ts`.
+- API methods: create/list/detail/retry rendition methods in `web/src/lib/api.ts`.
+- Component: `DeliveryRenditionPanel({ productId, node, onPreviewImage })`.
+- Pure helpers: `parseWorkflowDeliverySpec`, `deliverySpecKey`, `deliverySpecLabel`, and
+  `shouldOpenArtifactsForSelection(currentNodeIds, nextNodeIds, nodes)`.
+- React Query key: `['delivery-renditions', sourceAssetId]`.
+
+### 3. Contracts
+
+- Parse DeliverySpec strictly before displaying or submitting it. Enforce the backend's dimensions, 64-megapixel cap,
+  format, fit, background, anchor, and max-byte cross-field rules; malformed node config produces a bounded error state.
+- Selecting one image-generation node opens the Artifacts panel once for that selection change. A query refresh or
+  repeated React Flow selection event with the same IDs must preserve the user's later Recipes or Library tab choice.
+- Query jobs by the node's `bound_image_asset_id`. Poll only while at least one job is `queued` or `running`; the public
+  rendition status type excludes `cancelled` because the persisted state machine has four states.
+- When the current DeliverySpec has no matching job, the panel offers explicit creation. A retry action appears only for
+  a retryable failed job and does not invoke any image-generation API.
+- Success provides canonical preview and download actions. “View original” loads the source through the existing bounded
+  gallery detail API. Gallery cards obtain dimensions/format and source identity from `rendition`, not from filenames or
+  `parent_asset_id` inference.
+- Successful create/retry invalidates the exact rendition key, product gallery bootstrap/pages, and active v2 workflow.
+  Component-local loading and mutation state remain stable while those server projections refresh.
+- Layout uses fixed image aspect ratios and bounded text/action rows. Long filenames and failure reasons wrap or truncate
+  inside their region; mobile actions remain available without hover.
+
+### 4. Validation & Error Matrix
+
+| Condition | UI behavior |
+|---|---|
+| No single image node selected | Stable Artifacts empty state |
+| Selected image node has no source asset | Stable not-generated state; no rendition query |
+| DeliverySpec absent or invalid | Explicit empty/error state; create action unavailable |
+| Create/retry API failure | `ApiError.detail` shown in the panel; current source and existing jobs remain visible |
+| Queued/running job | Status indicator and bounded polling every 1.2 seconds |
+| Retryable failed job | Failure reason and retry action |
+| Successful job | Preview/download actions and exact specification label |
+| Gallery source lookup fails | Localized error; derivative card remains in the current directory |
+
+### 5. Good / Base / Bad Cases
+
+- Good: select one image node, inspect a failed export, retry it, preview the result, open the Library tab, and keep that
+  tab selected while the workflow query refreshes.
+- Base: a generated image without DeliverySpec shows no delivery history and does not create background work.
+- Bad: infer that every child image is a delivery rendition, show requested values as measured output, or treat a
+  rendition as another generated candidate.
+- Bad: run `setSidePanel('artifacts')` on every selection callback without comparing the previous and next selected IDs.
+
+### 6. Tests Required
+
+- Unit tests cover strict DeliverySpec parsing, pixel/cross-field rejection, compact labels, and changed-versus-repeated
+  image-node selection.
+- Workbench tests cover single-selection panel switching, user-selected tab preservation after refetch, active-only
+  polling, create/retry invalidation, and source preview.
+- Gallery tests cover derivative badges, exact source navigation, unavailable source handling, and absence of row-count
+  duplication.
+- Run frontend tests, lint, and build. Inspect real 1440x900 and 390x844 viewports for document overflow, button/text
+  overlap, console errors, failed requests, preview/download, retry, and “View original”.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```ts
+const handleSelectionChange = (ids: string[]) => {
+  setSelectedNodeIds(ids);
+  setSidePanel("artifacts");
+};
+```
+
+Correct:
+
+```ts
+if (shouldOpenArtifactsForSelection(selectedNodeIds, nodeIds, workflow.nodes)) {
+  setSidePanel("artifacts");
+}
+setSelectedNodeIds(nodeIds);
+```
+
+Selection changes may reveal the relevant inspector; repeated projection events do not take control away from the user.

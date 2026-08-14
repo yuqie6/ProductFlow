@@ -1749,3 +1749,101 @@ workflow.edit_version += 1
 ```
 
 The backend persists one coordinate system and one canvas edit sequence; folder cards remain a derived projection.
+
+## Scenario: Deterministic delivery renditions
+
+### 1. Scope / Trigger
+
+- Trigger: changing `DeliverySpec`, schema-v2 image persistence, delivery rendition jobs, Pillow rendering, rendition
+  recovery/retry, canonical asset deletion, gallery lineage, or delivery-rendition API routes.
+- The generated source remains the image node's current asset. A delivery rendition is a deterministic child asset with
+  its own durable task state and cannot call an image provider.
+
+### 2. Signatures
+
+- Contract: `DeliverySpec(width, height, format, max_byte_size?, fit, background_color?, crop_anchor?)`, schema version 1,
+  with `width * height <= 67_108_864`.
+- Application: `create_delivery_rendition_job(...)`, `submit_delivery_rendition_job(...)`,
+  `claim_delivery_rendition_job(...)`, `execute_delivery_rendition_job(...)`, and
+  `retry_delivery_rendition_job(...)`.
+- Durable actor: `run_delivery_rendition_job(job_id)`, `max_retries=0`; the database row is authoritative.
+- API:
+  - `POST|GET /api/v2/product-image-assets/{source_asset_id}/renditions`;
+  - `GET /api/v2/delivery-rendition-jobs/{job_id}`;
+  - `POST /api/v2/delivery-rendition-jobs/{job_id}/retry`.
+- Database: migration `20260814_0037`; idempotency key `(source_asset_id, spec_hash)`; public states are exactly
+  `queued`, `running`, `succeeded`, and `failed`.
+
+### 3. Contracts
+
+- Canonicalize a validated DeliverySpec with sorted compact JSON and SHA-256. Repeated source/spec submissions reuse one
+  active task or successful result. A failed task changes state only through the explicit retry command.
+- Only verified, top-level `ProductImageAsset` rows produced by a schema-v2 `WorkflowImageGenerationRecord` are valid
+  sources. Uploaded assets and existing child renditions are rejected.
+- Image-node success persists the generated source, generation record, node/run success, and optional queued rendition
+  job atomically. Queue submission occurs after commit. Queue or rendition failure updates only the rendition job.
+- Claim is a conditional `queued -> running` update that assigns a persisted attempt ID. Completion and failure writes
+  require the same active attempt ID; recovery clears stale attempts before requeueing, so late workers cannot overwrite
+  the current attempt.
+- Rendering fixes EXIF orientation, preserves aspect ratio, applies deterministic contain/pad or cover/crop behavior,
+  emits the requested PNG/JPEG/WEBP format, and inspects the encoded bytes again. Exact width, height, MIME, byte count,
+  and SHA-256 come from the emitted bytes.
+- A successful result is a new canonical `ProductImageAsset` whose `parent_asset_id` points to the generated source.
+  The rendition does not replace the node's current source, increment the planned generation count, or enter provider
+  generation lineage as a new candidate.
+- Source and result assets are protected by application checks and `RESTRICT` foreign keys while a rendition job exists.
+  Product aggregate deletion removes rendition jobs before canonical assets through the existing cascade path.
+- API responses expose the validated spec, bounded failure reason, attempts, retryability, timestamps, and optional
+  canonical result serializer. They do not expose the spec hash, active attempt, storage path, or image bytes.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+|---|---|
+| Missing source/job | `404` |
+| Invalid DeliverySpec, upload source, or recursive child source | `400`/`422`; no job or asset is written |
+| Retry requested for active, successful, or non-retryable failed job | `409`; current row is unchanged |
+| Queue unavailable after a new submission | `503`; the job remains visible as retryable `failed` |
+| Exact size/format/max-byte contract cannot be met | Non-retryable `failed`; source and workflow success remain unchanged |
+| Duplicate queue message | At most one claim succeeds; later messages are no-ops |
+| Stale worker writes after recovery | Attempt mismatch rejects both completion and failure writes |
+| Asset delete while referenced by a rendition job | `409`, with the rendition reference reported before generic child use |
+
+### 5. Good / Base / Bad Cases
+
+- Good: one generated PNG source yields exact JPEG and WEBP child assets for two DeliverySpecs without another provider
+  call; both children remain traceable to the same source.
+- Base: an image plan without DeliverySpec persists only its generated source and generation record.
+- Bad: overwrite the generated source, silently switch output format, stretch pixels, or satisfy a byte limit by changing
+  dimensions.
+- Bad: model rendition status as a workflow node, mutate `WorkflowNodeRun.output_json` after node success, or rely on a
+  Dramatiq message as the task authority.
+
+### 6. Tests Required
+
+- Pure renderer tests cover contain transparency/JPEG background, all cover anchors, PNG/JPEG/WEBP, EXIF, deterministic
+  byte-limit ladders, unsupported encoders, and post-encode measured metadata.
+- Application/API tests cover source eligibility, normalized idempotency, no-spec behavior, queue failure, workflow
+  success isolation, deletion conflicts, strict response fields, explicit retry, duplicate claim, and attempt fencing.
+- Migration tests cover checks, indexes, `RESTRICT`/`CASCADE`, enum values, and refusal to downgrade populated jobs.
+- Run the opt-in PostgreSQL/Redis gate `just backend-test-live-delivery-renditions`; it must use a temporary PostgreSQL
+  database, real Redis messages, and real PNG/JPEG/WEBP files.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+result = image_provider.generate(prompt=f"resize to {spec.width}x{spec.height}")
+source_asset.media_object = save(result)
+```
+
+Correct:
+
+```python
+claim = claim_delivery_rendition_job(session, job_id=job_id)
+if claim is not None:
+    execute_delivery_rendition_job(job_id=job_id, attempt_id=claim.attempt_id)
+```
+
+The deterministic worker emits a child asset and leaves the successful generation record and node current asset intact.
