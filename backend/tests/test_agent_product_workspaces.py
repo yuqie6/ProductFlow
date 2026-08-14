@@ -338,6 +338,14 @@ def test_agent_product_workspace_api_exposes_options_and_bounded_create(configur
     assert created["workflow_draft"]["current_revision"] is None
     assert created["workflow_draft"]["current_version"] == 0
     assert created["workflow_draft"]["revisions"] == []
+    assert created["workflow_draft"]["intake"] == {
+        "schema_version": 1,
+        "image_types": [
+            {"key": "hero", "quantity": 2, "order": 0},
+            {"key": "dimensions", "quantity": 1, "order": 1},
+        ],
+        "reference_asset_ids": [asset["id"] for asset in created["created_assets"]],
+    }
     assert created["conversation"]["harness_run_id"] == created["conversation"]["id"]
 
     replay_response = client.post("/api/v2/agent-product-workspaces", **request)

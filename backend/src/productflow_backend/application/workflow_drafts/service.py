@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
+from productflow_backend.application.agent_product_intake import parse_workflow_intake
 from productflow_backend.application.time import now_utc
 from productflow_backend.application.workflow_drafts.contracts import (
     WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS,
@@ -132,8 +133,15 @@ def append_workflow_draft_revision(
         if current_revision is None:
             if expected_draft_version != 0:
                 raise ConflictError("WorkflowDraft version 已变化，请基于最新 revision 重试")
-            if draft.recipe_seed is None or draft.status != WorkflowDraftStatus.COLLECTING:
-                raise ConflictError("只有 collecting recipe seed Draft 可以从 version 0 追加首次 revision")
+            intake = parse_workflow_intake(
+                schema_version=draft.intake_schema_version,
+                payload=draft.intake_json,
+            )
+            if (
+                draft.status != WorkflowDraftStatus.COLLECTING
+                or (draft.recipe_seed is None and intake is None)
+            ):
+                raise ConflictError("只有 collecting recipe seed 或 intake Draft 可以从 version 0 追加首次 revision")
             next_version = 1
         else:
             if current_revision.version != expected_draft_version:

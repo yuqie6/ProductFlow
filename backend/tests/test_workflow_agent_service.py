@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -8,7 +8,7 @@ import sqlalchemy as sa
 from alembic.config import Config
 from fastapi.testclient import TestClient
 from helpers import _login, _make_demo_image_bytes
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 from workflow_draft_helpers import make_workflow_draft_payload
 
 from alembic import command
@@ -16,10 +16,13 @@ from productflow_backend.application.agent_conversations import (
     attach_agent_workflow_draft_artifact,
     bind_harness_turn,
     create_agent_conversation,
+    list_agent_turn_page,
     project_agent_turn_state,
     reserve_agent_turn,
 )
 from productflow_backend.application.agent_cutover import inspect_agent_catalog_cutover
+from productflow_backend.application.agent_product_intake import AgentProductSelectionV1
+from productflow_backend.application.agent_product_workspaces import create_agent_product_workspace
 from productflow_backend.application.agent_sync import (
     execute_agent_turn_sync,
     recover_unfinished_agent_turn_syncs,
@@ -45,7 +48,10 @@ from productflow_backend.application.agent_tools import (
 )
 from productflow_backend.application.gallery_mutations import rename_gallery_asset
 from productflow_backend.application.use_cases import create_canonical_product
-from productflow_backend.application.workflow_drafts.service import create_workflow_draft
+from productflow_backend.application.workflow_drafts.service import (
+    append_workflow_draft_revision,
+    create_workflow_draft,
+)
 from productflow_backend.config import get_settings
 from productflow_backend.domain.enums import (
     AgentConversationStatus,
@@ -63,7 +69,9 @@ from productflow_backend.infrastructure.db.models import (
     AgentConversation,
     AgentToolMutation,
     AgentTurnProjection,
+    WorkflowDraft,
     WorkflowDraftRevision,
+    new_id,
 )
 
 
@@ -93,6 +101,25 @@ def _create_product_and_draft(
         ready_for_confirmation=False,
     )
     return product, asset, draft, payload
+
+
+def _create_agent_first_workspace(db_session):
+    selection = AgentProductSelectionV1.model_validate(
+        {
+            "schema_version": 1,
+            "image_types": [
+                {"key": "hero", "quantity": 2, "order": 0},
+                {"key": "detail", "quantity": 1, "order": 1},
+            ],
+        }
+    )
+    return create_agent_product_workspace(
+        db_session,
+        name="Agent-first 测试商品",
+        selection=selection,
+        image_uploads=[(_make_demo_image_bytes(), "agent-first.png", "image/png")],
+        idempotency_key="agent-first-workspace",
+    )
 
 
 def test_conversation_and_turn_reservation_are_product_scoped_and_idempotent(db_session) -> None:
@@ -166,15 +193,113 @@ def test_conversation_and_turn_reservation_are_product_scoped_and_idempotent(db_
         )
 
 
+def test_agent_turn_history_uses_bounded_reverse_keyset_pages(db_session) -> None:
+    product, _, draft, _ = _create_product_and_draft(db_session)
+    conversation = create_agent_conversation(
+        db_session,
+        product_id=product.id,
+        workflow_draft_id=draft.id,
+    )
+    base_time = datetime(2026, 8, 14, 8, 0, tzinfo=UTC)
+    db_session.add_all(
+        [
+            AgentTurnProjection(
+                id=new_id(),
+                conversation_id=conversation.id,
+                idempotency_key=f"page-key-{index}",
+                request_hash=f"{index:064x}",
+                input_text=f"turn-{index:02d}",
+                input_asset_ids_json=[],
+                status=AgentTurnStatus.SUCCEEDED,
+                output_text=f"output-{index:02d}",
+                finished_at=base_time + timedelta(seconds=index),
+                created_at=base_time + timedelta(seconds=index),
+                updated_at=base_time + timedelta(seconds=index),
+            )
+            for index in range(55)
+        ]
+    )
+    db_session.commit()
+
+    statements: list[str] = []
+
+    def capture_statement(_connection, _cursor, statement, _parameters, _context, _executemany) -> None:
+        if "FROM agent_turn_projections" in statement:
+            statements.append(statement)
+
+    assert db_session.bind is not None
+    event.listen(db_session.bind, "before_cursor_execute", capture_statement)
+    try:
+        newest = list_agent_turn_page(
+            db_session,
+            product_id=product.id,
+            conversation_id=conversation.id,
+        )
+    finally:
+        event.remove(db_session.bind, "before_cursor_execute", capture_statement)
+    assert [item.input_text for item in newest.items] == [f"turn-{index:02d}" for index in range(35, 55)]
+    assert newest.next_cursor is not None
+    assert any("LIMIT" in statement.upper() for statement in statements)
+
+    middle = list_agent_turn_page(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        after=newest.next_cursor,
+    )
+    assert [item.input_text for item in middle.items] == [f"turn-{index:02d}" for index in range(15, 35)]
+    assert middle.next_cursor is not None
+    oldest = list_agent_turn_page(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        after=middle.next_cursor,
+    )
+    assert [item.input_text for item in oldest.items] == [f"turn-{index:02d}" for index in range(15)]
+    assert oldest.next_cursor is None
+    assert [item.input_text for item in [*oldest.items, *middle.items, *newest.items]] == [
+        f"turn-{index:02d}" for index in range(55)
+    ]
+
+    other_product, _, other_draft, _ = _create_product_and_draft(db_session, name="分页其他商品")
+    other_conversation = create_agent_conversation(
+        db_session,
+        product_id=other_product.id,
+        workflow_draft_id=other_draft.id,
+    )
+    with pytest.raises(BusinessValidationError, match="不匹配"):
+        list_agent_turn_page(
+            db_session,
+            product_id=other_product.id,
+            conversation_id=other_conversation.id,
+            after=newest.next_cursor,
+        )
+    with pytest.raises(BusinessValidationError, match="cursor 无效"):
+        list_agent_turn_page(
+            db_session,
+            product_id=product.id,
+            conversation_id=conversation.id,
+            after="not-a-cursor",
+        )
+    with pytest.raises(BusinessValidationError, match="limit"):
+        list_agent_turn_page(
+            db_session,
+            product_id=product.id,
+            conversation_id=conversation.id,
+            limit=51,
+        )
+
+
 @pytest.mark.parametrize(
     ("terminal_status", "conversation_status"),
     [
+        (AgentTurnStatus.SUCCEEDED, AgentConversationStatus.COMPLETED),
         (AgentTurnStatus.FAILED, AgentConversationStatus.FAILED),
         (AgentTurnStatus.CANCELED, AgentConversationStatus.CANCELED),
         (AgentTurnStatus.UNKNOWN, AgentConversationStatus.UNKNOWN),
     ],
 )
-def test_failed_canceled_or_unknown_turn_does_not_close_conversation(
+def test_terminal_turn_statuses_allow_continuing_the_same_conversation(
     db_session,
     terminal_status: AgentTurnStatus,
     conversation_status: AgentConversationStatus,
@@ -185,6 +310,7 @@ def test_failed_canceled_or_unknown_turn_does_not_close_conversation(
         product_id=product.id,
         workflow_draft_id=draft.id,
     )
+    harness_run_id = conversation.harness_run_id
     first = reserve_agent_turn(
         db_session,
         product_id=product.id,
@@ -225,6 +351,108 @@ def test_failed_canceled_or_unknown_turn_does_not_close_conversation(
     )
     assert second.created is True
     assert second.projection.conversation.status == AgentConversationStatus.COLLECTING
+    assert second.projection.conversation.harness_run_id == harness_run_id
+
+
+def test_agent_first_version_zero_context_and_first_artifact_are_replayable(db_session) -> None:
+    workspace = _create_agent_first_workspace(db_session)
+    product = workspace.product
+    asset = workspace.created_assets[0]
+    draft = workspace.workflow_draft
+    conversation = workspace.conversation
+
+    contract = get_agent_contract(db_session, conversation.id)
+    assert contract["current_draft_version"] == 0
+    assert "不能静默改写" in contract["system_prompt"]
+    assert "不能臆造" in contract["system_prompt"]
+    context = get_agent_product_context(db_session, conversation.id)
+    assert context["workflow_draft"] == {
+        "id": draft.id,
+        "status": "collecting",
+        "version": 0,
+        "payload": None,
+        "intake": {
+            "schema_version": 1,
+            "image_types": [
+                {"key": "hero", "quantity": 2, "order": 0},
+                {"key": "detail", "quantity": 1, "order": 1},
+            ],
+            "reference_asset_ids": [asset.id],
+        },
+    }
+
+    projection = reserve_agent_turn(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        input_text="请根据 intake 完善工作流",
+        input_asset_ids=[asset.id],
+        idempotency_key="agent-first-artifact-turn",
+    ).projection
+    projection = bind_harness_turn(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        projection_id=projection.id,
+        harness_turn_id="harness-agent-first",
+        status=AgentTurnStatus.RUNNING,
+    )
+    projection = project_agent_turn_state(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        projection_id=projection.id,
+        harness_turn_id="harness-agent-first",
+        status=AgentTurnStatus.AWAITING_CONFIRMATION,
+        output_text="已准备结构化草案",
+        error_text=None,
+        question_json=None,
+        finished_at=datetime.now(UTC),
+    )
+    artifact = make_workflow_draft_payload(reference_asset_id=asset.id)
+    synced = attach_agent_workflow_draft_artifact(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        projection_id=projection.id,
+        harness_turn_id="harness-agent-first",
+        artifact_name="propose_workflow_draft",
+        artifact_step_id="agent-first-artifact",
+        artifact_value=artifact,
+    )
+    revision_id = synced.workflow_draft_revision_id
+    assert revision_id is not None
+    persisted_draft = db_session.get(WorkflowDraft, draft.id)
+    assert persisted_draft is not None
+    db_session.refresh(persisted_draft)
+    assert persisted_draft.current_revision is not None
+    assert persisted_draft.current_revision.version == 1
+
+    replay = attach_agent_workflow_draft_artifact(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        projection_id=projection.id,
+        harness_turn_id="harness-agent-first",
+        artifact_name="propose_workflow_draft",
+        artifact_step_id="agent-first-artifact",
+        artifact_value=artifact,
+    )
+    assert replay.workflow_draft_revision_id == revision_id
+    assert db_session.scalar(
+        select(func.count()).select_from(WorkflowDraftRevision).where(WorkflowDraftRevision.draft_id == draft.id)
+    ) == 1
+    with pytest.raises(ConflictError, match="version 已变化"):
+        append_workflow_draft_revision(
+            db_session,
+            product_id=product.id,
+            draft_id=draft.id,
+            expected_draft_version=0,
+            payload={**artifact, "title": "并发旧版本草案"},
+            ready_for_confirmation=True,
+            source_turn_id="stale-turn",
+            source_artifact_step_id="stale-artifact",
+        )
 
 
 def test_turn_projection_and_artifact_sync_converge_without_storing_artifact_body(db_session) -> None:
@@ -903,6 +1131,13 @@ def test_public_agent_routes_keep_session_scope_idempotency_question_and_sse(
     assert repeated.json()["turn"]["id"] == projection_id
     assert len(gateway.start_calls) == 1
 
+    turn_page = client.get(turn_path)
+    assert turn_page.status_code == 200, turn_page.text
+    assert turn_page.json() == {
+        "items": [repeated.json()["turn"]],
+        "next_cursor": None,
+    }
+
     cross_scope = client.get(
         f"/api/v2/products/{other_product.id}/agent-conversations/{conversation['id']}"
     )
@@ -1011,6 +1246,17 @@ def test_sync_worker_recovers_unbound_turn_and_idempotently_attaches_artifact(db
     refreshed_conversation = db_session.get(AgentConversation, conversation.id)
     assert refreshed_conversation is not None
     assert refreshed_conversation.status == AgentConversationStatus.COMPLETED
+    followup = reserve_agent_turn(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        input_text="确认后继续优化工作流",
+        input_asset_ids=[asset.id],
+        idempotency_key="worker-turn-followup",
+    )
+    assert followup.created is True
+    assert followup.projection.conversation.status == AgentConversationStatus.COLLECTING
+    assert followup.projection.conversation.harness_run_id == conversation.harness_run_id
 
 
 def test_agent_projection_tables_are_removed_without_touching_existing_rows(

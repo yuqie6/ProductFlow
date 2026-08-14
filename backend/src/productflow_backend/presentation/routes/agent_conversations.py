@@ -12,10 +12,12 @@ from productflow_backend.application.agent_control import (
     submit_agent_turn,
 )
 from productflow_backend.application.agent_conversations import (
+    AGENT_TURN_DEFAULT_PAGE_SIZE,
+    AGENT_TURN_MAX_PAGE_SIZE,
     create_agent_conversation,
     get_agent_conversation_or_raise,
     get_agent_turn_or_raise,
-    list_agent_turns,
+    list_agent_turn_page,
 )
 from productflow_backend.domain.errors import AgentServiceUnavailableError, BusinessValidationError, ConflictError
 from productflow_backend.infrastructure.agent_service import (
@@ -28,6 +30,7 @@ from productflow_backend.presentation.deps import get_session, require_admin
 from productflow_backend.presentation.schemas.agent_conversations import (
     AgentConversationResponse,
     AgentQuestionAnswerRequest,
+    AgentTurnPageResponse,
     AgentTurnResponse,
     CreateAgentConversationRequest,
     StartAgentTurnRequest,
@@ -73,20 +76,25 @@ def get_agent_conversation_endpoint(
     )
 
 
-@router.get("/{conversation_id}/turns", response_model=list[AgentTurnResponse])
+@router.get("/{conversation_id}/turns", response_model=AgentTurnPageResponse)
 def list_agent_turns_endpoint(
     product_id: str,
     conversation_id: str,
+    after: str = Query(default="", max_length=4096),
+    limit: int = Query(default=AGENT_TURN_DEFAULT_PAGE_SIZE, ge=1, le=AGENT_TURN_MAX_PAGE_SIZE),
     session: Session = Depends(get_session),
-) -> list[AgentTurnResponse]:
-    return [
-        serialize_agent_turn(turn)
-        for turn in list_agent_turns(
-            session,
-            product_id=product_id,
-            conversation_id=conversation_id,
-        )
-    ]
+) -> AgentTurnPageResponse:
+    page = list_agent_turn_page(
+        session,
+        product_id=product_id,
+        conversation_id=conversation_id,
+        after=after,
+        limit=limit,
+    )
+    return AgentTurnPageResponse(
+        items=[serialize_agent_turn(turn) for turn in page.items],
+        next_cursor=page.next_cursor,
+    )
 
 
 @router.post(

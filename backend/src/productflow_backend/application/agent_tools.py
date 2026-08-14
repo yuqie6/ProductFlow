@@ -13,6 +13,7 @@ from productflow_backend.application.agent_conversations import (
     AGENT_MAX_INPUT_ASSETS,
     get_agent_conversation_by_id_or_raise,
 )
+from productflow_backend.application.agent_product_intake import parse_workflow_intake
 from productflow_backend.application.gallery_assets import (
     GalleryAssetRecord,
     GalleryAssetSort,
@@ -41,6 +42,7 @@ from productflow_backend.infrastructure.db.models import (
     ProductAssetFolder,
     ProductImageAsset,
     ProductWorkflow,
+    WorkflowDraft,
     WorkflowDraftRecipeSeed,
     new_id,
 )
@@ -73,6 +75,10 @@ WORKFLOW_AGENT_SYSTEM_PROMPT = """你是 ProductFlow 的商品工作流设计 Ag
    不要在文本中输出 base64、data URL、存储路径或内部 URL。
 7. 如果上下文包含 workflow_recipe_seed，recipe 只表示可复用结构和要求。
    必须针对当前商品重新核对事实、选择参考图、生成提示词和视觉体系；不得把 recipe payload 直接作为 WorkflowDraft 提交。
+8. workflow_draft.intake 是用户初始提交的不可变需求。
+   可以建议调整图片类型或数量，但必须明确说明变化并等待用户确认，不能静默改写。
+9. Logo、认证、工厂或其他专有素材只能来自用户提供的真实资产。
+   缺失时应询问用户、降低对应设计要求或移除相关图片类型，不能臆造。
 """
 
 
@@ -154,6 +160,7 @@ def get_agent_product_context(session: Session, conversation_id: str) -> dict[st
     draft = conversation.workflow_draft
     revision = draft.current_revision
     recipe_seed = _load_recipe_seed_context(session, draft.recipe_seed)
+    intake = _load_workflow_intake_context(session, product_id=product.id, draft=draft)
     payload: dict[str, Any] = {
         "schema_version": 1,
         "product": {
@@ -176,6 +183,7 @@ def get_agent_product_context(session: Session, conversation_id: str) -> dict[st
             "status": draft.status.value,
             "version": revision.version if revision is not None else 0,
             "payload": revision.payload_json if revision is not None else None,
+            "intake": intake,
         },
         "workflow_recipe_seed": recipe_seed,
     }
@@ -183,6 +191,36 @@ def get_agent_product_context(session: Session, conversation_id: str) -> dict[st
     if len(encoded) > AGENT_CONTEXT_MAX_BYTES:
         raise ConflictError("商品与 WorkflowDraft 上下文超过 Agent 工具输出上限")
     return payload
+
+
+def _load_workflow_intake_context(
+    session: Session,
+    *,
+    product_id: str,
+    draft: WorkflowDraft,
+) -> dict[str, Any] | None:
+    intake = parse_workflow_intake(
+        schema_version=draft.intake_schema_version,
+        payload=draft.intake_json,
+    )
+    if intake is None:
+        return None
+    asset_ids = list(intake.reference_asset_ids)
+    assets = list(
+        session.scalars(
+            select(ProductImageAsset)
+            .options(selectinload(ProductImageAsset.media_object))
+            .where(ProductImageAsset.id.in_(asset_ids))
+        ).all()
+    )
+    assets_by_id = {asset.id: asset for asset in assets}
+    if set(assets_by_id) != set(asset_ids):
+        raise ConflictError("WorkflowDraft intake 引用了不存在的商品图片资产")
+    if any(asset.product_id != product_id for asset in assets):
+        raise ConflictError("WorkflowDraft intake 引用了其他商品的图片资产")
+    if any(asset.media_object.verification_status != MediaVerificationStatus.VERIFIED for asset in assets):
+        raise ConflictError("WorkflowDraft intake 引用了未通过核验的图片资产")
+    return intake.model_dump(mode="json")
 
 
 def _load_recipe_seed_context(

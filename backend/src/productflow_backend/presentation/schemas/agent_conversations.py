@@ -224,6 +224,11 @@ class AgentTurnResponse(BaseModel):
     updated_at: datetime
 
 
+class AgentTurnPageResponse(BaseModel):
+    items: list[AgentTurnResponse]
+    next_cursor: str | None = None
+
+
 class SubmitAgentTurnResponse(BaseModel):
     created: bool
     turn: AgentTurnResponse

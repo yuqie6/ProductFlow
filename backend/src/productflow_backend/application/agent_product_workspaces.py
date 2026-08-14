@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -14,6 +13,7 @@ from productflow_backend.application.agent_product_intake import (
     WorkflowIntakeV1,
     agent_product_workspace_request_hash,
     normalize_agent_product_idempotency_key,
+    parse_workflow_intake,
 )
 from productflow_backend.application.media_assets import get_product_image_assets_by_ids
 from productflow_backend.application.storage_compensation import compensate_storage_writes
@@ -152,12 +152,12 @@ def _load_idempotent_workspace(
     product = session.scalar(select(Product).where(Product.id == conversation.product_id))
     if draft is None or product is None:
         raise ConflictError("Agent 商品创建聚合不完整")
-    if draft.intake_schema_version != WORKFLOW_INTAKE_SCHEMA_VERSION or draft.intake_json is None:
-        raise ConflictError("Agent 商品创建 intake 缺失或版本不受支持")
-    try:
-        intake = WorkflowIntakeV1.model_validate(draft.intake_json)
-    except ValidationError as exc:
-        raise ConflictError("Agent 商品创建 intake 不符合 schema version 1") from exc
+    intake = parse_workflow_intake(
+        schema_version=draft.intake_schema_version,
+        payload=draft.intake_json,
+    )
+    if intake is None:
+        raise ConflictError("Agent 商品创建 intake 缺失")
     assets = get_product_image_assets_by_ids(
         session,
         product_id=product.id,

@@ -14,7 +14,7 @@ from productflow_backend.application.workflow_drafts.contracts import (
     WORKFLOW_DRAFT_MIN_IMAGE_TYPES,
     WORKFLOW_DRAFT_MIN_IMAGES_PER_TYPE,
 )
-from productflow_backend.domain.errors import BusinessValidationError
+from productflow_backend.domain.errors import BusinessValidationError, ConflictError
 
 AGENT_PRODUCT_SELECTION_SCHEMA_VERSION = 1
 WORKFLOW_INTAKE_SCHEMA_VERSION = 1
@@ -135,6 +135,21 @@ def parse_agent_product_selection(raw_json: str) -> AgentProductSelectionV1:
         raise BusinessValidationError("图片类型选择不符合 AgentProductSelectionV1") from exc
 
 
+def parse_workflow_intake(
+    *,
+    schema_version: int | None,
+    payload: dict[str, object] | None,
+) -> WorkflowIntakeV1 | None:
+    if schema_version is None and payload is None:
+        return None
+    if schema_version != WORKFLOW_INTAKE_SCHEMA_VERSION or payload is None:
+        raise ConflictError("WorkflowDraft intake 缺失或版本不受支持")
+    try:
+        return WorkflowIntakeV1.model_validate(payload)
+    except ValidationError as exc:
+        raise ConflictError("WorkflowDraft intake 不符合 schema version 1") from exc
+
+
 def normalize_agent_product_idempotency_key(value: str) -> str:
     normalized = value.strip()
     if not normalized:
@@ -183,4 +198,5 @@ __all__ = [
     "agent_product_workspace_request_hash",
     "normalize_agent_product_idempotency_key",
     "parse_agent_product_selection",
+    "parse_workflow_intake",
 ]

@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from productflow_backend.application.agent_product_intake import WorkflowIntakeV1, parse_workflow_intake
 from productflow_backend.application.product_workflow.folders import (
     WorkflowCanvasMutationResult,
     WorkflowNodePosition,
@@ -137,6 +138,7 @@ class WorkflowDraftResponse(BaseModel):
     current_revision: WorkflowDraftRevisionResponse | None
     current_version: int
     revisions: list[WorkflowDraftRevisionResponse]
+    intake: WorkflowIntakeV1 | None
     final_workflow_id: str | None
     recipe_seed: WorkflowDraftRecipeSeedResponse | None
     limits: WorkflowDraftLimitsResponse
@@ -324,6 +326,10 @@ def serialize_workflow_draft(draft: WorkflowDraft) -> WorkflowDraftResponse:
         ),
         current_version=current_revision.version if current_revision is not None else 0,
         revisions=[serialize_workflow_draft_revision(revision) for revision in draft.revisions],
+        intake=parse_workflow_intake(
+            schema_version=draft.intake_schema_version,
+            payload=draft.intake_json,
+        ),
         final_workflow_id=draft.final_workflow_id,
         recipe_seed=(
             WorkflowDraftRecipeSeedResponse(

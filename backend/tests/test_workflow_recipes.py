@@ -387,6 +387,7 @@ def test_recipe_apply_creates_version_zero_then_first_artifact_can_materialize(d
         "status": "collecting",
         "version": 0,
         "payload": None,
+        "intake": None,
     }
     seed_context = context["workflow_recipe_seed"]
     assert seed_context["recipe_id"] == recipe.id

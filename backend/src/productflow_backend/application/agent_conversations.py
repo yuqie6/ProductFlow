@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -33,6 +34,9 @@ from productflow_backend.infrastructure.db.models import (
 AGENT_MAX_INPUT_ASSETS = 6
 AGENT_MAX_INPUT_TEXT_CHARS = 20_000
 AGENT_MAX_IDEMPOTENCY_KEY_BYTES = 200
+AGENT_TURN_CURSOR_VERSION = 1
+AGENT_TURN_DEFAULT_PAGE_SIZE = 20
+AGENT_TURN_MAX_PAGE_SIZE = 50
 WORKFLOW_DRAFT_ARTIFACT_NAME = "propose_workflow_draft"
 
 _STARTABLE_CONVERSATION_STATUSES = {
@@ -41,6 +45,7 @@ _STARTABLE_CONVERSATION_STATUSES = {
     AgentConversationStatus.FAILED,
     AgentConversationStatus.CANCELED,
     AgentConversationStatus.UNKNOWN,
+    AgentConversationStatus.COMPLETED,
 }
 
 
@@ -48,6 +53,19 @@ _STARTABLE_CONVERSATION_STATUSES = {
 class AgentTurnReservation:
     projection: AgentTurnProjection
     created: bool
+
+
+@dataclass(frozen=True, slots=True)
+class AgentTurnPage:
+    items: list[AgentTurnProjection]
+    next_cursor: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _AgentTurnCursor:
+    conversation_id: str
+    created_at: datetime
+    projection_id: str
 
 
 def agent_conversation_query():
@@ -137,24 +155,104 @@ def create_agent_conversation(
     )
 
 
-def list_agent_turns(
+def list_agent_turn_page(
     session: Session,
     *,
     product_id: str,
     conversation_id: str,
-) -> list[AgentTurnProjection]:
+    after: str = "",
+    limit: int = AGENT_TURN_DEFAULT_PAGE_SIZE,
+) -> AgentTurnPage:
     get_agent_conversation_or_raise(
         session,
         product_id=product_id,
         conversation_id=conversation_id,
     )
-    return list(
-        session.scalars(
-            select(AgentTurnProjection)
-            .where(AgentTurnProjection.conversation_id == conversation_id)
-            .order_by(AgentTurnProjection.created_at.asc(), AgentTurnProjection.id.asc())
-        ).all()
+    if not 1 <= limit <= AGENT_TURN_MAX_PAGE_SIZE:
+        raise BusinessValidationError(
+            f"Agent Turn 分页 limit 必须在 1 到 {AGENT_TURN_MAX_PAGE_SIZE} 之间"
+        )
+    cursor = _decode_agent_turn_cursor(after) if after.strip() else None
+    if cursor is not None and cursor.conversation_id != conversation_id:
+        raise BusinessValidationError("Agent Turn 分页 cursor 与当前 conversation 不匹配")
+
+    statement = (
+        select(AgentTurnProjection)
+        .where(AgentTurnProjection.conversation_id == conversation_id)
+        .order_by(AgentTurnProjection.created_at.desc(), AgentTurnProjection.id.desc())
     )
+    if cursor is not None:
+        statement = statement.where(
+            or_(
+                AgentTurnProjection.created_at < cursor.created_at,
+                and_(
+                    AgentTurnProjection.created_at == cursor.created_at,
+                    AgentTurnProjection.id < cursor.projection_id,
+                ),
+            )
+        )
+    rows = list(session.scalars(statement.limit(limit + 1)).all())
+    has_more = len(rows) > limit
+    selected = rows[:limit]
+    next_cursor = None
+    if has_more and selected:
+        oldest = selected[-1]
+        next_cursor = _encode_agent_turn_cursor(
+            _AgentTurnCursor(
+                conversation_id=conversation_id,
+                created_at=_normalize_cursor_datetime(oldest.created_at),
+                projection_id=oldest.id,
+            )
+        )
+    return AgentTurnPage(items=list(reversed(selected)), next_cursor=next_cursor)
+
+
+def _encode_agent_turn_cursor(cursor: _AgentTurnCursor) -> str:
+    encoded = json.dumps(
+        {
+            "v": AGENT_TURN_CURSOR_VERSION,
+            "conversation_id": cursor.conversation_id,
+            "created_at": _normalize_cursor_datetime(cursor.created_at).isoformat(),
+            "id": cursor.projection_id,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return base64.urlsafe_b64encode(encoded).decode().rstrip("=")
+
+
+def _decode_agent_turn_cursor(value: str) -> _AgentTurnCursor:
+    normalized = value.strip()
+    if len(normalized) > 4096:
+        raise BusinessValidationError("Agent Turn 分页 cursor 无效")
+    try:
+        padded = normalized + "=" * (-len(normalized) % 4)
+        raw = base64.b64decode(padded, altchars=b"-_", validate=True)
+        decoded = json.loads(raw)
+        if not isinstance(decoded, dict) or set(decoded) != {"v", "conversation_id", "created_at", "id"}:
+            raise ValueError
+        if decoded["v"] != AGENT_TURN_CURSOR_VERSION:
+            raise ValueError
+        if not all(
+            isinstance(decoded[field], str) and decoded[field]
+            for field in ("conversation_id", "created_at", "id")
+        ):
+            raise ValueError
+        created_at = datetime.fromisoformat(decoded["created_at"])
+        if created_at.tzinfo is None:
+            raise ValueError
+        return _AgentTurnCursor(
+            conversation_id=decoded["conversation_id"],
+            created_at=_normalize_cursor_datetime(created_at),
+            projection_id=decoded["id"],
+        )
+    except (TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise BusinessValidationError("Agent Turn 分页 cursor 无效") from exc
+
+
+def _normalize_cursor_datetime(value: datetime) -> datetime:
+    normalized = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    return normalized.astimezone(UTC)
 
 
 def get_agent_turn_or_raise(
@@ -605,7 +703,10 @@ __all__ = [
     "AGENT_MAX_IDEMPOTENCY_KEY_BYTES",
     "AGENT_MAX_INPUT_ASSETS",
     "AGENT_MAX_INPUT_TEXT_CHARS",
+    "AGENT_TURN_DEFAULT_PAGE_SIZE",
+    "AGENT_TURN_MAX_PAGE_SIZE",
     "WORKFLOW_DRAFT_ARTIFACT_NAME",
+    "AgentTurnPage",
     "AgentTurnReservation",
     "agent_conversation_query",
     "attach_agent_workflow_draft_artifact",
@@ -614,7 +715,7 @@ __all__ = [
     "get_agent_conversation_by_id_or_raise",
     "get_agent_conversation_or_raise",
     "get_agent_turn_or_raise",
-    "list_agent_turns",
+    "list_agent_turn_page",
     "mark_agent_conversation_completed_for_draft",
     "project_agent_turn_state",
     "record_agent_turn_start_error",
