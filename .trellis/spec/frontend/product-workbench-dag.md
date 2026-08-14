@@ -763,6 +763,9 @@ The visible context selects a source only within the immutable recipe kind.
 - `V2NodeInspector.onFlushRegistration` exposes the currently mounted editor's async save boundary to the workbench;
   the boundary returns `Promise<number | null>`. `ProductWorkflowV2CanvasPanel.onBeforeWorkflowAction` awaits it before
   node selection, folder navigation, either run submission, structure mutation, or recipe extraction.
+- `WorkflowDraftConfirmation` reads only `WorkflowDraft.current_revision.payload`. Its
+  `data-workflow-confirmation-primary` region is the merchant decision surface; the closed
+  `data-workflow-confirmation-advanced` details element owns technical audit data.
 
 ### 3. Contracts
 
@@ -774,6 +777,14 @@ The visible context selects a source only within the immutable recipe kind.
 - Exactly one Agent panel instance remains mounted while the active inspector tool changes, the desktop sidebar collapses,
   or the compact view switches between Canvas and Agent. Hidden regions are inert and preserve composer text, message DOM
   identity, scroll state, and active event-stream ownership.
+- The confirmation default layer contains image-type quantity/order changes, readable facts and unresolved items, visual
+  direction, copy/text-language requirements, reference thumbnails/roles, and bounded summary counts. It does not render
+  fact keys, evidence IDs, asset IDs, Prompt keys, node types, Generation/DeliverySpec rows, or topology lists.
+- The collapsed advanced layer contains raw fact/evidence references, VisualSystem version/locked fields, complete Prompt
+  plans, per-image Generation/DeliverySpec, and folder/node/edge topology. Closing it does not mutate the Draft.
+- Confirmation exposes `Continue editing` and `Confirm and create workflow` as explicit commands. Continue editing removes
+  the review layer over the same mounted Agent panel. Compact headers place the title/summary above the two commands so
+  neither command compresses the summary into a narrow text column.
 - A single selected real node opens Details. Product context is read-only lineage/facts; reference nodes expose typed
   role/label editing and the existing image-explorer binding flow; prompt nodes edit the complete structured artifact;
   image nodes edit variation, GenerationSpec, DeliverySpec, and delivery renditions.
@@ -835,6 +846,8 @@ The visible context selects a source only within the immutable recipe kind.
 - Bootstrap failure -> bounded route error with retry; no legacy workflow query is attempted as recovery.
 - `agent_v2` with no materialized workflow -> full Agent surface; confirmation and materialization later reveal the
   persisted complete workflow in the same mounted shell.
+- Missing or conflicted required facts -> keep confirmation visible and disable materialization.
+- Exact Draft version conflict -> refresh the current revision, show the conflict message, and require a new review.
 - V1 history -> lazy legacy ProductDetail page with its existing tools and editor intact.
 - No workflow history on a legacy product -> read-only transition state; opening the URL creates no default DAG.
 - Node detail/edit/run failure -> `ApiError.detail` in the owning inspector panel; other canvas and Agent state remains.
@@ -876,8 +889,13 @@ The visible context selects a source only within the immutable recipe kind.
 
 - Route tests cover `agent_v2`, persisted `legacy_v1`, and legacy-empty discrimination.
 - Shell tests assert one Agent/canvas mount, confirmation inertness, compact visibility, and lazy non-Agent tool content.
+- Confirmation component tests split the server-rendered markup at the advanced details boundary: the default region must
+  omit UUIDs, asset IDs, Prompt keys, raw node types, specs, and edge lists; the advanced region must retain those fields.
 - Node API tests cover typed paths and payloads. Browser checks exercise Details, Runs, Library, Recipes, collapse, resize,
   maximize/restore, dark mode, and Agent DOM identity at 1440, 1024, and 390 px.
+- Browser confirmation checks cover the closed default layer, expanded advanced layer, both commands, and document/button
+  scroll widths at 1024 and 390 px. The full-screen-to-sidebar check stores the Agent panel, message-list, and composer DOM
+  references and asserts identity plus composer value after materialization, tool switching, collapse, and compact tabs.
 - Run API tests assert encoded product/workflow/run paths and one workflow-level request. Backend API coverage remains the
   authority for full-run idempotency, cancel, retry, and nested node-run response shape.
 - Browser checks cover the complete-run icon, empty Runs state, full/partial status cards, retry/cancel controls, node

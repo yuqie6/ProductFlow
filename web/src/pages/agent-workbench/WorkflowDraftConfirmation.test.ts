@@ -227,24 +227,59 @@ describe("WorkflowDraftConfirmation", () => {
     expect(review.textLanguages).toEqual(["zh-CN"]);
   });
 
-  it("renders typed facts, visual rules, references, prompts, specs, and topology", () => {
+  it("keeps user decisions in the default layer and technical contracts in collapsed advanced details", () => {
     const markup = renderToStaticMarkup(createElement(WorkflowDraftConfirmation, {
       draft: draft(),
       busy: false,
       error: null,
       onConfirm: () => undefined,
+      onClose: () => undefined,
     }));
+    const primaryStart = markup.indexOf("data-workflow-confirmation-primary");
+    const advancedStart = markup.indexOf("data-workflow-confirmation-advanced");
+    const advancedTagStart = markup.lastIndexOf("<details", advancedStart);
+    const defaultText = visibleText(markup.slice(0, advancedTagStart));
+    const primaryText = visibleText(markup.slice(primaryStart, advancedTagStart));
+    const advancedText = visibleText(markup.slice(advancedTagStart));
 
+    expect(primaryStart).toBeGreaterThan(-1);
+    expect(advancedStart).toBeGreaterThan(primaryStart);
     expect(markup).toContain("草案 v3");
-    expect(markup).toContain("Agent 新增");
-    expect(markup).toContain("Agent 移除");
-    expect(markup).toContain("299 元");
-    expect(markup).toContain("工业极简视觉体系");
-    expect(markup).toContain("#FF6B00");
-    expect(markup).toContain("硬质刀具 分类收纳");
-    expect(markup).toContain("zh-CN");
-    expect(markup).toContain("/api/v2/product-image-assets/asset-a/download?variant=thumbnail");
-    expect(markup).toContain("context -&gt; prompt");
-    expect(markup).toContain("确认并创建工作流");
+    expect(primaryText).toContain("Agent 新增");
+    expect(primaryText).toContain("Agent 移除");
+    expect(primaryText).toContain("价格");
+    expect(primaryText).toContain("299 元");
+    expect(primaryText).toContain("工业极简视觉体系");
+    expect(primaryText).toContain("#FF6B00");
+    expect(primaryText).toContain("硬质刀具 分类收纳");
+    expect(primaryText).toContain("zh-CN");
+    expect(primaryText).toContain("商品正面");
+    expect(defaultText).toContain("继续修改");
+    expect(defaultText).toContain("确认并创建工作流");
+    expect(markup).toContain("flex-col gap-4 sm:flex-row");
+    expect(markup).toContain("grid-cols-[auto_minmax(0,1fr)]");
+    expect(primaryText).not.toContain("asset-a");
+    expect(primaryText).not.toContain("hero-prompt");
+    expect(primaryText).not.toContain("prompt_generation");
+    expect(primaryText).not.toContain("context -> prompt");
+    expect(primaryText).not.toContain("节点");
+
+    expect(markup).toContain("<details data-workflow-confirmation-advanced=\"true\" class=\"group");
+    expect(advancedText).toContain("高级详情");
+    expect(advancedText).toContain("asset-a");
+    expect(advancedText).toContain("hero-prompt");
+    expect(advancedText).toContain("prompt_generation");
+    expect(advancedText).toContain("context -> prompt");
+    expect(advancedText).toContain("2000x2000");
   });
 });
+
+function visibleText(markup: string): string {
+  return markup
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&gt;/g, ">")
+    .replace(/&lt;/g, "<")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+}
