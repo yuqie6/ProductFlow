@@ -560,7 +560,14 @@ class WorkflowDraft(Base, TimestampMixin):
     """Agent 工作流草案的稳定身份和当前状态。"""
 
     __tablename__ = "workflow_drafts"
-    __table_args__ = (Index("ix_workflow_drafts_product_status", "product_id", "status"),)
+    __table_args__ = (
+        CheckConstraint(
+            "(intake_schema_version IS NULL AND intake_json IS NULL) OR "
+            "(intake_schema_version = 1 AND intake_json IS NOT NULL)",
+            name="ck_workflow_drafts_intake_pair",
+        ),
+        Index("ix_workflow_drafts_product_status", "product_id", "status"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     product_id: Mapped[str] = mapped_column(
@@ -581,6 +588,8 @@ class WorkflowDraft(Base, TimestampMixin):
         ),
         nullable=True,
     )
+    intake_schema_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    intake_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     final_workflow_id: Mapped[str | None] = mapped_column(
         String(36),
         ForeignKey(
@@ -684,6 +693,16 @@ class AgentConversation(Base, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("workflow_draft_id", name="uq_agent_conversations_workflow_draft_id"),
         UniqueConstraint("harness_run_id", name="uq_agent_conversations_harness_run_id"),
+        UniqueConstraint(
+            "creation_idempotency_key",
+            name="uq_agent_conversations_creation_idempotency_key",
+        ),
+        CheckConstraint(
+            "(creation_idempotency_key IS NULL AND creation_request_hash IS NULL) OR "
+            "(creation_idempotency_key IS NOT NULL AND length(creation_idempotency_key) > 0 "
+            "AND creation_request_hash IS NOT NULL AND length(creation_request_hash) = 64)",
+            name="ck_agent_conversations_creation_idempotency_pair",
+        ),
         Index("ix_agent_conversations_product_status", "product_id", "status"),
     )
 
@@ -701,6 +720,8 @@ class AgentConversation(Base, TimestampMixin):
         ),
     )
     harness_run_id: Mapped[str] = mapped_column(String(120))
+    creation_idempotency_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    creation_request_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[AgentConversationStatus] = mapped_column(
         enum_value_column(AgentConversationStatus),
         default=AgentConversationStatus.COLLECTING,

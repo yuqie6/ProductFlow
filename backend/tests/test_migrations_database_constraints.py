@@ -25,6 +25,7 @@ from productflow_backend.domain.enums import (
     WorkflowRunStatus,
 )
 from productflow_backend.infrastructure.db.models import (
+    AgentConversation,
     AgentToolMutation,
     CopySet,
     DeliveryRenditionJob,
@@ -316,6 +317,9 @@ def test_workflow_draft_models_match_atomic_materialization_contract() -> None:
 
     draft_table = WorkflowDraft.__table__
     assert {index.name for index in draft_table.indexes} == {"ix_workflow_drafts_product_status"}
+    assert {
+        constraint.name for constraint in draft_table.constraints if isinstance(constraint, sa.CheckConstraint)
+    } == {"ck_workflow_drafts_intake_pair"}
     draft_fks = {fk.parent.name: fk for fk in draft_table.foreign_keys}
     assert draft_fks["product_id"].constraint.name == "fk_workflow_drafts_product_id"
     assert draft_fks["product_id"].ondelete == "CASCADE"
@@ -323,6 +327,24 @@ def test_workflow_draft_models_match_atomic_materialization_contract() -> None:
     assert draft_fks["current_revision_id"].ondelete == "SET NULL"
     assert draft_fks["final_workflow_id"].constraint.name == "fk_workflow_drafts_final_workflow_id"
     assert draft_fks["final_workflow_id"].ondelete == "SET NULL"
+
+    conversation_table = AgentConversation.__table__
+    assert {
+        constraint.name
+        for constraint in conversation_table.constraints
+        if isinstance(constraint, sa.UniqueConstraint)
+    } == {
+        "uq_agent_conversations_workflow_draft_id",
+        "uq_agent_conversations_harness_run_id",
+        "uq_agent_conversations_creation_idempotency_key",
+    }
+    assert {
+        constraint.name
+        for constraint in conversation_table.constraints
+        if isinstance(constraint, sa.CheckConstraint)
+    } == {"ck_agent_conversations_creation_idempotency_pair"}
+    assert conversation_table.c.creation_idempotency_key.type.length == 200
+    assert conversation_table.c.creation_request_hash.type.length == 64
 
     revision_table = WorkflowDraftRevision.__table__
     revision_unique_constraints = {
@@ -1046,6 +1068,160 @@ def test_delivery_rendition_migration_round_trips_and_rejects_populated_downgrad
     command.downgrade(config, "20260813_0036")
     engine = sa.create_engine(f"sqlite:///{database_path}")
     assert "delivery_rendition_jobs" not in sa.inspect(engine).get_table_names()
+    engine.dispose()
+    get_settings.cache_clear()
+
+
+def test_agent_product_intake_migration_round_trips_without_deleting_aggregate_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path, config = _configure_sqlite_alembic(
+        tmp_path,
+        monkeypatch,
+        filename="agent-product-intake-roundtrip.db",
+    )
+    command.upgrade(config, "20260814_0037")
+    now = "2026-08-14 13:00:00"
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                "INSERT INTO products (id, name, created_at, updated_at) "
+                "VALUES ('product-intake', 'Agent 创建迁移商品', :now, :now)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO workflow_drafts "
+                "(id, product_id, status, current_revision_id, final_workflow_id, created_at, updated_at) "
+                "VALUES ('draft-intake', 'product-intake', 'collecting', NULL, NULL, :now, :now)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO agent_conversations "
+                "(id, product_id, workflow_draft_id, harness_run_id, status, created_at, updated_at) "
+                "VALUES ('conversation-intake', 'product-intake', 'draft-intake', 'run-intake', "
+                "'collecting', :now, :now)"
+            ),
+            {"now": now},
+        )
+    engine.dispose()
+
+    command.upgrade(config, "20260814_0038")
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    inspector = sa.inspect(engine)
+    assert {"intake_schema_version", "intake_json"} <= {
+        column["name"] for column in inspector.get_columns("workflow_drafts")
+    }
+    assert {"creation_idempotency_key", "creation_request_hash"} <= {
+        column["name"] for column in inspector.get_columns("agent_conversations")
+    }
+    assert "ck_workflow_drafts_intake_pair" in {
+        constraint["name"] for constraint in inspector.get_check_constraints("workflow_drafts")
+    }
+    assert "ck_agent_conversations_creation_idempotency_pair" in {
+        constraint["name"] for constraint in inspector.get_check_constraints("agent_conversations")
+    }
+    assert "uq_agent_conversations_creation_idempotency_key" in {
+        constraint["name"] for constraint in inspector.get_unique_constraints("agent_conversations")
+    }
+    with engine.connect() as connection:
+        historical = connection.execute(
+            sa.text(
+                "SELECT intake_schema_version, intake_json FROM workflow_drafts WHERE id = 'draft-intake'"
+            )
+        ).one()
+        historical_conversation = connection.execute(
+            sa.text(
+                "SELECT creation_idempotency_key, creation_request_hash FROM agent_conversations "
+                "WHERE id = 'conversation-intake'"
+            )
+        ).one()
+    assert historical == (None, None)
+    assert historical_conversation == (None, None)
+
+    intake_json = json.dumps(
+        {
+            "schema_version": 1,
+            "image_types": [{"key": "hero", "quantity": 2, "order": 0}],
+            "reference_asset_ids": ["asset-intake"],
+        }
+    )
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                "UPDATE workflow_drafts SET intake_schema_version = 1, intake_json = :intake "
+                "WHERE id = 'draft-intake'"
+            ),
+            {"intake": intake_json},
+        )
+        connection.execute(
+            sa.text(
+                "UPDATE agent_conversations SET creation_idempotency_key = 'intake-key', "
+                "creation_request_hash = :hash WHERE id = 'conversation-intake'"
+            ),
+            {"hash": "a" * 64},
+        )
+
+    with pytest.raises(sa.exc.IntegrityError):
+        with engine.begin() as connection:
+            connection.execute(
+                sa.text(
+                    "UPDATE workflow_drafts SET intake_schema_version = 1, intake_json = NULL "
+                    "WHERE id = 'draft-intake'"
+                )
+            )
+    with pytest.raises(sa.exc.IntegrityError):
+        with engine.begin() as connection:
+            connection.execute(
+                sa.text(
+                    "UPDATE agent_conversations SET creation_request_hash = 'short' "
+                    "WHERE id = 'conversation-intake'"
+                )
+            )
+    engine.dispose()
+
+    command.downgrade(config, "20260814_0037")
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    inspector = sa.inspect(engine)
+    assert "intake_schema_version" not in {
+        column["name"] for column in inspector.get_columns("workflow_drafts")
+    }
+    assert "creation_idempotency_key" not in {
+        column["name"] for column in inspector.get_columns("agent_conversations")
+    }
+    with engine.connect() as connection:
+        assert connection.execute(
+            sa.text("SELECT COUNT(*) FROM products WHERE id = 'product-intake'")
+        ).scalar_one() == 1
+        assert connection.execute(
+            sa.text("SELECT COUNT(*) FROM workflow_drafts WHERE id = 'draft-intake'")
+        ).scalar_one() == 1
+        assert connection.execute(
+            sa.text("SELECT COUNT(*) FROM agent_conversations WHERE id = 'conversation-intake'")
+        ).scalar_one() == 1
+    engine.dispose()
+
+    command.upgrade(config, "20260814_0038")
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    with engine.connect() as connection:
+        restored = connection.execute(
+            sa.text(
+                "SELECT intake_schema_version, intake_json FROM workflow_drafts WHERE id = 'draft-intake'"
+            )
+        ).one()
+        restored_conversation = connection.execute(
+            sa.text(
+                "SELECT creation_idempotency_key, creation_request_hash FROM agent_conversations "
+                "WHERE id = 'conversation-intake'"
+            )
+        ).one()
+    assert restored == (None, None)
+    assert restored_conversation == (None, None)
     engine.dispose()
     get_settings.cache_clear()
 

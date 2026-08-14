@@ -19,6 +19,7 @@ from productflow_backend.application.product_workflow.templates import (
     resolve_product_creation_canvas_template,
 )
 from productflow_backend.application.storage_compensation import (
+    StorageWriteCompensation,
     best_effort_storage_delete,
     compensate_storage_writes,
 )
@@ -70,6 +71,11 @@ def _normalize_required_text(value: str, *, field_name: str, max_length: int) ->
     if len(normalized) > max_length:
         raise BusinessValidationError(f"{field_name}不能超过 {max_length} 个字符")
     return normalized
+
+
+def normalize_product_name(value: str) -> str:
+    """Normalize a product name for canonical creation and idempotency hashing."""
+    return _normalize_required_text(value, field_name="商品名", max_length=255)
 
 
 def _normalize_optional_text(value: str | None, *, field_name: str, max_length: int) -> str | None:
@@ -308,47 +314,73 @@ def create_canonical_product_with_assets(
     storage: LocalStorage | None = None,
 ) -> CanonicalProductCreation:
     """创建 canonical 商品并仅返回本次创建的有界图片集合。"""
+    storage = storage or LocalStorage()
+    with compensate_storage_writes(session) as storage_writes:
+        creation = stage_canonical_product_with_assets(
+            session,
+            name=name,
+            category=category,
+            price=price,
+            source_note=source_note,
+            image_uploads=image_uploads,
+            storage=storage,
+            storage_writes=storage_writes,
+        )
+        creation.product.cover_image_asset_id = creation.created_assets[0].id
+        product_id = creation.product.id
+        asset_ids = [asset.id for asset in creation.created_assets]
+        session.commit()
+    session.expire_all()
+    return CanonicalProductCreation(
+        product=_get_product_or_raise(session, product_id),
+        created_assets=get_product_image_assets_by_ids(
+            session,
+            product_id=product_id,
+            asset_ids=asset_ids,
+        ),
+    )
+
+
+def stage_canonical_product_with_assets(
+    session: Session,
+    *,
+    name: str,
+    category: str | None,
+    price: str | None,
+    source_note: str | None,
+    image_uploads: list[tuple[bytes, str, str]],
+    storage: LocalStorage,
+    storage_writes: StorageWriteCompensation,
+) -> CanonicalProductCreation:
+    """Stage one canonical Product and its verified uploads without committing."""
     if not image_uploads:
         raise BusinessValidationError("至少上传一张商品参考图")
     if len(image_uploads) > 6:
         raise BusinessValidationError("商品参考图最多上传 6 张")
-    storage = storage or LocalStorage()
-    with compensate_storage_writes(session) as storage_writes:
-        product = Product(
-            name=_normalize_required_text(name, field_name="商品名", max_length=255),
-            category=_normalize_optional_text(category, field_name="类目", max_length=120),
-            price=_normalize_price(price),
-            source_note=_normalize_optional_text(source_note, field_name="备注", max_length=4000),
-        )
-        session.add(product)
-        session.flush()
-        image_assets = [
-            stage_product_image_asset(
-                session,
-                product=product,
-                content=image_bytes,
-                filename=filename,
-                expected_mime_type=mime_type,
-                display_name=filename,
-                origin_type=ProductImageOriginType.UPLOAD,
-                storage=storage,
-                storage_writes=storage_writes,
-            )
-            for image_bytes, filename, mime_type in image_uploads
-        ]
-        session.flush()
-        product.cover_image_asset_id = image_assets[0].id
-        asset_ids = [asset.id for asset in image_assets]
-        session.commit()
-    session.expire_all()
-    return CanonicalProductCreation(
-        product=_get_product_or_raise(session, product.id),
-        created_assets=get_product_image_assets_by_ids(
-            session,
-            product_id=product.id,
-            asset_ids=asset_ids,
-        ),
+    product = Product(
+        name=normalize_product_name(name),
+        category=_normalize_optional_text(category, field_name="类目", max_length=120),
+        price=_normalize_price(price),
+        source_note=_normalize_optional_text(source_note, field_name="备注", max_length=4000),
     )
+    session.add(product)
+    session.flush()
+    image_assets = [
+        stage_product_image_asset(
+            session,
+            product=product,
+            content=image_bytes,
+            filename=filename,
+            expected_mime_type=mime_type,
+            display_name=filename,
+            origin_type=ProductImageOriginType.UPLOAD,
+            storage=storage,
+            storage_writes=storage_writes,
+        )
+        for image_bytes, filename, mime_type in image_uploads
+    ]
+    session.flush()
+    return CanonicalProductCreation(product=product, created_assets=image_assets)
 
 
 def add_canonical_product_images(
