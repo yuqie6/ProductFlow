@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Barrier
 from types import ModuleType
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import uuid4
@@ -18,6 +19,12 @@ from alembic.config import Config
 from dramatiq.brokers.redis import RedisBroker
 from sqlalchemy.engine import URL, make_url
 from test_delivery_renditions import _create_generated_source
+from test_prompt_visual_image_nodes import (
+    RecordingImageProvider,
+    _create_materialized_workflow,
+    _png_bytes,
+    _queue_single_node_run,
+)
 
 from alembic import command
 from productflow_backend.application.delivery_renditions.service import (
@@ -30,11 +37,16 @@ from productflow_backend.application.delivery_renditions.service import (
     submit_delivery_rendition_job,
 )
 from productflow_backend.application.durable_recovery import recover_unfinished_delivery_rendition_jobs
+from productflow_backend.application.media_assets import clear_product_cover
+from productflow_backend.application.product_workflow.v2_execution import execute_v2_workflow_node_run
+from productflow_backend.application.product_workflow_dependencies import WorkflowExecutionDependencies
 from productflow_backend.config import get_settings
 from productflow_backend.domain.enums import JobStatus, WorkflowNodeStatus, WorkflowRunStatus
 from productflow_backend.infrastructure.db.models import (
     DeliveryRenditionJob,
+    Product,
     WorkflowImageGenerationRecord,
+    WorkflowNode,
     WorkflowNodeRun,
     WorkflowRun,
 )
@@ -324,3 +336,62 @@ def test_delivery_rendition_claim_recovery_retry_and_attempt_fencing_on_postgres
         retried = retry_delivery_rendition_job(session, job_id=job_id, enqueue=lambda _: None)
         assert retried.status == JobStatus.QUEUED
         assert retried.attempts == 2
+
+
+def test_concurrent_v2_image_completions_fill_empty_cover_once_on_postgres(
+    live_delivery_dependencies: tuple[RedisBroker, ModuleType],
+) -> None:
+    _, _ = live_delivery_dependencies
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        product, workflow = _create_materialized_workflow(session, include_scene_before_hero=True)
+        clear_product_cover(session, product_id=product.id)
+        image_nodes = sorted(
+            (node for node in workflow.nodes if node.node_type.value == "image_generation"),
+            key=lambda node: node.config_json["cover_priority"],
+        )
+        assert len(image_nodes) == 2
+        node_run_ids = [
+            _queue_single_node_run(session, workflow=workflow, node=node)[1].id for node in image_nodes
+        ]
+        product_id = product.id
+
+    provider_barrier = Barrier(2)
+
+    class ConcurrentImageProvider(RecordingImageProvider):
+        def generate_workflow_image(self, request):
+            provider_barrier.wait(timeout=10)
+            return super().generate_workflow_image(request)
+
+    def execute_node(item: tuple[str, tuple[int, int, int]]) -> None:
+        node_run_id, color = item
+        with session_factory() as session:
+            execute_v2_workflow_node_run(
+                session,
+                node_run_id=node_run_id,
+                dependencies=WorkflowExecutionDependencies(
+                    image_provider_resolver=lambda: ConcurrentImageProvider(
+                        image_bytes=_png_bytes(color=color, size=(80, 64))
+                    )
+                ),
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        list(executor.map(execute_node, zip(node_run_ids, ((220, 80, 20), (40, 100, 190)), strict=True)))
+
+    with session_factory() as session:
+        records = list(
+            session.scalars(
+                sa.select(WorkflowImageGenerationRecord).where(
+                    WorkflowImageGenerationRecord.workflow_node_run_id.in_(node_run_ids)
+                )
+            )
+        )
+        product = session.get(Product, product_id)
+        assert product is not None
+        assert len(records) == 2
+        assert product.cover_image_asset_id in {record.result_asset_id for record in records}
+        assert all(
+            session.get(WorkflowNode, record.node_id).bound_image_asset_id == record.result_asset_id
+            for record in records
+        )

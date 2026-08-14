@@ -348,10 +348,23 @@ def test_materialization_creates_complete_v2_workflow_and_is_idempotent(db_sessi
     assert len(result.workflow.edges) == 4
     reference_node = next(node for node in result.workflow.nodes if node.node_type.value == "reference_image")
     prompt_node = next(node for node in result.workflow.nodes if node.node_type.value == "prompt_generation")
+    image_nodes = sorted(
+        (node for node in result.workflow.nodes if node.node_type.value == "image_generation"),
+        key=lambda node: node.config_json["image_plan_order"],
+    )
     assert reference_node.bound_image_asset_id == product.image_assets[0].id
     assert prompt_node.current_prompt_artifact_version_id is not None
     assert "prompt_plan" not in prompt_node.config_json
     assert "visual_system" not in prompt_node.config_json
+    assert [
+        (
+            node.config_json["image_plan_key"],
+            node.config_json["image_type_order"],
+            node.config_json["image_plan_order"],
+            node.config_json["cover_priority"],
+        )
+        for node in image_nodes
+    ] == [("hero-1", 0, 0, 0), ("hero-2", 0, 1, 1)]
     assert len(result.workflow.prompt_artifacts) == 1
     prompt_artifact = result.workflow.prompt_artifacts[0]
     assert prompt_artifact.image_type_key == "hero"

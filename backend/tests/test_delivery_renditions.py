@@ -25,7 +25,7 @@ from productflow_backend.application.delivery_renditions.service import (
 )
 from productflow_backend.application.durable_recovery import recover_unfinished_delivery_rendition_jobs
 from productflow_backend.application.gallery_assets import get_gallery_asset_detail
-from productflow_backend.application.media_assets import delete_product_image_asset
+from productflow_backend.application.media_assets import clear_product_cover, delete_product_image_asset
 from productflow_backend.application.product_workflow.v2_execution import execute_v2_workflow_node_run
 from productflow_backend.application.product_workflow_dependencies import WorkflowExecutionDependencies
 from productflow_backend.application.use_cases import create_canonical_product, delete_product
@@ -42,6 +42,7 @@ from productflow_backend.domain.errors import (
 )
 from productflow_backend.infrastructure.db.models import (
     DeliveryRenditionJob,
+    Product,
     ProductImageAsset,
     WorkflowImageGenerationRecord,
     WorkflowNodeRun,
@@ -409,6 +410,7 @@ def test_job_execution_persists_child_asset_without_mutating_workflow_success(
     source, run, node_run = _create_generated_source(db_session, provider_capture=providers)
     assert len(providers) == 1
     assert len(providers[0].requests) == 1
+    clear_product_cover(db_session, product_id=source.product_id)
     job = submit_delivery_rendition_job(
         db_session,
         source_asset_id=source.id,
@@ -436,6 +438,7 @@ def test_job_execution_persists_child_asset_without_mutating_workflow_success(
     assert (completed.result_asset.media_object.width, completed.result_asset.media_object.height) == (48, 48)
     assert db_session.get(WorkflowRun, run.id).status == WorkflowRunStatus.SUCCEEDED
     assert db_session.get(WorkflowNodeRun, node_run.id).status == WorkflowNodeStatus.SUCCEEDED
+    assert db_session.get(Product, source.product_id).cover_image_asset_id is None
 
     gallery_record = get_gallery_asset_detail(
         db_session,

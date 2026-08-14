@@ -451,6 +451,24 @@ def _materialize_nodes(
         image.key: image_type for image_type in artifact.image_types for image in image_type.images
     }
     images_by_key = {image.key: image for image_type in artifact.image_types for image in image_type.images}
+    cover_priority_by_image_key = {
+        image.key: priority
+        for priority, (image_type, image) in enumerate(
+            sorted(
+                (
+                    (image_type, image)
+                    for image_type in artifact.image_types
+                    for image in image_type.images
+                ),
+                key=lambda item: (
+                    item[0].key != "hero",
+                    item[0].order,
+                    item[1].order,
+                    item[1].key,
+                ),
+            )
+        )
+    }
     nodes_by_key: dict[str, WorkflowNode] = {}
     for plan in artifact.nodes:
         config_json, bound_asset_id, prompt_version_id = _resolved_node_config(
@@ -461,6 +479,7 @@ def _materialize_nodes(
             prompts_by_key=prompts_by_key,
             image_type_by_image_key=image_type_by_image_key,
             images_by_key=images_by_key,
+            cover_priority_by_image_key=cover_priority_by_image_key,
             prompt_versions_by_plan=prompt_versions_by_plan,
         )
         node = WorkflowNode(
@@ -490,6 +509,7 @@ def _resolved_node_config(
     prompts_by_key: dict[str, Any],
     image_type_by_image_key: dict[str, Any],
     images_by_key: dict[str, Any],
+    cover_priority_by_image_key: dict[str, int],
     prompt_versions_by_plan: dict[str, ImagePromptArtifactVersion],
 ) -> tuple[dict[str, Any], str | None, str | None]:
     base = {"contract_version": 2, "source_draft_revision_id": draft_revision.id}
@@ -517,6 +537,9 @@ def _resolved_node_config(
             **base,
             "image_plan_key": image.key,
             "image_type_key": image_type.key,
+            "image_type_order": image_type.order,
+            "image_plan_order": image.order,
+            "cover_priority": cover_priority_by_image_key[image.key],
             "prompt_plan_key": image_type.prompt_plan_key,
             "variation_instruction": image.variation_instruction,
             "generation_spec": image.generation_spec.model_dump(mode="json"),

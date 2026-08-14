@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from datetime import UTC, datetime
 from io import BytesIO
 from types import SimpleNamespace
@@ -49,6 +50,7 @@ from productflow_backend.infrastructure.db.models import (
     ImagePromptArtifactVersion,
     ImagePromptArtifactVersionReference,
     PosterVariant,
+    Product,
     ProductImageAsset,
     ProductWorkflow,
     SourceAsset,
@@ -165,7 +167,90 @@ def _png_bytes(*, color: tuple[int, int, int], size: tuple[int, int]) -> bytes:
     return buffer.getvalue()
 
 
-def _create_materialized_workflow(db_session):
+def _add_scene_before_hero(payload: dict) -> dict:
+    payload = deepcopy(payload)
+    hero_type = payload["image_types"][0]
+    hero_type["order"] = 1
+    hero_type["quantity"] = 1
+    hero_type["images"] = hero_type["images"][:1]
+    hero_prompt = payload["prompt_plans"][0]
+    hero_prompt["payload"]["images"] = hero_prompt["payload"]["images"][:1]
+    payload["nodes"] = [
+        node for node in payload["nodes"] if node.get("image_plan_key") != "hero-2"
+    ]
+    payload["edges"] = [
+        edge
+        for edge in payload["edges"]
+        if edge["source_node_key"] != "hero-image-2-node" and edge["target_node_key"] != "hero-image-2-node"
+    ]
+
+    scene_image = deepcopy(hero_type["images"][0])
+    scene_image.update(key="scene-1", order=0, variation_instruction="工业车间使用场景")
+    scene_type = {
+        "key": "scene",
+        "title": "场景展示图",
+        "order": 0,
+        "quantity": 1,
+        "prompt_plan_key": "scene-prompt",
+        "images": [scene_image],
+    }
+    scene_prompt = deepcopy(hero_prompt)
+    scene_prompt.update(key="scene-prompt", image_type_key="scene", title="场景展示提示词")
+    scene_prompt["payload"]["images"][0]["image_plan_key"] = "scene-1"
+    scene_prompt["payload"]["images"][0]["instruction"] = "工业车间使用场景"
+    payload["image_types"].append(scene_type)
+    payload["prompt_plans"].append(scene_prompt)
+    payload["nodes"].extend(
+        [
+            {
+                "key": "scene-prompt-node",
+                "node_type": "prompt_generation",
+                "title": "场景展示提示词",
+                "position_x": 680,
+                "position_y": 460,
+                "folder_key": "hero-folder",
+                "prompt_plan_key": "scene-prompt",
+            },
+            {
+                "key": "scene-image-node",
+                "node_type": "image_generation",
+                "title": "场景展示图 1",
+                "position_x": 980,
+                "position_y": 660,
+                "folder_key": "hero-folder",
+                "image_plan_key": "scene-1",
+            },
+        ]
+    )
+    payload["edges"].extend(
+        [
+            {
+                "key": "context-to-scene-prompt",
+                "source_node_key": "product-context",
+                "target_node_key": "scene-prompt-node",
+                "source_handle": "facts",
+                "target_handle": "facts",
+            },
+            {
+                "key": "reference-to-scene-prompt",
+                "source_node_key": "product-reference-node",
+                "target_node_key": "scene-prompt-node",
+                "source_handle": "asset",
+                "target_handle": "reference",
+            },
+            {
+                "key": "scene-prompt-to-image",
+                "source_node_key": "scene-prompt-node",
+                "target_node_key": "scene-image-node",
+                "source_handle": "prompt",
+                "target_handle": "prompt",
+            },
+        ]
+    )
+    return payload
+
+
+def _create_materialized_workflow(db_session, *, include_scene_before_hero: bool = False):
     product = create_canonical_product(
         db_session,
         name="硬质刀具收纳套装",
@@ -175,10 +260,13 @@ def _create_materialized_workflow(db_session):
         image_uploads=[(_make_demo_image_bytes(), "product.png", "image/png")],
     )
     reference_asset_id = product.image_assets[0].id
+    payload = make_workflow_draft_payload(reference_asset_id=reference_asset_id)
+    if include_scene_before_hero:
+        payload = _add_scene_before_hero(payload)
     draft = create_workflow_draft(
         db_session,
         product_id=product.id,
-        payload=make_workflow_draft_payload(reference_asset_id=reference_asset_id),
+        payload=payload,
         ready_for_confirmation=True,
         source_turn_id="turn-prompt",
         source_artifact_step_id="artifact-prompt",
@@ -582,6 +670,7 @@ def test_v1_and_v2_node_executors_reject_the_other_schema(db_session) -> None:
 
 def test_image_node_creates_one_canonical_asset_and_preserves_rerun_history(db_session) -> None:
     product, workflow = _create_materialized_workflow(db_session)
+    clear_product_cover(db_session, product_id=product.id)
     image_node = next(
         node
         for node in workflow.nodes
@@ -611,6 +700,7 @@ def test_image_node_creates_one_canonical_asset_and_preserves_rerun_history(db_s
     assert persisted_node is not None and persisted_node.status == WorkflowNodeStatus.SUCCEEDED
     assert first_record is not None
     assert persisted_node.bound_image_asset_id == first_record.result_asset_id
+    assert db_session.get(Product, product.id).cover_image_asset_id == first_record.result_asset_id
     assert db_session.get(ProductImageAsset, first_record.result_asset_id).image_type_key == "hero"
     assert first_record.requested_spec_json == image_node.config_json["generation_spec"]
     assert first_record.effective_parameters_json == {
@@ -658,6 +748,7 @@ def test_image_node_creates_one_canonical_asset_and_preserves_rerun_history(db_s
     assert len(records) == 2
     assert rerun_node.bound_image_asset_id == records[1].result_asset_id
     assert rerun_node.bound_image_asset_id != first_asset_id
+    assert db_session.get(Product, product.id).cover_image_asset_id == first_asset_id
     assert db_session.get(ProductImageAsset, first_asset_id) is not None
     assert records[0].compiled_prompt_hash == records[1].compiled_prompt_hash
     assert records[0].prompt_artifact_version_id == records[1].prompt_artifact_version_id
@@ -668,6 +759,87 @@ def test_image_node_creates_one_canonical_asset_and_preserves_rerun_history(db_s
     assert db_session.scalar(select(func.count()).select_from(CopySet)) == 0
     assert db_session.scalar(select(func.count()).select_from(SourceAsset)) == 0
     assert db_session.scalar(select(func.count()).select_from(PosterVariant)) == 0
+
+
+def test_image_node_auto_cover_prefers_successful_hero_and_preserves_manual_cover(db_session) -> None:
+    product, workflow = _create_materialized_workflow(db_session, include_scene_before_hero=True)
+    uploaded_cover_id = product.cover_image_asset_id
+    hero_node = next(
+        node
+        for node in workflow.nodes
+        if node.node_type == WorkflowNodeType.IMAGE_GENERATION and node.config_json["image_type_key"] == "hero"
+    )
+    scene_node = next(
+        node
+        for node in workflow.nodes
+        if node.node_type == WorkflowNodeType.IMAGE_GENERATION and node.config_json["image_type_key"] == "scene"
+    )
+    assert hero_node.config_json["cover_priority"] < scene_node.config_json["cover_priority"]
+    assert hero_node.config_json["image_type_order"] > scene_node.config_json["image_type_order"]
+
+    _, hero_node_run = _queue_single_node_run(db_session, workflow=workflow, node=hero_node)
+    execute_v2_workflow_node_run(
+        db_session,
+        node_run_id=hero_node_run.id,
+        dependencies=WorkflowExecutionDependencies(
+            image_provider_resolver=lambda: RecordingImageProvider(
+                image_bytes=_png_bytes(color=(220, 80, 20), size=(96, 72)),
+                model="hero-provider",
+            )
+        ),
+    )
+    db_session.expire_all()
+    persisted_hero = db_session.get(WorkflowNode, hero_node.id)
+    assert persisted_hero is not None and persisted_hero.bound_image_asset_id is not None
+    assert db_session.get(Product, product.id).cover_image_asset_id == uploaded_cover_id
+
+    clear_product_cover(db_session, product_id=product.id)
+    _, scene_node_run = _queue_single_node_run(
+        db_session,
+        workflow=db_session.get(ProductWorkflow, workflow.id),
+        node=db_session.get(WorkflowNode, scene_node.id),
+    )
+    execute_v2_workflow_node_run(
+        db_session,
+        node_run_id=scene_node_run.id,
+        dependencies=WorkflowExecutionDependencies(
+            image_provider_resolver=lambda: RecordingImageProvider(
+                image_bytes=_png_bytes(color=(40, 100, 190), size=(96, 72)),
+                model="scene-provider",
+            )
+        ),
+    )
+    db_session.expire_all()
+    assert db_session.get(Product, product.id).cover_image_asset_id == persisted_hero.bound_image_asset_id
+
+
+def test_image_node_does_not_auto_fill_cover_after_workflow_becomes_inactive(db_session) -> None:
+    product, workflow = _create_materialized_workflow(db_session)
+    clear_product_cover(db_session, product_id=product.id)
+    image_node = next(node for node in workflow.nodes if node.node_type == WorkflowNodeType.IMAGE_GENERATION)
+    _, node_run = _queue_single_node_run(db_session, workflow=workflow, node=image_node)
+
+    class DeactivatingImageProvider(RecordingImageProvider):
+        def generate_workflow_image(self, request: WorkflowImageRequest) -> WorkflowImageResult:
+            persisted_workflow = db_session.get(ProductWorkflow, workflow.id)
+            assert persisted_workflow is not None
+            persisted_workflow.active = False
+            db_session.commit()
+            return super().generate_workflow_image(request)
+
+    execute_v2_workflow_node_run(
+        db_session,
+        node_run_id=node_run.id,
+        dependencies=WorkflowExecutionDependencies(
+            image_provider_resolver=lambda: DeactivatingImageProvider(
+                image_bytes=_png_bytes(color=(100, 120, 140), size=(64, 64))
+            )
+        ),
+    )
+
+    db_session.expire_all()
+    assert db_session.get(Product, product.id).cover_image_asset_id is None
+    assert db_session.scalar(select(func.count()).select_from(WorkflowImageGenerationRecord)) == 1
 
 
 def test_v2_reference_rebind_stales_downstream_until_prompt_is_regenerated(db_session) -> None:

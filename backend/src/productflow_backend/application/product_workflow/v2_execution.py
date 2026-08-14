@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic import ValidationError
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.delivery_renditions.service import (
@@ -38,6 +38,7 @@ from productflow_backend.application.workflow_drafts.contracts import (
     VisualSystemDraftPayload,
 )
 from productflow_backend.domain.enums import (
+    MediaVerificationStatus,
     ProductImageOriginType,
     WorkflowNodeStatus,
     WorkflowNodeType,
@@ -48,6 +49,7 @@ from productflow_backend.infrastructure.db.models import (
     ImagePromptArtifact,
     ImagePromptArtifactVersion,
     ImagePromptArtifactVersionReference,
+    MediaObject,
     Product,
     ProductFactSetVersion,
     ProductImageAsset,
@@ -917,9 +919,17 @@ def _persist_image_result(
     run = session.scalar(select(WorkflowRun).where(WorkflowRun.id == prepared.run_id).with_for_update())
     node = session.scalar(select(WorkflowNode).where(WorkflowNode.id == prepared.node_id).with_for_update())
     workflow = session.scalar(
-        select(ProductWorkflow).where(ProductWorkflow.id == prepared.workflow_id).with_for_update()
+        select(ProductWorkflow)
+        .where(ProductWorkflow.id == prepared.workflow_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
-    product = session.scalar(select(Product).where(Product.id == prepared.product_id).with_for_update())
+    product = session.scalar(
+        select(Product)
+        .where(Product.id == prepared.product_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     if node_run is None or run is None or node is None or workflow is None or product is None:
         raise ConflictError("图片节点运行状态已不存在")
     if run.status == WorkflowRunStatus.CANCELLED:
@@ -1051,8 +1061,69 @@ def _persist_image_result(
     run.finished_at = now
     workflow.updated_at = now
     product.updated_at = now
+    _fill_empty_product_cover_from_current_v2_results(
+        session,
+        product=product,
+        workflow=workflow,
+    )
     session.commit()
     return rendition_job_id
+
+
+def _fill_empty_product_cover_from_current_v2_results(
+    session: Session,
+    *,
+    product: Product,
+    workflow: ProductWorkflow,
+) -> None:
+    if product.cover_image_asset_id is not None:
+        return
+    if workflow.schema_version != V2_WORKFLOW_SCHEMA_VERSION or not workflow.active:
+        return
+
+    session.flush()
+    rows = session.execute(
+        select(WorkflowNode, ProductImageAsset.id)
+        .join(
+            WorkflowImageGenerationRecord,
+            WorkflowImageGenerationRecord.result_asset_id == WorkflowNode.bound_image_asset_id,
+        )
+        .join(ProductImageAsset, ProductImageAsset.id == WorkflowImageGenerationRecord.result_asset_id)
+        .join(MediaObject, MediaObject.id == ProductImageAsset.media_object_id)
+        .where(
+            WorkflowNode.workflow_id == workflow.id,
+            WorkflowNode.schema_version == V2_WORKFLOW_SCHEMA_VERSION,
+            WorkflowNode.node_type == WorkflowNodeType.IMAGE_GENERATION,
+            WorkflowNode.status == WorkflowNodeStatus.SUCCEEDED,
+            WorkflowImageGenerationRecord.product_id == product.id,
+            WorkflowImageGenerationRecord.workflow_id == workflow.id,
+            WorkflowImageGenerationRecord.node_id == WorkflowNode.id,
+            ProductImageAsset.product_id == product.id,
+            ProductImageAsset.origin_type == ProductImageOriginType.WORKFLOW_GENERATION,
+            MediaObject.verification_status == MediaVerificationStatus.VERIFIED,
+        )
+    )
+    candidates: list[tuple[int, int, int, str, str]] = []
+    for candidate_node, asset_id in rows:
+        config = candidate_node.config_json
+        priority = config.get("cover_priority")
+        image_type_order = config.get("image_type_order")
+        image_plan_order = config.get("image_plan_order")
+        if not all(type(value) is int and value >= 0 for value in (priority, image_type_order, image_plan_order)):
+            continue
+        candidates.append((priority, image_type_order, image_plan_order, candidate_node.id, asset_id))
+    if not candidates:
+        return
+
+    selected_asset_id = min(candidates)[-1]
+    result = session.execute(
+        update(Product)
+        .where(Product.id == product.id, Product.cover_image_asset_id.is_(None))
+        .values(cover_image_asset_id=selected_asset_id, updated_at=now_utc())
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount == 1:
+        session.refresh(product, attribute_names=["cover_image_asset_id", "updated_at"])
 
 
 def _enqueue_delivery_rendition_without_affecting_workflow(session: Session, job_id: str) -> None:
