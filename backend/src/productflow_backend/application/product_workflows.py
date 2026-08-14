@@ -51,13 +51,23 @@ from productflow_backend.application.product_workflow.user_templates import (
     list_canvas_templates,
     rename_user_canvas_template,
 )
+from productflow_backend.application.product_workflow.v2_node_editing import (
+    V2PromptArtifactSnapshot,
+    V2WorkflowNodeDetail,
+    get_v2_workflow_node_detail,
+    update_v2_image_node,
+    update_v2_prompt_node,
+    update_v2_reference_node,
+)
 from productflow_backend.application.product_workflow.v2_reference_bindings import (
     V2ReferenceBindingResult,
     bind_v2_reference_node_asset,
 )
 from productflow_backend.application.product_workflow.v2_runs import (
     V2WorkflowNodeRunSubmission,
+    cancel_v2_workflow_node_run,
     get_v2_workflow_node_run,
+    list_v2_workflow_node_runs,
     submit_v2_workflow_node_run,
 )
 
@@ -78,6 +88,8 @@ __all__ = [
     "WorkflowRunKickoff",
     "V2WorkflowNodeRunSubmission",
     "V2ReferenceBindingResult",
+    "V2PromptArtifactSnapshot",
+    "V2WorkflowNodeDetail",
     "AppliedWorkflowTemplateGroup",
     "WorkflowCanvasMutationResult",
     "WorkflowNodePosition",
@@ -85,6 +97,7 @@ __all__ = [
     "archive_user_canvas_template",
     "bind_workflow_node_image",
     "bind_v2_reference_node_asset",
+    "cancel_v2_workflow_node_run",
     "create_user_canvas_template_from_workflow_nodes",
     "cancel_product_workflow_run",
     "create_workflow_edge",
@@ -98,7 +111,9 @@ __all__ = [
     "execute_product_workflow_node_run",
     "get_or_create_product_workflow",
     "get_product_workflow_status",
+    "get_v2_workflow_node_detail",
     "get_v2_workflow_node_run",
+    "list_v2_workflow_node_runs",
     "latest_workflow_runs",
     "list_canvas_templates",
     "mark_workflow_run_enqueue_failed",
@@ -116,5 +131,8 @@ __all__ = [
     "update_workflow_copy_set",
     "update_workflow_node",
     "update_workflow_node_layout",
+    "update_v2_image_node",
+    "update_v2_prompt_node",
+    "update_v2_reference_node",
     "upload_workflow_node_image",
 ]

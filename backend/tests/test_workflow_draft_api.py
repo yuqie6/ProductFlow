@@ -175,6 +175,19 @@ def test_workflow_draft_api_materializes_v2_and_replays_reveal_events(configured
     assert completed_image_payload["reference_asset_ids"] == [reference_asset_id]
     assert "provider_request_json" not in completed_image_payload
 
+    image_runs = client.get(f"/api/v2/workflow-nodes/{image_node['id']}/runs", params={"limit": 1})
+    assert image_runs.status_code == 200, image_runs.text
+    assert [item["id"] for item in image_runs.json()["items"]] == [image_node_run_id]
+
+    submitted_for_cancel = client.post(f"/api/v2/workflow-nodes/{prompt_node['id']}/run")
+    assert submitted_for_cancel.status_code == 202, submitted_for_cancel.text
+    cancelled = client.post(
+        f"/api/v2/workflow-node-runs/{submitted_for_cancel.json()['node_run']['id']}/cancel"
+    )
+    assert cancelled.status_code == 200, cancelled.text
+    assert cancelled.json()["status"] == "failed"
+    assert cancelled.json()["failure_reason"] == "已取消"
+
     queried = client.get(f"/api/v2/products/{product_id}/workflow")
     assert queried.status_code == 200
     assert queried.json()["latest_revision"] == 1

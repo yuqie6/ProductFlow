@@ -8,7 +8,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.admission import ensure_generation_capacity
-from productflow_backend.application.product_workflow.run_state import mark_workflow_run_failed
+from productflow_backend.application.product_workflow.run_state import (
+    mark_workflow_run_cancelled,
+    mark_workflow_run_failed,
+)
 from productflow_backend.application.product_workflow.v2_staleness import (
     ensure_image_prompt_references_current,
 )
@@ -101,13 +104,45 @@ def get_v2_workflow_node_run(session: Session, *, node_run_id: str) -> WorkflowN
     return node_run
 
 
-def _get_v2_runnable_node(session: Session, *, node_id: str) -> WorkflowNode:
-    node = session.scalar(
+def list_v2_workflow_node_runs(
+    session: Session,
+    *,
+    node_id: str,
+    limit: int = 20,
+) -> tuple[WorkflowNodeRun, ...]:
+    _get_v2_node(session, node_id=node_id, lock=False)
+    bounded_limit = min(max(limit, 1), 50)
+    return tuple(
+        session.scalars(
+            _v2_node_run_query()
+            .where(WorkflowNodeRun.node_id == node_id)
+            .order_by(WorkflowNodeRun.started_at.desc(), WorkflowNodeRun.id.desc())
+            .limit(bounded_limit)
+        )
+    )
+
+
+def cancel_v2_workflow_node_run(session: Session, *, node_run_id: str) -> WorkflowNodeRun:
+    node_run = get_v2_workflow_node_run(session, node_run_id=node_run_id)
+    run = node_run.workflow_run
+    if run.status == WorkflowRunStatus.CANCELLED:
+        return node_run
+    if WORKFLOW_RUN_GENERATION_TASK_CONTRACT.is_terminal(run.status):
+        raise ConflictError("已结束的工作流节点运行不能取消")
+    mark_workflow_run_cancelled(session, run_id=run.id)
+    session.expire_all()
+    return get_v2_workflow_node_run(session, node_run_id=node_run_id)
+
+
+def _get_v2_node(session: Session, *, node_id: str, lock: bool = True) -> WorkflowNode:
+    statement = (
         select(WorkflowNode)
         .options(selectinload(WorkflowNode.workflow))
         .where(WorkflowNode.id == node_id)
-        .with_for_update()
     )
+    if lock:
+        statement = statement.with_for_update()
+    node = session.scalar(statement)
     if node is None:
         raise NotFoundError("工作流节点不存在")
     workflow = node.workflow
@@ -115,6 +150,11 @@ def _get_v2_runnable_node(session: Session, *, node_id: str) -> WorkflowNode:
         raise ConflictError("v2 节点运行接口拒绝提交 schema-v1 节点")
     if not workflow.active:
         raise ConflictError("只能运行 active schema-v2 工作流")
+    return node
+
+
+def _get_v2_runnable_node(session: Session, *, node_id: str) -> WorkflowNode:
+    node = _get_v2_node(session, node_id=node_id)
     if node.node_type not in V2_RUNNABLE_NODE_TYPES:
         raise ConflictError("schema-v2 只允许运行提示词或图片生成节点")
     if node.node_type == WorkflowNodeType.IMAGE_GENERATION:
@@ -155,6 +195,8 @@ def _v2_node_run_query():
 
 __all__ = [
     "V2WorkflowNodeRunSubmission",
+    "cancel_v2_workflow_node_run",
     "get_v2_workflow_node_run",
+    "list_v2_workflow_node_runs",
     "submit_v2_workflow_node_run",
 ]

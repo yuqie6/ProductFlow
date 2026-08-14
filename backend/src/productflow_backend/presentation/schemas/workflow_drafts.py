@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -10,6 +10,7 @@ from productflow_backend.application.product_workflow.folders import (
     WorkflowCanvasMutationResult,
     WorkflowNodePosition,
 )
+from productflow_backend.application.product_workflow.v2_node_editing import V2WorkflowNodeDetail
 from productflow_backend.application.product_workflow.v2_reference_bindings import V2ReferenceBindingResult
 from productflow_backend.application.workflow_drafts.contracts import (
     WORKFLOW_DRAFT_MAX_IMAGES_PER_TYPE,
@@ -17,7 +18,9 @@ from productflow_backend.application.workflow_drafts.contracts import (
     WORKFLOW_DRAFT_MAX_TOTAL_IMAGES,
     WORKFLOW_DRAFT_MIN_IMAGE_TYPES,
     WORKFLOW_DRAFT_MIN_IMAGES_PER_TYPE,
+    DeliverySpec,
     GenerationSpec,
+    ImagePromptPayloadV1,
     WorkflowDraftPayloadV1,
     parse_workflow_draft_payload,
 )
@@ -115,6 +118,39 @@ class UpdateWorkflowNodeLayoutRequest(StrictRequestModel):
     expected_edit_version: int = Field(ge=0)
 
 
+class UpdateReferenceWorkflowNodeV2Request(StrictRequestModel):
+    node_type: Literal["reference_image"]
+    expected_edit_version: int = Field(ge=0)
+    title: str = Field(min_length=1, max_length=255)
+    role: str = Field(min_length=1, max_length=120)
+    label: str = Field(min_length=1, max_length=255)
+
+
+class UpdatePromptWorkflowNodeV2Request(StrictRequestModel):
+    node_type: Literal["prompt_generation"]
+    expected_edit_version: int = Field(ge=0)
+    expected_prompt_artifact_version_id: str = Field(min_length=1, max_length=36)
+    title: str = Field(min_length=1, max_length=255)
+    prompt_payload: ImagePromptPayloadV1
+
+
+class UpdateImageWorkflowNodeV2Request(StrictRequestModel):
+    node_type: Literal["image_generation"]
+    expected_edit_version: int = Field(ge=0)
+    title: str = Field(min_length=1, max_length=255)
+    variation_instruction: str | None = Field(default=None, max_length=4000)
+    generation_spec: GenerationSpec
+    delivery_spec: DeliverySpec | None = None
+
+
+UpdateWorkflowNodeV2Request = Annotated[
+    UpdateReferenceWorkflowNodeV2Request
+    | UpdatePromptWorkflowNodeV2Request
+    | UpdateImageWorkflowNodeV2Request,
+    Field(discriminator="node_type"),
+]
+
+
 class WorkflowDraftRevisionResponse(BaseModel):
     id: str
     draft_id: str
@@ -197,6 +233,27 @@ class WorkflowNodeV2Response(BaseModel):
     failure_reason: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class PromptArtifactVersionV2Response(BaseModel):
+    artifact_id: str
+    artifact_title: str
+    image_type_key: str
+    version_id: str
+    version: int
+    schema_version: Literal[1]
+    payload: ImagePromptPayloadV1
+    created_at: datetime
+
+
+class WorkflowNodeDetailV2Response(BaseModel):
+    workflow_id: str
+    workflow_revision: int
+    workflow_edit_version: int
+    source_draft_revision_id: str
+    visual_system_version_id: str
+    node: WorkflowNodeV2Response
+    prompt_artifact: PromptArtifactVersionV2Response | None
 
 
 class WorkflowEdgeV2Response(BaseModel):
@@ -285,6 +342,10 @@ class WorkflowNodeRunV2Response(BaseModel):
 class SubmitWorkflowNodeRunV2Response(BaseModel):
     created: bool
     node_run: WorkflowNodeRunV2Response
+
+
+class WorkflowNodeRunListV2Response(BaseModel):
+    items: list[WorkflowNodeRunV2Response]
 
 
 class BindWorkflowReferenceAssetResponse(BaseModel):
@@ -456,6 +517,35 @@ def serialize_reference_binding(result: V2ReferenceBindingResult) -> BindWorkflo
     )
 
 
+def serialize_workflow_node_detail_v2(detail: V2WorkflowNodeDetail) -> WorkflowNodeDetailV2Response:
+    workflow = detail.workflow
+    if workflow.source_draft_revision_id is None or workflow.visual_system_version_id is None:
+        raise ValueError("v2 节点详情缺少 workflow lineage")
+    prompt = detail.prompt_artifact
+    return WorkflowNodeDetailV2Response(
+        workflow_id=workflow.id,
+        workflow_revision=workflow.revision,
+        workflow_edit_version=workflow.edit_version,
+        source_draft_revision_id=workflow.source_draft_revision_id,
+        visual_system_version_id=workflow.visual_system_version_id,
+        node=serialize_workflow_node_v2(detail.node),
+        prompt_artifact=(
+            PromptArtifactVersionV2Response(
+                artifact_id=prompt.artifact.id,
+                artifact_title=prompt.artifact.title,
+                image_type_key=prompt.artifact.image_type_key,
+                version_id=prompt.version.id,
+                version=prompt.version.version,
+                schema_version=prompt.version.schema_version,
+                payload=prompt.payload,
+                created_at=prompt.version.created_at,
+            )
+            if prompt is not None
+            else None
+        ),
+    )
+
+
 def to_workflow_node_positions(
     items: list[WorkflowNodePositionRequest],
 ) -> tuple[WorkflowNodePosition, ...]:
@@ -552,12 +642,16 @@ __all__ = [
     "RenameWorkflowFolderRequest",
     "SetWorkflowFolderMembersRequest",
     "SubmitWorkflowNodeRunV2Response",
+    "UpdateWorkflowNodeV2Request",
     "WorkflowDraftResponse",
     "TranslateWorkflowFolderRequest",
     "UpdateWorkflowNodeLayoutRequest",
     "WorkflowCanvasMutationResponse",
     "WorkflowMaterializationResponse",
     "WorkflowNodeRunV2Response",
+    "WorkflowNodeRunListV2Response",
+    "WorkflowNodeDetailV2Response",
+    "serialize_workflow_node_detail_v2",
     "serialize_active_v2_workflow",
     "serialize_materialization",
     "serialize_canvas_mutation",

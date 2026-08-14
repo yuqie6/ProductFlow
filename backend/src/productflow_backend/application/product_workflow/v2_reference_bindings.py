@@ -88,7 +88,7 @@ def bind_v2_reference_node_asset(
             changed=False,
         )
 
-    affected_ids = _reachable_stale_node_ids(
+    affected_ids = reachable_v2_stale_node_ids(
         session,
         workflow_id=workflow.id,
         source_node_id=reference_node.id,
@@ -148,7 +148,7 @@ def bind_v2_reference_node_asset(
     )
 
 
-def _reachable_stale_node_ids(
+def reachable_v2_stale_node_ids(
     session: Session,
     *,
     workflow_id: str,
@@ -185,4 +185,8 @@ def _reachable_stale_node_ids(
     )
 
 
-__all__ = ["V2ReferenceBindingResult", "bind_v2_reference_node_asset"]
+__all__ = [
+    "V2ReferenceBindingResult",
+    "bind_v2_reference_node_asset",
+    "reachable_v2_stale_node_ids",
+]

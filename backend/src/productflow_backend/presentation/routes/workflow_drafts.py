@@ -10,13 +10,19 @@ from sqlalchemy.orm import Session
 from productflow_backend.application.agent_conversations import mark_agent_conversation_completed_for_draft
 from productflow_backend.application.product_workflows import (
     bind_v2_reference_node_asset,
+    cancel_v2_workflow_node_run,
     create_workflow_folder,
     dissolve_workflow_folder,
+    get_v2_workflow_node_detail,
     get_v2_workflow_node_run,
+    list_v2_workflow_node_runs,
     rename_workflow_folder,
     set_workflow_folder_members,
     submit_v2_workflow_node_run,
     translate_workflow_folder,
+    update_v2_image_node,
+    update_v2_prompt_node,
+    update_v2_reference_node,
     update_workflow_node_layout,
 )
 from productflow_backend.application.workflow_drafts.materialization import (
@@ -46,16 +52,23 @@ from productflow_backend.presentation.schemas.workflow_drafts import (
     SetWorkflowFolderMembersRequest,
     SubmitWorkflowNodeRunV2Response,
     TranslateWorkflowFolderRequest,
+    UpdateImageWorkflowNodeV2Request,
+    UpdatePromptWorkflowNodeV2Request,
+    UpdateReferenceWorkflowNodeV2Request,
     UpdateWorkflowNodeLayoutRequest,
+    UpdateWorkflowNodeV2Request,
     WorkflowCanvasMutationResponse,
     WorkflowDraftResponse,
     WorkflowMaterializationResponse,
+    WorkflowNodeDetailV2Response,
+    WorkflowNodeRunListV2Response,
     WorkflowNodeRunV2Response,
     serialize_active_v2_workflow,
     serialize_canvas_mutation,
     serialize_materialization,
     serialize_reference_binding,
     serialize_workflow_draft,
+    serialize_workflow_node_detail_v2,
     serialize_workflow_node_run_v2,
     to_workflow_node_positions,
 )
@@ -69,6 +82,76 @@ def get_active_v2_workflow_endpoint(
     session: Session = Depends(get_session),
 ) -> ActiveProductWorkflowV2Response:
     return serialize_active_v2_workflow(get_active_v2_workflow_snapshot(session, product_id=product_id))
+
+
+@router.get(
+    "/products/{product_id}/workflows/{workflow_id}/nodes/{node_id}",
+    response_model=WorkflowNodeDetailV2Response,
+)
+def get_v2_workflow_node_detail_endpoint(
+    product_id: str,
+    workflow_id: str,
+    node_id: str,
+    session: Session = Depends(get_session),
+) -> WorkflowNodeDetailV2Response:
+    return serialize_workflow_node_detail_v2(
+        get_v2_workflow_node_detail(
+            session,
+            product_id=product_id,
+            workflow_id=workflow_id,
+            node_id=node_id,
+        )
+    )
+
+
+@router.patch(
+    "/products/{product_id}/workflows/{workflow_id}/nodes/{node_id}",
+    response_model=WorkflowCanvasMutationResponse,
+)
+def update_v2_workflow_node_endpoint(
+    product_id: str,
+    workflow_id: str,
+    node_id: str,
+    payload: UpdateWorkflowNodeV2Request,
+    session: Session = Depends(get_session),
+) -> WorkflowCanvasMutationResponse:
+    if isinstance(payload, UpdateReferenceWorkflowNodeV2Request):
+        result = update_v2_reference_node(
+            session,
+            product_id=product_id,
+            workflow_id=workflow_id,
+            node_id=node_id,
+            expected_edit_version=payload.expected_edit_version,
+            title=payload.title,
+            role=payload.role,
+            label=payload.label,
+        )
+    elif isinstance(payload, UpdatePromptWorkflowNodeV2Request):
+        result = update_v2_prompt_node(
+            session,
+            product_id=product_id,
+            workflow_id=workflow_id,
+            node_id=node_id,
+            expected_edit_version=payload.expected_edit_version,
+            expected_prompt_artifact_version_id=payload.expected_prompt_artifact_version_id,
+            title=payload.title,
+            payload=payload.prompt_payload,
+        )
+    elif isinstance(payload, UpdateImageWorkflowNodeV2Request):
+        result = update_v2_image_node(
+            session,
+            product_id=product_id,
+            workflow_id=workflow_id,
+            node_id=node_id,
+            expected_edit_version=payload.expected_edit_version,
+            title=payload.title,
+            variation_instruction=payload.variation_instruction,
+            generation_spec=payload.generation_spec,
+            delivery_spec=payload.delivery_spec,
+        )
+    else:
+        raise BusinessValidationError("不支持的 schema-v2 节点编辑请求")
+    return serialize_canvas_mutation(result)
 
 
 @router.patch(
@@ -256,6 +339,36 @@ def get_v2_workflow_node_run_endpoint(
 ) -> WorkflowNodeRunV2Response:
     return serialize_workflow_node_run_v2(
         get_v2_workflow_node_run(session, node_run_id=node_run_id)
+    )
+
+
+@router.get(
+    "/workflow-nodes/{node_id}/runs",
+    response_model=WorkflowNodeRunListV2Response,
+)
+def list_v2_workflow_node_runs_endpoint(
+    node_id: str,
+    limit: int = Query(default=20, ge=1, le=50),
+    session: Session = Depends(get_session),
+) -> WorkflowNodeRunListV2Response:
+    return WorkflowNodeRunListV2Response(
+        items=[
+            serialize_workflow_node_run_v2(node_run)
+            for node_run in list_v2_workflow_node_runs(session, node_id=node_id, limit=limit)
+        ]
+    )
+
+
+@router.post(
+    "/workflow-node-runs/{node_run_id}/cancel",
+    response_model=WorkflowNodeRunV2Response,
+)
+def cancel_v2_workflow_node_run_endpoint(
+    node_run_id: str,
+    session: Session = Depends(get_session),
+) -> WorkflowNodeRunV2Response:
+    return serialize_workflow_node_run_v2(
+        cancel_v2_workflow_node_run(session, node_run_id=node_run_id)
     )
 
 
