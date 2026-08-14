@@ -1,4 +1,4 @@
-import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
+import type { MouseEvent as ReactMouseEvent } from "react";
 import {
   Braces,
   Check,
@@ -49,7 +49,6 @@ export interface WorkflowNodePresentationCardProps {
   previewSelected?: boolean;
   dragging: boolean;
   revealActive?: boolean;
-  actions?: ReactNode;
   nodeRef?: (element: HTMLDivElement | null) => void;
   onSelect: (event: ReactMouseEvent<HTMLElement>) => void;
 }
@@ -77,7 +76,6 @@ export function WorkflowNodePresentationCard({
   previewSelected = false,
   dragging,
   revealActive = false,
-  actions,
   nodeRef,
   onSelect,
 }: WorkflowNodePresentationCardProps) {
@@ -206,11 +204,10 @@ export function WorkflowNodePresentationCard({
         ) : null}
       </div>
 
-      <div className="mt-3 flex min-h-8 items-center gap-2 border-t border-slate-100 pt-2 text-[10px] text-zinc-400 dark:border-slate-700/70 dark:text-slate-300">
+      <div className="mt-3 flex items-center gap-2 text-[10px] text-zinc-400 dark:text-slate-300">
         <span className="min-w-0 flex-1 truncate text-left leading-tight">
           {lastRunAt ? t("detail.recent", { time: formatDateTime(lastRunAt, t.locale) }) : label}
         </span>
-        {actions ? <div className="nodrag nopan flex shrink-0 items-center gap-1">{actions}</div> : null}
       </div>
     </div>
   );

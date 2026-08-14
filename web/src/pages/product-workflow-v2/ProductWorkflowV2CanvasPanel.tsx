@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CircleAlert, Loader2 } from "lucide-react";
+import { CircleAlert, Hand, Loader2, MousePointer2, Move } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ConfirmDialog } from "../../components/ConfirmDialog";
@@ -12,6 +12,11 @@ import type {
   WorkflowNodeV2,
 } from "../../lib/types";
 import { ProductWorkbenchCanvasChromeToggle } from "../product-detail/ProductWorkbenchCanvasChromeToggle";
+import {
+  WorkflowCanvasMobileModeTabs,
+  type WorkflowCanvasMobileModeItem,
+} from "../product-detail/WorkflowCanvasChrome";
+import type { CanvasInteractionMode } from "../product-detail/types";
 import {
   emptyWorkflowCanvasState,
   parseWorkflowCanvasState,
@@ -30,6 +35,7 @@ import { V2WorkflowCommandBar } from "./V2WorkflowCommandBar";
 import { WorkflowTextDialog } from "./WorkflowDialogs";
 
 type CanvasStateUpdate = WorkflowCanvasStateV1 | ((current: WorkflowCanvasStateV1) => WorkflowCanvasStateV1);
+const COMPACT_WORKFLOW_CANVAS_MEDIA_QUERY = "(max-width: 1023px)";
 type TextDialogState =
   | { kind: "create-folder" }
   | { kind: "rename-folder"; folderId: string; initialValue: string }
@@ -80,10 +86,47 @@ export function ProductWorkflowV2CanvasPanel({
   const [currentRun, setCurrentRun] = useState<{ id: string; nodeId: string } | null>(null);
   const [operationError, setOperationError] = useState<string | null>(null);
   const [canvasRenderable, setCanvasRenderable] = useState(false);
+  const [mobileCanvasMode, setMobileCanvasMode] = useState<CanvasInteractionMode>("browse");
+  const [mobileCanvasControlsActive, setMobileCanvasControlsActive] = useState(() => (
+    typeof window !== "undefined"
+      && typeof window.matchMedia === "function"
+      && window.matchMedia(COMPACT_WORKFLOW_CANVAS_MEDIA_QUERY).matches
+  ));
   const loadedCanvasWorkflowRef = useRef<string | null>(null);
   const canvasSurfaceRef = useRef<HTMLDivElement | null>(null);
 
   const openFolder = workflow.folders.find((folder) => folder.id === canvasState.open_folder_id) ?? null;
+  const mobileCanvasModeItems: WorkflowCanvasMobileModeItem[] = [
+    {
+      key: "browse",
+      label: t("detail.mobileCanvasBrowse"),
+      description: t("detail.mobileCanvasBrowseHint"),
+      icon: <Hand size={15} />,
+    },
+    {
+      key: "edit",
+      label: t("detail.mobileCanvasEdit"),
+      description: t("detail.mobileCanvasEditHint"),
+      icon: <Move size={15} />,
+    },
+    {
+      key: "select",
+      label: t("detail.mobileCanvasSelect"),
+      description: t("detail.mobileCanvasSelectHint"),
+      icon: <MousePointer2 size={15} />,
+    },
+  ];
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return;
+    }
+    const media = window.matchMedia(COMPACT_WORKFLOW_CANVAS_MEDIA_QUERY);
+    const update = () => setMobileCanvasControlsActive(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
 
   const persistCanvasState = useCallback((update: CanvasStateUpdate) => {
     setCanvasState((current) => {
@@ -248,7 +291,12 @@ export function ProductWorkflowV2CanvasPanel({
   }, [persistCanvasState, viewportFolderId]);
 
   const selectNodes = useCallback((nodeIds: string[]) => {
-    if (nodeIds.length === 1 && (selectedNodeIds.length !== 1 || selectedNodeIds[0] !== nodeIds[0])) {
+    const keepCanvasVisible = mobileCanvasControlsActive && mobileCanvasMode === "select";
+    if (
+      !keepCanvasVisible
+      && nodeIds.length === 1
+      && (selectedNodeIds.length !== 1 || selectedNodeIds[0] !== nodeIds[0])
+    ) {
       onReferenceNodeChange(null);
       onOpenSidebarTool("details");
     }
@@ -257,7 +305,7 @@ export function ProductWorkflowV2CanvasPanel({
         ? current
         : nodeIds
     ));
-  }, [onOpenSidebarTool, onReferenceNodeChange, selectedNodeIds]);
+  }, [mobileCanvasControlsActive, mobileCanvasMode, onOpenSidebarTool, onReferenceNodeChange, selectedNodeIds]);
 
   const runningNodeId = currentRun?.nodeId ?? (
     nodeRunMutation.isPending ? nodeRunMutation.variables?.id ?? null : null
@@ -304,6 +352,9 @@ export function ProductWorkflowV2CanvasPanel({
                 : canvasState.global_viewport}
               structureBusy={busy}
               runningNodeId={runningNodeId}
+              selectedNodeIds={selectedNodeIds}
+              mobileInteractionMode={mobileCanvasControlsActive ? mobileCanvasMode : "edit"}
+              mobileCanvasControlsActive={mobileCanvasControlsActive}
               onOpenFolder={(folderId) => {
                 persistCanvasState((current) => ({ ...current, open_folder_id: folderId }));
                 setSelectedNodeIds([]);
@@ -361,8 +412,21 @@ export function ProductWorkflowV2CanvasPanel({
             }}
           />
 
+          <div
+            data-canvas-control
+            className="pointer-events-none absolute inset-x-3 bottom-3 z-30 lg:hidden"
+          >
+            <div className="pointer-events-auto mx-auto max-w-[28rem] rounded-2xl border border-slate-200 bg-white p-1.5 shadow-[0_-6px_18px_rgba(15,23,42,0.12)] dark:border-slate-700 dark:bg-slate-950 dark:shadow-[0_-12px_28px_rgba(0,0,0,0.30)]">
+              <WorkflowCanvasMobileModeTabs
+                value={mobileCanvasMode}
+                items={mobileCanvasModeItems}
+                onChange={setMobileCanvasMode}
+              />
+            </div>
+          </div>
+
           {structureMutation.isPending ? (
-            <div className="pointer-events-none absolute bottom-3 left-3 z-20 inline-flex items-center gap-1.5 rounded-md border border-zinc-200 bg-white/95 px-2.5 py-1.5 text-[11px] font-semibold text-zinc-600 shadow-sm backdrop-blur dark:border-slate-700 dark:bg-slate-900/95 dark:text-slate-200">
+            <div className="pointer-events-none absolute bottom-20 left-3 z-20 inline-flex items-center gap-1.5 rounded-md border border-zinc-200 bg-white/95 px-2.5 py-1.5 text-[11px] font-semibold text-zinc-600 shadow-sm backdrop-blur dark:border-slate-700 dark:bg-slate-900/95 dark:text-slate-200 lg:bottom-3">
               <Loader2 size={12} className="animate-spin" />
               {t("workflowV2.canvas.saving")}
             </div>

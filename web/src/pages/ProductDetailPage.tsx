@@ -50,6 +50,10 @@ import { TemplateGroupsPanel } from "./product-detail/TemplateGroupsPanel";
 import { WorkflowCanvas } from "./product-detail/WorkflowCanvas";
 import type { NodePositionCommitInput, WorkflowCanvasHandle } from "./product-detail/WorkflowCanvas";
 import {
+  WorkflowCanvasMobileModeTabs,
+  type WorkflowCanvasMobileModeItem,
+} from "./product-detail/WorkflowCanvasChrome";
+import {
   buildPosterSourceAssetMap,
   getVisibleReferenceAssets,
 } from "./product-detail/galleryImages";
@@ -1845,12 +1849,7 @@ export function ProductDetailPage() {
     sidebarTabItems.find((item) => item.key === activeSidebarTab) ??
     sidebarTabItems.find((item) => item.key === "details") ??
     sidebarTabItems[0];
-  const mobileCanvasModeItems: Array<{
-    key: CanvasInteractionMode;
-    label: string;
-    description: string;
-    icon: ReactNode;
-  }> = [
+  const mobileCanvasModeItems: WorkflowCanvasMobileModeItem[] = [
     {
       key: "browse",
       label: t("detail.mobileCanvasBrowse"),
@@ -2157,26 +2156,11 @@ export function ProductDetailPage() {
         <div
           className="mx-auto max-w-[28rem] rounded-2xl border border-slate-200 bg-white p-1.5 shadow-[0_-6px_18px_rgba(15,23,42,0.12)] dark:border-slate-700 dark:bg-slate-950 dark:shadow-[0_-12px_28px_rgba(0,0,0,0.30)]"
         >
-          <div className="grid grid-cols-3 gap-1 rounded-xl bg-slate-100 p-1 dark:bg-slate-900/85">
-            {mobileCanvasModeItems.map((item) => (
-              <button
-                key={item.key}
-                type="button"
-                onClick={() => setMobileCanvasMode(item.key)}
-                className={`inline-flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-lg px-2 text-xs font-semibold transition-colors active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:focus-visible:ring-violet-400 ${
-                  mobileCanvasMode === item.key
-                    ? "bg-white text-indigo-700 shadow-sm dark:bg-violet-500/18 dark:text-violet-100 dark:ring-1 dark:ring-violet-300/35"
-                    : "text-slate-500 hover:bg-white/70 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
-                }`}
-                aria-pressed={mobileCanvasMode === item.key}
-                aria-label={item.description}
-                title={item.description}
-              >
-                {item.icon}
-                <span className="truncate">{item.label}</span>
-              </button>
-            ))}
-          </div>
+          <WorkflowCanvasMobileModeTabs
+            value={mobileCanvasMode}
+            items={mobileCanvasModeItems}
+            onChange={setMobileCanvasMode}
+          />
           <div
             role="toolbar"
             aria-label={t("detail.mobileToolbar")}

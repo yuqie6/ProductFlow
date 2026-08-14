@@ -165,6 +165,7 @@ export function V2WorkflowWorkbench({
               viewport={openFolder ? canvasState.folder_viewports[openFolder.id] ?? null : canvasState.global_viewport}
               structureBusy={structureBusy}
               runningNodeId={runningNodeId}
+              selectedNodeIds={selectedNodeIds}
               onOpenFolder={onOpenFolder}
               onRunNode={onRunNode}
               onBindReference={bindReference}

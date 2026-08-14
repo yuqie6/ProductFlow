@@ -748,6 +748,9 @@ The visible context selects a source only within the immutable recipe kind.
   mobile visibility, and `productflow.workflow.inspectorWidth` preference.
 - `WorkflowNodePresentationCard` is the schema-neutral node card. V1 and v2 adapters supply labels, status, current image,
   activity, failure, selection, and node-specific actions.
+- `WorkflowCanvasChrome` owns the shared ReactFlow ports, selected-node toolbar shell, viewport controls, dot grid, and
+  compact browse/edit/select tabs. `workflowCanvasInteraction` owns the schema-neutral drag, connect, lasso, modifier,
+  pan-key, zoom-key, and click-distance policy.
 - `ProductWorkflowV2CanvasPanel` composes the shared canvas controls with v2 graph/folder commands.
 - `V2NodeInspector` and `V2NodeRunsPanel` consume typed v2 detail/edit/run APIs.
 
@@ -769,8 +772,17 @@ The visible context selects a source only within the immutable recipe kind.
 - The canvas measures its actual rendered surface. Incompatible persisted viewports are discarded. Fit-view readability
   floors are `0.24` below 480 px, `0.32` below 720 px, and `0.55` otherwise, so compact canvases keep the complete local
   graph reachable.
+- Route/page state is the single owner of v2 `selectedNodeIds`; `V2WorkflowCanvas` receives it as a controlled prop and
+  emits semantic selection changes. ReactFlow selection events may update a temporary lasso session while the gesture is
+  active, but publish to the owner only once from `onSelectionEnd`. Publishing every controlled ReactFlow selection event
+  can alternate `[nodeId]` and `[]`, reopen inspector tools, and trigger a maximum-update-depth loop.
+- Compact v2 canvases expose the same `browse`, `edit`, and `select` policy as the legacy canvas. Browse pans and selects
+  without moving nodes, edit enables persisted node dragging, and select toggles an additive controlled selection while
+  keeping the canvas visible. Returning from a folder or completing a parent-owned structure command clears both command
+  context and ReactFlow highlights through the controlled selection prop.
 - V2 single-node create/delete/connect/undo controls remain unavailable until typed structure commands enforce v2 folder,
-  Prompt Artifact, one-image-per-node, and lineage invariants.
+  Prompt Artifact, one-image-per-node, and lineage invariants. Shared ports remain visible for topology readability, but
+  `connectionEditing: false` keeps them non-connectable until those commands exist.
 
 ### 4. Validation & Error Matrix
 
@@ -798,6 +810,10 @@ The visible context selects a source only within the immutable recipe kind.
 - Shell tests assert one Agent/canvas mount, confirmation inertness, compact visibility, and lazy non-Agent tool content.
 - Node API tests cover typed paths and payloads. Browser checks exercise Details, Runs, Library, Recipes, collapse, resize,
   maximize/restore, dark mode, and Agent DOM identity at 1440, 1024, and 390 px.
+- Pure canvas-policy tests assert desktop drag/connect/modifier behavior, compact browse/edit/select behavior, lock and
+  read-only behavior, and additive selection semantics. Real-browser selection checks must enter a folder, select a node,
+  return to the global canvas, and assert that both owner state and `.react-flow__node.selected` are cleared without a
+  React maximum-update-depth error.
 - Run frontend tests, lint, and production build after any shared inspector, node-card, or route-owner change.
 
 ### 7. Wrong vs Correct

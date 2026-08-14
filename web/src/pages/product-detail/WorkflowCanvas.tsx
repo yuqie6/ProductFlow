@@ -1,18 +1,11 @@
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent, MutableRefObject } from "react";
 import {
-  Background,
-  BackgroundVariant,
   BaseEdge,
   ConnectionLineType,
   ConnectionMode,
-  ControlButton,
-  Controls,
   EdgeToolbar,
-  Handle,
   MiniMap,
-  NodeToolbar,
-  Position,
   ReactFlow,
   SelectionMode,
   getBezierPath,
@@ -20,8 +13,6 @@ import {
   useOnSelectionChange,
   useKeyPress,
   useConnection,
-  useReactFlow,
-  useViewport,
 } from "@xyflow/react";
 import type {
   Connection,
@@ -35,13 +26,26 @@ import type {
   Viewport,
   XYPosition,
 } from "@xyflow/react";
-import { CopyPlus, Focus, Grid, Loader2, Play, Save, Sparkles, Trash2 } from "lucide-react";
+import { CopyPlus, Focus, Loader2, Play, Save, Trash2 } from "lucide-react";
 
 import type { DownloadableImage } from "../../lib/image-downloads";
 import type { ProductWorkflow, WorkflowNode } from "../../lib/types";
+import {
+  WorkflowCanvasControls,
+  WorkflowCanvasGrid,
+  WorkflowCanvasNodePort,
+  WorkflowCanvasNodeToolbar,
+  WorkflowCanvasNodeToolbarButton,
+  type WorkflowCanvasPortVisualState,
+} from "./WorkflowCanvasChrome";
 import { WorkflowNodeCard } from "./WorkflowNodeCard";
 import { MAX_ZOOM, MIN_ZOOM, NODE_WIDTH } from "./constants";
 import type { CanvasInteractionMode, CanvasPoint } from "./types";
+import {
+  WORKFLOW_CANVAS_PAN_ACTIVATION_KEY_CODE,
+  WORKFLOW_CANVAS_ZOOM_ACTIVATION_KEY_CODES,
+  deriveWorkflowCanvasInteractionPolicy,
+} from "./workflowCanvasInteraction";
 import type {
   WorkflowCanvasActionId,
   WorkflowCanvasActionIcon,
@@ -111,7 +115,6 @@ type ConnectionHandleSnapshot = {
   inProgress: boolean;
   fromHandle: { id?: string | null; nodeId: string; type: "source" | "target" } | null;
 };
-type ConnectionHandleVisualState = "idle" | "origin" | "valid-target" | "invalid-target";
 
 interface WorkflowCanvasProps {
   workflow: ProductWorkflow | null;
@@ -155,19 +158,6 @@ interface WorkflowCanvasProps {
   getNodeImage: (node: WorkflowNode) => DownloadableImage | null;
 }
 
-const NODE_HANDLE_CLASS_NAME =
-  "nodrag nopan !absolute !z-20 !h-5 !w-5 !rounded-full !border-2 !border-indigo-500 !bg-white !opacity-100 !shadow-sm transition-shadow hover:!bg-indigo-50 hover:!ring-4 hover:!ring-indigo-100 dark:!border-violet-300 dark:!bg-[#111b2d] dark:!shadow-black/30 dark:hover:!bg-violet-500/20 dark:hover:!ring-violet-400/25";
-const TARGET_HANDLE_CLASS_NAME =
-  "nodrag nopan !absolute !z-20 !h-[18px] !w-[18px] !rounded-full !border !border-slate-300 !bg-white !opacity-100 !shadow-sm transition-shadow hover:!border-indigo-400 hover:!ring-4 hover:!ring-indigo-100 dark:!border-slate-400/90 dark:!bg-[#111b2d] dark:!shadow-black/30 dark:hover:!border-violet-300 dark:hover:!ring-violet-400/20";
-const HANDLE_CONNECTION_CLASS_NAMES: Record<ConnectionHandleVisualState, string> = {
-  idle: "",
-  origin:
-    "!border-indigo-600 !bg-indigo-100 !ring-4 !ring-indigo-100 dark:!border-violet-200 dark:!bg-violet-500/30 dark:!ring-violet-400/25",
-  "valid-target":
-    "!border-emerald-500 !bg-emerald-50 !ring-4 !ring-emerald-100 dark:!border-emerald-300 dark:!bg-emerald-500/20 dark:!ring-emerald-400/25",
-  "invalid-target":
-    "!border-dashed !border-red-500 !bg-red-50 !opacity-75 !ring-4 !ring-red-100 dark:!border-red-300 dark:!bg-red-500/20 dark:!ring-red-400/25",
-};
 const HANDLE_STATE_SEPARATOR = ":";
 
 function removeNodePositions(current: Record<string, CanvasPoint>, nodeIds: Iterable<string>) {
@@ -186,7 +176,7 @@ function getConnectionHandleVisualState(
   nodeId: string,
   handleType: "source" | "target",
   connection: ConnectionHandleSnapshot,
-): ConnectionHandleVisualState {
+): WorkflowCanvasPortVisualState {
   if (!connection.inProgress || !connection.fromHandle) {
     return "idle";
   }
@@ -214,10 +204,6 @@ function getConnectionHandleVisualState(
         };
 
   return connectionToWorkflowEdgeInput(candidate) ? "valid-target" : "invalid-target";
-}
-
-function connectionHandleClassName(state: ConnectionHandleVisualState) {
-  return HANDLE_CONNECTION_CLASS_NAMES[state];
 }
 
 function WorkflowNodeToolbarIcon({
@@ -255,50 +241,22 @@ function WorkflowNodeToolbarActions({
   onAction: (actionId: WorkflowCanvasActionId, target: WorkflowCanvasActionTarget) => void;
 }) {
   return (
-    <NodeToolbar
-      isVisible={items.length > 0}
-      position={Position.Top}
-      align="center"
-      offset={10}
-      className="nodrag nopan nowheel z-50"
-    >
-      <div
-        data-node-action
-        className="nodrag nopan nowheel flex items-center gap-1 rounded-xl border border-slate-200 bg-white/98 p-1 shadow-lg shadow-slate-950/15 backdrop-blur dark:border-slate-700/80 dark:bg-[#111a2b]/98 dark:shadow-black/40"
-        onPointerDown={(event) => event.stopPropagation()}
-        onClick={(event) => event.stopPropagation()}
-      >
-        {items.map((item) => {
-          const label = item.title ?? item.label ?? "";
-          const destructive = Boolean(item.destructive);
-          return (
-            <button
-              key={item.id}
-              type="button"
-              data-node-action
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                if (!item.disabled) {
-                  onAction(item.id, target);
-                }
-              }}
-              disabled={item.disabled}
-              className={`nodrag nopan nowheel inline-flex h-11 w-11 items-center justify-center rounded-lg border text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-45 lg:h-9 lg:w-9 ${
-                destructive
-                  ? "border-red-200 bg-red-50 text-red-600 hover:border-red-300 hover:bg-red-100 hover:text-red-700 dark:border-red-400/45 dark:bg-red-500/10 dark:text-red-200 dark:hover:border-red-400/70 dark:hover:bg-red-500/18"
-                  : "border-transparent bg-white text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700 dark:bg-[#111a2b] dark:text-slate-100 dark:hover:border-violet-400/55 dark:hover:bg-violet-500/14 dark:hover:text-violet-100"
-              }`}
-              aria-label={label}
-              title={label}
-            >
-              <WorkflowNodeToolbarIcon icon={item.icon} pending={item.pending} />
-              <span className="sr-only">{label}</span>
-            </button>
-          );
-        })}
-      </div>
-    </NodeToolbar>
+    <WorkflowCanvasNodeToolbar visible={items.length > 0}>
+      {items.map((item) => {
+        const label = item.title ?? item.label ?? "";
+        return (
+          <WorkflowCanvasNodeToolbarButton
+            key={item.id}
+            label={label}
+            disabled={item.disabled}
+            destructive={Boolean(item.destructive)}
+            onClick={() => onAction(item.id, target)}
+          >
+            <WorkflowNodeToolbarIcon icon={item.icon} pending={item.pending} />
+          </WorkflowCanvasNodeToolbarButton>
+        );
+      })}
+    </WorkflowCanvasNodeToolbar>
   );
 }
 
@@ -314,8 +272,8 @@ function ProductFlowCanvasNode({ data, dragging, isConnectable }: NodeProps<Work
     ].join(HANDLE_STATE_SEPARATOR);
   });
   const [inputHandleState, outputHandleState] = connectionHandleStateKey.split(HANDLE_STATE_SEPARATOR) as [
-    ConnectionHandleVisualState,
-    ConnectionHandleVisualState,
+    WorkflowCanvasPortVisualState,
+    WorkflowCanvasPortVisualState,
   ];
 
   return (
@@ -327,14 +285,13 @@ function ProductFlowCanvasNode({ data, dragging, isConnectable }: NodeProps<Work
           onAction={data.onNodeAction}
         />
       ) : null}
-      <Handle
+      <WorkflowCanvasNodePort
         type="target"
         id={PRODUCTFLOW_TARGET_HANDLE}
-        position={Position.Left}
-        isConnectable={isConnectable}
-        className={`${TARGET_HANDLE_CLASS_NAME} ${connectionHandleClassName(inputHandleState)} !left-[-9px] !top-[56px]`}
-        title={data.inputHandleLabel}
-        aria-label={data.inputHandleLabel}
+        connectable={isConnectable}
+        visualState={inputHandleState}
+        top="56px"
+        label={data.inputHandleLabel}
       />
       <WorkflowNodeCard
         node={node}
@@ -348,14 +305,13 @@ function ProductFlowCanvasNode({ data, dragging, isConnectable }: NodeProps<Work
           data.onSelectNode(node.id, event);
         }}
       />
-      <Handle
+      <WorkflowCanvasNodePort
         type="source"
         id={PRODUCTFLOW_SOURCE_HANDLE}
-        position={Position.Right}
-        isConnectable={isConnectable}
-        className={`${NODE_HANDLE_CLASS_NAME} ${connectionHandleClassName(outputHandleState)} !right-[-10px] !top-[56px]`}
-        title={data.outputHandleLabel}
-        aria-label={data.outputHandleLabel}
+        connectable={isConnectable}
+        visualState={outputHandleState}
+        top="56px"
+        label={data.outputHandleLabel}
       />
     </div>
   );
@@ -446,14 +402,7 @@ const edgeTypes = {
 const FIT_VIEW_DURATION_MS = 180;
 const FIT_VIEW_PADDING = 0.2;
 const FIT_VIEW_MAX_ZOOM = 1.2;
-const MOUSE_NODE_VISUAL_DRAG_THRESHOLD = 0;
-const MOUSE_NODE_CLICK_COMMIT_DISTANCE = 3;
-const TOUCH_NODE_POINTER_DRAG_THRESHOLD = 6;
-const WORKFLOW_SELECTION_KEY_CODE = "Shift";
-const WORKFLOW_MULTI_SELECTION_KEY_CODES = ["Control", "Meta"];
 const WORKFLOW_CLEAR_SELECTION_KEY_CODE = "Escape";
-const WORKFLOW_PAN_ACTIVATION_KEY_CODE = "Space";
-const WORKFLOW_ZOOM_ACTIVATION_KEY_CODES = ["Control", "Meta"];
 const MINI_MAP_NODE_COLORS: Record<WorkflowNode["node_type"], string> = {
   product_context: "#64748b",
   reference_image: "#0ea5e9",
@@ -529,109 +478,6 @@ function WorkflowCanvasKeyboardBridge({
   }, [clearSelectionPressed, enabled, hasMultiSelection, onClearSelection]);
 
   return null;
-}
-
-interface WorkflowCanvasControlsPanelProps {
-  resetZoomLabel: string;
-  fitSelectionLabel: string;
-  canvasControlsLabel: string;
-  selectedNodeIds: string[];
-  onViewportCommit: (viewport: Viewport) => void;
-  snapToGrid: boolean;
-  onToggleSnapToGrid: () => void;
-  onAutoLayout: () => void;
-  snapToGridLabel: string;
-  autoLayoutLabel: string;
-}
-
-function WorkflowCanvasControlsPanel({
-  resetZoomLabel,
-  fitSelectionLabel,
-  canvasControlsLabel,
-  selectedNodeIds,
-  onViewportCommit,
-  snapToGrid,
-  onToggleSnapToGrid,
-  onAutoLayout,
-  snapToGridLabel,
-  autoLayoutLabel,
-}: WorkflowCanvasControlsPanelProps) {
-  const { zoom } = useViewport();
-  const reactFlow = useReactFlow<WorkflowCanvasNode, WorkflowCanvasEdge>();
-  const commitCurrentViewport = useCallback(() => {
-    onViewportCommit(reactFlow.getViewport());
-  }, [onViewportCommit, reactFlow]);
-  const commitViewportAfterControlAction = useCallback(() => {
-    window.setTimeout(commitCurrentViewport, FIT_VIEW_DURATION_MS + 40);
-  }, [commitCurrentViewport]);
-  const zoomTo = useCallback(
-    (nextZoom: number) => {
-      void reactFlow.zoomTo(normalizeWorkflowZoom(nextZoom)).then(commitCurrentViewport);
-    },
-    [commitCurrentViewport, reactFlow],
-  );
-  const fitSelectedNodes = useCallback(() => {
-    const selectedNodes = selectedNodeIds
-      .filter((nodeId) => reactFlow.getNode(nodeId))
-      .map((nodeId) => ({ id: nodeId }));
-    if (!selectedNodes.length) {
-      return;
-    }
-    void reactFlow
-      .fitView({
-        nodes: selectedNodes,
-        padding: FIT_VIEW_PADDING,
-        duration: FIT_VIEW_DURATION_MS,
-        maxZoom: FIT_VIEW_MAX_ZOOM,
-      })
-      .then(commitCurrentViewport);
-  }, [commitCurrentViewport, reactFlow, selectedNodeIds]);
-  const hasSelectedNodes = selectedNodeIds.length > 0;
-
-  return (
-    <Controls
-      position="top-left"
-      orientation="horizontal"
-      showInteractive={false}
-      fitViewOptions={{
-        padding: FIT_VIEW_PADDING,
-        duration: FIT_VIEW_DURATION_MS,
-        maxZoom: FIT_VIEW_MAX_ZOOM,
-      }}
-      onZoomIn={commitViewportAfterControlAction}
-      onZoomOut={commitViewportAfterControlAction}
-      onFitView={commitViewportAfterControlAction}
-      aria-label={canvasControlsLabel}
-      className="workflow-canvas-controls nopan nodrag nowheel z-30 !m-0 translate-x-3 translate-y-3 lg:translate-x-4 lg:translate-y-4"
-    >
-      <ControlButton onClick={() => zoomTo(1)} aria-label={resetZoomLabel} title={resetZoomLabel}>
-        <span className="text-[11px] tabular-nums">{Math.round(normalizeWorkflowZoom(zoom) * 100)}%</span>
-      </ControlButton>
-      <ControlButton
-        onClick={fitSelectedNodes}
-        disabled={!hasSelectedNodes}
-        aria-label={fitSelectionLabel}
-        title={fitSelectionLabel}
-      >
-        <Focus aria-hidden="true" size={13} />
-      </ControlButton>
-      <ControlButton
-        onClick={onToggleSnapToGrid}
-        aria-label={snapToGridLabel}
-        title={snapToGridLabel}
-        className={snapToGrid ? "!bg-indigo-50 dark:!bg-violet-500/20" : ""}
-      >
-        <Grid aria-hidden="true" size={13} className={snapToGrid ? "text-indigo-600 dark:text-violet-400" : ""} />
-      </ControlButton>
-      <ControlButton
-        onClick={onAutoLayout}
-        aria-label={autoLayoutLabel}
-        title={autoLayoutLabel}
-      >
-        <Sparkles aria-hidden="true" size={13} />
-      </ControlButton>
-    </Controls>
-  );
 }
 
 function workflowMiniMapNodeColor(node: WorkflowCanvasNode) {
@@ -929,15 +775,15 @@ export const WorkflowCanvas = forwardRef<WorkflowCanvasHandle, WorkflowCanvasPro
     [fitNodeIds, onNodePositionCommit, workflow],
   );
 
-  const canDragNodes = !structureBusy && (!mobileCanvasControlsActive || mobileInteractionMode === "edit");
-  const canConnectNodes = canDragNodes;
-  const canSelectByDrag = !mobileCanvasControlsActive;
-  const nodePointerDragThreshold = mobileCanvasControlsActive
-    ? TOUCH_NODE_POINTER_DRAG_THRESHOLD
-    : MOUSE_NODE_VISUAL_DRAG_THRESHOLD;
-  const nodeClickCommitDistance = mobileCanvasControlsActive
-    ? TOUCH_NODE_POINTER_DRAG_THRESHOLD
-    : MOUSE_NODE_CLICK_COMMIT_DISTANCE;
+  const interactionPolicy = deriveWorkflowCanvasInteractionPolicy({
+    compact: mobileCanvasControlsActive,
+    mode: mobileInteractionMode,
+    locked: structureBusy,
+    connectionEditing: true,
+  });
+  const canDragNodes = interactionPolicy.nodesDraggable;
+  const canConnectNodes = interactionPolicy.nodesConnectable;
+  const nodeClickCommitDistance = interactionPolicy.nodeClickDistance;
 
   const buildNodes = useCallback((previousNodes: WorkflowCanvasNode[] = []): WorkflowCanvasNode[] => {
     if (!workflow) {
@@ -1260,28 +1106,28 @@ export const WorkflowCanvas = forwardRef<WorkflowCanvasHandle, WorkflowCanvasPro
         edgesFocusable={false}
         edgesReconnectable={false}
         elementsSelectable
-        selectNodesOnDrag={false}
-        panOnDrag={[0]}
+        selectNodesOnDrag={interactionPolicy.selectNodesOnDrag}
+        panOnDrag={interactionPolicy.panOnDrag}
         panOnScroll={false}
         zoomOnScroll
         zoomOnPinch
         preventScrolling
         noWheelClassName="nowheel"
-        selectionOnDrag={false}
+        selectionOnDrag={interactionPolicy.selectionOnDrag}
         snapToGrid={false}
         snapGrid={[36, 36]}
-        selectionKeyCode={mobileCanvasControlsActive ? null : WORKFLOW_SELECTION_KEY_CODE}
+        selectionKeyCode={interactionPolicy.selectionKeyCode}
         selectionMode={SelectionMode.Partial}
-        multiSelectionKeyCode={mobileCanvasControlsActive ? null : WORKFLOW_MULTI_SELECTION_KEY_CODES}
-        panActivationKeyCode={WORKFLOW_PAN_ACTIVATION_KEY_CODE}
-        zoomActivationKeyCode={WORKFLOW_ZOOM_ACTIVATION_KEY_CODES}
+        multiSelectionKeyCode={interactionPolicy.multiSelectionKeyCode}
+        panActivationKeyCode={WORKFLOW_CANVAS_PAN_ACTIVATION_KEY_CODE}
+        zoomActivationKeyCode={WORKFLOW_CANVAS_ZOOM_ACTIVATION_KEY_CODES}
         deleteKeyCode={null}
         connectOnClick={false}
         connectionMode={ConnectionMode.Strict}
         connectionLineType={ConnectionLineType.Bezier}
         connectionLineStyle={{ stroke: "#2563eb", strokeWidth: 2, strokeDasharray: "6 4" }}
-        nodeDragThreshold={nodePointerDragThreshold}
-        nodeClickDistance={nodeClickCommitDistance}
+        nodeDragThreshold={interactionPolicy.nodeDragThreshold}
+        nodeClickDistance={interactionPolicy.nodeClickDistance}
         noDragClassName="nodrag"
         noPanClassName="nopan"
         autoPanOnConnect
@@ -1295,7 +1141,7 @@ export const WorkflowCanvas = forwardRef<WorkflowCanvasHandle, WorkflowCanvasPro
         onConnect={handleConnect}
         isValidConnection={isValidConnection}
         onSelectionStart={() => {
-          selectionBoxSessionRef.current = canSelectByDrag ? { nodeIds: [] } : null;
+          selectionBoxSessionRef.current = interactionPolicy.canSelectByBox ? { nodeIds: [] } : null;
         }}
         onSelectionEnd={handleSelectionEnd}
         onPaneClick={onBlankClick}
@@ -1309,22 +1155,7 @@ export const WorkflowCanvas = forwardRef<WorkflowCanvasHandle, WorkflowCanvasPro
         }}
         className="bg-transparent"
       >
-        <Background
-          id="workflow-grid-light"
-          className="block dark:hidden"
-          variant={BackgroundVariant.Dots}
-          gap={36}
-          size={1.5}
-          color="#94a3b8"
-        />
-        <Background
-          id="workflow-grid-dark"
-          className="hidden dark:block"
-          variant={BackgroundVariant.Dots}
-          gap={36}
-          size={1.5}
-          color="rgba(148, 163, 184, 0.35)"
-        />
+        <WorkflowCanvasGrid />
         <WorkflowCanvasSelectionBridge activeSessionRef={selectionBoxSessionRef} />
         <WorkflowCanvasKeyboardBridge
           enabled={keyboardShortcutsActive}
@@ -1332,17 +1163,25 @@ export const WorkflowCanvas = forwardRef<WorkflowCanvasHandle, WorkflowCanvasPro
           onClearSelection={onClearSelection}
         />
         <WorkflowCanvasViewportBridge onViewportChange={recordViewport} onViewportChangeEnd={persistViewport} />
-        <WorkflowCanvasControlsPanel
-          resetZoomLabel={resetZoomLabel}
-          fitSelectionLabel={fitSelectionLabel}
-          canvasControlsLabel={canvasControlsLabel}
+        <WorkflowCanvasControls
+          labels={{
+            resetZoom: resetZoomLabel,
+            fitSelection: fitSelectionLabel,
+            controls: canvasControlsLabel,
+            snapToGrid: snapToGridLabel,
+            autoLayout: autoLayoutLabel,
+          }}
           selectedNodeIds={selectedNodeIds}
           onViewportCommit={persistViewport}
           snapToGrid={snapToGrid}
           onToggleSnapToGrid={onToggleSnapToGrid}
           onAutoLayout={onAutoLayout}
-          snapToGridLabel={snapToGridLabel}
-          autoLayoutLabel={autoLayoutLabel}
+          fitViewOptions={{
+            padding: FIT_VIEW_PADDING,
+            duration: FIT_VIEW_DURATION_MS,
+            maxZoom: FIT_VIEW_MAX_ZOOM,
+          }}
+          normalizeZoom={normalizeWorkflowZoom}
         />
         <MiniMap<WorkflowCanvasNode>
           position="bottom-right"
