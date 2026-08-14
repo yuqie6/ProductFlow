@@ -12,6 +12,22 @@ export type ProductImageOriginType =
   | "workflow_generation"
   | "image_session_attach"
   | "legacy_import";
+export type AgentProductImageTypeKey =
+  | "hero"
+  | "selling_point"
+  | "scene"
+  | "detail"
+  | "sku"
+  | "dimensions"
+  | "specifications"
+  | "after_sales"
+  | "brand_story"
+  | "precautions"
+  | "certification"
+  | "faq"
+  | "factory"
+  | "packaging"
+  | "shipping";
 export type GalleryDirectoryKind =
   | "all"
   | "recent_generated"
@@ -315,6 +331,52 @@ export interface CanonicalProductDetail {
 export interface CanonicalProductCreateResponse {
   product: CanonicalProductDetail;
   created_assets: ProductImageAsset[];
+}
+
+export interface AgentProductImageTypeOption {
+  key: AgentProductImageTypeKey;
+  title: string;
+  description: string;
+  order: number;
+}
+
+export interface AgentProductWorkspaceLimits {
+  min_image_types: number;
+  default_images_per_type: number;
+  min_images_per_type: number;
+  max_images_per_type: number;
+  max_total_images: number;
+  min_reference_images: number;
+  max_reference_images: number;
+  allowed_image_mime_types: Array<"image/png" | "image/jpeg" | "image/webp">;
+}
+
+export interface AgentProductWorkspaceOptions {
+  schema_version: 1;
+  image_types: AgentProductImageTypeOption[];
+  limits: AgentProductWorkspaceLimits;
+}
+
+export interface AgentProductImageTypeSelection {
+  key: AgentProductImageTypeKey;
+  quantity: number;
+  order: number;
+}
+
+export interface AgentProductSelectionV1 {
+  schema_version: 1;
+  image_types: AgentProductImageTypeSelection[];
+}
+
+export interface WorkflowIntakeV1 extends AgentProductSelectionV1 {
+  reference_asset_ids: string[];
+}
+
+export interface CreateAgentProductWorkspaceInput {
+  name: string;
+  selection: AgentProductSelectionV1;
+  images: File[];
+  idempotency_key: string;
 }
 
 export interface ProductHistory {
@@ -808,6 +870,7 @@ export interface WorkflowDraft {
   current_revision: WorkflowDraftRevision | null;
   current_version: number;
   revisions: WorkflowDraftRevision[];
+  intake: WorkflowIntakeV1 | null;
   final_workflow_id: string | null;
   recipe_seed: WorkflowDraftRecipeSeed | null;
   limits: WorkflowDraftLimits;
@@ -1006,6 +1069,28 @@ export interface AgentConversation {
   created_at: string;
   updated_at: string;
 }
+
+export interface AgentProductWorkspaceCreateResponse {
+  product: CanonicalProductDetail;
+  created_assets: ProductImageAsset[];
+  workflow_draft: WorkflowDraft;
+  conversation: AgentConversation;
+}
+
+export type AgentWorkbenchBootstrap =
+  | {
+      mode: "agent_v2";
+      product: CanonicalProductDetail;
+      conversation: AgentConversation;
+      workflow_draft: WorkflowDraft;
+      active_workflow: ProductWorkflowV2 | null;
+      latest_workflow_revision: number;
+    }
+  | {
+      mode: "legacy_v1";
+      product: CanonicalProductDetail;
+      has_existing_v1_workflow: boolean;
+    };
 
 export interface WorkflowRecipeApplicationResult {
   created: boolean;

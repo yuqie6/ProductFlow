@@ -1,4 +1,7 @@
 import type {
+  AgentProductWorkspaceCreateResponse,
+  AgentProductWorkspaceOptions,
+  AgentWorkbenchBootstrap,
   ActiveProductWorkflowV2,
   AppendWorkflowDraftRevisionInput,
   ApplyWorkflowTemplateGroupInput,
@@ -24,6 +27,7 @@ import type {
   CreateUserTemplateGroupInput,
   CreateProductInput,
   CreateCanonicalProductInput,
+  CreateAgentProductWorkspaceInput,
   CreateWorkflowDraftInput,
   DeliveryRenditionJob,
   DeliveryRenditionJobListResponse,
@@ -270,6 +274,27 @@ export const api = {
       method: "POST",
       body: formData,
     });
+  },
+  getAgentProductWorkspaceOptions(): Promise<AgentProductWorkspaceOptions> {
+    return request("/api/v2/agent-product-workspaces/options");
+  },
+  async createAgentProductWorkspace(
+    input: CreateAgentProductWorkspaceInput,
+  ): Promise<AgentProductWorkspaceCreateResponse> {
+    const formData = new FormData();
+    formData.set("name", input.name);
+    formData.set("selection", JSON.stringify(input.selection));
+    input.images.forEach((image) => {
+      formData.append("images", image);
+    });
+    return request("/api/v2/agent-product-workspaces", {
+      method: "POST",
+      headers: { "Idempotency-Key": input.idempotency_key },
+      body: formData,
+    });
+  },
+  getAgentWorkbench(productId: string): Promise<AgentWorkbenchBootstrap> {
+    return request(`/api/v2/products/${encodeURIComponent(productId)}/agent-workbench`);
   },
   getCanonicalProduct(productId: string): Promise<CanonicalProductDetail> {
     return request(`/api/v2/products/${productId}`);
