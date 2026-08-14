@@ -18,6 +18,7 @@ import { ImageAssetGrid, ImageAssetList } from "./ImageAssetGrid";
 import { ImageDirectoryTree } from "./ImageDirectoryTree";
 import { ImageExplorerToolbar } from "./ImageExplorerToolbar";
 import { assetCanReadMedia, isWideImageExplorer } from "./explorerState";
+import { toggleImageExplorerTargetAsset } from "./selectionTarget";
 import { useProductImageExplorer } from "./useProductImageExplorer";
 
 export interface ImageExplorerReferenceTarget {
@@ -28,11 +29,21 @@ export interface ImageExplorerReferenceTarget {
   onBound?: (result: WorkflowReferenceBindingResult) => void;
 }
 
+export interface ImageExplorerSelectionTarget {
+  selectedAssets: readonly GalleryAsset[];
+  maxSelected: number;
+  confirmLabel: string;
+  selectionLabel: (count: number, maximum: number) => string;
+  limitMessage: string;
+  onConfirm: (assets: GalleryAsset[]) => void;
+}
+
 interface ProductImageExplorerProps {
   productId: string;
   productName: string;
   onPreviewImage: (image: DownloadableImage) => void;
   referenceTarget?: ImageExplorerReferenceTarget;
+  selectionTarget?: ImageExplorerSelectionTarget;
 }
 
 type ExplorerDialog =
@@ -48,6 +59,7 @@ export function ProductImageExplorer({
   productName,
   onPreviewImage,
   referenceTarget,
+  selectionTarget,
 }: ProductImageExplorerProps) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
@@ -55,6 +67,10 @@ export function ProductImageExplorer({
   const [wide, setWide] = useState(false);
   const [directoryOpen, setDirectoryOpen] = useState(false);
   const [dialog, setDialog] = useState<ExplorerDialog>(null);
+  const [targetAssetsById, setTargetAssetsById] = useState<Map<string, GalleryAsset>>(
+    () => new Map(selectionTarget?.selectedAssets.map((asset) => [asset.id, asset]) ?? []),
+  );
+  const [selectionError, setSelectionError] = useState<string | null>(null);
   const explorer = useProductImageExplorer(productId);
   const bootstrap = explorer.bootstrapQuery.data ?? null;
 
@@ -103,6 +119,42 @@ export function ProductImageExplorer({
     () => new Map(explorer.assets.map((asset) => [asset.id, asset])),
     [explorer.assets],
   );
+  const targetSelectedAssets = useMemo(
+    () => [...targetAssetsById.values()],
+    [targetAssetsById],
+  );
+  const visibleSelectedIds = selectionTarget
+    ? new Set(targetAssetsById.keys())
+    : explorer.selectedIds;
+  const toggleVisibleSelection = (assetId: string) => {
+    if (!selectionTarget) {
+      explorer.toggleSelected(assetId);
+      return;
+    }
+    setTargetAssetsById((current) => {
+      const next = new Map(current);
+      if (next.has(assetId)) {
+        next.delete(assetId);
+        setSelectionError(null);
+        return next;
+      }
+      const asset = loadedAssetsById.get(assetId);
+      if (!asset) {
+        return current;
+      }
+      const result = toggleImageExplorerTargetAsset(
+        [...next.values()],
+        asset,
+        selectionTarget.maxSelected,
+      );
+      if (result.limitExceeded) {
+        setSelectionError(selectionTarget.limitMessage);
+        return current;
+      }
+      setSelectionError(null);
+      return new Map(result.assets.map((item) => [item.id, item]));
+    });
+  };
   const operationBusy = [
     explorer.uploadMutation,
     explorer.createFolderMutation,
@@ -116,7 +168,8 @@ export function ProductImageExplorer({
   ].some((mutation) => mutation.isPending);
   const operationError = explorer.operationError
     ?? (referenceMutation.error instanceof Error ? referenceMutation.error : null)
-    ?? (sourceMutation.error instanceof Error ? sourceMutation.error : null);
+    ?? (sourceMutation.error instanceof Error ? sourceMutation.error : null)
+    ?? (selectionError ? new Error(selectionError) : null);
 
   const currentDirectoryLabel = bootstrap
     ? directoryLabel(bootstrap, explorer.directory, t)
@@ -280,7 +333,32 @@ export function ProductImageExplorer({
             </div>
           ) : null}
 
-          {explorer.selectedIds.size ? (
+          {selectionTarget && targetAssetsById.size ? (
+            <div className="mb-2 flex min-h-9 flex-wrap items-center gap-1.5 rounded-md border border-blue-200 bg-blue-50 px-2 py-1.5 text-xs text-blue-800 dark:border-cyan-400/35 dark:bg-cyan-400/10 dark:text-cyan-100">
+              <span className="mr-auto font-semibold">
+                {selectionTarget.selectionLabel(targetAssetsById.size, selectionTarget.maxSelected)}
+              </span>
+              <button
+                type="button"
+                onClick={() => selectionTarget.onConfirm(targetSelectedAssets)}
+                className="inline-flex h-8 items-center rounded-md bg-blue-600 px-3 font-semibold text-white hover:bg-blue-700 dark:bg-cyan-400 dark:text-[#071018] dark:hover:bg-cyan-300"
+              >
+                {selectionTarget.confirmLabel}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setTargetAssetsById(new Map());
+                  setSelectionError(null);
+                }}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-white dark:hover:bg-slate-950/70"
+                aria-label={t("detail.library.clearSelection")}
+                title={t("detail.library.clearSelection")}
+              >
+                <X size={13} />
+              </button>
+            </div>
+          ) : explorer.selectedIds.size ? (
             <div className="mb-2 flex min-h-9 flex-wrap items-center gap-1.5 rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1.5 text-xs text-indigo-800 dark:border-violet-400/35 dark:bg-violet-500/10 dark:text-violet-100">
               <span className="mr-auto font-semibold">{t("detail.library.selected", { count: explorer.selectedIds.size })}</span>
               <button type="button" onClick={() => setDialog({ kind: "move-assets", assets: explorer.selectedAssets })} className="inline-flex h-7 items-center gap-1 rounded bg-white px-2 font-medium shadow-sm dark:bg-slate-950/70">
@@ -294,7 +372,7 @@ export function ProductImageExplorer({
                 <X size={13} />
               </button>
             </div>
-          ) : explorer.assets.length ? (
+          ) : explorer.assets.length && !selectionTarget ? (
             <button type="button" onClick={explorer.selectAllLoaded} className="mb-2 text-[10px] font-medium text-slate-500 hover:text-indigo-700 dark:text-slate-400 dark:hover:text-violet-300">
               {t("detail.library.selectAll")}
             </button>
@@ -313,8 +391,8 @@ export function ProductImageExplorer({
           ) : explorer.view === "grid" ? (
             <ImageAssetGrid
               assets={explorer.assets}
-              selectedIds={explorer.selectedIds}
-              onToggleSelected={explorer.toggleSelected}
+              selectedIds={visibleSelectedIds}
+              onToggleSelected={toggleVisibleSelection}
               onPreview={preview}
               onRename={(asset) => setDialog({ kind: "rename-asset", asset })}
               onMove={(asset) => setDialog({ kind: "move-assets", assets: [asset] })}
@@ -326,8 +404,8 @@ export function ProductImageExplorer({
           ) : (
             <ImageAssetList
               assets={explorer.assets}
-              selectedIds={explorer.selectedIds}
-              onToggleSelected={explorer.toggleSelected}
+              selectedIds={visibleSelectedIds}
+              onToggleSelected={toggleVisibleSelection}
               onPreview={preview}
               onRename={(asset) => setDialog({ kind: "rename-asset", asset })}
               onMove={(asset) => setDialog({ kind: "move-assets", assets: [asset] })}

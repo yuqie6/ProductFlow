@@ -1,6 +1,9 @@
 import type {
   AgentProductWorkspaceCreateResponse,
   AgentProductWorkspaceOptions,
+  AgentQuestionAnswer,
+  AgentTurn,
+  AgentTurnPage,
   AgentWorkbenchBootstrap,
   ActiveProductWorkflowV2,
   AppendWorkflowDraftRevisionInput,
@@ -58,6 +61,8 @@ import type {
   SettingsImportCommitResponse,
   SettingsImportPreviewResponse,
   SessionState,
+  SubmitAgentTurnInput,
+  SubmitAgentTurnResponse,
   SubmitWorkflowNodeRunV2Result,
   UpdateUserTemplateGroupInput,
   WorkflowDraft,
@@ -90,6 +95,10 @@ function toApiUrl(path: string): string {
     return path;
   }
   return `${API_BASE_URL}${path}`;
+}
+
+function agentConversationPath(productId: string, conversationId: string): string {
+  return `/api/v2/products/${encodeURIComponent(productId)}/agent-conversations/${encodeURIComponent(conversationId)}`;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -295,6 +304,80 @@ export const api = {
   },
   getAgentWorkbench(productId: string): Promise<AgentWorkbenchBootstrap> {
     return request(`/api/v2/products/${encodeURIComponent(productId)}/agent-workbench`);
+  },
+  listAgentTurns(
+    productId: string,
+    conversationId: string,
+    input?: { after?: string | null; limit?: number },
+  ): Promise<AgentTurnPage> {
+    const params = new URLSearchParams({ limit: String(input?.limit ?? 20) });
+    if (input?.after) {
+      params.set("after", input.after);
+    }
+    return request(`${agentConversationPath(productId, conversationId)}/turns?${params}`);
+  },
+  submitAgentTurn(
+    productId: string,
+    conversationId: string,
+    input: SubmitAgentTurnInput,
+  ): Promise<SubmitAgentTurnResponse> {
+    return request(`${agentConversationPath(productId, conversationId)}/turns`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  getAgentTurn(productId: string, conversationId: string, projectionId: string): Promise<AgentTurn> {
+    return request(
+      `${agentConversationPath(productId, conversationId)}/turns/${encodeURIComponent(projectionId)}`,
+    );
+  },
+  cancelAgentTurn(productId: string, conversationId: string, projectionId: string): Promise<AgentTurn> {
+    return request(
+      `${agentConversationPath(productId, conversationId)}/turns/${encodeURIComponent(projectionId)}/cancel`,
+      { method: "POST" },
+    );
+  },
+  resumeAgentTurn(productId: string, conversationId: string, projectionId: string): Promise<AgentTurn> {
+    return request(
+      `${agentConversationPath(productId, conversationId)}/turns/${encodeURIComponent(projectionId)}/resume`,
+      { method: "POST" },
+    );
+  },
+  answerAgentQuestion(
+    productId: string,
+    conversationId: string,
+    projectionId: string,
+    questionId: string,
+    answer: AgentQuestionAnswer,
+  ): Promise<AgentTurn> {
+    return request(
+      `${agentConversationPath(productId, conversationId)}/turns/${encodeURIComponent(projectionId)}/questions/${encodeURIComponent(questionId)}/answer`,
+      { method: "POST", body: JSON.stringify(answer) },
+    );
+  },
+  getAgentTurnEventsUrl(
+    productId: string,
+    conversationId: string,
+    projectionId: string,
+    after = 0,
+  ): string {
+    const params = new URLSearchParams({ after: String(after) });
+    return toApiUrl(
+      `${agentConversationPath(productId, conversationId)}/turns/${encodeURIComponent(projectionId)}/events?${params}`,
+    );
+  },
+  getProductImageAssetMediaUrl(
+    assetId: string,
+    variant?: "thumbnail" | "preview",
+  ): string {
+    const params = new URLSearchParams();
+    if (variant) {
+      params.set("variant", variant);
+    }
+    const query = params.size ? `?${params}` : "";
+    return toApiUrl(
+      `/api/v2/product-image-assets/${encodeURIComponent(assetId)}/download${query}`,
+    );
   },
   getCanonicalProduct(productId: string): Promise<CanonicalProductDetail> {
     return request(`/api/v2/products/${productId}`);

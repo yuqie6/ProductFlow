@@ -1070,6 +1070,80 @@ export interface AgentConversation {
   updated_at: string;
 }
 
+export type AgentTurnStatus =
+  | "queued"
+  | "running"
+  | "requires_input"
+  | "awaiting_confirmation"
+  | "succeeded"
+  | "failed"
+  | "cancel_requested"
+  | "canceled"
+  | "unknown";
+
+export interface AgentQuestionOption {
+  label: string;
+  description?: string;
+}
+
+export interface AgentQuestion {
+  id: string;
+  header: string;
+  question: string;
+  options: AgentQuestionOption[];
+}
+
+export interface AgentTurn {
+  id: string;
+  conversation_id: string;
+  harness_turn_id: string | null;
+  idempotency_key: string;
+  input_text: string;
+  input_asset_ids: string[];
+  status: AgentTurnStatus;
+  resume_required: boolean;
+  output_text: string | null;
+  error_text: string | null;
+  question: AgentQuestion | null;
+  artifact_name: string | null;
+  artifact_step_id: string | null;
+  workflow_draft_revision_id: string | null;
+  sync_error: string | null;
+  finished_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentTurnPage {
+  items: AgentTurn[];
+  next_cursor: string | null;
+}
+
+export interface SubmitAgentTurnInput {
+  input_text: string;
+  asset_ids: string[];
+  idempotency_key: string;
+}
+
+export interface SubmitAgentTurnResponse {
+  created: boolean;
+  turn: AgentTurn;
+}
+
+export type AgentQuestionAnswer =
+  | { option: number; text?: never }
+  | { option?: never; text: string };
+
+export interface AgentTurnEvent {
+  schema_version: 1;
+  run_id: string;
+  turn_id: string;
+  sequence: number;
+  created_at: string;
+  kind: string;
+  payload: Record<string, unknown>;
+}
+
 export interface AgentProductWorkspaceCreateResponse {
   product: CanonicalProductDetail;
   created_assets: ProductImageAsset[];
