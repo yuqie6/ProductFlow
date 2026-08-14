@@ -361,7 +361,7 @@ const WorkflowNodeCard = memo(function WorkflowNodeCard({
   );
 });
 
-const WorkflowFolderCard = memo(function WorkflowFolderCard({
+export const WorkflowFolderCard = memo(function WorkflowFolderCard({
   data,
   selected,
 }: NodeProps<Node<WorkflowFolderData>>) {
@@ -371,13 +371,31 @@ const WorkflowFolderCard = memo(function WorkflowFolderCard({
 
   return (
     <div
-      className={`relative h-[210px] w-[340px] overflow-hidden rounded-lg border bg-white shadow-md transition-[border-color,box-shadow] dark:!bg-[#10151c] ${data.revealActive ? "animate-spring-pop-in" : ""} ${
+      className={`relative h-[210px] w-[340px] rounded-lg border bg-white shadow-md transition-[border-color,box-shadow] dark:!bg-[#10151c] ${data.revealActive ? "animate-spring-pop-in" : ""} ${
         selected
           ? "border-indigo-500 shadow-[0_0_0_3px_rgba(99,102,241,0.16)] dark:border-violet-400"
           : "border-slate-300 dark:border-slate-700"
       }`}
       data-workflow-folder-id={folder.id}
     >
+      {summary.inbound_edge_count > 0 ? (
+        <WorkflowCanvasNodePort
+          type="target"
+          top="50%"
+          label={t("workflowV2.folder.inbound", { count: summary.inbound_edge_count })}
+          connectable={false}
+          visualScale={0.8}
+        />
+      ) : null}
+      {summary.outbound_edge_count > 0 ? (
+        <WorkflowCanvasNodePort
+          type="source"
+          top="50%"
+          label={t("workflowV2.folder.outbound", { count: summary.outbound_edge_count })}
+          connectable={false}
+          visualScale={0.8}
+        />
+      ) : null}
       <div className="flex h-14 items-center gap-3 border-b border-slate-100 px-4 dark:border-slate-800">
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-indigo-50 text-indigo-700 dark:bg-violet-500/15 dark:text-violet-200">
           <Box size={17} />

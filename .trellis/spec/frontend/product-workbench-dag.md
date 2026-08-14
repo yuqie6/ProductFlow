@@ -670,6 +670,8 @@ onClick={() => void handleRunWorkflow(selectedNode.id)} // flushes selected draf
   remain unchanged. Returning to global view never writes graph data.
 - Folder bounds, member count, node types, aggregate status, preview asset IDs, and inbound/outbound counts are derived
   from the latest workflow DTO. Synthetic IDs and projected edges are never sent to backend mutations or recipe APIs.
+- Synthetic folder cards expose one non-connectable presentation handle for each non-empty inbound/outbound direction so
+  ReactFlow can render projected summary edges. These handles never participate in connection validation or mutations.
 - A folder is `succeeded` only when it has at least one runnable member and every runnable member succeeded. Otherwise its
   aggregate status comes from incomplete runnable members; one succeeded member must not hide an idle sibling.
 - Selection is scoped to the current projection. Global view retains only ungrouped real-node IDs; local view retains
@@ -708,7 +710,8 @@ onClick={() => void handleRunWorkflow(selectedNode.id)} // flushes selected draf
 ### 6. Tests Required
 
 - Pure graph tests cover 15 folders, projected edge provenance/aggregation, complete-versus-partial aggregate status,
-  local real-edge identity, and visible-node selection scope in global/local views.
+  local real-edge identity, and visible-node selection scope in global/local views. Component markup tests keep the
+  synthetic folder handles aligned with non-empty inbound/outbound summaries.
 - Preference tests cover malformed JSON, finite zoom bounds, deleted folders, legacy viewport data, and responsive
   compatibility.
 - Recipe-source tests cover full recipe precedence, selection-before-folder fragment source, and disabled no-source state.
