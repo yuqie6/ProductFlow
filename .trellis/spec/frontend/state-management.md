@@ -88,11 +88,12 @@ Global app preferences live in `PreferencesProvider`:
 Locale and theme are not server records. Do not store them in TanStack Query, add backend settings for them, or persist
 them with auth/session state unless a future product requirement explicitly changes that boundary.
 
-ProductDetail owns a small set of durable workbench-local browser preferences because they are specific to that page's
-canvas ergonomics rather than global app chrome:
+The product workbench owns a small set of durable browser preferences because they are specific to canvas ergonomics
+rather than global app chrome:
 
 - Workflow zoom: `productflow.workflow.zoom`, read by `ProductDetailPage.tsx` and persisted by `WorkflowCanvas`.
-- Workflow inspector width: `productflow.workflow.inspectorWidth`, read and written by `ProductDetailPage.tsx`.
+- Workflow inspector width: `productflow.workflow.inspectorWidth`, read and written by the shared
+  `useProductWorkbenchInspectorState` used by legacy and Agent v2 workbenches.
 - Workflow snap-to-grid toggle: `productflow.workflow.snapToGrid`, read and written by `ProductDetailPage.tsx`.
 
 The schema-v2 workbench owns a separate workflow-scoped canvas preference:

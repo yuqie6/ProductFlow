@@ -269,7 +269,13 @@ return api.createProduct({
   `workflowRevealEventsUrl`.
 - Node execution methods:
   - `runWorkflowNodeV2(nodeId: string): Promise<SubmitWorkflowNodeRunV2Result>`;
-  - `getWorkflowNodeRunV2(nodeRunId: string): Promise<WorkflowNodeRunV2>`.
+  - `getWorkflowNodeRunV2(nodeRunId: string): Promise<WorkflowNodeRunV2>`;
+  - `listWorkflowNodeRunsV2(nodeId: string, limit?: number): Promise<WorkflowNodeRunListV2Response>`;
+  - `cancelWorkflowNodeRunV2(nodeRunId: string): Promise<WorkflowNodeRunV2>`.
+- Node inspection methods:
+  - `getWorkflowNodeDetailV2(productId, workflowId, nodeId): Promise<WorkflowNodeDetailV2>`;
+  - `updateWorkflowNodeV2(productId, workflowId, nodeId, input): Promise<WorkflowCanvasMutationResult>`;
+  - `UpdateWorkflowNodeV2Input` is discriminated by the exact v2 `node_type`.
 - Strict DTOs include `WorkflowVisualSystemPayloadV1`, discriminated `WorkflowVisualFieldOverride`,
   `WorkflowImagePromptPayloadV1`, `WorkflowGenerationSpec`, `WorkflowActualMedia`, and `WorkflowNodeRunV2`.
 
@@ -290,6 +296,9 @@ return api.createProduct({
   not contain storage paths or raw provider request/output objects.
 - V1 components continue accepting `WorkflowNodeType`; v2 components explicitly accept `WorkflowNodeTypeV2` or the full
   v2 DTO. Do not widen the legacy union to make prompt nodes compile in old rendering/execution paths.
+- `WorkflowNodeDetailV2` carries workflow edit lineage and an optional typed Prompt Artifact snapshot. Prompt updates send
+  the complete `WorkflowImagePromptPayloadV1` plus the expected artifact version; reference and image updates expose only
+  their typed editable fields. Frontend forms never submit a raw node `config_json` replacement.
 - `workflowRevealEventsUrl(materializationId, after?)` owns the SSE path and replay cursor. Consumers first load the complete
   v2 workflow; reveal events control presentation order only.
 

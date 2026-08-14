@@ -732,6 +732,96 @@ if (source) api.appendWorkflowRecipeVersion(source);
 
 The visible context selects a source only within the immutable recipe kind.
 
+## Scenario: Agent-enhanced product workbench reuses the established canvas
+
+### 1. Scope / Trigger
+
+- Trigger: changing `/products/:productId` routing, `ProductWorkbenchPage`, `AgentProductWorkbenchPage`, the shared
+  inspector shell, shared node presentation, schema-v2 node inspection, or Agent/canvas responsive layout.
+- The existing ProductDetail workbench is the visual and interaction baseline. Agent support extends that workbench.
+
+### 2. Signatures
+
+- `ProductWorkbenchPage` loads the read-only Agent workbench bootstrap and routes `agent_v2`, persisted `legacy_v1`, and
+  legacy products with no workflow history without invoking a get-or-create workflow query.
+- `ProductWorkbenchInspector` and `useProductWorkbenchInspectorState` own the shared desktop rail, panel, collapse, resize,
+  mobile visibility, and `productflow.workflow.inspectorWidth` preference.
+- `WorkflowNodePresentationCard` is the schema-neutral node card. V1 and v2 adapters supply labels, status, current image,
+  activity, failure, selection, and node-specific actions.
+- `ProductWorkflowV2CanvasPanel` composes the shared canvas controls with v2 graph/folder commands.
+- `V2NodeInspector` and `V2NodeRunsPanel` consume typed v2 detail/edit/run APIs.
+
+### 3. Contracts
+
+- The formal Agent route keeps the existing top navigation, canvas frame, node card language, selection and dragging,
+  zoom/fit/MiniMap, snap, automatic layout, inspector rail, image explorer, preview, and download interactions.
+- The Agent is the first inspector tool. Details, Runs, Library, and user Recipes remain available. The legacy built-in
+  Templates tool stays confined to the legacy page; the Agent v2 route issues no template-catalog or schema-v1 mutation
+  requests.
+- Exactly one Agent panel instance remains mounted while the active inspector tool changes, the desktop sidebar collapses,
+  or the compact view switches between Canvas and Agent. Hidden regions are inert and preserve composer text, message DOM
+  identity, scroll state, and active event-stream ownership.
+- A single selected real node opens Details. Product context is read-only lineage/facts; reference nodes expose typed
+  role/label editing and the existing image-explorer binding flow; prompt nodes edit the complete structured artifact;
+  image nodes edit variation, GenerationSpec, DeliverySpec, and delivery renditions.
+- Node mutations refresh the complete active v2 workflow and exact node-detail/run queries. A `409` refreshes server
+  authority before another deliberate edit.
+- The canvas measures its actual rendered surface. Incompatible persisted viewports are discarded. Fit-view readability
+  floors are `0.24` below 480 px, `0.32` below 720 px, and `0.55` otherwise, so compact canvases keep the complete local
+  graph reachable.
+- V2 single-node create/delete/connect/undo controls remain unavailable until typed structure commands enforce v2 folder,
+  Prompt Artifact, one-image-per-node, and lineage invariants.
+
+### 4. Validation & Error Matrix
+
+- Bootstrap failure -> bounded route error with retry; no legacy workflow query is attempted as recovery.
+- `agent_v2` with no materialized workflow -> full Agent surface; confirmation and materialization later reveal the
+  persisted complete workflow in the same mounted shell.
+- V1 history -> lazy legacy ProductDetail page with its existing tools and editor intact.
+- No workflow history on a legacy product -> read-only transition state; opening the URL creates no default DAG.
+- Node detail/edit/run failure -> `ApiError.detail` in the owning inspector panel; other canvas and Agent state remains.
+
+### 5. Good/Base/Bad Cases
+
+- Good: select a prompt node, edit its structured artifact, inspect run history, switch through Library and Recipes, then
+  return to the same Agent conversation without remounting it.
+- Good: collapse and resize the shared inspector on both v1 and v2 pages; the canvas uses the released width and restoring
+  the panel preserves its stored size.
+- Base: open a four-node folder at 390 px; fit-view shows all real nodes inside the measured canvas and the Canvas/Agent
+  segmented control remains usable.
+- Bad: create a second simplified node card, fixed sidebar tab strip, canvas page header, or Agent-owned gallery component.
+- Bad: expose raw `config_json`, call the v1 generic PATCH endpoint, or emulate v2 topology edits with client JSON patches.
+
+### 6. Tests Required
+
+- Route tests cover `agent_v2`, persisted `legacy_v1`, and legacy-empty discrimination.
+- Shell tests assert one Agent/canvas mount, confirmation inertness, compact visibility, and lazy non-Agent tool content.
+- Node API tests cover typed paths and payloads. Browser checks exercise Details, Runs, Library, Recipes, collapse, resize,
+  maximize/restore, dark mode, and Agent DOM identity at 1440, 1024, and 390 px.
+- Run frontend tests, lint, and production build after any shared inspector, node-card, or route-owner change.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```tsx
+return <AgentCanvas fixedTabs={["agent", "gallery"]} nodeCard={SimplifiedV2NodeCard} />;
+```
+
+Correct:
+
+```tsx
+return (
+  <AgentWorkbenchShell
+    canvasContent={<ProductWorkflowV2CanvasPanel workflow={workflow} />}
+    sidebarTools={[detailsTool, runsTool, imageExplorerTool, recipeTool]}
+    agentContent={persistentAgentPanel}
+  />
+);
+```
+
+The route composes schema-v2 behavior through the shared workbench shell and presentation primitives.
+
 ## Scenario: Delivery rendition inspector and gallery lineage
 
 ### 1. Scope / Trigger

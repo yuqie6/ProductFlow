@@ -1539,12 +1539,18 @@ The command validates lineage and owns one commit/rollback boundary for the full
 - Runtime:
   - `submit_v2_workflow_node_run(session, *, node_id, enqueue=None) -> V2WorkflowNodeRunSubmission`;
   - `get_v2_workflow_node_run(session, *, node_run_id) -> WorkflowNodeRun`;
+  - `list_v2_workflow_node_runs(session, *, node_id, limit=20) -> tuple[WorkflowNodeRun, ...]`;
+  - `cancel_v2_workflow_node_run(session, *, node_run_id) -> WorkflowNodeRun`;
+  - `get_v2_workflow_node_detail(...) -> V2WorkflowNodeDetail`;
+  - typed `update_v2_reference_node`, `update_v2_prompt_node`, and `update_v2_image_node` commands;
   - `execute_v2_workflow_node_run(session, *, node_run_id, dependencies=None, storage=None) -> None`;
   - `PromptGenerationProvider.generate_prompt(PromptGenerationRequest) -> PromptGenerationResult`;
   - `ImageProvider.generate_workflow_image(WorkflowImageRequest) -> WorkflowImageResult`.
 - HTTP:
   - `POST /api/v2/workflow-nodes/{node_id}/run -> 202 SubmitWorkflowNodeRunV2Response`;
-  - `GET /api/v2/workflow-node-runs/{node_run_id} -> WorkflowNodeRunV2Response`.
+  - `GET /api/v2/workflow-node-runs/{node_run_id} -> WorkflowNodeRunV2Response`;
+  - `GET /api/v2/workflow-nodes/{node_id}/runs` and `POST /api/v2/workflow-node-runs/{node_run_id}/cancel`;
+  - `GET|PATCH /api/v2/products/{product_id}/workflows/{workflow_id}/nodes/{node_id}` for typed detail/edit.
 
 ### 3. Contracts
 
@@ -1572,6 +1578,15 @@ The command validates lineage and owns one commit/rollback boundary for the full
   node-run API exposes evidence fields and provider identifiers, but not raw provider request/output or storage paths.
 - Prompt/image success never creates `CreativeBrief`, `CopySet`, `SourceAsset`, or `PosterVariant`. Worker and scheduler
   dispatch by workflow schema, and each executor rejects the other schema again at its own entry.
+- Every v2 edit locks the active workflow and target node, compares `expected_edit_version`, and rejects any actual change
+  while the target node has a queued/running node run. Reference semantic changes also fence reachable prompt/image runs.
+- Prompt edits compare `expected_prompt_artifact_version_id`, preserve image-plan keys/order, validate fact, visual variant,
+  and product-owned evidence references, append one immutable artifact version, and reset dependent image nodes to idle.
+  Image edits retain materialization lineage/config keys; generation changes reset the node while delivery-only changes keep
+  the successful source asset and status. One successful command increments `workflow.edit_version` exactly once; no-op
+  submissions keep it unchanged.
+- Run history listing is bounded to 1..50 records and validates active schema-v2 ownership. Cancellation uses the existing
+  workflow-run cancellation state transition, preserving node-run history and the stable cancelled failure reason.
 - Direct canonical asset deletion returns `409` while any node binding, VisualSystem reference, Prompt evidence,
   generation result, or generation reference exists. Product deletion removes owned unused VisualSystem versions; an
   external product consumer that needs a source-product visual reference blocks deletion before any partial mutation.
@@ -1591,6 +1606,10 @@ The command validates lineage and owns one commit/rollback boundary for the full
 - Queue delivery failure -> run, node run, and node become failed with the stable queue-unavailable message. Startup
   recovery redispatches the one queued v2 node run.
 - v1 node submitted to the v2 API/executor, or v2 node sent through the legacy runtime -> `ConflictError` / HTTP `409`.
+- Stale workflow edit version, stale Prompt Artifact version, inactive workflow, type/request mismatch, or queued/running
+  target node -> `409`; the complete edit transaction rolls back.
+- Prompt image-plan drift, unknown fact/visual variant, or cross-product evidence asset -> `400`/`422`; no artifact version
+  or partial node update remains.
 
 ### 5. Good/Base/Bad Cases
 
@@ -1616,6 +1635,9 @@ The command validates lineage and owns one commit/rollback boundary for the full
   rerun history, provider switching, commit compensation, and zero legacy writes.
 - Queue/API tests cover idempotent submit, schema dispatch/rejection, queue failure, scheduler recovery, strict evidence
   DTOs, and absence of raw provider/storage fields.
+- Node-edit tests cover immutable prompt append, no-op behavior, stale workflow/artifact versions, prompt-plan drift,
+  generation-versus-delivery state changes, reference staleness, title-only active-run conflicts, and rollback.
+- Node-run API tests cover bounded ordered history and cancellation through the persisted run state machine.
 - Migration verification runs SQLite constraints plus isolated PostgreSQL 16
   `20260811_0032 -> 20260812_0033 -> 20260811_0032 -> 20260812_0033`, with real v1 sentinel rows, real v2 writes, and an
   unchanged storage-file hash across downgrade.
