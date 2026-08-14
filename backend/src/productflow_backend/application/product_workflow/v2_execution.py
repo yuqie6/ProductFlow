@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -9,6 +10,10 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
+from productflow_backend.application.delivery_renditions.service import (
+    create_delivery_rendition_job,
+    mark_delivery_rendition_job_enqueue_failed,
+)
 from productflow_backend.application.media_assets import inspect_image_bytes, stage_product_image_asset
 from productflow_backend.application.product_workflow.run_state import (
     WorkflowSafeExecutionError,
@@ -27,6 +32,7 @@ from productflow_backend.application.product_workflow_dependencies import (
 from productflow_backend.application.storage_compensation import StorageWriteCompensation
 from productflow_backend.application.time import now_utc
 from productflow_backend.application.workflow_drafts.contracts import (
+    DeliverySpec,
     GenerationSpec,
     ImagePromptPayloadV1,
     VisualSystemDraftPayload,
@@ -69,11 +75,14 @@ from productflow_backend.infrastructure.prompt.base import (
     PromptGenerationResult,
     PromptReferenceImage,
 )
+from productflow_backend.infrastructure.queue import enqueue_delivery_rendition_job
 from productflow_backend.infrastructure.storage import LocalStorage
 
 V2_WORKFLOW_SCHEMA_VERSION = 2
 MAX_PROMPT_REFERENCE_IMAGES = 6
 SUPPORTED_PROMPT_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp"}
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,7 +168,7 @@ def execute_v2_workflow_node_run(
             image_provider = resolved_dependencies.image_provider()
             image_result = _generate_workflow_image(image_provider, prepared_image.request)
             generated_image = _validate_workflow_image_result(image_result)
-            _persist_image_result(
+            rendition_job_id = _persist_image_result(
                 session,
                 prepared=prepared_image,
                 result=image_result,
@@ -168,6 +177,8 @@ def execute_v2_workflow_node_run(
                 storage=resolved_storage,
                 storage_writes=storage_writes,
             )
+            if rendition_job_id is not None:
+                _enqueue_delivery_rendition_without_affecting_workflow(session, rendition_job_id)
     except Exception as exc:  # noqa: BLE001
         session.rollback()
         storage_writes.cleanup()
@@ -338,7 +349,6 @@ def _prepare_image_generation(
         generation_spec = GenerationSpec.model_validate(node.config_json.get("generation_spec"))
     except ValidationError as exc:
         raise ConflictError("图片节点 GenerationSpec 不符合 schema") from exc
-
     prompt_node = ensure_image_prompt_references_current(session, image_node=node)
     prompt_version = prompt_node.current_prompt_artifact_version
     if prompt_version is None:
@@ -900,7 +910,7 @@ def _persist_image_result(
     provider_name: str,
     storage: LocalStorage,
     storage_writes: StorageWriteCompensation,
-) -> None:
+) -> str | None:
     node_run = session.scalar(
         select(WorkflowNodeRun).where(WorkflowNodeRun.id == prepared.node_run_id).with_for_update()
     )
@@ -933,6 +943,14 @@ def _persist_image_result(
         raise ConflictError("图片节点 GenerationSpec 已变为无效内容") from exc
     if current_generation_spec != prepared.request.generation_spec:
         raise ConflictError("图片节点 GenerationSpec 已变化，拒绝保存过期结果")
+    try:
+        current_delivery_spec = (
+            DeliverySpec.model_validate(node.config_json.get("delivery_spec"))
+            if node.config_json.get("delivery_spec") is not None
+            else None
+        )
+    except ValidationError as exc:
+        raise ConflictError("图片节点 DeliverySpec 已变为无效内容") from exc
     current_references = _load_image_references(
         session,
         workflow=workflow,
@@ -1002,6 +1020,15 @@ def _persist_image_result(
             )
         )
 
+    rendition_job_id = None
+    if current_delivery_spec is not None:
+        rendition = create_delivery_rendition_job(
+            session,
+            source_asset_id=asset.id,
+            delivery_spec=current_delivery_spec,
+        )
+        rendition_job_id = rendition.job.id
+
     output = {
         "contract_version": 2,
         "generation_record_id": record.id,
@@ -1025,6 +1052,23 @@ def _persist_image_result(
     workflow.updated_at = now
     product.updated_at = now
     session.commit()
+    return rendition_job_id
+
+
+def _enqueue_delivery_rendition_without_affecting_workflow(session: Session, job_id: str) -> None:
+    try:
+        enqueue_delivery_rendition_job(job_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("交付派生任务入队失败: job_id=%s", job_id)
+        try:
+            mark_delivery_rendition_job_enqueue_failed(
+                session,
+                job_id=job_id,
+                reason="任务队列暂不可用，请稍后重试",
+            )
+        except Exception:  # noqa: BLE001
+            session.rollback()
+            logger.exception("交付派生任务入队失败状态落库失败: job_id=%s", job_id)
 
 
 def _sanitize_provider_metadata(value: dict[str, Any] | None) -> dict[str, Any] | None:

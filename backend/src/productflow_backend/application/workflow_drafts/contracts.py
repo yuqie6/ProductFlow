@@ -19,6 +19,7 @@ WORKFLOW_DRAFT_MIN_IMAGES_PER_TYPE = 1
 WORKFLOW_DRAFT_MAX_IMAGES_PER_TYPE = 6
 WORKFLOW_DRAFT_MAX_TOTAL_IMAGES = 30
 WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS = 6
+DELIVERY_SPEC_MAX_TOTAL_PIXELS = 64 * 1024 * 1024
 
 BusinessKey = Annotated[
     str,
@@ -307,6 +308,8 @@ class DeliverySpec(StrictArtifactModel):
 
     @model_validator(mode="after")
     def validate_fit_options(self) -> DeliverySpec:
+        if self.width * self.height > DELIVERY_SPEC_MAX_TOTAL_PIXELS:
+            raise ValueError(f"交付规格总像素不能超过 {DELIVERY_SPEC_MAX_TOTAL_PIXELS}")
         if self.fit == "contain" and self.crop_anchor is not None:
             raise ValueError("contain 交付规格不能指定 crop_anchor")
         if self.fit == "cover" and self.background_color is not None:

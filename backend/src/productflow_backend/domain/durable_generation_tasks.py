@@ -94,6 +94,20 @@ IMAGE_SESSION_GENERATION_TASK_CONTRACT = DurableGenerationTaskContract(
     recovery_entrypoint="recover_unfinished_image_session_generation_tasks",
 )
 
+DELIVERY_RENDITION_TASK_CONTRACT = DurableGenerationTaskContract(
+    name="delivery_rendition_job",
+    durable_model_name="DeliveryRenditionJob",
+    actor_name="run_delivery_rendition_job",
+    active_statuses=(JobStatus.QUEUED, JobStatus.RUNNING),
+    queued_statuses=(JobStatus.QUEUED,),
+    running_statuses=(JobStatus.RUNNING,),
+    terminal_statuses=(JobStatus.SUCCEEDED, JobStatus.FAILED),
+    execution_queued_statuses=(JobStatus.QUEUED,),
+    execution_running_statuses=(JobStatus.RUNNING,),
+    status_snapshot_source="DeliveryRenditionJob",
+    recovery_entrypoint="recover_unfinished_delivery_rendition_jobs",
+)
+
 
 def classify_workflow_run_delivery(
     run_status: WorkflowRunStatus | str,

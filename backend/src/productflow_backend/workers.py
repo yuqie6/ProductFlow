@@ -9,7 +9,9 @@ from productflow_backend.application.agent_sync import (
     execute_agent_turn_sync,
     recover_unfinished_agent_turn_syncs,
 )
+from productflow_backend.application.delivery_renditions import execute_delivery_rendition_job
 from productflow_backend.application.durable_recovery import (
+    recover_unfinished_delivery_rendition_jobs,
     recover_unfinished_image_session_generation_tasks,
     recover_unfinished_workflow_runs,
 )
@@ -20,6 +22,7 @@ from productflow_backend.application.product_workflows import (
 )
 from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.domain.durable_generation_tasks import (
+    DELIVERY_RENDITION_TASK_CONTRACT,
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
     WORKFLOW_RUN_GENERATION_TASK_CONTRACT,
     assert_actor_uses_durable_generation_contract,
@@ -38,6 +41,7 @@ from productflow_backend.infrastructure.logging import (
 from productflow_backend.infrastructure.queue import (
     enqueue_agent_turn_sync,
     enqueue_agent_turn_sync_later,
+    enqueue_delivery_rendition_job,
     enqueue_image_session_generation_task,
     enqueue_workflow_run,
     get_broker,
@@ -100,10 +104,19 @@ def run_agent_turn_sync(projection_id: str) -> None:
     )
 
 
+@dramatiq.actor(max_retries=0, time_limit=IMAGE_SESSION_WORKER_FAILSAFE_TIME_LIMIT_MS)
+def run_delivery_rendition_job(job_id: str) -> None:
+    execute_delivery_rendition_job(job_id)
+
+
 assert_actor_uses_durable_generation_contract(WORKFLOW_RUN_GENERATION_TASK_CONTRACT, run_product_workflow_run)
 assert_actor_uses_durable_generation_contract(
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
     run_image_session_generation_task,
+)
+assert_actor_uses_durable_generation_contract(
+    DELIVERY_RENDITION_TASK_CONTRACT,
+    run_delivery_rendition_job,
 )
 
 
@@ -119,3 +132,7 @@ if _running_under_dramatiq_cli():
         reset_stale_running=True,
     )
     recover_unfinished_agent_turn_syncs(enqueue=enqueue_agent_turn_sync)
+    recover_unfinished_delivery_rendition_jobs(
+        enqueue=enqueue_delivery_rendition_job,
+        reset_stale_running=True,
+    )

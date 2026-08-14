@@ -4,6 +4,7 @@ import pytest
 
 from productflow_backend.application.queue_submission import enqueue_or_mark_failed
 from productflow_backend.domain.durable_generation_tasks import (
+    DELIVERY_RENDITION_TASK_CONTRACT,
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
     QUEUE_UNAVAILABLE_DETAIL,
     WORKFLOW_RUN_GENERATION_TASK_CONTRACT,
@@ -31,6 +32,11 @@ def test_durable_generation_task_contract_keeps_workflow_and_image_models_separa
     assert IMAGE_SESSION_GENERATION_TASK_CONTRACT.is_running(JobStatus.RUNNING)
     assert IMAGE_SESSION_GENERATION_TASK_CONTRACT.is_terminal(JobStatus.FAILED)
     assert IMAGE_SESSION_GENERATION_TASK_CONTRACT.is_terminal(JobStatus.CANCELLED)
+    assert DELIVERY_RENDITION_TASK_CONTRACT.durable_model_name == "DeliveryRenditionJob"
+    assert DELIVERY_RENDITION_TASK_CONTRACT.is_active(JobStatus.QUEUED)
+    assert DELIVERY_RENDITION_TASK_CONTRACT.is_active(JobStatus.RUNNING)
+    assert DELIVERY_RENDITION_TASK_CONTRACT.is_terminal(JobStatus.SUCCEEDED)
+    assert DELIVERY_RENDITION_TASK_CONTRACT.is_terminal(JobStatus.FAILED)
 
 
 @pytest.mark.parametrize(
@@ -65,6 +71,7 @@ def test_classify_workflow_run_delivery(
 
 def test_durable_generation_task_contract_matches_worker_actor_retry_policy(configured_env) -> None:
     from productflow_backend.workers import (
+        run_delivery_rendition_job,
         run_image_session_generation_task,
         run_product_workflow_node_run,
         run_product_workflow_run,
@@ -81,6 +88,10 @@ def test_durable_generation_task_contract_matches_worker_actor_retry_policy(conf
     assert_actor_uses_durable_generation_contract(
         IMAGE_SESSION_GENERATION_TASK_CONTRACT,
         run_image_session_generation_task,
+    )
+    assert_actor_uses_durable_generation_contract(
+        DELIVERY_RENDITION_TASK_CONTRACT,
+        run_delivery_rendition_job,
     )
 
 

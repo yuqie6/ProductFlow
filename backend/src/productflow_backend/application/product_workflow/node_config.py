@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from pydantic import ValidationError
+
 from productflow_backend.application.copy_payloads import normalize_copy_node_config
 from productflow_backend.application.image_generation_core import normalize_image_generation_tool_options
 from productflow_backend.application.product_workflow.context import image_size_from_config, optional_config_text
+from productflow_backend.application.workflow_drafts.contracts import DeliverySpec
 from productflow_backend.domain.enums import WorkflowNodeType
 from productflow_backend.domain.errors import BusinessValidationError
 
@@ -21,6 +24,13 @@ def normalize_workflow_node_config(
             raise BusinessValidationError(str(exc)) from exc
         return {**config, **normalized_copy_config}
     if node_type == WorkflowNodeType.IMAGE_GENERATION:
+        if "delivery_spec" in config and config["delivery_spec"] is not None:
+            try:
+                config["delivery_spec"] = DeliverySpec.model_validate(config["delivery_spec"]).model_dump(
+                    mode="json"
+                )
+            except ValidationError as exc:
+                raise BusinessValidationError("DeliverySpec 不符合 schema") from exc
         try:
             normalized_size = image_size_from_config(config)
         except ValueError as exc:

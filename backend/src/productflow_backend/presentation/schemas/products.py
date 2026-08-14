@@ -7,11 +7,13 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from productflow_backend.application.copy_payloads import copy_set_structured_payload
+from productflow_backend.application.delivery_renditions.contracts import DeliveryRenditionStatus
 from productflow_backend.application.gallery_assets import (
     GalleryAssetRecord,
     GalleryBootstrap,
 )
 from productflow_backend.application.use_cases import derive_product_state
+from productflow_backend.application.workflow_drafts.contracts import DeliverySpec
 from productflow_backend.domain.enums import (
     CopyStatus,
     MediaVerificationStatus,
@@ -156,10 +158,18 @@ class GalleryGenerationSummaryResponse(BaseModel):
     visual_system_version_id: str
 
 
+class GalleryRenditionSummaryResponse(BaseModel):
+    job_id: str
+    source_asset_id: str
+    delivery_spec: DeliverySpec
+    status: DeliveryRenditionStatus
+
+
 class GalleryAssetResponse(ProductImageAssetResponse):
     user_folder_name: str | None = None
     image_type_title: str | None = None
     generation: GalleryGenerationSummaryResponse | None = None
+    rendition: GalleryRenditionSummaryResponse | None = None
 
 
 class GalleryAssetPageResponse(BaseModel):
@@ -378,11 +388,22 @@ def serialize_gallery_asset(record: GalleryAssetRecord) -> GalleryAssetResponse:
         if record.generation is not None
         else None
     )
+    rendition = (
+        GalleryRenditionSummaryResponse(
+            job_id=record.rendition.job_id,
+            source_asset_id=record.rendition.source_asset_id,
+            delivery_spec=record.rendition.delivery_spec,
+            status=record.rendition.status,
+        )
+        if record.rendition is not None
+        else None
+    )
     return GalleryAssetResponse(
         **asset_payload,
         user_folder_name=record.asset.user_folder.name if record.asset.user_folder is not None else None,
         image_type_title=record.image_type_title,
         generation=generation,
+        rendition=rendition,
     )
 
 

@@ -27,6 +27,7 @@ from productflow_backend.domain.enums import (
 from productflow_backend.infrastructure.db.models import (
     AgentToolMutation,
     CopySet,
+    DeliveryRenditionJob,
     ImageGalleryEntry,
     ImagePromptArtifact,
     ImagePromptArtifactVersion,
@@ -281,6 +282,7 @@ def test_sqlalchemy_enum_columns_use_database_values() -> None:
     assert CopySet.__table__.c.status.type.enums == [member.value for member in CopyStatus]
     assert PosterVariant.__table__.c.kind.type.enums == [member.value for member in PosterKind]
     assert ImageSessionGenerationTask.__table__.c.status.type.enums == [member.value for member in JobStatus]
+    assert DeliveryRenditionJob.__table__.c.status.type.enums == [member.value for member in JobStatus]
     assert WorkflowNode.__table__.c.node_type.type.enums == [member.value for member in WorkflowNodeType]
     assert WorkflowNode.__table__.c.status.type.enums == [member.value for member in WorkflowNodeStatus]
     assert WorkflowNodeRun.__table__.c.status.type.enums == [member.value for member in WorkflowNodeStatus]
@@ -674,6 +676,57 @@ def test_canonical_image_asset_models_match_database_contract() -> None:
     assert mutation_asset_fk.ondelete == "SET NULL"
 
 
+def test_delivery_rendition_job_model_matches_database_contract() -> None:
+    table = DeliveryRenditionJob.__table__
+    assert table.c.id.type.length == 36
+    assert not table.c.product_id.nullable
+    assert not table.c.source_asset_id.nullable
+    assert table.c.result_asset_id.nullable
+    assert not table.c.spec_schema_version.nullable
+    assert not table.c.spec_json.nullable
+    assert table.c.spec_hash.type.length == 64
+    assert not table.c.spec_hash.nullable
+    assert not table.c.status.nullable
+    assert not table.c.attempts.nullable
+    assert table.c.active_attempt_id.nullable
+    assert not table.c.is_retryable.nullable
+    assert table.c.failure_reason.nullable
+    assert table.c.started_at.nullable
+    assert table.c.finished_at.nullable
+
+    assert {
+        constraint.name
+        for constraint in table.constraints
+        if isinstance(constraint, sa.UniqueConstraint)
+    } == {
+        "uq_delivery_rendition_jobs_source_spec",
+        "uq_delivery_rendition_jobs_result_asset_id",
+    }
+    assert {
+        constraint.name
+        for constraint in table.constraints
+        if isinstance(constraint, sa.CheckConstraint)
+    } == {
+        "ck_delivery_rendition_jobs_schema_version",
+        "ck_delivery_rendition_jobs_spec_hash",
+        "ck_delivery_rendition_jobs_non_negative_attempts",
+        "ck_delivery_rendition_jobs_status",
+        "ck_delivery_rendition_jobs_active_attempt",
+        "ck_delivery_rendition_jobs_result_state",
+    }
+    assert {index.name for index in table.indexes} == {
+        "ix_delivery_rendition_jobs_product_status_created",
+        "ix_delivery_rendition_jobs_source_created",
+    }
+    foreign_keys = {fk.parent.name: fk for fk in table.foreign_keys}
+    assert foreign_keys["product_id"].constraint.name == "fk_delivery_rendition_jobs_product_id"
+    assert foreign_keys["product_id"].ondelete == "CASCADE"
+    assert foreign_keys["source_asset_id"].constraint.name == "fk_delivery_rendition_jobs_source_asset_id"
+    assert foreign_keys["source_asset_id"].ondelete == "RESTRICT"
+    assert foreign_keys["result_asset_id"].constraint.name == "fk_delivery_rendition_jobs_result_asset_id"
+    assert foreign_keys["result_asset_id"].ondelete == "RESTRICT"
+
+
 def test_workflow_run_model_has_retryability_and_progress_metadata() -> None:
     table = WorkflowRun.__table__
     assert "is_retryable" in table.c
@@ -897,6 +950,103 @@ def test_canvas_recipe_migration_rejects_downgrade_with_saved_recipe_data(
         connection.execute(sa.text("DELETE FROM workflow_recipes WHERE id = 'recipe-saved'"))
     engine.dispose()
     command.downgrade(config, "20260812_0035")
+    get_settings.cache_clear()
+
+
+def test_delivery_rendition_migration_round_trips_and_rejects_populated_downgrade(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path, config = _configure_sqlite_alembic(
+        tmp_path,
+        monkeypatch,
+        filename="delivery-renditions-roundtrip.db",
+    )
+    command.upgrade(config, "20260813_0036")
+    command.upgrade(config, "20260814_0037")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    inspector = sa.inspect(engine)
+    assert "delivery_rendition_jobs" in inspector.get_table_names()
+    indexes = {index["name"]: index for index in inspector.get_indexes("delivery_rendition_jobs")}
+    assert indexes["ix_delivery_rendition_jobs_product_status_created"]["column_names"] == [
+        "product_id",
+        "status",
+        "created_at",
+        "id",
+    ]
+    assert indexes["ix_delivery_rendition_jobs_source_created"]["column_names"] == [
+        "source_asset_id",
+        "created_at",
+        "id",
+    ]
+    foreign_keys = {
+        tuple(foreign_key["constrained_columns"]): foreign_key
+        for foreign_key in inspector.get_foreign_keys("delivery_rendition_jobs")
+    }
+    assert foreign_keys[("product_id",)]["options"]["ondelete"] == "CASCADE"
+    assert foreign_keys[("source_asset_id",)]["options"]["ondelete"] == "RESTRICT"
+    assert foreign_keys[("result_asset_id",)]["options"]["ondelete"] == "RESTRICT"
+
+    now = "2026-08-14 12:00:00"
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                "INSERT INTO products (id, name, created_at, updated_at) "
+                "VALUES ('product-rendition', '交付派生迁移商品', :now, :now)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO media_objects "
+                "(id, storage_path, mime_type, byte_size, width, height, sha256, verification_status, "
+                "created_at, verified_at) VALUES "
+                "('media-rendition-source', 'media/source.png', 'image/png', 100, 10, 10, :hash, "
+                "'verified', :now, :now)"
+            ),
+            {"hash": "a" * 64, "now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO product_image_assets "
+                "(id, product_id, media_object_id, origin_type, display_name, original_filename, "
+                "image_type_key, user_folder_id, parent_asset_id, source_image_session_asset_id, "
+                "created_at, updated_at) VALUES "
+                "('asset-rendition-source', 'product-rendition', 'media-rendition-source', "
+                "'workflow_generation', '生成原图', 'source.png', 'hero', NULL, NULL, NULL, :now, :now)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO delivery_rendition_jobs "
+                "(id, product_id, source_asset_id, result_asset_id, spec_schema_version, spec_json, "
+                "spec_hash, status, attempts, active_attempt_id, is_retryable, failure_reason, started_at, "
+                "finished_at, created_at, updated_at) VALUES "
+                "('job-rendition', 'product-rendition', 'asset-rendition-source', NULL, 1, :spec, :hash, "
+                "'queued', 0, NULL, :retryable, NULL, NULL, NULL, :now, :now)"
+            ),
+            {
+                "spec": json.dumps({"width": 32, "height": 32, "format": "png", "fit": "cover"}),
+                "hash": "b" * 64,
+                "retryable": True,
+                "now": now,
+            },
+        )
+    engine.dispose()
+
+    with pytest.raises(RuntimeError, match="rendition jobs exist"):
+        command.downgrade(config, "20260813_0036")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    with engine.begin() as connection:
+        connection.execute(sa.text("DELETE FROM delivery_rendition_jobs"))
+    engine.dispose()
+    command.downgrade(config, "20260813_0036")
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    assert "delivery_rendition_jobs" not in sa.inspect(engine).get_table_names()
+    engine.dispose()
     get_settings.cache_clear()
 
 

@@ -40,6 +40,9 @@ backend-test-live-recovery:
     docker compose up -d --wait productflow-postgres productflow-redis
     PRODUCTFLOW_RUN_LIVE_RECOVERY=1 bash scripts/with_dev_env.sh uv run --directory backend pytest -q -m live_dependencies tests/test_live_workflow_recovery.py
 
+backend-test-live-delivery-renditions:
+    PRODUCTFLOW_RUN_LIVE_DELIVERY_RENDITIONS=1 bash scripts/with_dev_env.sh uv run --directory backend pytest -q -m live_dependencies tests/test_live_delivery_renditions.py
+
 backend-test-live-gallery-migration:
     PRODUCTFLOW_RUN_LIVE_GALLERY_MIGRATION=1 bash scripts/with_dev_env.sh uv run --directory backend pytest -q -m live_dependencies tests/test_live_gallery_migration.py
 

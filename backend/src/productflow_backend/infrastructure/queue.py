@@ -8,6 +8,7 @@ from dramatiq.message import Message
 
 from productflow_backend.config import get_settings
 from productflow_backend.domain.durable_generation_tasks import (
+    DELIVERY_RENDITION_TASK_CONTRACT,
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
     WORKFLOW_RUN_GENERATION_TASK_CONTRACT,
 )
@@ -71,3 +72,7 @@ def enqueue_agent_turn_sync(projection_id: str) -> None:
 
 def enqueue_agent_turn_sync_later(projection_id: str, *, delay_ms: int) -> None:
     _enqueue_actor(AGENT_TURN_SYNC_ACTOR_NAME, projection_id, delay_ms=delay_ms)
+
+
+def enqueue_delivery_rendition_job(job_id: str) -> None:
+    _enqueue_actor(DELIVERY_RENDITION_TASK_CONTRACT.actor_name, job_id)

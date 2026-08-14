@@ -119,6 +119,7 @@ def _strongly_connected_components(graph: dict[str, set[str]]) -> list[set[str]]
         ("enqueue_image_session_generation_task_later", "run_image_session_generation_task", 3456),
         ("enqueue_agent_turn_sync", "run_agent_turn_sync", None),
         ("enqueue_agent_turn_sync_later", "run_agent_turn_sync", 4567),
+        ("enqueue_delivery_rendition_job", "run_delivery_rendition_job", None),
     ],
 )
 def test_queue_sender_preserves_durable_actor_message_contract(

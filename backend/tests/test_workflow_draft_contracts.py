@@ -7,7 +7,9 @@ from pydantic import ValidationError
 from workflow_draft_helpers import make_workflow_draft_payload
 
 from productflow_backend.application.workflow_drafts.contracts import (
+    DELIVERY_SPEC_MAX_TOTAL_PIXELS,
     WORKFLOW_DRAFT_MAX_TOTAL_IMAGES,
+    DeliverySpec,
     WorkflowDraftPayloadV1,
     workflow_draft_payload_hash,
 )
@@ -19,6 +21,30 @@ def test_workflow_draft_payload_accepts_one_prompt_per_type_and_one_node_per_ima
     assert payload.schema_version == 1
     assert sum(image_type.quantity for image_type in payload.image_types) == 2
     assert payload.referenced_asset_ids() == {"00000000-0000-0000-0000-000000000001"}
+
+
+def test_delivery_spec_enforces_total_pixel_budget() -> None:
+    accepted = DeliverySpec.model_validate(
+        {
+            "width": 16384,
+            "height": 4096,
+            "format": "webp",
+            "fit": "cover",
+            "crop_anchor": "center",
+        }
+    )
+    assert accepted.width * accepted.height == DELIVERY_SPEC_MAX_TOTAL_PIXELS
+
+    with pytest.raises(ValidationError, match="交付规格总像素不能超过"):
+        DeliverySpec.model_validate(
+            {
+                "width": 16384,
+                "height": 4097,
+                "format": "webp",
+                "fit": "cover",
+                "crop_anchor": "center",
+            }
+        )
 
 
 def test_workflow_draft_folder_geometry_is_deprecated_and_empty_folders_are_rejected() -> None:

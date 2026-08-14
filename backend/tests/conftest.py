@@ -62,3 +62,7 @@ def _execute_image_session_queue_inline(monkeypatch: pytest.MonkeyPatch) -> None
         "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
         execute_image_session_generation_task,
     )
+    monkeypatch.setattr(
+        "productflow_backend.application.product_workflow.v2_execution.enqueue_delivery_rendition_job",
+        lambda _job_id: None,
+    )

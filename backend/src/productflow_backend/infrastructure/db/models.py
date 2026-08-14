@@ -219,6 +219,11 @@ class Product(Base, TimestampMixin):
         cascade="all, delete-orphan",
         foreign_keys="ProductImageAsset.product_id",
     )
+    delivery_rendition_jobs: Mapped[list[DeliveryRenditionJob]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+        foreign_keys="DeliveryRenditionJob.product_id",
+    )
     asset_folders: Mapped[list[ProductAssetFolder]] = relationship(
         back_populates="product",
         cascade="all, delete-orphan",
@@ -387,6 +392,17 @@ class ProductImageAsset(Base, TimestampMixin):
     child_assets: Mapped[list[ProductImageAsset]] = relationship(
         back_populates="parent_asset",
         foreign_keys=[parent_asset_id],
+    )
+    source_rendition_jobs: Mapped[list[DeliveryRenditionJob]] = relationship(
+        back_populates="source_asset",
+        foreign_keys="DeliveryRenditionJob.source_asset_id",
+        passive_deletes=True,
+    )
+    result_rendition_job: Mapped[DeliveryRenditionJob | None] = relationship(
+        back_populates="result_asset",
+        foreign_keys="DeliveryRenditionJob.result_asset_id",
+        uselist=False,
+        passive_deletes=True,
     )
     source_image_session_asset: Mapped[ImageSessionAsset | None] = relationship(
         foreign_keys=[source_image_session_asset_id]
@@ -1720,6 +1736,114 @@ class WorkflowImageGenerationReference(Base):
 
     generation_record: Mapped[WorkflowImageGenerationRecord] = relationship(back_populates="references")
     asset: Mapped[ProductImageAsset] = relationship()
+
+
+class DeliveryRenditionJob(Base, TimestampMixin):
+    """从成功的 v2 生成原图确定性派生交付图片的 durable 任务。"""
+
+    __tablename__ = "delivery_rendition_jobs"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_asset_id",
+            "spec_hash",
+            name="uq_delivery_rendition_jobs_source_spec",
+        ),
+        UniqueConstraint(
+            "result_asset_id",
+            name="uq_delivery_rendition_jobs_result_asset_id",
+        ),
+        CheckConstraint(
+            "spec_schema_version = 1",
+            name="ck_delivery_rendition_jobs_schema_version",
+        ),
+        CheckConstraint(
+            "length(spec_hash) = 64",
+            name="ck_delivery_rendition_jobs_spec_hash",
+        ),
+        CheckConstraint(
+            "attempts >= 0",
+            name="ck_delivery_rendition_jobs_non_negative_attempts",
+        ),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'succeeded', 'failed')",
+            name="ck_delivery_rendition_jobs_status",
+        ),
+        CheckConstraint(
+            "(status = 'running' AND active_attempt_id IS NOT NULL AND started_at IS NOT NULL "
+            "AND finished_at IS NULL) OR "
+            "(status != 'running' AND active_attempt_id IS NULL)",
+            name="ck_delivery_rendition_jobs_active_attempt",
+        ),
+        CheckConstraint(
+            "(status = 'succeeded' AND result_asset_id IS NOT NULL AND finished_at IS NOT NULL) OR "
+            "(status = 'failed' AND result_asset_id IS NULL AND finished_at IS NOT NULL) OR "
+            "(status IN ('queued', 'running') AND result_asset_id IS NULL AND finished_at IS NULL)",
+            name="ck_delivery_rendition_jobs_result_state",
+        ),
+        Index(
+            "ix_delivery_rendition_jobs_product_status_created",
+            "product_id",
+            "status",
+            "created_at",
+            "id",
+        ),
+        Index(
+            "ix_delivery_rendition_jobs_source_created",
+            "source_asset_id",
+            "created_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    product_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "products.id",
+            ondelete="CASCADE",
+            name="fk_delivery_rendition_jobs_product_id",
+        ),
+    )
+    source_asset_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "product_image_assets.id",
+            ondelete="RESTRICT",
+            name="fk_delivery_rendition_jobs_source_asset_id",
+        ),
+    )
+    result_asset_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "product_image_assets.id",
+            ondelete="RESTRICT",
+            name="fk_delivery_rendition_jobs_result_asset_id",
+        ),
+        nullable=True,
+    )
+    spec_schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    spec_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    spec_hash: Mapped[str] = mapped_column(String(64))
+    status: Mapped[JobStatus] = mapped_column(enum_value_column(JobStatus), default=JobStatus.QUEUED)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    active_attempt_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    is_retryable: Mapped[bool] = mapped_column(Boolean, default=True)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    product: Mapped[Product] = relationship(
+        back_populates="delivery_rendition_jobs",
+        foreign_keys=[product_id],
+    )
+    source_asset: Mapped[ProductImageAsset] = relationship(
+        back_populates="source_rendition_jobs",
+        foreign_keys=[source_asset_id],
+    )
+    result_asset: Mapped[ProductImageAsset | None] = relationship(
+        back_populates="result_rendition_job",
+        foreign_keys=[result_asset_id],
+    )
 
 
 class SourceAsset(Base):

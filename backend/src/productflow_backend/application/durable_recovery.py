@@ -5,11 +5,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import selectinload
 
 from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.domain.durable_generation_tasks import (
+    DELIVERY_RENDITION_TASK_CONTRACT,
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
     WORKFLOW_RUN_GENERATION_TASK_CONTRACT,
     WorkflowRunDeliveryState,
@@ -17,6 +18,7 @@ from productflow_backend.domain.durable_generation_tasks import (
 )
 from productflow_backend.domain.enums import JobStatus, WorkflowNodeStatus
 from productflow_backend.infrastructure.db.models import (
+    DeliveryRenditionJob,
     ImageSessionGenerationTask,
     WorkflowNode,
     WorkflowRun,
@@ -55,6 +57,13 @@ class ImageSessionGenerationTaskRecoverySummary:
     queued_tasks: int = 0
     stale_running_tasks: int = 0
     enqueued_tasks: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class DeliveryRenditionJobRecoverySummary:
+    queued_jobs: int = 0
+    stale_running_jobs: int = 0
+    enqueued_jobs: int = 0
 
 
 def recover_unfinished_workflow_runs(
@@ -238,4 +247,86 @@ def recover_unfinished_image_session_generation_tasks(
         queued_tasks=queued_tasks,
         stale_running_tasks=stale_running_tasks,
         enqueued_tasks=enqueued_tasks,
+    )
+
+
+def recover_unfinished_delivery_rendition_jobs(
+    *,
+    enqueue: Callable[[str], None],
+    reset_stale_running: bool = False,
+    stale_running_after: timedelta = DEFAULT_STALE_RUNNING_AFTER,
+) -> DeliveryRenditionJobRecoverySummary:
+    """恢复 queued / stale running 交付派生任务；数据库状态是权威。"""
+
+    cutoff = utcnow() - stale_running_after
+    session = get_session_factory()()
+    job_ids_to_enqueue: list[str] = []
+    queued_jobs = 0
+    stale_running_jobs = 0
+    try:
+        statement = select(DeliveryRenditionJob).where(
+            DeliveryRenditionJob.is_retryable.is_(True),
+            or_(
+                DeliveryRenditionJob.status.in_(DELIVERY_RENDITION_TASK_CONTRACT.queued_statuses),
+                (
+                    DeliveryRenditionJob.status.in_(DELIVERY_RENDITION_TASK_CONTRACT.running_statuses)
+                    & (DeliveryRenditionJob.started_at <= cutoff)
+                )
+                if reset_stale_running
+                else False,
+            ),
+        )
+        for job in session.scalars(statement).all():
+            if DELIVERY_RENDITION_TASK_CONTRACT.is_running(job.status):
+                reset = session.execute(
+                    update(DeliveryRenditionJob)
+                    .where(
+                        DeliveryRenditionJob.id == job.id,
+                        DeliveryRenditionJob.status == JobStatus.RUNNING,
+                        DeliveryRenditionJob.active_attempt_id == job.active_attempt_id,
+                        DeliveryRenditionJob.started_at <= cutoff,
+                    )
+                    .values(
+                        status=JobStatus.QUEUED,
+                        active_attempt_id=None,
+                        failure_reason=None,
+                        started_at=None,
+                        finished_at=None,
+                        updated_at=utcnow(),
+                    )
+                    .execution_options(synchronize_session=False)
+                )
+                if reset.rowcount != 1:
+                    continue
+                stale_running_jobs += 1
+            else:
+                queued_jobs += 1
+            job_ids_to_enqueue.append(job.id)
+        if stale_running_jobs:
+            session.commit()
+    except Exception:
+        session.rollback()
+        logger.exception("恢复滞留交付派生任务时读取数据库失败")
+        return DeliveryRenditionJobRecoverySummary()
+    finally:
+        session.close()
+
+    enqueued_jobs = 0
+    for job_id in job_ids_to_enqueue:
+        try:
+            enqueue(job_id)
+            enqueued_jobs += 1
+        except Exception:
+            logger.exception("恢复滞留交付派生任务入队失败: job_id=%s", job_id)
+    if job_ids_to_enqueue:
+        logger.info(
+            "已恢复滞留交付派生任务: queued=%s stale_running=%s enqueued=%s",
+            queued_jobs,
+            stale_running_jobs,
+            enqueued_jobs,
+        )
+    return DeliveryRenditionJobRecoverySummary(
+        queued_jobs=queued_jobs,
+        stale_running_jobs=stale_running_jobs,
+        enqueued_jobs=enqueued_jobs,
     )

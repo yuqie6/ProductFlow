@@ -17,6 +17,7 @@ from productflow_backend.application.time import now_utc
 from productflow_backend.domain.enums import MediaVerificationStatus, ProductImageOriginType
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
+    DeliveryRenditionJob,
     ImagePromptArtifactVersionReference,
     ImageSessionAsset,
     MediaObject,
@@ -448,7 +449,6 @@ def ensure_product_image_asset_not_referenced(
         raise ConflictError("商品图片仍被设为封面，不能删除")
     if session.scalar(select(ProductImageAsset.id).where(ProductImageAsset.parent_asset_id == asset_id).limit(1)):
         raise ConflictError("商品图片仍有派生图片，不能删除")
-
     source_query = select(SourceAsset.id).where(SourceAsset.canonical_asset_id == asset_id)
     if excluded_source_asset_id is not None:
         source_query = source_query.where(SourceAsset.id != excluded_source_asset_id)
@@ -487,6 +487,15 @@ def ensure_product_image_asset_not_referenced(
         .limit(1)
     ):
         raise ConflictError("商品图片仍被工作流生成历史作为参考图引用，不能删除")
+    if session.scalar(
+        select(DeliveryRenditionJob.id)
+        .where(
+            (DeliveryRenditionJob.source_asset_id == asset_id)
+            | (DeliveryRenditionJob.result_asset_id == asset_id)
+        )
+        .limit(1)
+    ):
+        raise ConflictError("商品图片仍被交付派生任务引用，不能删除")
 
 
 def verify_pending_media_objects(

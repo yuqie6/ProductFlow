@@ -9,6 +9,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from productflow_backend.application.agent_sync import recover_unfinished_agent_turn_syncs
 from productflow_backend.application.durable_recovery import (
+    recover_unfinished_delivery_rendition_jobs,
     recover_unfinished_image_session_generation_tasks,
     recover_unfinished_workflow_runs,
 )
@@ -23,6 +24,7 @@ from productflow_backend.infrastructure.logging import (
 )
 from productflow_backend.infrastructure.queue import (
     enqueue_agent_turn_sync,
+    enqueue_delivery_rendition_job,
     enqueue_image_session_generation_task,
     enqueue_workflow_run,
 )
@@ -30,6 +32,7 @@ from productflow_backend.presentation.errors import register_exception_handlers
 from productflow_backend.presentation.routes.agent_conversations import router as agent_conversations_router
 from productflow_backend.presentation.routes.agent_internal import router as agent_internal_router
 from productflow_backend.presentation.routes.auth import router as auth_router
+from productflow_backend.presentation.routes.delivery_renditions import router as delivery_renditions_router
 from productflow_backend.presentation.routes.gallery import router as gallery_router
 from productflow_backend.presentation.routes.generation_queue import router as generation_queue_router
 from productflow_backend.presentation.routes.image_sessions import router as image_sessions_router
@@ -55,6 +58,7 @@ def create_app() -> FastAPI:
         recover_unfinished_workflow_runs(enqueue=enqueue_workflow_run)
         recover_unfinished_image_session_generation_tasks(enqueue=enqueue_image_session_generation_task)
         recover_unfinished_agent_turn_syncs(enqueue=enqueue_agent_turn_sync)
+        recover_unfinished_delivery_rendition_jobs(enqueue=enqueue_delivery_rendition_job)
         yield
 
     app = FastAPI(title="ProductFlow API", version="0.1.0", lifespan=lifespan)
@@ -84,6 +88,7 @@ def create_app() -> FastAPI:
     app.include_router(generation_queue_router)
     app.include_router(gallery_router)
     app.include_router(products_router)
+    app.include_router(delivery_renditions_router)
     app.include_router(product_workflows_router)
     app.include_router(workflow_drafts_router)
     app.include_router(workflow_recipes_router)
