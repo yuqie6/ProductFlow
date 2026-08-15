@@ -240,6 +240,59 @@ export interface ProductImageAssetListResponse {
   items: ProductImageAsset[];
 }
 
+export type LegacyArchiveKind = "workflow" | "canvas_agent_thread" | "user_template";
+
+export interface LegacyArchiveListItem {
+  kind: LegacyArchiveKind;
+  id: string;
+  source_id: string;
+  source_key: string | null;
+  product_id: string | null;
+  product_name: string | null;
+  title: string;
+  description: string | null;
+  source_status: string | null;
+  archive_schema_version: number;
+  payload_sha256: string;
+  source_updated_at: string | null;
+  created_at: string;
+  counts: Record<string, number>;
+}
+
+export interface LegacyArchivePage {
+  items: LegacyArchiveListItem[];
+  next_cursor: string | null;
+  total: number;
+  kind_counts: Record<LegacyArchiveKind, number>;
+}
+
+export interface LegacyArchiveAsset {
+  product_image_asset_id: string;
+  role: string;
+  legacy_source_type: string;
+  legacy_source_id: string;
+  display_name: string;
+  original_filename: string;
+  mime_type: string;
+  byte_size: number | null;
+  width: number | null;
+  height: number | null;
+  verification_status: MediaVerificationStatus;
+  download_url: string;
+  preview_url: string;
+  thumbnail_url: string;
+  created_at: string;
+}
+
+export interface LegacyArchiveDetail {
+  item: LegacyArchiveListItem;
+  source_profile: string;
+  source_fingerprint_sha256: string;
+  payload: Record<string, unknown>;
+  diagnostics: Array<Record<string, unknown>>;
+  assets: LegacyArchiveAsset[];
+}
+
 export interface GalleryGenerationSummary {
   workflow_id: string;
   node_id: string;

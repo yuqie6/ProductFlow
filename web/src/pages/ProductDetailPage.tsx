@@ -6,6 +6,7 @@ import {
   CircleDot,
   Check,
   FileText,
+  FolderClock,
   Hand,
   Image as ImageIcon,
   ImagePlus,
@@ -1991,6 +1992,18 @@ export function ProductDetailPage() {
       {!topChromeCollapsed ? <TopNav onHome={() => navigate("/products")} breadcrumbs={product.name} /> : null}
 
       <main className="flex min-h-0 flex-1 flex-col border-t border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-[#060a12]">
+        {!topChromeCollapsed ? (
+          <div className="z-20 flex shrink-0 justify-end border-b border-slate-200 bg-white px-3 py-1.5 dark:border-slate-800 dark:bg-[#0b0f17] sm:px-4">
+            <button
+              type="button"
+              onClick={() => navigate(`/history?${new URLSearchParams({ product_id: productId })}`)}
+              className="inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-semibold text-slate-500 hover:bg-slate-100 hover:text-blue-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-cyan-200"
+            >
+              <FolderClock size={14} />
+              {t("detail.historyArchive")}
+            </button>
+          </div>
+        ) : null}
         {error ? (
           <div className="z-20 border-b border-red-200 bg-red-50 px-4 py-2 text-xs text-red-700 dark:border-red-400/35 dark:bg-red-500/10 dark:text-red-200">
             <AlertCircle size={14} className="mr-2 inline" /> {error}

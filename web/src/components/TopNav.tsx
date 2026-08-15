@@ -3,6 +3,7 @@ import {
   Check,
   ChevronDown,
   GalleryHorizontalEnd,
+  FolderClock,
   Languages,
   LayoutGrid,
   LogOut,
@@ -46,6 +47,12 @@ const navItems = [
     match: (pathname: string) => pathname.startsWith("/gallery"),
   },
   {
+    labelKey: "nav.history",
+    to: "/history",
+    icon: FolderClock,
+    match: (pathname: string) => pathname.startsWith("/history"),
+  },
+  {
     labelKey: "nav.help",
     to: "/help",
     icon: BookOpen,
@@ -67,7 +74,7 @@ const themeIcons: Record<ThemePreference, typeof Sun> = {
 
 function navItemClassName(active: boolean) {
   return [
-    "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-sm font-semibold transition-colors sm:w-auto sm:px-4 xl:px-5",
+    "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-sm font-semibold transition-colors sm:w-auto sm:px-4 lg:w-10 lg:px-0 xl:w-auto xl:px-3 2xl:px-4",
     active
       ? "bg-white text-indigo-700 shadow-sm ring-1 ring-indigo-100 dark:bg-slate-800 dark:text-indigo-300 dark:ring-slate-700"
       : "text-slate-500 hover:bg-white/70 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800/80 dark:hover:text-slate-100",
@@ -200,8 +207,8 @@ export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
                   className={navItemClassName(active)}
                   title={label}
                 >
-                  <Icon size={16} className="sm:mr-2" />
-                  <span className="hidden sm:inline">{label}</span>
+                  <Icon size={16} className="sm:mr-2 lg:mr-0 xl:mr-2" />
+                  <span className="hidden sm:inline lg:hidden xl:inline">{label}</span>
                 </Link>
               );
             })}
@@ -232,8 +239,8 @@ export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
           ) : null}
         </div>
 
-        <div className="hidden min-w-0 flex-wrap items-center justify-start gap-2 xl:flex xl:justify-end">
-          <LanguagePicker />
+        <div className="hidden min-w-0 flex-nowrap items-center justify-start gap-2 xl:flex xl:justify-end">
+          <LanguagePicker compact />
           <div className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1 dark:border-slate-800 dark:bg-slate-900">
             {THEME_PREFERENCES.map((item) => {
               const Icon = themeIcons[item];
@@ -261,9 +268,9 @@ export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
               onClick={onLogout}
               aria-label={t("nav.logout")}
               title={t("nav.logout")}
-              className="flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
             >
-              <LogOut size={15} className="sm:mr-1.5" /> <span className="hidden sm:inline">{t("nav.logout")}</span>
+              <LogOut size={15} />
             </button>
           ) : null}
         </div>
@@ -273,7 +280,10 @@ export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
         aria-label={t("nav.mobile")}
         className="fixed inset-x-0 bottom-0 z-50 border-t border-slate-200 bg-white/96 px-2 pt-1.5 pb-[calc(env(safe-area-inset-bottom)+0.4rem)] shadow-[0_-10px_30px_rgba(15,23,42,0.12)] backdrop-blur dark:border-slate-800 dark:bg-slate-950/94 dark:shadow-[0_-18px_40px_rgba(0,0,0,0.35)] lg:hidden"
       >
-        <div className="mx-auto grid w-full max-w-md grid-cols-5 gap-1">
+        <div
+          className="mx-auto grid w-full max-w-lg gap-1"
+          style={{ gridTemplateColumns: `repeat(${navItems.length}, minmax(0, 1fr))` }}
+        >
           {navItems.map((item) => {
             const Icon = item.icon;
             const active = item.match(location.pathname);

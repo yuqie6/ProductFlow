@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Archive, ArrowLeft, Loader2, RotateCw } from "lucide-react";
+import { Archive, ArrowLeft, FolderClock, Loader2, RotateCw } from "lucide-react";
 import { lazy } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
@@ -111,14 +111,24 @@ function LegacyEmptyProductState({ product }: { product: CanonicalProductDetail 
               {details.map((detail) => <span key={detail}>{detail}</span>)}
             </div>
           ) : null}
-          <button
-            type="button"
-            onClick={() => navigate("/products")}
-            className="mt-8 inline-flex h-11 items-center gap-2 rounded-md bg-zinc-950 px-4 text-sm font-semibold text-white hover:bg-blue-700 dark:bg-cyan-400 dark:text-[#071018] dark:hover:bg-cyan-300"
-          >
-            <ArrowLeft size={16} />
-            {t("productWorkbench.legacy.back")}
-          </button>
+          <div className="mt-8 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => navigate("/products")}
+              className="inline-flex h-11 items-center gap-2 rounded-md bg-zinc-950 px-4 text-sm font-semibold text-white hover:bg-blue-700 dark:bg-cyan-400 dark:text-[#071018] dark:hover:bg-cyan-300"
+            >
+              <ArrowLeft size={16} />
+              {t("productWorkbench.legacy.back")}
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate(`/history?${new URLSearchParams({ product_id: product.id })}`)}
+              className="inline-flex h-11 items-center gap-2 rounded-md border border-zinc-300 bg-white px-4 text-sm font-semibold text-zinc-700 hover:border-blue-400 hover:text-blue-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:border-cyan-400 dark:hover:text-cyan-200"
+            >
+              <FolderClock size={16} />
+              {t("productWorkbench.legacy.history")}
+            </button>
+          </div>
         </div>
       </main>
     </div>

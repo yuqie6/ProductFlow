@@ -40,6 +40,7 @@ from productflow_backend.presentation.routes.delivery_renditions import router a
 from productflow_backend.presentation.routes.gallery import router as gallery_router
 from productflow_backend.presentation.routes.generation_queue import router as generation_queue_router
 from productflow_backend.presentation.routes.image_sessions import router as image_sessions_router
+from productflow_backend.presentation.routes.legacy_archives import router as legacy_archives_router
 from productflow_backend.presentation.routes.product_workflows import router as product_workflows_router
 from productflow_backend.presentation.routes.products import router as products_router
 from productflow_backend.presentation.routes.settings import router as settings_router
@@ -99,6 +100,7 @@ def create_app() -> FastAPI:
     app.include_router(workflow_drafts_router)
     app.include_router(workflow_recipes_router)
     app.include_router(image_sessions_router)
+    app.include_router(legacy_archives_router)
     app.include_router(settings_router)
     return app
 

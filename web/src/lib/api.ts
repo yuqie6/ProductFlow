@@ -40,6 +40,9 @@ import type {
   ImageSessionListResponse,
   ImageSessionStatus,
   ImageToolOptions,
+  LegacyArchiveDetail,
+  LegacyArchiveKind,
+  LegacyArchivePage,
   ProductDetail,
   ProductHistory,
   ProductListSort,
@@ -435,6 +438,41 @@ export const api = {
     return toApiUrl(
       `/api/v2/product-image-assets/${encodeURIComponent(assetId)}/download${query}`,
     );
+  },
+  listLegacyArchives(input?: {
+    kind?: LegacyArchiveKind;
+    product_id?: string;
+    q?: string;
+    after?: string | null;
+    limit?: number;
+  }): Promise<LegacyArchivePage> {
+    const params = new URLSearchParams({ limit: String(input?.limit ?? 30) });
+    if (input?.kind) {
+      params.set("kind", input.kind);
+    }
+    if (input?.product_id) {
+      params.set("product_id", input.product_id);
+    }
+    if (input?.q?.trim()) {
+      params.set("q", input.q.trim());
+    }
+    if (input?.after) {
+      params.set("after", input.after);
+    }
+    return request(`/api/v2/legacy-archives?${params.toString()}`);
+  },
+  getLegacyArchive(kind: LegacyArchiveKind, archiveId: string): Promise<LegacyArchiveDetail> {
+    return request(
+      `/api/v2/legacy-archives/${encodeURIComponent(kind)}/${encodeURIComponent(archiveId)}`,
+    );
+  },
+  async downloadLegacyArchive(kind: LegacyArchiveKind, archiveId: string): Promise<Blob> {
+    const path = `/api/v2/legacy-archives/${encodeURIComponent(kind)}/${encodeURIComponent(archiveId)}/export`;
+    const response = await fetch(toApiUrl(path), { credentials: "include" });
+    if (!response.ok) {
+      throw await responseApiError(response);
+    }
+    return response.blob();
   },
   getCanonicalProduct(productId: string): Promise<CanonicalProductDetail> {
     return request(`/api/v2/products/${productId}`);
