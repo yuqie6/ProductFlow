@@ -38,7 +38,7 @@ import type {
   LegacyArchiveListItem,
   ProductSummary,
 } from "../lib/types";
-import { ImagePreviewModal } from "./product-detail/ImagePreviewModal";
+import { ImagePreviewModal } from "./legacy-history/ImagePreviewModal";
 import {
   boundedJson,
   flattenLegacyArchivePages,
@@ -1161,9 +1161,9 @@ function RebuildTargetProductRow({
       }`}
     >
       <span className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-md border border-slate-200 bg-slate-100 dark:border-slate-700 dark:bg-slate-800">
-        {product.source_image_thumbnail_url ? (
+        {product.cover_image_thumbnail_url ? (
           <img
-            src={api.toApiUrl(product.source_image_thumbnail_url)}
+            src={api.toApiUrl(product.cover_image_thumbnail_url)}
             alt=""
             className="h-full w-full object-cover"
           />

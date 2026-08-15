@@ -369,7 +369,7 @@ export function ImageChatPage() {
     () => compactImageToolOptions(toolOptions, imageToolAllowedFields),
     [imageToolAllowedFields, toolOptions],
   );
-  const submitGenerationCount = effectiveImageGenerationSubmitCount(generationCount, compactedToolOptions);
+  const submitGenerationCount = effectiveImageGenerationSubmitCount(generationCount);
   const hasActiveGenerationTask = imageSession?.generation_tasks.some(isImageSessionGenerationTaskActive) ?? false;
 
   const sessionStatusQuery = useQuery({
@@ -591,7 +591,7 @@ export function ImageChatPage() {
         : null;
       const submittedCount = submittedTask
         ? clampImageGenerationTaskCandidateCount(submittedTask.generation_count)
-        : effectiveImageGenerationSubmitCount(variables.generation_count, variables.tool_options);
+        : effectiveImageGenerationSubmitCount(variables.generation_count);
       if (placeholderId) {
         setSelectedTaskPlaceholderId(placeholderId);
         setSelectedGeneratedAssetId(null);
@@ -651,16 +651,17 @@ export function ImageChatPage() {
     !selectedSessionId || !imageSession || !draft.trim() || generateMutation.isPending || Boolean(baseRequirementMessage);
 
   const attachMutation = useMutation({
-    mutationFn: (payload: { assetId: string; target: "reference" | "main_source"; productId: string }) =>
-      api.attachImageSessionAssetToProduct(selectedSessionId!, payload.assetId, {
-        target: payload.target,
-        product_id: payload.productId,
-      }),
-    onSuccess: async (response) => {
-      setSuccessMessage(response.message);
+    mutationFn: (payload: { assetId: string; productId: string }) =>
+      api.attachImageSessionAssetToProductCanonical(selectedSessionId!, payload.assetId, payload.productId),
+    onSuccess: async (_asset, payload) => {
+      setSuccessMessage(t("chat.savedToProduct"));
       setErrorMessage("");
-      await queryClient.invalidateQueries({ queryKey: ["products"] });
-      await queryClient.invalidateQueries({ queryKey: ["product", response.product_id] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["products"] }),
+        queryClient.invalidateQueries({ queryKey: ["product", payload.productId] }),
+        queryClient.invalidateQueries({ queryKey: ["product-image-library", payload.productId] }),
+        queryClient.invalidateQueries({ queryKey: ["product-image-library-assets", payload.productId] }),
+      ]);
     },
     onError: (error) => {
       setErrorMessage(error instanceof ApiError ? error.detail : t("chat.saveProductFailed"));
@@ -760,7 +761,7 @@ export function ImageChatPage() {
     renameSessionMutation.mutate(nextTitle);
   }
 
-  function handleAttach(target: "reference" | "main_source") {
+  function handleAttach() {
     if (!selectedRound) {
       return;
     }
@@ -770,7 +771,6 @@ export function ImageChatPage() {
     }
     attachMutation.mutate({
       assetId: selectedRound.generated_asset.id,
-      target,
       productId: targetProductId,
     });
   }

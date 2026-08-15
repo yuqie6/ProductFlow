@@ -15,7 +15,6 @@ describe("image tool option helpers", () => {
         action: "generate",
         input_fidelity: "high",
         partial_images: 4,
-        n: 0,
       }),
     ).toEqual({
       model: "gpt-image-2",
@@ -25,7 +24,6 @@ describe("image tool option helpers", () => {
       input_fidelity: "high",
       partial_images: 3,
     });
-    expect(compactImageToolOptions({ n: 0 }, ["n"] as const)).toBeUndefined();
     expect(compactImageToolOptions({ background: "transparent" }, ["background"] as const)).toEqual({
       background: "transparent",
     });

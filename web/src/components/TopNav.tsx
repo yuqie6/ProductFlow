@@ -3,7 +3,6 @@ import {
   Check,
   ChevronDown,
   GalleryHorizontalEnd,
-  FolderClock,
   Languages,
   LayoutGrid,
   LogOut,
@@ -45,12 +44,6 @@ const navItems = [
     to: "/gallery",
     icon: GalleryHorizontalEnd,
     match: (pathname: string) => pathname.startsWith("/gallery"),
-  },
-  {
-    labelKey: "nav.history",
-    to: "/history",
-    icon: FolderClock,
-    match: (pathname: string) => pathname.startsWith("/history"),
   },
   {
     labelKey: "nav.help",

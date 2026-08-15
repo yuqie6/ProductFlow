@@ -155,7 +155,7 @@ export function ProductListSurface({
 
         <div className="hidden min-h-[38px] grid-cols-[minmax(320px,1fr)_130px_150px_78px] items-center border-b border-slate-200 bg-slate-50 text-[11px] font-medium text-slate-400 lg:grid xl:grid-cols-[minmax(300px,1.05fr)_minmax(220px,.8fr)_130px_150px_78px] dark:!border-[#292c32] dark:!bg-[#17191d] dark:!text-[#737780]">
           <div className="px-[18px]">{t("products.table.product")}</div>
-          <div className="hidden px-[18px] xl:block">{t("products.table.sourceFile")}</div>
+          <div className="hidden px-[18px] xl:block">{t("products.table.coverImage")}</div>
           <div className="px-[18px]">{t("products.table.created")}</div>
           <div className="px-[18px]">{t("products.table.updated")}</div>
           <div className="px-3 text-center">{t("products.table.actions")}</div>
@@ -266,7 +266,7 @@ function ProductRow({
     product.price ? formatPrice(product.price) : null,
   ].filter((value): value is string => Boolean(value));
   const metadataText = metadata.join(" · ");
-  const compactMetadata = [...metadata, product.source_image_filename].filter(
+  const compactMetadata = [...metadata, product.cover_image_filename].filter(
     (value): value is string => Boolean(value),
   );
   const compactMetadataText = compactMetadata.join(" · ");
@@ -318,8 +318,8 @@ function ProductRow({
       </div>
 
       <div className="relative z-0 hidden min-w-0 px-[18px] text-xs text-slate-500 xl:col-start-2 xl:row-start-1 xl:block dark:!text-[#a4a8b0]">
-        <span className="block truncate" title={product.source_image_filename ?? undefined}>
-          {product.source_image_filename ?? "--"}
+        <span className="block truncate" title={product.cover_image_filename ?? undefined}>
+          {product.cover_image_filename ?? "--"}
         </span>
       </div>
 
@@ -356,14 +356,14 @@ function ProductRow({
 
 function ProductThumbnail({ product }: { product: ProductSummary }) {
   const [failed, setFailed] = useState(false);
-  const source = product.source_image_thumbnail_url ?? product.source_image_preview_url;
+  const source = product.cover_image_thumbnail_url ?? product.cover_image_preview_url;
 
   return (
     <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-md border border-slate-300 bg-slate-50 text-slate-400 transition-colors group-hover:border-indigo-300 group-focus-within:border-indigo-300 lg:h-16 lg:w-16 dark:!border-[#373b43] dark:!bg-[#17191d] dark:!text-[#737780] dark:group-hover:!border-[#6f76c9] dark:group-focus-within:!border-[#6f76c9]">
       {source && !failed ? (
         <img
           src={api.toApiUrl(source)}
-          alt={product.source_image_filename ?? product.name}
+          alt={product.cover_image_filename ?? product.name}
           className="h-full w-full object-cover"
           loading="lazy"
           decoding="async"

@@ -22,12 +22,6 @@ describe("Agent product workspace API", () => {
       "/api/v2/products/product%2F1/agent-workbench",
       "/api/v2/products/product-1/workflow",
     ]);
-    expect(fetchMock.mock.calls.map(([url]) => url)).not.toContain(
-      "/api/products/product-1/workflow",
-    );
-    expect(fetchMock.mock.calls.map(([url]) => url)).not.toContain(
-      "/api/workflow/canvas-templates",
-    );
   });
 
   it("owns the multipart field names and keeps one stable idempotency header", async () => {
@@ -69,9 +63,6 @@ describe("Agent product workspace API", () => {
       ],
     });
     expect(formData.getAll("images")).toEqual([front, detail]);
-    expect(fetchMock.mock.calls.map(([requestUrl]) => requestUrl)).not.toContain(
-      "/api/workflow/canvas-templates",
-    );
   });
 
   it("supports draft creation, workspace recovery, and bounded intake finalization", async () => {

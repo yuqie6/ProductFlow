@@ -461,7 +461,7 @@ function directoryLabel(
       if (key === "upload") return t("detail.library.source.upload");
       if (key === "workflow_generation") return t("detail.library.source.workflow");
       if (key === "image_session_attach") return t("detail.library.source.session");
-      return t("detail.library.source.legacy");
+      return t("detail.library.sources");
     }
     case "user_folder": return bootstrap.user_folders.find((folder) => folder.id === directory.key)?.name ?? t("detail.library.folders");
   }

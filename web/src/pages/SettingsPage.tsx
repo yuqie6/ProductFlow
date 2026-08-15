@@ -91,7 +91,6 @@ export interface ProviderProfileFormState {
 
 export interface ProviderProfileUsage {
   prompt: boolean;
-  legacyText: boolean;
   agent: boolean;
   image: boolean;
 }
@@ -229,9 +228,6 @@ export function settingsSectionIds(): SettingsSectionId[] {
 }
 
 export function settingsSectionFromSearchParam(value: string | null): SettingsSectionId {
-  if (value === "text") {
-    return "prompt";
-  }
   return SETTINGS_SECTIONS.some((section) => section.id === value) ? (value as SettingsSectionId) : "providers";
 }
 
@@ -400,15 +396,8 @@ export function providerDrawerEditState(profile: ProviderProfile): ProviderDrawe
 }
 
 export function providerUsageFromBindings(bindings: ProviderBinding[], profileId: string): ProviderProfileUsage {
-  const prompt = bindings.some(
-    (binding) => binding.purpose === "prompt" && binding.provider_profile_id === profileId,
-  );
-  const legacyText = bindings.some(
-    (binding) => binding.purpose === "text" && binding.provider_profile_id === profileId,
-  );
   return {
-    prompt,
-    legacyText: legacyText && !prompt,
+    prompt: bindings.some((binding) => binding.purpose === "prompt" && binding.provider_profile_id === profileId),
     agent: bindings.some((binding) => binding.purpose === "agent" && binding.provider_profile_id === profileId),
     image: bindings.some((binding) => binding.purpose === "image" && binding.provider_profile_id === profileId),
   };
@@ -418,9 +407,6 @@ export function providerUsageLabelKeys(usage: ProviderProfileUsage): Translation
   const labels: TranslationKey[] = [];
   if (usage.prompt) {
     labels.push("settings.provider.usagePrompt");
-  }
-  if (usage.legacyText) {
-    labels.push("settings.provider.usageLegacyText");
   }
   if (usage.agent) {
     labels.push("settings.provider.usageAgent");
@@ -432,7 +418,7 @@ export function providerUsageLabelKeys(usage: ProviderProfileUsage): Translation
 }
 
 export function providerDisableBlocked(profile: ProviderProfile, usage: ProviderProfileUsage): boolean {
-  return profile.enabled && (usage.prompt || usage.legacyText || usage.agent || usage.image);
+  return profile.enabled && (usage.prompt || usage.agent || usage.image);
 }
 
 export function providerProfileCreatePayload(form: ProviderProfileFormState): ProviderProfileCreateRequest {
@@ -558,12 +544,7 @@ export function imageBindingPayloadFromDraft(draft: ImageBindingDraft): Provider
 export function itemsForSection(config: ConfigResponse | undefined, section: SettingsSectionId): ConfigItem[] {
   const items = config?.items ?? [];
   if (section === "prompts") {
-    return items.filter(
-      (item) =>
-        item.category === "提示词" &&
-        item.key !== "prompt_brief_system" &&
-        item.key !== "prompt_copy_system",
-    );
+    return items.filter((item) => item.category === "提示词");
   }
   if (section === "upload") {
     return items.filter((item) => item.category === "海报与上传" || item.category === "图片工具参数");

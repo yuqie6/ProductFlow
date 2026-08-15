@@ -149,7 +149,7 @@ describe("image chat branching helpers", () => {
     expect(clampGenerationCount(12)).toBe(10);
     expect(clampImageGenerationTaskCandidateCount(10)).toBe(10);
     expect(clampImageGenerationTaskCandidateCount(12)).toBe(10);
-    expect(effectiveImageGenerationSubmitCount(4, { n: 10 })).toBe(4);
+    expect(effectiveImageGenerationSubmitCount(4)).toBe(4);
   });
 
   it("builds a lightweight branch tree with task-derived placeholders", () => {
@@ -637,7 +637,7 @@ describe("image chat branching helpers", () => {
 
   it("merges lightweight session status into cached detail without replacing rounds and assets", () => {
     const cached = detail({
-      title: "旧标题",
+      title: "缓存标题",
       assets: [asset("asset-1")],
       rounds: [round({ id: "round-1" })],
       generation_tasks: [task({ id: "task-1", status: "queued" })],
@@ -646,7 +646,7 @@ describe("image chat branching helpers", () => {
     const merged = mergeImageSessionStatusIntoDetail(
       cached,
       status({
-        title: "新标题",
+        title: "最新标题",
         generation_tasks: [
           task({
             id: "task-1",
@@ -660,7 +660,7 @@ describe("image chat branching helpers", () => {
       }),
     );
 
-    expect(merged.title).toBe("新标题");
+    expect(merged.title).toBe("最新标题");
     expect(merged.assets).toBe(cached.assets);
     expect(merged.rounds).toBe(cached.rounds);
     expect(merged.generation_tasks[0].status).toBe("queued");

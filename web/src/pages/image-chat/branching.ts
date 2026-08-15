@@ -547,11 +547,7 @@ export function clampImageGenerationTaskCandidateCount(value: number): number {
   return Math.min(IMAGE_CHAT_TASK_CANDIDATE_COUNT_MAX, Math.max(1, Math.round(value)));
 }
 
-export function effectiveImageGenerationSubmitCount(
-  generationCount: number,
-  toolOptions: ImageToolOptions | null | undefined,
-): number {
-  void toolOptions;
+export function effectiveImageGenerationSubmitCount(generationCount: number): number {
   return clampGenerationCount(generationCount);
 }
 
@@ -654,7 +650,7 @@ export function buildImageGenerationSubmitSignature(payload: ImageGenerationSubm
     size: payload.size,
     base_asset_id: payload.base_asset_id ?? null,
     selected_reference_asset_ids: payload.selected_reference_asset_ids,
-    generation_count: effectiveImageGenerationSubmitCount(payload.generation_count, payload.tool_options),
+    generation_count: effectiveImageGenerationSubmitCount(payload.generation_count),
     tool_options: normalizeSubmitToolOptions(payload.tool_options),
   });
 }

@@ -1,4 +1,4 @@
-import { Check, Image as ImageIcon, ImagePlus, Loader2, Trash2 } from "lucide-react";
+import { Check, ImagePlus, Loader2, Trash2 } from "lucide-react";
 
 import { ImageDropZone } from "../../components/ImageDropZone";
 import { SelectField } from "../../components/SelectField";
@@ -111,7 +111,7 @@ interface ProductAssociationPanelProps {
   selectedRound: ImageSessionRound | null;
   attachBusy: boolean;
   onTargetProductChange: (value: string) => void;
-  onAttach: (target: "reference" | "main_source") => void;
+  onAttach: () => void;
   t: ImageChatTranslate;
 }
 
@@ -155,26 +155,15 @@ export function ProductAssociationPanel({
             {t("chat.selectHistoryFirst")}
           </div>
         )}
-        <div className="grid gap-2">
-          <button
-            type="button"
-            onClick={() => onAttach("reference")}
-            disabled={saveDisabled}
-            className="inline-flex items-center justify-center rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:border-slate-300 hover:text-slate-950 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950/70 dark:text-slate-200 dark:hover:border-violet-400/55 dark:hover:text-violet-100"
-          >
-            {attachBusy ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Check size={14} className="mr-2" />}
-            {t("chat.saveAsReference")}
-          </button>
-          <button
-            type="button"
-            onClick={() => onAttach("main_source")}
-            disabled={saveDisabled}
-            className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:opacity-60 dark:bg-violet-500/20 dark:text-violet-100 dark:ring-1 dark:ring-violet-400/35 dark:hover:bg-violet-500/30"
-          >
-            {attachBusy ? <Loader2 size={14} className="mr-2 animate-spin" /> : <ImageIcon size={14} className="mr-2" />}
-            {t("chat.setMainSource")}
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={onAttach}
+          disabled={saveDisabled}
+          className="inline-flex w-full items-center justify-center rounded-xl bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-slate-800 disabled:opacity-60 dark:bg-violet-500/20 dark:text-violet-100 dark:ring-1 dark:ring-violet-400/35 dark:hover:bg-violet-500/30"
+        >
+          {attachBusy ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Check size={14} className="mr-2" />}
+          {t("chat.saveToProduct")}
+        </button>
       </div>
     </div>
   );

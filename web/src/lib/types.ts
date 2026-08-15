@@ -1,10 +1,6 @@
-export type ProductWorkflowState = "draft" | "copy_ready" | "poster_ready" | "failed";
 export type ProductListSort = "updated_desc" | "created_desc" | "name_asc";
-export type CopyStatus = "draft" | "confirmed";
-export type PosterKind = "main_image" | "promo_poster";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 export type DeliveryRenditionStatus = Exclude<JobStatus, "cancelled">;
-export type SourceAssetKind = "original_image" | "reference_image" | "processed_product_image";
 export type ImageSessionAssetKind = "reference_upload" | "generated_image";
 export type MediaVerificationStatus = "verified" | "legacy_pending" | "missing";
 export type ProductImageOriginType =
@@ -38,140 +34,17 @@ export type GalleryDirectoryKind =
   | "unorganized"
   | "user_folder";
 export type GalleryAssetSort = "created_desc" | "created_asc" | "name_asc" | "name_desc";
-export type WorkflowNodeType =
-  | "product_context"
-  | "reference_image"
-  | "copy_generation"
-  | "image_generation";
 export type WorkflowNodeTypeV2 =
   | "product_context"
   | "reference_image"
   | "prompt_generation"
   | "image_generation";
 export type WorkflowNodeStatus = "idle" | "queued" | "running" | "succeeded" | "failed" | "cancelled";
-export type WorkflowNodeRunStatusValue = WorkflowNodeStatus;
 export type WorkflowRunStatus = "running" | "succeeded" | "failed" | "cancelled";
-export type WorkflowRetryHint = "retry_later" | "revise_input" | "check_settings";
-export type CanvasTemplateKind = "full_canvas" | "node_group";
-export type CanvasTemplateScenario =
-  | "main_image"
-  | "taobao_main_image"
-  | "xiaohongshu_image"
-  | "multi_angle"
-  | "sku_variant"
-  | "feature_infographic"
-  | "size_spec"
-  | "scale_reference"
-  | "package_checklist"
-  | "usage_steps"
-  | "comparison"
-  | "model_lifestyle"
-  | "scene_image"
-  | "detail_material"
-  | "campaign_promotion"
-  | "short_video_cover"
-  | "white_background";
 
 export interface SessionState {
   authenticated: boolean;
   access_required: boolean;
-}
-
-export interface SourceAsset {
-  id: string;
-  kind: SourceAssetKind;
-  original_filename: string;
-  mime_type: string;
-  source_poster_variant_id?: string | null;
-  download_url: string;
-  preview_url: string;
-  thumbnail_url: string;
-  created_at: string;
-}
-
-export interface CreativeBriefSummary {
-  id: string;
-  payload: {
-    positioning?: string;
-    audience?: string;
-    selling_angles?: string[];
-    taboo_phrases?: string[];
-    poster_style_hint?: string;
-    [key: string]: unknown;
-  };
-  provider_name: string;
-  model_name: string;
-  prompt_version: string;
-  created_at: string;
-}
-
-export interface CopyBlock {
-  id: string;
-  role?: string | null;
-  label?: string | null;
-  text: string;
-  note?: string | null;
-  visual_hint?: string | null;
-  priority?: number | null;
-}
-
-export interface CopySection {
-  id: string;
-  title?: string | null;
-  body?: string | null;
-  items: CopyBlock[];
-  visual_hint?: string | null;
-}
-
-export type CopyContent =
-  | { kind: "freeform"; text: string }
-  | { kind: "blocks"; blocks: CopyBlock[] }
-  | { kind: "layout_brief"; sections: CopySection[] };
-
-export interface VisualGuidance {
-  main_message?: string | null;
-  hierarchy: string[];
-  composition_hint?: string | null;
-  text_density?: "none" | "low" | "medium" | "high" | null;
-  avoid: string[];
-}
-
-export interface CopyPayloadV2 {
-  version: 2;
-  purpose?: string | null;
-  summary: string;
-  content: CopyContent;
-  visual_guidance?: VisualGuidance | null;
-}
-
-export interface CopySet {
-  id: string;
-  creative_brief_id: string | null;
-  status: CopyStatus;
-  structured_payload: CopyPayloadV2;
-  model_structured_payload: CopyPayloadV2 | null;
-  provider_name: string;
-  model_name: string;
-  prompt_version: string;
-  created_at: string;
-  updated_at: string;
-  edited_at: string | null;
-  confirmed_at: string | null;
-}
-
-export interface PosterVariant {
-  id: string;
-  product_id: string;
-  copy_set_id: string;
-  kind: PosterKind;
-  template_name: string;
-  mime_type: string;
-  width: number;
-  height: number;
-  download_url: string;
-  preview_url: string;
-  thumbnail_url: string;
-  created_at: string;
 }
 
 export interface ProductSummary {
@@ -179,13 +52,11 @@ export interface ProductSummary {
   name: string;
   category: string | null;
   price: string | null;
-  workflow_state: ProductWorkflowState;
-  latest_copy_status: CopyStatus | null;
-  latest_poster_at: string | null;
-  source_image_filename: string | null;
-  source_image_download_url: string | null;
-  source_image_preview_url: string | null;
-  source_image_thumbnail_url: string | null;
+  cover_image_asset_id: string | null;
+  cover_image_filename: string | null;
+  cover_image_download_url: string | null;
+  cover_image_preview_url: string | null;
+  cover_image_thumbnail_url: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -195,22 +66,6 @@ export interface ProductListResponse {
   total: number;
   page: number;
   page_size: number;
-}
-
-export interface ProductDetail {
-  id: string;
-  name: string;
-  category: string | null;
-  price: string | null;
-  source_note: string | null;
-  workflow_state: ProductWorkflowState;
-  source_assets: SourceAsset[];
-  latest_brief: CreativeBriefSummary | null;
-  current_confirmed_copy_set: CopySet | null;
-  copy_sets: CopySet[];
-  poster_variants: PosterVariant[];
-  created_at: string;
-  updated_at: string;
 }
 
 export interface ProductImageAsset {
@@ -381,11 +236,6 @@ export interface CanonicalProductDetail {
   updated_at: string;
 }
 
-export interface CanonicalProductCreateResponse {
-  product: CanonicalProductDetail;
-  created_assets: ProductImageAsset[];
-}
-
 export interface AgentProductImageTypeOption {
   key: AgentProductImageTypeKey;
   title: string;
@@ -442,160 +292,6 @@ export interface FinalizeAgentProductWorkspaceIntakeInput {
   selection: AgentProductSelectionV1;
   images: File[];
   idempotency_key: string;
-}
-
-export interface ProductHistory {
-  copy_sets: CopySet[];
-  poster_variants: PosterVariant[];
-}
-
-export interface CreateProductInput {
-  name: string;
-  category?: string;
-  price?: string;
-  source_note?: string;
-  canvas_template_key?: string;
-  template_language?: string;
-  file: File;
-  referenceFiles?: File[];
-}
-
-export interface CreateCanonicalProductInput {
-  name: string;
-  category?: string;
-  price?: string;
-  source_note?: string;
-  images: File[];
-}
-
-export interface WorkflowNode {
-  id: string;
-  workflow_id: string;
-  node_type: WorkflowNodeType;
-  title: string;
-  position_x: number;
-  position_y: number;
-  config_json: Record<string, unknown>;
-  status: WorkflowNodeStatus;
-  output_json: Record<string, unknown> | null;
-  failure_reason: string | null;
-  is_retryable: boolean;
-  attempt_count: number;
-  retry_count: number;
-  non_retryable_reason: string | null;
-  retry_hint: WorkflowRetryHint | null;
-  last_run_at: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface WorkflowEdge {
-  id: string;
-  workflow_id: string;
-  source_node_id: string;
-  target_node_id: string;
-  source_handle: string | null;
-  target_handle: string | null;
-  created_at: string;
-}
-
-export interface WorkflowNodeRun {
-  id: string;
-  workflow_run_id: string;
-  node_id: string;
-  status: WorkflowNodeRunStatusValue;
-  output_json: Record<string, unknown> | null;
-  failure_reason: string | null;
-  copy_set_id: string | null;
-  poster_variant_id: string | null;
-  started_at: string;
-  finished_at: string | null;
-}
-
-export interface WorkflowNodeRunStatus {
-  id: string;
-  workflow_run_id: string;
-  node_id: string;
-  status: WorkflowNodeRunStatusValue;
-  failure_reason: string | null;
-  started_at: string;
-  finished_at: string | null;
-}
-
-export interface WorkflowRun {
-  id: string;
-  workflow_id: string;
-  status: WorkflowRunStatus;
-  started_at: string;
-  finished_at: string | null;
-  failure_reason: string | null;
-  progress_metadata: Record<string, unknown> | null;
-  is_retryable: boolean;
-  is_cancelable: boolean;
-  queue_active_count: number;
-  queue_running_count: number;
-  queue_queued_count: number;
-  queue_max_concurrent_tasks: number;
-  queued_ahead_count: number | null;
-  queue_position: number | null;
-  node_runs: WorkflowNodeRun[];
-}
-
-export interface WorkflowRunStatusSummary {
-  id: string;
-  workflow_id: string;
-  status: WorkflowRunStatus;
-  started_at: string;
-  finished_at: string | null;
-  failure_reason: string | null;
-  progress_metadata: Record<string, unknown> | null;
-  is_retryable: boolean;
-  is_cancelable: boolean;
-  queue_active_count: number;
-  queue_running_count: number;
-  queue_queued_count: number;
-  queue_max_concurrent_tasks: number;
-  queued_ahead_count: number | null;
-  queue_position: number | null;
-  node_runs: WorkflowNodeRunStatus[];
-}
-
-export interface WorkflowNodeStatusSummary {
-  id: string;
-  workflow_id: string;
-  status: WorkflowNodeStatus;
-  failure_reason: string | null;
-  is_retryable: boolean;
-  attempt_count: number;
-  retry_count: number;
-  non_retryable_reason: string | null;
-  retry_hint: WorkflowRetryHint | null;
-  last_run_at: string | null;
-  updated_at: string;
-}
-
-export interface ProductWorkflow {
-  id: string;
-  product_id: string;
-  title: string;
-  active: boolean;
-  nodes: WorkflowNode[];
-  edges: WorkflowEdge[];
-  runs: WorkflowRun[];
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ProductWorkflowStatus {
-  id: string;
-  product_id: string;
-  title: string;
-  active: boolean;
-  has_active_workflow: boolean;
-  nodes: WorkflowNodeStatusSummary[];
-  runs: WorkflowRunStatusSummary[];
-  created_at: string;
-  updated_at: string;
 }
 
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
@@ -1309,20 +1005,14 @@ export interface AgentProductWorkspaceSnapshot extends AgentProductWorkspaceCrea
   intake_finalized: boolean;
 }
 
-export type AgentWorkbenchBootstrap =
-  | {
-      mode: "agent_v2";
-      product: CanonicalProductDetail;
-      conversation: AgentConversation;
-      workflow_draft: WorkflowDraft;
-      active_workflow: ProductWorkflowV2 | null;
-      latest_workflow_revision: number;
-    }
-  | {
-      mode: "legacy_v1";
-      product: CanonicalProductDetail;
-      has_existing_v1_workflow: boolean;
-    };
+export interface AgentWorkbenchBootstrap {
+  mode: "agent_v2";
+  product: CanonicalProductDetail;
+  conversation: AgentConversation;
+  workflow_draft: WorkflowDraft;
+  active_workflow: ProductWorkflowV2 | null;
+  latest_workflow_revision: number;
+}
 
 export interface WorkflowRecipeApplicationResult {
   created: boolean;
@@ -1451,97 +1141,6 @@ export interface WorkflowRevealEvent {
   created_at: string;
 }
 
-export interface CanvasTemplateScenarioMetadata {
-  scenario: CanvasTemplateScenario;
-  title: string;
-  description: string;
-  ecommerce_stage: string;
-  tags: string[];
-}
-
-export interface CanvasTemplateOutputSlot {
-  node_key: string;
-  label: string;
-  description: string;
-}
-
-export interface CanvasTemplateReferenceInputHint {
-  node_key: string;
-  role: string;
-  label: string;
-  required: boolean;
-  description: string;
-}
-
-export interface CanvasTemplateSuggestedConnection {
-  source_node_key: string;
-  target_node_key: string;
-  reason: string;
-}
-
-export interface CanvasTemplateDefaultExternalConnection {
-  source: "existing_product_context";
-  target_node_key: string;
-  label: string;
-}
-
-export interface CanvasTemplatePreviewNode {
-  key: string;
-  node_type: WorkflowNodeType;
-  title: string;
-  position_x: number;
-  position_y: number;
-  size: string | null;
-}
-
-export interface CanvasTemplatePreviewEdge {
-  source_node_key: string;
-  target_node_key: string;
-}
-
-export interface CanvasTemplateSummary {
-  key: string;
-  version: number;
-  kind: CanvasTemplateKind;
-  title: string;
-  description: string;
-  source: "builtin" | "user";
-  user_template_id: string | null;
-  scenario: CanvasTemplateScenarioMetadata;
-  preview_nodes: CanvasTemplatePreviewNode[];
-  preview_edges: CanvasTemplatePreviewEdge[];
-  output_slots: CanvasTemplateOutputSlot[];
-  reference_input_hints: CanvasTemplateReferenceInputHint[];
-  suggested_connections: CanvasTemplateSuggestedConnection[];
-  default_external_connections: CanvasTemplateDefaultExternalConnection[];
-}
-
-export interface CanvasTemplateListResponse {
-  items: CanvasTemplateSummary[];
-}
-
-export interface ApplyWorkflowTemplateGroupInput {
-  template_key: string;
-  position_x: number;
-  position_y: number;
-  template_language?: string;
-}
-
-export interface CreateUserTemplateGroupInput {
-  title: string;
-  description?: string;
-  node_ids: string[];
-}
-
-export interface UpdateUserTemplateGroupInput {
-  title?: string;
-  description?: string;
-}
-
-export interface CopySetUpdateRequest {
-  structured_payload: CopyPayloadV2;
-}
-
 export interface ImageSessionAsset {
   id: string;
   kind: ImageSessionAssetKind;
@@ -1585,7 +1184,6 @@ export interface ImageToolOptions {
   action?: "auto" | "generate" | "edit" | null;
   input_fidelity?: "low" | "high" | null;
   partial_images?: number | null;
-  n?: number | null;
 }
 
 export type ImageToolOptionKey = keyof ImageToolOptions;
@@ -1657,11 +1255,6 @@ export interface ImageSessionStatus {
 
 export interface ImageSessionListResponse {
   items: ImageSessionSummary[];
-}
-
-export interface ProductWritebackResponse {
-  product_id: string;
-  message: string;
 }
 
 export interface GalleryEntry {
@@ -1745,7 +1338,7 @@ export interface SettingsLockState {
 }
 
 export type ProviderCapability = "text_responses" | "image_responses" | "image_images" | "image_google_gemini";
-export type ProviderPurpose = "text" | "prompt" | "image" | "agent";
+export type ProviderPurpose = "prompt" | "image" | "agent";
 export type ProviderType = "openai_compatible" | "google_gemini";
 
 export interface ProviderProfile {
@@ -1831,7 +1424,6 @@ export interface SettingsExportProviderProfile {
 export interface SettingsExportProviderBinding {
   purpose: ProviderPurpose;
   provider_kind: string;
-  provider_profile_name?: string | null;
   provider_profile_id?: string | null;
   model_settings: Record<string, unknown>;
   config: Record<string, unknown>;
@@ -1859,12 +1451,4 @@ export interface SettingsImportCommitResponse {
   preview: SettingsImportPreviewResponse;
   config: ConfigResponse;
   provider_config: ProviderConfigResponse;
-}
-
-export interface DuplicateWorkflowNodeGroupInput {
-  node_ids: string[];
-  offset_x?: number;
-  offset_y?: number;
-  position_x?: number;
-  position_y?: number;
 }

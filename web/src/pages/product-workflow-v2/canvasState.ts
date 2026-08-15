@@ -2,8 +2,8 @@ export interface WorkflowCanvasViewport {
   x: number;
   y: number;
   zoom: number;
-  surface_width?: number;
-  surface_height?: number;
+  surface_width: number;
+  surface_height: number;
 }
 
 export interface WorkflowCanvasStateV1 {
@@ -81,9 +81,6 @@ export function isWorkflowCanvasViewportCompatible(
   if (!viewport || !Number.isFinite(surfaceWidth) || surfaceWidth <= 0) {
     return false;
   }
-  if (viewport.surface_width === undefined) {
-    return surfaceWidth >= 1024;
-  }
   const savedWideLayout = viewport.surface_width >= 1024;
   const currentWideLayout = surfaceWidth >= 1024;
   const widthRatio = Math.max(viewport.surface_width, surfaceWidth)
@@ -110,12 +107,15 @@ function parseViewport(value: unknown): WorkflowCanvasViewport | null {
   }
   const surfaceWidth = parseSurfaceDimension(value.surface_width);
   const surfaceHeight = parseSurfaceDimension(value.surface_height);
+  if (surfaceWidth === null || surfaceHeight === null) {
+    return null;
+  }
   return {
     x: x as number,
     y: y as number,
     zoom: zoom as number,
-    ...(surfaceWidth === null ? {} : { surface_width: surfaceWidth }),
-    ...(surfaceHeight === null ? {} : { surface_height: surfaceHeight }),
+    surface_width: surfaceWidth,
+    surface_height: surfaceHeight,
   };
 }
 

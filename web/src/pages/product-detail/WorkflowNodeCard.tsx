@@ -11,20 +11,12 @@ import {
 import { formatDateTime } from "../../lib/format";
 import type { DownloadableImage } from "../../lib/image-downloads";
 import { useI18n } from "../../lib/preferences";
-import type { WorkflowNode, WorkflowNodeStatus, WorkflowNodeTypeV2 } from "../../lib/types";
+import type { WorkflowNodeStatus, WorkflowNodeTypeV2 } from "../../lib/types";
 import { DownloadLink } from "./ImageDownloadComponents";
 import { IMAGE_PREVIEW_SURFACE_CLASS_NAME } from "./constants";
-import { workflowNodeDisplayLabel, workflowNodeDisplayTitle } from "./nodeDisplay";
-import {
-  imageWorkflowNodeWaitingLabel,
-  isImageWorkflowNodeWaiting,
-  statusClass,
-  workflowNodeActivityText,
-  workflowRetryHintLabel,
-  workflowNodeStatusLabel,
-} from "./utils";
+import { statusClass } from "./utils";
 
-export type WorkflowNodePresentationKind = WorkflowNodeTypeV2 | "copy_generation";
+export type WorkflowNodePresentationKind = WorkflowNodeTypeV2;
 
 export interface WorkflowNodePresentationCardProps {
   id: string;
@@ -83,7 +75,6 @@ export function WorkflowNodePresentationCard({
   const Icon = {
     product_context: FileText,
     reference_image: ImagePlus,
-    copy_generation: FileText,
     prompt_generation: Braces,
     image_generation: ImageIcon,
   }[kind];
@@ -219,57 +210,5 @@ function WaitingBadge({ label }: { label: string }) {
       <Loader2 size={11} className="mr-1 animate-spin" />
       {label}
     </div>
-  );
-}
-
-interface WorkflowNodeCardProps {
-  node: WorkflowNode;
-  nodeRef?: (element: HTMLDivElement | null) => void;
-  image: DownloadableImage | null;
-  primarySelected: boolean;
-  secondarySelected: boolean;
-  previewSelected: boolean;
-  dragging: boolean;
-  onSelect: (event: ReactMouseEvent<HTMLElement>) => void;
-}
-
-export function WorkflowNodeCard({
-  node,
-  nodeRef,
-  image,
-  primarySelected,
-  secondarySelected,
-  previewSelected,
-  dragging,
-  onSelect,
-}: WorkflowNodeCardProps) {
-  const { t } = useI18n();
-  return (
-    <WorkflowNodePresentationCard
-      id={node.id}
-      kind={node.node_type}
-      title={workflowNodeDisplayTitle(node, t)}
-      label={workflowNodeDisplayLabel(node, t)}
-      status={node.status}
-      statusLabel={workflowNodeStatusLabel(node, t)}
-      image={image}
-      imageWaiting={isImageWorkflowNodeWaiting(node)}
-      waitingLabel={imageWorkflowNodeWaitingLabel(node, t)}
-      activityText={workflowNodeActivityText(node, t)}
-      failureReason={node.failure_reason}
-      lastRunAt={node.last_run_at}
-      retryable={node.is_retryable}
-      attemptCount={node.attempt_count}
-      retryCount={node.retry_count}
-      nonRetryableReason={node.non_retryable_reason}
-      retryHintLabel={node.retry_hint ? workflowRetryHintLabel(node.retry_hint, t) : null}
-      primarySelected={primarySelected}
-      secondarySelected={secondarySelected}
-      previewSelected={previewSelected}
-      dragging={dragging}
-      revealActive
-      nodeRef={nodeRef}
-      onSelect={onSelect}
-    />
   );
 }

@@ -87,7 +87,7 @@ describe("SettingsPage draft helpers", () => {
   it("only submits changed non-secret values instead of rewriting the whole config page", () => {
     const items = [
       configItem({ key: "admin_access_required", input_type: "boolean", value: true }),
-      configItem({ key: "image_main_image_size", value: "1024x1024" }),
+      configItem({ key: "image_generation_max_dimension", input_type: "number", value: 4096 }),
       configItem({ key: "image_tool_allowed_fields", input_type: "multi_select", value: ["model", "quality"] }),
     ];
     const state = draftsFromConfig(configResponse(items));
@@ -96,13 +96,13 @@ describe("SettingsPage draft helpers", () => {
       items,
       {
         ...state.drafts,
-        image_main_image_size: "1536x1024",
+        image_generation_max_dimension: "2048",
       },
       state.snapshots,
       {},
     );
 
-    expect(values).toEqual({ image_main_image_size: "1536x1024" });
+    expect(values).toEqual({ image_generation_max_dimension: "2048" });
   });
 
   it("keeps untouched secrets out but submits touched secrets", () => {
@@ -259,10 +259,9 @@ describe("SettingsPage provider profile helpers", () => {
     });
   });
 
-  it("derives card usage labels from prompt, Agent, image, and legacy-only text bindings", () => {
+  it("derives card usage labels from prompt, Agent, and image bindings", () => {
     const usage = providerUsageFromBindings(
       [
-        providerBinding({ purpose: "text", provider_profile_id: "profile-1" }),
         providerBinding({ purpose: "prompt", provider_profile_id: "profile-1" }),
         providerBinding({ purpose: "agent", provider_profile_id: "profile-1" }),
         providerBinding({ purpose: "image", provider_profile_id: "profile-1", provider_kind: "openai_images" }),
@@ -271,19 +270,12 @@ describe("SettingsPage provider profile helpers", () => {
       "profile-1",
     );
 
-    expect(usage).toEqual({ prompt: true, legacyText: false, agent: true, image: true });
+    expect(usage).toEqual({ prompt: true, agent: true, image: true });
     expect(providerUsageLabelKeys(usage)).toEqual([
       "settings.provider.usagePrompt",
       "settings.provider.usageAgent",
       "settings.provider.usageImage",
     ]);
-
-    const legacyUsage = providerUsageFromBindings(
-      [providerBinding({ purpose: "text", provider_profile_id: "legacy-profile" })],
-      "legacy-profile",
-    );
-    expect(legacyUsage).toEqual({ prompt: false, legacyText: true, agent: false, image: false });
-    expect(providerUsageLabelKeys(legacyUsage)).toEqual(["settings.provider.usageLegacyText"]);
   });
 
   it("builds Google Gemini image binding payloads without OpenAI-specific config", () => {
@@ -348,7 +340,6 @@ describe("SettingsPage provider profile helpers", () => {
     expect(
       providerDisableBlocked(providerProfile({ enabled: true }), {
         prompt: true,
-        legacyText: false,
         agent: false,
         image: false,
       }),
@@ -356,15 +347,6 @@ describe("SettingsPage provider profile helpers", () => {
     expect(
       providerDisableBlocked(providerProfile({ enabled: true }), {
         prompt: false,
-        legacyText: true,
-        agent: false,
-        image: false,
-      }),
-    ).toBe(true);
-    expect(
-      providerDisableBlocked(providerProfile({ enabled: true }), {
-        prompt: false,
-        legacyText: false,
         agent: true,
         image: false,
       }),
@@ -372,7 +354,6 @@ describe("SettingsPage provider profile helpers", () => {
     expect(
       providerDisableBlocked(providerProfile({ enabled: true }), {
         prompt: false,
-        legacyText: false,
         agent: false,
         image: false,
       }),
@@ -380,7 +361,6 @@ describe("SettingsPage provider profile helpers", () => {
     expect(
       providerDisableBlocked(providerProfile({ enabled: false }), {
         prompt: true,
-        legacyText: true,
         agent: true,
         image: true,
       }),
@@ -429,17 +409,15 @@ describe("SettingsPage import/export helpers", () => {
 
   it("resolves deep-linked settings sections and rejects unknown values", () => {
     expect(settingsSectionFromSearchParam("prompt")).toBe("prompt");
-    expect(settingsSectionFromSearchParam("text")).toBe("prompt");
+    expect(settingsSectionFromSearchParam("text")).toBe("providers");
     expect(settingsSectionFromSearchParam("agent")).toBe("agent");
     expect(settingsSectionFromSearchParam("migration")).toBe("migration");
     expect(settingsSectionFromSearchParam("unknown")).toBe("providers");
     expect(settingsSectionFromSearchParam(null)).toBe("providers");
   });
 
-  it("hides retired copy system prompts from the normal image request template section", () => {
+  it("shows current prompt configuration in the prompt template section", () => {
     const config = configResponse([
-      configItem({ key: "prompt_brief_system", value: "legacy brief", category: "提示词" }),
-      configItem({ key: "prompt_copy_system", value: "legacy copy", category: "提示词" }),
       configItem({ key: "prompt_image_system", value: "image request", category: "提示词" }),
       configItem({ key: "upload_max_files", value: 6, category: "海报与上传" }),
     ]);
@@ -454,12 +432,12 @@ describe("SettingsPage import/export helpers", () => {
 
   it("normalizes import preview summary counts for confirmation copy", () => {
     const preview: SettingsImportPreviewResponse = {
-      schema_version: 1,
+      schema_version: 3,
       runtime_config_count: 12,
       provider_profile_count: 2,
       provider_binding_count: 2,
       provider_profile_names: ["主供应商", "备用供应商"],
-      provider_binding_purposes: ["image", "text"],
+      provider_binding_purposes: ["image", "prompt"],
       includes_api_keys: true,
       provider_profiles_with_api_key_count: 1,
     };

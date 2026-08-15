@@ -87,7 +87,6 @@ describe("product image explorer state", () => {
     expect(formatAssetByteSize(null)).toBe("--");
     expect(assetCanReadMedia(asset("verified"))).toBe(true);
     expect(assetCanReadMedia(asset("missing", "missing"))).toBe(false);
-    expect(assetCanReadMedia(asset("pending", "legacy_pending"))).toBe(false);
   });
 
   it("accepts only bounded unique drag payloads", () => {

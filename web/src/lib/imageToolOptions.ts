@@ -94,7 +94,6 @@ export function imageToolOptionsFromUnknown(
     action: stringOption(record.action) as ImageToolOptions["action"],
     input_fidelity: stringOption(record.input_fidelity) as ImageToolOptions["input_fidelity"],
     partial_images: numberOption(record.partial_images),
-    n: numberOption(record.n),
   };
   const entries = Object.entries(parsed).filter(([key]) => allowed.has(key as ImageToolOptionKey));
   return Object.fromEntries(entries) as ImageToolOptions;

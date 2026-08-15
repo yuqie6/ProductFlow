@@ -8,18 +8,10 @@ import type {
   AgentWorkbenchBootstrap,
   ActiveProductWorkflowV2,
   AppendWorkflowDraftRevisionInput,
-  ApplyWorkflowTemplateGroupInput,
-  CanvasTemplateSummary,
-  CanvasTemplateListResponse,
-  CanonicalProductCreateResponse,
-  CanonicalProductDetail,
   ConfigResponse,
   ConfigUpdateRequest,
-  CopySet,
-  CopySetUpdateRequest,
   CreateReferenceWorkflowNodeV2Input,
   CreateWorkflowEdgeV2Input,
-  DuplicateWorkflowNodeGroupInput,
   GalleryEntry,
   GalleryEntryListResponse,
   GalleryAsset,
@@ -30,9 +22,6 @@ import type {
   GalleryDirectoryKind,
   GalleryFolderMutation,
   GenerationQueueOverview,
-  CreateUserTemplateGroupInput,
-  CreateProductInput,
-  CreateCanonicalProductInput,
   CreateAgentProductWorkspaceInput,
   CreateAgentProductDraftWorkspaceInput,
   CreateWorkflowDraftInput,
@@ -43,12 +32,10 @@ import type {
   ImageSessionStatus,
   ImageToolOptions,
   FinalizeAgentProductWorkspaceIntakeInput,
-  LegacyArchiveDetail,
   LegacyArchiveAgentRebuildResult,
+  LegacyArchiveDetail,
   LegacyArchiveKind,
   LegacyArchivePage,
-  ProductDetail,
-  ProductHistory,
   ProductListSort,
   ProviderBinding,
   ProviderBindingUpdateRequest,
@@ -56,11 +43,7 @@ import type {
   ProviderProfile,
   ProviderProfileCreateRequest,
   ProviderProfileUpdateRequest,
-  ProductWorkflow,
   MaterializeWorkflowDraftInput,
-  ProductWorkflowState,
-  ProductWorkflowStatus,
-  ProductWritebackResponse,
   ProductListResponse,
   ProductImageAsset,
   ProductImageAssetListResponse,
@@ -74,7 +57,6 @@ import type {
   SubmitAgentTurnResponse,
   SubmitWorkflowNodeRunV2Result,
   SubmitWorkflowRunV2Result,
-  UpdateUserTemplateGroupInput,
   WorkflowDraft,
   WorkflowDeliverySpec,
   WorkflowCanvasMutationResult,
@@ -209,7 +191,6 @@ export const api = {
   listProducts(input?: {
     page?: number;
     page_size?: number;
-    status?: ProductWorkflowState;
     q?: string;
     sort?: ProductListSort;
   }): Promise<ProductListResponse> {
@@ -217,9 +198,6 @@ export const api = {
       page: String(input?.page ?? 1),
       page_size: String(input?.page_size ?? 20),
     });
-    if (input?.status) {
-      params.set("status", input.status);
-    }
     const query = input?.q?.trim();
     if (query) {
       params.set("q", query);
@@ -227,16 +205,10 @@ export const api = {
     if (input?.sort && input.sort !== "updated_desc") {
       params.set("sort", input.sort);
     }
-    return request(`/api/products?${params.toString()}`);
-  },
-  getProduct(productId: string): Promise<ProductDetail> {
-    return request(`/api/products/${productId}`);
+    return request(`/api/v2/products?${params.toString()}`);
   },
   deleteProduct(productId: string): Promise<void> {
-    return request(`/api/products/${productId}`, { method: "DELETE" });
-  },
-  getProductHistory(productId: string): Promise<ProductHistory> {
-    return request(`/api/products/${productId}/history`);
+    return request(`/api/v2/products/${productId}`, { method: "DELETE" });
   },
   getConfig(): Promise<ConfigResponse> {
     return request("/api/settings");
@@ -299,53 +271,6 @@ export const api = {
     return request("/api/settings/import", {
       method: "POST",
       body: JSON.stringify(payload),
-    });
-  },
-  async createProduct(input: CreateProductInput): Promise<ProductDetail> {
-    const formData = new FormData();
-    formData.set("name", input.name);
-    formData.set("image", input.file);
-    input.referenceFiles?.forEach((referenceFile) => {
-      formData.append("reference_images", referenceFile);
-    });
-    if (input.category) {
-      formData.set("category", input.category);
-    }
-    if (input.price) {
-      formData.set("price", input.price);
-    }
-    if (input.source_note) {
-      formData.set("source_note", input.source_note);
-    }
-    if (input.canvas_template_key !== undefined) {
-      formData.set("canvas_template_key", input.canvas_template_key);
-    }
-    if (input.template_language !== undefined) {
-      formData.set("template_language", input.template_language);
-    }
-    return request("/api/products", {
-      method: "POST",
-      body: formData,
-    });
-  },
-  async createCanonicalProduct(input: CreateCanonicalProductInput): Promise<CanonicalProductCreateResponse> {
-    const formData = new FormData();
-    formData.set("name", input.name);
-    input.images.forEach((image) => {
-      formData.append("images", image);
-    });
-    if (input.category) {
-      formData.set("category", input.category);
-    }
-    if (input.price) {
-      formData.set("price", input.price);
-    }
-    if (input.source_note) {
-      formData.set("source_note", input.source_note);
-    }
-    return request("/api/v2/products", {
-      method: "POST",
-      body: formData,
     });
   },
   getAgentProductWorkspaceOptions(): Promise<AgentProductWorkspaceOptions> {
@@ -520,12 +445,6 @@ export const api = {
       },
     );
   },
-  getCanonicalProduct(productId: string): Promise<CanonicalProductDetail> {
-    return request(`/api/v2/products/${productId}`);
-  },
-  listProductImageAssets(productId: string): Promise<ProductImageAssetListResponse> {
-    return request(`/api/v2/products/${productId}/image-assets`);
-  },
   getProductImageLibrary(productId: string): Promise<GalleryBootstrap> {
     return request(`/api/v2/products/${productId}/image-library`);
   },
@@ -632,40 +551,6 @@ export const api = {
       body: formData,
     });
   },
-  deleteProductImageAsset(assetId: string): Promise<void> {
-    return request(`/api/v2/product-image-assets/${assetId}`, { method: "DELETE" });
-  },
-  setProductCover(productId: string, assetId: string): Promise<CanonicalProductDetail> {
-    return request(`/api/v2/products/${productId}/cover`, {
-      method: "PUT",
-      body: JSON.stringify({ asset_id: assetId }),
-    });
-  },
-  clearProductCover(productId: string): Promise<CanonicalProductDetail> {
-    return request(`/api/v2/products/${productId}/cover`, { method: "DELETE" });
-  },
-  async addReferenceImages(productId: string, files: File[]): Promise<ProductDetail> {
-    const formData = new FormData();
-    files.forEach((file) => {
-      formData.append("reference_images", file);
-    });
-    return request(`/api/products/${productId}/reference-images`, {
-      method: "POST",
-      body: formData,
-    });
-  },
-  deleteSourceAsset(assetId: string): Promise<ProductDetail> {
-    return request(`/api/source-assets/${assetId}`, { method: "DELETE" });
-  },
-  updateCopySet(copySetId: string, payload: CopySetUpdateRequest): Promise<CopySet> {
-    return request(`/api/copy-sets/${copySetId}`, {
-      method: "PATCH",
-      body: JSON.stringify(payload),
-    });
-  },
-  confirmCopySet(copySetId: string): Promise<CopySet> {
-    return request(`/api/copy-sets/${copySetId}/confirm`, { method: "POST" });
-  },
   listImageSessions(): Promise<ImageSessionListResponse> {
     return request("/api/image-sessions");
   },
@@ -725,16 +610,6 @@ export const api = {
   cancelImageSessionGenerationTask(sessionId: string, taskId: string): Promise<ImageSessionDetail> {
     return request(`/api/image-sessions/${sessionId}/generation-tasks/${taskId}/cancel`, { method: "POST" });
   },
-  attachImageSessionAssetToProduct(
-    sessionId: string,
-    assetId: string,
-    input: { product_id: string; target: "reference" | "main_source" },
-  ): Promise<ProductWritebackResponse> {
-    return request(`/api/image-sessions/${sessionId}/assets/${assetId}/attach-to-product`, {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-  },
   attachImageSessionAssetToProductCanonical(
     sessionId: string,
     assetId: string,
@@ -753,9 +628,6 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ image_session_asset_id: imageSessionAssetId }),
     });
-  },
-  getProductWorkflow(productId: string): Promise<ProductWorkflow> {
-    return request(`/api/products/${productId}/workflow`);
   },
   getActiveProductWorkflowV2(productId: string): Promise<ActiveProductWorkflowV2> {
     return request(`/api/v2/products/${productId}/workflow`);
@@ -1100,131 +972,5 @@ export const api = {
       headers: after > 0 ? { "Last-Event-ID": String(after) } : undefined,
       onChunk: input.onChunk,
     });
-  },
-  getProductWorkflowStatus(productId: string): Promise<ProductWorkflowStatus> {
-    return request(`/api/products/${productId}/workflow/status`);
-  },
-  listCanvasTemplates(): Promise<CanvasTemplateListResponse> {
-    return request("/api/workflow/canvas-templates");
-  },
-  applyWorkflowTemplateGroup(productId: string, input: ApplyWorkflowTemplateGroupInput): Promise<ProductWorkflow> {
-    return request(`/api/products/${productId}/workflow/template-groups`, {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-  },
-  duplicateWorkflowNodeGroup(
-    productId: string,
-    input: DuplicateWorkflowNodeGroupInput,
-  ): Promise<ProductWorkflow> {
-    return request(`/api/products/${productId}/workflow/node-groups/duplicate`, {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-  },
-  createUserTemplateGroup(productId: string, input: CreateUserTemplateGroupInput): Promise<CanvasTemplateSummary> {
-    return request(`/api/products/${productId}/workflow/user-template-groups`, {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-  },
-  updateUserTemplateGroup(templateId: string, input: UpdateUserTemplateGroupInput): Promise<CanvasTemplateSummary> {
-    return request(`/api/workflow/user-template-groups/${templateId}`, {
-      method: "PATCH",
-      body: JSON.stringify(input),
-    });
-  },
-  archiveUserTemplateGroup(templateId: string): Promise<void> {
-    return request(`/api/workflow/user-template-groups/${templateId}`, {
-      method: "DELETE",
-    });
-  },
-  createWorkflowNode(
-    productId: string,
-    input: {
-      node_type: ProductWorkflow["nodes"][number]["node_type"];
-      title: string;
-      position_x: number;
-      position_y: number;
-      config_json: Record<string, unknown>;
-    },
-  ): Promise<ProductWorkflow> {
-    return request(`/api/products/${productId}/workflow/nodes`, {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-  },
-  updateWorkflowNode(
-    nodeId: string,
-    input: {
-      title?: string;
-      position_x?: number;
-      position_y?: number;
-      config_json?: Record<string, unknown>;
-    },
-  ): Promise<ProductWorkflow> {
-    return request(`/api/workflow-nodes/${nodeId}`, {
-      method: "PATCH",
-      body: JSON.stringify(input),
-    });
-  },
-  updateWorkflowNodeCopy(nodeId: string, payload: CopySetUpdateRequest): Promise<ProductWorkflow> {
-    return request(`/api/workflow-nodes/${nodeId}/copy`, {
-      method: "PATCH",
-      body: JSON.stringify(payload),
-    });
-  },
-  async uploadWorkflowNodeImage(
-    nodeId: string,
-    input: { file: File; role?: string; label?: string },
-  ): Promise<ProductWorkflow> {
-    const formData = new FormData();
-    formData.set("image", input.file);
-    if (input.role) {
-      formData.set("role", input.role);
-    }
-    if (input.label) {
-      formData.set("label", input.label);
-    }
-    return request(`/api/workflow-nodes/${nodeId}/image`, {
-      method: "POST",
-      body: formData,
-    });
-  },
-  bindWorkflowNodeImage(
-    nodeId: string,
-    input: { source_asset_id?: string; poster_variant_id?: string },
-  ): Promise<ProductWorkflow> {
-    return request(`/api/workflow-nodes/${nodeId}/image-source`, {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-  },
-  createWorkflowEdge(
-    productId: string,
-    input: { source_node_id: string; target_node_id: string; source_handle?: string; target_handle?: string },
-  ): Promise<ProductWorkflow> {
-    return request(`/api/products/${productId}/workflow/edges`, {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-  },
-  deleteWorkflowEdge(edgeId: string): Promise<ProductWorkflow> {
-    return request(`/api/workflow-edges/${edgeId}`, { method: "DELETE" });
-  },
-  deleteWorkflowNode(nodeId: string): Promise<ProductWorkflow> {
-    return request(`/api/workflow-nodes/${nodeId}`, { method: "DELETE" });
-  },
-  runProductWorkflow(productId: string, input?: { start_node_id?: string }): Promise<ProductWorkflow> {
-    return request(`/api/products/${productId}/workflow/run`, {
-      method: "POST",
-      body: JSON.stringify(input ?? {}),
-    });
-  },
-  cancelProductWorkflowRun(productId: string, runId: string): Promise<ProductWorkflow> {
-    return request(`/api/products/${productId}/workflow/runs/${runId}/cancel`, { method: "POST" });
-  },
-  retryProductWorkflowRun(productId: string, runId: string): Promise<ProductWorkflow> {
-    return request(`/api/products/${productId}/workflow/runs/${runId}/retry`, { method: "POST" });
   },
 };

@@ -12,6 +12,7 @@ import {
 import { useState, type DragEvent, type ReactNode } from "react";
 
 import { useI18n } from "../../../lib/preferences";
+import type { TranslationKey } from "../../../lib/i18n";
 import type {
   GalleryBootstrap,
   GalleryDirectorySelection,
@@ -35,16 +36,16 @@ interface ImageDirectoryTreeProps {
   busy?: boolean;
 }
 
-function originLabelKey(origin: ProductImageOriginType) {
+function originLabelKey(origin: ProductImageOriginType): TranslationKey {
   switch (origin) {
     case "upload":
       return "detail.library.source.upload" as const;
     case "workflow_generation":
       return "detail.library.source.workflow" as const;
     case "image_session_attach":
-      return "detail.library.source.session" as const;
+      return "detail.library.source.session";
     case "legacy_import":
-      return "detail.library.source.legacy" as const;
+      return "detail.library.source.legacy";
   }
 }
 
