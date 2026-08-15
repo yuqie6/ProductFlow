@@ -33,6 +33,9 @@ backend-worker-prod:
 backend-test:
     uv run --directory backend pytest
 
+docs-check:
+    python3 scripts/check_docs.py
+
 backend-test-live-recovery:
     docker compose up -d --wait productflow-postgres productflow-redis
     PRODUCTFLOW_RUN_LIVE_RECOVERY=1 bash scripts/with_dev_env.sh uv run --directory backend pytest -q -m live_dependencies tests/test_live_workflow_recovery.py

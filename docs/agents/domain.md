@@ -10,6 +10,8 @@ Expected files, when they exist:
 
 - `CONTEXT.md` at the repo root
 - `docs/adr/` for architectural decision records
+- `docs/ARCHITECTURE.md` for current code ownership and runtime flow
+- package `AGENTS.md` files for executable implementation constraints
 
 These files do not need to exist before a skill can run. If they are absent, proceed silently. Producer skills such as `/grill-with-docs` can create them later when real terminology or decisions need to be recorded.
 
@@ -17,6 +19,7 @@ These files do not need to exist before a skill can run. If they are absent, pro
 
 - `CONTEXT.md` at the repo root, if it exists.
 - ADRs under `docs/adr/` that touch the area about to be changed, if any exist.
+- The relevant ownership section in `docs/ARCHITECTURE.md` and package `AGENTS.md` before proposing code changes.
 
 ## Use the glossary's vocabulary
 

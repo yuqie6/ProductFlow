@@ -22,7 +22,7 @@ If you discover a security issue, contact the maintainers through a private chan
 ## Deployer Security Checklist
 
 - Change `ADMIN_ACCESS_KEY`, `SESSION_SECRET`, and `POSTGRES_PASSWORD`; do not use example placeholders.
-- Do not commit `.env`, `web/.env`, storage, logs, database dumps, or `.trellis/tasks/` / `.trellis/workspace/`.
+- Do not commit `.env`, `web/.env`, storage, logs, or database dumps.
 - Enable HTTPS in production and set `SESSION_COOKIE_SECURE=true`.
 - Allow backend access only from trusted origins and configure `BACKEND_CORS_ORIGINS` correctly.
 - Redis and PostgreSQL should not be exposed to the public internet.

@@ -211,7 +211,13 @@ Settings also controls:
 
 Generation count belongs to the image plan or image-session candidate count and is not duplicated as an advanced image field.
 
-## 9. Troubleshooting
+## 9. History Archives
+
+`/history` provides read-only browse, filter, download, and export for retired V1 workflows, user templates, and Canvas Agent records. Historical images can be previewed or downloaded only after canonical media verification; missing and pending media remain visible as metadata.
+
+“Rebuild with Agent” creates a WorkflowDraft and AgentConversation seeded from history for the original or selected target product. The user still reviews Agent questions and the structured Draft and confirms it explicitly. The action does not restore the old canvas, template application, or executor.
+
+## 10. Troubleshooting
 
 ### Agent Creation Cannot Start
 

@@ -7,10 +7,11 @@
 ## 开始前
 
 1. 阅读 `README.md`，确认项目定位和本地启动方式。
-2. 阅读 `docs/PRD.md` 和 `docs/ARCHITECTURE.md`，理解当前功能边界。
-3. 如果要改后端，参考 `.trellis/spec/backend/`。
-4. 如果要改前端，参考 `.trellis/spec/frontend/`。
-5. 不要提交 `.env`、`web/.env`、storage、缓存、构建产物、日志或 `.trellis/tasks/` / `.trellis/workspace/`。
+2. 阅读 `docs/README.md`、`docs/PRD.md` 和 `docs/ARCHITECTURE.md`，理解文档职责与当前功能边界。
+3. 如果要改后端，读取 `backend/AGENTS.md`。
+4. 如果要改前端，读取 `web/AGENTS.md`。
+5. 跨层或产品语义变更先核对 `CONTEXT.md` 与 `docs/adr/`；发布状态和未完成证据记录在 `docs/rollout/`。
+6. 不要提交 `.env`、`web/.env`、storage、缓存、构建产物、日志或本地数据库 dump。
 
 ## 本地开发
 
@@ -45,6 +46,10 @@ just web-build
 ```
 
 文档或开源治理文件变更至少应确认引用的命令、路径和配置文件存在。
+
+```bash
+just docs-check
+```
 
 ## 文档风格
 
@@ -105,6 +110,7 @@ Boundaries:
 - ...
 ```
 
-## Trellis 目录说明
+## 工程知识位置
 
-仓库保留 `.trellis/spec/`、`.trellis/workflow.md` 和 `.trellis/scripts/` 作为开发规范和任务工具。`.trellis/tasks/` 和 `.trellis/workspace/` 属于本地任务/开发者记录，不应提交。
+`AGENTS.md` 保存仓库和分层工程约束，`CONTEXT.md` 保存当前领域边界，`docs/adr/` 保存需要长期解释的架构决策，
+`docs/rollout/` 保存具体迁移或发布的已完成项、证据和停止条件。任务状态由 GitHub Issues 与实际 Git 状态承担。

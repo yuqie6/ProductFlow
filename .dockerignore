@@ -13,12 +13,6 @@ __pycache__/
 .ruff_cache/
 .debug/
 .release/
-.trellis/.cache/
-.trellis/cache/
-.trellis/.runtime/
-.trellis/runtime/
-.trellis/workspace/
-.trellis/tasks/
 .agents/**/.cache/
 .agents/**/node_modules/
 .codex/logs/

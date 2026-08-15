@@ -12,7 +12,7 @@
 
 ProductFlow 是面向单商家创作者的开源商品视觉工作台。用户上传真实商品参考图、选择所需图片类型和数量，工作流 Agent 通过对话补齐价格、风格、文字语种、文案要求等信息，再生成可编辑、可运行的图片生产工作流。
 
-当前公网实例是个人项目的 live demo。项目采用单管理员、单商家数据模型；演示数据允许重置，当前代码不承担 SaaS 历史兼容合同。多租户、计费、团队权限和正式兼容策略属于后续 SaaS 阶段。
+当前公网实例是个人项目的 live demo。项目采用单管理员、单商家数据模型；运营方可以按演示政策重置公开体验数据，但已部署实例的升级流程不依赖重置数据库或 storage。多租户、计费、团队权限和正式 SaaS 兼容策略属于后续阶段。
 
 ## 当前产品能力
 
@@ -66,11 +66,13 @@ ProductFlow 是面向单商家创作者的开源商品视觉工作台。用户�
 | `/products/:productId` | Agent 对话 + V2 工作流 + 图片库 |
 | `/image-chat` | 连续文/图生图 |
 | `/gallery` | 收藏画廊 |
+| `/history` | V1 历史归档与 Agent 重建 |
 | `/settings` | Provider 与运行时配置 |
 | `/help` | 产品内帮助 |
 
 仓库文档：
 
+- [文档地图](docs/README.md)
 - [产品需求](docs/PRD.md)
 - [用户指南](docs/USER_GUIDE.md)
 - [架构说明](docs/ARCHITECTURE.md)
@@ -101,7 +103,7 @@ ProductFlow/
     public/
   docs/
   scripts/
-  .trellis/
+  CONTEXT.md
   docker-compose.yml
   justfile
 ```
@@ -250,7 +252,7 @@ just release
 - License：MIT，见 [LICENSE](LICENSE)。
 - 贡献指南：[CONTRIBUTING.md](CONTRIBUTING.md)。
 - 安全报告：[SECURITY.md](SECURITY.md)。
-- 不要提交 `.env`、`web/.env`、storage、构建产物、缓存、日志、`.trellis/tasks/` 或 `.trellis/workspace/`。
+- 不要提交 `.env`、`web/.env`、storage、构建产物、缓存、日志或迁移证据目录。
 - Provider API key 只放在私有配置中。
 
-ProductFlow 使用 [Trellis](https://github.com/mindfold-ai/Trellis) 管理工程规范和任务上下文，并在开发过程中使用 OpenAI Codex。感谢 [LinuxDo](https://linux.do) 社区。
+ProductFlow 在开发过程中使用 OpenAI Codex。感谢 [LinuxDo](https://linux.do) 社区。

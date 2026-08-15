@@ -1,18 +1,6 @@
 # ProductFlow Roadmap
 
-## 当前阶段：个人 live demo
-
-当前版本已经具备：
-
-- Agent 创建商品、图片类型与数量选择、1 至 6 张真实参考图。
-- Durable Agent Turn、问题回答、确认和流式工作流物化。
-- schema-v2 DAG、四类节点、文件夹、节点编辑、连线和运行记录。
-- 用户保存的完整工作流配方与局部片段。
-- 商品 canonical 图片库、用户文件夹、批量操作和交付图。
-- 连续生图、候选分支、Gallery 和保存到商品。
-- prompt、agent、image provider 配置。
-
-已部署实例的数据升级需要经过备份恢复、canonical 资产映射、legacy archive 对账和 Agent 重建门槛。工程在线运行时只维护一套 V2 schema、API 和前端流程；迁移快照属于有边界的升级能力，不形成 V1 双执行器。
+本文只记录尚未实现或尚未取得真实验证证据的方向。当前已交付能力见 `PRD.md`，当前代码结构见 `ARCHITECTURE.md`，V1 切换证据见 `rollout/workflow-v2-cutover.md`。
 
 ## 近期优先级
 
@@ -47,7 +35,7 @@
 ### 5. 开发体验
 
 - 缩短本地启动、迁移、测试和真实 provider 验证路径。
-- 保持配置样例、README、帮助页和 Trellis specs 与当前实现同步。
+- 保持配置样例、README、用户指南、CONTEXT、ADR、ARCHITECTURE 和 package AGENTS 与当前实现同步。
 - 增加跨层合同测试，减少 DTO、route 和 provider 配置漂移。
 - 保持运行时代码中无平行兼容模型。
 

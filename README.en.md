@@ -12,7 +12,7 @@
 
 ProductFlow is an open-source product-visual workspace for a single merchant. A user uploads real product references, chooses the required image types and quantities, and works with a workflow Agent to clarify price, style, text language, copy requirements, and other missing information. The confirmed result becomes an editable, executable image-production workflow.
 
-The public instance is a personal live demo. The current data model has one administrator and one merchant. Demo data may be reset, and this codebase does not carry a SaaS backward-compatibility contract. Multi-tenancy, billing, team permissions, and formal compatibility policies belong to a later SaaS stage.
+The public instance is a personal live demo with one administrator and one merchant. Operators may reset public demo data under the demo policy, but deployed-instance upgrades do not depend on resetting the database or storage. Multi-tenancy, billing, team permissions, and formal SaaS compatibility policies belong to a later stage.
 
 ## Current Capabilities
 
@@ -66,11 +66,13 @@ The public instance is a personal live demo. The current data model has one admi
 | `/products/:productId` | Agent conversation, V2 workflow, and image library |
 | `/image-chat` | Iterative text/image generation |
 | `/gallery` | Collected images |
+| `/history` | V1 history archives and Agent rebuild |
 | `/settings` | Providers and runtime settings |
 | `/help` | In-product help |
 
 Repository documentation:
 
+- [Documentation map](docs/README.md)
 - [Product requirements](docs/PRD.en.md)
 - [User guide](docs/USER_GUIDE.en.md)
 - [Architecture](docs/ARCHITECTURE.en.md)
@@ -101,7 +103,7 @@ ProductFlow/
     public/
   docs/
   scripts/
-  .trellis/
+  CONTEXT.md
   docker-compose.yml
   justfile
 ```
@@ -250,7 +252,7 @@ FastAPI OpenAPI and `backend/src/productflow_backend/presentation/routes/` are a
 - License: MIT; see [LICENSE](LICENSE).
 - Contribution guide: [CONTRIBUTING.md](CONTRIBUTING.md).
 - Security reporting: [SECURITY.md](SECURITY.md).
-- Do not commit `.env`, `web/.env`, storage, build output, caches, logs, `.trellis/tasks/`, or `.trellis/workspace/`.
+- Do not commit `.env`, `web/.env`, storage, build output, caches, logs, or migration evidence directories.
 - Keep provider API keys in private configuration only.
 
-ProductFlow uses [Trellis](https://github.com/mindfold-ai/Trellis) for engineering specifications and task context, and uses OpenAI Codex during development. Thanks to the [LinuxDo](https://linux.do) community.
+ProductFlow uses OpenAI Codex during development. Thanks to the [LinuxDo](https://linux.do) community.

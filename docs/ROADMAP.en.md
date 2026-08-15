@@ -1,18 +1,6 @@
 # ProductFlow Roadmap
 
-## Current Stage: Personal Live Demo
-
-The current release includes:
-
-- Agent product creation, image-type quantities, and one to six real references.
-- Durable Agent Turns, questions, confirmation, and streamed workflow materialization.
-- A schema-v2 DAG with four node types, folders, node editing, edges, and run history.
-- User-saved full workflow recipes and fragments.
-- A canonical product image library with user folders, batch actions, and delivery renditions.
-- Iterative image generation, candidate branches, Gallery, and save-to-product.
-- Prompt, Agent, and image provider configuration.
-
-Deployed-instance upgrades require backup/restore verification, canonical asset mapping, legacy archive reconciliation, and Agent rebuild gates. Engineering maintains one online V2 schema, API, and frontend flow; migration snapshots are bounded upgrade support and do not create a V1 dual executor.
+This document records only directions that remain unimplemented or lack real validation evidence. Current capabilities live in `PRD.en.md`, current code structure in `ARCHITECTURE.en.md`, and V1 cutover evidence in `rollout/workflow-v2-cutover.md`.
 
 ## Near-Term Priorities
 
@@ -47,7 +35,7 @@ Deployed-instance upgrades require backup/restore verification, canonical asset 
 ### 5. Development Experience
 
 - Shorten local startup, migration, test, and real-provider validation paths.
-- Keep configuration examples, README, Help, and Trellis specs aligned with current code.
+- Keep configuration examples, README, the user guide, CONTEXT, ADRs, ARCHITECTURE, and package AGENTS aligned with current code.
 - Add cross-layer contract tests that reduce DTO, route, and provider drift.
 - Keep parallel compatibility models out of runtime code.
 

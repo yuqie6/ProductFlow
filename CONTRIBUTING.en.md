@@ -7,10 +7,11 @@ Thank you for considering contributing code, documentation, or issue reports to 
 ## Before You Start
 
 1. Read `README.en.md` to understand the project positioning and local startup flow.
-2. Read `docs/PRD.en.md` and `docs/ARCHITECTURE.en.md` to understand the current feature boundaries.
-3. If you change the backend, consult `.trellis/spec/backend/`.
-4. If you change the frontend, consult `.trellis/spec/frontend/`.
-5. Do not commit `.env`, `web/.env`, storage, caches, build outputs, logs, or `.trellis/tasks/` / `.trellis/workspace/`.
+2. Read `docs/README.md`, `docs/PRD.en.md`, and `docs/ARCHITECTURE.en.md` to understand documentation ownership and current feature boundaries.
+3. If you change the backend, read `backend/AGENTS.md`.
+4. If you change the frontend, read `web/AGENTS.md`.
+5. For cross-layer or product-semantic changes, check `CONTEXT.md` and `docs/adr/`; rollout status and missing evidence belong in `docs/rollout/`.
+6. Do not commit `.env`, `web/.env`, storage, caches, build outputs, logs, or local database dumps.
 
 ## Local Development
 
@@ -45,6 +46,10 @@ just web-build
 ```
 
 For documentation or open-source governance file changes, at least confirm that referenced commands, paths, and configuration files exist.
+
+```bash
+just docs-check
+```
 
 ## Documentation Style
 
@@ -105,6 +110,8 @@ Boundaries:
 - ...
 ```
 
-## Trellis Directory Notes
+## Engineering Knowledge
 
-The repository keeps `.trellis/spec/`, `.trellis/workflow.md`, and `.trellis/scripts/` as development specifications and task tooling. `.trellis/tasks/` and `.trellis/workspace/` are local task/developer records and should not be committed.
+`AGENTS.md` holds repository and layer-specific engineering constraints, `CONTEXT.md` records current domain boundaries,
+`docs/adr/` records architecture decisions that need durable rationale, and `docs/rollout/` records completed work, evidence,
+and stop conditions for a specific migration or release. GitHub Issues and the actual Git state carry task status.

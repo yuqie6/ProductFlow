@@ -23,5 +23,5 @@ Attach screenshots or recordings for UI changes.
 
 ## Security checklist
 
-- [ ] No `.env`, API keys, cookies, database URLs, private images, storage output, logs, or `.trellis/tasks/` are included.
+- [ ] No `.env`, API keys, cookies, database URLs, private images, storage output, logs, or database dumps are included.
 - [ ] New provider/config behavior does not echo secret values.

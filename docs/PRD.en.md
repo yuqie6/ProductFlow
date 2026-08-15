@@ -17,8 +17,8 @@ The current release serves a personal project and live demo, but upgrades for de
 ### 3.1 Create a Product
 
 1. The user opens `/products/new` and enters a product name.
-2. The user selects image types. Each type defaults to quantity two and can be adjusted independently.
-3. The user uploads one to six real product reference images.
+2. Image types start unselected. Selecting a type initializes its quantity to two; each selected type can be adjusted from one to six and the total plan cannot exceed 30 images.
+3. The user uploads one to six references and should include at least one image that identifies the real product or an authoritative product rendering. The backend deterministically validates count, ownership, bytes, and media format; semantic adequacy remains an Agent/user review responsibility.
 4. The system creates a Product, WorkflowDraft, and AgentConversation.
 5. The Agent checks known information and asks about missing price, style, text language, copy requirements, and visual-system decisions.
 6. The Agent produces product facts, a visual system, image plans, per-image prompts, reference bindings, and generation specifications.
@@ -35,12 +35,14 @@ The current release serves a personal project and live demo, but upgrades for de
 - Image-generation nodes hold aspect ratio, resolution, quality, reference fidelity, background, and text policy.
 - Users run a whole DAG or one node, inspect runs, cancel, and retry.
 - A whole workflow, folder, or selected node group can be saved as a user recipe.
+- Canvas folders are one-level visual organization only; they do not support nesting, independent run, cancel, or retry behavior.
 
 ### 3.3 Manage Images
 
 - The product library stores uploads, workflow generations, and image-session attachments.
 - Its directory tree exposes system groups, image types, origins, and user folders.
 - Users search, sort, preview, rename, move, multi-select, download, and create delivery renditions.
+- User folders are one level deep. Deleting a folder removes organization only and does not delete images or break node, cover, or lineage references.
 - Node bindings and library entries share the same ProductImageAsset identity.
 - Product cover selection is automatic and serves list presentation.
 
@@ -73,19 +75,23 @@ The current release serves a personal project and live demo, but upgrades for de
 - `/products/:productId`: Agent, V2 canvas, inspector, runs, recipes, and image library.
 - `/image-chat`: iterative text/image generation.
 - `/gallery`: collected images.
+- `/history`: read-only V1 workflow, user-template, and Canvas Agent archives with export and Agent rebuild.
 - `/settings`: provider and runtime settings.
 - `/help`: current in-product help.
 
 ## 6. Product Contracts
 
-- Real product references are required before the Agent creation flow begins.
-- Every selected image type has an explicit quantity with a default of two.
+- One to six media-verified references are required before the Agent creation flow begins. The Agent and user review whether product identity is sufficiently represented; the backend does not claim to prove image authenticity automatically.
+- Image types start unselected. Every selected type has a quantity from one to six, defaults to two, and the total plan is limited to 30 images.
+- Confirmed structured facts outrank unconfirmed user input, which outranks Agent image observations. Conflicting required facts cannot pass final Draft confirmation.
 - The Agent may organize, rename, and move product-library assets and inspect selected images. It does not load the entire library into model context.
 - Every reference node binds one explicit ProductImageAsset.
 - The visual system is a workflow-level shared constraint. Per-image prompts may record explicit exceptions.
+- GenerationSpec, provider-effective parameters, and measured output remain separate. DeliverySpec creates deterministic renditions without regenerating or replacing the source image.
 - Every generated result enters the product library. There is no rejected-draft or delivery-manifest state.
 - Workflow reuse comes only from user-saved recipes.
 - Provider purposes are `prompt`, `agent`, and `image`.
+- V1 history is read-only for browse, download, export, and Agent rebuild. Rebuild creates a reviewable V2 Draft and never restores a V1 editor or executor.
 
 ## 7. Non-Goals
 
@@ -102,3 +108,4 @@ The current release serves a personal project and live demo, but upgrades for de
 - Uploads, workflow results, and image-session attachments are manageable in one product image library.
 - Provider configuration, Agent Turns, workflow runs, and image jobs have explicit failure and restart state.
 - Current code and documentation describe one online workflow contract.
+- Deployed V1 instances require source/archive/canonical reconciliation and verified backup restoration; resetting data is not an upgrade procedure.

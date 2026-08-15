@@ -13,6 +13,8 @@ ProductFlow 是单管理员、单商家工作区，由六个运行单元组成�
 
 浏览器只访问 Web 和 FastAPI。Agent service 使用独立 bearer token 调用 FastAPI internal API；FastAPI 通过 agent-service internal HTTP/SSE 控制 Turn。API 和 worker 共享 PostgreSQL、Redis 和 storage。
 
+本文只描述当前实现。模块所有权来自当前源码树，行为证据来自对应测试；产品合同见 `PRD.md`，长期理由见 `adr/`，未完成部署证据见 `rollout/`。
+
 ## 2. 后端分层
 
 `backend/src/productflow_backend/` 保持四层边界：
@@ -22,17 +24,34 @@ ProductFlow 是单管理员、单商家工作区，由六个运行单元组成�
 - `domain/`：枚举、业务异常和不依赖数据库的 DAG 规则。
 - `infrastructure/`：SQLAlchemy、provider client、Redis/Dramatiq、storage、日志和 Agent service client。
 
-路由不直接组织复杂事务或 provider payload。应用层拥有业务事务，基础设施层负责外部系统适配。
+路由不直接组织复杂事务或 provider payload。应用层拥有业务事务，基础设施层负责外部系统适配。Session 生命周期由 FastAPI dependency 或 worker 管理；public application command 可以拥有一次明确的 commit/rollback，内部 `stage_*` helper 只组装或 flush。
+
+当前代码所有权：
+
+| 能力 | Application/Domain owner | HTTP/External owner | 主要回归测试 |
+|---|---|---|---|
+| Agent 商品创建 | `agent_product_workspaces.py`, `agent_product_intake.py` | `routes/agent_product_workspaces.py` | `test_agent_product_workspaces.py` |
+| Agent Turn 与同步 | `agent_conversations.py`, `agent_control.py`, `agent_sync.py` | `routes/agent_conversations.py`, `infrastructure/agent_service.py` | `test_workflow_agent_service.py` |
+| Draft 与物化 | `workflow_drafts/contracts.py`, `service.py`, `materialization.py` | `routes/workflow_drafts.py` | `test_workflow_draft_contracts.py`, `test_workflow_draft_materialization.py` |
+| V2 图与运行 | `domain/workflow_rules.py`, `product_workflow/v2_*.py`, `execution.py` | `routes/workflow_drafts.py`, `workers.py` | workflow domain/run/node/recovery tests |
+| 商品图片库 | `gallery.py`, `gallery_assets.py`, `gallery_mutations.py`, `gallery_archives.py`, `media_assets.py` | `routes/products.py` | `test_gallery.py`, `test_media_objects.py` |
+| 连续生图 | `image_sessions.py`, `image_generation_core.py` | `routes/image_sessions.py`, image adapters | image-session/provider tests |
+| 设置与 provider | `settings.py`, `runtime_settings.py` | `routes/settings.py`, `infrastructure/provider_config.py` | settings/provider/runtime tests |
+| V1 归档切换 | `legacy_archives.py`, `legacy_retirement/` | `routes/legacy_archives.py`, `commands/` | legacy archive/cutover/migration tests |
+| 错误与日志 | `domain/errors.py` | `presentation/errors.py`, `infrastructure/logging.py`, request middleware and workers | `test_error_handling.py`, `test_logging_behavior.py` |
 
 ## 3. 前端结构
 
-`web/src/App.tsx` 只注册当前页面：
+`web/src/App.tsx` 注册当前页面：
 
+- `/login`
 - `/products`
 - `/products/new`
+- `/products/new/agent`，只重定向到 `/products/new`
 - `/products/:productId`
 - `/image-chat`
 - `/gallery`
+- `/history` 与 `/history/:archiveKind/:archiveId`
 - `/settings`
 - `/help`
 
@@ -45,6 +64,17 @@ ProductFlow 是单管理员、单商家工作区，由六个运行单元组成�
 - `product-detail/`：已复用的画布 chrome、节点卡片、侧栏、快捷键和图片 Explorer。
 
 TanStack Query 管理服务端状态；局部表单、选择和画布交互使用 React state。`api.ts` 是浏览器 HTTP 的统一入口。
+
+当前前端所有权：
+
+| 能力 | Owner | 主要测试 |
+|---|---|---|
+| Agent 创建表单 | `AgentProductCreatePage.tsx`, `pages/product-create/` | selection/form/workspace API tests |
+| Agent 对话、SSE、Draft 确认 | `pages/agent-workbench/` | reducer, event, conversation, confirmation and reveal tests |
+| V2 画布与详情 | `pages/product-workflow-v2/` | graph, canvas, command, draft, history and rendition tests |
+| 共享工作台与图片库 | `pages/product-detail/` | shortcuts, interaction and image-explorer tests |
+| HTTP 和 wire DTO | `lib/api.ts`, `lib/types.ts` | `lib/*Api.test.ts`, TypeScript build |
+| 历史只读页 | `LegacyHistoryPage.tsx`, `pages/legacy-history/` | legacy history/model/API tests |
 
 ## 4. Agent 创建链路
 
@@ -66,6 +96,8 @@ ProductFlow 是业务数据权威。Agent service 保存 durable Turn transcript
 Agent 读取商品资产时先获取有界元数据列表，再选择需要检查的图片。图片工具结果使用版本化多模态合同，不把整个图库或 data URL 拼进文本历史。
 
 图库重命名、建文件夹、移动等 Agent 写操作使用 prepare/apply/reconcile 合同和幂等键，便于在网络中断或重启后对账。
+
+实现链路：`routes/agent_product_workspaces.py` 创建 workspace，`agent_product_workspaces.py` 在一个业务事务中保存 Product、资产、Draft 与 Conversation；`agent_control.py` 调用 `infrastructure/agent_service.py`；`agent_sync.py` 投影 durable Turn；`workflow_drafts/service.py` 接收并校验 artifact；`workflow_drafts/materialization.py` 原子写入 V2 图和 reveal events。
 
 ## 5. WorkflowDraft
 
@@ -91,9 +123,13 @@ ProductWorkflow 的在线 schema 固定为 2。节点类型为：
 
 WorkflowFolder 是局部视觉分组；它不改变 DAG 执行语义。WorkflowEdge 表示上游依赖。领域层拓扑排序拒绝跨工作流引用和循环。
 
+文件夹只支持一层，不拥有运行状态、端口、嵌套、取消或重试语义。聚合状态由成员节点推导。
+
 WorkflowRun 和 WorkflowNodeRun 保存运行状态。worker 根据已成功的上游节点调度 ready 节点。提示词产物使用版本记录；图片结果写入 ProductImageAsset，并绑定回目标节点。
 
 WorkflowRecipe 保存用户主动创建的完整工作流或局部片段。recipe payload 只保存可复用结构和配置，不保存商品身份、生成结果或媒体字节。
+
+图规则由 `domain/workflow_rules.py` 负责；结构命令、节点编辑、reference binding 和运行分别位于 `application/product_workflow/v2_*.py`。worker 只从 `workers.py` 进入 `application/product_workflow/execution.py`，不维护第二套执行逻辑。
 
 ## 7. 图片模型
 
@@ -105,9 +141,15 @@ WorkflowRecipe 保存用户主动创建的完整工作流或局部片段。recip
 - `workflow_generation`
 - `image_session_attach`
 
+`legacy_import` 只表示迁移期可读的 canonical 历史资产，不是在线写入来源。
+
 商品图片库、节点参考绑定、封面和交付图都使用 ProductImageAsset id。图片会话的资产也必须关联 MediaObject；保存到商品时创建 ProductImageAsset。
 
 DeliveryRenditionJob 从 ProductImageAsset 读取原始媒体，按裁切、缩放和格式规范异步生成交付文件。交付文件不替换源图。
+
+GenerationSpec 保存模型生成意图；provider effective values 和解码后的 actual output 保存在运行/生成记录中。DeliverySpec 是独立确定性合同，不能触发图片模型调用。
+
+图库读取、资产详情、文件夹/移动、ZIP 和媒体身份分别由 `gallery.py`、`gallery_assets.py`、`gallery_mutations.py`、`gallery_archives.py` 和 `media_assets.py` 负责。浏览器的唯一图库 owner 是 `pages/product-detail/image-explorer/`，列表使用有界 cursor page 和 preview/thumbnail URL。
 
 ## 8. Provider 架构
 
@@ -143,9 +185,11 @@ Provider profile、purpose binding 和业务运行时设置由 `/settings` 写�
 
 上传在持久化前校验 MIME、真实图片格式、字节数、像素数和数量。下载接口按数据库资产定位 storage，不接受任意文件路径。
 
-## 11. Schema 演进
+## 11. Schema 演进与 V1 退役
 
-SQLAlchemy metadata 只描述当前在线模型。Alembic 历史 revision 保留，以支持空数据库完整升级；破坏性 schema 清理集中在 migration 中。运行时代码不读取已退出的数据模型，也不保留双路由或双执行器。
+SQLAlchemy metadata 只描述当前在线模型与有边界的 archive/cutover 模型。Alembic 历史 revision 保留，以支持空数据库完整升级。运行时代码不读取 V1 source shape，也不保留双路由或双执行器。
+
+`20260816_0042` 只建立 `legacy_cutover_gates` evidence boundary，保留 V1 source/archive rows。源码已退出 V1 在线路径不代表某个部署已经完成数据切换；生产 source/archive/canonical hash、恢复演练时间和零 active/unknown run 必须按 runbook 产生。任何后续破坏性清理都要在同一事务内先通过 gate。
 
 ## 12. 质量门
 
@@ -153,3 +197,11 @@ SQLAlchemy metadata 只描述当前在线模型。Alembic 历史 revision 保留
 - Frontend：Vitest、ESLint、TypeScript 和 Vite production build。
 - Agent service：`go test ./...` 和 opt-in live provider transcript test。
 - 跨层变更补真实浏览器、真实数据库或真实 provider 验证，验证强度由变更风险决定。
+
+代码与文档同步规则：
+
+- 路由变化同时核对 `App.tsx`、`lib/api.ts`、PRD 页面表和用户指南。
+- enum/DTO 变化同时核对 `domain/enums.py`、Pydantic schema、`lib/types.ts`、label map 和 parser tests。
+- transaction/queue/recovery 变化沿 application entrypoint、durable row、broker call、worker claim 和恢复测试验证。
+- 历史值变化使用真实持久化 fixture 走完 migration、API serialization 和 frontend rendering；只构造当前 DTO 的单元测试不能证明兼容。
+- 模块移动同时更新本页所有权表和 package `AGENTS.md`，删除旧路径引用。

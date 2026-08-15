@@ -22,7 +22,7 @@ ProductFlow 是自托管项目。部署者负责保护自己的管理员密钥�
 ## 部署者安全清单
 
 - 修改 `ADMIN_ACCESS_KEY`、`SESSION_SECRET`、`POSTGRES_PASSWORD`，不要使用示例占位符。
-- 不要提交 `.env`、`web/.env`、storage、日志、数据库 dump 或 `.trellis/tasks/` / `.trellis/workspace/`。
+- 不要提交 `.env`、`web/.env`、storage、日志或数据库 dump。
 - 生产环境建议开启 HTTPS，并把 `SESSION_COOKIE_SECURE=true`。
 - 只允许可信来源访问后台，正确配置 `BACKEND_CORS_ORIGINS`。
 - Redis 和 PostgreSQL 不应暴露到公网。
