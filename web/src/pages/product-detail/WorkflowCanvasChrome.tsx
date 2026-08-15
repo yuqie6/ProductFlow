@@ -38,6 +38,7 @@ export function WorkflowCanvasNodePort({
   top,
   label,
   connectable,
+  presentationHidden = false,
   visualState = "idle",
   visualScale = 1,
 }: {
@@ -46,26 +47,33 @@ export function WorkflowCanvasNodePort({
   top: number | string;
   label: string;
   connectable: boolean;
+  presentationHidden?: boolean;
   visualState?: WorkflowCanvasPortVisualState;
   visualScale?: number;
 }) {
+  const interactionEnabled = connectable && !presentationHidden;
   return (
     <Handle
       id={id ?? undefined}
       type={type}
       position={type === "source" ? Position.Right : Position.Left}
-      isConnectable={connectable}
+      isConnectable={interactionEnabled}
+      isConnectableStart={interactionEnabled}
+      isConnectableEnd={interactionEnabled}
       style={{
         top: typeof top === "number" ? `${top}%` : top,
         transform: visualScale === 1
           ? undefined
           : `translate(${type === "source" ? "50%" : "-50%"}, -50%) scale(${visualScale})`,
+        visibility: presentationHidden ? "hidden" : undefined,
+        pointerEvents: presentationHidden ? "none" : undefined,
       }}
       className={`${type === "source" ? SOURCE_PORT_CLASS_NAME : TARGET_PORT_CLASS_NAME} ${
         PORT_STATE_CLASS_NAMES[visualState]
       } ${type === "source" ? "!right-[-10px]" : "!left-[-9px]"}`}
       title={label}
       aria-label={label}
+      aria-hidden={presentationHidden || undefined}
     />
   );
 }

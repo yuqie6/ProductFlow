@@ -9,6 +9,7 @@ import {
   getBezierPath,
   useConnection,
   useNodesState,
+  useUpdateNodeInternals,
   useViewport,
 } from "@xyflow/react";
 import type {
@@ -207,6 +208,14 @@ function nodeHandleIds(nodeType: WorkflowNodeTypeV2): { input: string[]; output:
   return { input: ["facts", "reference", "prompt"], output: ["image"] };
 }
 
+function nodeHandleLabel(handleId: string, t: ReturnType<typeof useI18n>["t"]): string {
+  if (handleId === "facts") return t("workflowV2.node.productContext");
+  if (handleId === "asset" || handleId === "reference") return t("workflowV2.node.referenceImage");
+  if (handleId === "prompt") return t("workflowV2.node.promptGeneration");
+  if (handleId === "image") return t("workflowV2.node.imageGeneration");
+  return handleId;
+}
+
 function getConnectionHandleVisualState(
   workflow: ProductWorkflowV2,
   node: WorkflowNodeV2,
@@ -233,7 +242,8 @@ function getConnectionHandleVisualState(
     : "invalid-target";
 }
 
-const WorkflowNodeCard = memo(function WorkflowNodeCard({
+export const WorkflowNodeCard = memo(function WorkflowNodeCard({
+  id,
   data,
   selected,
   dragging,
@@ -255,6 +265,14 @@ const WorkflowNodeCard = memo(function WorkflowNodeCard({
         }
       : null,
   }));
+  const hasMultipleInputPorts = data.inputHandleIds.length > 1;
+  const inputPortsExpanded = !hasMultipleInputPorts
+    || (isConnectable && (selected || connection.inProgress));
+  const updateNodeInternals = useUpdateNodeInternals();
+
+  useEffect(() => {
+    updateNodeInternals(id);
+  }, [id, inputPortsExpanded, updateNodeInternals]);
 
   return (
     <div className="relative w-[248px]">
@@ -301,14 +319,25 @@ const WorkflowNodeCard = memo(function WorkflowNodeCard({
           </WorkflowCanvasNodeToolbarButton>
         ) : null}
       </WorkflowCanvasNodeToolbar>
+      {hasMultipleInputPorts && !inputPortsExpanded ? (
+        <WorkflowCanvasNodePort
+          id="input-summary"
+          type="target"
+          top="50%"
+          label={t("workflowV2.port.inputSummary", { count: data.inputHandleIds.length })}
+          connectable={false}
+          visualScale={portVisualScale}
+        />
+      ) : null}
       {data.inputHandleIds.map((handleId, index) => (
         <WorkflowCanvasNodePort
           key={`target:${handleId}`}
           id={handleId}
           type="target"
-          top={((index + 1) / (data.inputHandleIds.length + 1)) * 100}
-          label={`${t("detail.inputHandle")}: ${handleId}`}
-          connectable={isConnectable}
+          top={inputPortsExpanded ? ((index + 1) / (data.inputHandleIds.length + 1)) * 100 : "50%"}
+          label={`${t("detail.inputHandle")}: ${nodeHandleLabel(handleId, t)}`}
+          connectable={isConnectable && inputPortsExpanded}
+          presentationHidden={!inputPortsExpanded}
           visualScale={portVisualScale}
           visualState={getConnectionHandleVisualState(
             data.workflow,
@@ -325,7 +354,7 @@ const WorkflowNodeCard = memo(function WorkflowNodeCard({
           id={handleId}
           type="source"
           top={((index + 1) / (data.outputHandleIds.length + 1)) * 100}
-          label={`${t("detail.outputHandle")}: ${handleId}`}
+          label={`${t("detail.outputHandle")}: ${nodeHandleLabel(handleId, t)}`}
           connectable={isConnectable}
           visualScale={portVisualScale}
           visualState={getConnectionHandleVisualState(

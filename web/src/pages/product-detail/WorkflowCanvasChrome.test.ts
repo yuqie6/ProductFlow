@@ -1,8 +1,9 @@
+import { ReactFlowProvider } from "@xyflow/react";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { WorkflowCanvasMobileModeTabs } from "./WorkflowCanvasChrome";
+import { WorkflowCanvasMobileModeTabs, WorkflowCanvasNodePort } from "./WorkflowCanvasChrome";
 
 describe("shared workflow canvas chrome", () => {
   it("renders the stable browse, edit, and select modes with one active choice", () => {
@@ -21,5 +22,22 @@ describe("shared workflow canvas chrome", () => {
     expect(markup).toContain("浏览");
     expect(markup).toContain("编辑");
     expect(markup).toContain("选择");
+  });
+
+  it("disables both connection directions when a presentation port is read-only", () => {
+    const markup = renderToStaticMarkup(
+      createElement(
+        ReactFlowProvider,
+        null,
+        createElement(WorkflowCanvasNodePort, {
+          type: "target",
+          top: "50%",
+          label: "只读输入",
+          connectable: false,
+        }),
+      ),
+    );
+
+    expect(markup).not.toMatch(/\bconnectable(start|end)?\b/);
   });
 });

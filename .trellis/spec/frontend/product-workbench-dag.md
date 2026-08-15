@@ -822,9 +822,13 @@ The visible context selects a source only within the immutable recipe kind.
   reference node in the current folder. NodeToolbar duplicates reference/image/prompt-group nodes and confirms typed
   deletion; product context has no duplicate/delete actions.
 - Shared ports are connectable only in an editable canvas. Exact semantic handles are `facts`, `asset`, `reference`,
-  `prompt`, and `image`; a drop on another visible handle is rejected before any request. Folder projection nodes never
-  become connection endpoints. Client validation supplies immediate feedback, while the typed backend command remains the
-  topology authority.
+  `prompt`, and `image`; they stay mounted so persisted edges retain their semantic endpoints. A real node with multiple
+  inputs shows one non-connectable summary anchor while unselected, then expands its exact inputs when selected in an
+  editable canvas or while a connection gesture is active. The node must call `useUpdateNodeInternals(nodeId)` after this
+  presentation layout changes. Hidden semantic handles disable pointer events, and every read-only/presentation handle
+  sets `isConnectable`, `isConnectableStart`, and `isConnectableEnd` to false. A drop on another visible handle is rejected
+  before any request. Folder projection nodes never become connection endpoints. Client validation supplies immediate
+  feedback, while the typed backend command remains the topology authority.
 - EdgeToolbar exposes deletion only for real optional edges. Product-context-to-prompt and owning-prompt-to-image lineage
   edges are visibly protected; projected global-folder edges are summaries and cannot be mutated directly.
 - Session history records persisted layout changes, standalone reference creation, node/group duplication, and optional
@@ -910,6 +914,10 @@ The visible context selects a source only within the immutable recipe kind.
   read-only behavior, and additive selection semantics. Real-browser selection checks must enter a folder, select a node,
   return to the global canvas, and assert that both owner state and `.react-flow__node.selected` are cleared without a
   React maximum-update-depth error.
+- Node-port component tests assert that a multi-input real node keeps hidden semantic handles mounted behind one read-only
+  summary anchor, expands readable exact inputs when selected, and disables both connection directions on presentation
+  handles. Real-browser checks cover collapsed, selected, and active-drag states, assert one valid target with the remaining
+  targets marked invalid, and require zero edge-mutation requests when the gesture is cancelled.
 - Graph/history tests assert exact handle pairs, duplicate/cycle rejection, lineage protection, local-versus-external
   edit-version invalidation, and server-assigned IDs across create/duplicate/edge undo/redo.
 - Real-browser structure checks create one reference node through Add, verify the node card and default metadata, run
