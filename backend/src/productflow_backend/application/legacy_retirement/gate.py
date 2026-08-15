@@ -106,10 +106,11 @@ def approve_legacy_cutover_gate(
 
 def assert_legacy_cutover_cleanup_ready(connection: Connection) -> LegacyCutoverGateState:
     """Guard any future destructive cleanup entrypoint with the persisted gate."""
-    state = read_legacy_cutover_gate(connection)
+    state = _state_from_row(_load_gate_row(connection, for_update=True))
     missing_evidence = [
         field_name
         for field_name in (
+            "source_profile",
             "source_report_sha256",
             "archive_report_sha256",
             "canonical_report_sha256",
@@ -120,6 +121,9 @@ def assert_legacy_cutover_cleanup_ready(connection: Connection) -> LegacyCutover
     if state.phase != LEGACY_CUTOVER_PHASE_READY or state.active_run_count != 0 or missing_evidence:
         details = ", ".join(missing_evidence) if missing_evidence else state.phase
         raise ConflictError(f"旧工作流清理门槛未通过: {details}")
+    active_run_count = count_legacy_active_runs(connection)
+    if active_run_count:
+        raise ConflictError(f"旧工作流清理门槛批准后又出现 {active_run_count} 条未到终态的执行记录")
     return state
 
 

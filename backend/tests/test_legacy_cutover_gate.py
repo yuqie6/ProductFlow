@@ -139,6 +139,32 @@ def test_gate_persists_all_evidence_before_cleanup_and_records_cleaned() -> None
         engine.dispose()
 
 
+def test_cleanup_assertion_rechecks_runs_created_after_gate_approval() -> None:
+    engine = _gate_engine()
+    try:
+        with engine.begin() as connection:
+            approve_legacy_cutover_gate(
+                connection,
+                source_profile="current_with_agent_workspace_finalization_20260815_0041",
+                **_HASHES,
+                backup_restore_verified_at=_VERIFIED_AT,
+            )
+            connection.execute(
+                sa.text("INSERT INTO product_workflows (id, schema_version) VALUES ('workflow-v1', 1)")
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO workflow_runs (id, workflow_id, status) "
+                    "VALUES ('late-run-v1', 'workflow-v1', 'running')"
+                )
+            )
+
+            with pytest.raises(ConflictError, match="批准后又出现 1 条"):
+                assert_legacy_cutover_cleanup_ready(connection)
+    finally:
+        engine.dispose()
+
+
 def test_gate_rejects_invalid_hashes_and_timezone_less_backup_evidence() -> None:
     engine = _gate_engine()
     try:
