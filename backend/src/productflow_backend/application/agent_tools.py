@@ -5,6 +5,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
@@ -31,7 +32,12 @@ from productflow_backend.application.gallery_mutations import (
     stage_rename_gallery_folder,
 )
 from productflow_backend.application.media_assets import inspect_image_bytes
-from productflow_backend.application.workflow_drafts.contracts import WorkflowDraftPayloadV1
+from productflow_backend.application.workflow_drafts.contracts import (
+    WorkflowDraftPayloadV1,
+    parse_workflow_draft_payload,
+    workflow_draft_tool_schema,
+)
+from productflow_backend.application.workflow_drafts.service import validate_workflow_draft_for_confirmation
 from productflow_backend.application.workflow_recipes.service import parse_recipe_payload_or_raise
 from productflow_backend.domain.enums import AgentToolMutationStatus, MediaVerificationStatus
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
@@ -143,9 +149,32 @@ def get_agent_contract(session: Session, conversation_id: str) -> dict[str, Any]
         "harness_run_id": conversation.harness_run_id,
         "current_draft_version": current_revision.version if current_revision is not None else 0,
         "system_prompt": WORKFLOW_AGENT_SYSTEM_PROMPT,
-        "workflow_draft_schema": WorkflowDraftPayloadV1.model_json_schema(),
+        "workflow_draft_schema": workflow_draft_tool_schema(),
         "tool_contract_version": AGENT_TOOL_CONTRACT_VERSION,
     }
+
+
+def validate_agent_workflow_draft(
+    session: Session,
+    *,
+    conversation_id: str,
+    value: dict[str, Any],
+) -> WorkflowDraftPayloadV1:
+    conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
+    try:
+        artifact = parse_workflow_draft_payload(value)
+    except ValidationError as exc:
+        issues = []
+        for error in exc.errors(include_url=False, include_context=False, include_input=False)[:8]:
+            path = ".".join(str(part) for part in error["loc"]) or "$"
+            issues.append(f"{path}: {error['msg']}")
+        raise BusinessValidationError(f"WorkflowDraft 无效: {'; '.join(issues)}") from exc
+    validate_workflow_draft_for_confirmation(
+        session,
+        product_id=conversation.product_id,
+        artifact=artifact,
+    )
+    return artifact
 
 
 def get_agent_product_context(session: Session, conversation_id: str) -> dict[str, Any]:
@@ -1262,4 +1291,5 @@ __all__ = [
     "reconcile_agent_asset_rename",
     "reconcile_agent_folder_create",
     "reconcile_agent_folder_rename",
+    "validate_agent_workflow_draft",
 ]

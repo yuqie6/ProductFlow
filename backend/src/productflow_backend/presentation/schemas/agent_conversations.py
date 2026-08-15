@@ -29,6 +29,14 @@ class AgentContractResponse(BaseModel):
     tool_contract_version: int
 
 
+class AgentWorkflowDraftValidationRequest(StrictAgentRequest):
+    value: dict[str, Any]
+
+
+class AgentWorkflowDraftValidationResponse(BaseModel):
+    accepted: Literal[True] = True
+
+
 class AgentAssetMetadataResponse(BaseModel):
     id: str
     display_name: str

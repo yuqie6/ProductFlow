@@ -1,8 +1,8 @@
 # agent-harness source snapshot
 
 - Module: `github.com/yuqie6/agent-harness`
-- Commit: `491c9d7e56d9dfc5004afbcda1a0f578df1cf95e`
-- Commit time: `2026-08-11T18:24:02+08:00`
+- Commit: `8c1d951ba9b7227e9bf16826eb50a5c801638727`
+- Commit time: `2026-08-15T13:14:44+08:00`
 - License: Apache-2.0 (`LICENSE` in this directory)
 
 This directory is an unmodified source snapshot of the packages required by

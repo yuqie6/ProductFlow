@@ -395,6 +395,66 @@ func TestServiceLocallyRejectsArtifactOutsideRequiredSchema(t *testing.T) {
 	}
 }
 
+func TestServiceRetriesRequiredArtifactRejectedByApplication(t *testing.T) {
+	var providerCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch providerCalls.Add(1) {
+		case 1:
+			writeServiceStream(t, writer, `{"id":"invalid_artifact","status":"completed","output":[{"id":"call_1","type":"function_call","call_id":"draft_1","name":"propose_workflow_draft","arguments":"{\"nodes\":[\"invalid\"]}"}]}`)
+		case 2:
+			writeServiceStream(t, writer, `{"id":"valid_artifact","status":"completed","output":[{"id":"call_2","type":"function_call","call_id":"draft_2","name":"propose_workflow_draft","arguments":"{\"nodes\":[\"accepted\"]}"}]}`)
+		case 3:
+			writeServiceStream(t, writer, `{"id":"final","status":"completed","output":[{"id":"message","type":"message","role":"assistant","content":[{"type":"output_text","text":"draft submitted"}]}]}`)
+		default:
+			http.Error(writer, "unexpected provider call", http.StatusInternalServerError)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	var validationCalls atomic.Int32
+	workspace := t.TempDir()
+	service, err := agenttask.OpenService(agenttask.ServiceConfig{Runner: agenttask.Config{
+		Database: filepath.Join(t.TempDir(), "application-artifact-validation.db"), Workspace: workspace, SkillUserHome: workspace,
+		Provider: agenttask.ProviderConfig{APIKey: "secret", BaseURL: server.URL, Model: "model", HTTPClient: server.Client()},
+		Policy:   testPolicy(),
+		RequiredArtifact: &agenttask.RequiredArtifact{
+			Schema: map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{"nodes": map[string]any{"type": "array"}}, "required": []string{"nodes"},
+			},
+			Validate: func(_ context.Context, raw json.RawMessage) error {
+				validationCalls.Add(1)
+				if strings.Contains(string(raw), "invalid") {
+					return errors.New("node plan violates application invariants")
+				}
+				return nil
+			},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = service.Close() })
+	state, err := service.StartTurn(t.Context(), agenttask.StartTurnRequest{
+		RunID: "run-application-artifact-validation", Input: agenttask.TextInput("create a draft"),
+		IdempotencyKey: "application-artifact-validation",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = awaitTurn(t, service, state.RunID, state.TurnID, turn.StatusAwaitingConfirmation)
+	if state.Artifact == nil || string(state.Artifact.Value) != `{"nodes":["accepted"]}` ||
+		providerCalls.Load() != 3 || validationCalls.Load() != 2 {
+		t.Fatalf(
+			"application-validated artifact state=%#v provider_calls=%d validation_calls=%d",
+			state,
+			providerCalls.Load(),
+			validationCalls.Load(),
+		)
+	}
+}
+
 func TestServiceSerializesSessionAndCancelsQueuedTurn(t *testing.T) {
 	var calls atomic.Int32
 	started := make(chan struct{})

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -30,6 +31,7 @@ from productflow_backend.infrastructure.agent_service import (
 from productflow_backend.infrastructure.db.models import AgentTurnProjection
 
 AgentControlCommand = Literal["cancel", "resume"]
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,7 +273,7 @@ def synchronize_agent_turn_state(
         harness_turn_id=state.turn_id,
         status=state.status,
         output_text=state.output or None,
-        error_text=state.error or None,
+        error_text=_safe_agent_turn_error(state),
         question_json=state.question.model_dump(mode="json") if state.question is not None else None,
         finished_at=state.finished_at,
     )
@@ -343,6 +345,26 @@ def _safe_agent_sync_error(exc: AgentServiceRequestError) -> str:
     if exc.status_code is not None and 400 <= exc.status_code < 500:
         return f"Agent 请求被拒绝: {exc.code}"
     return "Agent 服务暂时不可用"
+
+
+def _safe_agent_turn_error(state: AgentServiceTurnState) -> str | None:
+    if not state.error:
+        return None
+    if state.status == AgentTurnStatus.FAILED:
+        logger.warning(
+            "Agent Turn failed: run_id=%s turn_id=%s",
+            state.run_id,
+            state.turn_id,
+        )
+        return "Agent 生成失败，请重试；持续失败请检查 Agent 供应商配置"
+    if state.status == AgentTurnStatus.UNKNOWN:
+        logger.warning(
+            "Agent Turn entered unknown state: run_id=%s turn_id=%s",
+            state.run_id,
+            state.turn_id,
+        )
+        return "Agent 执行状态不明确，请稍后重试"
+    return state.error
 
 
 def _raise_agent_service_business_error(exc: AgentServiceRequestError) -> None:

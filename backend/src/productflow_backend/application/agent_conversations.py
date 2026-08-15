@@ -12,7 +12,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.time import now_utc
-from productflow_backend.application.workflow_drafts.service import append_workflow_draft_revision
+from productflow_backend.application.workflow_drafts.service import (
+    append_workflow_draft_revision,
+    parse_workflow_draft_payload_or_raise,
+    validate_workflow_draft_for_confirmation,
+)
 from productflow_backend.domain.enums import (
     AgentConversationStatus,
     AgentTurnStatus,
@@ -503,12 +507,18 @@ def attach_agent_workflow_draft_artifact(
     draft = conversation.workflow_draft
     expected_version = draft.current_revision.version if draft.current_revision is not None else 0
     draft_id = draft.id
+    artifact = parse_workflow_draft_payload_or_raise(artifact_value)
+    validate_workflow_draft_for_confirmation(
+        session,
+        product_id=product_id,
+        artifact=artifact,
+    )
     append_workflow_draft_revision(
         session,
         product_id=product_id,
         draft_id=draft_id,
         expected_draft_version=expected_version,
-        payload=artifact_value,
+        payload=artifact,
         ready_for_confirmation=True,
         source_turn_id=normalized_turn_id,
         source_artifact_step_id=normalized_step_id,

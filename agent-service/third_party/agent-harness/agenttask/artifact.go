@@ -22,6 +22,7 @@ type RequiredArtifact struct {
 	Name        string
 	Description string
 	Schema      map[string]any
+	Validate    func(context.Context, json.RawMessage) error
 }
 
 func requiredArtifactTool(contract *RequiredArtifact) (Tool, string, error) {
@@ -54,13 +55,18 @@ func requiredArtifactTool(contract *RequiredArtifact) (Tool, string, error) {
 	}
 	return Tool{
 		Name: name, Description: description, Parameters: schema, Strict: true,
-		Handler: func(_ context.Context, raw json.RawMessage) (string, error) {
+		Handler: func(ctx context.Context, raw json.RawMessage) (string, error) {
 			var value any
 			if err := json.Unmarshal(raw, &value); err != nil {
 				return "", fmt.Errorf("decode required artifact: %w", err)
 			}
 			if err := resolved.Validate(value); err != nil {
 				return "", fmt.Errorf("required artifact does not match schema: %w", err)
+			}
+			if contract.Validate != nil {
+				if err := contract.Validate(ctx, append(json.RawMessage(nil), raw...)); err != nil {
+					return "", fmt.Errorf("required artifact rejected by application: %w", err)
+				}
 			}
 			return `{"accepted":true}`, nil
 		},

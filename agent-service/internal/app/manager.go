@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -114,6 +115,9 @@ func (manager *Manager) Get(ctx context.Context, conversationID string) (*Conver
 			Name:        agenttask.WorkflowDraftToolName,
 			Description: "Submit the complete validated ProductFlow workflow draft for user confirmation.",
 			Schema:      contract.WorkflowDraftSchema,
+			Validate: func(ctx context.Context, value json.RawMessage) error {
+				return manager.config.ProductFlow.ValidateWorkflowDraft(ctx, scope.ConversationID, value)
+			},
 		},
 	}
 	service, err := agenttask.OpenService(agenttask.ServiceConfig{Runner: runnerConfig})

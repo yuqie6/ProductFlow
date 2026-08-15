@@ -673,6 +673,64 @@ def parse_workflow_draft_payload(payload: WorkflowDraftPayloadV1 | dict[str, Any
     return WorkflowDraftPayloadV1.model_validate(payload)
 
 
+def workflow_draft_tool_schema() -> dict[str, Any]:
+    schema = WorkflowDraftPayloadV1.model_json_schema()
+    schema["$defs"]["JsonValue"] = {
+        "anyOf": [
+            {"type": "string"},
+            {"type": "number"},
+            {"type": "boolean"},
+            {"type": "array", "items": {"$ref": "#/$defs/JsonValue"}},
+            {"type": "null"},
+        ]
+    }
+    _normalize_tool_schema(schema)
+    return schema
+
+
+def _normalize_tool_schema(schema: dict[str, Any]) -> None:
+    schema.pop("default", None)
+    schema.pop("deprecated", None)
+    schema.pop("discriminator", None)
+
+    one_of = schema.pop("oneOf", None)
+    if one_of is not None:
+        if "anyOf" in schema:
+            raise ValueError("工作流草稿工具 Schema 不能同时包含 oneOf 和 anyOf")
+        schema["anyOf"] = one_of
+
+    properties = schema.get("properties")
+    if properties is not None:
+        if not isinstance(properties, dict):
+            raise TypeError("工作流草稿工具 Schema properties 必须是对象")
+        schema["required"] = list(properties)
+        schema["additionalProperties"] = False
+        for property_schema in properties.values():
+            _normalize_tool_schema(property_schema)
+    elif schema.get("type") == "object":
+        raise ValueError("工作流草稿工具 Schema 不允许开放对象")
+
+    definitions = schema.get("$defs")
+    if definitions is not None:
+        if not isinstance(definitions, dict):
+            raise TypeError("工作流草稿工具 Schema $defs 必须是对象")
+        for definition in definitions.values():
+            _normalize_tool_schema(definition)
+
+    items = schema.get("items")
+    if isinstance(items, dict):
+        _normalize_tool_schema(items)
+
+    any_of = schema.get("anyOf")
+    if any_of is not None:
+        if not isinstance(any_of, list):
+            raise TypeError("工作流草稿工具 Schema anyOf 必须是数组")
+        for variant in any_of:
+            if not isinstance(variant, dict):
+                raise TypeError("工作流草稿工具 Schema anyOf 分支必须是对象")
+            _normalize_tool_schema(variant)
+
+
 def workflow_draft_payload_dict(payload: WorkflowDraftPayloadV1 | dict[str, Any]) -> dict[str, Any]:
     return parse_workflow_draft_payload(payload).model_dump(mode="json")
 

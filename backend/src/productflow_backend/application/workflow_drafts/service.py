@@ -17,7 +17,7 @@ from productflow_backend.application.workflow_drafts.contracts import (
     parse_workflow_draft_payload,
     workflow_draft_payload_hash,
 )
-from productflow_backend.domain.enums import ProductFactStatus, WorkflowDraftStatus
+from productflow_backend.domain.enums import MediaVerificationStatus, ProductFactStatus, WorkflowDraftStatus
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     Product,
@@ -203,11 +203,7 @@ def confirm_workflow_draft_revision(
         artifact = parse_workflow_draft_payload_or_raise(revision.payload_json)
         if workflow_draft_payload_hash(artifact) != revision.payload_hash:
             raise ConflictError("WorkflowDraft revision payload hash 不一致")
-        if artifact.missing_fact_keys:
-            raise BusinessValidationError("WorkflowDraft 仍有缺失的必要商品事实")
-        if any(fact.status == ProductFactStatus.CONFLICTED for fact in artifact.facts):
-            raise BusinessValidationError("WorkflowDraft 仍有未解决的商品事实冲突")
-        validate_workflow_draft_reference_assets(session, product_id=product_id, artifact=artifact)
+        validate_workflow_draft_for_confirmation(session, product_id=product_id, artifact=artifact)
         visual_system_version = _resolve_visual_system_version(
             session,
             revision=revision,
@@ -271,12 +267,33 @@ def validate_workflow_draft_reference_assets(
     artifact: WorkflowDraftPayloadV1,
 ) -> None:
     asset_ids = artifact.referenced_asset_ids()
-    assets = list(session.scalars(select(ProductImageAsset).where(ProductImageAsset.id.in_(asset_ids))))
+    assets = list(
+        session.scalars(
+            select(ProductImageAsset)
+            .options(selectinload(ProductImageAsset.media_object))
+            .where(ProductImageAsset.id.in_(asset_ids))
+        )
+    )
     assets_by_id = {asset.id: asset for asset in assets}
     if set(assets_by_id) != asset_ids:
         raise BusinessValidationError("WorkflowDraft 引用了不存在的商品图片资产")
     if any(asset.product_id != product_id for asset in assets):
         raise BusinessValidationError("WorkflowDraft 引用了其他商品的图片资产")
+    if any(asset.media_object.verification_status != MediaVerificationStatus.VERIFIED for asset in assets):
+        raise BusinessValidationError("WorkflowDraft 引用了未通过核验的图片资产")
+
+
+def validate_workflow_draft_for_confirmation(
+    session: Session,
+    *,
+    product_id: str,
+    artifact: WorkflowDraftPayloadV1,
+) -> None:
+    if artifact.missing_fact_keys:
+        raise BusinessValidationError("WorkflowDraft 仍有缺失的必要商品事实")
+    if any(fact.status == ProductFactStatus.CONFLICTED for fact in artifact.facts):
+        raise BusinessValidationError("WorkflowDraft 仍有未解决的商品事实冲突")
+    validate_workflow_draft_reference_assets(session, product_id=product_id, artifact=artifact)
 
 
 def _resolve_visual_system_version(
@@ -450,6 +467,7 @@ __all__ = [
     "create_workflow_draft",
     "get_workflow_draft_or_raise",
     "parse_workflow_draft_payload_or_raise",
+    "validate_workflow_draft_for_confirmation",
     "validate_workflow_draft_reference_assets",
     "workflow_draft_query",
 ]

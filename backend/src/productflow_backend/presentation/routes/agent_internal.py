@@ -23,6 +23,7 @@ from productflow_backend.application.agent_tools import (
     reconcile_agent_asset_rename,
     reconcile_agent_folder_create,
     reconcile_agent_folder_rename,
+    validate_agent_workflow_draft,
 )
 from productflow_backend.application.gallery_assets import GalleryAssetSort, GalleryDirectoryKind
 from productflow_backend.application.gallery_mutations import GalleryAssetMove
@@ -44,6 +45,8 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     AgentFolderRenamePreparedRequest,
     AgentFolderRenameReconcileResponse,
     AgentFolderRenameResultResponse,
+    AgentWorkflowDraftValidationRequest,
+    AgentWorkflowDraftValidationResponse,
     InspectAgentAssetsRequest,
     InspectAgentAssetsResponse,
     PrepareAgentAssetMoveRequest,
@@ -65,6 +68,23 @@ def get_agent_contract_endpoint(
     session: Session = Depends(get_session),
 ) -> AgentContractResponse:
     return AgentContractResponse.model_validate(get_agent_contract(session, conversation_id))
+
+
+@router.post(
+    "/{conversation_id}/workflow-draft/validate",
+    response_model=AgentWorkflowDraftValidationResponse,
+)
+def validate_agent_workflow_draft_endpoint(
+    conversation_id: str,
+    payload: AgentWorkflowDraftValidationRequest,
+    session: Session = Depends(get_session),
+) -> AgentWorkflowDraftValidationResponse:
+    validate_agent_workflow_draft(
+        session,
+        conversation_id=conversation_id,
+        value=payload.value,
+    )
+    return AgentWorkflowDraftValidationResponse()
 
 
 @router.get("/{conversation_id}/product-context")

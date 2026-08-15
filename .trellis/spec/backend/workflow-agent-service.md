@@ -97,10 +97,26 @@ artifact revision `SET NULL`, and complete enum removal on downgrade.
 Every completed workflow-design Turn must call strict `propose_workflow_draft` with the current
 `WorkflowDraftPayloadV1` JSON Schema. A prose-only completion fails the harness artifact gate.
 
+`WorkflowDraftPayloadV1.model_json_schema()` is the domain/validation schema and is not sent to a strict provider
+unchanged. `workflow_draft_tool_schema()` derives the provider boundary schema by making every object property required,
+setting `additionalProperties=false`, representing optional values through nullable unions, converting `oneOf` to
+supported `anyOf`, and removing unsupported `default`, `deprecated`, and `discriminator` annotations. The unconstrained
+Pydantic `JsonValue` definition is narrowed to recursive scalar/list/null facts because a strict open object is not a
+portable tool parameter. This conversion must not change Pydantic defaults, persisted Draft payloads, or confirmation
+semantics.
+
+Provider JSON Schema acceptance is necessary but cannot express all Draft invariants. The harness `RequiredArtifact`
+runs an optional, repeatable, side-effect-free application validator after local schema validation. ProductFlow binds it
+to `POST /api/internal/v1/agent-conversations/{conversation_id}/workflow-draft/validate`, which parses the complete
+payload, checks model validators, missing/conflicted facts, current-product reference ownership, and verified media.
+Application rejection becomes the native tool error returned to the model, so the same Turn can submit a corrected
+artifact. Rejected values do not produce `awaiting_confirmation` and do not append a Draft revision.
+
 When a Turn reaches `awaiting_confirmation`, the sync path calls `append_workflow_draft_revision(...)` with harness Turn
 ID and artifact step ID. The existing `(draft_id, source_turn_id, source_artifact_step_id)` uniqueness contract makes
 replay idempotent. Only the resulting revision ID is stored on the Turn projection. Confirming the Draft marks an
-associated Agent conversation `completed`.
+associated Agent conversation `completed`. Artifact attachment parses and validates the value again before persistence;
+this closes callback bypass, stale-reference, and projection-race paths without adding a second acceptance policy.
 
 ## ProductFlow Tool Gateway
 
@@ -270,6 +286,9 @@ The Agent supplies the first complete product-specific artifact after reading th
   idempotency key.
 - Pollable network failures retain durable state and schedule a later sync. Artifact validation conflicts are retained for
   operator/user correction and are not treated as successful sync.
+- Harness `failed` and `unknown` error strings are diagnostic data. ProductFlow projects stable user-facing messages for
+  those statuses and logs only run/Turn IDs plus the safe status category; provider response bodies do not enter browser
+  state or ProductFlow logs.
 - Logs may contain conversation, projection, harness Turn IDs, status, and safe failure categories. They must not contain
   internal/provider tokens, complete user input, artifact bodies, image bytes, base64, data URLs, storage paths, or
   complete provider requests/responses.
@@ -281,6 +300,9 @@ The Agent supplies the first complete product-specific artifact after reading th
 - `scripts/release.sh` checks the Agent `/healthz` endpoint from the Compose network because the service has no host port.
 - Required Go gates: `gofmt`, `go vet ./...`, `go test ./...`, and `go test -race ./...`.
 - Required backend gates: focused Agent/API/migration tests, Ruff, and the full pytest suite.
+- Required artifact changes test the full generated schema, local harness rejection/retry, ProductFlow business
+  rejection/retry, cross-product reference rejection, and attachment-time revalidation. A real provider run must use the
+  complete production schema rather than a reduced probe.
 - Migration changes require a PostgreSQL 16 `previous -> head -> previous -> head` round trip with sentinel preservation.
 - `TestLiveProviderTwoTurnTranscript` is opt-in through `PRODUCTFLOW_RUN_LIVE_AGENT=1`; the default suite skips it and
   consumes no provider quota.

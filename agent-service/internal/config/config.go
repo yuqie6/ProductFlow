@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const HarnessCommit = "491c9d7e56d9dfc5004afbcda1a0f578df1cf95e"
+const HarnessCommit = "8c1d951ba9b7227e9bf16826eb50a5c801638727"
 
 type Config struct {
 	ListenAddress             string

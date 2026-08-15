@@ -12,6 +12,8 @@ from sqlalchemy import event, func, select
 from workflow_draft_helpers import make_workflow_draft_payload
 
 from alembic import command
+from productflow_backend.application import agent_control
+from productflow_backend.application.agent_control import synchronize_agent_turn_state
 from productflow_backend.application.agent_conversations import (
     attach_agent_workflow_draft_artifact,
     bind_harness_turn,
@@ -56,6 +58,7 @@ from productflow_backend.config import get_settings
 from productflow_backend.domain.enums import (
     AgentConversationStatus,
     AgentTurnStatus,
+    MediaVerificationStatus,
 )
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.agent_service import (
@@ -354,6 +357,78 @@ def test_terminal_turn_statuses_allow_continuing_the_same_conversation(
     assert second.projection.conversation.harness_run_id == harness_run_id
 
 
+@pytest.mark.parametrize(
+    ("terminal_status", "safe_error"),
+    [
+        (
+            AgentTurnStatus.FAILED,
+            "Agent 生成失败，请重试；持续失败请检查 Agent 供应商配置",
+        ),
+        (AgentTurnStatus.UNKNOWN, "Agent 执行状态不明确，请稍后重试"),
+    ],
+)
+def test_agent_terminal_provider_errors_are_not_projected_to_the_browser(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+    terminal_status: AgentTurnStatus,
+    safe_error: str,
+) -> None:
+    product, _, draft, _ = _create_product_and_draft(db_session)
+    conversation = create_agent_conversation(
+        db_session,
+        product_id=product.id,
+        workflow_draft_id=draft.id,
+    )
+    projection = reserve_agent_turn(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        input_text="生成工作流",
+        input_asset_ids=[],
+        idempotency_key=f"provider-error-{terminal_status.value}",
+    ).projection
+    projection = bind_harness_turn(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        projection_id=projection.id,
+        harness_turn_id=f"harness-{terminal_status.value}",
+        status=AgentTurnStatus.RUNNING,
+    )
+    raw_error = "provider returned 400 with internal request details"
+    warning_calls: list[tuple[str, tuple[object, ...]]] = []
+    monkeypatch.setattr(
+        agent_control.logger,
+        "warning",
+        lambda message, *args: warning_calls.append((message, args)),
+    )
+
+    projected = synchronize_agent_turn_state(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        projection_id=projection.id,
+        state=AgentServiceTurnState(
+            api_version="v1alpha1",
+            run_id=conversation.harness_run_id,
+            turn_id=projection.harness_turn_id or "",
+            status=terminal_status,
+            error=raw_error,
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+            finished_at=datetime.now(UTC),
+        ),
+    )
+
+    assert projected.error_text == safe_error
+    assert raw_error not in projected.error_text
+    assert len(warning_calls) == 1
+    warning_message, warning_args = warning_calls[0]
+    assert raw_error not in warning_message
+    assert raw_error not in warning_args
+    assert warning_args == (conversation.harness_run_id, projection.harness_turn_id)
+
+
 def test_agent_first_version_zero_context_and_first_artifact_are_replayable(db_session) -> None:
     workspace = _create_agent_first_workspace(db_session)
     product = workspace.product
@@ -551,7 +626,13 @@ def test_agent_read_tools_are_bounded_and_rename_is_reconcilable(db_session) -> 
     assert contract["product_id"] == product.id
     assert contract["workflow_draft_id"] == draft.id
     assert contract["current_draft_version"] == 1
-    assert contract["workflow_draft_schema"]["additionalProperties"] is False
+    workflow_schema = contract["workflow_draft_schema"]
+    assert workflow_schema["additionalProperties"] is False
+    delivery_schema = workflow_schema["$defs"]["DeliverySpec"]
+    assert delivery_schema["required"] == list(delivery_schema["properties"])
+    assert "background_color" in delivery_schema["required"]
+    assert "oneOf" not in workflow_schema["properties"]["nodes"]["items"]
+    assert "anyOf" in workflow_schema["properties"]["nodes"]["items"]
     assert contract["tool_contract_version"] == 2
 
     context = get_agent_product_context(db_session, conversation.id)
@@ -886,7 +967,7 @@ def test_internal_agent_routes_require_service_token_and_never_need_browser_sess
 ) -> None:
     from productflow_backend.presentation.api import create_app
 
-    product, asset, draft, _ = _create_product_and_draft(db_session)
+    product, asset, draft, payload = _create_product_and_draft(db_session)
     conversation = create_agent_conversation(
         db_session,
         product_id=product.id,
@@ -911,6 +992,34 @@ def test_internal_agent_routes_require_service_token_and_never_need_browser_sess
     assert contract.status_code == 200, contract.text
     assert contract.json()["conversation_id"] == conversation.id
     assert contract.json()["tool_contract_version"] == 2
+
+    validation_path = f"/api/internal/v1/agent-conversations/{conversation.id}/workflow-draft/validate"
+    validated = client.post(validation_path, headers=headers, json={"value": payload})
+    assert validated.status_code == 200, validated.text
+    assert validated.json() == {"accepted": True}
+
+    invalid_payload = make_workflow_draft_payload(reference_asset_id=asset.id)
+    invalid_payload["visual_system"]["payload"]["colors"][1]["role"] = "primary"
+    rejected = client.post(validation_path, headers=headers, json={"value": invalid_payload})
+    assert rejected.status_code == 400
+    assert "visual_system.payload" in rejected.json()["detail"]
+    assert "视觉颜色 role 不能重复" in rejected.json()["detail"]
+
+    other_product, other_asset, _, _ = _create_product_and_draft(db_session, name="其他商品")
+    assert other_product.id != product.id
+    foreign_payload = make_workflow_draft_payload(reference_asset_id=other_asset.id)
+    foreign_reference = client.post(validation_path, headers=headers, json={"value": foreign_payload})
+    assert foreign_reference.status_code == 400
+    assert foreign_reference.json()["detail"] == "WorkflowDraft 引用了其他商品的图片资产"
+
+    asset.media_object.verification_status = MediaVerificationStatus.LEGACY_PENDING
+    db_session.commit()
+    unverified_reference = client.post(validation_path, headers=headers, json={"value": payload})
+    assert unverified_reference.status_code == 400
+    assert unverified_reference.json()["detail"] == "WorkflowDraft 引用了未通过核验的图片资产"
+    asset.media_object.verification_status = MediaVerificationStatus.VERIFIED
+    db_session.commit()
+
     assets = client.get(
         f"/api/internal/v1/agent-conversations/{conversation.id}/assets?limit=10",
         headers=headers,

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/yuqie6/agent-harness/agenttask"
+	"github.com/yuqie6/productflow-agent-service/internal/config"
 	"github.com/yuqie6/productflow-agent-service/internal/productflow"
 )
 
@@ -88,6 +89,18 @@ func TestServerScopesMultimodalTurnAndReplaysTerminalEvents(t *testing.T) {
 	}
 	api := httptest.NewServer(server.Handler())
 	t.Cleanup(api.Close)
+	healthResponse, err := api.Client().Get(api.URL + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var health map[string]string
+	if err := json.NewDecoder(healthResponse.Body).Decode(&health); err != nil {
+		t.Fatal(err)
+	}
+	_ = healthResponse.Body.Close()
+	if healthResponse.StatusCode != http.StatusOK || health["harness_commit"] != config.HarnessCommit {
+		t.Fatalf("health status=%d body=%v", healthResponse.StatusCode, health)
+	}
 
 	unauthorized, err := api.Client().Get(api.URL + "/internal/v1/conversations/" + testConversationID + "/turns/missing")
 	if err != nil {
@@ -211,6 +224,64 @@ func TestServerScopesMultimodalTurnAndReplaysTerminalEvents(t *testing.T) {
 			bytes.Contains(data, []byte("data:image")) {
 			t.Fatalf("%s contains a credential or data URL", path)
 		}
+	}
+}
+
+func TestManagerRetriesArtifactRejectedByProductFlow(t *testing.T) {
+	var providerCalls atomic.Int32
+	provider := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		body, _ := io.ReadAll(request.Body)
+		switch providerCalls.Add(1) {
+		case 1:
+			writeProviderStream(t, writer, `{"id":"rejected","status":"completed","output":[{"id":"call_1","type":"function_call","call_id":"draft_1","name":"propose_workflow_draft","arguments":"{\"title\":\"Rejected\"}"}]}`)
+		case 2:
+			if !bytes.Contains(body, []byte("title violates ProductFlow rules")) {
+				writeProviderStream(t, writer, `{"id":"premature_final","status":"completed","output":[{"id":"message","type":"message","role":"assistant","content":[{"type":"output_text","text":"draft ready"}]}]}`)
+				return
+			}
+			writeProviderStream(t, writer, `{"id":"accepted","status":"completed","output":[{"id":"call_2","type":"function_call","call_id":"draft_2","name":"propose_workflow_draft","arguments":"{\"title\":\"Ready\"}"}]}`)
+		case 3:
+			writeProviderStream(t, writer, `{"id":"final","status":"completed","output":[{"id":"message","type":"message","role":"assistant","content":[{"type":"output_text","text":"draft ready"}]}]}`)
+		default:
+			http.Error(writer, "unexpected provider call", http.StatusInternalServerError)
+		}
+	}))
+	t.Cleanup(provider.Close)
+	productFlow := newProductFlowFixture(t, nil, testProductID)
+	t.Cleanup(productFlow.Close)
+	client, err := productflow.NewClient(productFlow.URL, testInternalToken, productFlow.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewManager(ManagerConfig{
+		DataRoot: t.TempDir(),
+		Provider: agenttask.ProviderConfig{
+			APIKey: "provider-secret", BaseURL: provider.URL, Model: "test-model", HTTPClient: provider.Client(),
+		},
+		Policy: agenttask.Policy{
+			MaxIterations: 10, ModelContextWindow: 100_000,
+			AutoCompactTokenLimit: 80_000, CompactionSummaryMaxChars: 4_000,
+		},
+		ProductFlow: client,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	entry, err := manager.Get(t.Context(), testConversationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := entry.Service.StartTurn(t.Context(), agenttask.StartTurnRequest{
+		RunID: entry.Scope.RunID, Input: agenttask.TextInput("Create a valid draft"),
+		IdempotencyKey: "productflow-artifact-validation",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = awaitLiveTurn(t, entry.Service, state.RunID, state.TurnID)
+	if state.Artifact == nil || string(state.Artifact.Value) != `{"title":"Ready"}` || providerCalls.Load() != 3 {
+		t.Fatalf("validated artifact state=%#v provider_calls=%d", state, providerCalls.Load())
 	}
 }
 
@@ -469,6 +540,23 @@ func newProductFlowFixture(t *testing.T, png []byte, productID string) *httptest
 				},
 				"tool_contract_version": 2,
 			})
+		case base + "/workflow-draft/validate":
+			var payload struct {
+				Value struct {
+					Title string `json:"title"`
+				} `json:"value"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				http.Error(writer, "invalid validation payload", http.StatusBadRequest)
+				return
+			}
+			if payload.Value.Title == "Rejected" {
+				writer.Header().Set("Content-Type", "application/json")
+				writer.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(writer).Encode(map[string]string{"detail": "title violates ProductFlow rules"})
+				return
+			}
+			writeFixtureJSON(writer, map[string]bool{"accepted": true})
 		default:
 			matchedAsset := false
 			for _, assetID := range testAssetIDs {

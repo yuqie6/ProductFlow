@@ -142,6 +142,33 @@ func (client *Client) ProductContext(ctx context.Context, conversationID string)
 	return result, err
 }
 
+func (client *Client) ValidateWorkflowDraft(
+	ctx context.Context,
+	conversationID string,
+	value json.RawMessage,
+) error {
+	if !json.Valid(value) {
+		return errors.New("workflow draft validation value must be valid JSON")
+	}
+	var result struct {
+		Accepted bool `json:"accepted"`
+	}
+	if err := client.json(
+		ctx,
+		http.MethodPost,
+		client.conversationPath(conversationID)+"/workflow-draft/validate",
+		map[string]any{"value": value},
+		&result,
+		"",
+	); err != nil {
+		return err
+	}
+	if !result.Accepted {
+		return errors.New("ProductFlow rejected workflow draft without an error")
+	}
+	return nil
+}
+
 func (client *Client) ListAssets(
 	ctx context.Context,
 	conversationID, directoryKind, directoryKey, query, sort, cursor string,
