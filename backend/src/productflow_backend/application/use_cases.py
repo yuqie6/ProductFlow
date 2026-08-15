@@ -8,6 +8,7 @@ from sqlalchemy import delete, desc, exists, func, literal, select
 from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.copy_payloads import validate_copy_payload
+from productflow_backend.application.legacy_retirement.freeze import ensure_legacy_v1_write_allowed
 from productflow_backend.application.media_assets import (
     delete_legacy_source_with_canonical_asset,
     get_product_image_assets_by_ids,
@@ -230,6 +231,7 @@ def create_product(
     storage: LocalStorage | None = None,
 ) -> Product:
     """创建商品，保存原始图和参考图到本地存储。"""
+    ensure_legacy_v1_write_allowed(session)
     canvas_template = resolve_product_creation_canvas_template(canvas_template_key)
     storage = storage or LocalStorage()
     with compensate_storage_writes(session) as storage_writes:
@@ -470,6 +472,7 @@ def add_reference_images(
     reference_image_uploads: list[tuple[bytes, str, str]],
     storage: LocalStorage | None = None,
 ) -> Product:
+    ensure_legacy_v1_write_allowed(session)
     product = _get_product_or_raise(session, product_id)
     storage = storage or LocalStorage()
     with compensate_storage_writes(session) as storage_writes:
@@ -498,6 +501,7 @@ def delete_reference_image(
     asset_id: str,
     storage: LocalStorage | None = None,
 ) -> Product:
+    ensure_legacy_v1_write_allowed(session)
     asset = session.get(SourceAsset, asset_id)
     if asset is None:
         raise NotFoundError("商品参考图不存在")
@@ -563,6 +567,22 @@ def delete_product(
     storage: LocalStorage | None = None,
 ) -> None:
     product = _get_product_or_raise(session, product_id)
+    legacy_workflow_id = session.scalar(
+        select(ProductWorkflow.id)
+        .where(
+            ProductWorkflow.product_id == product_id,
+            ProductWorkflow.schema_version == 1,
+        )
+        .limit(1)
+    )
+    if (
+        legacy_workflow_id is not None
+        or product.source_assets
+        or product.creative_briefs
+        or product.copy_sets
+        or product.poster_variants
+    ):
+        ensure_legacy_v1_write_allowed(session)
     active_workflow_run = session.scalar(
         select(WorkflowRun)
         .join(ProductWorkflow, WorkflowRun.workflow_id == ProductWorkflow.id)
@@ -714,6 +734,7 @@ def update_copy_set(
     copy_set_id: str,
     structured_payload: dict[str, Any],
 ) -> CopySet:
+    ensure_legacy_v1_write_allowed(session)
     copy_set = _get_copy_set_or_raise(session, copy_set_id)
     try:
         payload = validate_copy_payload(structured_payload)
@@ -727,6 +748,7 @@ def update_copy_set(
 
 
 def confirm_copy_set(session: Session, *, copy_set_id: str) -> CopySet:
+    ensure_legacy_v1_write_allowed(session)
     copy_set = _get_copy_set_or_raise(session, copy_set_id)
     product = _get_product_or_raise(session, copy_set.product_id)
     copy_set.status = CopyStatus.CONFIRMED

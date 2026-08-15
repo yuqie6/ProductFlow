@@ -35,6 +35,7 @@ from productflow_backend.application.image_session_dependencies import (
     ImageSessionProviderFailure,
     default_image_session_chat_service_factory,
 )
+from productflow_backend.application.legacy_retirement.freeze import ensure_legacy_v1_write_allowed
 from productflow_backend.application.media_assets import (
     ensure_image_session_asset_media,
     get_product_image_asset,
@@ -1414,6 +1415,7 @@ def attach_image_session_asset_to_product(
     storage: LocalStorage | None = None,
 ) -> Product:
     """将生图结果写回商品（设为参考图或替换主图）。"""
+    ensure_legacy_v1_write_allowed(session)
     image_session = _get_image_session_or_raise(session, image_session_id)
     asset = next((item for item in image_session.assets if item.id == asset_id), None)
     if asset is None:

@@ -13,6 +13,7 @@ from productflow_backend.application.canvas_templates import (
     CanvasTemplateScenario,
     CanvasTemplateScenarioMetadata,
 )
+from productflow_backend.application.legacy_retirement.freeze import ensure_legacy_v1_write_allowed
 from productflow_backend.application.product_workflow import graph as product_workflow_graph
 from productflow_backend.application.product_workflow.node_config import normalize_workflow_node_config
 from productflow_backend.application.time import now_utc
@@ -166,6 +167,7 @@ def create_user_canvas_template_from_workflow_nodes(
     if workflow is None:
         product_workflow_graph.get_product_or_raise(session, product_id)
         raise BusinessValidationError("需要先创建或打开画布后才能保存模板")
+    ensure_legacy_v1_write_allowed(session)
 
     workflow_nodes_by_id = {node.id: node for node in workflow.nodes}
     unknown_node_ids = [node_id for node_id in node_ids if node_id not in workflow_nodes_by_id]
@@ -219,6 +221,7 @@ def rename_user_canvas_template(
     title: str | None,
     description: str | None,
 ) -> UserCanvasTemplate:
+    ensure_legacy_v1_write_allowed(session)
     template = _get_user_template_or_raise(session, template_id)
     if template.archived_at is not None:
         raise NotFoundError("用户模板不存在")
@@ -236,6 +239,7 @@ def rename_user_canvas_template(
 
 
 def archive_user_canvas_template(session: Session, *, template_id: str) -> None:
+    ensure_legacy_v1_write_allowed(session)
     template = _get_user_template_or_raise(session, template_id)
     if template.archived_at is None:
         template.archived_at = now_utc()

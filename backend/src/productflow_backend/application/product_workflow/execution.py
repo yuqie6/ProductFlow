@@ -16,6 +16,7 @@ from productflow_backend.application.copy_payloads import (
     normalize_copy_node_config,
     validate_copy_payload,
 )
+from productflow_backend.application.legacy_retirement.freeze import ensure_legacy_v1_write_allowed
 from productflow_backend.application.product_workflow import graph as product_workflow_graph
 from productflow_backend.application.product_workflow.artifacts import (
     copy_node_output,
@@ -171,6 +172,8 @@ def start_product_workflow_run(
     node_ids_to_run_override: set[str] | None = None,
 ) -> WorkflowRunKickoff:
     workflow = get_or_create_product_workflow(session, product_id)
+    if workflow.schema_version == 1:
+        ensure_legacy_v1_write_allowed(session)
     session.expire(workflow, ["nodes", "edges", "runs"])
     ordered_nodes = product_workflow_graph.topological_nodes(workflow)
     if start_node_id is not None:
@@ -258,6 +261,8 @@ def retry_product_workflow_run(
     enqueue: Callable[[str], None] | None = None,
 ) -> ProductWorkflow:
     workflow = get_or_create_product_workflow(session, product_id)
+    if workflow.schema_version == 1:
+        ensure_legacy_v1_write_allowed(session)
     run = session.get(WorkflowRun, run_id) if run_id else _latest_failed_workflow_run(workflow)
     if run is None or run.workflow_id != workflow.id:
         raise NotFoundError("工作流运行不存在")
@@ -297,6 +302,8 @@ def cancel_product_workflow_run(
     run_id: str | None = None,
 ) -> ProductWorkflow:
     workflow = get_or_create_product_workflow(session, product_id)
+    if workflow.schema_version == 1:
+        ensure_legacy_v1_write_allowed(session)
     run = session.get(WorkflowRun, run_id) if run_id else _active_workflow_run(workflow)
     if run is None or run.workflow_id != workflow.id:
         raise NotFoundError("工作流运行不存在")

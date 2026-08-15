@@ -7,6 +7,7 @@ from productflow_backend.application.legacy_retirement.contracts import (
     LegacyArchiveExportPage,
     LegacyRetirementAuditReport,
 )
+from productflow_backend.application.legacy_retirement.preflight import audit_legacy_cutover_preflight
 from productflow_backend.application.legacy_retirement.snapshots import export_legacy_archive_page
 
 __all__ = [
@@ -14,6 +15,7 @@ __all__ = [
     "LegacyArchiveExportPage",
     "LegacyRetirementAuditReport",
     "audit_legacy_retirement",
+    "audit_legacy_cutover_preflight",
     "backfill_legacy_archive_page",
     "export_legacy_archive_page",
 ]

@@ -8,6 +8,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from productflow_backend.application.canvas_templates import CanvasTemplateNodeSpec
+from productflow_backend.application.legacy_retirement.freeze import (
+    ensure_legacy_v1_write_allowed,
+    legacy_v1_writes_are_frozen,
+)
 from productflow_backend.application.product_workflow import graph as product_workflow_graph
 from productflow_backend.application.product_workflow.artifacts import (
     copy_node_output,
@@ -187,6 +191,12 @@ def apply_workflow_node_patch(
 def get_or_create_product_workflow(session: Session, product_id: str) -> ProductWorkflow:
     existing = product_workflow_graph.get_active_workflow(session, product_id)
     if existing is not None:
+        if _has_single_product_context_node(existing):
+            return existing
+        if legacy_v1_writes_are_frozen(session):
+            return existing
+        ensure_legacy_v1_write_allowed(session)
+        session.expire(existing, ["nodes"])
         if _normalize_product_context_singleton(session, existing):
             session.commit()
             session.expire_all()
@@ -195,6 +205,7 @@ def get_or_create_product_workflow(session: Session, product_id: str) -> Product
             ) or product_workflow_graph.get_workflow_or_raise(session, existing.id)
         return existing
 
+    ensure_legacy_v1_write_allowed(session)
     product = product_workflow_graph.get_product_or_raise(session, product_id)
     workflow = ProductWorkflow(
         product_id=product.id,
@@ -243,6 +254,7 @@ def create_workflow_node(
             product_workflow_graph.get_product_or_raise(session, product_id)
         raise BusinessValidationError("提示词节点只能通过 confirmed WorkflowDraft 物化为 schema-v2 工作流")
     workflow = get_or_create_product_workflow(session, product_id)
+    ensure_legacy_v1_write_allowed(session)
     if node_type == WorkflowNodeType.PRODUCT_CONTEXT and any(
         node.node_type == WorkflowNodeType.PRODUCT_CONTEXT for node in workflow.nodes
     ):
@@ -298,6 +310,7 @@ def materialize_node_group_template_to_workflow(
     if workflow is None:
         product_workflow_graph.get_product_or_raise(session, product_id)
         raise BusinessValidationError("需要先创建或打开画布后才能添加模板")
+    ensure_legacy_v1_write_allowed(session)
     # 模板里的商品资料节点是占位符，落到已有画布时要映射到当前商品资料节点。
     needs_product_context = any(
         node.node_type == WorkflowNodeType.PRODUCT_CONTEXT
@@ -365,6 +378,7 @@ def duplicate_workflow_node_group(
     if workflow is None:
         product_workflow_graph.get_product_or_raise(session, product_id)
         raise BusinessValidationError("需要先创建或打开画布后才能复制节点")
+    ensure_legacy_v1_write_allowed(session)
 
     workflow_nodes_by_id = {node.id: node for node in workflow.nodes}
     unknown_node_ids = [node_id for node_id in node_ids if node_id not in workflow_nodes_by_id]
@@ -433,6 +447,7 @@ def update_workflow_node(
     config_json: dict[str, Any] | None,
 ) -> ProductWorkflow:
     node = product_workflow_graph.get_node_or_raise(session, node_id)
+    ensure_legacy_v1_write_allowed(session)
     touched = title is not None or position_x is not None or position_y is not None or config_json is not None
     apply_workflow_node_patch(node, title=title, config_json=config_json)
     if position_x is not None:
@@ -453,6 +468,7 @@ def update_workflow_copy_set(
     structured_payload: dict[str, Any],
 ) -> ProductWorkflow:
     node = product_workflow_graph.get_node_or_raise(session, node_id)
+    ensure_legacy_v1_write_allowed(session)
     if node.node_type != WorkflowNodeType.COPY_GENERATION:
         raise BusinessValidationError("只有文案节点可以编辑文案")
     workflow_id = node.workflow_id
@@ -494,6 +510,7 @@ def upload_workflow_node_image(
 ) -> ProductWorkflow:
     """把上传图存为商品参考图，并绑定到参考图节点输出。"""
     node = product_workflow_graph.get_node_or_raise(session, node_id)
+    ensure_legacy_v1_write_allowed(session)
     if node.node_type != WorkflowNodeType.REFERENCE_IMAGE:
         raise BusinessValidationError("只有参考图节点可以上传图片")
     workflow = product_workflow_graph.get_workflow_or_raise(session, node.workflow_id)
@@ -554,6 +571,7 @@ def bind_workflow_node_image(
         raise BusinessValidationError("请选择一张图片")
 
     node = product_workflow_graph.get_node_or_raise(session, node_id)
+    ensure_legacy_v1_write_allowed(session)
     if node.node_type != WorkflowNodeType.REFERENCE_IMAGE:
         raise BusinessValidationError("只有参考图节点可以填充图片")
     workflow = product_workflow_graph.get_workflow_or_raise(session, node.workflow_id)
@@ -616,6 +634,7 @@ def create_workflow_edge(
     target_handle: str | None = None,
 ) -> ProductWorkflow:
     workflow = get_or_create_product_workflow(session, product_id)
+    ensure_legacy_v1_write_allowed(session)
     nodes = {node.id for node in workflow.nodes}
     if source_node_id == target_node_id:
         raise BusinessValidationError("工作流连线不能连接到自身")
@@ -641,6 +660,7 @@ def create_workflow_edge(
 
 def delete_workflow_edge(session: Session, *, edge_id: str) -> ProductWorkflow:
     edge = product_workflow_graph.get_edge_or_raise(session, edge_id)
+    ensure_legacy_v1_write_allowed(session)
     workflow_id = edge.workflow_id
     edge.workflow.updated_at = now_utc()
     session.delete(edge)
@@ -651,6 +671,7 @@ def delete_workflow_edge(session: Session, *, edge_id: str) -> ProductWorkflow:
 
 def delete_workflow_node(session: Session, *, node_id: str) -> ProductWorkflow:
     node = product_workflow_graph.get_node_or_raise(session, node_id)
+    ensure_legacy_v1_write_allowed(session)
     workflow = product_workflow_graph.get_workflow_or_raise(session, node.workflow_id)
     if (
         _active_workflow_run(workflow) is not None
@@ -708,3 +729,7 @@ def _normalize_product_context_singleton(session: Session, workflow: ProductWork
     if changed:
         workflow.updated_at = now_utc()
     return changed
+
+
+def _has_single_product_context_node(workflow: ProductWorkflow) -> bool:
+    return sum(node.node_type == WorkflowNodeType.PRODUCT_CONTEXT for node in workflow.nodes) == 1

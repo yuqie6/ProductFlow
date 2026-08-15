@@ -222,11 +222,16 @@ def _build_issues(
                 detail="检测到 dangling、orphan 或跨商品/工作流引用，归档映射前必须逐项处理。",
             )
         )
+    legacy_workflows = [item for item in workflows.items if item.archive_candidate]
     active_workflow_runs = sum(
-        workflows.run_status_counts.get(status, 0) for status in WORKFLOW_RUN_ACTIVE_STATUSES
+        item.run_status_counts.get(status, 0)
+        for item in legacy_workflows
+        for status in WORKFLOW_RUN_ACTIVE_STATUSES
     )
     active_node_runs = sum(
-        workflows.node_run_status_counts.get(status, 0) for status in WORKFLOW_NODE_ACTIVE_STATUSES
+        item.node_run_status_counts.get(status, 0)
+        for item in legacy_workflows
+        for status in WORKFLOW_NODE_ACTIVE_STATUSES
     )
     if active_workflow_runs + active_node_runs:
         issues.append(
@@ -238,10 +243,14 @@ def _build_issues(
             )
         )
     unknown_workflow_statuses = sum(
-        count for status, count in workflows.run_status_counts.items() if status not in WORKFLOW_RUN_KNOWN_STATUSES
+        count
+        for item in legacy_workflows
+        for status, count in item.run_status_counts.items()
+        if status not in WORKFLOW_RUN_KNOWN_STATUSES
     ) + sum(
         count
-        for status, count in workflows.node_run_status_counts.items()
+        for item in legacy_workflows
+        for status, count in item.node_run_status_counts.items()
         if status not in WORKFLOW_NODE_KNOWN_STATUSES
     )
     if unknown_workflow_statuses:

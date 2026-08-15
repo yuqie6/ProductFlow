@@ -36,6 +36,18 @@ backend-audit-legacy-retirement *args:
 backend-audit-legacy-retirement-prod *args:
     uv run --directory backend python -m productflow_backend.commands.audit_legacy_retirement {{args}}
 
+backend-legacy-v1-freeze *args:
+    bash scripts/with_dev_env.sh uv run --directory backend python -m productflow_backend.commands.manage_legacy_v1_freeze {{args}}
+
+backend-legacy-v1-freeze-prod *args:
+    uv run --directory backend python -m productflow_backend.commands.manage_legacy_v1_freeze {{args}}
+
+backend-preflight-legacy-cutover *args:
+    bash scripts/with_dev_env.sh uv run --directory backend python -m productflow_backend.commands.preflight_legacy_cutover {{args}}
+
+backend-preflight-legacy-cutover-prod *args:
+    uv run --directory backend python -m productflow_backend.commands.preflight_legacy_cutover {{args}}
+
 backend-export-legacy-archives *args:
     bash scripts/with_dev_env.sh uv run --directory backend python -m productflow_backend.commands.export_legacy_archives {{args}}
 

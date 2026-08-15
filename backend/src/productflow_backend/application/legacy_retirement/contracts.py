@@ -26,6 +26,7 @@ AuditIssueSeverity = Literal["warning", "blocking"]
 ArchiveItemKind = Literal["workflow", "user_template", "canvas_agent_thread"]
 ArchiveAssetSourceType = Literal["source_asset", "poster_variant", "image_session_asset"]
 ArchiveBackfillItemStatus = Literal["would_create", "created", "unchanged", "blocked"]
+ConfigurationValueSource = Literal["database_override", "environment", "default", "absent"]
 
 
 class _FrozenContract(BaseModel):
@@ -241,6 +242,86 @@ class LegacyArchiveBackfillReport(_FrozenContract):
     report_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+class LegacyV1FreezePreflightSummary(_FrozenContract):
+    configured: bool
+    frozen: bool
+    valid: bool
+    updated_at: datetime | None = None
+
+
+class LegacyV1ExecutionPreflightSummary(_FrozenContract):
+    workflow_count: int = Field(ge=0)
+    workflow_run_status_counts: dict[str, int]
+    node_run_status_counts: dict[str, int]
+    blocking_workflow_ids: list[str]
+    blocking_canvas_agent_thread_ids: list[str]
+    active_workflow_run_count: int = Field(ge=0)
+    active_node_run_count: int = Field(ge=0)
+    unknown_workflow_run_count: int = Field(ge=0)
+    unknown_node_run_count: int = Field(ge=0)
+    active_canvas_agent_run_count: int = Field(ge=0)
+    unknown_canvas_agent_run_count: int = Field(ge=0)
+
+
+class ProviderProfilePreflightSummary(_FrozenContract):
+    profile_id: str
+    name: str
+    provider_type: str
+    enabled: bool
+    archived: bool
+    capabilities: list[str]
+    default_model_keys: list[str]
+    default_models_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    config_keys: list[str]
+    config_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    base_url_configured: bool
+    base_url_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    api_key_configured: bool
+    api_key_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+
+class ProviderBindingPreflightSummary(_FrozenContract):
+    purpose: str
+    provider_kind: str
+    provider_profile_id: str | None = None
+    models: dict[str, str]
+    model_settings_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    config_keys: list[str]
+    config_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    valid: bool
+    issue_codes: list[str]
+
+
+class ConfigurationValueFingerprint(_FrozenContract):
+    name: str
+    source: ConfigurationValueSource
+    configured: bool
+    sensitive: bool
+    value_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+
+class LegacyProviderConfigurationPreflightSummary(_FrozenContract):
+    required_purposes: list[str]
+    missing_purposes: list[str]
+    profiles: list[ProviderProfilePreflightSummary]
+    bindings: list[ProviderBindingPreflightSummary]
+    system_prompt_fingerprints: list[ConfigurationValueFingerprint]
+    environment_fingerprints: list[ConfigurationValueFingerprint]
+
+
+class LegacyCutoverPreflightReport(_FrozenContract):
+    schema_version: Literal[1] = 1
+    generated_at: datetime
+    source_profile: SchemaProfile
+    source_report_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    freeze: LegacyV1FreezePreflightSummary
+    execution: LegacyV1ExecutionPreflightSummary
+    provider_configuration: LegacyProviderConfigurationPreflightSummary
+    issues: list[AuditIssue]
+    ready_for_cutover: bool
+    report_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 def canonical_json_bytes(value: Any) -> bytes:
     return json.dumps(
         canonical_json_value(value),
@@ -276,6 +357,11 @@ def archive_backfill_report_sha256(report: LegacyArchiveBackfillReport) -> str:
         mode="json",
         exclude={"generated_at", "report_sha256"},
     )
+    return canonical_sha256(payload)
+
+
+def cutover_preflight_report_sha256(report: LegacyCutoverPreflightReport) -> str:
+    payload = report.model_dump(mode="json", exclude={"generated_at", "report_sha256"})
     return canonical_sha256(payload)
 
 
@@ -318,6 +404,8 @@ __all__ = [
     "AuditIssue",
     "CanvasAgentAuditSummary",
     "CanvasAgentThreadSourceSummary",
+    "ConfigurationValueFingerprint",
+    "ConfigurationValueSource",
     "DatabaseSourceSummary",
     "LegacyRetirementAuditReport",
     "LegacyArchiveAssetDeclaration",
@@ -326,8 +414,14 @@ __all__ = [
     "LegacyArchiveExportPage",
     "LegacyArchiveSnapshot",
     "LegacyArchiveSnapshotDiagnostic",
+    "LegacyCutoverPreflightReport",
+    "LegacyProviderConfigurationPreflightSummary",
+    "LegacyV1ExecutionPreflightSummary",
+    "LegacyV1FreezePreflightSummary",
     "MediaAuditSummary",
     "MediaPathProblem",
+    "ProviderBindingPreflightSummary",
+    "ProviderProfilePreflightSummary",
     "SchemaProfile",
     "UserTemplateAuditSummary",
     "UserTemplateSourceSummary",
@@ -338,5 +432,6 @@ __all__ = [
     "canonical_json_bytes",
     "canonical_json_value",
     "canonical_sha256",
+    "cutover_preflight_report_sha256",
     "report_sha256",
 ]

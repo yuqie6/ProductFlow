@@ -14,6 +14,7 @@ from productflow_backend.application.legacy_retirement.audit import (
     audit_legacy_retirement,
 )
 from productflow_backend.application.legacy_retirement.contracts import archive_export_page_sha256
+from productflow_backend.application.legacy_retirement.preflight import audit_legacy_cutover_preflight
 from productflow_backend.application.legacy_retirement.snapshots import export_legacy_archive_page
 from productflow_backend.infrastructure.db.models import Base
 
@@ -478,6 +479,23 @@ def test_legacy_canvas_profile_is_stable_read_only_and_counts_hidden_transport_e
         statement.startswith(("insert ", "update ", "delete ", "create ", "alter ", "drop ", "truncate "))
         for statement in statements
     )
+
+
+def test_legacy_cutover_preflight_identifies_blocking_canvas_agent_thread(tmp_path: Path) -> None:
+    engine, storage_root = _legacy_engine(tmp_path)
+    try:
+        report = audit_legacy_cutover_preflight(
+            engine,
+            storage_root=storage_root,
+            environment={},
+        )
+    finally:
+        engine.dispose()
+
+    assert report.execution.blocking_workflow_ids == []
+    assert report.execution.blocking_canvas_agent_thread_ids == ["thread-1"]
+    assert report.execution.active_canvas_agent_run_count == 1
+    assert "active_canvas_agent_run" in {issue.code for issue in report.issues}
 
 
 def test_current_archive_profile_can_audit_v1_candidates_without_canvas_tables(tmp_path: Path) -> None:

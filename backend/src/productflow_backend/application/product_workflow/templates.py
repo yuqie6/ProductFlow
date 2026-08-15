@@ -14,6 +14,7 @@ from productflow_backend.application.language_policy import (
     TemplateLanguageHints,
     language_hints_from_template_language,
 )
+from productflow_backend.application.legacy_retirement.freeze import ensure_legacy_v1_write_allowed
 from productflow_backend.application.product_workflow.node_config import normalize_workflow_node_config
 from productflow_backend.domain.enums import WorkflowNodeType
 from productflow_backend.domain.errors import BusinessValidationError, NotFoundError
@@ -41,6 +42,7 @@ def materialize_product_workflow_from_template(
     template: CanvasTemplate,
     template_language: str | None = None,
 ) -> ProductWorkflow:
+    ensure_legacy_v1_write_allowed(session)
     validate_canvas_template(template)
     if template.kind != "full_canvas":
         raise BusinessValidationError("商品创建只支持完整画布模板，节点组模板请在画布内添加")
