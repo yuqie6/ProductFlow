@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
   ArrowLeft,
   Bot,
   Boxes,
+  Check,
   ChevronRight,
   CircleAlert,
   Download,
@@ -35,6 +36,7 @@ import type {
   LegacyArchiveDetail,
   LegacyArchiveKind,
   LegacyArchiveListItem,
+  ProductSummary,
 } from "../lib/types";
 import { ImagePreviewModal } from "./product-detail/ImagePreviewModal";
 import {
@@ -51,6 +53,36 @@ import {
 
 const ARCHIVE_PAGE_SIZE = 30;
 const SEARCH_COMMIT_DELAY_MS = 300;
+
+export type LegacyArchiveRebuildTarget =
+  | { mode: "select_product" }
+  | { mode: "direct"; targetProductId: string }
+  | { mode: "unavailable" };
+
+export function resolveLegacyArchiveRebuildTarget(item: LegacyArchiveListItem): LegacyArchiveRebuildTarget {
+  if (item.kind === "user_template") {
+    return { mode: "select_product" };
+  }
+  return item.product_id
+    ? { mode: "direct", targetProductId: item.product_id }
+    : { mode: "unavailable" };
+}
+
+export function getOrCreateLegacyArchiveRebuildKey(
+  keys: Map<string, string>,
+  archive: Pick<LegacyArchiveListItem, "kind" | "id">,
+  targetProductId: string,
+  createId: () => string = () => globalThis.crypto.randomUUID(),
+): string {
+  const identity = `${archive.kind}:${archive.id}:${targetProductId}`;
+  const existing = keys.get(identity);
+  if (existing) {
+    return existing;
+  }
+  const created = `legacy-rebuild:${createId()}`;
+  keys.set(identity, created);
+  return created;
+}
 
 const KIND_OPTIONS: Array<{
   kind: LegacyArchiveKind | null;
@@ -105,6 +137,8 @@ export function LegacyHistoryPage() {
   const detailSelected = Boolean(detailKind && archiveId);
   const [searchDraft, setSearchDraft] = useState(committedQuery);
   const [previewAsset, setPreviewAsset] = useState<LegacyArchiveAsset | null>(null);
+  const [templateRebuildDetail, setTemplateRebuildDetail] = useState<LegacyArchiveDetail | null>(null);
+  const rebuildKeysRef = useRef(new Map<string, string>());
 
   useEffect(() => {
     setSearchDraft(committedQuery);
@@ -171,6 +205,24 @@ export function LegacyHistoryPage() {
     }),
     onSuccess: ({ blob, item }) => downloadBlob(blob, legacyArchiveExportFilename(item)),
   });
+  const rebuildMutation = useMutation({
+    mutationFn: ({ detail, targetProductId }: { detail: LegacyArchiveDetail; targetProductId: string }) => {
+      const idempotencyKey = getOrCreateLegacyArchiveRebuildKey(
+        rebuildKeysRef.current,
+        detail.item,
+        targetProductId,
+      );
+      return api.createLegacyArchiveAgentRebuild(detail.item.kind, detail.item.id, {
+        target_product_id: targetProductId,
+        idempotency_key: idempotencyKey,
+      });
+    },
+    onSuccess: async (result) => {
+      setTemplateRebuildDetail(null);
+      await queryClient.invalidateQueries({ queryKey: ["agent-workbench", result.target_product_id] });
+      navigate(`/products/${encodeURIComponent(result.target_product_id)}`);
+    },
+  });
   const logoutMutation = useMutation({
     mutationFn: api.destroySession,
     onSuccess: async () => {
@@ -192,6 +244,17 @@ export function LegacyHistoryPage() {
     const next = new URLSearchParams(searchParams);
     next.delete("product_id");
     navigate(historyListPath(next));
+  };
+  const rebuildFromArchive = (detail: LegacyArchiveDetail) => {
+    rebuildMutation.reset();
+    const target = resolveLegacyArchiveRebuildTarget(detail.item);
+    if (target.mode === "select_product") {
+      setTemplateRebuildDetail(detail);
+      return;
+    }
+    if (target.mode === "direct") {
+      rebuildMutation.mutate({ detail, targetProductId: target.targetProductId });
+    }
   };
 
   return (
@@ -319,11 +382,22 @@ export function LegacyHistoryPage() {
                 isLoading={detailQuery.isLoading}
                 isExporting={exportMutation.isPending}
                 exportError={exportMutation.error}
+                isRebuilding={rebuildMutation.isPending}
+                rebuildError={
+                  rebuildMutation.variables?.detail.item.id === detailQuery.data?.item.id
+                    ? rebuildMutation.error
+                    : null
+                }
                 onBack={() => navigate(historyListPath(searchParams))}
                 onRetry={() => void detailQuery.refetch()}
                 onExport={() => {
                   if (detailQuery.data) {
                     exportMutation.mutate(detailQuery.data);
+                  }
+                }}
+                onRebuild={() => {
+                  if (detailQuery.data) {
+                    rebuildFromArchive(detailQuery.data);
                   }
                 }}
                 onPreviewAsset={setPreviewAsset}
@@ -342,6 +416,23 @@ export function LegacyHistoryPage() {
 
       {previewAsset ? (
         <ImagePreviewModal image={archiveAssetImage(previewAsset)} onClose={() => setPreviewAsset(null)} />
+      ) : null}
+      {templateRebuildDetail ? (
+        <RebuildTargetDialog
+          key={templateRebuildDetail.item.id}
+          archive={templateRebuildDetail.item}
+          busy={rebuildMutation.isPending}
+          error={rebuildMutation.error}
+          onClose={() => {
+            if (!rebuildMutation.isPending) {
+              setTemplateRebuildDetail(null);
+              rebuildMutation.reset();
+            }
+          }}
+          onSubmit={(targetProductId) => {
+            rebuildMutation.mutate({ detail: templateRebuildDetail, targetProductId });
+          }}
+        />
       ) : null}
     </div>
   );
@@ -499,9 +590,12 @@ function ArchiveDetailPanel({
   isLoading,
   isExporting,
   exportError,
+  isRebuilding,
+  rebuildError,
   onBack,
   onRetry,
   onExport,
+  onRebuild,
   onPreviewAsset,
 }: {
   detail: LegacyArchiveDetail | null;
@@ -509,9 +603,12 @@ function ArchiveDetailPanel({
   isLoading: boolean;
   isExporting: boolean;
   exportError: unknown;
+  isRebuilding: boolean;
+  rebuildError: unknown;
   onBack: () => void;
   onRetry: () => void;
   onExport: () => void;
+  onRebuild: () => void;
   onPreviewAsset: (asset: LegacyArchiveAsset) => void;
 }) {
   const { locale, t } = useI18n();
@@ -547,6 +644,18 @@ function ArchiveDetailPanel({
         </div>
         <button
           type="button"
+          onClick={onRebuild}
+          disabled={isRebuilding || (item.kind !== "user_template" && !item.product_id)}
+          className="inline-flex h-9 shrink-0 items-center gap-2 rounded-md bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-500 disabled:opacity-60 dark:bg-cyan-400 dark:text-[#071018] dark:hover:bg-cyan-300"
+          title={t("history.rebuild")}
+        >
+          {isRebuilding ? <Loader2 size={14} className="animate-spin" /> : <Bot size={14} />}
+          <span className="hidden sm:inline">
+            {isRebuilding ? t("history.rebuilding") : t("history.rebuild")}
+          </span>
+        </button>
+        <button
+          type="button"
           onClick={onExport}
           disabled={isExporting}
           className="inline-flex h-9 shrink-0 items-center gap-2 rounded-md bg-slate-950 px-3 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60 dark:bg-cyan-400 dark:text-[#071018] dark:hover:bg-cyan-300"
@@ -560,6 +669,11 @@ function ArchiveDetailPanel({
       {exportError ? (
         <div role="alert" className="border-b border-red-200 bg-red-50 px-5 py-2 text-xs text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200">
           {errorDetail(exportError, t("history.exportFailed"))}
+        </div>
+      ) : null}
+      {rebuildError ? (
+        <div role="alert" className="border-b border-red-200 bg-red-50 px-5 py-2 text-xs text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200">
+          {errorDetail(rebuildError, t("history.rebuildFailed"))}
         </div>
       ) : null}
 
@@ -860,6 +974,220 @@ function ArchiveRecordSection({
         ))}
       </div>
     </section>
+  );
+}
+
+function RebuildTargetDialog({
+  archive,
+  busy,
+  error,
+  onClose,
+  onSubmit,
+}: {
+  archive: LegacyArchiveListItem;
+  busy: boolean;
+  error: unknown;
+  onClose: () => void;
+  onSubmit: (targetProductId: string) => void;
+}) {
+  const { t } = useI18n();
+  const headingId = useId();
+  const [searchDraft, setSearchDraft] = useState("");
+  const [committedSearch, setCommittedSearch] = useState("");
+  const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
+  const productsQuery = useQuery({
+    queryKey: ["products", "legacy-archive-rebuild-targets", committedSearch],
+    queryFn: () => api.listProducts({ q: committedSearch, page_size: 20 }),
+  });
+  const products = productsQuery.data?.items ?? [];
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setCommittedSearch(searchDraft.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [searchDraft]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [busy, onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/60 p-3 backdrop-blur-sm sm:p-6"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) {
+          onClose();
+        }
+      }}
+    >
+      <form
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={headingId}
+        className="flex max-h-[min(680px,calc(100dvh-1.5rem))] w-full max-w-xl flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-2xl shadow-slate-950/25 dark:border-slate-700 dark:bg-[#0f151f]"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (selectedProductId) {
+            onSubmit(selectedProductId);
+          }
+        }}
+      >
+        <header className="flex items-start gap-3 border-b border-slate-200 px-4 py-4 dark:border-slate-800 sm:px-5">
+          <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-blue-50 text-blue-600 dark:bg-cyan-400/10 dark:text-cyan-300">
+            <LayoutTemplate size={17} aria-hidden="true" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 id={headingId} className="text-base font-semibold text-slate-950 dark:text-white">
+              {t("history.rebuildTargetTitle")}
+            </h2>
+            <p className="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">{archive.title}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-950 disabled:opacity-50 dark:hover:bg-slate-800 dark:hover:text-white"
+            aria-label={t("workflowV2.dialog.close")}
+            title={t("workflowV2.dialog.close")}
+          >
+            <X size={16} />
+          </button>
+        </header>
+
+        <div className="border-b border-slate-200 p-3 dark:border-slate-800 sm:px-5">
+          <label className="relative block">
+            <Search
+              size={15}
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+              aria-hidden="true"
+            />
+            <input
+              autoFocus
+              type="search"
+              value={searchDraft}
+              onChange={(event) => setSearchDraft(event.target.value)}
+              placeholder={t("history.rebuildTargetSearch")}
+              aria-label={t("history.rebuildTargetSearch")}
+              className="h-10 w-full rounded-md border border-slate-300 bg-white pl-9 pr-3 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:border-cyan-400 dark:focus:ring-cyan-400/15"
+            />
+          </label>
+        </div>
+
+        <div className="flex min-h-[260px] flex-1 flex-col overflow-y-auto">
+          {productsQuery.isLoading ? (
+            <CenteredState
+              icon={<Loader2 size={20} className="animate-spin" />}
+              label={t("history.rebuildTargetLoading")}
+            />
+          ) : productsQuery.error ? (
+            <CenteredState
+              icon={<CircleAlert size={20} />}
+              label={errorDetail(productsQuery.error, t("history.rebuildTargetLoadFailed"))}
+              actionLabel={t("history.retry")}
+              onAction={() => void productsQuery.refetch()}
+            />
+          ) : products.length ? (
+            <div className="divide-y divide-slate-100 dark:divide-slate-800">
+              {products.map((product) => (
+                <RebuildTargetProductRow
+                  key={product.id}
+                  product={product}
+                  selected={selectedProductId === product.id}
+                  disabled={busy}
+                  onSelect={() => setSelectedProductId(product.id)}
+                />
+              ))}
+            </div>
+          ) : (
+            <CenteredState icon={<Package size={21} />} label={t("history.rebuildTargetEmpty")} />
+          )}
+        </div>
+
+        {error ? (
+          <div role="alert" className="border-t border-red-200 bg-red-50 px-5 py-2 text-xs text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200">
+            {errorDetail(error, t("history.rebuildFailed"))}
+          </div>
+        ) : null}
+
+        <footer className="flex justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-950/45 sm:px-5">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+          >
+            {t("common.cancel")}
+          </button>
+          <button
+            type="submit"
+            disabled={!selectedProductId || busy}
+            className="inline-flex h-9 min-w-[112px] items-center justify-center gap-2 rounded-md bg-blue-600 px-3 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50 dark:bg-cyan-400 dark:text-[#071018] dark:hover:bg-cyan-300"
+          >
+            {busy ? <Loader2 size={15} className="animate-spin" /> : <Bot size={15} />}
+            {busy ? t("history.rebuilding") : t("history.rebuild")}
+          </button>
+        </footer>
+      </form>
+    </div>
+  );
+}
+
+function RebuildTargetProductRow({
+  product,
+  selected,
+  disabled,
+  onSelect,
+}: {
+  product: ProductSummary;
+  selected: boolean;
+  disabled: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      disabled={disabled}
+      aria-pressed={selected}
+      className={`flex min-h-[68px] w-full items-center gap-3 px-4 py-2.5 text-left transition-colors disabled:opacity-60 sm:px-5 ${
+        selected
+          ? "bg-blue-50 text-blue-950 dark:bg-cyan-400/10 dark:text-cyan-50"
+          : "hover:bg-slate-50 dark:hover:bg-slate-900"
+      }`}
+    >
+      <span className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-md border border-slate-200 bg-slate-100 dark:border-slate-700 dark:bg-slate-800">
+        {product.source_image_thumbnail_url ? (
+          <img
+            src={api.toApiUrl(product.source_image_thumbnail_url)}
+            alt=""
+            className="h-full w-full object-cover"
+          />
+        ) : (
+          <Package size={17} className="text-slate-400" aria-hidden="true" />
+        )}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-semibold">{product.name}</span>
+        <span className="mt-0.5 block truncate text-xs text-slate-500 dark:text-slate-400">
+          {product.category ?? product.id}
+        </span>
+      </span>
+      <span
+        className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border ${
+          selected
+            ? "border-blue-600 bg-blue-600 text-white dark:border-cyan-300 dark:bg-cyan-300 dark:text-slate-950"
+            : "border-slate-300 text-transparent dark:border-slate-600"
+        }`}
+        aria-hidden="true"
+      >
+        <Check size={13} />
+      </span>
+    </button>
   );
 }
 

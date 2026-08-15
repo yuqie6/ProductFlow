@@ -7,7 +7,8 @@ from productflow_backend.application.legacy_retirement.contracts import SchemaPr
 
 LEGACY_CANVAS_PROFILE: SchemaProfile = "legacy_canvas_agent_20260518_0032"
 CURRENT_CANONICAL_PROFILE: SchemaProfile = "current_canonical_20260814_0038"
-CURRENT_ARCHIVE_PROFILE: SchemaProfile = "current_with_legacy_archives_20260815_0039"
+PRE_REBUILD_ARCHIVE_PROFILE: SchemaProfile = "current_with_legacy_archives_20260815_0039"
+CURRENT_ARCHIVE_PROFILE: SchemaProfile = "current_with_legacy_archive_rebuilds_20260815_0040"
 UNKNOWN_PROFILE: SchemaProfile = "unknown"
 
 VISIBLE_CANVAS_EVENT_TYPES = frozenset(
@@ -56,6 +57,7 @@ RELEVANT_TABLES = (
     "legacy_workflow_archive_assets",
     "legacy_user_template_archives",
     "legacy_canvas_agent_archives",
+    "workflow_draft_legacy_archive_seeds",
     "canvas_agent_threads",
     "canvas_agent_messages",
     "canvas_agent_runs",
@@ -148,6 +150,7 @@ _PROFILE_DEFINITIONS = (
                 "legacy_workflow_archive_assets",
                 "legacy_user_template_archives",
                 "legacy_canvas_agent_archives",
+                "workflow_draft_legacy_archive_seeds",
             }
         ),
         forbidden_columns={
@@ -159,7 +162,7 @@ _PROFILE_DEFINITIONS = (
         },
     ),
     _ProfileDefinition(
-        name=CURRENT_ARCHIVE_PROFILE,
+        name=PRE_REBUILD_ARCHIVE_PROFILE,
         revisions=frozenset({"20260815_0039"}),
         required_columns={
             "products": frozenset({"id", "cover_image_asset_id"}),
@@ -228,6 +231,7 @@ _PROFILE_DEFINITIONS = (
                 "canvas_agent_plans",
                 "canvas_agent_task_plans",
                 "canvas_agent_timeline_events",
+                "workflow_draft_legacy_archive_seeds",
             }
         ),
         forbidden_columns={
@@ -237,6 +241,34 @@ _PROFILE_DEFINITIONS = (
             "image_gallery_entries": frozenset({"user_id"}),
             "user_canvas_templates": frozenset({"user_id"}),
         },
+    ),
+)
+
+_PRE_REBUILD_ARCHIVE_DEFINITION = _PROFILE_DEFINITIONS[-1]
+_PROFILE_DEFINITIONS = (
+    *_PROFILE_DEFINITIONS,
+    _ProfileDefinition(
+        name=CURRENT_ARCHIVE_PROFILE,
+        revisions=frozenset({"20260815_0040"}),
+        required_columns={
+            **_PRE_REBUILD_ARCHIVE_DEFINITION.required_columns,
+            "workflow_draft_legacy_archive_seeds": frozenset(
+                {
+                    "id",
+                    "workflow_draft_id",
+                    "product_id",
+                    "workflow_archive_id",
+                    "canvas_agent_archive_id",
+                    "user_template_archive_id",
+                    "schema_version",
+                    "idempotency_key",
+                    "request_hash",
+                }
+            ),
+        },
+        forbidden_tables=_PRE_REBUILD_ARCHIVE_DEFINITION.forbidden_tables
+        - {"workflow_draft_legacy_archive_seeds"},
+        forbidden_columns=_PRE_REBUILD_ARCHIVE_DEFINITION.forbidden_columns,
     ),
 )
 
@@ -289,6 +321,7 @@ __all__ = [
     "CURRENT_ARCHIVE_PROFILE",
     "CURRENT_CANONICAL_PROFILE",
     "LEGACY_CANVAS_PROFILE",
+    "PRE_REBUILD_ARCHIVE_PROFILE",
     "RELEVANT_TABLES",
     "UNKNOWN_PROFILE",
     "VISIBLE_CANVAS_EVENT_TYPES",

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
+from productflow_backend.application.legacy_archive_rebuilds import create_legacy_archive_rebuild
 from productflow_backend.application.legacy_archives import (
     LEGACY_ARCHIVE_DEFAULT_LIMIT,
     LEGACY_ARCHIVE_MAX_LIMIT,
@@ -15,10 +16,13 @@ from productflow_backend.application.legacy_archives import (
 )
 from productflow_backend.presentation.deps import get_session, require_admin
 from productflow_backend.presentation.schemas.legacy_archives import (
+    LegacyArchiveAgentRebuildRequest,
+    LegacyArchiveAgentRebuildResponse,
     LegacyArchiveDetailResponse,
     LegacyArchivePageResponse,
     serialize_legacy_archive_detail,
     serialize_legacy_archive_page,
+    serialize_legacy_archive_rebuild,
 )
 
 router = APIRouter(
@@ -77,6 +81,28 @@ def export_legacy_archive_endpoint(
             "Content-Disposition": f'attachment; filename="{filename}"',
             "ETag": f'"{digest}"',
         },
+    )
+
+
+@router.post(
+    "/{kind}/{archive_id}/agent-rebuilds",
+    response_model=LegacyArchiveAgentRebuildResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_legacy_archive_agent_rebuild_endpoint(
+    kind: LegacyArchiveKind,
+    archive_id: str,
+    payload: LegacyArchiveAgentRebuildRequest,
+    session: Session = Depends(get_session),
+) -> LegacyArchiveAgentRebuildResponse:
+    return serialize_legacy_archive_rebuild(
+        create_legacy_archive_rebuild(
+            session,
+            kind=kind,
+            archive_id=archive_id,
+            target_product_id=payload.target_product_id,
+            idempotency_key=payload.idempotency_key,
+        )
     )
 
 

@@ -273,6 +273,11 @@ class Product(Base, TimestampMixin):
         cascade="all, delete-orphan",
         foreign_keys="WorkflowDraftRecipeSeed.product_id",
     )
+    workflow_draft_legacy_archive_seeds: Mapped[list[WorkflowDraftLegacyArchiveSeed]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+        foreign_keys="WorkflowDraftLegacyArchiveSeed.product_id",
+    )
     agent_conversations: Mapped[list[AgentConversation]] = relationship(
         back_populates="product",
         cascade="all, delete-orphan",
@@ -447,8 +452,7 @@ class LegacyWorkflowArchive(Base):
             name="ck_legacy_workflow_archives_payload_hash",
         ),
         CheckConstraint(
-            "node_count >= 0 AND edge_count >= 0 AND run_count >= 0 "
-            "AND node_run_count >= 0 AND asset_count >= 0",
+            "node_count >= 0 AND edge_count >= 0 AND run_count >= 0 AND node_run_count >= 0 AND asset_count >= 0",
             name="ck_legacy_workflow_archives_counts",
         ),
         Index(
@@ -876,6 +880,12 @@ class WorkflowDraft(Base, TimestampMixin):
         foreign_keys="WorkflowDraftRecipeSeed.workflow_draft_id",
         uselist=False,
     )
+    legacy_archive_seed: Mapped[WorkflowDraftLegacyArchiveSeed | None] = relationship(
+        back_populates="workflow_draft",
+        cascade="all, delete-orphan",
+        foreign_keys="WorkflowDraftLegacyArchiveSeed.workflow_draft_id",
+        uselist=False,
+    )
 
 
 class WorkflowDraftRevision(Base):
@@ -1275,6 +1285,109 @@ class WorkflowDraftRecipeSeed(Base):
     base_workflow: Mapped[ProductWorkflow | None] = relationship(
         back_populates="recipe_seeds",
         foreign_keys=[base_workflow_id],
+    )
+
+
+class WorkflowDraftLegacyArchiveSeed(Base):
+    """把一个不可变旧归档绑定到新的 Agent WorkflowDraft。"""
+
+    __tablename__ = "workflow_draft_legacy_archive_seeds"
+    __table_args__ = (
+        UniqueConstraint(
+            "workflow_draft_id",
+            name="uq_workflow_draft_legacy_archive_seeds_draft_id",
+        ),
+        UniqueConstraint(
+            "product_id",
+            "idempotency_key",
+            name="uq_workflow_draft_legacy_archive_seeds_product_key",
+        ),
+        CheckConstraint(
+            "schema_version = 1",
+            name="ck_workflow_draft_legacy_archive_seeds_schema_version",
+        ),
+        CheckConstraint(
+            "length(request_hash) = 64",
+            name="ck_workflow_draft_legacy_archive_seeds_request_hash",
+        ),
+        CheckConstraint(
+            "(workflow_archive_id IS NOT NULL AND canvas_agent_archive_id IS NULL "
+            "AND user_template_archive_id IS NULL) OR "
+            "(workflow_archive_id IS NULL AND canvas_agent_archive_id IS NOT NULL "
+            "AND user_template_archive_id IS NULL) OR "
+            "(workflow_archive_id IS NULL AND canvas_agent_archive_id IS NULL "
+            "AND user_template_archive_id IS NOT NULL)",
+            name="ck_workflow_draft_legacy_archive_seeds_one_archive",
+        ),
+        Index(
+            "ix_workflow_draft_legacy_archive_seeds_product_created",
+            "product_id",
+            "created_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    workflow_draft_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "workflow_drafts.id",
+            ondelete="CASCADE",
+            name="fk_workflow_draft_legacy_archive_seeds_draft_id",
+        ),
+    )
+    product_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "products.id",
+            ondelete="CASCADE",
+            name="fk_workflow_draft_legacy_archive_seeds_product_id",
+        ),
+    )
+    workflow_archive_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "legacy_workflow_archives.id",
+            ondelete="RESTRICT",
+            name="fk_workflow_draft_legacy_archive_seeds_workflow_archive_id",
+        ),
+        nullable=True,
+    )
+    canvas_agent_archive_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "legacy_canvas_agent_archives.id",
+            ondelete="RESTRICT",
+            name="fk_workflow_draft_legacy_archive_seeds_canvas_archive_id",
+        ),
+        nullable=True,
+    )
+    user_template_archive_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "legacy_user_template_archives.id",
+            ondelete="RESTRICT",
+            name="fk_workflow_draft_legacy_archive_seeds_template_archive_id",
+        ),
+        nullable=True,
+    )
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    idempotency_key: Mapped[str] = mapped_column(String(120))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    workflow_draft: Mapped[WorkflowDraft] = relationship(
+        back_populates="legacy_archive_seed",
+        foreign_keys=[workflow_draft_id],
+    )
+    product: Mapped[Product] = relationship(
+        back_populates="workflow_draft_legacy_archive_seeds",
+        foreign_keys=[product_id],
+    )
+    workflow_archive: Mapped[LegacyWorkflowArchive | None] = relationship(foreign_keys=[workflow_archive_id])
+    canvas_agent_archive: Mapped[LegacyCanvasAgentArchive | None] = relationship(foreign_keys=[canvas_agent_archive_id])
+    user_template_archive: Mapped[LegacyUserTemplateArchive | None] = relationship(
+        foreign_keys=[user_template_archive_id]
     )
 
 

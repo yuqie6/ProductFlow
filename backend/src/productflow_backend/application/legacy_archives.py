@@ -87,6 +87,12 @@ class LegacyArchiveDetail:
 
 
 @dataclass(frozen=True, slots=True)
+class LegacyArchiveAssetPage:
+    items: list[LegacyArchiveAsset]
+    total: int
+
+
+@dataclass(frozen=True, slots=True)
 class _LegacyArchiveCursor:
     filter_hash: str
     created_at: datetime
@@ -168,18 +174,19 @@ def get_legacy_archive_detail(
     *,
     kind: LegacyArchiveKind,
     archive_id: str,
+    include_assets: bool = True,
 ) -> LegacyArchiveDetail:
     if kind == "workflow":
-        archive = session.scalar(
-            select(LegacyWorkflowArchive)
-            .options(
-                selectinload(LegacyWorkflowArchive.product),
+        statement = select(LegacyWorkflowArchive).options(
+            selectinload(LegacyWorkflowArchive.product),
+        )
+        if include_assets:
+            statement = statement.options(
                 selectinload(LegacyWorkflowArchive.assets)
                 .selectinload(LegacyWorkflowArchiveAsset.asset)
                 .selectinload(ProductImageAsset.media_object),
             )
-            .where(LegacyWorkflowArchive.id == archive_id)
-        )
+        archive = session.scalar(statement.where(LegacyWorkflowArchive.id == archive_id))
         if archive is None:
             raise NotFoundError("旧工作流归档不存在")
         return LegacyArchiveDetail(
@@ -188,7 +195,11 @@ def get_legacy_archive_detail(
             source_fingerprint_sha256=archive.source_fingerprint_sha256,
             payload_json=archive.payload_json,
             diagnostics=[],
-            assets=[_archive_asset(item) for item in sorted(archive.assets, key=_archive_asset_sort_key)],
+            assets=(
+                [_archive_asset(item) for item in sorted(archive.assets, key=_archive_asset_sort_key)]
+                if include_assets
+                else []
+            ),
         )
 
     if kind == "user_template":
@@ -223,6 +234,45 @@ def get_legacy_archive_detail(
         )
 
     raise BusinessValidationError("旧归档类型无效")
+
+
+def list_legacy_workflow_archive_assets(
+    session: Session,
+    *,
+    archive_id: str,
+    offset: int,
+    limit: int,
+) -> LegacyArchiveAssetPage:
+    if offset < 0 or not 1 <= limit <= 100:
+        raise BusinessValidationError("旧归档图片分页参数无效")
+    if session.get(LegacyWorkflowArchive, archive_id) is None:
+        raise NotFoundError("旧工作流归档不存在")
+    order_columns = (
+        LegacyWorkflowArchiveAsset.role,
+        LegacyWorkflowArchiveAsset.legacy_source_type,
+        LegacyWorkflowArchiveAsset.legacy_source_id,
+        LegacyWorkflowArchiveAsset.product_image_asset_id,
+    )
+    statement = (
+        select(LegacyWorkflowArchiveAsset)
+        .options(selectinload(LegacyWorkflowArchiveAsset.asset).selectinload(ProductImageAsset.media_object))
+        .where(LegacyWorkflowArchiveAsset.archive_id == archive_id)
+        .order_by(*order_columns)
+        .offset(offset)
+        .limit(limit)
+    )
+    total = int(
+        session.scalar(
+            select(func.count())
+            .select_from(LegacyWorkflowArchiveAsset)
+            .where(LegacyWorkflowArchiveAsset.archive_id == archive_id)
+        )
+        or 0
+    )
+    return LegacyArchiveAssetPage(
+        items=[_archive_asset(reference) for reference in session.scalars(statement)],
+        total=total,
+    )
 
 
 def build_legacy_archive_export(detail: LegacyArchiveDetail) -> dict[str, Any]:
@@ -627,6 +677,7 @@ __all__ = [
     "LEGACY_ARCHIVE_KINDS",
     "LEGACY_ARCHIVE_MAX_LIMIT",
     "LegacyArchiveAsset",
+    "LegacyArchiveAssetPage",
     "LegacyArchiveDetail",
     "LegacyArchiveKind",
     "LegacyArchiveListItem",
@@ -636,4 +687,5 @@ __all__ = [
     "legacy_archive_export_bytes",
     "legacy_archive_export_sha256",
     "list_legacy_archives",
+    "list_legacy_workflow_archive_assets",
 ]

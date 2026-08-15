@@ -31,6 +31,7 @@ from productflow_backend.application.gallery_mutations import (
     stage_rename_gallery_asset,
     stage_rename_gallery_folder,
 )
+from productflow_backend.application.legacy_archive_rebuilds import legacy_archive_seed_summary
 from productflow_backend.application.media_assets import inspect_image_bytes
 from productflow_backend.application.workflow_drafts.contracts import (
     WorkflowDraftPayloadV1,
@@ -54,7 +55,7 @@ from productflow_backend.infrastructure.db.models import (
 )
 from productflow_backend.infrastructure.storage import LocalStorage
 
-AGENT_TOOL_CONTRACT_VERSION = 2
+AGENT_TOOL_CONTRACT_VERSION = 3
 AGENT_ASSET_LIST_DEFAULT_LIMIT = 50
 AGENT_ASSET_LIST_MAX_LIMIT = 100
 AGENT_ASSET_MAX_BYTES = 20 * 1024 * 1024
@@ -85,6 +86,9 @@ WORKFLOW_AGENT_SYSTEM_PROMPT = """你是 ProductFlow 的商品工作流设计 Ag
    可以建议调整图片类型或数量，但必须明确说明变化并等待用户确认，不能静默改写。
 9. Logo、认证、工厂或其他专有素材只能来自用户提供的真实资产。
    缺失时应询问用户、降低对应设计要求或移除相关图片类型，不能臆造。
+10. 如果上下文包含 legacy_archive_seed，应把旧归档当作只读设计参考。
+    使用有界的归档 list/inspect 工具按 section 分页读取需要的信息；不得声称无损迁移，
+    不得修改、运行或重试旧归档，也不得一次读取全部历史运行或图片。
 """
 
 
@@ -189,6 +193,11 @@ def get_agent_product_context(session: Session, conversation_id: str) -> dict[st
     draft = conversation.workflow_draft
     revision = draft.current_revision
     recipe_seed = _load_recipe_seed_context(session, draft.recipe_seed)
+    archive_seed = (
+        legacy_archive_seed_summary(draft.legacy_archive_seed) if draft.legacy_archive_seed is not None else None
+    )
+    if recipe_seed is not None and archive_seed is not None:
+        raise ConflictError("WorkflowDraft 不能同时使用 recipe seed 和旧归档重建 seed")
     intake = _load_workflow_intake_context(session, product_id=product.id, draft=draft)
     payload: dict[str, Any] = {
         "schema_version": 1,
@@ -215,6 +224,7 @@ def get_agent_product_context(session: Session, conversation_id: str) -> dict[st
             "intake": intake,
         },
         "workflow_recipe_seed": recipe_seed,
+        "legacy_archive_seed": archive_seed,
     }
     encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
     if len(encoded) > AGENT_CONTEXT_MAX_BYTES:

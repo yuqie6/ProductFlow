@@ -142,6 +142,47 @@ func (client *Client) ProductContext(ctx context.Context, conversationID string)
 	return result, err
 }
 
+func (client *Client) ListLegacyArchives(
+	ctx context.Context,
+	conversationID, kind, query, cursor string,
+	limit int,
+) (json.RawMessage, error) {
+	values := url.Values{}
+	values.Set("kind", strings.TrimSpace(kind))
+	if strings.TrimSpace(query) != "" {
+		values.Set("query", strings.TrimSpace(query))
+	}
+	if strings.TrimSpace(cursor) != "" {
+		values.Set("after", strings.TrimSpace(cursor))
+	}
+	values.Set("limit", strconv.Itoa(limit))
+	path := client.conversationPath(conversationID) + "/legacy-archives?" + values.Encode()
+	var result json.RawMessage
+	err := client.json(ctx, http.MethodGet, path, nil, &result, "")
+	return result, err
+}
+
+func (client *Client) InspectLegacyArchive(
+	ctx context.Context,
+	conversationID, kind, archiveID, section string,
+	offset, limit int,
+) (json.RawMessage, error) {
+	body := map[string]any{
+		"kind": kind, "archive_id": archiveID, "section": section,
+		"offset": offset, "limit": limit,
+	}
+	var result json.RawMessage
+	err := client.json(
+		ctx,
+		http.MethodPost,
+		client.conversationPath(conversationID)+"/legacy-archives/inspect",
+		body,
+		&result,
+		"",
+	)
+	return result, err
+}
+
 func (client *Client) ValidateWorkflowDraft(
 	ctx context.Context,
 	conversationID string,

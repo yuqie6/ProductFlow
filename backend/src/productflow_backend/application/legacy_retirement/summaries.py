@@ -23,6 +23,7 @@ from productflow_backend.application.legacy_retirement.profiles import (
     CURRENT_ARCHIVE_PROFILE,
     CURRENT_CANONICAL_PROFILE,
     LEGACY_CANVAS_PROFILE,
+    PRE_REBUILD_ARCHIVE_PROFILE,
     VISIBLE_CANVAS_EVENT_TYPES,
 )
 from productflow_backend.application.legacy_retirement.row_utils import (
@@ -281,7 +282,7 @@ def audit_media(
     storage_root: Path,
 ) -> MediaAuditSummary:
     root = storage_root.expanduser().resolve()
-    if profile in {CURRENT_CANONICAL_PROFILE, CURRENT_ARCHIVE_PROFILE}:
+    if profile in {CURRENT_CANONICAL_PROFILE, PRE_REBUILD_ARCHIVE_PROFILE, CURRENT_ARCHIVE_PROFILE}:
         source_tables = ("media_objects",)
     elif profile == LEGACY_CANVAS_PROFILE:
         source_tables = ("source_assets", "poster_variants", "image_session_assets")

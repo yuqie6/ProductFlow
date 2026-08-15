@@ -43,9 +43,11 @@ func TestScopedToolCatalogContainsOnlyCurrentGalleryTools(t *testing.T) {
 		}
 	}
 	wantRead := map[string]bool{
-		productContextToolName: true,
-		listAssetsToolName:     true,
-		inspectAssetsToolName:  true,
+		productContextToolName:       true,
+		listLegacyArchivesToolName:   true,
+		inspectLegacyArchiveToolName: true,
+		listAssetsToolName:           true,
+		inspectAssetsToolName:        true,
 	}
 	if !reflect.DeepEqual(readNames, wantRead) || !readNames["list_product_image_assets_v2"] {
 		t.Fatalf("read catalog = %#v, want %#v", readNames, wantRead)
@@ -70,6 +72,106 @@ func TestScopedToolCatalogContainsOnlyCurrentGalleryTools(t *testing.T) {
 	}
 	if !reflect.DeepEqual(durableNames, wantDurable) {
 		t.Fatalf("durable catalog = %#v, want %#v", durableNames, wantDurable)
+	}
+}
+
+func TestLegacyArchiveReadToolsUseBoundedProductFlowEndpoints(t *testing.T) {
+	basePath := "/api/internal/v1/agent-conversations/" + testConversationID
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer "+testInternalToken {
+			http.Error(writer, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		requestCount++
+		switch request.URL.Path {
+		case basePath + "/legacy-archives":
+			if request.Method != http.MethodGet || request.URL.Query().Get("kind") != "workflow" ||
+				request.URL.Query().Get("query") != "主图" || request.URL.Query().Get("after") != "cursor-1" ||
+				request.URL.Query().Get("limit") != "25" {
+				t.Fatalf("legacy archive list request = %s %s", request.Method, request.URL.String())
+			}
+			writeFixtureJSON(writer, map[string]any{
+				"schema_version": 1,
+				"items": []map[string]any{{
+					"kind": "workflow", "id": "archive-1", "title": "主图工作流",
+				}},
+				"next_cursor": nil,
+			})
+		case basePath + "/legacy-archives/inspect":
+			if request.Method != http.MethodPost {
+				t.Fatalf("legacy archive inspect method = %s", request.Method)
+			}
+			var body struct {
+				Kind      string `json:"kind"`
+				ArchiveID string `json:"archive_id"`
+				Section   string `json:"section"`
+				Offset    int    `json:"offset"`
+				Limit     int    `json:"limit"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body.Kind != "workflow" || body.ArchiveID != "archive-1" || body.Section != "assets" ||
+				body.Offset != 10 || body.Limit != 10 {
+				t.Fatalf("legacy archive inspect body = %#v", body)
+			}
+			writeFixtureJSON(writer, map[string]any{
+				"schema_version": 1, "archive_kind": "workflow", "archive_id": "archive-1",
+				"section": "assets", "offset": 10, "limit": 10, "total": 11,
+				"items": []map[string]any{{
+					"product_image_asset_id": testAssetID, "mime_type": "image/png", "byte_size": 68,
+				}},
+				"has_more": false,
+			})
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client, err := productflow.NewClient(server.URL, testInternalToken, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	invoke := func(name, arguments string) (string, error) {
+		t.Helper()
+		for _, tool := range scopedReadTools(client, Scope{ConversationID: testConversationID}) {
+			if tool.Name == name {
+				return tool.Handler(context.Background(), json.RawMessage(arguments))
+			}
+		}
+		t.Fatalf("tool %q is not registered", name)
+		return "", nil
+	}
+
+	listed, err := invoke(
+		listLegacyArchivesToolName,
+		`{"kind":"workflow","query":"主图","after":"cursor-1","limit":25}`,
+	)
+	if err != nil || !strings.Contains(listed, `"archive-1"`) || strings.Contains(listed, "payload") {
+		t.Fatalf("legacy archive list result = %q, %v", listed, err)
+	}
+	inspected, err := invoke(
+		inspectLegacyArchiveToolName,
+		`{"kind":"workflow","archive_id":"archive-1","section":"assets","offset":10,"limit":10}`,
+	)
+	if err != nil || !strings.Contains(inspected, testAssetID) || strings.Contains(inspected, "image_url") {
+		t.Fatalf("legacy archive inspect result = %q, %v", inspected, err)
+	}
+	if _, err := invoke(
+		listLegacyArchivesToolName,
+		`{"kind":"workflow","query":"","after":"","limit":51}`,
+	); err == nil {
+		t.Fatal("unbounded legacy archive list was accepted")
+	}
+	if _, err := invoke(
+		inspectLegacyArchiveToolName,
+		`{"kind":"workflow","archive_id":"archive-1","section":"nodes","offset":0,"limit":11}`,
+	); err == nil {
+		t.Fatal("unbounded legacy archive inspection was accepted")
+	}
+	if requestCount != 2 {
+		t.Fatalf("ProductFlow request count = %d, want 2", requestCount)
 	}
 }
 

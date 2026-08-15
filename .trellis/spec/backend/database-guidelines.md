@@ -350,6 +350,88 @@ latest_revision = session.scalar(select(func.max(ProductWorkflow.revision)).wher
 
 The product row lock serializes revision allocation for one product; unique constraints remain the concurrency backstop.
 
+### Scenario: Immutable archive lineage for Agent rebuild Drafts
+
+#### 1. Scope / Trigger
+
+- Trigger: migrations, ORM relationships, retirement schema profiles, or application creation logic for an Agent Draft
+  that is seeded by a legacy workflow, Canvas Agent thread, or user-template archive.
+
+#### 2. Signatures
+
+- Migration `20260815_0040`, based on `20260815_0039`, creates `workflow_draft_legacy_archive_seeds`.
+- Columns: `id`, `workflow_draft_id`, `product_id`, three nullable archive foreign keys, `schema_version`,
+  `idempotency_key`, `request_hash`, and `created_at`.
+- Application uniqueness: one seed per Draft and one idempotency key per target product.
+
+#### 3. Contracts
+
+- Exactly one of `workflow_archive_id`, `canvas_agent_archive_id`, and `user_template_archive_id` is non-null. Schema
+  version is fixed at 1 and request hashes are exactly 64 characters.
+- The Draft and target product own the seed with named `CASCADE` foreign keys. Every referenced archive uses a named
+  `RESTRICT` foreign key so a live rebuild lineage cannot be deleted independently.
+- `WorkflowDraft.legacy_archive_seed` is one-to-one and delete-orphan. `Product.workflow_draft_legacy_archive_seeds`
+  exposes product ownership for cleanup and inspection.
+- Creation locks the target product, inserts the empty Draft, seed, and Agent conversation in one transaction, and
+  commits once. No revision or schema-v2 workflow is inserted by this transaction.
+- `(product_id, idempotency_key)` plus the canonical request hash resolves ambiguous retries. A concurrent duplicate is
+  reloaded after rollback; a different request under the same key conflicts.
+- The current retirement profile requires this table at Alembic revision `20260815_0040`; the preceding `0039` profile
+  forbids it. Schema inspection therefore distinguishes both additive states.
+- Downgrade to `0039` succeeds only when the seed table is empty. A populated table raises before dropping the table or
+  index because removing it would erase rebuild lineage.
+
+#### 4. Validation & Error Matrix
+
+| Condition | Result |
+|---|---|
+| Zero or multiple archive foreign keys populated | database check-constraint failure |
+| Duplicate Draft seed | unique-constraint failure |
+| Duplicate target-product idempotency key | application reload/conflict according to request hash |
+| Delete Draft or product | seed cascades with the owned aggregate |
+| Delete referenced archive while seed exists | foreign-key `RESTRICT` failure |
+| Request hash length is not 64 or schema version is not 1 | database check-constraint failure |
+| Downgrade with any seed row | migration raises; table and lineage remain |
+
+#### 5. Good / Base / Bad Cases
+
+- Good: a duplicate browser response retry returns the same seed, Draft, and conversation after an integrity race.
+- Base: an unused empty `0040` database downgrades to `0039` and re-upgrades with the expected table and constraints.
+- Bad: store archive kind/ID only in Draft JSON, where archive deletion and lineage integrity cannot be enforced.
+- Bad: allow downgrade to drop populated seeds because the associated Drafts happen to remain.
+
+#### 6. Tests Required
+
+- ORM inspection asserts one-to-one relationships, named constraints, exactly-one-archive checks, index columns, and
+  `CASCADE`/`RESTRICT` delete rules.
+- Migration tests run `0039 -> 0040 -> 0039 -> 0040`, assert an empty round trip, insert a valid seed row, and assert the
+  populated downgrade refuses without dropping data.
+- Retirement-profile tests distinguish the `0039` and `0040` table signatures.
+- Application tests assert atomic creation, zero initial revisions/workflows, idempotent retry, request-hash conflict,
+  product locking behavior, and archive immutability.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+draft.intake_json = {"legacy_archive_id": archive.id}
+session.commit()
+```
+
+Correct:
+
+```python
+session.add(WorkflowDraftLegacyArchiveSeed(
+    workflow_draft_id=draft.id,
+    product_id=target_product_id,
+    workflow_archive_id=archive.id,
+    request_hash=request_hash,
+    idempotency_key=idempotency_key,
+))
+# Draft, seed, and conversation are committed by the owning use case.
+```
+
 ### Scenario: Immutable visual, prompt, and image-generation lineage
 
 #### 1. Scope / Trigger

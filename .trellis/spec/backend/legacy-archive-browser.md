@@ -1,15 +1,19 @@
-# Legacy Archive Browser
+# Legacy Archive Browser And Agent Rebuild Boundary
 
-> Executable contracts for browsing and exporting immutable legacy workflow, Canvas Agent, and user-template archives.
+> Executable contracts for browsing/exporting immutable legacy archives and starting a separate Agent-owned rebuild.
 
 ## Ownership
 
 - `application/legacy_archives.py` owns bounded list/detail reads, cursor validation, canonical asset projection, and
   deterministic JSON export construction.
+- `application/legacy_archive_rebuilds.py` owns idempotent rebuild bootstrap, immutable seed projection, and bounded
+  Agent list/inspect reads. It never translates an archived payload into a Draft revision or DAG.
 - `presentation/routes/legacy_archives.py` and `presentation/schemas/legacy_archives.py` expose the administrator-only
   HTTP contract.
 - The archive browser reads `LegacyWorkflowArchive`, `LegacyCanvasAgentArchive`, and `LegacyUserTemplateArchive`.
   It does not reconstruct an archive from live v1 tables during a request.
+- `WorkflowDraftLegacyArchiveSeed` binds exactly one immutable archive to one new version-zero `WorkflowDraft` and its
+  Agent conversation. The seed is context lineage, not an executable recipe.
 - Referenced image identity remains `ProductImageAsset.id`; media-object IDs, storage paths, and legacy source IDs are
   not download identities.
 
@@ -19,8 +23,8 @@
 
 - Trigger: changing archive list/detail/export routes, archive cursor/search behavior, archive asset presentation, or
   frontend links from a product's old workflow surface.
-- This contract covers read-only history after additive archive backfill. Backfill, cutover freezes, Agent-assisted
-  rebuild, and eventual v1 code removal have separate implementation phases.
+- This contract covers read-only history after additive archive backfill plus the command that opens a new Agent Draft.
+  Backfill, cutover freezes, and eventual v1 code removal have separate implementation phases.
 
 ### 2. Signatures
 
@@ -28,18 +32,27 @@
 - `get_legacy_archive_detail(session, *, kind, archive_id) -> LegacyArchiveDetail`.
 - `build_legacy_archive_export(detail) -> dict[str, Any]`.
 - `legacy_archive_export_bytes(detail) -> bytes` and `legacy_archive_export_sha256(detail) -> str`.
+- `create_legacy_archive_rebuild(session, *, kind, archive_id, target_product_id, idempotency_key) ->
+  LegacyArchiveRebuildResult`.
+- `list_agent_legacy_archives(..., limit=20) -> dict[str, Any]` and
+  `inspect_agent_legacy_archive(..., section, offset, limit) -> dict[str, Any]`.
 - Browser endpoints:
   - `GET /api/v2/legacy-archives` with optional `kind`, `product_id`, `q`, `after`, and `limit`;
   - `GET /api/v2/legacy-archives/{kind}/{archive_id}`;
   - `GET /api/v2/legacy-archives/{kind}/{archive_id}/export`;
+  - `POST /api/v2/legacy-archives/{kind}/{archive_id}/agent-rebuilds`;
   - canonical archive images continue to use `GET /api/v2/product-image-assets/{asset_id}/download`.
+- Internal Agent endpoints:
+  - `GET /api/internal/v1/agent-conversations/{conversation_id}/legacy-archives`;
+  - `POST /api/internal/v1/agent-conversations/{conversation_id}/legacy-archives/inspect`.
 
 ### 3. Contracts
 
 #### Read-only ownership
 
-- Every archive endpoint requires the existing administrator session and performs reads only. It exposes no archive
-  create/update/delete, workflow run, retry, template apply, or DAG mutation endpoint.
+- List, detail, export, and canonical image reads require the existing administrator session and perform reads only.
+  The rebuild command may create a new Draft, immutable seed, and conversation, but exposes no archive mutation,
+  workflow run/retry, template apply, Draft revision, or DAG mutation endpoint.
 - List and detail requests query archive tables and canonical image metadata only. They must not call
   `get_or_create_product_workflow`, initialize a default DAG, enqueue a worker message, or contact a provider.
 - Opening an old product/workbench surface may offer an explicit link to the archive browser. The existing v1 editor
@@ -72,6 +85,24 @@
 - JSON export has schema version 1, UTF-8 encoding, stable key ordering, compact separators, and no NaN values. Its ETag
   is the SHA-256 of the exact response bytes. Re-exporting unchanged archive data yields identical bytes and ETag.
 
+#### Rebuild bootstrap and bounded Agent inspection
+
+- The browser supplies `target_product_id` and an idempotency key of at most 120 characters. The application locks the
+  target product and binds `(kind, archive_id, target_product_id)` into a SHA-256 request hash. Reusing the same key for a
+  different request is a conflict; an ambiguous retry returns the same Draft/conversation.
+- Workflow and Canvas Agent archives can only rebuild into their original product. A productless user-template archive
+  requires an explicit target-product selection and may rebuild into any existing product.
+- Creation persists a collecting Draft with no current revision, no materialized workflow, one conversation, and one
+  `WorkflowDraftLegacyArchiveSeed`. The archive payload/hash and original archive row remain unchanged.
+- Agent context receives only `legacy_archive_seed` metadata. It does not receive the archive payload or all images.
+  The first browser Turn uses no attached images; the Agent must call the bounded archive tools and then explicitly
+  inspect at most six current-product images through the existing image tool when pixels are necessary.
+- Agent list pages default to 20 and allow at most 50 metadata rows. Inspect accepts only kind-specific named sections,
+  at most 10 items per call, non-negative offsets, and a maximum serialized result of 256 KiB. Asset inspection returns
+  canonical metadata only, with no URL, storage path, bytes, base64, or data URL.
+- The Go tool catalog uses `list_legacy_archives_v1` and `inspect_legacy_archive_v1`; both are conversation-scoped and do
+  not expose product, Draft, or conversation IDs as model arguments.
+
 ### 4. Validation & Error Matrix
 
 | Condition | Result |
@@ -83,6 +114,12 @@
 | Workflow archive references pending or missing canonical media | Metadata remains inspectable; canonical preview/download enforces media availability |
 | Archive payload contains no image references | Empty `assets`; no inferred or fabricated asset |
 | List, detail, or export request | No DML, default workflow creation, queue message, or provider call |
+| Missing target product or missing archive | `404`; no Draft or conversation |
+| Product-bound archive targets another product | `400`; archive and target product remain unchanged |
+| Same product/idempotency key with a different archive request | `409`; original rebuild identity wins |
+| Unsupported inspect section, negative offset, or limit outside 1..10 | `400`; no fallback to complete payload |
+| Agent tool output exceeds 256 KiB | `409`; caller narrows section/page instead of receiving truncation |
+| Populated rebuild-seed table is downgraded below migration `20260815_0040` | migration refuses; lineage is not dropped |
 
 ### 5. Good / Base / Bad Cases
 
@@ -90,9 +127,14 @@
 - Good: open a product-scoped old workflow, follow History, inspect its immutable snapshot, and download a referenced
   canonical image without creating a ProductWorkflow row.
 - Base: a productless archived user template appears in the global history and is absent from a product-scoped view.
+- Good: start a workflow rebuild, inspect only its summary/nodes/copy/assets pages, inspect one necessary canonical image,
+  and let the Agent propose version 1 for explicit user confirmation.
+- Base: select a target product for a user-template archive; creation returns an empty version-zero Draft and preserves
+  the archive exactly.
 - Bad: call the legacy workflow read use case and serialize its current mutable state as an archive detail response.
 - Bad: place all legacy run history or image bytes in one list response.
 - Bad: expose a storage path or use a legacy SourceAsset/PosterVariant ID as the download URL.
+- Bad: copy archived nodes into a Draft revision or materialized workflow during the rebuild POST.
 
 ### 6. Tests Required
 
@@ -103,6 +145,12 @@
 - Read-only tests capture SQL DML during list/detail/export requests and assert no `ProductWorkflow` default DAG row is
   created.
 - Asset tests prove archive URLs reuse canonical download authorization and return the archived verified media.
+- Rebuild tests assert empty Draft/zero DAG, archive immutability, idempotent retry/conflict, original-product scope,
+  cross-product template selection, latest-workbench selection, and no archived asset auto-attachment.
+- Agent tool tests assert section allowlists, list 50/inspect 10/output 256 KiB limits, metadata-only assets, cross-product
+  denial, and correct Go internal endpoint paths.
+- Migration tests assert exactly-one archive FK, `CASCADE` Draft/product ownership, `RESTRICT` archive lineage, profile
+  recognition at `20260815_0040`, empty downgrade success, and populated downgrade refusal.
 - Run backend Ruff, focused archive tests, and the complete backend test suite.
 
 ### 7. Wrong vs Correct
@@ -131,4 +179,18 @@ Correct:
 
 ```python
 urls = build_image_urls(f"/api/v2/product-image-assets/{archive_asset.product_image_asset_id}/download")
+```
+
+Wrong:
+
+```python
+draft = create_workflow_draft(payload=archive.payload_json)
+```
+
+Correct:
+
+```python
+draft = WorkflowDraft(product_id=target_product_id, status=WorkflowDraftStatus.COLLECTING)
+seed = WorkflowDraftLegacyArchiveSeed(workflow_draft_id=draft.id, workflow_archive_id=archive.id, ...)
+# The Agent reads bounded sections and supplies the first complete Draft revision after user confirmation.
 ```

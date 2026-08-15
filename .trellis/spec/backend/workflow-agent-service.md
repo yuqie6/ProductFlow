@@ -11,6 +11,7 @@
 - `application/agent_sync.py` owns browser-independent polling, restart recovery, and required-artifact attachment.
 - `application/agent_tools.py` owns scope-bound product context, gallery metadata/content reads, and reconcilable
   folder/asset organization changes.
+- `application/legacy_archive_rebuilds.py` owns immutable archive-seed context plus bounded archive list/inspect reads.
 - `infrastructure/agent_service.py` owns the FastAPI-to-Go HTTP/SSE client.
 - `presentation/routes/agent_conversations.py` exposes session-authenticated browser APIs.
 - `presentation/routes/agent_internal.py` exposes bearer-authenticated ProductFlow tool APIs to the Go service.
@@ -125,6 +126,8 @@ Read tools are bound to the conversation closure and expose no scope IDs in thei
 - `get_product_workflow_context_v1`
 - `list_product_image_assets_v2`
 - `inspect_product_image_assets_v1`
+- `list_legacy_archives_v1`
+- `inspect_legacy_archive_v1`
 
 Asset listing accepts the product-gallery directory, search, sort, and cursor contract and returns at most 100 metadata
 rows without URLs, storage paths, or bytes. Inspect accepts explicit IDs only, returns at most six images, and revalidates
@@ -141,14 +144,16 @@ Prepare captures stable object IDs plus expected-before and target state. Execut
 key. Reconcile distinguishes `applied`, `not_applied`, `conflict`, and `unknown` from the generic ProductFlow mutation
 ledger and current object state. An applied ledger result remains replayable after a later rename, move, or folder delete.
 
-The service has no tools for deleting assets, changing covers, creating missing brand material, writing individual DAG
-nodes, or materializing a Draft. It cannot change original filenames, media bytes, origin, cover relations, reference
-bindings, or generation lineage through gallery organization tools.
+The archive tools return metadata/selected JSON sections only. They cannot return image bytes or URLs; pixels remain
+behind the existing explicit six-image inspect tool. The service has no tools for deleting assets, changing covers,
+creating missing brand material, writing individual DAG nodes, or materializing a Draft. It cannot change original
+filenames, media bytes, origin, cover relations, reference bindings, or generation lineage through gallery organization
+tools.
 
-## Tool Catalog V2 Cutover
+## Tool Catalog V3 Cutover
 
-- The ProductFlow contract wire remains schema version 1 and declares `tool_contract_version=2`. The Go manager checks
-  both values before opening a conversation service. There is no v1/v2 catalog switch inside one process.
+- The ProductFlow contract wire remains schema version 1 and declares `tool_contract_version=3`. The Go manager checks
+  both values before opening a conversation service. There is no catalog-version switch inside one process.
 - Existing completed Turns remain durable transcript history. A new Turn opens against the current v2 catalog. A pending
   old Turn whose execution envelope contains the old catalog fails with an explicit durable contract-drift conflict.
 - Release freezes browser/backend/worker ingress before the cutover check, then cross-checks every nonterminal projected
@@ -277,6 +282,88 @@ seed = WorkflowDraftRecipeSeed(workflow_draft_id=draft.id, recipe_version_id=rec
 ```
 
 The Agent supplies the first complete product-specific artifact after reading the immutable seed.
+
+## Scenario: Legacy-archive-seeded version-zero Agent Drafts
+
+### 1. Scope / Trigger
+
+- Trigger: creating a WorkflowDraft from an immutable workflow, Canvas Agent, or user-template archive; exposing archive
+  lineage in Agent context; or changing the archive list/inspect tools.
+
+### 2. Signatures
+
+- `POST /api/v2/legacy-archives/{kind}/{archive_id}/agent-rebuilds` accepts
+  `{target_product_id, idempotency_key}` and returns `{created, archive_kind, archive_id, target_product_id, draft,
+  conversation}`.
+- `get_product_workflow_context_v1` returns `legacy_archive_seed` metadata when the Draft has an archive seed.
+- `list_legacy_archives_v1` accepts `{kind, query, after, limit}` with limit `1..50`.
+- `inspect_legacy_archive_v1` accepts `{kind, archive_id, section, offset, limit}` with limit `1..10`.
+- Migration `20260815_0040` creates `workflow_draft_legacy_archive_seeds`.
+
+### 3. Contracts
+
+- A rebuild creates a collecting Draft with version zero, one conversation, and one seed that points to exactly one
+  immutable archive. It creates no Draft revision, workflow, node, edge, run, recipe version, or copied archive asset.
+- Workflow and Canvas Agent archive reads are restricted to the conversation product. User-template archives are global,
+  while the browser must select the target product before creating the scoped conversation.
+- Context exposes the archive kind/ID/title/status, source profile, payload hash, counts, and timestamps. Complete archive
+  payloads are available only through named inspect sections with explicit pagination.
+- List output contains at most 50 metadata rows. Inspect output contains at most 10 section items and 256 KiB of encoded
+  JSON. The application returns a conflict when the budget is exceeded; it never silently truncates a section item.
+- The initial archive-rebuild Turn has `asset_ids=[]`. If visual evidence is needed, the Agent reads archive asset
+  metadata, chooses specific current-product asset IDs, and calls `inspect_product_image_assets_v1` within its six-image
+  bound.
+- Recipe and archive seeds are mutually exclusive. The first valid `propose_workflow_draft` artifact uses expected Draft
+  version zero and follows the existing application validator, confirmation, and materialization path.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+|---|---|
+| Missing archive or target product | browser API `404`; no seed/Draft/conversation |
+| Product-bound archive targets a different product | browser API `400`; no write |
+| Same product/key reused with a different request hash | browser API `409`; existing rebuild remains authoritative |
+| Conversation asks for another product's archive | internal tool `404`; archive existence is not disclosed |
+| Unsupported section, negative offset, or limit outside bounds | internal tool `400` |
+| Encoded tool result exceeds 256 KiB | internal tool `409`; model must narrow the request |
+| Archive seed and recipe seed both exist | Agent context conflict; Turn does not receive ambiguous seed guidance |
+| Required artifact is invalid | native tool rejection; no Draft revision is appended and the same Turn may correct it |
+
+### 5. Good / Base / Bad Cases
+
+- Good: the Agent reads summary, selected node/copy pages, asset metadata, and one chosen image before proposing a
+  target-specific Draft that the user reviews.
+- Base: an archived user template is rebuilt for a different product after explicit target selection; the Agent treats
+  old structure as guidance and writes new facts/prompts/references.
+- Bad: serialize hundreds of archives, complete run history, or every gallery image into product context.
+- Bad: attach archived image IDs to the first Turn or copy the archive payload directly into Draft version 1.
+
+### 6. Tests Required
+
+- API/application tests assert atomic empty-Draft creation, original archive immutability, idempotent retry/conflict,
+  target-product scope, global template selection, and latest workbench loading.
+- Context/tool tests assert metadata-only seed context, recipe/seed exclusivity, kind-specific sections, cursor/offset
+  paging, 50/10/256 KiB limits, asset metadata without URL/bytes, and cross-product denial.
+- Go tests assert tool names, strict schemas, internal endpoint paths, request bodies, configured limits, and contract
+  version 3.
+- A real browser/provider run must show bounded archive inspect calls, explicit image inspection, Question confirmation,
+  zero DAG before artifact attachment, and the existing Draft confirmation surface after a valid artifact.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```go
+context["legacy_archive_payload"] = loadAllArchiveRowsAndImages()
+```
+
+Correct:
+
+```go
+registerReadTool("list_legacy_archives_v1", boundedListHandler)
+registerReadTool("inspect_legacy_archive_v1", boundedSectionHandler)
+// The model selects sections and image IDs inside the conversation scope.
+```
 
 ## Failure And Logging Rules
 

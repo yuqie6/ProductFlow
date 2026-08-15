@@ -27,6 +27,7 @@ from productflow_backend.infrastructure.db.models import (
     VisualSystemVersion,
     VisualSystemVersionReference,
     WorkflowDraft,
+    WorkflowDraftLegacyArchiveSeed,
     WorkflowDraftRecipeSeed,
     WorkflowDraftRevision,
 )
@@ -38,8 +39,13 @@ def workflow_draft_query():
         selectinload(WorkflowDraft.revisions).selectinload(WorkflowDraftRevision.visual_system_version),
         selectinload(WorkflowDraft.current_revision),
         selectinload(WorkflowDraft.final_workflow),
-        selectinload(WorkflowDraft.recipe_seed).selectinload(
-            WorkflowDraftRecipeSeed.recipe_version
+        selectinload(WorkflowDraft.recipe_seed).selectinload(WorkflowDraftRecipeSeed.recipe_version),
+        selectinload(WorkflowDraft.legacy_archive_seed).selectinload(WorkflowDraftLegacyArchiveSeed.workflow_archive),
+        selectinload(WorkflowDraft.legacy_archive_seed).selectinload(
+            WorkflowDraftLegacyArchiveSeed.canvas_agent_archive
+        ),
+        selectinload(WorkflowDraft.legacy_archive_seed).selectinload(
+            WorkflowDraftLegacyArchiveSeed.user_template_archive
         ),
     )
 
@@ -137,11 +143,13 @@ def append_workflow_draft_revision(
                 schema_version=draft.intake_schema_version,
                 payload=draft.intake_json,
             )
-            if (
-                draft.status != WorkflowDraftStatus.COLLECTING
-                or (draft.recipe_seed is None and intake is None)
+            if draft.status != WorkflowDraftStatus.COLLECTING or (
+                draft.recipe_seed is None and draft.legacy_archive_seed is None and intake is None
             ):
-                raise ConflictError("只有 collecting recipe seed 或 intake Draft 可以从 version 0 追加首次 revision")
+                raise ConflictError(
+                    "只有 collecting recipe seed、legacy archive seed "
+                    "或 intake Draft 可以从 version 0 追加首次 revision"
+                )
             next_version = 1
         else:
             if current_revision.version != expected_draft_version:

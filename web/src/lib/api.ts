@@ -41,6 +41,7 @@ import type {
   ImageSessionStatus,
   ImageToolOptions,
   LegacyArchiveDetail,
+  LegacyArchiveAgentRebuildResult,
   LegacyArchiveKind,
   LegacyArchivePage,
   ProductDetail,
@@ -473,6 +474,19 @@ export const api = {
       throw await responseApiError(response);
     }
     return response.blob();
+  },
+  createLegacyArchiveAgentRebuild(
+    kind: LegacyArchiveKind,
+    archiveId: string,
+    input: { target_product_id: string; idempotency_key: string },
+  ): Promise<LegacyArchiveAgentRebuildResult> {
+    return request(
+      `/api/v2/legacy-archives/${encodeURIComponent(kind)}/${encodeURIComponent(archiveId)}/agent-rebuilds`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    );
   },
   getCanonicalProduct(productId: string): Promise<CanonicalProductDetail> {
     return request(`/api/v2/products/${productId}`);

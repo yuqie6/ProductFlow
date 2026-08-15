@@ -926,6 +926,7 @@ export interface WorkflowDraft {
   intake: WorkflowIntakeV1 | null;
   final_workflow_id: string | null;
   recipe_seed: WorkflowDraftRecipeSeed | null;
+  legacy_archive_seed: WorkflowDraftLegacyArchiveSeed | null;
   limits: WorkflowDraftLimits;
   created_at: string;
   updated_at: string;
@@ -943,6 +944,32 @@ export interface WorkflowDraftRecipeSeed {
   base_workflow_revision: number | null;
   schema_version: 1;
   created_at: string;
+}
+
+export interface WorkflowDraftLegacyArchiveSeed {
+  id: string;
+  workflow_draft_id: string;
+  product_id: string;
+  archive_kind: LegacyArchiveKind;
+  archive_id: string;
+  archive_title: string;
+  archive_status: string | null;
+  source_product_id: string | null;
+  source_profile: string;
+  archive_schema_version: number;
+  payload_sha256: string;
+  counts: Record<string, number>;
+  schema_version: 1;
+  created_at: string;
+}
+
+export interface LegacyArchiveAgentRebuildResult {
+  created: boolean;
+  archive_kind: LegacyArchiveKind;
+  archive_id: string;
+  target_product_id: string;
+  draft: WorkflowDraft;
+  conversation: AgentConversation;
 }
 
 export interface CreateWorkflowDraftInput {

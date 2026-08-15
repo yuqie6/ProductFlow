@@ -39,7 +39,7 @@ from productflow_backend.infrastructure.db.models import (
 from productflow_backend.infrastructure.db.session import get_engine
 
 
-def _install_archive_revision(db_session, revision: str = "20260815_0039") -> None:
+def _install_archive_revision(db_session, revision: str = "20260815_0040") -> None:
     db_session.execute(sa.text("CREATE TABLE alembic_version (version_num VARCHAR(32) PRIMARY KEY)"))
     db_session.execute(
         sa.text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
@@ -258,6 +258,7 @@ def test_archive_backfill_blocks_before_querying_missing_target_archive_tables(c
     _install_archive_revision(db_session, "20260814_0038")
     _seed_current_v1_source(db_session)
     for table_name in (
+        "workflow_draft_legacy_archive_seeds",
         "legacy_workflow_archive_assets",
         "legacy_canvas_agent_archives",
         "legacy_user_template_archives",

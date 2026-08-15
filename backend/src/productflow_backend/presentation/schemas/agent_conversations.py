@@ -9,6 +9,11 @@ from productflow_backend.application.agent_conversations import (
     AGENT_MAX_INPUT_ASSETS,
     AGENT_MAX_INPUT_TEXT_CHARS,
 )
+from productflow_backend.application.legacy_archive_rebuilds import (
+    AGENT_LEGACY_ARCHIVE_INSPECT_MAX_ITEMS,
+    AgentLegacyArchiveSection,
+)
+from productflow_backend.application.legacy_archives import LegacyArchiveKind
 from productflow_backend.domain.enums import AgentConversationStatus, AgentTurnStatus
 from productflow_backend.infrastructure.db.models import AgentConversation, AgentTurnProjection
 
@@ -67,6 +72,32 @@ class InspectAgentAssetsRequest(StrictAgentRequest):
 
 class InspectAgentAssetsResponse(BaseModel):
     items: list[AgentAssetMetadataResponse]
+
+
+class InspectAgentLegacyArchiveRequest(StrictAgentRequest):
+    kind: LegacyArchiveKind
+    archive_id: str = Field(min_length=1, max_length=64)
+    section: AgentLegacyArchiveSection
+    offset: int = Field(ge=0)
+    limit: int = Field(ge=1, le=AGENT_LEGACY_ARCHIVE_INSPECT_MAX_ITEMS)
+
+
+class AgentLegacyArchiveListResponse(BaseModel):
+    schema_version: Literal[1]
+    items: list[dict[str, Any]]
+    next_cursor: str | None = None
+
+
+class AgentLegacyArchiveInspectResponse(BaseModel):
+    schema_version: Literal[1]
+    archive_kind: LegacyArchiveKind
+    archive_id: str
+    section: AgentLegacyArchiveSection
+    offset: int
+    limit: int
+    total: int
+    items: list[Any]
+    has_more: bool
 
 
 class PrepareAgentAssetRenameRequest(StrictAgentRequest):

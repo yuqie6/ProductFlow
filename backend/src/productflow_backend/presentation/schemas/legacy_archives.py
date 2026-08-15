@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
+from productflow_backend.application.legacy_archive_rebuilds import LegacyArchiveRebuildResult
 from productflow_backend.application.legacy_archives import (
     LegacyArchiveAsset,
     LegacyArchiveDetail,
@@ -14,6 +15,23 @@ from productflow_backend.application.legacy_archives import (
 )
 from productflow_backend.domain.enums import MediaVerificationStatus
 from productflow_backend.presentation.image_variants import build_image_urls
+from productflow_backend.presentation.schemas.agent_conversations import (
+    AgentConversationResponse,
+    serialize_agent_conversation,
+)
+from productflow_backend.presentation.schemas.workflow_drafts import (
+    WorkflowDraftResponse,
+    serialize_workflow_draft,
+)
+
+
+class StrictLegacyArchiveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class LegacyArchiveAgentRebuildRequest(StrictLegacyArchiveRequest):
+    target_product_id: str = Field(min_length=1, max_length=36)
+    idempotency_key: str = Field(min_length=1, max_length=120)
 
 
 class LegacyArchiveListItemResponse(BaseModel):
@@ -65,6 +83,15 @@ class LegacyArchiveDetailResponse(BaseModel):
     payload: dict[str, Any]
     diagnostics: list[dict[str, Any]]
     assets: list[LegacyArchiveAssetResponse]
+
+
+class LegacyArchiveAgentRebuildResponse(BaseModel):
+    created: bool
+    archive_kind: LegacyArchiveKind
+    archive_id: str
+    target_product_id: str
+    draft: WorkflowDraftResponse
+    conversation: AgentConversationResponse
 
 
 def serialize_legacy_archive_item(item: LegacyArchiveListItem) -> LegacyArchiveListItemResponse:
@@ -125,9 +152,31 @@ def serialize_legacy_archive_detail(detail: LegacyArchiveDetail) -> LegacyArchiv
     )
 
 
+def serialize_legacy_archive_rebuild(
+    result: LegacyArchiveRebuildResult,
+) -> LegacyArchiveAgentRebuildResponse:
+    seed_summary = result.draft.legacy_archive_seed
+    if seed_summary is None:
+        raise ValueError("旧归档重建结果缺少 seed")
+    from productflow_backend.application.legacy_archive_rebuilds import legacy_archive_seed_summary
+
+    summary = legacy_archive_seed_summary(seed_summary)
+    return LegacyArchiveAgentRebuildResponse(
+        created=result.created,
+        archive_kind=summary["archive_kind"],
+        archive_id=summary["archive_id"],
+        target_product_id=result.draft.product_id,
+        draft=serialize_workflow_draft(result.draft),
+        conversation=serialize_agent_conversation(result.conversation),
+    )
+
+
 __all__ = [
     "LegacyArchiveDetailResponse",
+    "LegacyArchiveAgentRebuildRequest",
+    "LegacyArchiveAgentRebuildResponse",
     "LegacyArchivePageResponse",
     "serialize_legacy_archive_detail",
     "serialize_legacy_archive_page",
+    "serialize_legacy_archive_rebuild",
 ]

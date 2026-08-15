@@ -18,6 +18,7 @@ SchemaProfile = Literal[
     "legacy_canvas_agent_20260518_0032",
     "current_canonical_20260814_0038",
     "current_with_legacy_archives_20260815_0039",
+    "current_with_legacy_archive_rebuilds_20260815_0040",
     "unknown",
 ]
 AuditIssueSeverity = Literal["warning", "blocking"]

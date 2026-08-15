@@ -1,6 +1,6 @@
 # Legacy History Explorer
 
-> Executable frontend contracts for the read-only, Explorer-style legacy archive surface and old-workflow links.
+> Executable frontend contracts for the read-only, Explorer-style legacy archive surface, export, and Agent rebuild entry.
 
 ## Scenario: Inspect archived work without mounting an editor
 
@@ -17,9 +17,10 @@
 - URL query state: optional `kind`, `product_id`, and `q`.
 - Query keys:
   - list pages: `['legacy-archives', kind, productId, query]`;
-  - detail: `['legacy-archive', kind, archiveId]`.
+  - detail: `['legacy-archive', kind, archiveId]`;
+  - rebuilt workbench invalidation: `['agent-workbench', targetProductId]`.
 - Central API methods in `web/src/lib/api.ts`: `listLegacyArchives`, `getLegacyArchive`, and
-  `downloadLegacyArchive`.
+  `downloadLegacyArchive`, and `createLegacyArchiveAgentRebuild`.
 - Model helpers: `isLegacyArchiveKind`, `flattenLegacyArchivePages`, `legacyArchiveDetailPath`,
   `legacyArchiveExportFilename`, and bounded payload projection helpers.
 
@@ -39,10 +40,10 @@
 
 #### Read-only interaction
 
-- The page exposes search, kind/product filtering, paging, detail navigation, JSON export, image preview, and canonical
-  image download.
+- The page exposes search, kind/product filtering, paging, detail navigation, JSON export, image preview, canonical image
+  download, and the explicit command that starts a separate Agent rebuild Draft.
 - It contains no node editor, free-connect canvas, prompt/image configuration form, workflow run/retry control,
-  template apply action, archive mutation, or rebuild shortcut.
+  template apply action, or archive mutation.
 - Workflow, Canvas Agent, and user-template payloads use kind-specific semantic summaries. Generic JSON previews are
   bounded in the UI; complete retained data remains available through export.
 - The old `ProductDetailPage` keeps its established toolbar, node details, ratio/quality controls, and connection
@@ -51,6 +52,22 @@
   Opening either link must not request a default DAG.
 - No runtime setting or provider binding controls this archive browser; adding it does not require a Settings page
   field.
+
+#### Agent rebuild entry
+
+- Workflow and Canvas Agent detail actions submit the archive's existing `product_id` directly. User-template archives
+  open a target-product dialog because they are productless; the dialog uses bounded `listProducts` requests with a
+  20-row page and a 250 ms committed search.
+- Each `(kind, archiveId, targetProductId)` keeps one browser-generated idempotency key for the mounted history page.
+  Mutation retries reuse that key. A successful response invalidates the target workbench query and navigates to
+  `/products/{targetProductId}`.
+- The action does not attach archive images, construct a Draft payload, copy nodes, or mount the workbench inside the
+  history page. The target workbench starts the archive-specific initial Agent Turn and owns all questions,
+  confirmation, materialization, and canvas reveal behavior.
+- Rebuild failure is shown next to the active detail or inside the target dialog. The archive detail remains available,
+  and the stable key permits a retry without duplicate Drafts.
+- The dialog has an accessible label, search input, single selected product, disabled submit until selection, Escape and
+  backdrop close while idle, and fixed footer/actions. Busy state blocks close and duplicate submission.
 
 #### Responsive composition
 
@@ -73,6 +90,10 @@
 | Search/kind/product changes | A new first-page query identity; prior selected detail is removed from the URL |
 | No matches | Search-aware or general empty state; no template/create prompt |
 | Export failure | Inline API detail near the export control; detail remains inspectable |
+| Product-bound rebuild succeeds | Navigate to the original product workbench and continue the same Agent conversation |
+| User-template rebuild selected | Open target-product search; no rebuild request before explicit submit |
+| Rebuild API failure | Inline error with archive/detail state retained and idempotency key reused |
+| Product search loading/failure/empty | Stable dialog-local state, retry action, or empty result; no fabricated target |
 | Referenced media is not verified | Metadata remains visible; preview/download action is unavailable |
 | Narrow viewport | List/detail replacement and mobile navigation with no horizontal overflow |
 
@@ -81,19 +102,27 @@
 - Good: follow a product's History link, search the product's workflow archives, inspect a snapshot, export JSON, and
   preview one verified canonical image.
 - Good: copy a detail URL, reload it, then return to the same kind/search/product-filtered list.
+- Good: rebuild a workflow archive, arrive at its original product workbench, let the Agent inspect bounded archive
+  sections, and review a new Draft without modifying the archive.
+- Good: open a user-template archive, select a target product in the dialog, and create a product-scoped Agent Draft.
 - Base: global history with no selected item shows the three classifications and a quiet detail placeholder.
 - Bad: import and mount `ProductDetailPage`, a DAG store, or node mutation hooks inside the history route.
-- Bad: label an archive snapshot as editable or add a Run/Rebuild action before the Agent rebuild contract exists.
+- Bad: label an archive snapshot as editable or implement rebuild by copying its JSON into frontend Draft state.
 - Bad: fetch every archive or render an arbitrary unbounded payload tree in the browser.
 
 ### 6. Tests Required
 
 - Model tests cover valid kinds, page flattening, URL preservation, safe export filenames, and bounded JSON previews.
 - API tests assert encoded list filters/cursors, typed detail routes, export error decoding, and session credentials.
+- API tests assert the encoded rebuild route, exact POST body, session credentials, and typed result.
+- Frontend model/API tests cover direct product-bound targeting, explicit user-template target selection, unavailable
+  lineage, stable idempotency reuse, encoded request bodies, and typed responses. Real-browser checks cover dialog
+  disabled/busy/error states, workbench cache invalidation/navigation, and archive immutability at the backend boundary.
 - Existing product/workbench tests retain their old controls while archive links use the product filter.
 - Run frontend unit tests, ESLint, and the production TypeScript/Vite build.
 - For layout changes, verify real `innerWidth` and `clientWidth`, console/network failures, horizontal overflow, and
-  screenshots at 1440x900, 1024x768, and 390x844 in light mode plus a representative dark detail/preview state.
+  screenshots at 1440x900, 1024x768, and 390x844 in light mode. Include desktop/mobile target dialogs and a live Agent
+  transition. Run with API, Redis, worker, and Agent service active so queue failure is not confused with a UI defect.
 
 ### 7. Wrong vs Correct
 
@@ -124,4 +153,22 @@ Correct:
 
 ```ts
 return api.listLegacyArchives({ kind, product_id: productId, q: query, after: cursor, limit: 30 });
+```
+
+Wrong:
+
+```tsx
+const draft = archive.payload as WorkflowDraftPayloadV1;
+navigate("/products/new", { state: { draft } });
+```
+
+Correct:
+
+```tsx
+const result = await api.createLegacyArchiveAgentRebuild(kind, archiveId, {
+  target_product_id: targetProductId,
+  idempotency_key: stableKey,
+});
+queryClient.invalidateQueries({ queryKey: ["agent-workbench", result.target_product_id] });
+navigate(`/products/${encodeURIComponent(result.target_product_id)}`);
 ```

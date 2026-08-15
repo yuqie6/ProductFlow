@@ -16,16 +16,20 @@ import (
 )
 
 const (
-	productContextToolName = "get_product_workflow_context_v1"
-	listAssetsToolName     = "list_product_image_assets_v2"
-	inspectAssetsToolName  = "inspect_product_image_assets_v1"
-	createFolderToolName   = "create_product_image_folder_v1"
-	renameFolderToolName   = "rename_product_image_folder_v1"
-	renameAssetToolName    = "rename_product_image_asset_v1"
-	moveAssetsToolName     = "move_product_image_assets_v1"
-	maxInspectedAssets     = 6
-	maxListedAssets        = 100
-	maxMovedAssets         = 100
+	productContextToolName       = "get_product_workflow_context_v1"
+	listLegacyArchivesToolName   = "list_legacy_archives_v1"
+	inspectLegacyArchiveToolName = "inspect_legacy_archive_v1"
+	listAssetsToolName           = "list_product_image_assets_v2"
+	inspectAssetsToolName        = "inspect_product_image_assets_v1"
+	createFolderToolName         = "create_product_image_folder_v1"
+	renameFolderToolName         = "rename_product_image_folder_v1"
+	renameAssetToolName          = "rename_product_image_asset_v1"
+	moveAssetsToolName           = "move_product_image_assets_v1"
+	maxInspectedAssets           = 6
+	maxListedLegacyArchives      = 50
+	maxInspectedArchiveItems     = 10
+	maxListedAssets              = 100
+	maxMovedAssets               = 100
 )
 
 func scopedReadTools(client *productflow.Client, scope Scope) []agenttask.Tool {
@@ -40,6 +44,91 @@ func scopedReadTools(client *productflow.Client, scope Scope) []agenttask.Tool {
 					return "", err
 				}
 				result, err := client.ProductContext(ctx, scope.ConversationID)
+				return string(result), err
+			},
+		},
+		{
+			Name:        listLegacyArchivesToolName,
+			Description: "List one bounded page of legacy archive metadata. Workflow and old Agent records are scoped to this product; user templates are global. Payloads, image bytes, URLs, and run details are excluded.",
+			Parameters: map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"kind": map[string]any{
+						"type": "string", "enum": []string{"workflow", "canvas_agent_thread", "user_template"},
+					},
+					"query": map[string]any{"type": "string", "maxLength": 255},
+					"after": map[string]any{"type": "string", "maxLength": 4096},
+					"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": maxListedLegacyArchives},
+				},
+				"required": []string{"kind", "query", "after", "limit"},
+			},
+			Strict: true,
+			Handler: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var arguments struct {
+					Kind  string `json:"kind"`
+					Query string `json:"query"`
+					After string `json:"after"`
+					Limit int    `json:"limit"`
+				}
+				if err := decodeStrictObject(raw, &arguments); err != nil {
+					return "", err
+				}
+				if !validLegacyArchiveKind(arguments.Kind) {
+					return "", errors.New("kind must be workflow, canvas_agent_thread, or user_template")
+				}
+				if arguments.Limit < 1 || arguments.Limit > maxListedLegacyArchives {
+					return "", fmt.Errorf("limit must be between 1 and %d", maxListedLegacyArchives)
+				}
+				result, err := client.ListLegacyArchives(
+					ctx, scope.ConversationID, arguments.Kind, arguments.Query, arguments.After, arguments.Limit,
+				)
+				return string(result), err
+			},
+		},
+		{
+			Name:        inspectLegacyArchiveToolName,
+			Description: "Inspect one explicit legacy archive section with offset pagination. Read only the sections needed for redesign; never request an entire payload or all run history. Asset sections return canonical asset metadata only, after which explicitly selected images can be inspected with inspect_product_image_assets_v1.",
+			Parameters: map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"kind": map[string]any{
+						"type": "string", "enum": []string{"workflow", "canvas_agent_thread", "user_template"},
+					},
+					"archive_id": map[string]any{"type": "string", "minLength": 1, "maxLength": 64},
+					"section": map[string]any{
+						"type": "string", "enum": []string{
+							"summary", "product", "workflow", "nodes", "edges", "creative_briefs", "copy_sets",
+							"poster_variants", "source_assets", "runs", "node_runs", "assets", "thread", "messages",
+							"tool_events", "plans", "task_plans", "visible_timeline", "template", "template_nodes",
+							"template_edges", "diagnostics",
+						},
+					},
+					"offset": map[string]any{"type": "integer", "minimum": 0},
+					"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": maxInspectedArchiveItems},
+				},
+				"required": []string{"kind", "archive_id", "section", "offset", "limit"},
+			},
+			Strict: true,
+			Handler: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var arguments struct {
+					Kind      string `json:"kind"`
+					ArchiveID string `json:"archive_id"`
+					Section   string `json:"section"`
+					Offset    int    `json:"offset"`
+					Limit     int    `json:"limit"`
+				}
+				if err := decodeStrictObject(raw, &arguments); err != nil {
+					return "", err
+				}
+				arguments.ArchiveID = strings.TrimSpace(arguments.ArchiveID)
+				if !validLegacyArchiveKind(arguments.Kind) || arguments.ArchiveID == "" ||
+					arguments.Offset < 0 || arguments.Limit < 1 || arguments.Limit > maxInspectedArchiveItems {
+					return "", errors.New("invalid bounded legacy archive inspection arguments")
+				}
+				result, err := client.InspectLegacyArchive(
+					ctx, scope.ConversationID, arguments.Kind, arguments.ArchiveID,
+					arguments.Section, arguments.Offset, arguments.Limit,
+				)
 				return string(result), err
 			},
 		},
@@ -440,6 +529,15 @@ func emptyObjectSchema() map[string]any {
 		"properties":           map[string]any{},
 		"required":             []string{},
 		"additionalProperties": false,
+	}
+}
+
+func validLegacyArchiveKind(value string) bool {
+	switch value {
+	case "workflow", "canvas_agent_thread", "user_template":
+		return true
+	default:
+		return false
 	}
 }
 

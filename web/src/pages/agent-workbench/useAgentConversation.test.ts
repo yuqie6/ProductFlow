@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { AgentTurn, AgentTurnPage } from "../../lib/types";
 import {
+  INITIAL_ARCHIVE_REBUILD_TURN_TEXT,
   INITIAL_AGENT_TURN_TEXT,
   flattenAgentTurnPages,
   initialAgentTurnInput,
@@ -43,6 +44,31 @@ describe("Agent conversation model", () => {
       input_text: INITIAL_AGENT_TURN_TEXT,
       asset_ids: ["asset-1", "asset-2"],
       idempotency_key: "initial:conversation-1",
+    });
+  });
+
+  it("starts archive rebuilds from the bounded archive tools without attaching every archived image", () => {
+    const input = initialAgentTurnInput("conversation-archive", ["asset-1", "asset-2"], {
+      id: "seed-1",
+      workflow_draft_id: "draft-1",
+      product_id: "product-1",
+      archive_kind: "workflow",
+      archive_id: "archive-1",
+      archive_title: "旧主图工作流",
+      archive_status: null,
+      source_product_id: "product-1",
+      source_profile: "legacy_canvas_agent_20260518_0032",
+      archive_schema_version: 1,
+      payload_sha256: "a".repeat(64),
+      counts: { nodes: 12, assets: 4 },
+      schema_version: 1,
+      created_at: "2026-08-15T09:00:00Z",
+    });
+
+    expect(input).toEqual({
+      input_text: INITIAL_ARCHIVE_REBUILD_TURN_TEXT,
+      asset_ids: [],
+      idempotency_key: "initial:conversation-archive",
     });
   });
 

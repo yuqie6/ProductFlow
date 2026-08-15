@@ -15,11 +15,14 @@ import type {
   AgentTurnPage,
   SubmitAgentTurnInput,
   WorkflowDraft,
+  WorkflowDraftLegacyArchiveSeed,
 } from "../../lib/types";
 import { isAgentTurnTerminal } from "./agentEventReducer";
 
 export const INITIAL_AGENT_TURN_TEXT =
   "请读取我已提交的商品参考图和图片需求，整理生成工作流所需信息；只补问当前确实缺失且会影响工作流的内容。";
+export const INITIAL_ARCHIVE_REBUILD_TURN_TEXT =
+  "请读取当前 WorkflowDraft 的 legacy_archive_seed，按需分段检查这份只读归档和必要的参考图，结合当前商品重新形成工作流；只补问确实影响结果的信息，确认无误后再提交工作流方案。";
 
 const AGENT_TURN_PAGE_SIZE = 20;
 const AGENT_TURN_PROJECTION_POLL_MS = 1_500;
@@ -65,10 +68,11 @@ export function agentTurnQueryKey(productId: string, conversationId: string, pro
 export function initialAgentTurnInput(
   conversationId: string,
   referenceAssetIds: readonly string[],
+  legacyArchiveSeed: WorkflowDraftLegacyArchiveSeed | null = null,
 ): SubmitAgentTurnInput {
   return {
-    input_text: INITIAL_AGENT_TURN_TEXT,
-    asset_ids: [...referenceAssetIds],
+    input_text: legacyArchiveSeed ? INITIAL_ARCHIVE_REBUILD_TURN_TEXT : INITIAL_AGENT_TURN_TEXT,
+    asset_ids: legacyArchiveSeed ? [] : [...referenceAssetIds],
     idempotency_key: `initial:${conversationId}`,
   };
 }
@@ -215,8 +219,9 @@ export function useAgentConversation({
       initialAgentTurnInput(
         conversation.id,
         workflowDraft.intake?.reference_asset_ids ?? [],
+        workflowDraft.legacy_archive_seed,
       ),
-    [conversation.id, workflowDraft.intake?.reference_asset_ids],
+    [conversation.id, workflowDraft.intake?.reference_asset_ids, workflowDraft.legacy_archive_seed],
   );
 
   const initialTurnMutation = useMutation({

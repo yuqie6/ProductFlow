@@ -538,7 +538,7 @@ func newProductFlowFixture(t *testing.T, png []byte, productID string) *httptest
 					"type": "object", "additionalProperties": false,
 					"properties": map[string]any{"title": map[string]any{"type": "string"}}, "required": []string{"title"},
 				},
-				"tool_contract_version": 2,
+				"tool_contract_version": 3,
 			})
 		case base + "/workflow-draft/validate":
 			var payload struct {

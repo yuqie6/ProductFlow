@@ -27,6 +27,13 @@ from productflow_backend.application.agent_tools import (
 )
 from productflow_backend.application.gallery_assets import GalleryAssetSort, GalleryDirectoryKind
 from productflow_backend.application.gallery_mutations import GalleryAssetMove
+from productflow_backend.application.legacy_archive_rebuilds import (
+    AGENT_LEGACY_ARCHIVE_LIST_DEFAULT_LIMIT,
+    AGENT_LEGACY_ARCHIVE_LIST_MAX_LIMIT,
+    inspect_agent_legacy_archive,
+    list_agent_legacy_archives,
+)
+from productflow_backend.application.legacy_archives import LegacyArchiveKind
 from productflow_backend.presentation.deps import get_session, require_agent_service
 from productflow_backend.presentation.schemas.agent_conversations import (
     AgentAssetListResponse,
@@ -45,10 +52,13 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     AgentFolderRenamePreparedRequest,
     AgentFolderRenameReconcileResponse,
     AgentFolderRenameResultResponse,
+    AgentLegacyArchiveInspectResponse,
+    AgentLegacyArchiveListResponse,
     AgentWorkflowDraftValidationRequest,
     AgentWorkflowDraftValidationResponse,
     InspectAgentAssetsRequest,
     InspectAgentAssetsResponse,
+    InspectAgentLegacyArchiveRequest,
     PrepareAgentAssetMoveRequest,
     PrepareAgentAssetRenameRequest,
     PrepareAgentFolderCreateRequest,
@@ -133,8 +143,56 @@ def inspect_agent_product_assets_endpoint(
         conversation_id=conversation_id,
         asset_ids=payload.asset_ids,
     )
-    return InspectAgentAssetsResponse(
-        items=[AgentAssetMetadataResponse.model_validate(item) for item in items]
+    return InspectAgentAssetsResponse(items=[AgentAssetMetadataResponse.model_validate(item) for item in items])
+
+
+@router.get(
+    "/{conversation_id}/legacy-archives",
+    response_model=AgentLegacyArchiveListResponse,
+)
+def list_agent_legacy_archives_endpoint(
+    conversation_id: str,
+    kind: LegacyArchiveKind = Query(),
+    query: str = Query(default="", max_length=255),
+    after: str = Query(default="", max_length=4096),
+    limit: int = Query(
+        default=AGENT_LEGACY_ARCHIVE_LIST_DEFAULT_LIMIT,
+        ge=1,
+        le=AGENT_LEGACY_ARCHIVE_LIST_MAX_LIMIT,
+    ),
+    session: Session = Depends(get_session),
+) -> AgentLegacyArchiveListResponse:
+    return AgentLegacyArchiveListResponse.model_validate(
+        list_agent_legacy_archives(
+            session,
+            conversation_id=conversation_id,
+            kind=kind,
+            query=query,
+            after=after,
+            limit=limit,
+        )
+    )
+
+
+@router.post(
+    "/{conversation_id}/legacy-archives/inspect",
+    response_model=AgentLegacyArchiveInspectResponse,
+)
+def inspect_agent_legacy_archive_endpoint(
+    conversation_id: str,
+    payload: InspectAgentLegacyArchiveRequest,
+    session: Session = Depends(get_session),
+) -> AgentLegacyArchiveInspectResponse:
+    return AgentLegacyArchiveInspectResponse.model_validate(
+        inspect_agent_legacy_archive(
+            session,
+            conversation_id=conversation_id,
+            kind=payload.kind,
+            archive_id=payload.archive_id,
+            section=payload.section,
+            offset=payload.offset,
+            limit=payload.limit,
+        )
     )
 
 

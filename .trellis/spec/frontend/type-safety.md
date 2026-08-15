@@ -266,7 +266,8 @@ return api.createProduct({
 - `WorkflowNodeTypeV2` is `product_context | reference_image | prompt_generation | image_generation`.
 - Central API methods: `getActiveProductWorkflowV2`, `createWorkflowDraft`, `getWorkflowDraft`,
   `appendWorkflowDraftRevision`, `confirmWorkflowDraft`, `materializeWorkflowDraft`, and
-  `workflowRevealEventsUrl`.
+  `workflowRevealEventsUrl`. Archive rebuild entry uses
+  `createLegacyArchiveAgentRebuild(kind, archiveId, input): Promise<LegacyArchiveAgentRebuildResult>`.
 - Node execution methods:
   - `runWorkflowNodeV2(nodeId: string): Promise<SubmitWorkflowNodeRunV2Result>`;
   - `getWorkflowNodeRunV2(nodeRunId: string): Promise<WorkflowNodeRunV2>`;
@@ -277,7 +278,8 @@ return api.createProduct({
   - `updateWorkflowNodeV2(productId, workflowId, nodeId, input): Promise<WorkflowCanvasMutationResult>`;
   - `UpdateWorkflowNodeV2Input` is discriminated by the exact v2 `node_type`.
 - Strict DTOs include `WorkflowVisualSystemPayloadV1`, discriminated `WorkflowVisualFieldOverride`,
-  `WorkflowImagePromptPayloadV1`, `WorkflowGenerationSpec`, `WorkflowActualMedia`, and `WorkflowNodeRunV2`.
+  `WorkflowImagePromptPayloadV1`, `WorkflowGenerationSpec`, `WorkflowActualMedia`, `WorkflowNodeRunV2`, and
+  `WorkflowDraftLegacyArchiveSeed`.
 
 #### 3. Contracts
 
@@ -288,6 +290,11 @@ return api.createProduct({
   exact shape is node-type and run-state dependent.
 - The Draft response supplies `limits` for image-type, per-type, total-image, and reference-asset counts. UI code reads
   these values and does not duplicate backend numeric limits.
+- Every Draft response has nullable, mutually exclusive `recipe_seed` and `legacy_archive_seed` fields. Archive seed DTOs
+  contain lineage metadata/counts only; they do not expose an archive payload, image URL, storage path, or bytes.
+- `LegacyArchiveAgentRebuildResult` returns the created/reused Draft and Agent conversation plus the archive and target
+  product identity. The frontend navigates by the returned `target_product_id` and never derives a Draft payload from an
+  archive detail DTO.
 - Draft revisions expose nullable `visual_system_version_id`; materialized workflows expose a required fixed version ID;
   prompt nodes expose nullable `current_prompt_artifact_version_id` and image nodes use `bound_image_asset_id` as their
   current result pointer.
@@ -307,6 +314,8 @@ return api.createProduct({
 - Backend `422` for a strict Draft shape -> surface `ApiError.detail`; do not coerce unknown fields locally.
 - Backend `409` for stale revisions, active v1, or idempotency drift -> refresh the corresponding Draft/workflow state
   before a deliberate retry.
+- Backend `400`/`404`/`409` for archive target scope, missing rows, or rebuild idempotency drift -> surface the typed API
+  detail and retain the archive view; do not locally construct a replacement Draft.
 - Backend `409` for a v1 node sent to v2 run APIs, an inactive workflow, or a non-runnable v2 context/reference node ->
   surface `ApiError.detail`; do not fall back to the legacy run endpoint.
 - A repeated run submit for the same queued/running node may return `created: false` with the existing `node_run`; callers
@@ -332,6 +341,8 @@ return api.createProduct({
 #### 6. Tests Required
 
 - API helper tests assert exact materialization/run paths, methods, JSON fields, and reveal URL cursor construction.
+- Archive rebuild API tests assert encoded kind/archive path, `{target_product_id, idempotency_key}` body, credentials,
+  and typed Draft/conversation response.
 - TypeScript build must verify distinct v1/v2 node unions, literal schema versions, strict visual/prompt fields, and typed
   requested/actual generation evidence.
 - Run `pnpm --dir web test:run`, `pnpm --dir web lint`, and `just web-build` after DTO changes.

@@ -363,7 +363,7 @@ def _current_engine(tmp_path: Path, *, archive_schema: bool = True) -> tuple[sa.
 
     with engine.begin() as connection:
         connection.exec_driver_sql("CREATE TABLE alembic_version (version_num VARCHAR(32) PRIMARY KEY)")
-        revision = "20260815_0039" if archive_schema else "20260814_0038"
+        revision = "20260815_0040" if archive_schema else "20260814_0038"
         connection.execute(
             sa.text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
             {"revision": revision},
@@ -410,6 +410,7 @@ def _current_engine(tmp_path: Path, *, archive_schema: bool = True) -> tuple[sa.
             },
         )
         if not archive_schema:
+            connection.exec_driver_sql("DROP TABLE workflow_draft_legacy_archive_seeds")
             connection.exec_driver_sql("DROP TABLE legacy_workflow_archive_assets")
             connection.exec_driver_sql("DROP TABLE legacy_canvas_agent_archives")
             connection.exec_driver_sql("DROP TABLE legacy_user_template_archives")

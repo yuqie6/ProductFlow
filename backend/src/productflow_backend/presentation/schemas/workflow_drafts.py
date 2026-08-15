@@ -197,6 +197,7 @@ class WorkflowDraftResponse(BaseModel):
     intake: WorkflowIntakeV1 | None
     final_workflow_id: str | None
     recipe_seed: WorkflowDraftRecipeSeedResponse | None
+    legacy_archive_seed: WorkflowDraftLegacyArchiveSeedResponse | None
     limits: WorkflowDraftLimitsResponse
     created_at: datetime
     updated_at: datetime
@@ -212,6 +213,23 @@ class WorkflowDraftRecipeSeedResponse(BaseModel):
     product_id: str
     base_workflow_id: str | None
     base_workflow_revision: int | None
+    schema_version: Literal[1]
+    created_at: datetime
+
+
+class WorkflowDraftLegacyArchiveSeedResponse(BaseModel):
+    id: str
+    workflow_draft_id: str
+    product_id: str
+    archive_kind: Literal["workflow", "canvas_agent_thread", "user_template"]
+    archive_id: str
+    archive_title: str
+    archive_status: str | None
+    source_product_id: str | None
+    source_profile: str
+    archive_schema_version: int
+    payload_sha256: str
+    counts: dict[str, int]
     schema_version: Literal[1]
     created_at: datetime
 
@@ -421,17 +439,18 @@ def serialize_workflow_draft_revision(revision: WorkflowDraftRevision) -> Workfl
 
 
 def serialize_workflow_draft(draft: WorkflowDraft) -> WorkflowDraftResponse:
+    from productflow_backend.application.legacy_archive_rebuilds import legacy_archive_seed_summary
+
     current_revision = draft.current_revision
     seed = draft.recipe_seed
+    archive_seed = draft.legacy_archive_seed
     return WorkflowDraftResponse(
         id=draft.id,
         product_id=draft.product_id,
         status=draft.status,
         current_revision_id=draft.current_revision_id,
         current_revision=(
-            serialize_workflow_draft_revision(current_revision)
-            if current_revision is not None
-            else None
+            serialize_workflow_draft_revision(current_revision) if current_revision is not None else None
         ),
         current_version=current_revision.version if current_revision is not None else 0,
         revisions=[serialize_workflow_draft_revision(revision) for revision in draft.revisions],
@@ -455,6 +474,11 @@ def serialize_workflow_draft(draft: WorkflowDraft) -> WorkflowDraftResponse:
                 created_at=seed.created_at,
             )
             if seed is not None
+            else None
+        ),
+        legacy_archive_seed=(
+            WorkflowDraftLegacyArchiveSeedResponse.model_validate(legacy_archive_seed_summary(archive_seed))
+            if archive_seed is not None
             else None
         ),
         limits=WorkflowDraftLimitsResponse(),
@@ -515,11 +539,7 @@ def serialize_workflow_edge_v2(edge: WorkflowEdge) -> WorkflowEdgeV2Response:
 
 
 def serialize_product_workflow_v2(workflow: ProductWorkflow) -> ProductWorkflowV2Response:
-    if (
-        workflow.schema_version != 2
-        or workflow.source_draft_revision_id is None
-        or workflow.materialization is None
-    ):
+    if workflow.schema_version != 2 or workflow.source_draft_revision_id is None or workflow.materialization is None:
         raise ValueError("v2 workflow projection 收到了不完整的 lineage")
     return ProductWorkflowV2Response(
         id=workflow.id,

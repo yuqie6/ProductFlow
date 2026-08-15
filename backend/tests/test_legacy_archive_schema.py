@@ -21,6 +21,7 @@ from productflow_backend.infrastructure.db.models import (
     LegacyWorkflowArchive,
     LegacyWorkflowArchiveAsset,
     ProductImageAsset,
+    WorkflowDraftLegacyArchiveSeed,
 )
 
 
@@ -115,6 +116,28 @@ def test_legacy_archive_models_match_immutable_snapshot_contract() -> None:
         "ck_legacy_canvas_agent_archives_event_total",
     }
     assert "updated_at" not in canvas_table.c
+
+    rebuild_seed_table = WorkflowDraftLegacyArchiveSeed.__table__
+    assert _constraint_names(rebuild_seed_table, sa.UniqueConstraint) == {
+        "uq_workflow_draft_legacy_archive_seeds_draft_id",
+        "uq_workflow_draft_legacy_archive_seeds_product_key",
+    }
+    assert _constraint_names(rebuild_seed_table, sa.CheckConstraint) == {
+        "ck_workflow_draft_legacy_archive_seeds_schema_version",
+        "ck_workflow_draft_legacy_archive_seeds_request_hash",
+        "ck_workflow_draft_legacy_archive_seeds_one_archive",
+    }
+    assert {index.name for index in rebuild_seed_table.indexes} == {
+        "ix_workflow_draft_legacy_archive_seeds_product_created"
+    }
+    seed_fks = {foreign_key.parent.name: foreign_key for foreign_key in rebuild_seed_table.foreign_keys}
+    assert seed_fks["workflow_draft_id"].constraint.name == "fk_workflow_draft_legacy_archive_seeds_draft_id"
+    assert seed_fks["workflow_draft_id"].ondelete == "CASCADE"
+    assert seed_fks["product_id"].constraint.name == "fk_workflow_draft_legacy_archive_seeds_product_id"
+    assert seed_fks["product_id"].ondelete == "CASCADE"
+    assert seed_fks["workflow_archive_id"].ondelete == "RESTRICT"
+    assert seed_fks["canvas_agent_archive_id"].ondelete == "RESTRICT"
+    assert seed_fks["user_template_archive_id"].ondelete == "RESTRICT"
 
 
 def test_legacy_workflow_archive_reference_blocks_image_deletion(configured_env: Path, db_session) -> None:
@@ -302,5 +325,80 @@ def test_legacy_archive_migration_round_trips_and_refuses_populated_downgrade(
     command.upgrade(config, "20260815_0039")
     engine = sa.create_engine(f"sqlite:///{database_path}")
     assert "legacy_workflow_archives" in sa.inspect(engine).get_table_names()
+    engine.dispose()
+    get_settings.cache_clear()
+
+
+def test_legacy_archive_rebuild_seed_migration_is_additive_and_refuses_data_loss(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path, config = _migration_config(tmp_path, monkeypatch)
+    command.upgrade(config, "20260815_0040")
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    inspector = sa.inspect(engine)
+    assert "workflow_draft_legacy_archive_seeds" in inspector.get_table_names()
+    foreign_keys = {
+        foreign_key["name"]: foreign_key
+        for foreign_key in inspector.get_foreign_keys("workflow_draft_legacy_archive_seeds")
+    }
+    assert foreign_keys["fk_workflow_draft_legacy_archive_seeds_draft_id"]["options"]["ondelete"] == "CASCADE"
+    workflow_archive_fk = foreign_keys["fk_workflow_draft_legacy_archive_seeds_workflow_archive_id"]
+    assert workflow_archive_fk["options"]["ondelete"] == "RESTRICT"
+    now = "2026-08-15 09:30:00"
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                "INSERT INTO products (id, name, created_at, updated_at) "
+                "VALUES ('product-rebuild', '重建迁移商品', :now, :now)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO workflow_drafts (id, product_id, status, created_at, updated_at) "
+                "VALUES ('draft-rebuild', 'product-rebuild', 'collecting', :now, :now)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO legacy_workflow_archives "
+                "(id, source_profile, legacy_workflow_id, product_id, source_title, source_updated_at, "
+                "archive_schema_version, payload_json, source_fingerprint_sha256, payload_sha256, "
+                "node_count, edge_count, run_count, node_run_count, asset_count, created_at) "
+                "VALUES ('archive-rebuild', 'legacy_canvas_agent_20260518_0032', 'workflow-rebuild', "
+                "'product-rebuild', '待重建设计', NULL, 1, '{}', :source_hash, :payload_hash, "
+                "0, 0, 0, 0, 0, :now)"
+            ),
+            {"source_hash": "a" * 64, "payload_hash": "b" * 64, "now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO workflow_draft_legacy_archive_seeds "
+                "(id, workflow_draft_id, product_id, workflow_archive_id, canvas_agent_archive_id, "
+                "user_template_archive_id, schema_version, idempotency_key, request_hash, created_at) "
+                "VALUES ('seed-rebuild', 'draft-rebuild', 'product-rebuild', 'archive-rebuild', NULL, NULL, "
+                "1, 'migration-rebuild', :request_hash, :now)"
+            ),
+            {"request_hash": "c" * 64, "now": now},
+        )
+    engine.dispose()
+
+    with pytest.raises(RuntimeError, match="seed data exists"):
+        command.downgrade(config, "20260815_0039")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    with engine.begin() as connection:
+        connection.execute(sa.text("DELETE FROM workflow_draft_legacy_archive_seeds"))
+    engine.dispose()
+    command.downgrade(config, "20260815_0039")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    inspector = sa.inspect(engine)
+    assert "workflow_draft_legacy_archive_seeds" not in inspector.get_table_names()
+    assert "legacy_workflow_archives" in inspector.get_table_names()
+    with engine.connect() as connection:
+        assert connection.scalar(sa.text("SELECT COUNT(*) FROM legacy_workflow_archives")) == 1
     engine.dispose()
     get_settings.cache_clear()

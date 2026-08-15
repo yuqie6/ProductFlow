@@ -52,4 +52,27 @@ describe("legacy archive API", () => {
       { credentials: "include" },
     ]);
   });
+
+  it("creates an idempotent Agent rebuild for one explicit target product", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: async () => ({ created: true }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.createLegacyArchiveAgentRebuild("user_template", "archive/1", {
+      target_product_id: "product/1",
+      idempotency_key: "legacy-rebuild-1",
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v2/legacy-archives/user_template/archive%2F1/agent-rebuilds");
+    expect(init.method).toBe("POST");
+    expect(init.credentials).toBe("include");
+    expect(JSON.parse(String(init.body))).toEqual({
+      target_product_id: "product/1",
+      idempotency_key: "legacy-rebuild-1",
+    });
+  });
 });

@@ -30,6 +30,7 @@ from productflow_backend.infrastructure.db.models import (
     Product,
     ProductImageAsset,
     WorkflowDraft,
+    WorkflowDraftLegacyArchiveSeed,
     WorkflowDraftRecipeSeed,
     WorkflowDraftRevision,
     new_id,
@@ -78,6 +79,15 @@ def agent_conversation_query():
         selectinload(AgentConversation.workflow_draft)
         .selectinload(WorkflowDraft.recipe_seed)
         .selectinload(WorkflowDraftRecipeSeed.recipe_version),
+        selectinload(AgentConversation.workflow_draft)
+        .selectinload(WorkflowDraft.legacy_archive_seed)
+        .selectinload(WorkflowDraftLegacyArchiveSeed.workflow_archive),
+        selectinload(AgentConversation.workflow_draft)
+        .selectinload(WorkflowDraft.legacy_archive_seed)
+        .selectinload(WorkflowDraftLegacyArchiveSeed.canvas_agent_archive),
+        selectinload(AgentConversation.workflow_draft)
+        .selectinload(WorkflowDraft.legacy_archive_seed)
+        .selectinload(WorkflowDraftLegacyArchiveSeed.user_template_archive),
     )
 
 

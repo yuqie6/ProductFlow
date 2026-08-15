@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 from helpers import _login, _make_demo_image_bytes
 from sqlalchemy import event, func, select
+from workflow_draft_helpers import make_workflow_draft_payload
 
 from productflow_backend.application.legacy_archives import (
     get_legacy_archive_detail,
@@ -13,13 +15,19 @@ from productflow_backend.application.legacy_archives import (
     list_legacy_archives,
 )
 from productflow_backend.application.use_cases import create_canonical_product
+from productflow_backend.application.workflow_drafts.service import append_workflow_draft_revision
+from productflow_backend.config import get_settings
 from productflow_backend.domain.errors import BusinessValidationError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
+    AgentConversation,
     LegacyCanvasAgentArchive,
     LegacyUserTemplateArchive,
     LegacyWorkflowArchive,
     LegacyWorkflowArchiveAsset,
     ProductWorkflow,
+    WorkflowDraft,
+    WorkflowDraftLegacyArchiveSeed,
+    WorkflowDraftRevision,
 )
 from productflow_backend.infrastructure.db.session import get_engine, get_session_factory
 from productflow_backend.presentation.api import create_app
@@ -252,3 +260,273 @@ def test_archive_http_surface_is_read_only_and_reuses_canonical_asset_download(c
         assert verification_session.scalar(select(func.count()).select_from(ProductWorkflow)) == 0
     finally:
         verification_session.close()
+
+
+def test_archive_agent_rebuild_creates_an_empty_idempotent_draft_without_touching_archive(
+    configured_env,
+    db_session,
+) -> None:
+    product, other_product, workflow, canvas, template = _seed_archives(db_session)
+    original_payload = deepcopy(workflow.payload_json)
+    original_payload_hash = workflow.payload_sha256
+    client = TestClient(create_app())
+    _login(client)
+    request = {
+        "target_product_id": product.id,
+        "idempotency_key": "rebuild-workflow-main",
+    }
+
+    created = client.post(
+        f"/api/v2/legacy-archives/workflow/{workflow.id}/agent-rebuilds",
+        json=request,
+    )
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["created"] is True
+    assert body["archive_kind"] == "workflow"
+    assert body["archive_id"] == workflow.id
+    assert body["target_product_id"] == product.id
+    assert body["draft"]["status"] == "collecting"
+    assert body["draft"]["current_version"] == 0
+    assert body["draft"]["current_revision"] is None
+    assert body["draft"]["revisions"] == []
+    assert body["draft"]["recipe_seed"] is None
+    assert body["draft"]["legacy_archive_seed"] == {
+        "id": body["draft"]["legacy_archive_seed"]["id"],
+        "workflow_draft_id": body["draft"]["id"],
+        "product_id": product.id,
+        "archive_kind": "workflow",
+        "archive_id": workflow.id,
+        "archive_title": workflow.source_title,
+        "archive_status": None,
+        "source_product_id": product.id,
+        "source_profile": workflow.source_profile,
+        "archive_schema_version": 1,
+        "payload_sha256": original_payload_hash,
+        "counts": {"nodes": 1, "edges": 0, "runs": 2, "node_runs": 3, "assets": 1},
+        "schema_version": 1,
+        "created_at": body["draft"]["legacy_archive_seed"]["created_at"],
+    }
+    assert body["conversation"]["workflow_draft_id"] == body["draft"]["id"]
+    assert body["conversation"]["status"] == "collecting"
+
+    db_session.expire_all()
+    assert db_session.scalar(select(func.count()).select_from(ProductWorkflow)) == 0
+    assert db_session.scalar(select(func.count()).select_from(WorkflowDraftRevision)) == 0
+    assert db_session.scalar(select(func.count()).select_from(WorkflowDraft)) == 1
+    assert db_session.scalar(select(func.count()).select_from(AgentConversation)) == 1
+    assert db_session.scalar(select(func.count()).select_from(WorkflowDraftLegacyArchiveSeed)) == 1
+    persisted_workflow = db_session.get(LegacyWorkflowArchive, workflow.id)
+    assert persisted_workflow is not None
+    assert persisted_workflow.payload_json == original_payload
+    assert persisted_workflow.payload_sha256 == original_payload_hash
+
+    workbench = client.get(f"/api/v2/products/{product.id}/agent-workbench")
+    assert workbench.status_code == 200, workbench.text
+    assert workbench.json()["mode"] == "agent_v2"
+    assert workbench.json()["conversation"]["id"] == body["conversation"]["id"]
+    assert workbench.json()["workflow_draft"]["id"] == body["draft"]["id"]
+    assert workbench.json()["active_workflow"] is None
+
+    repeated = client.post(
+        f"/api/v2/legacy-archives/workflow/{workflow.id}/agent-rebuilds",
+        json=request,
+    )
+    assert repeated.status_code == 201, repeated.text
+    assert repeated.json()["created"] is False
+    assert repeated.json()["draft"]["id"] == body["draft"]["id"]
+    assert repeated.json()["conversation"]["id"] == body["conversation"]["id"]
+
+    conflicting = client.post(
+        f"/api/v2/legacy-archives/canvas_agent_thread/{canvas.id}/agent-rebuilds",
+        json=request,
+    )
+    assert conflicting.status_code == 409
+
+    foreign_product = client.post(
+        f"/api/v2/legacy-archives/workflow/{workflow.id}/agent-rebuilds",
+        json={"target_product_id": other_product.id, "idempotency_key": "foreign-product"},
+    )
+    assert foreign_product.status_code == 400
+    assert "只能重建到原商品" in foreign_product.json()["detail"]
+
+    template_rebuild = client.post(
+        f"/api/v2/legacy-archives/user_template/{template.id}/agent-rebuilds",
+        json={"target_product_id": other_product.id, "idempotency_key": "template-on-other-product"},
+    )
+    assert template_rebuild.status_code == 201, template_rebuild.text
+    assert template_rebuild.json()["archive_kind"] == "user_template"
+    assert template_rebuild.json()["target_product_id"] == other_product.id
+
+
+def test_archive_seeded_version_zero_draft_accepts_first_agent_revision(
+    configured_env,
+    db_session,
+) -> None:
+    product, _, workflow, _, _ = _seed_archives(db_session)
+    archived_payload = deepcopy(workflow.payload_json)
+    client = TestClient(create_app())
+    _login(client)
+    rebuilt = client.post(
+        f"/api/v2/legacy-archives/workflow/{workflow.id}/agent-rebuilds",
+        json={"target_product_id": product.id, "idempotency_key": "archive-first-revision"},
+    )
+    assert rebuilt.status_code == 201, rebuilt.text
+
+    db_session.expire_all()
+    draft = append_workflow_draft_revision(
+        db_session,
+        product_id=product.id,
+        draft_id=rebuilt.json()["draft"]["id"],
+        expected_draft_version=0,
+        payload=make_workflow_draft_payload(reference_asset_id=product.image_assets[0].id),
+        ready_for_confirmation=True,
+        source_turn_id="archive-agent-turn",
+        source_artifact_step_id="archive-agent-artifact",
+    )
+
+    assert draft.status.value == "awaiting_confirmation"
+    assert draft.current_revision is not None
+    assert draft.current_revision.version == 1
+    assert db_session.scalar(select(func.count()).select_from(ProductWorkflow)) == 0
+    persisted_archive = db_session.get(LegacyWorkflowArchive, workflow.id)
+    assert persisted_archive is not None
+    assert persisted_archive.payload_json == archived_payload
+
+
+def test_agent_archive_tools_are_product_scoped_sectioned_and_metadata_only(
+    configured_env,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    product, _, workflow, _, _ = _seed_archives(db_session)
+    workflow.payload_json = {
+        "nodes": [{"id": f"prompt-{index}", "config": {"prompt": f"提示词 {index}"}} for index in range(12)],
+        "edges": [],
+    }
+    workflow.node_count = 12
+    huge_archive = LegacyWorkflowArchive(
+        id="archive-workflow-huge",
+        source_profile=workflow.source_profile,
+        legacy_workflow_id="legacy-workflow-huge",
+        product_id=product.id,
+        source_title="超大旧工作流",
+        source_updated_at=None,
+        archive_schema_version=1,
+        payload_json={"nodes": [{"id": "huge", "config": {"prompt": "x" * (257 * 1024)}}], "edges": []},
+        source_fingerprint_sha256="9" * 64,
+        payload_sha256="a" * 64,
+        node_count=1,
+        edge_count=0,
+        run_count=0,
+        node_run_count=0,
+        asset_count=0,
+    )
+    db_session.add(huge_archive)
+    db_session.commit()
+
+    client = TestClient(create_app())
+    _login(client)
+    rebuilt = client.post(
+        f"/api/v2/legacy-archives/workflow/{workflow.id}/agent-rebuilds",
+        json={"target_product_id": product.id, "idempotency_key": "agent-tool-scope"},
+    )
+    assert rebuilt.status_code == 201, rebuilt.text
+    conversation_id = rebuilt.json()["conversation"]["id"]
+
+    internal_token = "agent-internal-token-with-at-least-32-characters"
+    monkeypatch.setenv("AGENT_SERVICE_INTERNAL_TOKEN", internal_token)
+    get_settings.cache_clear()
+    headers = {"Authorization": f"Bearer {internal_token}"}
+    base = f"/api/internal/v1/agent-conversations/{conversation_id}"
+
+    context = client.get(f"{base}/product-context", headers=headers)
+    assert context.status_code == 200, context.text
+    assert context.json()["legacy_archive_seed"]["archive_id"] == workflow.id
+    assert "payload" not in context.json()["legacy_archive_seed"]
+
+    listed = client.get(
+        f"{base}/legacy-archives",
+        headers=headers,
+        params={"kind": "workflow", "limit": 10},
+    )
+    assert listed.status_code == 200, listed.text
+    assert {item["id"] for item in listed.json()["items"]} == {workflow.id, huge_archive.id}
+    assert all("payload" not in item for item in listed.json()["items"])
+    assert "storage_path" not in listed.text
+    assert "download_url" not in listed.text
+
+    nodes = client.post(
+        f"{base}/legacy-archives/inspect",
+        headers=headers,
+        json={
+            "kind": "workflow",
+            "archive_id": workflow.id,
+            "section": "nodes",
+            "offset": 3,
+            "limit": 5,
+        },
+    )
+    assert nodes.status_code == 200, nodes.text
+    assert nodes.json()["total"] == 12
+    assert [item["id"] for item in nodes.json()["items"]] == [f"prompt-{index}" for index in range(3, 8)]
+    assert nodes.json()["has_more"] is True
+    assert "edges" not in nodes.json()
+
+    assets = client.post(
+        f"{base}/legacy-archives/inspect",
+        headers=headers,
+        json={
+            "kind": "workflow",
+            "archive_id": workflow.id,
+            "section": "assets",
+            "offset": 0,
+            "limit": 10,
+        },
+    )
+    assert assets.status_code == 200, assets.text
+    assert assets.json()["total"] == 1
+    assert assets.json()["items"][0]["product_image_asset_id"] == product.image_assets[0].id
+    assert "storage_path" not in assets.text
+    assert "download_url" not in assets.text
+    assert "data:image/" not in assets.text
+
+    other_product_archive = client.post(
+        f"{base}/legacy-archives/inspect",
+        headers=headers,
+        json={
+            "kind": "workflow",
+            "archive_id": "archive-workflow-other",
+            "section": "summary",
+            "offset": 0,
+            "limit": 1,
+        },
+    )
+    assert other_product_archive.status_code == 404
+
+    unbounded = client.post(
+        f"{base}/legacy-archives/inspect",
+        headers=headers,
+        json={
+            "kind": "workflow",
+            "archive_id": workflow.id,
+            "section": "nodes",
+            "offset": 0,
+            "limit": 11,
+        },
+    )
+    assert unbounded.status_code == 422
+
+    oversized = client.post(
+        f"{base}/legacy-archives/inspect",
+        headers=headers,
+        json={
+            "kind": "workflow",
+            "archive_id": huge_archive.id,
+            "section": "nodes",
+            "offset": 0,
+            "limit": 1,
+        },
+    )
+    assert oversized.status_code == 409
+    assert "256 KiB" in oversized.json()["detail"]

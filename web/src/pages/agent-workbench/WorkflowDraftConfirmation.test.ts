@@ -198,6 +198,7 @@ function draft(): WorkflowDraft {
     },
     final_workflow_id: null,
     recipe_seed: null,
+    legacy_archive_seed: null,
     limits: {
       min_image_types: 1,
       min_images_per_type: 1,
