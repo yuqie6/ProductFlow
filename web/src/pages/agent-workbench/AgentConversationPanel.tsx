@@ -10,6 +10,7 @@ import { useI18n } from "../../lib/preferences";
 import type {
   AgentConversation,
   AgentQuestionAnswer,
+  AgentTurn,
   GalleryAsset,
   WorkflowDraft,
 } from "../../lib/types";
@@ -31,7 +32,6 @@ interface AgentConversationPanelProps {
   conversation: AgentConversation;
   workflowDraft: WorkflowDraft;
   className?: string;
-  onArtifactProposed?: () => void;
   reviewDraftAvailable?: boolean;
   onReviewDraft?: () => void;
 }
@@ -42,7 +42,6 @@ export function AgentConversationPanel({
   conversation,
   workflowDraft,
   className = "",
-  onArtifactProposed,
   reviewDraftAvailable = false,
   onReviewDraft,
 }: AgentConversationPanelProps) {
@@ -61,13 +60,6 @@ export function AgentConversationPanel({
     productId,
     conversation,
     turn: agent.activeTurn,
-    onArtifactProposed: () => {
-      void Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["agent-workbench", productId] }),
-        queryClient.invalidateQueries({ queryKey: ["workflow-draft", productId, workflowDraft.id] }),
-      ]);
-      onArtifactProposed?.();
-    },
     onTerminal: () => void agent.refreshLatestTurn(),
   });
   const activeQuestion =
@@ -76,6 +68,15 @@ export function AgentConversationPanel({
       : agent.activeTurn?.question ?? null;
 
   useEffect(() => setAnsweredQuestionId(null), [activeQuestion?.id]);
+  useEffect(() => {
+    if (!hasUnsyncedWorkflowDraftRevision(workflowDraft, agent.latestTurn)) {
+      return;
+    }
+    void Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["agent-workbench", productId] }),
+      queryClient.invalidateQueries({ queryKey: ["workflow-draft", productId, workflowDraft.id] }),
+    ]);
+  }, [agent.latestTurn?.workflow_draft_revision_id, productId, queryClient, workflowDraft]);
   useEffect(() => {
     if (!assetSelectorOpen && !preview) {
       return;
@@ -383,6 +384,16 @@ export function AgentConversationPanel({
 
       {typeof document === "undefined" ? dialogs : createPortal(dialogs, document.body)}
     </section>
+  );
+}
+
+export function hasUnsyncedWorkflowDraftRevision(
+  workflowDraft: WorkflowDraft,
+  latestTurn: AgentTurn | null,
+): boolean {
+  const projectedRevisionId = latestTurn?.workflow_draft_revision_id;
+  return Boolean(
+    projectedRevisionId && workflowDraft.current_revision?.id !== projectedRevisionId,
   );
 }
 

@@ -2,8 +2,9 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { AgentQuestion, AgentTurn, GalleryAsset } from "../../lib/types";
+import type { AgentQuestion, AgentTurn, GalleryAsset, WorkflowDraft } from "../../lib/types";
 import { AgentComposer } from "./AgentComposer";
+import { hasUnsyncedWorkflowDraftRevision } from "./AgentConversationPanel";
 import { AgentMessageList } from "./AgentMessageList";
 import { AgentQuestionPrompt } from "./AgentQuestionPrompt";
 import { agentEventReducer, createAgentTurnEventState } from "./agentEventReducer";
@@ -33,6 +34,25 @@ function turn(overrides: Partial<AgentTurn> = {}): AgentTurn {
 }
 
 describe("Agent conversation components", () => {
+  it("refreshes the draft only after ProductFlow projects the proposed revision ID", () => {
+    const staleDraft = {
+      id: "draft-1",
+      current_revision: null,
+    } as WorkflowDraft;
+    const synchronizedDraft = {
+      ...staleDraft,
+      current_revision: { id: "revision-1" },
+    } as WorkflowDraft;
+    const projected = turn({
+      status: "awaiting_confirmation",
+      workflow_draft_revision_id: "revision-1",
+    });
+
+    expect(hasUnsyncedWorkflowDraftRevision(staleDraft, projected)).toBe(true);
+    expect(hasUnsyncedWorkflowDraftRevision(synchronizedDraft, projected)).toBe(false);
+    expect(hasUnsyncedWorkflowDraftRevision(staleDraft, turn())).toBe(false);
+  });
+
   it("renders composer attachments as equal removable thumbnails and keeps the draft", () => {
     const selectedAssets = [
       {

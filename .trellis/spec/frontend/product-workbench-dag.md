@@ -853,6 +853,8 @@ The visible context selects a source only within the immutable recipe kind.
 - Bootstrap failure -> bounded route error with retry; no legacy workflow query is attempted as recovery.
 - `agent_v2` with no materialized workflow -> full Agent surface; confirmation and materialization later reveal the
   persisted complete workflow in the same mounted shell.
+- `artifact.proposed` before PostgreSQL attachment -> keep the conversation visible. Refresh the workbench bootstrap when
+  the terminal Turn projection contains a `workflow_draft_revision_id`; the review command must appear without reload.
 - Missing or conflicted required facts -> keep confirmation visible and disable materialization.
 - Exact Draft version conflict -> refresh the current revision, show the conflict message, and require a new review.
 - V1 history -> lazy legacy ProductDetail page with its existing tools and editor intact.
@@ -889,6 +891,8 @@ The visible context selects a source only within the immutable recipe kind.
   replayed against unrelated graph state.
 - Base: open a four-node folder at 390 px; fit-view shows all real nodes inside the measured canvas and the Canvas/Agent
   segmented control remains usable.
+- Base: complete a materialization reveal while the inspector is open; fit the now-visible folders/nodes to the measured
+  canvas content box once, persist that viewport, and leave later user pan/zoom untouched.
 - Bad: create a second simplified node card, fixed sidebar tab strip, canvas page header, or Agent-owned gallery component.
 - Bad: expose raw `config_json`, call the v1 generic PATCH endpoint, or emulate v2 topology edits with client JSON patches.
 
@@ -903,6 +907,10 @@ The visible context selects a source only within the immutable recipe kind.
 - Browser confirmation checks cover the closed default layer, expanded advanced layer, both commands, and document/button
   scroll widths at 1024 and 390 px. The full-screen-to-sidebar check stores the Agent panel, message-list, and composer DOM
   references and asserts identity plus composer value after materialization, tool switching, collapse, and compact tabs.
+- Agent projection tests distinguish the early harness artifact event from the later ProductFlow revision ID. Real-browser
+  confirmation checks require the review layer and enabled confirm command to appear without a page reload.
+- Reveal browser checks assert every materialized folder/node bounds remains within the measured ReactFlow surface after
+  completion with the desktop inspector open; the resulting viewport must survive refresh.
 - Run API tests assert encoded product/workflow/run paths and one workflow-level request. Backend API coverage remains the
   authority for full-run idempotency, cancel, retry, and nested node-run response shape.
 - Browser checks cover the complete-run icon, empty Runs state, full/partial status cards, retry/cancel controls, node

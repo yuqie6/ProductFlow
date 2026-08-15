@@ -9,6 +9,7 @@ import {
   getBezierPath,
   useConnection,
   useNodesState,
+  useReactFlow,
   useUpdateNodeInternals,
   useViewport,
 } from "@xyflow/react";
@@ -16,6 +17,7 @@ import type {
   Connection,
   Edge,
   EdgeProps,
+  FitViewOptions,
   IsValidConnection,
   Node,
   NodeMouseHandler,
@@ -1081,6 +1083,11 @@ export function V2WorkflowCanvas({
         className="bg-transparent"
         proOptions={V2_PRO_OPTIONS}
       >
+        <WorkflowRevealFitView
+          active={revealVisibility !== null && revealVisibility !== undefined}
+          options={fitViewOptions}
+          onViewportCommit={persistViewport}
+        />
         <WorkflowCanvasGrid gap={24} />
         <WorkflowCanvasControls
           labels={{
@@ -1113,6 +1120,35 @@ export function V2WorkflowCanvas({
       </ReactFlow>
     </div>
   );
+}
+
+function WorkflowRevealFitView({
+  active,
+  options,
+  onViewportCommit,
+}: {
+  active: boolean;
+  options: FitViewOptions<WorkflowCanvasNode>;
+  onViewportCommit: (viewport: Viewport) => void;
+}) {
+  const reactFlow = useReactFlow<WorkflowCanvasNode, WorkflowCanvasEdge>();
+  const wasActiveRef = useRef(active);
+
+  useEffect(() => {
+    const completed = wasActiveRef.current && !active;
+    wasActiveRef.current = active;
+    if (!completed) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      void reactFlow.fitView(options).then(() => {
+        onViewportCommit(reactFlow.getViewport());
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [active, onViewportCommit, options, reactFlow]);
+
+  return null;
 }
 
 export { assetThumbnailUrl, folderSyntheticNodeId };

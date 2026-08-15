@@ -542,7 +542,6 @@ export function AgentProductWorkbenchPage({
               setConflictDetected(false);
               setDismissedRevisionId(null);
             }}
-            onArtifactProposed={() => void onRefetchBootstrap()}
             className="h-full"
           />
         )}
