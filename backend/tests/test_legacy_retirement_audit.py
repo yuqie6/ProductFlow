@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -12,6 +13,8 @@ from productflow_backend.application.legacy_retirement.audit import (
     UNKNOWN_PROFILE,
     audit_legacy_retirement,
 )
+from productflow_backend.application.legacy_retirement.contracts import archive_export_page_sha256
+from productflow_backend.application.legacy_retirement.snapshots import export_legacy_archive_page
 from productflow_backend.infrastructure.db.models import Base
 
 
@@ -39,6 +42,8 @@ def _legacy_engine(tmp_path: Path) -> tuple[sa.Engine, Path]:
         sa.Column("node_type", sa.String(40), nullable=False),
         sa.Column("status", sa.String(40), nullable=False),
         sa.Column("bound_image_asset_id", sa.String(36)),
+        sa.Column("config_json", sa.JSON),
+        sa.Column("output_json", sa.JSON),
     )
     sa.Table(
         "workflow_edges",
@@ -117,6 +122,7 @@ def _legacy_engine(tmp_path: Path) -> tuple[sa.Engine, Path]:
         sa.Column("role", sa.String(40), nullable=False),
         sa.Column("content", sa.Text, nullable=False),
         sa.Column("metadata_json", sa.JSON, nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
     )
     sa.Table(
         "canvas_agent_runs",
@@ -183,6 +189,16 @@ def _legacy_engine(tmp_path: Path) -> tuple[sa.Engine, Path]:
                 "workflow_id": "workflow-1",
                 "node_type": "image_generation",
                 "status": "succeeded",
+                "config_json": {
+                    "api_key": "must-not-enter-archive",
+                    "source_url": "https://github.com/example/public-recipe",
+                    "signed_url": "https://media.example.test/image.png?signature=secret",
+                    "storage_path": "private/products/product-1/source.png",
+                },
+                "output_json": {
+                    "preview": "data:image/png;base64,must-not-enter-archive",
+                    "provider_output_json": {"raw": "must-not-enter-archive"},
+                },
             },
         )
         connection.execute(
@@ -235,7 +251,10 @@ def _legacy_engine(tmp_path: Path) -> tuple[sa.Engine, Path]:
                 "id": "template-1",
                 "key": "saved-template",
                 "schema_version": 1,
-                "template_json": {"nodes": [{"id": "saved-node"}], "edges": []},
+                "template_json": {
+                    "nodes": [{"id": "saved-node", "local_path": "/private/template.png"}],
+                    "edges": [],
+                },
                 "archived_at": None,
             },
         )
@@ -245,13 +264,24 @@ def _legacy_engine(tmp_path: Path) -> tuple[sa.Engine, Path]:
         )
         connection.execute(
             tables["canvas_agent_messages"].insert(),
-            {
-                "id": "message-1",
-                "thread_id": "thread-1",
-                "role": "user",
-                "content": "调整主图",
-                "metadata_json": {},
-            },
+            [
+                {
+                    "id": "message-z",
+                    "thread_id": "thread-1",
+                    "role": "user",
+                    "content": "z-first",
+                    "metadata_json": {},
+                    "created_at": datetime(2026, 8, 15, 1, 0, tzinfo=UTC),
+                },
+                {
+                    "id": "message-a",
+                    "thread_id": "thread-1",
+                    "role": "assistant",
+                    "content": "a-second",
+                    "metadata_json": {},
+                    "created_at": datetime(2026, 8, 15, 1, 1, tzinfo=UTC),
+                },
+            ],
         )
         connection.execute(
             tables["canvas_agent_runs"].insert(),
@@ -584,3 +614,93 @@ def test_invalid_storage_path_is_reported_without_leaving_storage_root(tmp_path:
     problem = next(problem for problem in report.media.problems if problem.record_id == "source-invalid")
     assert problem.reason == "invalid_path"
     assert any(issue.code == "invalid_storage_path" and issue.severity == "blocking" for issue in report.issues)
+
+
+def test_legacy_archive_snapshots_are_stable_and_exclude_canvas_transport_payloads(tmp_path: Path) -> None:
+    engine, storage_root = _legacy_engine(tmp_path)
+    timestamp = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
+    try:
+        workflow_page = export_legacy_archive_page(
+            engine,
+            storage_root=storage_root,
+            kind="workflow",
+            limit=1,
+            generated_at=timestamp,
+        )
+        repeated_workflow_page = export_legacy_archive_page(
+            engine,
+            storage_root=storage_root,
+            kind="workflow",
+            limit=1,
+            generated_at=timestamp + timedelta(minutes=1),
+        )
+        template_page = export_legacy_archive_page(
+            engine,
+            storage_root=storage_root,
+            kind="user_template",
+            limit=1,
+            generated_at=timestamp,
+        )
+        canvas_page = export_legacy_archive_page(
+            engine,
+            storage_root=storage_root,
+            kind="canvas_agent_thread",
+            limit=1,
+            generated_at=timestamp,
+        )
+    finally:
+        engine.dispose()
+
+    assert workflow_page.source_profile == LEGACY_CANVAS_PROFILE
+    assert workflow_page.page_sha256 == repeated_workflow_page.page_sha256
+    assert archive_export_page_sha256(workflow_page) == workflow_page.page_sha256
+    assert workflow_page.items[0].payload_sha256 == repeated_workflow_page.items[0].payload_sha256
+    assert workflow_page.items[0].counts == {
+        "asset_declaration_count": 2,
+        "edge_count": 1,
+        "node_count": 1,
+        "node_run_count": 1,
+        "run_count": 1,
+    }
+    assert {item.legacy_source_type for item in workflow_page.items[0].asset_declarations} == {
+        "image_session_asset",
+        "source_asset",
+    }
+    assert "storage_path" not in workflow_page.items[0].asset_declarations[0].model_dump()
+    assert template_page.items[0].kind == "user_template"
+    workflow_payload = workflow_page.items[0].payload_json
+    node_config = workflow_payload["nodes"][0]["config_json"]
+    node_output = workflow_payload["nodes"][0]["output_json"]
+    assert node_config["source_url"] == "https://github.com/example/public-recipe"
+    assert node_config["api_key"] == {"_archive_omitted": "sensitive_field"}
+    assert node_config["signed_url"] == {"_archive_omitted": "unsafe_url"}
+    assert node_config["storage_path"] == {"_archive_omitted": "storage_path"}
+    assert node_output["preview"] == {"_archive_omitted": "inline_data"}
+    assert node_output["provider_output_json"] == {"_archive_omitted": "sensitive_field"}
+    assert template_page.items[0].payload_json["template_json"]["nodes"][0]["local_path"] == {
+        "_archive_omitted": "storage_path"
+    }
+    serialized_payloads = json.dumps(
+        [workflow_payload, template_page.items[0].payload_json],
+        ensure_ascii=False,
+    )
+    assert "must-not-enter-archive" not in serialized_payloads
+    assert "/private/template.png" not in serialized_payloads
+
+    canvas = canvas_page.items[0]
+    assert canvas.kind == "canvas_agent_thread"
+    assert canvas.counts["timeline_event_count"] == 2
+    assert canvas.counts["visible_event_count"] == 1
+    assert canvas.counts["technical_event_count"] == 1
+    assert len(canvas.payload_json["technical_events_source_sha256"]) == 64
+    assert [message["content"] for message in canvas.payload_json["messages"]] == [
+        "z-first",
+        "a-second",
+    ]
+    assert all(
+        event["type"] == "approval_requested"
+        for event in canvas.payload_json["visible_timeline"]
+    )
+    assert all("metadata_json" not in message for message in canvas.payload_json["messages"])
+    assert all("checkpoint_ref" not in run and "goal_state_json" not in run for run in canvas.payload_json["runs"])
+    assert all("args_json" not in tool and "result_json" not in tool for tool in canvas.payload_json["tool_events"])

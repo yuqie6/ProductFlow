@@ -36,6 +36,18 @@ backend-audit-legacy-retirement *args:
 backend-audit-legacy-retirement-prod *args:
     uv run --directory backend python -m productflow_backend.commands.audit_legacy_retirement {{args}}
 
+backend-export-legacy-archives *args:
+    bash scripts/with_dev_env.sh uv run --directory backend python -m productflow_backend.commands.export_legacy_archives {{args}}
+
+backend-export-legacy-archives-prod *args:
+    uv run --directory backend python -m productflow_backend.commands.export_legacy_archives {{args}}
+
+backend-backfill-legacy-archives *args:
+    bash scripts/with_dev_env.sh uv run --directory backend python -m productflow_backend.commands.backfill_legacy_archives {{args}}
+
+backend-backfill-legacy-archives-prod *args:
+    uv run --directory backend python -m productflow_backend.commands.backfill_legacy_archives {{args}}
+
 backend-worker-prod:
     uv run --directory backend dramatiq --processes 2 --threads 4 productflow_backend.workers
 

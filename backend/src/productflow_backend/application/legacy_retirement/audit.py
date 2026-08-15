@@ -35,6 +35,7 @@ from productflow_backend.application.legacy_retirement.profiles import (
     WORKFLOW_RUN_KNOWN_STATUSES,
     recognize_profile,
 )
+from productflow_backend.application.legacy_retirement.source import open_legacy_read_only_connection
 from productflow_backend.application.legacy_retirement.summaries import (
     audit_canvas_agent,
     audit_media,
@@ -55,54 +56,31 @@ def audit_legacy_retirement(
     """Inspect a supported ProductFlow database without permitting database writes."""
 
     timestamp = generated_at or datetime.now(UTC)
-    dialect = engine.dialect.name
-    if dialect not in {"postgresql", "sqlite"}:
-        raise RuntimeError(f"遗留资产只读审计暂不支持数据库方言: {dialect}")
-
-    with engine.connect() as connection:
-        if dialect == "postgresql":
-            transaction = connection.begin()
-            try:
-                connection.exec_driver_sql("SET TRANSACTION READ ONLY")
-                read_only = connection.exec_driver_sql("SHOW transaction_read_only").scalar_one() == "on"
-                if not read_only:
-                    raise RuntimeError("PostgreSQL 只读事务未生效")
-                return _audit_connection(
-                    connection,
-                    storage_root=storage_root,
-                    generated_at=timestamp,
-                    read_only_enforced=True,
-                )
-            finally:
-                if transaction.is_active:
-                    transaction.rollback()
-
-        original_query_only = int(connection.exec_driver_sql("PRAGMA query_only").scalar_one())
-        connection.rollback()
-        try:
-            connection.exec_driver_sql("PRAGMA query_only = ON")
-            read_only = int(connection.exec_driver_sql("PRAGMA query_only").scalar_one()) == 1
-            if not read_only:
-                raise RuntimeError("SQLite query_only 未生效")
-            return _audit_connection(
-                connection,
-                storage_root=storage_root,
-                generated_at=timestamp,
-                read_only_enforced=True,
-            )
-        finally:
-            connection.rollback()
-            connection.exec_driver_sql(f"PRAGMA query_only = {original_query_only}")
-            connection.rollback()
+    with open_legacy_read_only_connection(engine) as connection:
+        return audit_legacy_retirement_connection(
+            connection,
+            storage_root=storage_root,
+            generated_at=timestamp,
+        )
 
 
-def _audit_connection(
+def audit_legacy_retirement_connection(
     connection: Connection,
     *,
     storage_root: Path,
     generated_at: datetime,
-    read_only_enforced: bool,
 ) -> LegacyRetirementAuditReport:
+    """Audit an already-enforced read-only source connection."""
+
+    if connection.dialect.name == "postgresql":
+        read_only_enforced = connection.exec_driver_sql("SHOW transaction_read_only").scalar_one() == "on"
+    elif connection.dialect.name == "sqlite":
+        read_only_enforced = int(connection.exec_driver_sql("PRAGMA query_only").scalar_one()) == 1
+    else:
+        read_only_enforced = False
+    if not read_only_enforced:
+        raise RuntimeError("遗留资产审计连接不是只读连接")
+
     inspector = sa.inspect(connection)
     table_names = frozenset(inspector.get_table_names())
     columns_by_table = {
@@ -348,4 +326,5 @@ __all__ = [
     "UNKNOWN_PROFILE",
     "VISIBLE_CANVAS_EVENT_TYPES",
     "audit_legacy_retirement",
+    "audit_legacy_retirement_connection",
 ]

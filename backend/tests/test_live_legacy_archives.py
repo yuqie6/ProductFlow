@@ -12,13 +12,16 @@ import sqlalchemy as sa
 from alembic.config import Config
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from alembic import command
 from productflow_backend.application.legacy_retirement.audit import (
     CURRENT_ARCHIVE_PROFILE,
     audit_legacy_retirement,
 )
+from productflow_backend.application.legacy_retirement.backfill import backfill_legacy_archive_page
 from productflow_backend.application.legacy_retirement.contracts import canonical_sha256
+from productflow_backend.application.legacy_retirement.snapshots import export_legacy_archive_page
 from productflow_backend.config import get_settings
 from productflow_backend.infrastructure.db.session import get_engine, get_session_factory
 
@@ -155,11 +158,58 @@ def test_legacy_archive_contract_on_postgresql(
                     ),
                     {"now": now},
                 )
+                connection.execute(
+                    sa.text(
+                        "INSERT INTO source_assets "
+                        "(id, product_id, kind, original_filename, mime_type, storage_path, "
+                        "source_poster_variant_id, canonical_asset_id, created_at) VALUES "
+                        "('source-live-v1', 'product-live-archive', 'original_image', 'live-archive.png', "
+                        "'image/png', 'media/live-archive.png', NULL, 'asset-live-archive', :now)"
+                    ),
+                    {"now": now},
+                )
+                connection.execute(
+                    sa.text(
+                        "INSERT INTO product_workflows "
+                        "(id, product_id, title, active, schema_version, revision, edit_version, "
+                        "source_draft_revision_id, visual_system_version_id, created_at, updated_at) VALUES "
+                        "('workflow-live-v1', 'product-live-archive', 'PostgreSQL v1 工作流', TRUE, 1, 1, 0, "
+                        "NULL, NULL, :now, :now)"
+                    ),
+                    {"now": now},
+                )
+
+            page = export_legacy_archive_page(
+                engine,
+                storage_root=storage_root,
+                kind="workflow",
+                source_id="workflow-live-v1",
+                generated_at=now,
+            )
+            with Session(engine) as session:
+                created = backfill_legacy_archive_page(
+                    session,
+                    page=page,
+                    expected_source_report_sha256=page.source_report_sha256,
+                    apply=True,
+                    generated_at=now,
+                )
+                assert created.applied is True
+                assert created.created_count == 1
+                unchanged = backfill_legacy_archive_page(
+                    session,
+                    page=page,
+                    expected_source_report_sha256=page.source_report_sha256,
+                    apply=True,
+                    generated_at=now,
+                )
+                assert unchanged.applied is True
+                assert unchanged.unchanged_count == 1
 
             report = audit_legacy_retirement(engine, storage_root=storage_root, generated_at=now)
             assert report.source.schema_profile == CURRENT_ARCHIVE_PROFILE
             assert report.source.read_only_enforced is True
-            assert report.source.table_counts["legacy_workflow_archives"] == 1
+            assert report.source.table_counts["legacy_workflow_archives"] == 2
             assert {key: value for key, value in report.integrity_counts.items() if value} == {}
             assert report.ready_for_archive is True
 

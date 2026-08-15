@@ -10,9 +10,10 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 LEGACY_RETIREMENT_REPORT_SCHEMA_VERSION = 1
+LEGACY_ARCHIVE_EXPORT_SCHEMA_VERSION = 1
 SchemaProfile = Literal[
     "legacy_canvas_agent_20260518_0032",
     "current_canonical_20260814_0038",
@@ -20,6 +21,9 @@ SchemaProfile = Literal[
     "unknown",
 ]
 AuditIssueSeverity = Literal["warning", "blocking"]
+ArchiveItemKind = Literal["workflow", "user_template", "canvas_agent_thread"]
+ArchiveAssetSourceType = Literal["source_asset", "poster_variant", "image_session_asset"]
+ArchiveBackfillItemStatus = Literal["would_create", "created", "unchanged", "blocked"]
 
 
 class _FrozenContract(BaseModel):
@@ -158,9 +162,86 @@ class LegacyRetirementAuditReport(_FrozenContract):
     report_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+class LegacyArchiveAssetDeclaration(_FrozenContract):
+    role: str = Field(min_length=1, max_length=80)
+    legacy_source_type: ArchiveAssetSourceType
+    legacy_source_id: str = Field(min_length=1, max_length=80)
+    product_id: str = Field(min_length=1, max_length=36)
+    source_canonical_asset_id: str | None = Field(default=None, max_length=36)
+
+
+class LegacyArchiveSnapshotDiagnostic(_FrozenContract):
+    code: str
+    count: int = Field(ge=1)
+    detail: str
+
+
+class LegacyArchiveSnapshot(_FrozenContract):
+    kind: ArchiveItemKind
+    source_profile: SchemaProfile
+    source_id: str = Field(min_length=1, max_length=80)
+    product_id: str | None = Field(default=None, max_length=36)
+    title: str = Field(max_length=255)
+    source_updated_at: datetime | None = None
+    payload_json: dict[str, Any]
+    source_fingerprint_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    payload_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    counts: dict[str, int]
+    asset_declarations: list[LegacyArchiveAssetDeclaration] = Field(default_factory=list)
+    diagnostics: list[LegacyArchiveSnapshotDiagnostic] = Field(default_factory=list)
+
+    @field_validator("counts")
+    @classmethod
+    def _validate_counts(cls, value: dict[str, int]) -> dict[str, int]:
+        if any(count < 0 for count in value.values()):
+            raise ValueError("archive snapshot counts 不能为负数")
+        return dict(sorted(value.items()))
+
+
+class LegacyArchiveExportPage(_FrozenContract):
+    schema_version: Literal[1] = LEGACY_ARCHIVE_EXPORT_SCHEMA_VERSION
+    generated_at: datetime
+    source_profile: SchemaProfile
+    source_report_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_fingerprint_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    blocking_issue_codes: list[str]
+    kind: ArchiveItemKind
+    requested_after: str | None = None
+    next_cursor: str | None = None
+    items: list[LegacyArchiveSnapshot]
+    page_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class LegacyArchiveBackfillItemResult(_FrozenContract):
+    kind: ArchiveItemKind
+    source_id: str
+    status: ArchiveBackfillItemStatus
+    archive_id: str | None = None
+    resolved_asset_count: int = Field(ge=0)
+    diagnostic_codes: list[str]
+
+
+class LegacyArchiveBackfillReport(_FrozenContract):
+    schema_version: Literal[1] = LEGACY_ARCHIVE_EXPORT_SCHEMA_VERSION
+    generated_at: datetime
+    apply_requested: bool
+    applied: bool
+    allow_legacy_bridge: bool
+    source_profile: SchemaProfile
+    source_report_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_page_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    target_profile: SchemaProfile
+    global_blocking_issue_codes: list[str]
+    created_count: int = Field(ge=0)
+    unchanged_count: int = Field(ge=0)
+    blocked_count: int = Field(ge=0)
+    items: list[LegacyArchiveBackfillItemResult]
+    report_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 def canonical_json_bytes(value: Any) -> bytes:
     return json.dumps(
-        _canonical_json_value(value),
+        canonical_json_value(value),
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
@@ -180,7 +261,23 @@ def report_sha256(report: LegacyRetirementAuditReport) -> str:
     return canonical_sha256(payload)
 
 
-def _canonical_json_value(value: Any) -> Any:
+def archive_export_page_sha256(page: LegacyArchiveExportPage) -> str:
+    payload = page.model_dump(
+        mode="json",
+        exclude={"generated_at", "page_sha256"},
+    )
+    return canonical_sha256(payload)
+
+
+def archive_backfill_report_sha256(report: LegacyArchiveBackfillReport) -> str:
+    payload = report.model_dump(
+        mode="json",
+        exclude={"generated_at", "report_sha256"},
+    )
+    return canonical_sha256(payload)
+
+
+def canonical_json_value(value: Any) -> Any:
     if value is None or isinstance(value, (str, int, bool)):
         return value
     if isinstance(value, float):
@@ -194,7 +291,7 @@ def _canonical_json_value(value: Any) -> Any:
     if isinstance(value, (UUID, Path)):
         return str(value)
     if isinstance(value, Enum):
-        return _canonical_json_value(value.value)
+        return canonical_json_value(value.value)
     if isinstance(value, bytes):
         return {"byte_size": len(value), "sha256": hashlib.sha256(value).hexdigest()}
     if isinstance(value, memoryview):
@@ -202,21 +299,31 @@ def _canonical_json_value(value: Any) -> Any:
         return {"byte_size": len(content), "sha256": hashlib.sha256(content).hexdigest()}
     if isinstance(value, Mapping):
         return {
-            str(key): _canonical_json_value(item)
+            str(key): canonical_json_value(item)
             for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
         }
     if isinstance(value, (list, tuple)):
-        return [_canonical_json_value(item) for item in value]
+        return [canonical_json_value(item) for item in value]
     raise TypeError(f"unsupported canonical JSON value: {type(value).__name__}")
 
 
 __all__ = [
     "LEGACY_RETIREMENT_REPORT_SCHEMA_VERSION",
+    "LEGACY_ARCHIVE_EXPORT_SCHEMA_VERSION",
+    "ArchiveAssetSourceType",
+    "ArchiveBackfillItemStatus",
+    "ArchiveItemKind",
     "AuditIssue",
     "CanvasAgentAuditSummary",
     "CanvasAgentThreadSourceSummary",
     "DatabaseSourceSummary",
     "LegacyRetirementAuditReport",
+    "LegacyArchiveAssetDeclaration",
+    "LegacyArchiveBackfillItemResult",
+    "LegacyArchiveBackfillReport",
+    "LegacyArchiveExportPage",
+    "LegacyArchiveSnapshot",
+    "LegacyArchiveSnapshotDiagnostic",
     "MediaAuditSummary",
     "MediaPathProblem",
     "SchemaProfile",
@@ -224,7 +331,10 @@ __all__ = [
     "UserTemplateSourceSummary",
     "WorkflowAuditSummary",
     "WorkflowSourceSummary",
+    "archive_backfill_report_sha256",
+    "archive_export_page_sha256",
     "canonical_json_bytes",
+    "canonical_json_value",
     "canonical_sha256",
     "report_sha256",
 ]

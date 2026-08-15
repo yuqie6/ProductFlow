@@ -54,6 +54,8 @@ def audit_workflows(
     }
     sessions_by_product = group_rows(rows_by_table.get("image_sessions", []), "product_id")
     session_assets_by_session = group_rows(rows_by_table.get("image_session_assets", []), "session_id")
+    sessions_by_id = row_index(rows_by_table.get("image_sessions", []))
+    session_assets_by_id = row_index(rows_by_table.get("image_session_assets", []))
     canonical_assets_by_product = group_rows(rows_by_table.get("product_image_assets", []), "product_id")
     media_by_id = row_index(rows_by_table.get("media_objects", []))
 
@@ -69,13 +71,31 @@ def audit_workflows(
             *product_artifacts["poster_variants"].get(product_id, []),
             *product_artifacts["source_assets"].get(product_id, []),
         ]
-        product_sessions = sessions_by_product.get(product_id, [])
-        session_assets = [
-            asset
-            for session in product_sessions
-            for asset in session_assets_by_session.get(required_id(session, "id"), [])
-        ]
         canonical_assets = canonical_assets_by_product.get(product_id, [])
+        product_sessions = sessions_by_product.get(product_id, [])
+        if profile == LEGACY_CANVAS_PROFILE:
+            session_assets = [
+                asset
+                for session in product_sessions
+                for asset in session_assets_by_session.get(required_id(session, "id"), [])
+            ]
+        else:
+            linked_session_asset_ids = {
+                source_id
+                for asset in canonical_assets
+                if (source_id := optional_id(asset, "source_image_session_asset_id")) is not None
+            }
+            session_assets = [
+                asset
+                for asset_id, asset in session_assets_by_id.items()
+                if asset_id in linked_session_asset_ids
+            ]
+            linked_session_ids = {required_id(asset, "session_id") for asset in session_assets}
+            product_sessions = [
+                session
+                for session_id, session in sessions_by_id.items()
+                if session_id in linked_session_ids
+            ]
         canonical_media = [
             media_by_id[media_id]
             for asset in canonical_assets
