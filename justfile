@@ -58,6 +58,9 @@ backend-test-live-canvas-recipes:
 backend-test-live-agent-product-intake:
     PRODUCTFLOW_RUN_LIVE_AGENT_PRODUCT_INTAKE=1 bash scripts/with_dev_env.sh uv run --directory backend pytest -q -m live_dependencies tests/test_live_agent_product_intake.py
 
+backend-test-live-legacy-archives:
+    PRODUCTFLOW_RUN_LIVE_LEGACY_ARCHIVES=1 bash scripts/with_dev_env.sh uv run --directory backend pytest -q -m live_dependencies tests/test_live_legacy_archives.py
+
 web-install:
     pnpm --dir web install
 

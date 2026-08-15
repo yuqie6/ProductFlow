@@ -6,6 +6,7 @@ from pathlib import Path
 import sqlalchemy as sa
 
 from productflow_backend.application.legacy_retirement.audit import (
+    CURRENT_ARCHIVE_PROFILE,
     CURRENT_CANONICAL_PROFILE,
     LEGACY_CANVAS_PROFILE,
     UNKNOWN_PROFILE,
@@ -322,7 +323,7 @@ def _legacy_engine(tmp_path: Path) -> tuple[sa.Engine, Path]:
     return engine, storage_root
 
 
-def _current_engine(tmp_path: Path) -> tuple[sa.Engine, Path]:
+def _current_engine(tmp_path: Path, *, archive_schema: bool = True) -> tuple[sa.Engine, Path]:
     database_path = tmp_path / "current.db"
     storage_root = tmp_path / "current-storage"
     storage_root.mkdir()
@@ -332,7 +333,11 @@ def _current_engine(tmp_path: Path) -> tuple[sa.Engine, Path]:
 
     with engine.begin() as connection:
         connection.exec_driver_sql("CREATE TABLE alembic_version (version_num VARCHAR(32) PRIMARY KEY)")
-        connection.exec_driver_sql("INSERT INTO alembic_version (version_num) VALUES ('20260814_0038')")
+        revision = "20260815_0039" if archive_schema else "20260814_0038"
+        connection.execute(
+            sa.text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
+            {"revision": revision},
+        )
         connection.execute(
             Base.metadata.tables["products"].insert(),
             {"id": "product-current", "name": "现行商品", "created_at": now, "updated_at": now},
@@ -374,6 +379,11 @@ def _current_engine(tmp_path: Path) -> tuple[sa.Engine, Path]:
                 "updated_at": now,
             },
         )
+        if not archive_schema:
+            connection.exec_driver_sql("DROP TABLE legacy_workflow_archive_assets")
+            connection.exec_driver_sql("DROP TABLE legacy_canvas_agent_archives")
+            connection.exec_driver_sql("DROP TABLE legacy_user_template_archives")
+            connection.exec_driver_sql("DROP TABLE legacy_workflow_archives")
 
     media_path = storage_root / "media/current.png"
     media_path.parent.mkdir(parents=True)
@@ -439,7 +449,7 @@ def test_legacy_canvas_profile_is_stable_read_only_and_counts_hidden_transport_e
     )
 
 
-def test_current_canonical_profile_can_audit_v1_candidates_without_canvas_tables(tmp_path: Path) -> None:
+def test_current_archive_profile_can_audit_v1_candidates_without_canvas_tables(tmp_path: Path) -> None:
     engine, storage_root = _current_engine(tmp_path)
     statements, listener = _record_sql(engine)
     try:
@@ -448,7 +458,7 @@ def test_current_canonical_profile_can_audit_v1_candidates_without_canvas_tables
         sa.event.remove(engine, "before_cursor_execute", listener)
         engine.dispose()
 
-    assert report.source.schema_profile == CURRENT_CANONICAL_PROFILE
+    assert report.source.schema_profile == CURRENT_ARCHIVE_PROFILE
     assert report.workflows.workflow_count == 1
     assert report.workflows.archive_candidate_count == 1
     assert report.workflows.items[0].canonical_asset_count == 1
@@ -459,6 +469,21 @@ def test_current_canonical_profile_can_audit_v1_candidates_without_canvas_tables
     assert report.issues == []
     assert report.ready_for_archive is True
     assert not any(statement.startswith(("insert ", "update ", "delete ")) for statement in statements)
+
+
+def test_current_canonical_profile_rejects_archive_tables_before_their_revision(tmp_path: Path) -> None:
+    engine, storage_root = _current_engine(tmp_path, archive_schema=False)
+    try:
+        canonical = audit_legacy_retirement(engine, storage_root=storage_root)
+        with engine.begin() as connection:
+            Base.metadata.tables["legacy_workflow_archives"].create(connection)
+        drifted = audit_legacy_retirement(engine, storage_root=storage_root)
+    finally:
+        engine.dispose()
+
+    assert canonical.source.schema_profile == CURRENT_CANONICAL_PROFILE
+    assert drifted.source.schema_profile == UNKNOWN_PROFILE
+    assert "存在不应属于该 profile 的表: legacy_workflow_archives" in drifted.source.profile_diagnostics
 
 
 def test_unknown_revision_blocks_without_reading_assumed_source_rows(tmp_path: Path) -> None:

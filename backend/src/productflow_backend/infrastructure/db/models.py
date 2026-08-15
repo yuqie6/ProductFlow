@@ -278,6 +278,16 @@ class Product(Base, TimestampMixin):
         cascade="all, delete-orphan",
         foreign_keys="AgentConversation.product_id",
     )
+    legacy_workflow_archives: Mapped[list[LegacyWorkflowArchive]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+        foreign_keys="LegacyWorkflowArchive.product_id",
+    )
+    legacy_canvas_agent_archives: Mapped[list[LegacyCanvasAgentArchive]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+        foreign_keys="LegacyCanvasAgentArchive.product_id",
+    )
 
 
 class ProductAssetFolder(Base, TimestampMixin):
@@ -406,6 +416,245 @@ class ProductImageAsset(Base, TimestampMixin):
     )
     source_image_session_asset: Mapped[ImageSessionAsset | None] = relationship(
         foreign_keys=[source_image_session_asset_id]
+    )
+    legacy_archive_references: Mapped[list[LegacyWorkflowArchiveAsset]] = relationship(
+        back_populates="asset",
+        foreign_keys="LegacyWorkflowArchiveAsset.product_image_asset_id",
+        passive_deletes=True,
+    )
+
+
+class LegacyWorkflowArchive(Base):
+    """不可变的 v1 workflow 历史快照，不具备执行语义。"""
+
+    __tablename__ = "legacy_workflow_archives"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_profile",
+            "legacy_workflow_id",
+            name="uq_legacy_workflow_archives_source_id",
+        ),
+        CheckConstraint(
+            "archive_schema_version = 1",
+            name="ck_legacy_workflow_archives_schema_version",
+        ),
+        CheckConstraint(
+            "length(source_fingerprint_sha256) = 64",
+            name="ck_legacy_workflow_archives_source_hash",
+        ),
+        CheckConstraint(
+            "length(payload_sha256) = 64",
+            name="ck_legacy_workflow_archives_payload_hash",
+        ),
+        CheckConstraint(
+            "node_count >= 0 AND edge_count >= 0 AND run_count >= 0 "
+            "AND node_run_count >= 0 AND asset_count >= 0",
+            name="ck_legacy_workflow_archives_counts",
+        ),
+        Index(
+            "ix_legacy_workflow_archives_product_created",
+            "product_id",
+            "created_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    source_profile: Mapped[str] = mapped_column(String(80))
+    legacy_workflow_id: Mapped[str] = mapped_column(String(36))
+    product_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "products.id",
+            ondelete="CASCADE",
+            name="fk_legacy_workflow_archives_product_id",
+        ),
+    )
+    source_title: Mapped[str] = mapped_column(String(255))
+    source_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    archive_schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    source_fingerprint_sha256: Mapped[str] = mapped_column(String(64))
+    payload_sha256: Mapped[str] = mapped_column(String(64))
+    node_count: Mapped[int] = mapped_column(Integer)
+    edge_count: Mapped[int] = mapped_column(Integer)
+    run_count: Mapped[int] = mapped_column(Integer)
+    node_run_count: Mapped[int] = mapped_column(Integer)
+    asset_count: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    product: Mapped[Product] = relationship(
+        back_populates="legacy_workflow_archives",
+        foreign_keys=[product_id],
+    )
+    assets: Mapped[list[LegacyWorkflowArchiveAsset]] = relationship(
+        back_populates="archive",
+        cascade="all, delete-orphan",
+        order_by="LegacyWorkflowArchiveAsset.id",
+    )
+
+
+class LegacyWorkflowArchiveAsset(Base):
+    """归档快照对 canonical 商品图片的显式保留关系。"""
+
+    __tablename__ = "legacy_workflow_archive_assets"
+    __table_args__ = (
+        UniqueConstraint(
+            "archive_id",
+            "product_image_asset_id",
+            "role",
+            "legacy_source_type",
+            "legacy_source_id",
+            name="uq_legacy_workflow_archive_assets_identity",
+        ),
+        Index(
+            "ix_legacy_workflow_archive_assets_asset_id",
+            "product_image_asset_id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    archive_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "legacy_workflow_archives.id",
+            ondelete="CASCADE",
+            name="fk_legacy_workflow_archive_assets_archive_id",
+        ),
+    )
+    product_image_asset_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "product_image_assets.id",
+            ondelete="RESTRICT",
+            name="fk_legacy_workflow_archive_assets_asset_id",
+        ),
+    )
+    role: Mapped[str] = mapped_column(String(80))
+    legacy_source_type: Mapped[str] = mapped_column(String(80))
+    legacy_source_id: Mapped[str] = mapped_column(String(80))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    archive: Mapped[LegacyWorkflowArchive] = relationship(back_populates="assets")
+    asset: Mapped[ProductImageAsset] = relationship(back_populates="legacy_archive_references")
+
+
+class LegacyUserTemplateArchive(Base):
+    """旧用户模板的不可应用只读快照或损坏记录。"""
+
+    __tablename__ = "legacy_user_template_archives"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_profile",
+            "legacy_template_id",
+            name="uq_legacy_user_template_archives_source_id",
+        ),
+        CheckConstraint(
+            "archive_schema_version = 1",
+            name="ck_legacy_user_template_archives_schema_version",
+        ),
+        CheckConstraint(
+            "archive_status IN ('archived', 'damaged')",
+            name="ck_legacy_user_template_archives_status",
+        ),
+        CheckConstraint(
+            "length(source_fingerprint_sha256) = 64",
+            name="ck_legacy_user_template_archives_source_hash",
+        ),
+        CheckConstraint(
+            "length(payload_sha256) = 64",
+            name="ck_legacy_user_template_archives_payload_hash",
+        ),
+        Index("ix_legacy_user_template_archives_created", "created_at", "id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    source_profile: Mapped[str] = mapped_column(String(80))
+    legacy_template_id: Mapped[str] = mapped_column(String(36))
+    legacy_key: Mapped[str] = mapped_column(String(80))
+    title: Mapped[str] = mapped_column(String(255))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    archive_status: Mapped[str] = mapped_column(String(40))
+    archive_schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    diagnostics_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    source_fingerprint_sha256: Mapped[str] = mapped_column(String(64))
+    payload_sha256: Mapped[str] = mapped_column(String(64))
+    source_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class LegacyCanvasAgentArchive(Base):
+    """旧 Canvas Agent thread 的有界用户历史快照。"""
+
+    __tablename__ = "legacy_canvas_agent_archives"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_profile",
+            "legacy_thread_id",
+            name="uq_legacy_canvas_agent_archives_source_id",
+        ),
+        CheckConstraint(
+            "archive_schema_version = 1",
+            name="ck_legacy_canvas_agent_archives_schema_version",
+        ),
+        CheckConstraint(
+            "length(source_fingerprint_sha256) = 64",
+            name="ck_legacy_canvas_agent_archives_source_hash",
+        ),
+        CheckConstraint(
+            "length(payload_sha256) = 64",
+            name="ck_legacy_canvas_agent_archives_payload_hash",
+        ),
+        CheckConstraint(
+            "message_count >= 0 AND run_count >= 0 AND tool_event_count >= 0 "
+            "AND plan_count >= 0 AND task_plan_count >= 0 AND timeline_event_count >= 0 "
+            "AND visible_event_count >= 0 AND technical_event_count >= 0",
+            name="ck_legacy_canvas_agent_archives_counts",
+        ),
+        CheckConstraint(
+            "visible_event_count + technical_event_count = timeline_event_count",
+            name="ck_legacy_canvas_agent_archives_event_total",
+        ),
+        Index(
+            "ix_legacy_canvas_agent_archives_product_created",
+            "product_id",
+            "created_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    source_profile: Mapped[str] = mapped_column(String(80))
+    legacy_thread_id: Mapped[str] = mapped_column(String(36))
+    product_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "products.id",
+            ondelete="CASCADE",
+            name="fk_legacy_canvas_agent_archives_product_id",
+        ),
+    )
+    title: Mapped[str] = mapped_column(String(255))
+    source_status: Mapped[str] = mapped_column(String(40))
+    source_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    archive_schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    source_fingerprint_sha256: Mapped[str] = mapped_column(String(64))
+    payload_sha256: Mapped[str] = mapped_column(String(64))
+    message_count: Mapped[int] = mapped_column(Integer)
+    run_count: Mapped[int] = mapped_column(Integer)
+    tool_event_count: Mapped[int] = mapped_column(Integer)
+    plan_count: Mapped[int] = mapped_column(Integer)
+    task_plan_count: Mapped[int] = mapped_column(Integer)
+    timeline_event_count: Mapped[int] = mapped_column(Integer)
+    visible_event_count: Mapped[int] = mapped_column(Integer)
+    technical_event_count: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    product: Mapped[Product] = relationship(
+        back_populates="legacy_canvas_agent_archives",
+        foreign_keys=[product_id],
     )
 
 

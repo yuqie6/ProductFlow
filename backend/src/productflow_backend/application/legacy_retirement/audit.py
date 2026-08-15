@@ -23,6 +23,7 @@ from productflow_backend.application.legacy_retirement.integrity import INTEGRIT
 from productflow_backend.application.legacy_retirement.profiles import (
     CANVAS_RUN_ACTIVE_STATUSES,
     CANVAS_RUN_KNOWN_STATUSES,
+    CURRENT_ARCHIVE_PROFILE,
     CURRENT_CANONICAL_PROFILE,
     LEGACY_CANVAS_PROFILE,
     RELEVANT_TABLES,
@@ -342,6 +343,7 @@ def _build_issues(
 
 __all__ = [
     "CURRENT_CANONICAL_PROFILE",
+    "CURRENT_ARCHIVE_PROFILE",
     "LEGACY_CANVAS_PROFILE",
     "UNKNOWN_PROFILE",
     "VISIBLE_CANVAS_EVENT_TYPES",

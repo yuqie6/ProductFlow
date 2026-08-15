@@ -4,6 +4,7 @@ from collections import Counter
 from collections.abc import Mapping
 from typing import Any
 
+from productflow_backend.application.legacy_retirement.contracts import canonical_sha256
 from productflow_backend.application.legacy_retirement.row_utils import (
     optional_id,
     required_id,
@@ -55,6 +56,15 @@ INTEGRITY_KEYS = (
     "canvas_timeline_missing_thread",
     "canvas_timeline_missing_run",
     "invalid_user_template_payload",
+    "legacy_workflow_archive_missing_product",
+    "legacy_canvas_archive_missing_product",
+    "legacy_archive_asset_missing_archive",
+    "legacy_archive_asset_missing_product_asset",
+    "legacy_archive_asset_cross_product",
+    "legacy_workflow_archive_asset_count_mismatch",
+    "legacy_workflow_archive_payload_hash_mismatch",
+    "legacy_user_template_archive_payload_hash_mismatch",
+    "legacy_canvas_archive_payload_hash_mismatch",
 )
 
 
@@ -226,6 +236,38 @@ def audit_integrity(rows_by_table: Mapping[str, list[dict[str, Any]]]) -> dict[s
     for template in rows_by_table.get("user_canvas_templates", []):
         if not isinstance(template.get("template_json"), Mapping):
             counts["invalid_user_template_payload"] += 1
+
+    workflow_archives = row_index(rows_by_table.get("legacy_workflow_archives", []))
+    archive_assets_by_archive: Counter[str] = Counter()
+    for archive in workflow_archives.values():
+        if required_id(archive, "product_id") not in products:
+            counts["legacy_workflow_archive_missing_product"] += 1
+        if canonical_sha256(archive.get("payload_json")) != str(archive.get("payload_sha256")):
+            counts["legacy_workflow_archive_payload_hash_mismatch"] += 1
+    for reference in rows_by_table.get("legacy_workflow_archive_assets", []):
+        archive_id = required_id(reference, "archive_id")
+        asset_id = required_id(reference, "product_image_asset_id")
+        archive_assets_by_archive[archive_id] += 1
+        if archive_id not in workflow_archives:
+            counts["legacy_archive_asset_missing_archive"] += 1
+        if asset_id not in product_assets:
+            counts["legacy_archive_asset_missing_product_asset"] += 1
+        if archive_id in workflow_archives and asset_id in product_assets and (
+            required_id(workflow_archives[archive_id], "product_id")
+            != required_id(product_assets[asset_id], "product_id")
+        ):
+            counts["legacy_archive_asset_cross_product"] += 1
+    for archive_id, archive in workflow_archives.items():
+        if archive_assets_by_archive[archive_id] != int(archive.get("asset_count") or 0):
+            counts["legacy_workflow_archive_asset_count_mismatch"] += 1
+    for template_archive in rows_by_table.get("legacy_user_template_archives", []):
+        if canonical_sha256(template_archive.get("payload_json")) != str(template_archive.get("payload_sha256")):
+            counts["legacy_user_template_archive_payload_hash_mismatch"] += 1
+    for canvas_archive in rows_by_table.get("legacy_canvas_agent_archives", []):
+        if required_id(canvas_archive, "product_id") not in products:
+            counts["legacy_canvas_archive_missing_product"] += 1
+        if canonical_sha256(canvas_archive.get("payload_json")) != str(canvas_archive.get("payload_sha256")):
+            counts["legacy_canvas_archive_payload_hash_mismatch"] += 1
 
     return {key: counts[key] for key in INTEGRITY_KEYS}
 

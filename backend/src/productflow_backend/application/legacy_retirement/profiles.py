@@ -7,6 +7,7 @@ from productflow_backend.application.legacy_retirement.contracts import SchemaPr
 
 LEGACY_CANVAS_PROFILE: SchemaProfile = "legacy_canvas_agent_20260518_0032"
 CURRENT_CANONICAL_PROFILE: SchemaProfile = "current_canonical_20260814_0038"
+CURRENT_ARCHIVE_PROFILE: SchemaProfile = "current_with_legacy_archives_20260815_0039"
 UNKNOWN_PROFILE: SchemaProfile = "unknown"
 
 VISIBLE_CANVAS_EVENT_TYPES = frozenset(
@@ -51,6 +52,10 @@ RELEVANT_TABLES = (
     "image_gallery_entries",
     "media_objects",
     "product_image_assets",
+    "legacy_workflow_archives",
+    "legacy_workflow_archive_assets",
+    "legacy_user_template_archives",
+    "legacy_canvas_agent_archives",
     "canvas_agent_threads",
     "canvas_agent_messages",
     "canvas_agent_runs",
@@ -139,6 +144,90 @@ _PROFILE_DEFINITIONS = (
                 "canvas_agent_plans",
                 "canvas_agent_task_plans",
                 "canvas_agent_timeline_events",
+                "legacy_workflow_archives",
+                "legacy_workflow_archive_assets",
+                "legacy_user_template_archives",
+                "legacy_canvas_agent_archives",
+            }
+        ),
+        forbidden_columns={
+            "products": frozenset({"user_id"}),
+            "workflow_node_runs": frozenset({"image_session_asset_id"}),
+            "image_sessions": frozenset({"product_id", "user_id"}),
+            "image_gallery_entries": frozenset({"user_id"}),
+            "user_canvas_templates": frozenset({"user_id"}),
+        },
+    ),
+    _ProfileDefinition(
+        name=CURRENT_ARCHIVE_PROFILE,
+        revisions=frozenset({"20260815_0039"}),
+        required_columns={
+            "products": frozenset({"id", "cover_image_asset_id"}),
+            "product_workflows": frozenset(
+                {"id", "product_id", "active", "schema_version", "revision", "edit_version"}
+            ),
+            "workflow_nodes": frozenset(
+                {"id", "workflow_id", "schema_version", "node_key", "folder_id", "bound_image_asset_id"}
+            ),
+            "workflow_edges": frozenset({"id", "workflow_id", "source_node_id", "target_node_id", "edge_key"}),
+            "workflow_runs": frozenset({"id", "workflow_id", "status"}),
+            "workflow_node_runs": frozenset({"id", "workflow_run_id", "node_id", "status"}),
+            "source_assets": frozenset({"id", "product_id", "storage_path", "canonical_asset_id"}),
+            "poster_variants": frozenset({"id", "product_id", "storage_path", "canonical_asset_id"}),
+            "user_canvas_templates": frozenset({"id", "key", "schema_version", "template_json"}),
+            "image_sessions": frozenset({"id", "title"}),
+            "image_session_assets": frozenset({"id", "session_id", "storage_path", "media_object_id"}),
+            "media_objects": frozenset({"id", "storage_path", "verification_status"}),
+            "product_image_assets": frozenset({"id", "product_id", "media_object_id"}),
+            "legacy_workflow_archives": frozenset(
+                {
+                    "id",
+                    "source_profile",
+                    "legacy_workflow_id",
+                    "product_id",
+                    "archive_schema_version",
+                    "payload_json",
+                    "source_fingerprint_sha256",
+                    "payload_sha256",
+                }
+            ),
+            "legacy_workflow_archive_assets": frozenset(
+                {"id", "archive_id", "product_image_asset_id", "role", "legacy_source_type", "legacy_source_id"}
+            ),
+            "legacy_user_template_archives": frozenset(
+                {
+                    "id",
+                    "source_profile",
+                    "legacy_template_id",
+                    "archive_status",
+                    "archive_schema_version",
+                    "payload_json",
+                    "source_fingerprint_sha256",
+                    "payload_sha256",
+                }
+            ),
+            "legacy_canvas_agent_archives": frozenset(
+                {
+                    "id",
+                    "source_profile",
+                    "legacy_thread_id",
+                    "product_id",
+                    "archive_schema_version",
+                    "payload_json",
+                    "source_fingerprint_sha256",
+                    "payload_sha256",
+                }
+            ),
+        },
+        forbidden_tables=frozenset(
+            {
+                "canvas_agent_threads",
+                "canvas_agent_messages",
+                "canvas_agent_runs",
+                "canvas_agent_tool_events",
+                "canvas_agent_plans",
+                "canvas_agent_task_plans",
+                "canvas_agent_timeline_events",
             }
         ),
         forbidden_columns={
@@ -197,6 +286,7 @@ __all__ = [
     "CANVAS_RUN_ACTIVE_STATUSES",
     "CANVAS_RUN_KNOWN_STATUSES",
     "CANVAS_TERMINAL_EVIDENCE_TYPES",
+    "CURRENT_ARCHIVE_PROFILE",
     "CURRENT_CANONICAL_PROFILE",
     "LEGACY_CANVAS_PROFILE",
     "RELEVANT_TABLES",

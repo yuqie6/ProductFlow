@@ -16,6 +16,7 @@ LEGACY_RETIREMENT_REPORT_SCHEMA_VERSION = 1
 SchemaProfile = Literal[
     "legacy_canvas_agent_20260518_0032",
     "current_canonical_20260814_0038",
+    "current_with_legacy_archives_20260815_0039",
     "unknown",
 ]
 AuditIssueSeverity = Literal["warning", "blocking"]
