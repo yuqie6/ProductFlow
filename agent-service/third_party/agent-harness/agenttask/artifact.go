@@ -23,6 +23,9 @@ type RequiredArtifact struct {
 	Description string
 	Schema      map[string]any
 	Validate    func(context.Context, json.RawMessage) error
+	// AllowPriorTranscriptArtifact lets a trusted application transcript carry
+	// an already accepted artifact into prose-only follow-up turns.
+	AllowPriorTranscriptArtifact bool
 }
 
 func requiredArtifactTool(contract *RequiredArtifact) (Tool, string, error) {

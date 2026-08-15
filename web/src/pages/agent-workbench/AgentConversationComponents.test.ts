@@ -169,4 +169,23 @@ describe("Agent conversation components", () => {
     expect(terminalMarkup).toContain("最终回答");
     expect(terminalMarkup).not.toContain("流式回答");
   });
+
+  it("does not show a processing placeholder after the Turn starts waiting for user action", () => {
+    for (const status of ["requires_input", "awaiting_confirmation"] as const) {
+      const markup = renderToStaticMarkup(
+        createElement(AgentMessageList, {
+          turns: [turn({ status })],
+          activeTurnId: "projection-1",
+          eventState: null,
+          initialTurnPending: false,
+          hasOlder: false,
+          loadingOlder: false,
+          onLoadOlder: async () => undefined,
+          onPreviewAsset: () => undefined,
+        }),
+      );
+
+      expect(markup).not.toContain("Agent 正在处理");
+    }
+  });
 });

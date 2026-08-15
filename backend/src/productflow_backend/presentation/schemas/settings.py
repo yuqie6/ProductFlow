@@ -86,6 +86,18 @@ class ProviderConfigResponse(BaseModel):
     bindings: list[ProviderBindingResponse]
 
 
+class AgentProviderRuntimeConfigResponse(BaseModel):
+    schema_version: Literal[1] = 1
+    provider_kind: Literal["openai"]
+    api_key: str = Field(min_length=1)
+    base_url: str | None = None
+    model: str = Field(min_length=1)
+    reasoning_effort: str | None = None
+    reasoning_summary: str | None = None
+    text_verbosity: str | None = None
+    service_tier: str | None = None
+
+
 class ProviderProfileCreateRequest(BaseModel):
     name: str = Field(min_length=1)
     provider_type: str = "openai_compatible"

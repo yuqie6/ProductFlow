@@ -178,15 +178,9 @@ PostgreSQL 是元数据和运行状态的权威存储；Redis/Dramatiq 只负责
 
 ProductFlow 把模型能力按模态拆分。
 
-文本 provider 位于 `infrastructure/text/`，统一接口为：
-
-- `generate_brief(product_input)`
-- `generate_copy(product_input, brief, config, reference_images=None)`
-
-当前实现：
-
-- `mock`
-- `openai`（Responses API 兼容）
+v2 `prompt_generation` 通过 `prompt` purpose binding 解析单模型提示词 provider；工作流 Agent 通过独立的
+`agent` purpose binding 解析模型与 reasoning/text/service-tier 选项。`infrastructure/text/` 中的
+`generate_brief(...)` / `generate_copy(...)` 仅保留给尚未退出的 v1 copy execution，不是 v2 提示词节点的依赖。
 
 图片 provider 位于 `infrastructure/image/`，统一服务于海报生成和图片会话。当前实现：
 
@@ -201,7 +195,7 @@ ProductFlow 把模型能力按模态拆分。
 Provider 选择由 `provider_profiles`、`provider_bindings` 和对应 factory 控制。旧 `TEXT_*` / `IMAGE_*`
 环境变量只作为首次迁移输入；运行时 resolver 从供应商档案和用途绑定读取接口类型、连接信息和模型。路由不直接依赖具体 SDK。
 
-工作流 Agent 通过 Go 服务中的 agent-harness 使用 Responses API。当前 Agent provider 连接由 env-only 的 `AGENT_PROVIDER_API_KEY`、`AGENT_PROVIDER_BASE_URL`、`AGENT_PROVIDER_MODEL` 和 reasoning/text/service-tier 选项控制，尚未接入 `provider_profiles` / `provider_bindings`。该配置只进入 Agent 容器，不通过浏览器 API 回显。
+工作流 Agent 通过 Go 服务中的 agent-harness 使用 Responses API。Agent provider 使用 `provider_profiles` 中的 OpenAI 兼容连接和 `agent` 用途绑定；设置页可配置模型及 reasoning/text/service-tier 选项。Go 服务在首次打开 conversation 时通过鉴权内部 API 读取完整配置并固定到该 conversation，浏览器只看到供应商档案的脱敏状态。旧数据库首次启动时会从文案绑定复制一份 Agent 绑定。
 
 ## 7. 海报生成
 
@@ -219,7 +213,7 @@ Provider 选择由 `provider_profiles`、`provider_bindings` 和对应 factory �
 
 配置分为两类：
 
-1. Env-only 基础设施配置：`DATABASE_URL`、`REDIS_URL`、`SESSION_SECRET`、`ADMIN_ACCESS_KEY`、`SETTINGS_ACCESS_TOKEN`、`AGENT_SERVICE_INTERNAL_TOKEN`、Agent 服务地址和 Agent provider 连接参数等。这些配置在进程启动、内部服务鉴权或访问数据库前就必须可用，因此不支持运行时 DB 覆盖。
+1. Env-only 基础设施配置：`DATABASE_URL`、`REDIS_URL`、`SESSION_SECRET`、`ADMIN_ACCESS_KEY`、`SETTINGS_ACCESS_TOKEN`、`AGENT_SERVICE_INTERNAL_TOKEN` 和 Agent 服务地址等。这些配置在进程启动、内部服务鉴权或访问数据库前就必须可用，因此不支持运行时 DB 覆盖。
 2. 运行时业务配置：provider、模型、图片尺寸、上传限制、任务重试、全局生成并发上限、海报模式、提示词模板、登录门禁开关、业务删除开关等。它们可由 `.env` / `.env.dev` 提供默认值，也可在登录并二次解锁设置页后通过 `/api/settings` 写入 `app_settings` 并覆盖。
 
 Secret 类配置在 API 响应中不回显已有值。

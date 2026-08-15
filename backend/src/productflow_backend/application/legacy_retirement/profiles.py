@@ -8,7 +8,8 @@ from productflow_backend.application.legacy_retirement.contracts import SchemaPr
 LEGACY_CANVAS_PROFILE: SchemaProfile = "legacy_canvas_agent_20260518_0032"
 CURRENT_CANONICAL_PROFILE: SchemaProfile = "current_canonical_20260814_0038"
 PRE_REBUILD_ARCHIVE_PROFILE: SchemaProfile = "current_with_legacy_archives_20260815_0039"
-CURRENT_ARCHIVE_PROFILE: SchemaProfile = "current_with_legacy_archive_rebuilds_20260815_0040"
+PRE_AGENT_WORKSPACE_PROFILE: SchemaProfile = "current_with_legacy_archive_rebuilds_20260815_0040"
+CURRENT_ARCHIVE_PROFILE: SchemaProfile = "current_with_agent_workspace_finalization_20260815_0041"
 UNKNOWN_PROFILE: SchemaProfile = "unknown"
 
 VISIBLE_CANVAS_EVENT_TYPES = frozenset(
@@ -58,6 +59,7 @@ RELEVANT_TABLES = (
     "legacy_user_template_archives",
     "legacy_canvas_agent_archives",
     "workflow_draft_legacy_archive_seeds",
+    "agent_conversations",
     "canvas_agent_threads",
     "canvas_agent_messages",
     "canvas_agent_runs",
@@ -248,7 +250,7 @@ _PRE_REBUILD_ARCHIVE_DEFINITION = _PROFILE_DEFINITIONS[-1]
 _PROFILE_DEFINITIONS = (
     *_PROFILE_DEFINITIONS,
     _ProfileDefinition(
-        name=CURRENT_ARCHIVE_PROFILE,
+        name=PRE_AGENT_WORKSPACE_PROFILE,
         revisions=frozenset({"20260815_0040"}),
         required_columns={
             **_PRE_REBUILD_ARCHIVE_DEFINITION.required_columns,
@@ -269,6 +271,32 @@ _PROFILE_DEFINITIONS = (
         forbidden_tables=_PRE_REBUILD_ARCHIVE_DEFINITION.forbidden_tables
         - {"workflow_draft_legacy_archive_seeds"},
         forbidden_columns=_PRE_REBUILD_ARCHIVE_DEFINITION.forbidden_columns,
+    ),
+)
+
+_PRE_AGENT_WORKSPACE_DEFINITION = _PROFILE_DEFINITIONS[-1]
+_PROFILE_DEFINITIONS = (
+    *_PROFILE_DEFINITIONS,
+    _ProfileDefinition(
+        name=CURRENT_ARCHIVE_PROFILE,
+        revisions=frozenset({"20260815_0041"}),
+        required_columns={
+            **_PRE_AGENT_WORKSPACE_DEFINITION.required_columns,
+            "agent_conversations": frozenset(
+                {
+                    "id",
+                    "product_id",
+                    "workflow_draft_id",
+                    "harness_run_id",
+                    "creation_idempotency_key",
+                    "creation_request_hash",
+                    "intake_idempotency_key",
+                    "intake_request_hash",
+                }
+            ),
+        },
+        forbidden_tables=_PRE_AGENT_WORKSPACE_DEFINITION.forbidden_tables,
+        forbidden_columns=_PRE_AGENT_WORKSPACE_DEFINITION.forbidden_columns,
     ),
 )
 
@@ -321,6 +349,7 @@ __all__ = [
     "CURRENT_ARCHIVE_PROFILE",
     "CURRENT_CANONICAL_PROFILE",
     "LEGACY_CANVAS_PROFILE",
+    "PRE_AGENT_WORKSPACE_PROFILE",
     "PRE_REBUILD_ARCHIVE_PROFILE",
     "RELEVANT_TABLES",
     "UNKNOWN_PROFILE",

@@ -432,6 +432,18 @@ export interface CreateAgentProductWorkspaceInput {
   idempotency_key: string;
 }
 
+export interface CreateAgentProductDraftWorkspaceInput {
+  name: string;
+  idempotency_key: string;
+}
+
+export interface FinalizeAgentProductWorkspaceIntakeInput {
+  conversation_id: string;
+  selection: AgentProductSelectionV1;
+  images: File[];
+  idempotency_key: string;
+}
+
 export interface ProductHistory {
   copy_sets: CopySet[];
   poster_variants: PosterVariant[];
@@ -1292,6 +1304,11 @@ export interface AgentProductWorkspaceCreateResponse {
   conversation: AgentConversation;
 }
 
+export interface AgentProductWorkspaceSnapshot extends AgentProductWorkspaceCreateResponse {
+  created: boolean;
+  intake_finalized: boolean;
+}
+
 export type AgentWorkbenchBootstrap =
   | {
       mode: "agent_v2";
@@ -1728,7 +1745,7 @@ export interface SettingsLockState {
 }
 
 export type ProviderCapability = "text_responses" | "image_responses" | "image_images" | "image_google_gemini";
-export type ProviderPurpose = "text" | "image";
+export type ProviderPurpose = "text" | "prompt" | "image" | "agent";
 export type ProviderType = "openai_compatible" | "google_gemini";
 
 export interface ProviderProfile {

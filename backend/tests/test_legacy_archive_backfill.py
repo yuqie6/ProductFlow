@@ -39,7 +39,7 @@ from productflow_backend.infrastructure.db.models import (
 from productflow_backend.infrastructure.db.session import get_engine
 
 
-def _install_archive_revision(db_session, revision: str = "20260815_0040") -> None:
+def _install_archive_revision(db_session, revision: str = "20260815_0041") -> None:
     db_session.execute(sa.text("CREATE TABLE alembic_version (version_num VARCHAR(32) PRIMARY KEY)"))
     db_session.execute(
         sa.text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),

@@ -358,6 +358,64 @@ func TestServiceRejectsProseOnlyCompletionWhenArtifactIsRequired(t *testing.T) {
 	}
 }
 
+func TestServiceAllowsProseOnlyFollowUpAfterArtifact(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch calls.Add(1) {
+		case 1:
+			writeServiceStream(t, writer, `{"id":"draft","status":"completed","output":[{"id":"call","type":"function_call","call_id":"draft","name":"propose_workflow_draft","arguments":"{\"nodes\":[]}"}]}`)
+		case 2:
+			writeServiceStream(t, writer, `{"id":"draft-ready","status":"completed","output":[{"id":"message","type":"message","role":"assistant","content":[{"type":"output_text","text":"草案已提交。"}]}]}`)
+		case 3:
+			writeServiceStream(t, writer, `{"id":"follow-up","status":"completed","output":[{"id":"message","type":"message","role":"assistant","content":[{"type":"output_text","text":"当前草案已经准备好，请使用确认操作继续。"}]}]}`)
+		default:
+			t.Errorf("unexpected provider call %d", calls.Load())
+			http.Error(writer, "too many calls", http.StatusInternalServerError)
+		}
+	}))
+	t.Cleanup(server.Close)
+	workspace := t.TempDir()
+	service, err := agenttask.OpenService(agenttask.ServiceConfig{Runner: agenttask.Config{
+		Database: filepath.Join(t.TempDir(), "follow-up-artifact.db"), Workspace: workspace, SkillUserHome: workspace,
+		Provider: agenttask.ProviderConfig{APIKey: "secret", BaseURL: server.URL, Model: "model", HTTPClient: server.Client()},
+		Policy:   testPolicy(),
+		RequiredArtifact: &agenttask.RequiredArtifact{
+			Schema: map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{"nodes": map[string]any{"type": "array"}}, "required": []string{"nodes"},
+			},
+			AllowPriorTranscriptArtifact: true,
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = service.Close() })
+
+	first, err := service.StartTurn(t.Context(), agenttask.StartTurnRequest{
+		RunID: "run-follow-up-artifact", Input: agenttask.TextInput("create a draft"), IdempotencyKey: "first",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first = awaitTurn(t, service, first.RunID, first.TurnID, turn.StatusAwaitingConfirmation)
+	if first.Artifact == nil {
+		t.Fatalf("first turn artifact = %#v", first.Artifact)
+	}
+
+	second, err := service.StartTurn(t.Context(), agenttask.StartTurnRequest{
+		RunID: first.RunID, Input: agenttask.TextInput("what happens next?"), IdempotencyKey: "second",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second = awaitTurn(t, service, second.RunID, second.TurnID, turn.StatusSucceeded)
+	if second.Output != "当前草案已经准备好，请使用确认操作继续。" || calls.Load() != 3 {
+		t.Fatalf("follow-up turn = %#v, provider calls = %d", second, calls.Load())
+	}
+}
+
 func TestServiceLocallyRejectsArtifactOutsideRequiredSchema(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

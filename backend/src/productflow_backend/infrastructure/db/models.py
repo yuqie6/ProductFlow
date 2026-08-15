@@ -962,6 +962,12 @@ class AgentConversation(Base, TimestampMixin):
             "AND creation_request_hash IS NOT NULL AND length(creation_request_hash) = 64)",
             name="ck_agent_conversations_creation_idempotency_pair",
         ),
+        CheckConstraint(
+            "(intake_idempotency_key IS NULL AND intake_request_hash IS NULL) OR "
+            "(intake_idempotency_key IS NOT NULL AND length(intake_idempotency_key) > 0 "
+            "AND intake_request_hash IS NOT NULL AND length(intake_request_hash) = 64)",
+            name="ck_agent_conversations_intake_idempotency_pair",
+        ),
         Index("ix_agent_conversations_product_status", "product_id", "status"),
     )
 
@@ -981,6 +987,8 @@ class AgentConversation(Base, TimestampMixin):
     harness_run_id: Mapped[str] = mapped_column(String(120))
     creation_idempotency_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
     creation_request_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    intake_idempotency_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    intake_request_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[AgentConversationStatus] = mapped_column(
         enum_value_column(AgentConversationStatus),
         default=AgentConversationStatus.COLLECTING,

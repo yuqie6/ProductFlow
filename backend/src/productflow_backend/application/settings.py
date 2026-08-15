@@ -20,10 +20,10 @@ from productflow_backend.config import (
 )
 from productflow_backend.infrastructure.db.models import AppSetting, ProviderBinding, ProviderProfile
 from productflow_backend.infrastructure.provider_config import (
-    IMAGE_PROVIDER_KINDS,
+    AGENT_PURPOSE,
+    PROMPT_PURPOSE,
     PROVIDER_PURPOSES,
     PROVIDER_TYPES,
-    TEXT_PROVIDER_KINDS,
     UNSET_PROVIDER_FIELD,
     capability_for_provider_kind,
     ensure_provider_config_bootstrapped,
@@ -33,6 +33,7 @@ from productflow_backend.infrastructure.provider_config import (
     normalize_provider_binding_model_settings,
     normalize_provider_binding_runtime_config,
     provider_config_tables_available,
+    provider_kinds_for_purpose,
     validate_provider_capabilities,
     validate_provider_profile_contract,
 )
@@ -49,8 +50,10 @@ from productflow_backend.infrastructure.provider_config import (
     update_provider_profile as persist_updated_provider_profile,
 )
 
-SETTINGS_EXPORT_SCHEMA_VERSION = 1
-SETTINGS_EXPORT_COMPATIBILITY = "productflow-settings-v1"
+SETTINGS_EXPORT_SCHEMA_VERSION = 2
+SETTINGS_EXPORT_COMPATIBILITY = "productflow-settings-v2"
+LEGACY_SETTINGS_EXPORT_CONTRACTS = {(1, "productflow-settings-v1")}
+REQUIRED_PROVIDER_PURPOSES = {"text", "image"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -341,9 +344,13 @@ def update_provider_binding(
 
 
 def preview_settings_import(document: SettingsImportDocument) -> SettingsImportBundle:
-    if document.schema_version != SETTINGS_EXPORT_SCHEMA_VERSION:
+    supported_versions = {SETTINGS_EXPORT_SCHEMA_VERSION, *(version for version, _ in LEGACY_SETTINGS_EXPORT_CONTRACTS)}
+    if document.schema_version not in supported_versions:
         raise ValueError("配置文件版本不支持")
-    if document.compatibility != SETTINGS_EXPORT_COMPATIBILITY:
+    contract = (document.schema_version, document.compatibility)
+    if contract != (SETTINGS_EXPORT_SCHEMA_VERSION, SETTINGS_EXPORT_COMPATIBILITY) and contract not in (
+        LEGACY_SETTINGS_EXPORT_CONTRACTS
+    ):
         raise ValueError("配置文件兼容标识不支持")
 
     normalized_runtime_config = _normalize_runtime_import_config(document.runtime_config)
@@ -513,9 +520,9 @@ def _normalize_import_bindings(
             raise ValueError("供应商用途绑定不能重复")
         seen_purposes.add(purpose)
         if purpose not in PROVIDER_PURPOSES:
-            raise ValueError("用途必须是 text 或 image")
+            raise ValueError("用途必须是 text、prompt、agent 或 image")
         provider_kind = binding["provider_kind"]
-        allowed_kinds = TEXT_PROVIDER_KINDS if purpose == "text" else IMAGE_PROVIDER_KINDS
+        allowed_kinds = provider_kinds_for_purpose(purpose)
         if provider_kind not in allowed_kinds:
             raise ValueError("供应商接口类型不支持当前用途")
         model_settings = dict(binding.get("model_settings") or {})
@@ -553,10 +560,54 @@ def _normalize_import_bindings(
                 "config_json": normalized_config,
             }
         )
-    missing_purposes = PROVIDER_PURPOSES - seen_purposes
+    missing_purposes = REQUIRED_PROVIDER_PURPOSES - seen_purposes
     if missing_purposes:
         raise ValueError(f"配置文件缺少供应商绑定: {', '.join(sorted(missing_purposes))}")
+    text_binding = next(binding for binding in normalized if binding["purpose"] == "text")
+    if PROMPT_PURPOSE not in seen_purposes:
+        prompt_binding = _derive_compat_text_response_binding(
+            text_binding,
+            purpose=PROMPT_PURPOSE,
+            model_keys=("copy_model",),
+        )
+        if prompt_binding is not None:
+            normalized.append(prompt_binding)
+    if AGENT_PURPOSE not in seen_purposes:
+        agent_binding = _derive_compat_text_response_binding(
+            text_binding,
+            purpose=AGENT_PURPOSE,
+            model_keys=("brief_model", "copy_model"),
+        )
+        if agent_binding is not None:
+            normalized.append(agent_binding)
     return normalized
+
+
+def _derive_compat_text_response_binding(
+    text_binding: dict[str, Any],
+    *,
+    purpose: str,
+    model_keys: tuple[str, ...],
+) -> dict[str, Any] | None:
+    text_models = text_binding["model_settings_json"]
+    model = next(
+        (
+            normalized_model
+            for key in model_keys
+            if (normalized_model := _normalize_optional_text(text_models.get(key))) is not None
+        ),
+        None,
+    )
+    if model is None:
+        return None
+    is_openai = text_binding["provider_kind"] == "openai"
+    return {
+        "purpose": purpose,
+        "provider_kind": "openai" if is_openai else "mock",
+        "provider_profile_id": text_binding["provider_profile_id"] if is_openai else None,
+        "model_settings_json": {"model": model},
+        "config_json": {},
+    }
 
 
 def _config_definitions():

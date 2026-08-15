@@ -440,6 +440,82 @@ func TestManagerRejectsProductFlowToolContractDriftBeforeCreatingJournal(t *test
 	}
 }
 
+func TestManagerLoadsAgentProviderConfigOnceWhenOpeningConversation(t *testing.T) {
+	const secondConversationID = "11111111-1111-4111-8111-111111111112"
+	var providerConfigCalls atomic.Int32
+	productFlow := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer "+testInternalToken {
+			http.Error(writer, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		switch request.URL.Path {
+		case "/api/internal/v1/agent-runtime/provider-config":
+			providerConfigCalls.Add(1)
+			writeFixtureJSON(writer, map[string]any{
+				"schema_version": 1, "provider_kind": "openai", "api_key": "runtime-secret",
+				"base_url": "https://provider.invalid/v1", "model": "runtime-model",
+				"reasoning_effort": "high", "reasoning_summary": "concise",
+				"text_verbosity": "low", "service_tier": "priority",
+			})
+		case "/api/internal/v1/agent-conversations/" + testConversationID + "/contract",
+			"/api/internal/v1/agent-conversations/" + secondConversationID + "/contract":
+			conversationID := strings.TrimSuffix(
+				strings.TrimPrefix(request.URL.Path, "/api/internal/v1/agent-conversations/"),
+				"/contract",
+			)
+			writeFixtureJSON(writer, map[string]any{
+				"schema_version": 1, "conversation_id": conversationID, "product_id": testProductID,
+				"workflow_draft_id": testDraftID, "harness_run_id": conversationID,
+				"current_draft_version": 0, "system_prompt": "Build a workflow.",
+				"workflow_draft_schema": map[string]any{
+					"type": "object", "additionalProperties": false,
+					"properties": map[string]any{"title": map[string]any{"type": "string"}},
+					"required":   []string{"title"},
+				},
+				"tool_contract_version": 3,
+			})
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(productFlow.Close)
+	client, err := productflow.NewClient(productFlow.URL, testInternalToken, productFlow.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewManager(ManagerConfig{
+		DataRoot: t.TempDir(),
+		Policy: agenttask.Policy{
+			MaxIterations: 10, ModelContextWindow: 100_000,
+			AutoCompactTokenLimit: 80_000, CompactionSummaryMaxChars: 4_000,
+		},
+		ProductFlow: client,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+
+	first, err := manager.Get(t.Context(), testConversationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := manager.Get(t.Context(), testConversationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second || providerConfigCalls.Load() != 1 {
+		t.Fatalf("conversation cache mismatch: same=%t provider calls=%d", first == second, providerConfigCalls.Load())
+	}
+	third, err := manager.Get(t.Context(), secondConversationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third == first || providerConfigCalls.Load() != 2 {
+		t.Fatalf("new conversation did not reload provider config: same=%t provider calls=%d", third == first, providerConfigCalls.Load())
+	}
+}
+
 type httpResult struct {
 	status int
 	body   []byte
@@ -521,6 +597,15 @@ func sseSequenceForEvent(t *testing.T, body []byte, event string) int64 {
 }
 
 func newProductFlowFixture(t *testing.T, png []byte, productID string) *httptest.Server {
+	return newProductFlowFixtureWithAgentProvider(t, png, productID, nil)
+}
+
+func newProductFlowFixtureWithAgentProvider(
+	t *testing.T,
+	png []byte,
+	productID string,
+	agentProvider *productflow.AgentProviderConfig,
+) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Header.Get("Authorization") != "Bearer "+testInternalToken {
@@ -529,6 +614,12 @@ func newProductFlowFixture(t *testing.T, png []byte, productID string) *httptest
 		}
 		base := "/api/internal/v1/agent-conversations/" + testConversationID
 		switch request.URL.Path {
+		case "/api/internal/v1/agent-runtime/provider-config":
+			if agentProvider == nil {
+				http.NotFound(writer, request)
+				return
+			}
+			writeFixtureJSON(writer, agentProvider)
 		case base + "/contract":
 			writeFixtureJSON(writer, map[string]any{
 				"schema_version": 1, "conversation_id": testConversationID, "product_id": productID,

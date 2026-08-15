@@ -51,12 +51,6 @@ func NewManager(managerConfig ManagerConfig) (*Manager, error) {
 func ManagerConfigFrom(configValue config.Config, client *productflow.Client) ManagerConfig {
 	return ManagerConfig{
 		DataRoot: configValue.DataRoot,
-		Provider: agenttask.ProviderConfig{
-			APIKey: configValue.ProviderAPIKey, BaseURL: configValue.ProviderBaseURL,
-			Model: configValue.ProviderModel, ResponseMode: agenttask.ResponseModeOpaque,
-			ReasoningEffort: configValue.ProviderReasoningEffort, ReasoningSummary: configValue.ProviderReasoningSummary,
-			TextVerbosity: configValue.ProviderTextVerbosity, ServiceTier: configValue.ProviderServiceTier,
-		},
 		Policy: agenttask.Policy{
 			MaxIterations: configValue.MaxIterations, ModelContextWindow: configValue.ModelContextWindow,
 			AutoCompactTokenLimit: configValue.AutoCompactTokenLimit, CompactionSummaryMaxChars: 12_000,
@@ -93,6 +87,10 @@ func (manager *Manager) Get(ctx context.Context, conversationID string) (*Conver
 			contract.SchemaVersion, contract.ToolContractVersion, productFlowToolContractVersion,
 		)
 	}
+	providerConfig, err := manager.providerConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
 	scope := Scope{
 		SchemaVersion: scopeSchemaVersion, ConversationID: contract.ConversationID,
 		ProductID: contract.ProductID, WorkflowDraftID: contract.WorkflowDraftID, RunID: contract.HarnessRunID,
@@ -107,14 +105,15 @@ func (manager *Manager) Get(ctx context.Context, conversationID string) (*Conver
 	}
 	runnerConfig := agenttask.Config{
 		Database: database, Workspace: workspace, SkillUserHome: workspace,
-		Provider: manager.config.Provider, Policy: manager.config.Policy,
+		Provider: providerConfig, Policy: manager.config.Policy,
 		SystemPrompt: contract.SystemPrompt,
 		Tools:        scopedReadTools(manager.config.ProductFlow, scope),
 		DurableTools: scopedDurableTools(manager.config.ProductFlow, scope),
 		RequiredArtifact: &agenttask.RequiredArtifact{
-			Name:        agenttask.WorkflowDraftToolName,
-			Description: "Submit the complete validated ProductFlow workflow draft for user confirmation.",
-			Schema:      contract.WorkflowDraftSchema,
+			Name:                         agenttask.WorkflowDraftToolName,
+			Description:                  "Submit the complete validated ProductFlow workflow draft for user confirmation.",
+			Schema:                       contract.WorkflowDraftSchema,
+			AllowPriorTranscriptArtifact: true,
 			Validate: func(ctx context.Context, value json.RawMessage) error {
 				return manager.config.ProductFlow.ValidateWorkflowDraft(ctx, scope.ConversationID, value)
 			},
@@ -132,6 +131,45 @@ func (manager *Manager) Get(ctx context.Context, conversationID string) (*Conver
 	entry := &ConversationService{Scope: scope, Service: service, Handler: handler}
 	manager.entries[conversationID] = entry
 	return entry, nil
+}
+
+func (manager *Manager) providerConfig(ctx context.Context) (agenttask.ProviderConfig, error) {
+	if strings.TrimSpace(manager.config.Provider.APIKey) != "" {
+		return manager.config.Provider, nil
+	}
+	resolved, err := manager.config.ProductFlow.AgentProviderConfig(ctx)
+	if err != nil {
+		return agenttask.ProviderConfig{}, err
+	}
+	if resolved.SchemaVersion != 1 || strings.TrimSpace(resolved.ProviderKind) != "openai" {
+		return agenttask.ProviderConfig{}, fmt.Errorf(
+			"ProductFlow Agent provider contract mismatch: schema_version=%d provider_kind=%q",
+			resolved.SchemaVersion,
+			resolved.ProviderKind,
+		)
+	}
+	apiKey := strings.TrimSpace(resolved.APIKey)
+	model := strings.TrimSpace(resolved.Model)
+	if apiKey == "" || model == "" {
+		return agenttask.ProviderConfig{}, errors.New("ProductFlow returned an incomplete Agent provider configuration")
+	}
+	return agenttask.ProviderConfig{
+		APIKey:           apiKey,
+		BaseURL:          optionalString(resolved.BaseURL),
+		Model:            model,
+		ResponseMode:     agenttask.ResponseModeOpaque,
+		ReasoningEffort:  optionalString(resolved.ReasoningEffort),
+		ReasoningSummary: optionalString(resolved.ReasoningSummary),
+		TextVerbosity:    optionalString(resolved.TextVerbosity),
+		ServiceTier:      optionalString(resolved.ServiceTier),
+	}, nil
+}
+
+func optionalString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
 }
 
 func (manager *Manager) Close() error {

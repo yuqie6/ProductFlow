@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from productflow_backend.application.agent_control import (
     answer_agent_question,
     control_agent_turn,
+    refresh_agent_turn,
     submit_agent_turn,
 )
 from productflow_backend.application.agent_conversations import (
@@ -19,6 +20,7 @@ from productflow_backend.application.agent_conversations import (
     get_agent_turn_or_raise,
     list_agent_turn_page,
 )
+from productflow_backend.domain.enums import AgentTurnStatus
 from productflow_backend.domain.errors import AgentServiceUnavailableError, BusinessValidationError, ConflictError
 from productflow_backend.infrastructure.agent_service import (
     AgentServiceClient,
@@ -44,6 +46,12 @@ router = APIRouter(
     tags=["agent-conversations"],
     dependencies=[Depends(require_admin)],
 )
+
+_REFRESHABLE_AGENT_TURN_STATUSES = {
+    AgentTurnStatus.QUEUED,
+    AgentTurnStatus.RUNNING,
+    AgentTurnStatus.CANCEL_REQUESTED,
+}
 
 
 @router.post("", response_model=AgentConversationResponse, status_code=status.HTTP_201_CREATED)
@@ -131,14 +139,27 @@ def get_agent_turn_endpoint(
     projection_id: str,
     session: Session = Depends(get_session),
 ) -> AgentTurnResponse:
-    return serialize_agent_turn(
-        get_agent_turn_or_raise(
+    projection = get_agent_turn_or_raise(
+        session,
+        product_id=product_id,
+        conversation_id=conversation_id,
+        projection_id=projection_id,
+    )
+    if (
+        projection.status in _REFRESHABLE_AGENT_TURN_STATUSES
+        and projection.sync_error is None
+    ) or (
+        projection.status == AgentTurnStatus.AWAITING_CONFIRMATION
+        and projection.workflow_draft_revision_id is None
+    ):
+        projection = refresh_agent_turn(
             session,
             product_id=product_id,
             conversation_id=conversation_id,
             projection_id=projection_id,
+            gateway=_agent_gateway_or_raise(),
         )
-    )
+    return serialize_agent_turn(projection)
 
 
 @router.post("/{conversation_id}/turns/{projection_id}/cancel", response_model=AgentTurnResponse)

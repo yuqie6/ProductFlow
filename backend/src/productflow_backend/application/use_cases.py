@@ -353,10 +353,32 @@ def stage_canonical_product_with_assets(
     storage_writes: StorageWriteCompensation,
 ) -> CanonicalProductCreation:
     """Stage one canonical Product and its verified uploads without committing."""
-    if not image_uploads:
-        raise BusinessValidationError("至少上传一张商品参考图")
-    if len(image_uploads) > 6:
-        raise BusinessValidationError("商品参考图最多上传 6 张")
+    product = stage_canonical_product(
+        session,
+        name=name,
+        category=category,
+        price=price,
+        source_note=source_note,
+    )
+    image_assets = stage_canonical_product_assets(
+        session,
+        product=product,
+        image_uploads=image_uploads,
+        storage=storage,
+        storage_writes=storage_writes,
+    )
+    return CanonicalProductCreation(product=product, created_assets=image_assets)
+
+
+def stage_canonical_product(
+    session: Session,
+    *,
+    name: str,
+    category: str | None,
+    price: str | None,
+    source_note: str | None,
+) -> Product:
+    """Stage canonical product identity without committing or creating media."""
     product = Product(
         name=normalize_product_name(name),
         category=_normalize_optional_text(category, field_name="类目", max_length=120),
@@ -365,6 +387,22 @@ def stage_canonical_product_with_assets(
     )
     session.add(product)
     session.flush()
+    return product
+
+
+def stage_canonical_product_assets(
+    session: Session,
+    *,
+    product: Product,
+    image_uploads: list[tuple[bytes, str, str]],
+    storage: LocalStorage,
+    storage_writes: StorageWriteCompensation,
+) -> list[ProductImageAsset]:
+    """Stage one bounded set of equal-reference canonical assets without committing."""
+    if not image_uploads:
+        raise BusinessValidationError("至少上传一张商品参考图")
+    if len(image_uploads) > 6:
+        raise BusinessValidationError("商品参考图最多上传 6 张")
     image_assets = [
         stage_product_image_asset(
             session,
@@ -380,7 +418,7 @@ def stage_canonical_product_with_assets(
         for image_bytes, filename, mime_type in image_uploads
     ]
     session.flush()
-    return CanonicalProductCreation(product=product, created_assets=image_assets)
+    return image_assets
 
 
 def add_canonical_product_images(

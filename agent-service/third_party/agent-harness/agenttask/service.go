@@ -600,13 +600,26 @@ func (s *Service) finishDrive(runID, turnID string, advanced AdvanceResult, runE
 		return
 	}
 	if s.requiredArtifact != "" {
-		artifact, found, err := ArtifactFromJob(advanced.Job, s.requiredArtifact)
-		if err != nil || !found {
-			_ = s.store.setOutcome(ctx, runID, turnID, turnprotocol.StatusFailed, "", errorText(errors.Join(ErrRequiredArtifactMissing, err)), nil, nil, now)
+		artifact, found, artifactErr := ArtifactFromJob(advanced.Job, s.requiredArtifact)
+		if found {
+			_ = s.store.setOutcome(ctx, runID, turnID, turnprotocol.StatusAwaitingConfirmation, advanced.Output, "", nil, &artifact, now)
 			return
 		}
-		_ = s.store.setOutcome(ctx, runID, turnID, turnprotocol.StatusAwaitingConfirmation, advanced.Output, "", nil, &artifact, now)
-		return
+		if artifactErr != nil {
+			_ = s.store.setOutcome(ctx, runID, turnID, turnprotocol.StatusFailed, "", errorText(errors.Join(ErrRequiredArtifactMissing, artifactErr)), nil, nil, now)
+			return
+		}
+		priorArtifact, priorArtifactErr := s.store.hasPriorArtifact(ctx, runID, turnID)
+		if priorArtifactErr != nil {
+			_ = s.store.setOutcome(ctx, runID, turnID, turnprotocol.StatusUnknown, "", errorText(priorArtifactErr), nil, nil, now)
+			return
+		}
+		if !priorArtifact {
+			_ = s.store.setOutcome(ctx, runID, turnID, turnprotocol.StatusFailed, "", errorText(ErrRequiredArtifactMissing), nil, nil, now)
+			return
+		}
+		// Once a workflow draft exists, follow-up turns may answer questions without
+		// creating a new revision. A successful artifact still takes precedence above.
 	}
 	_ = s.store.setOutcome(ctx, runID, turnID, turnprotocol.StatusSucceeded, advanced.Output, "", nil, nil, now)
 }

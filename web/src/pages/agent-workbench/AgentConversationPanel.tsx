@@ -363,6 +363,23 @@ export function AgentConversationPanel({
         </div>
       ) : null}
 
+      {reviewDraftAvailable && onReviewDraft && !agent.activeTurn ? (
+        <div className="flex items-center gap-3 border-t border-zinc-200 bg-blue-50 px-4 py-3 dark:border-slate-800 dark:bg-cyan-400/5">
+          <ListChecks size={16} className="shrink-0 text-blue-700 dark:text-cyan-300" />
+          <span className="min-w-0 flex-1 text-xs text-blue-900 dark:text-cyan-100">
+            {t("workflowConfirmation.title")}
+          </span>
+          <button
+            type="button"
+            onClick={onReviewDraft}
+            className="inline-flex h-10 items-center gap-2 rounded-md bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700 dark:bg-cyan-400 dark:text-[#071018] dark:hover:bg-cyan-300"
+          >
+            <ListChecks size={14} />
+            {t("agentWorkbench.reviewDraft")}
+          </button>
+        </div>
+      ) : null}
+
       <AgentComposer
         value={composerText}
         selectedAssets={composerAssets}

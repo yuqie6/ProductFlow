@@ -19,6 +19,7 @@ from productflow_backend.infrastructure import provider_config, runtime_config_s
 from productflow_backend.infrastructure.db.models import AppSetting, ProviderBinding
 from productflow_backend.infrastructure.provider_config import (
     resolve_image_provider_config,
+    resolve_prompt_provider_config,
     resolve_text_provider_config,
 )
 
@@ -175,13 +176,18 @@ def test_provider_resolver_leaves_borrowed_session_transaction_to_caller(
 
     monkeypatch.setattr(provider_config, "get_session_factory", fail_get_session_factory)
     bind = db_session.get_bind()
-    for resolver in (resolve_text_provider_config, resolve_image_provider_config):
+    for resolver in (resolve_text_provider_config, resolve_prompt_provider_config, resolve_image_provider_config):
         db_session.add(AppSetting(key="deletion_enabled", value="true"))
 
         resolved = resolver(session=db_session)
 
         assert resolved.provider_kind == "mock"
-        assert set(db_session.scalars(select(ProviderBinding.purpose)).all()) == {"text", "image"}
+        assert set(db_session.scalars(select(ProviderBinding.purpose)).all()) == {
+            "text",
+            "prompt",
+            "image",
+            "agent",
+        }
         db_session.rollback()
 
         with Session(bind) as verification_session:
@@ -192,7 +198,12 @@ def test_provider_resolver_leaves_borrowed_session_transaction_to_caller(
     db_session.commit()
 
     with Session(bind) as verification_session:
-        assert set(verification_session.scalars(select(ProviderBinding.purpose)).all()) == {"text", "image"}
+        assert set(verification_session.scalars(select(ProviderBinding.purpose)).all()) == {
+            "text",
+            "prompt",
+            "image",
+            "agent",
+        }
 
 
 def test_config_helpers_use_explicit_runtime_limits() -> None:

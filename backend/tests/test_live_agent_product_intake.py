@@ -14,7 +14,12 @@ from sqlalchemy.engine import URL, make_url
 
 from alembic import command
 from productflow_backend.application.agent_product_intake import AgentProductSelectionV1
-from productflow_backend.application.agent_product_workspaces import create_agent_product_workspace
+from productflow_backend.application.agent_product_workspaces import (
+    create_agent_product_draft_workspace,
+    create_agent_product_workspace,
+    finalize_agent_product_workspace_intake,
+    get_agent_product_workspace,
+)
 from productflow_backend.config import get_settings
 from productflow_backend.infrastructure.db.session import get_engine, get_session_factory
 
@@ -124,7 +129,7 @@ def test_agent_product_intake_round_trips_and_creates_atomically_on_postgresql(
                 )
             engine.dispose()
 
-            command.upgrade(config, "20260814_0038")
+            command.upgrade(config, "head")
             session_factory = get_session_factory()
             with session_factory() as session:
                 selection = AgentProductSelectionV1.model_validate(
@@ -202,6 +207,102 @@ def test_agent_product_intake_round_trips_and_creates_atomically_on_postgresql(
                     {"id": conversation_id},
                 ).one() == (None, None)
             engine.dispose()
+            _reset_database_state()
+
+        _reset_database_state()
+
+
+def test_draft_first_agent_product_intake_replays_across_sessions_on_postgresql(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    base_database_url = os.getenv("DATABASE_URL", "").strip()
+    if not base_database_url:
+        pytest.fail("DATABASE_URL must be provided by the development environment", pytrace=False)
+
+    with _temporary_postgres_database(base_database_url) as database_url:
+        with monkeypatch.context() as environment:
+            environment.setenv("DATABASE_URL", database_url.render_as_string(hide_password=False))
+            environment.setenv("STORAGE_ROOT", str(tmp_path / "storage"))
+            environment.setenv("TEXT_PROVIDER_KIND", "mock")
+            environment.setenv("IMAGE_PROVIDER_KIND", "mock")
+            _reset_database_state()
+            backend_dir = Path(__file__).resolve().parents[1]
+            config = Config(str(backend_dir / "alembic.ini"))
+            config.set_main_option("script_location", str(backend_dir / "alembic"))
+            command.upgrade(config, "head")
+
+            selection = AgentProductSelectionV1.model_validate(
+                {
+                    "schema_version": 1,
+                    "image_types": [
+                        {"key": "hero", "quantity": 3, "order": 0},
+                        {"key": "scene", "quantity": 2, "order": 1},
+                    ],
+                }
+            )
+            uploads = [
+                (_make_demo_image_bytes(), "front.png", "image/png"),
+                (_make_demo_image_bytes(), "detail.png", "image/png"),
+            ]
+            session_factory = get_session_factory()
+            with session_factory() as session:
+                draft = create_agent_product_draft_workspace(
+                    session,
+                    name="PostgreSQL 两阶段 Agent 商品",
+                    idempotency_key="postgres-draft-first",
+                )
+                conversation_id = draft.conversation.id
+                product_id = draft.product.id
+                assert draft.created is True
+                assert draft.created_assets == []
+                assert draft.workflow_draft.intake_json is None
+                assert draft.workflow_draft.current_revision_id is None
+                assert draft.product.cover_image_asset_id is None
+
+            with session_factory() as session:
+                restored = get_agent_product_workspace(
+                    session,
+                    conversation_id=conversation_id,
+                )
+                assert restored.product.id == product_id
+                assert restored.created is False
+                assert restored.created_assets == []
+                finalized = finalize_agent_product_workspace_intake(
+                    session,
+                    conversation_id=conversation_id,
+                    selection=selection,
+                    image_uploads=uploads,
+                    idempotency_key="postgres-intake-finalization",
+                )
+                asset_ids = [asset.id for asset in finalized.created_assets]
+                assert finalized.created is True
+                assert len(asset_ids) == 2
+                assert finalized.workflow_draft.intake_json == {
+                    "schema_version": 1,
+                    "image_types": [
+                        {"key": "hero", "quantity": 3, "order": 0},
+                        {"key": "scene", "quantity": 2, "order": 1},
+                    ],
+                    "reference_asset_ids": asset_ids,
+                }
+
+            with session_factory() as session:
+                replay = finalize_agent_product_workspace_intake(
+                    session,
+                    conversation_id=conversation_id,
+                    selection=selection,
+                    image_uploads=uploads,
+                    idempotency_key="postgres-intake-finalization",
+                )
+                assert replay.created is False
+                assert [asset.id for asset in replay.created_assets] == asset_ids
+                assert session.scalar(sa.text("SELECT COUNT(*) FROM products")) == 1
+                assert session.scalar(sa.text("SELECT COUNT(*) FROM product_image_assets")) == 2
+                assert session.scalar(sa.text("SELECT COUNT(*) FROM media_objects")) == 2
+                assert session.scalar(sa.text("SELECT COUNT(*) FROM product_workflows")) == 0
+                assert session.scalar(sa.text("SELECT COUNT(*) FROM workflow_draft_revisions")) == 0
+
             _reset_database_state()
 
         _reset_database_state()

@@ -1,6 +1,7 @@
 import type {
   AgentProductWorkspaceCreateResponse,
   AgentProductWorkspaceOptions,
+  AgentProductWorkspaceSnapshot,
   AgentQuestionAnswer,
   AgentTurn,
   AgentTurnPage,
@@ -33,6 +34,7 @@ import type {
   CreateProductInput,
   CreateCanonicalProductInput,
   CreateAgentProductWorkspaceInput,
+  CreateAgentProductDraftWorkspaceInput,
   CreateWorkflowDraftInput,
   DeliveryRenditionJob,
   DeliveryRenditionJobListResponse,
@@ -40,6 +42,7 @@ import type {
   ImageSessionListResponse,
   ImageSessionStatus,
   ImageToolOptions,
+  FinalizeAgentProductWorkspaceIntakeInput,
   LegacyArchiveDetail,
   LegacyArchiveAgentRebuildResult,
   LegacyArchiveKind,
@@ -115,12 +118,12 @@ function agentConversationPath(productId: string, conversationId: string): strin
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(toApiUrl(path), {
+    ...init,
     credentials: "include",
     headers: {
       ...(init?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
       ...init?.headers,
     },
-    ...init,
   });
 
   if (!response.ok) {
@@ -256,7 +259,7 @@ export const api = {
   archiveProviderProfile(profileId: string): Promise<ProviderProfile> {
     return request(`/api/settings/provider-profiles/${profileId}`, { method: "DELETE" });
   },
-  updateProviderBinding(purpose: "text" | "image", payload: ProviderBindingUpdateRequest): Promise<ProviderBinding> {
+  updateProviderBinding(purpose: ProviderBinding["purpose"], payload: ProviderBindingUpdateRequest): Promise<ProviderBinding> {
     return request(`/api/settings/provider-bindings/${purpose}`, {
       method: "PATCH",
       body: JSON.stringify(payload),
@@ -362,6 +365,35 @@ export const api = {
       headers: { "Idempotency-Key": input.idempotency_key },
       body: formData,
     });
+  },
+  createAgentProductDraftWorkspace(
+    input: CreateAgentProductDraftWorkspaceInput,
+  ): Promise<AgentProductWorkspaceSnapshot> {
+    return request("/api/v2/agent-product-workspaces/drafts", {
+      method: "POST",
+      headers: { "Idempotency-Key": input.idempotency_key },
+      body: JSON.stringify({ name: input.name }),
+    });
+  },
+  getAgentProductWorkspace(conversationId: string): Promise<AgentProductWorkspaceSnapshot> {
+    return request(`/api/v2/agent-product-workspaces/${encodeURIComponent(conversationId)}`);
+  },
+  async finalizeAgentProductWorkspaceIntake(
+    input: FinalizeAgentProductWorkspaceIntakeInput,
+  ): Promise<AgentProductWorkspaceSnapshot> {
+    const formData = new FormData();
+    formData.set("selection", JSON.stringify(input.selection));
+    input.images.forEach((image) => {
+      formData.append("images", image);
+    });
+    return request(
+      `/api/v2/agent-product-workspaces/${encodeURIComponent(input.conversation_id)}/intake`,
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": input.idempotency_key },
+        body: formData,
+      },
+    );
   },
   getAgentWorkbench(productId: string): Promise<AgentWorkbenchBootstrap> {
     return request(`/api/v2/products/${encodeURIComponent(productId)}/agent-workbench`);

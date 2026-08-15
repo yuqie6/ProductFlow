@@ -21,9 +21,6 @@ const LegacyHistoryPage = lazy(() =>
 const loadImageChatPage = () =>
   import("./pages/ImageChatPage").then((module) => ({ default: module.ImageChatPage }));
 const ImageChatPage = lazy(loadImageChatPage);
-const ProductCreatePage = lazy(() =>
-  import("./pages/ProductCreatePage").then((module) => ({ default: module.ProductCreatePage })),
-);
 const AgentProductCreatePage = lazy(() =>
   import("./pages/AgentProductCreatePage").then((module) => ({ default: module.AgentProductCreatePage })),
 );
@@ -82,11 +79,11 @@ function AppRoutes() {
         />
         <Route
           path="/products/new/agent"
-          element={authenticated ? <AgentProductCreatePage /> : <Navigate to="/login" replace />}
+          element={authenticated ? <Navigate to="/products/new" replace /> : <Navigate to="/login" replace />}
         />
         <Route
           path="/products/new"
-          element={authenticated ? <ProductCreatePage /> : <Navigate to="/login" replace />}
+          element={authenticated ? <AgentProductCreatePage /> : <Navigate to="/login" replace />}
         />
         <Route
           path="/image-chat"

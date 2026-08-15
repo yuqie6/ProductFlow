@@ -760,22 +760,36 @@ const DOC_PAGES: DocPage[] = [
   {
     slug: "settings-providers",
     title: "模型供应商",
-    description: "说明供应商档案、文案/图片用途绑定、模型和图片生成基础参数。",
+    description: "说明供应商档案、提示词/Agent/图片用途绑定、模型和图片生成基础参数。",
     category: "配置",
     icon: Settings,
     sections: [
       {
-        id: "text-settings",
-        title: "文案生成",
+        id: "prompt-settings",
+        title: "提示词生成",
         blocks: [
           {
             type: "table",
             headers: ["字段", "说明"],
             rows: [
               ["供应商档案", "保存供应商类型、连接信息、API Key 和能力。Google Gemini 使用官方 SDK endpoint，不配置 Base URL；密钥不会回显，编辑档案时留空 API Key 会保留旧值。"],
-              ["文案用途绑定", "选择 `mock` 或真实 OpenAI Responses 兼容接口，并选择具备文案能力的供应商档案。"],
-              ["商品理解模型", "用于把商品名称、类目、价格、说明等整理成 CreativeBrief。"],
-              ["文案生成模型", "用于生成 CopyPayloadV2 结构化文案，可包含自由正文、文案块、布局分区和视觉建议。"],
+              ["提示词用途绑定", "选择 `mock` 或真实 OpenAI Responses 兼容接口，并选择具备文本 Responses 能力的供应商档案。"],
+              ["提示词模型", "用于根据商品事实、视觉体系、图片类型和参考图生成结构化图片提示词。"],
+            ],
+          },
+        ],
+      },
+      {
+        id: "agent-settings",
+        title: "工作流 Agent",
+        blocks: [
+          {
+            type: "table",
+            headers: ["字段", "说明"],
+            rows: [
+              ["Agent 用途绑定", "选择真实 OpenAI Responses 兼容接口；未配置时，商品创建页会给出明确的配置入口。"],
+              ["Agent 模型", "用于商品创建阶段的资料澄清、需求确认和工作流草案生成。"],
+              ["推理与响应参数", "`reasoning_effort`、`reasoning_summary`、`text_verbosity` 和 `service_tier` 会随新会话配置快照发送给 Agent 服务。"],
             ],
           },
         ],
@@ -788,7 +802,7 @@ const DOC_PAGES: DocPage[] = [
             type: "table",
             headers: ["字段", "说明"],
             rows: [
-              ["供应商档案", "OpenAI 兼容档案可以同时声明文案、Responses 图片和 Images API 图片能力；Google Gemini 档案只声明 Gemini 图片能力。"],
+              ["供应商档案", "OpenAI 兼容档案可以同时声明文本 Responses、Responses 图片和 Images API 图片能力；Google Gemini 档案只声明 Gemini 图片能力。"],
               ["图片用途绑定", "选择 `mock`、OpenAI Responses、OpenAI Images API 或 Google Gemini Image，并选择具备对应图片能力的供应商档案。"],
               ["图片模型", "发送给图片 provider 的默认图片模型。Responses、Images API 与 Gemini 支持范围不同。"],
               ["Responses 后台响应模式", "只属于 OpenAI Responses 图片绑定。开启后长任务先拿到 response_id 再轮询状态；如果网关明确不支持，会按同步请求重试。"],
@@ -851,8 +865,8 @@ const DOC_PAGES: DocPage[] = [
   },
   {
     slug: "settings-prompts",
-    title: "提示词模板",
-    description: "说明全局提示词模板负责哪些默认行为，以及哪些要求应该留在单次节点或文/图生图输入里。",
+    title: "图片请求模板",
+    description: "说明全局图片请求模板负责哪些长期默认行为，以及哪些要求应该留在单次节点或文/图生图输入里。",
     category: "配置",
     icon: Settings,
     sections: [
@@ -864,8 +878,6 @@ const DOC_PAGES: DocPage[] = [
             type: "table",
             headers: ["字段", "说明"],
             rows: [
-              ["商品理解系统提示词", "用于商品资料理解；结构化输出由后端 schema 和 provider structured output 约束。"],
-              ["文案生成系统提示词", "用于主图/海报文案生成；结构化输出由后端 schema 和 provider structured output 约束。"],
               ["海报生图提示词模板", "用于工作台 AI 生图。常用占位符包括 `instruction`、`size`、`context_block`、`reference_policy`、`kind` 等。"],
               ["工作台改图提示词模板", "用于工作台带参考图或上游上下文的改图任务。适合带上游文案或参考图上下文的场景。"],
               ["工作台视觉参考规则", "填入工作台生图模板的 `reference_policy` 占位符，用于控制视觉参考优先级规则。"],
@@ -875,7 +887,7 @@ const DOC_PAGES: DocPage[] = [
           {
             type: "callout",
             title: "单次要求不要写进全局模板",
-            text: "如果只是这一次想要某种背景、构图或语气，应写在节点要求或文/图生图的画面描述里。提示词模板适合长期默认行为。",
+            text: "如果只是这一次想要某种背景、构图或语气，应写在节点要求或文/图生图的画面描述里。图片请求模板适合长期默认行为。",
           },
         ],
       },
@@ -1198,12 +1210,13 @@ const DOC_PAGES_EN: DocPage[] = [
   {
     slug: "settings-providers",
     title: "Model providers",
-    description: "Explains provider profiles, copy/image purpose bindings, models, and base image generation parameters.",
+    description: "Explains provider profiles, prompt/Agent/image purpose bindings, models, and base image generation parameters.",
     category: "Settings",
     icon: Settings,
     sections: [
-      { id: "text-settings", title: "Copy generation", blocks: [{ type: "table", headers: ["Field", "Description"], rows: [["Provider profile", "Stores provider type, connection data, API key, and capabilities. Google Gemini uses the official SDK endpoint and does not configure a Base URL. Secrets are not returned; leaving API key blank while editing preserves the old value."], ["Copy purpose binding", "Selects `mock` or a real OpenAI Responses-compatible interface, and points to a provider profile with copy capability."], ["Product understanding model", "Organizes product name, category, price, and description into a CreativeBrief."], ["Copy generation model", "Generates CopyPayloadV2 structured copy, which can contain freeform text, copy blocks, layout sections, and visual guidance."]] }] },
-      { id: "image-settings", title: "Image generation", blocks: [{ type: "table", headers: ["Field", "Description"], rows: [["Provider profile", "OpenAI-compatible profiles can declare copy, Responses image, and Images API image capabilities. Google Gemini profiles declare only Gemini image capability."], ["Image purpose binding", "Selects `mock`, OpenAI Responses, OpenAI Images API, or Google Gemini Image, and points to a provider profile with the matching image capability."], ["Image model", "Default image model sent to the image provider. Responses, Images API, and Gemini support different model sets."], ["Responses background mode", "Only belongs to the OpenAI Responses image binding. When enabled, long tasks first receive a response_id and then poll status; gateways that clearly do not support it retry as synchronous requests."], ["Images API Quality / Style", "Only belongs to the OpenAI Images API image binding. Compatible gateways that reject optional fields retry with the base parameters."], ["Gemini API version / output MIME", "Only belongs to the Google Gemini image binding. API version defaults to `v1beta`; blank output MIME uses the provider default."], ["Image max single edge", "Maximum width or height in pixels for workbench image generation and image chat. Maximum area uses this value squared."], ["Main image size (compat default)", "Advanced compatibility value used only when provider input does not explicitly send image_size and kind is main image. New workflows prefer the node size picker."], ["Promo poster size (compat default)", "Advanced compatibility value used only when provider input does not explicitly send image_size and kind is promo poster."], ["Poster generation mode", "`Template render` does not consume the image model; `AI generation` calls the image provider."], ["Poster font path", "Font file used for Chinese text rendering in template posters and mock images."]] }] },
+      { id: "prompt-settings", title: "Prompt generation", blocks: [{ type: "table", headers: ["Field", "Description"], rows: [["Provider profile", "Stores provider type, connection data, API key, and capabilities. Google Gemini uses the official SDK endpoint and does not configure a Base URL. Secrets are not returned; leaving API key blank while editing preserves the old value."], ["Prompt purpose binding", "Selects `mock` or a real OpenAI Responses-compatible interface, and points to a provider profile with text Responses capability."], ["Prompt model", "Generates structured image prompts from product facts, the visual system, image type, and reference images."]] }] },
+      { id: "agent-settings", title: "Workflow Agent", blocks: [{ type: "table", headers: ["Field", "Description"], rows: [["Agent purpose binding", "Selects a real OpenAI Responses-compatible interface. When it is not configured, the product creation page shows a direct settings link."], ["Agent model", "Handles intake clarification, requirement confirmation, and workflow draft generation during product creation."], ["Reasoning and response options", "`reasoning_effort`, `reasoning_summary`, `text_verbosity`, and `service_tier` are included in the configuration snapshot sent to the Agent service for each new conversation."]] }] },
+      { id: "image-settings", title: "Image generation", blocks: [{ type: "table", headers: ["Field", "Description"], rows: [["Provider profile", "OpenAI-compatible profiles can declare text Responses, Responses image, and Images API image capabilities. Google Gemini profiles declare only Gemini image capability."], ["Image purpose binding", "Selects `mock`, OpenAI Responses, OpenAI Images API, or Google Gemini Image, and points to a provider profile with the matching image capability."], ["Image model", "Default image model sent to the image provider. Responses, Images API, and Gemini support different model sets."], ["Responses background mode", "Only belongs to the OpenAI Responses image binding. When enabled, long tasks first receive a response_id and then poll status; gateways that clearly do not support it retry as synchronous requests."], ["Images API Quality / Style", "Only belongs to the OpenAI Images API image binding. Compatible gateways that reject optional fields retry with the base parameters."], ["Gemini API version / output MIME", "Only belongs to the Google Gemini image binding. API version defaults to `v1beta`; blank output MIME uses the provider default."], ["Image max single edge", "Maximum width or height in pixels for workbench image generation and image chat. Maximum area uses this value squared."], ["Main image size (compat default)", "Advanced compatibility value used only when provider input does not explicitly send image_size and kind is main image. New workflows prefer the node size picker."], ["Promo poster size (compat default)", "Advanced compatibility value used only when provider input does not explicitly send image_size and kind is promo poster."], ["Poster generation mode", "`Template render` does not consume the image model; `AI generation` calls the image provider."], ["Poster font path", "Font file used for Chinese text rendering in template posters and mock images."]] }] },
     ],
   },
   {
@@ -1218,12 +1231,12 @@ const DOC_PAGES_EN: DocPage[] = [
   },
   {
     slug: "settings-prompts",
-    title: "Prompt templates",
-    description: "Explains which defaults global prompt templates control and which requirements should remain in one-off node or image chat inputs.",
+    title: "Image request templates",
+    description: "Explains which long-lived defaults global image request templates control and which requirements should remain in one-off node or image chat inputs.",
     category: "Settings",
     icon: Settings,
     sections: [
-      { id: "prompt-settings", title: "Fields", blocks: [{ type: "table", headers: ["Field", "Description"], rows: [["Product understanding system prompt", "Used for product data understanding; structured output is enforced by backend schema and provider structured outputs."], ["Copy generation system prompt", "Used for main image/poster copy generation; structured output is enforced by backend schema and provider structured outputs."], ["Poster image prompt template", "Used for workbench AI image generation. Common placeholders include `instruction`, `size`, `context_block`, `reference_policy`, and `kind`."], ["Workbench image-edit prompt template", "Used for workbench image-edit runs with reference or upstream context."], ["Workbench visual reference policy", "Fills the `reference_policy` placeholder in workbench image templates to control visual-reference priority rules."], ["Image chat prompt template", "Used for image chat. Available placeholders include `prompt`, `size`, and `history_block`."]] }, { type: "callout", title: "Keep one-off requirements out of global templates", text: "If a background, composition, or tone is needed only for this run, put it in the node requirement or image chat description. Prompt templates are better for long-term default behavior." }] },
+      { id: "prompt-settings", title: "Fields", blocks: [{ type: "table", headers: ["Field", "Description"], rows: [["Poster image prompt template", "Used for workbench AI image generation. Common placeholders include `instruction`, `size`, `context_block`, `reference_policy`, and `kind`."], ["Workbench image-edit prompt template", "Used for workbench image-edit runs with reference or upstream context."], ["Workbench visual reference policy", "Fills the `reference_policy` placeholder in workbench image templates to control visual-reference priority rules."], ["Image chat prompt template", "Used for image chat. Available placeholders include `prompt`, `size`, and `history_block`."]] }, { type: "callout", title: "Keep one-off requirements out of global templates", text: "If a background, composition, or tone is needed only for this run, put it in the node requirement or image chat description. Image request templates are better for long-term default behavior." }] },
     ],
   },
   {
@@ -1720,6 +1733,32 @@ const HELP_DOC_JA_TRANSLATIONS: Record<string, string> = {
   "设置页二次解锁由 `SETTINGS_ACCESS_TOKEN` 保护。": "設定ページの二次ロック解除は `SETTINGS_ACCESS_TOKEN` で保護されます。",
   "关闭登录门禁不会关闭设置页二次解锁。": "ログイン保護を無効にしても、設定ページの二次ロック解除は無効になりません。",
   "模型供应商": "モデルプロバイダー",
+  "说明供应商档案、提示词/Agent/图片用途绑定、模型和图片生成基础参数。":
+    "プロバイダープロファイル、プロンプト/Agent/画像の用途バインディング、モデル、画像生成の基本パラメータを説明します。",
+  "提示词生成": "プロンプト生成",
+  "提示词用途绑定": "プロンプト用途バインディング",
+  "选择 `mock` 或真实 OpenAI Responses 兼容接口，并选择具备文本 Responses 能力的供应商档案。":
+    "`mock` または実際の OpenAI Responses 互換インターフェースを選択し、テキスト Responses 能力を持つプロバイダープロファイルを選びます。",
+  "提示词模型": "プロンプトモデル",
+  "用于根据商品事实、视觉体系、图片类型和参考图生成结构化图片提示词。":
+    "商品情報、ビジュアルシステム、画像タイプ、参考画像から構造化された画像プロンプトを生成します。",
+  "工作流 Agent": "ワークフロー Agent",
+  "Agent 用途绑定": "Agent 用途バインディング",
+  "选择真实 OpenAI Responses 兼容接口；未配置时，商品创建页会给出明确的配置入口。":
+    "実際の OpenAI Responses 互換インターフェースを選択します。未設定の場合、商品作成ページに設定への明確な導線が表示されます。",
+  "Agent 模型": "Agent モデル",
+  "用于商品创建阶段的资料澄清、需求确认和工作流草案生成。":
+    "商品作成時の情報確認、要件確認、ワークフロー下書き生成に使います。",
+  "推理与响应参数": "推論と応答のパラメータ",
+  "`reasoning_effort`、`reasoning_summary`、`text_verbosity` 和 `service_tier` 会随新会话配置快照发送给 Agent 服务。":
+    "`reasoning_effort`、`reasoning_summary`、`text_verbosity`、`service_tier` は、新しい会話ごとの設定スナップショットとして Agent サービスへ送信されます。",
+  "OpenAI 兼容档案可以同时声明文本 Responses、Responses 图片和 Images API 图片能力；Google Gemini 档案只声明 Gemini 图片能力。":
+    "OpenAI 互換プロファイルはテキスト Responses、Responses 画像、Images API 画像能力を同時に宣言できます。Google Gemini プロファイルは Gemini 画像能力だけを宣言します。",
+  "图片请求模板": "画像リクエストテンプレート",
+  "说明全局图片请求模板负责哪些长期默认行为，以及哪些要求应该留在单次节点或文/图生图输入里。":
+    "グローバル画像リクエストテンプレートが制御する長期的な既定動作と、単発ノードや画像生成チャット入力に残す要件を説明します。",
+  "如果只是这一次想要某种背景、构图或语气，应写在节点要求或文/图生图的画面描述里。图片请求模板适合长期默认行为。":
+    "今回だけ必要な背景、構図、トーンは、ノード要件または画像生成チャットの画像説明に記述します。画像リクエストテンプレートは長期的な既定動作に適しています。",
   "说明供应商档案、文案/图片用途绑定、模型和图片生成基础参数。":
     "プロバイダープロファイル、コピー/画像用途バインディング、モデル、画像生成の基本パラメータを説明します。",
   "字段": "項目",
@@ -2208,6 +2247,23 @@ const HELP_DOC_VI_TRANSLATIONS: Record<string, string> = {
   "设置页二次解锁由 `SETTINGS_ACCESS_TOKEN` 保护。": "Việc mở khóa phụ của trang cài đặt được bảo vệ bởi `SETTINGS_ACCESS_TOKEN`.",
   "关闭登录门禁不会关闭设置页二次解锁。": "Việc đóng kiểm soát truy cập đăng nhập sẽ không đóng tính năng mở khóa phụ của trang cài đặt.",
   "模型供应商": "Nhà cung cấp model",
+  "说明供应商档案、提示词/Agent/图片用途绑定、模型和图片生成基础参数。": "Giải thích hồ sơ nhà cung cấp, liên kết mục đích cho prompt/Agent/hình ảnh, model và các tham số tạo ảnh cơ bản.",
+  "提示词生成": "Tạo prompt",
+  "提示词用途绑定": "Liên kết mục đích prompt",
+  "选择 `mock` 或真实 OpenAI Responses 兼容接口，并选择具备文本 Responses 能力的供应商档案。": "Chọn `mock` hoặc giao diện thực tương thích OpenAI Responses, rồi chọn hồ sơ nhà cung cấp có năng lực Responses văn bản.",
+  "提示词模型": "Model prompt",
+  "用于根据商品事实、视觉体系、图片类型和参考图生成结构化图片提示词。": "Dùng để tạo prompt hình ảnh có cấu trúc từ dữ kiện sản phẩm, hệ thống hình ảnh, loại ảnh và ảnh tham chiếu.",
+  "工作流 Agent": "Agent quy trình",
+  "Agent 用途绑定": "Liên kết mục đích Agent",
+  "选择真实 OpenAI Responses 兼容接口；未配置时，商品创建页会给出明确的配置入口。": "Chọn giao diện thực tương thích OpenAI Responses. Khi chưa cấu hình, trang tạo sản phẩm sẽ hiển thị liên kết trực tiếp tới phần cài đặt.",
+  "Agent 模型": "Model Agent",
+  "用于商品创建阶段的资料澄清、需求确认和工作流草案生成。": "Dùng để làm rõ dữ liệu, xác nhận yêu cầu và tạo bản nháp quy trình trong giai đoạn tạo sản phẩm.",
+  "推理与响应参数": "Tham số suy luận và phản hồi",
+  "`reasoning_effort`、`reasoning_summary`、`text_verbosity` 和 `service_tier` 会随新会话配置快照发送给 Agent 服务。": "`reasoning_effort`, `reasoning_summary`, `text_verbosity` và `service_tier` được gửi tới dịch vụ Agent trong bản chụp cấu hình của mỗi cuộc hội thoại mới.",
+  "OpenAI 兼容档案可以同时声明文本 Responses、Responses 图片和 Images API 图片能力；Google Gemini 档案只声明 Gemini 图片能力。": "Hồ sơ tương thích OpenAI có thể đồng thời khai báo năng lực Responses văn bản, Responses hình ảnh và Images API; hồ sơ Google Gemini chỉ khai báo năng lực hình ảnh Gemini.",
+  "图片请求模板": "Mẫu yêu cầu hình ảnh",
+  "说明全局图片请求模板负责哪些长期默认行为，以及哪些要求应该留在单次节点或文/图生图输入里。": "Giải thích các hành vi mặc định dài hạn do mẫu yêu cầu hình ảnh toàn cục kiểm soát và các yêu cầu nên được giữ trong node hoặc đầu vào tạo ảnh riêng lẻ.",
+  "如果只是这一次想要某种背景、构图或语气，应写在节点要求或文/图生图的画面描述里。图片请求模板适合长期默认行为。": "Nếu nền, bố cục hoặc sắc thái chỉ cần cho lần này, hãy ghi trong yêu cầu của node hoặc mô tả hình ảnh. Mẫu yêu cầu hình ảnh phù hợp với hành vi mặc định dài hạn.",
   "说明供应商档案、文案/图片用途绑定、模型和图片生成基础参数。": "Giải thích các thông số cơ bản của hồ sơ nhà cung cấp, ràng buộc sử dụng nội dung/hình ảnh, mô hình và tạo hình ảnh.",
   "字段": "trường",
   "供应商档案": "Hồ sơ nhà cung cấp",

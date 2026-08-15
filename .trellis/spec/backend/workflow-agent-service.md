@@ -15,6 +15,8 @@
 - `infrastructure/agent_service.py` owns the FastAPI-to-Go HTTP/SSE client.
 - `presentation/routes/agent_conversations.py` exposes session-authenticated browser APIs.
 - `presentation/routes/agent_internal.py` exposes bearer-authenticated ProductFlow tool APIs to the Go service.
+- `presentation/routes/agent_runtime.py` exposes the complete Agent provider configuration only to the authenticated Go
+  service; browser settings APIs continue to return redacted provider profiles.
 
 The service is single-instance and single-merchant. Multi-instance journal coordination, workflow materialization, and
 the frontend Agent conversation are separate tasks.
@@ -52,6 +54,19 @@ calling its internal client.
 
 Go and ProductFlow internal routes use `AGENT_SERVICE_INTERNAL_TOKEN` with constant-time bearer comparison. The token is
 separate from browser sessions, admin credentials, and provider credentials. The Go service has no host port in Compose.
+
+The Agent provider is a first-class `agent` purpose binding over an enabled OpenAI-compatible profile with
+`text_responses` capability and a non-empty API key. The binding owns the model plus optional reasoning effort, reasoning
+summary, text verbosity, and service tier. Existing databases add the missing binding by copying the text binding and its
+brief-model fallback; no second credential store is created. Settings export schema v2 includes this binding, while v1
+imports derive it from the required text binding.
+
+When opening an uncached conversation, Go validates the ProductFlow conversation contract, fetches
+`GET /api/internal/v1/agent-runtime/provider-config`, and passes that immutable snapshot to `agenttask.OpenService`.
+Repeated requests for the same conversation reuse its existing service and provider snapshot. A newly opened conversation
+fetches current settings. Missing, disabled, incomplete, or capability-incompatible Agent configuration fails before any
+harness journal or workspace is created. `AGENT_PROVIDER_*` variables are reserved for the opt-in provider test and are
+not runtime service configuration.
 
 SSE preserves harness event bytes and sequence IDs. FastAPI forwards the greater valid cursor from `after` and
 `Last-Event-ID`, disables proxy buffering, and closes its upstream stream when the browser disconnects. PostgreSQL does
@@ -92,11 +107,20 @@ artifact revision `SET NULL`, and complete enum removal on downgrade.
 - `unknown` is projected unchanged. ProductFlow must not infer success or automatically replay an ambiguous effect.
 - API and worker startup both enqueue recoverable projection rows. Duplicate sync messages converge through projection,
   harness start, artifact-origin, and tool-mutation idempotency contracts.
+- Reading an active `queued`, `running`, or `cancel_requested` projection without a persisted sync error refreshes it from
+  the scoped Agent service before returning. An `awaiting_confirmation` projection without a revision ID is also refreshed.
+  This closes the SSE
+  terminal-event race so the terminal response includes its attached revision instead of leaving the browser on an
+  incomplete local projection.
 
 ## Required Workflow Artifact
 
-Every completed workflow-design Turn must call strict `propose_workflow_draft` with the current
-`WorkflowDraftPayloadV1` JSON Schema. A prose-only completion fails the harness artifact gate.
+The first completed workflow-design Turn and every Turn that changes the proposed draft must call strict
+`propose_workflow_draft` with the current `WorkflowDraftPayloadV1` JSON Schema. A prose-only completion before any
+accepted artifact fails the harness gate. Once the trusted run transcript contains an accepted artifact, a follow-up that
+only explains or answers questions about that draft may complete without creating a duplicate revision. The conversation
+remains `awaiting_confirmation` while its current WorkflowDraft is still unconfirmed. If a follow-up submits an artifact,
+that artifact still passes the complete local and application validation path below.
 
 `WorkflowDraftPayloadV1.model_json_schema()` is the domain/validation schema and is not sent to a strict provider
 unchanged. `workflow_draft_tool_schema()` derives the provider boundary schema by making every object property required,
@@ -365,6 +389,108 @@ registerReadTool("inspect_legacy_archive_v1", boundedSectionHandler)
 // The model selects sections and image IDs inside the conversation scope.
 ```
 
+## Scenario: Draft-first Agent product workspace creation
+
+### 1. Scope / Trigger
+
+- Trigger: changing the public product-creation route, the workspace draft/recovery/finalization API, canonical reference
+  upload staging, the pre-intake Turn guard, or AgentConversation intake idempotency columns.
+- This scenario owns the formal `/products/new` write contract. Recipe and legacy-archive rebuilds retain their seed-based
+  version-zero contracts.
+
+### 2. Signatures
+
+- `POST /api/v2/agent-product-workspaces/drafts`: strict JSON `{name}` plus required `Idempotency-Key`; returns
+  `AgentProductWorkspaceSnapshotResponse` with `created=true|false` and `intake_finalized=false`.
+- `GET /api/v2/agent-product-workspaces/{conversation_id}`: returns the current workspace snapshot with `created=false`.
+- `POST /api/v2/agent-product-workspaces/{conversation_id}/intake`: multipart `selection` plus repeated `images`, with a
+  required `Idempotency-Key`; returns the finalized snapshot.
+- `POST /api/v2/agent-product-workspaces`: the transitional one-request compatibility endpoint.
+- Application boundaries are `create_agent_product_draft_workspace(...)`, `get_agent_product_workspace(...)`, and
+  `finalize_agent_product_workspace_intake(...)`. Canonical writes are shared through `stage_canonical_product(...)`,
+  `stage_canonical_product_assets(...)`, and `stage_canonical_product_with_assets(...)`.
+- Migration `20260815_0041` adds nullable `AgentConversation.intake_idempotency_key: String(200)` and
+  `intake_request_hash: String(64)` plus `ck_agent_conversations_intake_idempotency_pair`.
+
+### 3. Contracts
+
+- Draft creation atomically persists one normalized Product, one collecting WorkflowDraft with no intake or revision, and
+  one AgentConversation whose harness run ID equals its conversation ID. It creates no media, cover, Turn, workflow, node,
+  edge, run, recipe, or template record.
+- The creation request hash binds the normalized product name. A replay with the same key and hash returns the same
+  aggregate. A replay with changed content conflicts. Draft and transitional composite creation deliberately share one
+  global creation-key namespace; clients switching operation shape must generate a new key instead of replaying a key from
+  the other endpoint.
+- Intake finalization locks the conversation, Draft, and Product. It accepts the existing selection limits and one to six
+  verified PNG/JPEG/WEBP uploads, stages canonical media through storage compensation, writes immutable `WorkflowIntakeV1`,
+  and persists both intake idempotency fields in the same commit. References are equal inputs; finalization does not assign
+  a cover.
+- The intake request hash binds structured selection plus each upload's order, filename, declared MIME type, and byte
+  SHA-256. Same-key replay returns the original assets; a different key or payload after finalization conflicts.
+- A plain empty workspace cannot reserve its first Agent Turn. A Draft with intake, a current revision, a recipe seed, or a
+  legacy archive seed remains eligible under its existing lifecycle contract.
+- The compatibility composite endpoint reuses the same staging and workspace-record primitives. It must not copy product,
+  media validation, storage compensation, Draft, or conversation initialization logic.
+- Downgrade to `20260815_0040` is allowed only while every intake idempotency pair is null; populated finalization identity
+  blocks destructive downgrade.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+|---|---|
+| Missing/blank/oversized name or unknown JSON field | browser API `422` or business `400`; no workspace write |
+| Missing, malformed, or drifted creation idempotency key | `400`/`409`; an existing aggregate remains authoritative |
+| Unknown conversation | `404`; no Product or Draft probing through fallback creation |
+| Intake has invalid taxonomy/counts or reference count outside `1..6` | `400`; empty Draft remains recoverable |
+| Upload bytes, declared MIME, or measured image metadata disagree | `400`; DB rollback and storage compensation |
+| Finalization after Turn/revision/seed/state transition | `409`; no new media or intake mutation |
+| Same finalization key and hash after ambiguous response | `200`, `created=false`, original asset IDs |
+| Finalization key/hash drift or partial idempotency pair | `409`; persisted intake is unchanged |
+
+### 5. Good/Base/Bad Cases
+
+- Good: create a workspace, close the session, recover by conversation ID, finalize two references, lose the response, and
+  replay with the same key to obtain the same two asset IDs and no workflow.
+- Base: open an unfinished draft through its product URL and route back to the same intake workspace.
+- Base: call the compatibility composite endpoint and receive the established fully collected version-zero workspace.
+- Bad: create the Product in one request and later create a second Draft/conversation during intake finalization.
+- Bad: start a Turn on a plain empty Draft or assign the first uploaded reference as a semantic main image.
+
+### 6. Tests Required
+
+- Application tests assert draft-only row counts, replay/drift, restore, storage failure compensation, finalization replay,
+  post-finalization drift, and the empty-Draft Turn guard.
+- HTTP tests assert strict JSON, multipart field names, status/response shape, one to six files, and zero ProductWorkflow rows.
+- ORM/migration tests assert both field lengths, the pair check, populated downgrade refusal, empty downgrade, and history
+  preservation.
+- An isolated PostgreSQL test must close/reopen sessions across create, restore, finalize, and replay; assert one Product,
+  exact media/asset counts, zero revisions, and zero workflows.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```python
+product = create_product_and_commit(...)
+draft = create_draft_and_commit(product.id)
+upload_references_and_commit(draft.id, images)
+```
+
+Correct:
+
+```python
+workspace = create_agent_product_draft_workspace(session, name=name, idempotency_key=key)
+workspace = finalize_agent_product_workspace_intake(
+    session,
+    conversation_id=workspace.conversation.id,
+    selection=selection,
+    image_uploads=images,
+    idempotency_key=intake_key,
+)
+```
+
+Each command owns one atomic boundary, and both commands converge through persisted request identity.
+
 ## Failure And Logging Rules
 
 - Syntactic/business rejection maps to stable `400`/`404`/`409` responses. Network failures, malformed upstream state,
@@ -382,8 +508,9 @@ registerReadTool("inspect_legacy_archive_v1", boundedSectionHandler)
 
 ## Deployment And Validation
 
-- Compose persists `/data` in `productflow-agent-data`, passes internal/provider settings only through environment
-  variables, and starts the worker after backend and Agent health checks pass.
+- Compose persists `/data` in `productflow-agent-data`, passes infrastructure and internal-auth settings through
+  environment variables, and starts the worker after backend and Agent health checks pass. Runtime provider credentials
+  and model options come from the authenticated ProductFlow endpoint.
 - `scripts/release.sh` checks the Agent `/healthz` endpoint from the Compose network because the service has no host port.
 - Required Go gates: `gofmt`, `go vet ./...`, `go test ./...`, and `go test -race ./...`.
 - Required backend gates: focused Agent/API/migration tests, Ruff, and the full pytest suite.
@@ -391,7 +518,8 @@ registerReadTool("inspect_legacy_archive_v1", boundedSectionHandler)
   rejection/retry, cross-product reference rejection, and attachment-time revalidation. A real provider run must use the
   complete production schema rather than a reduced probe.
 - Migration changes require a PostgreSQL 16 `previous -> head -> previous -> head` round trip with sentinel preservation.
-- `TestLiveProviderTwoTurnTranscript` is opt-in through `PRODUCTFLOW_RUN_LIVE_AGENT=1`; the default suite skips it and
-  consumes no provider quota.
+- `TestLiveProviderTwoTurnTranscript` is opt-in through `PRODUCTFLOW_RUN_LIVE_AGENT=1`; environment credentials are
+  exposed by its ProductFlow fixture through the authenticated runtime-config endpoint, and Manager must fetch them rather
+  than receive a direct provider override. The default suite skips it and consumes no provider quota.
 - Docker verification must build from a clean repository context, run as the non-root `productflow` user, return the fixed
   harness commit from `/healthz`, reject missing internal auth, and contain no sibling checkout dependency.

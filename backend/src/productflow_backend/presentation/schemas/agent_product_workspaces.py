@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from productflow_backend.application.agent_product_intake import (
     AGENT_PRODUCT_ALLOWED_IMAGE_MIME_TYPES,
@@ -56,6 +56,21 @@ class AgentProductWorkspaceCreateResponse(BaseModel):
     conversation: AgentConversationResponse
 
 
+class AgentProductDraftWorkspaceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=255)
+
+
+class AgentProductWorkspaceSnapshotResponse(BaseModel):
+    created: bool
+    intake_finalized: bool
+    product: CanonicalProductDetailResponse
+    created_assets: list[ProductImageAssetResponse]
+    workflow_draft: WorkflowDraftResponse
+    conversation: AgentConversationResponse
+
+
 def serialize_agent_product_workspace_options() -> AgentProductWorkspaceOptionsResponse:
     return AgentProductWorkspaceOptionsResponse(
         image_types=[
@@ -72,7 +87,9 @@ def serialize_agent_product_workspace_options() -> AgentProductWorkspaceOptionsR
 
 
 __all__ = [
+    "AgentProductDraftWorkspaceRequest",
     "AgentProductWorkspaceCreateResponse",
     "AgentProductWorkspaceOptionsResponse",
+    "AgentProductWorkspaceSnapshotResponse",
     "serialize_agent_product_workspace_options",
 ]

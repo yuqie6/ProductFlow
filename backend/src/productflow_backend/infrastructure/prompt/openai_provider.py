@@ -14,8 +14,8 @@ from productflow_backend.infrastructure.prompt.base import (
     PromptGenerationResult,
 )
 from productflow_backend.infrastructure.provider_config import (
-    ResolvedTextProviderConfig,
-    resolve_text_provider_config,
+    ResolvedPromptProviderConfig,
+    resolve_prompt_provider_config,
 )
 
 PROMPT_GENERATION_INSTRUCTIONS = (
@@ -29,13 +29,13 @@ PROMPT_GENERATION_INSTRUCTIONS = (
 class OpenAIPromptGenerationProvider(PromptGenerationProvider):
     provider_name = "openai"
 
-    def __init__(self, provider_config: ResolvedTextProviderConfig | None = None) -> None:
-        resolved_config = provider_config or resolve_text_provider_config()
+    def __init__(self, provider_config: ResolvedPromptProviderConfig | None = None) -> None:
+        resolved_config = provider_config or resolve_prompt_provider_config()
         client_kwargs: dict[str, Any] = {"api_key": resolved_config.api_key}
         if resolved_config.base_url:
             client_kwargs["base_url"] = resolved_config.base_url
         self.client = OpenAI(**client_kwargs)
-        self.model = resolved_config.copy_model
+        self.model = resolved_config.model
 
     def generate_prompt(self, request: PromptGenerationRequest) -> PromptGenerationResult:
         parse = getattr(self.client.responses, "parse", None)

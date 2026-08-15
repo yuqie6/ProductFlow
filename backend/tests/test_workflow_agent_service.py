@@ -72,6 +72,8 @@ from productflow_backend.infrastructure.db.models import (
     AgentConversation,
     AgentToolMutation,
     AgentTurnProjection,
+    ProviderBinding,
+    ProviderProfile,
     WorkflowDraft,
     WorkflowDraftRevision,
     new_id,
@@ -612,6 +614,43 @@ def test_turn_projection_and_artifact_sync_converge_without_storing_artifact_bod
             artifact_value=changed_payload,
         )
 
+    follow_up = reserve_agent_turn(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        input_text="然后呢？",
+        input_asset_ids=[],
+        idempotency_key="artifact-follow-up",
+    ).projection
+    follow_up = bind_harness_turn(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        projection_id=follow_up.id,
+        harness_turn_id="harness-turn-2",
+        status=AgentTurnStatus.RUNNING,
+    )
+    follow_up = synchronize_agent_turn_state(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        projection_id=follow_up.id,
+        state=AgentServiceTurnState(
+            api_version="v1alpha1",
+            run_id=conversation.harness_run_id,
+            turn_id="harness-turn-2",
+            status=AgentTurnStatus.SUCCEEDED,
+            output="请审阅并确认当前草案。",
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+            finished_at=datetime.now(UTC),
+        ),
+    )
+    assert follow_up.output_text == "请审阅并确认当前草案。"
+    assert follow_up.workflow_draft_revision_id is None
+    assert follow_up.conversation.status == AgentConversationStatus.AWAITING_CONFIRMATION
+    assert follow_up.conversation.workflow_draft.current_revision_id == revision_id
+
 
 def test_agent_read_tools_are_bounded_and_rename_is_reconcilable(db_session) -> None:
     product, asset, draft, _ = _create_product_and_draft(db_session, image_count=3)
@@ -961,6 +1000,63 @@ def test_agent_catalog_cutover_blocks_when_harness_cannot_be_verified(db_session
     assert "unavailable" in summary.blockers[0].reason
 
 
+def test_internal_agent_runtime_config_returns_bound_secret_only_to_service(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    profile = ProviderProfile(
+        name="工作流 Agent 网关",
+        provider_type="openai_compatible",
+        base_url="https://agent.example/v1",
+        api_key="agent-runtime-secret",
+        capabilities_json=["text_responses"],
+        default_models_json={},
+        config_json={},
+        enabled=True,
+    )
+    db_session.add(profile)
+    db_session.flush()
+    db_session.add(
+        ProviderBinding(
+            purpose="agent",
+            provider_kind="openai",
+            provider_profile_id=profile.id,
+            model_settings_json={"model": "gpt-agent"},
+            config_json={
+                "reasoning_effort": "high",
+                "reasoning_summary": "concise",
+                "text_verbosity": "low",
+                "service_tier": "priority",
+            },
+        )
+    )
+    db_session.commit()
+
+    internal_token = "agent-internal-token-with-at-least-32-characters"
+    monkeypatch.setenv("AGENT_SERVICE_INTERNAL_TOKEN", internal_token)
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+    path = "/api/internal/v1/agent-runtime/provider-config"
+
+    assert client.get(path).status_code == 401
+    response = client.get(path, headers={"Authorization": f"Bearer {internal_token}"})
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "schema_version": 1,
+        "provider_kind": "openai",
+        "api_key": "agent-runtime-secret",
+        "base_url": "https://agent.example/v1",
+        "model": "gpt-agent",
+        "reasoning_effort": "high",
+        "reasoning_summary": "concise",
+        "text_verbosity": "low",
+        "service_tier": "priority",
+    }
+
+
 def test_internal_agent_routes_require_service_token_and_never_need_browser_session(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
@@ -1291,6 +1387,66 @@ def test_public_agent_routes_keep_session_scope_idempotency_question_and_sse(
     canceled = client.post(f"{turn_path}/{projection_id}/cancel")
     assert canceled.status_code == 200, canceled.text
     assert canceled.json()["status"] == "canceled"
+
+
+def test_get_active_agent_turn_refreshes_and_attaches_artifact(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.presentation.api import create_app
+    from productflow_backend.presentation.routes import agent_conversations as agent_routes
+
+    product, asset, draft, payload = _create_product_and_draft(db_session)
+    conversation = create_agent_conversation(
+        db_session,
+        product_id=product.id,
+        workflow_draft_id=draft.id,
+    )
+    projection = reserve_agent_turn(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        input_text="生成可确认草案",
+        input_asset_ids=[asset.id],
+        idempotency_key="refresh-artifact-turn",
+    ).projection
+    projection = bind_harness_turn(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        projection_id=projection.id,
+        harness_turn_id="harness-refresh-artifact",
+        status=AgentTurnStatus.RUNNING,
+    )
+    projection = project_agent_turn_state(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        projection_id=projection.id,
+        harness_turn_id="harness-refresh-artifact",
+        status=AgentTurnStatus.AWAITING_CONFIRMATION,
+        output_text="草案终态已到达",
+        error_text=None,
+        question_json=None,
+        finished_at=datetime.now(UTC),
+    )
+    assert projection.workflow_draft_revision_id is None
+    gateway = _ArtifactAgentGateway(payload)
+    gateway.run_id = conversation.harness_run_id
+    gateway.turn_id = projection.harness_turn_id or ""
+    monkeypatch.setattr(agent_routes, "_agent_gateway_or_raise", lambda: gateway)
+
+    client = TestClient(create_app())
+    _login(client)
+    response = client.get(
+        f"/api/v2/products/{product.id}/agent-conversations/{conversation.id}/turns/{projection.id}"
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "awaiting_confirmation"
+    assert body["workflow_draft_revision_id"] is not None
+    assert body["output_text"] == "草案已准备完成"
 
 
 def test_sync_worker_recovers_unbound_turn_and_idempotently_attaches_artifact(db_session) -> None:

@@ -19,6 +19,7 @@ SchemaProfile = Literal[
     "current_canonical_20260814_0038",
     "current_with_legacy_archives_20260815_0039",
     "current_with_legacy_archive_rebuilds_20260815_0040",
+    "current_with_agent_workspace_finalization_20260815_0041",
     "unknown",
 ]
 AuditIssueSeverity = Literal["warning", "blocking"]

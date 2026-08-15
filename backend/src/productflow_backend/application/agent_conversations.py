@@ -16,6 +16,7 @@ from productflow_backend.application.workflow_drafts.service import (
     append_workflow_draft_revision,
     parse_workflow_draft_payload_or_raise,
     validate_workflow_draft_for_confirmation,
+    workflow_draft_query,
 )
 from productflow_backend.domain.enums import (
     AgentConversationStatus,
@@ -342,6 +343,19 @@ def reserve_agent_turn(
             raise ConflictError("同一 idempotency key 不能提交不同的 Agent Turn 请求")
         session.commit()
         return AgentTurnReservation(projection=existing, created=False)
+
+    draft = session.scalar(
+        workflow_draft_query().where(WorkflowDraft.id == conversation.workflow_draft_id)
+    )
+    if draft is None:
+        raise ConflictError("Agent conversation 绑定的 WorkflowDraft 不存在")
+    if (
+        draft.intake_json is None
+        and draft.current_revision_id is None
+        and draft.recipe_seed is None
+        and draft.legacy_archive_seed is None
+    ):
+        raise ConflictError("请先完成商品图片需求和参考图，再启动 Agent Turn")
 
     _validate_product_assets(
         session,
@@ -701,7 +715,11 @@ def _apply_conversation_status(
     if turn_status == AgentTurnStatus.AWAITING_CONFIRMATION:
         conversation.status = AgentConversationStatus.AWAITING_CONFIRMATION
     elif turn_status == AgentTurnStatus.SUCCEEDED:
-        conversation.status = AgentConversationStatus.COMPLETED
+        conversation.status = (
+            AgentConversationStatus.AWAITING_CONFIRMATION
+            if conversation.workflow_draft.status == WorkflowDraftStatus.AWAITING_CONFIRMATION
+            else AgentConversationStatus.COMPLETED
+        )
     elif turn_status == AgentTurnStatus.FAILED:
         conversation.status = AgentConversationStatus.FAILED
     elif turn_status == AgentTurnStatus.CANCELED:

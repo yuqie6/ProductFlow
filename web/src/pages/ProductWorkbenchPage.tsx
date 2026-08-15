@@ -1,14 +1,17 @@
 import { useQuery } from "@tanstack/react-query";
 import { Archive, ArrowLeft, FolderClock, Loader2, RotateCw } from "lucide-react";
 import { lazy } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Navigate, useNavigate, useParams } from "react-router-dom";
 
 import { TopNav } from "../components/TopNav";
 import { api, ApiError } from "../lib/api";
 import { formatPrice, formatShortDate } from "../lib/format";
 import { useI18n } from "../lib/preferences";
 import type { CanonicalProductDetail } from "../lib/types";
-import { productWorkbenchRouteTarget } from "./agent-workbench/productWorkbenchRoute";
+import {
+  agentProductIntakeResumePath,
+  productWorkbenchRouteTarget,
+} from "./agent-workbench/productWorkbenchRoute";
 
 const AgentProductWorkbenchPage = lazy(() =>
   import("./agent-workbench/AgentProductWorkbenchPage").then((module) => ({
@@ -32,6 +35,9 @@ export function ProductWorkbenchPage() {
   }
 
   const target = productWorkbenchRouteTarget(query.data);
+  if (target === "agent_intake" && query.data.mode === "agent_v2") {
+    return <Navigate to={agentProductIntakeResumePath(query.data.conversation.id)} replace />;
+  }
   if (target === "agent_v2" && query.data.mode === "agent_v2") {
     return (
       <AgentProductWorkbenchPage

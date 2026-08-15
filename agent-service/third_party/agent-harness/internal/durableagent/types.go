@@ -103,16 +103,17 @@ type Config struct {
 	// Instructions are trusted startup instructions persisted with new tasks.
 	Instructions []string
 	// SkillUserHome overrides user-level discovery for embedders and tests.
-	SkillUserHome    string
-	Policy           Policy
-	AllowEdit        bool
-	ReviewEdit       bool
-	Checks           []tools.NamedCheck
-	ReadTools        []tools.Tool
-	ExternalTools    []ExternalTool
-	RequiredArtifact string
-	TextDeltaSink    TextDeltaSink
-	EngineOptions    durable.Options
+	SkillUserHome                string
+	Policy                       Policy
+	AllowEdit                    bool
+	ReviewEdit                   bool
+	Checks                       []tools.NamedCheck
+	ReadTools                    []tools.Tool
+	ExternalTools                []ExternalTool
+	RequiredArtifact             string
+	AllowPriorTranscriptArtifact bool
+	TextDeltaSink                TextDeltaSink
+	EngineOptions                durable.Options
 }
 
 type ExternalTool struct {

@@ -13,15 +13,19 @@ from productflow_backend.infrastructure.db.models import AppSetting, ProviderBin
 from productflow_backend.infrastructure.db.session import get_session_factory
 
 TEXT_PURPOSE = "text"
+PROMPT_PURPOSE = "prompt"
 IMAGE_PURPOSE = "image"
+AGENT_PURPOSE = "agent"
 PROVIDER_TYPE_OPENAI_COMPATIBLE = "openai_compatible"
 PROVIDER_TYPE_GOOGLE_GEMINI = "google_gemini"
 PROVIDER_TYPES = {PROVIDER_TYPE_OPENAI_COMPATIBLE, PROVIDER_TYPE_GOOGLE_GEMINI}
 
 TEXT_PROVIDER_KINDS = {"mock", "openai"}
+PROMPT_PROVIDER_KINDS = {"mock", "openai"}
 IMAGE_PROVIDER_KINDS = {"mock", "openai_responses", "openai_images", "google_gemini_image"}
+AGENT_PROVIDER_KINDS = {"mock", "openai"}
 REAL_IMAGE_PROVIDER_KINDS = IMAGE_PROVIDER_KINDS - {"mock"}
-PROVIDER_PURPOSES = {TEXT_PURPOSE, IMAGE_PURPOSE}
+PROVIDER_PURPOSES = {TEXT_PURPOSE, PROMPT_PURPOSE, IMAGE_PURPOSE, AGENT_PURPOSE}
 CAPABILITY_TEXT_RESPONSES = "text_responses"
 CAPABILITY_IMAGE_RESPONSES = "image_responses"
 CAPABILITY_IMAGE_IMAGES = "image_images"
@@ -61,6 +65,15 @@ class ResolvedTextProviderConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class ResolvedPromptProviderConfig:
+    provider_kind: Literal["mock", "openai"]
+    model: str
+    provider_profile_id: str | None = None
+    api_key: str | None = None
+    base_url: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ResolvedImageProviderConfig:
     provider_kind: Literal["mock", "openai_responses", "openai_images", "google_gemini_image"]
     model: str
@@ -74,6 +87,19 @@ class ResolvedImageProviderConfig:
     gemini_output_mime_type: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class ResolvedAgentProviderConfig:
+    provider_kind: Literal["openai"]
+    model: str
+    api_key: str
+    provider_profile_id: str
+    base_url: str | None = None
+    reasoning_effort: str | None = None
+    reasoning_summary: str | None = None
+    text_verbosity: str | None = None
+    service_tier: str | None = None
+
+
 def ensure_provider_config_bootstrapped(session: Session | None = None, *, commit: bool = True) -> None:
     """Create provider profiles and bindings from legacy effective settings once."""
 
@@ -85,76 +111,85 @@ def ensure_provider_config_bootstrapped(session: Session | None = None, *, commi
             owned_session.close()
         return
 
-    if _provider_config_exists(session):
+    changed = False
+    if not _provider_config_exists(session):
+        settings = _load_effective_legacy_settings(session)
+        profiles_by_connection: dict[tuple[str, str], ProviderProfile] = {}
+
+        text_kind = _normalize_provider_kind(settings.text_provider_kind, allowed=TEXT_PROVIDER_KINDS, default="mock")
+        image_kind = _normalize_provider_kind(
+            settings.image_provider_kind,
+            allowed=IMAGE_PROVIDER_KINDS,
+            default="mock",
+        )
+
+        if text_kind == "openai":
+            profile = _profile_for_legacy_connection(
+                session,
+                profiles_by_connection,
+                base_url=settings.text_base_url,
+                api_key=settings.text_api_key,
+                capability=CAPABILITY_TEXT_RESPONSES,
+            )
+            _add_binding(
+                session,
+                purpose=TEXT_PURPOSE,
+                provider_kind="openai",
+                provider_profile=profile,
+                model_settings={
+                    "brief_model": settings.text_brief_model,
+                    "copy_model": settings.text_copy_model,
+                },
+            )
+        else:
+            _add_binding(
+                session,
+                purpose=TEXT_PURPOSE,
+                provider_kind="mock",
+                provider_profile=None,
+                model_settings={
+                    "brief_model": settings.text_brief_model,
+                    "copy_model": settings.text_copy_model,
+                },
+            )
+
+        if image_kind in {"openai_responses", "openai_images"}:
+            capability = CAPABILITY_IMAGE_RESPONSES if image_kind == "openai_responses" else CAPABILITY_IMAGE_IMAGES
+            profile = _profile_for_legacy_connection(
+                session,
+                profiles_by_connection,
+                base_url=settings.image_base_url,
+                api_key=settings.image_api_key,
+                capability=capability,
+            )
+            _add_binding(
+                session,
+                purpose=IMAGE_PURPOSE,
+                provider_kind=image_kind,
+                provider_profile=profile,
+                model_settings={"model": settings.image_generate_model},
+                config={
+                    "images_quality": settings.image_images_quality,
+                    "images_style": settings.image_images_style,
+                    "responses_background_enabled": settings.image_responses_background_enabled,
+                },
+            )
+        else:
+            _add_binding(
+                session,
+                purpose=IMAGE_PURPOSE,
+                provider_kind="mock",
+                provider_profile=None,
+                model_settings={"model": settings.image_generate_model},
+                config={},
+            )
+        session.flush()
+        changed = True
+
+    changed = _ensure_prompt_binding_from_text(session) or changed
+    changed = _ensure_agent_binding_from_text(session) or changed
+    if not changed:
         return
-
-    settings = _load_effective_legacy_settings(session)
-    profiles_by_connection: dict[tuple[str, str], ProviderProfile] = {}
-
-    text_kind = _normalize_provider_kind(settings.text_provider_kind, allowed=TEXT_PROVIDER_KINDS, default="mock")
-    image_kind = _normalize_provider_kind(settings.image_provider_kind, allowed=IMAGE_PROVIDER_KINDS, default="mock")
-
-    if text_kind == "openai":
-        profile = _profile_for_legacy_connection(
-            session,
-            profiles_by_connection,
-            base_url=settings.text_base_url,
-            api_key=settings.text_api_key,
-            capability=CAPABILITY_TEXT_RESPONSES,
-        )
-        _add_binding(
-            session,
-            purpose=TEXT_PURPOSE,
-            provider_kind="openai",
-            provider_profile=profile,
-            model_settings={
-                "brief_model": settings.text_brief_model,
-                "copy_model": settings.text_copy_model,
-            },
-        )
-    else:
-        _add_binding(
-            session,
-            purpose=TEXT_PURPOSE,
-            provider_kind="mock",
-            provider_profile=None,
-            model_settings={
-                "brief_model": settings.text_brief_model,
-                "copy_model": settings.text_copy_model,
-            },
-        )
-
-    if image_kind in {"openai_responses", "openai_images"}:
-        capability = CAPABILITY_IMAGE_RESPONSES if image_kind == "openai_responses" else CAPABILITY_IMAGE_IMAGES
-        profile = _profile_for_legacy_connection(
-            session,
-            profiles_by_connection,
-            base_url=settings.image_base_url,
-            api_key=settings.image_api_key,
-            capability=capability,
-        )
-        _add_binding(
-            session,
-            purpose=IMAGE_PURPOSE,
-            provider_kind=image_kind,
-            provider_profile=profile,
-            model_settings={"model": settings.image_generate_model},
-            config={
-                "images_quality": settings.image_images_quality,
-                "images_style": settings.image_images_style,
-                "responses_background_enabled": settings.image_responses_background_enabled,
-            },
-        )
-    else:
-        _add_binding(
-            session,
-            purpose=IMAGE_PURPOSE,
-            provider_kind="mock",
-            provider_profile=None,
-            model_settings={"model": settings.image_generate_model},
-            config={},
-        )
-
     if commit:
         session.commit()
     else:
@@ -274,7 +309,7 @@ def archive_provider_profile(session: Session, profile_id: str, *, commit: bool 
         select(ProviderBinding).where(ProviderBinding.provider_profile_id == profile_id)
     ).all()
     if active_bindings:
-        raise ValueError("供应商仍被文案或图片配置使用，不能归档")
+        raise ValueError("供应商仍被提示词、图片、Agent 或旧工作流配置使用，不能归档")
     profile.archived_at = datetime.now(UTC)
     profile.enabled = False
     if commit:
@@ -339,6 +374,10 @@ def update_provider_binding(
 
 def capability_for_provider_kind(provider_kind: str) -> str:
     return _capability_for_kind(provider_kind)
+
+
+def provider_kinds_for_purpose(purpose: str) -> set[str]:
+    return _provider_kinds_for_purpose(purpose)
 
 
 def is_real_image_provider_kind(provider_kind: str | None) -> bool:
@@ -422,6 +461,40 @@ def resolve_text_provider_config(session: Session | None = None) -> ResolvedText
             session.close()
 
 
+def resolve_prompt_provider_config(session: Session | None = None) -> ResolvedPromptProviderConfig:
+    owns_session = session is None
+    session = session or get_session_factory()()
+    try:
+        ensure_provider_config_bootstrapped(session, commit=owns_session)
+        binding = _require_binding(session, PROMPT_PURPOSE)
+        kind = binding.provider_kind
+        if kind == "mock":
+            return ResolvedPromptProviderConfig(
+                provider_kind="mock",
+                model=_require_text_value(binding.model_settings_json, "model", "提示词模型未配置"),
+            )
+        if kind != "openai":
+            raise RuntimeError(f"暂不支持的提示词 provider: {kind}")
+        profile = _require_active_profile(binding)
+        _require_capability(profile, CAPABILITY_TEXT_RESPONSES)
+        return ResolvedPromptProviderConfig(
+            provider_kind="openai",
+            model=_require_text_value(
+                binding.model_settings_json,
+                "model",
+                "提示词模型未配置",
+                fallback_values=profile.default_models_json,
+                fallback_key="prompt_model",
+            ),
+            provider_profile_id=profile.id,
+            api_key=profile.api_key,
+            base_url=profile.base_url,
+        )
+    finally:
+        if owns_session:
+            session.close()
+
+
 def resolve_image_provider_config(session: Session | None = None) -> ResolvedImageProviderConfig:
     owns_session = session is None
     session = session or get_session_factory()()
@@ -480,6 +553,43 @@ def resolve_image_provider_config(session: Session | None = None) -> ResolvedIma
             session.close()
 
 
+def resolve_agent_provider_config(session: Session | None = None) -> ResolvedAgentProviderConfig:
+    owns_session = session is None
+    session = session or get_session_factory()()
+    try:
+        ensure_provider_config_bootstrapped(session, commit=owns_session)
+        binding = _require_binding(session, AGENT_PURPOSE)
+        if binding.provider_kind == "mock":
+            raise RuntimeError("工作流 Agent 供应商尚未配置")
+        if binding.provider_kind != "openai":
+            raise RuntimeError(f"暂不支持的工作流 Agent provider: {binding.provider_kind}")
+        profile = _require_active_profile(binding)
+        _require_capability(profile, CAPABILITY_TEXT_RESPONSES)
+        api_key = _optional_str(profile.api_key)
+        if api_key is None:
+            raise RuntimeError("工作流 Agent 供应商 API Key 未配置")
+        return ResolvedAgentProviderConfig(
+            provider_kind="openai",
+            model=_require_text_value(
+                binding.model_settings_json,
+                "model",
+                "工作流 Agent 模型未配置",
+                fallback_values=profile.default_models_json,
+                fallback_key="agent_model",
+            ),
+            api_key=api_key,
+            provider_profile_id=profile.id,
+            base_url=profile.base_url,
+            reasoning_effort=_optional_str(binding.config_json.get("reasoning_effort")),
+            reasoning_summary=_optional_str(binding.config_json.get("reasoning_summary")),
+            text_verbosity=_optional_str(binding.config_json.get("text_verbosity")),
+            service_tier=_optional_str(binding.config_json.get("service_tier")),
+        )
+    finally:
+        if owns_session:
+            session.close()
+
+
 def _provider_config_exists(session: Session) -> bool:
     return bool(
         session.scalar(select(ProviderProfile.id).limit(1))
@@ -520,6 +630,50 @@ def _profile_for_legacy_connection(
         capabilities = _dedupe_ordered([*profile.capabilities_json, capability])
         profile.capabilities_json = capabilities
     return profile
+
+
+def _ensure_agent_binding_from_text(session: Session) -> bool:
+    if _get_binding(session, AGENT_PURPOSE) is not None:
+        return False
+    text_binding = _get_binding(session, TEXT_PURPOSE)
+    if text_binding is None:
+        return False
+    model = _optional_str(text_binding.model_settings_json.get("brief_model")) or _optional_str(
+        text_binding.model_settings_json.get("copy_model")
+    )
+    if model is None:
+        return False
+    _add_binding(
+        session,
+        purpose=AGENT_PURPOSE,
+        provider_kind="openai" if text_binding.provider_kind == "openai" else "mock",
+        provider_profile=text_binding.provider_profile if text_binding.provider_kind == "openai" else None,
+        model_settings={"model": model},
+        config={},
+    )
+    session.flush()
+    return True
+
+
+def _ensure_prompt_binding_from_text(session: Session) -> bool:
+    if _get_binding(session, PROMPT_PURPOSE) is not None:
+        return False
+    text_binding = _get_binding(session, TEXT_PURPOSE)
+    if text_binding is None:
+        return False
+    model = _optional_str(text_binding.model_settings_json.get("copy_model"))
+    if model is None:
+        return False
+    _add_binding(
+        session,
+        purpose=PROMPT_PURPOSE,
+        provider_kind="openai" if text_binding.provider_kind == "openai" else "mock",
+        provider_profile=text_binding.provider_profile if text_binding.provider_kind == "openai" else None,
+        model_settings={"model": model},
+        config={},
+    )
+    session.flush()
+    return True
 
 
 def _add_binding(
@@ -576,8 +730,8 @@ def _validate_binding_payload(
     config: dict[str, Any],
 ) -> None:
     if purpose not in PROVIDER_PURPOSES:
-        raise ValueError("用途必须是 text 或 image")
-    allowed_kinds = TEXT_PROVIDER_KINDS if purpose == TEXT_PURPOSE else IMAGE_PROVIDER_KINDS
+        raise ValueError("用途必须是 text、prompt、agent 或 image")
+    allowed_kinds = _provider_kinds_for_purpose(purpose)
     if provider_kind not in allowed_kinds:
         raise ValueError("供应商接口类型不支持当前用途")
     _validate_binding_runtime_config(
@@ -613,7 +767,7 @@ def _validate_profile_update_keeps_active_bindings(
     if not active_bindings:
         return
     if enabled is False:
-        raise ValueError("供应商仍被文案或图片配置使用，不能停用")
+        raise ValueError("供应商仍被提示词、图片、Agent 或旧工作流配置使用，不能停用")
     if capabilities is None:
         return
 
@@ -623,7 +777,19 @@ def _validate_profile_update_keeps_active_bindings(
             continue
         required_capability = _capability_for_kind(binding.provider_kind)
         if required_capability not in capability_set:
-            raise ValueError("供应商仍被文案或图片配置使用，不能移除当前接口能力")
+            raise ValueError("供应商仍被提示词、图片、Agent 或旧工作流配置使用，不能移除当前接口能力")
+
+
+def _provider_kinds_for_purpose(purpose: str) -> set[str]:
+    if purpose == TEXT_PURPOSE:
+        return TEXT_PROVIDER_KINDS
+    if purpose == PROMPT_PURPOSE:
+        return PROMPT_PROVIDER_KINDS
+    if purpose == IMAGE_PURPOSE:
+        return IMAGE_PROVIDER_KINDS
+    if purpose == AGENT_PURPOSE:
+        return AGENT_PROVIDER_KINDS
+    raise ValueError("用途必须是 text、prompt、agent 或 image")
 
 
 def _capability_for_kind(provider_kind: str) -> str:
@@ -655,6 +821,10 @@ def _validate_binding_runtime_config(
         _require_text_value(normalized_settings, "brief_model", "文案商品理解模型未配置", exc_type=ValueError)
         _require_text_value(normalized_settings, "copy_model", "文案生成模型未配置", exc_type=ValueError)
         return
+    if purpose in {PROMPT_PURPOSE, AGENT_PURPOSE}:
+        message = "提示词模型未配置" if purpose == PROMPT_PURPOSE else "工作流 Agent 模型未配置"
+        _require_text_value(model_settings, "model", message, exc_type=ValueError)
+        return
     _require_text_value(model_settings, "model", "图片模型未配置", exc_type=ValueError)
     if provider_kind == "openai_responses":
         _require_bool_value(
@@ -672,6 +842,9 @@ def _validate_binding_runtime_config(
 def _normalize_binding_model_settings(*, purpose: str, model_settings: dict[str, Any]) -> dict[str, Any]:
     if purpose == TEXT_PURPOSE:
         return _normalize_text_model_settings(model_settings)
+    if purpose in {PROMPT_PURPOSE, AGENT_PURPOSE}:
+        model = _optional_str(model_settings.get("model"))
+        return {"model": model} if model is not None else {}
     return {key: value for key, value in model_settings.items() if value is not None}
 
 
@@ -686,6 +859,17 @@ def _normalize_text_model_settings(model_settings: dict[str, Any]) -> dict[str, 
 
 
 def _normalize_binding_config(*, purpose: str, provider_kind: str, config: dict[str, Any]) -> dict[str, Any]:
+    if purpose == AGENT_PURPOSE:
+        return {
+            key: value
+            for key, value in {
+                "reasoning_effort": _optional_str(config.get("reasoning_effort")),
+                "reasoning_summary": _optional_str(config.get("reasoning_summary")),
+                "text_verbosity": _optional_str(config.get("text_verbosity")),
+                "service_tier": _optional_str(config.get("service_tier")),
+            }.items()
+            if value is not None
+        }
     if purpose != IMAGE_PURPOSE:
         return {}
     if provider_kind == "openai_responses":

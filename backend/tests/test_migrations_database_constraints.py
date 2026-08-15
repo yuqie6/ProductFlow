@@ -342,9 +342,14 @@ def test_workflow_draft_models_match_atomic_materialization_contract() -> None:
         constraint.name
         for constraint in conversation_table.constraints
         if isinstance(constraint, sa.CheckConstraint)
-    } == {"ck_agent_conversations_creation_idempotency_pair"}
+    } == {
+        "ck_agent_conversations_creation_idempotency_pair",
+        "ck_agent_conversations_intake_idempotency_pair",
+    }
     assert conversation_table.c.creation_idempotency_key.type.length == 200
     assert conversation_table.c.creation_request_hash.type.length == 64
+    assert conversation_table.c.intake_idempotency_key.type.length == 200
+    assert conversation_table.c.intake_request_hash.type.length == 64
 
     revision_table = WorkflowDraftRevision.__table__
     revision_unique_constraints = {
@@ -938,6 +943,113 @@ def test_canvas_recipe_migration_preserves_member_folders_and_round_trips_sqlite
     assert restored["width"] == 640
     assert restored["height"] == 420
     assert restored["config_json"] in ({}, "{}")
+    engine.dispose()
+    get_settings.cache_clear()
+
+
+def test_agent_workspace_finalization_migration_preserves_history_and_refuses_data_loss(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path, config = _configure_sqlite_alembic(
+        tmp_path,
+        monkeypatch,
+        filename="agent-workspace-finalization-roundtrip.db",
+    )
+    command.upgrade(config, "20260815_0040")
+    now = "2026-08-15 12:00:00"
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                "INSERT INTO products (id, name, created_at, updated_at) "
+                "VALUES ('product-finalization', '两阶段创建迁移商品', :now, :now)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO workflow_drafts (id, product_id, status, created_at, updated_at) "
+                "VALUES ('draft-finalization', 'product-finalization', 'collecting', :now, :now)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO agent_conversations "
+                "(id, product_id, workflow_draft_id, harness_run_id, status, "
+                "creation_idempotency_key, creation_request_hash, created_at, updated_at) "
+                "VALUES ('conversation-finalization', 'product-finalization', 'draft-finalization', "
+                "'conversation-finalization', 'collecting', 'draft-key', :creation_hash, :now, :now)"
+            ),
+            {"creation_hash": "a" * 64, "now": now},
+        )
+    engine.dispose()
+
+    command.upgrade(config, "20260815_0041")
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    inspector = sa.inspect(engine)
+    assert {"intake_idempotency_key", "intake_request_hash"} <= {
+        column["name"] for column in inspector.get_columns("agent_conversations")
+    }
+    assert "ck_agent_conversations_intake_idempotency_pair" in {
+        constraint["name"] for constraint in inspector.get_check_constraints("agent_conversations")
+    }
+    with engine.connect() as connection:
+        historical = connection.execute(
+            sa.text(
+                "SELECT intake_idempotency_key, intake_request_hash FROM agent_conversations "
+                "WHERE id = 'conversation-finalization'"
+            )
+        ).one()
+    assert historical == (None, None)
+
+    with pytest.raises(sa.exc.IntegrityError):
+        with engine.begin() as connection:
+            connection.execute(
+                sa.text(
+                    "UPDATE agent_conversations SET intake_idempotency_key = 'intake-key' "
+                    "WHERE id = 'conversation-finalization'"
+                )
+            )
+
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                "UPDATE agent_conversations SET intake_idempotency_key = 'intake-key', "
+                "intake_request_hash = :request_hash WHERE id = 'conversation-finalization'"
+            ),
+            {"request_hash": "b" * 64},
+        )
+    engine.dispose()
+
+    with pytest.raises(RuntimeError, match="cannot downgrade Agent workspace finalization"):
+        command.downgrade(config, "20260815_0040")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    with engine.begin() as connection:
+        assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260815_0041"
+        connection.execute(
+            sa.text(
+                "UPDATE agent_conversations SET intake_idempotency_key = NULL, intake_request_hash = NULL "
+                "WHERE id = 'conversation-finalization'"
+            )
+        )
+    engine.dispose()
+
+    command.downgrade(config, "20260815_0040")
+    engine = sa.create_engine(f"sqlite:///{database_path}")
+    inspector = sa.inspect(engine)
+    assert "intake_idempotency_key" not in {
+        column["name"] for column in inspector.get_columns("agent_conversations")
+    }
+    with engine.connect() as connection:
+        assert connection.scalar(
+            sa.text(
+                "SELECT COUNT(*) FROM agent_conversations WHERE id = 'conversation-finalization'"
+            )
+        ) == 1
+        assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260815_0040"
     engine.dispose()
     get_settings.cache_clear()
 

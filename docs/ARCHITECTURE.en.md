@@ -175,15 +175,10 @@ Related entrypoints:
 
 ProductFlow separates model capabilities by modality.
 
-Text providers live under `infrastructure/text/` with a unified interface:
-
-- `generate_brief(product_input)`
-- `generate_copy(product_input, brief, config, reference_images=None)`
-
-Current implementations:
-
-- `mock`
-- `openai` (Responses API compatible)
+v2 `prompt_generation` resolves its single-model prompt provider through the `prompt` purpose binding. The workflow Agent
+resolves its model and reasoning/text/service-tier options through a separate `agent` purpose binding. The
+`generate_brief(...)` / `generate_copy(...)` interfaces under `infrastructure/text/` remain only for transitional v1 copy
+execution and are not dependencies of v2 prompt nodes.
 
 Image providers live under `infrastructure/image/` and serve poster generation and image sessions. Current implementations:
 
@@ -196,7 +191,7 @@ Provider selection is controlled by `provider_profiles`, `provider_bindings`, an
 `TEXT_*` / `IMAGE_*` environment values are only first-migration input; runtime resolvers read interface kind,
 connection data, and models from provider profiles and purpose bindings. Routes do not directly depend on concrete SDKs.
 
-The workflow Agent uses the Responses API through agent-harness in the Go service. Its current provider connection is controlled by the env-only `AGENT_PROVIDER_API_KEY`, `AGENT_PROVIDER_BASE_URL`, `AGENT_PROVIDER_MODEL`, and reasoning/text/service-tier options. It has not been integrated with `provider_profiles` / `provider_bindings` yet. These values only enter the Agent container and are never echoed through browser APIs.
+The workflow Agent uses the Responses API through agent-harness in the Go service. Its provider uses an OpenAI-compatible connection from `provider_profiles` and the `agent` purpose binding; the settings page owns the model and reasoning/text/service-tier options. The Go service reads the complete configuration through an authenticated internal API when it first opens a conversation and keeps that conversation on the same configuration. Browsers only receive the redacted provider-profile state. Existing databases copy the initial Agent binding from the text binding on first startup.
 
 ## 7. Poster Generation
 
@@ -214,7 +209,7 @@ Both modes target two artifact types:
 
 Configuration is split into two categories:
 
-1. Env-only infrastructure configuration: `DATABASE_URL`, `REDIS_URL`, `SESSION_SECRET`, `ADMIN_ACCESS_KEY`, `SETTINGS_ACCESS_TOKEN`, `AGENT_SERVICE_INTERNAL_TOKEN`, the Agent service address, Agent provider connection values, and similar settings. These must be available at process startup, for internal-service authentication, or before database access, so runtime DB overrides are not supported.
+1. Env-only infrastructure configuration: `DATABASE_URL`, `REDIS_URL`, `SESSION_SECRET`, `ADMIN_ACCESS_KEY`, `SETTINGS_ACCESS_TOKEN`, `AGENT_SERVICE_INTERNAL_TOKEN`, the Agent service address, and similar settings. These must be available at process startup, for internal-service authentication, or before database access, so runtime DB overrides are not supported.
 2. Runtime business configuration: provider, model, image size, upload limits, task retry, global generation concurrency limit, poster mode, prompt templates, login-gate switch, business deletion switch, and similar values. They can be provided as defaults by `.env` / `.env.dev`, or written to `app_settings` through `/api/settings` after login and settings-page unlock.
 
 Secret configuration values are not echoed back in API responses.

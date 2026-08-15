@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  agentBindingPayloadFromDraft,
   configValuesFromChangedDrafts,
   draftsFromConfig,
   imageBindingPayloadFromDraft,
+  itemsForSection,
+  promptBindingPayloadFromDraft,
   providerDisableBlocked,
   providerDrawerCreateState,
   providerDrawerEditState,
@@ -14,9 +17,9 @@ import {
   providerUsageLabelKeys,
   settingsExportFilename,
   settingsImportSummaryCounts,
+  settingsSectionFromSearchParam,
   settingsSectionIds,
   shouldShowSettingsMigrationPanel,
-  textBindingPayloadFromDraft,
 } from "./SettingsPage";
 import { translate } from "../lib/i18n";
 import type {
@@ -256,21 +259,31 @@ describe("SettingsPage provider profile helpers", () => {
     });
   });
 
-  it("derives card usage labels from text and image provider bindings", () => {
+  it("derives card usage labels from prompt, Agent, image, and legacy-only text bindings", () => {
     const usage = providerUsageFromBindings(
       [
         providerBinding({ purpose: "text", provider_profile_id: "profile-1" }),
+        providerBinding({ purpose: "prompt", provider_profile_id: "profile-1" }),
+        providerBinding({ purpose: "agent", provider_profile_id: "profile-1" }),
         providerBinding({ purpose: "image", provider_profile_id: "profile-1", provider_kind: "openai_images" }),
         providerBinding({ purpose: "image", provider_profile_id: "other", provider_kind: "openai_images" }),
       ],
       "profile-1",
     );
 
-    expect(usage).toEqual({ text: true, image: true });
+    expect(usage).toEqual({ prompt: true, legacyText: false, agent: true, image: true });
     expect(providerUsageLabelKeys(usage)).toEqual([
-      "settings.provider.usageText",
+      "settings.provider.usagePrompt",
+      "settings.provider.usageAgent",
       "settings.provider.usageImage",
     ]);
+
+    const legacyUsage = providerUsageFromBindings(
+      [providerBinding({ purpose: "text", provider_profile_id: "legacy-profile" })],
+      "legacy-profile",
+    );
+    expect(legacyUsage).toEqual({ prompt: false, legacyText: true, agent: false, image: false });
+    expect(providerUsageLabelKeys(legacyUsage)).toEqual(["settings.provider.usageLegacyText"]);
   });
 
   it("builds Google Gemini image binding payloads without OpenAI-specific config", () => {
@@ -293,29 +306,85 @@ describe("SettingsPage provider profile helpers", () => {
     });
   });
 
-  it("builds text binding payloads with text models only", () => {
+  it("builds prompt binding payloads with one prompt model", () => {
     expect(
-      textBindingPayloadFromDraft({
+      promptBindingPayloadFromDraft({
         provider_kind: "openai",
         provider_profile_id: "profile-1",
-        brief_model: " gpt-5.4 ",
-        copy_model: " gpt-5.4 ",
+        model: " gpt-5.4 ",
       }),
     ).toEqual({
       provider_kind: "openai",
       provider_profile_id: "profile-1",
-      model_settings: {
-        brief_model: "gpt-5.4",
-        copy_model: "gpt-5.4",
-      },
+      model_settings: { model: "gpt-5.4" },
       config: {},
     });
   });
 
+  it("builds workflow Agent binding payloads with Responses runtime options", () => {
+    expect(
+      agentBindingPayloadFromDraft({
+        provider_kind: "openai",
+        provider_profile_id: "profile-1",
+        model: " gpt-5.5 ",
+        reasoning_effort: " high ",
+        reasoning_summary: " concise ",
+        text_verbosity: " ",
+        service_tier: " priority ",
+      }),
+    ).toEqual({
+      provider_kind: "openai",
+      provider_profile_id: "profile-1",
+      model_settings: { model: "gpt-5.5" },
+      config: {
+        reasoning_effort: "high",
+        reasoning_summary: "concise",
+        service_tier: "priority",
+      },
+    });
+  });
+
   it("blocks disabling an enabled provider that is currently used by a binding", () => {
-    expect(providerDisableBlocked(providerProfile({ enabled: true }), { text: true, image: false })).toBe(true);
-    expect(providerDisableBlocked(providerProfile({ enabled: true }), { text: false, image: false })).toBe(false);
-    expect(providerDisableBlocked(providerProfile({ enabled: false }), { text: true, image: true })).toBe(false);
+    expect(
+      providerDisableBlocked(providerProfile({ enabled: true }), {
+        prompt: true,
+        legacyText: false,
+        agent: false,
+        image: false,
+      }),
+    ).toBe(true);
+    expect(
+      providerDisableBlocked(providerProfile({ enabled: true }), {
+        prompt: false,
+        legacyText: true,
+        agent: false,
+        image: false,
+      }),
+    ).toBe(true);
+    expect(
+      providerDisableBlocked(providerProfile({ enabled: true }), {
+        prompt: false,
+        legacyText: false,
+        agent: true,
+        image: false,
+      }),
+    ).toBe(true);
+    expect(
+      providerDisableBlocked(providerProfile({ enabled: true }), {
+        prompt: false,
+        legacyText: false,
+        agent: false,
+        image: false,
+      }),
+    ).toBe(false);
+    expect(
+      providerDisableBlocked(providerProfile({ enabled: false }), {
+        prompt: true,
+        legacyText: true,
+        agent: true,
+        image: true,
+      }),
+    ).toBe(false);
   });
 
   it("localizes the provider delete confirmation dialog copy", () => {
@@ -350,10 +419,32 @@ describe("SettingsPage import/export helpers", () => {
     const sectionIds = settingsSectionIds();
 
     expect(sectionIds).toContain("migration");
+    expect(sectionIds).toContain("prompt");
+    expect(sectionIds).toContain("agent");
     expect(shouldShowSettingsMigrationPanel("migration")).toBe(true);
     for (const sectionId of sectionIds.filter((sectionId) => sectionId !== "migration")) {
       expect(shouldShowSettingsMigrationPanel(sectionId)).toBe(false);
     }
+  });
+
+  it("resolves deep-linked settings sections and rejects unknown values", () => {
+    expect(settingsSectionFromSearchParam("prompt")).toBe("prompt");
+    expect(settingsSectionFromSearchParam("text")).toBe("prompt");
+    expect(settingsSectionFromSearchParam("agent")).toBe("agent");
+    expect(settingsSectionFromSearchParam("migration")).toBe("migration");
+    expect(settingsSectionFromSearchParam("unknown")).toBe("providers");
+    expect(settingsSectionFromSearchParam(null)).toBe("providers");
+  });
+
+  it("hides retired copy system prompts from the normal image request template section", () => {
+    const config = configResponse([
+      configItem({ key: "prompt_brief_system", value: "legacy brief", category: "提示词" }),
+      configItem({ key: "prompt_copy_system", value: "legacy copy", category: "提示词" }),
+      configItem({ key: "prompt_image_system", value: "image request", category: "提示词" }),
+      configItem({ key: "upload_max_files", value: 6, category: "海报与上传" }),
+    ]);
+
+    expect(itemsForSection(config, "prompts").map((item) => item.key)).toEqual(["prompt_image_system"]);
   });
 
   it("builds a stable JSON export filename from the export timestamp", () => {

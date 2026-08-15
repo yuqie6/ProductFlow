@@ -97,7 +97,11 @@ export function AgentMessageList({
         {turns.map((turn) => {
           const active = turn.id === activeTurnId;
           const assistantText = selectAgentAssistantText(turn, active ? eventState : null);
-          const showAssistant = Boolean(assistantText || active || turn.error_text || turn.sync_error);
+          const waitingForAssistant =
+            active && turn.status !== "requires_input" && turn.status !== "awaiting_confirmation";
+          const showAssistant = Boolean(
+            assistantText || waitingForAssistant || turn.error_text || turn.sync_error,
+          );
           return (
             <div key={turn.id} data-agent-turn-id={turn.id} className="space-y-3">
               <div className="flex justify-end gap-2.5">
@@ -145,7 +149,7 @@ export function AgentMessageList({
                     >
                       {assistantText ? (
                         <div className="whitespace-pre-wrap break-words">{assistantText}</div>
-                      ) : active ? (
+                      ) : waitingForAssistant ? (
                         <div className="flex h-8 items-center gap-2 text-zinc-500 dark:text-slate-400">
                           <Loader2 size={14} className="animate-spin" />
                           {t("agentWorkbench.waitingForAgent")}

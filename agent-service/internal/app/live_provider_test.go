@@ -31,8 +31,32 @@ func TestLiveProviderTwoTurnTranscript(t *testing.T) {
 	if model == "" {
 		model = "gpt-5.4"
 	}
+	optional := func(value string) *string {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil
+		}
+		return &value
+	}
 
-	productFlowServer := newProductFlowFixture(t, nil, testProductID)
+	productFlowServer := newProductFlowFixtureWithAgentProvider(
+		t,
+		nil,
+		testProductID,
+		&productflow.AgentProviderConfig{
+			SchemaVersion: 1,
+			ProviderKind:  "openai",
+			APIKey:        apiKey,
+			BaseURL:       optional(baseURL),
+			Model:         model,
+			ReasoningEffort: optional(
+				os.Getenv("AGENT_PROVIDER_REASONING_EFFORT"),
+			),
+			ReasoningSummary: optional(os.Getenv("AGENT_PROVIDER_REASONING_SUMMARY")),
+			TextVerbosity:    optional(os.Getenv("AGENT_PROVIDER_TEXT_VERBOSITY")),
+			ServiceTier:      optional(os.Getenv("AGENT_PROVIDER_SERVICE_TIER")),
+		},
+	)
 	t.Cleanup(productFlowServer.Close)
 	productFlowClient, err := productflow.NewClient(
 		productFlowServer.URL,
@@ -44,16 +68,6 @@ func TestLiveProviderTwoTurnTranscript(t *testing.T) {
 	}
 	manager, err := NewManager(ManagerConfig{
 		DataRoot: t.TempDir(),
-		Provider: agenttask.ProviderConfig{
-			APIKey:           apiKey,
-			BaseURL:          baseURL,
-			Model:            model,
-			ResponseMode:     agenttask.ResponseModeOpaque,
-			ReasoningEffort:  strings.TrimSpace(os.Getenv("AGENT_PROVIDER_REASONING_EFFORT")),
-			ReasoningSummary: strings.TrimSpace(os.Getenv("AGENT_PROVIDER_REASONING_SUMMARY")),
-			TextVerbosity:    strings.TrimSpace(os.Getenv("AGENT_PROVIDER_TEXT_VERBOSITY")),
-			ServiceTier:      strings.TrimSpace(os.Getenv("AGENT_PROVIDER_SERVICE_TIER")),
-		},
 		Policy: agenttask.Policy{
 			MaxIterations:             12,
 			ModelContextWindow:        128_000,

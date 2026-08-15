@@ -202,7 +202,11 @@ func open(config Config, textDeltaSink durableagent.TextDeltaSink) (*Runner, err
 	publicTools := append([]Tool(nil), config.Tools...)
 	if requiredArtifact != "" {
 		publicTools = append(publicTools, artifactTool)
-		system = strings.TrimSpace(system + "\n\nYou must successfully call the strict " + requiredArtifact + " tool with the complete terminal artifact before giving a final answer. A prose-only answer is incomplete.")
+		artifactInstruction := "You must successfully call the strict " + requiredArtifact + " tool with the complete terminal artifact before giving a final answer. A prose-only answer is incomplete."
+		if config.RequiredArtifact.AllowPriorTranscriptArtifact {
+			artifactInstruction = "You must successfully call the strict " + requiredArtifact + " tool before the first terminal draft answer and whenever the user requests a draft change. If the trusted transcript already contains an accepted artifact, a prose-only answer to a question about that draft is allowed."
+		}
+		system = strings.TrimSpace(system + "\n\n" + artifactInstruction)
 	}
 	readTools, err := internalReadTools(publicTools)
 	if err != nil {
@@ -234,7 +238,9 @@ func open(config Config, textDeltaSink durableagent.TextDeltaSink) (*Runner, err
 		AllowEdit: config.AllowEdit, ReviewEdit: config.ReviewEdit, EngineOptions: config.EngineOptions,
 		Checks: checks, ReadTools: readTools, ExternalTools: durableTools,
 		RequiredArtifact: requiredArtifact,
-		TextDeltaSink:    textDeltaSink,
+		AllowPriorTranscriptArtifact: config.RequiredArtifact != nil &&
+			config.RequiredArtifact.AllowPriorTranscriptArtifact,
+		TextDeltaSink: textDeltaSink,
 	})
 	if err != nil {
 		return nil, err

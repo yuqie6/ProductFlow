@@ -17,13 +17,6 @@ type Config struct {
 	DataRoot                  string
 	ProductFlowBaseURL        string
 	InternalToken             string
-	ProviderAPIKey            string
-	ProviderBaseURL           string
-	ProviderModel             string
-	ProviderReasoningEffort   string
-	ProviderReasoningSummary  string
-	ProviderTextVerbosity     string
-	ProviderServiceTier       string
 	ProductFlowRequestTimeout time.Duration
 	EventPollInterval         time.Duration
 	HeartbeatInterval         time.Duration
@@ -71,13 +64,6 @@ func Load() (Config, error) {
 		DataRoot:                  dataRoot,
 		ProductFlowBaseURL:        strings.TrimRight(envOr("PRODUCTFLOW_INTERNAL_BASE_URL", "http://productflow-backend:29280"), "/"),
 		InternalToken:             strings.TrimSpace(os.Getenv("AGENT_SERVICE_INTERNAL_TOKEN")),
-		ProviderAPIKey:            strings.TrimSpace(os.Getenv("AGENT_PROVIDER_API_KEY")),
-		ProviderBaseURL:           strings.TrimRight(strings.TrimSpace(os.Getenv("AGENT_PROVIDER_BASE_URL")), "/"),
-		ProviderModel:             strings.TrimSpace(os.Getenv("AGENT_PROVIDER_MODEL")),
-		ProviderReasoningEffort:   strings.TrimSpace(os.Getenv("AGENT_PROVIDER_REASONING_EFFORT")),
-		ProviderReasoningSummary:  strings.TrimSpace(os.Getenv("AGENT_PROVIDER_REASONING_SUMMARY")),
-		ProviderTextVerbosity:     strings.TrimSpace(os.Getenv("AGENT_PROVIDER_TEXT_VERBOSITY")),
-		ProviderServiceTier:       strings.TrimSpace(os.Getenv("AGENT_PROVIDER_SERVICE_TIER")),
 		ProductFlowRequestTimeout: requestTimeout,
 		EventPollInterval:         eventPoll,
 		HeartbeatInterval:         heartbeat,
@@ -104,12 +90,6 @@ func (config Config) Validate() error {
 	}
 	if len(config.InternalToken) < 32 {
 		return errors.New("AGENT_SERVICE_INTERNAL_TOKEN must contain at least 32 characters")
-	}
-	if config.ProviderAPIKey == "" {
-		return errors.New("AGENT_PROVIDER_API_KEY is required")
-	}
-	if config.ProviderModel == "" {
-		return errors.New("AGENT_PROVIDER_MODEL is required")
 	}
 	if config.ProductFlowRequestTimeout <= 0 || config.EventPollInterval < time.Millisecond || config.HeartbeatInterval < config.EventPollInterval {
 		return errors.New("agent service duration settings are invalid")

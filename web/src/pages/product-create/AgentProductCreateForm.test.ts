@@ -49,20 +49,17 @@ function renderForm(selections: Array<{ key: "hero" | "scene"; quantity: number 
   return renderToStaticMarkup(
     createElement(AgentProductCreateForm, {
       options,
-      name: "",
       selections,
       referenceFiles: [],
       isOptionsLoading: false,
       isOptionsError: false,
       isSubmitting: false,
       error: "",
-      onNameChange: () => undefined,
       onToggleImageType: () => undefined,
       onQuantityChange: () => undefined,
       onAddReferenceFiles: () => undefined,
       onRemoveReferenceFile: () => undefined,
       onRetryOptions: () => undefined,
-      onCancel: () => undefined,
       onSubmit: () => undefined,
     }),
   );

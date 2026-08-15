@@ -17,22 +17,23 @@ import (
 )
 
 type Runner struct {
-	engine             *durable.Engine
-	model              *modelTool
-	compact            *compactionTool
-	workspace          string
-	system             string
-	provider           ProviderSnapshot
-	policy             Policy
-	catalog            []llm.Tool
-	allowed            map[string]bool
-	editMode           string
-	reviewEdit         bool
-	toolContractSHA256 string
-	resultCodecs       map[string]toolResultCodec
-	checks             *tools.NamedCheckSet
-	requiredChecks     []string
-	requiredArtifact   string
+	engine                       *durable.Engine
+	model                        *modelTool
+	compact                      *compactionTool
+	workspace                    string
+	system                       string
+	provider                     ProviderSnapshot
+	policy                       Policy
+	catalog                      []llm.Tool
+	allowed                      map[string]bool
+	editMode                     string
+	reviewEdit                   bool
+	toolContractSHA256           string
+	resultCodecs                 map[string]toolResultCodec
+	checks                       *tools.NamedCheckSet
+	requiredChecks               []string
+	requiredArtifact             string
+	allowPriorTranscriptArtifact bool
 }
 
 func Open(config Config) (*Runner, error) {
@@ -238,6 +239,7 @@ func Open(config Config) (*Runner, error) {
 		editMode:           editMode,
 		toolContractSHA256: toolContractSHA256, resultCodecs: resultCodecs,
 		checks: checkSet, requiredChecks: checkSet.RequiredNames(), requiredArtifact: strings.TrimSpace(config.RequiredArtifact),
+		allowPriorTranscriptArtifact: config.AllowPriorTranscriptArtifact,
 	}, nil
 }
 

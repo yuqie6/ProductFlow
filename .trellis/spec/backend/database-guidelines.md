@@ -663,7 +663,9 @@ between the DB-free configuration module, application composition points, and in
 - `application.runtime_settings.get_runtime_settings(session: Session | None = None) -> Settings`.
 - `application.settings`: settings/provider-config read projections, validation, bootstrap, mutation transactions, and
   import/export application use cases.
-- `infrastructure.provider_config.resolve_text_provider_config(session: Session | None = None)`.
+- `infrastructure.provider_config.resolve_text_provider_config(session: Session | None = None)` for transitional v1 copy execution.
+- `infrastructure.provider_config.resolve_prompt_provider_config(session: Session | None = None)` for v2 prompt generation.
+- `infrastructure.provider_config.resolve_agent_provider_config(session: Session | None = None)` for workflow Agent turns.
 - `infrastructure.provider_config.resolve_image_provider_config(session: Session | None = None)`.
 - `config.normalize_image_generation_size(..., max_dimension: int | None = None)` and
   `config.filter_image_tool_options(..., allowed_fields: tuple[str, ...] | None = None)` are pure helpers.
@@ -744,8 +746,8 @@ provider = resolve_image_provider_config(session=session)
 
 ### 1. Scope / Trigger
 
-- Trigger: changing text provider selection, image provider selection, settings APIs, provider secrets, or legacy
-  `text_*` / `image_*` provider env keys.
+- Trigger: changing prompt, workflow Agent, transitional text, or image provider selection; settings APIs; provider
+  secrets; or legacy provider environment keys.
 - This is a cross-layer and database contract because provider configuration spans `Settings`, `app_settings`,
   `provider_profiles`, `provider_bindings`, provider factories, API DTOs, and `SettingsPage`.
 
@@ -763,7 +765,7 @@ provider = resolve_image_provider_config(session=session)
   - `enabled: bool`
   - `archived_at: datetime | null`
 - DB table: `provider_bindings`
-  - `purpose: "text" | "image"`
+  - `purpose: "text" | "prompt" | "agent" | "image"`
   - `provider_kind: "mock" | "openai" | "openai_responses" | "openai_images" | "google_gemini_image"`
   - `provider_profile_id: String(36) | null`
   - `model_settings_json: JSON object`
@@ -775,7 +777,9 @@ provider = resolve_image_provider_config(session=session)
   - `DELETE /api/settings/provider-profiles/{profile_id}`
   - `PATCH /api/settings/provider-bindings/{purpose}`
 - Resolver functions:
-  - `resolve_text_provider_config() -> ResolvedTextProviderConfig`
+  - `resolve_text_provider_config() -> ResolvedTextProviderConfig` (transitional v1)
+  - `resolve_prompt_provider_config() -> ResolvedPromptProviderConfig`
+  - `resolve_agent_provider_config() -> ResolvedAgentProviderConfig`
   - `resolve_image_provider_config() -> ResolvedImageProviderConfig`
 
 ### 3. Contracts

@@ -184,6 +184,37 @@ def agent_product_workspace_request_hash(
     return hashlib.sha256(encoded).hexdigest()
 
 
+def agent_product_draft_workspace_request_hash(*, normalized_product_name: str) -> str:
+    payload = {
+        "request_kind": "agent_product_draft_workspace_v1",
+        "product_name": normalized_product_name,
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def agent_product_intake_request_hash(
+    *,
+    selection: AgentProductSelectionV1,
+    image_uploads: list[tuple[bytes, str, str]],
+) -> str:
+    payload = {
+        "request_kind": "agent_product_intake_finalization_v1",
+        "selection": selection.model_dump(mode="json"),
+        "images": [
+            {
+                "order": order,
+                "filename": filename,
+                "mime_type": mime_type,
+                "sha256": hashlib.sha256(content).hexdigest(),
+            }
+            for order, (content, filename, mime_type) in enumerate(image_uploads)
+        ],
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 __all__ = [
     "AGENT_PRODUCT_ALLOWED_IMAGE_MIME_TYPES",
     "AGENT_PRODUCT_DEFAULT_IMAGE_QUANTITY",
@@ -195,6 +226,8 @@ __all__ = [
     "AgentProductSelectionV1",
     "WORKFLOW_INTAKE_SCHEMA_VERSION",
     "WorkflowIntakeV1",
+    "agent_product_draft_workspace_request_hash",
+    "agent_product_intake_request_hash",
     "agent_product_workspace_request_hash",
     "normalize_agent_product_idempotency_key",
     "parse_agent_product_selection",

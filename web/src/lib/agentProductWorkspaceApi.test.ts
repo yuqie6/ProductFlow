@@ -73,4 +73,51 @@ describe("Agent product workspace API", () => {
       "/api/workflow/canvas-templates",
     );
   });
+
+  it("supports draft creation, workspace recovery, and bounded intake finalization", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const front = new File(["front"], "front.png", { type: "image/png" });
+
+    await api.createAgentProductDraftWorkspace({
+      name: "硬质刀具收纳套装",
+      idempotency_key: "draft-create-1",
+    });
+    await api.getAgentProductWorkspace("conversation/1");
+    await api.finalizeAgentProductWorkspaceIntake({
+      conversation_id: "conversation/1",
+      selection: {
+        schema_version: 1,
+        image_types: [{ key: "hero", quantity: 2, order: 0 }],
+      },
+      images: [front],
+      idempotency_key: "intake-finalize-1",
+    });
+
+    const [draftUrl, draftInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(draftUrl).toBe("/api/v2/agent-product-workspaces/drafts");
+    expect(draftInit.headers).toEqual({
+      "Content-Type": "application/json",
+      "Idempotency-Key": "draft-create-1",
+    });
+    expect(JSON.parse(String(draftInit.body))).toEqual({ name: "硬质刀具收纳套装" });
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      "/api/v2/agent-product-workspaces/conversation%2F1",
+    );
+    const [intakeUrl, intakeInit] = fetchMock.mock.calls[2] as [string, RequestInit];
+    expect(intakeUrl).toBe(
+      "/api/v2/agent-product-workspaces/conversation%2F1/intake",
+    );
+    expect(intakeInit.headers).toEqual({ "Idempotency-Key": "intake-finalize-1" });
+    const formData = intakeInit.body as FormData;
+    expect(JSON.parse(String(formData.get("selection")))).toEqual({
+      schema_version: 1,
+      image_types: [{ key: "hero", quantity: 2, order: 0 }],
+    });
+    expect(formData.getAll("images")).toEqual([front]);
+  });
 });

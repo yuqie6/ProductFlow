@@ -71,7 +71,7 @@ func (r *Runner) advanceAwaiting(ctx context.Context, job durable.Job) (AdvanceR
 			}
 			return advanceFromResult(result, true, true), failErr
 		}
-		if gateErr := requiredArtifactGateError(job, r.requiredArtifact); gateErr != nil {
+		if gateErr := requiredArtifactGateError(job, r.requiredArtifact, r.allowPriorTranscriptArtifact); gateErr != nil {
 			result, failErr := r.failBoundary(ctx, job, gateErr)
 			if isContention(failErr) {
 				return r.observeLatest(ctx, job.ID)
@@ -165,7 +165,7 @@ func (r *Runner) advanceAwaiting(ctx context.Context, job durable.Job) (AdvanceR
 	return advanceFor(appended, "", true, false), nil
 }
 
-func requiredArtifactGateError(job durable.Job, name string) error {
+func requiredArtifactGateError(job durable.Job, name string, allowPriorTranscript bool) error {
 	if name == "" {
 		return nil
 	}
@@ -187,7 +187,37 @@ func requiredArtifactGateError(job durable.Job, name string) error {
 	if lastFailure != nil {
 		return fmt.Errorf("%w: %s did not validate: %v", ErrRequiredArtifactMissing, name, lastFailure)
 	}
+	if allowPriorTranscript && priorTranscriptHasArtifact(job, name) {
+		return nil
+	}
 	return fmt.Errorf("%w: model completed without calling %s", ErrRequiredArtifactMissing, name)
+}
+
+func priorTranscriptHasArtifact(job durable.Job, name string) bool {
+	for _, step := range job.Steps {
+		if step.Tool != modelToolName {
+			continue
+		}
+		var input modelInput
+		if err := json.Unmarshal(step.Input, &input); err != nil {
+			return false
+		}
+		calls := make(map[string]struct{})
+		for _, message := range input.Messages {
+			for _, call := range message.ToolCalls {
+				if call.Function.Name == name {
+					calls[call.ID] = struct{}{}
+				}
+			}
+			if message.Role == "tool" {
+				if _, found := calls[message.ToolCallID]; found {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return false
 }
 
 func (r *Runner) observeLatest(ctx context.Context, jobID string) (AdvanceResult, error) {

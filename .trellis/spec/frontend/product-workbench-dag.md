@@ -735,6 +735,105 @@ if (source) api.appendWorkflowRecipeVersion(source);
 
 The visible context selects a source only within the immutable recipe kind.
 
+## Scenario: Formal full-screen Agent product creation entry
+
+### 1. Scope / Trigger
+
+- Trigger: changing `/products/new`, `/products/new/agent`, the product-list create command, draft workspace recovery,
+  structured intake controls, or the transition into the Agent-enhanced workbench.
+- The creation surface collects product identity and bounded reference intake. Agent clarification, Draft confirmation,
+  materialization, canvas editing, and asset operations remain owned by the shared workbench components.
+
+### 2. Signatures
+
+- `/products/new` renders `AgentProductCreatePage`; `/products/new/agent` redirects with `replace` to `/products/new`.
+- The resumable URL is `/products/new?workspace={encodedConversationId}`. All browser navigation stays origin-relative;
+  no route or component may hard-code the Vite development port.
+- `api.createAgentProductDraftWorkspace({name, idempotency_key})`,
+  `api.getAgentProductWorkspace(conversationId)`, and
+  `api.finalizeAgentProductWorkspaceIntake({conversation_id, selection, images, idempotency_key})` own the frontend API
+  boundary.
+- `AgentProductWorkspaceSnapshot` extends the composite response with `created` and `intake_finalized`.
+- `productWorkbenchRouteTarget(...)` returns `agent_intake` only for an Agent-v2 bootstrap with no active workflow, intake,
+  current revision, recipe seed, or legacy archive seed.
+
+### 3. Contracts
+
+- The initial route renders one full-height shell with a single vertical scroll owner and a centered product-name composer.
+  It must not fetch a template catalog, preview/apply a template, upload images, or request a workflow before draft creation.
+- Successful identity submission stores the workspace ID in the URL and renders the product name as a user bubble followed
+  by unboxed Agent content. The structured intake stays in this shell: all 15 backend-owned image types start unselected;
+  selection defaults to two; each selected quantity remains `1..6`; total output remains at most 30; references remain one
+  to six equal files.
+- The type list uses stable two-column desktop and one-column compact tracks. Quantity steppers have fixed dimensions;
+  reference previews use the shared ImageDropZone plus a horizontal strip and explicit preview/remove commands.
+- A pending draft creation key is written to session storage before the request. Intake uses one conversation-scoped key.
+  Network errors keep the same key and current input; editing request content rotates the relevant key.
+- A workspace query restores the persisted phase after refresh. Browser security prevents durable File restoration, so an
+  unfinalized hard refresh restores identity/workspace while the user reselects local files.
+- Successful intake finalization clears its local key, updates Product/Agent caches, performs a reduced-motion-aware short
+  fade, and replaces the route with `/products/{productId}`. It does not build or render a provisional DAG.
+- The existing product route sends an unfinished empty Agent Draft back to its resumable intake URL. A finalized Draft
+  loads the existing `AgentProductWorkbenchPage`: `AgentWorkbenchShell` is Agent-only until materialization, then keeps the
+  same `AgentConversationPanel` mounted in the right inspector while revealing the established canvas.
+- The post-materialization rail retains Agent, Add, Details, Runs, Library, and Recipes. Existing node cards, typed handles,
+  free connection gestures, ratio/quality editors, gallery, run controls, and inspector state are not reimplemented in the
+  creation page.
+- Motion uses standard 180-300 ms easing and has `prefers-reduced-motion` branches. User messages may use a compact bubble;
+  Agent prose should remain unboxed. Decorative effects or a second page-level card hierarchy are not part of this flow.
+
+### 4. Validation & Error Matrix
+
+- Blank identity -> inline name error; no draft request.
+- Draft request failure -> remain in identity composer with the stable key available for retry.
+- Unknown/unreadable workspace URL -> full-height recovery error with explicit retry; do not silently create a new draft.
+- Options request failure -> keep the persisted workspace and show retry inside the intake region.
+- Invalid type quantity, total, MIME, or reference count -> show the bounded error near intake; do not send finalization.
+- Finalization failure -> keep selections, File objects, previews, and finalization key in the mounted page.
+- Direct product navigation for an empty Draft -> replace with its workspace URL; no empty canvas or default DAG.
+- Finalized workspace reopened through the creation URL -> replace with the product workbench.
+
+### 5. Good/Base/Bad Cases
+
+- Good: submit a product name, choose hero `3` and scene `2`, upload two references, finalize, and continue the same
+  conversation through Agent Question, confirmation, materialization, and the existing right sidebar.
+- Good: reload after draft creation and recover the same Product, Draft, and conversation without a template or workflow
+  request.
+- Base: enter `/products/new/agent` from an old bookmark and land on the canonical `/products/new` route.
+- Bad: mount `ProductCreatePage`, a template picker, or a second workbench to collect the same creation data.
+- Bad: show a fake canvas while the Draft is collecting or replace the mature inspector/node components after materialization.
+
+### 6. Tests Required
+
+- API helper tests assert JSON `Content-Type` and `Idempotency-Key` coexist, FormData owns its multipart boundary, paths are
+  encoded, and no template endpoint is called.
+- Pure/form tests assert all 15 options are initially unchecked, selected rows alone expose a stable quantity control, and
+  route discrimination returns `agent_intake` only for a plain unfinished Draft.
+- Browser tests cover redirect, draft-only database state, reload recovery, local selection/upload, finalization, the first
+  real Agent Turn, and provider Question at `1440x900`, `1024x768`, and `390x844`.
+- Browser diagnostics must assert exact viewport dimensions, no document horizontal overflow, no console/page/network
+  failures, zero template catalog/preview/apply calls, zero legacy workflow reads, and zero workflow before confirmation.
+- Existing shell identity tests remain authoritative for keeping the Agent panel, message list, composer draft, scroll, and
+  harness run mounted across materialization and sidebar/tool transitions.
+
+### 7. Wrong vs Correct
+
+Wrong:
+
+```tsx
+<Route path="/products/new" element={<ProductCreatePage templates={catalog} />} />
+<Route path="/products/new/agent" element={<StandaloneAgentIntake />} />
+```
+
+Correct:
+
+```tsx
+<Route path="/products/new" element={<AgentProductCreatePage />} />
+<Route path="/products/new/agent" element={<Navigate to="/products/new" replace />} />
+```
+
+The finalized workspace enters `AgentProductWorkbenchPage`, which preserves the shared canvas and inspector ownership.
+
 ## Scenario: Agent-enhanced product workbench reuses the established canvas
 
 ### 1. Scope / Trigger
@@ -1077,3 +1176,29 @@ setSelectedNodeIds(nodeIds);
 ```
 
 Selection changes may reveal the relevant inspector; repeated projection events do not take control away from the user.
+
+## Scenario: Workflow Agent settings entry
+
+### 1. Scope / Trigger
+
+- Trigger: changing the formal product-creation header, settings navigation, provider usage state, or Agent binding form.
+
+### 2. Contracts
+
+- The full-screen `/products/new` header exposes an icon-only settings command with tooltip and routes directly to
+  `/settings?section=agent`. The close command continues to return to the product list.
+- Settings section identity is URL-backed. `section=agent` opens the Agent form after authentication/unlock, unknown values
+  fall back to the provider-profile section, and desktop/mobile navigation updates the same query parameter.
+- The Agent form reuses provider profiles with `text_responses` capability. It stores one provider, one model, and optional
+  reasoning effort, reasoning summary, text verbosity, and service tier. Selecting the unavailable state writes the
+  existing `mock` wire value and does not introduce a second frontend-only enum.
+- Provider cards show Agent usage and cannot disable or archive a profile while the Agent binding references it. API keys
+  remain write-only through the existing profile drawer and never appear in Agent form state.
+- Saving Agent settings states that new conversations use the configuration. Existing conversation services retain their
+  provider snapshot and are not presented as hot-switched.
+
+### 3. Tests Required
+
+- Pure tests cover deep-link resolution, Agent payload trimming, provider usage labels, and disabled-profile guards.
+- Backend/API tests own secret redaction and binding validation. Browser verification covers direct entry from
+  `/products/new`, unlocked desktop/mobile layouts, model editing, and no text/button overflow.

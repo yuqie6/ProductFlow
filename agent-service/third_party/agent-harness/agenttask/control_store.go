@@ -261,6 +261,18 @@ func (s *controlStore) latestSuccessfulTurnBefore(
 	return previous, err == nil, err
 }
 
+func (s *controlStore) hasPriorArtifact(ctx context.Context, runID, turnID string) (bool, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*)
+		FROM agent_turns_v1 AS candidate
+		JOIN agent_turns_v1 AS current ON current.turn_id = ? AND current.run_id = ?
+		WHERE candidate.run_id = current.run_id
+		  AND candidate.status = ?
+		  AND candidate.run_sequence < current.run_sequence`,
+		turnID, runID, turnprotocol.StatusAwaitingConfirmation).Scan(&count)
+	return count > 0, err
+}
+
 type rowScanner interface{ Scan(...any) error }
 
 func scanTurn(row rowScanner) (turnprotocol.State, error) {

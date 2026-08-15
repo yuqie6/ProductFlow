@@ -26,7 +26,9 @@ from productflow_backend.infrastructure.db.models import (
 from productflow_backend.infrastructure.db.session import get_session_factory
 from productflow_backend.infrastructure.provider_config import (
     ensure_provider_config_bootstrapped,
+    resolve_agent_provider_config,
     resolve_image_provider_config,
+    resolve_prompt_provider_config,
     resolve_text_provider_config,
 )
 
@@ -365,7 +367,7 @@ def test_settings_export_includes_migratable_runtime_config_provider_secrets_and
 
     assert exported.status_code == 200
     payload = exported.json()
-    assert payload["metadata"]["schema_version"] == 1
+    assert payload["metadata"]["schema_version"] == 2
     assert payload["metadata"]["app"] == "ProductFlow"
     assert payload["metadata"]["app_version"]
     assert payload["runtime_config"]["generation_max_concurrent_tasks"] == 2
@@ -444,15 +446,28 @@ def test_settings_import_preview_and_commit_replaces_runtime_and_provider_config
         },
     ]
 
+    legacy_document = {
+        **document,
+        "metadata": {
+            **document["metadata"],
+            "schema_version": 1,
+            "compatibility": "productflow-settings-v1",
+        },
+    }
+    legacy_preview = client.post("/api/settings/import/preview", json=legacy_document)
+    assert legacy_preview.status_code == 200
+    assert legacy_preview.json()["schema_version"] == 1
+    assert legacy_preview.json()["provider_binding_purposes"] == ["agent", "image", "prompt", "text"]
+
     preview = client.post("/api/settings/import/preview", json=document)
     assert preview.status_code == 200
     assert preview.json() == {
-        "schema_version": 1,
+        "schema_version": 2,
         "runtime_config_count": len(RUNTIME_CONFIG_KEYS),
         "provider_profile_count": 1,
-        "provider_binding_count": 2,
+        "provider_binding_count": 4,
         "provider_profile_names": ["导入网关"],
-        "provider_binding_purposes": ["image", "text"],
+        "provider_binding_purposes": ["agent", "image", "prompt", "text"],
         "includes_api_keys": True,
         "provider_profiles_with_api_key_count": 1,
     }
@@ -477,6 +492,10 @@ def test_settings_import_preview_and_commit_replaces_runtime_and_provider_config
         assert profiles[0].api_key == "import-secret-key"
         bindings = {binding.purpose: binding for binding in session.scalars(select(ProviderBinding)).all()}
         assert bindings["text"].provider_profile_id == imported_profile_id
+        assert bindings["prompt"].provider_profile_id == imported_profile_id
+        assert bindings["prompt"].model_settings_json == {"model": "copy-import"}
+        assert bindings["agent"].provider_profile_id == imported_profile_id
+        assert bindings["agent"].model_settings_json == {"model": "brief-import"}
         assert bindings["image"].provider_kind == "openai_responses"
         assert bindings["image"].config_json == {"responses_background_enabled": True}
     finally:
@@ -530,7 +549,9 @@ def test_settings_import_rejects_unknown_version_and_rolls_back_invalid_bindings
         assert session.get(AppSetting, "generation_max_concurrent_tasks") is None
         bindings = {binding.purpose: binding for binding in session.scalars(select(ProviderBinding)).all()}
         assert {purpose: binding.provider_kind for purpose, binding in bindings.items()} == {
+            "agent": "mock",
             "image": "mock",
+            "prompt": "mock",
             "text": "mock",
         }
     finally:
@@ -567,7 +588,14 @@ def test_provider_bootstrap_runs_on_app_startup(configured_env: Path) -> None:
 
     assert len(profiles) == 1
     assert set(profiles[0].capabilities_json) == {"text_responses", "image_responses"}
-    assert {binding.purpose for binding in bindings} == {"text", "image"}
+    assert {binding.purpose for binding in bindings} == {"text", "prompt", "image", "agent"}
+    text_binding = next(binding for binding in bindings if binding.purpose == "text")
+    prompt_binding = next(binding for binding in bindings if binding.purpose == "prompt")
+    agent_binding = next(binding for binding in bindings if binding.purpose == "agent")
+    assert prompt_binding.provider_kind == "openai"
+    assert prompt_binding.model_settings_json == {"model": text_binding.model_settings_json["copy_model"]}
+    assert agent_binding.provider_kind == "openai"
+    assert agent_binding.model_settings_json == {"model": text_binding.model_settings_json["brief_model"]}
 
 
 def test_provider_config_reads_do_not_bootstrap_or_write(configured_env: Path) -> None:
@@ -591,6 +619,32 @@ def test_provider_config_reads_do_not_bootstrap_or_write(configured_env: Path) -
     try:
         assert session.scalars(select(ProviderProfile)).all() == []
         assert session.scalars(select(ProviderBinding)).all() == []
+    finally:
+        session.close()
+
+
+def test_provider_bootstrap_never_overwrites_an_existing_prompt_binding(configured_env: Path) -> None:
+    ensure_provider_config_bootstrapped()
+
+    session = get_session_factory()()
+    try:
+        prompt_binding = session.scalar(select(ProviderBinding).where(ProviderBinding.purpose == "prompt"))
+        text_binding = session.scalar(select(ProviderBinding).where(ProviderBinding.purpose == "text"))
+        assert prompt_binding is not None
+        assert text_binding is not None
+        prompt_binding.model_settings_json = {"model": "operator-prompt-model"}
+        text_binding.model_settings_json = {"brief_model": "legacy-brief", "copy_model": "new-legacy-copy"}
+        session.commit()
+    finally:
+        session.close()
+
+    ensure_provider_config_bootstrapped()
+
+    session = get_session_factory()()
+    try:
+        prompt_binding = session.scalar(select(ProviderBinding).where(ProviderBinding.purpose == "prompt"))
+        assert prompt_binding is not None
+        assert prompt_binding.model_settings_json == {"model": "operator-prompt-model"}
     finally:
         session.close()
 
@@ -639,6 +693,12 @@ def test_provider_bootstrap_merges_matching_legacy_text_and_image_config(configu
     assert bindings["text"]["provider_kind"] == "openai"
     assert bindings["text"]["provider_profile_id"] == profile["id"]
     assert bindings["text"]["model_settings"] == {"brief_model": "brief-model", "copy_model": "copy-model"}
+    assert bindings["prompt"]["provider_kind"] == "openai"
+    assert bindings["prompt"]["provider_profile_id"] == profile["id"]
+    assert bindings["prompt"]["model_settings"] == {"model": "copy-model"}
+    assert bindings["agent"]["provider_kind"] == "openai"
+    assert bindings["agent"]["provider_profile_id"] == profile["id"]
+    assert bindings["agent"]["model_settings"] == {"model": "brief-model"}
     assert bindings["image"]["provider_kind"] == "openai_images"
     assert bindings["image"]["provider_profile_id"] == profile["id"]
     assert bindings["image"]["model_settings"] == {"model": "gpt-image-2"}
@@ -655,6 +715,17 @@ def test_provider_bootstrap_merges_matching_legacy_text_and_image_config(configu
     assert text_config.base_url == "http://localhost:3000/v1"
     assert text_config.brief_model == "brief-model"
     assert text_config.copy_model == "copy-model"
+
+    agent_config = resolve_agent_provider_config()
+    assert agent_config.api_key == "shared-key"
+    assert agent_config.base_url == "http://localhost:3000/v1"
+    assert agent_config.model == "brief-model"
+
+    prompt_config = resolve_prompt_provider_config()
+    assert prompt_config.provider_kind == "openai"
+    assert prompt_config.api_key == "shared-key"
+    assert prompt_config.base_url == "http://localhost:3000/v1"
+    assert prompt_config.model == "copy-model"
 
     image_config = resolve_image_provider_config()
     assert image_config.provider_kind == "openai_images"
@@ -700,6 +771,8 @@ def test_provider_bootstrap_splits_different_legacy_connections(configured_env: 
     assert set(profiles_by_base_url["https://image.example/v1"]["capabilities"]) == {"image_responses"}
     bindings = {binding["purpose"]: binding for binding in payload["bindings"]}
     assert bindings["text"]["provider_profile_id"] == profiles_by_base_url["https://text.example/v1"]["id"]
+    assert bindings["prompt"]["provider_profile_id"] == profiles_by_base_url["https://text.example/v1"]["id"]
+    assert bindings["agent"]["provider_profile_id"] == profiles_by_base_url["https://text.example/v1"]["id"]
     assert bindings["image"]["provider_profile_id"] == profiles_by_base_url["https://image.example/v1"]["id"]
 
 
@@ -717,7 +790,9 @@ def test_provider_config_api_masks_keys_preserves_blank_update_and_validates_bin
     initial_payload = initial.json()
     assert initial_payload["profiles"] == []
     assert {binding["purpose"]: binding["provider_kind"] for binding in initial_payload["bindings"]} == {
+        "agent": "mock",
         "image": "mock",
+        "prompt": "mock",
         "text": "mock",
     }
 
@@ -782,6 +857,42 @@ def test_provider_config_api_masks_keys_preserves_blank_update_and_validates_bin
         "copy_model": "copy-model",
     }
 
+    prompt_binding = client.patch(
+        "/api/settings/provider-bindings/prompt",
+        json={
+            "provider_kind": "openai",
+            "provider_profile_id": profile_id,
+            "model_settings": {"model": "prompt-model", "ignored": "value"},
+            "config": {"ignored": "value"},
+        },
+    )
+    assert prompt_binding.status_code == 200
+    assert prompt_binding.json()["model_settings"] == {"model": "prompt-model"}
+    assert prompt_binding.json()["config"] == {}
+
+    agent_binding = client.patch(
+        "/api/settings/provider-bindings/agent",
+        json={
+            "provider_kind": "openai",
+            "provider_profile_id": profile_id,
+            "model_settings": {"model": "agent-model", "ignored": "value"},
+            "config": {
+                "reasoning_effort": " high ",
+                "reasoning_summary": "concise",
+                "text_verbosity": "",
+                "service_tier": "priority",
+                "ignored": "value",
+            },
+        },
+    )
+    assert agent_binding.status_code == 200
+    assert agent_binding.json()["model_settings"] == {"model": "agent-model"}
+    assert agent_binding.json()["config"] == {
+        "reasoning_effort": "high",
+        "reasoning_summary": "concise",
+        "service_tier": "priority",
+    }
+
     image_binding = client.patch(
         "/api/settings/provider-bindings/image",
         json={
@@ -813,6 +924,13 @@ def test_provider_config_api_masks_keys_preserves_blank_update_and_validates_bin
     )
     assert missing_text_model.status_code == 400
     assert "文案商品理解模型未配置" in missing_text_model.json()["detail"]
+
+    missing_prompt_model = client.patch(
+        "/api/settings/provider-bindings/prompt",
+        json={"provider_kind": "mock", "provider_profile_id": None, "model_settings": {}, "config": {}},
+    )
+    assert missing_prompt_model.status_code == 400
+    assert "提示词模型未配置" in missing_prompt_model.json()["detail"]
 
     missing_image_model = client.patch(
         "/api/settings/provider-bindings/image",
@@ -856,7 +974,7 @@ def test_provider_config_api_masks_keys_preserves_blank_update_and_validates_bin
 
     archive_active = client.delete(f"/api/settings/provider-profiles/{profile_id}")
     assert archive_active.status_code == 400
-    assert "仍被文案或图片配置使用" in archive_active.json()["detail"]
+    assert "仍被提示词、图片、Agent 或旧工作流配置使用" in archive_active.json()["detail"]
 
     reset_image = client.patch(
         "/api/settings/provider-bindings/image",
@@ -880,6 +998,26 @@ def test_provider_config_api_masks_keys_preserves_blank_update_and_validates_bin
         },
     )
     assert reset_text.status_code == 200
+    reset_prompt = client.patch(
+        "/api/settings/provider-bindings/prompt",
+        json={
+            "provider_kind": "mock",
+            "provider_profile_id": None,
+            "model_settings": {"model": "mock-prompt"},
+            "config": {},
+        },
+    )
+    assert reset_prompt.status_code == 200
+    reset_agent = client.patch(
+        "/api/settings/provider-bindings/agent",
+        json={
+            "provider_kind": "mock",
+            "provider_profile_id": None,
+            "model_settings": {"model": "mock-agent"},
+            "config": {},
+        },
+    )
+    assert reset_agent.status_code == 200
     archived = client.delete(f"/api/settings/provider-profiles/{profile_id}")
     assert archived.status_code == 200
     assert archived.json()["archived_at"] is not None
@@ -1079,6 +1217,11 @@ def test_resolvers_ignore_legacy_rows_after_provider_bindings_exist(configured_e
     assert text_config.api_key == "new-key"
     assert text_config.base_url == "https://new.example/v1"
     assert text_config.brief_model == "new-brief"
+
+    prompt_config = resolve_prompt_provider_config()
+    assert prompt_config.api_key == "new-key"
+    assert prompt_config.base_url == "https://new.example/v1"
+    assert prompt_config.model == "new-copy"
 
     image_config = resolve_image_provider_config()
     assert image_config.api_key == "new-key"

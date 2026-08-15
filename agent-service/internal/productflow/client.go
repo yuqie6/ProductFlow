@@ -38,6 +38,18 @@ type Contract struct {
 	ToolContractVersion int            `json:"tool_contract_version"`
 }
 
+type AgentProviderConfig struct {
+	SchemaVersion    int     `json:"schema_version"`
+	ProviderKind     string  `json:"provider_kind"`
+	APIKey           string  `json:"api_key"`
+	BaseURL          *string `json:"base_url"`
+	Model            string  `json:"model"`
+	ReasoningEffort  *string `json:"reasoning_effort"`
+	ReasoningSummary *string `json:"reasoning_summary"`
+	TextVerbosity    *string `json:"text_verbosity"`
+	ServiceTier      *string `json:"service_tier"`
+}
+
 type AssetMetadata struct {
 	ID                 string          `json:"id"`
 	DisplayName        string          `json:"display_name"`
@@ -133,6 +145,12 @@ func NewClient(baseURL, token string, httpClient *http.Client) (*Client, error) 
 func (client *Client) Contract(ctx context.Context, conversationID string) (Contract, error) {
 	var result Contract
 	err := client.json(ctx, http.MethodGet, client.conversationPath(conversationID)+"/contract", nil, &result, "")
+	return result, err
+}
+
+func (client *Client) AgentProviderConfig(ctx context.Context) (AgentProviderConfig, error) {
+	var result AgentProviderConfig
+	err := client.json(ctx, http.MethodGet, "/api/internal/v1/agent-runtime/provider-config", nil, &result, "")
 	return result, err
 }
 

@@ -100,7 +100,7 @@ from productflow_backend.infrastructure.prompt.base import (
 from productflow_backend.infrastructure.prompt.openai_provider import OpenAIPromptGenerationProvider
 from productflow_backend.infrastructure.provider_config import (
     ResolvedImageProviderConfig,
-    ResolvedTextProviderConfig,
+    ResolvedPromptProviderConfig,
 )
 
 
@@ -361,10 +361,9 @@ def test_openai_prompt_provider_sends_native_multimodal_content_parts() -> None:
             return SimpleNamespace(id="resp-openai-prompt", output_parsed=current_prompt)
 
     provider = OpenAIPromptGenerationProvider(
-        ResolvedTextProviderConfig(
+        ResolvedPromptProviderConfig(
             provider_kind="openai",
-            brief_model="brief-model",
-            copy_model="prompt-model",
+            model="prompt-model",
             api_key="test-key",
         )
     )
