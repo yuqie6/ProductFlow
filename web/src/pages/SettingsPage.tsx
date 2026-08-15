@@ -1850,7 +1850,11 @@ function ImageBindingSection({ data, draft, pending, onChange, onSave }: ImageBi
         <button
           type="button"
           onClick={onSave}
-          disabled={pending || (draft.provider_kind !== "mock" && !draft.provider_profile_id)}
+          disabled={
+            pending ||
+            !draft.model.trim() ||
+            (draft.provider_kind !== "mock" && !draft.provider_profile_id)
+          }
           className={SETTINGS_MAIN_ACTION_CLASS}
         >
           {pending ? <Loader2 size={14} className="mr-2 animate-spin" /> : <Save size={14} className="mr-2" />}

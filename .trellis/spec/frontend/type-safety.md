@@ -368,6 +368,73 @@ const run = await api.runWorkflowNodeV2(nodeId);
 const evidence = await api.getWorkflowNodeRunV2(run.node_run.id);
 ```
 
+### Scenario: Provider purpose settings and compatibility navigation
+
+#### 1. Scope / Trigger
+
+- Trigger: changing provider purposes, provider binding forms, settings navigation, provider usage badges, or the retirement
+  of legacy copy configuration from normal UI.
+- This contract covers the compatibility release where old v1 workflows still execute, while all new prompt generation uses
+  the first-class prompt purpose.
+
+#### 2. Signatures
+
+- `ProviderPurpose = "text" | "prompt" | "agent" | "image"` in `web/src/lib/types.ts`.
+- `api.updateProviderBinding(purpose: ProviderPurpose, input: ProviderBindingUpdateRequest)`.
+- Current model/workflow section IDs are `providers`, `prompt`, `agent`, `image`, and `prompts`; operational sections remain
+  available for image parameters, queues, security, and import/export.
+
+#### 3. Contracts
+
+- Prompt generation submits exactly one trimmed `model` in `model_settings`; it never submits `brief_model` or
+  `copy_model`.
+- Workflow Agent submits one `model` plus optional `reasoning_effort`, `reasoning_summary`, `text_verbosity`, and
+  `service_tier` values. Blank optional values are omitted.
+- Transitional `text` remains in API DTOs and V2 export/import during the v1 compatibility window, but it has no normal
+  settings navigation or editable form. `?section=text` renders the prompt section for old bookmarks.
+- Provider cards show prompt, Agent, image, and legacy workflow compatibility usage. A text binding gets a legacy badge only
+  when the same profile is not already represented by a prompt binding.
+- The normal image request template section filters out `prompt_brief_system` and `prompt_copy_system`. Backend compatibility
+  rows may still exist until the final maintenance release.
+- Mobile uses the same section registry as desktop through one grouped selector. Do not fork a smaller mobile-only purpose
+  list.
+
+#### 4. Validation & Error Matrix
+
+- Unknown or missing `section` query -> `providers`.
+- Legacy `section=text` -> `prompt` without exposing the old double-model form.
+- Real prompt or Agent binding without a profile -> save action remains disabled; backend errors still surface through
+  `ApiError.detail` if called directly.
+- Enabled profile used by prompt, Agent, image, or transitional text -> disabling and archiving remain blocked.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: prompt and Agent reuse one `text_responses` provider profile while retaining different models and runtime options.
+- Base: prompt uses mock, Agent is visibly disabled, and existing operational settings remain reachable.
+- Bad: remove `text` from `ProviderPurpose` before v1 freeze; settings V2 import/export would delete a production dependency.
+- Bad: hide image parameters, queue, security, or import/export because the current model/workflow group has five entries.
+
+#### 6. Tests Required
+
+- Helper tests assert prompt payload trimming, Agent option omission, provider usage labels, and disable blocking.
+- Navigation tests assert `text -> prompt`, unknown -> providers, and both desktop/mobile registries contain prompt and Agent.
+- Config filtering test asserts old brief/copy system prompts are hidden while active image request templates remain.
+- Run full Vitest, ESLint, TypeScript, and production build after changing this contract.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+
+```ts
+api.updateProviderBinding("text", { model_settings: { brief_model, copy_model }, config: {} });
+```
+
+Correct:
+
+```ts
+api.updateProviderBinding("prompt", { model_settings: { model }, config: {} });
+```
+
 ### Scenario: Settings migration API typing
 
 #### 1. Scope / Trigger

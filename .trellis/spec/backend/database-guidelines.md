@@ -793,7 +793,9 @@ provider = resolve_image_provider_config(session=session)
 - `Settings.image_responses_background_enabled` defaults to `False`. Background Responses image generation is opt-in
   because several OpenAI-compatible gateways fail or stall on the top-level `background` flag.
 - `ensure_provider_config_bootstrapped(session)` reads legacy effective provider config from env plus legacy
-  `app_settings` rows, then creates provider profiles and text/image bindings once.
+  `app_settings` rows, creates provider profiles and transitional text/image bindings once, then idempotently fills missing
+  prompt and Agent bindings from text. Prompt uses `text.copy_model`; Agent uses `text.brief_model` and falls back to
+  `text.copy_model`. An existing prompt or Agent binding is never overwritten by bootstrap.
 - If legacy text and image configs share the same `(base_url, api_key)`, bootstrap creates one profile with merged
   capabilities. Different connections create separate profiles.
 - Google Gemini profiles use `provider_type="google_gemini"`, declare only `image_google_gemini`, reject custom
@@ -801,13 +803,15 @@ provider = resolve_image_provider_config(session=session)
 - Google Gemini image bindings store `model_settings_json.model`, `config_json.gemini_api_version` (`v1beta` by default,
   allowed values `v1` or `v1beta`), and optional `config_json.gemini_output_mime_type`.
 - Provider factories and concrete clients must read API key, base URL, provider kind, and model through
-  `resolve_*_provider_config()`. They must not fall back to old `Settings.text_api_key`,
-  `Settings.image_api_key`, or provider kind fields.
+  `resolve_*_provider_config()`. V2 prompt generation calls `resolve_prompt_provider_config()` and reads its single
+  `model`; it must not call `resolve_text_provider_config()` or fall back to `copy_model`. No resolver may fall back to old
+  `Settings.text_api_key`, `Settings.image_api_key`, or provider kind fields after bindings exist.
 - Saving or importing an image-purpose binding for a real image provider (`openai_responses`, `openai_images`, or
   `google_gemini_image`) must persist `app_settings.poster_generation_mode = "generated"` so the visible runtime config
   matches workflow execution. Saving a `mock` image binding preserves the existing runtime mode instead of forcing a reset.
 - Provider model settings must come from `provider_bindings.model_settings_json` or
-  `provider_profiles.default_models_json`. If required model settings are absent after bootstrap, resolvers must fail
+  `provider_profiles.default_models_json`. Transitional text owns `brief_model` and `copy_model`; prompt and Agent each own
+  a single `model`; image owns a single `model`. If required model settings are absent after bootstrap, resolvers must fail
   with a clear configuration error instead of falling back to legacy `Settings.text_brief_model`,
   `Settings.text_copy_model`, or `Settings.image_generate_model`.
 - Image binding config is provider-kind scoped: `openai_responses` owns `responses_background_enabled`, while
@@ -816,8 +820,9 @@ provider = resolve_image_provider_config(session=session)
   Gemini, or `mock`.
 - API responses for provider profiles expose `has_api_key`; they never expose the raw `api_key`.
 - A blank API key update preserves the existing stored key. A non-blank API key update replaces it.
-- While a provider profile is referenced by a real text/image binding, profile updates must not disable it or remove the
-  capability required by that binding.
+- While a provider profile is referenced by any real prompt/Agent/image or transitional text binding, profile updates must
+  not disable it, archive it, or remove the capability required by that binding. User-facing usage and validation copy names
+  the transitional text case as legacy workflow compatibility instead of advertising copy generation as a current feature.
 - Docker Compose must continue passing legacy `TEXT_*` / `IMAGE_*` provider env values into backend and worker containers
   during the migration window, because containerized bootstrap cannot read the host `.env` file directly.
 
@@ -833,8 +838,10 @@ provider = resolve_image_provider_config(session=session)
 - Archiving a provider profile still used by a binding -> `400`, active binding detail.
 - Missing provider config tables during very early startup -> settings defaults may still load, but real provider
   resolution must fail clearly rather than using old URL/key fallback.
-- Missing text/image model settings in both binding and profile defaults -> resolver fails clearly and asks the operator to
-  configure the provider binding; do not silently use legacy env/app_settings model values.
+- Missing required text/prompt/Agent/image model settings in both binding and profile defaults -> resolver fails clearly and
+  asks the operator to configure the provider binding; do not silently use legacy env/app_settings model values.
+- Existing prompt binding plus a different transitional text binding -> preserve prompt exactly; bootstrap returns without
+  changing its profile, kind, model, or config.
 - `google_gemini` profile with non-empty `base_url` -> provider profile create/update returns `400`.
 - `google_gemini` profile with any capability except `image_google_gemini` -> provider profile create/update returns
   `400`.
@@ -846,12 +853,12 @@ provider = resolve_image_provider_config(session=session)
 
 ### 5. Good/Base/Bad Cases
 
-- Good: one OpenAI-compatible gateway supports `text_responses` and `image_images`; text and image bindings point to the
-  same profile and carry separate model settings.
+- Good: one OpenAI-compatible gateway supports `text_responses` and `image_images`; prompt, Agent, transitional text, and
+  image bindings may point to the same profile while carrying purpose-specific model settings.
 - Good: a text gateway and an image gateway use different keys or URLs; bootstrap creates two profiles.
 - Good: a Google Gemini profile has `provider_type="google_gemini"`, no `base_url`, capability
   `image_google_gemini`, and the image binding stores `provider_kind="google_gemini_image"` plus Gemini-specific config.
-- Base: default local development has mock text/image bindings and no real provider profile.
+- Base: default local development has mock text/prompt/Agent/image bindings and no real provider profile.
 - Bad: showing `text_api_key` or `image_api_key` in `/api/settings`.
 - Bad: constructing an OpenAI client from `get_runtime_settings().image_api_key`.
 - Bad: modeling Google Gemini as an OpenAI-compatible gateway or storing a Gemini custom endpoint in `base_url`.
@@ -862,10 +869,13 @@ provider = resolve_image_provider_config(session=session)
 - Settings API test that `/api/settings` excludes all old provider keys and rejects updates for those keys.
 - Bootstrap test for matching legacy text/image URL and key producing one profile with merged capabilities.
 - Bootstrap test for different legacy URL/key pairs producing separate profiles.
+- Bootstrap test proving a missing prompt copies text profile/kind/copy model and a pre-existing prompt is never overwritten.
 - API test that provider profile responses never include the raw key and blank-key update preserves the stored key.
 - Binding validation test for required capabilities and active profile constraints.
 - Profile update test that active bindings prevent removing required capabilities and disabling the profile.
 - Resolver test proving existing provider bindings override stale legacy `app_settings` rows.
+- Prompt provider test proving `OpenAIPromptGenerationProvider` accepts `ResolvedPromptProviderConfig.model` and sends native
+  multimodal Responses content without reading `ResolvedTextProviderConfig.copy_model`.
 - Resolver test proving missing binding/profile model settings do not fall back to stale legacy model rows or env values.
 - Settings API/import test proving real image bindings switch visible `poster_generation_mode` to `generated`.
 - Settings API test for creating a `google_gemini` profile, rejecting custom Gemini `base_url`, and rejecting mismatched
@@ -1687,6 +1697,8 @@ system_prompt = settings.prompt_copy_system
 - Export document sections: `metadata`, `runtime_config`, `provider_profiles`, and `provider_bindings`.
 
 ### 3. Contracts
+- Current compatibility export metadata is `schema_version=2` and `compatibility="productflow-settings-v2"`. Import also
+  accepts the explicit legacy pair `(1, "productflow-settings-v1")`; version and marker must be validated as one pair.
 - Export is for frontend-operation settings only. It includes effective runtime values from every `CONFIG_DEFINITIONS`
   key, plus active provider profiles and provider bindings.
 - Export must include provider API keys because the migration file is meant to let another machine use the same configured
@@ -1701,11 +1713,18 @@ system_prompt = settings.prompt_copy_system
   all change together or not at all.
 - Provider bindings must be validated after imported profiles are normalized so non-mock bindings never point to missing,
   disabled, or capability-incompatible profiles.
+- During the v1 compatibility window, text and image remain the minimum required imported bindings. If prompt is missing,
+  import derives it from text `copy_model`; if Agent is missing, import uses text `brief_model` and then `copy_model`.
+  Explicit prompt or Agent bindings are preserved. The normalized preview and atomic commit therefore contain all four
+  purposes: `text`, `prompt`, `agent`, and `image`.
+- Export keeps transitional text alongside prompt/Agent/image until the v1 freeze. V3 removal of text is a later maintenance
+  release and must not be simulated by silently dropping text from a V2 document.
 
 ### 4. Validation & Error Matrix
 - Malformed document -> `400` with `配置文件格式不正确`.
 - Unsupported schema version -> `400` with `配置文件版本不支持`.
 - Unsupported compatibility marker -> `400` with `配置文件兼容标识不支持`.
+- Schema version and compatibility marker from different contracts -> `400` with `配置文件兼容标识不支持`.
 - Unknown runtime config key -> `400` with `未知配置项: ...`.
 - Missing runtime config key -> `400` with `配置文件缺少配置项: ...`.
 - Duplicate provider profile id -> `400` with `供应商档案不能重复`.
@@ -1717,7 +1736,8 @@ system_prompt = settings.prompt_copy_system
 - Good: export from a configured workspace, import into a clean workspace, and see the same settings page values,
   provider profiles, bindings, and provider API keys.
 - Good: preview an import file and show counts plus whether API keys are present before commit.
-- Base: importing a `mock` text/image binding uses no provider profile id.
+- Base: importing mock text/image bindings derives mock prompt/Agent bindings without provider profile ids.
+- Good: importing V2 with explicit prompt/Agent bindings keeps their profile and models instead of deriving replacements.
 - Bad: exporting `ADMIN_ACCESS_KEY` or `SETTINGS_ACCESS_TOKEN`; these protect access and belong to deployment setup.
 - Bad: writing runtime rows before discovering a broken provider binding, leaving a half-imported state.
 
@@ -1727,6 +1747,8 @@ system_prompt = settings.prompt_copy_system
   reads.
 - Import preview regression asserting no database mutation.
 - Import commit regression asserting runtime config, provider profiles, and bindings update together.
+- V1/V2 compatibility regression asserting missing prompt/Agent are derived in preview and commit, while explicit bindings
+  are retained.
 - Import failure regression asserting invalid version/config/binding keeps existing settings and providers unchanged.
 - Keep `uv run --directory backend ruff check .`, `uv run --directory backend pytest`, and frontend build/type checks green
   after changing import/export DTOs.
