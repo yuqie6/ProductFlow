@@ -10,6 +10,7 @@ CURRENT_CANONICAL_PROFILE: SchemaProfile = "current_canonical_20260814_0038"
 PRE_REBUILD_ARCHIVE_PROFILE: SchemaProfile = "current_with_legacy_archives_20260815_0039"
 PRE_AGENT_WORKSPACE_PROFILE: SchemaProfile = "current_with_legacy_archive_rebuilds_20260815_0040"
 CURRENT_ARCHIVE_PROFILE: SchemaProfile = "current_with_agent_workspace_finalization_20260815_0041"
+CURRENT_CUTOVER_PROFILE: SchemaProfile = "current_with_agent_workspace_finalization_and_cutover_gate_20260816_0042"
 UNKNOWN_PROFILE: SchemaProfile = "unknown"
 
 VISIBLE_CANVAS_EVENT_TYPES = frozenset(
@@ -298,6 +299,32 @@ _PROFILE_DEFINITIONS = (
         forbidden_tables=_PRE_AGENT_WORKSPACE_DEFINITION.forbidden_tables,
         forbidden_columns=_PRE_AGENT_WORKSPACE_DEFINITION.forbidden_columns,
     ),
+    _ProfileDefinition(
+        name=CURRENT_CUTOVER_PROFILE,
+        revisions=frozenset({"20260816_0042"}),
+        required_columns={
+            **_PRE_AGENT_WORKSPACE_DEFINITION.required_columns,
+            "agent_conversations": frozenset(
+                {
+                    "id",
+                    "product_id",
+                    "workflow_draft_id",
+                    "harness_run_id",
+                    "creation_idempotency_key",
+                    "creation_request_hash",
+                    "intake_idempotency_key",
+                    "intake_request_hash",
+                }
+            ),
+        },
+        forbidden_tables=_PRE_AGENT_WORKSPACE_DEFINITION.forbidden_tables,
+        forbidden_columns={
+            table_name: columns - {
+                "user_id",
+            }
+            for table_name, columns in (_PRE_AGENT_WORKSPACE_DEFINITION.forbidden_columns or {}).items()
+        },
+    ),
 )
 
 
@@ -348,6 +375,7 @@ __all__ = [
     "CANVAS_TERMINAL_EVIDENCE_TYPES",
     "CURRENT_ARCHIVE_PROFILE",
     "CURRENT_CANONICAL_PROFILE",
+    "CURRENT_CUTOVER_PROFILE",
     "LEGACY_CANVAS_PROFILE",
     "PRE_AGENT_WORKSPACE_PROFILE",
     "PRE_REBUILD_ARCHIVE_PROFILE",

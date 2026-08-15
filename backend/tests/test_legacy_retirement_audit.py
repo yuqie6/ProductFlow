@@ -15,6 +15,7 @@ from productflow_backend.application.legacy_retirement.audit import (
 )
 from productflow_backend.application.legacy_retirement.contracts import archive_export_page_sha256
 from productflow_backend.application.legacy_retirement.preflight import audit_legacy_cutover_preflight
+from productflow_backend.application.legacy_retirement.profiles import CURRENT_CUTOVER_PROFILE
 from productflow_backend.application.legacy_retirement.snapshots import export_legacy_archive_page
 from productflow_backend.infrastructure.db.models import Base
 
@@ -360,6 +361,33 @@ def _current_engine(tmp_path: Path, *, archive_schema: bool = True) -> tuple[sa.
     storage_root.mkdir()
     engine = sa.create_engine(f"sqlite:///{database_path}", future=True)
     Base.metadata.create_all(engine)
+    with engine.begin() as connection:
+        connection.exec_driver_sql("DROP TABLE product_workflows")
+        connection.exec_driver_sql(
+            "CREATE TABLE product_workflows ("
+            "id VARCHAR(36) PRIMARY KEY, product_id VARCHAR(36) NOT NULL, title VARCHAR(255), "
+            "active BOOLEAN NOT NULL, schema_version INTEGER NOT NULL, revision INTEGER NOT NULL, "
+            "edit_version INTEGER NOT NULL, created_at DATETIME, updated_at DATETIME"
+            ")"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE source_assets ("
+            "id VARCHAR(36) PRIMARY KEY, product_id VARCHAR(36) NOT NULL, "
+            "storage_path VARCHAR(500) NOT NULL, canonical_asset_id VARCHAR(36)"
+            ")"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE poster_variants ("
+            "id VARCHAR(36) PRIMARY KEY, product_id VARCHAR(36) NOT NULL, "
+            "storage_path VARCHAR(500) NOT NULL, canonical_asset_id VARCHAR(36)"
+            ")"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE user_canvas_templates ("
+            "id VARCHAR(36) PRIMARY KEY, key VARCHAR(80) NOT NULL, schema_version INTEGER NOT NULL, "
+            "template_json JSON NOT NULL, archived_at DATETIME"
+            ")"
+        )
     now = datetime(2026, 8, 15, 4, 0, tzinfo=UTC)
 
     with engine.begin() as connection:
@@ -518,6 +546,22 @@ def test_current_archive_profile_can_audit_v1_candidates_without_canvas_tables(t
     assert report.issues == []
     assert report.ready_for_archive is True
     assert not any(statement.startswith(("insert ", "update ", "delete ")) for statement in statements)
+
+
+def test_current_cutover_profile_audits_preserved_v1_candidates_after_0042(tmp_path: Path) -> None:
+    engine, storage_root = _current_engine(tmp_path)
+    with engine.begin() as connection:
+        connection.execute(sa.text("UPDATE alembic_version SET version_num = '20260816_0042'"))
+
+    try:
+        report = audit_legacy_retirement(engine, storage_root=storage_root)
+    finally:
+        engine.dispose()
+
+    assert report.source.schema_profile == CURRENT_CUTOVER_PROFILE
+    assert report.workflows.workflow_count == 1
+    assert report.workflows.archive_candidate_count == 1
+    assert report.ready_for_archive is True
 
 
 def test_current_canonical_profile_rejects_archive_tables_before_their_revision(tmp_path: Path) -> None:

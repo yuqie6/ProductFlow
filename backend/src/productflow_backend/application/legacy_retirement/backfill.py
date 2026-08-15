@@ -21,6 +21,7 @@ from productflow_backend.application.legacy_retirement.contracts import (
 )
 from productflow_backend.application.legacy_retirement.profiles import (
     CURRENT_ARCHIVE_PROFILE,
+    CURRENT_CUTOVER_PROFILE,
     LEGACY_CANVAS_PROFILE,
     RELEVANT_TABLES,
     UNKNOWN_PROFILE,
@@ -33,13 +34,12 @@ from productflow_backend.infrastructure.db.models import (
     LegacyUserTemplateArchive,
     LegacyWorkflowArchive,
     LegacyWorkflowArchiveAsset,
-    PosterVariant,
     Product,
     ProductImageAsset,
-    SourceAsset,
 )
 
 _PlanStatus = Literal["would_create", "unchanged", "blocked"]
+_ARCHIVE_TARGET_PROFILES = frozenset({CURRENT_ARCHIVE_PROFILE, CURRENT_CUTOVER_PROFILE})
 
 
 @dataclass(slots=True)
@@ -82,12 +82,12 @@ def backfill_legacy_archive_page(
         global_blockers.discard("migration_bridge_required")
     if page.source_profile == LEGACY_CANVAS_PROFILE and not allow_legacy_bridge:
         global_blockers.add("legacy_bridge_not_approved")
-    if target_profile != CURRENT_ARCHIVE_PROFILE:
+    if target_profile not in _ARCHIVE_TARGET_PROFILES:
         global_blockers.add("target_archive_schema_profile_required")
 
     plans = (
         [_plan_item(session, snapshot) for snapshot in page.items]
-        if target_profile == CURRENT_ARCHIVE_PROFILE
+        if target_profile in _ARCHIVE_TARGET_PROFILES
         else [_blocked_target_plan(snapshot) for snapshot in page.items]
     )
     item_blocked = any(plan.status == "blocked" for plan in plans)
@@ -254,15 +254,24 @@ def _resolve_asset(
         ):
             return None, "target_canonical_asset_mapping_drift"
         return _ResolvedAsset(declaration=declaration, asset=asset), None
-    if declaration.legacy_source_type == "source_asset":
-        source = session.get(SourceAsset, declaration.legacy_source_id)
-    else:
-        source = session.get(PosterVariant, declaration.legacy_source_id)
+    source_table = {
+        "source_asset": "source_assets",
+        "poster_variant": "poster_variants",
+    }.get(declaration.legacy_source_type)
+    if source_table is None:
+        return None, "target_legacy_asset_source_type_unknown"
+    source = session.execute(
+        sa.text(
+            f"SELECT product_id, canonical_asset_id FROM {source_table} "
+            "WHERE id = :source_id"
+        ),
+        {"source_id": declaration.legacy_source_id},
+    ).mappings().first()
     if source is None:
         return None, "target_legacy_asset_source_missing"
-    if source.product_id != declaration.product_id:
+    if source["product_id"] != declaration.product_id:
         return None, "target_legacy_asset_source_cross_product"
-    canonical_asset_id = source.canonical_asset_id
+    canonical_asset_id = source["canonical_asset_id"]
     if canonical_asset_id is None:
         return None, "target_canonical_asset_mapping_missing"
     if (

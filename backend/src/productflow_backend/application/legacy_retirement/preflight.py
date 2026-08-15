@@ -46,7 +46,6 @@ from productflow_backend.infrastructure.provider_config import (
     AGENT_PURPOSE,
     IMAGE_PURPOSE,
     PROMPT_PURPOSE,
-    TEXT_PURPOSE,
     capability_for_provider_kind,
     normalize_provider_binding_model_settings,
     normalize_provider_binding_runtime_config,
@@ -54,6 +53,8 @@ from productflow_backend.infrastructure.provider_config import (
     validate_provider_profile_contract,
 )
 
+TEXT_PURPOSE = "text"
+_LEGACY_TEXT_PROVIDER_KINDS = {"mock", "openai"}
 _COMPATIBILITY_PURPOSES = (TEXT_PURPOSE, PROMPT_PURPOSE, AGENT_PURPOSE, IMAGE_PURPOSE)
 _V2_ONLINE_PURPOSES = frozenset({PROMPT_PURPOSE, AGENT_PURPOSE, IMAGE_PURPOSE})
 _MODEL_KEYS = frozenset({"model", "brief_model", "copy_model"})
@@ -365,9 +366,16 @@ def _binding_summary(
     if purpose not in _COMPATIBILITY_PURPOSES:
         issue_codes.add("provider_binding_purpose_unknown")
     else:
-        kind_valid = provider_kind in provider_kinds_for_purpose(purpose)
+        kind_valid = (
+            provider_kind in _LEGACY_TEXT_PROVIDER_KINDS
+            if purpose == TEXT_PURPOSE
+            else provider_kind in provider_kinds_for_purpose(purpose)
+        )
         if not kind_valid:
             issue_codes.add("provider_binding_kind_invalid")
+        elif purpose == TEXT_PURPOSE:
+            if not any(models.get(key) for key in ("model", "brief_model", "copy_model")):
+                issue_codes.add("provider_binding_runtime_invalid")
         else:
             try:
                 normalize_provider_binding_model_settings(purpose=purpose, model_settings=model_settings)
@@ -401,7 +409,12 @@ def _binding_summary(
                     capabilities=capabilities,
                     base_url=str(profile.get("base_url") or "").strip() or None,
                 )
-                if capability_for_provider_kind(provider_kind) not in set(capabilities):
+                required_capability = (
+                    "text_responses"
+                    if purpose == TEXT_PURPOSE
+                    else capability_for_provider_kind(provider_kind)
+                )
+                if required_capability not in set(capabilities):
                     raise ValueError
             except (TypeError, ValueError):
                 issue_codes.add("provider_profile_contract_invalid")
@@ -434,6 +447,9 @@ def _system_prompt_fingerprints(
         elif environment_name in environment:
             value = environment[environment_name]
             source = "environment"
+        elif not hasattr(base_settings, field_name):
+            value = None
+            source = "absent"
         else:
             value = str(getattr(base_settings, field_name))
             field_default = Settings.model_fields[field_name].default
@@ -442,9 +458,9 @@ def _system_prompt_fingerprints(
             ConfigurationValueFingerprint(
                 name=field_name,
                 source=source,
-                configured=True,
+                configured=value is not None,
                 sensitive=True,
-                value_sha256=_sha256_text(value),
+                value_sha256=_sha256_text(value) if value is not None else None,
             )
         )
     return results
@@ -461,7 +477,7 @@ def _environment_fingerprints(
             configured = True
             source = "environment"
             value = environment[name]
-        elif settings_field is None:
+        elif settings_field is None or not hasattr(base_settings, settings_field):
             configured = False
             source = "absent"
             value = None
