@@ -30,6 +30,12 @@ backend-migrate-prod:
 backend-verify-media *args:
     bash scripts/with_dev_env.sh uv run --directory backend python -m productflow_backend.commands.verify_media {{args}}
 
+backend-audit-legacy-retirement *args:
+    bash scripts/with_dev_env.sh uv run --directory backend python -m productflow_backend.commands.audit_legacy_retirement {{args}}
+
+backend-audit-legacy-retirement-prod *args:
+    uv run --directory backend python -m productflow_backend.commands.audit_legacy_retirement {{args}}
+
 backend-worker-prod:
     uv run --directory backend dramatiq --processes 2 --threads 4 productflow_backend.workers
 
