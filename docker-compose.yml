@@ -57,23 +57,6 @@ services:
       LOG_MAX_BYTES: ${LOG_MAX_BYTES:-10485760}
       LOG_BACKUP_COUNT: ${LOG_BACKUP_COUNT:-5}
       LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-14}
-      # Migration-only provider env input. New runtime provider config lives in provider_profiles/provider_bindings.
-      TEXT_PROVIDER_KIND: ${TEXT_PROVIDER_KIND:-mock}
-      TEXT_API_KEY: ${TEXT_API_KEY:-}
-      TEXT_BASE_URL: ${TEXT_BASE_URL:-}
-      TEXT_BRIEF_MODEL: ${TEXT_BRIEF_MODEL:-gpt-4o}
-      TEXT_COPY_MODEL: ${TEXT_COPY_MODEL:-gpt-4o}
-      IMAGE_PROVIDER_KIND: ${IMAGE_PROVIDER_KIND:-mock}
-      IMAGE_API_KEY: ${IMAGE_API_KEY:-}
-      IMAGE_BASE_URL: ${IMAGE_BASE_URL:-}
-      IMAGE_GENERATE_MODEL: ${IMAGE_GENERATE_MODEL:-gpt-5.4}
-      IMAGE_RESPONSES_BACKGROUND_ENABLED: ${IMAGE_RESPONSES_BACKGROUND_ENABLED:-true}
-      IMAGE_IMAGES_QUALITY: ${IMAGE_IMAGES_QUALITY:-}
-      IMAGE_IMAGES_STYLE: ${IMAGE_IMAGES_STYLE:-}
-      IMAGE_MAIN_IMAGE_SIZE: ${IMAGE_MAIN_IMAGE_SIZE:-1024x1024}
-      IMAGE_PROMO_POSTER_SIZE: ${IMAGE_PROMO_POSTER_SIZE:-1024x1536}
-      POSTER_GENERATION_MODE: ${POSTER_GENERATION_MODE:-template}
-      POSTER_FONT_PATH: /usr/share/fonts/truetype/wqy/wqy-zenhei.ttc
       UPLOAD_MAX_IMAGE_BYTES: ${UPLOAD_MAX_IMAGE_BYTES:-10485760}
       UPLOAD_MAX_REFERENCE_IMAGES: ${UPLOAD_MAX_REFERENCE_IMAGES:-6}
       UPLOAD_MAX_PIXELS: ${UPLOAD_MAX_PIXELS:-16000000}
@@ -87,7 +70,7 @@ services:
       - "${APP_HOST_PORT:-29280}:29280"
     volumes:
       # STORAGE_HOST_PATH is host-only. Leave it unset to use the productflow-storage named volume,
-      # or set it to an existing production directory such as /home/cot/ProductFlow-release/shared/storage.
+      # or set it to an existing absolute host directory.
       - ${STORAGE_HOST_PATH:-productflow-storage}:/app/storage
     depends_on:
       productflow-postgres:
@@ -128,23 +111,6 @@ services:
       LOG_MAX_BYTES: ${LOG_MAX_BYTES:-10485760}
       LOG_BACKUP_COUNT: ${LOG_BACKUP_COUNT:-5}
       LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-14}
-      # Migration-only provider env input. New runtime provider config lives in provider_profiles/provider_bindings.
-      TEXT_PROVIDER_KIND: ${TEXT_PROVIDER_KIND:-mock}
-      TEXT_API_KEY: ${TEXT_API_KEY:-}
-      TEXT_BASE_URL: ${TEXT_BASE_URL:-}
-      TEXT_BRIEF_MODEL: ${TEXT_BRIEF_MODEL:-gpt-4o}
-      TEXT_COPY_MODEL: ${TEXT_COPY_MODEL:-gpt-4o}
-      IMAGE_PROVIDER_KIND: ${IMAGE_PROVIDER_KIND:-mock}
-      IMAGE_API_KEY: ${IMAGE_API_KEY:-}
-      IMAGE_BASE_URL: ${IMAGE_BASE_URL:-}
-      IMAGE_GENERATE_MODEL: ${IMAGE_GENERATE_MODEL:-gpt-5.4}
-      IMAGE_RESPONSES_BACKGROUND_ENABLED: ${IMAGE_RESPONSES_BACKGROUND_ENABLED:-true}
-      IMAGE_IMAGES_QUALITY: ${IMAGE_IMAGES_QUALITY:-}
-      IMAGE_IMAGES_STYLE: ${IMAGE_IMAGES_STYLE:-}
-      IMAGE_MAIN_IMAGE_SIZE: ${IMAGE_MAIN_IMAGE_SIZE:-1024x1024}
-      IMAGE_PROMO_POSTER_SIZE: ${IMAGE_PROMO_POSTER_SIZE:-1024x1536}
-      POSTER_GENERATION_MODE: ${POSTER_GENERATION_MODE:-template}
-      POSTER_FONT_PATH: /usr/share/fonts/truetype/wqy/wqy-zenhei.ttc
       UPLOAD_MAX_IMAGE_BYTES: ${UPLOAD_MAX_IMAGE_BYTES:-10485760}
       UPLOAD_MAX_REFERENCE_IMAGES: ${UPLOAD_MAX_REFERENCE_IMAGES:-6}
       UPLOAD_MAX_PIXELS: ${UPLOAD_MAX_PIXELS:-16000000}

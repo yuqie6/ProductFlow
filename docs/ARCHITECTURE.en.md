@@ -1,249 +1,155 @@
 # ProductFlow Architecture
 
-[中文](ARCHITECTURE.md) | English
+## 1. System Boundary
 
-Current architecture health, completed cleanup, and remaining risks are tracked in `docs/ARCHITECTURE_HEALTH_REVIEW.en.md`; this document stays focused on system structure.
+ProductFlow is a single-administrator, single-merchant workspace with six runtime units:
 
-## 1. System Overview
+1. React/Vite Web.
+2. FastAPI business API.
+3. Dramatiq worker.
+4. Go workflow Agent service.
+5. PostgreSQL.
+6. Redis and media storage.
 
-ProductFlow consists of the frontend, backend API, workflow Agent service, background worker, PostgreSQL, Redis, and local file storage:
+The browser reaches only Web and FastAPI. The Agent service calls FastAPI internal endpoints with a dedicated bearer token; FastAPI controls Agent Turns over the agent-service internal HTTP/SSE API. API and worker share PostgreSQL, Redis, and storage.
 
-```text
-React/Vite web
-  -> FastAPI backend
-    -> PostgreSQL metadata and Agent projections
-    -> Redis/Dramatiq queue
-    -> local storage files
-    -> text provider / image provider
-    -> ProductFlow Agent service (internal bearer HTTP/SSE)
-      -> Responses API provider
-      -> per-conversation SQLite journal
-      -> scoped FastAPI internal tool APIs
-  -> Dramatiq worker
-    -> same database, queue, storage, providers and Agent service
-```
+## 2. Backend Layers
 
-The default self-hosted path is driven by the root `docker-compose.yml`. `docker compose up -d --build` builds and starts six services: PostgreSQL, Redis, the FastAPI backend, the Dramatiq worker, the workflow Agent service, and the nginx-served Web static site. API/worker containers connect to dependencies through `productflow-postgres:5432` and `productflow-redis:6379`, and share persistent storage mounted at `/app/storage`. When `STORAGE_HOST_PATH` is not set, storage uses the Docker named volume `productflow-storage`. When migrating from an older systemd production environment, you can set the host-only variable `STORAGE_HOST_PATH=/home/cot/ProductFlow-release/shared/storage` to bind-mount an existing host storage directory to `/app/storage`; the runtime container still keeps `STORAGE_ROOT=/app/storage`. The Agent service has no published host port, and the `productflow-agent-data` volume persists its `/data` directory. The worker starts after backend and Agent health checks pass. The backend container runs Alembic migrations before starting `uvicorn`.
+`backend/src/productflow_backend/` keeps four boundaries:
 
-The production update entrypoint is `just release`, which calls `scripts/release.sh` to validate Compose configuration, stop legacy user-level systemd services (`productflow-backend.service`, `productflow-worker.service`, `productflow-web.service`, used to free old release ports 29280/29281), run `docker compose up -d --build --remove-orphans`, and perform HTTP health checks. `just release-dry-run` only validates configuration and prints the plan; it does not stop old services, build, or start containers. Normal updates do not delete Docker volumes.
+- `presentation/`: FastAPI routes, request/response schemas, authentication, upload reads, and HTTP error mapping.
+- `application/`: product, Agent conversation, WorkflowDraft, V2 workflow, image library, image session, settings, and asynchronous use cases.
+- `domain/`: enums, business errors, and database-free DAG rules.
+- `infrastructure/`: SQLAlchemy, provider clients, Redis/Dramatiq, storage, logging, and the Agent service client.
 
-Local hot-reload development is still driven by the root `justfile`: you can start only `productflow-postgres` and `productflow-redis`, then run the API, Agent service, worker, and frontend separately with `just backend-run`, `just agent-service-run`, `just backend-worker`, and `just web-dev`. The development environment uses `STORAGE_ROOT=./backend/storage-dev` from `.env.dev`, isolated from production Compose storage. Do not start local development processes by shell-sourcing production `.env`.
-
-## 2. Backend Layering
-
-Backend code lives under `backend/src/productflow_backend/` and is organized by layer:
-
-- `presentation/`: FastAPI app, routes, auth dependencies, Pydantic schemas, and upload validation.
-- `application/`: use-case logic for products, copy, posters, gallery, image sessions, and product workflows. Product workflow logic is split into graph / mutations / query / execution / context / artifacts / dependencies modules, with `product_workflows.py` kept as the compatibility facade.
-- `domain/`: stable enums such as task status, asset type, and workflow node type.
-- `infrastructure/`: SQLAlchemy models/session, queue, storage, text/image providers, and poster renderer.
-- `workers.py`: Dramatiq actor entrypoint.
-- `config.py`: environment configuration, runtime configuration definitions, and database override reading.
-
-The route layer only handles input adaptation, authentication, error mapping, and serialization. Provider calls, job state changes, and workflow progression stay inside application/infrastructure boundaries.
-
-The root `agent-service/` directory is an independent Go module. It creates an isolated agent-harness service, SQLite journal, and empty workspace for each conversation, and owns native multimodal Turns, token-level event replay, question/answer/resume/cancel control, and the required workflow-draft artifact. FastAPI modules `application/agent_conversations.py`, `agent_control.py`, `agent_sync.py`, and `agent_tools.py` own PostgreSQL projections, control orchestration, Dramatiq synchronization, and ProductFlow tool boundaries; `infrastructure/agent_service.py` owns the internal HTTP/SSE client. Browsers only call the session-authenticated FastAPI endpoints.
+Routes do not own complex transactions or provider payload construction. The application layer owns business transactions, and infrastructure adapts external systems.
 
 ## 3. Frontend Structure
 
-Frontend code lives under `web/src/`:
+`web/src/App.tsx` registers the current pages:
 
-- `pages/`: login, product list, product creation, product detail, gallery, help, settings, and image-session pages (current routes include `/image-chat`, `/gallery`, `/help`, and `/settings`).
-- `components/`: shared UI such as the top navigation, status tags, and image drag-and-drop upload area.
-- `lib/api.ts`: centralized REST API request wrapper.
-- `lib/types.ts`: frontend DTO types that must stay aligned with backend schemas.
+- `/products`
+- `/products/new`
+- `/products/:productId`
+- `/image-chat`
+- `/gallery`
+- `/settings`
+- `/help`
 
-The frontend uses TanStack Query for server state. The product detail page and iterative image page use lightweight status polling while work is active:
+Page code lives in `web/src/pages/`. Shared visual components live in `web/src/components/`. HTTP, DTOs, i18n, and browser preferences live in `web/src/lib/`.
 
-- Iterative image generation polls `['image-session-status', selectedSessionId]`, merges task state only, then refreshes the full session after completion.
-- Product workflows poll `['product-workflow-status', productId]`, merge node/run state only, then refresh full workflow and product artifact queries after completion.
+The product workbench composes three existing component groups:
 
-Do not reintroduce active polling for complete `ImageSessionDetailResponse` or complete `ProductWorkflowResponse`; those payloads include image history, node configuration, artifact references, and run records, and high-frequency refresh increases frontend render cost and backend serialization work.
+- `agent-workbench/`: conversation, SSE events, questions, Draft confirmation, and materialization reveal.
+- `product-workflow-v2/`: V2 canvas, command bar, inspector, runs, recipes, and delivery renditions.
+- `product-detail/`: reused canvas chrome, node cards, sidebar, shortcuts, and image Explorer.
 
-The product detail page is currently the ProductFlow workbench: the canvas handles nodes, edges, zoom, pan, node dragging, box selection, and multi-select. On desktop, the right sidebar handles Details, Runs, Library, and Templates. On mobile, a bottom toolbar carries the workflow run entrypoint plus Single node, Templates, Details, Runs, and Library entrypoints, and a bottom sheet renders those panel contents. The mobile canvas has local `browse` / `edit` / `select` interaction modes: `browse` handles one-finger pan, node tap selection, and two-finger pinch zoom; `edit` allows touch/pen node dragging and edge creation; `select` toggles multi-select by tapping nodes. Canvas zoom ratio and desktop sidebar width are browser-local preferences, while mobile mode and sheet openness are page-local UI state. Workflow nodes, edges, run state, and artifacts remain database-backed.
+TanStack Query owns server state. React state owns local forms, selection, and canvas interaction. `api.ts` is the browser HTTP boundary.
 
-The workflow Agent conversation entry screen, streamed message presentation, confirmation-to-canvas transition animation, and right-sidebar conversation continuation have not been connected to the frontend yet. This phase only provides the conversation, Turn, Question, control, and SSE APIs required by those interactions.
-
-## 4. Main Data Model Lines
-
-Traditional product creative chain:
-
-```text
-Product
-  -> SourceAsset(original/reference/processed)
-  -> CreativeBrief
-  -> CopySet(draft/confirmed)
-  -> PosterVariant(main_image/promo_poster)
-```
-
-Iterative image-generation chain:
+## 4. Agent Creation Flow
 
 ```text
-ImageSession
-  -> ImageSessionAsset(reference_upload/generated_image)
-  -> ImageSessionRound(one generated candidate per row)
-  -> ImageSessionGenerationTask(durable async generation task)
-  -> optional Product attachment
-  -> optional ImageGalleryEntry
+image types + quantities + 1..6 uploads
+  -> Product + ProductImageAsset + WorkflowDraft + AgentConversation
+  -> ProductFlow submits Agent Turn
+  -> agent-service / agent-harness durable execution
+  -> ProductFlow internal read and mutation tools
+  -> versioned WorkflowDraft artifact
+  -> user confirmation
+  -> schema-v2 workflow materialization
+  -> reveal event stream
+  -> product workbench
 ```
 
-Product DAG workflow chain:
+ProductFlow is authoritative for business data. The Agent service stores durable Turn transcript, tool calls/results, and token deltas. PostgreSQL stores AgentConversation, AgentTurnProjection, question state, and WorkflowDraft revisions.
 
-```text
-ProductWorkflow
-  -> WorkflowNode(product_context/reference_image/copy_generation/image_generation)
-  -> WorkflowEdge
-  -> WorkflowRun
-  -> WorkflowNodeRun
-```
+When reading product assets, the Agent first receives bounded metadata and then inspects selected images. Image tool results use a versioned multimodal contract; the full library and data URLs are not concatenated into text history.
 
-Workflow Agent design chain:
+Agent mutations such as rename, folder creation, and move use prepare/apply/reconcile contracts with idempotency keys so network interruption and restart can be reconciled.
 
-```text
-Product -> WorkflowDraft
-  -> AgentConversation
-    -> AgentTurnProjection(bounded PostgreSQL UI/recovery state)
-    -> harness run/transcript/events(per-conversation SQLite journal)
-  -> WorkflowDraftRevision(required artifact from an awaiting-confirmation Turn)
-```
+## 5. WorkflowDraft
 
-PostgreSQL does not store the Agent transcript, reasoning, token deltas, image bytes, or artifact body. Event replay after a browser reconnect comes from the Agent SQLite journal. PostgreSQL retains only bounded conversation/Turn projections, synchronization state, and the related `WorkflowDraftRevision`.
+WorkflowDraft is the persistent boundary between Agent output and user confirmation. A revision contains:
 
-Canvas template chain:
+- Product facts with source, state, and conflicts.
+- Selected image types and per-type quantities.
+- Workflow-level visual system.
+- Per-image prompts, reference bindings, and generation specifications.
+- Folder, node, and edge plans.
+- Optional user-recipe seed.
 
-```text
-CanvasTemplate(builtin full_canvas)
-  -> product creation or workflow template insertion
+Draft states cover collecting, awaiting_confirmation, confirmed, materializing, ready, and the failed/cancelled terminals. Every Agent artifact appends a revision. Confirmation targets an explicit revision to prevent concurrent overwrite.
 
-UserCanvasTemplate(node_group)
-  -> reusable selected workflow nodes and internal edges
-```
+## 6. V2 Workflow
 
-PostgreSQL is the source of truth for metadata and run state. Redis/Dramatiq is only responsible for dispatching background execution messages.
+The online ProductWorkflow schema is fixed at 2. Node types are:
 
-Workflow node semantics for users:
+- `product_context`: product facts and visual-system entry.
+- `reference_image`: one ProductImageAsset binding.
+- `prompt_generation`: generate, edit, and version one-image prompts.
+- `image_generation`: generate images from upstream context and GenerationSpec.
 
-- `product_context`: product information entrypoint for one product workflow.
-- `reference_image`: a single current reference image slot; manual upload or upstream image generation replaces the current image, while old assets remain in product history/assets.
-- `copy_generation`: copy generation and editable structured copy. Later image generation reads structured copy context directly.
-- `image_generation`: image-generation trigger/configuration node; image artifacts are written into downstream reference image nodes instead of being displayed on the image-generation node itself.
+WorkflowFolder is a local visual group and does not alter DAG execution. WorkflowEdge represents dependency. Domain topological sorting rejects cross-workflow references and cycles.
 
-Canvas template boundaries:
+WorkflowRun and WorkflowNodeRun store execution state. The worker schedules ready nodes after their upstream dependencies succeed. Prompt artifacts are versioned. Image results become ProductImageAsset records and bind back to target nodes.
 
-- Built-in `full_canvas` scenario templates can initialize a complete workflow during product creation and can also be
-  inserted into an existing product workbench.
-- When a built-in scenario template is inserted into an existing workbench, the template `product_context` node is mapped
-  to the active workflow's existing product node instead of creating a second product node.
-- User node-group templates are saved from selected nodes and persist only reusable configuration plus internal edges between selected nodes; they do not store product details, generated images, or copy outputs.
+WorkflowRecipe stores user-created full workflows and fragments. Recipe payloads store reusable structure and configuration, without product identity, generated results, or media bytes.
 
-## 5. Async Jobs and Recovery
+## 7. Image Model
 
-There are currently two generation entrypoints and one Agent projection-synchronization entrypoint:
+`MediaObject` stores path, MIME type, byte size, dimensions, hash, and verification state. `ProductImageAsset` stores product-scoped display name, origin, folder, parent image, and image type.
 
-1. `WorkflowRun`: used for product DAG workflow execution.
-2. `ImageSessionGenerationTask`: used for iterative image generation.
-3. `AgentTurnProjection`: `run_agent_turn_sync` mirrors agent-harness Turn state and attaches the required workflow-draft artifact; the Go Agent service owns model execution and transcript persistence.
+Current origins:
 
-Shared principles:
+- `upload`
+- `workflow_generation`
+- `image_session_attach`
 
-- Database records are persisted first; Redis messages are only recoverable dispatch attempts.
-- A workflow may have multiple disjoint running runs; database constraints ensure one node has at most one queued/running
-  `WorkflowNodeRun` at a time.
-- If workflow or iterative-image enqueue fails, the newly created run/task is marked failed to avoid stuck active state.
-- API startup recovers queued workflows, iterative-image tasks, and synchronizable Agent Turns.
-- Worker startup can reset stale running generation state and re-dispatch generation tasks and synchronizable Agent Turns.
-- After an Agent Question is answered, the Turn remains `queued` with `resume_required=true`; only an explicit resume restarts execution and polling.
-- The agent-harness `unknown` state is projected unchanged. ProductFlow does not infer success or automatically replay an effect with an ambiguous outcome.
-- Workflow runs and iterative image-generation tasks serialize `is_retryable` / `is_cancelable`, and the frontend uses those flags to show retry and cancel actions.
-- Image-generation failures are classified into user-readable categories covering provider quota/rate limit, content policy, network interruption, request timeout, provider service errors, and unsupported parameters.
-- Iterative image generation no longer treats a user-configurable hard total timeout as product semantics. Running tasks persist `progress_updated_at`, completed candidate count, current candidate, and provider response state; stale-running recovery uses the latest progress heartbeat for idle detection and only falls back to `started_at` for older rows.
-- The iterative image worker's Dramatiq `time_limit` remains only as an internal failsafe, not as a user-tunable generation deadline.
-- Dramatiq actors should no-op on duplicate messages for terminal/currently-running records.
-- The global generation concurrency limit is enforced by counting running `WorkflowNodeRun` rows and running
-  `ImageSessionGenerationTask` rows in the database.
-- `/api/generation-queue` returns the global durable queue overview; iterative image status responses include the current task's queue position.
+The product library, node reference bindings, covers, and delivery renditions all use ProductImageAsset ids. Every image-session asset also has a MediaObject; saving it to a product creates a ProductImageAsset.
 
-Related entrypoints:
+DeliveryRenditionJob reads a ProductImageAsset and asynchronously emits a crop, resize, and format-specific delivery file. It does not replace the source image.
 
-- `productflow_backend.application.durable_recovery.recover_unfinished_workflow_runs`
-- `productflow_backend.application.durable_recovery.recover_unfinished_image_session_generation_tasks`
-- `productflow_backend.application.agent_sync.recover_unfinished_agent_turn_syncs`
-- `productflow_backend.infrastructure.queue.run_agent_turn_sync`
-- `productflow_backend.workers`
+## 8. Provider Architecture
 
-## 6. Provider Architecture
+`ProviderProfile` stores endpoint, secret, capabilities, default models, and provider configuration. `ProviderBinding` maps one profile to a purpose:
 
-ProductFlow separates model capabilities by modality.
+- `prompt`: prompt nodes.
+- `agent`: workflow Agent.
+- `image`: workflow and image-session generation.
 
-v2 `prompt_generation` resolves its single-model prompt provider through the `prompt` purpose binding. The workflow Agent
-resolves its model and reasoning/text/service-tier options through a separate `agent` purpose binding. The
-`generate_brief(...)` / `generate_copy(...)` interfaces under `infrastructure/text/` remain only for transitional v1 copy
-execution and are not dependencies of v2 prompt nodes.
+FastAPI resolves prompt/image bindings. The Agent service obtains the agent binding through an internal-token-protected endpoint. Missing bindings, disabled profiles, and empty models produce explicit configuration failures.
 
-Image providers live under `infrastructure/image/` and serve poster generation and image sessions. Current implementations:
+Runtime image-tool settings are filtered through the allowed-field contract before a provider adapter maps them. Candidate count comes from image-type quantity or image-session generation_count and is not an advanced tool option.
 
-- `mock`
-- `openai_responses` (Responses API `image_generation` tool, supporting `input_image`; iterative image generation prefers background response + retrieve polling and writes provider status into task progress)
-- `openai_images` (Images API `images.generate` / `images.edit` compatible interface; it does not use Responses `previous_response_id`, and ProductFlow explicitly sends the selected base image plus references for iterative image sessions)
-- `google_gemini_image` (Google Gemini native `generateContent` image API through the official `google-genai` SDK; ProductFlow explicitly sends the selected base image plus references for iterative image sessions)
+## 9. Asynchronous Work and Recovery
 
-Provider selection is controlled by `provider_profiles`, `provider_bindings`, and corresponding factories. Legacy
-`TEXT_*` / `IMAGE_*` environment values are only first-migration input; runtime resolvers read interface kind,
-connection data, and models from provider profiles and purpose bindings. Routes do not directly depend on concrete SDKs.
+- Dramatiq executes workflow nodes, image-session candidates, and delivery renditions.
+- Redis provides the broker and concurrency admission.
+- PostgreSQL stores queued/running/terminal states, attempts, and safe errors.
+- Worker startup recovers unfinished jobs that can be safely redelivered.
+- Agent service uses the agent-harness durable journal; SSE event sequences support Last-Event-ID replay.
+- ProductFlow Turn sync trusts only reconcilable harness state and preserves unknown outcomes as unknown.
 
-The workflow Agent uses the Responses API through agent-harness in the Go service. Its provider uses an OpenAI-compatible connection from `provider_profiles` and the `agent` purpose binding; the settings page owns the model and reasoning/text/service-tier options. The Go service reads the complete configuration through an authenticated internal API when it first opens a conversation and keeps that conversation on the same configuration. Browsers only receive the redacted provider-profile state. Existing databases copy the initial Agent binding from the text binding on first startup.
+## 10. Configuration and Security
 
-## 7. Poster Generation
+Environment variables hold infrastructure and secrets required before database access:
 
-Posters have two modes:
+- database, Redis, and storage
+- admin, session, and settings tokens
+- Agent service address and internal token
+- upload, logging, and worker base settings
 
-- `template`: render with local Pillow templates, suitable for development/testing without image model keys.
-- `generated`: package confirmed copy, product images, and reference images as image-provider input and generate the result with a remote model.
+Provider profiles, purpose bindings, and business runtime settings are stored through `/settings`. The page requires an administrator session and independent `SETTINGS_ACCESS_TOKEN`.
 
-Both modes target two artifact types:
+Uploads are checked for MIME, actual image format, byte size, pixel count, and count before persistence. Download endpoints locate storage through database assets and never accept arbitrary file paths.
 
-- `main_image`: 1:1 ecommerce main image.
-- `promo_poster`: 3:4 promotional poster.
+## 11. Schema Evolution
 
-## 8. Configuration Layers
+SQLAlchemy metadata describes only current online models. Historical Alembic revisions remain so a fresh database can upgrade to head. Destructive schema cleanup lives in migrations. Runtime code does not read retired models or keep parallel routes and executors.
 
-Configuration is split into two categories:
+## 12. Quality Gates
 
-1. Env-only infrastructure configuration: `DATABASE_URL`, `REDIS_URL`, `SESSION_SECRET`, `ADMIN_ACCESS_KEY`, `SETTINGS_ACCESS_TOKEN`, `AGENT_SERVICE_INTERNAL_TOKEN`, the Agent service address, and similar settings. These must be available at process startup, for internal-service authentication, or before database access, so runtime DB overrides are not supported.
-2. Runtime business configuration: provider, model, image size, upload limits, task retry, global generation concurrency limit, poster mode, prompt templates, login-gate switch, business deletion switch, and similar values. They can be provided as defaults by `.env` / `.env.dev`, or written to `app_settings` through `/api/settings` after login and settings-page unlock.
-
-Secret configuration values are not echoed back in API responses.
-
-The login gate `admin_access_required` is enabled by default. When enabled, private APIs require an admin marker in the Cookie session through `require_admin`, and invalid `ADMIN_ACCESS_KEY` values still return 401. When disabled, normal workspace/private APIs can be used without the admin key, and `GET /api/auth/session` returns `authenticated=true` and `access_required=false`; complete `/api/settings` reads/writes still require the independent `SETTINGS_ACCESS_TOKEN` unlock.
-
-The business deletion switch `deletion_enabled` is disabled by default. When disabled, the backend rejects whole-product deletion and whole iterative image-session deletion at the route boundary, so demo sites do not lose evidence after problematic content is deleted. Workflow node/edge editing and reference-image deletion are not affected. `DELETE /api/auth/session` and restoring database overrides from the settings page are not part of business deletion protection.
-
-Prompt template overrides cover product understanding, copy generation, workbench image generation, and iterative image generation. Infrastructure configuration and secret reading stay behind backend boundaries; the frontend only displays configuration items, sources, and save state.
-
-## 9. File Storage and Downloads
-
-Local files are managed by `LocalStorage` in `infrastructure/storage.py`. It constrains relative paths under the configured `STORAGE_ROOT` and rejects absolute paths or path traversal. In production Compose containers, `STORAGE_ROOT` is fixed to `/app/storage`; `STORAGE_HOST_PATH` only controls the host bind-mount source and should not be passed into application logic as a replacement for `STORAGE_ROOT`.
-
-User-downloadable files are read through controlled routes, for example:
-
-- `/api/posters/{poster_id}/download`
-- `/api/source-assets/{asset_id}/download`
-- `/api/image-session-assets/{asset_id}/download`
-
-Do not bypass the storage service by directly concatenating user-controlled paths.
-
-## 10. Security Boundaries
-
-The current security model is "single-admin self-hosted":
-
-- Admin-key login, not public registration.
-- `ADMIN_ACCESS_KEY` is read only from environment variables and does not enter database configuration. The login gate can be disabled through the `admin_access_required` runtime switch and stays enabled by default.
-- The settings page uses an independent `SETTINGS_ACCESS_TOKEN` for secondary unlock; the session stores only the unlocked marker, not the plaintext token. Disabling the login gate does not disable this secondary unlock.
-- Session cookies are signed with `SESSION_SECRET`.
-- CORS is controlled by `BACKEND_CORS_ORIGINS`.
-- Uploaded files have MIME, size, pixel, and count limits.
-- Provider API keys are stored in env or database configuration, and APIs do not echo secrets.
-- FastAPI and the Agent service protect their internal control and tool APIs with the independent `AGENT_SERVICE_INTERNAL_TOKEN`; browsers cannot connect directly to the Agent service.
-- Agent tool scope for product, Draft, conversation, and run is bound by server-side closures. The model cannot submit those IDs to change its operating scope.
-
-Currently not provided: multi-user isolation, object-level permissions, audit logs, or production WAF configuration.
+- Backend: Ruff, full pytest, SQLite migration, and opt-in PostgreSQL/Redis live tests.
+- Frontend: Vitest, ESLint, TypeScript, and Vite production build.
+- Agent service: `go test ./...` and an opt-in live-provider transcript test.
+- Cross-layer changes add real browser, database, or provider validation according to risk.

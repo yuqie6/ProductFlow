@@ -1,301 +1,169 @@
 <p align="center">
-  <img src="docs/assets/productflow-brand-concept.png" alt="ProductFlow brand concept: product card connected to AI copy and image workflow nodes" width="168">
+  <img src="docs/assets/productflow-brand-concept.png" alt="ProductFlow 商品工作流品牌图" width="168">
 </p>
 
 # ProductFlow
 
 [中文](README.md) | [English](README.en.md)
+
 <p align="center">
   <a href="https://draw.devbin.de"><strong>体验站 / Live Demo</strong></a>
 </p>
 
-ProductFlow 是面向单人或小团队商家的开源自托管商品素材工作台。核心链路覆盖商品资料、参考图、AI 文案、AI/模板海报、连续生图会话、生成图画廊和可视化工作流。
+ProductFlow 是面向单商家创作者的开源商品视觉工作台。用户上传真实商品参考图、选择所需图片类型和数量，工作流 Agent 通过对话补齐价格、风格、文字语种、文案要求等信息，再生成可编辑、可运行的图片生产工作流。
 
-当前形态为私有单管理员实例。自托管部署需要 PostgreSQL、Redis、后端 API、Dramatiq worker、Web 前端，以及可用的文本/图片模型供应商。
+当前公网实例是个人项目的 live demo。项目采用单管理员、单商家数据模型；演示数据允许重置，当前代码不承担 SaaS 历史兼容合同。多租户、计费、团队权限和正式兼容策略属于后续 SaaS 阶段。
 
-## 功能概览
+## 当前产品能力
 
-### 商品/工作台
+### Agent 创建商品
 
-- 单管理员访问密钥登录，基于 Cookie session 访问后台 API。
-- 商品列表、分页浏览、创建商品、商品详情工作台、受全局开关保护的商品删除；移动端商品列表使用卡片和浮动分页。
-- 节点画布组织商品资料、参考图、文案节点和生图节点。
-- 桌面画布支持滚轮缩放、空白处拖动平移、节点拖拽定位、节点连线、边删除、Ctrl/Cmd/Shift 多选、Shift 框选。
-- 移动端商品工作台保留画布为主界面，提供浏览、编辑和选择模式；支持单指平移、点选节点、双指缩放、触控拖拽节点、触控创建连线和点按多选。
-- 移动端底部工具栏提供运行工作流、单节点、模板、详情、日志和图库入口，面板内容从底部展开。
-- 完整画布模板用于创建商品；内置节点组模板和用户节点组模板用于工作台内追加流程。
-- 商品原图、参考图、连续生图参考图支持点击选择或拖拽上传，并受 MIME、大小、像素和数量限制保护。
-- 参考图节点是单图槽位；手动上传或上游生图填充会替换当前图，旧素材保留在商品历史/素材列表中。
-- 文案节点支持生成、编辑、确认和历史查看，当前输出是后续生图可直接读取的可编辑结构化文案。
-- 生图节点只负责触发和配置生成；生成结果写入连接的下游参考图节点，并在参考图节点或图库面板预览和下载。
+- `/products/new` 是唯一正式创建入口。
+- 用户选择首屏海报、卖点、场景、细节、SKU、尺寸等图片类型；每种类型默认生成 2 张，可独立调整数量。
+- 每个商品需要上传 1 至 6 张真实商品参考图，支持 PNG、JPEG 和 WebP。
+- Agent 可追问商品价格、生图风格、图片文字语种、文案要求和视觉体系等缺失信息。
+- 用户确认 WorkflowDraft 后，页面流式展示物化过程，并平滑进入商品工作台；右侧继续同一段 Agent 对话。
 
-### 文/图生图
+### V2 工作流画布
 
-- 独立图片会话支持参考图上传、历史基图选择、连续生成、多候选比较和移动端主视图/抽屉/底部面板布局。
-- 移动端文/图生图顶部栏提供会话抽屉、当前会话标题/重命名和历史抽屉；生成状态、当前结果和供应商提示保留在主视图。
-- 会话列表从左侧抽屉打开，可新建、选择和删除会话；分支/候选历史从右侧窄抽屉打开，点击已完成图片会设为当前结果和下一轮基图。
-- 底部快捷条始终提供生成入口；选中已完成结果后，同时提供下载和投至画廊。底部生成面板包含生成设置/高级标签页、商品关联、商品/会话参考图、提示词、尺寸、候选数量和图片工具参数。
-- 运行状态包含排队位置、轻量状态刷新、候选进度、失败原因、取消和重试。
-- 生成图可下载、投至画廊、保存为商品参考图，或设为商品主图参考。
+- 当前节点类型只有 `product_context`、`reference_image`、`prompt_generation`、`image_generation`。
+- 画布保留节点拖动、自由添加、连线、删除、多选、缩放、平移、自动布局和快捷键。
+- 文件夹用于收纳局部流程，降低大型 DAG 的排线和浏览压力。
+- 节点详情可编辑提示词、参考图绑定、视觉体系覆盖、生图比例、分辨率、质量、文字策略和交付规格。
+- 生图结果写入对应节点，同时进入该商品的统一图片库。
+- 工作流复用只来自用户主动保存的 `WorkflowRecipe` 或局部 `recipe_fragment`。
 
-### 画廊
+### 图片库与连续生图
 
-- `/gallery` 集中保存文/图生图结果。
-- 条目保留来源会话、关联商品、提示词、尺寸、模型和下载入口。
+- 商品图片库使用类似资源管理器的目录树、文件夹、筛选、排序、重命名、移动、预览、批量选择和下载。
+- 每个图片节点只绑定自己的当前承载图；图片库保存商品的全部上传图、工作流生成图和会话转入图。
+- 商品封面从图片资产自动选择，仍可通过当前封面 API 显式调整。
+- `/image-chat` 支持参考图、分支基图、多候选生成、取消、重试、下载和保存到商品图片库。
+- `/gallery` 保存用户主动收藏的连续生图结果。
 
-### 配置与运行
+### Provider 与运行
 
-- `/settings` 支持运行时业务配置覆盖：provider、模型、图片尺寸、图片工具参数、提示词模板、上传限制、全局并发、业务删除开关等。
-- 图片工具参数可控制 Responses `image_generation` tool 的可用字段、质量、输出格式、压缩、背景、审核、action、input fidelity、partial images 和 provider `n` 等高级参数；Responses 后台响应模式默认开启，不支持时会回退同步请求。
-- Secret 字段不回显；配置页由独立 `SETTINGS_ACCESS_TOKEN` 二次解锁。
-- 文案、海报、商品工作流和文/图生图由 Dramatiq + Redis 投递，PostgreSQL 记录状态。
-- API/worker 启动时恢复未完成文案/海报任务、商品工作流和连续生图任务。
-- 运行中商品工作流和文/图生图只轮询轻量 status，结束后刷新完整详情。
-
-### 产品内帮助
-
-- 顶部导航提供 `/help` 帮助页。
-- 帮助页按真实页面域组织：入门、画布工作台、画廊、文/图生图、配置。
-- 文档页包含左侧分页导航、本页目录、上一页/下一页和本地全文搜索。
-
-### 界面预览
-
-![商品列表示例](images/preview1.png)
-
-![商品工作台示例](images/preview2.png)
-
-![新建商品示例](images/preview3.png)
-
-![图生图面板示例](images/preview4.png)
-
-![暗色模式与英文模式示例](images/preview5.png)
+- `/settings` 管理供应商档案和 `prompt`、`agent`、`image` 三类用途绑定。
+- 供应商档案保存 Base URL、API Key、能力和默认模型；secret 不回显。
+- 图片用途支持 OpenAI Responses、OpenAI Images 兼容接口和 Google Gemini 图片能力。
+- 高级图片参数包括质量、格式、压缩、背景、审核、action、input fidelity 和 partial images；生成数量由业务选择决定。
+- Agent Turn 使用独立 Go 服务和内置的 `agent-harness` durable runtime，SSE 支持断线续传。
+- 图片生成和交付图任务由 Dramatiq + Redis 执行，PostgreSQL 保存业务状态，storage 保存媒体字节。
 
 ## 当前边界
 
-暂不提供多用户/多租户、团队权限、支付、托管账号体系、自动投放/自动上架、视频生成、Kubernetes/Helm/发布版容器镜像等生产编排包。仓库内 Docker Compose 自托管路径已可用。
+- 单管理员、单商家实例。
+- 不提供多租户、团队权限、支付、托管账号、自动上架、广告投放或视频生成。
+- 公网体验站数据可能在版本升级时重置。
+- Alembic 历史迁移保留用于从空库构建当前 schema；在线运行时只有当前 V2 合同。
 
-## 产品入口与文档
+## 页面入口
 
-- 产品内帮助：顶部导航 **帮助**，路由 `/help`
-- 新手操作参考：`docs/USER_GUIDE.md`
-- 架构说明：`docs/ARCHITECTURE.md`
-- 当前架构健康度复审：`docs/ARCHITECTURE_HEALTH_REVIEW.md`
-- 路线图：`docs/ROADMAP.md`
-- 版本记录：`CHANGELOG.md`
-- 品牌资产：`docs/assets/productflow-brand-concept.png`、`docs/assets/productflow-mark.svg`
-- Web metadata / favicon 资产：`web/public/productflow-brand-concept.png`、`web/public/productflow-mark.svg`
+| 路由 | 用途 |
+|---|---|
+| `/products` | 商品列表 |
+| `/products/new` | Agent 创建商品 |
+| `/products/:productId` | Agent 对话 + V2 工作流 + 图片库 |
+| `/image-chat` | 连续文/图生图 |
+| `/gallery` | 收藏画廊 |
+| `/settings` | Provider 与运行时配置 |
+| `/help` | 产品内帮助 |
+
+仓库文档：
+
+- [产品需求](docs/PRD.md)
+- [用户指南](docs/USER_GUIDE.md)
+- [架构说明](docs/ARCHITECTURE.md)
+- [路线图](docs/ROADMAP.md)
+- [版本记录](CHANGELOG.md)
 
 ## 技术栈
 
-- 后端：Python 3.12、FastAPI、SQLAlchemy、Alembic、Dramatiq、Redis、PostgreSQL、Pillow、OpenAI Python SDK。
-- 前端：React 19、Vite、TypeScript、React Router、TanStack Query、Tailwind CSS 4。
-- 本地开发入口：根目录 `justfile`；无 `just` 时可直接执行下文列出的原始命令。
-- 文档：`docs/PRD.md`、`docs/USER_GUIDE.md`、`docs/ARCHITECTURE.md`、`docs/ARCHITECTURE_HEALTH_REVIEW.md`、`docs/ROADMAP.md`、`CHANGELOG.md`。
-
-## 开源依赖与致谢
-
-ProductFlow 的应用代码之外，仓库还保留了一套面向 AI 协作的项目工作流资产。特别感谢**真诚、友善、团结、专业**的 Linuxdo 社区。
-<p>
-  <a href="https://linux.do">
-    <img src="https://img.shields.io/badge/LinuxDo-community-1f6feb" alt="LinuxDo">
-  </a>
-</p>
-
-- [LinuxDo](https://linux.do)
-
-同时感谢对本仓库结构、开发方式和协作体验影响最大的开源项目。
-
-<p>
-  <a href="https://github.com/mindfold-ai/Trellis">
-    <img src="https://raw.githubusercontent.com/mindfold-ai/Trellis/main/assets/trellis.png" alt="Trellis" height="32">
-  </a>
-  &nbsp;
-  <a href="https://openai.com/codex/">
-    <img src="https://img.shields.io/badge/OpenAI%20Codex-AI%20coding-412991?logo=openai&logoColor=white" alt="OpenAI Codex">
-  </a>
-  &nbsp;
-</p>
-
-- [Trellis](https://github.com/mindfold-ai/Trellis) 为本项目提供任务工作流、规范沉淀和上下文注入约定；仓库保留 `.trellis/workflow.md`、`.trellis/scripts/` 和 `.trellis/spec/`，方便贡献者理解需求、实现、检查和收尾方式。
-- [OpenAI Codex](https://openai.com/codex/) / Codex CLI 参与本项目的开发协作流程；仓库中的 `.codex/`、`.agents/skills/` 和 `AGENTS.md` 用于保存面向 AI coding agent 的项目级指令、hooks、技能和子代理配置。
+- 后端：Python 3.12+、FastAPI、SQLAlchemy、Alembic、Dramatiq、Redis、PostgreSQL、Pillow。
+- Agent service：Go、同仓 `agent-harness`、SQLite durable journal、Responses API。
+- 前端：React 19、Vite、TypeScript、React Router、TanStack Query、XYFlow、Tailwind CSS 4。
+- 模型 SDK：OpenAI Python/Go 生态和 Google GenAI。
 
 ## 仓库结构
 
 ```text
 ProductFlow/
-  README.md
-  LICENSE
-  CONTRIBUTING.md
-  SECURITY.md
-  CHANGELOG.md
-  .env.example
-  .env.dev.example
-  docker-compose.yml
-  .dockerignore
-  justfile
-  scripts/
-    release.sh
-    with_dev_env.sh
-  docs/
-    PRD.md
-    PRD.en.md
-    USER_GUIDE.md
-    USER_GUIDE.en.md
-    ARCHITECTURE.md
-    ARCHITECTURE.en.md
-    ARCHITECTURE_HEALTH_REVIEW.md
-    ARCHITECTURE_HEALTH_REVIEW.en.md
-    ROADMAP.md
-    ROADMAP.en.md
-    assets/
-      productflow-brand-concept.png
-      productflow-mark.svg
   backend/
-    Dockerfile
-    pyproject.toml
-    alembic.ini
     alembic/versions/
     src/productflow_backend/
     tests/
+  agent-service/
+    cmd/productflow-agent-service/
+    internal/
+    third_party/agent-harness/
   web/
-    Dockerfile
-    nginx.conf
-    package.json
-    public/
-      productflow-brand-concept.png
-      productflow-mark.svg
     src/
+    public/
+  docs/
+  scripts/
   .trellis/
-    workflow.md
-    scripts/
-    spec/
+  docker-compose.yml
+  justfile
 ```
 
-`.trellis/spec/`、`.trellis/workflow.md` 和 `.trellis/scripts/` 是项目开发规范和任务工具，保留在仓库中便于贡献者理解约定；`.trellis/tasks/` 和 `.trellis/workspace/` 是本地任务/开发者运行上下文，不应公开跟踪。
+## Docker Compose 运行
 
-## 快速开始：Docker Compose 一键自托管
-
-该路径面向单机自托管部署。默认配置可运行基础流程；配置真实模型供应商、持久化存储和反向代理/HTTPS 后，可作为小规模生产运行的基础方式。宿主机仅需 Docker / Docker Compose，无需安装 Python、`uv`、Node、`pnpm` 或 `just`。Compose 会构建并启动 PostgreSQL、Redis、后端 API、Dramatiq worker 和 Web 静态站点。
-
-### 1. 复制并修改环境变量
+### 1. 准备配置
 
 ```bash
 cp .env.example .env
 ```
 
-至少修改以下值：
+至少修改：
 
-- `ADMIN_ACCESS_KEY`：登录后台使用的管理员密钥；密钥本身只从环境变量读取，不写入数据库。
-- `SETTINGS_ACCESS_TOKEN`：配置页二次解锁令牌，必须与登录密钥分开。
-- `SESSION_SECRET`：签名 session cookie 的长随机字符串。
-- `POSTGRES_PASSWORD`：PostgreSQL 密码；Compose 会用它拼出容器内的 `DATABASE_URL`。
+- `ADMIN_ACCESS_KEY`
+- `SETTINGS_ACCESS_TOKEN`
+- `SESSION_SECRET`
+- `POSTGRES_PASSWORD`
+- `AGENT_SERVICE_INTERNAL_TOKEN`
 
-默认 provider 为 `mock`，`POSTER_GENERATION_MODE=template`，无需真实模型密钥即可完成创建商品、生成文案和模板海报等基础流程。真实模型配置见“模型与供应商配置”。
-
-### 2. 一键构建并启动
+### 2. 启动完整栈
 
 ```bash
 docker compose up -d --build
 ```
 
-不要在该命令后追加服务名；追加服务名只会启动指定服务。完整自托管栈应一次启动全部服务。
+Compose 包含 PostgreSQL、Redis、FastAPI、Dramatiq worker、Agent service 和 Web。后端容器启动时自动执行 `alembic upgrade head`。
 
-Compose 默认启动：
+默认地址：
 
-- PostgreSQL：服务名 `productflow-postgres`，Compose volume `productflow-postgres-data`，宿主机端口 `${POSTGRES_HOST_PORT:-15432}`。
-- Redis：服务名 `productflow-redis`，AOF 持久化 Compose volume `productflow-redis-data`，宿主机端口 `${REDIS_HOST_PORT:-16379}`。
-- 后端 API：服务名 `productflow-backend`，宿主机端口 `${APP_HOST_PORT:-29280}`。
-- Dramatiq worker：服务名 `productflow-worker`，与 API 共享数据库、Redis 和 storage 卷。
-- Web：服务名 `productflow-web`，nginx 静态服务，宿主机端口 `${WEB_PORT:-29281}`。
+- Web：`http://127.0.0.1:29281`
+- Backend health：`http://127.0.0.1:29280/healthz`
+- Web proxy health：`http://127.0.0.1:29281/api/healthz`
 
-如端口已被占用，可在 `.env` 中修改 `APP_HOST_PORT`、`WEB_PORT`、`POSTGRES_HOST_PORT` 或 `REDIS_HOST_PORT`，再重新执行 `docker compose up -d --build`。容器内部仍通过服务名互联，无需修改应用内的 `DATABASE_URL` / `REDIS_URL`。
+启动后使用 `ADMIN_ACCESS_KEY` 登录，再用 `SETTINGS_ACCESS_TOKEN` 解锁设置页并配置 `prompt`、`agent`、`image` 用途。
 
-容器内应用会使用 Compose 网络服务名连接依赖：
-
-```text
-DATABASE_URL=postgresql+psycopg://productflow:<POSTGRES_PASSWORD>@productflow-postgres:5432/productflow
-REDIS_URL=redis://productflow-redis:6379/0
-STORAGE_ROOT=/app/storage
-```
-
-容器运行时 `STORAGE_ROOT` 固定为 `/app/storage`，不要写入宿主机路径。默认上传和生成文件存入 Docker named volume `productflow-storage`，容器重启后数据保留。
-
-从旧 systemd 生产环境迁移到 Compose 时，如已有生产文件目录（例如 `/home/cot/ProductFlow-release/shared/storage`），可在 `.env` 中设置 host-only 变量复用旧文件：
+### 3. 数据与日志
 
 ```bash
-STORAGE_HOST_PATH=/home/cot/ProductFlow-release/shared/storage
-```
-
-`STORAGE_HOST_PATH` 仅用于 Compose bind mount 的宿主机路径；API/worker 容器内仍使用 `STORAGE_ROOT=/app/storage`。留空或不设置时使用 `productflow-storage` named volume。普通更新不要执行 `docker compose down -v`，也不要为切换 storage 挂载删除 Docker volume；如需回到 named volume，移除 `STORAGE_HOST_PATH` 后重新执行 `docker compose up -d`。
-
-### 3. 数据库迁移
-
-`productflow-backend` 启动命令会先执行：
-
-```bash
-alembic upgrade head
-```
-
-迁移成功后才会启动 `uvicorn`。升级代码后如需手动重跑迁移，执行：
-
-```bash
-docker compose run --rm productflow-backend alembic upgrade head
-```
-
-### 4. 访问与健康检查
-
-默认端口下可执行：
-
-```bash
-docker compose ps
-curl http://127.0.0.1:29280/healthz
-curl http://127.0.0.1:29281/api/healthz
-```
-
-如已在 `.env` 中修改端口，请替换为对应值：
-
-```bash
-curl "http://127.0.0.1:<APP_HOST_PORT>/healthz"
-curl "http://127.0.0.1:<WEB_PORT>/api/healthz"
-```
-
-预期 API 返回：
-
-```json
-{"status":"ok"}
-```
-
-Web 默认入口：`http://127.0.0.1:29281`（改过端口时使用 `.env` 中的 `WEB_PORT`）。使用 `.env` 中的 `ADMIN_ACCESS_KEY` 登录。Web 镜像提供 Vite build 后的静态资源，nginx 将同源 `/api/*` 请求反向代理到 `productflow-backend:29280`。
-
-### 5. 日志、停止与清理
-
-```bash
-docker compose logs -f productflow-backend productflow-worker productflow-web
+docker compose logs -f productflow-backend productflow-worker productflow-agent-service productflow-web
 docker compose down
 ```
 
-停止服务不会删除数据卷。确认需要清空数据库、Redis 和 storage 时再执行：
+`docker compose down` 保留 volumes。确认需要清空演示数据库、Redis、媒体 storage 和 Agent journal 时执行：
 
 ```bash
 docker compose down -v
 ```
 
-## 本地开发路径
+设置 `STORAGE_HOST_PATH=/absolute/host/path` 可使用宿主机目录；未设置时使用 `productflow-storage` named volume。
 
-修改代码并使用热重载开发时，使用本地开发路径。
+## 本地开发
 
 ### 1. 准备工具
 
-需要本机已有：
-
-- Python 3.12+
-- `uv`
-- Node.js 20+ 或兼容版本
-- `pnpm`
+- Python 3.12+ 与 `uv`
+- Go 1.26.5+
+- Node.js 20+ 与 `pnpm`
 - Docker / Docker Compose
-- `just`（可选；下文同时列出原始命令）
+- `just`（推荐）
 
-### 2. 复制环境变量
+### 2. 准备开发配置
 
 ```bash
 cp .env.example .env
@@ -303,157 +171,86 @@ cp .env.dev.example .env.dev
 cp web/.env.example web/.env
 ```
 
-`.env.example` 的 `DATABASE_URL` / `REDIS_URL` 面向 Compose 容器网络；本地热重载开发命令会通过 `.env.dev` 使用宿主机 `localhost:${POSTGRES_HOST_PORT:-15432}` 和 `localhost:${REDIS_HOST_PORT:-16379}`。至少需要把 `.env` / `.env.dev` 中的这些值改成自己的随机值：
+保持 `.env` 和 `.env.dev` 的 PostgreSQL 密码一致，并为管理员、设置页和内部 Agent 服务分别设置不同的随机密钥。
 
-- `ADMIN_ACCESS_KEY`：登录后台使用的管理员密钥；密钥本身只从环境变量读取，不写入数据库。
-- `SETTINGS_ACCESS_TOKEN`：配置页二次解锁令牌，必须与登录密钥分开。
-- `SESSION_SECRET`：签名 session cookie 的长随机字符串。
-- `POSTGRES_PASSWORD`：本地 PostgreSQL 密码，同时保持 `.env.dev` 的 `DATABASE_URL` 中密码一致。
-
-`.env.dev.example` 使用开发端口、Redis DB 1 和 `backend/storage-dev`，数据库名与默认 `docker-compose.yml` 保持一致。使用单独开发数据库时，需要先在 PostgreSQL 中创建对应数据库，再调整 `.env.dev` 的 `DATABASE_URL`。本地开发 storage 与生产 Compose 隔离：`just backend-run` / `just backend-worker` 及对应原始命令会读取 `.env.dev` 中的 `STORAGE_ROOT=./backend/storage-dev`。避免通过 `source .env` 或生产 `STORAGE_HOST_PATH` 启动开发进程。
-
-### 3. 仅启动开发依赖
-
-本地热重载开发只用 Compose 启动 PostgreSQL 和 Redis；API、worker 和 Web 由下一步的本机命令启动。完整自托管栈使用上文的 `docker compose up -d --build`。
+### 3. 安装与迁移
 
 ```bash
 docker compose up -d productflow-postgres productflow-redis
-```
-
-### 4. 安装依赖并迁移数据库
-
-使用 `just`：
-
-```bash
 just backend-install
 just web-install
 just backend-migrate
 ```
 
-无 `just` 时：
+### 4. 启动四个开发进程
 
-```bash
-uv sync --directory backend --extra dev
-pnpm --dir web install
-bash scripts/with_dev_env.sh uv run --directory backend alembic upgrade head
-```
-
-### 5. 启动后端、worker 和前端
-
-开三个终端分别运行。使用 `just`：
+分别在四个终端运行：
 
 ```bash
 just backend-run
 just backend-worker
+just agent-service-run
 just web-dev
 ```
 
-无 `just` 时：
+默认开发地址：
+
+- API：`http://127.0.0.1:29282`
+- Agent service：`http://127.0.0.1:29284`
+- Web：`http://127.0.0.1:29283`
+
+## 常用验证
 
 ```bash
-bash scripts/with_dev_env.sh bash -lc 'uv run --directory backend uvicorn productflow_backend.main:app --reload --host 0.0.0.0 --port "${APP_PORT:-29282}"'
-bash scripts/with_dev_env.sh uv run --directory backend dramatiq --processes 2 --threads 4 productflow_backend.workers
-bash scripts/with_dev_env.sh bash -lc 'web_port="${WEB_PORT:-29283}"; api_target="${VITE_DEV_PROXY_TARGET:-http://127.0.0.1:${APP_PORT:-29282}}"; VITE_API_BASE_URL= VITE_DEV_PROXY_TARGET="$api_target" pnpm --dir web dev -- --host 0.0.0.0 --port "$web_port" --strictPort'
+uv run --directory backend ruff check src tests
+just backend-test
+pnpm --dir web test:run
+pnpm --dir web lint
+just web-build
+just agent-service-test
 ```
 
-默认开发端口来自 `.env.dev.example`：
-
-- API：`http://localhost:29282`
-- Web：`http://localhost:29283`
-
-打开 Web 页面后使用 `ADMIN_ACCESS_KEY` 登录。顶部导航提供 **商品/工作台**、**文/图生图**、**画廊**、**帮助** 和 **配置**。
-
-### 6. 开发健康检查
+依赖真实 PostgreSQL/Redis 的恢复测试和真实 provider 测试为显式 opt-in：
 
 ```bash
-curl http://127.0.0.1:29282/healthz
+just backend-test-live-recovery
+just backend-test-live-delivery-renditions
+just backend-test-live-agent-product-intake
+just agent-service-test-live
 ```
 
-预期返回：
+## 发布脚本
 
-```json
-{"status":"ok"}
+```bash
+just release-dry-run
+just release
 ```
 
-## 模型与供应商配置
-
-ProductFlow 把文本和图片能力分开配置。基础设施配置（数据库、Redis、session、管理员密钥）仍然只从环境变量读取；业务配置可在前端 `/settings` 页面写入数据库并覆盖环境变量默认值。
-
-登录门禁 `admin_access_required` 默认开启。普通工作台和私有 API 需要 `ADMIN_ACCESS_KEY` 登录。二次解锁 `/settings` 后可关闭该开关，让普通工作台/API 免登录访问。`ADMIN_ACCESS_KEY` 仍必须保留在环境变量中，作为重新开启登录后的管理员入口。`SETTINGS_ACCESS_TOKEN` 始终独立保护配置页读取和写入。
-
-业务整删默认关闭：`DELETION_ENABLED=false` 时商品删除和连续生图会话删除 API 会返回 403，以便体验站保留违规内容溯源证据。工作流节点/连线编辑和参考图删除不受该开关影响。需要清理整条商品或会话数据时，管理员可在 `/settings` 显式开启“启用业务删除”，或通过环境默认值开启。
-
-供应商配置：
-
-- 文案和图片供应商在 `/settings` 的供应商档案与用途绑定中配置。供应商档案保存 Base URL、API Key 和能力；用途绑定选择文案或图片当前使用的接口与模型。
-- `TEXT_PROVIDER_KIND`、`TEXT_API_KEY`、`TEXT_BASE_URL`、`TEXT_BRIEF_MODEL`、`TEXT_COPY_MODEL`、`IMAGE_PROVIDER_KIND`、`IMAGE_API_KEY`、`IMAGE_BASE_URL`、`IMAGE_GENERATE_MODEL`、`IMAGE_RESPONSES_BACKGROUND_ENABLED`、`IMAGE_IMAGES_QUALITY`、`IMAGE_IMAGES_STYLE` 是升级迁移输入。升级后的首次启动会读取这些值并创建 `provider_profiles` / `provider_bindings`；新配置请在 `/settings` 修改。
-- Docker Compose 会把上述 legacy provider 变量传入 backend 和 worker 容器，保证旧 `.env` 中的真实 provider 能参与首次 bootstrap。默认值保持 mock，适合本地开发和无外部 API Key 的部署。
-- 文案用途支持 `mock` 和 `openai`。图片用途支持 `mock`、`openai_responses`、`openai_images`。
-- `openai_responses` 使用 OpenAI Responses `image_generation` 工具，支持参考图输入。ProductFlow 当前的连续生图分支上下文由用户显式选择的基图和参考图决定，不会自动把整段历史图片都传给 provider。
-- `openai_images` 使用 OpenAI Images API 兼容接口，适合直接生成/编辑图片；连续生图由 ProductFlow 显式传入所选基图和参考图，不使用 `previous_response_id`。
-- 图片尺寸默认值仍可通过 `IMAGE_MAIN_IMAGE_SIZE`、`IMAGE_PROMO_POSTER_SIZE` 提供，并可在 `/settings` 中覆盖。
-- 高级 tool 参数：`IMAGE_TOOL_ALLOWED_FIELDS` 控制前端可展示、后端可持久化并发送给 provider 的 tool 字段；可选默认值还包括 `IMAGE_TOOL_MODEL`、`IMAGE_TOOL_QUALITY`、`IMAGE_TOOL_OUTPUT_FORMAT`、`IMAGE_TOOL_OUTPUT_COMPRESSION`、`IMAGE_TOOL_BACKGROUND`、`IMAGE_TOOL_MODERATION`、`IMAGE_TOOL_ACTION`、`IMAGE_TOOL_INPUT_FIDELITY`、`IMAGE_TOOL_PARTIAL_IMAGES`、`IMAGE_TOOL_N`。
-
-海报模式：
-
-- `POSTER_GENERATION_MODE=template`：用本地模板/Pillow 渲染，不调用图片模型。
-- `POSTER_GENERATION_MODE=generated`：把确认版文案和商品/参考图交给图片 provider 生成海报。
-
-提示词模板：
-
-- `/settings` 的提示词分组可覆盖商品理解、文案生成、工作台生图和连续生图模板。
-- 单次需求写在文案/生图节点或文/图生图画面描述里；长期默认行为写入配置页模板。
-
-## 常用命令
-
-| 目的 | 使用 `just` | 无 `just` 时执行 |
-|---|---|---|
-| 安装后端依赖 | `just backend-install` | `uv sync --directory backend --extra dev` |
-| 安装前端依赖 | `just web-install` | `pnpm --dir web install` |
-| 应用开发库迁移 | `just backend-migrate` | `bash scripts/with_dev_env.sh uv run --directory backend alembic upgrade head` |
-| 启动开发 API | `just backend-run` | `bash scripts/with_dev_env.sh bash -lc 'uv run --directory backend uvicorn productflow_backend.main:app --reload --host 0.0.0.0 --port "${APP_PORT:-29282}"'` |
-| 启动 Dramatiq worker | `just backend-worker` | `bash scripts/with_dev_env.sh uv run --directory backend dramatiq --processes 2 --threads 4 productflow_backend.workers` |
-| 运行 backend pytest | `just backend-test` | `uv run --directory backend pytest` |
-| 验证 PostgreSQL/Redis 恢复投递 | `just backend-test-live-recovery` | 见下方隔离说明 |
-| 启动 Vite 开发服务器 | `just web-dev` | `bash scripts/with_dev_env.sh bash -lc 'web_port="${WEB_PORT:-29283}"; api_target="${VITE_DEV_PROXY_TARGET:-http://127.0.0.1:${APP_PORT:-29282}}"; VITE_API_BASE_URL= VITE_DEV_PROXY_TARGET="$api_target" pnpm --dir web dev -- --host 0.0.0.0 --port "$web_port" --strictPort'` |
-| 运行前端 lint | 无 just 包装 | `pnpm --dir web lint` |
-| 运行前端单测 | 无 just 包装 | `pnpm --dir web test:run` |
-| TypeScript 检查 + Vite build | `just web-build` | `pnpm --dir web build` |
-| 发布 dry run | `just release-dry-run` | `DRY_RUN=1 bash scripts/release.sh` |
-| 生产更新 | `just release` | `bash scripts/release.sh` |
-
-`just backend-test-live-recovery` 是显式 opt-in 的依赖集成门禁，需要先按本地开发章节配置 `.env` 与 `.env.dev`。
-命令只启动 Compose 的 PostgreSQL 与 Redis，从 `.env.dev` 读取基础连接，为每次运行创建并删除随机 PostgreSQL database，并且只清理 Redis DB 15。
-它不启动 worker，不执行 provider 请求，也不读写开发业务 database 或 Redis DB 0。普通 `just backend-test`
-继续使用 SQLite；live test 会显示为 skipped，且不会连接外部依赖。
-
-`just release` / `bash scripts/release.sh` 是 Docker Compose 生产更新入口。流程包括 `docker compose config --quiet`、停止可能占用 `29280/29281` 的 legacy user-level systemd 服务、`docker compose up -d --build --remove-orphans`，以及 backend `/healthz`、web `/healthz`、web 代理 `/api/healthz` 检查。该流程不会删除 Docker volumes；普通更新不要执行 `docker compose down -v`。复用旧 systemd 生产文件时，在 `.env` 中设置 `STORAGE_HOST_PATH=/home/cot/ProductFlow-release/shared/storage`。已手动迁走旧服务时，可临时执行 `LEGACY_SYSTEMD_ACTION=skip bash scripts/release.sh`，或使用 `LEGACY_SYSTEMD_ACTION=skip just release`。
-
-`just release-dry-run` / `DRY_RUN=1 bash scripts/release.sh` 只校验 Compose 配置并打印实际发布会执行的步骤；不会停止 systemd 服务、不会构建镜像，也不会启动或切换运行中的服务。
+`release-dry-run` 校验 Compose 配置并打印当前发布动作。`release` 执行 `docker compose up -d --build --remove-orphans`，随后检查 backend、Agent service、Web 和 Web API proxy；它不会删除 volumes。
 
 ## 主要 API 资源
 
-后端只暴露 REST API。主要入口包括：
-
-- `POST /api/auth/session`、`GET /api/auth/session`、`DELETE /api/auth/session`
-- `/api/products`、`/api/products/{product_id}`、`/api/products/{product_id}/history`
-- `/api/products/{product_id}/reference-images`、`/api/source-assets/{asset_id}`、`/api/source-assets/{asset_id}/download`
-- `/api/copy-sets/{copy_set_id}`、`/api/copy-sets/{copy_set_id}/confirm`
-- `/api/posters/{poster_id}/download`
-- `/api/image-sessions`、`/api/image-sessions/{image_session_id}`、`/api/image-sessions/{image_session_id}/status`、`/api/image-session-assets/{asset_id}/download`
+- `/api/auth/session`
+- `/api/v2/agent-product-workspaces`
+- `/api/v2/products`
+- `/api/v2/products/{product_id}/agent-conversations`
+- `/api/v2/products/{product_id}/agent-workbench`
+- `/api/v2/products/{product_id}/workflow`
+- `/api/v2/workflow-drafts`
+- `/api/v2/workflow-recipes`
+- `/api/v2/product-image-assets`
+- `/api/image-sessions`
 - `/api/gallery`
-- `/api/generation-queue`
-- `/api/products/{product_id}/workflow`、`/api/products/{product_id}/workflow/status`、`/api/products/{product_id}/workflow/run`、`/api/products/{product_id}/workflow/runs/{run_id}/cancel`
-- `/api/workflow/canvas-templates`、`/api/workflow/user-template-groups`
-- `/api/workflow-nodes/{node_id}`、`/api/workflow-edges/{edge_id}`
-- `/api/settings`、`/api/settings/lock-state`、`/api/settings/unlock`、`/api/settings/runtime`
+- `/api/settings`
 
-上面是常用资源入口，不是完整 OpenAPI reference；操作型接口还包括连续生图生成/取消/重试/收藏到画廊、工作流重试、模板插入和用户模板管理等。
+完整合同以 FastAPI OpenAPI 和 `backend/src/productflow_backend/presentation/routes/` 为准。
 
-## 开源与安全边界
+## 开源与安全
 
-- License：MIT，见 `LICENSE`。
-- 贡献指南：见 `CONTRIBUTING.md`。
-- 安全报告：见 `SECURITY.md`。
-- 不要提交 `.env`、`web/.env`、本地 storage、构建产物、缓存、日志或 `.trellis/tasks/` / `.trellis/workspace/`。
-- 真实 provider API key 只应放在本地环境变量或私有部署配置中，不应写入 issue、PR 或文档示例。
+- License：MIT，见 [LICENSE](LICENSE)。
+- 贡献指南：[CONTRIBUTING.md](CONTRIBUTING.md)。
+- 安全报告：[SECURITY.md](SECURITY.md)。
+- 不要提交 `.env`、`web/.env`、storage、构建产物、缓存、日志、`.trellis/tasks/` 或 `.trellis/workspace/`。
+- Provider API key 只放在私有配置中。
+
+ProductFlow 使用 [Trellis](https://github.com/mindfold-ai/Trellis) 管理工程规范和任务上下文，并在开发过程中使用 OpenAI Codex。感谢 [LinuxDo](https://linux.do) 社区。

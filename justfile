@@ -27,39 +27,6 @@ backend-migrate:
 backend-migrate-prod:
     uv run --directory backend alembic upgrade head
 
-backend-verify-media *args:
-    bash scripts/with_dev_env.sh uv run --directory backend python -m productflow_backend.commands.verify_media {{args}}
-
-backend-audit-legacy-retirement *args:
-    bash scripts/with_dev_env.sh uv run --directory backend python -m productflow_backend.commands.audit_legacy_retirement {{args}}
-
-backend-audit-legacy-retirement-prod *args:
-    uv run --directory backend python -m productflow_backend.commands.audit_legacy_retirement {{args}}
-
-backend-legacy-v1-freeze *args:
-    bash scripts/with_dev_env.sh uv run --directory backend python -m productflow_backend.commands.manage_legacy_v1_freeze {{args}}
-
-backend-legacy-v1-freeze-prod *args:
-    uv run --directory backend python -m productflow_backend.commands.manage_legacy_v1_freeze {{args}}
-
-backend-preflight-legacy-cutover *args:
-    bash scripts/with_dev_env.sh uv run --directory backend python -m productflow_backend.commands.preflight_legacy_cutover {{args}}
-
-backend-preflight-legacy-cutover-prod *args:
-    uv run --directory backend python -m productflow_backend.commands.preflight_legacy_cutover {{args}}
-
-backend-export-legacy-archives *args:
-    bash scripts/with_dev_env.sh uv run --directory backend python -m productflow_backend.commands.export_legacy_archives {{args}}
-
-backend-export-legacy-archives-prod *args:
-    uv run --directory backend python -m productflow_backend.commands.export_legacy_archives {{args}}
-
-backend-backfill-legacy-archives *args:
-    bash scripts/with_dev_env.sh uv run --directory backend python -m productflow_backend.commands.backfill_legacy_archives {{args}}
-
-backend-backfill-legacy-archives-prod *args:
-    uv run --directory backend python -m productflow_backend.commands.backfill_legacy_archives {{args}}
-
 backend-worker-prod:
     uv run --directory backend dramatiq --processes 2 --threads 4 productflow_backend.workers
 
@@ -73,17 +40,8 @@ backend-test-live-recovery:
 backend-test-live-delivery-renditions:
     PRODUCTFLOW_RUN_LIVE_DELIVERY_RENDITIONS=1 bash scripts/with_dev_env.sh uv run --directory backend pytest -q -m live_dependencies tests/test_live_delivery_renditions.py
 
-backend-test-live-gallery-migration:
-    PRODUCTFLOW_RUN_LIVE_GALLERY_MIGRATION=1 bash scripts/with_dev_env.sh uv run --directory backend pytest -q -m live_dependencies tests/test_live_gallery_migration.py
-
-backend-test-live-canvas-recipes:
-    PRODUCTFLOW_RUN_LIVE_CANVAS_RECIPE=1 bash scripts/with_dev_env.sh uv run --directory backend pytest -q -m live_dependencies tests/test_live_canvas_recipes.py
-
 backend-test-live-agent-product-intake:
     PRODUCTFLOW_RUN_LIVE_AGENT_PRODUCT_INTAKE=1 bash scripts/with_dev_env.sh uv run --directory backend pytest -q -m live_dependencies tests/test_live_agent_product_intake.py
-
-backend-test-live-legacy-archives:
-    PRODUCTFLOW_RUN_LIVE_LEGACY_ARCHIVES=1 bash scripts/with_dev_env.sh uv run --directory backend pytest -q -m live_dependencies tests/test_live_legacy_archives.py
 
 web-install:
     pnpm --dir web install

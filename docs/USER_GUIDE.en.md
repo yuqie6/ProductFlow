@@ -1,282 +1,242 @@
-# ProductFlow Beginner Tutorial and Reference
+# ProductFlow User Guide
 
-[中文](USER_GUIDE.md) | English
+The in-product `/help` pages cover the same current system. This document is optimized for repository search and troubleshooting.
 
-This document has two parts:
+## 1. First Use
 
-1. **Beginner tutorial**: minimal jargon, follow the clicks and fields, and generate one usable product image first.
-2. **Reference**: after completing one run, read more about workbench cards, prompt configuration, model settings, and common questions.
+1. Log in with `ADMIN_ACCESS_KEY`.
+2. Open `/settings` and unlock it with `SETTINGS_ACCESS_TOKEN`.
+3. Create provider profiles with Base URL, API key, capabilities, and default models.
+4. Bind profiles, interfaces, and models to `prompt`, `agent`, and `image`.
+5. Save and return to `/products`.
 
-The product now provides a **Help** page in the top navigation for quick access to workflows, templates, supported operations, and common troubleshooting. This Markdown document remains as repository text reference and should stay aligned with the in-product help page.
+All three purposes are required by the core flow:
 
-The current workbench is the **ProductFlow workbench**: the middle area is a zoomable and draggable node canvas. On desktop, the right side is a compact sidebar that switches between **Details / Runs / Library / Templates** with a small rail. On mobile, the canvas remains the main surface and the bottom toolbar opens workflow run, Single node, Templates, Details, Runs, and Library controls. Normal use does not require understanding the internal DAG. Just remember: product, reference image, copy, and image generation are cards; edges mean "downstream generation refers to upstream data".
+- Prompt: prompt-generation nodes.
+- Agent: requirement clarification, library organization, and workflow creation.
+- Image: workflow and iterative image generation.
 
----
+## 2. Create a Product
 
-## Beginner Tutorial: Start from One Product Image
+Open `/products/new`.
 
-Goal: upload one product image, add a little information, generate copy, then generate a satisfying image.
+### 2.1 Choose an Image Plan
 
-### 1. Create a Product
+- Enter the product name.
+- Select the required image types.
+- Each type defaults to two images and has an independent quantity control.
+- Multiple hero images are usually candidates. For multi-angle output, describe the intended angle or content of each image during clarification.
 
-1. Click **Products / Workbench** in the top navigation.
-2. Click **New product**.
-3. Upload a clear product main image.
-4. Fill in a product name, for example: `cream white commuter tote bag`.
-5. Choose a canvas template. Beginners can choose **Product main image**; choose **Blank canvas** if you want to build the workflow manually.
-6. Click **Create and continue**.
+### 2.2 Upload Real References
 
-Expected result: the page enters this product's workbench, with several clickable cards in the middle.
+- Upload one to six images of the actual product.
+- PNG, JPEG, and WebP are supported.
+- Images should expose product shape, structure, color, and important details.
+- Logos, certifications, packaging, factory material, and manuals can only be used when the user supplies them.
 
-### 2. Add Product Details
+References are product evidence and candidates for reference-node bindings. Product cover selection is automatic; no separate cover prop is required.
 
-1. Click the **Product** card on the canvas.
-2. The right side switches to **Details**. Add category, price, product description, or the direction you want to emphasize this time.
-3. Example description: `Suitable for commuting and weekend outings, lightweight, large capacity, cream white color.`
-4. Click **Save**, or wait until the right-side status shows **Saved**.
+### 2.3 Clarify with the Agent
 
-Expected result: the form saves successfully. Later copy and image generation use these saved product details.
+The Agent checks the selected image types and uploaded references for gaps. Common questions cover:
 
-### 3. Generate the First Copy Version
+- Price, category, specifications, and selling points.
+- Visual style, colors, typography, photography, and realism.
+- Image-text language, copy density, and forbidden content.
+- Aspect ratio, quality, reference fidelity, and background.
+- Whether multiple images of one type are candidates or distinct angles/content.
 
-1. Click the **Copy** card.
-2. In generation requirements, write one sentence, for example:
+Questions should affect the workflow or image result. The user can add text or upload more verifiable product material.
 
-   ```text
-   Emphasize commuting, lightweight design, and large capacity. Use a premium tone without exaggeration.
-   ```
+### 2.4 Confirm the Draft
 
-3. Click **Run current node**. If you want to run from product details all the way to image generation, click **Run workflow**.
+The confirmation view summarizes:
 
-Expected result: the copy card generates an editable structured copy payload. It may be freeform text, short labeled blocks, layout sections, visual guidance, or a mix that fits the selected template.
+- Product facts and conflicts.
+- Image types and quantities.
+- Shared visual system.
+- Per-type or per-image goals and prompts.
+- Reference bindings.
+- Aspect ratio, resolution, quality, text policy, and delivery specifications.
+- Planned folders, nodes, and edges.
 
-If you are not satisfied, change only one direction and try again, such as "make it younger", "make it more concise", or "use fewer exaggerated words".
+Confirmation starts materialization. The canvas reveals folders, nodes, and edges from streamed events, then enters the product workbench with the same Agent conversation in the sidebar.
 
-The copy detail editor shows fields that already have content. Empty optional fields collapse into compact add buttons such as "add label" or "add visual guidance", and long text boxes grow with their content. Later image generation reads the structured copy, so every result can use the shape that fits the scene.
+## 3. Product Workbench
 
-### 4. Add or Connect Reference Images
+### 3.1 Four Node Types
 
-If you have a style image you want to reference:
+- Product context: confirmed product facts and visual system.
+- Reference image: one explicit image from the product library.
+- Prompt generation: an editable prompt built from facts, visual rules, and image goal.
+- Image generation: aspect ratio, resolution, quality, background, text policy, reference fidelity, and execution state.
 
-1. Select or add a **Reference image** card.
-2. Upload a reference image, such as lighting, background, composition, or style that you like. Reference image upload also supports click-to-select and drag-and-drop.
-3. Drag from the connection point on the reference image card to the **Copy** or **Image generation** card.
+### 3.2 Canvas Operations
 
-You only need to remember: **connecting to it = reference it during generation**.
+- Add nodes from the toolbar.
+- Drag from an output handle to a target input handle to create an edge.
+- Drag nodes to position them; zoom with wheel/touch and pan from blank canvas.
+- Ctrl/Cmd/Shift-click or marquee-select multiple nodes.
+- Check downstream dependencies before deleting selected nodes or edges.
+- Use automatic layout to improve routing.
+- Put a local flow in a canvas folder. A folder changes visual organization only, not DAG execution order.
 
-Expected result: an edge appears on the canvas. When the connected card runs later, it references this image's tags and image information. If you connect the wrong edge, select and delete the edge, then drag a new one.
+Node cards show compact scanning summaries. Edit complete content in the inspector so cards remain readable.
 
-### 5. Generate the First Image
+### 3.3 Inspector
 
-1. Click the **Image generation** card.
-2. Confirm that the **Image generation** card is connected to at least one downstream **Reference image** card. The image-generation card only triggers generation; it does not display/download images itself. Generated results are written into the connected reference image cards.
-3. Write image requirements, for example:
+Reference nodes:
 
-   ```text
-   Place a white tote bag on a commuter desk with a laptop and coffee nearby, clean natural light, suitable for an ecommerce main image.
-   ```
+- Select one product-library asset.
+- Preview the current binding.
+- Upload or save an image-session result to the product before binding a new reference.
 
-4. Click **Run current node** or **Run workflow**.
+Prompt nodes:
 
-Expected result: the downstream reference image card is filled with the new image and provides preview/download on the card. The right-side **Library** panel also aggregates the image. Click the thumbnail to preview it in the app; click **Download** to download the original image.
+- Inspect the current prompt artifact.
+- Edit image goal, composition, content, text, and atmosphere.
+- New executions retain artifact versions.
 
-If there is no downstream reference image card connected, the system tells you to connect at least one image/reference image node first. It will not silently place the image on the image-generation card.
+Image nodes:
 
-### 6. Keep Adjusting Until Satisfied
+- Choose aspect ratio and resolution tier.
+- Set quality intent, reference fidelity, background, and text policy.
+- Supply an explicit language when image text is required.
+- Inspect output both on the node and in the library.
 
-Change only one or two things per round; it is easier to tell which sentence worked.
+### 3.4 Runs
 
-Common adjustments:
+- Run Workflow follows DAG dependencies for all targeted nodes.
+- Run Current Node submits only the required scope for the selected node.
+- The Runs panel shows state, node results, and safe errors.
+- Active runs can be cancelled. Retry is available for retryable failures.
 
-- Subject is unclear: add `product centered in frame, complete subject, clear texture`.
-- Background is too busy: add `clean background, fewer props, keep only 1-2 supporting objects`.
-- Style is wrong: add `natural light`, `magazine-like composition`, `minimal ecommerce`, or `warm lifestyle`.
-- Selling point is missing: put the most important selling point in the first sentence, such as `large capacity`, `lightweight`, or `commuter-friendly`.
+## 4. Visual System and Prompts
 
-Copyable rewrite example:
+The visual system is shared across the workflow and can define:
 
-```text
-Make the background cleaner, keep only the laptop and coffee; the bag texture should be clear and the shadow soft.
-```
+- Style position.
+- Primary, secondary, accent, and background colors.
+- Typography and size hierarchy.
+- Decoration, icon language, and whitespace.
+- Lighting, depth of field, lens, and composition.
+- Resolution, commercial quality, realism, and product-form lock.
 
-Download the image when you are satisfied. If you want to continue fine-tuning iteratively, click **Image chat** in the top navigation. If this image came from Image chat, you can also save it to **Gallery** for centralized browsing later.
+Images of one type may share a goal and base composition. Images with distinct angles, content, or text should have separate prompts. Record explicit per-image exceptions so visual consistency remains understandable.
 
-### Canvas Basics
+## 5. Product Image Library
 
-- **Desktop zoom**: move the mouse into the workbench canvas and scroll the wheel; the canvas zooms around the mouse position. Zoom buttons and percentage are also available in the lower-right corner.
-- **Desktop pan**: hold the left mouse button on blank canvas and drag to move the view. Dragging cards, clicking buttons, uploading, or dragging edges does not trigger canvas panning.
-- **Desktop move cards**: hold the card body or title area and drag; the position is saved after release. It stays where you placed it after refresh.
-- **Desktop connect cards**: drag from a card connection point to a target card. An edge is created after release. Edges are part of the workflow, not temporary visuals.
-- **Desktop multi-select cards**: hold Shift and drag a selection box from blank canvas, or Ctrl / Cmd / Shift-click several nodes. A selected group can be moved, deleted, or saved as a node-group template.
-- **Mobile browse mode**: the product workbench opens in browse mode on mobile. One-finger dragging on blank canvas pans the view, tapping a node selects it, and two-finger pinch zooms the canvas.
-- **Mobile edit mode**: after switching the bottom mode control to **Edit**, touch and pen input can drag nodes and create edges from output handles to target nodes.
-- **Mobile select mode**: after switching the bottom mode control to **Select**, tapping nodes adds or removes them from multi-select. Tapping blank canvas exits the temporary selection mode.
-- **Mobile toolbar and panels**: the bottom toolbar provides workflow run, Single node, Templates, Details, Runs, and Library entrypoints. Those sidebar contents open as a bottom sheet on mobile.
-- **Adjust sidebar**: on desktop, the right sidebar handles Details, Runs, Library, and Templates. It stays compact and no longer uses a large bottom panel that occupies canvas space.
+The workbench Library panel uses an Explorer-style structure.
 
-### Node Group Templates
+### 5.1 Browse and Classify
 
-The right-side **Templates** panel inserts reusable groups into an existing product workbench. It serves a different moment from the full-canvas template chosen during product creation:
+- System directories: all, recent, uploads, generations, and related views.
+- Image-type directories from the creation plan.
+- Origin directories for upload, workflow generation, and image-session attachment.
+- User folders that can be created, renamed, removed, and used as move targets.
 
-- **Full-canvas template**: chosen only when creating a product; it defines the initial workflow structure.
-- **Node-group template**: appended inside an existing product workbench, for example a main-image refinement, scene image, or campaign image flow.
-- **User template**: after selecting two or more non-product nodes, save the selected structure as your own node-group template.
+Switch between grid and list, sort by name or time, search the current scope, and load cursor pages.
 
-Saving a user template stores only reusable node configuration and internal edges between selected nodes. It does not store generated images, copy outputs, or product details. User templates can be renamed and deleted; deleting a template does not affect nodes already inserted into a product workbench.
+### 5.2 Image Actions
 
-### 7. Use Iterative Image Generation for Detail Tuning
+- Preview, rename, and download one image.
+- Multi-select loaded images to move or download a ZIP.
+- Create a delivery rendition from an image.
+- Bind an explicit asset to a reference node.
 
-1. Click **Image chat** in the top navigation.
-2. Select a product, or generate freely first.
-3. The first image can be generated directly from a text description. For later edits, first click a completed image in history as the base image.
-4. Request changes conversationally, for example:
+Every generation remains in the library. The system has no rejected-draft state and does not automatically delete unselected candidates.
 
-   ```text
-   Keep the bag angle unchanged, change the background to a brighter office, and reduce desk clutter.
-   ```
+### 5.3 Agent Organization
 
-5. When satisfied, write the image back to the product so the workbench can reference it later.
+The Agent can read bounded names, directories, and metadata; create or rename folders; and rename or move assets. When visual inspection is required, it opens selected images instead of loading the entire library.
 
-On small screens, Image chat uses a main-view, drawer, and bottom-sheet layout:
+## 6. Save Workflow Recipes
 
-- **Top bar**: the left button opens the session drawer, the center shows the current session title, the pencil renames it, and the right button opens the history drawer.
-- **Left session drawer**: create, select, and delete sessions. Session cards show the latest thumbnail, round count, and update time; selecting a session switches the main view to it.
-- **Right history drawer**: shows branch/candidate history and running placeholders. Tapping a completed image selects it as the current result and the next base image; tapping a placeholder shows that candidate's queued, generating, failed, or cancelled state.
-- **Main view**: generation status, current result, failure reason, and provider notes remain visible. When a multi-candidate task is submitted, history first shows the matching number of placeholders; while running, the page refreshes lightweight status and refreshes full session detail after the task ends.
-- **Bottom action bar**: the generation entry is always available. After a completed result is selected, the bar also shows Download and Send to gallery.
-- **Bottom generation sheet**: contains Generation and Advanced tabs. Generation manages the write-back target product, session references, image description, size, and candidate count; Advanced manages enabled image tool parameters. The submit button at the bottom starts generation using the current candidate count.
+The workbench can save:
 
-### 8. Save to Gallery
+- A complete workflow recipe.
+- The local flow represented by one folder.
+- A fragment from the current node selection.
 
-Image chat results can be saved to **Gallery**. The gallery keeps image source, prompt, size, and model information, and provides a download entrypoint.
+A recipe stores reusable structure, edges, and configuration. It excludes product identity, product images, and generated results. The recipe library contains only content explicitly saved by the user.
 
-Good gallery candidates:
+## 7. Iterative Image Generation
 
-- Backgrounds or compositions that may be reused later but should not be attached to a product yet.
-- Satisfying candidates that need to be reviewed together.
-- Useful tuning results that are not the current product's final image.
+Open `/image-chat`.
 
----
+1. Create or choose a session.
+2. Enter a prompt.
+3. Choose image size and candidate count.
+4. Optionally choose a completed result as the branch base.
+5. Select up to six context references. A branch base consumes one context slot.
+6. Set advanced fields supported by the active provider.
+7. Submit and inspect queue, progress, candidates, and provider notes.
 
-## Reference: What Cards Are in the Workbench
+A completed candidate can be:
 
-These notes are for users who have completed one run and want more precise control.
+- Used as the next branch base.
+- Downloaded.
+- Collected in Gallery.
+- Saved to a selected product library.
 
-### Product
+After save-to-product, it uses the same ProductImageAsset management as uploads and workflow results.
 
-Stores product name, category, price, and description. Downstream generation prioritizes the latest saved product details.
+## 8. Settings
 
-### Reference Image
+### 8.1 Provider Profiles
 
-A reference image card holds only the current image. You can upload manually, or let an image-generation card fill it with a new image. The new image replaces the current image in the card; old assets remain in product history.
+A profile contains:
 
-When a reference image card is selected, assets in the right-side **Library** panel show fill actions. When filling from an existing asset, the system reuses the existing asset record and does not create a duplicate upload for the same image.
+- Name and provider type.
+- Base URL and API key.
+- Capabilities.
+- Default models and provider configuration.
+- Enabled/disabled state.
 
-### Copy
+API keys are not echoed after save. Leaving the secret blank during update does not send the stored value back to the browser.
 
-Generates editable structured copy. The result can be freeform text, copy blocks, layout sections, and visual guidance. After generation, you can keep editing inside the card. Edited structured copy is used by later image generation.
+### 8.2 Purpose Bindings
 
-The current workbench uses structured copy as later image-generation context, so you do not need to invent fixed copy fields when the scene does not need them.
+Each purpose chooses a profile, interface mode, model, and request settings. The profile must advertise the required capability.
 
-### Image Generation
+### 8.3 Runtime Settings
 
-Triggers image generation based on product details, copy, reference images, and your image requirements. It is not an image slot: generated images are written into connected downstream reference image cards. If no downstream reference image card is connected, running fails and tells you to connect at least one image/reference image node first.
+Settings also controls:
 
-The image-generation card now distinguishes between "generate directly from product details" and "generate with copy/reference context": when upstream copy or reference images are connected, generation reads that context. Without connected copy, it can still try to generate from product details and the node's image requirements.
+- Allowed image-tool fields and defaults.
+- Maximum generation dimension.
+- Upload byte, pixel, and count limits.
+- Concurrency and security switches.
+- Import/export of the current configuration format.
 
----
+Generation count belongs to the image plan or image-session candidate count and is not duplicated as an advanced image field.
 
-## Reference: Connections and Runs
+## 9. Troubleshooting
 
-- Connect A to B: B references A during generation.
-- To try one card only: select the card and run the current node.
-- To generate from product details all the way to image: run the whole workflow.
-- Before running, confirm that the right-side form is saved. If the selected card has unsaved draft content, the current run button first attempts to save it, then starts running.
-- You can keep organizing canvas positions while the workflow is running, but do not repeatedly click run or change the structure.
-- Image-generation results are not downloaded from the image-generation card. Use the downstream reference image card or the right-side **Library** panel.
-- Running workflows can be cancelled from the Details or Runs area for the node involved. Failed retryable runs expose a retry action.
-- Failure messages try to distinguish provider quota/rate limit, content policy, network interruption, request timeout, provider service error, and unsupported parameters.
+### Agent Creation Cannot Start
 
----
+Select at least one image type and upload one to six valid product images. Then check the Agent binding and Agent service health.
 
-## Reference: Prompt Configuration
+### The Agent Replied but No Workflow Appeared
 
-Open **Settings** in the top navigation and find the **Prompts** group. You can adjust four long-term default prompt templates:
+Check whether the Turn requires input or awaits confirmation. Answer the question and confirm the latest WorkflowDraft revision before materialization.
 
-- `prompt_brief_system`: default prompt for product understanding.
-- `prompt_copy_system`: default prompt for copy generation.
-- `prompt_poster_image_template`: workbench image-generation template.
-- `prompt_poster_image_edit_template`: workbench edit template when upstream copy or reference-image context is present.
-- `prompt_poster_image_reference_policy`: visual-reference rule used by the `reference_policy` placeholder in workbench image templates.
-- `prompt_image_chat_template`: iterative image-generation template.
+### A Reference Node Is Empty
 
-Recommended usage:
+Open the product library, confirm the target image exists, and bind the explicit asset from the inspector. The product cover is not automatically used by every reference node.
 
-- For one-off effects: write requirements in the copy card or image-generation card.
-- For long-term tone or format: change prompt templates in the settings page.
-- If unsure: copy the default value first, make a small adjustment, save, and test.
+### Image Generation Failed
 
-Restoring defaults deletes the custom value from the database and returns to the system default prompt.
+Check the Image binding, model, references, generation specification, and safe error. Change unsupported size or advanced fields and retry.
 
-Common placeholders:
+### Workflow Routing Is Hard to Read
 
-- Workbench image template: `product_name`, `category`, `price`, `source_note`, `instruction`, `context_block`, `reference_policy`, `size`, `kind`, `kind_label`, `kind_requirements`.
-- Workbench edit template: `product_name`, `category`, `price`, `source_note`, `instruction`, `context_block`, `reference_policy`, `size`, `kind`, `kind_label`, `kind_requirements`.
-- Iterative image template: `prompt`, `size`, `history_block`.
+Use automatic layout, place one image type or local stage in a folder, and remove meaningless cross-folder edges. Folders do not require dependency changes.
 
-If a placeholder is misspelled, the system does not crash just because of the unknown placeholder. That part may not be replaced as expected. Prefer small edits followed by testing.
+### Settings Cannot Save
 
----
+Confirm the independent SETTINGS_ACCESS_TOKEN unlock and inspect provider capability, model, and request-field validation errors.
 
-## Reference: Model and Runtime Settings
+### Are Secrets Written to Logs?
 
-The top-navigation **Settings** page can also manage:
-
-- Copy provider and copy model.
-- Image provider and image model.
-- Provider profiles, including provider type, connection data, API key, and interface capabilities. Google Gemini profiles use the official SDK endpoint and do not configure a Base URL.
-- Default image size. Iterative image generation and workbench image generation can directly select common 1K / 2K / 4K frames or enter custom width/height.
-- Iterative image-generation idle recovery threshold, defaulting to 90 minutes; the system judges stale running tasks by the latest generation-progress heartbeat.
-- Upload file size limits.
-
-Provider profile secrets are not echoed back. Leaving API key blank while editing a profile preserves the old value; only entering a new value writes it to the database.
-
-## Reference: Running State
-
-Copy, poster, workflow, and Image chat generation are background tasks. Pages refresh status while running, but they do not repeatedly download complete historical data:
-
-- Image chat updates queue position, completed candidate count, latest progress time, provider status, success/failure state, and failure reason.
-- Product workflows update node state, run state, and failure reasons.
-- After a task ends, the page refreshes full details and shows new images, copy, or product history.
-- Retryable failed tasks keep a retry entrypoint. Retry reuses the task's prompt, size, reference images, and advanced parameters.
-- Running Image chat tasks can be cancelled; cancelled tasks do not write new candidates.
-
-If a page does not change for a long time, check the running state and error message first, then refresh the page to confirm backend results.
-
----
-
-## Common Questions
-
-### Running a downstream card directly did not use new details?
-
-First confirm that the right-side form has been saved. Runs use saved content, not unsaved input draft.
-
-### Does the image-generation card have to connect to a reference image card?
-
-It must connect to at least one downstream reference image card. The image-generation card only triggers and configures generation; image preview/download happens on the filled reference image card. If one image-generation card connects to multiple reference image cards, generation runs concurrently and fills those cards separately.
-
-### Image quality is poor. How should I change the prompt?
-
-Do not change many sentences at once. Change only one item per round: background, composition, lighting, or subject detail. This makes it easier to know which sentence improved the result.
-
-### Template saving failed?
-
-Confirm that you selected at least two nodes and did not include the **Product** node. User node-group templates store reusable workflow fragments. They cannot contain product-detail nodes and do not store generated images or copy outputs.
-
-### Settings failed to save?
-
-Check the field name in the page error message. A common cause is invalid image size format, such as needing `1024x1024`. Custom width/height does not need to be added to an allow-list beforehand, but width and height must be positive and each side must not exceed the system safety limit of `3840`. Image generation sizes are automatically calibrated to nearby 16-pixel multiples required by providers.
-
-### Are complete prompts recorded in logs?
-
-They should not be. The backend only saves necessary node summaries and artifact references. It should not log full prompts, secrets, uploaded bytes, or provider payloads.
+Application logs must not contain API keys, session tokens, complete upload bytes, or data URLs. Treat any such log as a security issue.

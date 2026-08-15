@@ -220,8 +220,8 @@ Record the metrics decision in the observability task/spec, then implement only 
 Never log secrets or full request payloads that may contain secrets:
 
 - `Settings.admin_access_key` and `Settings.session_secret` from `backend/src/productflow_backend/config.py`.
-- Provider keys such as `text_api_key` and `image_api_key`.
-- Uploaded image bytes or data URLs built in `application/image_sessions.py::_session_data_url`.
+- ProviderProfile API keys and the Agent service internal bearer token.
+- Uploaded image bytes or temporary data URLs constructed for provider requests.
 - Session cookies or `request.session` contents.
 - Full prompts or full request bodies.
 - Raw provider responses if they can include prompts, base64 images, credentials, provider request bodies, or provider

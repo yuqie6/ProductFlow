@@ -1,132 +1,158 @@
 # Frontend Directory Structure
 
-> Actual React/Vite organization for ProductFlow.
-
----
-
 ## Overview
 
-The frontend is a React 19 + Vite + TypeScript app under `web/src/`. It uses React Router for pages, TanStack Query for
-server state, Tailwind CSS v4 utility classes for styling, and a small central API/type layer under `web/src/lib/`.
+The frontend is a React 19 + Vite + strict TypeScript app under `web/src/`.
 
-Key files:
+- React Router owns pages and URL state.
+- TanStack Query owns server state.
+- XYFlow owns the workflow canvas.
+- Tailwind CSS 4 owns utility styling.
+- `lib/api.ts` and `lib/types.ts` form the shared HTTP/DTO boundary.
 
-- `web/src/main.tsx` mounts the app with `React.StrictMode`.
-- `web/src/App.tsx` creates the `QueryClient`, wraps `BrowserRouter`, and declares routes.
-- `web/src/index.css` imports Tailwind and defines minimal global theme/base styles.
-- `web/src/pages/` contains route-level pages.
-- `web/src/components/` contains shared presentational components.
-- `web/src/lib/` contains API calls, shared TypeScript DTOs, and formatting helpers.
+There is no global client-state store.
 
----
-
-## Directory Layout
+## Current Layout
 
 ```text
-web/
-├── package.json                     # scripts: dev, build, lint, test, test:run, preview
-├── tsconfig.json
-├── tsconfig.app.json                # strict TypeScript for src/
-├── tsconfig.node.json               # Vite config typing
-├── vite.config.ts                   # React/Tailwind plugins, API proxy, ports/hosts
-└── src/
-    ├── main.tsx                     # ReactDOM entrypoint
-    ├── App.tsx                      # QueryClientProvider, BrowserRouter, auth-gated routes
-    ├── index.css                    # Tailwind import and global base CSS
-    ├── components/
-    │   ├── StatusPill.tsx           # shared status badge
-    │   └── TopNav.tsx               # shared top navigation
-    ├── lib/
-    │   ├── api.ts                   # fetch wrapper, ApiError, typed API methods
-    │   ├── format.ts                # date/price/job formatting helpers
-    │   └── types.ts                 # frontend DTOs mirroring backend responses
-    └── pages/
-        ├── LoginPage.tsx
-        ├── ProductListPage.tsx
-        ├── ProductCreatePage.tsx
-        ├── ProductDetailPage.tsx
-        ├── product-detail/              # page-local product workflow constants/types/utils/components
-        ├── ImageChatPage.tsx
-        └── SettingsPage.tsx
+web/src/
+  main.tsx
+  App.tsx
+  index.css
+  components/
+    TopNav.tsx
+    ImageDropZone.tsx
+    image-generation/
+  lib/
+    api.ts
+    types.ts
+    i18n.ts
+    preferences.tsx
+    format.ts
+    imageSizes.ts
+    imageToolOptions.ts
+  pages/
+    LoginPage.tsx
+    ProductListPage.tsx
+    AgentProductCreatePage.tsx
+    ProductWorkbenchPage.tsx
+    ImageChatPage.tsx
+    GalleryPage.tsx
+    SettingsPage.tsx
+    HelpPage.tsx
+    agent-workbench/
+    product-workflow-v2/
+    product-detail/
+    product-list/
+    image-chat/
 ```
 
-There is no `hooks/` directory and no global state store today. Stateful logic currently lives in pages unless it is a
-shared API/type/format helper.
+Use `rg --files web/src` before editing; the live tree is authoritative.
 
----
+## Routes
 
-## Route Organization
+Routes are centralized in `App.tsx`:
 
-Routes are centralized in `web/src/App.tsx` inside `AppRoutes()`:
+- `/login` -> LoginPage
+- `/products` -> ProductListPage
+- `/products/new` -> AgentProductCreatePage
+- `/products/new/agent` -> redirect to `/products/new`
+- `/products/:productId` -> ProductWorkbenchPage
+- `/image-chat` -> ImageChatPage
+- `/gallery` -> GalleryPage
+- `/help` -> HelpPage
+- `/settings` -> SettingsPage
 
-- `/login` -> `LoginPage`
-- `/products` -> `ProductListPage`
-- `/products/new` -> `ProductCreatePage`
-- `/products/:productId` -> `ProductDetailPage`
-- `/image-chat` -> standalone `ImageChatPage`
-- `/gallery` -> `GalleryPage`
-- `/help` -> `HelpPage`
-- `/settings` -> `SettingsPage`
+Auth gating also stays in AppRoutes. Do not introduce a second router or duplicate page for one product flow.
 
-Auth gating is also in `AppRoutes()`: it loads `api.getSessionState` with query key `['session']` and redirects
-unauthenticated users to `/login`.
+## Page Ownership
 
----
+Route pages own high-level query/mutation composition, navigation, and page layout:
 
-## Page vs Component Placement
+- AgentProductCreatePage: intake and first Agent workspace.
+- ProductWorkbenchPage: canonical product-id route and workbench loading.
+- ImageChatPage: sessions, candidates, branching, and save-to-product.
+- GalleryPage: explicit collected image entries.
+- SettingsPage: provider profiles, bindings, runtime settings, and import/export.
+- HelpPage: current localized product documentation.
 
-Use `web/src/pages/` for route-level modules that own data fetching, navigation, mutations, and complex local UI state.
-Current examples:
+Complex feature code belongs in page-local directories.
 
-- `ProductListPage.tsx` owns product list fetching, logout mutation, and navigation to settings/image chat/new product.
-- `ProductDetailPage.tsx` owns product detail/history queries, workflow status polling, copy editing state, and
-  workbench actions.
-- `ImageChatPage.tsx` owns session selection, auto-create behavior, config-derived image size options, and generation.
-- `SettingsPage.tsx` owns config fetching, grouped drafts, secret touched state, save/reset mutations.
+## Workbench Feature Directories
 
-Use `web/src/components/` for reusable presentational components with small props and no route ownership:
+`agent-workbench/` owns:
 
-- `TopNav.tsx`
-- `StatusPill.tsx`
-- `ImageGenerationSettingsTabs.tsx`, `ImageGenerationSettingsPanel.tsx`, `ImageSizePicker.tsx`, and
-  `ImageToolControls.tsx` for the shared image generation settings shell and controls used by both the image-session page
-  and product workflow inspector.
+- Agent message list/composer/questions;
+- Turn event reducer and SSE hooks;
+- Draft confirmation;
+- materialization reveal;
+- responsive Agent/workbench shell.
 
-If a component is only used inside one page and tightly coupled to that page's state, keep it either in the page file or
-in a page-local directory. `ProductDetailPage.tsx` uses `web/src/pages/product-detail/` for workflow canvas constants,
-draft/config utilities, image mapping helpers, and page-local components; do not move those to global `components/`
-until another page actually reuses them.
+`product-workflow-v2/` owns:
 
----
+- canvas and command bar;
+- add-node panel;
+- node inspector;
+- run panels;
+- recipes;
+- delivery renditions;
+- graph, draft, generation-spec, viewport, and side-panel helpers.
 
-## Lib Organization
+`product-detail/` contains polished components retained and reused by the current workbench:
 
-- `web/src/lib/api.ts` is the only place that should know fetch details, credentials, `VITE_API_BASE_URL`, and API paths.
-- `web/src/lib/types.ts` contains DTO interfaces and string union types mirroring backend Pydantic responses and enums.
-- `web/src/lib/format.ts` contains pure formatting helpers such as `formatDateTime`, `formatShortDate`, and
-  `formatPrice`.
-- `web/src/lib/image-downloads.ts` contains reusable image URL, filename sanitization, timestamp suffix, and extension
-  helpers. Page-specific mapping from product/poster records to downloadable images should stay page-local.
+- canvas chrome and node card;
+- inspector shell, tabs, status, text controls, shortcuts;
+- product image Explorer and its hooks/helpers.
 
-Do not scatter raw `fetch(...)` calls or duplicate DTO interfaces inside pages.
+The directory name does not imply a separate page. Do not duplicate these components to make the Agent workbench look independent.
 
----
+## Shared Components
 
-## Naming Conventions
+Place a component in `web/src/components/` when multiple route/features actually reuse it:
 
-- Page and component files use `PascalCase.tsx`: `ProductListPage.tsx`, `TopNav.tsx`.
-- Exported React components use named exports: `export function ProductListPage() { ... }`.
-- Utility files use lower camel-ish names: `api.ts`, `format.ts`, `types.ts`.
-- Helper functions use `camelCase`, for example `getWorkingCopy`, `getSourceImageUrl`, `draftsFromConfig`.
-- API DTO fields intentionally preserve backend `snake_case` names, for example `workflow_state`, `copy_set_id`,
-  and `reset_keys` in `web/src/lib/types.ts`; image size presets live in `web/src/lib/imageSizes.ts`, not runtime config.
+- TopNav;
+- image drop zone;
+- dialogs and form fields;
+- image-generation settings controls.
 
----
+Keep tightly coupled workflow/library components in their feature directory until another feature shares their contract.
+
+## Lib Boundary
+
+- `api.ts` is the only raw fetch/path/credentials owner.
+- `types.ts` mirrors backend DTOs and enums.
+- `i18n.ts` owns locale dictionaries and keys.
+- `preferences.tsx` owns global locale/theme.
+- `format.ts` owns pure display formatting.
+- `imageSizes.ts` and `imageToolOptions.ts` own current image control parsing/options.
+
+Do not place React query hooks or page-specific projections in `lib/` merely to shorten a page file.
+
+## Naming
+
+- Components/pages: `PascalCase.tsx`.
+- Hooks: `useSomething.ts`.
+- Pure helpers: descriptive `camelCase.ts`.
+- Test: owner filename plus `.test.ts` / `.test.tsx`.
+- Backend wire fields remain `snake_case` in DTOs.
+- Display translation goes through i18n; enum strings are not user-facing labels.
+
+## Placement Decision
+
+Before adding a file:
+
+1. Is it a route? Put it in `pages/` and register it once in App.tsx.
+2. Is it owned by Agent, V2 workflow, product library, product list, or image chat? Use that feature directory.
+3. Is it visually reused with the same props in multiple features? Use `components/`.
+4. Is it a wire DTO/API/format/preference helper? Use `lib/`.
+5. Is it a one-off helper? Keep it beside the owner.
 
 ## Avoid
 
-- Adding route declarations outside `App.tsx` without a deliberate router refactor.
-- Creating a global state store for server data that already lives in TanStack Query.
-- Duplicating API URL construction outside `api.toApiUrl(...)`.
-- Moving page-specific subcomponents into `components/` before they are reused.
-- Renaming backend DTO fields to camelCase in frontend types unless the backend response changes too.
+- Raw fetch outside `lib/api.ts`.
+- DTO definitions inside components.
+- A global store for TanStack Query data.
+- A parallel Agent canvas or product detail page.
+- Moving a component to global scope before real reuse.
+- Browser-generated default workflows.
+- Keeping deleted page names in route, query, or test conventions.

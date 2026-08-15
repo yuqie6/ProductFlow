@@ -1,253 +1,155 @@
 # ProductFlow Architecture
 
-[中文](ARCHITECTURE.md) | [English](ARCHITECTURE.en.md)
+## 1. 系统边界
 
-当前架构健康度、已完成治理和剩余风险见 `docs/ARCHITECTURE_HEALTH_REVIEW.md`；本文保持为系统结构说明。
+ProductFlow 是单管理员、单商家工作区，由六个运行单元组成：
 
-## 1. 系统概览
+1. React/Vite Web。
+2. FastAPI 业务 API。
+3. Dramatiq worker。
+4. Go workflow Agent service。
+5. PostgreSQL。
+6. Redis 与媒体 storage。
 
-ProductFlow 由前端、后端 API、工作流 Agent 服务、后台 worker、PostgreSQL、Redis 和本地文件存储组成：
-
-```text
-React/Vite web
-  -> FastAPI backend
-    -> PostgreSQL metadata and Agent projections
-    -> Redis/Dramatiq queue
-    -> local storage files
-    -> text provider / image provider
-    -> ProductFlow Agent service (internal bearer HTTP/SSE)
-      -> Responses API provider
-      -> per-conversation SQLite journal
-      -> scoped FastAPI internal tool APIs
-  -> Dramatiq worker
-    -> same database, queue, storage, providers and Agent service
-```
-
-默认自托管路径由根目录 `docker-compose.yml` 驱动。`docker compose up -d --build` 会构建并启动 PostgreSQL、Redis、FastAPI 后端、Dramatiq worker、工作流 Agent 服务和 nginx-served Web 静态站点，共六个服务；API/worker 在容器内通过 `productflow-postgres:5432` 与 `productflow-redis:6379` 连接依赖，并共享挂载到容器 `/app/storage` 的持久化 storage。未设置 `STORAGE_HOST_PATH` 时，storage 使用 Docker named volume `productflow-storage`；迁移旧 systemd 生产环境时，可以设置 host-only 变量 `STORAGE_HOST_PATH=/home/cot/ProductFlow-release/shared/storage` 将既有宿主机 storage 目录 bind-mount 到 `/app/storage`，容器运行时仍保持 `STORAGE_ROOT=/app/storage`。Agent 服务不暴露宿主机端口，其 `/data` 目录由 `productflow-agent-data` volume 持久化；worker 在后端和 Agent health check 通过后启动。后端容器启动时先执行 Alembic 迁移，再启动 `uvicorn`。
-
-生产更新入口是 `just release`，底层调用 `scripts/release.sh` 执行 Compose 配置校验、停止 legacy user-level systemd 服务（`productflow-backend.service`、`productflow-worker.service`、`productflow-web.service`，用于释放旧发布占用的 29280/29281 端口）、`docker compose up -d --build --remove-orphans` 和 HTTP health checks。`just release-dry-run` 只做配置校验与计划输出，不停止旧服务、不构建、不启动容器。普通更新不会删除 Docker volumes。
-
-本地热重载开发仍由根目录 `justfile` 驱动：可以只启动 `productflow-postgres` 与 `productflow-redis`，API、Agent 服务、worker、前端分别由 `just backend-run`、`just agent-service-run`、`just backend-worker`、`just web-dev` 启动。开发环境使用 `.env.dev` 中的 `STORAGE_ROOT=./backend/storage-dev`，与生产 Compose storage 隔离；不要通过 shell-sourcing 生产 `.env` 来启动本地开发进程。
+浏览器只访问 Web 和 FastAPI。Agent service 使用独立 bearer token 调用 FastAPI internal API；FastAPI 通过 agent-service internal HTTP/SSE 控制 Turn。API 和 worker 共享 PostgreSQL、Redis 和 storage。
 
 ## 2. 后端分层
 
-后端代码位于 `backend/src/productflow_backend/`，按以下层组织：
+`backend/src/productflow_backend/` 保持四层边界：
 
-- `presentation/`：FastAPI app、路由、鉴权依赖、Pydantic schemas、上传校验。
-- `application/`：商品、文案、海报、画廊、图片会话、商品工作流等用例逻辑。商品工作流已拆成 graph /
-  mutations / query / execution / context / artifacts / dependencies 等 page-facing use case 模块，由
-  `product_workflows.py` 作为兼容 facade 对外暴露。
-- `domain/`：稳定枚举，如任务状态、素材类型、工作流节点类型。
-- `infrastructure/`：SQLAlchemy models/session、队列、storage、text/image provider、海报 renderer。
-- `workers.py`：Dramatiq actor 入口。
-- `config.py`：环境变量配置、运行时配置定义、数据库覆盖读取。
+- `presentation/`：FastAPI 路由、请求/响应 schema、认证、上传读取和 HTTP 错误映射。
+- `application/`：商品、Agent 会话、WorkflowDraft、V2 工作流、图片库、图片会话、配置和异步任务用例。
+- `domain/`：枚举、业务异常和不依赖数据库的 DAG 规则。
+- `infrastructure/`：SQLAlchemy、provider client、Redis/Dramatiq、storage、日志和 Agent service client。
 
-路由层只做输入适配、鉴权、错误映射和序列化；provider 调用、任务状态变更、工作流推进都在 application/infrastructure 边界内完成。
-
-根目录 `agent-service/` 是独立 Go 模块。它按 conversation 创建隔离的 agent-harness service、SQLite journal 和空 workspace，负责原生多模态 Turn、token 级事件重放、补问/回答/恢复/取消和必需工作流草稿 artifact。FastAPI 的 `application/agent_conversations.py`、`agent_control.py`、`agent_sync.py`、`agent_tools.py` 负责 PostgreSQL 投影、控制编排、Dramatiq 同步和 ProductFlow 工具边界；`infrastructure/agent_service.py` 负责内部 HTTP/SSE 客户端。浏览器只访问 FastAPI 的 session-authenticated API。
+路由不直接组织复杂事务或 provider payload。应用层拥有业务事务，基础设施层负责外部系统适配。
 
 ## 3. 前端结构
 
-前端代码位于 `web/src/`：
+`web/src/App.tsx` 只注册当前页面：
 
-- `pages/`：登录、商品列表、创建商品、商品详情、画廊、帮助、设置、图片会话页面（当前路由包括 `/image-chat`、`/gallery`、`/help` 和 `/settings`）。
-- `components/`：共享 UI，如顶栏、状态标签和图片拖拽上传区。
-- `lib/api.ts`：集中封装 REST API 请求。
-- `lib/types.ts`：前端 DTO 类型，需与后端 schemas 保持一致。
+- `/products`
+- `/products/new`
+- `/products/:productId`
+- `/image-chat`
+- `/gallery`
+- `/settings`
+- `/help`
 
-前端使用 TanStack Query 管理服务端状态。商品详情页和连续生图页对运行中状态采用轻量 status 轮询：
+页面级代码位于 `web/src/pages/`。共享视觉组件位于 `web/src/components/`，HTTP client、DTO、i18n 和浏览器偏好位于 `web/src/lib/`。
 
-- 连续生图运行中轮询 `['image-session-status', selectedSessionId]`，只合并任务状态，完成后再刷新完整 session。
-- 商品工作流运行中轮询 `['product-workflow-status', productId]`，只合并 node/run 状态，完成后再刷新完整 workflow
-  和商品产物查询。
+商品工作台由三组现有组件组合：
 
-不要重新给完整 `ImageSessionDetailResponse` 或完整 `ProductWorkflowResponse` 加 active 轮询；它们包含历史图片、
-节点配置、产物引用和运行记录，运行中高频刷新会放大前端渲染和后端序列化压力。
+- `agent-workbench/`：对话、SSE 事件、问题确认、Draft 确认和 materialization reveal。
+- `product-workflow-v2/`：V2 画布、命令栏、节点详情、运行、配方和交付图。
+- `product-detail/`：已复用的画布 chrome、节点卡片、侧栏、快捷键和图片 Explorer。
 
-商品详情页当前是 ProductFlow 工作台：画布负责节点、连接线、缩放、平移、节点拖拽、框选和多选。桌面端右侧侧栏负责详情、日志、图库和模板；移动端用底部工具栏承载运行入口、单节点、模板、详情、日志和图库入口，并用底部面板展示这些面板内容。移动端画布有 `browse` / `edit` / `select` 三种本地交互模式：`browse` 用于单指平移、点选节点和双指缩放；`edit` 允许触控/触控笔拖动节点和创建连线；`select` 用点按切换多选。画布缩放比例和桌面侧栏宽度是浏览器本地偏好，移动端模式和底部面板开合是页面本地 UI 状态；工作流节点、连接、运行状态和产物仍以数据库为准。
+TanStack Query 管理服务端状态；局部表单、选择和画布交互使用 React state。`api.ts` 是浏览器 HTTP 的统一入口。
 
-工作流 Agent 的对话首屏、流式消息呈现、确认后过渡到画布的动画，以及右侧栏对话延续尚未接入前端。本阶段只提供可供这些交互消费的会话、Turn、Question、控制和 SSE API。
-
-## 4. 数据模型主线
-
-传统商品素材链路：
+## 4. Agent 创建链路
 
 ```text
-Product
-  -> SourceAsset(original/reference/processed)
-  -> CreativeBrief
-  -> CopySet(draft/confirmed)
-  -> PosterVariant(main_image/promo_poster)
+image types + quantities + 1..6 uploads
+  -> Product + ProductImageAsset + WorkflowDraft + AgentConversation
+  -> ProductFlow submits Agent Turn
+  -> agent-service / agent-harness durable execution
+  -> ProductFlow internal read and mutation tools
+  -> versioned WorkflowDraft artifact
+  -> user confirmation
+  -> schema-v2 workflow materialization
+  -> reveal event stream
+  -> product workbench
 ```
 
-连续生图链路：
+ProductFlow 是业务数据权威。Agent service 保存 durable Turn transcript、tool call/result 和 token delta；PostgreSQL 保存 AgentConversation、AgentTurnProjection、问题状态和 WorkflowDraft revision。
 
-```text
-ImageSession
-  -> ImageSessionAsset(reference_upload/generated_image)
-  -> ImageSessionRound(one generated candidate per row)
-  -> ImageSessionGenerationTask(durable async generation task)
-  -> optional Product attachment
-  -> optional ImageGalleryEntry
-```
+Agent 读取商品资产时先获取有界元数据列表，再选择需要检查的图片。图片工具结果使用版本化多模态合同，不把整个图库或 data URL 拼进文本历史。
 
-商品 DAG 工作流链路：
+图库重命名、建文件夹、移动等 Agent 写操作使用 prepare/apply/reconcile 合同和幂等键，便于在网络中断或重启后对账。
 
-```text
-ProductWorkflow
-  -> WorkflowNode(product_context/reference_image/copy_generation/image_generation)
-  -> WorkflowEdge
-  -> WorkflowRun
-  -> WorkflowNodeRun
-```
+## 5. WorkflowDraft
 
-工作流 Agent 设计链路：
+WorkflowDraft 是 Agent 和用户确认之间的持久化边界。revision payload 包含：
 
-```text
-Product -> WorkflowDraft
-  -> AgentConversation
-    -> AgentTurnProjection(bounded PostgreSQL UI/recovery state)
-    -> harness run/transcript/events(per-conversation SQLite journal)
-  -> WorkflowDraftRevision(required artifact from an awaiting-confirmation Turn)
-```
+- 商品事实及其来源、状态和冲突。
+- 用户选择的图片类型和每类数量。
+- 工作流级视觉体系。
+- 每张图片的提示词、参考图绑定和生成规格。
+- 文件夹、节点和连线计划。
+- 可选的用户配方 seed。
 
-PostgreSQL 不保存 Agent transcript、reasoning、token delta、图片字节或 artifact body。浏览器断线重连时的事件重放来自 Agent SQLite journal；PostgreSQL 只保留有界的会话/Turn 投影、同步状态和关联的 `WorkflowDraftRevision`。
+Draft 状态依次覆盖 collecting、awaiting_confirmation、confirmed、materializing、ready，以及 failed/cancelled 终态。每次 Agent artifact 都追加 revision；确认针对明确 revision，避免并发覆盖。
 
-画布模板链路：
+## 6. V2 工作流
 
-```text
-CanvasTemplate(builtin full_canvas)
-  -> product creation or workflow template insertion
+ProductWorkflow 的在线 schema 固定为 2。节点类型为：
 
-UserCanvasTemplate(node_group)
-  -> reusable selected workflow nodes and internal edges
-```
+- `product_context`：商品事实和视觉体系入口。
+- `reference_image`：一对一绑定 ProductImageAsset。
+- `prompt_generation`：生成、编辑和版本化单图提示词。
+- `image_generation`：根据上游内容和 GenerationSpec 生成图片。
 
-PostgreSQL 是元数据和运行状态的权威存储；Redis/Dramatiq 只负责投递后台执行消息。
+WorkflowFolder 是局部视觉分组；它不改变 DAG 执行语义。WorkflowEdge 表示上游依赖。领域层拓扑排序拒绝跨工作流引用和循环。
 
-工作流节点的用户语义：
+WorkflowRun 和 WorkflowNodeRun 保存运行状态。worker 根据已成功的上游节点调度 ready 节点。提示词产物使用版本记录；图片结果写入 ProductImageAsset，并绑定回目标节点。
 
-- `product_context`：一个商品工作流的商品资料入口。
-- `reference_image`：单张当前参考图槽位；手动上传或上游生图填充会替换当前图，旧素材保留在商品历史/素材表。
-- `copy_generation`：文案生成和可编辑结构化文案；后续生图直接读取结构化文案上下文。
-- `image_generation`：生图触发/配置节点；图片产物填充到下游参考图节点，生图节点本身只保存触发与配置语义。
+WorkflowRecipe 保存用户主动创建的完整工作流或局部片段。recipe payload 只保存可复用结构和配置，不保存商品身份、生成结果或媒体字节。
 
-画布模板的边界：
+## 7. 图片模型
 
-- 内置 `full_canvas` 场景模板可在创建商品时初始化完整工作流，也可在已有商品工作台中追加同一套场景模板。
-- 追加内置场景模板时，模板里的 `product_context` 会复用当前活动工作流已有的商品资料节点，不会创建第二个商品节点。
-- 用户节点组模板由多选节点保存而来，只持久化可复用配置和选中节点之间的内部连线，不保存商品资料、生成图片或文案产物。
+`MediaObject` 保存 storage 路径、MIME、字节数、尺寸、哈希和核验状态。`ProductImageAsset` 保存商品作用域内的显示名、来源、文件夹、父图和图片类型。
 
-## 5. 异步任务与恢复
+当前图片来源：
 
-当前有两套生成后台入口和一套 Agent 投影同步入口：
+- `upload`
+- `workflow_generation`
+- `image_session_attach`
 
-1. `WorkflowRun`：用于商品 DAG 工作流执行。
-2. `ImageSessionGenerationTask`：用于连续生图异步生成。
-3. `AgentTurnProjection`：`run_agent_turn_sync` 同步 agent-harness Turn 状态并挂接必需的工作流草稿 artifact；模型执行和 transcript 持久化由 Go Agent 服务负责。
+商品图片库、节点参考绑定、封面和交付图都使用 ProductImageAsset id。图片会话的资产也必须关联 MediaObject；保存到商品时创建 ProductImageAsset。
 
-共同原则：
+DeliveryRenditionJob 从 ProductImageAsset 读取原始媒体，按裁切、缩放和格式规范异步生成交付文件。交付文件不替换源图。
 
-- 数据库记录先落地，Redis 消息只是可恢复的投递尝试。
-- 同一工作流可以有多个 disjoint 的 running run；数据库约束限制同一节点同时只能有一个 queued/running
-  `WorkflowNodeRun`。
-- 工作流或连续生图 enqueue 失败时会把新建 run/task 标记为失败，避免 active 状态卡死。
-- API 启动时会恢复 queued 的工作流、连续生图任务和可同步 Agent Turn。
-- worker 启动时可重置 stale running 生成状态，并重新投递生成任务和可同步 Agent Turn。
-- Agent Question 回答后，Turn 保持 `queued` 且设置 `resume_required=true`；只有显式 resume 才恢复执行和轮询。
-- agent-harness 的 `unknown` 状态原样投影，ProductFlow 不推断成功，也不自动重放结果不明确的 effect。
-- 工作流运行和连续生图任务都会序列化 `is_retryable` / `is_cancelable`，前端据此展示重试和取消入口。
-- 图片生成失败会先做用户可读分类，覆盖供应商限流/配额、内容策略、网络中断、请求超时、服务异常和参数不支持等常见情况。
-- 连续生图不再用用户可配置的硬总超时作为产品语义。运行中任务会持久化 `progress_updated_at`、
-  `completed_candidates`、当前候选和 provider response 状态；stale running 恢复按最近 progress heartbeat
-  判断 idle，旧行才回退到 `started_at`。
-- 连续生图 worker 的 Dramatiq `time_limit` 只保留为内部 failsafe，避免进程永久占用，不作为用户可调的生成总时限。
-- Dramatiq actor 对 terminal/currently-running 的重复消息应 no-op。
-- 全局生成并发上限通过数据库中的 running `WorkflowNodeRun` 与 running `ImageSessionGenerationTask` 计数实现。
-- `/api/generation-queue` 返回全局 durable 队列概览；连续生图 status 响应会带回当前任务的队列位置。
+## 8. Provider 架构
 
-相关入口：
+`ProviderProfile` 保存 endpoint、secret、能力、默认模型和 provider 级配置。`ProviderBinding` 把一个 profile 绑定到用途：
 
-- `productflow_backend.application.durable_recovery.recover_unfinished_workflow_runs`
-- `productflow_backend.application.durable_recovery.recover_unfinished_image_session_generation_tasks`
-- `productflow_backend.application.agent_sync.recover_unfinished_agent_turn_syncs`
-- `productflow_backend.infrastructure.queue.run_agent_turn_sync`
-- `productflow_backend.workers`
+- `prompt`：提示词节点。
+- `agent`：workflow Agent。
+- `image`：工作流和图片会话生图。
 
-## 6. Provider 架构
+FastAPI 解析 prompt/image 绑定；Agent service 通过受内部 token 保护的 endpoint 获取 agent 绑定。缺少绑定、profile 被禁用或模型为空时返回明确配置错误。
 
-ProductFlow 把模型能力按模态拆分。
+运行时图片工具设置经过允许字段校验，再由具体 provider adapter 映射。候选数量来自图片类型数量或图片会话 generation_count，不属于高级 tool option。
 
-v2 `prompt_generation` 通过 `prompt` purpose binding 解析单模型提示词 provider；工作流 Agent 通过独立的
-`agent` purpose binding 解析模型与 reasoning/text/service-tier 选项。`infrastructure/text/` 中的
-`generate_brief(...)` / `generate_copy(...)` 仅保留给尚未退出的 v1 copy execution，不是 v2 提示词节点的依赖。
+## 9. 异步与恢复
 
-图片 provider 位于 `infrastructure/image/`，统一服务于海报生成和图片会话。当前实现：
+- Dramatiq 负责工作流节点、生图会话候选和交付图任务。
+- Redis 承担 broker 和并发 admission。
+- PostgreSQL 保存 queued/running/terminal 状态、attempt 和错误摘要。
+- worker 启动恢复可安全重投的未完成任务。
+- Agent service 依赖 agent-harness durable journal；SSE event sequence 支持 Last-Event-ID 重放。
+- ProductFlow 的 Turn sync 只信任可对账的 harness 状态，未知结果保留 unknown 语义。
 
-- `mock`
-- `openai_responses`（Responses API `image_generation` 工具，支持 `input_image`；连续生图优先使用 background
-  response + retrieve polling，把 provider status 写入任务 progress）
-- `openai_images`（Images API `images.generate` / `images.edit` 兼容接口；不使用 Responses
-  `previous_response_id`，连续生图由 ProductFlow 显式传入所选基图和参考图）
-- `google_gemini_image`（Google Gemini native `generateContent` 图片接口，通过官方 `google-genai` SDK 调用；
-  连续生图由 ProductFlow 显式传入所选基图和参考图）
+## 10. 配置与安全
 
-Provider 选择由 `provider_profiles`、`provider_bindings` 和对应 factory 控制。旧 `TEXT_*` / `IMAGE_*`
-环境变量只作为首次迁移输入；运行时 resolver 从供应商档案和用途绑定读取接口类型、连接信息和模型。路由不直接依赖具体 SDK。
+环境变量只保存启动前必需的基础设施和 secret：
 
-工作流 Agent 通过 Go 服务中的 agent-harness 使用 Responses API。Agent provider 使用 `provider_profiles` 中的 OpenAI 兼容连接和 `agent` 用途绑定；设置页可配置模型及 reasoning/text/service-tier 选项。Go 服务在首次打开 conversation 时通过鉴权内部 API 读取完整配置并固定到该 conversation，浏览器只看到供应商档案的脱敏状态。旧数据库首次启动时会从文案绑定复制一份 Agent 绑定。
+- database、Redis、storage
+- admin/session/settings token
+- Agent service 地址和内部 token
+- 上传限制、日志和 worker 基础参数
 
-## 7. 海报生成
+Provider profile、purpose binding 和业务运行时设置由 `/settings` 写入数据库。设置页需要管理员 session 和独立 `SETTINGS_ACCESS_TOKEN`。
 
-海报生成保留两个运行模式，工作流生图会在图片用途绑定真实供应商时自动走 AI 生成：
+上传在持久化前校验 MIME、真实图片格式、字节数、像素数和数量。下载接口按数据库资产定位 storage，不接受任意文件路径。
 
-- `template`：使用本地 Pillow 模板渲染，适合无图片模型密钥的开发/测试。
-- `generated`：把确认版文案、商品图和参考图组织为图片 provider 输入，由远程模型生成结果。
+## 11. Schema 演进
 
-两种模式都面向两类产物：
+SQLAlchemy metadata 只描述当前在线模型。Alembic 历史 revision 保留，以支持空数据库完整升级；破坏性 schema 清理集中在 migration 中。运行时代码不读取已退出的数据模型，也不保留双路由或双执行器。
 
-- `main_image`：1:1 电商主图。
-- `promo_poster`：3:4 促销海报。
+## 12. 质量门
 
-## 8. 配置层级
-
-配置分为两类：
-
-1. Env-only 基础设施配置：`DATABASE_URL`、`REDIS_URL`、`SESSION_SECRET`、`ADMIN_ACCESS_KEY`、`SETTINGS_ACCESS_TOKEN`、`AGENT_SERVICE_INTERNAL_TOKEN` 和 Agent 服务地址等。这些配置在进程启动、内部服务鉴权或访问数据库前就必须可用，因此不支持运行时 DB 覆盖。
-2. 运行时业务配置：provider、模型、图片尺寸、上传限制、任务重试、全局生成并发上限、海报模式、提示词模板、登录门禁开关、业务删除开关等。它们可由 `.env` / `.env.dev` 提供默认值，也可在登录并二次解锁设置页后通过 `/api/settings` 写入 `app_settings` 并覆盖。
-
-Secret 类配置在 API 响应中不回显已有值。
-
-登录门禁开关 `admin_access_required` 默认开启；开启时私有 API 通过 `require_admin` 要求 Cookie session 中存在管理员登录标记，错误 `ADMIN_ACCESS_KEY` 仍返回 401。关闭时普通工作台和私有 API 可免管理员密钥访问，`GET /api/auth/session` 返回 `authenticated=true` 和 `access_required=false`；但 `/api/settings` 的完整配置读取/写入仍必须先通过独立的 `SETTINGS_ACCESS_TOKEN` 解锁。
-
-业务删除开关 `deletion_enabled` 默认关闭；关闭时后端在路由边界拒绝商品整删和连续生图会话整删，避免体验站违规内容被整条删除后无法溯源。工作流节点/连线编辑和参考图删除不受该开关影响。`DELETE /api/auth/session` 和设置页恢复数据库覆盖值不属于业务删除保护范围。
-
-提示词模板覆盖范围包括商品理解、文案生成、工作台生图和连续生图。基础设施配置和 secret 读取仍保持后端边界；前端只展示配置项、来源和保存状态。
-
-## 9. 文件存储与下载
-
-本地文件由 `infrastructure/storage.py` 中的 `LocalStorage` 管理。它把相对路径约束在配置的 `STORAGE_ROOT` 下，并拒绝绝对路径或路径穿越。生产 Compose 容器内的 `STORAGE_ROOT` 固定为 `/app/storage`；`STORAGE_HOST_PATH` 只控制宿主机 bind mount 来源，不应传入应用逻辑替代 `STORAGE_ROOT`。
-
-用户可下载的文件通过受控路由读取，例如：
-
-- `/api/posters/{poster_id}/download`
-- `/api/source-assets/{asset_id}/download`
-- `/api/image-session-assets/{asset_id}/download`
-
-不要绕过 storage 服务直接拼接用户可控路径。
-
-## 10. 安全边界
-
-当前安全模型是“单管理员自托管”：
-
-- 管理员密钥登录用于私有工作台访问控制。
-- `ADMIN_ACCESS_KEY` 只从环境变量读取，不进入数据库配置；登录门禁可通过 `admin_access_required` 运行时开关关闭，默认保持开启。
-- 配置页使用独立的 `SETTINGS_ACCESS_TOKEN` 二次解锁；session 只保存已解锁标记，不保存令牌明文。关闭登录门禁不会关闭这个二次解锁。
-- Session cookie 由 `SESSION_SECRET` 签名。
-- CORS 由 `BACKEND_CORS_ORIGINS` 控制。
-- 上传文件有 MIME、大小、像素和数量限制。
-- Provider API key 保存在 env 或数据库配置中，接口不回显 secret。
-- FastAPI 与 Agent 服务通过独立的 `AGENT_SERVICE_INTERNAL_TOKEN` 双向保护内部控制和工具 API；浏览器不能直连 Agent 服务。
-- Agent 工具的商品、Draft、conversation 和 run scope 由服务端 closure 绑定，模型不能提交这些 ID 来改变操作范围。
-
-当前不提供多用户隔离、对象级权限、审计日志或生产 WAF 配置。
+- Backend：Ruff、完整 pytest、SQLite migration 和 opt-in PostgreSQL/Redis live tests。
+- Frontend：Vitest、ESLint、TypeScript 和 Vite production build。
+- Agent service：`go test ./...` 和 opt-in live provider transcript test。
+- 跨层变更补真实浏览器、真实数据库或真实 provider 验证，验证强度由变更风险决定。

@@ -1,441 +1,199 @@
 # Frontend Component Guidelines
 
-> Component patterns currently used in ProductFlow.
+## Structure
 
----
-
-## Overview
-
-ProductFlow components are simple React function components with TypeScript props, Tailwind CSS classes, and named exports.
-Route-level pages own data fetching and mutations; shared components stay mostly presentational.
-
-Real examples:
-
-- `web/src/components/TopNav.tsx`
-- `web/src/components/StatusPill.tsx`
-- Page-local components/helpers in `web/src/pages/SettingsPage.tsx` and `web/src/pages/ProductDetailPage.tsx`
-
----
-
-## Component Structure
-
-Use named function exports:
+Use named function components with explicit props.
 
 ```tsx
-interface TopNavProps {
-  breadcrumbs?: string;
-  onHome?: () => void;
-  onLogout?: () => void;
+interface PanelProps {
+  productId: string;
+  onClose: () => void;
 }
 
-export function TopNav({ breadcrumbs, onHome, onLogout }: TopNavProps) {
-  return (...);
+export function Panel({ productId, onClose }: PanelProps) {
+  // hooks
+  // derived values
+  // handlers
+  return <section>{/* UI */}</section>;
 }
 ```
 
-For very small props, inline typing is acceptable; `StatusPill` uses:
+Keep static typed maps outside render. Keep handlers close to the owning interaction.
 
-```tsx
-export function StatusPill({ status }: { status: ProductWorkflowState }) {
-  const config = CONFIG[status];
-  return (...);
-}
-```
+## Component Ownership
 
-Use top-level constants for static display maps. `StatusPill.tsx` defines `CONFIG` as a `Record<ProductWorkflowState, ...>`
-so every workflow status has a label and classes.
+- Route pages own navigation and high-level query composition.
+- Feature components own one visual/interaction domain.
+- Shared components have demonstrated reuse and small stable props.
+- Pure mapping/parsing belongs in a helper beside the feature.
 
----
-
-## Props Conventions
+Avoid both monolithic pages and tiny wrapper components that add no contract.
 
-- Use `interface` for reusable component props (`TopNavProps`, `ConfigFieldProps`).
-- Use explicit callback props for UI actions: `onHome`, `onLogout`, `onChange`, `onReset`.
-- Keep props serializable/simple when possible; pages should pass already-derived values into shared components.
-- Prefer optional props for optional UI affordances, and render `null` when absent. `TopNav` renders breadcrumbs and logout
-  button only when props exist.
+## Workbench Reuse
 
----
+The Agent workbench reuses current canvas/UI components under:
 
-## Styling Patterns
+- `pages/product-detail/`
+- `pages/product-workflow-v2/`
+- `pages/agent-workbench/`
 
-Styling is Tailwind-first:
+When adding Agent behavior, compose with `WorkflowNodeCard`, canvas chrome, inspector, side rail, image explorer, and command surfaces. Do not create a visually unrelated node system.
 
-- Global CSS stays minimal in `web/src/index.css`.
-- Components/pages use `className` utility strings directly.
-- State-dependent styles are built with small maps/functions, e.g. `sourceClassName(...)` in `SettingsPage.tsx` and
-  `CONFIG` in `StatusPill.tsx`.
-- Icons come from `lucide-react` and are imported directly by each page/component.
+## Node Cards and Inspector
 
-Current visual language uses zinc/slate surfaces, thin borders, small rounded corners, and restrained hover/focus states.
-Every new visible surface should include dark-mode variants when it uses explicit light backgrounds, borders, shadows, or
-text colors. The app uses a root `dark` class from `PreferencesProvider`, so Tailwind `dark:*` utilities are the normal
-path for component-level theme variants. Existing examples include `TopNav.tsx`, `ProductListPage.tsx`,
-`ProductCreatePage.tsx`, and `SettingsPage.tsx`.
+Node cards:
 
-`web/src/index.css` also contains root dark compatibility selectors for common light utilities and form elements. These
-selectors have higher specificity than ordinary Tailwind `dark:*` utilities. When a page needs custom dark colors while
-retaining base classes such as `bg-white`, `bg-slate-50`, `text-slate-*`, or an `input`, use a page-local important dark
-utility such as `dark:!bg-[#111316]`, `dark:!text-[#f1f2f4]`, or `dark:!border-[#292c32]`. Verify the computed result in a
-real dark-mode screenshot; a successful build alone does not prove that the intended token won the cascade. Keep the
-override on the affected page instead of changing the global compatibility palette for an isolated surface.
+- compact title/type/status;
+- stable preview dimensions;
+- one clear input/output handle as appropriate;
+- selection and failure affordances;
+- no dense forms.
 
-When adding image preview or canvas surfaces, keep images inspectable in both themes. Dark variants should change chrome
-and empty/loading/error states, not tint or obscure product thumbnails.
+Inspector:
 
----
+- complete editable controls;
+- grouped by node responsibility;
+- visible save state;
+- field-level validation;
+- stable panel width and scrolling.
 
-## Internationalized UI Text
+Use segmented controls for modes, switches/checkboxes for booleans, selects/menus for option sets, sliders/inputs for numbers, and icon buttons for familiar commands.
 
-User-visible UI chrome should use the local i18n helpers instead of hard-coded one-off strings:
+## Styling
 
-- Translation keys live in `web/src/lib/i18n.ts`; supported locales are `zh-CN`, `en-US`, `ja-JP`, and `vi-VN`.
-- Components read translations through `useI18n()` / `usePreferences()` from `web/src/lib/preferences.tsx`.
-- Pure helpers that format visible labels should accept an optional translate function or locale rather than importing
-  React hooks. Examples include image-size labels, gallery size labels, and ProductDetail node display helpers.
-- Keep product/operator/model-authored data as source text. Do not translate product names, custom node titles, user
-  template titles/descriptions returned by the backend, prompts, generated copy, filenames, provider messages, or
-  `ApiError.detail`.
-- Backend-owned built-in canvas template catalog text is system UI chrome. Localize it in frontend helpers by stable
-  built-in template key and node/output/reference identifiers, while leaving user templates and user-renamed node titles
-  as source text.
-- Built-in template metadata may identify a node's original system template, but it must not override a user-renamed
-  title. Only translate a persisted built-in node title when the stored title still matches the source built-in label or
-  an already-localized system label.
-- Default system labels should be locale-aware. If a helper suppresses legacy default titles, it must recognize defaults
-  from all supported locales so older records such as `参考图 2` do not leak into non-Chinese UI.
+Follow existing Tailwind conventions and theme tokens. Both light and dark modes are required.
 
-Good:
+- Cards have restrained radius and hierarchy.
+- Do not nest decorative cards.
+- Operational pages favor dense, scannable information.
+- Fixed controls use stable height/width.
+- Long names truncate or wrap within their owner.
+- Letter spacing remains zero.
+- Font size does not scale with viewport width.
+- Avoid decorative gradients/orbs and one-hue surfaces.
 
-```tsx
-const { t } = useI18n();
-return <button type="button" aria-label={t("nav.logout")}>{t("nav.logout")}</button>;
-```
+Use Lucide icons already installed. Add `aria-label`/`title` for icon-only buttons.
 
-Good:
+## Responsive Components
 
-```ts
-export function workflowNodeDisplayTitle(node: WorkflowNode, t = defaultT): string {
-  return isSystemDefaultTitle(node.title) ? t("detail.node.referenceImage") : node.title;
-}
-```
+Choose the measurement boundary that matches the component:
 
-Bad:
+- page layout may use viewport breakpoints;
+- inspector-contained Explorer uses ResizeObserver content width;
+- canvas controls use explicit responsive states;
+- mobile drawers/sheets use existing Vaul patterns.
 
-```tsx
-return <button type="button">退出登录</button>;
-```
+Touch actions cannot rely on hover. Verify that drawers, software keyboard, bottom bars, and canvas gestures do not overlap.
 
-Bad:
-
-```tsx
-return locale === "en-US" ? translateProductName(product.name) : product.name;
-```
+## Forms
 
----
+- Inputs have labels or accessible names.
+- Buttons inside forms specify `type`.
+- Submit handlers prevent default and call a mutation.
+- Pending state disables duplicate submit.
+- Errors appear near the relevant form/action.
+- Secret fields do not repopulate with stored values.
+- Numeric controls enforce current min/max and do not shift layout.
 
-## Accessibility and Forms
-
-Follow the patterns already present:
-
-- Buttons include `type="button"` unless they submit a form. See `TopNav.tsx`, `ProductListPage.tsx`, and `SettingsPage.tsx`.
-- Form submit handlers call `event.preventDefault()` and trigger a mutation, e.g. `ProductCreatePage.tsx` and
-  `LoginPage.tsx`.
-- Inputs in settings use `label htmlFor={item.key}` and matching `id={item.key}` in `ConfigField`.
-- Image upload drop zones use the shared `ImageDropZone` component. Pages own the upload mutation and pass an `onFiles`
-  callback; the shared component only handles click, keyboard, drag/drop, `accept`, `multiple`, and disabled/focus states.
-  Use the default single-file mode for product/workflow images and `multiple` for session reference images.
-- Loading states use `Loader2` with `animate-spin`; disabled buttons use `disabled` and reduced opacity.
-- Errors are rendered near the relevant action as text or red alert blocks.
-
-When adding new forms, keep keyboard/focus behavior at least as strong as these examples.
-
----
-
-## Data Fetching Boundary
-
-Shared components should not call the API directly today. API calls live in pages through TanStack Query and the central
-`api` object:
-
-- `ProductListPage.tsx` calls `useQuery({ queryKey: ['products'], queryFn: api.listProducts })`.
-- `SettingsPage.tsx` calls `api.getConfig` / `api.updateConfig` from page-level mutations.
-- `TopNav.tsx` receives `onLogout` instead of knowing about sessions or `api.destroySession`.
-
-If a component starts needing API calls, consider whether it is actually a route/page-level component.
-
-## Feature Page Extraction Boundary
-
-Large route pages should keep query/mutation ownership, URL parameters, selection reconciliation, and submit handlers in
-the route component. Move repeated or bulky display surfaces into page-local feature components under the route's feature
-folder, for example `web/src/pages/image-chat/`.
-
-Good extraction targets:
-
-- Main preview/canvas surfaces that receive already-derived rounds, task placeholders, and callback props.
-- History strips, session lists, reference panels, and other repeated UI regions that can stay presentational.
-- Pure display helpers for labels, status classes, and sizing text.
-
-Keep extracted components API-free. Pass action callbacks such as `onSelectRound`, `onDeleteSession`, `onRetry`, and
-`onCancel` from the page. If extraction starts requiring TanStack Query hooks or direct `api.*` mutations inside the
-component, promote the design to a dedicated controller/hook refactor with focused regression tests around selection and
-submission behavior.
-
-When optimizing image-heavy pages, preserve the resource contract while extracting UI: visible preview surfaces should use
-preview-sized assets, explicit download actions should use download URLs, and route-level lazy loading should stay in
-`App.tsx` so unrelated pages do not inflate the initial route load.
-
----
-
-## Scenario: Shared image size picker contract
-
-### 1. Scope / Trigger
-
-- Trigger: editing continuous image chat size controls, schema-v1 workflow pixel-size controls, schema-v2
-  `GenerationSpec.aspect_ratio`, runtime built-in preset display behavior, or frontend helpers that parse `WIDTHxHEIGHT`.
-- Goal: keep the visual size picker, custom dimensions, and backend image-size contract aligned across every image
-  generation surface.
-
-### 2. Signatures
-
-- Shared component: `ImageSizePicker({ value, onChange, presets, disabled?, maxDimension? })`.
-- Shared ratio components: `ImageAspectRatioPicker({ value, onChange, presets?, disabled? })` and
-  `ImageRatioFrame({ aspectRatio, label?, className? })`.
-- Ratio helpers: `parseAspectRatio`, `formatAspectRatio`, and `aspectRatioFrameSize` in
-  `web/src/components/ImageRatioFrame.tsx`.
-- Shared helpers live under `web/src/lib/imageSizes.ts`.
-- Runtime max dimension comes from `api.getRuntimeConfig()` and is passed into `buildImageSizeOptions(maxDimension)` and
-  `ImageSizePicker({ maxDimension })`.
-- Page/API boundary values remain normalized `WIDTHxHEIGHT` strings, for example `1024x1024` or `3840x2160`.
-- Custom dimensions are calibrated to the nearest provider-safe 16-pixel multiple before being emitted, for example
-  `1500x800` becomes `1504x800`.
-
-### 3. Contracts
-
-- Continuous image chat and schema-v1 workflow image-generation inspector must use the same shared pixel-size picker
-  instead of duplicating separate button/input implementations.
-- `ImageSizePicker` owns provider-facing `WIDTHxHEIGHT` values. Schema-v2 `GenerationSpec` owns a provider-neutral
-  `W:H` intent and must use `ImageAspectRatioPicker`; do not invent pixel dimensions or copy provider size limits into
-  the v2 node DTO. Both pickers reuse `ImageRatioFrame` for stable visual proportions.
-- Continuous image chat and workflow image-generation inspector must use the same shared `ImageToolControls` component for
-  provider image-tool parameters. Keep compaction/normalization in shared helpers under `web/src/lib/`, not inside one
-  page, so the workbench node and image chat submit the same payload shape.
-- `ImageToolControls` visibility and `compactImageToolOptions(...)` submission filtering must both use
-  `runtime-config.image_tool_allowed_fields`; do not show or submit provider fields that the active provider profile has
-  not enabled.
-- Pages pass built-in preset options into the component; `ImageSizePicker` must not call the API.
-- Runtime config filters built-in size preset buttons by maximum single edge. It must not provide an arbitrary backend
-  allowlist; a custom value may be valid even when it is not present in the preset list.
-- The picker should preserve and round-trip unknown valid values by switching to custom width/height mode instead of
-  resetting to the first preset.
-- Preset labels should include the human tier/aspect and the exact pixel string so users know what will be submitted.
-
-### 4. Validation & Error Matrix
-
-- Invalid local text such as missing width/height -> keep the custom inputs visible and avoid emitting a malformed size.
-- Existing value not found in presets -> show it as custom dimensions when parseable.
-- Existing schema-v2 ratio not found in the nine common presets -> keep it selected in the custom ratio editor.
-- Schema-v2 ratio side outside `1..999`, zero, missing side, or non-integer -> do not emit a new value; typed node save
-  remains blocked until the draft is valid.
-- Custom inputs with uppercase separators or oversized values -> normalize/calibrate in the shared helper before emitting.
-- Custom inputs with either side not divisible by 16 -> normalize/calibrate in the shared helper before emitting.
-- Backend rejection still remains authoritative; frontend validation only improves UX.
-
-### 5. Good/Base/Bad Cases
+## Internationalization
 
-- Good: `3840x2160` from workflow node config opens the inspector with custom dimensions `3840` and `2160`, then submits
-  `3840x2160` unchanged.
-- Good: schema-v2 `21:9` remains `21:9`, is shown in the custom ratio editor, and submits through `GenerationSpec` without
-  adding a global runtime-config field.
-- Base: `1024x1024`, `2048x2048`, and `3840x3840` appear as preset buttons when present in the derived presets.
-- Bad: `ImageChatPage` accepts custom dimensions while `InspectorPanel` still exposes a raw text field.
-- Bad: `ImageChatPage` supports provider quality/format/fidelity fields while `InspectorPanel` has a separate partial
-  implementation or sends raw unnormalized `tool_options`.
-- Bad: product workflow inspector and image-session generation rebuild separate size/tool/count panels instead of sharing
-  `ImageGenerationSettingsPanel` where the behavior is the same.
-- Bad: one image generation entry uses a combined settings page while another uses `生成设置 / 高级`; product workflow
-  image nodes and image-session generation should both use `ImageGenerationSettingsTabs` to keep common
-  size/count/prompt controls separate from advanced provider tool options.
-- Bad: put workflow-scoped aspect ratio, quality intent, reference fidelity, background intent, or image-text language in
-  `SettingsPage`. Settings owns provider profiles/capabilities; the v2 node owns these generation intentions.
-- Bad: a custom value is auto-reset because it is not one of the built-in preset buttons.
-
-### 6. Tests Required
-
-- Shared helper tests should cover default presets, custom labels, calibration, and invalid strings.
-- Ratio helper tests cover portrait/square/landscape frames, custom formatting, malformed ratios, and the backend
-  `1..999` side bounds. `GenerationSpec` tests cover enum and text-policy/language cross-field validation.
-- When picker state behavior changes, add or update component-level tests before relying on manual visual review.
-- `just web-build`, `pnpm --dir web lint`, and `pnpm --dir web test:run` remain required for frontend changes.
-
-### 7. Wrong vs Correct
-
-#### Wrong
-
-```tsx
-<input value={draft.size} onChange={(event) => onDraftChange({ ...draft, size: event.target.value })} />
-```
-
-This creates a second workflow-only size UI and bypasses the shared custom/preset behavior.
-
-#### Correct
-
-```tsx
-<ImageSizePicker
-  value={draft.size}
-  onChange={(size) => onDraftChange({ ...draft, size })}
-  presets={imageSizePresets}
-/>
-```
-
-Pages provide data and mutations; the shared picker owns only presentational size selection state.
-
-For schema-v2 generation intent, use:
-
-```tsx
-<ImageAspectRatioPicker
-  value={generationSpec.aspect_ratio}
-  onChange={(aspectRatio) => updateGenerationSpec({ aspect_ratio: aspectRatio })}
-/>
-```
-
----
-
-## TopNav Global Navigation Contract
-
-`web/src/components/TopNav.tsx` is the shared authenticated product navigation bar, not just a page title strip.
-
-- Every primary authenticated page should render `TopNav` so the same frequent entries are always available:
-  `商品/工作台`, `文/图生图`, `画廊`, `帮助`, and `配置`.
-- The entries link to `/products`, `/image-chat`, `/gallery`, `/help`, and `/settings`; keep route declarations centralized in
-  `web/src/App.tsx`.
-- Page components may still pass `breadcrumbs`, `onHome`, and `onLogout`, but should not duplicate these global nav links
-  in a separate header unless that page needs an additional hero call-to-action.
-- `TopNav` may use React Router primitives such as `NavLink` / `useLocation`, but must not fetch session or settings data
-  directly. Session logout remains a page-owned mutation passed in through `onLogout`.
-- `TopNav` owns the compact global locale and theme controls. Do not add separate per-page language/theme toggles unless a
-  page-specific workflow requires an additional local affordance.
-
-Wrong:
+All application chrome uses `t(...)`.
 
-```tsx
-<TopNav breadcrumbs="配置" />
-<button onClick={() => navigate("/settings")}>配置</button>
-```
+- Add keys for zh-CN, en-US, ja-JP, and vi-VN.
+- Keep backend enum/system ids out of visible text.
+- Product names, prompts, filenames, Agent messages, and provider notes are user/server content and are not translated.
+- Verify dictionary completeness through tests/build.
+- Remove keys when their page/action is deleted.
 
-Correct:
+## Image Controls
 
-```tsx
-<TopNav breadcrumbs="配置" onHome={() => navigate("/products")} onLogout={() => logoutMutation.mutate()} />
-```
+Reuse shared image-generation controls for:
 
-The shared nav itself exposes the settings/image-chat/product/gallery links; pages only add page-specific actions.
+- aspect ratio/size;
+- candidate count;
+- quality/format/background;
+- provider-supported advanced fields.
 
-## Scenario: Global gallery display page
+Workflow GenerationSpec and ImageChat requests have different business contracts. Share visual primitives and parsing where the data shape truly matches; do not force one giant settings component.
 
-### 1. Scope / Trigger
+Generation count is an explicit business control, separate from advanced tool options.
 
-- Trigger: editing `GalleryPage`, gallery route registration, gallery API DTO consumption, or continuous image-chat save
-  to gallery affordances.
-- The gallery is a visual browsing surface for generated images, not a management dashboard.
+## Global Navigation
 
-### 2. Signatures
+`TopNav` reflects current routes:
 
-- Route: `/gallery` in `web/src/App.tsx`.
-- API client:
-  - `api.listGalleryEntries()`.
-  - `api.saveGalleryEntry(imageSessionAssetId)`.
-- Query key: `['gallery']`.
-- DTO: `GalleryEntry` in `web/src/lib/types.ts`.
+- products;
+- image chat;
+- gallery;
+- help;
+- settings.
 
-### 3. Contracts
+It owns locale/theme/logout controls and responsive navigation. Route matching uses current canonical paths.
 
-- `GalleryPage` lists global gallery entries and uses `api.toApiUrl(...)` for `image.thumbnail_url`, `image.preview_url`,
-  and `image.download_url`.
-- Continuous image chat saves only the selected generated candidate to the gallery; existing save-to-product behavior must
-  remain separate.
-- Successful save invalidates `['gallery']` so the global page refreshes without a hard reload.
-- The page should emphasize image-led browsing: a strong selected/hero image, a responsive visual grid, and compact prompt
-  and metadata context. Do not turn it into product filters, bulk tools, or a table-first admin page.
-- Gallery feed cards should preserve the full generated image instead of cropping it. Derive card aspect from
-  `actual_size` first and `size` second, clamp extreme ratios, and use a stable id/index-based score for featured cards
-  so the layout feels varied without changing on every render.
-- If the feed uses CSS Grid masonry behavior with `auto-rows-*` and `gridRowEnd: span N`, the span calculation must include
-  both the row unit and the grid gap. A span that ignores `gap-*` will produce oversized dark bars because CSS Grid adds
-  every inter-row gap inside the spanned area.
-- Desktop masonry row spans must be calculated from the measured grid width, not a fixed container width. Account for
-  column gaps when deriving tile width: subtract `gap * (columns - 1)` before dividing into columns, then add the gaps
-  inside the tile span back. Keep `auto-rows-*` and `gridRowEnd` scoped to the desktop grid; mobile and tablet layouts
-  should use natural `aspect-ratio` sizing.
+## Gallery Page
 
-### 4. Validation & Error Matrix
+The global Gallery is a collection surface for explicit ImageSession favorites. It is distinct from the Product Image Explorer.
 
-- Empty gallery -> styled empty state, no broken image placeholders.
-- API load failure -> visible page-local error state.
-- Missing selected ID after refresh/list change -> fall back to the newest available entry.
-- Save-to-gallery API error from image chat -> show page-local mutation error near existing image-chat feedback.
+- Stable image grid/list behavior.
+- Source/session/product metadata.
+- Preview and download.
+- Empty/loading/error states.
 
-### 5. Good/Base/Bad Cases
+Do not add product-library folder controls to global Gallery.
 
-- Good: the selected generated candidate appears in the gallery after saving and refreshes via `['gallery']`.
-- Bad: raw `fetch('/api/gallery')` from a page.
-- Bad: adding gallery grouping/filtering/bulk controls under this display-only contract.
+## Accessibility
 
-### 6. Tests Required
+- Semantic buttons, links, nav, headings, lists, and dialogs.
+- Keyboard-visible focus.
+- Modal/drawer focus behavior from existing primitives.
+- Images have meaningful alt text or empty alt when decorative.
+- Status is not conveyed only by color.
+- Screen-reader text for loading/icon-only actions.
+- Minimum practical touch targets on mobile.
 
-- Pure helper tests for selected-entry fallback, size/actual-size labels, aspect-ratio parsing/clamping, stable featured
-  tile placement, masonry row-span behavior, gap-aware tile width, and measured grid width changes.
-- Frontend build must type-check `GalleryEntry` DTOs and API methods.
-- When save behavior changes, run image-chat related helper tests and `pnpm --dir web test:run`.
+Canvas accessibility should preserve keyboard actions and provide labeled external controls for operations that are hard to expose through graph handles alone.
 
-### 7. Wrong vs Correct
+## Data Boundary
 
-#### Wrong
+Presentational components receive typed DTO/projection/callback props. Page/controller hooks call API methods.
 
-```tsx
-fetch('/api/gallery')
-```
+Exceptions are feature controllers explicitly designed to own their queries, such as ProductImageExplorer.
 
-#### Correct
+No raw fetch in JSX components.
 
-```tsx
-useQuery({ queryKey: ['gallery'], queryFn: api.listGalleryEntries })
-```
+## Motion
 
-#### Wrong
+Motion communicates state:
 
-```tsx
-const rowSpan = Math.ceil(tileHeight / 8)
-```
+- Agent delta arrival;
+- Draft-to-canvas transition;
+- materialization reveal;
+- drawer/panel opening;
+- selection/drag feedback.
 
-This ignores the `gap-4` space that CSS Grid adds between every spanned row.
+Respect `prefers-reduced-motion`. Avoid animation that delays a command or makes canvas coordinates unstable.
 
-#### Correct
+## Tests
 
-```tsx
-const rowSpan = Math.ceil((tileHeight + gridGapPx) / (rowUnitPx + gridGapPx))
-```
+Test:
 
-#### Wrong
+- accessible labels and commands;
+- mode/selection changes;
+- validation/pending/error;
+- responsive branch helpers;
+- node card/inspector projections;
+- i18n completeness;
+- current navigation.
 
-```tsx
-const tileWidth = (1280 * columnSpan) / 12
-```
+Use real browser screenshots for layout, overlap, canvas, touch, or animation changes.
 
-This ignores the 11 grid gaps in a 12-column desktop grid.
+## Avoid
 
-#### Correct
-
-```tsx
-const columnWidth = (gridWidth - gridGapPx * (columns - 1)) / columns
-const tileWidth = columnWidth * columnSpan + gridGapPx * (columnSpan - 1)
-```
-
----
-
-## Common Mistakes to Avoid
-
-- Putting server mutations inside shared presentational components.
-- Creating untyped props or using `any` for component inputs.
-- Omitting `type="button"` on non-submit buttons inside forms.
-- Hardcoding API URLs in components; use `api.toApiUrl(...)` for backend-provided relative image URLs.
-- Duplicating status label/style maps instead of reusing `StatusPill` or a local typed `Record`.
+- Parallel visual systems for the same node.
+- Feature instructions rendered as permanent in-app prose.
+- Hover-only mobile action.
+- Card-inside-card layout.
+- Raw enum strings shown to users.
+- Localized duplicate logic inside components.
+- Unstable dimensions caused by dynamic content.
+- Shared component abstractions with only one artificial caller.

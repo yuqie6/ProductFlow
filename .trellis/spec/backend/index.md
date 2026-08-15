@@ -23,7 +23,6 @@ These files document the backend conventions that are actually present in this r
 | [Logging Guidelines](./logging-guidelines.md) | Current minimal logging reality and safe logging extension rules | Filled |
 | [Workflow Agent Service](./workflow-agent-service.md) | Scoped Go service, Turn projections, tools, SSE, and recovery | Filled |
 | [Product Gallery Explorer](./product-gallery-explorer.md) | Canonical image-library queries, organization, archives, and v2 rebinding | Filled |
-| [Legacy Archive Browser](./legacy-archive-browser.md) | Immutable v1 history list/detail/export and canonical asset reads | Filled |
 
 ---
 
@@ -40,7 +39,6 @@ Before backend changes, read:
    - product workbench DAG: `./product-workflow-dag.md`
    - workflow Agent service, Turn APIs, or Agent tools: `./workflow-agent-service.md`
    - product image library, folders, archive downloads, or v2 re-reference: `./product-gallery-explorer.md`
-   - legacy workflow, Canvas Agent, or user-template archive browsing/export: `./legacy-archive-browser.md`
 
 If a backend change affects frontend API contracts, also read `../frontend/type-safety.md` and
 `../frontend/state-management.md`.

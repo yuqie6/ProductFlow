@@ -1,233 +1,161 @@
 # Frontend Quality Guidelines
 
-> Frontend quality standards reflected by current ProductFlow code and tooling.
-
----
-
-## Tooling
-
-Frontend tooling is defined in `web/package.json`, `web/tsconfig*.json`, `web/vite.config.ts`, and the root `justfile`:
-
-- React 19, React DOM 19.
-- Vite 7 with `@vitejs/plugin-react`.
-- Tailwind CSS v4 through `@tailwindcss/vite`.
-- TanStack Query 5 for server state.
-- React Router DOM 7 for routing.
-- TypeScript strict mode.
-
-Common commands:
+## Required Gates
 
 ```bash
-just web-install
-just web-dev
-just web-build
+pnpm --dir web test:run
 pnpm --dir web lint
-pnpm --dir web test:run
+pnpm --dir web build
 ```
 
-`just web-build` runs `pnpm --dir web build`, which type-checks app and Vite/Vitest config before building. Frontend
-changes should also run the executable quality gate added under `web/package.json`:
+`build` includes both TypeScript projects and the Vite production bundle.
 
-- `pnpm --dir web lint` runs ESLint flat config from `web/eslint.config.js` over the Vite/React/TypeScript workspace.
-  The baseline intentionally keeps formatting churn low: React hooks rules are enabled, while exhaustive dependency
-  cleanup is not part of the first gate.
-- `pnpm --dir web test:run` runs deterministic Vitest unit tests from `web/vitest.config.ts`.
-- `pnpm --dir web test` is reserved for local Vitest watch mode.
+Run focused tests while editing, then the complete gate before finishing.
 
-Prefer pure helper tests for page-local logic before large UI refactors. For ProductDetail workbench changes, add or
-extend tests under `web/src/pages/product-detail/*.test.ts` when touching gallery, download, workflow status, or other
-importable helper behavior. Do not split `ProductDetailPage.tsx` solely to satisfy tests; extract only small pure helpers
-when that keeps runtime behavior unchanged.
+## API Centralization
 
-## Scenario: Frontend executable quality gate
+- All HTTP calls use `web/src/lib/api.ts`.
+- DTOs use `web/src/lib/types.ts`.
+- Paths, credentials, JSON/multipart parsing, and ApiError stay centralized.
+- Tests assert method, encoded path/query, headers, and body for changed methods.
+- Deleted routes/types/methods are removed together.
 
-### 1. Scope / Trigger
+## Server State
 
-- Trigger: any frontend code change under `web/src/`, frontend config change under `web/`, or ProductDetail helper
-  extraction intended to support refactoring.
-- Goal: keep the gate small and deterministic before larger ProductDetail UI splitting.
+- TanStack Query owns remote records.
+- Query keys include every identity/filter that affects queryFn.
+- Mutations update/invalidate precise projections.
+- Poll only lightweight status.
+- Event streams reconnect and converge to persisted state.
 
-### 2. Signatures
+## Type Safety
 
-- `pnpm --dir web lint`
-- `pnpm --dir web test:run`
-- `pnpm --dir web test` for local watch mode only.
-- `just web-build` remains the build/type-check gate and delegates to `pnpm --dir web build`.
+- No `any` or unchecked double casts.
+- Parse untrusted/localStorage JSON.
+- Keep backend unions synchronized.
+- Optionality must reflect wire behavior.
+- Remove unused DTOs after feature retirement.
 
-### 3. Contracts
+## Visual and Interaction Quality
 
-- ESLint config lives at `web/eslint.config.js`.
-- Vitest config lives at `web/vitest.config.ts`.
-- Unit tests use `*.test.ts` under `web/src/`; keep them close to the pure helper they cover.
-- `web/tsconfig.node.json` includes frontend tool config files that should be type-checked by `web build`.
+For every affected viewport:
 
-### 4. Validation & Error Matrix
+- no overlap;
+- no clipped controls/text;
+- stable fixed controls and canvas nodes;
+- clear selected, pending, success, failure, empty, and disabled states;
+- light and dark mode;
+- all supported locales;
+- keyboard and touch access where applicable.
 
-- Lint error -> fix code or narrow the rule in `web/eslint.config.js`; do not add inline suppressions unless the
-  exception is intentional and documented near the code.
-- Test failure -> fix the helper or update the assertion when the intended behavior changed.
-- Type/build failure -> fix TypeScript/runtime import boundaries before reporting frontend work complete.
-- Large pre-existing React hook dependency cleanup -> do not mix into unrelated work; keep the initial gate low-noise and
-  schedule stricter rules separately.
+Operational workbenches remain dense and predictable. Do not replace established toolbars, sidebar controls, or inspector depth with a simplified shell.
 
-### 5. Good/Base/Bad Cases
+## Canvas Review
 
-- Good: add or update a ProductDetail gallery/download/status helper and cover it with a colocated `*.test.ts`.
-- Base: run `pnpm --dir web lint`, `pnpm --dir web test:run`, and `just web-build` before handing off frontend changes.
-- Bad: split `ProductDetailPage.tsx` UI only to make tests importable.
-- Bad: enable broad formatting or hook-dependency rules that require whole-frontend rewrites in an unrelated task.
+Canvas changes require:
 
-### 6. Tests Required
+- nonblank initial render;
+- node/edge visibility;
+- one clear input/output handle;
+- drag, pan, zoom, selection, edge creation/deletion;
+- folder behavior;
+- inspector/command access;
+- desktop and mobile screenshot review;
+- canvas pixel check when automation is used.
 
-- New pure helper -> add Vitest unit coverage for normal and edge cases.
-- ProductDetail helper changes -> prefer colocated tests under `web/src/pages/product-detail/`.
-- Locale/theme helper changes -> update or add tests near `web/src/lib/preferences.test.ts`.
-- Locale-aware pure helper changes -> cover the supported locale set (`zh-CN`, `en-US`, `ja-JP`, `vi-VN`) where labels differ,
-  including fallback behavior for legacy system labels when old records store default Chinese titles.
-- DTO/API behavior changes still require `just web-build`; frontend unit tests do not replace backend contract tests.
+Verify actual browser `innerWidth` / `clientWidth` and element bounds.
 
-### 7. Wrong vs Correct
+## Agent UI Review
 
-#### Wrong
+- token deltas do not reflow the whole page excessively;
+- reconnect does not duplicate text/messages;
+- questions remain actionable;
+- cancel/resume has explicit pending state;
+- Draft confirmation is readable and complete;
+- materialization reveal preserves stable canvas coordinates;
+- creation-to-workbench transition retains conversation context;
+- reduced-motion users receive an immediate stable transition.
 
-```bash
-pnpm --dir web test
-```
+## Image UI Review
 
-Using watch mode as the handoff gate can hang automation.
+- uploads validate count/format before submit;
+- per-type quantity defaults to two and remains editable;
+- candidate count stays separate from advanced fields;
+- missing media disables preview/download;
+- save-to-product updates the target library;
+- Product Image Explorer uses bounded pages and component-width responsiveness.
 
-#### Correct
+## Settings Review
 
-```bash
-pnpm --dir web test:run
-```
+- provider purposes are prompt, Agent, and image;
+- secret never appears in response/UI after save;
+- capability/model incompatibility is visible;
+- unlock token is not persisted;
+- import preview and apply use the current schema;
+- locale/theme coverage includes compact and desktop layouts.
 
-Use the deterministic run mode for CI-style verification and keep `test` for local watch mode.
+## Accessibility
 
----
+- semantic controls;
+- visible focus;
+- icon button labels/tooltips;
+- status not color-only;
+- dialog/drawer focus behavior;
+- touch targets;
+- reduced motion;
+- form labels and error association.
 
-## Required Patterns
+## Bundle and Performance
 
-### Centralize API access
+- Route-level pages remain lazy.
+- Avoid importing workbench-heavy modules into list/login entry chunks.
+- Large libraries use cursor pages, not full arrays.
+- Images use preview/thumbnail URLs where provided.
+- Use React memoization only for measured or obvious expensive projections.
+- Investigate new chunk warnings when a change materially increases a route bundle.
 
-Use `web/src/lib/api.ts` for all backend calls. It handles:
+## Testing Strategy
 
-- `VITE_API_BASE_URL` trimming.
-- `credentials: "include"` for session-cookie auth.
-- JSON vs `FormData` headers.
-- API error parsing into `ApiError`.
-- Typed request/response methods.
+Prefer the smallest useful test:
 
-Do not add raw `fetch(...)` calls in pages/components.
+- pure parser/reducer/helper;
+- component interaction;
+- API contract;
+- feature integration;
+- real browser flow.
 
-### Keep server state in TanStack Query
+Risk expands verification:
 
-Use `useQuery`, `useMutation`, and `useQueryClient` as shown in current pages. Mutations should update or invalidate the
-query keys affected by the change. Do not introduce global stores for server records.
+- DTO/API changes -> API tests + build;
+- shared hook/state changes -> related feature tests;
+- canvas/interaction -> browser screenshots;
+- provider/config flow -> live backend/browser where available.
 
-### Keep routes auth-gated
+## Environment
 
-Add new private routes in `web/src/App.tsx` with the same authenticated/redirect pattern used by existing routes. Login is
-the only public page.
-
-### Preserve build-time type safety
-
-Any API contract change should update `web/src/lib/types.ts`, page usage, and backend schemas/tests together. Run
-`just web-build` before finishing frontend work. When frontend code changes, also run `pnpm --dir web lint` and
-`pnpm --dir web test:run`.
-
-### Keep UI feedback explicit
-
-Current pages show loading, error, disabled, and success states close to the action:
-
-- Loading spinner for initial app/session load in `App.tsx`.
-- Product list load/error states in `ProductListPage.tsx`.
-- Mutation errors in `ProductCreatePage.tsx`, `ProductDetailPage.tsx`, `ImageChatPage.tsx`, and `SettingsPage.tsx`.
-- Disabled buttons while mutations are pending.
-
-Follow this style for new actions.
-
-### Keep settings/admin workspaces theme-complete and locale-complete
-
-Settings, admin, and operational workspaces must be designed and reviewed as light/dark paired surfaces, not as a
-single-theme mock copied into both modes.
-
-- Light mode should remain a first-class surface: neutral page background, white or near-white panels, readable slate/zinc
-  text, and visible but restrained borders.
-- Dark mode may use deep navy/slate surfaces and violet/indigo accents, but every explicit light background, border,
-  placeholder, muted text, hover state, and alert state needs a matching `dark:*` variant.
-- Every new visible UI label, placeholder, button, section heading, status message, and aria label must use
-  `web/src/lib/i18n.ts` keys for all supported locales: `zh-CN`, `en-US`, `ja-JP`, and `vi-VN`.
-- Provider names, model IDs, API keys, URLs, filenames, backend `ApiError.detail`, and operator-authored content stay as
-  source data and should not be translated.
-- Configuration pages should keep app-style density: fixed or sticky navigation, one active working panel, explicit field
-  labels, and save/error feedback near the changed section.
-
-### Keep desktop-only layout state bounded
-
-When adding resizable panels to a desktop-only layout:
-
-- Keep min/max sizing and viewport-fit calculations in pure helper functions when the math is non-trivial.
-- Re-clamp stored panel sizes on desktop viewport resize so hidden overflow does not push primary content below its
-  minimum useful size.
-- Gate desktop-only clamping with the same breakpoint that controls the desktop layout. Do not shrink hidden panel state
-  while the page is in a mobile stacked layout, or the user may return to desktop with unexpectedly collapsed panels.
-- Cover clamp helpers with deterministic Vitest tests instead of relying only on manual drag checks.
-
----
-
-## Accessibility and UX Checklist
-
-Review new UI for:
-
-- Non-submit buttons have `type="button"`.
-- Inputs have labels or are wrapped by labels.
-- Loading states use both disabled controls and visible feedback when an action can take time.
-- Error text is visible near the action that failed.
-- Image URLs from the backend are converted with `api.toApiUrl(...)` before being used in `src` or links.
-- Destructive actions such as delete are explicit buttons and update cache/selection state after success.
-- Visible UI chrome uses `useI18n()` or locale-aware helpers instead of hard-coded page-local strings.
-- Light surfaces, borders, and muted text have dark-mode variants, and product/image previews remain inspectable.
-
----
-
-## Build and Environment
-
-Development and preview ports are configured through `web/vite.config.ts`:
-
-- Dev default port: `29283`.
-- Preview default port: `29281`.
-- Dev API proxy target default: `http://127.0.0.1:29282`.
-- Allowed hosts default to `draw.devbin.de` unless `WEB_ALLOWED_HOSTS` is provided.
-
-Use `just web-dev` so `.env.dev` and proxy behavior match backend dev commands.
-
----
-
-## Forbidden Patterns
-
-- Raw `fetch(...)` outside `web/src/lib/api.ts`.
-- Untyped API responses or `any` payloads.
-- New pages not registered in `App.tsx` or not protected by session auth when private.
-- New server state held only in local component state when it should be cached/invalidation-aware.
-- Committing `web/dist/`, `web/node_modules/`, `*.tsbuildinfo`, or local env files.
-- Adding lint/test commands to docs without actually configuring them in `web/package.json`.
-- Adding page-local locale/theme persistence outside `PreferencesProvider`.
-- Translating product/operator/model-authored content instead of only ProductFlow UI chrome and system labels.
-
----
+- Dev Web defaults to 29283 and proxies API to 29282.
+- Docker Web defaults to 29281 and proxies API to backend 29280.
+- `VITE_API_BASE_URL` stays empty for same-origin proxy operation.
+- Do not hard-code a localhost backend URL in components.
 
 ## Review Checklist
 
-Before accepting frontend changes, check:
+- Read the live component and caller before editing.
+- Reuse current components and helpers.
+- Check route/query/API/type/i18n together.
+- Inspect loading/empty/error/pending/terminal states.
+- Run tests, lint, and build.
+- Use browser evidence for visible interaction changes.
+- Run `git diff --check` and residual scans after deletion work.
 
-- Does `just web-build` pass?
-- Does `pnpm --dir web lint` pass?
-- Does `pnpm --dir web test:run` pass?
-- Are API methods and DTO types centralized in `web/src/lib/`?
-- Are query keys and invalidations complete for every mutation?
-- Are backend enum/DTO changes mirrored in `web/src/lib/types.ts`?
-- Are loading/error/disabled states present for async actions?
-- Does the UI match the existing Tailwind/zinc visual language?
-- Does visible UI chrome render correctly in supported locales (`zh-CN`, `en-US`, `ja-JP`, `vi-VN`)?
-- Does the changed UI remain readable in `light`, `dark`, and `system` theme modes?
+## Forbidden Patterns
+
+- Raw fetch outside api.ts.
+- Global store for server state.
+- Browser-generated workflow defaults.
+- Parallel product workbench/canvas.
+- Hidden fallback to a removed route or localStorage shape.
+- Secrets in localStorage or query keys.
+- Hover-only critical action.
+- Layout controlled only by screenshot width assumptions.
+- Feature-complete controls removed because the Agent has a related tool.

@@ -1,1204 +1,244 @@
 # Frontend Product Workbench DAG Guidelines
 
-> Frontend contracts for the product detail node workbench.
+## Scope
 
-## Scenario: Product detail DAG workbench UI
+Read this guide before changing:
 
-### 1. Scope / Trigger
+- `AgentProductCreatePage.tsx`
+- `ProductWorkbenchPage.tsx`
+- `pages/agent-workbench/`
+- `pages/product-workflow-v2/`
+- the retained canvas, node-card, sidebar, shortcut, and image-explorer components under `pages/product-detail/`
 
-- Trigger: any ProductDetail page change that renders, edits, runs, or consumes product workflow DAG data.
-- This feature spans API DTOs, TanStack Query cache keys, local selected-node state, and artifact previews.
+The product workbench is an upgrade of the established canvas interaction. New Agent behavior must compose with existing node editing, edges, layout, gallery, and sidebar controls.
 
-### 2. Signatures
+## Route Contract
 
-- API methods live only in `web/src/lib/api.ts`:
-  - `getProductWorkflow(productId)`
-  - `createWorkflowNode(productId, input)`
-  - `updateWorkflowNode(nodeId, input)`
-  - `updateWorkflowNodeCopy(nodeId, input)`
-  - `uploadWorkflowNodeImage(nodeId, input)`
-  - `bindWorkflowNodeImage(nodeId, { source_asset_id? , poster_variant_id? })`
-  - `createWorkflowEdge(productId, input)`
-  - `deleteWorkflowEdge(edgeId)`
-  - `runProductWorkflow(productId, input?)`
-- DTOs live only in `web/src/lib/types.ts`: `ProductWorkflow`, `WorkflowNode`, `WorkflowEdge`, `WorkflowRun`,
-  `WorkflowNodeRun`.
-- Query key: `['product-workflow', productId]`.
+- `/products/new` renders the full-screen Agent creation experience.
+- `/products/new/agent` redirects to `/products/new` without maintaining a second implementation.
+- `/products/:productId` renders `ProductWorkbenchPage`.
+- `ProductWorkbenchPage` resolves the active product id and mounts `AgentProductWorkbenchPage`.
+- The workbench uses the backend-provided Agent bootstrap and active schema-v2 workflow.
 
-### 3. Contracts
+Do not create a parallel workbench route for the canvas.
 
-- Frontend keeps backend `snake_case` fields (`node_type`, `config_json`, `output_json`, `start_node_id`).
-- Supported user-facing node types are `product_context`, `reference_image`, `copy_generation`, and `image_generation`.
-- Product detail/workbench is canvas-first: product context, reference slots, copy, and image generation are graph nodes,
-  not permanent fixed columns.
-- ProductDetail workbench uses ReactFlow / `@xyflow/react` as the frontend graph renderer and pointer interaction layer.
-  The backend `ProductWorkflow` payload remains the authority for persisted nodes and edges.
-- The main workbench grid background should be rendered with ReactFlow `Background` so the visual canvas grid follows the
-  ReactFlow viewport. Avoid page-level CSS grid overlays for the main workflow canvas.
-- Viewport controls should use ReactFlow `Controls` / `ControlButton` instead of a page-level custom button group. Keep
-  ReactFlow-native zoom in, zoom out, and fit-view behavior where possible; reserve ProductFlow-owned control buttons for
-  business-specific actions such as reset-to-100% display and fitting the selected node group. Localize built-in control
-  and minimap aria labels through ReactFlow `ariaLabelConfig`.
-- Large ProductDetail canvases should use ReactFlow `MiniMap` for desktop overview. Mobile should either hide the minimap
-  or expose it through an explicit mode/entry so it does not cover browse/edit/select touch flows.
-- ReactFlow's internal node/edge store owns live drag coordinates during active pointer movement. ProductDetail and
-  WorkflowCanvas may resync nodes/edges from backend workflow data, selection state, and optimistic drop positions through
-  ReactFlow instance methods, but they must not rebuild the full node array in React state on every drag-frame position
-  event.
-- Canvas interaction is pointer-first: nodes move through ReactFlow drag handling and persist via
-  `updateWorkflowNode(...)` on drag stop. ReactFlow node positions map directly to workflow `position_x` /
-  `position_y`.
-- Active node drag must visually follow the pointer, not merely the eventual persisted coordinate. Do not round active
-  drag coordinates before rendering; round only the final persisted `position_x` / `position_y` values on release.
-- The main workflow canvas is unbounded in both viewport panning and node coordinates. Do not apply frontend-only minimum
-  `position_x` / `position_y` clamps; negative workflow coordinates are valid when the user pans or drags there. New
-  nodes and templates should still be inserted at the current viewport center so they remain visible at creation time.
-- Empty canvas/background areas may be dragged to pan the ReactFlow viewport. Guard node actions, edge handles/buttons,
-  zoom controls, uploads, and panel resize handles so those controls do not start background panning.
-- Mobile canvas interaction uses an explicit `CanvasInteractionMode`:
-  `browse`, `edit`, and `select`. Mobile defaults to `browse`; desktop passes `edit` so existing mouse drag and Shift
-  selection behavior stay available. In `browse`, one-finger empty-canvas drag pans the viewport and tapping a node selects
-  it without starting a node drag. In `edit`, touch/pen users may drag nodes and create connections. In `select`, tapping
-  nodes toggles multi-select without keyboard modifiers, one-finger blank-canvas drag still pans the viewport, and tapping
-  blank canvas exits the temporary selection mode. Mobile select mode should not enable ReactFlow's selection rectangle;
-  small touch screens use tap-toggle selection instead of lasso selection.
-- Touch and pen canvas edits must be gated by the active mobile interaction mode. Mouse pointers keep the desktop behavior.
-  ReactFlow may start visual mouse node drag immediately so the node follows the pointer without a dead zone. Keep a small
-  non-zero screen-pixel guard for mouse click suppression and persisted position commits so click jitter does not persist
-  accidental node movement. Touch/pen can keep a larger non-zero visual and commit threshold so tap/select sequences stay
-  stable.
-- Mobile pinch zoom uses ReactFlow viewport zoom, clamps through the shared workflow zoom bounds, and should preserve the
-  gesture center. Pinch has higher gesture priority than pan, selection box, node drag, and connection drag.
-- ProductDetail supports canvas node multi-select through local UI state. Keep `selectedNodeId` as the primary node that
-  drives the Details sidebar, draft saving, reference-image fill target, and node-level run/delete/cancel/upload actions.
-  Keep `selectedNodeIds` as the selected node group for group actions such as saving a node-group template, group drag,
-  and group delete. Normal
-  node click replaces the group with that node; Ctrl/Cmd/Shift click toggles a node in the group and makes newly added
-  nodes primary; Shift-drag on empty canvas draws a transient selection rectangle and replaces the group with intersecting
-  nodes. Clicking a secondary selected node without modifiers makes it the primary Details node while preserving the
-  selected group. Plain empty-canvas drag must continue to pan the viewport.
-- Multi-select visuals must distinguish primary and secondary selected nodes without relying on color alone. The primary
-  node keeps the strong selected ring used by the Details sidebar. Secondary selected nodes use a quieter ring and a small
-  check marker. The selection rectangle is a temporary translucent overlay; do not render a persistent group bounding box,
-  multi-node inspector, or batch-operation panel under the multi-select contract. When more than one node is selected, a
-  top-center canvas-control status such as `已选 N` should appear with a prominent red clear-selection button so the
-  temporary state is obvious and not hidden by bottom scroll controls.
-- Canvas keyboard selection behavior should prefer ReactFlow key props/hooks for local selection and viewport activation:
-  `selectionKeyCode`, `multiSelectionKeyCode`, `panActivationKeyCode`, `zoomActivationKeyCode`, and `useKeyPress` are
-  appropriate for lasso, multi-select modifiers, Space pan activation, Ctrl/Meta zoom activation, and Escape
-  clear-selection. Backend-backed operations such as delete, duplicate, paste, undo, and redo remain ProductDetail-owned
-  shortcuts because they require confirmation, mutation calls, cache updates, or history restoration; keep ReactFlow
-  `deleteKeyCode` disabled unless those contracts are routed through ProductFlow handlers.
-- ProductDetail node/group secondary actions must use one ProductFlow action model rendered through ReactFlow
-  `NodeToolbar` on the selected node. The toolbar is the direct action surface on both desktop and mobile. Do not add a
-  selected-card More button, mobile node action sheet, long-press action path, or ProductFlow desktop right-click context
-  menu for node actions. Single selected reusable nodes expose run, duplicate, fit selected, and delete. A single
-  `product_context` node exposes only fit selected. A selected group exposes duplicate, fit selected, save selected as
-  template, and delete through one toolbar anchored to the primary selected node; secondary selected nodes do not render
-  duplicate toolbars. A group that includes `product_context` exposes only duplicate and fit selected.
-  Toolbar buttons must be icon buttons with `aria-label` and `title`, use `nodrag nopan nowheel`, and stay outside the
-  node-card layout so they do not resize the node card. Actions such as run, duplicate, fit selected, save selected as
-  template, and delete must call existing ProductDetail
-  handlers/mutations: run flushes the selected draft through `handleRunWorkflow`, duplicate uses the backend duplicate
-  mutation, fit selected uses WorkflowCanvas/ReactFlow fit-view helpers, template save opens the existing save-template
-  form/state, and delete opens ProductFlow confirmation before backend mutation. A single `product_context` target should
-  expose only fit-selected; a group that includes `product_context` may duplicate reusable non-product nodes, but should
-  not expose node-group template save or group delete. Keep ReactFlow `deleteKeyCode` disabled and do not locally
-  materialize duplicate or delete results.
-- Multi-select hit testing should be based on canvas coordinates so zoom and pan do not change selection semantics. Use
-  ReactFlow selection events for the main workbench and keep pure helpers for selection reconciliation. Selection state
-  must reconcile when workflow data changes: deleted nodes are removed, the primary node remains included in
-  `selectedNodeIds`, and a missing primary falls back to another selected node or the first workflow node.
-- Treat multi-select as a temporary grouping state, not the default canvas mode. Ordinary non-group actions should collapse
-  the group back to a single primary node, including blank-canvas click, adding a node, deleting a node or edge, creating
-  an edge, uploading/filling a reference image, or applying a node-group template. Future save-as-template and deliberate
-  group drag/delete flows consume the full `selectedNodeIds` group instead of clearing it before the operation.
-- If the browser emits a click after completing a Shift-drag lasso selection, that click must not be treated as a
-  blank-canvas clear action. Skip only that immediate synthetic/paired click; later blank-canvas clicks should still exit
-  multi-select.
-- Pointer release must not flash the node back to its stale server position. Keep the final drag coordinates in an
-  optimistic position layer and update the `['product-workflow', productId]` cache before/while the PATCH is in flight;
-  clear the optimistic entry after the server response becomes the authority, or restore the previous cache on error.
-- Pointer releases below the ProductFlow click/commit guard must restore ReactFlow internal node positions to their drag
-  start positions and skip persisted position mutations.
-- If the same node is dropped again before an earlier position mutation resolves, protect the latest optimistic position
-  from stale mutation success/error handlers; serialize or version position mutations so older responses cannot overwrite
-  the newest drop and cause a one-frame old-position flash.
-- Dragging any node in a multi-selected group should move every selected node by the same canvas delta, keep internal
-  spacing, let ReactFlow update connected edges while dragging, allow the group to move through the unbounded canvas
-  coordinate space, and persist each moved node through the normal `updateWorkflowNode(...)` position mutation. Position
-  mutation success must not overwrite other pending group positions with stale full-workflow responses.
-- Edges are created by dragging a ReactFlow output handle to a target handle/node. The visible temporary connection line is
-  rendered by ReactFlow.
-- Connection-drag handle highlighting should use ReactFlow native connection state, such as `useConnection` or
-  ReactFlow-provided handle connection classes. Do not reimplement connection drag, draw a custom temporary connection
-  path, or bypass ProductFlow's existing `onConnect` / `isValidConnection` / backend edge mutation path.
-- Edge deletion is a canvas action and should use ReactFlow `EdgeToolbar` or an equivalent ReactFlow edge child for the
-  delete affordance. It must call `deleteWorkflowEdge(edgeId)` before refreshing `['product-workflow', productId]`; do
-  not leave stale local-only edge state.
-- Node deletion is a persisted canvas action and must call `deleteWorkflowNode(nodeId)` before refreshing
-  `['product-workflow', productId]`; deleting a node must not be represented by local-only filtering because connected
-  edges and run history cleanup are backend responsibilities.
-- Workflow execution is asynchronous from the frontend perspective: `runProductWorkflow(productId, input?)` returns the
-  persisted kickoff state, then the page polls `['product-workflow', productId]` while any run is `running` or any node is
-  `queued` / `running`. Run history must use backend `is_retryable` for retry actions. Cancellation belongs in the
-  selected node detail actions when the selected node is part of a cancelable active run; cancel buttons call the workflow
-  cancel API and must not be local-only state.
-- ProductDetail run history should display both workflow-run and node-run status details. Each run card should surface
-  queue/running text, `is_cancelable`, `is_retryable`, `failure_reason`, and a node-run list with node title, node type,
-  node-run status, started/finished timestamps, and node-run failure reason. Image-generation prompt review may be exposed
-  as an explicit button on the corresponding node-run row; do not render raw `output_json`, artifact ids, or prompt text
-  inline in the normal log.
-- ProductDetail run history may display workflow image-provider summaries from `nodeRun.output_json.provider_results`
-  when present. Keep this as a compact summary only: provider/model, provider response status/id, actual size, and
-  provider compatibility notes are acceptable; raw provider request/output JSON, prompts, API keys, base URLs, and artifact
-  ids must stay hidden. Do not imply live provider progress unless the workflow API exposes durable node-run progress
-  fields.
-- Running any workflow node must first flush the currently selected dirty inspector draft, even when the clicked run action
-  belongs to a different node. Otherwise a user can edit the product context node and immediately run an image node from
-  the canvas before autosave persists the newest product fields.
-- Do not use workflow active state as a global node-run lock. Split interaction busy state so the full-workflow run button
-  and structural mutations can be disabled during active runs, while individual node run buttons are disabled only when
-  that node is already `queued` / `running` or a run submission is currently pending. Node dragging remains available
-  unless a layout/position mutation is already pending.
-- When an active run transitions to inactive, refresh artifact-bearing queries: `['product', productId]`,
-  `['product-history', productId]`, and `['products']`.
-- Product creation is intentionally minimal: only product name and preview/main image are required; category, price,
-  description/context, reference images, copy, and image directions are configured later through canvas nodes.
-- Product list deletion must use `api.deleteProduct(productId)`, ask for explicit confirmation, and refresh `['products']`
-  after success. Show `ApiError.detail` when active workflow runs block deletion.
-- `reference_image` nodes use `uploadWorkflowNodeImage(...)` for manual uploads and can also be filled by upstream
-  `image_generation` nodes.
-- A `reference_image` node is a single current-image slot. When manual upload or upstream `image_generation` fills a slot,
-  the UI should treat the returned single `source_asset_ids[0]` / `image_asset_ids[0]` as the node's current image and rely
-  on product source-asset/history artifact surfaces for older replaced assets. Do not hide multi-image output only in the
-  frontend; the backend contract must replace the node output.
-- `image_generation` is a trigger/config node, not an image-bearing artifact node. It must not render generated-image
-  previews or download links on the image-generation card itself.
-- `image_generation` output count is represented by downstream graph slots: one generated image per connected downstream
-  `reference_image` node. With no downstream slots, backend execution fails with a concise "connect at least one
-  image/reference node" message; the frontend should make that requirement visible in the inspector.
-- Any node with an image asset/output should render a compact preview directly on the node card.
-- Any user-visible product/workbench image preview should provide an explicit `下载` action. Do not rely on browser
-  right-click as the only way to retrieve product images.
-- Type-specific inspector forms are required for product context, reference image, copy generation, and image generation;
-  avoid generic JSON editors for normal user flows.
-- A selected `copy_generation` node with a generated `copy_set_id` must edit `CopyPayloadV2` as the primary copy model:
-  `summary`, `content.kind`, block/section text, labels, notes, and visual hints. The inspector must not show a derived
-  fixed-field copy panel or maintain removed copy fields as draft state. Saving calls
-  `updateWorkflowNodeCopy(...)` with `structured_payload`, refreshes workflow/product artifacts, and does not expose the
-  raw `copy_set_id`.
-- Node output details should stay productized and minimal. Do not render raw `output_json` keys, artifact IDs, prompt /
-  instruction text, generated-summary prose, or technical fact-chip piles in the normal inspector; keep failure reasons
-  visible and expose successful artifacts through their productized surfaces (node thumbnails, editable copy fields, and
-  the Images tab).
-- ProductDetail uses one right sidebar for Details, Runs, Images, and Templates. The small rail selects the active tab; clicking a
-  workflow node must select it and switch the sidebar to Details. Workflow completion must refresh artifacts silently and
-  must not auto-switch the active tab.
-- The Images tab may aggregate `PosterVariant` and `SourceAsset` records, but it must de-duplicate generated images that
-  appear as both a persisted poster and a filled reference source asset from the same `image_generation` output.
-- In the Images tab, thumbnail primary click opens a large in-app preview/lightbox using preview/full URLs; it must not
-  navigate to, download, or expose the compressed thumbnail as the primary action. Explicit `下载` controls still use
-  original/download URLs.
-- When the selected node is `reference_image`, Images tab cards expose a concise fill action. SourceAsset-backed cards
-  call `bindWorkflowNodeImage(..., { source_asset_id })` so no duplicate upload is created. PosterVariant-backed cards
-  should pass the already paired filled SourceAsset id when workflow output exposes one, otherwise call
-  `bindWorkflowNodeImage(..., { poster_variant_id })` so the backend can materialize a reference SourceAsset.
-- Images tab de-duplication should read every durable poster-to-SourceAsset mapping available: generated image-node
-  `generated_poster_variant_ids` / `filled_source_asset_ids`, filled reference-node `source_poster_variant_id`, and
-  SourceAsset `source_poster_variant_id`. Do not rely only on currently filled reference nodes; old materialized poster
-  SourceAssets remain implementation artifacts and must stay hidden when their source PosterVariant is already shown. The
-  backend materialized poster filename convention `poster-{poster_variant_id}.*` is only a legacy fallback when an older
-  API payload lacks the explicit SourceAsset field; do not apply it when `source_poster_variant_id` is present and null, or
-  user-uploaded reference images with the same filename would be over-filtered.
-- Image download links should use `download_url` when available and fall back to preview URLs only when needed. Always pass
-  backend URLs through `api.toApiUrl(...)`, use short visible copy such as `下载`, stop propagation inside node cards, and
-  sanitize generated filenames so product names cannot introduce path separators or control characters.
-- User-visible copy should be short utility labels such as `商品`, `参考图`, `文案`, `生图`, `运行`, `连接`, `删除`.
-- An idle `product_context` node is usable static context and should not be labeled as `未运行`; display it as available
-  context while leaving real generative/action nodes to use the generic idle label.
-- Mutations that create artifacts must refresh `['product', productId]`, `['product-history', productId]`, and
-  `['products']` when outputs can affect copy, posters, or list status.
+## Creation Flow
 
-### Templates Sidebar Tab
+The creation screen has four persistent stages:
 
-- Built-in canvas templates are loaded through `api.listCanvasTemplates()` from `GET /api/workflow/canvas-templates`;
-  ProductDetail should display built-in scenario templates and non-archived user templates for workbench insertion.
-- ProductDetail must present templates inside the inspector sidebar as a `templates` tab with the same rail
-  behavior as Details, Runs, and Images. Do not open a canvas floating palette for templates.
-- The collapsed sidebar rail must include a Templates tab entry; clicking it expands the sidebar and switches to the
-  Templates tab.
-- Template cards should make a real mini-map the primary visual: render a taller node-editor-like preview with a subtle
-  dotted/grid background, compact node rectangles, visible edge paths, and only short labels/chips below it. Avoid
-  explanatory paragraphs, long suggested-connection copy, or dense fact lists in the sidebar.
-- The mini-map node cards should echo `WorkflowNodeCard` visual language: white or white/95 surfaces, slate/zinc borders,
-  rounded card corners, type-matched lucide icons, short title plus `NODE_LABELS`, compact status pills, and left/right
-  handle dots. Do not regress to color-strip-plus-lines nodes.
-- Template card previews must be rendered from catalog summary `preview_nodes` and `preview_edges`, which are derived from
-  backend `CanvasTemplate.nodes` and `CanvasTemplate.edges`. Use the provided relative coordinates to fit the graph into
-  the sidebar card as a real mini-map. Do not hard-code a generic template structure in the frontend, and show a short
-  empty state when preview data is absent.
-- Template card mini-maps must remain readable for built-in scenario templates: node rectangles must not overlap, edge
-  paths should render behind nodes with enough visible space between columns, and the preview can increase height or use
-  a normalized column layout while still deriving nodes/edges from the backend summary.
-- Template cards should display backend `default_external_connections` as short chips such as `自动接商品`. These chips
-  describe edges that the apply API will persist; they are not long-form instructions.
-- Template summaries include `source: "builtin" | "user"` and nullable `user_template_id`. ProductDetail must show a
-  concise source marker, expose rename/delete actions only for `source === "user"` templates, and leave built-in templates
-  immutable.
-- When more than one canvas node is selected, the top-center multi-select control may open a save-template form. The form
-  requires a template name, accepts an optional description, calls
-  `api.createUserTemplateGroup(productId, { title, description, node_ids: selectedNodeIds })`, invalidates
-  `["canvas-templates"]` on success, and switches the sidebar to Templates so the saved template is visible.
-- Deleting a user template calls `api.archiveUserTemplateGroup(user_template_id)` after user confirmation and invalidates
-  `["canvas-templates"]`; UI text may say delete, but the backend operation is archival.
-- Renaming a user template calls `api.updateUserTemplateGroup(user_template_id, { title })` and invalidates
-  `["canvas-templates"]`. The first UI contract only edits the title; description editing can stay out of the card flow.
-- Applying a built-in scenario template calls `api.applyWorkflowTemplateGroup(productId, { template_key, position_x,
-  position_y })` and receives the normal `ProductWorkflow` response. Built-in full-canvas templates reuse the active
-  workflow's existing product node instead of creating a second product node.
-- Applying a user node-group template uses the same API with `template_key === "user:{id}"`; the frontend must not special
-  case materialization locally.
-- Use the current viewport-center node position for the insertion point unless a more explicit user-selected canvas
-  coordinate is part of a future task.
-- On apply success, update `['product-workflow', productId]`, refresh the workflow query, and select a created primary
-  node by comparing pre/post node IDs. Prefer `copy_generation`, then `image_generation`, then the first created node so
-  the user can immediately edit, connect, drag, or run it.
-- Display `reference_input_hints`, `output_slots`, and `suggested_connections` as guidance only. Suggested connections
-  must not become hidden external edges; every real edge in the canvas should come from the backend workflow payload.
-- When a user or legacy node-group template declares default external connections, adding it should result in visible backend-returned
-  workflow edges, for example from the existing product context node to newly created copy/image nodes. The frontend must
-  render those edges from the normal workflow payload rather than from local template metadata.
-- Do not duplicate the backend template catalog in ProductDetail. The page may use merchant-facing labels from the API,
-  but the submitted `template_key` must be the backend-recognized key.
+1. Product name.
+2. Image-type selection with an independent quantity for each selected type.
+3. One to six real product uploads.
+4. Agent conversation, questions, and Draft confirmation.
 
-### Keyboard Shortcuts and Undo/Redo
+Each selected image type defaults to quantity two. Quantity is product intent, not a provider advanced field.
 
-#### 1. Scope / Trigger
-- Trigger: ProductDetail changes to keyboard handling, selected node groups, copy/paste, delete shortcuts, or undo/redo.
-- Shortcuts are local workbench interactions on top of persisted workflow mutations.
+The initial workspace request is idempotent. A page reload uses the conversation/workspace snapshot instead of creating a duplicate Product.
 
-#### 2. Signatures
-- Copy: `Ctrl/Cmd+C` stores the current selected node ids in page memory.
-- Paste: `Ctrl/Cmd+V` calls `api.duplicateWorkflowNodeGroup(productId, ...)`.
-- Duplicate: `Ctrl/Cmd+D` copies and immediately duplicates the current selected group.
-- Delete: `Delete` / `Backspace` requests confirmation, then deletes the selected node/group through persisted APIs.
-- Undo: `Ctrl/Cmd+Z` applies the latest frontend inverse action.
-- Redo: `Shift+Ctrl/Cmd+Z` or `Ctrl/Cmd+Y` reapplies the latest undone inverse action.
-- Backend duplicate endpoint: `POST /api/products/{product_id}/workflow/node-groups/duplicate`.
+After confirmation:
 
-#### 3. Contracts
-- Shortcut handling must ignore events from `input`, `textarea`, `select`, `button`, `a`, labels, role buttons,
-  contenteditable elements, and node/action controls where text editing or normal browser commands should win.
-- Shortcuts operate on the current `selectedNodeIds`; no selection means no destructive action.
-- Delete shortcut always opens confirmation. Undo/redo opens confirmation only when the step will delete nodes or edges.
-  Movement, restoration, copy, and paste execute without confirmation.
-- Copy/paste and duplicate must use backend duplication. The frontend must not locally materialize workflow rows.
-- After paste/duplicate, update `['product-workflow', productId]` with the backend response and select the created nodes.
-- Undo/redo history is an in-memory inverse-action stack scoped to the current product page. Clear it on product changes
-  and when workflow data is externally refreshed in a way that makes local history unsafe.
-- Undoing node deletion restores structure, editable config, and internal edges only. It must not restore output JSON, run
-  state, workflow run rows, generated copy, generated images, or artifact ids/URLs/paths.
+- materialization starts once;
+- reveal events append folders, nodes, and edges in sequence order;
+- the canvas grows without layout jumps caused by unknown node dimensions;
+- the Agent conversation transitions into the workbench sidebar;
+- the URL becomes the canonical product route.
 
-#### 4. Validation & Error Matrix
-- Shortcut from editable target -> do nothing and do not prevent the user's text operation.
-- Delete with no selected nodes -> do nothing.
-- Paste with empty clipboard -> do nothing or show a concise local notice; do not call the backend.
-- Backend duplicate error -> show `ApiError.detail` in the existing ProductDetail error surface.
-- Destructive undo/redo canceled by user -> keep history unchanged.
-- Undo/redo mutation failure -> show `ApiError.detail` and keep the page consistent with the latest query data.
+## Workbench Composition
 
-#### 5. Good/Base/Bad Cases
-- Good: select a copy/image/reference chain, press `Ctrl/Cmd+D`, and see a new selected chain with internal edges.
-- Good: delete selected nodes with confirmation, then undo and get fresh idle/configured nodes without old outputs.
-- Base: pressing `Ctrl/Cmd+C` inside an inspector text field uses normal text copy and does not replace the canvas
-  clipboard.
-- Bad: storing copied workflow nodes in localStorage or sharing them across products/tabs for the MVP.
-- Bad: undoing deletion by writing old `output_json` back into a node, which makes stale generated artifacts look valid.
+`AgentProductWorkbenchPage` owns orchestration and composes:
 
-#### 6. Tests Required
-- Pure helper tests for shortcut target filtering and shortcut key classification.
-- Pure helper tests for undo/redo inverse-action stack behavior and artifact-field sanitization.
-- ProductDetail or focused tests that delete and destructive undo/redo request confirmation.
-- Frontend build must pass because shortcut routes touch DTOs, API helpers, and ProductDetail.
+- `AgentWorkbenchShell` for responsive page layout;
+- `AgentConversationPanel` for message history, questions, composer, cancel, and resume;
+- `ProductWorkflowV2CanvasPanel` for canvas, toolbar, inspector, runs, recipes, and library;
+- `WorkflowDraftConfirmation` when the current Agent artifact needs approval.
 
-#### 7. Wrong vs Correct
+Keep orchestration at the page boundary. Node cards and panels receive typed data and callbacks; they do not fetch unrelated product state.
 
-Wrong:
+## Canvas Contract
 
-```tsx
-document.addEventListener("keydown", (event) => {
-  if (event.metaKey && event.key === "c") setClipboard(selectedNodeIds);
-});
+Use the established XYFlow canvas and helpers.
+
+Required capabilities:
+
+- add current node types;
+- drag nodes;
+- create and delete edges;
+- zoom, pan, fit view, and automatic layout;
+- click, modifier-click, and marquee multi-selection;
+- keyboard delete, undo/redo where implemented, and shortcut suppression inside inputs;
+- desktop and touch interaction modes;
+- folder projection and translation;
+- stable save state and optimistic layout persistence.
+
+Each node card exposes one clear input handle and one clear output handle when the node type accepts those directions. Do not render a separate left-side handle for every semantic input field.
+
+Canvas nodes have stable width/height constraints. Loading, status, image preview, and selection affordances must not resize the graph unexpectedly.
+
+## Node Cards
+
+`WorkflowNodeCard` is the shared visual language. A card shows:
+
+- node type icon and localized title;
+- compact purpose/status summary;
+- bound reference or current output preview when relevant;
+- run state and failure indicator;
+- selection/folder state;
+- connection handles.
+
+Detailed forms belong in `V2NodeInspector`. Do not turn the card into a dense settings form.
+
+Current node labels and semantics:
+
+- product context;
+- reference image;
+- prompt generation;
+- image generation.
+
+## Inspector
+
+The inspector preserves current editing depth:
+
+- product facts and visual-system context;
+- explicit ProductImageAsset binding for reference nodes;
+- prompt instruction, artifact version, and prompt preview;
+- aspect ratio, resolution tier, quality intent, reference fidelity, background, text policy, and text language;
+- delivery specification and rendition jobs;
+- node run history and retry/cancel actions.
+
+Use node-specific draft helpers and `useV2NodeDraftAutosave`. Normalize before comparing drafts so autosave does not loop on whitespace or representation differences.
+
+Validation errors remain near the affected control. Server conflict errors trigger a targeted refetch and visible save state.
+
+## Sidebar and Command Surfaces
+
+The existing workbench tool surfaces remain available:
+
+- add-node command;
+- workflow/single-node run;
+- node details;
+- run history;
+- product image library;
+- user recipe library;
+- Agent conversation;
+- canvas chrome and layout controls.
+
+On desktop, use the established right-side rail/panel behavior. On narrow viewports, use the existing drawer/bottom-sheet behavior and preserve the canvas as the primary surface.
+
+Do not remove a tool because the Agent can perform a related action. Manual editing remains a first-class workflow.
+
+## Folders
+
+Folders are local visual groups:
+
+- project backend folder membership into canvas bounds;
+- keep folder and member selection coherent;
+- translate members with the folder;
+- show a compact folder header and name;
+- allow recipe save from a folder;
+- preserve edges crossing folder boundaries.
+
+Folders do not introduce nested canvases or a separate navigation stack.
+
+## Recipes
+
+`RecipeLibraryPanel` lists only user-saved WorkflowRecipe records.
+
+Save sources:
+
+- full workflow;
+- selected folder;
+- current multi-selection.
+
+The UI collects name/description, displays source scope, submits the current workflow edit version, and invalidates recipe/workflow queries after success. Applying a recipe reveals the inserted graph and retains current selection semantics.
+
+Do not synthesize a recipe catalog in the browser.
+
+## Product Image Library
+
+`ProductImageExplorer` is the canonical product-image selector and manager.
+
+The workbench uses it for:
+
+- general library browsing;
+- binding a reference node;
+- preview/download;
+- folders, rename, move, and multi-select;
+- delivery renditions.
+
+Selection mode must state the target node and commit one explicit asset id. Product cover is visual list metadata and must not appear as an automatic reference choice.
+
+Every generated output remains visible in the library even after a node points to a newer result.
+
+## Agent Conversation
+
+`useAgentConversation` and `useAgentTurnEvents` own:
+
+- bounded turn-page loading;
+- one active Turn projection;
+- SSE sequence deduplication and reconnect;
+- token-level text delta reduction;
+- questions and answers;
+- cancel/resume;
+- Draft artifact attachment;
+- transition from creation to workbench.
+
+Render persisted projections as authority after reconnect. Optimistic local delta may fill the current response but must converge to the server event sequence.
+
+The composer accepts text and selected product assets according to the current contract. It must not send the complete product library by default.
+
+## Query Keys and Invalidation
+
+Use feature-owned query keys. Common scopes include:
+
+- product list and product detail;
+- agent workspace/bootstrap/conversation/turns;
+- active workflow, node detail, workflow runs, node runs;
+- product image library and gallery asset pages;
+- workflow recipes;
+- provider/runtime settings.
+
+After a mutation, invalidate the narrow authoritative query and any projection that visibly depends on it. Avoid clearing the entire QueryClient.
+
+## Responsive Requirements
+
+- Verify real `innerWidth` and `clientWidth` before drawing mobile conclusions.
+- Fixed canvas controls, node cards, toolbar buttons, and sidebar rails need stable dimensions.
+- Long product, folder, recipe, and file names truncate or wrap without overlapping controls.
+- Touch panning, node dragging, edge creation, and bottom-sheet gestures must not compete.
+- The Agent composer remains reachable when the software keyboard is open.
+
+## Tests Required
+
+Change-specific tests should cover:
+
+- creation selection and default/custom quantity;
+- workspace idempotency and route transition;
+- SSE reducer, reconnect, questions, and cancellation;
+- Draft confirmation and materialization reveal ordering;
+- graph adapters, edge validation, layout, selection, and shortcuts;
+- node inspector parsing and autosave;
+- folder projection and recipe source mapping;
+- reference-node selection through the image library;
+- desktop/mobile panel state.
+
+Run:
+
+```bash
+pnpm --dir web test:run
+pnpm --dir web lint
+pnpm --dir web build
 ```
 
-This steals normal copy behavior from inspector fields.
-
-Correct:
-
-```tsx
-if (!isWorkflowShortcutBlockedTarget(event.target)) {
-  handleWorkflowShortcut(event);
-}
-```
-
-Filter editable/action targets before interpreting canvas shortcuts.
-
-### 4. Validation & Error Matrix
-
-- API `ApiError.detail` is shown near the workflow action.
-- Missing workflow while loading -> loading state, not an empty destructive reset.
-- Active workflow polling stops when no run is `running` and no node is `queued` / `running`; `cancelled` runs are
-  terminal and should not keep polling alive.
-- Deleting a node during an active workflow run -> show backend `运行中，稍后删除`; do not locally remove it.
-- Deleting a product during active workflow runs -> show backend detail; do not locally remove it until the API succeeds.
-- Unsupported node config fields stay in `config_json` and are not force-cast to narrower frontend-only types.
-- Image URLs from workflow-created source assets and poster artifacts still go through `api.toApiUrl(...)`.
-- Direct image runs without downstream reference slots should show the backend error near the workflow action/node; do not
-  invent a fallback preview on the image-generation node.
-- Image-size inputs smaller than the provider-safe lower bound must be calibrated in the picker before submission, matching
-  the backend 512px minimum per side. The user-facing custom-size hint should show the calibrated final output.
-- When async workflow polling observes a failed run with `failure_reason`, ProductDetail should surface that reason in the
-  global workflow error area as well as node/run detail surfaces.
-
-### 5. Good/Base/Bad Cases
-
-- Good: selecting a node updates the inspector without navigating away from the product detail page.
-- Good: an image-generation node with no downstream reference slot fails clearly and shows no generated image
-  preview/download on the image node.
-- Good: an image-generation node connected to two downstream reference slots visibly fills both slot nodes after run.
-- Base: adding a copy/image/reference branch creates a node, then connects it with an edge through API helpers.
-- Base: after a copy node run succeeds, editing the generated copy updates the inspector draft from product `copy_sets`
-  plus node output, without showing raw output summaries or artifact IDs in the normal inspector.
-- Base: uploading an image in a `reference_image` inspector refreshes the workflow query and keeps the node output visible
-  after a page reload.
-- Base: after dragging a node and releasing the pointer, the rendered node stays at the dropped position while the
-  position mutation is pending; it must not briefly render the old `position_x` / `position_y`.
-- Base: dragging an empty canvas/background area pans the ReactFlow viewport, while dragging a node still persists node
-  coordinates and clicking edge/delete/run/upload/zoom controls does not move the viewport.
-- Base: on desktop, Shift-dragging an empty canvas area uses the ReactFlow selection rectangle and replaces the selected
-  node group, while a normal empty-canvas drag still pans.
-- Base: on mobile, select mode uses tap-toggle multi-select, keeps empty-canvas drag as viewport pan, and does not show a
-  selection rectangle.
-- Base: multi-selecting nodes does not turn Details into a batch editor; `selectedNodeId` remains the primary node and
-  `selectedNodeIds` remains the group for future template saving or batch actions.
-- Base: clicking a secondary selected node opens that node in Details while keeping the group selected; clicking blank
-  canvas or performing ordinary node/edge/image mutations exits multi-select back to one primary node.
-- Base: dragging a secondary selected node makes it primary for Details but keeps the group selected and moves the whole
-  selected group.
-- Base: deleting from the multi-select control confirms once, calls backend node deletion for selected nodes, and exits to
-  a single remaining primary node after success.
-- Base: while a workflow run is active, users can still drag nodes to reorganize the canvas and may run another
-  non-queued/non-running node; the backend rejects overlapping planned nodes and the UI still blocks unsafe structural
-  changes.
-- Base: deleting a node removes it and its connected edges after the backend response, and a page refresh does not restore
-  the node.
-- Base: deleting a product from the product list removes it after API success and a direct detail load returns not found.
-- Base: visible product images, filled reference-slot images, and image-history thumbnails each expose a concise `下载`
-  action that does not select/drag the node or open the preview modal as a side effect. Image-generation nodes do not expose
-  generated-image downloads directly.
-- Base: with a reference-image node selected, filling from a SourceAsset updates the workflow cache to the chosen
-  `source_asset_id`; filling from a PosterVariant either reuses its paired SourceAsset id or relies on the backend
-  materialization endpoint.
-- Bad: keeping workflow nodes in local-only state; refresh would lose the DAG and break run history.
-- Bad: treating `workflowActive` as `runBusy` for every node run button; that hides the backend's ability to run disjoint
-  nodes and makes the UI look globally locked while only one node is active.
-
-### 6. Tests Required
-
-- `just web-build` must pass after any DTO or page change.
-- Backend API tests should cover workflow payload shapes; the frontend relies on these typed shapes at build time.
-- User-template frontend changes must pass `just web-build` because `CanvasTemplateSummary`, API helpers, ProductDetail,
-  and `TemplateGroupsPanel` all share DTO fields.
-- If a separate frontend test runner is added later, cover selected-node inspector, run-all mutation, edge drag/delete, and
-  cache invalidation.
-- If a separate frontend test runner is added later, cover workflow active-run polling, active-to-inactive artifact query
-  refresh, node deletion, and product list deletion error/success states.
-- Drag-position regressions should cover the render priority: active drag position, then optimistic dropped position, then
-  server workflow position.
-- Multi-select regressions should cover desktop rectangle normalization/intersection, node hit testing with
-  measured/fallback bounds, modifier-toggle behavior, lasso replacement behavior, mobile tap-toggle behavior, and
-  selection reconciliation after workflow node changes.
-- Multi-select regressions should also cover secondary-node focus and clearing the group for ordinary non-group actions.
-- User-template regressions should cover saving from `selectedNodeIds`, invalidating `["canvas-templates"]`, showing
-  user-only rename/delete actions, confirming archival, and applying user templates through the same template-group API as
-  built-ins.
-- Download-link regressions should cover URL construction through `api.toApiUrl(...)`, filename sanitization, and event
-  propagation isolation inside node cards.
-- Images-tab regressions should cover preview/lightbox primary click, explicit download action, gallery de-duplication, and
-  reference-node fill cache refresh for both `source_asset_id` and `poster_variant_id` inputs.
-
-### 7. Wrong vs Correct
-
-#### Wrong
-
-```ts
-const [nodes, setNodes] = useState(defaultNodes);
-```
-
-Local-only nodes do not satisfy the persisted ProductFlow workflow contract.
-
-#### Correct
-
-```ts
-const workflowQuery = useQuery({
-  queryKey: ["product-workflow", productId],
-  queryFn: () => api.getProductWorkflow(productId),
-});
-```
-
-Load the persisted workflow and keep only transient selection/edit drafts in local state.
-
-#### Wrong
-
-```tsx
-Object.entries(node.output_json).map(([key, value]) => <div>{key}: {String(value)}</div>);
-```
-
-This leaks internal artifact IDs and prompt-like implementation detail into the product UI.
-
-#### Correct
-
-```tsx
-const facts = [`图片 ${posterCount}`, `参考图 ${filledCount}`, size].filter(Boolean);
-```
-
-Render concise, user-facing facts and keep raw workflow JSON as an API/debug boundary, not normal UI copy.
-
-#### Wrong
-
-```tsx
-setNodeDrag(null);
-updateWorkflowNode(node.id, { position_x: x, position_y: y });
-```
-
-If the render path falls back to the still-stale query data after `setNodeDrag(null)`, the node flashes back to the old
-position until the mutation/refetch completes.
-
-#### Correct
-
-```tsx
-setOptimisticNodePositions((positions) => ({ ...positions, [node.id]: { x, y } }));
-queryClient.setQueryData(["product-workflow", productId], moveNodeInCache(node.id, x, y));
-updateWorkflowNode(node.id, { position_x: x, position_y: y });
-```
-
-Keep a short-lived optimistic coordinate and cache update during the mutation, then replace it with the server-returned
-workflow on success or restore the previous cache on error.
-
-#### Wrong
-
-```tsx
-const busy = runWorkflowMutation.isPending || updateNodePositionMutation.isPending;
-if (busy) return;
-```
-
-This makes a long async workflow run feel like a frozen canvas even though persisted run/node status is available through
-polling.
-
-#### Correct
-
-```tsx
-const workflowActive = hasActiveWorkflow(workflow);
-const runSubmissionPending = runWorkflowMutation.isPending || retryWorkflowRunMutation.isPending;
-const selectedNodeRunAction = getWorkflowNodeRunActionState(selectedNode, {
-  runSubmissionPending,
-  pendingStartNodeId,
-});
-const dragBusy = updateNodePositionMutation.isPending;
-const structureBusy = layoutMutationBusy || workflowActive;
-```
-
-Use persisted workflow activity to control polling and unsafe structural mutations. Use node status plus submission
-pending state for individual node run actions, while keeping layout dragging independent from provider execution.
-
-## Scenario: Product-list workflow summary boundary
-
-### 1. Scope / Trigger
-
-- Trigger: adding workflow status, progress, output summaries, or workflow-derived filters to the product list.
-- Product workflows are user-editable DAGs. A list-level summary must preserve that variability instead of projecting a
-  fixed sequence onto every product.
-
-### 2. Signatures
-
-- Existing summary field: `ProductSummary.workflow_state: "draft" | "copy_ready" | "poster_ready" | "failed"`.
-- Existing compatibility query: `api.listProducts({ status? })` / `GET /api/products?status=...`.
-- Current product-list URL state: `page`, `q`, and `sort`; it does not include workflow state.
-- Current sort values: `updated_desc`, `created_desc`, and `name_asc`.
-
-### 3. Contracts
-
-- Do not turn `workflow_state` into a fixed step rail, percentage, active-node claim, or mutually exclusive artifact
-  selector.
-- The scalar has priority semantics and cannot describe overlapping copy/poster presence plus run failure. It also lacks
-  active-workflow identity, latest run, failed node, repeated node outputs, and retry state.
-- Product workflows may add, remove, reorder, or repeat nodes, including multiple image-generation nodes.
-- Until a dedicated summary DTO exists, the product list should use factual product fields such as thumbnail, name,
-  source filename, created time, and updated time. Workflow inspection remains in the product detail workbench.
-- A future filter/summary contract must identify the active workflow and define how latest-run and node-output facts are
-  reduced. Add that backend/frontend contract and tests in one task.
-
-### 4. Validation & Error Matrix
-
-- Workflow omits copy generation -> a fixed `素材 / 文案 / 成图` rail would be false; omit the rail.
-- Workflow contains two image-generation nodes -> a single `已有成图` step loses which node/output exists; omit the
-  scalar presentation.
-- Product has poster output plus a failed run -> `workflow_state` precedence may report `poster_ready`; do not present it
-  as complete run health.
-- Product has copy and poster artifacts simultaneously -> do not expose them as mutually exclusive segmented options.
-- Summary/filter requested without a new DTO contract -> keep list workflow-neutral and route users to product detail.
-
-### 5. Good/Base/Bad Cases
-
-- Good: list rows show factual product identity and timestamps, then open the DAG workbench for workflow state.
-- Base: the central API client retains optional `status` for compatibility while `ProductListPage` does not send it.
-- Bad: label `workflow_state="copy_ready"` as “已有文案” and imply no image exists; the scalar predicate includes
-  additional precedence conditions.
-- Bad: render three progress segments for every product regardless of its persisted node graph.
-
-### 6. Tests Required
-
-- Product-list browser regression asserting no workflow-status group or output-status column is rendered.
-- Existing backend state-predicate tests continue to prove scalar compatibility for API callers.
-- A future summary DTO requires DAG cases with omitted nodes, repeated image nodes, overlapping artifacts, and failed runs.
-- Keep real responsive screenshots for the list and detail workbench when their boundary changes.
-
-### 7. Wrong vs Correct
-
-Wrong:
-
-```tsx
-const completedSteps = product.workflow_state === "poster_ready" ? 3 : 1;
-return <ProgressRail steps={["素材", "文案", "成图"]} completed={completedSteps} />;
-```
-
-Correct:
-
-```tsx
-return <Link to={`/products/${product.id}`}>{product.name}</Link>;
-```
-
-Open the persisted workflow graph before making node-level claims.
-
-## Scenario: Autosaved direct image workbench
-
-### 1. Scope / Trigger
-- Trigger: ProductDetail workbench changes for image-node execution, autosave, panel sizing, or canvas zoom.
-
-### 2. Signatures
-- `api.listProducts({ page, page_size })` drives paginated product lists and returns thumbnail URLs.
-- `api.runProductWorkflow(productId, { start_node_id })` may target an image node whose only required upstream is product
-  context.
-- Local UI persistence keys: `productflow.workflow.zoom`, `productflow.workflow.inspectorWidth`, and
-  `productflow.workflow.snapToGrid`.
-
-### 3. Contracts
-- The add-node toolbar must not expose `product_context`; one product context exists per active workflow.
-- Node draft edits debounce-save through `updateWorkflowNode(...)`; run-all and run-selected must flush the selected draft
-  before calling `runProductWorkflow(...)`.
-- Image-node inspector copy should only show the downstream reference-slot requirement when no slot is connected; do not
-  show internal graph counts such as upstream-node totals. Node cards should show status and any failure reason, not
-  generated-summary prose, raw coordinates, or image previews for `image_generation` nodes.
-- ReactFlow viewport zoom transforms visual coordinates, while drag persistence must keep backend positions in unscaled
-  workflow coordinates.
-- Mouse wheel and pinch events inside the canvas viewport should zoom the ReactFlow canvas within shared zoom bounds and
-  persist the value under `productflow.workflow.zoom`. Controls/forms/buttons should not trigger unexpected zoom.
-- The shared minimum zoom must be low enough for mobile all-nodes overview. Do not set a floor such as 50% that prevents
-  ReactFlow `fitView` from fitting the current workflow into a narrow mobile viewport.
-- Canvas zoom controls must be a floating overlay anchored inside the ReactFlow canvas viewport through ReactFlow `Panel`
-  or an equivalent ReactFlow child component. Zoom display should read ReactFlow viewport state through native hooks such
-  as `useViewport`, and durable zoom persistence should be tied to ReactFlow viewport change end events.
-- Canvas view-fitting controls should use ReactFlow instance viewport helpers such as `fitView` with node id filters for
-  all-nodes and selected-node focus. Do not calculate viewport transforms manually for these standard view operations.
-- The snap-to-grid toggle is a ProductDetail-owned workbench preference persisted under
-  `productflow.workflow.snapToGrid`; it affects canvas editing ergonomics only and must not be serialized into workflow
-  API payloads.
-- Run history and downloadable images live in the right sidebar, not in a persistent bottom panel, so the canvas keeps its
-  vertical working space.
-
-### 4. Validation & Error Matrix
-- Autosave error -> show local `ApiError.detail`, keep user draft visible, and allow explicit retry/save.
-- Run clicked while selected draft is dirty -> save first; if save fails, do not run stale config.
-- Zoomed canvas drag -> persisted `position_x` / `position_y` are unscaled workflow coordinates.
-
-### 5. Good/Base/Bad Cases
-- Good: edit image instruction, immediately click run, and backend receives the new instruction.
-- Base: resize the right sidebar, refresh, and see the same local width.
-- Base: pan or zoom the canvas and the zoom controls stay visually anchored over the canvas viewport.
-- Bad: showing generated image preview/download on an `image_generation` node instead of on linked reference slots.
-- Bad: placing zoom controls in the top toolbar or scrollable canvas flow so they move with workflow content.
-
-### 6. Tests Required
-- `just web-build` for DTO/type compatibility.
-- Backend API tests for direct image-node run and singleton product context, because frontend relies on those contracts.
-
-### 7. Wrong vs Correct
-#### Wrong
-
-```tsx
-onClick={() => runWorkflowMutation.mutate(selectedNode.id)}
-```
-
-#### Correct
-
-```tsx
-onClick={() => void handleRunWorkflow(selectedNode.id)} // flushes selected draft first
-```
-
-## Scenario: Schema-v2 folder projection and recipe workbench
-
-### 1. Scope / Trigger
-
-- Trigger: changing `/products/:productId/workflow-v2`, `V2WorkflowCanvas`, folder projection/local navigation, recipe
-  library actions, or schema-v2 canvas preference restoration.
-
-### 2. Signatures
-
-- Route: `/products/:productId/workflow-v2` loads `GET /api/v2/products/{product_id}/workflow` without creating a DAG.
-- Components: `ProductWorkflowV2Page` owns queries/mutations, `V2WorkflowWorkbench` owns layout/actions, and
-  `V2WorkflowCanvas` owns ReactFlow projection and drag commits.
-- Pure helpers: `projectGlobalGraph`, `buildLocalFolderGraph`, `deriveFolderBounds`, `deriveFolderSummary`,
-  `parseWorkflowCanvasState`, `isWorkflowCanvasViewportCompatible`, and `resolveRecipeVersionSource`.
-
-### 3. Contracts
-
-- Global view replaces each non-empty folder's members with one synthetic `folder:{folder_id}` node. Internal edges are
-  hidden; cross-boundary edges map real endpoints to synthetic endpoints and aggregate by projected source/target while
-  retaining sorted `original_edge_ids`.
-- Local view renders only folder members and real edges whose two endpoints are members. IDs, endpoint IDs, and handles
-  remain unchanged. Returning to global view never writes graph data.
-- Folder bounds, member count, node types, aggregate status, preview asset IDs, and inbound/outbound counts are derived
-  from the latest workflow DTO. Synthetic IDs and projected edges are never sent to backend mutations or recipe APIs.
-- Synthetic folder cards expose one non-connectable presentation handle for each non-empty inbound/outbound direction so
-  ReactFlow can render projected summary edges. These handles never participate in connection validation or mutations.
-- A folder is `succeeded` only when it has at least one runnable member and every runnable member succeeded. Otherwise its
-  aggregate status comes from incomplete runnable members; one succeeded member must not hide an idle sibling.
-- Selection is scoped to the current projection. Global view retains only ungrouped real-node IDs; local view retains
-  only members of the open folder. Moving a selected node across that boundary or changing views removes the hidden ID.
-- Dragging a folder submits one delta; dragging real selected nodes submits one exact layout batch. The server-returned
-  complete workflow replaces query cache data. A `409` triggers a refetch before another structural edit.
-- Canvas preference key is `productflow.workflowV2.canvasState.v1:{workflow_id}`. It stores only current folder ID plus
-  global/per-folder viewports. Parsing rejects malformed/non-finite/out-of-range values and removes deleted folder IDs.
-  Viewports saved for another responsive layout or a width difference greater than 1.4 are ignored and `fitView` runs.
-- A full recipe always appends from the complete workflow. A fragment appends from current selection, then current open
-  folder; with neither source available its append action is disabled. This mirrors the backend immutable recipe-kind
-  contract.
-- With no active v2 workflow, the canvas stays empty and recipe listing/application remains available. The route does not
-  import schema-v1 mutation, built-in template catalog, or `UserCanvasTemplate` APIs.
-
-### 4. Validation & Error Matrix
-
-- Workflow query failure -> canvas error state with retry; recipe query remains independently usable.
-- Stale folder stored locally -> reconcile to global view and delete its viewport entry.
-- Desktop viewport opened on mobile, mobile viewport opened on desktop, or incompatible width ratio -> ignore persisted
-  transform and fit current graph.
-- Recipe fragment append without selection/open folder -> disabled action; do not submit a guaranteed-invalid source.
-- Structural `409` -> display backend detail, refetch workflow, and retain server authority.
-
-### 5. Good/Base/Bad Cases
-
-- Good: a 15-type, two-image-per-type workflow renders as 15 folder cards plus ungrouped nodes; opening one folder shows
-  its prompt and image nodes with original internal edges.
-- Good: drag a folder once; every member moves by the same delta, `edit_version` increments, and refresh preserves layout.
-- Base: open the desktop canvas on a 390 px viewport; incompatible saved transform is discarded and all folders remain
-  reachable without horizontal document overflow.
-- Bad: nest real node cards inside a ReactFlow folder node, persist folder bounds, or use projected edge IDs as business
-  edge IDs.
-- Bad: enable appending a fragment from a complete workflow when no fragment source is selected.
-
-### 6. Tests Required
-
-- Pure graph tests cover 15 folders, projected edge provenance/aggregation, complete-versus-partial aggregate status,
-  local real-edge identity, and visible-node selection scope in global/local views. Component markup tests keep the
-  synthetic folder handles aligned with non-empty inbound/outbound summaries.
-- Preference tests cover malformed JSON, finite zoom bounds, deleted folders, legacy viewport data, and responsive
-  compatibility.
-- Recipe-source tests cover full recipe precedence, selection-before-folder fragment source, and disabled no-source state.
-- Run frontend tests, lint, type-check/build, then inspect real desktop and 390 px browser screenshots plus
-  `innerWidth/clientWidth/scrollWidth`, console errors, folder counts, local edge counts, and persisted drag coordinates.
-
-### 7. Wrong vs Correct
-
-Wrong:
-
-```ts
-api.appendWorkflowRecipeVersion({ source_type: openFolderId ? "folder" : "workflow" });
-```
-
-Correct:
-
-```ts
-const source = resolveRecipeVersionSource(recipe.kind, workflow, openFolderId, selectedNodeIds);
-if (source) api.appendWorkflowRecipeVersion(source);
-```
-
-The visible context selects a source only within the immutable recipe kind.
-
-## Scenario: Formal full-screen Agent product creation entry
-
-### 1. Scope / Trigger
-
-- Trigger: changing `/products/new`, `/products/new/agent`, the product-list create command, draft workspace recovery,
-  structured intake controls, or the transition into the Agent-enhanced workbench.
-- The creation surface collects product identity and bounded reference intake. Agent clarification, Draft confirmation,
-  materialization, canvas editing, and asset operations remain owned by the shared workbench components.
-
-### 2. Signatures
-
-- `/products/new` renders `AgentProductCreatePage`; `/products/new/agent` redirects with `replace` to `/products/new`.
-- The resumable URL is `/products/new?workspace={encodedConversationId}`. All browser navigation stays origin-relative;
-  no route or component may hard-code the Vite development port.
-- `api.createAgentProductDraftWorkspace({name, idempotency_key})`,
-  `api.getAgentProductWorkspace(conversationId)`, and
-  `api.finalizeAgentProductWorkspaceIntake({conversation_id, selection, images, idempotency_key})` own the frontend API
-  boundary.
-- `AgentProductWorkspaceSnapshot` extends the composite response with `created` and `intake_finalized`.
-- `productWorkbenchRouteTarget(...)` returns `agent_intake` only for an Agent-v2 bootstrap with no active workflow, intake,
-  current revision, recipe seed, or legacy archive seed.
-
-### 3. Contracts
-
-- The initial route renders one full-height shell with a single vertical scroll owner and a centered product-name composer.
-  It must not fetch a template catalog, preview/apply a template, upload images, or request a workflow before draft creation.
-- Successful identity submission stores the workspace ID in the URL and renders the product name as a user bubble followed
-  by unboxed Agent content. The structured intake stays in this shell: all 15 backend-owned image types start unselected;
-  selection defaults to two; each selected quantity remains `1..6`; total output remains at most 30; references remain one
-  to six equal files.
-- The type list uses stable two-column desktop and one-column compact tracks. Quantity steppers have fixed dimensions;
-  reference previews use the shared ImageDropZone plus a horizontal strip and explicit preview/remove commands.
-- A pending draft creation key is written to session storage before the request. Intake uses one conversation-scoped key.
-  Network errors keep the same key and current input; editing request content rotates the relevant key.
-- A workspace query restores the persisted phase after refresh. Browser security prevents durable File restoration, so an
-  unfinalized hard refresh restores identity/workspace while the user reselects local files.
-- Successful intake finalization clears its local key, updates Product/Agent caches, performs a reduced-motion-aware short
-  fade, and replaces the route with `/products/{productId}`. It does not build or render a provisional DAG.
-- The existing product route sends an unfinished empty Agent Draft back to its resumable intake URL. A finalized Draft
-  loads the existing `AgentProductWorkbenchPage`: `AgentWorkbenchShell` is Agent-only until materialization, then keeps the
-  same `AgentConversationPanel` mounted in the right inspector while revealing the established canvas.
-- The post-materialization rail retains Agent, Add, Details, Runs, Library, and Recipes. Existing node cards, typed handles,
-  free connection gestures, ratio/quality editors, gallery, run controls, and inspector state are not reimplemented in the
-  creation page.
-- Motion uses standard 180-300 ms easing and has `prefers-reduced-motion` branches. User messages may use a compact bubble;
-  Agent prose should remain unboxed. Decorative effects or a second page-level card hierarchy are not part of this flow.
-
-### 4. Validation & Error Matrix
-
-- Blank identity -> inline name error; no draft request.
-- Draft request failure -> remain in identity composer with the stable key available for retry.
-- Unknown/unreadable workspace URL -> full-height recovery error with explicit retry; do not silently create a new draft.
-- Options request failure -> keep the persisted workspace and show retry inside the intake region.
-- Invalid type quantity, total, MIME, or reference count -> show the bounded error near intake; do not send finalization.
-- Finalization failure -> keep selections, File objects, previews, and finalization key in the mounted page.
-- Direct product navigation for an empty Draft -> replace with its workspace URL; no empty canvas or default DAG.
-- Finalized workspace reopened through the creation URL -> replace with the product workbench.
-
-### 5. Good/Base/Bad Cases
-
-- Good: submit a product name, choose hero `3` and scene `2`, upload two references, finalize, and continue the same
-  conversation through Agent Question, confirmation, materialization, and the existing right sidebar.
-- Good: reload after draft creation and recover the same Product, Draft, and conversation without a template or workflow
-  request.
-- Base: enter `/products/new/agent` from an old bookmark and land on the canonical `/products/new` route.
-- Bad: mount `ProductCreatePage`, a template picker, or a second workbench to collect the same creation data.
-- Bad: show a fake canvas while the Draft is collecting or replace the mature inspector/node components after materialization.
-
-### 6. Tests Required
-
-- API helper tests assert JSON `Content-Type` and `Idempotency-Key` coexist, FormData owns its multipart boundary, paths are
-  encoded, and no template endpoint is called.
-- Pure/form tests assert all 15 options are initially unchecked, selected rows alone expose a stable quantity control, and
-  route discrimination returns `agent_intake` only for a plain unfinished Draft.
-- Browser tests cover redirect, draft-only database state, reload recovery, local selection/upload, finalization, the first
-  real Agent Turn, and provider Question at `1440x900`, `1024x768`, and `390x844`.
-- Browser diagnostics must assert exact viewport dimensions, no document horizontal overflow, no console/page/network
-  failures, zero template catalog/preview/apply calls, zero legacy workflow reads, and zero workflow before confirmation.
-- Existing shell identity tests remain authoritative for keeping the Agent panel, message list, composer draft, scroll, and
-  harness run mounted across materialization and sidebar/tool transitions.
-
-### 7. Wrong vs Correct
-
-Wrong:
-
-```tsx
-<Route path="/products/new" element={<ProductCreatePage templates={catalog} />} />
-<Route path="/products/new/agent" element={<StandaloneAgentIntake />} />
-```
-
-Correct:
-
-```tsx
-<Route path="/products/new" element={<AgentProductCreatePage />} />
-<Route path="/products/new/agent" element={<Navigate to="/products/new" replace />} />
-```
-
-The finalized workspace enters `AgentProductWorkbenchPage`, which preserves the shared canvas and inspector ownership.
-
-## Scenario: Agent-enhanced product workbench reuses the established canvas
-
-### 1. Scope / Trigger
-
-- Trigger: changing `/products/:productId` routing, `ProductWorkbenchPage`, `AgentProductWorkbenchPage`, the shared
-  inspector shell, shared node presentation, schema-v2 node inspection, or Agent/canvas responsive layout.
-- The existing ProductDetail workbench is the visual and interaction baseline. Agent support extends that workbench.
-
-### 2. Signatures
-
-- `ProductWorkbenchPage` loads the read-only Agent workbench bootstrap and routes `agent_v2`, persisted `legacy_v1`, and
-  legacy products with no workflow history without invoking a get-or-create workflow query.
-- `ProductWorkbenchInspector` and `useProductWorkbenchInspectorState` own the shared desktop rail, panel, collapse, resize,
-  mobile visibility, and `productflow.workflow.inspectorWidth` preference.
-- `WorkflowNodePresentationCard` is the schema-neutral node card. V1 and v2 adapters supply labels, status, current image,
-  activity, failure, selection, and node-specific actions.
-- `WorkflowCanvasChrome` owns the shared ReactFlow ports, selected-node toolbar shell, viewport controls, dot grid, and
-  compact browse/edit/select tabs. `workflowCanvasInteraction` owns the schema-neutral drag, connect, lasso, modifier,
-  pan-key, zoom-key, and click-distance policy.
-- `ProductWorkflowV2CanvasPanel` composes the shared canvas controls with v2 graph/folder commands.
-- `V2AddNodePanel` owns the Add inspector tool and opens the typed standalone reference-node dialog.
-- `v2WorkflowHistory` describes reversible server command records and version-identity invalidation; it never stores raw
-  workflow JSON snapshots.
-- `V2NodeInspector` and `V2NodeRunsPanel` consume typed v2 detail/edit/run APIs.
-- `ImageAspectRatioPicker`, `ImageRatioFrame`, `ImageGenerationSettingsTabs`, compact form fields, prompt preview, image
-  preview/download, and `SaveStatusBadge` are shared presentation primitives used by the typed v2 inspector.
-- `api.runWorkflowV2`, `getWorkflowRunV2`, `listWorkflowRunsV2`, `cancelWorkflowRunV2`, and `retryWorkflowRunV2` use the
-  product/workflow-scoped v2 run routes. `runWorkflowNodeV2` remains the node-toolbar command.
-- `V2NodeInspector.onFlushRegistration` exposes the currently mounted editor's async save boundary to the workbench;
-  the boundary returns `Promise<number | null>`. `ProductWorkflowV2CanvasPanel.onBeforeWorkflowAction` awaits it before
-  node selection, folder navigation, either run submission, structure mutation, or recipe extraction.
-- `WorkflowDraftConfirmation` reads only `WorkflowDraft.current_revision.payload`. Its
-  `data-workflow-confirmation-primary` region is the merchant decision surface; the closed
-  `data-workflow-confirmation-advanced` details element owns technical audit data.
-
-### 3. Contracts
-
-- The formal Agent route keeps the existing top navigation, canvas frame, node card language, selection and dragging,
-  zoom/fit/MiniMap, snap, automatic layout, inspector rail, image explorer, preview, and download interactions.
-- The Agent is the first inspector tool. Details, Runs, Library, and user Recipes remain available. The legacy built-in
-  Templates tool stays confined to the legacy page; the Agent v2 route issues no template-catalog or schema-v1 mutation
-  requests.
-- Exactly one Agent panel instance remains mounted while the active inspector tool changes, the desktop sidebar collapses,
-  or the compact view switches between Canvas and Agent. Hidden regions are inert and preserve composer text, message DOM
-  identity, scroll state, and active event-stream ownership.
-- The confirmation default layer contains image-type quantity/order changes, readable facts and unresolved items, visual
-  direction, copy/text-language requirements, reference thumbnails/roles, and bounded summary counts. It does not render
-  fact keys, evidence IDs, asset IDs, Prompt keys, node types, Generation/DeliverySpec rows, or topology lists.
-- The collapsed advanced layer contains raw fact/evidence references, VisualSystem version/locked fields, complete Prompt
-  plans, per-image Generation/DeliverySpec, and folder/node/edge topology. Closing it does not mutate the Draft.
-- Confirmation exposes `Continue editing` and `Confirm and create workflow` as explicit commands. Continue editing removes
-  the review layer over the same mounted Agent panel. Compact headers place the title/summary above the two commands so
-  neither command compresses the summary into a narrow text column.
-- A single selected real node opens Details. Product context is read-only lineage/facts; reference nodes expose typed
-  role/label editing and the existing image-explorer binding flow; prompt nodes edit the complete structured artifact;
-  image nodes edit variation, GenerationSpec, DeliverySpec, and delivery renditions.
-- Node mutations refresh the complete active v2 workflow and exact node-detail/run queries. A `409` refreshes server
-  authority before another deliberate edit.
-- Reference metadata, image title/variation, `GenerationSpec`, and optional `DeliverySpec` use typed 700ms debounce
-  autosave with serialized requests. Invalid or failed unchanged drafts stop retrying until the user edits or explicitly
-  retries. Prompt Artifact payloads retain an explicit save-new-version action and reject navigation while dirty.
-- The transition boundary applies when the selected node changes inside the already-active Details tool. Sidebar tool
-  equality cannot bypass flush. A failed selection, run, folder, layout, or recipe precondition keeps the current editor
-  and its local draft visible.
-- Structure mutations consume the edit version returned by flush. If a layout/folder mutation fails before persistence,
-  reset the local ReactFlow projection to the authoritative workflow coordinates.
-- The image editor uses the provider-neutral `GenerationSpec` vocabulary. Provider profiles, allowed image-tool fields,
-  models, secrets, and runtime maximum dimensions stay in Settings; workflow aspect ratio and quality/fidelity/text intent
-  do not create duplicate global configuration.
-- Product context presents product fields and confirmed facts with readable labels/status/source. Reference/image output
-  surfaces reuse canonical preview/download helpers. Normal inspector content does not render raw `config_json`, UUIDs,
-  evidence ID arrays, provider payloads, or JSON-formatted fact values.
-- The canvas measures its actual rendered surface. Incompatible persisted viewports are discarded. Fit-view readability
-  floors are `0.24` below 480 px, `0.32` below 720 px, and `0.55` otherwise, so compact canvases keep the complete local
-  graph reachable.
-- Route/page state is the single owner of v2 `selectedNodeIds`; `V2WorkflowCanvas` receives it as a controlled prop and
-  emits semantic selection changes. ReactFlow selection events may update a temporary lasso session while the gesture is
-  active, but publish to the owner only once from `onSelectionEnd`. Publishing every controlled ReactFlow selection event
-  can alternate `[nodeId]` and `[]`, reopen inspector tools, and trigger a maximum-update-depth loop.
-- Compact v2 canvases expose the same `browse`, `edit`, and `select` policy as the legacy canvas. Browse pans and selects
-  without moving nodes, edit enables persisted node dragging, and select toggles an additive controlled selection while
-  keeping the canvas visible. Returning from a folder or completing a parent-owned structure command clears both command
-  context and ReactFlow highlights through the controlled selection prop.
-- The shared inspector rail keeps Agent, Add, Details, Runs, Library, and user Recipes. Add creates one standalone
-  reference node in the current folder. NodeToolbar duplicates reference/image/prompt-group nodes and confirms typed
-  deletion; product context has no duplicate/delete actions.
-- Shared ports are connectable only in an editable canvas. Exact semantic handles are `facts`, `asset`, `reference`,
-  `prompt`, and `image`; they stay mounted so persisted edges retain their semantic endpoints. A real node with multiple
-  inputs shows one non-connectable summary anchor while unselected, then expands its exact inputs when selected in an
-  editable canvas or while a connection gesture is active. The node must call `useUpdateNodeInternals(nodeId)` after this
-  presentation layout changes. Hidden semantic handles disable pointer events, and every read-only/presentation handle
-  sets `isConnectable`, `isConnectableStart`, and `isConnectableEnd` to false. A drop on another visible handle is rejected
-  before any request. Folder projection nodes never become connection endpoints. Client validation supplies immediate
-  feedback, while the typed backend command remains the topology authority.
-- EdgeToolbar exposes deletion only for real optional edges. Product-context-to-prompt and owning-prompt-to-image lineage
-  edges are visibly protected; projected global-folder edges are summaries and cannot be mutated directly.
-- Session history records persisted layout changes, standalone reference creation, node/group duplication, and optional
-  edge creation/deletion. Undo and redo replay typed server commands with the latest accepted edit version. Arbitrary node
-  deletion and folder membership operations clear history because their full Prompt Artifact/lineage state is not safely
-  reconstructible. A workflow switch or externally observed `edit_version` change clears history; a locally accepted
-  mutation version preserves it.
-- The complete-workflow command awaits the registered inspector flush and makes exactly one workflow-run API request. It
-  never enumerates nodes in the browser. The existing node toolbar and inspector run action keep the single-node API and
-  await the same flush boundary.
-- The v2 run query polls while any workflow run is active and refreshes the authoritative workflow, product cover, and
-  image-library caches after the active set becomes terminal. Persisted workflow activity disables unsafe structure and
-  duplicate full-run commands while leaving navigation and run inspection available.
-- Runs is workflow-oriented: each card represents one `WorkflowRun`, labels full versus node scope, nests its ordered
-  `WorkflowNodeRun` records, and exposes result previews/evidence per node. Cancel and retry act on the workflow run; failed
-  and blocked nodes remain visible rather than being flattened into separate top-level history entries.
-- Generic validation/workbench instances render the full-run icon only when an actual callback is supplied. No disabled or
-  decorative command may imply runnable behavior without an owner.
-
-### 4. Validation & Error Matrix
-
-- Bootstrap failure -> bounded route error with retry; no legacy workflow query is attempted as recovery.
-- `agent_v2` with no materialized workflow -> full Agent surface; confirmation and materialization later reveal the
-  persisted complete workflow in the same mounted shell.
-- `artifact.proposed` before PostgreSQL attachment -> keep the conversation visible. Refresh the workbench bootstrap when
-  the terminal Turn projection contains a `workflow_draft_revision_id`; the review command must appear without reload.
-- Missing or conflicted required facts -> keep confirmation visible and disable materialization.
-- Exact Draft version conflict -> refresh the current revision, show the conflict message, and require a new review.
-- V1 history -> lazy legacy ProductDetail page with its existing tools and editor intact.
-- No workflow history on a legacy product -> read-only transition state; opening the URL creates no default DAG.
-- Node detail/edit/run failure -> `ApiError.detail` in the owning inspector panel; other canvas and Agent state remains.
-- Inspector flush rejection -> no workflow/node run request is sent and the editor error remains visible.
-- Dirty Prompt Artifact -> node/tool/folder/run/structure/recipe transition is rejected until save-new-version or discard.
-- Invalid/failed ordinary autosave -> automatic retry stops; local draft remains; edit or explicit retry is available.
-- Structure command rejected after an optimistic canvas move -> reset visible positions to the server projection.
-- Wrong semantic handle, duplicate edge, self-edge, cycle, folder endpoint, or unsupported node pair -> mark the target
-  invalid and send no create-edge request. A backend conflict still refreshes server authority.
-- Active workflow run -> full-run and structure commands are disabled from persisted run state; Runs continues polling and
-  supports workflow-level cancel.
-- Failed retryable workflow run -> Runs exposes retry; a successful response inserts the new run and preserves the source
-  run as history. Non-retryable and non-failed runs expose no retry control.
-
-### 5. Good/Base/Bad Cases
-
-- Good: select a prompt node, edit its structured artifact, inspect run history, switch through Library and Recipes, then
-  return to the same Agent conversation without remounting it.
-- Good: collapse and resize the shared inspector on both v1 and v2 pages; the canvas uses the released width and restoring
-  the panel preserves its stored size.
-- Good: edit an image node, immediately invoke complete run, await one typed save, submit one workflow run, and open Runs
-  with the workflow and nested node rows visible.
-- Good: edit a prompt, click another node while Details is already selected, retain the prompt draft and show the explicit
-  save/discard decision instead of switching nodes.
-- Good: select a custom `21:9` ratio, preserve it in the visual custom-ratio editor, and save only the typed node intent.
-- Good: retry a partially failed run; the new card contains only failed/blocked nodes while the source card retains its
-  successful branch evidence.
-- Good: create a reference node from Add, undo it, redo it, and keep the new server-assigned node ID in the redo record.
-- Good: drag from a reference `asset` port to an image `reference` port; valid-target styling appears and one typed edge
-  command is submitted. Dropping the same source on `prompt` remains invalid.
-- Good: receive an external workflow refresh with another edit version; clear local undo/redo so no stale command is
-  replayed against unrelated graph state.
-- Base: open a four-node folder at 390 px; fit-view shows all real nodes inside the measured canvas and the Canvas/Agent
-  segmented control remains usable.
-- Base: complete a materialization reveal while the inspector is open; fit the now-visible folders/nodes to the measured
-  canvas content box once, persist that viewport, and leave later user pan/zoom untouched.
-- Bad: create a second simplified node card, fixed sidebar tab strip, canvas page header, or Agent-owned gallery component.
-- Bad: expose raw `config_json`, call the v1 generic PATCH endpoint, or emulate v2 topology edits with client JSON patches.
-
-### 6. Tests Required
-
-- Route tests cover `agent_v2`, persisted `legacy_v1`, and legacy-empty discrimination.
-- Shell tests assert one Agent/canvas mount, confirmation inertness, compact visibility, and lazy non-Agent tool content.
-- Confirmation component tests split the server-rendered markup at the advanced details boundary: the default region must
-  omit UUIDs, asset IDs, Prompt keys, raw node types, specs, and edge lists; the advanced region must retain those fields.
-- Node API tests cover typed paths and payloads. Browser checks exercise Details, Runs, Library, Recipes, collapse, resize,
-  maximize/restore, dark mode, and Agent DOM identity at 1440, 1024, and 390 px.
-- Browser confirmation checks cover the closed default layer, expanded advanced layer, both commands, and document/button
-  scroll widths at 1024 and 390 px. The full-screen-to-sidebar check stores the Agent panel, message-list, and composer DOM
-  references and asserts identity plus composer value after materialization, tool switching, collapse, and compact tabs.
-- Agent projection tests distinguish the early harness artifact event from the later ProductFlow revision ID. Real-browser
-  confirmation checks require the review layer and enabled confirm command to appear without a page reload.
-- Reveal browser checks assert every materialized folder/node bounds remains within the measured ReactFlow surface after
-  completion with the desktop inspector open; the resulting viewport must survive refresh.
-- Run API tests assert encoded product/workflow/run paths and one workflow-level request. Backend API coverage remains the
-  authority for full-run idempotency, cancel, retry, and nested node-run response shape.
-- Browser checks cover the complete-run icon, empty Runs state, full/partial status cards, retry/cancel controls, node
-  evidence, and 44 px compact controls without horizontal overflow at 1440x900, 1024x768, and 390x844.
-- Node-editor checks cover strict ratio/spec parsing, normalized reference/image drafts, readable facts, prompt preview,
-  debounce save/restore, dirty-prompt transition blocking, canonical reference preview, and absence of raw UUID/JSON in
-  product context. Measure document, inspector, and ratio-picker scroll widths in all three target viewports.
-- Pure canvas-policy tests assert desktop drag/connect/modifier behavior, compact browse/edit/select behavior, lock and
-  read-only behavior, and additive selection semantics. Real-browser selection checks must enter a folder, select a node,
-  return to the global canvas, and assert that both owner state and `.react-flow__node.selected` are cleared without a
-  React maximum-update-depth error.
-- Node-port component tests assert that a multi-input real node keeps hidden semantic handles mounted behind one read-only
-  summary anchor, expands readable exact inputs when selected, and disables both connection directions on presentation
-  handles. Real-browser checks cover collapsed, selected, and active-drag states, assert one valid target with the remaining
-  targets marked invalid, and require zero edge-mutation requests when the gesture is cancelled.
-- Graph/history tests assert exact handle pairs, duplicate/cycle rejection, lineage protection, local-versus-external
-  edit-version invalidation, and server-assigned IDs across create/duplicate/edge undo/redo.
-- Real-browser structure checks create one reference node through Add, verify the node card and default metadata, run
-  undo/redo/undo with node-count and edit-version assertions, and require zero runtime errors at 1440x900, 1024x768, and
-  390x844.
-- Run frontend tests, lint, and production build after any shared inspector, node-card, or route-owner change.
-
-### 7. Wrong vs Correct
-
-Wrong:
-
-```tsx
-return <AgentCanvas fixedTabs={["agent", "gallery"]} nodeCard={SimplifiedV2NodeCard} />;
-```
-
-Correct:
-
-```tsx
-return (
-  <AgentWorkbenchShell
-    canvasContent={<ProductWorkflowV2CanvasPanel workflow={workflow} />}
-    sidebarTools={[detailsTool, runsTool, imageExplorerTool, recipeTool]}
-    agentContent={persistentAgentPanel}
-  />
-);
-```
-
-Wrong:
-
-```ts
-await Promise.all(workflow.nodes.filter(isRunnable).map((node) => api.runWorkflowNodeV2(node.id)));
-```
-
-Correct:
-
-```ts
-await flushInspector();
-await api.runWorkflowV2(productId, workflow.id);
-```
-
-One user command owns one persisted workflow run. The server scheduler determines dependency order and retry scope.
-
-Wrong:
-
-```ts
-if (tool === activeTool) return true;
-setSelectedNodeIds(nextNodeIds);
-```
-
-Correct:
-
-```ts
-const accepted = await onOpenSidebarTool("details");
-if (accepted) setSelectedNodeIds(nextNodeIds);
-```
-
-Changing nodes inside one inspector tool still replaces the mounted editor and therefore requires the same flush gate.
-
-The route composes schema-v2 behavior through the shared workbench shell and presentation primitives.
-
-## Scenario: Delivery rendition inspector and gallery lineage
-
-### 1. Scope / Trigger
-
-- Trigger: changing `DeliveryRenditionPanel`, DeliverySpec parsing, workbench side-panel selection, rendition polling,
-  gallery rendition badges, source navigation, or rendition query invalidation.
-- The UI presents a deterministic export attached to a generated source. It does not add a canvas node, selection
-  workflow, or delivery checklist.
-
-### 2. Signatures
-
-- Types: `WorkflowDeliverySpec`, `DeliveryRenditionStatus`, `DeliveryRenditionJob`, and
-  `GalleryRenditionSummary` in `web/src/lib/types.ts`.
-- API methods: create/list/detail/retry rendition methods in `web/src/lib/api.ts`.
-- Component: `DeliveryRenditionPanel({ productId, node, onPreviewImage })`.
-- Pure helpers: `parseWorkflowDeliverySpec`, `deliverySpecKey`, `deliverySpecLabel`, and
-  `shouldOpenArtifactsForSelection(currentNodeIds, nextNodeIds, nodes)`.
-- React Query key: `['delivery-renditions', sourceAssetId]`.
-
-### 3. Contracts
-
-- Parse DeliverySpec strictly before displaying or submitting it. Enforce the backend's dimensions, 64-megapixel cap,
-  format, fit, background, anchor, and max-byte cross-field rules; malformed node config produces a bounded error state.
-- Selecting one image-generation node opens the Artifacts panel once for that selection change. A query refresh or
-  repeated React Flow selection event with the same IDs must preserve the user's later Recipes or Library tab choice.
-- Query jobs by the node's `bound_image_asset_id`. Poll only while at least one job is `queued` or `running`; the public
-  rendition status type excludes `cancelled` because the persisted state machine has four states.
-- When the current DeliverySpec has no matching job, the panel offers explicit creation. A retry action appears only for
-  a retryable failed job and does not invoke any image-generation API.
-- Success provides canonical preview and download actions. “View original” loads the source through the existing bounded
-  gallery detail API. Gallery cards obtain dimensions/format and source identity from `rendition`, not from filenames or
-  `parent_asset_id` inference.
-- Successful create/retry invalidates the exact rendition key, product gallery bootstrap/pages, and active v2 workflow.
-  Component-local loading and mutation state remain stable while those server projections refresh.
-- Layout uses fixed image aspect ratios and bounded text/action rows. Long filenames and failure reasons wrap or truncate
-  inside their region; mobile actions remain available without hover.
-
-### 4. Validation & Error Matrix
-
-| Condition | UI behavior |
-|---|---|
-| No single image node selected | Stable Artifacts empty state |
-| Selected image node has no source asset | Stable not-generated state; no rendition query |
-| DeliverySpec absent or invalid | Explicit empty/error state; create action unavailable |
-| Create/retry API failure | `ApiError.detail` shown in the panel; current source and existing jobs remain visible |
-| Queued/running job | Status indicator and bounded polling every 1.2 seconds |
-| Retryable failed job | Failure reason and retry action |
-| Successful job | Preview/download actions and exact specification label |
-| Gallery source lookup fails | Localized error; derivative card remains in the current directory |
-
-### 5. Good / Base / Bad Cases
-
-- Good: select one image node, inspect a failed export, retry it, preview the result, open the Library tab, and keep that
-  tab selected while the workflow query refreshes.
-- Base: a generated image without DeliverySpec shows no delivery history and does not create background work.
-- Bad: infer that every child image is a delivery rendition, show requested values as measured output, or treat a
-  rendition as another generated candidate.
-- Bad: run `setSidePanel('artifacts')` on every selection callback without comparing the previous and next selected IDs.
-
-### 6. Tests Required
-
-- Unit tests cover strict DeliverySpec parsing, pixel/cross-field rejection, compact labels, and changed-versus-repeated
-  image-node selection.
-- Workbench tests cover single-selection panel switching, user-selected tab preservation after refetch, active-only
-  polling, create/retry invalidation, and source preview.
-- Gallery tests cover derivative badges, exact source navigation, unavailable source handling, and absence of row-count
-  duplication.
-- Run frontend tests, lint, and build. Inspect real 1440x900 and 390x844 viewports for document overflow, button/text
-  overlap, console errors, failed requests, preview/download, retry, and “View original”.
-
-### 7. Wrong vs Correct
-
-Wrong:
-
-```ts
-const handleSelectionChange = (ids: string[]) => {
-  setSelectedNodeIds(ids);
-  setSidePanel("artifacts");
-};
-```
-
-Correct:
-
-```ts
-if (shouldOpenArtifactsForSelection(selectedNodeIds, nodeIds, workflow.nodes)) {
-  setSidePanel("artifacts");
-}
-setSelectedNodeIds(nodeIds);
-```
-
-Selection changes may reveal the relevant inspector; repeated projection events do not take control away from the user.
-
-## Scenario: Workflow Agent settings entry
-
-### 1. Scope / Trigger
-
-- Trigger: changing the formal product-creation header, settings navigation, provider usage state, or Agent binding form.
-
-### 2. Contracts
-
-- The full-screen `/products/new` header exposes an icon-only settings command with tooltip and routes directly to
-  `/settings?section=agent`. The close command continues to return to the product list.
-- Settings section identity is URL-backed. `section=agent` opens the Agent form after authentication/unlock, unknown values
-  fall back to the provider-profile section, and desktop/mobile navigation updates the same query parameter.
-- The Agent form reuses provider profiles with `text_responses` capability. It stores one provider, one model, and optional
-  reasoning effort, reasoning summary, text verbosity, and service tier. Selecting the unavailable state writes the
-  existing `mock` wire value and does not introduce a second frontend-only enum.
-- Provider cards show Agent usage and cannot disable or archive a profile while the Agent binding references it. API keys
-  remain write-only through the existing profile drawer and never appear in Agent form state.
-- Saving Agent settings states that new conversations use the configuration. Existing conversation services retain their
-  provider snapshot and are not presented as hot-switched.
-
-### 3. Tests Required
-
-- Pure tests cover deep-link resolution, Agent payload trimming, provider usage labels, and disabled-profile guards.
-- Backend/API tests own secret redaction and binding validation. Browser verification covers direct entry from
-  `/products/new`, unlocked desktop/mobile layouts, model editing, and no text/button overflow.
+For interaction or layout changes, inspect Playwright screenshots at desktop and mobile widths and verify there is no overlap or blank canvas.
+
+## Forbidden Patterns
+
+- Rebuilding the canvas in the Agent feature.
+- Removing manual add, edge, inspector, run, recipe, or library controls.
+- One handle per semantic field on the left side of a node.
+- Fetching full image bytes for every library item.
+- Treating product cover as a workflow reference.
+- Maintaining two creation screens or two product-workbench pages.
+- Browser-generated default workflows.
+- Hidden fallback to a different workflow schema.
+- Whole-app query invalidation after a narrow mutation.

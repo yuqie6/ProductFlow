@@ -1,126 +1,104 @@
 # ProductFlow PRD
 
-[中文](PRD.md) | English
+## 1. Product Position
 
-## 1. Product Positioning
+ProductFlow is a product-visual production workspace for a single merchant. The user supplies real product references and delivery goals. A workflow Agent clarifies product facts, visual-system rules, and per-image prompts, then creates an editable, executable, reusable image-production workflow.
 
-ProductFlow is an open-source, self-hosted product creative workspace for solo merchants, small operations teams, and developers who want to manage AI creative workflows on their own infrastructure.
-
-It is not a hosted SaaS product, not a multi-tenant open platform, and does not promise to replace human operational judgment. The current core goal is:
-
-> Move one product from input assets to editable copy, downloadable posters, reusable image assets, and traceable workflow state.
+The current release serves a personal project and live demo, but upgrades for deployed instances cannot rely on resetting data. The migration window preserves bounded immutable history snapshots, canonical asset mappings, and Agent rebuild entry points; the online release still maintains one V2 schema, API, and execution model. SaaS tenancy, billing, and long-term compatibility policy are outside this release.
 
 ## 2. Target Users
 
-- Merchants who need to quickly create product titles, selling points, main images, and promotional posters.
-- Teams that want to self-host model keys, databases, and asset files.
-- Developers who want to extend AI ecommerce creative workflows.
+- Independent merchants who repeatedly produce ecommerce images.
+- Designers who need direct control over prompts, references, aspect ratio, quality, and delivery size.
+- Users who want Agent-led requirement clarification with a visual workflow editor.
 
-Non-target users: teams that need multi-tenant isolation, complex RBAC, payment settlement, asset placement platforms, or hosted account systems.
+## 3. Core Flows
 
-## 3. Current Core Scenarios
+### 3.1 Create a Product
 
-### 3.1 Product Creative Chain
+1. The user opens `/products/new` and enters a product name.
+2. The user selects image types. Each type defaults to quantity two and can be adjusted independently.
+3. The user uploads one to six real product reference images.
+4. The system creates a Product, WorkflowDraft, and AgentConversation.
+5. The Agent checks known information and asks about missing price, style, text language, copy requirements, and visual-system decisions.
+6. The Agent produces product facts, a visual system, image plans, per-image prompts, reference bindings, and generation specifications.
+7. The user reviews and confirms the Draft.
+8. The system materializes a schema-v2 workflow and streams folder, node, and edge reveal events.
+9. The creation screen transitions into the product workbench while the same Agent conversation continues in the sidebar.
 
-1. Log in with an admin key.
-2. Create a product, upload the product source image, fill in the product name, and choose a blank canvas or ecommerce scenario template.
-3. Enter the product workbench and add category, price, product notes, and generation direction.
-4. Use copy nodes to generate and edit structured copy; later image generation reads the structured copy context directly.
-5. Use image-generation nodes to generate images and fill downstream reference-image slots.
-6. Download images/posters, or review product asset history in the right-side Library panel.
-7. On mobile, the product list uses cards and floating pagination; product detail keeps the canvas as the main view and opens workflow run, Single node, Templates, Details, Runs, and Library from the bottom toolbar.
+### 3.2 Edit and Run a Workflow
 
-### 3.2 Iterative Image Sessions
+- Users add, move, delete, and connect nodes.
+- Folders organize local workflow sections.
+- Prompt nodes hold the prompt strategy for one image type or related image set.
+- Reference nodes bind one image from the product library.
+- Image-generation nodes hold aspect ratio, resolution, quality, reference fidelity, background, and text policy.
+- Users run a whole DAG or one node, inspect runs, cancel, and retry.
+- A whole workflow, folder, or selected node group can be saved as a user recipe.
 
-1. Create a standalone image session, optionally attached to a product.
-2. Upload multiple reference images.
-3. Enter a prompt to generate images.
-4. Continue from any generated candidate, or explicitly select reference images for the next generation round.
-5. View queued/running/failed state; after task completion, the page refreshes new candidates automatically.
-6. Attach satisfactory generated images back to a product as reference assets, save them as product main-image references, or collect them in the gallery.
-7. On mobile, use a main-view, drawer, and bottom-sheet layout: the top bar exposes the session drawer, current session title/rename, and history drawer; the main view keeps status, current result, and provider notes; the left drawer manages sessions; the narrow right drawer selects branch/candidate history; the bottom generation sheet carries the write-back target product, references, prompt, size, candidate count, and advanced image tool parameters.
+### 3.3 Manage Images
 
-### 3.3 Product DAG Workflow
+- The product library stores uploads, workflow generations, and image-session attachments.
+- Its directory tree exposes system groups, image types, origins, and user folders.
+- Users search, sort, preview, rename, move, multi-select, download, and create delivery renditions.
+- Node bindings and library entries share the same ProductImageAsset identity.
+- Product cover selection is automatic and serves list presentation.
 
-1. Open the workflow workbench in the product detail page.
-2. Create or adjust nodes: product context, reference image, copy generation, and image generation.
-3. Use built-in scenario templates to append common flows, or multi-select nodes and save them as user templates.
-4. Connect nodes to form a DAG.
-5. Start a background workflow run, then cancel running work or retry failed runs when needed.
-6. Persist run state, node state, and failure reasons in the database.
-7. While running, the frontend polls lightweight workflow status; after completion, it refreshes full workflow, product detail, and historical artifacts.
-8. On mobile, the canvas provides Browse, Edit, and Select modes: Browse supports one-finger pan, node tap selection, and two-finger zoom; Edit supports touch node dragging and edge creation; Select supports tap-based multi-select.
+### 3.4 Iterative Image Generation
 
-### 3.4 Gallery
-
-1. Save generated image-session results to the gallery.
-2. Browse collected generated images at `/gallery` by generation time.
-3. Gallery entries keep source session, prompt, size, model, and download entrypoint.
-
-### 3.5 In-Product Help
-
-1. Open `/help` from the top navigation.
-2. Review quick start, workbench, templates, run state, supported operations, and common questions.
-3. Return from the help page to the product workbench or Image chat.
+- A user creates an image session and selects a branch base plus up to six context references.
+- Each round has candidate count, size, and advanced image parameters.
+- Jobs expose queue state, progress, cancel, failure retry, and candidate branching.
+- A satisfactory result can be downloaded, collected in Gallery, or saved to a product library.
 
 ## 4. Core Objects
 
-- `Product`: product entity, including name, category, price, and input assets.
-- `SourceAsset`: product asset, including original main images, reference images, processed product images, and other types.
-- `CreativeBrief`: system-generated product understanding result that provides shared semantics for copy and posters.
-- `CopySet`: one copy-generation result whose primary content is editable structured copy.
-- `PosterVariant`: main image / promotional poster output based on copy and assets.
-- `ImageSession` / `ImageSessionAsset`: standalone iterative image-generation session and its reference/generated images.
-- `ImageSessionRound` / `ImageSessionGenerationTask`: iterative image candidates and durable async generation-task state.
-- `ImageGalleryEntry`: saved generated-image collection record.
-- `ProductWorkflow` / `WorkflowNode` / `WorkflowEdge` / `WorkflowRun`: product DAG workflow structure and run records.
-- `CanvasTemplate` / `UserCanvasTemplate`: built-in full scenario templates and user-saved node-group templates.
-- `AppSetting`: runtime business configuration override.
+- `Product`: product identity and basic information.
+- `MediaObject`: media bytes, MIME type, dimensions, verification state, and storage path.
+- `ProductImageAsset`: product-scoped image identity, origin, directory, and derivation.
+- `WorkflowDraft` / `WorkflowDraftRevision`: confirmable Agent workflow proposal.
+- `ProductWorkflow`: the current schema-v2 DAG.
+- `WorkflowNode` / `WorkflowEdge` / `WorkflowFolder`: canvas structure.
+- `WorkflowRun` / `WorkflowNodeRun`: execution state and results.
+- `WorkflowRecipe` / `WorkflowRecipeVersion`: user-saved full recipes and fragments.
+- `AgentConversation` / `AgentTurnProjection`: ProductFlow-side Agent conversation and Turn projection.
+- `ImageSession`: independent iterative image session.
+- `DeliveryRenditionJob`: asynchronous delivery-format rendering.
+- `ProviderProfile` / `ProviderBinding`: provider profile and purpose binding.
 
 ## 5. Current Pages
 
-Implemented frontend pages:
+- `/products`: product list and automatic covers.
+- `/products/new`: full-screen Agent creation flow.
+- `/products/:productId`: Agent, V2 canvas, inspector, runs, recipes, and image library.
+- `/image-chat`: iterative text/image generation.
+- `/gallery`: collected images.
+- `/settings`: provider and runtime settings.
+- `/help`: current in-product help.
 
-- `/login`: admin-key login.
-- `/products`: product list.
-- `/products/new`: create product.
-- `/products/:productId`: product detail, copy/poster main chain, history, and DAG workflow.
-- `/gallery`: generated image gallery.
-- `/help`: in-product help page.
-- `/settings`: provider, model, upload limit, job retry, and other business configuration.
-- `/image-chat`: iterative image generation; generated assets can be explicitly attached back to products.
+## 6. Product Contracts
 
-## 6. V1 Implemented Acceptance Surface
+- Real product references are required before the Agent creation flow begins.
+- Every selected image type has an explicit quantity with a default of two.
+- The Agent may organize, rename, and move product-library assets and inspect selected images. It does not load the entire library into model context.
+- Every reference node binds one explicit ProductImageAsset.
+- The visual system is a workflow-level shared constraint. Per-image prompts may record explicit exceptions.
+- Every generated result enters the product library. There is no rejected-draft or delivery-manifest state.
+- Workflow reuse comes only from user-saved recipes.
+- Provider purposes are `prompt`, `agent`, and `image`.
 
-For a single self-hosted deployment, the current version should be able to:
+## 7. Non-Goals
 
-1. Run the product chain with local `mock` providers without external model keys.
-2. Store products, assets, copy, posters, tasks, image sessions, and workflow state in PostgreSQL.
-3. Use Redis + Dramatiq to execute async copy/poster jobs and product workflows.
-4. Use durable `ImageSessionGenerationTask` records for iterative image generation, including queue position, failure reason, and completion refresh.
-5. Create products with full scenario templates and insert the same built-in scenario templates or user-saved node-group templates in the workbench.
-6. Display task state, workflow node state, generation queue overview, failure reasons, and history in the frontend.
-7. Refresh running tasks/workflows through lightweight status APIs instead of high-frequency full-object polling.
-8. Retry recoverable iterative image tasks and product workflow runs, and cancel running tasks.
-9. Save iterative generated images to the gallery and retrieve originals through controlled download APIs.
-10. Save business configuration overrides through `/settings` while avoiding secret values in API responses.
-11. Store uploaded/generated files in local storage and read them through controlled download APIs.
-12. Read in-product operation guidance and support boundaries at `/help`.
-13. Use responsive mobile entrypoints for the product list, product workbench canvas, and iterative image page.
-
-## 7. Explicit Boundaries
-
-Currently not included:
-
-- Multi-user, multi-tenant, team permissions, or audit admin.
-- Hosted model keys, cloud account systems, or billing systems.
-- Automatic placement, automatic listing, or store authorization.
-- Video generation workflows.
-- Kubernetes / Helm / released container images or other production orchestration packages. The repository already includes a Docker Compose self-hosting path.
+- Multi-tenancy, team roles, billing, and usage settlement.
+- Automatic publishing to ecommerce or ad platforms.
+- Automatically classifying and deleting images the user dislikes.
+- Loading an entire product library into Agent context.
+- Long-term runtime readers for retired V1 database models; migration-window archive snapshots remain a bounded upgrade capability.
 
 ## 8. Success Criteria
 
-- External developers can start the complete development stack locally by following the README.
-- The default mock configuration does not require real API keys.
-- Documentation does not exaggerate current capabilities for copy, posters, image sessions, or workflows, and does not hide key dependencies.
-- Private environment files, runtime data, Trellis task history, and build outputs are not publicly committed.
+- A user can move from references and image-type selection through Agent clarification, confirmation, and workflow materialization.
+- A user can keep editing nodes, edges, folders, prompts, reference bindings, and generation specifications manually.
+- Uploads, workflow results, and image-session attachments are manageable in one product image library.
+- Provider configuration, Agent Turns, workflow runs, and image jobs have explicit failure and restart state.
+- Current code and documentation describe one online workflow contract.

@@ -1,163 +1,210 @@
 # Frontend State Management
 
-> Actual state management choices in ProductFlow.
+## State Categories
 
----
+ProductFlow uses:
 
-## Overview
+1. TanStack Query for server state.
+2. React state/reducers for local interaction and editable drafts.
+3. React Router for page and product identity.
+4. Narrow localStorage records for global preferences and canvas ergonomics.
 
-ProductFlow uses four state categories:
-
-1. Server state: TanStack Query in pages and `AppRoutes()`.
-2. Local UI/form state: React `useState`, `useMemo`, and `useEffect` inside page components.
-3. URL state: React Router params and navigation.
-4. Durable browser-local UI preferences: global locale/theme mode in `PreferencesProvider` plus narrowly scoped
-   page-owned workbench preferences.
-
-There is no Redux, Zustand, Jotai, custom event bus, or durable browser-local onboarding state.
-
----
+There is no Redux/Zustand/Jotai store or custom global event bus.
 
 ## Server State
 
-Server state is loaded through `web/src/lib/api.ts` and cached by TanStack Query. The `QueryClient` is created once in
-`web/src/App.tsx` with `refetchOnWindowFocus: false`.
+`web/src/lib/api.ts` is the server boundary. The QueryClient is created once in `App.tsx` with focus refetch disabled.
 
-Current query key patterns:
+Feature query keys are owned near their hooks/pages. Current scopes include:
 
-- Session: `['session']` in `App.tsx`. `GET /api/auth/session` returns both `authenticated` and `access_required`; when
-  login is disabled server-side, `authenticated` is true even without a login cookie.
-- Product list: `['products']` in `ProductListPage.tsx` and `ImageChatPage.tsx`.
-- Product detail/history: `['product', productId]` and `['product-history', productId]` in `ProductDetailPage.tsx`.
-- Product workbench: `['product-workflow', productId]` and `['product-workflow-status', productId]` in
-  `ProductDetailPage.tsx`.
-- Image sessions: `['image-sessions']` and `['image-session', selectedSessionId]` in `ImageChatPage.tsx`.
-- Runtime config: `['runtime-config']` in `ProductDetailPage.tsx`, `ProductListPage.tsx`, and `ImageChatPage.tsx`.
-- Full settings config: `['config']` in `SettingsPage.tsx`; successful settings saves/resets must invalidate
-  `['runtime-config']` when they can affect public runtime behavior, and `['session']` because settings can toggle
-  `admin_access_required`.
-- Settings lock state: `['settings-lock-state']` in `SettingsPage.tsx`; fetch full `['config']` only after the secondary
-  settings token unlock succeeds.
+- `["session"]`
+- product list and product detail
+- Agent workspace/bootstrap/conversation/Turn pages
+- active workflow and node detail
+- workflow/node runs
+- WorkflowDraft/materialization
+- WorkflowRecipe list/detail
+- product image-library bootstrap/pages
+- image sessions and session status
+- Gallery
+- settings lock/config/runtime/provider profiles/bindings
 
-When writing mutations, update/invalidate every key that can show stale data.
+Use ids in keys for product/workflow/node/conversation/session scoping. Do not combine unrelated products under one mutable cache entry.
 
----
+## Mutation Invalidation
 
-## Local UI and Form State
+Invalidate or update every projection that is visibly affected, using the narrowest authoritative scope.
 
-Keep short-lived UI state local to the page that owns the interaction:
+Examples:
 
-- `ProductCreatePage.tsx` stores form fields, selected files, and a local error string.
-- `ProductDetailPage.tsx` stores editing mode, editable copy draft, selected canvas/workbench state, and local mutation
-  error strings.
-- `ImageChatPage.tsx` stores selected session/generated asset, prompt draft, image size, rename mode, target product,
-  and transient success/error messages.
-- `SettingsPage.tsx` stores config drafts, secret touched flags, reset progress, and save/error messages.
-- `SettingsPage.tsx` stores the transient settings unlock token only in local component state for the submit attempt; do
-  not persist the token in localStorage, query cache, or API responses.
+- save image-session result to product -> target product detail, product library pages, product list cover if needed;
+- bind reference node -> active workflow and node detail;
+- edit node -> active workflow/node detail and save status;
+- apply recipe -> active workflow, recipe list if version metadata changes;
+- provider binding change -> settings and current runtime provider projection;
+- settings access toggle -> session.
 
-Local state should not duplicate server records unless the user is editing a draft. For example, `SettingsPage.tsx` creates
-`drafts` from fetched config so the user can edit before saving; product details themselves remain in TanStack Query.
+Avoid `queryClient.clear()` or whole-app invalidation after a narrow mutation.
 
-## URL and Navigation State
+## Agent State
 
-React Router owns route selection and route params:
+ProductFlow's persisted AgentTurn projection is server state. The active stream also has local reducer state for immediate deltas.
 
-- `useNavigate()` is used after login/logout, product creation, and page buttons.
-- `useParams()` supplies `productId` for `ProductDetailPage.tsx`.
-- Auth redirects are centralized in `App.tsx` route elements and `LoginPage.tsx` redirects authenticated users away from
-  `/login`.
+`useAgentConversation` / `useAgentTurnEvents` own:
 
-Do not introduce a global store just to track current page or product ID; use the URL.
+- bounded older-page loading;
+- active Turn;
+- SSE sequence and reconnect cursor;
+- text/refusal deltas;
+- questions;
+- cancel/resume state;
+- WorkflowDraft artifact linkage.
 
----
+After reconnect or terminal state, refetched projection is authoritative. Deduplicate events by sequence.
 
-## Durable UI Preferences
+Creation workspace identity is durable server state. Reloading the page retrieves the existing workspace snapshot using the conversation/idempotency contract.
 
-Global app preferences live in `PreferencesProvider`:
+## Workflow State
 
-- Provider: `PreferencesProvider` in `web/src/lib/preferences.tsx`, mounted once in `App.tsx` inside `BrowserRouter`.
-- Locale storage key: `productflow.locale`; default locale is `zh-CN`.
-- Theme storage key: `productflow.theme`; default preference is `system`.
-- Supported theme preferences are `light`, `dark`, and `system`; `system` resolves from `prefers-color-scheme`.
-- The provider updates `document.documentElement.lang`, root `class="dark"` when the resolved theme is dark, and root
-  `data-theme` / `data-theme-preference` attributes.
-- Use `useI18n()` or `usePreferences()` in components that need locale/theme values; do not create page-local duplicate
-  locale/theme state.
+The active ProductWorkflow, node details, runs, recipes, and image library are server state.
 
-Locale and theme are not server records. Do not store them in TanStack Query, add backend settings for them, or persist
-them with auth/session state unless a future product requirement explicitly changes that boundary.
+Local state includes:
 
-The product workbench owns a small set of durable browser preferences because they are specific to canvas ergonomics
-rather than global app chrome:
+- selection;
+- open folder;
+- viewport;
+- command/dialog state;
+- inspector tabs and editable drafts;
+- pending edge or drag interaction;
+- transient reveal animation state.
 
-- Workflow zoom: `productflow.workflow.zoom`, read by `ProductDetailPage.tsx` and persisted by `WorkflowCanvas`.
-- Workflow inspector width: `productflow.workflow.inspectorWidth`, read and written by the shared
-  `useProductWorkbenchInspectorState` used by legacy and Agent v2 workbenches.
-- Workflow snap-to-grid toggle: `productflow.workflow.snapToGrid`, read and written by `ProductDetailPage.tsx`.
+Graph mutations return canonical server projections. Reconcile optimistic visuals against them.
 
-The schema-v2 workbench owns a separate workflow-scoped canvas preference:
+`useV2NodeDraftAutosave` owns node-edit draft normalization, debounce, mutation state, and conflict feedback. Do not duplicate autosave in each inspector section.
 
-- `productflow.workflowV2.canvasState.v1:{workflow_id}` stores the open folder ID and global/per-folder ReactFlow
-  viewports. The parser accepts only schema version 1, finite coordinates, zoom `0.05..4`, and bounded optional surface
-  dimensions. Reconciliation removes deleted folders. Viewport restore also checks desktop/mobile layout class and saved
-  width compatibility so a desktop transform cannot hide the graph on mobile.
+## Creation Form State
 
-Keep additional durable local preferences rare and owner-scoped. When a page adds one, document the storage key and owner
-here or in the feature-specific spec, and add focused helper tests when parsing/clamping behavior is non-trivial.
+AgentProductCreatePage keeps short-lived values locally:
 
-Good:
+- product name;
+- selected image types;
+- per-type quantities;
+- selected upload files;
+- local validation messages.
 
-```tsx
-const { t } = useI18n();
-return <button type="button">{t("nav.settings")}</button>;
+After workspace creation, Product/Draft/Conversation are server state. Do not persist an independent onboarding model in localStorage.
+
+## Image Chat State
+
+Server state:
+
+- session list/detail/status;
+- assets, rounds, generation tasks;
+- product list used for save-to-product.
+
+Local state:
+
+- selected session/result;
+- prompt;
+- size and candidate count;
+- branch base and selected context assets;
+- advanced tool options;
+- target product;
+- drawers/sheets and transient feedback.
+
+Do not copy full session detail into local state. Derive selected round/result by id.
+
+## Settings State
+
+SettingsPage stores editable drafts locally after loading server definitions/profiles/bindings.
+
+- The unlock token exists only for the unlock submission.
+- Secret fields track whether the user touched them.
+- Saved secrets never enter query data.
+- Reset/save completion refetches authoritative settings.
+
+## URL State
+
+React Router owns:
+
+- current page;
+- `productId`;
+- settings section/search params where supported.
+
+Do not use localStorage or a global store for the current product/page.
+
+## Global Preferences
+
+`PreferencesProvider` owns:
+
+- `productflow.locale`
+- `productflow.theme`
+
+It updates document language, resolved dark class, and theme attributes. Locale/theme are browser preferences, not backend settings.
+
+## Canvas Persistence
+
+The current canvas record uses:
+
+```text
+productflow.workflowV2.canvasState.v1:{workflow_id}
 ```
 
-Bad:
+It stores:
 
-```tsx
-const [locale] = useState(window.localStorage.getItem("productflow.locale"));
-return <button type="button">{locale === "en-US" ? "Settings" : "配置"}</button>;
-```
+- schema version;
+- open folder id;
+- global and per-folder viewport;
+- required surface width/height used for compatibility checks.
 
----
+The parser accepts only finite bounded coordinates/zoom and the exact current record shape. Invalid or mismatched state is discarded. Deleted folder state is removed during reconciliation.
+
+Other workbench preference keys must have one clear owner, parser, bounds, and focused tests. Avoid accumulating compatibility parsing for retired browser records.
 
 ## Derived State
 
-Prefer derived values over additional state:
+Prefer pure derivation:
 
-- `ProductDetailPage.tsx` derives source image URL, reference images, working copy, and poster variants from
-  `ProductDetail`.
-- `ImageChatPage.tsx` derives built-in image-size picker presets from `web/src/lib/imageSizes.ts`, selected round from
-  the selected asset ID, and product source/reference images from product detail.
-- `SettingsPage.tsx` derives grouped config items from the fetched config response.
+- ProductSummary cover display from current cover fields.
+- graph nodes/edges from ProductWorkflowV2.
+- selected node detail from id.
+- image-library directory selection and page filters.
+- WorkflowDraft confirmation sections.
+- provider usage from current purpose bindings.
+- image-session branch/context count.
 
-Use `useMemo` where the derivation is non-trivial or passed deeply; otherwise a local helper function is fine.
+Use `useMemo` for expensive or referentially important projections, not for every trivial value.
 
----
+## Error State
 
-## API Error State
+`ApiError` is the common HTTP failure. Keep action-specific user feedback near the affected page/panel.
 
-The central API wrapper throws `ApiError(status, detail)` from `web/src/lib/api.ts`. Pages convert it into local user-facing
-strings:
+- Auth error in Login.
+- Intake/upload/Agent error in creation.
+- Graph/edit/run error in the workbench surface.
+- Session generation/save error in ImageChat.
+- Provider/config validation error in Settings.
 
-- `LoginPage.tsx` displays invalid key errors.
-- `ProductCreatePage.tsx` displays create/upload validation errors.
-- `ProductDetailPage.tsx` displays copy/poster/reference image mutation errors.
-- `ImageChatPage.tsx` displays generation/session/attach errors.
-- `SettingsPage.tsx` displays config validation errors.
+Persisted failed/unknown business status is server state; a toast alone is insufficient.
 
-Keep error display local unless multiple pages need a shared notification system.
+## Tests
 
----
+Add focused tests for:
+
+- query invalidation after mutations;
+- Agent reducer sequence/reconnect;
+- autosave normalization/conflict;
+- creation default/custom quantities;
+- canvas localStorage parsing/reconciliation;
+- image-chat branch/context derivation;
+- settings secret/unlock state.
 
 ## Avoid
 
-- Adding a global store for server data already cached by TanStack Query.
-- Keeping a separate local copy of fetched records unless the user is editing a draft.
-- Invalidating broad caches unnecessarily when a precise `setQueryData` is already used and safe.
-- Hiding route state in local storage or globals instead of using React Router params.
-- Storing API keys or admin keys in frontend local storage. Authentication is session-cookie based.
-- Reintroducing durable browser-local onboarding, tour, help, or tutorial state without a new approved product requirement.
-- Adding new durable local preferences outside `PreferencesProvider` or a documented page-owned feature boundary without
-  updating this spec and focused helper tests when parsing/clamping behavior is non-trivial.
+- Global store for cached API data.
+- Local copies of whole server records.
+- Broad invalidation for narrow mutations.
+- Page identity outside the URL.
+- Admin/settings/provider secrets in localStorage or Query cache.
+- Unversioned persistent browser records.
+- Hidden fallback parsing for a removed workflow/page.

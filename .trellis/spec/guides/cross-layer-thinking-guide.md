@@ -46,6 +46,27 @@ For each boundary:
 - What is the exact output format?
 - What errors can occur?
 
+### Step 4: Audit Persisted Historical Values
+
+When a migration preserves JSON, enum-like strings, archive payloads, or runtime settings, every stored value is part of the compatibility contract even if its online behavior is retired. Before removing a runtime feature:
+
+- Search database fixtures, migration code, ORM/Pydantic contracts, serializers, frontend unions, label maps, and test payloads for every historical value.
+- Classify each value as online, archive-only, migration-only, or invalid. Keep archive-only values readable without restoring their old executor or editor.
+- Add the value at every typed boundary that must round-trip it. A backend enum alone is insufficient when the frontend has exhaustive maps.
+- Verify one real upgraded database record through the API and page bootstrap. Unit validation of a newly constructed payload does not cover deployed historical data.
+
+For a preserved workflow fact, the expected path is:
+
+```text
+PostgreSQL JSON (legacy_product)
+  -> WorkflowDraftPayloadV1 / ProductFactSourceType
+  -> agent-workbench bootstrap response
+  -> frontend ProductFactSourceType / label map
+  -> read-only historical label
+```
+
+A retired value must not be silently rewritten, dropped, or routed into an online V1 executor during this read path.
+
 ---
 
 ## Common Cross-Layer Mistakes

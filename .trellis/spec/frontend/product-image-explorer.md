@@ -1,146 +1,102 @@
 # Product Image Explorer
 
-> Executable frontend contracts for the product-scoped image-library explorer and its workbench integration.
+## Ownership
 
-## Scenario: Browse and organize canonical product images
+- `useProductImageExplorer(productId)` owns bootstrap/page queries, filters, selection, and mutations.
+- `ProductImageExplorer` owns responsive composition and dialogs.
+- `ImageDirectoryTree` owns directories and folder commands.
+- `ImageAssetGrid` and toolbar/actions own asset presentation.
+- `selectionTarget.ts` maps reference-node binding intent.
+- `lib/api.ts` owns all gallery HTTP paths.
 
-### 1. Scope / Trigger
+The explorer manages ProductImageAsset entries for one Product.
 
-- Trigger: changing `ProductImageExplorer`, its hook/state helpers, gallery DTOs/API methods, the Images inspector panel,
-  responsive behavior, or schema-v2 "use as reference" integration.
-- The explorer manages canonical `ProductImageAsset` entries for one product. It does not replace the global `/gallery`
-  page and does not provide canonical asset deletion.
+## Query Contract
 
-### 2. Signatures
+Query keys:
 
-- `useProductImageExplorer(productId)` owns bootstrap/page queries, search, directory/sort/view state, selection, and
-  gallery mutations.
-- `ProductImageExplorer({ productId, productName, onPreviewImage, referenceTarget? })` owns responsive composition and
-  dialogs.
-- `ImageExplorerReferenceTarget` contains `workflowId`, `nodeId`, `expectedWorkflowRevision`,
-  `expectedBoundAssetId`, and optional `onBound`.
-- Query keys:
-  - bootstrap: `['product-image-library', productId]`;
-  - pages: `['product-image-library-assets', productId, directoryKind, directoryKey, query, sort]`.
-- Local preference key: `productflow.product.{productId}.imageExplorer.view` with value `grid` or `list`.
-- Central API methods live in `web/src/lib/api.ts`: `getProductImageLibrary`, `listGalleryAssets`, `getGalleryAsset`,
-  folder mutations, asset rename/move, archive download, and `bindWorkflowReferenceAsset`.
+- bootstrap: `["product-image-library", productId]`;
+- pages: product id + directory kind/key + normalized search + sort.
 
-### 3. Contracts
+Rules:
 
-#### Server and local state
+- search trims and debounces by 250 ms;
+- page size is 50;
+- cursors are opaque;
+- directory/search/sort change clears selection;
+- an exact query-identity change removes its previous infinite page chain;
+- “select all” covers at most 100 currently loaded assets;
+- mutations invalidate bootstrap counts and product asset-page keys.
 
-- Bootstrap, pages, and mutation results are React Query server state. Directory, debounced search input, sort,
-  selection, dialogs, and narrow-directory visibility are component/hook state.
-- Only grid/list preference is stored in owner-scoped `localStorage`. Directory, search, cursor, selection, and dialog
-  state are not persisted there.
-- Search is trimmed and debounced by 250 ms. Directory, effective search, or sort changes clear selection.
-- Infinite queries request 50 rows at a time and render only fetched pages. "Select all" means up to 100 currently loaded
-  assets; it does not issue a hidden whole-library query.
-- A query-identity change removes the previous exact infinite-query cache entry. Returning to an earlier
-  directory/search/sort starts from its first page instead of restoring a large stale page chain.
-- Gallery mutations invalidate both the bootstrap counts and all product asset-page keys. A successful move or folder
-  delete also clears selection.
-- API query strings use `URLSearchParams`. Components never construct `/api/v2/...` URLs directly.
+Use URLSearchParams through `api.ts`. Components do not construct API URLs.
 
-#### Responsive layout and interaction
+## Directories
 
-- Responsiveness is based on the explorer component's observed content width, not the browser viewport or configured
-  sidebar width.
-- At 440 px and wider, the explorer renders a 148 px directory rail beside the asset area. Below 440 px, the rail is
-  replaced by a directory toggle and an in-flow directory panel.
-- `ProductImageExplorer` returns a loading/error state before its root exists. The `ResizeObserver` effect must run again
-  after bootstrap data mounts the root; an empty dependency list leaves the first real render permanently narrow.
-- Grid/list rows, thumbnails, counters, and controls have stable dimensions. Long names truncate or wrap within their
-  own bounds and do not resize the inspector.
-- Mobile actions are available without hover. Folder action buttons remain visible at narrow widths, and interactive
-  targets in the mobile drawer are at least 44 by 44 px where the compact desktop action is expanded for touch.
-- Preview and download are disabled for media whose verification status is not `verified`; metadata remains visible.
-- Drag/drop and move dialogs call the same move mutation with each loaded asset's expected current folder.
+The tree renders backend-provided:
 
-#### Workbench compatibility and references
+- system directories;
+- image-type directories;
+- origin directories;
+- one-level user folders.
 
-- `ImagesPanel` mounts the canonical explorer as the default view.
-- When a schema-v1 reference node is selected, a sibling legacy tab keeps the existing SourceAsset/PosterVariant picker.
-  The explorer does not expose canonical re-reference in this v1 path and does not write canonical-to-legacy mappings.
-- A schema-v2 owner may pass `referenceTarget`. The action sends the stable canonical asset ID and both expected values,
-  then invalidates the active v2 workflow query and forwards the binding result to `onBound`.
-- The explorer never infers a product cover from page order. Cover identity comes from bootstrap/product
-  `cover_image_asset_id`.
+Folder actions support create, rename, delete, and move target selection. Deleting a folder returns its assets to unorganized state; it does not delete images.
 
-### 4. Validation & Error Matrix
+## Responsive Layout
 
-| Condition | UI behavior |
-|---|---|
-| Bootstrap loading/failure | Stable loading state or retry action; asset surface is not mounted with partial metadata |
-| Asset page loading/failure | Loading state or page-local retry; folder shell remains usable after bootstrap |
-| Directory/search/sort changes | Selection cleared, prior exact page chain removed, new first page requested |
-| Mutation conflict or validation error | `ApiError.detail` shown beside the current directory; no optimistic overwrite |
-| Missing or pending media | Metadata card/list row remains; preview and archive selection are unavailable |
-| Narrow explorer | Directory toggle/panel; no permanent desktop rail or hover-only folder actions |
-| v1 reference selected | Explorer and "legacy workflow reference" tabs shown; legacy fill callbacks remain unchanged |
-| v2 bind conflict | Error remains in the explorer; active workflow cache is not treated as successfully rebound |
+- Observe explorer content width with ResizeObserver.
+- At 440 px and above, show the fixed directory rail.
+- Below 440 px, use the in-flow directory toggle/panel.
+- Re-run observation after bootstrap mounts the real root.
+- Thumbnails, rows, counters, and controls have stable dimensions.
+- Long names truncate or wrap without changing inspector width.
+- Touch actions do not depend on hover and use appropriate target sizes.
 
-### 5. Good / Base / Bad Cases
+Real browser verification must include content widths 560, 440, 439, and 280 px, plus the actual mobile drawer.
 
-- Good: load 50 assets, load 50 more, enter a search, then clear it; the all-assets query returns to one 50-row page.
-- Good: at 408 px component width inside a 1440 px viewport, the explorer uses its narrow layout.
-- Base: a product with no assets shows a bounded empty state and still permits upload/folder creation.
-- Bad: use `window.innerWidth` to decide whether the directory rail fits inside the inspector.
-- Bad: cache every visited infinite-query page chain for a 1,000-asset product.
-- Bad: hide rename/move/folder controls behind hover on touch devices.
-- Bad: expose the v2 canonical bind action while the current canvas still owns a schema-v1 reference node.
+## Asset Actions
 
-### 6. Tests Required
+- preview and download one verified asset;
+- rename display name;
+- move selected loaded assets;
+- download selected assets as ZIP;
+- open delivery rendition controls;
+- bind one explicit asset to a reference node.
 
-- Unit tests cover query-key identity, page flattening, selection cap, drag payload validation, byte/pixel formatting,
-  owner-scoped view preference, and the 439/440 px boundary.
-- API tests assert encoded list parameters, expected-before mutation bodies, archive error decoding, and credentials.
-- Component/workbench tests preserve the existing v1 SourceAsset/PosterVariant bind path and assert that the default tab
-  is the canonical explorer.
-- Run `pnpm --dir web test:run`, `pnpm --dir web lint`, and `just web-build`.
-- For layout changes, verify actual `innerWidth/clientWidth`, component bounding boxes, console/network failures, and
-  screenshots at inspector widths 560, 440, and 280 px; a 1024 px desktop viewport; and a 390 px mobile drawer.
+Missing media remains visible as metadata and cannot be previewed/downloaded.
 
-### 7. Wrong vs Correct
+Move/rename requests send expected current values. Conflict responses display near the current directory without optimistic overwrite.
 
-Wrong:
+## Reference Binding
 
-```tsx
-const wide = window.innerWidth >= 1024;
-return wide ? <DirectoryRail /> : <DirectoryMenu />;
-```
+`ImageExplorerReferenceTarget` identifies:
 
-Correct:
+- workflow id;
+- reference node id;
+- expected workflow edit/revision value required by the API;
+- expected currently bound asset id;
+- optional completion callback.
 
-```tsx
-useEffect(() => {
-  const element = rootRef.current;
-  if (!element || typeof ResizeObserver === "undefined") return;
-  const observer = new ResizeObserver(([entry]) => {
-    setWide(isWideImageExplorer(entry.contentRect.width));
-  });
-  observer.observe(element);
-  return () => observer.disconnect();
-}, [bootstrap]);
-```
+The action sends one ProductImageAsset id, invalidates the active workflow/node queries, and closes selection mode only after success.
 
-Wrong:
+Product cover and page order have no binding semantics.
 
-```ts
-const assets = await api.listProductImageAssets(productId);
-const visible = assets.items.filter((asset) => asset.display_name.includes(query));
-```
+## Tests
 
-Correct:
+- query identity, flattening, cursor page append, and selection cap;
+- 439/440 px responsive boundary;
+- owner-scoped grid/list preference;
+- drag/move payload expected state;
+- reference selection target;
+- missing-media action disabling;
+- encoded API params and archive error decoding.
 
-```ts
-await api.listGalleryAssets(productId, {
-  directory_kind: directory.kind,
-  directory_key: directory.key,
-  q: query,
-  sort,
-  after: cursor,
-  limit: 50,
-});
-```
+Run Vitest, ESLint, build, and screenshot checks for layout changes.
+
+## Avoid
+
+- `window.innerWidth` for an inspector-contained explorer.
+- Loading/filtering the full product library in React.
+- Hover-only actions.
+- Binding by filename, display name, folder, or cover.
+- Hidden deletion of unselected or overwritten candidates.
+- Separate reference pickers for the same ProductImageAsset model.
