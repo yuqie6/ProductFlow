@@ -1,17 +1,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import pytest
-import sqlalchemy as sa
-from alembic.config import Config
 from fastapi.testclient import TestClient
 from helpers import _login, _make_demo_image_bytes
 from sqlalchemy import event, func, select
 from workflow_draft_helpers import make_workflow_draft_payload
 
-from alembic import command
 from productflow_backend.application import agent_control
 from productflow_backend.application.agent_control import synchronize_agent_turn_state
 from productflow_backend.application.agent_conversations import (
@@ -22,7 +18,6 @@ from productflow_backend.application.agent_conversations import (
     project_agent_turn_state,
     reserve_agent_turn,
 )
-from productflow_backend.application.agent_cutover import inspect_agent_catalog_cutover
 from productflow_backend.application.agent_product_intake import AgentProductSelectionV1
 from productflow_backend.application.agent_product_workspaces import create_agent_product_workspace
 from productflow_backend.application.agent_sync import (
@@ -65,7 +60,6 @@ from productflow_backend.infrastructure.agent_service import (
     AgentServiceArtifact,
     AgentServiceQuestion,
     AgentServiceQuestionOption,
-    AgentServiceRequestError,
     AgentServiceTurnState,
 )
 from productflow_backend.infrastructure.db.models import (
@@ -906,100 +900,6 @@ def test_agent_folder_and_move_tools_share_atomic_gallery_mutations(db_session) 
     ) == 0
 
 
-def test_agent_catalog_cutover_cross_checks_projection_and_harness_state(db_session) -> None:
-    product, _, draft, _ = _create_product_and_draft(db_session)
-    conversation = create_agent_conversation(
-        db_session,
-        product_id=product.id,
-        workflow_draft_id=draft.id,
-    )
-
-    def projection(key: str, status: AgentTurnStatus, harness_turn_id: str | None):
-        item = AgentTurnProjection(
-            conversation_id=conversation.id,
-            harness_turn_id=harness_turn_id,
-            idempotency_key=key,
-            request_hash="a" * 64,
-            input_text=key,
-            input_asset_ids_json=[],
-            status=status,
-        )
-        db_session.add(item)
-        db_session.flush()
-        return item
-
-    unbound = projection("unbound", AgentTurnStatus.QUEUED, None)
-    stale_running = projection("stale-running", AgentTurnStatus.RUNNING, "harness-succeeded")
-    requires_input = projection("requires-input", AgentTurnStatus.REQUIRES_INPUT, "harness-question")
-    unsynced_artifact = projection(
-        "unsynced-artifact",
-        AgentTurnStatus.AWAITING_CONFIRMATION,
-        "harness-awaiting",
-    )
-    synced_artifact = projection(
-        "synced-artifact",
-        AgentTurnStatus.AWAITING_CONFIRMATION,
-        "harness-synced",
-    )
-    synced_artifact.workflow_draft_revision_id = draft.current_revision_id
-    db_session.commit()
-
-    class Gateway:
-        states = {
-            "harness-succeeded": AgentTurnStatus.SUCCEEDED,
-            "harness-question": AgentTurnStatus.REQUIRES_INPUT,
-            "harness-awaiting": AgentTurnStatus.AWAITING_CONFIRMATION,
-        }
-
-        def get_turn(self, *, conversation_id: str, turn_id: str):
-            assert conversation_id == conversation.id
-            return type("TurnState", (), {"status": self.states[turn_id]})()
-
-    summary = inspect_agent_catalog_cutover(db_session, gateway=Gateway())
-    assert summary.checked_turns == 4
-    assert {blocker.projection_id for blocker in summary.blockers} == {
-        unbound.id,
-        requires_input.id,
-        unsynced_artifact.id,
-    }
-    assert stale_running.id not in {blocker.projection_id for blocker in summary.blockers}
-    assert synced_artifact.id not in {blocker.projection_id for blocker in summary.blockers}
-    assert summary.ready is False
-
-
-def test_agent_catalog_cutover_blocks_when_harness_cannot_be_verified(db_session) -> None:
-    product, _, draft, _ = _create_product_and_draft(db_session)
-    conversation = create_agent_conversation(
-        db_session,
-        product_id=product.id,
-        workflow_draft_id=draft.id,
-    )
-    projection = AgentTurnProjection(
-        conversation_id=conversation.id,
-        harness_turn_id="harness-unavailable",
-        idempotency_key="unavailable",
-        request_hash="b" * 64,
-        input_text="unavailable",
-        input_asset_ids_json=[],
-        status=AgentTurnStatus.UNKNOWN,
-    )
-    db_session.add(projection)
-    db_session.commit()
-
-    class Gateway:
-        def get_turn(self, **_kwargs):
-            raise AgentServiceRequestError(
-                status_code=None,
-                code="unavailable",
-                safe_message="Agent 服务暂时不可用",
-            )
-
-    summary = inspect_agent_catalog_cutover(db_session, gateway=Gateway())
-    assert summary.ready is False
-    assert summary.blockers[0].projection_id == projection.id
-    assert "unavailable" in summary.blockers[0].reason
-
-
 def test_internal_agent_runtime_config_returns_bound_secret_only_to_service(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
@@ -1108,7 +1008,7 @@ def test_internal_agent_routes_require_service_token_and_never_need_browser_sess
     assert foreign_reference.status_code == 400
     assert foreign_reference.json()["detail"] == "WorkflowDraft 引用了其他商品的图片资产"
 
-    asset.media_object.verification_status = MediaVerificationStatus.LEGACY_PENDING
+    asset.media_object.verification_status = MediaVerificationStatus.MISSING
     db_session.commit()
     unverified_reference = client.post(validation_path, headers=headers, json={"value": payload})
     assert unverified_reference.status_code == 400
@@ -1522,102 +1422,3 @@ def test_sync_worker_recovers_unbound_turn_and_idempotently_attaches_artifact(db
     assert followup.created is True
     assert followup.projection.conversation.status == AgentConversationStatus.COLLECTING
     assert followup.projection.conversation.harness_run_id == conversation.harness_run_id
-
-
-def test_agent_projection_tables_are_removed_without_touching_existing_rows(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    database_path = tmp_path / "workflow-agent-migration.db"
-    monkeypatch.setenv("ADMIN_ACCESS_KEY", "super-secret-admin-key")
-    monkeypatch.setenv("SESSION_SECRET", "super-secret-session-key-123")
-    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{database_path}")
-    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/9")
-    monkeypatch.setenv("STORAGE_ROOT", str(tmp_path / "storage"))
-    get_settings.cache_clear()
-
-    backend_dir = Path(__file__).resolve().parents[1]
-    config = Config(str(backend_dir / "alembic.ini"))
-    config.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(config, "20260812_0033")
-    engine = sa.create_engine(f"sqlite:///{database_path}")
-    now = "2026-08-12 12:00:00"
-    with engine.begin() as connection:
-        connection.execute(
-            sa.text(
-                "INSERT INTO products (id, name, created_at, updated_at) "
-                "VALUES ('product-agent', '迁移保留商品', :now, :now)"
-            ),
-            {"now": now},
-        )
-        connection.execute(
-            sa.text(
-                "INSERT INTO workflow_drafts "
-                "(id, product_id, status, created_at, updated_at) "
-                "VALUES ('draft-agent', 'product-agent', 'collecting', :now, :now)"
-            ),
-            {"now": now},
-        )
-
-    command.upgrade(config, "head")
-    inspector = sa.inspect(engine)
-    assert {
-        "agent_conversations",
-        "agent_turn_projections",
-        "agent_tool_mutations",
-    }.issubset(inspector.get_table_names())
-    conversation_fks = {
-        foreign_key["name"]: foreign_key
-        for foreign_key in inspector.get_foreign_keys("agent_conversations")
-    }
-    assert conversation_fks["fk_agent_conversations_product_id"]["options"]["ondelete"] == "CASCADE"
-    assert conversation_fks["fk_agent_conversations_workflow_draft_id"]["options"]["ondelete"] == "CASCADE"
-    turn_constraints = {constraint["name"] for constraint in inspector.get_unique_constraints("agent_turn_projections")}
-    assert "uq_agent_turn_projections_conversation_key" in turn_constraints
-    assert "uq_agent_turn_projections_harness_turn_id" in turn_constraints
-
-    with engine.begin() as connection:
-        connection.execute(
-            sa.text(
-                "INSERT INTO agent_conversations "
-                "(id, product_id, workflow_draft_id, harness_run_id, status, created_at, updated_at) "
-                "VALUES ('conversation-agent', 'product-agent', 'draft-agent', 'run-agent', "
-                "'collecting', :now, :now)"
-            ),
-            {"now": now},
-        )
-        connection.execute(
-            sa.text(
-                "INSERT INTO agent_turn_projections "
-                "(id, conversation_id, idempotency_key, request_hash, input_text, "
-                "input_asset_ids_json, status, resume_required, created_at, updated_at) "
-                "VALUES ('turn-agent', 'conversation-agent', 'key-agent', :hash, '核对商品', "
-                "'[]', 'queued', 0, :now, :now)"
-            ),
-            {"hash": "a" * 64, "now": now},
-        )
-    with pytest.raises(sa.exc.IntegrityError):
-        with engine.begin() as connection:
-            connection.execute(
-                sa.text(
-                    "INSERT INTO agent_turn_projections "
-                    "(id, conversation_id, idempotency_key, request_hash, input_text, "
-                    "input_asset_ids_json, status, resume_required, created_at, updated_at) "
-                    "VALUES ('turn-agent-2', 'conversation-agent', 'key-agent', :hash, '不同请求', "
-                    "'[]', 'queued', 0, :now, :now)"
-                ),
-                {"hash": "b" * 64, "now": now},
-            )
-
-    engine.dispose()
-    command.downgrade(config, "20260812_0033")
-    engine = sa.create_engine(f"sqlite:///{database_path}")
-    inspector = sa.inspect(engine)
-    assert "agent_conversations" not in inspector.get_table_names()
-    with engine.connect() as connection:
-        assert connection.scalar(sa.text("SELECT name FROM products WHERE id = 'product-agent'")) == "迁移保留商品"
-        assert connection.scalar(sa.text("SELECT id FROM workflow_drafts WHERE id = 'draft-agent'")) == "draft-agent"
-    engine.dispose()
-
-    command.upgrade(config, "head")
-    get_settings.cache_clear()

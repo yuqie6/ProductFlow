@@ -7,7 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import Field, ValidationError, ValidationInfo, field_validator, model_validator
+from pydantic import Field, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ConfigInputType = Literal["text", "password", "number", "boolean", "select", "multi_select", "textarea"]
@@ -24,15 +24,7 @@ IMAGE_SESSION_IDLE_TIMEOUT_MIN_MINUTES = 1
 IMAGE_SESSION_IDLE_TIMEOUT_MAX_MINUTES = 24 * 60
 DEFAULT_IMAGE_SESSION_WORKER_FAILSAFE_TIME_LIMIT_MINUTES = 24 * 60
 DEFAULT_WORKFLOW_IMAGE_GENERATION_PROVIDER_TIMEOUT_SECONDS = 15 * 60
-IMAGE_SIZE_CONFIG_KEYS = {"image_main_image_size", "image_promo_poster_size"}
-PROMPT_CONFIG_KEYS = {
-    "prompt_brief_system",
-    "prompt_copy_system",
-    "prompt_poster_image_template",
-    "prompt_poster_image_edit_template",
-    "prompt_poster_image_reference_policy",
-    "prompt_image_chat_template",
-}
+PROMPT_CONFIG_KEYS = {"prompt_image_chat_template"}
 IMAGE_TOOL_FIELD_KEYS: tuple[str, ...] = (
     "model",
     "quality",
@@ -44,38 +36,10 @@ IMAGE_TOOL_FIELD_KEYS: tuple[str, ...] = (
     "input_fidelity",
     "partial_images",
 )
-IMAGE_TOOL_LEGACY_FIELD_KEYS: tuple[str, ...] = ("n",)
 DEFAULT_IMAGE_TOOL_ALLOWED_FIELDS: tuple[str, ...] = tuple(key for key in IMAGE_TOOL_FIELD_KEYS if key != "background")
 DEFAULT_IMAGE_TOOL_ALLOWED_FIELDS_TEXT = ",".join(DEFAULT_IMAGE_TOOL_ALLOWED_FIELDS)
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_LOG_DIR = BACKEND_DIR / "storage" / "logs"
-DEFAULT_PROMPT_BRIEF_SYSTEM = (
-    "You analyze ecommerce product facts from the JSON task data in the user message. "
-    "Extract positioning, audience, supported selling angles, taboo phrases, and visual style guidance. "
-    "Use only supplied facts; mark sparse facts conservatively."
-)
-DEFAULT_PROMPT_COPY_SYSTEM = (
-    "You generate editable ecommerce copy from the JSON task data in the user message. "
-    "The structured-output schema owns the response fields. Write concise copy that fits the declared purpose, "
-    "language policy, available facts, and reference-image context. Use only supplied facts."
-)
-DEFAULT_PROMPT_POSTER_IMAGE_TEMPLATE = """Create an image from the current user request and explicitly connected
-upstream context.
-User request:
-{instruction}
-Output size: {size}
-Upstream context:
-{context_block}
-Visual reference policy:
-{reference_policy}
-{kind_requirements}
-Generate the image directly. Do not return explanatory text."""
-DEFAULT_PROMPT_POSTER_IMAGE_EDIT_TEMPLATE = DEFAULT_PROMPT_POSTER_IMAGE_TEMPLATE
-DEFAULT_PROMPT_POSTER_IMAGE_REFERENCE_POLICY = (
-    "When input images are provided, use the actual product/subject in those images as the visual baseline. "
-    "If text facts are weak, prioritize the visible product subject. Do not replace it with unrelated people, IP, "
-    "brands, products, or ad themes. Treat copy as auxiliary selling-point and layout context."
-)
 DEFAULT_PROMPT_IMAGE_CHAT_TEMPLATE = """Create an image from the current user request.
 Output size: {size}
 {history_block}
@@ -109,7 +73,7 @@ class Settings(BaseSettings):
 
     运行时 app_settings 覆盖由 application.runtime_settings 组装，
     基础设施配置（数据库 / Redis / Secret 等）仅从环境变量读取。
-    历史 text/image provider 字段仅作为供应商迁移输入。
+    供应商档案和用途绑定由数据库设置页管理。
     """
 
     model_config = SettingsConfigDict(
@@ -144,19 +108,6 @@ class Settings(BaseSettings):
     log_backup_count: int = 5
     log_retention_days: int = 14
 
-    text_provider_kind: str = "mock"
-    text_api_key: str | None = None
-    text_base_url: str | None = None
-    text_brief_model: str = "gpt-4o"
-    text_copy_model: str = "gpt-4o"
-
-    image_provider_kind: str = "mock"
-    image_api_key: str | None = None
-    image_base_url: str | None = None
-    image_generate_model: str = "gpt-5.4"
-    image_images_quality: str | None = None
-    image_images_style: str | None = None
-    image_responses_background_enabled: bool = False
     image_tool_model: str | None = None
     image_tool_quality: str | None = None
     image_tool_output_format: str | None = None
@@ -166,24 +117,12 @@ class Settings(BaseSettings):
     image_tool_action: str | None = None
     image_tool_input_fidelity: str | None = None
     image_tool_partial_images: int | None = Field(default=None, ge=0, le=3)
-    image_tool_n: int | None = Field(default=None, ge=1, le=10)
     image_tool_allowed_fields: str = DEFAULT_IMAGE_TOOL_ALLOWED_FIELDS_TEXT
     image_generation_max_dimension: int = Field(
         default=DEFAULT_IMAGE_GENERATION_MAX_DIMENSION,
         ge=IMAGE_GENERATION_MIN_MAX_DIMENSION,
         le=IMAGE_GENERATION_MAX_MAX_DIMENSION,
     )
-    image_main_image_size: str = "1024x1024"
-    image_promo_poster_size: str = "1024x1536"
-    poster_generation_mode: str = "template"
-
-    poster_font_path: Path = Path("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc")
-
-    prompt_brief_system: str = DEFAULT_PROMPT_BRIEF_SYSTEM
-    prompt_copy_system: str = DEFAULT_PROMPT_COPY_SYSTEM
-    prompt_poster_image_template: str = DEFAULT_PROMPT_POSTER_IMAGE_TEMPLATE
-    prompt_poster_image_edit_template: str = DEFAULT_PROMPT_POSTER_IMAGE_EDIT_TEMPLATE
-    prompt_poster_image_reference_policy: str = DEFAULT_PROMPT_POSTER_IMAGE_REFERENCE_POLICY
     prompt_image_chat_template: str = DEFAULT_PROMPT_IMAGE_CHAT_TEMPLATE
 
     upload_max_image_bytes: int = 10 * 1024 * 1024
@@ -210,12 +149,6 @@ class Settings(BaseSettings):
     admin_access_required: bool = True
     deletion_enabled: bool = False
 
-    @field_validator("image_main_image_size", "image_promo_poster_size")
-    @classmethod
-    def _normalize_image_generation_fallback_size(cls, value: str, info: ValidationInfo) -> str:
-        max_dimension = int(info.data.get("image_generation_max_dimension") or DEFAULT_IMAGE_GENERATION_MAX_DIMENSION)
-        return normalize_image_generation_size(value, max_dimension=max_dimension)
-
     @field_validator(
         "agent_service_base_url",
         "agent_service_internal_token",
@@ -226,8 +159,6 @@ class Settings(BaseSettings):
         "image_tool_moderation",
         "image_tool_action",
         "image_tool_input_fidelity",
-        "image_images_quality",
-        "image_images_style",
         mode="before",
     )
     @classmethod
@@ -235,7 +166,7 @@ class Settings(BaseSettings):
         normalized = "" if value is None else str(value).strip()
         return normalized or None
 
-    @field_validator("image_tool_output_compression", "image_tool_partial_images", "image_tool_n", mode="before")
+    @field_validator("image_tool_output_compression", "image_tool_partial_images", mode="before")
     @classmethod
     def _normalize_optional_image_tool_int(cls, value: Any) -> int | None:
         if value is None:
@@ -400,84 +331,6 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
         maximum=IMAGE_GENERATION_MAX_MAX_DIMENSION,
     ),
     ConfigDefinition(
-        key="image_main_image_size",
-        label="主图尺寸（兼容默认）",
-        category="图片生成",
-        input_type="text",
-        description=(
-            "高级/兼容默认值：仅当图片 provider 输入未显式传入 image_size，"
-            "且生成类型为 MAIN_IMAGE 时使用。新工作流生图节点通常会传入明确尺寸，"
-            "请优先使用节点里的尺寸选择器。"
-        ),
-    ),
-    ConfigDefinition(
-        key="image_promo_poster_size",
-        label="促销海报尺寸（兼容默认）",
-        category="图片生成",
-        input_type="text",
-        description=(
-            "高级/兼容默认值：仅当图片 provider 输入未显式传入 image_size，"
-            "且生成类型为 PROMO_POSTER 时使用。新工作流生图节点通常会传入明确尺寸，"
-            "请优先使用节点里的尺寸选择器。"
-        ),
-    ),
-    ConfigDefinition(
-        key="poster_generation_mode",
-        label="海报生成模式",
-        category="海报与上传",
-        input_type="select",
-        options=(ConfigOption("template", "模板渲染"), ConfigOption("generated", "AI 生成")),
-        description="本地模板用于 mock/dev fallback；绑定真实图片供应商时工作流生图自动使用 AI 生成。",
-    ),
-    ConfigDefinition(
-        key="poster_font_path",
-        label="海报字体路径",
-        category="海报与上传",
-        input_type="text",
-        description="模板海报和 mock 图片中用于中文文字渲染的字体文件。",
-    ),
-    ConfigDefinition(
-        key="prompt_brief_system",
-        label="商品理解系统提示词",
-        category="提示词",
-        input_type="textarea",
-        description="用于商品资料理解；结构化输出由后端 schema 和 provider structured output 约束。",
-    ),
-    ConfigDefinition(
-        key="prompt_copy_system",
-        label="文案生成系统提示词",
-        category="提示词",
-        input_type="textarea",
-        description="用于主图/海报文案生成；结构化输出由后端 schema 和 provider structured output 约束。",
-    ),
-    ConfigDefinition(
-        key="prompt_poster_image_template",
-        label="海报生图提示词模板",
-        category="提示词",
-        input_type="textarea",
-        description=(
-            "用于工作台 AI 生图。可用占位符：instruction、size、context_block、reference_policy、"
-            "kind、kind_label、kind_requirements。"
-        ),
-    ),
-    ConfigDefinition(
-        key="prompt_poster_image_edit_template",
-        label="工作台改图提示词模板",
-        category="提示词",
-        input_type="textarea",
-        description=(
-            "用于工作台带参考图或上游上下文的改图任务。可用占位符：instruction、size、context_block、"
-            "reference_policy、kind、kind_label、kind_requirements。"
-        ),
-    ),
-    ConfigDefinition(
-        key="prompt_poster_image_reference_policy",
-        label="工作台视觉参考规则",
-        category="提示词",
-        input_type="textarea",
-        description="用于工作台生图模板的 reference_policy 占位符，可在设置中调整图片主体优先级规则。",
-    ),
-    ConfigDefinition(
         key="prompt_image_chat_template",
         label="文/图生图提示词模板",
         category="提示词",
@@ -487,28 +340,28 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
     ConfigDefinition(
         key="upload_max_image_bytes",
         label="单图最大字节数",
-        category="海报与上传",
+        category="图片与上传",
         input_type="number",
         minimum=1,
     ),
     ConfigDefinition(
         key="upload_max_reference_images",
         label="最多参考图数量",
-        category="海报与上传",
+        category="图片与上传",
         input_type="number",
         minimum=0,
     ),
     ConfigDefinition(
         key="upload_max_pixels",
         label="最大像素数",
-        category="海报与上传",
+        category="图片与上传",
         input_type="number",
         minimum=1,
     ),
     ConfigDefinition(
         key="upload_allowed_image_mime_types",
         label="允许图片 MIME",
-        category="海报与上传",
+        category="图片与上传",
         input_type="textarea",
         description="逗号分隔，例如 image/png,image/jpeg,image/webp。",
     ),
@@ -642,7 +495,7 @@ def parse_image_tool_allowed_fields(value: Any) -> tuple[str, ...]:
         parts = [str(value).strip()] if str(value).strip() else []
 
     selected = set(parts)
-    unknown = selected - set(IMAGE_TOOL_FIELD_KEYS) - set(IMAGE_TOOL_LEGACY_FIELD_KEYS)
+    unknown = selected - set(IMAGE_TOOL_FIELD_KEYS)
     if unknown:
         raise ValueError(f"可用 Tool 字段包含不支持的字段: {', '.join(sorted(unknown))}")
     return tuple(key for key in IMAGE_TOOL_FIELD_KEYS if key in selected)
@@ -704,8 +557,6 @@ def normalize_config_value(key: str, value: Any) -> str:
             raise ValueError(f"{definition.label} 不能大于 {definition.maximum}")
         return str(normalized_int)
 
-    if key in IMAGE_SIZE_CONFIG_KEYS:
-        return normalize_image_generation_size(value, label=definition.label)
     normalized = "" if value is None else str(value).strip()
     if key in PROMPT_CONFIG_KEYS and not normalized:
         raise ValueError(f"{definition.label} 不能为空；如需回到默认值请使用恢复默认")

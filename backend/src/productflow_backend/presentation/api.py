@@ -13,7 +13,7 @@ from productflow_backend.application.durable_recovery import (
     recover_unfinished_image_session_generation_tasks,
     recover_unfinished_workflow_runs,
 )
-from productflow_backend.application.settings import bootstrap_provider_config_if_available
+from productflow_backend.application.settings import initialize_provider_bindings_if_available
 from productflow_backend.config import get_settings
 from productflow_backend.infrastructure.logging import (
     cleanup_old_logs,
@@ -42,7 +42,6 @@ from productflow_backend.presentation.routes.gallery import router as gallery_ro
 from productflow_backend.presentation.routes.generation_queue import router as generation_queue_router
 from productflow_backend.presentation.routes.image_sessions import router as image_sessions_router
 from productflow_backend.presentation.routes.legacy_archives import router as legacy_archives_router
-from productflow_backend.presentation.routes.product_workflows import router as product_workflows_router
 from productflow_backend.presentation.routes.products import router as products_router
 from productflow_backend.presentation.routes.settings import router as settings_router
 from productflow_backend.presentation.routes.workflow_drafts import router as workflow_drafts_router
@@ -60,7 +59,7 @@ def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         cleanup_old_logs(settings)
-        bootstrap_provider_config_if_available()
+        initialize_provider_bindings_if_available()
         recover_unfinished_workflow_runs(enqueue=enqueue_workflow_run)
         recover_unfinished_image_session_generation_tasks(enqueue=enqueue_image_session_generation_task)
         recover_unfinished_agent_turn_syncs(enqueue=enqueue_agent_turn_sync)
@@ -98,7 +97,6 @@ def create_app() -> FastAPI:
     app.include_router(gallery_router)
     app.include_router(products_router)
     app.include_router(delivery_renditions_router)
-    app.include_router(product_workflows_router)
     app.include_router(workflow_drafts_router)
     app.include_router(workflow_recipes_router)
     app.include_router(image_sessions_router)

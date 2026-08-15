@@ -159,9 +159,6 @@ def live_delivery_dependencies(
             environment.setenv("REDIS_URL", isolated_redis_url)
             environment.setenv("STORAGE_ROOT", str(tmp_path / "storage"))
             environment.setenv("LOG_DIR", str(tmp_path / "logs"))
-            environment.setenv("TEXT_PROVIDER_KIND", "mock")
-            environment.setenv("IMAGE_PROVIDER_KIND", "mock")
-            environment.setenv("POSTER_GENERATION_MODE", "template")
             _reset_runtime_state()
 
             broker: RedisBroker | None = None

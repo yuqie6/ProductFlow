@@ -24,6 +24,15 @@ def test_workflow_draft_payload_accepts_one_prompt_per_type_and_one_node_per_ima
     assert payload.referenced_asset_ids() == {"00000000-0000-0000-0000-000000000001"}
 
 
+def test_workflow_draft_payload_accepts_legacy_product_fact_source() -> None:
+    payload = make_workflow_draft_payload()
+    payload["facts"][0]["source_type"] = "legacy_product"
+
+    parsed = WorkflowDraftPayloadV1.model_validate(payload)
+
+    assert parsed.facts[0].source_type.value == "legacy_product"
+
+
 def test_delivery_spec_enforces_total_pixel_budget() -> None:
     accepted = DeliverySpec.model_validate(
         {

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from io import BytesIO
 from pathlib import Path
 
@@ -8,7 +7,6 @@ import pytest
 from fastapi.testclient import TestClient
 from helpers import _enable_deletion, _login, _make_demo_image_bytes
 from PIL import Image
-from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 
 from productflow_backend.application.image_sessions import (
@@ -23,10 +21,8 @@ from productflow_backend.application.media_assets import (
     inspect_image_bytes,
     set_product_cover,
     set_product_cover_if_empty,
-    verify_pending_media_objects,
 )
 from productflow_backend.application.use_cases import create_canonical_product, delete_product
-from productflow_backend.commands.verify_media import main as verify_media_main
 from productflow_backend.domain.enums import (
     ImageSessionAssetKind,
     MediaVerificationStatus,
@@ -38,7 +34,6 @@ from productflow_backend.infrastructure.db.models import (
     MediaObject,
     Product,
     ProductImageAsset,
-    SourceAsset,
     new_id,
 )
 from productflow_backend.infrastructure.storage import LocalStorage
@@ -106,7 +101,6 @@ def test_create_canonical_product_writes_only_canonical_assets(configured_env: P
         ],
     )
 
-    assert db_session.query(SourceAsset).filter_by(product_id=product.id).count() == 0
     assert db_session.query(ProductImageAsset).filter_by(product_id=product.id).count() == 2
     assert db_session.query(MediaObject).count() == 2
     assert product.cover_image_asset_id == product.image_assets[0].id
@@ -148,7 +142,7 @@ def test_canonical_product_rolls_back_files_and_database_on_invalid_later_image(
     assert not list(configured_env.glob("media/**/*.*"))
 
 
-def test_generated_asset_has_one_media_file_and_no_legacy_rows(configured_env: Path, db_session) -> None:
+def test_generated_asset_has_one_media_object_and_three_files(configured_env: Path, db_session) -> None:
     product = Product(name="工作流商品")
     db_session.add(product)
     db_session.commit()
@@ -165,139 +159,8 @@ def test_generated_asset_has_one_media_file_and_no_legacy_rows(configured_env: P
     assert asset.origin_type == ProductImageOriginType.WORKFLOW_GENERATION
     assert db_session.query(MediaObject).count() == 1
     assert db_session.query(ProductImageAsset).count() == 1
-    assert db_session.query(SourceAsset).count() == 0
     media_files = [path for path in configured_env.glob("media/**/*") if path.is_file()]
     assert len(media_files) == 3  # original + preview + thumbnail
-
-
-def test_verify_pending_media_objects_marks_verified_missing_and_keeps_invalid_pending(
-    configured_env: Path,
-    db_session,
-) -> None:
-    storage = LocalStorage(configured_env)
-    valid_path = storage.save_product_upload("legacy", "valid.png", _make_demo_image_bytes())
-    invalid_path = "products/legacy/source/invalid.png"
-    storage.resolve(invalid_path).parent.mkdir(parents=True, exist_ok=True)
-    storage.resolve(invalid_path).write_bytes(b"invalid")
-    valid = MediaObject(
-        storage_path=valid_path,
-        mime_type="application/octet-stream",
-        verification_status=MediaVerificationStatus.LEGACY_PENDING,
-    )
-    missing = MediaObject(
-        storage_path="products/legacy/source/missing.png",
-        mime_type="image/png",
-        verification_status=MediaVerificationStatus.LEGACY_PENDING,
-    )
-    invalid = MediaObject(
-        storage_path=invalid_path,
-        mime_type="image/png",
-        verification_status=MediaVerificationStatus.LEGACY_PENDING,
-    )
-    db_session.add_all([valid, missing, invalid])
-    db_session.commit()
-
-    result = verify_pending_media_objects(db_session, storage=storage, batch_size=10)
-
-    assert result.processed == 3
-    assert result.verified == 1
-    assert result.missing == 1
-    assert result.failed == 1
-    db_session.refresh(valid)
-    db_session.refresh(missing)
-    db_session.refresh(invalid)
-    assert valid.verification_status == MediaVerificationStatus.VERIFIED
-    assert valid.mime_type == "image/png"
-    assert valid.byte_size == len(_make_demo_image_bytes())
-    assert (valid.width, valid.height) == (800, 800)
-    assert valid.sha256 and len(valid.sha256) == 64
-    assert valid.verified_at is not None
-    assert missing.verification_status == MediaVerificationStatus.MISSING
-    assert invalid.verification_status == MediaVerificationStatus.LEGACY_PENDING
-
-
-def test_verify_pending_media_objects_does_not_count_a_concurrently_verified_row(
-    configured_env: Path,
-    db_session,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    storage = LocalStorage(configured_env)
-    content = _make_demo_image_bytes()
-    storage_path = storage.save_product_upload("concurrent", "legacy.png", content)
-    media = MediaObject(
-        storage_path=storage_path,
-        mime_type="image/png",
-        verification_status=MediaVerificationStatus.LEGACY_PENDING,
-    )
-    db_session.add(media)
-    db_session.commit()
-    metadata = inspect_image_bytes(content)
-    original_execute = db_session.execute
-    update_injected = False
-
-    def execute_with_concurrent_verification(statement, *args, **kwargs):
-        nonlocal update_injected
-        if not update_injected:
-            update_injected = True
-            original_execute(
-                update(MediaObject)
-                .where(MediaObject.id == media.id)
-                .values(
-                    mime_type=metadata.mime_type,
-                    byte_size=metadata.byte_size,
-                    width=metadata.width,
-                    height=metadata.height,
-                    sha256=metadata.sha256,
-                    verification_status=MediaVerificationStatus.VERIFIED,
-                    verified_at=media.created_at,
-                )
-            )
-        return original_execute(statement, *args, **kwargs)
-
-    monkeypatch.setattr(db_session, "execute", execute_with_concurrent_verification)
-
-    result = verify_pending_media_objects(db_session, storage=storage, batch_size=10)
-
-    assert result.processed == 1
-    assert result.verified == 0
-    assert result.missing == 0
-    assert result.failed == 0
-    db_session.expire_all()
-    assert db_session.get(MediaObject, media.id).verification_status == MediaVerificationStatus.VERIFIED
-
-
-def test_verify_media_command_supports_dry_run_and_cursor_output(
-    configured_env: Path,
-    db_session,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    storage = LocalStorage(configured_env)
-    storage_path = storage.save_product_upload("command", "legacy.png", _make_demo_image_bytes())
-    media = MediaObject(
-        storage_path=storage_path,
-        mime_type="image/png",
-        verification_status=MediaVerificationStatus.LEGACY_PENDING,
-    )
-    db_session.add(media)
-    db_session.commit()
-
-    assert verify_media_main(["--batch-size", "1", "--dry-run"]) == 0
-    dry_run_payload = json.loads(capsys.readouterr().out)
-    assert dry_run_payload == {
-        "failed": 0,
-        "missing": 0,
-        "next_cursor": media.id,
-        "processed": 1,
-        "verified": 1,
-    }
-    db_session.expire_all()
-    assert db_session.get(MediaObject, media.id).verification_status == MediaVerificationStatus.LEGACY_PENDING
-
-    assert verify_media_main(["--batch-size", "1"]) == 0
-    applied_payload = json.loads(capsys.readouterr().out)
-    assert applied_payload["next_cursor"] == media.id
-    db_session.expire_all()
-    assert db_session.get(MediaObject, media.id).verification_status == MediaVerificationStatus.VERIFIED
 
 
 def test_cover_blocks_asset_delete_until_cleared(configured_env: Path, db_session) -> None:
@@ -411,14 +274,12 @@ def test_image_session_attach_reuses_media_and_session_delete_preserves_product_
         image_session_id=image_session.id,
         asset_id=session_asset.id,
         product_id=product.id,
-        storage=storage,
     )
     attached_again = attach_image_session_asset_to_product_canonical(
         db_session,
         image_session_id=image_session.id,
         asset_id=session_asset.id,
         product_id=product.id,
-        storage=storage,
     )
 
     assert attached_again.id == attached.id
@@ -595,8 +456,6 @@ def test_canonical_image_session_attach_api_keeps_shared_media_after_session_del
     session_asset = db_session.get(ImageSessionAsset, generated_asset_id)
     assert session_asset is not None
     assert session_asset.media_object_id == attached.json()["media_object_id"]
-    assert db_session.query(SourceAsset).filter_by(product_id=product_id).count() == 0
-
     _enable_deletion(client)
     deleted_session = client.delete(f"/api/image-sessions/{image_session_id}")
     assert deleted_session.status_code == 204

@@ -7,24 +7,14 @@ from fastapi.testclient import TestClient
 from helpers import _login, _make_demo_image_bytes
 
 from productflow_backend.application.image_sessions import create_image_session, submit_image_session_generation_task
-from productflow_backend.application.product_workflow import graph as product_workflow_graph
-from productflow_backend.application.product_workflow.context import poster_kind_from_config
-from productflow_backend.application.product_workflow.mutations import (
-    create_workflow_edge,
-    create_workflow_node,
-    get_or_create_product_workflow,
-)
-from productflow_backend.application.use_cases import create_product, update_copy_set
-from productflow_backend.domain.enums import WorkflowNodeType
+from productflow_backend.application.use_cases import create_canonical_product
 from productflow_backend.domain.errors import (
     BusinessError,
     BusinessValidationError,
     NotFoundError,
     QueueUnavailableError,
 )
-from productflow_backend.infrastructure.db.models import CopySet
 from productflow_backend.infrastructure.logging import current_log_context
-from productflow_backend.presentation import errors as presentation_errors
 from productflow_backend.presentation.api import create_app
 from productflow_backend.presentation.errors import business_error_to_response
 
@@ -43,11 +33,11 @@ def test_typed_business_error_maps_to_400() -> None:
     assert json.loads(response.body) == {"detail": "请选择一张图片"}
 
 
-def test_typed_poster_file_missing_remains_400() -> None:
-    response = business_error_to_response(BusinessValidationError("海报文件不存在"))
+def test_typed_image_file_missing_remains_400() -> None:
+    response = business_error_to_response(BusinessValidationError("图片文件不存在"))
 
     assert response.status_code == 400
-    assert json.loads(response.body) == {"detail": "海报文件不存在"}
+    assert json.loads(response.body) == {"detail": "图片文件不存在"}
 
 
 def test_typed_workflow_integrity_error_remains_400() -> None:
@@ -62,10 +52,6 @@ def test_typed_queue_unavailable_maps_to_503() -> None:
 
     assert response.status_code == 503
     assert json.loads(response.body) == {"detail": "任务队列暂不可用，请稍后重试"}
-
-
-def test_legacy_value_error_adapter_is_removed_after_route_migration() -> None:
-    assert not hasattr(presentation_errors, "raise_value_error_as_http")
 
 
 def test_global_business_error_handler_preserves_detail_shape(configured_env) -> None:  # noqa: ARG001
@@ -94,7 +80,7 @@ def test_product_workflow_route_uses_global_business_error_handler(configured_en
     client = TestClient(app)
     _login(client)
 
-    response = client.get("/api/products/missing-product/workflow")
+    response = client.get("/api/v2/products/missing-product/workflow")
 
     assert response.status_code == 404
     assert response.json() == {"detail": "商品不存在"}
@@ -105,16 +91,16 @@ def test_product_route_uses_global_business_error_handler(configured_env) -> Non
     client = TestClient(app)
     _login(client)
 
-    missing = client.get("/api/products/missing-product")
+    missing = client.get("/api/v2/products/missing-product")
 
     assert missing.status_code == 404
     assert missing.json() == {"detail": "商品不存在"}
     assert "code" not in missing.json()
 
     invalid = client.post(
-        "/api/products",
+        "/api/v2/products",
         data={"name": "   "},
-        files={"image": ("blank.png", _make_demo_image_bytes(), "image/png")},
+        files={"images": ("blank.png", _make_demo_image_bytes(), "image/png")},
     )
 
     assert invalid.status_code == 400
@@ -165,61 +151,24 @@ def test_gallery_route_uses_global_business_error_handler(configured_env) -> Non
 
 def test_high_risk_business_paths_raise_typed_validation_errors(db_session, configured_env) -> None:  # noqa: ARG001
     with pytest.raises(BusinessValidationError, match="商品名不能为空"):
-        create_product(
+        create_canonical_product(
             db_session,
             name="   ",
             category=None,
             price=None,
             source_note=None,
-            image_bytes=_make_demo_image_bytes(),
-            filename="blank.png",
-            content_type="image/png",
+            image_uploads=[(_make_demo_image_bytes(), "blank.png", "image/png")],
         )
     db_session.rollback()
 
     with pytest.raises(BusinessValidationError, match="价格格式不正确"):
-        create_product(
+        create_canonical_product(
             db_session,
             name="价格格式错误商品",
             category=None,
             price="abc",
             source_note=None,
-            image_bytes=_make_demo_image_bytes(),
-            filename="invalid-price.png",
-            content_type="image/png",
-        )
-    db_session.rollback()
-
-    product = create_product(
-        db_session,
-        name="typed error 商品",
-        category=None,
-        price=None,
-        source_note=None,
-        image_bytes=_make_demo_image_bytes(),
-        filename="typed.png",
-        content_type="image/png",
-    )
-    with pytest.raises(BusinessValidationError, match="商品资料节点已存在"):
-        create_workflow_node(
-            db_session,
-            product_id=product.id,
-            node_type=WorkflowNodeType.PRODUCT_CONTEXT,
-            title="重复商品资料",
-            position_x=0,
-            position_y=0,
-            config_json={},
-        )
-
-    workflow = get_or_create_product_workflow(db_session, product.id)
-    copy_node = next(node for node in workflow.nodes if node.node_type == WorkflowNodeType.COPY_GENERATION)
-    image_node = next(node for node in workflow.nodes if node.node_type == WorkflowNodeType.IMAGE_GENERATION)
-    with pytest.raises(BusinessValidationError, match="工作流不能包含循环依赖"):
-        create_workflow_edge(
-            db_session,
-            product_id=product.id,
-            source_node_id=image_node.id,
-            target_node_id=copy_node.id,
+            image_uploads=[(_make_demo_image_bytes(), "invalid-price.png", "image/png")],
         )
     db_session.rollback()
 
@@ -231,74 +180,4 @@ def test_high_risk_business_paths_raise_typed_validation_errors(db_session, conf
             prompt="数量越界",
             size="1024x1024",
             generation_count=11,
-        )
-
-    with pytest.raises(BusinessValidationError, match="生图节点包含不支持的图片类型"):
-        poster_kind_from_config({"poster_kind": "invalid"})
-
-
-def test_update_copy_set_payload_validation_uses_typed_business_error(db_session, configured_env) -> None:  # noqa: ARG001
-    product = create_product(
-        db_session,
-        name="bad copy payload 商品",
-        category=None,
-        price=None,
-        source_note=None,
-        image_bytes=_make_demo_image_bytes(),
-        filename="bad-copy-payload.png",
-        content_type="image/png",
-    )
-    copy_set = CopySet(
-        product_id=product.id,
-        structured_payload={
-            "version": 2,
-            "summary": "旧文案",
-            "content": {"kind": "freeform", "text": "旧内容"},
-        },
-        model_structured_payload={
-            "version": 2,
-            "summary": "旧文案",
-            "content": {"kind": "freeform", "text": "旧内容"},
-        },
-        provider_name="test",
-        model_name="test",
-        prompt_version="test",
-    )
-    db_session.add(copy_set)
-    db_session.commit()
-
-    with pytest.raises(BusinessValidationError, match="文案 payload 不符合 CopyPayloadV2 合同"):
-        update_copy_set(db_session, copy_set_id=copy_set.id, structured_payload={"invalid": True})
-
-
-def test_workflow_edge_rollback_preserves_typed_business_errors(
-    db_session,
-    configured_env,  # noqa: ARG001
-    monkeypatch,
-) -> None:
-    product = create_product(
-        db_session,
-        name="typed edge error 商品",
-        category=None,
-        price=None,
-        source_note=None,
-        image_bytes=_make_demo_image_bytes(),
-        filename="typed-edge.png",
-        content_type="image/png",
-    )
-    workflow = get_or_create_product_workflow(db_session, product.id)
-    copy_node = next(node for node in workflow.nodes if node.node_type == WorkflowNodeType.COPY_GENERATION)
-    reference_node = next(node for node in workflow.nodes if node.node_type == WorkflowNodeType.REFERENCE_IMAGE)
-
-    def raise_not_found(_workflow):
-        raise NotFoundError("工作流不存在")
-
-    monkeypatch.setattr(product_workflow_graph, "topological_nodes", raise_not_found)
-
-    with pytest.raises(NotFoundError, match="工作流不存在"):
-        create_workflow_edge(
-            db_session,
-            product_id=product.id,
-            source_node_id=copy_node.id,
-            target_node_id=reference_node.id,
         )

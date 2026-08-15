@@ -1,28 +1,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from base64 import b64decode, b64encode
+from base64 import b64decode
 from io import BytesIO
 from typing import Any
 
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
 
-from productflow_backend.application.contracts import PosterGenerationInput, ReferenceImageInput
 from productflow_backend.application.workflow_drafts.contracts import GenerationSpec
-from productflow_backend.domain.enums import PosterKind
-
-
-class GeneratedImagePayload(BaseModel):
-    kind: PosterKind
-    bytes_data: bytes
-    mime_type: str = "image/png"
-    width: int
-    height: int
-    variant_label: str
-    provider_response_id: str | None = None
-    provider_response_status: str | None = None
-    provider_output_json: dict[str, Any] | None = None
 
 
 class WorkflowImageReference(BaseModel):
@@ -56,21 +42,14 @@ class WorkflowImageResult(BaseModel):
 
 
 class ImageProvider(ABC):
-    """图片生成器抽象接口：用于 AI 海报生成。"""
+    """Schema-v2 工作流图片生成接口。"""
 
     provider_name: str
     prompt_version: str = "v1"
 
     @abstractmethod
-    def generate_poster_image(
-        self,
-        poster: PosterGenerationInput,
-        kind: PosterKind,
-    ) -> tuple[GeneratedImagePayload, str]:
-        raise NotImplementedError
-
     def generate_workflow_image(self, request: WorkflowImageRequest) -> WorkflowImageResult:
-        raise NotImplementedError("当前图片 provider 尚未实现 schema-v2 单图生成")
+        raise NotImplementedError
 
 
 def parse_size(size: str) -> tuple[int, int]:
@@ -80,12 +59,6 @@ def parse_size(size: str) -> tuple[int, int]:
 
 def decode_b64_image(data: str) -> bytes:
     return b64decode(data)
-
-
-def encode_reference_image(reference: ReferenceImageInput) -> str:
-    raw = reference.path.read_bytes()
-    encoded = b64encode(raw).decode("utf-8")
-    return f"data:{reference.mime_type};base64,{encoded}"
 
 
 def infer_extension(mime_type: str) -> str:

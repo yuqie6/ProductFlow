@@ -256,7 +256,7 @@ def finalize_agent_product_workspace_intake(
         raise ConflictError("当前 WorkflowDraft 状态不允许确认商品输入")
     if draft.current_revision_id is not None or draft.revisions:
         raise ConflictError("已经开始生成的 WorkflowDraft 不能再确认商品输入")
-    if draft.recipe_seed is not None or draft.legacy_archive_seed is not None:
+    if draft.recipe_seed is not None:
         raise ConflictError("带重建种子的 WorkflowDraft 不能确认商品创建输入")
     has_turn = session.scalar(
         select(AgentTurnProjection.id)

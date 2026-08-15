@@ -5,7 +5,7 @@ from base64 import b64encode
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from dramatiq.middleware.time_limit import TimeLimitExceeded
 from sqlalchemy import desc, func, select, update
@@ -35,9 +35,7 @@ from productflow_backend.application.image_session_dependencies import (
     ImageSessionProviderFailure,
     default_image_session_chat_service_factory,
 )
-from productflow_backend.application.legacy_retirement.freeze import ensure_legacy_v1_write_allowed
 from productflow_backend.application.media_assets import (
-    ensure_image_session_asset_media,
     get_product_image_asset,
     prune_unreferenced_media_objects,
     stage_verified_media_object,
@@ -58,18 +56,18 @@ from productflow_backend.domain.durable_generation_tasks import (
 from productflow_backend.domain.enums import (
     ImageSessionAssetKind,
     JobStatus,
+    MediaVerificationStatus,
     ProductImageOriginType,
-    SourceAssetKind,
 )
-from productflow_backend.domain.errors import BusinessValidationError, NotFoundError
+from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     ImageSession,
     ImageSessionAsset,
     ImageSessionGenerationTask,
     ImageSessionRound,
+    MediaObject,
     Product,
     ProductImageAsset,
-    SourceAsset,
     new_id,
 )
 from productflow_backend.infrastructure.db.session import get_session_factory
@@ -80,7 +78,6 @@ from productflow_backend.infrastructure.queue import (
 )
 from productflow_backend.infrastructure.storage import LocalStorage
 
-ATTACH_TARGET = Literal["reference", "main_source"]
 DEFAULT_SESSION_TITLE = "未命名会话"
 DEFAULT_ASSISTANT_MESSAGE = "已按本轮选择的图片上下文生成候选，你可以从任意候选继续。"
 MAX_BRANCH_CONTEXT_IMAGES = 6
@@ -174,15 +171,6 @@ def _attach_generation_task_queue_metadata(session: Session, image_session: Imag
         task.__dict__["_queue_metadata"] = metadata
 
 
-def _get_product_or_raise(session: Session, product_id: str) -> Product:
-    product = session.scalar(
-        select(Product).options(selectinload(Product.source_assets)).where(Product.id == product_id)
-    )
-    if product is None:
-        raise NotFoundError("商品不存在")
-    return product
-
-
 def _session_data_url(storage: LocalStorage, path: str, mime_type: str) -> str:
     raw = storage.resolve(path).read_bytes()
     encoded = b64encode(raw).decode("utf-8")
@@ -199,14 +187,6 @@ def _normalize_generation_prompt(prompt: str) -> str:
     if not normalized:
         raise BusinessValidationError("提示词不能为空")
     return normalized
-
-
-def _get_product_original_assets(product: Product) -> list[SourceAsset]:
-    return sorted(
-        [asset for asset in product.source_assets if asset.kind == SourceAssetKind.ORIGINAL_IMAGE],
-        key=lambda item: item.created_at,
-        reverse=True,
-    )
 
 
 def _find_session_asset_or_raise(
@@ -465,8 +445,7 @@ def delete_image_session(
     image_session_assets = list(image_session.assets)
     storage = storage or LocalStorage()
     asset_ids = [asset.id for asset in image_session_assets]
-    media_ids = {asset.media_object_id for asset in image_session_assets if asset.media_object_id is not None}
-    legacy_paths = [asset.storage_path for asset in image_session_assets if asset.media_object_id is None]
+    media_ids = {asset.media_object_id for asset in image_session_assets}
     if asset_ids:
         session.execute(
             update(ProductImageAsset)
@@ -481,11 +460,6 @@ def delete_image_session(
         best_effort_storage_delete(
             lambda path=storage_path: storage.delete_image_with_variants(path),
             target=f"media_object_id={media_id} path={storage_path}",
-        )
-    for storage_path in legacy_paths:
-        best_effort_storage_delete(
-            lambda path=storage_path: storage.delete_image_with_variants(path),
-            target=f"image_session_id={image_session_id} legacy_path={storage_path}",
         )
     best_effort_storage_delete(
         lambda: storage.remove_empty_image_session_directories(image_session_id),
@@ -553,9 +527,9 @@ def delete_image_session_reference_image(
     session.delete(asset)
     image_session.updated_at = now_utc()
     session.flush()
-    deleted_media = prune_unreferenced_media_objects(session, {media_id} if media_id is not None else set())
+    deleted_media = prune_unreferenced_media_objects(session, {media_id})
     session.commit()
-    if media_id is None or deleted_media:
+    if deleted_media:
         best_effort_storage_delete(
             lambda: storage.delete_image_with_variants(storage_path),
             target=f"image_session_asset_id={asset_id} path={storage_path}",
@@ -1405,74 +1379,12 @@ def execute_image_session_generation_task(
         session.close()
 
 
-def attach_image_session_asset_to_product(
-    session: Session,
-    *,
-    image_session_id: str,
-    asset_id: str,
-    target: ATTACH_TARGET,
-    product_id: str,
-    storage: LocalStorage | None = None,
-) -> Product:
-    """将生图结果写回商品（设为参考图或替换主图）。"""
-    ensure_legacy_v1_write_allowed(session)
-    image_session = _get_image_session_or_raise(session, image_session_id)
-    asset = next((item for item in image_session.assets if item.id == asset_id), None)
-    if asset is None:
-        raise NotFoundError("会话图片不存在")
-    if asset.kind != ImageSessionAssetKind.GENERATED_IMAGE:
-        raise BusinessValidationError("只有生成结果可以写回商品")
-
-    product = _get_product_or_raise(session, product_id)
-
-    storage = storage or LocalStorage()
-    image_bytes = storage.resolve(asset.storage_path).read_bytes()
-
-    with compensate_storage_writes(session) as storage_writes:
-        if target == "reference":
-            relative_path = storage_writes.track(
-                storage,
-                storage.save_reference_upload(product.id, asset.original_filename, image_bytes),
-            )
-            session.add(
-                SourceAsset(
-                    product_id=product.id,
-                    kind=SourceAssetKind.REFERENCE_IMAGE,
-                    original_filename=asset.original_filename,
-                    mime_type=asset.mime_type,
-                    storage_path=relative_path,
-                )
-            )
-        else:
-            for current_source in _get_product_original_assets(product):
-                current_source.kind = SourceAssetKind.REFERENCE_IMAGE
-            session.flush()
-            relative_path = storage_writes.track(
-                storage,
-                storage.save_product_upload(product.id, asset.original_filename, image_bytes),
-            )
-            session.add(
-                SourceAsset(
-                    product_id=product.id,
-                    kind=SourceAssetKind.ORIGINAL_IMAGE,
-                    original_filename=asset.original_filename,
-                    mime_type=asset.mime_type,
-                    storage_path=relative_path,
-                )
-            )
-        product.updated_at = now_utc()
-        session.commit()
-    session.expire_all()
-    return _get_product_or_raise(session, product.id)
-
-
 def attach_image_session_asset_to_product_canonical(
     session: Session,
     *,
     image_session_id: str,
     asset_id: str,
     product_id: str,
-    storage: LocalStorage | None = None,
 ) -> ProductImageAsset:
     """把 ImageChat 结果作为商品逻辑资产附加，不复制媒体 bytes。"""
     image_session = _get_image_session_or_raise(session, image_session_id)
@@ -1489,7 +1401,11 @@ def attach_image_session_asset_to_product_canonical(
     if product is None:
         raise NotFoundError("商品不存在")
 
-    media = ensure_image_session_asset_media(session, asset=asset, storage=storage)
+    media = session.get(MediaObject, asset.media_object_id)
+    if media is None:
+        raise ConflictError("会话图片引用的媒体对象不存在")
+    if media.verification_status == MediaVerificationStatus.MISSING:
+        raise BusinessValidationError("会话图片文件缺失，不能附加到商品")
     existing = session.scalar(
         select(ProductImageAsset).where(
             ProductImageAsset.product_id == product_id,

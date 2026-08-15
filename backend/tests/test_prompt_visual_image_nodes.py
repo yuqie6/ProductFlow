@@ -4,6 +4,7 @@ import json
 from copy import deepcopy
 from datetime import UTC, datetime
 from io import BytesIO
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -51,15 +52,11 @@ from productflow_backend.application.workflow_drafts.service import (
 from productflow_backend.domain.enums import WorkflowNodeStatus, WorkflowNodeType, WorkflowRunStatus
 from productflow_backend.domain.errors import ConflictError, NotFoundError, QueueUnavailableError
 from productflow_backend.infrastructure.db.models import (
-    CopySet,
-    CreativeBrief,
     ImagePromptArtifactVersion,
     ImagePromptArtifactVersionReference,
-    PosterVariant,
     Product,
     ProductImageAsset,
     ProductWorkflow,
-    SourceAsset,
     VisualSystemVersion,
     VisualSystemVersionReference,
     WorkflowEdge,
@@ -70,7 +67,6 @@ from productflow_backend.infrastructure.db.models import (
     WorkflowRun,
 )
 from productflow_backend.infrastructure.image.base import (
-    GeneratedImagePayload,
     ImageProvider,
     WorkflowGeneratedImage,
     WorkflowImageReference,
@@ -140,9 +136,6 @@ class RecordingImageProvider(ImageProvider):
         self.image_count = image_count
         self.model = model
         self.requests: list[WorkflowImageRequest] = []
-
-    def generate_poster_image(self, poster, kind) -> tuple[GeneratedImagePayload, str]:
-        raise NotImplementedError
 
     def generate_workflow_image(self, request: WorkflowImageRequest) -> WorkflowImageResult:
         self.requests.append(request)
@@ -385,7 +378,7 @@ def test_openai_prompt_provider_sends_native_multimodal_content_parts() -> None:
     assert result.response_id == "resp-openai-prompt"
 
 
-def test_prompt_node_appends_version_and_never_writes_legacy_copy_models(db_session) -> None:
+def test_prompt_node_appends_a_new_artifact_version(db_session) -> None:
     product, workflow = _create_materialized_workflow(db_session)
     prompt_node = next(node for node in workflow.nodes if node.node_type == WorkflowNodeType.PROMPT_GENERATION)
     initial_version_id = prompt_node.current_prompt_artifact_version_id
@@ -440,10 +433,6 @@ def test_prompt_node_appends_version_and_never_writes_legacy_copy_models(db_sess
     )
     assert "data:image/" not in persisted_text
     assert ";base64," not in persisted_text
-    assert db_session.scalar(select(func.count()).select_from(CreativeBrief)) == 0
-    assert db_session.scalar(select(func.count()).select_from(CopySet)) == 0
-    assert db_session.scalar(select(func.count()).select_from(SourceAsset)) == 0
-    assert db_session.scalar(select(func.count()).select_from(PosterVariant)) == 0
 
 
 def test_prompt_node_reads_reused_visual_system_references_across_products(db_session) -> None:
@@ -1036,41 +1025,6 @@ def test_v2_full_workflow_cancel_and_durable_recovery_use_workflow_run(db_sessio
     ).status == WorkflowRunStatus.CANCELLED
 
 
-def test_v1_and_v2_node_executors_reject_the_other_schema(db_session) -> None:
-    product, v2_workflow = _create_materialized_workflow(db_session)
-    v2_node = next(node for node in v2_workflow.nodes if node.node_type == WorkflowNodeType.PROMPT_GENERATION)
-    _, v2_node_run = _queue_single_node_run(db_session, workflow=v2_workflow, node=v2_node)
-
-    with pytest.raises(ConflictError, match="schema-v1 executor"):
-        workflow_execution._execute_workflow_node_run(db_session, node_run_id=v2_node_run.id)
-
-    v2_workflow.active = False
-    v1_workflow = ProductWorkflow(
-        product_id=product.id,
-        title="legacy",
-        active=True,
-        schema_version=1,
-        revision=1,
-    )
-    db_session.add(v1_workflow)
-    db_session.flush()
-    v1_node = WorkflowNode(
-        workflow_id=v1_workflow.id,
-        schema_version=1,
-        node_type=WorkflowNodeType.COPY_GENERATION,
-        title="legacy copy",
-        status=WorkflowNodeStatus.QUEUED,
-    )
-    db_session.add(v1_node)
-    db_session.flush()
-    _, v1_node_run = _queue_single_node_run(db_session, workflow=v1_workflow, node=v1_node)
-
-    with pytest.raises(ConflictError, match="schema-v2 executor"):
-        execute_v2_workflow_node_run(db_session, node_run_id=v1_node_run.id)
-    with pytest.raises(ConflictError, match="schema-v1"):
-        submit_v2_workflow_node_run(db_session, node_id=v1_node.id, enqueue=lambda _: None)
-
-
 def test_image_node_creates_one_canonical_asset_and_preserves_rerun_history(db_session) -> None:
     product, workflow = _create_materialized_workflow(db_session)
     clear_product_cover(db_session, product_id=product.id)
@@ -1158,10 +1112,6 @@ def test_image_node_creates_one_canonical_asset_and_preserves_rerun_history(db_s
     assert [record.provider_model for record in records] == ["provider-a", "provider-b"]
     assert db_session.scalar(select(func.count()).select_from(ProductImageAsset)) == 3
     assert db_session.scalar(select(func.count()).select_from(ImagePromptArtifactVersion)) == 1
-    assert db_session.scalar(select(func.count()).select_from(CreativeBrief)) == 0
-    assert db_session.scalar(select(func.count()).select_from(CopySet)) == 0
-    assert db_session.scalar(select(func.count()).select_from(SourceAsset)) == 0
-    assert db_session.scalar(select(func.count()).select_from(PosterVariant)) == 0
 
 
 def test_image_node_auto_cover_prefers_successful_hero_and_preserves_manual_cover(db_session) -> None:
@@ -1632,7 +1582,10 @@ def _workflow_image_request() -> WorkflowImageRequest:
     )
 
 
-def test_responses_workflow_adapter_uses_one_image_tool_call_with_native_reference(monkeypatch) -> None:
+def test_responses_workflow_adapter_uses_one_image_tool_call_with_native_reference(
+    configured_env: Path,
+    monkeypatch,
+) -> None:
     provider = OpenAIResponsesImageProvider(
         ResolvedImageProviderConfig(
             provider_kind="openai_responses",

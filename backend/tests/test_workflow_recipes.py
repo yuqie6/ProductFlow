@@ -16,7 +16,6 @@ from productflow_backend.application.agent_conversations import (
     reserve_agent_turn,
 )
 from productflow_backend.application.agent_tools import get_agent_contract, get_agent_product_context
-from productflow_backend.application.canvas_templates import BUILTIN_CANVAS_TEMPLATES
 from productflow_backend.application.product_workflow.folders import WorkflowNodePosition, update_workflow_node_layout
 from productflow_backend.application.product_workflow.v2_graph_commands import (
     create_v2_reference_node,
@@ -52,11 +51,11 @@ from productflow_backend.infrastructure.db.models import (
     ImagePromptArtifactVersion,
     Product,
     ProductWorkflow,
-    UserCanvasTemplate,
     WorkflowDraft,
     WorkflowRecipe,
     WorkflowRecipeVersion,
 )
+from productflow_backend.infrastructure.db.session import get_session_factory
 
 
 def _materialize_recipe_source(db_session):
@@ -690,31 +689,14 @@ def test_version_zero_agent_artifact_sync_creates_first_revision_idempotently(db
     assert len(refreshed.revisions) == 1
 
 
-def test_recipe_api_does_not_union_legacy_templates_or_builtin_catalog(configured_env) -> None:
-    from productflow_backend.infrastructure.db.session import get_session_factory
+def test_recipe_api_starts_empty_and_uses_saved_recipes_only(configured_env) -> None:
     from productflow_backend.presentation.api import create_app
-
-    session = get_session_factory()()
-    try:
-        legacy = UserCanvasTemplate(
-            key="legacy-user-template",
-            title="旧用户模板",
-            kind="node_group",
-            schema_version=1,
-            template_json={},
-        )
-        session.add(legacy)
-        session.commit()
-    finally:
-        session.close()
 
     client = TestClient(create_app())
     _login(client)
     listed = client.get("/api/v2/workflow-recipes")
     assert listed.status_code == 200
     assert listed.json() == []
-    assert "legacy-user-template" not in listed.text
-    assert all(template.key not in listed.text for template in BUILTIN_CANVAS_TEMPLATES)
 
     product_response = client.post(
         "/api/v2/products",
@@ -768,7 +750,6 @@ def test_recipe_api_does_not_union_legacy_templates_or_builtin_catalog(configure
     listed = client.get("/api/v2/workflow-recipes")
     assert listed.status_code == 200
     assert [item["id"] for item in listed.json()] == [recipe["id"]]
-    assert "legacy-user-template" not in listed.text
 
     target_response = client.post(
         "/api/v2/products",

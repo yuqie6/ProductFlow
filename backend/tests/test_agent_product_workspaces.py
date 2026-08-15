@@ -28,7 +28,6 @@ from productflow_backend.infrastructure.db.models import (
     Product,
     ProductImageAsset,
     ProductWorkflow,
-    SourceAsset,
     WorkflowDraft,
     WorkflowDraftRevision,
     WorkflowEdge,
@@ -157,7 +156,6 @@ def test_create_agent_product_workspace_is_atomic_coverless_and_has_no_dag(
     assert db_session.scalar(select(func.count()).select_from(Product)) == 1
     assert db_session.scalar(select(func.count()).select_from(ProductImageAsset)) == 2
     assert db_session.scalar(select(func.count()).select_from(MediaObject)) == 2
-    assert db_session.scalar(select(func.count()).select_from(SourceAsset)) == 0
     assert db_session.scalar(select(func.count()).select_from(WorkflowDraftRevision)) == 0
     assert db_session.scalar(select(func.count()).select_from(ProductWorkflow)) == 0
     assert db_session.scalar(select(func.count()).select_from(WorkflowNode)) == 0
@@ -641,7 +639,7 @@ def test_agent_product_workspace_api_supports_draft_resume_and_intake_finalizati
 
     invalid_draft = client.post(
         "/api/v2/agent-product-workspaces/drafts",
-        json={"name": "拒绝未知字段", "template_key": "legacy"},
+        json={"name": "拒绝未知字段", "template_key": "unexpected"},
         headers={"Idempotency-Key": "strict-draft"},
     )
     assert invalid_draft.status_code == 422

@@ -78,6 +78,9 @@ WORKFLOW_AGENT_SYSTEM_PROMPT = """你是 ProductFlow 的商品工作流设计 Ag
 5. 用户确认需求后，提交完整的 propose_workflow_draft artifact。
    每个图片类型由一个提示词计划表达；同类型数量用于候选抽取，不拆成多个提示词节点。
    不同角度或不同信息任务应建为不同图片类型。
+10. 如果上下文包含 legacy_archive_seed，应把旧归档当作只读设计参考。
+    使用有界的归档 list/inspect 工具按 section 分页读取需要的信息；不得声称无损迁移，
+    不得修改、运行或重试旧归档，也不得一次读取全部历史运行或图片。
 6. 最终草案必须满足工具提供的 JSON Schema，并引用当前商品真实存在的资产 ID。
    不要在文本中输出 base64、data URL、存储路径或内部 URL。
 7. 如果上下文包含 workflow_recipe_seed，recipe 只表示可复用结构和要求。
@@ -86,9 +89,6 @@ WORKFLOW_AGENT_SYSTEM_PROMPT = """你是 ProductFlow 的商品工作流设计 Ag
    可以建议调整图片类型或数量，但必须明确说明变化并等待用户确认，不能静默改写。
 9. Logo、认证、工厂或其他专有素材只能来自用户提供的真实资产。
    缺失时应询问用户、降低对应设计要求或移除相关图片类型，不能臆造。
-10. 如果上下文包含 legacy_archive_seed，应把旧归档当作只读设计参考。
-    使用有界的归档 list/inspect 工具按 section 分页读取需要的信息；不得声称无损迁移，
-    不得修改、运行或重试旧归档，也不得一次读取全部历史运行或图片。
 """
 
 
@@ -194,7 +194,9 @@ def get_agent_product_context(session: Session, conversation_id: str) -> dict[st
     revision = draft.current_revision
     recipe_seed = _load_recipe_seed_context(session, draft.recipe_seed)
     archive_seed = (
-        legacy_archive_seed_summary(draft.legacy_archive_seed) if draft.legacy_archive_seed is not None else None
+        legacy_archive_seed_summary(draft.legacy_archive_seed)
+        if draft.legacy_archive_seed is not None
+        else None
     )
     if recipe_seed is not None and archive_seed is not None:
         raise ConflictError("WorkflowDraft 不能同时使用 recipe seed 和旧归档重建 seed")

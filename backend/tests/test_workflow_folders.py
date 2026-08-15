@@ -14,7 +14,6 @@ from productflow_backend.application.product_workflow.folders import (
     translate_workflow_folder,
     update_workflow_node_layout,
 )
-from productflow_backend.application.product_workflow.mutations import get_or_create_product_workflow
 from productflow_backend.application.use_cases import create_canonical_product
 from productflow_backend.application.workflow_drafts.materialization import materialize_workflow_draft
 from productflow_backend.application.workflow_drafts.service import (
@@ -216,7 +215,7 @@ def test_folder_rename_translate_and_layout_use_one_edit_version_each(db_session
         )
 
 
-def test_folder_mutations_reject_invalid_scope_duplicates_and_v1_workflows(db_session) -> None:
+def test_folder_mutations_reject_invalid_scope_and_duplicates(db_session) -> None:
     product, workflow = _materialize_v2_workflow(db_session)
     node = workflow.nodes[0]
 
@@ -248,26 +247,6 @@ def test_folder_mutations_reject_invalid_scope_duplicates_and_v1_workflows(db_se
             folder_id="00000000-0000-0000-0000-000000000000",
             expected_edit_version=0,
         )
-
-    legacy_product = create_canonical_product(
-        db_session,
-        name="旧工作流商品",
-        category=None,
-        price=None,
-        source_note=None,
-        image_uploads=[(_make_demo_image_bytes(), "legacy.png", "image/png")],
-    )
-    legacy_workflow = get_or_create_product_workflow(db_session, legacy_product.id)
-    with pytest.raises(ConflictError, match="schema-v2"):
-        create_workflow_folder(
-            db_session,
-            product_id=legacy_product.id,
-            workflow_id=legacy_workflow.id,
-            title="不支持",
-            node_ids=[legacy_workflow.nodes[0].id],
-            expected_edit_version=0,
-        )
-
 
 def test_folder_api_returns_complete_latest_workflow_and_rejects_unknown_fields(configured_env) -> None:
     from productflow_backend.presentation.api import create_app

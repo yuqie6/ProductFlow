@@ -199,7 +199,7 @@ def _ensure_v2_node_run(
     node: WorkflowNode,
 ) -> None:
     if workflow.schema_version != V2_WORKFLOW_SCHEMA_VERSION or node.schema_version != V2_WORKFLOW_SCHEMA_VERSION:
-        raise ConflictError("schema-v2 executor 拒绝处理 schema-v1 工作流或节点")
+        raise ConflictError("schema-v2 executor 拒绝处理不支持的工作流或节点版本")
 
 
 def _prepare_prompt_generation(

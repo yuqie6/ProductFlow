@@ -174,22 +174,10 @@ class GenerateImageSessionRoundRequest(BaseModel):
         return validate_image_generation_size(size)
 
 
-class AttachImageSessionAssetRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    product_id: str = Field(min_length=1)
-    target: Literal["reference", "main_source"]
-
-
 class AttachCanonicalImageSessionAssetRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     product_id: str = Field(min_length=1)
-
-
-class ProductWritebackResponse(BaseModel):
-    product_id: str
-    message: str
 
 
 def serialize_image_session_asset(asset: ImageSessionAsset) -> ImageSessionAssetResponse:

@@ -147,8 +147,8 @@ def append_workflow_draft_revision(
                 draft.recipe_seed is None and draft.legacy_archive_seed is None and intake is None
             ):
                 raise ConflictError(
-                    "只有 collecting recipe seed、legacy archive seed "
-                    "或 intake Draft 可以从 version 0 追加首次 revision"
+                    "只有 collecting recipe seed、legacy archive seed 或 intake Draft "
+                    "可以从 version 0 追加首次 revision"
                 )
             next_version = 1
         else:

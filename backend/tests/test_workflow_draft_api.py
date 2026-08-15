@@ -336,27 +336,6 @@ def test_workflow_draft_api_materializes_v2_and_replays_reveal_events(configured
     assert stale_image_run.status_code == 409
     assert "重新生成提示词" in stale_image_run.json()["detail"]
 
-    legacy_query = client.get(f"/api/products/{product_id}/workflow")
-    legacy_run = client.post(f"/api/products/{product_id}/workflow/run", json={})
-    legacy_patch = client.patch(
-        f"/api/workflow-nodes/{workflow['nodes'][0]['id']}",
-        json={"title": "旧入口不应改写"},
-    )
-    legacy_prompt_create = client.post(
-        f"/api/products/{product_id}/workflow/nodes",
-        json={
-            "node_type": "prompt_generation",
-            "title": "旧入口不应创建提示词节点",
-            "position_x": 0,
-            "position_y": 0,
-            "config_json": {},
-        },
-    )
-    assert legacy_query.status_code == 409
-    assert legacy_run.status_code == 409
-    assert legacy_patch.status_code == 409
-    assert legacy_prompt_create.status_code == 409
-
     stream = client.get(materialization["reveal_events_url"])
     assert stream.status_code == 200
     assert stream.headers["content-type"].startswith("text/event-stream")
@@ -418,57 +397,6 @@ def test_workflow_draft_api_returns_409_for_idempotency_key_parameter_drift(conf
     )
     assert conflict.status_code == 409
     assert "相同 idempotency key" in conflict.json()["detail"]
-
-
-def test_v2_workflow_query_ignores_v1_without_modifying_it(configured_env) -> None:
-    from productflow_backend.presentation.api import create_app
-
-    client = TestClient(create_app())
-    _login(client)
-    product = _create_canonical_product(client)
-    product_id = product["id"]
-    legacy = client.get(f"/api/products/{product_id}/workflow")
-    assert legacy.status_code == 200
-    legacy_payload = legacy.json()
-
-    queried = client.get(f"/api/v2/products/{product_id}/workflow")
-    assert queried.status_code == 200
-    assert queried.json() == {"latest_revision": 0, "workflow": None}
-    legacy_after = client.get(f"/api/products/{product_id}/workflow")
-    assert legacy_after.status_code == 200
-    assert legacy_after.json()["id"] == legacy_payload["id"]
-    assert {node["id"] for node in legacy_after.json()["nodes"]} == {
-        node["id"] for node in legacy_payload["nodes"]
-    }
-
-
-def test_legacy_node_create_rejects_prompt_without_creating_a_default_workflow(configured_env) -> None:
-    from productflow_backend.presentation.api import create_app
-
-    client = TestClient(create_app())
-    _login(client)
-    product = _create_canonical_product(client)
-
-    rejected = client.post(
-        f"/api/products/{product['id']}/workflow/nodes",
-        json={
-            "node_type": "prompt_generation",
-            "title": "提示词",
-            "position_x": 0,
-            "position_y": 0,
-            "config_json": {},
-        },
-    )
-
-    assert rejected.status_code == 400
-    assert "confirmed WorkflowDraft" in rejected.json()["detail"]
-    session = get_session_factory()()
-    try:
-        assert session.scalar(
-            select(func.count()).select_from(ProductWorkflow).where(ProductWorkflow.product_id == product["id"])
-        ) == 0
-    finally:
-        session.close()
 
 
 def test_workflow_draft_requests_reject_unknown_fields_and_bad_sse_cursor(configured_env) -> None:

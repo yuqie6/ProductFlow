@@ -244,7 +244,7 @@ def get_v2_workflow_node_run(session: Session, *, node_run_id: str) -> WorkflowN
         workflow.schema_version != V2_WORKFLOW_SCHEMA_VERSION
         or node_run.node.schema_version != V2_WORKFLOW_SCHEMA_VERSION
     ):
-        raise ConflictError("v2 节点运行接口拒绝读取 schema-v1 运行")
+        raise ConflictError("v2 节点运行接口拒绝读取不支持的运行版本")
     return node_run
 
 
@@ -372,7 +372,7 @@ def _get_v2_workflow(
     if workflow is None:
         raise NotFoundError("工作流不存在")
     if workflow.schema_version != V2_WORKFLOW_SCHEMA_VERSION:
-        raise ConflictError("v2 工作流运行接口拒绝处理 schema-v1 工作流")
+        raise ConflictError("v2 工作流运行接口拒绝处理不支持的工作流版本")
     if require_active and not workflow.active:
         raise ConflictError("只能运行 active schema-v2 工作流")
     return workflow
@@ -477,7 +477,7 @@ def _get_v2_node(session: Session, *, node_id: str, lock: bool = True) -> Workfl
         raise NotFoundError("工作流节点不存在")
     workflow = node.workflow
     if workflow.schema_version != V2_WORKFLOW_SCHEMA_VERSION or node.schema_version != V2_WORKFLOW_SCHEMA_VERSION:
-        raise ConflictError("v2 节点运行接口拒绝提交 schema-v1 节点")
+        raise ConflictError("v2 节点运行接口拒绝提交不支持的节点版本")
     if not workflow.active:
         raise ConflictError("只能运行 active schema-v2 工作流")
     return node
@@ -533,9 +533,9 @@ def _get_v2_workflow_run_by_id(session: Session, *, run_id: str) -> WorkflowRun:
 
 def _ensure_v2_workflow_run(run: WorkflowRun) -> None:
     if run.workflow.schema_version != V2_WORKFLOW_SCHEMA_VERSION:
-        raise ConflictError("v2 工作流运行接口拒绝读取 schema-v1 运行")
+        raise ConflictError("v2 工作流运行接口拒绝读取不支持的运行版本")
     if any(node_run.node.schema_version != V2_WORKFLOW_SCHEMA_VERSION for node_run in run.node_runs):
-        raise ConflictError("v2 工作流运行包含 schema-v1 节点")
+        raise ConflictError("v2 工作流运行包含不支持的节点版本")
 
 
 def _run_node_ids(run: WorkflowRun) -> set[str]:

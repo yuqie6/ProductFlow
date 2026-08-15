@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session
 
 from productflow_backend.application.image_sessions import (
     add_image_session_reference_images,
-    attach_image_session_asset_to_product,
     attach_image_session_asset_to_product_canonical,
     cancel_image_session_generation_task,
     create_image_session,
@@ -25,13 +24,11 @@ from productflow_backend.presentation.deps import get_session, require_admin, re
 from productflow_backend.presentation.image_variants import serve_image_variant
 from productflow_backend.presentation.schemas.image_sessions import (
     AttachCanonicalImageSessionAssetRequest,
-    AttachImageSessionAssetRequest,
     CreateImageSessionRequest,
     GenerateImageSessionRoundRequest,
     ImageSessionDetailResponse,
     ImageSessionListResponse,
     ImageSessionStatusResponse,
-    ProductWritebackResponse,
     UpdateImageSessionRequest,
     serialize_image_session_detail,
     serialize_image_session_status,
@@ -223,27 +220,6 @@ def cancel_image_session_generation_task_endpoint(
         task_id=task_id,
     )
     return serialize_image_session_detail(image_session)
-
-
-@router.post(
-    "/image-sessions/{image_session_id}/assets/{asset_id}/attach-to-product",
-    response_model=ProductWritebackResponse,
-)
-def attach_image_session_asset_to_product_endpoint(
-    image_session_id: str,
-    asset_id: str,
-    payload: AttachImageSessionAssetRequest,
-    session: Session = Depends(get_session),
-) -> ProductWritebackResponse:
-    product = attach_image_session_asset_to_product(
-        session,
-        image_session_id=image_session_id,
-        asset_id=asset_id,
-        target=payload.target,
-        product_id=payload.product_id,
-    )
-    message = "已加入商品参考图" if payload.target == "reference" else "已设为商品主图"
-    return ProductWritebackResponse(product_id=product.id, message=message)
 
 
 @router.get("/image-session-assets/{asset_id}/download")

@@ -50,7 +50,6 @@ from productflow_backend.infrastructure.db.models import (
     WorkflowRun,
 )
 from productflow_backend.infrastructure.image.base import (
-    GeneratedImagePayload,
     ImageProvider,
     WorkflowGeneratedImage,
     WorkflowImageRequest,
@@ -67,9 +66,6 @@ class StaticWorkflowImageProvider(ImageProvider):
         self.image_bytes = image_bytes
         self.on_generate = on_generate
         self.requests: list[WorkflowImageRequest] = []
-
-    def generate_poster_image(self, poster, kind) -> tuple[GeneratedImagePayload, str]:
-        raise NotImplementedError
 
     def generate_workflow_image(self, request: WorkflowImageRequest) -> WorkflowImageResult:
         self.requests.append(request)

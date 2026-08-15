@@ -91,8 +91,6 @@ def test_agent_product_intake_round_trips_and_creates_atomically_on_postgresql(
         with monkeypatch.context() as environment:
             environment.setenv("DATABASE_URL", database_url.render_as_string(hide_password=False))
             environment.setenv("STORAGE_ROOT", str(tmp_path / "storage"))
-            environment.setenv("TEXT_PROVIDER_KIND", "mock")
-            environment.setenv("IMAGE_PROVIDER_KIND", "mock")
             _reset_database_state()
             backend_dir = Path(__file__).resolve().parents[1]
             config = Config(str(backend_dir / "alembic.ini"))
@@ -224,8 +222,6 @@ def test_draft_first_agent_product_intake_replays_across_sessions_on_postgresql(
         with monkeypatch.context() as environment:
             environment.setenv("DATABASE_URL", database_url.render_as_string(hide_password=False))
             environment.setenv("STORAGE_ROOT", str(tmp_path / "storage"))
-            environment.setenv("TEXT_PROVIDER_KIND", "mock")
-            environment.setenv("IMAGE_PROVIDER_KIND", "mock")
             _reset_database_state()
             backend_dir = Path(__file__).resolve().parents[1]
             config = Config(str(backend_dir / "alembic.ini"))

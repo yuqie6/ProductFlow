@@ -7,12 +7,13 @@ from fastapi.testclient import TestClient
 from helpers import _login, _make_demo_image_bytes
 
 from productflow_backend.application import gallery as gallery_app
-from productflow_backend.domain.enums import ImageSessionAssetKind
+from productflow_backend.domain.enums import ImageSessionAssetKind, MediaVerificationStatus
 from productflow_backend.infrastructure.db.models import (
     ImageGalleryEntry,
     ImageSession,
     ImageSessionAsset,
     ImageSessionRound,
+    MediaObject,
 )
 from productflow_backend.infrastructure.db.session import get_session_factory
 from productflow_backend.presentation.api import create_app
@@ -86,12 +87,24 @@ def test_gallery_rejects_generated_asset_without_round(configured_env: Path, db_
     session = ImageSession(title="孤立生成图")
     db_session.add(session)
     db_session.flush()
+    media = MediaObject(
+        storage_path="image-sessions/orphan.png",
+        mime_type="image/png",
+        byte_size=1,
+        width=1,
+        height=1,
+        sha256="0" * 64,
+        verification_status=MediaVerificationStatus.VERIFIED,
+        verified_at=session.created_at,
+    )
+    db_session.add(media)
     asset = ImageSessionAsset(
         session_id=session.id,
         kind=ImageSessionAssetKind.GENERATED_IMAGE,
         original_filename="orphan.png",
         mime_type="image/png",
         storage_path="image-sessions/orphan.png",
+        media_object=media,
     )
     db_session.add(asset)
     db_session.commit()
@@ -113,12 +126,24 @@ def test_gallery_save_handles_integrity_race(
     session = ImageSession(title="并发保存会话")
     db_session.add(session)
     db_session.flush()
+    media = MediaObject(
+        storage_path="image-sessions/race.png",
+        mime_type="image/png",
+        byte_size=1,
+        width=1,
+        height=1,
+        sha256="1" * 64,
+        verification_status=MediaVerificationStatus.VERIFIED,
+        verified_at=session.created_at,
+    )
+    db_session.add(media)
     asset = ImageSessionAsset(
         session_id=session.id,
         kind=ImageSessionAssetKind.GENERATED_IMAGE,
         original_filename="race.png",
         mime_type="image/png",
         storage_path="image-sessions/race.png",
+        media_object=media,
     )
     db_session.add(asset)
     db_session.flush()

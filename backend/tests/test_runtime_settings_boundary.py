@@ -20,7 +20,6 @@ from productflow_backend.infrastructure.db.models import AppSetting, ProviderBin
 from productflow_backend.infrastructure.provider_config import (
     resolve_image_provider_config,
     resolve_prompt_provider_config,
-    resolve_text_provider_config,
 )
 
 
@@ -160,7 +159,7 @@ def test_provider_resolver_reuses_supplied_session_without_closing_it(
     monkeypatch.setattr(provider_config, "get_session_factory", fail_get_session_factory)
     monkeypatch.setattr(db_session, "close", track_close)
 
-    resolved = resolve_text_provider_config(session=db_session)
+    resolved = resolve_prompt_provider_config(session=db_session)
 
     assert resolved.provider_kind == "mock"
     assert close_calls == 0
@@ -176,14 +175,13 @@ def test_provider_resolver_leaves_borrowed_session_transaction_to_caller(
 
     monkeypatch.setattr(provider_config, "get_session_factory", fail_get_session_factory)
     bind = db_session.get_bind()
-    for resolver in (resolve_text_provider_config, resolve_prompt_provider_config, resolve_image_provider_config):
+    for resolver in (resolve_prompt_provider_config, resolve_image_provider_config):
         db_session.add(AppSetting(key="deletion_enabled", value="true"))
 
         resolved = resolver(session=db_session)
 
         assert resolved.provider_kind == "mock"
         assert set(db_session.scalars(select(ProviderBinding.purpose)).all()) == {
-            "text",
             "prompt",
             "image",
             "agent",
@@ -194,12 +192,11 @@ def test_provider_resolver_leaves_borrowed_session_transaction_to_caller(
             assert verification_session.get(AppSetting, "deletion_enabled") is None
             assert verification_session.scalars(select(ProviderBinding)).all() == []
 
-    resolve_text_provider_config(session=db_session)
+    resolve_prompt_provider_config(session=db_session)
     db_session.commit()
 
     with Session(bind) as verification_session:
         assert set(verification_session.scalars(select(ProviderBinding.purpose)).all()) == {
-            "text",
             "prompt",
             "image",
             "agent",

@@ -1,27 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
-from productflow_backend.application.contracts import ReferenceImageInput
 from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.config import filter_image_tool_options, parse_image_tool_allowed_fields
 from productflow_backend.infrastructure.image.base import image_dimensions_from_bytes
-
-
-class StoredImageReference(Protocol):
-    id: str
-    storage_path: str
-    mime_type: str
-    original_filename: str
-
-
-@dataclass(frozen=True, slots=True)
-class ImageGenerationReferencePayload:
-    source_image: Path | None
-    reference_images: list[ReferenceImageInput]
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,37 +62,7 @@ def normalize_image_generation_tool_options(
     if resolved_allowed_fields is None:
         resolved_allowed_fields = parse_image_tool_allowed_fields(get_runtime_settings().image_tool_allowed_fields)
     normalized = filter_image_tool_options(tool_options, allowed_fields=resolved_allowed_fields)
-    if not normalized:
-        return None
-    normalized.pop("n", None)
     return normalized or None
-
-
-def unique_image_generation_references[T: StoredImageReference](references: list[T]) -> list[T]:
-    unique_by_path: dict[str, T] = {}
-    for reference in references:
-        unique_by_path.setdefault(reference.storage_path, reference)
-    return list(unique_by_path.values())
-
-
-def build_stored_image_reference_payload(
-    references: list[StoredImageReference],
-    *,
-    resolve_storage_path: Callable[[str], str | Path],
-) -> ImageGenerationReferencePayload:
-    unique_references = unique_image_generation_references(references)
-    reference_inputs = [
-        ReferenceImageInput(
-            path=Path(resolve_storage_path(reference.storage_path)),
-            mime_type=reference.mime_type,
-            filename=reference.original_filename,
-        )
-        for reference in unique_references
-    ]
-    return ImageGenerationReferencePayload(
-        source_image=reference_inputs[0].path if reference_inputs else None,
-        reference_images=reference_inputs,
-    )
 
 
 def provider_output_with_actual_image_size(

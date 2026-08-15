@@ -47,8 +47,13 @@ def _asset(
     media = MediaObject(
         storage_path=f"gallery/{product.id}/{suffix}.png",
         mime_type="image/png",
-        verification_status=MediaVerificationStatus.LEGACY_PENDING,
+        byte_size=1024,
+        width=100,
+        height=100,
+        sha256="a" * 64,
+        verification_status=MediaVerificationStatus.VERIFIED,
         created_at=created_at,
+        verified_at=created_at,
     )
     return ProductImageAsset(
         product=product,
@@ -119,10 +124,10 @@ def _seed_gallery(db_session):
         ),
         _asset(
             product,
-            suffix="legacy",
-            name="历史导入",
+            suffix="upload-extra",
+            name="补充参考",
             created_at=now - timedelta(days=3),
-            origin=ProductImageOriginType.LEGACY_IMPORT,
+            origin=ProductImageOriginType.UPLOAD,
         ),
     ]
     db_session.add_all(assets)
@@ -155,7 +160,7 @@ def test_gallery_directories_bootstrap_search_and_detail(db_session) -> None:
     assert system_counts == {
         GalleryDirectoryKind.ALL: 5,
         GalleryDirectoryKind.RECENT_GENERATED: 3,
-        GalleryDirectoryKind.UPLOADS: 1,
+        GalleryDirectoryKind.UPLOADS: 2,
         GalleryDirectoryKind.GENERATED: 3,
         GalleryDirectoryKind.UNORGANIZED: 3,
     }
@@ -169,7 +174,7 @@ def test_gallery_directories_bootstrap_search_and_detail(db_session) -> None:
     assert bootstrap.unorganized_count == 3
 
     expected_by_directory = {
-        (GalleryDirectoryKind.UPLOADS, None): {assets[0].id},
+        (GalleryDirectoryKind.UPLOADS, None): {assets[0].id, assets[4].id},
         (GalleryDirectoryKind.GENERATED, None): {assets[1].id, assets[2].id, assets[3].id},
         (GalleryDirectoryKind.RECENT_GENERATED, None): {assets[1].id, assets[2].id, assets[3].id},
         (GalleryDirectoryKind.IMAGE_TYPE, "hero"): {assets[1].id, assets[2].id},
@@ -178,7 +183,7 @@ def test_gallery_directories_bootstrap_search_and_detail(db_session) -> None:
             assets[3].id,
             assets[4].id,
         },
-        (GalleryDirectoryKind.SOURCE, ProductImageOriginType.LEGACY_IMPORT.value): {assets[4].id},
+        (GalleryDirectoryKind.SOURCE, ProductImageOriginType.UPLOAD.value): {assets[0].id, assets[4].id},
         (GalleryDirectoryKind.UNORGANIZED, None): {assets[1].id, assets[3].id, assets[4].id},
         (GalleryDirectoryKind.USER_FOLDER, folder.id): {assets[0].id, assets[2].id},
     }

@@ -2,22 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from typing import Any, Literal
+from typing import Literal
 
-from sqlalchemy import delete, desc, exists, func, literal, select
+from sqlalchemy import delete, desc, func, select
 from sqlalchemy.orm import Session, selectinload
 
-from productflow_backend.application.copy_payloads import validate_copy_payload
-from productflow_backend.application.legacy_retirement.freeze import ensure_legacy_v1_write_allowed
 from productflow_backend.application.media_assets import (
-    delete_legacy_source_with_canonical_asset,
     get_product_image_assets_by_ids,
     prune_unreferenced_media_objects,
     stage_product_image_asset,
-)
-from productflow_backend.application.product_workflow.templates import (
-    materialize_product_workflow_from_template,
-    resolve_product_creation_canvas_template,
 )
 from productflow_backend.application.storage_compensation import (
     StorageWriteCompensation,
@@ -26,30 +19,18 @@ from productflow_backend.application.storage_compensation import (
 )
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.durable_generation_tasks import WORKFLOW_RUN_GENERATION_TASK_CONTRACT
-from productflow_backend.domain.enums import (
-    CopyStatus,
-    ProductImageOriginType,
-    ProductWorkflowState,
-    SourceAssetKind,
-    WorkflowNodeStatus,
-    WorkflowRunStatus,
-)
+from productflow_backend.domain.enums import ProductImageOriginType
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
-    CopySet,
-    MediaObject,
-    PosterVariant,
     Product,
     ProductImageAsset,
     ProductWorkflow,
-    SourceAsset,
     VisualSystem,
     VisualSystemVersion,
     VisualSystemVersionReference,
     WorkflowDraft,
     WorkflowDraftRevision,
     WorkflowImageGenerationRecord,
-    WorkflowNode,
     WorkflowRecipeVersion,
     WorkflowRun,
 )
@@ -108,13 +89,8 @@ def _product_query():
     return (
         select(Product)
         .options(
-            selectinload(Product.source_assets),
-            selectinload(Product.creative_briefs),
-            selectinload(Product.copy_sets),
-            selectinload(Product.poster_variants),
-            selectinload(Product.confirmed_copy_set),
-            selectinload(Product.workflows).selectinload(ProductWorkflow.nodes),
-            selectinload(Product.workflows).selectinload(ProductWorkflow.runs),
+            selectinload(Product.image_assets).selectinload(ProductImageAsset.media_object),
+            selectinload(Product.cover_image_asset).selectinload(ProductImageAsset.media_object),
         )
         .order_by(desc(Product.updated_at))
     )
@@ -122,11 +98,7 @@ def _product_query():
 
 def _product_list_query():
     return select(Product).options(
-        selectinload(Product.source_assets),
-        selectinload(Product.copy_sets),
-        selectinload(Product.poster_variants),
-        selectinload(Product.workflows).selectinload(ProductWorkflow.nodes),
-        selectinload(Product.workflows).selectinload(ProductWorkflow.runs),
+        selectinload(Product.cover_image_asset).selectinload(ProductImageAsset.media_object),
     )
 
 
@@ -143,144 +115,6 @@ def _get_product_or_raise(session: Session, product_id: str) -> Product:
     if product is None:
         raise NotFoundError("商品不存在")
     return product
-
-
-def _get_copy_set_or_raise(session: Session, copy_set_id: str) -> CopySet:
-    stmt = select(CopySet).options(selectinload(CopySet.product)).where(CopySet.id == copy_set_id)
-    copy_set = session.scalar(stmt)
-    if copy_set is None:
-        raise NotFoundError("文案不存在")
-    return copy_set
-
-
-def derive_product_state(product: Product) -> ProductWorkflowState:
-    """从商品关联数据推导流程状态，用于列表过滤。"""
-    if product.poster_variants:
-        return ProductWorkflowState.POSTER_READY
-    if _product_has_failed_workflow(product):
-        return ProductWorkflowState.FAILED
-    if product.current_confirmed_copy_set_id:
-        return ProductWorkflowState.COPY_READY
-    return ProductWorkflowState.DRAFT
-
-
-def _product_has_failed_workflow(product: Product) -> bool:
-    return any(
-        workflow.active
-        and (
-            any(run.status == WorkflowRunStatus.FAILED for run in workflow.runs)
-            or any(node.status == WorkflowNodeStatus.FAILED for node in workflow.nodes)
-        )
-        for workflow in product.workflows
-    )
-
-
-def _product_failed_workflow_exists():
-    has_failed_run = exists(
-        select(literal(1))
-        .select_from(WorkflowRun)
-        .join(ProductWorkflow, WorkflowRun.workflow_id == ProductWorkflow.id)
-        .where(
-            ProductWorkflow.product_id == Product.id,
-            ProductWorkflow.active.is_(True),
-            WorkflowRun.status == WorkflowRunStatus.FAILED,
-        )
-    ).correlate(Product)
-    has_failed_node = exists(
-        select(literal(1))
-        .select_from(WorkflowNode)
-        .join(ProductWorkflow, WorkflowNode.workflow_id == ProductWorkflow.id)
-        .where(
-            ProductWorkflow.product_id == Product.id,
-            ProductWorkflow.active.is_(True),
-            WorkflowNode.status == WorkflowNodeStatus.FAILED,
-        )
-    ).correlate(Product)
-    return has_failed_run | has_failed_node
-
-
-def _product_status_filter(status: ProductWorkflowState):
-    has_poster = exists(
-        select(literal(1)).select_from(PosterVariant).where(PosterVariant.product_id == Product.id)
-    ).correlate(Product)
-    has_failed = _product_failed_workflow_exists()
-    if status == ProductWorkflowState.POSTER_READY:
-        return has_poster
-    if status == ProductWorkflowState.FAILED:
-        return has_failed & ~has_poster
-    if status == ProductWorkflowState.COPY_READY:
-        return Product.current_confirmed_copy_set_id.is_not(None) & ~has_poster & ~has_failed
-    if status == ProductWorkflowState.DRAFT:
-        return Product.current_confirmed_copy_set_id.is_(None) & ~has_poster & ~has_failed
-    return literal(False)
-
-
-def create_product(
-    session: Session,
-    *,
-    name: str,
-    category: str | None,
-    price: str | None,
-    source_note: str | None,
-    image_bytes: bytes,
-    filename: str,
-    content_type: str,
-    reference_image_uploads: list[tuple[bytes, str, str]] | None = None,
-    canvas_template_key: str | None = None,
-    template_language: str | None = None,
-    storage: LocalStorage | None = None,
-) -> Product:
-    """创建商品，保存原始图和参考图到本地存储。"""
-    ensure_legacy_v1_write_allowed(session)
-    canvas_template = resolve_product_creation_canvas_template(canvas_template_key)
-    storage = storage or LocalStorage()
-    with compensate_storage_writes(session) as storage_writes:
-        product = Product(
-            name=_normalize_required_text(name, field_name="商品名", max_length=255),
-            category=_normalize_optional_text(category, field_name="类目", max_length=120),
-            price=_normalize_price(price),
-            source_note=_normalize_optional_text(source_note, field_name="备注", max_length=4000),
-        )
-        session.add(product)
-        session.flush()
-
-        relative_path = storage_writes.track(
-            storage,
-            storage.save_product_upload(product.id, filename, image_bytes),
-        )
-        session.add(
-            SourceAsset(
-                product_id=product.id,
-                kind=SourceAssetKind.ORIGINAL_IMAGE,
-                original_filename=filename,
-                mime_type=content_type or "application/octet-stream",
-                storage_path=relative_path,
-            )
-        )
-        for reference_bytes, reference_filename, reference_content_type in reference_image_uploads or []:
-            reference_path = storage_writes.track(
-                storage,
-                storage.save_reference_upload(product.id, reference_filename, reference_bytes),
-            )
-            session.add(
-                SourceAsset(
-                    product_id=product.id,
-                    kind=SourceAssetKind.REFERENCE_IMAGE,
-                    original_filename=reference_filename,
-                    mime_type=reference_content_type or "application/octet-stream",
-                    storage_path=reference_path,
-                )
-            )
-        if canvas_template is not None:
-            materialize_product_workflow_from_template(
-                session,
-                product_id=product.id,
-                template=canvas_template,
-                template_language=template_language,
-            )
-        session.commit()
-    session.expire_all()
-    return _get_product_or_raise(session, product.id)
 
 
 def create_canonical_product(
@@ -465,71 +299,9 @@ def add_canonical_product_images(
     )
 
 
-def add_reference_images(
-    session: Session,
-    *,
-    product_id: str,
-    reference_image_uploads: list[tuple[bytes, str, str]],
-    storage: LocalStorage | None = None,
-) -> Product:
-    ensure_legacy_v1_write_allowed(session)
-    product = _get_product_or_raise(session, product_id)
-    storage = storage or LocalStorage()
-    with compensate_storage_writes(session) as storage_writes:
-        for reference_bytes, reference_filename, reference_content_type in reference_image_uploads:
-            reference_path = storage_writes.track(
-                storage,
-                storage.save_reference_upload(product.id, reference_filename, reference_bytes),
-            )
-            session.add(
-                SourceAsset(
-                    product_id=product.id,
-                    kind=SourceAssetKind.REFERENCE_IMAGE,
-                    original_filename=reference_filename,
-                    mime_type=reference_content_type or "application/octet-stream",
-                    storage_path=reference_path,
-                )
-            )
-        session.commit()
-    session.expire_all()
-    return _get_product_or_raise(session, product.id)
-
-
-def delete_reference_image(
-    session: Session,
-    *,
-    asset_id: str,
-    storage: LocalStorage | None = None,
-) -> Product:
-    ensure_legacy_v1_write_allowed(session)
-    asset = session.get(SourceAsset, asset_id)
-    if asset is None:
-        raise NotFoundError("商品参考图不存在")
-    if asset.kind != SourceAssetKind.REFERENCE_IMAGE:
-        raise BusinessValidationError("只能删除商品参考图")
-
-    product_id = asset.product_id
-    storage_path = asset.storage_path
-    storage = storage or LocalStorage()
-    if delete_legacy_source_with_canonical_asset(session, source_asset=asset, storage=storage):
-        session.expire_all()
-        return _get_product_or_raise(session, product_id)
-    product = _get_product_or_raise(session, product_id)
-    product.updated_at = now_utc()
-    session.delete(asset)
-    session.commit()
-    best_effort_storage_delete(
-        lambda: storage.delete_image_with_variants(storage_path),
-        target=f"source_asset_id={asset_id} path={storage_path}",
-    )
-    session.expire_all()
-    return _get_product_or_raise(session, product_id)
-
-
 def list_products(
     session: Session,
     *,
-    status: ProductWorkflowState | None,
     page: int,
     page_size: int,
     q: str | None = None,
@@ -539,8 +311,6 @@ def list_products(
     page_size = min(max(page_size, 1), 100)
     start = (page - 1) * page_size
     filters = []
-    if status is not None:
-        filters.append(_product_status_filter(status))
     normalized_q = q.strip() if q else ""
     if normalized_q:
         filters.append(Product.name.icontains(normalized_q, autoescape=True))
@@ -567,22 +337,6 @@ def delete_product(
     storage: LocalStorage | None = None,
 ) -> None:
     product = _get_product_or_raise(session, product_id)
-    legacy_workflow_id = session.scalar(
-        select(ProductWorkflow.id)
-        .where(
-            ProductWorkflow.product_id == product_id,
-            ProductWorkflow.schema_version == 1,
-        )
-        .limit(1)
-    )
-    if (
-        legacy_workflow_id is not None
-        or product.source_assets
-        or product.creative_briefs
-        or product.copy_sets
-        or product.poster_variants
-    ):
-        ensure_legacy_v1_write_allowed(session)
     active_workflow_run = session.scalar(
         select(WorkflowRun)
         .join(ProductWorkflow, WorkflowRun.workflow_id == ProductWorkflow.id)
@@ -594,16 +348,11 @@ def delete_product(
     if active_workflow_run is not None:
         raise BusinessValidationError("商品工作流运行中，稍后删除")
     storage = storage or LocalStorage()
-    session.expire(product, ["source_assets", "poster_variants"])
     media_ids = set(
         session.scalars(
             select(ProductImageAsset.media_object_id).where(ProductImageAsset.product_id == product_id)
         )
     )
-    legacy_paths = {
-        *(asset.storage_path for asset in product.source_assets),
-        *(poster.storage_path for poster in product.poster_variants),
-    }
     removable_visual_versions = _prepare_visual_system_cleanup_for_product(
         session,
         product_id=product_id,
@@ -612,12 +361,8 @@ def delete_product(
     session.flush()
     _delete_owned_visual_system_versions(session, removable_visual_versions)
     deleted_media = prune_unreferenced_media_objects(session, media_ids)
-    retained_legacy_paths = set(
-        session.scalars(select(MediaObject.storage_path).where(MediaObject.storage_path.in_(legacy_paths))).all()
-    )
     session.commit()
     cleanup_paths = {storage_path for _, storage_path in deleted_media}
-    cleanup_paths.update(legacy_paths - retained_legacy_paths)
     for storage_path in sorted(cleanup_paths):
         best_effort_storage_delete(
             lambda path=storage_path: storage.delete_image_with_variants(path),
@@ -726,42 +471,3 @@ def _delete_owned_visual_system_versions(
         if remaining_version_id is None:
             session.execute(delete(VisualSystem).where(VisualSystem.id == visual_system_id))
     session.flush()
-
-
-def update_copy_set(
-    session: Session,
-    *,
-    copy_set_id: str,
-    structured_payload: dict[str, Any],
-) -> CopySet:
-    ensure_legacy_v1_write_allowed(session)
-    copy_set = _get_copy_set_or_raise(session, copy_set_id)
-    try:
-        payload = validate_copy_payload(structured_payload)
-    except ValueError as exc:
-        raise BusinessValidationError("文案 payload 不符合 CopyPayloadV2 合同") from exc
-    copy_set.structured_payload = payload.model_dump(mode="json")
-    copy_set.edited_at = now_utc()
-    session.commit()
-    session.refresh(copy_set)
-    return copy_set
-
-
-def confirm_copy_set(session: Session, *, copy_set_id: str) -> CopySet:
-    ensure_legacy_v1_write_allowed(session)
-    copy_set = _get_copy_set_or_raise(session, copy_set_id)
-    product = _get_product_or_raise(session, copy_set.product_id)
-    copy_set.status = CopyStatus.CONFIRMED
-    copy_set.confirmed_at = now_utc()
-    product.current_confirmed_copy_set_id = copy_set.id
-    session.commit()
-    session.refresh(copy_set)
-    return copy_set
-
-
-def get_product_history(session: Session, product_id: str) -> dict[str, Any]:
-    product = _get_product_or_raise(session, product_id)
-    return {
-        "copy_sets": sorted(product.copy_sets, key=lambda item: item.created_at, reverse=True),
-        "poster_variants": sorted(product.poster_variants, key=lambda item: item.created_at, reverse=True),
-    }

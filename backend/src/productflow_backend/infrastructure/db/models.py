@@ -27,13 +27,10 @@ from productflow_backend.domain.enums import (
     AgentConversationStatus,
     AgentToolMutationStatus,
     AgentTurnStatus,
-    CopyStatus,
     ImageSessionAssetKind,
     JobStatus,
     MediaVerificationStatus,
-    PosterKind,
     ProductImageOriginType,
-    SourceAssetKind,
     WorkflowDraftStatus,
     WorkflowNodeStatus,
     WorkflowNodeType,
@@ -123,22 +120,6 @@ class ProviderBinding(Base, TimestampMixin):
     provider_profile: Mapped[ProviderProfile | None] = relationship()
 
 
-class UserCanvasTemplate(Base, TimestampMixin):
-    """用户保存的可复用画布节点组模板。"""
-
-    __tablename__ = "user_canvas_templates"
-    __table_args__ = (Index("ix_user_canvas_templates_archived_at", "archived_at"),)
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    key: Mapped[str] = mapped_column(String(80), unique=True, nullable=False)
-    title: Mapped[str] = mapped_column(String(255))
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    kind: Mapped[str] = mapped_column(String(40), default="node_group")
-    schema_version: Mapped[int] = mapped_column(Integer, default=1)
-    template_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-
-
 class MediaObject(Base):
     """不可变的实际图片文件及其核验元数据。"""
 
@@ -178,16 +159,6 @@ class Product(Base, TimestampMixin):
     category: Mapped[str | None] = mapped_column(String(120), nullable=True)
     price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     source_note: Mapped[str | None] = mapped_column(Text, nullable=True)
-    current_confirmed_copy_set_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey(
-            "copy_sets.id",
-            ondelete="SET NULL",
-            use_alter=True,
-            name="fk_products_current_confirmed_copy_set_id",
-        ),
-        nullable=True,
-    )
     cover_image_asset_id: Mapped[str | None] = mapped_column(
         String(36),
         ForeignKey(
@@ -209,11 +180,6 @@ class Product(Base, TimestampMixin):
         nullable=True,
     )
 
-    source_assets: Mapped[list[SourceAsset]] = relationship(
-        back_populates="product",
-        cascade="all, delete-orphan",
-        foreign_keys="SourceAsset.product_id",
-    )
     image_assets: Mapped[list[ProductImageAsset]] = relationship(
         back_populates="product",
         cascade="all, delete-orphan",
@@ -241,23 +207,6 @@ class Product(Base, TimestampMixin):
     current_fact_set_version: Mapped[ProductFactSetVersion | None] = relationship(
         foreign_keys=[current_fact_set_version_id],
         post_update=True,
-    )
-    creative_briefs: Mapped[list[CreativeBrief]] = relationship(
-        back_populates="product",
-        cascade="all, delete-orphan",
-    )
-    copy_sets: Mapped[list[CopySet]] = relationship(
-        back_populates="product",
-        cascade="all, delete-orphan",
-        foreign_keys="CopySet.product_id",
-    )
-    confirmed_copy_set: Mapped[CopySet | None] = relationship(
-        foreign_keys=[current_confirmed_copy_set_id],
-        post_update=True,
-    )
-    poster_variants: Mapped[list[PosterVariant]] = relationship(
-        back_populates="product",
-        cascade="all, delete-orphan",
     )
     workflows: Mapped[list[ProductWorkflow]] = relationship(
         back_populates="product",
@@ -427,6 +376,14 @@ class ProductImageAsset(Base, TimestampMixin):
         foreign_keys="LegacyWorkflowArchiveAsset.product_image_asset_id",
         passive_deletes=True,
     )
+
+
+
+
+
+
+
+
 
 
 class LegacyWorkflowArchive(Base):
@@ -1296,6 +1253,8 @@ class WorkflowDraftRecipeSeed(Base):
     )
 
 
+
+
 class WorkflowDraftLegacyArchiveSeed(Base):
     """把一个不可变旧归档绑定到新的 Agent WorkflowDraft。"""
 
@@ -1412,14 +1371,12 @@ class ProductWorkflow(Base, TimestampMixin):
             sqlite_where=text("active = 1"),
         ),
         Index(
-            "uq_product_workflows_product_v2_revision",
+            "uq_product_workflows_product_revision",
             "product_id",
             "revision",
             unique=True,
-            postgresql_where=text("schema_version = 2"),
-            sqlite_where=text("schema_version = 2"),
         ),
-        CheckConstraint("schema_version IN (1, 2)", name="ck_product_workflows_schema_version"),
+        CheckConstraint("schema_version = 2", name="ck_product_workflows_schema_version"),
         CheckConstraint("revision > 0", name="ck_product_workflows_positive_revision"),
         CheckConstraint("edit_version >= 0", name="ck_product_workflows_non_negative_edit_version"),
     )
@@ -1428,7 +1385,7 @@ class ProductWorkflow(Base, TimestampMixin):
     product_id: Mapped[str] = mapped_column(String(36), ForeignKey("products.id", ondelete="CASCADE"))
     title: Mapped[str] = mapped_column(String(255), default="商品创意工作流")
     active: Mapped[bool] = mapped_column(Boolean, default=True)
-    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    schema_version: Mapped[int] = mapped_column(Integer, default=2)
     revision: Mapped[int] = mapped_column(Integer, default=1)
     edit_version: Mapped[int] = mapped_column(Integer, default=0)
     source_draft_revision_id: Mapped[str | None] = mapped_column(
@@ -1526,12 +1483,12 @@ class WorkflowNode(Base, TimestampMixin):
     __tablename__ = "workflow_nodes"
     __table_args__ = (
         UniqueConstraint("workflow_id", "node_key", name="uq_workflow_nodes_workflow_key"),
-        CheckConstraint("schema_version IN (1, 2)", name="ck_workflow_nodes_schema_version"),
+        CheckConstraint("schema_version = 2", name="ck_workflow_nodes_schema_version"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     workflow_id: Mapped[str] = mapped_column(String(36), ForeignKey("product_workflows.id", ondelete="CASCADE"))
-    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    schema_version: Mapped[int] = mapped_column(Integer, default=2)
     node_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
     node_type: Mapped[WorkflowNodeType] = mapped_column(enum_value_column(WorkflowNodeType))
     title: Mapped[str] = mapped_column(String(255))
@@ -1781,16 +1738,6 @@ class WorkflowNodeRun(Base):
     status: Mapped[WorkflowNodeStatus] = mapped_column(enum_value_column(WorkflowNodeStatus))
     output_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    copy_set_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey("copy_sets.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    poster_variant_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey("poster_variants.id", ondelete="SET NULL"),
-        nullable=True,
-    )
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -2237,131 +2184,6 @@ class DeliveryRenditionJob(Base, TimestampMixin):
     )
 
 
-class SourceAsset(Base):
-    """商品源素材（原始图/参考图），一个商品最多一张原始图。"""
-
-    __tablename__ = "source_assets"
-    __table_args__ = (
-        Index(
-            "uq_source_assets_one_original_per_product",
-            "product_id",
-            unique=True,
-            postgresql_where=text("kind = 'original_image'"),
-            sqlite_where=text("kind = 'original_image'"),
-        ),
-        Index("ix_source_assets_source_poster_variant_id", "source_poster_variant_id"),
-        Index("ix_source_assets_canonical_asset_id", "canonical_asset_id"),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    product_id: Mapped[str] = mapped_column(String(36), ForeignKey("products.id", ondelete="CASCADE"))
-    kind: Mapped[SourceAssetKind] = mapped_column(enum_value_column(SourceAssetKind))
-    original_filename: Mapped[str] = mapped_column(String(255))
-    mime_type: Mapped[str] = mapped_column(String(100))
-    storage_path: Mapped[str] = mapped_column(String(500))
-    source_poster_variant_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey(
-            "poster_variants.id",
-            ondelete="SET NULL",
-            name="fk_source_assets_source_poster_variant_id",
-        ),
-        nullable=True,
-    )
-    canonical_asset_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey(
-            "product_image_assets.id",
-            ondelete="RESTRICT",
-            name="fk_source_assets_canonical_asset_id",
-        ),
-        nullable=True,
-    )
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-    product: Mapped[Product] = relationship(back_populates="source_assets", foreign_keys=[product_id])
-    canonical_asset: Mapped[ProductImageAsset | None] = relationship(foreign_keys=[canonical_asset_id])
-
-
-class CreativeBrief(Base):
-    """AI 对商品的理解结果：定位/受众/卖点/禁忌词。"""
-
-    __tablename__ = "creative_briefs"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    product_id: Mapped[str] = mapped_column(String(36), ForeignKey("products.id", ondelete="CASCADE"))
-    payload: Mapped[dict[str, Any]] = mapped_column(JSON)
-    provider_name: Mapped[str] = mapped_column(String(50))
-    model_name: Mapped[str] = mapped_column(String(100))
-    prompt_version: Mapped[str] = mapped_column(String(32))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-    product: Mapped[Product] = relationship(back_populates="creative_briefs")
-    copy_sets: Mapped[list[CopySet]] = relationship(back_populates="creative_brief")
-
-
-class CopySet(Base, TimestampMixin):
-    """文案版本，记录 AI 原始输出与人工编辑历史。"""
-
-    __tablename__ = "copy_sets"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    product_id: Mapped[str] = mapped_column(String(36), ForeignKey("products.id", ondelete="CASCADE"))
-    creative_brief_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey("creative_briefs.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    status: Mapped[CopyStatus] = mapped_column(enum_value_column(CopyStatus), default=CopyStatus.DRAFT)
-
-    structured_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    model_structured_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-
-    provider_name: Mapped[str] = mapped_column(String(50))
-    model_name: Mapped[str] = mapped_column(String(100))
-    prompt_version: Mapped[str] = mapped_column(String(32))
-    edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-
-    product: Mapped[Product] = relationship(
-        back_populates="copy_sets",
-        foreign_keys=[product_id],
-    )
-    creative_brief: Mapped[CreativeBrief | None] = relationship(back_populates="copy_sets")
-    poster_variants: Mapped[list[PosterVariant]] = relationship(back_populates="copy_set")
-
-
-class PosterVariant(Base):
-    """已生成的海报变体，关联文案和存储路径。"""
-
-    __tablename__ = "poster_variants"
-    __table_args__ = (Index("ix_poster_variants_canonical_asset_id", "canonical_asset_id"),)
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    product_id: Mapped[str] = mapped_column(String(36), ForeignKey("products.id", ondelete="CASCADE"))
-    copy_set_id: Mapped[str] = mapped_column(String(36), ForeignKey("copy_sets.id", ondelete="CASCADE"))
-    kind: Mapped[PosterKind] = mapped_column(enum_value_column(PosterKind))
-    template_name: Mapped[str] = mapped_column(String(100))
-    mime_type: Mapped[str] = mapped_column(String(50), default="image/png")
-    storage_path: Mapped[str] = mapped_column(String(500))
-    width: Mapped[int] = mapped_column()
-    height: Mapped[int] = mapped_column()
-    canonical_asset_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey(
-            "product_image_assets.id",
-            ondelete="RESTRICT",
-            name="fk_poster_variants_canonical_asset_id",
-        ),
-        nullable=True,
-    )
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-    product: Mapped[Product] = relationship(back_populates="poster_variants")
-    copy_set: Mapped[CopySet] = relationship(back_populates="poster_variants")
-    canonical_asset: Mapped[ProductImageAsset | None] = relationship(foreign_keys=[canonical_asset_id])
-
-
 class ImageSession(Base, TimestampMixin):
     """连续生图会话，含多轮对话历史与生成结果。"""
 
@@ -2400,19 +2222,19 @@ class ImageSessionAsset(Base):
     original_filename: Mapped[str] = mapped_column(String(255))
     mime_type: Mapped[str] = mapped_column(String(100))
     storage_path: Mapped[str] = mapped_column(String(500))
-    media_object_id: Mapped[str | None] = mapped_column(
+    media_object_id: Mapped[str] = mapped_column(
         String(36),
         ForeignKey(
             "media_objects.id",
             ondelete="RESTRICT",
             name="fk_image_session_assets_media_object_id",
         ),
-        nullable=True,
+        nullable=False,
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     session: Mapped[ImageSession] = relationship(back_populates="assets")
-    media_object: Mapped[MediaObject | None] = relationship(back_populates="image_session_assets")
+    media_object: Mapped[MediaObject] = relationship(back_populates="image_session_assets")
     generated_in_round: Mapped[ImageSessionRound | None] = relationship(
         back_populates="generated_asset",
         foreign_keys="ImageSessionRound.generated_asset_id",

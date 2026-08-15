@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import time
 from io import BytesIO
 from typing import TYPE_CHECKING
 
@@ -57,40 +56,6 @@ def _enable_deletion(client: TestClient) -> None:
     assert response.status_code == 200
 
 
-def _wait_for_workflow_run(
-    client: TestClient,
-    product_id: str,
-    *,
-    run_id: str | None = None,
-    status: str | None = None,
-    timeout: float = 5.0,
-) -> dict:
-    deadline = time.monotonic() + timeout
-    last_payload: dict | None = None
-    while time.monotonic() < deadline:
-        response = client.get(f"/api/products/{product_id}/workflow")
-        assert response.status_code == 200, (
-            f"{response.status_code}: {response.text} has_session_cookie={'session' in client.cookies}"
-        )
-        last_payload = response.json()
-        observed_run = (
-            next((run for run in last_payload["runs"] if run["id"] == run_id), None)
-            if run_id is not None
-            else (last_payload["runs"][0] if last_payload["runs"] else None)
-        )
-        if observed_run and (status is None or observed_run["status"] == status):
-            if run_id is not None and last_payload["runs"][0]["id"] != run_id:
-                last_payload = {
-                    **last_payload,
-                    "runs": [observed_run, *[run for run in last_payload["runs"] if run["id"] != run_id]],
-                }
-            return last_payload
-        time.sleep(0.05)
-    assert last_payload is not None
-    target = f"run {run_id} " if run_id is not None else ""
-    raise AssertionError(f"workflow {target}did not reach {status or 'any status'}: {last_payload['runs'][:1]}")
-
-
 def _execute_workflow_queue_inline(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -102,7 +67,7 @@ def _execute_workflow_queue_inline(
     )
 
     def execute_inline(run_id: str) -> None:
-        execute_product_workflow_run(run_id, dependencies=dependencies)
+        execute_product_workflow_run(run_id)
 
     def execute_node_inline(node_run_id: str) -> None:
         execute_product_workflow_node_run(node_run_id, dependencies=dependencies)

@@ -87,7 +87,7 @@ class ImageSessionProviderFailure(RuntimeError):
 
 
 def default_image_session_chat_service_factory() -> ImageSessionChatService:
-    """Keep legacy direct application callers on the existing production adapter."""
+    """Build the production image-session adapter."""
 
     from productflow_backend.infrastructure.image.chat_service import ImageChatService
 

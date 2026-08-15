@@ -28,25 +28,28 @@ def test_product_asset_variant_urls_serve_preview_and_thumbnail(configured_env: 
     _login(client)
 
     create_product_response = client.post(
-        "/api/products",
+        "/api/v2/products",
         data={"name": "大尺寸主图样例", "category": "个护", "price": "99.00"},
-        files={"image": ("large.png", _make_demo_image_bytes_with_size(2400, 1800), "image/png")},
+        files=[
+            (
+                "images",
+                ("large.png", _make_demo_image_bytes_with_size(2400, 1800), "image/png"),
+            )
+        ],
     )
     assert create_product_response.status_code == 201
-    source_asset = next(
-        asset for asset in create_product_response.json()["source_assets"] if asset["kind"] == "original_image"
-    )
+    image_asset = create_product_response.json()["created_assets"][0]
 
-    assert source_asset["download_url"].startswith("/api/source-assets/")
-    assert source_asset["preview_url"].endswith("variant=preview")
-    assert source_asset["thumbnail_url"].endswith("variant=thumbnail")
+    assert image_asset["download_url"].startswith("/api/v2/product-image-assets/")
+    assert image_asset["preview_url"].endswith("variant=preview")
+    assert image_asset["thumbnail_url"].endswith("variant=thumbnail")
 
-    preview = client.get(source_asset["preview_url"])
+    preview = client.get(image_asset["preview_url"])
     assert preview.status_code == 200
     assert preview.headers["content-type"].startswith("image/")
     assert max(_read_image_size(preview.content)) <= 1600
 
-    thumbnail = client.get(source_asset["thumbnail_url"])
+    thumbnail = client.get(image_asset["thumbnail_url"])
     assert thumbnail.status_code == 200
     assert thumbnail.headers["content-type"].startswith("image/")
     assert max(_read_image_size(thumbnail.content)) <= 320
@@ -59,16 +62,16 @@ def test_product_create_rejects_invalid_price_and_invalid_image(configured_env: 
     _login(client)
 
     invalid_price = client.post(
-        "/api/products",
+        "/api/v2/products",
         data={"name": "护手霜", "category": "个护", "price": "abc"},
-        files={"image": ("cream.png", _make_demo_image_bytes(), "image/png")},
+        files=[("images", ("cream.png", _make_demo_image_bytes(), "image/png"))],
     )
     assert invalid_price.status_code == 400
 
     invalid_image = client.post(
-        "/api/products",
+        "/api/v2/products",
         data={"name": "护手霜", "category": "个护", "price": "59.00"},
-        files={"image": ("cream.png", b"not an image", "image/png")},
+        files=[("images", ("cream.png", b"not an image", "image/png"))],
     )
     assert invalid_image.status_code == 400
 

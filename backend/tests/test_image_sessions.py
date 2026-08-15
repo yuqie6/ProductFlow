@@ -17,9 +17,7 @@ from helpers import (
     _read_image_size,
 )
 
-from productflow_backend.config import get_settings
 from productflow_backend.infrastructure.db.models import (
-    AppSetting,
     ImageSession,
     ImageSessionAsset,
     ImageSessionGenerationTask,
@@ -27,6 +25,31 @@ from productflow_backend.infrastructure.db.models import (
     ProviderBinding,
     ProviderProfile,
 )
+
+
+def _configure_openai_images_binding(db_session) -> None:
+    profile = ProviderProfile(
+        name="OpenAI Images",
+        provider_type="openai_compatible",
+        base_url=None,
+        api_key="demo-api-key",
+        capabilities_json=["image_images"],
+        default_models_json={},
+        config_json={},
+        enabled=True,
+    )
+    db_session.add(profile)
+    db_session.flush()
+    db_session.add(
+        ProviderBinding(
+            purpose="image",
+            provider_kind="openai_images",
+            provider_profile_id=profile.id,
+            model_settings_json={"model": "gpt-image-1"},
+            config_json={},
+        )
+    )
+    db_session.commit()
 
 
 def _variant_paths(path: Path) -> list[Path]:
@@ -427,28 +450,6 @@ def test_image_session_generation_accepts_per_request_tool_options_and_exposes_p
     task = db_session.get(ImageSessionGenerationTask, payload["generation_tasks"][0]["id"])
     assert task is not None
     assert task.tool_options == expected_options
-
-    db_session.add(
-        AppSetting(
-            key="image_tool_allowed_fields",
-            value="model,quality,output_format,output_compression,moderation,action,input_fidelity,partial_images,n",
-        )
-    )
-    db_session.commit()
-
-    explicit_session = client.post("/api/image-sessions", json={"title": "显式允许 n"})
-    assert explicit_session.status_code == 201
-    explicitly_allowed = client.post(
-        f"/api/image-sessions/{explicit_session.json()['id']}/generate",
-        json={
-            "prompt": "显式允许 n",
-            "size": "1024x1024",
-            "tool_options": {"quality": "high", "n": 2},
-        },
-    )
-    assert explicitly_allowed.status_code == 202
-    assert calls[-1] == {"quality": "high"}
-    assert explicitly_allowed.json()["generation_tasks"][-1]["tool_options"] == {"quality": "high"}
 
     invalid = client.post(
         f"/api/image-sessions/{created.json()['id']}/generate",
@@ -1762,10 +1763,7 @@ def test_image_session_openai_images_uses_selected_base_and_references_only(
         generate_image_session_round,
     )
 
-    monkeypatch.setenv("IMAGE_PROVIDER_KIND", "openai_images")
-    monkeypatch.setenv("IMAGE_API_KEY", "demo-api-key")
-    monkeypatch.setenv("IMAGE_GENERATE_MODEL", "gpt-image-1")
-    get_settings.cache_clear()
+    _configure_openai_images_binding(db_session)
 
     calls: list[dict] = []
 
@@ -2114,17 +2112,7 @@ def test_image_session_openai_images_candidate_count_sets_provider_batch_n(
 ) -> None:
     from productflow_backend.presentation.api import create_app
 
-    monkeypatch.setenv("IMAGE_PROVIDER_KIND", "openai_images")
-    monkeypatch.setenv("IMAGE_API_KEY", "demo-api-key")
-    monkeypatch.setenv("IMAGE_GENERATE_MODEL", "gpt-image-1")
-    get_settings.cache_clear()
-    db_session.add(
-        AppSetting(
-            key="image_tool_allowed_fields",
-            value="model,quality,output_format,output_compression,moderation,action,input_fidelity,partial_images,n",
-        )
-    )
-    db_session.commit()
+    _configure_openai_images_binding(db_session)
 
     calls: list[dict] = []
     encoded_result = b64encode(_make_demo_image_bytes()).decode("utf-8")
@@ -2341,12 +2329,12 @@ def test_image_session_result_can_write_back_to_product(configured_env: Path) ->
     _login(client)
 
     create_product_response = client.post(
-        "/api/products",
+        "/api/v2/products",
         data={"name": "护手霜", "category": "个护", "price": "59.00"},
-        files={"image": ("cream.png", _make_demo_image_bytes(), "image/png")},
+        files={"images": ("cream.png", _make_demo_image_bytes(), "image/png")},
     )
     assert create_product_response.status_code == 201
-    product_id = create_product_response.json()["id"]
+    product_id = create_product_response.json()["product"]["id"]
 
     created = client.post("/api/image-sessions", json={})
     assert created.status_code == 201
@@ -2360,34 +2348,26 @@ def test_image_session_result_can_write_back_to_product(configured_env: Path) ->
     generated_payload = generated.json()
     generated_asset_id = generated_payload["rounds"][-1]["generated_asset"]["id"]
 
-    attach_reference = client.post(
-        f"/api/image-sessions/{session_id}/assets/{generated_asset_id}/attach-to-product",
-        json={"target": "reference", "product_id": product_id},
+    attached = client.post(
+        f"/api/v2/image-sessions/{session_id}/assets/{generated_asset_id}/attach-to-product",
+        json={"product_id": product_id},
     )
-    assert attach_reference.status_code == 200
-    assert attach_reference.json()["message"] == "已加入商品参考图"
-
-    product_after_reference = client.get(f"/api/products/{product_id}")
-    assert product_after_reference.status_code == 200
-    reference_assets = [
-        asset for asset in product_after_reference.json()["source_assets"] if asset["kind"] == "reference_image"
-    ]
-    assert len(reference_assets) >= 1
-
-    attach_main = client.post(
-        f"/api/image-sessions/{session_id}/assets/{generated_asset_id}/attach-to-product",
-        json={"target": "main_source", "product_id": product_id},
+    attached_again = client.post(
+        f"/api/v2/image-sessions/{session_id}/assets/{generated_asset_id}/attach-to-product",
+        json={"product_id": product_id},
     )
-    assert attach_main.status_code == 200
-    assert attach_main.json()["message"] == "已设为商品主图"
+    assert attached.status_code == 200
+    assert attached_again.status_code == 200
+    assert attached_again.json()["id"] == attached.json()["id"]
+    assert attached.json()["origin_type"] == "image_session_attach"
 
-    product_after_main = client.get(f"/api/products/{product_id}")
-    assert product_after_main.status_code == 200
-    original_assets = [
-        asset for asset in product_after_main.json()["source_assets"] if asset["kind"] == "original_image"
-    ]
-    all_reference_assets = [
-        asset for asset in product_after_main.json()["source_assets"] if asset["kind"] == "reference_image"
-    ]
-    assert len(original_assets) == 1
-    assert len(all_reference_assets) >= 2
+    gallery = client.get(f"/api/v2/products/{product_id}/image-assets")
+    assert gallery.status_code == 200
+    assert attached.json()["id"] in {asset["id"] for asset in gallery.json()["items"]}
+
+    set_cover = client.put(
+        f"/api/v2/products/{product_id}/cover",
+        json={"asset_id": attached.json()["id"]},
+    )
+    assert set_cover.status_code == 200
+    assert set_cover.json()["cover_image_asset_id"] == attached.json()["id"]

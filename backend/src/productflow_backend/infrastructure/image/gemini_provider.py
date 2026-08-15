@@ -9,22 +9,15 @@ from typing import Any
 from google import genai
 from google.genai import types
 
-from productflow_backend.application.contracts import PosterGenerationInput
-from productflow_backend.application.runtime_settings import get_runtime_settings
-from productflow_backend.domain.enums import PosterKind
 from productflow_backend.infrastructure.image.base import (
-    GeneratedImagePayload,
     ImageProvider,
     WorkflowGeneratedImage,
     WorkflowImageReference,
     WorkflowImageRequest,
     WorkflowImageResult,
-    image_dimensions_from_bytes,
     map_generation_spec_to_pixel_size,
     parse_size,
 )
-from productflow_backend.infrastructure.image.responses_provider import build_responses_reference_images_from_poster
-from productflow_backend.infrastructure.prompts import render_poster_image_prompt
 from productflow_backend.infrastructure.provider_config import (
     ResolvedImageProviderConfig,
     resolve_image_provider_config,
@@ -296,37 +289,6 @@ class GoogleGeminiImageProvider(ImageProvider):
     def __init__(self, provider_config: ResolvedImageProviderConfig | None = None) -> None:
         self.provider_config = provider_config or resolve_image_provider_config()
 
-    def generate_poster_image(
-        self,
-        poster: PosterGenerationInput,
-        kind: PosterKind,
-    ) -> tuple[GeneratedImagePayload, str]:
-        settings = get_runtime_settings()
-        size = poster.image_size or (
-            settings.image_main_image_size if kind == PosterKind.MAIN_IMAGE else settings.image_promo_poster_size
-        )
-        prompt = self._build_prompt(poster, kind, size, settings)
-        result = GoogleGeminiImageClient(self.provider_config).generate_image(
-            prompt=prompt,
-            size=size,
-            reference_images=self._build_reference_images_from_poster(poster),
-        )
-        width, height = parse_size(size)
-        dims = image_dimensions_from_bytes(result.bytes_data)
-        if dims:
-            width, height = dims
-        payload = GeneratedImagePayload(
-            kind=kind,
-            bytes_data=result.bytes_data,
-            mime_type=result.mime_type,
-            width=width,
-            height=height,
-            variant_label="v1",
-            provider_response_id=result.provider_response_id,
-            provider_output_json=result.provider_output_json,
-        )
-        return payload, result.model_name
-
     def generate_workflow_image(self, request: WorkflowImageRequest) -> WorkflowImageResult:
         size = map_generation_spec_to_pixel_size(request.generation_spec)
         result = GoogleGeminiImageClient(self.provider_config).generate_image(
@@ -371,27 +333,6 @@ class GoogleGeminiImageProvider(ImageProvider):
             provider_request_json=result.provider_request_json,
             provider_output_json=result.provider_output_json,
         )
-
-    def _build_prompt(self, poster: PosterGenerationInput, kind: PosterKind, size: str, settings: Any) -> str:
-        return render_poster_image_prompt(
-            poster,
-            kind,
-            size,
-            image_template=settings.prompt_poster_image_template,
-            edit_template=settings.prompt_poster_image_edit_template,
-            reference_policy=settings.prompt_poster_image_reference_policy,
-        )
-
-    def _build_reference_images_from_poster(self, poster: PosterGenerationInput) -> list[GoogleGeminiReferenceImage]:
-        return [
-            GoogleGeminiReferenceImage(
-                bytes_data=reference.bytes_data,
-                mime_type=reference.mime_type,
-                filename=reference.filename,
-            )
-            for reference in build_responses_reference_images_from_poster(poster)
-        ]
-
 
 def _gemini_reference(reference: WorkflowImageReference) -> GoogleGeminiReferenceImage:
     return GoogleGeminiReferenceImage(

@@ -641,7 +641,7 @@ def serialize_canvas_mutation(
 def serialize_workflow_node_run_v2(node_run: WorkflowNodeRun) -> WorkflowNodeRunV2Response:
     workflow = node_run.workflow_run.workflow
     if workflow.schema_version != 2 or node_run.node.schema_version != 2:
-        raise ValueError("v2 node run projection 收到了 schema-v1 运行")
+        raise ValueError("v2 node run projection 收到了不支持的 schema 版本")
     if workflow.visual_system_version_id is None:
         raise ValueError("v2 node run projection 缺少 VisualSystemVersion")
 
@@ -700,7 +700,7 @@ def serialize_workflow_node_run_v2(node_run: WorkflowNodeRun) -> WorkflowNodeRun
 
 def serialize_workflow_run_v2(run: WorkflowRun) -> WorkflowRunV2Response:
     if run.workflow.schema_version != 2:
-        raise ValueError("v2 workflow run projection 收到了 schema-v1 运行")
+        raise ValueError("v2 workflow run projection 收到了不支持的 schema 版本")
     return WorkflowRunV2Response(
         id=run.id,
         schema_version=2,

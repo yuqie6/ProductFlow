@@ -22,10 +22,8 @@ from productflow_backend.infrastructure.db.models import (
     ImageSessionAsset,
     LegacyWorkflowArchiveAsset,
     MediaObject,
-    PosterVariant,
     Product,
     ProductImageAsset,
-    SourceAsset,
     VisualSystemVersionReference,
     WorkflowImageGenerationRecord,
     WorkflowImageGenerationReference,
@@ -48,15 +46,6 @@ class VerifiedImageMetadata:
     width: int
     height: int
     sha256: str
-
-
-@dataclass(frozen=True, slots=True)
-class MediaVerificationBatchResult:
-    processed: int
-    verified: int
-    missing: int
-    failed: int
-    next_cursor: str | None
 
 
 def inspect_image_bytes(content: bytes, *, expected_mime_type: str | None = None) -> VerifiedImageMetadata:
@@ -316,46 +305,6 @@ def _media_has_references(session: Session, media_object_id: str) -> bool:
     )
 
 
-def ensure_image_session_asset_media(
-    session: Session,
-    *,
-    asset: ImageSessionAsset,
-    storage: LocalStorage | None = None,
-) -> MediaObject:
-    if asset.media_object_id is not None:
-        media = session.get(MediaObject, asset.media_object_id)
-        if media is None:
-            raise ConflictError("会话图片引用的媒体对象不存在")
-        if media.verification_status == MediaVerificationStatus.MISSING:
-            raise BusinessValidationError("会话图片文件缺失，不能附加到商品")
-        return media
-
-    media = session.scalar(select(MediaObject).where(MediaObject.storage_path == asset.storage_path))
-    if media is None:
-        storage = storage or LocalStorage()
-        try:
-            content = storage.resolve(asset.storage_path).read_bytes()
-        except FileNotFoundError as exc:
-            raise BusinessValidationError("会话图片文件缺失，不能附加到商品") from exc
-        metadata = inspect_image_bytes(content)
-        media = MediaObject(
-            storage_path=asset.storage_path,
-            mime_type=metadata.mime_type,
-            byte_size=metadata.byte_size,
-            width=metadata.width,
-            height=metadata.height,
-            sha256=metadata.sha256,
-            verification_status=MediaVerificationStatus.VERIFIED,
-            created_at=asset.created_at,
-            verified_at=now_utc(),
-        )
-        session.add(media)
-        session.flush()
-    asset.media_object_id = media.id
-    asset.mime_type = media.mime_type
-    return media
-
-
 def prune_unreferenced_media_objects(
     session: Session,
     media_object_ids: set[str],
@@ -404,66 +353,23 @@ def delete_product_image_asset(
     return product_id
 
 
-def delete_legacy_source_with_canonical_asset(
-    session: Session,
-    *,
-    source_asset: SourceAsset,
-    storage: LocalStorage | None = None,
-) -> bool:
-    """删除已映射的旧 SourceAsset 及其同一 canonical 逻辑资产。"""
-    if source_asset.canonical_asset_id is None:
-        return False
-    asset = get_product_image_asset(session, source_asset.canonical_asset_id)
-    ensure_product_image_asset_not_referenced(
-        session,
-        asset_id=asset.id,
-        excluded_source_asset_id=source_asset.id,
-    )
-
-    product_id = source_asset.product_id
-    media = asset.media_object
-    storage_path = media.storage_path
-    session.delete(source_asset)
-    session.delete(asset)
-    session.flush()
-    deleted_media = prune_unreferenced_media_objects(session, {media.id})
-    product = session.get(Product, product_id)
-    if product is not None:
-        product.updated_at = now_utc()
-    session.commit()
-    if deleted_media:
-        storage = storage or LocalStorage()
-        best_effort_storage_delete(
-            lambda: storage.delete_image_with_variants(storage_path),
-            target=f"media_object_id={media.id} path={storage_path}",
-        )
-    return True
-
-
 def ensure_product_image_asset_not_referenced(
     session: Session,
     *,
     asset_id: str,
-    excluded_source_asset_id: str | None = None,
 ) -> None:
     if session.scalar(select(Product.id).where(Product.cover_image_asset_id == asset_id).limit(1)) is not None:
         raise ConflictError("商品图片仍被设为封面，不能删除")
     if session.scalar(select(ProductImageAsset.id).where(ProductImageAsset.parent_asset_id == asset_id).limit(1)):
         raise ConflictError("商品图片仍有派生图片，不能删除")
-    source_query = select(SourceAsset.id).where(SourceAsset.canonical_asset_id == asset_id)
-    if excluded_source_asset_id is not None:
-        source_query = source_query.where(SourceAsset.id != excluded_source_asset_id)
-    if session.scalar(source_query.limit(1)):
-        message = (
-            "商品图片仍被其他旧源素材归档引用，不能删除"
-            if excluded_source_asset_id is not None
-            else "商品图片仍被旧源素材归档引用，不能删除"
-        )
-        raise ConflictError(message)
-    if session.scalar(select(PosterVariant.id).where(PosterVariant.canonical_asset_id == asset_id).limit(1)):
-        raise ConflictError("商品图片仍被旧海报归档引用，不能删除")
     if session.scalar(select(WorkflowNode.id).where(WorkflowNode.bound_image_asset_id == asset_id).limit(1)):
         raise ConflictError("商品图片仍被工作流节点绑定，不能删除")
+    if session.scalar(
+        select(LegacyWorkflowArchiveAsset.id)
+        .where(LegacyWorkflowArchiveAsset.product_image_asset_id == asset_id)
+        .limit(1)
+    ):
+        raise ConflictError("商品图片仍被旧工作流归档引用，不能删除")
     if session.scalar(
         select(VisualSystemVersionReference.id)
         .where(VisualSystemVersionReference.asset_id == asset_id)
@@ -497,84 +403,3 @@ def ensure_product_image_asset_not_referenced(
         .limit(1)
     ):
         raise ConflictError("商品图片仍被交付派生任务引用，不能删除")
-    if session.scalar(
-        select(LegacyWorkflowArchiveAsset.id)
-        .where(LegacyWorkflowArchiveAsset.product_image_asset_id == asset_id)
-        .limit(1)
-    ):
-        raise ConflictError("商品图片仍被旧工作流归档引用，不能删除")
-
-
-def verify_pending_media_objects(
-    session: Session,
-    *,
-    storage: LocalStorage | None = None,
-    batch_size: int = 100,
-    after_id: str | None = None,
-    dry_run: bool = False,
-) -> MediaVerificationBatchResult:
-    if not 1 <= batch_size <= 1000:
-        raise BusinessValidationError("batch_size 必须在 1-1000 之间")
-    storage = storage or LocalStorage()
-    query = (
-        select(MediaObject)
-        .where(MediaObject.verification_status == MediaVerificationStatus.LEGACY_PENDING)
-        .order_by(MediaObject.id.asc())
-        .limit(batch_size)
-    )
-    if after_id is not None:
-        query = query.where(MediaObject.id > after_id)
-    media_objects = list(session.scalars(query).all())
-    verified = 0
-    missing = 0
-    failed = 0
-    for media in media_objects:
-        try:
-            content = storage.resolve(media.storage_path).read_bytes()
-            metadata = inspect_image_bytes(content)
-        except FileNotFoundError:
-            if dry_run:
-                missing += 1
-            else:
-                result = session.execute(
-                    update(MediaObject)
-                    .where(
-                        MediaObject.id == media.id,
-                        MediaObject.verification_status == MediaVerificationStatus.LEGACY_PENDING,
-                    )
-                    .values(verification_status=MediaVerificationStatus.MISSING)
-                )
-                missing += result.rowcount
-            continue
-        except (BusinessValidationError, OSError, ValueError):
-            failed += 1
-            continue
-        if dry_run:
-            verified += 1
-        else:
-            result = session.execute(
-                update(MediaObject)
-                .where(
-                    MediaObject.id == media.id,
-                    MediaObject.verification_status == MediaVerificationStatus.LEGACY_PENDING,
-                )
-                .values(
-                    mime_type=metadata.mime_type,
-                    byte_size=metadata.byte_size,
-                    width=metadata.width,
-                    height=metadata.height,
-                    sha256=metadata.sha256,
-                    verification_status=MediaVerificationStatus.VERIFIED,
-                    verified_at=now_utc(),
-                )
-            )
-            verified += result.rowcount
-    if not dry_run:
-        session.commit()
-    return MediaVerificationBatchResult(
-        processed=len(media_objects),
-        verified=verified,
-        missing=missing,
-        failed=failed,
-        next_cursor=media_objects[-1].id if media_objects else None,
-    )

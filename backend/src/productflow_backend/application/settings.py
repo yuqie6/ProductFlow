@@ -16,18 +16,14 @@ from productflow_backend.config import (
     Settings,
     build_settings_with_overrides,
     normalize_config_values,
-    normalize_image_generation_size,
 )
 from productflow_backend.infrastructure.db.models import AppSetting, ProviderBinding, ProviderProfile
 from productflow_backend.infrastructure.provider_config import (
-    AGENT_PURPOSE,
-    PROMPT_PURPOSE,
     PROVIDER_PURPOSES,
     PROVIDER_TYPES,
     UNSET_PROVIDER_FIELD,
     capability_for_provider_kind,
-    ensure_provider_config_bootstrapped,
-    is_real_image_provider_kind,
+    ensure_provider_bindings_initialized,
     list_provider_bindings,
     list_provider_profiles,
     normalize_provider_binding_model_settings,
@@ -50,10 +46,9 @@ from productflow_backend.infrastructure.provider_config import (
     update_provider_profile as persist_updated_provider_profile,
 )
 
-SETTINGS_EXPORT_SCHEMA_VERSION = 2
-SETTINGS_EXPORT_COMPATIBILITY = "productflow-settings-v2"
-LEGACY_SETTINGS_EXPORT_CONTRACTS = {(1, "productflow-settings-v1")}
-REQUIRED_PROVIDER_PURPOSES = {"text", "image"}
+SETTINGS_EXPORT_SCHEMA_VERSION = 3
+SETTINGS_EXPORT_COMPATIBILITY = "productflow-settings-v3"
+REQUIRED_PROVIDER_PURPOSES = PROVIDER_PURPOSES
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,12 +174,12 @@ def get_provider_config_view(session: Session) -> ProviderConfigView:
     )
 
 
-def bootstrap_provider_config_if_available() -> bool:
-    """Run the one-time legacy provider bootstrap when its tables already exist."""
+def initialize_provider_bindings_if_available() -> bool:
+    """Initialize current-purpose bindings when provider tables already exist."""
 
     if not provider_config_tables_available():
         return False
-    ensure_provider_config_bootstrapped()
+    ensure_provider_bindings_initialized()
     return True
 
 
@@ -252,7 +247,7 @@ def create_provider_profile(
     enabled: bool,
 ) -> ProviderProfileView:
     def apply() -> ProviderProfile:
-        ensure_provider_config_bootstrapped(session, commit=False)
+        ensure_provider_bindings_initialized(session, commit=False)
         return persist_provider_profile(
             session,
             name=name,
@@ -286,7 +281,7 @@ def update_provider_profile(
     enabled: bool | None,
 ) -> ProviderProfileView:
     def apply() -> ProviderProfile:
-        ensure_provider_config_bootstrapped(session, commit=False)
+        ensure_provider_bindings_initialized(session, commit=False)
         return persist_updated_provider_profile(
             session,
             profile_id,
@@ -307,7 +302,7 @@ def update_provider_profile(
 
 def archive_provider_profile(session: Session, profile_id: str) -> ProviderProfileView:
     def apply() -> ProviderProfile:
-        ensure_provider_config_bootstrapped(session, commit=False)
+        ensure_provider_bindings_initialized(session, commit=False)
         return persist_archived_provider_profile(session, profile_id, commit=False)
 
     profile = _run_transaction(session, apply)
@@ -324,7 +319,7 @@ def update_provider_binding(
     config: dict[str, Any],
 ) -> ProviderBindingView:
     def apply() -> ProviderBinding:
-        ensure_provider_config_bootstrapped(session, commit=False)
+        ensure_provider_bindings_initialized(session, commit=False)
         binding = persist_provider_binding(
             session,
             purpose=purpose,
@@ -334,8 +329,6 @@ def update_provider_binding(
             config=config,
             commit=False,
         )
-        if binding.purpose == "image" and is_real_image_provider_kind(binding.provider_kind):
-            _upsert_app_setting(session, key="poster_generation_mode", value="generated")
         session.flush()
         return binding
 
@@ -344,23 +337,14 @@ def update_provider_binding(
 
 
 def preview_settings_import(document: SettingsImportDocument) -> SettingsImportBundle:
-    supported_versions = {SETTINGS_EXPORT_SCHEMA_VERSION, *(version for version, _ in LEGACY_SETTINGS_EXPORT_CONTRACTS)}
-    if document.schema_version not in supported_versions:
+    if document.schema_version != SETTINGS_EXPORT_SCHEMA_VERSION:
         raise ValueError("配置文件版本不支持")
-    contract = (document.schema_version, document.compatibility)
-    if contract != (SETTINGS_EXPORT_SCHEMA_VERSION, SETTINGS_EXPORT_COMPATIBILITY) and contract not in (
-        LEGACY_SETTINGS_EXPORT_CONTRACTS
-    ):
+    if document.compatibility != SETTINGS_EXPORT_COMPATIBILITY:
         raise ValueError("配置文件兼容标识不支持")
 
     normalized_runtime_config = _normalize_runtime_import_config(document.runtime_config)
     profiles = _normalize_import_profiles(document.provider_profiles)
     bindings = _normalize_import_bindings(document.provider_bindings, profiles)
-    if any(
-        binding["purpose"] == "image" and is_real_image_provider_kind(binding["provider_kind"])
-        for binding in bindings
-    ):
-        normalized_runtime_config["poster_generation_mode"] = "generated"
     preview = SettingsImportPreview(
         schema_version=document.schema_version,
         runtime_config_count=len(normalized_runtime_config),
@@ -443,16 +427,6 @@ def _upsert_app_setting(session: Session, *, key: str, value: str) -> None:
 
 def _validate_runtime_settings(overrides: dict[str, str]) -> None:
     settings = build_settings_with_overrides(overrides)
-    normalize_image_generation_size(
-        settings.image_main_image_size,
-        label="主图尺寸",
-        max_dimension=settings.image_generation_max_dimension,
-    )
-    normalize_image_generation_size(
-        settings.image_promo_poster_size,
-        label="促销海报尺寸",
-        max_dimension=settings.image_generation_max_dimension,
-    )
     if not settings.allowed_image_mime_types:
         raise ValueError("允许图片 MIME 不能为空")
 
@@ -520,7 +494,7 @@ def _normalize_import_bindings(
             raise ValueError("供应商用途绑定不能重复")
         seen_purposes.add(purpose)
         if purpose not in PROVIDER_PURPOSES:
-            raise ValueError("用途必须是 text、prompt、agent 或 image")
+            raise ValueError("用途必须是 prompt、agent 或 image")
         provider_kind = binding["provider_kind"]
         allowed_kinds = provider_kinds_for_purpose(purpose)
         if provider_kind not in allowed_kinds:
@@ -563,51 +537,7 @@ def _normalize_import_bindings(
     missing_purposes = REQUIRED_PROVIDER_PURPOSES - seen_purposes
     if missing_purposes:
         raise ValueError(f"配置文件缺少供应商绑定: {', '.join(sorted(missing_purposes))}")
-    text_binding = next(binding for binding in normalized if binding["purpose"] == "text")
-    if PROMPT_PURPOSE not in seen_purposes:
-        prompt_binding = _derive_compat_text_response_binding(
-            text_binding,
-            purpose=PROMPT_PURPOSE,
-            model_keys=("copy_model",),
-        )
-        if prompt_binding is not None:
-            normalized.append(prompt_binding)
-    if AGENT_PURPOSE not in seen_purposes:
-        agent_binding = _derive_compat_text_response_binding(
-            text_binding,
-            purpose=AGENT_PURPOSE,
-            model_keys=("brief_model", "copy_model"),
-        )
-        if agent_binding is not None:
-            normalized.append(agent_binding)
     return normalized
-
-
-def _derive_compat_text_response_binding(
-    text_binding: dict[str, Any],
-    *,
-    purpose: str,
-    model_keys: tuple[str, ...],
-) -> dict[str, Any] | None:
-    text_models = text_binding["model_settings_json"]
-    model = next(
-        (
-            normalized_model
-            for key in model_keys
-            if (normalized_model := _normalize_optional_text(text_models.get(key))) is not None
-        ),
-        None,
-    )
-    if model is None:
-        return None
-    is_openai = text_binding["provider_kind"] == "openai"
-    return {
-        "purpose": purpose,
-        "provider_kind": "openai" if is_openai else "mock",
-        "provider_profile_id": text_binding["provider_profile_id"] if is_openai else None,
-        "model_settings_json": {"model": model},
-        "config_json": {},
-    }
 
 
 def _config_definitions():

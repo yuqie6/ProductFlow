@@ -3,14 +3,6 @@ from __future__ import annotations
 from enum import StrEnum
 
 
-class SourceAssetKind(StrEnum):
-    """商品素材类型：原始主图 / 参考图 / 处理后商品图。"""
-
-    ORIGINAL_IMAGE = "original_image"
-    REFERENCE_IMAGE = "reference_image"
-    PROCESSED_PRODUCT_IMAGE = "processed_product_image"
-
-
 class ImageSessionAssetKind(StrEnum):
     """生图会话附件：用户上传参考图 / AI 生成图。"""
 
@@ -22,8 +14,8 @@ class MediaVerificationStatus(StrEnum):
     """媒体对象的实际文件核验状态。"""
 
     VERIFIED = "verified"
-    LEGACY_PENDING = "legacy_pending"
     MISSING = "missing"
+    LEGACY_PENDING = "legacy_pending"
 
 
 class ProductImageOriginType(StrEnum):
@@ -45,35 +37,11 @@ class JobStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
-class CopyStatus(StrEnum):
-    """文案状态：草稿(可编辑) / 已确认(锁定用于海报)。"""
-
-    DRAFT = "draft"
-    CONFIRMED = "confirmed"
-
-
-class PosterKind(StrEnum):
-    """海报品种：商品主图 / 促销海报。"""
-
-    MAIN_IMAGE = "main_image"
-    PROMO_POSTER = "promo_poster"
-
-
-class ProductWorkflowState(StrEnum):
-    """商品流程推导状态：素材/文案/海报/失败。"""
-
-    DRAFT = "draft"
-    COPY_READY = "copy_ready"
-    POSTER_READY = "poster_ready"
-    FAILED = "failed"
-
-
 class WorkflowNodeType(StrEnum):
     """商品工作流节点类型。"""
 
     PRODUCT_CONTEXT = "product_context"
     REFERENCE_IMAGE = "reference_image"
-    COPY_GENERATION = "copy_generation"
     PROMPT_GENERATION = "prompt_generation"
     IMAGE_GENERATION = "image_generation"
 

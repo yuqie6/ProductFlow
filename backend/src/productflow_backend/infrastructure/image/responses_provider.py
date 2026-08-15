@@ -5,43 +5,33 @@ from base64 import b64encode
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from time import sleep
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 from openai import OpenAI
 
-from productflow_backend.application.contracts import PosterGenerationInput
 from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.config import (
     IMAGE_TOOL_FIELD_KEYS,
     filter_image_tool_options,
     parse_image_tool_allowed_fields,
 )
-from productflow_backend.domain.enums import PosterKind
 from productflow_backend.infrastructure.image.base import (
-    GeneratedImagePayload,
     ImageProvider,
     WorkflowGeneratedImage,
     WorkflowImageReference,
     WorkflowImageRequest,
     WorkflowImageResult,
     decode_b64_image,
-    image_dimensions_from_bytes,
     map_generation_spec_to_openai_size,
-    parse_size,
 )
-from productflow_backend.infrastructure.prompts import render_poster_image_prompt
 from productflow_backend.infrastructure.provider_config import (
     ResolvedImageProviderConfig,
     resolve_image_provider_config,
 )
 
-RESPONSES_UNSUPPORTED_IMAGE_TOOL_FIELD_KEYS = {"n"}
-IMAGE_TOOL_OPTIONAL_FIELD_KEYS = tuple(
-    key for key in IMAGE_TOOL_FIELD_KEYS if key not in RESPONSES_UNSUPPORTED_IMAGE_TOOL_FIELD_KEYS
-)
+IMAGE_TOOL_OPTIONAL_FIELD_KEYS = IMAGE_TOOL_FIELD_KEYS
 RESPONSES_BACKGROUND_POLL_INTERVAL_SECONDS = 2.0
 RESPONSES_IN_PROGRESS_STATUSES = {"queued", "in_progress"}
 RESPONSES_TERMINAL_FAILURE_STATUSES = {"failed", "cancelled", "canceled", "incomplete", "expired"}
@@ -120,15 +110,6 @@ def _sanitize_base64_images(item: Any) -> Any:
     return item
 
 
-def _mime_type_for_path(path: Path) -> str:
-    suffix = path.suffix.lower()
-    if suffix in {".jpg", ".jpeg"}:
-        return "image/jpeg"
-    if suffix == ".webp":
-        return "image/webp"
-    return "image/png"
-
-
 def decode_reference_data_url(data_url: str) -> ResponsesReferenceImage:
     if not data_url.startswith("data:") or ";base64," not in data_url:
         raise RuntimeError("对话中的参考图不是合法 data URL")
@@ -143,35 +124,6 @@ def build_responses_reference_images_from_data_urls(
     limit: int,
 ) -> list[ResponsesReferenceImage]:
     return [decode_reference_data_url(data_url) for data_url in data_urls[:limit]]
-
-
-def build_responses_reference_images_from_poster(poster: PosterGenerationInput) -> list[ResponsesReferenceImage]:
-    references: list[ResponsesReferenceImage] = []
-    seen_keys: set[str] = set()
-
-    def add_path(path: Path, *, mime_type: str, filename: str | None = None) -> None:
-        resolved = path.resolve()
-        key = str(resolved)
-        if key in seen_keys:
-            return
-        seen_keys.add(key)
-        references.append(
-            ResponsesReferenceImage(
-                bytes_data=resolved.read_bytes(),
-                mime_type=mime_type,
-                filename=filename or resolved.name,
-            )
-        )
-
-    if poster.source_image is not None:
-        add_path(
-            poster.source_image,
-            mime_type=_mime_type_for_path(poster.source_image),
-            filename=poster.source_image.name,
-        )
-    for reference in poster.reference_images:
-        add_path(reference.path, mime_type=reference.mime_type, filename=reference.filename)
-    return references
 
 
 def _mime_type_from_output_format(value: Any) -> str | None:
@@ -725,48 +677,8 @@ class OpenAIResponsesImageProvider(ImageProvider):
     prompt_version = OpenAIResponsesImageClient.prompt_version
 
     def __init__(self, provider_config: ResolvedImageProviderConfig | None = None) -> None:
-        settings = get_runtime_settings()
         self.provider_config = provider_config or resolve_image_provider_config()
-        self.model = self.provider_config.model
-        self.main_image_size = settings.image_main_image_size
-        self.promo_poster_size = settings.image_promo_poster_size
-        self.poster_image_template = settings.prompt_poster_image_template
-        self.poster_image_edit_template = settings.prompt_poster_image_edit_template
-        self.poster_image_reference_policy = settings.prompt_poster_image_reference_policy
         self.client = OpenAIResponsesImageClient(self.provider_config)
-
-    def generate_poster_image(
-        self,
-        poster: PosterGenerationInput,
-        kind: PosterKind,
-    ) -> tuple[GeneratedImagePayload, str]:
-        size = poster.image_size or (self.main_image_size if kind == PosterKind.MAIN_IMAGE else self.promo_poster_size)
-        width, height = parse_size(size)
-        prompt = self._build_prompt(poster, kind, size)
-        result = self.client.generate_image(
-            prompt=prompt,
-            size=size,
-            reference_images=build_responses_reference_images_from_poster(poster),
-            tool_options=poster.tool_options,
-        )
-        actual_dimensions = image_dimensions_from_bytes(result.bytes_data)
-        if actual_dimensions is not None:
-            width, height = actual_dimensions
-        variant_label = "generated-main" if kind == PosterKind.MAIN_IMAGE else "generated-promo"
-        return (
-            GeneratedImagePayload(
-                kind=kind,
-                bytes_data=result.bytes_data,
-                mime_type=result.mime_type,
-                width=width,
-                height=height,
-                variant_label=variant_label,
-                provider_response_id=result.provider_response_id,
-                provider_response_status=str(result.provider_output_json.get("status", "") or "") or None,
-                provider_output_json=result.provider_output_json,
-            ),
-            self.model,
-        )
 
     def generate_workflow_image(self, request: WorkflowImageRequest) -> WorkflowImageResult:
         size = map_generation_spec_to_openai_size(request.generation_spec)
@@ -829,22 +741,6 @@ class OpenAIResponsesImageProvider(ImageProvider):
             provider_request_json=result.provider_request_json,
             provider_output_json=result.provider_output_json,
         )
-
-    def _build_prompt(
-        self,
-        poster: PosterGenerationInput,
-        kind: PosterKind,
-        size: str,
-    ) -> str:
-        return render_poster_image_prompt(
-            poster,
-            kind,
-            size,
-            image_template=self.poster_image_template,
-            edit_template=self.poster_image_edit_template,
-            reference_policy=self.poster_image_reference_policy,
-        )
-
 
 def _responses_reference(reference: WorkflowImageReference) -> ResponsesReferenceImage:
     return ResponsesReferenceImage(

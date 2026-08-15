@@ -193,7 +193,7 @@ def materialize_workflow_draft(
             .with_for_update()
         )
         if active_workflow is not None and active_workflow.schema_version != 2:
-            raise ConflictError("商品仍有 active v1 工作流，需先完成历史归档切换")
+            raise ConflictError("active 工作流 schema version 不受支持")
         latest_revision = (
             session.scalar(
                 select(func.max(ProductWorkflow.revision)).where(

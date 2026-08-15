@@ -23,10 +23,6 @@ def configured_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/9")
     monkeypatch.setenv("STORAGE_ROOT", str(storage_root))
     monkeypatch.setenv("LOG_DIR", str(tmp_path / "logs"))
-    monkeypatch.setenv("TEXT_PROVIDER_KIND", "mock")
-    monkeypatch.setenv("IMAGE_PROVIDER_KIND", "mock")
-    monkeypatch.setenv("POSTER_GENERATION_MODE", "template")
-
     get_settings.cache_clear()
     get_engine.cache_clear()
     get_session_factory.cache_clear()

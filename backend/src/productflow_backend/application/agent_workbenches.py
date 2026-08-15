@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from sqlalchemy import exists, select
 from sqlalchemy.orm import Session
 
 from productflow_backend.application.agent_conversations import agent_conversation_query
@@ -16,7 +15,6 @@ from productflow_backend.domain.errors import ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
     Product,
-    ProductWorkflow,
     WorkflowDraft,
 )
 
@@ -30,14 +28,7 @@ class AgentV2WorkbenchBootstrap:
     active_workflow: ActiveV2WorkflowSnapshot
 
 
-@dataclass(frozen=True, slots=True)
-class LegacyV1WorkbenchBootstrap:
-    mode: Literal["legacy_v1"]
-    product: Product
-    has_existing_v1_workflow: bool
-
-
-AgentWorkbenchBootstrap = AgentV2WorkbenchBootstrap | LegacyV1WorkbenchBootstrap
+AgentWorkbenchBootstrap = AgentV2WorkbenchBootstrap
 
 
 def get_agent_workbench_bootstrap(
@@ -56,21 +47,7 @@ def get_agent_workbench_bootstrap(
         .limit(1)
     )
     if conversation is None:
-        has_existing_v1_workflow = bool(
-            session.scalar(
-                select(
-                    exists().where(
-                        ProductWorkflow.product_id == product_id,
-                        ProductWorkflow.schema_version == 1,
-                    )
-                )
-            )
-        )
-        return LegacyV1WorkbenchBootstrap(
-            mode="legacy_v1",
-            product=product,
-            has_existing_v1_workflow=has_existing_v1_workflow,
-        )
+        raise ConflictError("商品还没有 Agent 工作区")
 
     draft = session.scalar(
         workflow_draft_query().where(
@@ -92,6 +69,5 @@ def get_agent_workbench_bootstrap(
 __all__ = [
     "AgentV2WorkbenchBootstrap",
     "AgentWorkbenchBootstrap",
-    "LegacyV1WorkbenchBootstrap",
     "get_agent_workbench_bootstrap",
 ]

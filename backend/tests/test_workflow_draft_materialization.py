@@ -7,7 +7,6 @@ from helpers import _make_demo_image_bytes
 from sqlalchemy import func, select
 from workflow_draft_helpers import make_workflow_draft_payload
 
-from productflow_backend.application.product_workflow.mutations import get_or_create_product_workflow
 from productflow_backend.application.use_cases import create_canonical_product, delete_product
 from productflow_backend.application.workflow_drafts.materialization import (
     get_active_v2_workflow_snapshot,
@@ -497,42 +496,6 @@ def test_confirmation_rejects_cross_product_assets_without_writing_confirmed_sta
     ) == 0
     persisted = get_workflow_draft_or_raise(db_session, product_id=product.id, draft_id=draft.id)
     assert persisted.status == WorkflowDraftStatus.AWAITING_CONFIRMATION
-
-
-def test_materialization_does_not_modify_an_active_v1_workflow(db_session) -> None:
-    product = _create_product_with_reference(db_session)
-    legacy = get_or_create_product_workflow(db_session, product.id)
-    legacy_updated_at = legacy.updated_at
-    legacy_node_ids = {node.id for node in legacy.nodes}
-    draft = _create_confirmed_draft(
-        db_session,
-        product_id=product.id,
-        reference_asset_id=product.image_assets[0].id,
-    )
-
-    with pytest.raises(ConflictError, match="active v1"):
-        materialize_workflow_draft(
-            db_session,
-            product_id=product.id,
-            draft_id=draft.id,
-            expected_draft_version=1,
-            expected_workflow_revision=0,
-            idempotency_key="blocked-by-v1",
-        )
-
-    db_session.expire_all()
-    persisted_legacy = db_session.get(ProductWorkflow, legacy.id)
-    assert persisted_legacy is not None
-    assert persisted_legacy.schema_version == 1
-    assert persisted_legacy.active is True
-    assert persisted_legacy.updated_at == legacy_updated_at
-    assert {node.id for node in persisted_legacy.nodes} == legacy_node_ids
-    assert db_session.scalar(
-        select(func.count()).select_from(ProductWorkflow).where(
-            ProductWorkflow.product_id == product.id,
-            ProductWorkflow.schema_version == 2,
-        )
-    ) == 0
 
 
 @pytest.mark.parametrize(
