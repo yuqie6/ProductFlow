@@ -14,7 +14,6 @@
   --color-border-l1: rgb(51 65 85);
   --color-border-l2: rgb(30 41 59);
   --color-border-l3: rgb(71 85 105);
-  --color-border-control: rgb(100 116 139);
 
   --color-text-primary: rgb(226 232 240);
   --color-text-secondary: rgb(148 163 184);
@@ -39,7 +38,6 @@
   --color-border-l1: rgb(226 232 240);
   --color-border-l2: rgb(228 228 231);
   --color-border-l3: rgb(203 213 225);
-  --color-border-control: rgb(148 163 184 / 0.8);
 
   /* ── 文本层级 ── */
   --color-text-primary: rgb(15 23 42);
@@ -51,11 +49,6 @@
   --color-accent-strong: rgb(79 70 229);
   --color-accent-soft: rgb(238 242 255);
   --color-accent-fg: rgb(255 255 255);
-  --color-accent-violet: rgb(139 92 246);
-
-  /* ── accent 阴影 ── */
-  --shadow-accent-sm: 0 3px 8px rgb(99 102 241 / 0.3);
-  --shadow-accent: 0 8px 20px rgb(99 102 241 / 0.28);
 
   /* ── 状态色 ── */
   --color-state-success: rgb(16 185 129);
@@ -575,13 +568,6 @@ textarea {
   background-color: rgb(30 41 59);
   border-color: rgb(51 65 85);
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.12);
-}
-
-/* indigo→violet 品牌渐变唯一来源。
-   两端固定为存量手写渐变的实际值，亮暗主题一致，
-   替换 from-[#6366f1] to-[#8b5cf6] 时必须保持逐像素等价。 */
-.bg-accent-gradient {
-  background-image: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
 }
 
 .btn-primary-spring {
