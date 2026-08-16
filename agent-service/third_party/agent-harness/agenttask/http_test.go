@@ -2,7 +2,9 @@ package agenttask_test
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/yuqie6/agent-harness/agenttask"
 	"github.com/yuqie6/agent-harness/turn"
+	_ "modernc.org/sqlite"
 )
 
 func TestHTTPHandlerControlsQuestionTurnAndReplaysSSE(t *testing.T) {
@@ -168,6 +171,73 @@ func TestHTTPHandlerControlsQuestionTurnAndReplaysSSE(t *testing.T) {
 	})
 	if idempotencyConflict.StatusCode != http.StatusConflict || !strings.Contains(idempotencyConflict.body, "idempotency_conflict") {
 		t.Fatalf("idempotency status=%d body=%s", idempotencyConflict.StatusCode, idempotencyConflict.body)
+	}
+}
+
+func TestHTTPHandlerDrainsAllPublicEventPagesBeforeTerminalEOF(t *testing.T) {
+	provider := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writeServiceStream(t, writer, `{"id":"terminal_pages","status":"completed","output":[{"id":"message","type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]}`)
+	}))
+	t.Cleanup(provider.Close)
+
+	workspace := t.TempDir()
+	databasePath := filepath.Join(t.TempDir(), "terminal-pages.db")
+	service, err := agenttask.OpenService(agenttask.ServiceConfig{Runner: agenttask.Config{
+		Database: databasePath, Workspace: workspace, SkillUserHome: workspace,
+		Provider: agenttask.ProviderConfig{APIKey: "secret", BaseURL: provider.URL, Model: "model", HTTPClient: provider.Client()},
+		Policy:   testPolicy(),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = service.Close() })
+	state, err := service.StartTurn(t.Context(), agenttask.StartTurnRequest{
+		RunID: "terminal-pages-run", Input: agenttask.TextInput("finish"), IdempotencyKey: "terminal-pages",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = awaitTurn(t, service, state.RunID, state.TurnID, turn.StatusSucceeded)
+	database, err := sql.Open("sqlite", databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	for index := 0; index < 600; index++ {
+		payload, err := json.Marshal(map[string]string{"delta": fmt.Sprintf("safe-%03d", index)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.ExecContext(t.Context(), `INSERT INTO agent_turn_events_v1(
+			turn_id, sequence, schema_version, run_id, kind, payload_json, created_at
+		) VALUES(?, (SELECT COALESCE(MAX(sequence), 0) + 1 FROM agent_turn_events_v1 WHERE turn_id = ?), ?, ?, ?, ?, ?)`,
+			state.TurnID, state.TurnID, turn.EventSchemaVersion, state.RunID, turn.EventTextDelta, payload, time.Now().UTC().UnixNano()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	handler, err := agenttask.NewHTTPHandler(service, agenttask.HTTPOptions{
+		EventPollInterval: time.Millisecond, HeartbeatInterval: time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/v1alpha1/runs/"+state.RunID+"/turns/"+state.TurnID+"/events", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	ids := sseEventIDs(t, recorder.Body.String())
+	if len(ids) <= 600 {
+		t.Fatalf("delivered %d events, want all original and 600 appended events", len(ids))
+	}
+	for index := 1; index < len(ids); index++ {
+		if ids[index] <= ids[index-1] {
+			t.Fatalf("SSE ids are not increasing at %d: %d then %d", index, ids[index-1], ids[index])
+		}
+	}
+	for index := 0; index < 600; index++ {
+		if !strings.Contains(recorder.Body.String(), fmt.Sprintf(`"delta":"safe-%03d"`, index)) {
+			t.Fatalf("missing appended text event %d", index)
+		}
 	}
 }
 

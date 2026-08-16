@@ -57,19 +57,23 @@ func TestServiceMultimodalArtifactIdempotencyAndReplay(t *testing.T) {
 
 	database := filepath.Join(t.TempDir(), "turns.db")
 	workspace := t.TempDir()
-	service, err := agenttask.OpenService(agenttask.ServiceConfig{Runner: agenttask.Config{
-		Database: database, Workspace: workspace, SkillUserHome: workspace,
-		Provider: agenttask.ProviderConfig{APIKey: "secret", BaseURL: server.URL, Model: "model", HTTPClient: server.Client()},
-		Policy:   testPolicy(),
-		RequiredArtifact: &agenttask.RequiredArtifact{
-			Name: agenttask.WorkflowDraftToolName,
-			Schema: map[string]any{
-				"type": "object", "additionalProperties": false,
-				"properties": map[string]any{"nodes": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}},
-				"required":   []string{"nodes"},
-			},
+	service, err := agenttask.OpenService(agenttask.ServiceConfig{
+		ToolProjector: func(job durable.Job) []turn.ToolStep {
+			return []turn.ToolStep{{StepID: job.Steps[0].ID, Kind: "propose_draft", Summary: "Propose workflow draft", Status: "running"}}
 		},
-	}})
+		Runner: agenttask.Config{
+			Database: database, Workspace: workspace, SkillUserHome: workspace,
+			Provider: agenttask.ProviderConfig{APIKey: "secret", BaseURL: server.URL, Model: "model", HTTPClient: server.Client()},
+			Policy:   testPolicy(),
+			RequiredArtifact: &agenttask.RequiredArtifact{
+				Name: agenttask.WorkflowDraftToolName,
+				Schema: map[string]any{
+					"type": "object", "additionalProperties": false,
+					"properties": map[string]any{"nodes": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}},
+					"required":   []string{"nodes"},
+				},
+			},
+		}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,14 +157,14 @@ func TestServiceMultimodalArtifactIdempotencyAndReplay(t *testing.T) {
 	var streamed strings.Builder
 	sawAttemptStarted := false
 	for _, event := range events {
-		if event.Kind == "journal.attempt.started" {
+		if event.Kind == "tool.step" {
 			sawAttemptStarted = true
 		}
 		if event.Kind != agenttask.EventTextDelta {
 			continue
 		}
 		if !sawAttemptStarted {
-			t.Fatal("text.delta was sequenced before journal.attempt.started")
+			t.Fatal("text.delta was sequenced before projected tool.step")
 		}
 		var payload struct {
 			Delta     string `json:"delta"`

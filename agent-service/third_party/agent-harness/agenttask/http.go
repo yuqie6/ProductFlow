@@ -256,19 +256,24 @@ func (h *serviceHTTPHandler) streamEvents(writer http.ResponseWriter, request *h
 		}
 		if terminalTurnStatus(state.Status) {
 			// The terminal state and its final events commit atomically, but that
-			// commit can land between the event query above and GetTurn. Drain once
-			// more after observing terminal so a clean EOF means the terminal event
-			// batch was delivered through the current cursor.
-			finalEvents, err := h.service.Events(request.Context(), runID, turnID, cursor)
-			if err != nil {
-				writeSSEError(writer, err)
-				flusher.Flush()
-				return
+			// commit can land between the event query above and GetTurn. Drain every
+			// remaining public page so a clean EOF means all terminal events were
+			// delivered. An empty page is authoritative even when legacy journal
+			// rows remain after the public cursor because the store filters them.
+			for {
+				finalEvents, err := h.service.Events(request.Context(), runID, turnID, cursor)
+				if err != nil {
+					writeSSEError(writer, err)
+					flusher.Flush()
+					return
+				}
+				if len(finalEvents) == 0 {
+					return
+				}
+				if !writeEvents(finalEvents) {
+					return
+				}
 			}
-			if !writeEvents(finalEvents) {
-				return
-			}
-			return
 		}
 		if time.Since(lastWrite) >= h.heartbeatInterval {
 			if _, err := fmt.Fprintf(writer, ": keep-alive %d\n\n", time.Now().UTC().Unix()); err != nil {

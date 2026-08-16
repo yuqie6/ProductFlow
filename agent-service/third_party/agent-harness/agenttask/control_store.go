@@ -16,6 +16,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+const publicEventReadLimit = 256
+
 type controlStore struct{ db *sql.DB }
 
 func openControlStore(path string) (*controlStore, error) {
@@ -474,7 +476,9 @@ func (s *controlStore) appendEvent(
 
 func (s *controlStore) events(ctx context.Context, runID, turnID string, after int64) ([]turnprotocol.Event, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT schema_version, run_id, turn_id, sequence, created_at, kind, payload_json
-        FROM agent_turn_events_v1 WHERE run_id = ? AND turn_id = ? AND sequence > ? ORDER BY sequence`, runID, turnID, after)
+        FROM agent_turn_events_v1
+        WHERE run_id = ? AND turn_id = ? AND sequence > ? AND kind NOT LIKE 'journal.%'
+        ORDER BY sequence LIMIT ?`, runID, turnID, after, publicEventReadLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -498,8 +502,7 @@ func (s *controlStore) durableCursor(ctx context.Context, turnID string) (int64,
 	return value, err
 }
 
-func (s *controlStore) appendDurableEvent(ctx context.Context, runID, turnID string, source durable.Event) error {
-	payload, _ := json.Marshal(source)
+func (s *controlStore) appendDurableEvent(ctx context.Context, runID, turnID string, source durable.Event, projected *turnprotocol.ToolStep) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -512,8 +515,14 @@ func (s *controlStore) appendDurableEvent(ctx context.Context, runID, turnID str
 	if source.Sequence <= current {
 		return nil
 	}
-	if _, err := appendControlEvent(ctx, tx, runID, turnID, "journal."+source.Kind, payload, time.Now().UTC()); err != nil {
-		return err
+	if projected != nil {
+		payload, err := json.Marshal(projected)
+		if err != nil {
+			return err
+		}
+		if _, err := appendControlEvent(ctx, tx, runID, turnID, turnprotocol.EventToolStep, payload, time.Now().UTC()); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE agent_turns_v1 SET durable_sequence = ? WHERE turn_id = ?`,
 		source.Sequence, turnID); err != nil {

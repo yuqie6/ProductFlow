@@ -57,16 +57,26 @@ type StartTurnRequest struct {
 	IdempotencyKey string    `json:"idempotency_key"`
 }
 
+type ToolStepProjector func(durable.Job) []turnprotocol.ToolStep
+
+type journalReader interface {
+	Events(ctx context.Context, jobID string, afterSequence int64) ([]durable.Event, error)
+	Task(ctx context.Context, jobID string) (durable.Job, error)
+}
+
 type ServiceConfig struct {
-	Runner Config
+	Runner        Config
+	ToolProjector ToolStepProjector
 }
 
 // Service is the asynchronous v1alpha1 control plane. Its metadata and event
 // cursor live beside, but do not replace, the durable model/tool journal.
 type Service struct {
 	runner           *Runner
+	journal          journalReader
 	store            *controlStore
 	requiredArtifact string
+	toolProjector    ToolStepProjector
 	ctx              context.Context
 	cancel           context.CancelFunc
 
@@ -96,7 +106,7 @@ func OpenService(config ServiceConfig) (*Service, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	service := &Service{
-		store: store, requiredArtifact: requiredArtifact,
+		store: store, requiredArtifact: requiredArtifact, toolProjector: config.ToolProjector,
 		ctx: ctx, cancel: cancel, workers: make(map[string]context.CancelFunc),
 	}
 	runner, err := open(config.Runner, service.persistTextDelta)
@@ -106,6 +116,7 @@ func OpenService(config ServiceConfig) (*Service, error) {
 		return nil, err
 	}
 	service.runner = runner
+	service.journal = runner
 	return service, nil
 }
 
@@ -208,7 +219,25 @@ func (s *Service) GetTurn(ctx context.Context, runID, turnID string) (Turn, erro
 	if err := s.validateIDs(runID, turnID); err != nil {
 		return Turn{}, err
 	}
-	return s.store.getTurn(ctx, runID, turnID)
+	if err := s.syncDurableEvents(ctx, runID, turnID); err != nil && !errors.Is(err, durable.ErrNotFound) {
+		return Turn{}, err
+	}
+	state, err := s.store.getTurn(ctx, runID, turnID)
+	if err != nil {
+		return Turn{}, err
+	}
+	if s.toolProjector == nil {
+		return state, nil
+	}
+	job, err := s.runner.Task(ctx, turnID)
+	if errors.Is(err, durable.ErrNotFound) {
+		return state, nil
+	}
+	if err != nil {
+		return Turn{}, err
+	}
+	state.ToolSteps = s.toolProjector(job)
+	return state, nil
 }
 
 func (s *Service) CancelTurn(ctx context.Context, runID, turnID string) (Turn, error) {
@@ -646,16 +675,65 @@ func (s *Service) syncDurableEvents(ctx context.Context, runID, turnID string) e
 	if err != nil {
 		return err
 	}
-	events, err := s.runner.Events(ctx, turnID, cursor)
+	events, err := s.journal.Events(ctx, turnID, cursor)
 	if err != nil {
 		return err
 	}
+	var projectedByStep map[string]turnprotocol.ToolStep
+	if s.toolProjector != nil && hasPublicToolStepEvent(events) {
+		job, jobErr := s.journal.Task(ctx, turnID)
+		if jobErr != nil {
+			return jobErr
+		}
+		projected := s.toolProjector(job)
+		projectedByStep = make(map[string]turnprotocol.ToolStep, len(projected))
+		for _, step := range projected {
+			projectedByStep[step.StepID] = step
+		}
+	}
 	for _, event := range events {
-		if err := s.store.appendDurableEvent(ctx, runID, turnID, event); err != nil {
+		if err := s.store.appendDurableEvent(ctx, runID, turnID, event, projectDurableToolStep(event, projectedByStep)); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func projectDurableToolStep(event durable.Event, projectedByStep map[string]turnprotocol.ToolStep) *turnprotocol.ToolStep {
+	status, ok := publicToolStepStatus(event.Kind)
+	if !ok {
+		return nil
+	}
+	step, found := projectedByStep[event.StepID]
+	if !found {
+		return nil
+	}
+	step.Status = status
+	return &step
+}
+
+func hasPublicToolStepEvent(events []durable.Event) bool {
+	for _, event := range events {
+		if _, ok := publicToolStepStatus(event.Kind); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func publicToolStepStatus(kind string) (string, bool) {
+	switch kind {
+	case "step.pending", "step.prepared", "step.running", "attempt.prepared", "attempt.started", "attempt.recovered":
+		return "running", true
+	case "step.succeeded", "attempt.succeeded":
+		return "succeeded", true
+	case "step.failed", "attempt.failed", "attempt.prepare_failed":
+		return "failed", true
+	case "step.unknown", "step.requires_action", "attempt.unknown", "attempt.requires_action":
+		return "unknown", true
+	default:
+		return "", false
+	}
 }
 
 func (s *Service) scheduleNext(runID string) {

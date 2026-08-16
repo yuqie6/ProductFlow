@@ -9,7 +9,10 @@ import (
 
 const EventSchemaVersion = 1
 
-const EventTextDelta = "text.delta"
+const (
+	EventTextDelta = "text.delta"
+	EventToolStep  = "tool.step"
+)
 
 var (
 	ErrConflict                = errors.New("turn conflict")
@@ -69,12 +72,20 @@ type State struct {
 	Input      TurnInput  `json:"input"`
 	Question   *Question  `json:"question,omitempty"`
 	Artifact   *Artifact  `json:"artifact,omitempty"`
+	ToolSteps  []ToolStep `json:"tool_steps,omitempty"`
 	Output     string     `json:"output,omitempty"`
 	Error      string     `json:"error,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`
 	UpdatedAt  time.Time  `json:"updated_at"`
 	StartedAt  *time.Time `json:"started_at,omitempty"`
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
+}
+
+type ToolStep struct {
+	StepID  string `json:"step_id"`
+	Kind    string `json:"kind"`
+	Summary string `json:"summary"`
+	Status  string `json:"status"`
 }
 
 type Event struct {

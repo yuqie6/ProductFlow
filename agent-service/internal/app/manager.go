@@ -119,7 +119,10 @@ func (manager *Manager) Get(ctx context.Context, conversationID string) (*Conver
 			},
 		},
 	}
-	service, err := agenttask.OpenService(agenttask.ServiceConfig{Runner: runnerConfig})
+	service, err := agenttask.OpenService(agenttask.ServiceConfig{
+		Runner:        runnerConfig,
+		ToolProjector: productFlowToolProjector,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("open harness service for conversation: %w", err)
 	}
