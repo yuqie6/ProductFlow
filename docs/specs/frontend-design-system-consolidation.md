@@ -61,6 +61,10 @@ ProductFlow 前端已有集中式语义 token 层，位于 `web/src/index.css`�
 5. `components/ui/` 原语只在出现 3 个及以上重复非平凡行为时提取，提取前先搜索现有实现；原语只收 props，不自行请求数据。
 6. 任何涉及样式的改动，验证包含亮/暗色、桌面/窄桌面/移动端（断点 `max-width: 1023px`，移动端验证壳 390px）真实浏览器截图。
 
+### 4.1 例外：营销落地页（Atelier Zero）
+
+2026-08-16 维护者在会话中要求用 Atelier Zero 编辑拼贴视觉语言实现公开营销落地页。`web/src/pages/landing/` 是该视觉族的唯一 owner：允许在页面级 `landing.css` 内声明 `--atelier-*` 自有 token 与页面级类；`index.css` 语义 token、`bg-accent-gradient` 和共享类仍是应用侧单一来源。该页面 markup 仍通过 `scripts/check-web-design.sh` 的禁止色扫描，其余 60 个存量文件的迁移规则不变。
+
 ## 5. 阶段计划
 
 ### 阶段 0：立规则、补 token、建检查（一次交付）
@@ -77,6 +81,13 @@ ProductFlow 前端已有集中式语义 token 层，位于 `web/src/index.css`�
    - 输出违规行号和 `web/AGENTS.md` 指针。
 
 验收：`just web-design-check` 通过；`pnpm --dir web test:run`、`lint`、`build` 通过；渐变迁移前后截图视觉等价。
+
+### 阶段 1 迁移方法修订（2026-08-16，TopNav 首切回滚后生效）
+
+1. 生效值规则：存量 raw 类的暗色实际渲染值以 `index.css` 内 `:root.dark .*` 覆盖层为准。这些覆盖规则是非分层 CSS，优先级高于 Tailwind 分层生成的 `dark:*` 工具类。推导映射的顺序固定为：先查 `index.css` 覆盖层，覆盖层没有该 raw 类时才采用组件里显式写的 `dark:*` 值。
+2. 一比一替换后，新 token 不再经过旧覆盖层，因此 token 的亮/暗值必须等于上一步推导出的实际生效值；组件中「被覆盖层压制而从未生效」的显式 `dark:*` 类直接删除，不保留等价副本。
+3. A/B 基线验证：每个切片建立基线快照（`git archive <parent-commit>` 解包到 `/tmp`，复用 `node_modules` 软链，以相同 env 起第二个 Vite 端口，连同一后端），在基线服务与工作区服务上以相同主题、locale、页面状态截图，逐像素对比，目标 diffRatio=0。数据会变化的列表页按改动区域裁剪比较。出现非零差异先归因；无法解释的差异立即回滚该切片，禁止带疑提交。
+4. 首切回滚记录：TopNav 切片曾因违反生效值规则被回滚（工作区文件恢复到父提交，allowlist 恢复 59 项，导航头像素对比 0 差异确认恢复），作为后续切片的反例引用。
 
 ### 阶段 1：迁移 `components/` 12 个共享组件
 
