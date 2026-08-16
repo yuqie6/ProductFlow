@@ -37,8 +37,16 @@ docs-check:
     python3 scripts/check_docs.py
 
 backend-test-live-recovery:
-    docker compose up -d --wait productflow-postgres productflow-redis
+    bash scripts/with_dev_env.sh docker compose up -d --wait productflow-postgres productflow-redis
     PRODUCTFLOW_RUN_LIVE_RECOVERY=1 bash scripts/with_dev_env.sh uv run --directory backend pytest -q -m live_dependencies tests/test_live_workflow_recovery.py
+
+backend-test-live-generation-attempt-fencing:
+    bash scripts/with_dev_env.sh docker compose up -d --wait productflow-postgres
+    PRODUCTFLOW_RUN_LIVE_GENERATION_ATTEMPT_FENCING=1 bash scripts/with_dev_env.sh uv run --directory backend pytest -q -m live_dependencies tests/test_live_generation_attempt_fencing.py
+
+backend-test-live-image-session-media-migration:
+    bash scripts/with_dev_env.sh docker compose up -d --wait productflow-postgres
+    PRODUCTFLOW_RUN_LIVE_IMAGE_SESSION_MEDIA_MIGRATION=1 bash scripts/with_dev_env.sh uv run --directory backend pytest -q -m live_dependencies tests/test_live_image_session_media_migration.py
 
 backend-test-live-delivery-renditions:
     PRODUCTFLOW_RUN_LIVE_DELIVERY_RENDITIONS=1 bash scripts/with_dev_env.sh uv run --directory backend pytest -q -m live_dependencies tests/test_live_delivery_renditions.py

@@ -41,6 +41,7 @@ def test_recover_unfinished_image_session_generation_tasks_resets_stale_running_
         size="1024x1024",
     )
     result.task.status = JobStatus.RUNNING
+    result.task.active_attempt_id = "stale-running-attempt"
     result.task.started_at = datetime.now(UTC) - timedelta(hours=2)
     result.task.progress_updated_at = datetime.now(UTC) - timedelta(hours=2)
     db_session.commit()
@@ -57,6 +58,7 @@ def test_recover_unfinished_image_session_generation_tasks_resets_stale_running_
     assert summary.enqueued_tasks == 1
     assert sent == [result.task.id]
     assert result.task.status == JobStatus.QUEUED
+    assert result.task.active_attempt_id is None
     assert result.task.started_at is None
     assert result.task.progress_phase == "requeued_after_idle"
 
@@ -73,6 +75,7 @@ def test_recover_unfinished_image_session_generation_tasks_uses_progress_heartbe
         size="1024x1024",
     )
     result.task.status = JobStatus.RUNNING
+    result.task.active_attempt_id = "fresh-heartbeat-attempt"
     result.task.started_at = datetime.now(UTC) - timedelta(hours=2)
     result.task.progress_updated_at = datetime.now(UTC) - timedelta(minutes=5)
     db_session.commit()
@@ -88,6 +91,7 @@ def test_recover_unfinished_image_session_generation_tasks_uses_progress_heartbe
     assert summary.enqueued_tasks == 0
     assert sent == []
     assert result.task.status == JobStatus.RUNNING
+    assert result.task.active_attempt_id == "fresh-heartbeat-attempt"
 
 
 def test_recover_unfinished_image_session_generation_tasks_fails_stale_partial_task(
@@ -103,6 +107,7 @@ def test_recover_unfinished_image_session_generation_tasks_fails_stale_partial_t
         generation_count=2,
     )
     result.task.status = JobStatus.RUNNING
+    result.task.active_attempt_id = "stale-running-attempt"
     result.task.started_at = datetime.now(UTC) - timedelta(hours=2)
     result.task.progress_updated_at = datetime.now(UTC) - timedelta(hours=2)
     result.task.completed_candidates = 1
@@ -121,6 +126,7 @@ def test_recover_unfinished_image_session_generation_tasks_fails_stale_partial_t
     assert summary.enqueued_tasks == 0
     assert sent == []
     assert result.task.status == JobStatus.FAILED
+    assert result.task.active_attempt_id is None
     assert result.task.is_retryable is False
     assert result.task.failure_reason == "已生成 1/2 张候选，但任务超时，剩余候选未完成。"
     assert result.task.progress_phase == "failed_idle_timeout"
@@ -138,6 +144,7 @@ def test_recover_unfinished_image_session_generation_tasks_uses_runtime_stale_cu
         size="1024x1024",
     )
     result.task.status = JobStatus.RUNNING
+    result.task.active_attempt_id = "runtime-cutoff-attempt"
     result.task.started_at = datetime.now(UTC) - timedelta(minutes=60)
     db_session.commit()
     sent: list[str] = []
@@ -165,6 +172,7 @@ def test_recover_unfinished_image_session_generation_tasks_uses_runtime_stale_cu
     assert override_summary.enqueued_tasks == 1
     assert sent == [result.task.id]
     assert result.task.status == JobStatus.QUEUED
+    assert result.task.active_attempt_id is None
     assert result.task.started_at is None
 
 

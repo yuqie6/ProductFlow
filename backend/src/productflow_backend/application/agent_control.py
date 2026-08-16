@@ -275,6 +275,11 @@ def synchronize_agent_turn_state(
         output_text=state.output or None,
         error_text=_safe_agent_turn_error(state),
         question_json=state.question.model_dump(mode="json") if state.question is not None else None,
+        tool_steps_json=(
+            [tool_step.model_dump(mode="json") for tool_step in state.tool_steps]
+            if state.tool_steps is not None
+            else None
+        ),
         finished_at=state.finished_at,
     )
     if state.status == AgentTurnStatus.AWAITING_CONFIRMATION:

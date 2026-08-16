@@ -52,6 +52,8 @@ from productflow_backend.application.workflow_drafts.service import (
 from productflow_backend.config import get_settings
 from productflow_backend.domain.enums import (
     AgentConversationStatus,
+    AgentToolStepKind,
+    AgentToolStepStatus,
     AgentTurnStatus,
     MediaVerificationStatus,
 )
@@ -60,6 +62,7 @@ from productflow_backend.infrastructure.agent_service import (
     AgentServiceArtifact,
     AgentServiceQuestion,
     AgentServiceQuestionOption,
+    AgentServiceToolStep,
     AgentServiceTurnState,
 )
 from productflow_backend.infrastructure.db.models import (
@@ -119,6 +122,87 @@ def _create_agent_first_workspace(db_session):
         image_uploads=[(_make_demo_image_bytes(), "agent-first.png", "image/png")],
         idempotency_key="agent-first-workspace",
     )
+
+
+def _agent_service_state_payload(**overrides) -> dict:
+    payload = {
+        "api_version": "v1alpha1",
+        "run_id": "run-1",
+        "turn_id": "turn-1",
+        "status": "running",
+        "created_at": datetime.now(UTC),
+        "updated_at": datetime.now(UTC),
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_agent_service_tool_step_contract_is_strict_bounded_and_optional() -> None:
+    omitted = AgentServiceTurnState.model_validate(_agent_service_state_payload())
+    assert omitted.tool_steps is None
+
+    accepted = AgentServiceTurnState.model_validate(
+        _agent_service_state_payload(
+            tool_steps=[
+                {
+                    "step_id": "inspect-1",
+                    "kind": "inspect_image",
+                    "summary": "查看商品主图",
+                    "status": "succeeded",
+                }
+            ]
+        )
+    )
+    assert accepted.tool_steps == [
+        AgentServiceToolStep(
+            step_id="inspect-1",
+            kind=AgentToolStepKind.INSPECT_IMAGE,
+            summary="查看商品主图",
+            status=AgentToolStepStatus.SUCCEEDED,
+        )
+    ]
+
+    invalid_steps = [
+        {"step_id": "inspect-1", "kind": "generate_image", "summary": "生成图片", "status": "running"},
+        {"step_id": "inspect-1", "kind": "inspect_image", "summary": "查看图片", "status": "canceled"},
+        {
+            "step_id": "inspect-1",
+            "kind": "inspect_image",
+            "summary": "查看图片",
+            "status": "running",
+            "tool_name": "read_file",
+        },
+        {
+            "step_id": "inspect-1",
+            "kind": "inspect_image",
+            "summary": "查看图片",
+            "status": "running",
+            "input": {"path": "/secret"},
+        },
+        {"step_id": "inspect-1", "kind": "inspect_image", "summary": "第一行\n第二行", "status": "running"},
+        {"step_id": "inspect-1", "kind": "inspect_image", "summary": "a" * 161, "status": "running"},
+        {"step_id": " ", "kind": "inspect_image", "summary": "查看图片", "status": "running"},
+        {"step_id": "界" * 67, "kind": "inspect_image", "summary": "查看图片", "status": "running"},
+        {"step_id": "inspect-1", "kind": "inspect_image", "summary": "图" * 54, "status": "running"},
+    ]
+    for step in invalid_steps:
+        with pytest.raises(ValueError):
+            AgentServiceTurnState.model_validate(_agent_service_state_payload(tool_steps=[step]))
+
+    with pytest.raises(ValueError):
+        AgentServiceTurnState.model_validate(
+            _agent_service_state_payload(
+                tool_steps=[
+                    {
+                        "step_id": f"step-{index}",
+                        "kind": "read_history",
+                        "summary": "读取历史",
+                        "status": "unknown",
+                    }
+                    for index in range(101)
+                ]
+            )
+        )
 
 
 def test_conversation_and_turn_reservation_are_product_scoped_and_idempotent(db_session) -> None:
@@ -423,6 +507,80 @@ def test_agent_terminal_provider_errors_are_not_projected_to_the_browser(
     assert raw_error not in warning_message
     assert raw_error not in warning_args
     assert warning_args == (conversation.harness_run_id, projection.harness_turn_id)
+
+
+def test_agent_tool_step_snapshot_replaces_preserves_and_clears(db_session) -> None:
+    product, _, draft, _ = _create_product_and_draft(db_session)
+    conversation = create_agent_conversation(
+        db_session,
+        product_id=product.id,
+        workflow_draft_id=draft.id,
+    )
+    projection = reserve_agent_turn(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        input_text="检查商品信息",
+        input_asset_ids=[],
+        idempotency_key="tool-step-sync",
+    ).projection
+    projection = bind_harness_turn(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        projection_id=projection.id,
+        harness_turn_id="harness-tool-steps",
+        status=AgentTurnStatus.RUNNING,
+    )
+    step = AgentServiceToolStep(
+        step_id="context-1",
+        kind=AgentToolStepKind.INSPECT_CONTEXT,
+        summary="检查商品上下文",
+        status=AgentToolStepStatus.SUCCEEDED,
+    )
+    projection = synchronize_agent_turn_state(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        projection_id=projection.id,
+        state=AgentServiceTurnState(
+            **_agent_service_state_payload(
+                run_id=conversation.harness_run_id,
+                turn_id="harness-tool-steps",
+                tool_steps=[step.model_dump(mode="json")],
+            )
+        ),
+    )
+    assert projection.tool_steps_json == [step.model_dump(mode="json")]
+
+    projection = synchronize_agent_turn_state(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        projection_id=projection.id,
+        state=AgentServiceTurnState(
+            **_agent_service_state_payload(
+                run_id=conversation.harness_run_id,
+                turn_id="harness-tool-steps",
+            )
+        ),
+    )
+    assert projection.tool_steps_json == [step.model_dump(mode="json")]
+
+    projection = synchronize_agent_turn_state(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        projection_id=projection.id,
+        state=AgentServiceTurnState(
+            **_agent_service_state_payload(
+                run_id=conversation.harness_run_id,
+                turn_id="harness-tool-steps",
+                tool_steps=[],
+            )
+        ),
+    )
+    assert projection.tool_steps_json == []
 
 
 def test_agent_first_version_zero_context_and_first_artifact_are_replayable(db_session) -> None:
@@ -1287,6 +1445,80 @@ def test_public_agent_routes_keep_session_scope_idempotency_question_and_sse(
     canceled = client.post(f"{turn_path}/{projection_id}/cancel")
     assert canceled.status_code == 200, canceled.text
     assert canceled.json()["status"] == "canceled"
+
+
+def test_stored_malformed_agent_tool_steps_degrade_safely_in_detail_and_list_routes(
+    db_session,
+) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    product, _, draft, _ = _create_product_and_draft(db_session)
+    conversation = create_agent_conversation(
+        db_session,
+        product_id=product.id,
+        workflow_draft_id=draft.id,
+    )
+    valid_steps = [
+        {
+            "step_id": f"history-{index}",
+            "kind": "read_history",
+            "summary": "读取既有对话历史",
+            "status": "succeeded",
+        }
+        for index in range(101)
+    ]
+    invalid_steps = [
+        "not-an-object",
+        {**valid_steps[1], "kind": "unknown_kind"},
+        {**valid_steps[2], "raw_sentinel": "RAW_SENTINEL"},
+        {**valid_steps[3], "summary": "第一行\nRAW_SENTINEL"},
+        {**valid_steps[4], "summary": "图" * 54},
+    ]
+    projection = AgentTurnProjection(
+        conversation_id=conversation.id,
+        harness_turn_id="historical-tool-step-turn",
+        idempotency_key="historical-tool-step-key",
+        request_hash="a" * 64,
+        input_text="历史投影",
+        input_asset_ids_json=[],
+        status=AgentTurnStatus.SUCCEEDED,
+        tool_steps_json=[valid_steps[0], *invalid_steps, *valid_steps[1:]],
+    )
+    malformed_root_projection = AgentTurnProjection(
+        conversation_id=conversation.id,
+        harness_turn_id="malformed-root-tool-step-turn",
+        idempotency_key="malformed-root-tool-step-key",
+        request_hash="b" * 64,
+        input_text="损坏的历史投影",
+        input_asset_ids_json=[],
+        status=AgentTurnStatus.SUCCEEDED,
+        tool_steps_json={"raw_sentinel": "RAW_SENTINEL"},
+    )
+    db_session.add_all([projection, malformed_root_projection])
+    db_session.commit()
+
+    client = TestClient(create_app())
+    _login(client)
+    base_path = f"/api/v2/products/{product.id}/agent-conversations/{conversation.id}/turns"
+    detail_response = client.get(f"{base_path}/{projection.id}")
+    malformed_root_response = client.get(f"{base_path}/{malformed_root_projection.id}")
+    list_response = client.get(base_path)
+
+    assert detail_response.status_code == 200, detail_response.text
+    assert malformed_root_response.status_code == 200, malformed_root_response.text
+    assert list_response.status_code == 200, list_response.text
+    assert malformed_root_response.json()["tool_steps"] == []
+
+    expected_steps = valid_steps[:100]
+    detail_steps = detail_response.json()["tool_steps"]
+    listed_turns = {item["id"]: item for item in list_response.json()["items"]}
+    assert detail_steps == expected_steps
+    assert listed_turns[projection.id]["tool_steps"] == expected_steps
+    assert listed_turns[malformed_root_projection.id]["tool_steps"] == []
+    assert len(detail_steps) == 100
+    assert "RAW_SENTINEL" not in detail_response.text
+    assert "RAW_SENTINEL" not in list_response.text
+    assert all(set(step) == {"step_id", "kind", "summary", "status"} for step in detail_steps)
 
 
 def test_get_active_agent_turn_refreshes_and_attaches_artifact(

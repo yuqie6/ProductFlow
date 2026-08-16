@@ -90,6 +90,25 @@ class AgentTurnStatus(StrEnum):
     UNKNOWN = "unknown"
 
 
+class AgentToolStepKind(StrEnum):
+    """Agent service 可安全投影到网页的语义工具步骤类别。"""
+
+    INSPECT_IMAGE = "inspect_image"
+    PROPOSE_DRAFT = "propose_draft"
+    INSPECT_CONTEXT = "inspect_context"
+    READ_HISTORY = "read_history"
+    ORGANIZE_ASSETS = "organize_assets"
+
+
+class AgentToolStepStatus(StrEnum):
+    """Agent service 工具步骤的有界投影状态。"""
+
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    UNKNOWN = "unknown"
+
+
 class AgentToolMutationStatus(StrEnum):
     """Agent 可对账业务副作用在 ProductFlow 侧的持久化结果。"""
 

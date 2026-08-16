@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from productflow_backend.application.agent_conversations import (
     AGENT_MAX_INPUT_ASSETS,
@@ -14,7 +14,13 @@ from productflow_backend.application.legacy_archive_rebuilds import (
     AgentLegacyArchiveSection,
 )
 from productflow_backend.application.legacy_archives import LegacyArchiveKind
-from productflow_backend.domain.enums import AgentConversationStatus, AgentTurnStatus
+from productflow_backend.domain.enums import (
+    AgentConversationStatus,
+    AgentToolStepKind,
+    AgentToolStepStatus,
+    AgentTurnStatus,
+)
+from productflow_backend.infrastructure.agent_service import AgentServiceToolStep
 from productflow_backend.infrastructure.db.models import AgentConversation, AgentTurnProjection
 
 
@@ -242,6 +248,13 @@ class AgentConversationResponse(BaseModel):
     updated_at: datetime
 
 
+class AgentToolStepResponse(BaseModel):
+    step_id: str
+    kind: AgentToolStepKind
+    summary: str
+    status: AgentToolStepStatus
+
+
 class AgentTurnResponse(BaseModel):
     id: str
     conversation_id: str
@@ -254,6 +267,7 @@ class AgentTurnResponse(BaseModel):
     output_text: str | None
     error_text: str | None
     question: dict[str, Any] | None
+    tool_steps: list[AgentToolStepResponse]
     artifact_name: str | None
     artifact_step_id: str | None
     workflow_draft_revision_id: str | None
@@ -285,6 +299,24 @@ def serialize_agent_conversation(conversation: AgentConversation) -> AgentConver
     )
 
 
+def _serialize_agent_tool_steps(stored_value: Any) -> list[AgentToolStepResponse]:
+    if not isinstance(stored_value, list):
+        return []
+
+    serialized: list[AgentToolStepResponse] = []
+    for item in stored_value:
+        if not isinstance(item, dict):
+            continue
+        try:
+            service_step = AgentServiceToolStep.model_validate(item)
+            serialized.append(AgentToolStepResponse.model_validate(service_step.model_dump()))
+        except ValidationError:
+            continue
+        if len(serialized) == 100:
+            break
+    return serialized
+
+
 def serialize_agent_turn(projection: AgentTurnProjection) -> AgentTurnResponse:
     return AgentTurnResponse(
         id=projection.id,
@@ -298,6 +330,7 @@ def serialize_agent_turn(projection: AgentTurnProjection) -> AgentTurnResponse:
         output_text=projection.output_text,
         error_text=projection.error_text,
         question=dict(projection.question_json) if projection.question_json is not None else None,
+        tool_steps=_serialize_agent_tool_steps(projection.tool_steps_json),
         artifact_name=projection.artifact_name,
         artifact_step_id=projection.artifact_step_id,
         workflow_draft_revision_id=projection.workflow_draft_revision_id,

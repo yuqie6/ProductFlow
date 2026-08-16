@@ -1017,6 +1017,7 @@ class AgentTurnProjection(Base, TimestampMixin):
     output_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     question_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    tool_steps_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     artifact_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     artifact_step_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     workflow_draft_revision_id: Mapped[str | None] = mapped_column(
@@ -1730,12 +1731,24 @@ class WorkflowNodeRun(Base):
             postgresql_where=text("status IN ('queued', 'running')"),
             sqlite_where=text("status IN ('queued', 'running')"),
         ),
+        CheckConstraint(
+            "attempts >= 0",
+            name="ck_workflow_node_runs_non_negative_attempts",
+        ),
+        CheckConstraint(
+            "(status = 'running' AND active_attempt_id IS NOT NULL) OR "
+            "(status != 'running' AND active_attempt_id IS NULL)",
+            name="ck_workflow_node_runs_active_attempt",
+        ),
+        Index("ix_workflow_node_runs_recovery", "status", "started_at", "id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     workflow_run_id: Mapped[str] = mapped_column(String(36), ForeignKey("workflow_runs.id", ondelete="CASCADE"))
     node_id: Mapped[str] = mapped_column(String(36), ForeignKey("workflow_nodes.id", ondelete="CASCADE"))
     status: Mapped[WorkflowNodeStatus] = mapped_column(enum_value_column(WorkflowNodeStatus))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    active_attempt_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     output_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -2292,6 +2305,16 @@ class ImageSessionGenerationTask(Base):
     __table_args__ = (
         Index("ix_image_session_generation_tasks_session_id", "session_id"),
         Index("ix_image_session_generation_tasks_status", "status"),
+        CheckConstraint(
+            "attempts >= 0",
+            name="ck_image_session_generation_tasks_non_negative_attempts",
+        ),
+        CheckConstraint(
+            "(status = 'running' AND active_attempt_id IS NOT NULL AND started_at IS NOT NULL "
+            "AND finished_at IS NULL) OR "
+            "(status != 'running' AND active_attempt_id IS NULL)",
+            name="ck_image_session_generation_tasks_active_attempt",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -2324,6 +2347,7 @@ class ImageSessionGenerationTask(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
+    active_attempt_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     is_retryable: Mapped[bool] = mapped_column(Boolean, default=True)
 
     session: Mapped[ImageSession] = relationship(back_populates="generation_tasks")

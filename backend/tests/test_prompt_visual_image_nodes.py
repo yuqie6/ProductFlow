@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -590,6 +590,54 @@ def test_v2_node_run_submission_is_durable_and_idempotent(db_session) -> None:
     assert len(provider.requests) == 1
 
 
+def test_v2_prompt_stale_attempt_cannot_persist_result_after_reclaim(db_session) -> None:
+    from productflow_backend.application.product_workflow.run_state import claim_workflow_node_run
+
+    _, workflow = _create_materialized_workflow(db_session)
+    prompt_node = next(node for node in workflow.nodes if node.node_type == WorkflowNodeType.PROMPT_GENERATION)
+    _, node_run = _queue_single_node_run(db_session, workflow=workflow, node=prompt_node)
+    initial_version_count = db_session.scalar(select(func.count()).select_from(ImagePromptArtifactVersion))
+    provider = RecordingPromptProvider()
+    original_generate = provider.generate_prompt
+
+    def generate_after_reclaim(request: PromptGenerationRequest) -> PromptGenerationResult:
+        db_session.expire_all()
+        claimed = db_session.get(WorkflowNodeRun, node_run.id)
+        assert claimed is not None
+        assert claimed.status == WorkflowNodeStatus.RUNNING
+        old_attempt_id = claimed.active_attempt_id
+        assert old_attempt_id is not None
+        claimed.status = WorkflowNodeStatus.QUEUED
+        claimed.active_attempt_id = None
+        db_session.commit()
+        new_claim = claim_workflow_node_run(
+            db_session,
+            node_run_id=node_run.id,
+            node_id=prompt_node.id,
+            attempt_id="new-prompt-attempt",
+        )
+        assert new_claim.claimed is True
+        assert new_claim.attempt_id == "new-prompt-attempt"
+        return original_generate(request)
+
+    provider.generate_prompt = generate_after_reclaim  # type: ignore[method-assign]
+    changed = execute_v2_workflow_node_only(
+        db_session,
+        node_run_id=node_run.id,
+        dependencies=WorkflowExecutionDependencies(prompt_generation_provider_resolver=lambda: provider),
+    )
+
+    db_session.expire_all()
+    persisted = db_session.get(WorkflowNodeRun, node_run.id)
+    assert changed is False
+    assert persisted is not None
+    assert persisted.status == WorkflowNodeStatus.RUNNING
+    assert persisted.active_attempt_id == "new-prompt-attempt"
+    assert persisted.attempts == 2
+    assert persisted.failure_reason is None
+    assert db_session.scalar(select(func.count()).select_from(ImagePromptArtifactVersion)) == initial_version_count
+
+
 def test_v2_node_run_queue_failure_marks_run_and_node_failed(db_session) -> None:
     _, workflow = _create_materialized_workflow(db_session)
     prompt_node = next(node for node in workflow.nodes if node.node_type == WorkflowNodeType.PROMPT_GENERATION)
@@ -1023,6 +1071,83 @@ def test_v2_full_workflow_cancel_and_durable_recovery_use_workflow_run(db_sessio
         workflow_id=workflow.id,
         run_id=submission.run.id,
     ).status == WorkflowRunStatus.CANCELLED
+
+    prompt_node = next(node for node in workflow.nodes if node.node_type == WorkflowNodeType.PROMPT_GENERATION)
+    stale_run, stale_node_run = _queue_single_node_run(db_session, workflow=workflow, node=prompt_node)
+    stale_node_run.status = WorkflowNodeStatus.RUNNING
+    stale_node_run.active_attempt_id = "stale-workflow-attempt"
+    stale_node_run.started_at = datetime.now(UTC) - timedelta(hours=2)
+    prompt_node.status = WorkflowNodeStatus.RUNNING
+    db_session.commit()
+    recovered_run_ids.clear()
+
+    stale_summary = recover_unfinished_workflow_runs(
+        enqueue=recovered_run_ids.append,
+        reset_stale_running=True,
+        stale_running_after=timedelta(minutes=30),
+    )
+
+    db_session.expire_all()
+    recovered_node_run = db_session.get(WorkflowNodeRun, stale_node_run.id)
+    assert stale_summary.stale_running_runs == 1
+    assert recovered_run_ids == [stale_run.id]
+    assert recovered_node_run is not None
+    assert recovered_node_run.status == WorkflowNodeStatus.QUEUED
+    assert recovered_node_run.active_attempt_id is None
+
+
+def test_v2_image_stale_attempt_cannot_write_media_or_child_rows(db_session, configured_env: Path) -> None:
+    from productflow_backend.application.product_workflow.run_state import claim_workflow_node_run
+
+    _, workflow = _create_materialized_workflow(db_session)
+    image_node = next(
+        node
+        for node in workflow.nodes
+        if node.node_type == WorkflowNodeType.IMAGE_GENERATION and node.config_json["image_plan_key"] == "hero-1"
+    )
+    _, node_run = _queue_single_node_run(db_session, workflow=workflow, node=image_node)
+    initial_record_count = db_session.scalar(select(func.count()).select_from(WorkflowImageGenerationRecord))
+    initial_asset_count = db_session.scalar(select(func.count()).select_from(ProductImageAsset))
+    initial_files = {path.relative_to(configured_env) for path in configured_env.rglob("*") if path.is_file()}
+    provider = RecordingImageProvider(image_bytes=_png_bytes(color=(25, 80, 160), size=(80, 64)))
+    original_generate = provider.generate_workflow_image
+
+    def generate_after_reclaim(request: WorkflowImageRequest) -> WorkflowImageResult:
+        db_session.expire_all()
+        claimed = db_session.get(WorkflowNodeRun, node_run.id)
+        assert claimed is not None
+        assert claimed.status == WorkflowNodeStatus.RUNNING
+        assert claimed.active_attempt_id is not None
+        claimed.status = WorkflowNodeStatus.QUEUED
+        claimed.active_attempt_id = None
+        db_session.commit()
+        new_claim = claim_workflow_node_run(
+            db_session,
+            node_run_id=node_run.id,
+            node_id=image_node.id,
+            attempt_id="new-image-attempt",
+        )
+        assert new_claim.claimed is True
+        return original_generate(request)
+
+    provider.generate_workflow_image = generate_after_reclaim  # type: ignore[method-assign]
+    changed = execute_v2_workflow_node_only(
+        db_session,
+        node_run_id=node_run.id,
+        dependencies=WorkflowExecutionDependencies(image_provider_resolver=lambda: provider),
+    )
+
+    db_session.expire_all()
+    persisted = db_session.get(WorkflowNodeRun, node_run.id)
+    final_files = {path.relative_to(configured_env) for path in configured_env.rglob("*") if path.is_file()}
+    assert changed is False
+    assert persisted is not None
+    assert persisted.status == WorkflowNodeStatus.RUNNING
+    assert persisted.active_attempt_id == "new-image-attempt"
+    assert persisted.attempts == 2
+    assert db_session.scalar(select(func.count()).select_from(WorkflowImageGenerationRecord)) == initial_record_count
+    assert db_session.scalar(select(func.count()).select_from(ProductImageAsset)) == initial_asset_count
+    assert final_files == initial_files
 
 
 def test_image_node_creates_one_canonical_asset_and_preserves_rerun_history(db_session) -> None:

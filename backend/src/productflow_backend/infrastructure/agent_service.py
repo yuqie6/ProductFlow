@@ -8,10 +8,10 @@ from typing import Any
 from urllib.parse import quote, urlsplit
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from productflow_backend.config import get_settings
-from productflow_backend.domain.enums import AgentTurnStatus
+from productflow_backend.domain.enums import AgentToolStepKind, AgentToolStepStatus, AgentTurnStatus
 
 
 class AgentServiceQuestionOption(BaseModel):
@@ -38,6 +38,35 @@ class AgentServiceArtifact(BaseModel):
     step_id: str
 
 
+class AgentServiceToolStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    step_id: str = Field(min_length=1, max_length=200)
+    kind: AgentToolStepKind
+    summary: str = Field(min_length=1, max_length=160)
+    status: AgentToolStepStatus
+
+    @field_validator("step_id")
+    @classmethod
+    def validate_step_id(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("step_id must not be blank")
+        if len(value.encode("utf-8")) > 200:
+            raise ValueError("step_id must not exceed 200 bytes")
+        return value
+
+    @field_validator("summary")
+    @classmethod
+    def validate_summary(cls, value: str) -> str:
+        if "\n" in value or "\r" in value:
+            raise ValueError("summary must be a single line")
+        if not value.strip():
+            raise ValueError("summary must not be blank")
+        if len(value.encode("utf-8")) > 160:
+            raise ValueError("summary must not exceed 160 bytes")
+        return value
+
+
 class AgentServiceTurnState(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -47,6 +76,7 @@ class AgentServiceTurnState(BaseModel):
     status: AgentTurnStatus
     question: AgentServiceQuestion | None = None
     artifact: AgentServiceArtifact | None = None
+    tool_steps: list[AgentServiceToolStep] | None = Field(default=None, max_length=100)
     output: str = ""
     error: str = ""
     created_at: datetime
@@ -275,6 +305,7 @@ __all__ = [
     "AgentServiceQuestion",
     "AgentServiceQuestionOption",
     "AgentServiceRequestError",
+    "AgentServiceToolStep",
     "AgentServiceTurnState",
     "get_agent_service_client",
 ]

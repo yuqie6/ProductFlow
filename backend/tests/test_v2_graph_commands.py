@@ -371,6 +371,7 @@ def test_graph_commands_reject_product_context_stale_versions_limits_and_active_
             workflow_run_id=run.id,
             node_id=image.id,
             status=WorkflowNodeStatus.RUNNING,
+            active_attempt_id="graph-command-active-attempt",
         )
     )
     db_session.commit()

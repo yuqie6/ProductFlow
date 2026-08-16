@@ -232,9 +232,9 @@ def download_image_session_asset_endpoint(
     if asset is None:
         raise HTTPException(status_code=404, detail="会话图片不存在")
     return serve_image_variant(
-        storage_path=asset.storage_path,
+        storage_path=asset.media_object.storage_path,
         original_filename=asset.original_filename,
-        mime_type=asset.mime_type,
+        mime_type=asset.media_object.mime_type,
         variant=variant,
         missing_file_detail="会话图片文件不存在",
     )

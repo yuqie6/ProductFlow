@@ -651,10 +651,12 @@ def test_image_session_generation_cancel_after_file_save_does_not_persist_round_
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from productflow_backend.application import image_sessions as image_session_app
     from productflow_backend.application.image_sessions import (
         IMAGE_SESSION_CANCELLED_REASON,
         ImageSessionGenerationCancelledError,
         _execute_image_session_round_generation,
+        cancel_image_session_generation_task,
         create_image_session,
         create_image_session_generation_task,
     )
@@ -686,21 +688,23 @@ def test_image_session_generation_cancel_after_file_save_does_not_persist_round_
         def save_media_image(self, media_id: str, filename: str, content: bytes) -> str:
             relative_path = self.inner.save_media_image(media_id, filename, content)
             self.saved_relative_path = relative_path
-            task = db_session.get(ImageSessionGenerationTask, task_id)
-            assert task is not None
-            task.status = JobStatus.CANCELLED
-            task.failure_reason = IMAGE_SESSION_CANCELLED_REASON
-            task.finished_at = datetime.now(UTC)
-            task.progress_phase = "cancelled"
-            task.progress_updated_at = datetime.now(UTC)
-            task.is_retryable = False
-            db_session.commit()
             return relative_path
 
     monkeypatch.setattr(
         "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
         generate_success,
     )
+    original_stage_media = image_session_app.stage_verified_media_object
+
+    def stage_media_then_lose_attempt(session, **kwargs):
+        media = original_stage_media(session, **kwargs)
+        task = session.get(ImageSessionGenerationTask, task_id)
+        assert task is not None
+        task.status = JobStatus.CANCELLED
+        task.active_attempt_id = None
+        return media
+
+    monkeypatch.setattr(image_session_app, "stage_verified_media_object", stage_media_then_lose_attempt)
 
     image_session = create_image_session(db_session, title="保存后取消")
     result = create_image_session_generation_task(
@@ -711,6 +715,7 @@ def test_image_session_generation_cancel_after_file_save_does_not_persist_round_
     )
     task_id = result.task.id
     result.task.status = JobStatus.RUNNING
+    result.task.active_attempt_id = "cancel-after-save-attempt"
     result.task.started_at = datetime.now(UTC)
     db_session.commit()
     storage = CancellingStorage()
@@ -722,8 +727,14 @@ def test_image_session_generation_cancel_after_file_save_does_not_persist_round_
             prompt=result.task.prompt,
             size=result.task.size,
             generation_task_id=task_id,
+            generation_attempt_id="cancel-after-save-attempt",
             storage=storage,
         )
+    cancel_image_session_generation_task(
+        db_session,
+        image_session_id=image_session.id,
+        task_id=task_id,
+    )
 
     db_session.expire_all()
     task = db_session.get(ImageSessionGenerationTask, task_id)
@@ -772,6 +783,7 @@ def test_image_session_generation_cancelled_task_is_not_overwritten_by_late_fail
     _handle_image_generation_task_failure_safely(
         db_session,
         task_id=result.task.id,
+        attempt_id="cancelled-old-attempt",
         reason="图片生成失败，请稍后重试",
     )
 
@@ -1431,65 +1443,122 @@ def test_image_session_worker_failure_settles_task_when_parent_session_deleted(
     assert task.is_retryable is True
 
 
-def test_image_session_worker_failure_settlement_retries_after_stale_data_error(
+def test_image_session_stale_attempt_cannot_fail_reclaimed_task(
     configured_env: Path,
     db_session,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from sqlalchemy.orm.exc import StaleDataError
-
-    from productflow_backend.application import image_sessions as image_session_app
     from productflow_backend.application.image_sessions import (
-        ImageSessionGenerationExecutionError,
+        _handle_image_generation_task_failure_safely,
+        _mark_image_generation_task_running,
         create_image_session,
         create_image_session_generation_task,
-        execute_image_session_generation_task,
     )
+    from productflow_backend.domain.enums import JobStatus
 
-    monkeypatch.setattr(
-        image_session_app,
-        "_execute_image_session_round_generation",
-        lambda *args, **kwargs: (_ for _ in ()).throw(
-            ImageSessionGenerationExecutionError(
-                completed_candidates=1,
-                requested_candidates=2,
-                generation_group_id="generation-group-stale",
-                timed_out=False,
-            )
-        ),
-    )
-    original_handle_failure = image_session_app._handle_image_generation_task_failure
-    settlement_calls = {"count": 0}
-
-    def flaky_handle_failure(*args, **kwargs):
-        settlement_calls["count"] += 1
-        if settlement_calls["count"] == 1:
-            raise StaleDataError("stale parent session")
-        return original_handle_failure(*args, **kwargs)
-
-    monkeypatch.setattr(image_session_app, "_handle_image_generation_task_failure", flaky_handle_failure)
-
-    image_session = create_image_session(db_session, title="stale 收口")
+    image_session = create_image_session(db_session, title="stale attempt failure")
     result = create_image_session_generation_task(
         db_session,
         image_session_id=image_session.id,
-        prompt="失败收口期间 ORM stale",
+        prompt="old failure must not overwrite",
         size="1024x1024",
-        generation_count=2,
     )
+    old_claim = _mark_image_generation_task_running(db_session, result.task, attempt_id="old-attempt")
+    assert old_claim.claimed is True
 
-    execute_image_session_generation_task(result.task.id)
+    result.task.status = JobStatus.QUEUED
+    result.task.active_attempt_id = None
+    result.task.started_at = None
+    result.task.progress_phase = "requeued_after_idle"
+    db_session.commit()
+    new_claim = _mark_image_generation_task_running(db_session, result.task, attempt_id="new-attempt")
+    assert new_claim.claimed is True
+
+    _handle_image_generation_task_failure_safely(
+        db_session,
+        task_id=result.task.id,
+        attempt_id="old-attempt",
+        reason="late old-attempt failure",
+    )
 
     db_session.expire_all()
     task = db_session.get(ImageSessionGenerationTask, result.task.id)
     assert task is not None
-    assert task.status == "failed"
-    assert task.failure_reason == "已生成 1/2 张候选，后续生成失败，请重新发起生成补齐。"
-    assert task.result_generation_group_id is not None
-    assert task.finished_at is not None
-    assert task.attempts == 3
-    assert task.is_retryable is True
-    assert settlement_calls["count"] == 4
+    assert task.status == JobStatus.RUNNING
+    assert task.active_attempt_id == "new-attempt"
+    assert task.failure_reason is None
+    assert task.attempts == 2
+
+
+def test_image_session_stale_attempt_cannot_persist_provider_result(
+    configured_env: Path,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.application.image_sessions import (
+        _mark_image_generation_task_running,
+        create_image_session,
+        create_image_session_generation_task,
+        execute_image_session_generation_task,
+    )
+    from productflow_backend.domain.enums import JobStatus
+    from productflow_backend.infrastructure.image.chat_service import GeneratedChatImage
+
+    image_session = create_image_session(db_session, title="stale result")
+    result = create_image_session_generation_task(
+        db_session,
+        image_session_id=image_session.id,
+        prompt="old provider result must not persist",
+        size="1024x1024",
+    )
+    initial_files = {path.relative_to(configured_env) for path in configured_env.rglob("*") if path.is_file()}
+
+    def generate_after_reclaim(self, **kwargs) -> GeneratedChatImage:
+        db_session.expire_all()
+        claimed = db_session.get(ImageSessionGenerationTask, result.task.id)
+        assert claimed is not None
+        assert claimed.status == JobStatus.RUNNING
+        assert claimed.active_attempt_id is not None
+        claimed.status = JobStatus.QUEUED
+        claimed.active_attempt_id = None
+        claimed.started_at = None
+        db_session.commit()
+        new_claim = _mark_image_generation_task_running(
+            db_session,
+            claimed,
+            attempt_id="new-image-session-attempt",
+        )
+        assert new_claim.claimed is True
+        return GeneratedChatImage(
+            bytes_data=_make_demo_image_bytes_with_size(1024, 1024),
+            mime_type="image/png",
+            model_name="mock-image-chat-v1",
+            provider_name="mock",
+            prompt_version="test-v1",
+            size=kwargs["size"],
+            generated_at=datetime.now(UTC),
+            provider_request_json={"size": kwargs["size"]},
+            provider_output_json={},
+        )
+
+    monkeypatch.setattr(
+        "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
+        generate_after_reclaim,
+    )
+    execute_image_session_generation_task(result.task.id)
+
+    db_session.expire_all()
+    task = db_session.get(ImageSessionGenerationTask, result.task.id)
+    rounds = db_session.query(ImageSessionRound).filter(ImageSessionRound.session_id == image_session.id).all()
+    assets = db_session.query(ImageSessionAsset).filter(ImageSessionAsset.session_id == image_session.id).all()
+    final_files = {path.relative_to(configured_env) for path in configured_env.rglob("*") if path.is_file()}
+    assert task is not None
+    assert task.status == JobStatus.RUNNING
+    assert task.active_attempt_id == "new-image-session-attempt"
+    assert task.attempts == 2
+    assert task.failure_reason is None
+    assert rounds == []
+    assert assets == []
+    assert final_files == initial_files
 
 
 def test_image_session_worker_persists_provider_progress_heartbeat(
@@ -1611,6 +1680,8 @@ def test_image_session_worker_duplicate_message_noops_running_task(
         size="1024x1024",
     )
     result.task.status = JobStatus.RUNNING
+    result.task.active_attempt_id = "already-running-attempt"
+    result.task.started_at = datetime.now(UTC)
     db_session.commit()
     calls: list[object] = []
     monkeypatch.setattr(
@@ -1649,6 +1720,8 @@ def test_image_session_worker_defers_queued_task_when_global_running_capacity_fu
         prompt="第一张正在跑",
         size="1024x1024",
         generation_count=1,
+        active_attempt_id="capacity-holder-attempt",
+        started_at=datetime.now(UTC),
     )
     queued = ImageSessionGenerationTask(
         session_id=image_session.id,
@@ -2239,6 +2312,59 @@ def test_image_session_generation_accepts_custom_size_and_rejects_invalid_dimens
     )
     assert oversized.status_code == 202
     assert oversized.json()["rounds"][-1]["size"] == "3840x3840"
+
+
+def test_image_session_runtime_reads_canonical_media_when_carrier_columns_drift(
+    configured_env: Path,
+    db_session,
+) -> None:
+    from productflow_backend.presentation.api import create_app
+
+    client = TestClient(create_app())
+    _login(client)
+
+    created = client.post("/api/image-sessions", json={"title": "Canonical media owner"})
+    assert created.status_code == 201
+    session_id = created.json()["id"]
+    reference_bytes = _make_demo_image_bytes()
+    uploaded = client.post(
+        f"/api/image-sessions/{session_id}/reference-images",
+        files={"reference_images": ("reference.png", reference_bytes, "image/png")},
+    )
+    assert uploaded.status_code == 200
+    reference_asset = next(asset for asset in uploaded.json()["assets"] if asset["kind"] == "reference_upload")
+
+    db_session.expire_all()
+    persisted_asset = db_session.get(ImageSessionAsset, reference_asset["id"])
+    assert persisted_asset is not None
+    canonical_path = Path(configured_env) / persisted_asset.media_object.storage_path
+    persisted_asset.storage_path = "stale/session-carrier.jpg"
+    persisted_asset.mime_type = "image/jpeg"
+    db_session.commit()
+
+    detail = client.get(f"/api/image-sessions/{session_id}")
+    assert detail.status_code == 200
+    serialized_asset = next(asset for asset in detail.json()["assets"] if asset["id"] == reference_asset["id"])
+    assert serialized_asset["mime_type"] == "image/png"
+
+    downloaded = client.get(serialized_asset["download_url"])
+    assert downloaded.status_code == 200
+    assert downloaded.headers["content-type"] == "image/png"
+    assert downloaded.content == reference_bytes
+
+    generated = client.post(
+        f"/api/image-sessions/{session_id}/generate",
+        json={
+            "prompt": "Use the selected canonical reference",
+            "size": "1024x1024",
+            "selected_reference_asset_ids": [reference_asset["id"]],
+        },
+    )
+    assert generated.status_code == 202, generated.text
+
+    deleted = client.delete(f"/api/image-sessions/{session_id}/reference-images/{reference_asset['id']}")
+    assert deleted.status_code == 200
+    assert not canonical_path.exists()
 
 
 def test_image_session_reference_image_can_be_deleted(configured_env: Path, db_session) -> None:

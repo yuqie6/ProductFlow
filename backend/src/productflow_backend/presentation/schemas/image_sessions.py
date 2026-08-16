@@ -186,7 +186,7 @@ def serialize_image_session_asset(asset: ImageSessionAsset) -> ImageSessionAsset
         id=asset.id,
         kind=asset.kind,
         original_filename=asset.original_filename,
-        mime_type=asset.mime_type,
+        mime_type=asset.media_object.mime_type,
         **urls,
         created_at=asset.created_at,
     )

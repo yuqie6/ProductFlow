@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from dramatiq.middleware.time_limit import TimeLimitExceeded
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
@@ -13,7 +13,7 @@ from productflow_backend.application.admission import generation_running_capacit
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.durable_generation_tasks import WORKFLOW_RUN_GENERATION_TASK_CONTRACT
 from productflow_backend.domain.enums import WorkflowNodeStatus, WorkflowRunStatus
-from productflow_backend.infrastructure.db.models import WorkflowNode, WorkflowNodeRun, WorkflowRun
+from productflow_backend.infrastructure.db.models import WorkflowNode, WorkflowNodeRun, WorkflowRun, new_id
 from productflow_backend.infrastructure.queue import enqueue_workflow_node_run_later, enqueue_workflow_run_later
 
 logger = logging.getLogger(__name__)
@@ -62,6 +62,7 @@ class WorkflowSafeExecutionError(RuntimeError):
 class WorkflowNodeRunClaimResult:
     claimed: bool
     should_requeue: bool = False
+    attempt_id: str | None = None
 
 
 def safe_workflow_failure_reason(exc: BaseException) -> str:
@@ -106,13 +107,20 @@ def workflow_node_failed_run_is_retryable(node: WorkflowNode, runs: list[Workflo
     return True
 
 
-def claim_workflow_node_run(session: Session, *, node_run_id: str, node_id: str) -> WorkflowNodeRunClaimResult:
+def claim_workflow_node_run(
+    session: Session,
+    *,
+    node_run_id: str,
+    node_id: str,
+    attempt_id: str | None = None,
+) -> WorkflowNodeRunClaimResult:
     """Atomically claim one queued node run so duplicate Dramatiq messages do not execute it twice."""
 
     now = now_utc()
     if not generation_running_capacity_available(session):
         session.commit()
         return WorkflowNodeRunClaimResult(claimed=False, should_requeue=True)
+    resolved_attempt_id = attempt_id or new_id()
     result = cast(
         CursorResult[Any],
         session.execute(
@@ -120,8 +128,16 @@ def claim_workflow_node_run(session: Session, *, node_run_id: str, node_id: str)
             .where(
                 WorkflowNodeRun.id == node_run_id,
                 WorkflowNodeRun.status == WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_queued_statuses[0],
+                WorkflowNodeRun.active_attempt_id.is_(None),
             )
-            .values(status=WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_running_statuses[0], started_at=now)
+            .values(
+                status=WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_running_statuses[0],
+                attempts=WorkflowNodeRun.attempts + 1,
+                active_attempt_id=resolved_attempt_id,
+                failure_reason=None,
+                started_at=now,
+                finished_at=None,
+            )
         ),
     )
     if result.rowcount != 1:
@@ -133,7 +149,7 @@ def claim_workflow_node_run(session: Session, *, node_run_id: str, node_id: str)
         .values(status=WorkflowNodeStatus.RUNNING, failure_reason=None, last_run_at=now)
     )
     session.commit()
-    return WorkflowNodeRunClaimResult(claimed=True)
+    return WorkflowNodeRunClaimResult(claimed=True, attempt_id=resolved_attempt_id)
 
 
 def requeue_workflow_run_after_capacity_wait(run_id: str) -> None:
@@ -154,16 +170,30 @@ def mark_workflow_node_run_failed(
     session: Session,
     *,
     node_run_id: str,
+    attempt_id: str | None = None,
     reason: str,
     is_retryable: bool = True,
     retry_hint: str | None = None,
     failure_category: str | None = None,
 ) -> str | None:
-    node_run = session.get(WorkflowNodeRun, node_run_id)
+    node_run = session.scalar(
+        select(WorkflowNodeRun)
+        .where(WorkflowNodeRun.id == node_run_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     if node_run is None:
+        return None
+    if attempt_id is None:
+        if node_run.status != WorkflowNodeStatus.QUEUED or node_run.active_attempt_id is not None:
+            session.rollback()
+            return None
+    elif node_run.status != WorkflowNodeStatus.RUNNING or node_run.active_attempt_id != attempt_id:
+        session.rollback()
         return None
     run = node_run.workflow_run
     if WORKFLOW_RUN_GENERATION_TASK_CONTRACT.is_terminal(run.status):
+        session.rollback()
         return None
     now = now_utc()
     node = session.get(WorkflowNode, node_run.node_id)
@@ -172,6 +202,7 @@ def mark_workflow_node_run_failed(
         node.failure_reason = reason
         node.last_run_at = now
     node_run.status = WorkflowNodeStatus.FAILED
+    node_run.active_attempt_id = None
     node_run.failure_reason = reason
     node_run.finished_at = now
     current_metadata = run.progress_metadata if isinstance(run.progress_metadata, dict) else {}
@@ -215,6 +246,7 @@ def mark_workflow_run_failed(
     for node_run in persisted_run.node_runs:
         if node_run.node_id == failed_node_id:
             node_run.status = WorkflowNodeStatus.FAILED
+            node_run.active_attempt_id = None
             node_run.failure_reason = reason
             node_run.finished_at = now
         elif failed_node_id is None and WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_running(node_run.status):
@@ -224,6 +256,7 @@ def mark_workflow_run_failed(
                 failed_node.failure_reason = reason
                 failed_node.last_run_at = now
             node_run.status = WorkflowNodeStatus.FAILED
+            node_run.active_attempt_id = None
             node_run.failure_reason = reason
             node_run.finished_at = now
         elif WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_queued(node_run.status):
@@ -232,6 +265,7 @@ def mark_workflow_run_failed(
                 skipped_node.status = WorkflowNodeStatus.IDLE
                 skipped_node.failure_reason = None
             node_run.status = WorkflowNodeStatus.FAILED
+            node_run.active_attempt_id = None
             node_run.failure_reason = "上游节点失败"
             node_run.finished_at = now
     logger.warning("工作流运行失败: run_id=%s failed_node_id=%s reason=%s", run_id, failed_node_id, reason)
@@ -269,6 +303,7 @@ def mark_workflow_run_cancelled(session: Session, *, run_id: str) -> None:
                 skipped_node.status = WorkflowNodeStatus.IDLE
                 skipped_node.failure_reason = None
             node_run.status = WorkflowNodeStatus.FAILED
+            node_run.active_attempt_id = None
             node_run.failure_reason = WORKFLOW_CANCELLED_REASON
             node_run.finished_at = now
         elif WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_running(node_run.status):
@@ -278,6 +313,7 @@ def mark_workflow_run_cancelled(session: Session, *, run_id: str) -> None:
                 running_node.failure_reason = WORKFLOW_CANCELLED_REASON
                 running_node.last_run_at = now
             node_run.status = WorkflowNodeStatus.FAILED
+            node_run.active_attempt_id = None
             node_run.failure_reason = WORKFLOW_CANCELLED_REASON
             node_run.finished_at = now
     persisted_run.status = WorkflowRunStatus.CANCELLED

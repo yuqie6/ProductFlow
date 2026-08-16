@@ -21,6 +21,11 @@ class StorageWriteCompensation:
         self._writes.append((storage, relative_path))
         return relative_path
 
+    def release(self) -> None:
+        """Forget files after their owning database transaction commits."""
+
+        self._writes = []
+
     def cleanup(self) -> None:
         writes = reversed(self._writes)
         self._writes = []

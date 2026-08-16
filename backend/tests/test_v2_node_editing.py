@@ -309,6 +309,7 @@ def test_target_node_title_edit_rejects_active_run(db_session) -> None:
             workflow_run_id=run.id,
             node_id=image_node.id,
             status=WorkflowNodeStatus.RUNNING,
+            active_attempt_id="node-edit-active-attempt",
         )
     )
     db_session.commit()

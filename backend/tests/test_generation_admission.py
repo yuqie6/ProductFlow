@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -82,6 +83,7 @@ def test_generation_cap_accepts_and_queues_workflow_run_creation(
     busy_node = db_session.get(WorkflowNode, busy_node_run.node_id)
     assert busy_node is not None
     busy_node_run.status = WorkflowNodeStatus.RUNNING
+    busy_node_run.active_attempt_id = "busy-workflow-attempt"
     busy_node.status = WorkflowNodeStatus.RUNNING
     db_session.commit()
     busy_run = db_session.get(WorkflowRun, busy.run.id)
@@ -137,6 +139,8 @@ def test_generation_cap_accepts_and_queues_image_session_generation_task_creatio
         size="1024x1024",
     ).task
     running.status = JobStatus.RUNNING
+    running.active_attempt_id = "admission-running-attempt"
+    running.started_at = datetime.now(UTC)
     db_session.commit()
     _set_generation_cap(db_session, 1)
 
@@ -208,6 +212,8 @@ def test_generation_queue_overview_and_positions_include_durable_tasks(
         size="1024x1024",
     ).task
     second.status = JobStatus.RUNNING
+    second.active_attempt_id = "queue-overview-running-attempt"
+    second.started_at = datetime.now(UTC)
     db_session.commit()
 
     overview = get_generation_queue_overview(db_session)
@@ -249,6 +255,8 @@ def test_generation_queue_overview_endpoint_returns_public_snapshot(
         size="1024x1024",
     ).task
     running.status = JobStatus.RUNNING
+    running.active_attempt_id = "admission-running-attempt"
+    running.started_at = datetime.now(UTC)
     db_session.commit()
 
     app = create_app()

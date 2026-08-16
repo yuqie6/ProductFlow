@@ -87,11 +87,16 @@ SUPPORTED_PROMPT_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp"}
 logger = logging.getLogger(__name__)
 
 
+class WorkflowNodeRunStaleAttemptError(Exception):
+    """Raised when a worker no longer owns the WorkflowNodeRun attempt."""
+
+
 @dataclass(frozen=True, slots=True)
 class PreparedPromptGeneration:
     run_id: str
     node_id: str
     node_run_id: str
+    attempt_id: str
     prompt_artifact_id: str
     current_prompt_version_id: str
     visual_variant_keys: frozenset[str]
@@ -104,6 +109,7 @@ class PreparedImageGeneration:
     run_id: str
     node_id: str
     node_run_id: str
+    attempt_id: str
     product_id: str
     workflow_id: str
     image_type_key: str
@@ -139,6 +145,8 @@ def execute_v2_workflow_node_run(
         if claim.should_requeue:
             requeue_workflow_node_run_after_capacity_wait(node_run.id)
         return False
+    if claim.attempt_id is None:
+        raise RuntimeError("claimed WorkflowNodeRun has no attempt id")
 
     resolved_dependencies = dependencies or default_workflow_execution_dependencies()
     resolved_storage = storage or LocalStorage()
@@ -148,6 +156,7 @@ def execute_v2_workflow_node_run(
             prepared_prompt = _prepare_prompt_generation(
                 session,
                 node_run_id=node_run.id,
+                attempt_id=claim.attempt_id,
                 storage=resolved_storage,
             )
             session.commit()
@@ -164,6 +173,7 @@ def execute_v2_workflow_node_run(
             prepared_image = _prepare_image_generation(
                 session,
                 node_run_id=node_run.id,
+                attempt_id=claim.attempt_id,
                 storage=resolved_storage,
             )
             session.commit()
@@ -179,17 +189,26 @@ def execute_v2_workflow_node_run(
                 storage=resolved_storage,
                 storage_writes=storage_writes,
             )
+            storage_writes.release()
             if rendition_job_id is not None:
                 _enqueue_delivery_rendition_without_affecting_workflow(session, rendition_job_id)
-    except Exception as exc:  # noqa: BLE001
+    except WorkflowNodeRunStaleAttemptError:
+        session.rollback()
+        storage_writes.cleanup()
+        return False
+    except BaseException as exc:  # noqa: BLE001
+        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            raise
         session.rollback()
         storage_writes.cleanup()
         failure = workflow_run_failure_context(exc)
-        mark_workflow_node_run_failed(
+        run_id = mark_workflow_node_run_failed(
             session,
             node_run_id=node_run.id,
+            attempt_id=claim.attempt_id,
             **failure,
         )
+        return run_id is not None
     return True
 
 
@@ -206,6 +225,7 @@ def _prepare_prompt_generation(
     session: Session,
     *,
     node_run_id: str,
+    attempt_id: str,
     storage: LocalStorage,
 ) -> PreparedPromptGeneration:
     node_run = session.scalar(
@@ -221,8 +241,10 @@ def _prepare_prompt_generation(
     run = node_run.workflow_run
     node = node_run.node
     workflow = run.workflow
-    if run.status != WorkflowRunStatus.RUNNING or node_run.status != WorkflowNodeStatus.RUNNING:
-        raise ConflictError("工作流节点运行不再处于 running 状态")
+    if node_run.status != WorkflowNodeStatus.RUNNING or node_run.active_attempt_id != attempt_id:
+        raise WorkflowNodeRunStaleAttemptError()
+    if run.status != WorkflowRunStatus.RUNNING:
+        raise WorkflowNodeRunStaleAttemptError()
     if node.node_type != WorkflowNodeType.PROMPT_GENERATION:
         raise ConflictError("当前 schema-v2 节点不是提示词节点")
     current_version = node.current_prompt_artifact_version
@@ -292,6 +314,7 @@ def _prepare_prompt_generation(
         run_id=run.id,
         node_id=node.id,
         node_run_id=node_run.id,
+        attempt_id=attempt_id,
         prompt_artifact_id=prompt_artifact.id,
         current_prompt_version_id=current_version.id,
         visual_variant_keys=visual_variant_keys,
@@ -313,6 +336,7 @@ def _prepare_image_generation(
     session: Session,
     *,
     node_run_id: str,
+    attempt_id: str,
     storage: LocalStorage,
 ) -> PreparedImageGeneration:
     node_run = session.scalar(
@@ -328,8 +352,10 @@ def _prepare_image_generation(
     run = node_run.workflow_run
     node = node_run.node
     workflow = run.workflow
-    if run.status != WorkflowRunStatus.RUNNING or node_run.status != WorkflowNodeStatus.RUNNING:
-        raise ConflictError("工作流节点运行不再处于 running 状态")
+    if node_run.status != WorkflowNodeStatus.RUNNING or node_run.active_attempt_id != attempt_id:
+        raise WorkflowNodeRunStaleAttemptError()
+    if run.status != WorkflowRunStatus.RUNNING:
+        raise WorkflowNodeRunStaleAttemptError()
     if node.node_type != WorkflowNodeType.IMAGE_GENERATION:
         raise ConflictError("当前 schema-v2 节点不是图片生成节点")
 
@@ -406,6 +432,7 @@ def _prepare_image_generation(
         run_id=run.id,
         node_id=node.id,
         node_run_id=node_run.id,
+        attempt_id=attempt_id,
         product_id=workflow.product_id,
         workflow_id=workflow.id,
         image_type_key=image_type_key,
@@ -803,7 +830,10 @@ def _persist_prompt_result(
     provider_name: str,
 ) -> None:
     node_run = session.scalar(
-        select(WorkflowNodeRun).where(WorkflowNodeRun.id == prepared.node_run_id).with_for_update()
+        select(WorkflowNodeRun)
+        .where(WorkflowNodeRun.id == prepared.node_run_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     run = session.scalar(select(WorkflowRun).where(WorkflowRun.id == prepared.run_id).with_for_update())
     node = session.scalar(select(WorkflowNode).where(WorkflowNode.id == prepared.node_id).with_for_update())
@@ -814,11 +844,12 @@ def _persist_prompt_result(
     )
     if node_run is None or run is None or node is None or prompt_artifact is None:
         raise ConflictError("提示词节点运行状态已不存在")
-    if run.status == WorkflowRunStatus.CANCELLED:
-        session.rollback()
-        return
-    if run.status != WorkflowRunStatus.RUNNING or node_run.status != WorkflowNodeStatus.RUNNING:
-        raise ConflictError("提示词节点运行状态已变化")
+    if (
+        run.status != WorkflowRunStatus.RUNNING
+        or node_run.status != WorkflowNodeStatus.RUNNING
+        or node_run.active_attempt_id != prepared.attempt_id
+    ):
+        raise WorkflowNodeRunStaleAttemptError()
     if node.current_prompt_artifact_version_id != prepared.current_prompt_version_id:
         raise ConflictError("提示词节点 current version 已变化，拒绝覆盖新结果")
 
@@ -867,6 +898,7 @@ def _persist_prompt_result(
     node.failure_reason = None
     node.last_run_at = now
     node_run.status = WorkflowNodeStatus.SUCCEEDED
+    node_run.active_attempt_id = None
     node_run.output_json = output
     node_run.finished_at = now
     run.workflow.updated_at = now
@@ -912,7 +944,10 @@ def _persist_image_result(
     storage_writes: StorageWriteCompensation,
 ) -> str | None:
     node_run = session.scalar(
-        select(WorkflowNodeRun).where(WorkflowNodeRun.id == prepared.node_run_id).with_for_update()
+        select(WorkflowNodeRun)
+        .where(WorkflowNodeRun.id == prepared.node_run_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     run = session.scalar(select(WorkflowRun).where(WorkflowRun.id == prepared.run_id).with_for_update())
     node = session.scalar(select(WorkflowNode).where(WorkflowNode.id == prepared.node_id).with_for_update())
@@ -930,11 +965,12 @@ def _persist_image_result(
     )
     if node_run is None or run is None or node is None or workflow is None or product is None:
         raise ConflictError("图片节点运行状态已不存在")
-    if run.status == WorkflowRunStatus.CANCELLED:
-        session.rollback()
-        return
-    if run.status != WorkflowRunStatus.RUNNING or node_run.status != WorkflowNodeStatus.RUNNING:
-        raise ConflictError("图片节点运行状态已变化")
+    if (
+        run.status != WorkflowRunStatus.RUNNING
+        or node_run.status != WorkflowNodeStatus.RUNNING
+        or node_run.active_attempt_id != prepared.attempt_id
+    ):
+        raise WorkflowNodeRunStaleAttemptError()
     if workflow.visual_system_version_id != prepared.visual_system_version_id:
         raise ConflictError("图片节点 VisualSystemVersion 已变化，拒绝保存过期结果")
     current_prompt_node_id = session.scalar(
@@ -1052,6 +1088,7 @@ def _persist_image_result(
     node.failure_reason = None
     node.last_run_at = now
     node_run.status = WorkflowNodeStatus.SUCCEEDED
+    node_run.active_attempt_id = None
     node_run.output_json = output
     node_run.finished_at = now
     workflow.updated_at = now

@@ -458,6 +458,7 @@ def project_agent_turn_state(
     error_text: str | None,
     question_json: dict[str, Any] | None,
     finished_at: datetime | None,
+    tool_steps_json: list[dict[str, Any]] | None = None,
 ) -> AgentTurnProjection:
     projection = _get_agent_turn_for_update(
         session,
@@ -470,6 +471,8 @@ def project_agent_turn_state(
     projection.output_text = _bounded_optional_text(output_text, limit=100_000)
     projection.error_text = _bounded_optional_text(error_text, limit=4_000)
     projection.question_json = dict(question_json) if question_json is not None else None
+    if tool_steps_json is not None:
+        projection.tool_steps_json = [dict(item) for item in tool_steps_json]
     projection.sync_error = None
     projection.finished_at = finished_at
     projection.updated_at = now_utc()

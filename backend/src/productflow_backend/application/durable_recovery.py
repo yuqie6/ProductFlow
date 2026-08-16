@@ -21,6 +21,7 @@ from productflow_backend.infrastructure.db.models import (
     DeliveryRenditionJob,
     ImageSessionGenerationTask,
     WorkflowNode,
+    WorkflowNodeRun,
     WorkflowRun,
     utcnow,
 )
@@ -111,13 +112,40 @@ def recover_unfinished_workflow_runs(
                 ]
                 if not reset_stale_running or len(stale_node_runs) != len(running_node_runs):
                     continue
-                for stale_node_run in stale_node_runs:
-                    stale_node_run.status = WorkflowNodeStatus.QUEUED
+                reset_succeeded = True
+                for stale_node_run in sorted(stale_node_runs, key=lambda item: (item.node_id, item.id)):
+                    observed_attempt_id = stale_node_run.active_attempt_id
+                    if observed_attempt_id is None:
+                        reset_succeeded = False
+                        break
+                    reset = session.execute(
+                        update(WorkflowNodeRun)
+                        .where(
+                            WorkflowNodeRun.id == stale_node_run.id,
+                            WorkflowNodeRun.status == WorkflowNodeStatus.RUNNING,
+                            WorkflowNodeRun.active_attempt_id == observed_attempt_id,
+                            WorkflowNodeRun.started_at <= cutoff,
+                        )
+                        .values(
+                            status=WorkflowNodeStatus.QUEUED,
+                            active_attempt_id=None,
+                            failure_reason=None,
+                            finished_at=None,
+                        )
+                        .execution_options(synchronize_session=False)
+                    )
+                    if reset.rowcount != 1:
+                        reset_succeeded = False
+                        break
                     node = session.get(WorkflowNode, stale_node_run.node_id)
                     if node is not None and WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_running(node.status):
                         node.status = WorkflowNodeStatus.QUEUED
                         node.failure_reason = None
+                if not reset_succeeded:
+                    session.rollback()
+                    continue
                 run.failure_reason = None
+                session.commit()
                 stale_running_runs += 1
                 runs_to_enqueue.append(run.id)
                 continue
@@ -194,33 +222,58 @@ def recover_unfinished_image_session_generation_tasks(
         tasks = list(session.scalars(statement).all())
         for task in tasks:
             if IMAGE_SESSION_GENERATION_TASK_CONTRACT.is_running(task.status):
+                observed_attempt_id = task.active_attempt_id
+                if observed_attempt_id is None:
+                    continue
+                now = utcnow()
+                values: dict[str, object]
                 if task.completed_candidates:
-                    now = utcnow()
-                    task.status = JobStatus.FAILED
-                    task.finished_at = now
-                    task.is_retryable = False
-                    task.active_candidate_index = None
-                    task.progress_phase = "failed_idle_timeout"
-                    task.progress_updated_at = now
-                    task.failure_reason = (
-                        f"已生成 {task.completed_candidates}/{task.generation_count} 张候选，"
-                        "但任务超时，剩余候选未完成。"
-                    )
+                    values = {
+                        "status": JobStatus.FAILED,
+                        "active_attempt_id": None,
+                        "finished_at": now,
+                        "is_retryable": False,
+                        "active_candidate_index": None,
+                        "progress_phase": "failed_idle_timeout",
+                        "progress_updated_at": now,
+                        "failure_reason": (
+                            f"已生成 {task.completed_candidates}/{task.generation_count} 张候选，"
+                            "但任务超时，剩余候选未完成。"
+                        ),
+                    }
                 else:
-                    task.status = JobStatus.QUEUED
-                    task.started_at = None
-                    task.active_candidate_index = None
-                    task.provider_response_status = None
-                    task.provider_response_id = None
-                    task.progress_phase = "requeued_after_idle"
-                    task.progress_updated_at = utcnow()
+                    values = {
+                        "status": JobStatus.QUEUED,
+                        "active_attempt_id": None,
+                        "started_at": None,
+                        "finished_at": None,
+                        "active_candidate_index": None,
+                        "provider_response_status": None,
+                        "provider_response_id": None,
+                        "progress_phase": "requeued_after_idle",
+                        "progress_updated_at": now,
+                    }
+                reset = session.execute(
+                    update(ImageSessionGenerationTask)
+                    .where(
+                        ImageSessionGenerationTask.id == task.id,
+                        ImageSessionGenerationTask.status == JobStatus.RUNNING,
+                        ImageSessionGenerationTask.active_attempt_id == observed_attempt_id,
+                        last_progress_at <= cutoff,
+                    )
+                    .values(**values)
+                    .execution_options(synchronize_session=False)
+                )
+                if reset.rowcount != 1:
+                    session.rollback()
+                    continue
+                session.commit()
+                if not task.completed_candidates:
                     task_ids_to_enqueue.append(task.id)
                 stale_running_tasks += 1
             else:
                 queued_tasks += 1
                 task_ids_to_enqueue.append(task.id)
-        if stale_running_tasks:
-            session.commit()
     except Exception:
         session.rollback()
         logger.exception("恢复滞留连续生图任务时读取数据库失败")
