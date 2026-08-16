@@ -30,7 +30,7 @@ web/dist/
 backend/storage-dev/
 backend/backend/storage-dev/
 agent-service/data/
-
+aegis/
 # Root-level .agents/ and .codex/ helper definitions should be visible to git;
 # keep only generated/runtime output and local overrides out of source control.
 .agents/**/.cache/

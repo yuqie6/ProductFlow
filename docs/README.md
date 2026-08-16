@@ -9,9 +9,11 @@
 | `ARCHITECTURE.md` | 当前运行单元、代码所有权、数据流、实现和测试锚点 | 未实现设想、逐步用户教程 |
 | `USER_GUIDE.md` | 用户可以执行的页面操作和故障提示 | 内部事务、模型表、未来计划 |
 | `ROADMAP.md` | 尚未实现或尚未验证的产品与工程方向 | 已交付能力清单、当前架构复述 |
+| `specs/` | scoped PRD 与实现设计；状态必须标注 Draft/Approved，Approved 必须给出批准 issue、decision 或任务 evidence | 冒充当前运行事实、部署证据、会频繁变化的任务状态 |
 | `adr/` | 已接受决策的背景、选择、后果 | 会频繁随重构变化的文件列表 |
 | `rollout/` | 某次迁移或发布的已完成项、缺失证据和停止条件 | 长期工程规则 |
 | `operations/` | 操作者命令、前置条件、回滚和证据处理 | 产品愿景、普通开发流程 |
+| `aegis/` | 长任务 intent、实施计划、checkpoint 与证据草稿 | 取代 PRD、ADR、ARCHITECTURE 或 runtime authority |
 | `../AGENTS.md` | 全仓开发方法和验证要求 | 领域需求复述 |
 | `../backend/AGENTS.md` | 后端可执行工程约束 | 产品路线图 |
 | `../web/AGENTS.md` | 前端可执行工程约束 | 后端内部实现细节 |
@@ -22,7 +24,8 @@
 
 开发前按改动类型读取最小集合：
 
-- 产品语义：`CONTEXT.md`、`PRD.md`、相关 ADR。
+- 当前产品语义：`CONTEXT.md`、`PRD.md`、相关 ADR。
+- 已批准但未交付的产品/设计变更：相关 `specs/`、ADR、rollout 和实施计划；不得提前写成当前事实。
 - 后端：`backend/AGENTS.md`、`ARCHITECTURE.md` 中对应所有权、相关代码和测试。
 - 前端：`web/AGENTS.md`、`ARCHITECTURE.md` 中对应所有权、相关代码和测试。
 - 跨层合同：以上两份 package `AGENTS.md`，沿 wire DTO、应用用例、持久化、API client 和 UI projection 验证完整链路。
