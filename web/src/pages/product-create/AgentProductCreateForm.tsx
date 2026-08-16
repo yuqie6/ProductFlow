@@ -1,5 +1,30 @@
-import { useEffect, useMemo, useState } from "react";
-import { Eye, ImagePlus, Loader2, Minus, Plus, RotateCw, Sparkles, X } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  BadgeCheck,
+  BookOpen,
+  Boxes,
+  Check,
+  CircleAlert,
+  CircleHelp,
+  Eye,
+  Factory,
+  ImagePlus,
+  Images,
+  Layers,
+  ListChecks,
+  Loader2,
+  Minus,
+  Package,
+  Plus,
+  RotateCw,
+  Ruler,
+  ShieldCheck,
+  Sparkles,
+  Truck,
+  X,
+  ZoomIn,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
 import { ImageDropZone } from "../../components/ImageDropZone";
 import { useI18n } from "../../lib/preferences";
@@ -32,6 +57,38 @@ interface AgentProductCreateFormProps {
   onRemoveReferenceFile: (index: number) => void;
   onRetryOptions: () => void;
   onSubmit: () => void;
+}
+
+const IMAGE_TYPE_ICONS: Partial<Record<AgentProductImageTypeKey, LucideIcon>> = {
+  hero: Sparkles,
+  selling_point: BadgeCheck,
+  scene: Layers,
+  detail: ZoomIn,
+  sku: Boxes,
+  dimensions: Ruler,
+  specifications: ListChecks,
+  after_sales: ShieldCheck,
+  brand_story: BookOpen,
+  precautions: CircleAlert,
+  certification: BadgeCheck,
+  faq: CircleHelp,
+  factory: Factory,
+  packaging: Package,
+  shipping: Truck,
+};
+
+const STAGE_ICONS: [LucideIcon, LucideIcon, LucideIcon] = [Package, Images, ImagePlus];
+
+const stepClass =
+  "flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#6366f1] to-[#8b5cf6] text-[11px] font-bold text-white shadow-[0_3px_8px_rgb(99_102_241/0.3)]";
+
+function cardShellClass(isActive: boolean): string {
+  const base =
+    "relative rounded-2xl border bg-surface-raised p-5 shadow-sm transition-[border-color,box-shadow] duration-200 sm:p-6";
+  if (isActive) {
+    return `${base} border-accent/40 shadow-[0_12px_44px_-16px_rgb(99_102_241/0.35)] ring-1 ring-accent/15`;
+  }
+  return `${base} border-border-l1 hover:border-border-l3`;
 }
 
 function formatFileSize(bytes: number, locale: string): string {
@@ -98,7 +155,89 @@ export function AgentProductCreateForm({
 
   const previewFile = previewIndex === null ? null : referenceFiles[previewIndex] ?? null;
   const previewUrl = previewIndex === null ? "" : previewUrls[previewIndex] ?? "";
+  const minReferences = options?.limits.min_reference_images ?? 0;
   const maxReferences = options?.limits.max_reference_images ?? 0;
+  const nameReady = productName.trim().length > 0;
+  const planReady = selections.length > 0;
+  const referenceReady = referenceFiles.length >= minReferences;
+
+  const stageCard = (stage: 1 | 2 | 3, meta: string, isActive: boolean, body: ReactNode) => {
+    const Icon = STAGE_ICONS[stage - 1];
+    return (
+      <section aria-labelledby={`agent-stage-${stage}-title`} className={cardShellClass(isActive)}>
+        <div className="mb-4 flex items-start gap-3 border-b border-border-l2 pb-4">
+          <span className={stepClass} aria-hidden="true">
+            {stage}
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2
+              id={`agent-stage-${stage}-title`}
+              className="flex items-center gap-2 text-sm font-semibold text-text-primary"
+            >
+              <Icon size={16} className="text-accent" aria-hidden="true" />
+              {stage === 1 ? t("agentCreate.productName") : stage === 2 ? t("agentCreate.imageTypes") : t("agentCreate.references")}
+            </h2>
+            <p className="mt-0.5 text-xs leading-4 text-text-muted">{meta}</p>
+          </div>
+          {isActive ? (
+            <span className="mt-0.5 hidden shrink-0 items-center gap-1 rounded-full border border-accent/30 bg-accent-soft px-2.5 py-1 text-[11px] font-semibold text-accent-strong sm:flex">
+              <Check size={12} aria-hidden="true" />
+              {t("agentCreate.stageReady")}
+            </span>
+          ) : null}
+        </div>
+        {body}
+      </section>
+    );
+  };
+
+  const stepper = (key: AgentProductImageTypeKey, title: string) => {
+    if (!options) return null;
+    const selected = selectedByKey.get(key);
+    if (!selected) {
+      return (
+        <span className="inline-flex h-8 items-center gap-1 rounded-full border border-accent/70 bg-accent/20 px-3.5 text-xs font-semibold text-accent-strong transition-colors group-hover:border-accent group-hover:bg-accent/25">
+          <Plus size={12} aria-hidden="true" />
+          {t("agentCreate.add")}
+        </span>
+      );
+    }
+    return (
+      <div className="grid h-9 w-28 grid-cols-[34px_44px_34px] overflow-hidden rounded-full border border-accent/35 bg-surface-raised shadow-sm">
+        <button
+          type="button"
+          title={t("agentCreate.decrease", { title })}
+          aria-label={t("agentCreate.decrease", { title })}
+          disabled={isSubmitting || editingLocked || selected.quantity <= options.limits.min_images_per_type}
+          onClick={() => onQuantityChange(key, selected.quantity - 1)}
+          className="flex items-center justify-center rounded-l-full text-text-secondary transition-colors hover:bg-surface-subtle hover:text-text-primary disabled:opacity-35"
+        >
+          <Minus size={14} />
+        </button>
+        <input
+          aria-label={`${title} ${t("agentCreate.quantity")}`}
+          type="number"
+          min={options.limits.min_images_per_type}
+          max={options.limits.max_images_per_type}
+          step={1}
+          disabled={isSubmitting || editingLocked}
+          value={selected.quantity}
+          onChange={(event) => onQuantityChange(key, Number(event.target.value))}
+          className="h-full w-full border-x border-accent/25 bg-transparent text-center text-sm font-semibold tabular-nums text-text-primary outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+        />
+        <button
+          type="button"
+          title={t("agentCreate.increase", { title })}
+          aria-label={t("agentCreate.increase", { title })}
+          disabled={isSubmitting || editingLocked || selected.quantity >= options.limits.max_images_per_type}
+          onClick={() => onQuantityChange(key, selected.quantity + 1)}
+          className="flex items-center justify-center rounded-r-full text-text-secondary transition-colors hover:bg-surface-subtle hover:text-text-primary disabled:opacity-35"
+        >
+          <Plus size={14} />
+        </button>
+      </div>
+    );
+  };
 
   return (
     <form
@@ -108,234 +247,206 @@ export function AgentProductCreateForm({
         event.preventDefault();
         onSubmit();
       }}
-      className="mt-6 min-w-0"
+      className="mt-6 min-w-0 space-y-4 pb-40"
     >
-      <div>
-        <label
-          htmlFor="agent-product-name"
-          className="block text-sm font-semibold text-zinc-950 dark:text-white"
-        >
-          {t("agentCreate.productName")}
+      {stageCard(1, t("agentCreate.nameHint"), nameReady, (
+        <label htmlFor="agent-product-name" className="block">
+          <span className="sr-only">{t("agentCreate.productName")}</span>
+          <input
+            id="agent-product-name"
+            autoFocus={!isProductNameReadOnly}
+            autoComplete="off"
+            value={productName}
+            readOnly={isProductNameReadOnly}
+            disabled={isSubmitting || editingLocked}
+            onChange={(event) => onProductNameChange(event.target.value)}
+            placeholder={t("agentCreate.namePlaceholder")}
+            className="input-premium h-12 w-full px-4 text-[15px] font-medium text-text-primary read-only:cursor-not-allowed read-only:bg-surface-subtle/70 read-only:text-text-secondary disabled:cursor-not-allowed disabled:opacity-60"
+          />
         </label>
-        <input
-          id="agent-product-name"
-          autoFocus={!isProductNameReadOnly}
-          autoComplete="off"
-          value={productName}
-          readOnly={isProductNameReadOnly}
-          disabled={isSubmitting || editingLocked}
-          onChange={(event) => onProductNameChange(event.target.value)}
-          placeholder={t("agentCreate.namePlaceholder")}
-          className="mt-2 h-11 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 outline-none transition-colors placeholder:text-zinc-400 focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 disabled:cursor-not-allowed disabled:opacity-60 read-only:bg-zinc-100 read-only:text-zinc-600 dark:border-slate-700 dark:!bg-[#0d1117] dark:text-white dark:placeholder:text-slate-500 dark:read-only:!bg-slate-800 dark:read-only:text-slate-300"
-        />
-      </div>
+      ))}
 
-      <section className="mt-7" aria-labelledby="agent-image-types-title">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 id="agent-image-types-title" className="text-sm font-semibold text-zinc-950 dark:text-white">
-            {t("agentCreate.imageTypes")}
-          </h2>
-          <span className="text-xs tabular-nums text-zinc-500 dark:text-slate-400">
-            {t("agentCreate.imageTypesMeta", { selected: selections.length, total: totalImages })}
-          </span>
-        </div>
+      {stageCard(2, t("agentCreate.imageTypesMeta", { selected: selections.length, total: totalImages }), planReady, (
+        <div className="space-y-3">
+          {isOptionsLoading ? (
+            <div className="flex min-h-28 items-center justify-center text-sm text-text-muted">
+              <Loader2 size={17} className="mr-2 animate-spin text-accent" />
+              {t("agentCreate.optionsLoading")}
+            </div>
+          ) : null}
 
-        {isOptionsLoading ? (
-          <div className="mt-3 flex min-h-28 items-center justify-center border-y border-zinc-200 text-sm text-zinc-500 dark:border-slate-800 dark:text-slate-400">
-            <Loader2 size={17} className="mr-2 animate-spin" />
-            {t("agentCreate.optionsLoading")}
-          </div>
-        ) : null}
+          {isOptionsError ? (
+            <div className="flex min-h-28 flex-col items-center justify-center gap-3 rounded-xl border border-state-error/30 bg-state-error/10 px-4 py-5 text-sm text-text-primary">
+              <span className="text-text-secondary">{t("agentCreate.optionsFailed")}</span>
+              <button
+                type="button"
+                onClick={onRetryOptions}
+                className="inline-flex h-9 items-center gap-2 rounded-lg border border-border-l3 bg-surface-raised px-3 font-medium text-text-secondary transition-colors hover:border-accent/50 hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              >
+                <RotateCw size={14} />
+                {t("agentCreate.retryOptions")}
+              </button>
+            </div>
+          ) : null}
 
-        {isOptionsError ? (
-          <div className="mt-3 flex min-h-28 flex-col items-center justify-center gap-3 border-y border-red-200 bg-red-50/70 px-4 text-sm text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200">
-            <span>{t("agentCreate.optionsFailed")}</span>
-            <button
-              type="button"
-              onClick={onRetryOptions}
-              className="inline-flex h-9 items-center gap-2 rounded-md border border-red-300 bg-white px-3 font-medium hover:bg-red-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500 dark:border-red-400/40 dark:!bg-[#161018]"
-            >
-              <RotateCw size={14} />
-              {t("agentCreate.retryOptions")}
-            </button>
-          </div>
-        ) : null}
-
-        {options ? (
-          <div className="mt-3 grid overflow-hidden border-y border-zinc-200 bg-white md:grid-cols-2 dark:border-slate-800 dark:!bg-[#0d1117]">
-            {sortedOptions.map((option) => {
-              const selected = selectedByKey.get(option.key);
-              const translations = AGENT_IMAGE_TYPE_TRANSLATIONS[option.key];
-              const title = translations ? t(translations.title) : option.title;
-              const description = translations ? t(translations.description) : option.description;
-              return (
-                <div
-                  key={option.key}
-                  data-image-type={option.key}
-                  className={`grid min-h-21 grid-cols-[minmax(0,1fr)_112px] items-center gap-3 border-b border-zinc-100 px-3 py-2.5 transition-colors md:odd:border-r dark:border-slate-800 ${
-                    selected ? "bg-blue-50/60 dark:bg-cyan-400/5" : "hover:bg-zinc-50 dark:hover:bg-slate-800/45"
-                  }`}
-                >
-                  <label className="flex min-w-0 cursor-pointer items-start gap-3">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(selected)}
-                      disabled={isSubmitting || editingLocked}
-                      onChange={(event) => onToggleImageType(option.key, event.target.checked)}
-                      className="mt-0.5 h-4 w-4 shrink-0 accent-blue-600"
-                    />
-                    <span className="min-w-0">
-                      <span className="block text-sm font-semibold leading-5 text-zinc-950 dark:text-white">
-                        {title}
+          {options ? (
+            <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+              {sortedOptions.map((option) => {
+                const selected = selectedByKey.get(option.key);
+                const translations = AGENT_IMAGE_TYPE_TRANSLATIONS[option.key];
+                const title = translations ? t(translations.title) : option.title;
+                const description = translations ? t(translations.description) : option.description;
+                const Icon = IMAGE_TYPE_ICONS[option.key] ?? Images;
+                const iconColor = selected ? "text-accent" : "text-text-muted";
+                return (
+                  <label
+                    key={option.key}
+                    data-image-type={option.key}
+                    className={`group flex min-h-32 cursor-pointer flex-col rounded-xl border p-4 transition-[border-color,background-color,box-shadow] duration-200 ${
+                      selected
+                        ? "border-accent/60 bg-accent-soft/60 shadow-[0_8px_24px_-14px_rgb(99_102_241/0.45)] dark:bg-accent/10"
+                        : "border-border-l1 bg-surface-base/60 hover:border-border-l3 hover:bg-surface-raised"
+                    }`}
+                  >
+                    <span className="flex min-h-10 items-start gap-2.5">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(selected)}
+                        disabled={isSubmitting || editingLocked}
+                        onChange={(event) => onToggleImageType(option.key, event.target.checked)}
+                        className="peer sr-only"
+                      />
+                      <span
+                        aria-hidden="true"
+                        className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-slate-400/80 bg-surface-raised transition-colors group-hover:border-accent/60 peer-focus-visible:ring-2 peer-focus-visible:ring-accent peer-focus-visible:ring-offset-2 peer-disabled:opacity-50 peer-checked:hidden dark:border-slate-500 dark:peer-focus-visible:ring-offset-surface-raised"
+                      />
+                      <span
+                        aria-hidden="true"
+                        className="mt-0.5 hidden h-5 w-5 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-[#6366f1] to-[#8b5cf6] text-white shadow-[0_2px_6px_rgb(99_102_241/0.4)] transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-accent peer-focus-visible:ring-offset-2 peer-disabled:opacity-50 peer-checked:flex dark:peer-focus-visible:ring-offset-surface-raised"
+                      >
+                        <Check size={12} strokeWidth={3} aria-hidden="true" />
                       </span>
-                      <span className="mt-0.5 block text-xs leading-4 text-zinc-500 dark:text-slate-400">
-                        {description}
+                      <span className="flex min-w-0 items-start gap-1.5 text-sm font-semibold leading-5 text-text-primary">
+                        <Icon size={15} className={`${iconColor} mt-0.5 shrink-0`} aria-hidden="true" />
+                        <span className="min-w-0 line-clamp-2">{title}</span>
                       </span>
                     </span>
+                    <span className="mt-1.5 block text-xs leading-5 text-text-muted">{description}</span>
+                    <span className="mt-auto flex justify-end pt-2.5">{stepper(option.key, title)}</span>
                   </label>
-
-                  {selected ? (
-                    <div className="grid h-9 w-28 grid-cols-[34px_44px_34px] overflow-hidden rounded-md border border-zinc-300 bg-white dark:border-slate-700 dark:!bg-[#111820]">
-                      <button
-                        type="button"
-                        title={t("agentCreate.decrease", { title })}
-                        aria-label={t("agentCreate.decrease", { title })}
-                        disabled={isSubmitting || editingLocked || selected.quantity <= options.limits.min_images_per_type}
-                        onClick={() => onQuantityChange(option.key, selected.quantity - 1)}
-                        className="flex items-center justify-center border-r border-zinc-200 text-zinc-600 hover:bg-zinc-100 disabled:opacity-35 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-700"
-                      >
-                        <Minus size={14} />
-                      </button>
-                      <input
-                        aria-label={`${title} ${t("agentCreate.quantity")}`}
-                        type="number"
-                        min={options.limits.min_images_per_type}
-                        max={options.limits.max_images_per_type}
-                        step={1}
-                        disabled={isSubmitting || editingLocked}
-                        value={selected.quantity}
-                        onChange={(event) => onQuantityChange(option.key, Number(event.target.value))}
-                        className="h-full w-full border-0 bg-transparent p-0 text-center text-sm font-semibold tabular-nums outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                      />
-                      <button
-                        type="button"
-                        title={t("agentCreate.increase", { title })}
-                        aria-label={t("agentCreate.increase", { title })}
-                        disabled={isSubmitting || editingLocked || selected.quantity >= options.limits.max_images_per_type}
-                        onClick={() => onQuantityChange(option.key, selected.quantity + 1)}
-                        className="flex items-center justify-center border-l border-zinc-200 text-zinc-600 hover:bg-zinc-100 disabled:opacity-35 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-700"
-                      >
-                        <Plus size={14} />
-                      </button>
-                    </div>
-                  ) : (
-                    <span className="w-28 text-center text-sm text-zinc-300 dark:text-slate-700">-</span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        ) : null}
-      </section>
-
-      <section className="mt-7" aria-labelledby="agent-reference-images-title">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 id="agent-reference-images-title" className="text-sm font-semibold text-zinc-950 dark:text-white">
-            {t("agentCreate.references")}
-          </h2>
-          {options ? (
-            <span className="text-xs tabular-nums text-zinc-500 dark:text-slate-400">
-              {t("agentCreate.referencesMeta", {
-                count: referenceFiles.length,
-                max: options.limits.max_reference_images,
+                );
               })}
-            </span>
+            </div>
           ) : null}
         </div>
+      ))}
 
-        <div className="mt-3 flex min-h-27 gap-2 overflow-x-auto pb-2">
-          {referenceFiles.map((file, index) => (
-            <article
-              key={`${file.name}:${file.size}:${file.lastModified}:${index}`}
-              className="group relative w-24 shrink-0 overflow-hidden rounded-md border border-zinc-200 bg-white dark:border-slate-800 dark:!bg-[#0d1117]"
-            >
-              <button
-                type="button"
-                onClick={() => setPreviewIndex(index)}
-                aria-label={t("agentCreate.preview", { name: file.name })}
-                className="relative block h-20 w-full overflow-hidden bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-600 dark:bg-[#080b10]"
-              >
-                {previewUrls[index] ? (
-                  <img src={previewUrls[index]} alt="" className="h-full w-full object-contain" />
-                ) : null}
-                <span className="absolute inset-0 flex items-center justify-center bg-black/0 text-white opacity-0 transition group-hover:bg-black/30 group-hover:opacity-100 group-focus-within:bg-black/30 group-focus-within:opacity-100">
-                  <Eye size={18} />
-                </span>
-              </button>
-              <div className="min-w-0 px-2 py-1.5">
-                <div className="truncate text-[11px] font-medium text-zinc-800 dark:text-slate-200">{file.name}</div>
-                <div className="text-[10px] text-zinc-400 dark:text-slate-500">
-                  {formatFileSize(file.size, locale)}
-                </div>
-              </div>
-              <button
-                type="button"
-                title={t("agentCreate.remove", { name: file.name })}
-                aria-label={t("agentCreate.remove", { name: file.name })}
-                disabled={isSubmitting || editingLocked}
-                onClick={() => onRemoveReferenceFile(index)}
-                className="absolute right-1 top-1 flex h-7 w-7 items-center justify-center rounded-md bg-black/65 text-white opacity-0 transition-opacity hover:bg-red-600 focus:opacity-100 group-hover:opacity-100 disabled:opacity-40"
-              >
-                <X size={13} />
-              </button>
-            </article>
-          ))}
-
+      {stageCard(3, t("agentCreate.referencesMeta", { count: referenceFiles.length, max: maxReferences }) || t("agentCreate.references"), referenceReady, (
+        <div className="space-y-3">
           {options && referenceFiles.length < maxReferences ? (
             <ImageDropZone
               multiple
               disabled={isSubmitting || editingLocked}
               ariaLabel={t("agentCreate.uploadAria")}
               onFiles={onAddReferenceFiles}
-              className="flex h-27 w-36 shrink-0 cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-zinc-300 bg-zinc-50 px-3 text-center text-zinc-500 transition-colors hover:border-amber-500 hover:bg-amber-50/60 dark:!border-slate-700 dark:!bg-[#0d1117] dark:text-slate-400 dark:hover:!border-amber-400 dark:hover:!bg-amber-400/5"
-              activeClassName="!border-amber-500 !bg-amber-50 text-amber-800 dark:!border-amber-400 dark:!bg-amber-400/10 dark:!text-amber-200"
+              className="glass-empty-state flex min-h-27 cursor-pointer flex-col items-center justify-center gap-1 px-4 text-center"
+              activeClassName="!border-accent !bg-accent-soft text-accent-strong"
             >
               {({ isDragging }) => (
                 <>
-                  <ImagePlus size={20} className="mb-2 text-amber-600 dark:text-amber-400" />
-                  <span className="text-xs font-semibold text-zinc-800 dark:text-slate-200">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-full bg-accent/10 text-accent">
+                    <ImagePlus size={20} aria-hidden="true" />
+                  </span>
+                  <span className="mt-1 text-sm font-semibold text-text-primary">
                     {isDragging ? t("agentCreate.uploadDrop") : t("agentCreate.uploadTitle")}
                   </span>
-                  <span className="mt-1 text-[10px] leading-4 text-zinc-500 dark:text-slate-500">
+                  <span className="text-xs leading-4 text-text-muted">
                     {t("agentCreate.uploadHint", { max: maxReferences })}
                   </span>
                 </>
               )}
             </ImageDropZone>
           ) : null}
+
+          {referenceFiles.length > 0 ? (
+            <div className="flex gap-2.5 overflow-x-auto pb-2">
+              {referenceFiles.map((file, index) => (
+                <article
+                  key={`${file.name}:${file.size}:${file.lastModified}:${index}`}
+                  className="group relative w-25 shrink-0 overflow-hidden rounded-xl border border-border-l1 bg-surface-raised shadow-sm"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setPreviewIndex(index)}
+                    aria-label={t("agentCreate.preview", { name: file.name })}
+                    className="relative block h-20 w-full overflow-hidden bg-surface-subtle focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent"
+                  >
+                    {previewUrls[index] ? (
+                      <img src={previewUrls[index]} alt="" className="h-full w-full object-contain" />
+                    ) : null}
+                    <span className="absolute inset-0 flex items-center justify-center bg-black/0 text-white opacity-0 transition group-hover:bg-black/30 group-hover:opacity-100 group-focus-within:bg-black/30 group-focus-within:opacity-100">
+                      <Eye size={18} />
+                    </span>
+                  </button>
+                  <div className="min-w-0 px-2 py-1.5">
+                    <div className="truncate text-[11px] font-medium text-text-primary">{file.name}</div>
+                    <div className="text-[10px] text-text-muted">{formatFileSize(file.size, locale)}</div>
+                  </div>
+                  <button
+                    type="button"
+                    title={t("agentCreate.remove", { name: file.name })}
+                    aria-label={t("agentCreate.remove", { name: file.name })}
+                    disabled={isSubmitting || editingLocked}
+                    onClick={() => onRemoveReferenceFile(index)}
+                    className="absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-surface-inverse/70 text-surface-inverse-fg backdrop-blur-sm transition-opacity hover:bg-state-error hover:text-white focus:opacity-100 group-hover:opacity-100 disabled:opacity-40 sm:opacity-0"
+                  >
+                    <X size={13} />
+                  </button>
+                </article>
+              ))}
+            </div>
+          ) : null}
         </div>
-      </section>
+      ))}
 
       {error ? (
-        <div role="alert" className="mt-5 border-l-2 border-red-500 bg-red-50 px-3 py-2.5 text-sm leading-5 text-red-700 dark:bg-red-500/10 dark:text-red-200">
+        <div
+          role="alert"
+          className="animate-spring-slide-in rounded-xl border border-state-error/30 bg-state-error/10 px-4 py-3 text-sm leading-5 text-state-error"
+        >
           {error}
         </div>
       ) : null}
 
-      <div className="mt-6 flex flex-col-reverse gap-3 border-t border-zinc-200 pt-5 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800">
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500 dark:text-slate-400">
-          <span>{t("agentCreate.selectedTypes")}: <strong className="font-semibold text-zinc-800 dark:text-slate-200">{selections.length}</strong></span>
-          <span>{t("agentCreate.plannedImages")}: <strong className="font-semibold text-zinc-800 dark:text-slate-200">{totalImages}</strong></span>
-          <span>{t("agentCreate.referenceImages")}: <strong className="font-semibold text-zinc-800 dark:text-slate-200">{referenceFiles.length}</strong></span>
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border-l1 bg-surface-raised shadow-[0_-10px_30px_-12px_rgb(2_6_23/0.25)] dark:border-slate-700 dark:bg-[#0b1424] dark:shadow-[0_-14px_36px_rgb(0_0_0/0.45)]">
+        <div className="mx-auto flex w-full max-w-[920px] flex-col-reverse gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+          <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-xs text-text-secondary">
+            <span>
+              {t("agentCreate.selectedTypes")}:{" "}
+              <strong className="font-semibold tabular-nums text-text-primary">{selections.length}</strong>
+            </span>
+            <span>
+              {t("agentCreate.plannedImages")}:{" "}
+              <strong className="font-semibold tabular-nums text-text-primary">{totalImages}</strong>
+            </span>
+            <span>
+              {t("agentCreate.referenceImages")}:{" "}
+              <strong className="font-semibold tabular-nums text-text-primary">{referenceFiles.length}</strong>
+            </span>
+          </div>
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="btn-primary-spring inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl px-6 text-sm font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+          >
+            {isSubmitting ? (
+              <Loader2 size={16} className="animate-spin" />
+            ) : (
+              <Sparkles size={16} aria-hidden="true" />
+            )}
+            {isSubmitting ? t("agentCreate.submitting") : primaryActionLabel ?? t("agentCreate.submit")}
+          </button>
         </div>
-        <button
-          type="submit"
-          disabled={isSubmitting}
-          className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-md bg-zinc-950 px-5 text-sm font-semibold text-white transition-colors hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-cyan-400 dark:text-[#071018] dark:hover:bg-cyan-300"
-        >
-          {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-          {isSubmitting ? t("agentCreate.submitting") : primaryActionLabel ?? t("agentCreate.submit")}
-        </button>
       </div>
 
       {previewFile && previewUrl ? (
@@ -348,20 +459,20 @@ export function AgentProductCreateForm({
             if (event.target === event.currentTarget) setPreviewIndex(null);
           }}
         >
-          <div className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-md bg-white shadow-2xl dark:bg-[#0d1117]">
-            <div className="flex h-13 items-center justify-between gap-3 border-b border-zinc-200 px-4 dark:border-slate-800">
-              <span className="min-w-0 truncate text-sm font-medium text-zinc-900 dark:text-white">{previewFile.name}</span>
+          <div className="flex max-h-[92vh] w-full max-w-5xl animate-spring-pop-in flex-col overflow-hidden rounded-2xl border border-border-l1 bg-surface-raised shadow-2xl">
+            <div className="flex h-13 shrink-0 items-center justify-between gap-3 border-b border-border-l1 px-4">
+              <span className="min-w-0 truncate text-sm font-medium text-text-primary">{previewFile.name}</span>
               <button
                 type="button"
                 title={t("agentCreate.closePreview")}
                 aria-label={t("agentCreate.closePreview")}
                 onClick={() => setPreviewIndex(null)}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 dark:text-slate-400 dark:hover:bg-slate-800"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface-subtle hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               >
                 <X size={18} />
               </button>
             </div>
-            <div className="min-h-0 flex-1 bg-zinc-100 p-3 dark:bg-[#070a0e]">
+            <div className="min-h-0 flex-1 bg-surface-subtle p-3">
               <img
                 src={previewUrl}
                 alt={previewFile.name}
