@@ -16,6 +16,7 @@ const AGENT_EVENT_TYPES = [
   "turn.queued",
   "turn.started",
   "text.delta",
+  "tool.step",
   "question.required",
   "question.answered",
   "turn.resume_requested",
@@ -134,8 +135,10 @@ export function useAgentTurnEvents({
   callbacksRef.current = { onEvent, onArtifactProposed, onTerminal };
 
   useEffect(() => {
-    dispatch({ type: "reset", turn_key: turnKey });
-    setStreamError(null);
+    if (turnKey) {
+      dispatch({ type: "reset", turn_key: turnKey });
+      setStreamError(null);
+    }
   }, [turnKey]);
 
   useEffect(() => {

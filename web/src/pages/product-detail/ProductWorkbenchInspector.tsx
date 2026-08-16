@@ -2,7 +2,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 
-import { MAX_INSPECTOR_WIDTH, MIN_INSPECTOR_WIDTH } from "./constants";
+import { INSPECTOR_RAIL_WIDTH, MAX_INSPECTOR_WIDTH, MIN_INSPECTOR_WIDTH } from "./constants";
 import { SidebarTabButton } from "./SidebarTabButton";
 import { clamp, readStoredNumber } from "./utils";
 
@@ -40,6 +40,7 @@ interface ProductWorkbenchInspectorProps {
   inert?: boolean;
   railBefore?: ReactNode;
   showActiveWhenCollapsed?: boolean;
+  desktopLayout?: "overlay" | "grid-child";
   desktopPositionClassName?: string;
   desktopCollapsedPositionClassName?: string;
   slotDataAttribute?: `data-${string}`;
@@ -125,6 +126,7 @@ export function ProductWorkbenchInspector({
   inert = false,
   railBefore,
   showActiveWhenCollapsed = false,
+  desktopLayout = "overlay",
   desktopPositionClassName = "lg:bottom-6 lg:left-auto lg:right-6 lg:top-20",
   desktopCollapsedPositionClassName = "lg:left-auto lg:right-6 lg:top-20",
   slotDataAttribute,
@@ -133,7 +135,7 @@ export function ProductWorkbenchInspector({
   const slotData = slotDataAttribute ? { [slotDataAttribute]: "" } : {};
   const collapsedData = collapsedDataAttribute ? { [collapsedDataAttribute]: "" } : {};
   const inspectorStyle = workflowAvailable
-    ? ({ "--product-workbench-inspector-width": `${72 + width}px` } as CSSProperties)
+    ? ({ "--product-workbench-inspector-width": `${INSPECTOR_RAIL_WIDTH + width}px` } as CSSProperties)
     : undefined;
   const visibilityClassName = desktopOnly
     ? "hidden lg:flex"
@@ -142,6 +144,7 @@ export function ProductWorkbenchInspector({
       : workflowAvailable && collapsed
         ? "invisible pointer-events-none flex opacity-0"
         : "invisible pointer-events-none flex opacity-0 lg:visible lg:pointer-events-auto lg:opacity-100";
+  const desktopGridChild = workflowAvailable && desktopLayout === "grid-child";
 
   const renderRailTools = (collapsedRail: boolean) => tools.map((tool) => (
     <div key={tool.id} className="contents">
@@ -163,7 +166,12 @@ export function ProductWorkbenchInspector({
           {...collapsedData}
           data-product-workbench-collapsed-tools
           aria-label={ariaLabel}
-          className={`glass-inspector absolute right-6 z-30 hidden w-[72px] flex-col items-center gap-2 rounded-[24px] p-2 pb-3 shadow-2xl lg:flex ${desktopCollapsedPositionClassName}`}
+          style={{ width: INSPECTOR_RAIL_WIDTH }}
+          className={`glass-inspector absolute right-6 z-30 hidden flex-col items-center gap-2 rounded-[24px] p-2 pb-3 shadow-2xl lg:flex ${
+            desktopGridChild
+              ? "lg:relative lg:inset-auto lg:z-auto lg:h-full lg:justify-self-stretch lg:rounded-[24px]"
+              : desktopCollapsedPositionClassName
+          }`}
         >
           {railBefore}
           {renderRailTools(true)}
@@ -188,7 +196,11 @@ export function ProductWorkbenchInspector({
         inert={inert}
         className={`absolute inset-0 z-30 min-h-0 min-w-0 flex-col overflow-hidden bg-white transition-[opacity,visibility] duration-300 motion-reduce:transition-none dark:bg-[#070b11] lg:flex-row ${visibilityClassName} ${
           workflowAvailable
-            ? `glass-inspector lg:inset-auto lg:w-[var(--product-workbench-inspector-width)] lg:rounded-[28px] lg:shadow-[0_24px_50px_rgba(15,23,42,0.18)] dark:lg:shadow-[0_32px_64px_rgba(0,0,0,0.45)] ${desktopPositionClassName}`
+            ? `glass-inspector lg:inset-auto lg:w-[var(--product-workbench-inspector-width)] lg:rounded-[28px] lg:shadow-[0_24px_50px_rgba(15,23,42,0.18)] dark:lg:shadow-[0_32px_64px_rgba(0,0,0,0.45)] ${
+                desktopGridChild
+                  ? "lg:relative lg:z-auto lg:h-full lg:justify-self-stretch"
+                  : desktopPositionClassName
+              }`
             : ""
         } ${workflowAvailable && collapsed ? "lg:invisible lg:pointer-events-none lg:opacity-0" : ""}`}
         style={inspectorStyle}
@@ -206,7 +218,8 @@ export function ProductWorkbenchInspector({
 
             <nav
               aria-label={ariaLabel}
-              className="flex h-auto shrink-0 gap-1 overflow-x-auto border-b border-slate-200/60 bg-white/80 px-2 py-2 dark:border-white/5 dark:bg-black/10 lg:h-full lg:w-[72px] lg:flex-col lg:gap-2 lg:overflow-y-auto lg:border-b-0 lg:border-r lg:px-2 lg:py-4"
+              className="flex h-auto shrink-0 gap-1 overflow-x-auto border-b border-slate-200/60 bg-white/80 px-2 py-2 dark:border-white/5 dark:bg-black/10 lg:h-full lg:flex-col lg:gap-2 lg:overflow-y-auto lg:border-b-0 lg:border-r lg:px-2 lg:py-4"
+              style={{ width: INSPECTOR_RAIL_WIDTH }}
             >
               {railBefore}
               {renderRailTools(false)}

@@ -930,6 +930,22 @@ export type AgentTurnStatus =
   | "canceled"
   | "unknown";
 
+export type AgentToolStepKind =
+  | "inspect_image"
+  | "propose_draft"
+  | "inspect_context"
+  | "read_history"
+  | "organize_assets";
+
+export type AgentToolStepStatus = "running" | "succeeded" | "failed" | "unknown";
+
+export interface AgentToolStep {
+  step_id: string;
+  kind: AgentToolStepKind;
+  summary: string;
+  status: AgentToolStepStatus;
+}
+
 export interface AgentQuestionOption {
   label: string;
   description?: string;
@@ -953,6 +969,7 @@ export interface AgentTurn {
   resume_required: boolean;
   output_text: string | null;
   error_text: string | null;
+  tool_steps?: AgentToolStep[];
   question: AgentQuestion | null;
   artifact_name: string | null;
   artifact_step_id: string | null;

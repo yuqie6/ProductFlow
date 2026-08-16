@@ -1,9 +1,27 @@
 import type {
   AgentQuestion,
+  AgentToolStep,
+  AgentToolStepKind,
+  AgentToolStepStatus,
   AgentTurn,
   AgentTurnEvent,
   AgentTurnStatus,
 } from "../../lib/types";
+
+const AGENT_TOOL_STEP_KINDS = new Set<AgentToolStepKind>([
+  "inspect_image",
+  "propose_draft",
+  "inspect_context",
+  "read_history",
+  "organize_assets",
+]);
+const AGENT_TOOL_STEP_STATUSES = new Set<AgentToolStepStatus>([
+  "running",
+  "succeeded",
+  "failed",
+  "unknown",
+]);
+const UTF8_ENCODER = new TextEncoder();
 
 export const AGENT_TERMINAL_EVENT_KINDS = [
   "turn.awaiting_confirmation",
@@ -23,11 +41,18 @@ export interface AgentAttemptBuffer {
   last_sequence: number;
 }
 
+export interface AgentLiveToolStep {
+  step: AgentToolStep;
+  sequence: number;
+}
+
 export interface AgentTurnEventState {
   turn_key: string;
   last_sequence: number;
   attempts: Record<string, AgentAttemptBuffer>;
   attempt_order: string[];
+  tool_steps: Record<string, AgentLiveToolStep>;
+  tool_step_order: string[];
   current_attempt_id: string | null;
   question: AgentQuestion | null;
   question_answered: boolean;
@@ -55,6 +80,8 @@ export function createAgentTurnEventState(turnKey: string): AgentTurnEventState 
     last_sequence: 0,
     attempts: {},
     attempt_order: [],
+    tool_steps: {},
+    tool_step_order: [],
     current_attempt_id: null,
     question: null,
     question_answered: false,
@@ -104,6 +131,9 @@ export function parseAgentTurnEvent(
   if (value.kind === "question.required") {
     parseAgentQuestion(value.payload);
   }
+  if (value.kind === "tool.step") {
+    parseAgentToolStep(value.payload);
+  }
   return value as unknown as AgentTurnEvent;
 }
 
@@ -112,7 +142,9 @@ export function agentEventReducer(
   action: AgentTurnEventAction,
 ): AgentTurnEventState {
   if (action.type === "reset") {
-    return action.turn_key === state.turn_key ? state : createAgentTurnEventState(action.turn_key);
+    return !action.turn_key || action.turn_key === state.turn_key
+      ? state
+      : createAgentTurnEventState(action.turn_key);
   }
   const { event } = action;
   if (event.sequence <= state.last_sequence) {
@@ -149,6 +181,20 @@ export function agentEventReducer(
           ? state.attempt_order
           : [...state.attempt_order, payload.attempt_id],
         current_attempt_id: payload.attempt_id,
+      };
+    }
+    case "tool.step": {
+      const step = parseAgentToolStep(event.payload);
+      const existing = state.tool_steps[step.step_id];
+      return {
+        ...next,
+        tool_steps: {
+          ...state.tool_steps,
+          [step.step_id]: { step, sequence: event.sequence },
+        },
+        tool_step_order: existing
+          ? state.tool_step_order
+          : [...state.tool_step_order, step.step_id],
       };
     }
     case "question.required":
@@ -208,6 +254,36 @@ export function selectAgentAssistantText(
   return turn.output_text ?? "";
 }
 
+export function selectAgentToolSteps(
+  turn: AgentTurn | null | undefined,
+  eventState: AgentTurnEventState | null | undefined,
+): AgentToolStep[] {
+  if (!turn) {
+    return [];
+  }
+  const snapshotById = new Map<string, AgentToolStep>();
+  for (const step of turn.tool_steps ?? []) {
+    if (!snapshotById.has(step.step_id)) {
+      snapshotById.set(step.step_id, step);
+    }
+  }
+  if (!eventState || eventState.turn_key !== turn.id) {
+    return [...snapshotById.values()];
+  }
+  const merged = [...snapshotById.entries()].map(
+    ([stepId, step]) => eventState.tool_steps[stepId]?.step ?? step,
+  );
+  for (const stepId of eventState.tool_step_order) {
+    if (!snapshotById.has(stepId)) {
+      const live = eventState.tool_steps[stepId];
+      if (live) {
+        merged.push(live.step);
+      }
+    }
+  }
+  return merged;
+}
+
 function parseTextDeltaPayload(payload: Record<string, unknown>): {
   delta: string;
   step_id: string;
@@ -226,6 +302,33 @@ function parseTextDeltaPayload(payload: Record<string, unknown>): {
     delta: payload.delta,
     step_id: payload.step_id,
     attempt_id: payload.attempt_id,
+  };
+}
+
+function parseAgentToolStep(payload: Record<string, unknown>): AgentToolStep {
+  const keys = Object.keys(payload);
+  if (
+    keys.length !== 4 ||
+    !keys.every((key) => ["step_id", "kind", "summary", "status"].includes(key)) ||
+    typeof payload.step_id !== "string" ||
+    !payload.step_id.trim() ||
+    UTF8_ENCODER.encode(payload.step_id).byteLength > 200 ||
+    typeof payload.kind !== "string" ||
+    !AGENT_TOOL_STEP_KINDS.has(payload.kind as AgentToolStepKind) ||
+    typeof payload.summary !== "string" ||
+    !payload.summary.trim() ||
+    /[\r\n]/u.test(payload.summary) ||
+    UTF8_ENCODER.encode(payload.summary).byteLength > 160 ||
+    typeof payload.status !== "string" ||
+    !AGENT_TOOL_STEP_STATUSES.has(payload.status as AgentToolStepStatus)
+  ) {
+    throw new AgentEventProtocolError("tool.step payload 无效");
+  }
+  return {
+    step_id: payload.step_id,
+    kind: payload.kind as AgentToolStepKind,
+    summary: payload.summary,
+    status: payload.status as AgentToolStepStatus,
   };
 }
 

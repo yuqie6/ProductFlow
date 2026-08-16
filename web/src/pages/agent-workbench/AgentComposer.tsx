@@ -1,4 +1,4 @@
-import { ImagePlus, Send, X } from "lucide-react";
+import { ImagePlus, Loader2, Send, Square, X } from "lucide-react";
 import type { KeyboardEvent } from "react";
 
 import { api } from "../../lib/api";
@@ -10,12 +10,15 @@ interface AgentComposerProps {
   selectedAssets: readonly GalleryAsset[];
   isSubmitting: boolean;
   canSubmit: boolean;
+  stopAvailable: boolean;
+  isStopping: boolean;
   error: string | null;
   onChange: (value: string) => void;
   onOpenAssets: () => void;
   onRemoveAsset: (assetId: string) => void;
   onPreviewAsset: (asset: GalleryAsset) => void;
   onSubmit: () => void;
+  onStop: () => void;
 }
 
 export function AgentComposer({
@@ -23,12 +26,15 @@ export function AgentComposer({
   selectedAssets,
   isSubmitting,
   canSubmit,
+  stopAvailable,
+  isStopping,
   error,
   onChange,
   onOpenAssets,
   onRemoveAsset,
   onPreviewAsset,
   onSubmit,
+  onStop,
 }: AgentComposerProps) {
   const { t } = useI18n();
   const submitReady = canSubmit && !isSubmitting && Boolean(value.trim());
@@ -40,7 +46,7 @@ export function AgentComposer({
   };
 
   return (
-    <div className="border-t border-zinc-200 bg-white px-3 py-3 dark:border-slate-800 dark:bg-[#0a0f16]">
+    <div className="border-t border-border-l1 bg-surface-raised px-3 py-3">
       {selectedAssets.length ? (
         <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
           {selectedAssets.map((asset) => (
@@ -80,7 +86,7 @@ export function AgentComposer({
         </div>
       ) : null}
 
-      <div className="grid grid-cols-[44px_minmax(0,1fr)_44px] items-end gap-2 rounded-md border border-zinc-300 bg-white p-2 focus-within:border-blue-600 focus-within:ring-2 focus-within:ring-blue-100 dark:border-slate-700 dark:bg-[#0d131c] dark:focus-within:border-cyan-400 dark:focus-within:ring-cyan-400/15">
+      <div className="grid grid-cols-[44px_minmax(0,1fr)_44px] items-end gap-2 rounded-md border border-border-l3 bg-surface-raised p-2 focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/15">
         <button
           type="button"
           onClick={onOpenAssets}
@@ -103,13 +109,21 @@ export function AgentComposer({
         />
         <button
           type="button"
-          onClick={onSubmit}
-          disabled={!submitReady}
-          aria-label={t("agentWorkbench.send")}
-          title={t("agentWorkbench.send")}
-          className="flex h-11 w-11 items-center justify-center rounded-md bg-zinc-950 text-white hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 disabled:cursor-not-allowed disabled:opacity-35 dark:bg-cyan-400 dark:text-[#071018] dark:hover:bg-cyan-300"
+          onClick={stopAvailable ? onStop : onSubmit}
+          disabled={stopAvailable ? isStopping : !submitReady}
+          aria-label={t(stopAvailable ? "agentWorkbench.cancelTurn" : "agentWorkbench.send")}
+          title={t(stopAvailable ? "agentWorkbench.cancelTurn" : "agentWorkbench.send")}
+          className={`flex h-11 w-11 items-center justify-center rounded-md text-white focus:outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-40 ${
+            stopAvailable
+              ? "bg-state-error hover:bg-state-error/85 focus-visible:ring-state-error"
+              : "bg-accent hover:bg-accent-strong focus-visible:ring-accent"
+          }`}
         >
-          <Send size={18} />
+          {stopAvailable ? (
+            isStopping ? <Loader2 size={17} className="animate-spin motion-reduce:animate-none" /> : <Square size={16} fill="currentColor" />
+          ) : (
+            <Send size={18} />
+          )}
         </button>
       </div>
     </div>

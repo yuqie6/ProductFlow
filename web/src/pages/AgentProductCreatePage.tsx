@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, Bot, Loader2, RotateCw, Settings2, X } from "lucide-react";
+import { Bot, Loader2, RotateCw, Settings2, X } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { api, ApiError } from "../lib/api";
@@ -12,6 +12,13 @@ import type {
 } from "../lib/types";
 import { AgentProductCreateForm } from "./product-create/AgentProductCreateForm";
 import {
+  isAmbiguousFinalizeError,
+  parsePendingDraft,
+  resolveWorkspaceRestorationId,
+  submitAgentProductIntake,
+  type PendingDraftState,
+} from "./product-create/intakeSubmission";
+import {
   buildAgentProductSelection,
   toggleAgentImageType,
   updateAgentImageTypeQuantity,
@@ -22,11 +29,6 @@ import {
 
 const PENDING_DRAFT_STORAGE_KEY = "productflow.agent-create.pending-draft.v1";
 const INTAKE_STORAGE_KEY_PREFIX = "productflow.agent-create.intake.v1:";
-
-interface PendingDraftState {
-  name: string;
-  idempotencyKey: string;
-}
 
 interface IntakeIdempotencyState {
   conversationId: string;
@@ -69,16 +71,9 @@ function removeSessionValue(key: string): void {
 
 function readPendingDraft(): PendingDraftState | null {
   const raw = readSessionValue(PENDING_DRAFT_STORAGE_KEY);
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as Partial<PendingDraftState>;
-    if (typeof parsed.name === "string" && typeof parsed.idempotencyKey === "string") {
-      return { name: parsed.name, idempotencyKey: parsed.idempotencyKey };
-    }
-  } catch {
-    removeSessionValue(PENDING_DRAFT_STORAGE_KEY);
-  }
-  return null;
+  const pendingDraft = parsePendingDraft(raw);
+  if (raw && !pendingDraft) removeSessionValue(PENDING_DRAFT_STORAGE_KEY);
+  return pendingDraft;
 }
 
 function intakeStorageKey(conversationId: string): string {
@@ -138,13 +133,15 @@ export function AgentProductCreatePage() {
   const [selections, setSelections] = useState<AgentImageTypeSelectionDraft[]>([]);
   const [referenceFiles, setReferenceFiles] = useState<File[]>([]);
   const [error, setError] = useState("");
+  const [reconciliationRequired, setReconciliationRequired] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const draftIdempotencyKeyRef = useRef(pendingDraft?.idempotencyKey ?? createIdempotencyKey());
   const intakeIdempotencyRef = useRef<IntakeIdempotencyState | null>(null);
+  const submissionWorkspaceRef = useRef<AgentProductWorkspaceSnapshot | null>(null);
   const navigationScheduledRef = useRef(false);
   const navigationTimerRef = useRef<number | null>(null);
 
-  const workspaceId = searchParams.get("workspace")?.trim() ?? "";
+  const workspaceId = resolveWorkspaceRestorationId(searchParams.get("workspace"), pendingDraft);
   const workspaceQuery = useQuery({
     queryKey: ["agent-product-workspace", workspaceId],
     queryFn: () => api.getAgentProductWorkspace(workspaceId),
@@ -159,7 +156,6 @@ export function AgentProductCreatePage() {
   const optionsQuery = useQuery({
     queryKey: ["agent-product-workspace-options"],
     queryFn: api.getAgentProductWorkspaceOptions,
-    enabled: Boolean(workspace && !workspace.intake_finalized),
   });
   const options = optionsQuery.data ?? null;
 
@@ -190,26 +186,78 @@ export function AgentProductCreatePage() {
     [],
   );
 
-  const createDraftMutation = useMutation({
-    mutationFn: api.createAgentProductDraftWorkspace,
-    onSuccess: (createdWorkspace) => {
-      removeSessionValue(PENDING_DRAFT_STORAGE_KEY);
-      setError("");
-      setLocalWorkspace(createdWorkspace);
-      queryClient.setQueryData(
-        ["agent-product-workspace", createdWorkspace.conversation.id],
-        createdWorkspace,
-      );
-      void queryClient.invalidateQueries({ queryKey: ["products"] });
-      setSearchParams({ workspace: createdWorkspace.conversation.id }, { replace: true });
-    },
-    onError: (mutationError) => {
-      setError(errorDetail(mutationError, t("agentCreate.error.failed")));
-    },
-  });
+  const retainWorkspace = (nextWorkspace: AgentProductWorkspaceSnapshot) => {
+    submissionWorkspaceRef.current = nextWorkspace;
+    const conversationId = nextWorkspace.conversation.id;
+    const retainedPending = {
+      name: nextWorkspace.product.name,
+      idempotencyKey: draftIdempotencyKeyRef.current,
+      conversationId,
+    } satisfies PendingDraftState;
+    writeSessionValue(PENDING_DRAFT_STORAGE_KEY, JSON.stringify(retainedPending));
+    setLocalWorkspace(nextWorkspace);
+    queryClient.setQueryData(["agent-product-workspace", conversationId], nextWorkspace);
+    void queryClient.invalidateQueries({ queryKey: ["products"] });
+    setSearchParams({ workspace: conversationId }, { replace: true });
+  };
 
-  const finalizeIntakeMutation = useMutation({
-    mutationFn: api.finalizeAgentProductWorkspaceIntake,
+  const finalizeIntake = async (targetWorkspace: AgentProductWorkspaceSnapshot) => {
+    const targetConversationId = targetWorkspace.conversation.id;
+    const idempotencyState =
+      intakeIdempotencyRef.current?.conversationId === targetConversationId
+        ? intakeIdempotencyRef.current
+        : {
+            conversationId: targetConversationId,
+            idempotencyKey: readOrCreateIntakeIdempotencyKey(targetConversationId),
+          };
+    intakeIdempotencyRef.current = idempotencyState;
+    return api.finalizeAgentProductWorkspaceIntake({
+      conversation_id: targetConversationId,
+      selection: buildAgentProductSelection(selections),
+      images: referenceFiles,
+      idempotency_key: idempotencyState.idempotencyKey,
+    });
+  };
+
+  const applyReconciledWorkspace = (reconciledWorkspace: AgentProductWorkspaceSnapshot) => {
+    setLocalWorkspace(reconciledWorkspace);
+    queryClient.setQueryData(
+      ["agent-product-workspace", reconciledWorkspace.conversation.id],
+      reconciledWorkspace,
+    );
+    if (reconciledWorkspace.intake_finalized) {
+      removeSessionValue(PENDING_DRAFT_STORAGE_KEY);
+      removeSessionValue(intakeStorageKey(reconciledWorkspace.conversation.id));
+    }
+  };
+
+  const reconcileWorkspace = async (targetWorkspace: AgentProductWorkspaceSnapshot) => {
+    const reconciledWorkspace = await api.getAgentProductWorkspace(targetWorkspace.conversation.id);
+    applyReconciledWorkspace(reconciledWorkspace);
+    return reconciledWorkspace;
+  };
+
+  const submitMutation = useMutation({
+    mutationFn: async () => {
+      const trimmedName = name.trim();
+      submissionWorkspaceRef.current = workspace ?? null;
+      const pending = {
+        name: trimmedName,
+        idempotencyKey: draftIdempotencyKeyRef.current,
+        ...(workspace ? { conversationId: workspace.conversation.id } : {}),
+      } satisfies PendingDraftState;
+      if (!workspace) writeSessionValue(PENDING_DRAFT_STORAGE_KEY, JSON.stringify(pending));
+      return submitAgentProductIntake({
+        workspace: workspace ?? null,
+        createWorkspace: () =>
+          api.createAgentProductDraftWorkspace({
+            name: trimmedName,
+            idempotency_key: pending.idempotencyKey,
+          }),
+        retainWorkspace,
+        finalizeWorkspace: finalizeIntake,
+      });
+    },
     onSuccess: (finalizedWorkspace) => {
       setError("");
       setLocalWorkspace(finalizedWorkspace);
@@ -217,14 +265,45 @@ export function AgentProductCreatePage() {
         ["agent-product-workspace", finalizedWorkspace.conversation.id],
         finalizedWorkspace,
       );
+      removeSessionValue(PENDING_DRAFT_STORAGE_KEY);
       removeSessionValue(intakeStorageKey(finalizedWorkspace.conversation.id));
+      submissionWorkspaceRef.current = finalizedWorkspace;
       void queryClient.invalidateQueries({ queryKey: ["products"] });
       void queryClient.invalidateQueries({
         queryKey: ["agent-workbench", finalizedWorkspace.product.id],
       });
     },
-    onError: (mutationError) => {
-      setError(errorDetail(mutationError, t("agentCreate.error.failed")));
+    onError: async (mutationError) => {
+      const originalError = errorDetail(mutationError, t("agentCreate.error.failed"));
+      const retainedWorkspace = submissionWorkspaceRef.current ?? workspace ?? localWorkspace;
+      if (!retainedWorkspace || !isAmbiguousFinalizeError(mutationError)) {
+        setError(originalError);
+        return;
+      }
+
+      try {
+        const reconciledWorkspace = await reconcileWorkspace(retainedWorkspace);
+        setReconciliationRequired(false);
+        if (!reconciledWorkspace.intake_finalized) setError(originalError);
+      } catch {
+        setReconciliationRequired(true);
+        setError(t("agentCreate.error.reconcileFailed"));
+      }
+    },
+  });
+
+  const reconciliationMutation = useMutation({
+    mutationFn: async () => {
+      if (!workspace) throw new Error(t("agentCreate.error.reconcileFailed"));
+      return reconcileWorkspace(workspace);
+    },
+    onSuccess: (reconciledWorkspace) => {
+      setReconciliationRequired(false);
+      if (!reconciledWorkspace.intake_finalized) setError("");
+    },
+    onError: () => {
+      setReconciliationRequired(true);
+      setError(t("agentCreate.error.reconcileFailed"));
     },
   });
 
@@ -236,35 +315,21 @@ export function AgentProductCreatePage() {
   };
 
   const handleNameChange = (nextName: string) => {
+    if (workspace) return;
     setName(nextName);
     draftIdempotencyKeyRef.current = createIdempotencyKey();
     removeSessionValue(PENDING_DRAFT_STORAGE_KEY);
     setError("");
   };
 
-  const handleCreateDraft = () => {
-    if (createDraftMutation.isPending) return;
-    const trimmedName = name.trim();
-    if (!trimmedName) {
-      setError(t("agentCreate.error.nameRequired"));
+  const handleSubmit = () => {
+    if (reconciliationRequired) {
+      if (!reconciliationMutation.isPending) reconciliationMutation.mutate();
       return;
     }
-    const pending = {
-      name: trimmedName,
-      idempotencyKey: draftIdempotencyKeyRef.current,
-    } satisfies PendingDraftState;
-    writeSessionValue(PENDING_DRAFT_STORAGE_KEY, JSON.stringify(pending));
-    setError("");
-    createDraftMutation.mutate({
-      name: trimmedName,
-      idempotency_key: pending.idempotencyKey,
-    });
-  };
-
-  const handleFinalizeIntake = () => {
-    if (!workspace || finalizeIntakeMutation.isPending) return;
+    if (submitMutation.isPending || workspace?.intake_finalized) return;
     const issue = validateAgentProductWorkspaceInput({
-      name: workspace.product.name,
+      name: workspace?.product.name ?? name,
       selections,
       referenceImageCount: referenceFiles.length,
       limits: options?.limits ?? null,
@@ -273,21 +338,8 @@ export function AgentProductCreatePage() {
       setError(validationMessage(t, issue));
       return;
     }
-    const idempotencyState =
-      intakeIdempotencyRef.current?.conversationId === conversationId
-        ? intakeIdempotencyRef.current
-        : {
-            conversationId,
-            idempotencyKey: readOrCreateIntakeIdempotencyKey(conversationId),
-          };
-    intakeIdempotencyRef.current = idempotencyState;
     setError("");
-    finalizeIntakeMutation.mutate({
-      conversation_id: conversationId,
-      selection: buildAgentProductSelection(selections),
-      images: referenceFiles,
-      idempotency_key: idempotencyState.idempotencyKey,
-    });
+    submitMutation.mutate();
   };
 
   const handleToggleImageType = (key: AgentProductImageTypeKey, selected: boolean) => {
@@ -335,18 +387,14 @@ export function AgentProductCreatePage() {
     setError("");
   };
 
-  const liveIssue =
-    workspace && options
-      ? validateAgentProductWorkspaceInput({
-          name: workspace.product.name,
-          selections,
-          referenceImageCount: Math.max(
-            referenceFiles.length,
-            options.limits.min_reference_images,
-          ),
-          limits: options.limits,
-        })
-      : null;
+  const liveIssue = options
+    ? validateAgentProductWorkspaceInput({
+        name: workspace?.product.name ?? name,
+        selections,
+        referenceImageCount: Math.max(referenceFiles.length, options.limits.min_reference_images),
+        limits: options.limits,
+      })
+    : null;
   const liveError =
     error ||
     (liveIssue?.code === "quantity_out_of_range" || liveIssue?.code === "total_images_exceeded"
@@ -354,23 +402,25 @@ export function AgentProductCreatePage() {
       : "");
   const restoring = Boolean(workspaceId && !workspace && workspaceQuery.isLoading);
   const restoreError = workspaceId && !workspace ? workspaceQuery.error : null;
-  const phase = restoring || restoreError ? "restoring" : workspace ? "intake" : "identity";
+  const isSubmitting = submitMutation.isPending || reconciliationMutation.isPending;
+  const restoredUnfinalizedWorkspace = Boolean(
+    workspaceId && workspace && !workspace.intake_finalized && !localWorkspace,
+  );
 
   return (
     <div
-      data-agent-create-phase={phase}
-      className={`flex h-dvh min-h-[560px] flex-col overflow-hidden bg-white text-zinc-950 transition-opacity duration-200 motion-reduce:transition-none dark:bg-[#070a0f] dark:text-slate-100 ${
+      className={`flex h-dvh min-h-[560px] flex-col overflow-hidden bg-surface-base text-text-primary transition-opacity duration-200 motion-reduce:transition-none ${
         leaving ? "opacity-0" : "opacity-100"
       }`}
     >
-      <header className="z-10 flex h-14 shrink-0 items-center justify-between border-b border-zinc-200 bg-white px-4 dark:border-slate-800 dark:!bg-[#070a0f] sm:px-6">
+      <header className="z-10 flex h-14 shrink-0 items-center justify-between border-b border-border-l1 bg-surface-raised px-4 sm:px-6">
         <div className="flex min-w-0 items-center gap-2.5">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-zinc-950 text-white dark:bg-cyan-400 dark:text-[#071018]">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-surface-inverse text-surface-raised">
             <Bot size={17} aria-hidden="true" />
           </div>
           <div className="min-w-0 truncate text-sm font-semibold">
-            ProductFlow <span className="font-normal text-zinc-400 dark:text-slate-500">/</span>{" "}
-            <span className="font-normal text-zinc-600 dark:text-slate-300">{t("agentCreate.title")}</span>
+            ProductFlow <span className="font-normal text-text-muted">/</span>{" "}
+            <span className="font-normal text-text-secondary">{t("agentCreate.title")}</span>
           </div>
         </div>
         <div className="flex items-center gap-1">
@@ -379,7 +429,7 @@ export function AgentProductCreatePage() {
             title={t("agentCreate.settings")}
             aria-label={t("agentCreate.settings")}
             onClick={() => navigate("/settings?section=agent")}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-950 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-surface-subtle hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           >
             <Settings2 size={17} />
           </button>
@@ -388,7 +438,7 @@ export function AgentProductCreatePage() {
             title={t("agentCreate.close")}
             aria-label={t("agentCreate.close")}
             onClick={() => navigate("/products")}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-zinc-500 transition-colors hover:bg-zinc-100 hover:text-zinc-950 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-surface-subtle hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           >
             <X size={18} />
           </button>
@@ -397,7 +447,7 @@ export function AgentProductCreatePage() {
 
       <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         {restoring ? (
-          <div className="flex min-h-full items-center justify-center px-5 text-sm text-zinc-500 dark:text-slate-400">
+          <div className="flex min-h-full items-center justify-center px-5 text-sm text-text-secondary">
             <Loader2 size={18} className="mr-2 animate-spin motion-reduce:animate-none" />
             {t("agentCreate.restoring")}
           </div>
@@ -411,7 +461,7 @@ export function AgentProductCreatePage() {
             <button
               type="button"
               onClick={() => void workspaceQuery.refetch()}
-              className="mt-4 inline-flex h-10 items-center gap-2 rounded-md border border-zinc-300 px-3 text-sm font-semibold text-zinc-700 hover:border-zinc-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 dark:border-slate-700 dark:text-slate-200"
+              className="mt-4 inline-flex h-10 items-center gap-2 rounded-md border border-border-l3 px-3 text-sm font-semibold text-text-secondary hover:border-text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             >
               <RotateCw size={15} />
               {t("agentCreate.retryOptions")}
@@ -419,91 +469,41 @@ export function AgentProductCreatePage() {
           </div>
         ) : null}
 
-        {!workspaceId && !workspace ? (
-          <div className="mx-auto flex min-h-full w-full max-w-[780px] flex-col items-center justify-center px-4 py-10 sm:px-6">
-            <div className="flex h-11 w-11 items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 text-zinc-700 dark:border-slate-700 dark:!bg-[#0d1117] dark:text-slate-200">
-              <Bot size={21} aria-hidden="true" />
-            </div>
-            <h1 className="mt-5 text-center text-2xl font-semibold tracking-normal text-zinc-950 dark:text-white sm:text-3xl">
+        {!restoring && !restoreError && !workspace?.intake_finalized ? (
+          <div className="mx-auto w-full max-w-[880px] px-4 py-7 sm:px-6 sm:py-9">
+            <h1 className="text-2xl font-semibold tracking-normal text-text-primary">
               {t("agentCreate.title")}
             </h1>
-            <form
-              noValidate
-              onSubmit={(event) => {
-                event.preventDefault();
-                handleCreateDraft();
-              }}
-              className="mt-8 w-full"
-            >
-              <div className="flex min-h-14 items-center gap-2 rounded-lg border border-zinc-300 bg-white p-2 pl-4 shadow-sm transition-[border-color,box-shadow] focus-within:border-zinc-500 focus-within:shadow-md dark:border-slate-700 dark:!bg-[#0d1117] dark:focus-within:border-slate-500">
-                <label htmlFor="agent-product-name" className="sr-only">
-                  {t("agentCreate.productName")}
-                </label>
-                <input
-                  id="agent-product-name"
-                  autoFocus
-                  autoComplete="off"
-                  value={name}
-                  disabled={createDraftMutation.isPending}
-                  onChange={(event) => handleNameChange(event.target.value)}
-                  placeholder={t("agentCreate.namePlaceholder")}
-                  className="min-w-0 flex-1 border-0 bg-transparent px-0 py-2 text-base outline-none placeholder:text-zinc-400 dark:!bg-transparent dark:placeholder:text-slate-500"
-                />
-                <button
-                  type="submit"
-                  title={t("agentCreate.continue")}
-                  aria-label={t("agentCreate.continue")}
-                  disabled={createDraftMutation.isPending || !name.trim()}
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-zinc-950 text-white transition-colors hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-35 dark:bg-cyan-400 dark:text-[#071018] dark:hover:bg-cyan-300"
-                >
-                  {createDraftMutation.isPending ? (
-                    <Loader2 size={17} className="animate-spin motion-reduce:animate-none" />
-                  ) : (
-                    <ArrowUp size={18} />
-                  )}
-                </button>
-              </div>
-              {error ? (
-                <p role="alert" className="mt-3 px-1 text-sm leading-5 text-red-700 dark:text-red-200">
-                  {error}
-                </p>
-              ) : null}
-            </form>
-          </div>
-        ) : null}
-
-        {workspace && !workspace.intake_finalized ? (
-          <div className="agent-create-message-in mx-auto w-full max-w-[880px] px-4 py-7 sm:px-6 sm:py-10">
-            <div className="flex justify-end">
-              <div className="max-w-[min(34rem,88%)] rounded-lg bg-blue-50 px-3.5 py-2.5 text-sm leading-5 text-zinc-900 dark:bg-cyan-400/10 dark:text-slate-100">
-                {workspace.product.name}
-              </div>
-            </div>
-
-            <div className="mt-7">
-              <div className="flex items-center gap-2 text-xs font-semibold text-zinc-500 dark:text-slate-400">
-                <Bot size={15} aria-hidden="true" />
-                Agent
-              </div>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-700 dark:text-slate-300">
-                {t("agentCreate.description")}
+            <p className="mt-1.5 text-sm leading-6 text-text-secondary">
+              {t("agentCreate.description")}
+            </p>
+            {restoredUnfinalizedWorkspace ? (
+              <p className="mt-4 border-l-2 border-amber-500 bg-amber-50 px-3 py-2.5 text-sm leading-5 text-amber-900 dark:bg-amber-400/10 dark:text-amber-100">
+                {t("agentCreate.recoveryNotice")}
               </p>
-              <AgentProductCreateForm
-                options={options}
-                selections={selections}
-                referenceFiles={referenceFiles}
-                isOptionsLoading={optionsQuery.isLoading}
-                isOptionsError={optionsQuery.isError}
-                isSubmitting={finalizeIntakeMutation.isPending}
-                error={liveError}
-                onToggleImageType={handleToggleImageType}
-                onQuantityChange={handleQuantityChange}
-                onAddReferenceFiles={handleAddReferenceFiles}
-                onRemoveReferenceFile={handleRemoveReferenceFile}
-                onRetryOptions={() => void optionsQuery.refetch()}
-                onSubmit={handleFinalizeIntake}
-              />
-            </div>
+            ) : null}
+            <AgentProductCreateForm
+              productName={workspace?.product.name ?? name}
+              isProductNameReadOnly={Boolean(workspace)}
+              options={options}
+              selections={selections}
+              referenceFiles={referenceFiles}
+              isOptionsLoading={optionsQuery.isLoading}
+              isOptionsError={optionsQuery.isError}
+              isSubmitting={isSubmitting}
+              editingLocked={reconciliationRequired}
+              primaryActionLabel={
+                reconciliationRequired ? t("agentCreate.recheckStatus") : undefined
+              }
+              error={liveError}
+              onProductNameChange={handleNameChange}
+              onToggleImageType={handleToggleImageType}
+              onQuantityChange={handleQuantityChange}
+              onAddReferenceFiles={handleAddReferenceFiles}
+              onRemoveReferenceFile={handleRemoveReferenceFile}
+              onRetryOptions={() => void optionsQuery.refetch()}
+              onSubmit={handleSubmit}
+            />
           </div>
         ) : null}
       </main>

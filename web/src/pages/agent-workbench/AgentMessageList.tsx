@@ -1,28 +1,18 @@
-import { AlertTriangle, Bot, ChevronUp, Image, Loader2, User } from "lucide-react";
+import { Bot, ChevronUp, Image, Loader2, User } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 
 import { api } from "../../lib/api";
 import { formatDateTime } from "../../lib/format";
-import type { TranslationKey } from "../../lib/i18n";
 import { useI18n } from "../../lib/preferences";
-import type { AgentTurn, AgentTurnStatus } from "../../lib/types";
+import type { AgentTurn } from "../../lib/types";
 import {
-  isAgentTurnTerminal,
   selectAgentAssistantText,
+  selectAgentToolSteps,
   type AgentTurnEventState,
 } from "./agentEventReducer";
-
-const STATUS_KEYS: Record<AgentTurnStatus, TranslationKey> = {
-  queued: "agentWorkbench.status.queued",
-  running: "agentWorkbench.status.running",
-  requires_input: "agentWorkbench.status.requiresInput",
-  awaiting_confirmation: "agentWorkbench.status.awaitingConfirmation",
-  succeeded: "agentWorkbench.status.succeeded",
-  failed: "agentWorkbench.status.failed",
-  cancel_requested: "agentWorkbench.status.cancelRequested",
-  canceled: "agentWorkbench.status.canceled",
-  unknown: "agentWorkbench.status.unknown",
-};
+import { AgentToolStepList } from "./AgentToolStepList";
+import { AgentTurnTail } from "./AgentTurnTail";
+import { toolStepSignature } from "./toolStepSignature";
 
 interface AgentMessageListProps {
   turns: readonly AgentTurn[];
@@ -31,8 +21,10 @@ interface AgentMessageListProps {
   initialTurnPending: boolean;
   hasOlder: boolean;
   loadingOlder: boolean;
+  reviewDraftRevisionId?: string | null;
   onLoadOlder: () => Promise<unknown>;
   onPreviewAsset: (assetId: string) => void;
+  onReviewDraft?: () => void;
 }
 
 export function AgentMessageList({
@@ -42,15 +34,23 @@ export function AgentMessageList({
   initialTurnPending,
   hasOlder,
   loadingOlder,
+  reviewDraftRevisionId = null,
   onLoadOlder,
   onPreviewAsset,
+  onReviewDraft,
 }: AgentMessageListProps) {
   const { t } = useI18n();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const nearBottomRef = useRef(true);
-  const latestLiveText = useMemo(() => {
-    const active = turns.find((turn) => turn.id === activeTurnId);
-    return active ? selectAgentAssistantText(active, eventState) : "";
+  const latestLiveSignature = useMemo(() => {
+    const eventTurnId = activeTurnId ?? eventState?.turn_key ?? null;
+    const eventTurn = turns.find((turn) => turn.id === eventTurnId);
+    if (!eventTurn) {
+      return "";
+    }
+    const text = selectAgentAssistantText(eventTurn, eventState);
+    const tools = toolStepSignature(selectAgentToolSteps(eventTurn, eventState));
+    return `${text}\u0000${tools}`;
   }, [activeTurnId, eventState, turns]);
 
   useEffect(() => {
@@ -58,7 +58,7 @@ export function AgentMessageList({
     if (element && nearBottomRef.current) {
       element.scrollTop = element.scrollHeight;
     }
-  }, [latestLiveText, turns.length]);
+  }, [latestLiveSignature, turns.length]);
 
   const loadOlder = async () => {
     const element = scrollRef.current;
@@ -96,11 +96,13 @@ export function AgentMessageList({
 
         {turns.map((turn) => {
           const active = turn.id === activeTurnId;
-          const assistantText = selectAgentAssistantText(turn, active ? eventState : null);
+          const matchingEventState = eventState?.turn_key === turn.id ? eventState : null;
+          const assistantText = selectAgentAssistantText(turn, matchingEventState);
+          const toolSteps = selectAgentToolSteps(turn, matchingEventState);
           const waitingForAssistant =
             active && turn.status !== "requires_input" && turn.status !== "awaiting_confirmation";
-          const showAssistant = Boolean(
-            assistantText || waitingForAssistant || turn.error_text || turn.sync_error,
+          const reviewDraft = Boolean(
+            reviewDraftRevisionId && turn.workflow_draft_revision_id === reviewDraftRevisionId,
           );
           return (
             <div key={turn.id} data-agent-turn-id={turn.id} className="space-y-3">
@@ -137,40 +139,35 @@ export function AgentMessageList({
                 </span>
               </div>
 
-              {showAssistant ? (
-                <div className="flex gap-2.5">
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-zinc-950 text-white dark:bg-cyan-400 dark:text-[#071018]">
-                    <Bot size={15} />
-                  </span>
-                  <div className="min-w-0 max-w-[88%] flex-1">
+              <div className="flex gap-2.5">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-zinc-950 text-white dark:bg-cyan-400 dark:text-[#071018]">
+                  <Bot size={15} />
+                </span>
+                <div className="min-w-0 max-w-[88%] flex-1">
+                  {assistantText || waitingForAssistant ? (
                     <div
                       aria-live={active ? "polite" : undefined}
-                      className="border-l-2 border-zinc-300 pl-3 text-sm leading-6 text-zinc-800 dark:border-slate-700 dark:text-slate-200"
+                      className="border-l-2 border-border-l3 pl-3 text-sm leading-6 text-text-primary"
                     >
                       {assistantText ? (
                         <div className="whitespace-pre-wrap break-words">{assistantText}</div>
-                      ) : waitingForAssistant ? (
-                        <div className="flex h-8 items-center gap-2 text-zinc-500 dark:text-slate-400">
-                          <Loader2 size={14} className="animate-spin" />
+                      ) : (
+                        <div className="flex h-8 items-center gap-2 text-text-secondary">
+                          <Loader2 size={14} className="animate-spin motion-reduce:animate-none" />
                           {t("agentWorkbench.waitingForAgent")}
                         </div>
-                      ) : null}
-                      {turn.error_text || turn.sync_error ? (
-                        <div className="mt-2 flex items-start gap-2 border-l-2 border-red-500 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700 dark:bg-red-500/10 dark:text-red-200">
-                          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-                          <span>{turn.error_text ?? turn.sync_error}</span>
-                        </div>
-                      ) : null}
+                      )}
                     </div>
-                    <div className="mt-1 flex items-center gap-1.5 text-[10px] text-zinc-400 dark:text-slate-500">
-                      <span>{t(STATUS_KEYS[turn.status])}</span>
-                      {active && !isAgentTurnTerminal(turn.status) ? (
-                        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-600 dark:bg-cyan-400" />
-                      ) : null}
-                    </div>
-                  </div>
+                  ) : null}
+                  <AgentToolStepList steps={toolSteps} live={active} />
+                  <AgentTurnTail
+                    turn={turn}
+                    active={active}
+                    reviewDraft={reviewDraft}
+                    onReviewDraft={onReviewDraft}
+                  />
                 </div>
-              ) : null}
+              </div>
             </div>
           );
         })}

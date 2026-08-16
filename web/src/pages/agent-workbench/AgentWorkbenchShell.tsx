@@ -1,8 +1,9 @@
 import { Bot, Workflow } from "lucide-react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 
 import { useI18n } from "../../lib/preferences";
+import { INSPECTOR_CANVAS_GAP, INSPECTOR_RAIL_WIDTH } from "../product-detail/constants";
 import {
   ProductWorkbenchInspector,
   type ProductWorkbenchInspectorTool,
@@ -12,6 +13,10 @@ import {
 export type AgentWorkbenchMobileView = "canvas" | "agent";
 
 export type AgentWorkbenchSidebarTool = ProductWorkbenchInspectorTool;
+
+export function getAgentWorkbenchInspectorTrackWidth(collapsed: boolean, inspectorWidth: number): number {
+  return collapsed ? INSPECTOR_RAIL_WIDTH : INSPECTOR_RAIL_WIDTH + inspectorWidth;
+}
 
 interface AgentWorkbenchRegionState {
   canvasInert: boolean;
@@ -139,11 +144,7 @@ export function AgentWorkbenchShell({
       ? "visible opacity-100"
       : "invisible pointer-events-none opacity-0 lg:visible lg:pointer-events-auto lg:opacity-100"
     : "invisible pointer-events-none opacity-0";
-  const canvasPaddingRight = !workflowAvailable || compact
-    ? 0
-    : sidebarCollapsed
-      ? 96
-      : 72 + inspectorWidth + 24;
+  const inspectorTrackWidth = getAgentWorkbenchInspectorTrackWidth(sidebarCollapsed, inspectorWidth);
   const inspectorTools: ProductWorkbenchInspectorTool[] = [
     {
       id: "agent",
@@ -185,13 +186,21 @@ export function AgentWorkbenchShell({
         </div>
       ) : null}
 
-      <div className="relative min-h-0 flex-1 overflow-hidden">
+      <div
+        data-agent-workbench-work-area
+        className={`relative min-h-0 flex-1 overflow-hidden lg:grid lg:transition-[grid-template-columns] lg:duration-300 lg:ease-out motion-reduce:lg:transition-none ${
+          workflowAvailable ? "lg:gap-[var(--agent-workbench-inspector-gap)] lg:pr-[var(--agent-workbench-inspector-gap)]" : ""
+        }`}
+        style={workflowAvailable ? ({
+          "--agent-workbench-inspector-gap": `${INSPECTOR_CANVAS_GAP}px`,
+          gridTemplateColumns: `minmax(0, 1fr) ${inspectorTrackWidth}px`,
+        } as CSSProperties) : undefined}
+      >
         <section
           data-agent-workbench-canvas-slot
           aria-hidden={regions.canvasInert || undefined}
           inert={regions.canvasInert}
-          className={`absolute inset-0 min-h-0 min-w-0 overflow-hidden transition-[padding,opacity,visibility] duration-300 ease-out motion-reduce:transition-none ${canvasVisibleClass}`}
-          style={{ paddingRight: canvasPaddingRight }}
+          className={`absolute inset-0 min-h-0 min-w-0 overflow-hidden transition-[opacity,visibility] duration-300 ease-out motion-reduce:transition-none lg:relative lg:inset-auto ${canvasVisibleClass}`}
         >
           {canvasContent}
         </section>
@@ -212,8 +221,7 @@ export function AgentWorkbenchShell({
           mobileVisible={!workflowAvailable || mobileView === "agent"}
           inert={regions.sidebarInert}
           showActiveWhenCollapsed
-          desktopPositionClassName="lg:bottom-6 lg:left-auto lg:right-6 lg:top-6"
-          desktopCollapsedPositionClassName="lg:left-auto lg:right-6 lg:top-6"
+          desktopLayout="grid-child"
           slotDataAttribute="data-agent-workbench-agent-slot"
           collapsedDataAttribute="data-agent-workbench-collapsed-tools"
         />

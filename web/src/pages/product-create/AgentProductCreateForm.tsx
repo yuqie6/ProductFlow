@@ -14,13 +14,18 @@ import {
 } from "./imageTypeSelection";
 
 interface AgentProductCreateFormProps {
+  productName: string;
+  isProductNameReadOnly: boolean;
   options: AgentProductWorkspaceOptions | null;
   selections: readonly AgentImageTypeSelectionDraft[];
   referenceFiles: readonly File[];
   isOptionsLoading: boolean;
   isOptionsError: boolean;
   isSubmitting: boolean;
+  editingLocked: boolean;
+  primaryActionLabel?: string;
   error: string;
+  onProductNameChange: (name: string) => void;
   onToggleImageType: (key: AgentProductImageTypeKey, selected: boolean) => void;
   onQuantityChange: (key: AgentProductImageTypeKey, quantity: number) => void;
   onAddReferenceFiles: (files: File[]) => void;
@@ -36,13 +41,18 @@ function formatFileSize(bytes: number, locale: string): string {
 }
 
 export function AgentProductCreateForm({
+  productName,
+  isProductNameReadOnly,
   options,
   selections,
   referenceFiles,
   isOptionsLoading,
   isOptionsError,
   isSubmitting,
+  editingLocked,
+  primaryActionLabel,
   error,
+  onProductNameChange,
   onToggleImageType,
   onQuantityChange,
   onAddReferenceFiles,
@@ -98,9 +108,29 @@ export function AgentProductCreateForm({
         event.preventDefault();
         onSubmit();
       }}
-      className="mt-5 min-w-0"
+      className="mt-6 min-w-0"
     >
-      <section aria-labelledby="agent-image-types-title">
+      <div>
+        <label
+          htmlFor="agent-product-name"
+          className="block text-sm font-semibold text-zinc-950 dark:text-white"
+        >
+          {t("agentCreate.productName")}
+        </label>
+        <input
+          id="agent-product-name"
+          autoFocus={!isProductNameReadOnly}
+          autoComplete="off"
+          value={productName}
+          readOnly={isProductNameReadOnly}
+          disabled={isSubmitting || editingLocked}
+          onChange={(event) => onProductNameChange(event.target.value)}
+          placeholder={t("agentCreate.namePlaceholder")}
+          className="mt-2 h-11 w-full rounded-md border border-zinc-300 bg-white px-3 text-sm text-zinc-950 outline-none transition-colors placeholder:text-zinc-400 focus:border-blue-600 focus:ring-2 focus:ring-blue-600/20 disabled:cursor-not-allowed disabled:opacity-60 read-only:bg-zinc-100 read-only:text-zinc-600 dark:border-slate-700 dark:!bg-[#0d1117] dark:text-white dark:placeholder:text-slate-500 dark:read-only:!bg-slate-800 dark:read-only:text-slate-300"
+        />
+      </div>
+
+      <section className="mt-7" aria-labelledby="agent-image-types-title">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 id="agent-image-types-title" className="text-sm font-semibold text-zinc-950 dark:text-white">
             {t("agentCreate.imageTypes")}
@@ -150,7 +180,7 @@ export function AgentProductCreateForm({
                     <input
                       type="checkbox"
                       checked={Boolean(selected)}
-                      disabled={isSubmitting}
+                      disabled={isSubmitting || editingLocked}
                       onChange={(event) => onToggleImageType(option.key, event.target.checked)}
                       className="mt-0.5 h-4 w-4 shrink-0 accent-blue-600"
                     />
@@ -170,7 +200,7 @@ export function AgentProductCreateForm({
                         type="button"
                         title={t("agentCreate.decrease", { title })}
                         aria-label={t("agentCreate.decrease", { title })}
-                        disabled={isSubmitting || selected.quantity <= options.limits.min_images_per_type}
+                        disabled={isSubmitting || editingLocked || selected.quantity <= options.limits.min_images_per_type}
                         onClick={() => onQuantityChange(option.key, selected.quantity - 1)}
                         className="flex items-center justify-center border-r border-zinc-200 text-zinc-600 hover:bg-zinc-100 disabled:opacity-35 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-700"
                       >
@@ -182,7 +212,7 @@ export function AgentProductCreateForm({
                         min={options.limits.min_images_per_type}
                         max={options.limits.max_images_per_type}
                         step={1}
-                        disabled={isSubmitting}
+                        disabled={isSubmitting || editingLocked}
                         value={selected.quantity}
                         onChange={(event) => onQuantityChange(option.key, Number(event.target.value))}
                         className="h-full w-full border-0 bg-transparent p-0 text-center text-sm font-semibold tabular-nums outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
@@ -191,7 +221,7 @@ export function AgentProductCreateForm({
                         type="button"
                         title={t("agentCreate.increase", { title })}
                         aria-label={t("agentCreate.increase", { title })}
-                        disabled={isSubmitting || selected.quantity >= options.limits.max_images_per_type}
+                        disabled={isSubmitting || editingLocked || selected.quantity >= options.limits.max_images_per_type}
                         onClick={() => onQuantityChange(option.key, selected.quantity + 1)}
                         className="flex items-center justify-center border-l border-zinc-200 text-zinc-600 hover:bg-zinc-100 disabled:opacity-35 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-700"
                       >
@@ -252,7 +282,7 @@ export function AgentProductCreateForm({
                 type="button"
                 title={t("agentCreate.remove", { name: file.name })}
                 aria-label={t("agentCreate.remove", { name: file.name })}
-                disabled={isSubmitting}
+                disabled={isSubmitting || editingLocked}
                 onClick={() => onRemoveReferenceFile(index)}
                 className="absolute right-1 top-1 flex h-7 w-7 items-center justify-center rounded-md bg-black/65 text-white opacity-0 transition-opacity hover:bg-red-600 focus:opacity-100 group-hover:opacity-100 disabled:opacity-40"
               >
@@ -264,7 +294,7 @@ export function AgentProductCreateForm({
           {options && referenceFiles.length < maxReferences ? (
             <ImageDropZone
               multiple
-              disabled={isSubmitting}
+              disabled={isSubmitting || editingLocked}
               ariaLabel={t("agentCreate.uploadAria")}
               onFiles={onAddReferenceFiles}
               className="flex h-27 w-36 shrink-0 cursor-pointer flex-col items-center justify-center rounded-md border border-dashed border-zinc-300 bg-zinc-50 px-3 text-center text-zinc-500 transition-colors hover:border-amber-500 hover:bg-amber-50/60 dark:!border-slate-700 dark:!bg-[#0d1117] dark:text-slate-400 dark:hover:!border-amber-400 dark:hover:!bg-amber-400/5"
@@ -304,7 +334,7 @@ export function AgentProductCreateForm({
           className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-md bg-zinc-950 px-5 text-sm font-semibold text-white transition-colors hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-cyan-400 dark:text-[#071018] dark:hover:bg-cyan-300"
         >
           {isSubmitting ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-          {isSubmitting ? t("agentCreate.submitting") : t("agentCreate.submit")}
+          {isSubmitting ? t("agentCreate.submitting") : primaryActionLabel ?? t("agentCreate.submit")}
         </button>
       </div>
 

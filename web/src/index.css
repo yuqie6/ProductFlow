@@ -2,8 +2,64 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* ── 深色模式语义 token 覆盖 ──
+   `@theme` 只在默认（亮）值上声明 token 名并生成 utility；
+   深色下覆盖同名变量，`.dark` 内的 utility 自动取新值。 */
+.dark {
+  --color-surface-base: rgb(2 6 23);
+  --color-surface-raised: rgb(15 23 42);
+  --color-surface-subtle: rgb(30 41 59);
+  --color-surface-inverse: rgb(248 250 252);
+
+  --color-border-l1: rgb(51 65 85);
+  --color-border-l2: rgb(30 41 59);
+  --color-border-l3: rgb(71 85 105);
+
+  --color-text-primary: rgb(226 232 240);
+  --color-text-secondary: rgb(148 163 184);
+  --color-text-muted: rgb(100 116 139);
+
+  --color-accent: rgb(139 92 246);
+  --color-accent-strong: rgb(167 139 250);
+  --color-accent-soft: rgb(30 27 75);
+  --color-accent-fg: rgb(255 255 255);
+}
+
 @theme {
   --font-sans: "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+
+  /* ── 语义表面（surface）── */
+  --color-surface-base: rgb(248 250 252);
+  --color-surface-raised: rgb(255 255 255);
+  --color-surface-subtle: rgb(241 245 249);
+  --color-surface-inverse: rgb(15 23 42);
+
+  /* ── 边框层级 ── */
+  --color-border-l1: rgb(226 232 240);
+  --color-border-l2: rgb(228 228 231);
+  --color-border-l3: rgb(203 213 225);
+
+  /* ── 文本层级 ── */
+  --color-text-primary: rgb(15 23 42);
+  --color-text-secondary: rgb(71 85 105);
+  --color-text-muted: rgb(100 116 139);
+
+  /* ── accent（indigo → violet，V2 工作台主色）── */
+  --color-accent: rgb(99 102 241);
+  --color-accent-strong: rgb(79 70 229);
+  --color-accent-soft: rgb(238 242 255);
+  --color-accent-fg: rgb(255 255 255);
+
+  /* ── 状态色 ── */
+  --color-state-success: rgb(16 185 129);
+  --color-state-warning: rgb(245 158 11);
+  --color-state-error: rgb(239 68 68);
+
+  /* ── 缓动与时长 ── */
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --duration-fast: 120ms;
+  --duration-slow: 240ms;
 }
 
 html,
@@ -56,23 +112,6 @@ textarea {
 
 * {
   box-sizing: border-box;
-}
-
-@keyframes agent-create-message-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-}
-
-.agent-create-message-in {
-  animation: agent-create-message-in 240ms cubic-bezier(0.4, 0, 0.2, 1) both;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .agent-create-message-in {
-    animation: none;
-  }
 }
 
 :root.dark {

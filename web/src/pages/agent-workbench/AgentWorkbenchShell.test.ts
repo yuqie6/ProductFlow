@@ -2,9 +2,12 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
+import { INSPECTOR_CANVAS_GAP, INSPECTOR_RAIL_WIDTH } from "../product-detail/constants";
+import { ProductWorkbenchInspector } from "../product-detail/ProductWorkbenchInspector";
 import {
   AgentWorkbenchShell,
   deriveAgentWorkbenchRegionState,
+  getAgentWorkbenchInspectorTrackWidth,
 } from "./AgentWorkbenchShell";
 
 function renderShell(
@@ -31,6 +34,38 @@ function renderShell(
   }));
 }
 
+function renderInspector({
+  collapsed = false,
+  desktopLayout,
+  inert = false,
+}: {
+  collapsed?: boolean;
+  desktopLayout?: "overlay" | "grid-child";
+  inert?: boolean;
+} = {}): string {
+  return renderToStaticMarkup(createElement(ProductWorkbenchInspector, {
+    workflowAvailable: true,
+    tools: [{
+      id: "agent",
+      label: "Agent",
+      icon: createElement("span", null, "A"),
+      content: createElement("div", null, "Agent content"),
+    }],
+    activeToolId: "agent",
+    onToolChange: () => undefined,
+    collapsed,
+    onCollapsedChange: () => undefined,
+    width: 360,
+    onResizeStart: () => undefined,
+    ariaLabel: "Inspector",
+    resizeLabel: "Resize",
+    collapseLabel: "Collapse",
+    expandLabel: "Expand",
+    inert,
+    desktopLayout,
+  }));
+}
+
 describe("AgentWorkbenchShell", () => {
   it("keeps exactly one mounted canvas slot and Agent slot in both layout modes", () => {
     const agentOnly = renderShell(false);
@@ -44,6 +79,30 @@ describe("AgentWorkbenchShell", () => {
       expect(markup.match(/data-agent-workbench-canvas-slot/g)).toHaveLength(1);
       expect(markup.match(/data-canvas-probe/g)).toHaveLength(1);
     }
+  });
+
+  it("owns expanded and collapsed desktop width through one grid track", () => {
+    const source = renderShell(true);
+
+    expect(source).toContain("lg:grid");
+    expect(source).toContain("grid-template-columns:minmax(0, 1fr) 432px");
+    expect(source).toContain(`--agent-workbench-inspector-gap:${INSPECTOR_CANVAS_GAP}px`);
+    expect(source).toContain("lg:gap-[var(--agent-workbench-inspector-gap)]");
+    expect(source).toContain("lg:pr-[var(--agent-workbench-inspector-gap)]");
+    expect(source).not.toContain("padding-right");
+    expect(source).not.toContain("transition-[padding");
+    expect(getAgentWorkbenchInspectorTrackWidth(false, 360)).toBe(INSPECTOR_RAIL_WIDTH + 360);
+    expect(getAgentWorkbenchInspectorTrackWidth(true, 360)).toBe(INSPECTOR_RAIL_WIDTH);
+
+    const shellSource = AgentWorkbenchShell.toString();
+    expect(shellSource).not.toContain("canvasPaddingRight");
+    expect(shellSource).not.toContain("paddingRight");
+  });
+
+  it("keeps the canvas absolute below lg and makes it a normal grid child on desktop", () => {
+    const markup = renderShell(true);
+
+    expect(markup).toMatch(/data-agent-workbench-canvas-slot[^>]*class="[^"]*absolute inset-0[^"]*lg:relative lg:inset-auto/);
   });
 
   it("keeps both regions mounted beneath confirmation and makes them inert", () => {
@@ -87,6 +146,26 @@ describe("AgentWorkbenchShell", () => {
       confirmationOpen: false,
       sidebarCollapsed: true,
     })).toEqual({ canvasInert: false, sidebarInert: true, agentInert: true });
+  });
+
+  it("uses grid-child positioning only when explicitly requested", () => {
+    const overlay = renderInspector();
+    const gridChild = renderInspector({ desktopLayout: "grid-child" });
+    const collapsedGridChild = renderInspector({ collapsed: true, desktopLayout: "grid-child", inert: true });
+
+    expect(overlay).toContain("absolute inset-0 z-30");
+    expect(overlay).toContain("lg:bottom-6 lg:left-auto lg:right-6 lg:top-20");
+    expect(overlay).not.toContain("lg:relative lg:z-auto lg:h-full lg:justify-self-stretch");
+
+    expect(gridChild).toContain("absolute inset-0 z-30");
+    expect(gridChild).toContain("lg:relative lg:z-auto lg:h-full lg:justify-self-stretch");
+    expect(gridChild).not.toContain("lg:bottom-6 lg:left-auto lg:right-6 lg:top-20");
+    expect(gridChild).toContain(`--product-workbench-inspector-width:${INSPECTOR_RAIL_WIDTH + 360}px`);
+
+    expect(collapsedGridChild).toContain("data-product-workbench-collapsed-tools");
+    expect(collapsedGridChild).toContain(`style="width:${INSPECTOR_RAIL_WIDTH}px"`);
+    expect(collapsedGridChild).toContain("lg:relative lg:inset-auto lg:z-auto lg:h-full lg:justify-self-stretch");
+    expect(collapsedGridChild).toContain("aria-hidden=\"true\" inert=\"\"");
   });
 
   it("keeps the Agent mounted while lazily switching the active sidebar tool", () => {

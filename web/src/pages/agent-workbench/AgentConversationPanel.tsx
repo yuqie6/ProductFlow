@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Bot, CircleAlert, ListChecks, Loader2, Pause, Play, RotateCw, X } from "lucide-react";
+import { Bot, CircleAlert, ListChecks, Loader2, Play, RotateCw, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -183,6 +183,14 @@ export function AgentConversationPanel({
     (!activeQuestion ? questionError : null) ??
     events.streamError ??
     previewError;
+  const reviewDraftRevisionId = reviewDraftAvailable
+    ? workflowDraft.current_revision?.id ?? null
+    : null;
+  const reviewDraftTurnAvailable = Boolean(
+    reviewDraftRevisionId && agent.turns.some(
+      (turn) => turn.workflow_draft_revision_id === reviewDraftRevisionId,
+    ),
+  );
   const connectionLabel = events.state.terminal_kind
     ? t("agentWorkbench.connection.syncing")
     : events.connectionState === "open"
@@ -263,7 +271,7 @@ export function AgentConversationPanel({
           <h2 className="truncate text-sm font-semibold text-zinc-950 dark:text-white">{t("agentWorkbench.agent")}</h2>
           <p className="truncate text-xs text-zinc-500 dark:text-slate-400">{productName}</p>
         </div>
-        {reviewDraftAvailable && onReviewDraft ? (
+        {reviewDraftAvailable && !reviewDraftTurnAvailable && onReviewDraft ? (
           <button
             type="button"
             onClick={onReviewDraft}
@@ -290,20 +298,7 @@ export function AgentConversationPanel({
                       : "animate-pulse bg-zinc-400 dark:bg-slate-500"
               }`}
             />
-            <button
-              type="button"
-              onClick={() => agent.cancelTurnMutation.mutate(agent.activeTurn?.id ?? "")}
-              disabled={
-                agent.cancelTurnMutation.isPending ||
-                agent.activeTurn.status === "cancel_requested" ||
-                Boolean(events.state.terminal_kind)
-              }
-              aria-label={t("agentWorkbench.cancelTurn")}
-              title={t("agentWorkbench.cancelTurn")}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-zinc-200 text-zinc-500 hover:border-red-300 hover:bg-red-50 hover:text-red-700 disabled:opacity-40 dark:border-slate-700 dark:text-slate-400 dark:hover:border-red-400/40 dark:hover:bg-red-500/10 dark:hover:text-red-200"
-            >
-              {agent.cancelTurnMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Pause size={16} />}
-            </button>
+
           </>
         ) : null}
       </header>
@@ -327,12 +322,14 @@ export function AgentConversationPanel({
       <AgentMessageList
         turns={agent.turns}
         activeTurnId={agent.activeTurn?.id ?? null}
-        eventState={agent.activeTurn ? events.state : null}
+        eventState={events.state}
         initialTurnPending={agent.initialTurnMutation.isPending || agent.turnsQuery.isLoading}
         hasOlder={Boolean(agent.turnsQuery.hasNextPage)}
         loadingOlder={agent.turnsQuery.isFetchingNextPage}
+        reviewDraftRevisionId={reviewDraftRevisionId}
         onLoadOlder={() => agent.turnsQuery.fetchNextPage()}
         onPreviewAsset={(assetId) => void previewTurnAsset(assetId)}
+        onReviewDraft={onReviewDraft}
       />
 
       {activeQuestion && agent.activeTurn ? (
@@ -363,28 +360,17 @@ export function AgentConversationPanel({
         </div>
       ) : null}
 
-      {reviewDraftAvailable && onReviewDraft && !agent.activeTurn ? (
-        <div className="flex items-center gap-3 border-t border-zinc-200 bg-blue-50 px-4 py-3 dark:border-slate-800 dark:bg-cyan-400/5">
-          <ListChecks size={16} className="shrink-0 text-blue-700 dark:text-cyan-300" />
-          <span className="min-w-0 flex-1 text-xs text-blue-900 dark:text-cyan-100">
-            {t("workflowConfirmation.title")}
-          </span>
-          <button
-            type="button"
-            onClick={onReviewDraft}
-            className="inline-flex h-10 items-center gap-2 rounded-md bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700 dark:bg-cyan-400 dark:text-[#071018] dark:hover:bg-cyan-300"
-          >
-            <ListChecks size={14} />
-            {t("agentWorkbench.reviewDraft")}
-          </button>
-        </div>
-      ) : null}
-
       <AgentComposer
         value={composerText}
         selectedAssets={composerAssets}
         isSubmitting={agent.submitTurnMutation.isPending}
         canSubmit={canSubmitMessage}
+        stopAvailable={Boolean(agent.activeTurn)}
+        isStopping={
+          agent.cancelTurnMutation.isPending ||
+          agent.activeTurn?.status === "cancel_requested" ||
+          Boolean(events.state.terminal_kind)
+        }
         error={composerError}
         onChange={(value) => {
           setComposerText(value);
@@ -397,6 +383,7 @@ export function AgentConversationPanel({
         }}
         onPreviewAsset={previewSelectedAsset}
         onSubmit={() => void submitMessage()}
+        onStop={() => agent.cancelTurnMutation.mutate(agent.activeTurn?.id ?? "")}
       />
 
       {typeof document === "undefined" ? dialogs : createPortal(dialogs, document.body)}

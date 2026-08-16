@@ -7,6 +7,7 @@ import {
   currentAgentAttempt,
   parseAgentTurnEvent,
   selectAgentAssistantText,
+  selectAgentToolSteps,
 } from "./agentEventReducer";
 
 function event(
@@ -75,6 +76,26 @@ describe("agentEventReducer", () => {
     expect(selectAgentAssistantText(turn(), state)).toBe("new answer");
   });
 
+  it("retains state for an empty turn key and resets before a different nonempty turn", () => {
+    let state = createAgentTurnEventState("projection-1");
+    state = agentEventReducer(state, {
+      type: "event",
+      event: event(1, "tool.step", {
+        step_id: "step-1",
+        kind: "inspect_context",
+        summary: "读取商品上下文",
+        status: "succeeded",
+      }),
+    });
+
+    const retained = agentEventReducer(state, { type: "reset", turn_key: "" });
+    expect(retained).toBe(state);
+
+    const reset = agentEventReducer(retained, { type: "reset", turn_key: "projection-2" });
+    expect(reset).toEqual(createAgentTurnEventState("projection-2"));
+    expect(reset).not.toBe(retained);
+  });
+
   it("tracks Question, answer/resume, artifact, cancel, and terminal control events", () => {
     let state = createAgentTurnEventState("projection-1");
     state = agentEventReducer(state, {
@@ -128,6 +149,221 @@ describe("agentEventReducer", () => {
     expect(() =>
       parseAgentTurnEvent(JSON.stringify(event(1, "text.delta", { delta: "x" })), "text.delta", scope),
     ).toThrow("text.delta payload");
+  });
+
+  it("strictly validates bounded tool.step payloads", () => {
+    const scope = { run_id: "run-1", turn_id: "harness-turn-1" };
+    const validPayload = {
+      step_id: "step-1",
+      kind: "inspect_image",
+      summary: "检查商品正面图",
+      status: "running",
+    };
+
+    expect(parseAgentTurnEvent(JSON.stringify(event(1, "tool.step", validPayload)), "tool.step", scope).payload)
+      .toEqual(validPayload);
+    expect(() =>
+      parseAgentTurnEvent(
+        JSON.stringify(event(1, "tool.step", { ...validPayload, raw: { secret: true } })),
+        "tool.step",
+        scope,
+      ),
+    ).toThrow("tool.step payload");
+    expect(() =>
+      parseAgentTurnEvent(
+        JSON.stringify(event(1, "tool.step", { ...validPayload, kind: "generate_image" })),
+        "tool.step",
+        scope,
+      ),
+    ).toThrow("tool.step payload");
+    expect(() =>
+      parseAgentTurnEvent(
+        JSON.stringify(event(1, "tool.step", { ...validPayload, status: "canceled" })),
+        "tool.step",
+        scope,
+      ),
+    ).toThrow("tool.step payload");
+    expect(() =>
+      parseAgentTurnEvent(
+        JSON.stringify(event(1, "tool.step", { ...validPayload, step_id: "界".repeat(67) })),
+        "tool.step",
+        scope,
+      ),
+    ).toThrow("tool.step payload");
+    expect(() =>
+      parseAgentTurnEvent(
+        JSON.stringify(event(1, "tool.step", { ...validPayload, summary: "界".repeat(54) })),
+        "tool.step",
+        scope,
+      ),
+    ).toThrow("tool.step payload");
+    expect(() =>
+      parseAgentTurnEvent(
+        JSON.stringify(event(1, "tool.step", { ...validPayload, summary: "line 1\nline 2" })),
+        "tool.step",
+        scope,
+      ),
+    ).toThrow("tool.step payload");
+    expect(() =>
+      parseAgentTurnEvent(
+        JSON.stringify(event(1, "tool.step", { ...validPayload, step_id: "   " })),
+        "tool.step",
+        scope,
+      ),
+    ).toThrow("tool.step payload");
+  });
+
+  it("merges newer tool step updates by ID without duplication", () => {
+    let state = createAgentTurnEventState("projection-1");
+    state = agentEventReducer(state, {
+      type: "event",
+      event: event(1, "tool.step", {
+        step_id: "step-1",
+        kind: "inspect_context",
+        summary: "读取商品上下文",
+        status: "running",
+      }),
+    });
+    state = agentEventReducer(state, {
+      type: "event",
+      event: event(2, "tool.step", {
+        step_id: "step-1",
+        kind: "inspect_context",
+        summary: "已读取商品上下文",
+        status: "succeeded",
+      }),
+    });
+
+    expect(state.tool_step_order).toEqual(["step-1"]);
+    expect(state.tool_steps["step-1"]).toEqual({
+      sequence: 2,
+      step: {
+        step_id: "step-1",
+        kind: "inspect_context",
+        summary: "已读取商品上下文",
+        status: "succeeded",
+      },
+    });
+  });
+
+  it("merges snapshot steps first and appends new live steps for the matching Turn", () => {
+    const snapshotTurn = turn({
+      tool_steps: [
+        {
+          step_id: "step-1",
+          kind: "inspect_image",
+          summary: "检查商品图片",
+          status: "running",
+        },
+      ],
+    });
+    let state = createAgentTurnEventState("projection-1");
+    state = agentEventReducer(state, {
+      type: "event",
+      event: event(1, "tool.step", {
+        step_id: "step-1",
+        kind: "inspect_image",
+        summary: "检查商品图片",
+        status: "succeeded",
+      }),
+    });
+    state = agentEventReducer(state, {
+      type: "event",
+      event: event(2, "tool.step", {
+        step_id: "step-2",
+        kind: "organize_assets",
+        summary: "整理商品图片",
+        status: "running",
+      }),
+    });
+
+    expect(selectAgentToolSteps(snapshotTurn, state).map(({ step_id, status }) => ({ step_id, status })))
+      .toEqual([
+        { step_id: "step-1", status: "succeeded" },
+        { step_id: "step-2", status: "running" },
+      ]);
+    expect(selectAgentToolSteps(snapshotTurn, createAgentTurnEventState("other"))).toEqual(
+      snapshotTurn.tool_steps,
+    );
+    expect(selectAgentToolSteps(turn(), null)).toEqual([]);
+    expect(selectAgentToolSteps(undefined, state)).toEqual([]);
+  });
+
+  it("keeps the first snapshot value and position for duplicate step IDs, then overlays live values", () => {
+    const snapshotTurn = turn({
+      tool_steps: [
+        {
+          step_id: "step-1",
+          kind: "inspect_context",
+          summary: "first snapshot value",
+          status: "running",
+        },
+        {
+          step_id: "step-2",
+          kind: "inspect_image",
+          summary: "second position",
+          status: "running",
+        },
+        {
+          step_id: "step-1",
+          kind: "read_history",
+          summary: "duplicate snapshot value",
+          status: "failed",
+        },
+      ],
+    });
+
+    expect(selectAgentToolSteps(snapshotTurn, null)).toEqual([
+      {
+        step_id: "step-1",
+        kind: "inspect_context",
+        summary: "first snapshot value",
+        status: "running",
+      },
+      {
+        step_id: "step-2",
+        kind: "inspect_image",
+        summary: "second position",
+        status: "running",
+      },
+    ]);
+
+    let state = createAgentTurnEventState("projection-1");
+    state = agentEventReducer(state, {
+      type: "event",
+      event: event(1, "tool.step", {
+        step_id: "step-3",
+        kind: "organize_assets",
+        summary: "first live-only step",
+        status: "running",
+      }),
+    });
+    state = agentEventReducer(state, {
+      type: "event",
+      event: event(2, "tool.step", {
+        step_id: "step-1",
+        kind: "inspect_context",
+        summary: "live overlay",
+        status: "succeeded",
+      }),
+    });
+    state = agentEventReducer(state, {
+      type: "event",
+      event: event(3, "tool.step", {
+        step_id: "step-4",
+        kind: "propose_draft",
+        summary: "second live-only step",
+        status: "running",
+      }),
+    });
+
+    expect(selectAgentToolSteps(snapshotTurn, state).map(({ step_id, summary }) => ({ step_id, summary })))
+      .toEqual([
+        { step_id: "step-1", summary: "live overlay" },
+        { step_id: "step-2", summary: "second position" },
+        { step_id: "step-3", summary: "first live-only step" },
+        { step_id: "step-4", summary: "second live-only step" },
+      ]);
   });
 
   it("marks an attempt that changes step identity as a protocol error", () => {

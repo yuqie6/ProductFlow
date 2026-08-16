@@ -65,6 +65,48 @@ describe("subscribeToAgentTurnEvents", () => {
     expect(source.closed).toBe(true);
   });
 
+  it("parses and dispatches scoped tool.step events and reports invalid payloads", () => {
+    const source = new FakeEventSource();
+    const onEvent = vi.fn();
+    const onProtocolError = vi.fn();
+    subscribeToAgentTurnEvents({
+      url: "/events?after=0",
+      scope: { run_id: "run-1", turn_id: "turn-1" },
+      createEventSource: () => source,
+      onEvent,
+      onProtocolError,
+    });
+
+    source.emit("tool.step", event(1, "tool.step", {
+      step_id: "step-1",
+      kind: "inspect_image",
+      summary: "检查商品图片",
+      status: "running",
+    }));
+    source.emit(
+      "tool.step",
+      JSON.stringify({ ...JSON.parse(event(2, "tool.step", {
+        step_id: "step-2",
+        kind: "inspect_context",
+        summary: "读取商品上下文",
+        status: "running",
+      })), turn_id: "other-turn" }),
+    );
+    source.emit("tool.step", event(3, "tool.step", {
+      step_id: "step-3",
+      kind: "inspect_image",
+      summary: "invalid",
+      status: "canceled",
+    }));
+
+    expect(onEvent).toHaveBeenCalledOnce();
+    expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "tool.step",
+      payload: expect.objectContaining({ step_id: "step-1", status: "running" }),
+    }));
+    expect(onProtocolError).toHaveBeenCalledTimes(2);
+  });
+
   it("rejects a mismatched scope without exposing the event", () => {
     const source = new FakeEventSource();
     const onEvent = vi.fn();
