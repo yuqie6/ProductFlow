@@ -80,7 +80,7 @@ const IMAGE_TYPE_ICONS: Partial<Record<AgentProductImageTypeKey, LucideIcon>> = 
 const STAGE_ICONS: [LucideIcon, LucideIcon, LucideIcon] = [Package, Images, ImagePlus];
 
 const stepClass =
-  "flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#6366f1] to-[#8b5cf6] text-[11px] font-bold text-white shadow-[0_3px_8px_rgb(99_102_241/0.3)]";
+  "bg-accent-gradient flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-white shadow-accent-sm";
 
 function cardShellClass(isActive: boolean): string {
   const base =
@@ -318,11 +318,11 @@ export function AgentProductCreateForm({
                       />
                       <span
                         aria-hidden="true"
-                        className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-slate-400/80 bg-surface-raised transition-colors group-hover:border-accent/60 peer-focus-visible:ring-2 peer-focus-visible:ring-accent peer-focus-visible:ring-offset-2 peer-disabled:opacity-50 peer-checked:hidden dark:border-slate-500 dark:peer-focus-visible:ring-offset-surface-raised"
+                        className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-border-control bg-surface-raised transition-colors group-hover:border-accent/60 peer-focus-visible:ring-2 peer-focus-visible:ring-accent peer-focus-visible:ring-offset-2 peer-disabled:opacity-50 peer-checked:hidden dark:peer-focus-visible:ring-offset-surface-raised"
                       />
                       <span
                         aria-hidden="true"
-                        className="mt-0.5 hidden h-5 w-5 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-[#6366f1] to-[#8b5cf6] text-white shadow-[0_2px_6px_rgb(99_102_241/0.4)] transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-accent peer-focus-visible:ring-offset-2 peer-disabled:opacity-50 peer-checked:flex dark:peer-focus-visible:ring-offset-surface-raised"
+                        className="mt-0.5 hidden h-5 w-5 shrink-0 items-center justify-center rounded-md bg-accent-gradient text-white shadow-[0_2px_6px_rgb(99_102_241/0.4)] transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-accent peer-focus-visible:ring-offset-2 peer-disabled:opacity-50 peer-checked:flex dark:peer-focus-visible:ring-offset-surface-raised"
                       >
                         <Check size={12} strokeWidth={3} aria-hidden="true" />
                       </span>
@@ -350,6 +350,7 @@ export function AgentProductCreateForm({
               ariaLabel={t("agentCreate.uploadAria")}
               onFiles={onAddReferenceFiles}
               className="glass-empty-state flex min-h-27 cursor-pointer flex-col items-center justify-center gap-1 px-4 text-center"
+              // active 状态需要覆盖 glass-empty-state 的边框与底色，`!` 是共享类状态切换的最小补丁。
               activeClassName="!border-accent !bg-accent-soft text-accent-strong"
             >
               {({ isDragging }) => (
@@ -418,7 +419,7 @@ export function AgentProductCreateForm({
         </div>
       ) : null}
 
-      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border-l1 bg-surface-raised shadow-[0_-10px_30px_-12px_rgb(2_6_23/0.25)] dark:border-slate-700 dark:bg-[#0b1424] dark:shadow-[0_-14px_36px_rgb(0_0_0/0.45)]">
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border-l1 bg-surface-raised shadow-[0_-10px_30px_-12px_rgb(2_6_23/0.25)] dark:bg-[#0b1424] dark:shadow-[0_-14px_36px_rgb(0_0_0/0.45)]">
         <div className="mx-auto flex w-full max-w-[920px] flex-col-reverse gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
           <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-xs text-text-secondary">
             <span>

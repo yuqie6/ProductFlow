@@ -60,6 +60,15 @@ Current feature owners:
 - Critical actions work without hover. Long names cannot overlap adjacent controls. Status is not color-only.
 - Component-contained responsive behavior uses its measured content width when page viewport width is not the real boundary.
 
+## Design System And Styling
+
+- Colors use the semantic tokens defined in `web/src/index.css` (`surface-*`, `border-l*`, `text-*`, `accent*`, `state-*`). New or changed markup must not use `slate-`, `zinc-`, `gray-`, `neutral-` color utilities or brand hex literals (`#6366f1`, `#8b5cf6`).
+- Dark mode comes from `.dark` overriding the same token variables. Do not add `!border-*` / `!bg-*` / `!text-*` color patches or new `:root.dark .*` global fallback rules.
+- The indigo→violet brand gradient uses `bg-accent-gradient`; accent shadows use `shadow-accent` / `shadow-accent-sm`. The gradient class is the single source and must stay pixel-equivalent across themes.
+- Reuse `btn-primary-spring`, `btn-secondary-spring`, `btn-danger-spring`, `input-premium`, `textarea-premium`, `glass-empty-state`, `glass-inspector` before hand-writing equivalent styles. Add a new shared class in `index.css` only when the same non-trivial style combination has 3 or more call sites.
+- Extract a `components/ui/` primitive only when 3 or more call sites duplicate non-trivial behavior; primitives take typed props and never fetch data.
+- Style changes must be verified in a real browser for light/dark, desktop, narrow desktop, and mobile (breakpoint `max-width: 1023px`, 390px shell). Token swaps are visual no-ops: keep before/after screenshots and require pixel-level equivalence unless the change is explicitly visual.
+
 ## Verification
 
 Run focused tests while editing, then:

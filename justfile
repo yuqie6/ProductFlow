@@ -65,6 +65,9 @@ web-preview-prod:
 
 web-build:
     pnpm --dir web build
+
+web-design-check:
+    bash scripts/check-web-design.sh
 release:
     bash scripts/release.sh
 
