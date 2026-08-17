@@ -19,6 +19,7 @@ func TestProductFlowToolMapping(t *testing.T) {
 		{listAssetsToolName, "inspect_context", "Inspect product context and assets"},
 		{listGlobalProductsToolName, "inspect_context", "Inspect products and workflows"},
 		{inspectGlobalProductsToolName, "inspect_context", "Inspect products and workflows"},
+		{inspectGlobalWorkflowRunsToolName, "inspect_context", "Inspect products and workflows"},
 		{listGlobalMediaAssetsToolName, "inspect_context", "Inspect global media assets"},
 		{inspectGlobalMediaAssetsToolName, "inspect_context", "Inspect global media assets"},
 		{listLegacyArchivesToolName, "read_history", "Read product history"},
