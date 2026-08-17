@@ -29,7 +29,7 @@
 
 - `/media-library` 已提供全局素材列表、搜索、文件夹、标签、归档/恢复、批量组织和选择反馈。
 - `WorkflowMediaLibraryAsset` 已把全局素材关联到工作流子图库；同一图片可被多个工作流使用，关联不复制媒体 bytes。
-- ImageChat 的保存动作已切换到 canonical `/api/media-library/from-session`，`/gallery` 已重定向到 `/media-library`；旧 `/api/gallery`、历史 DTO 和在线 runtime owner 已移除，旧表的部署级回填、引用审计、观察窗和物理清理资格仍待完成。
+- ImageChat 的保存动作已切换到 canonical `/api/media-library/from-session`，`/gallery` 已重定向到 `/media-library`；旧 `/api/gallery`、历史 DTO 和在线 runtime owner 已移除，旧表的部署级回填、引用审计、观察窗和物理清理资格仍待完成。旧 `legacy_canvas_agent_20260518_0032` 数据库需要单独批准和演练 migration bridge，当前回填命令会拒绝该 schema。
 - Agent 图库整理已接入有界读取、可确认 Draft、revision 校验、幂等确认、原子应用和结果投影；全局素材关联到明确工作流也已通过同一 Draft 机制落地，使用工作流 revision 和当前关联状态校验，不复制媒体 bytes。剩余工作是旧 Gallery 对账/owner 退休，以及跨商品等更高范围的 Agent 写操作。
 
 ### 5. 全局 Agent 与人工工作流协作

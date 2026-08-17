@@ -144,6 +144,17 @@ Last reviewed against the current working tree on 2026-08-18.
 
 当前 `backfill_media_library` command 已将坏文件和无效 source 以 entry id/code 写入 `summary.blockers`，存在 blocker 时返回退出码 `2`；`--verify` 还会输出包含 workflow 子图库关联和商品收录引用计数的 `reconciliation_report_sha256`。reconcile 也会拒绝 canonical 侧多出的 `legacy_gallery` mapping。它仍然只证明应用层 source mapping，不能替代 PostgreSQL snapshot、storage backup identity、维护窗口和观察窗证据。
 
+### 4.1 旧 Canvas revision 的桥接边界
+
+若 source audit 报告的 `source.schema_profile` 为 `legacy_canvas_agent_20260518_0032`，该数据库仍处于旧 Canvas Agent 分支。它没有当前素材库回填所需的 `media_objects`、`image_session_assets.media_object_id` 和 `media_library_assets` 目标结构。`backfill_media_library` 会在命令入口返回退出码 `2`，报告缺少的表/列，并要求先完成旧库审计和切换预检。
+
+当前仓库没有把该旧 revision 原地升级为当前 head 的 migration bridge。旧 Canvas Agent 仍有数据时，历史删除 migration 也不能作为升级捷径，因为它会丢失尚未归档的线程、run、计划和时间线事实。生产处理必须保留以下边界：
+
+1. 使用只读 source connection 生成 `audit_legacy_retirement`、`preflight_legacy_cutover` 和必要的 archive page；source audit 的 `migration_bridge_required` 保持 blocking。
+2. 处理 active/needs-approval run、V1 写入冻结、媒体文件恢复和 provider binding 缺口；报告中的 missing 文件不能用空文件或人工成功状态填平。
+3. 由单独评审批准目标数据库和桥接实现后，才可在目标 current schema 执行 Media Library backfill。当前命令不跨库复制旧 Gallery，也不接受 `alembic stamp`、手工 SQL 或 force flag 代替桥接。
+4. 桥接演练必须证明旧 Gallery、商品图片、工作流关联和 Agent archive 的 source/hash 对账；完成前不得执行 `retire_legacy_gallery`。
+
 新代码确认只读写 `MediaLibraryAsset` 后才解除维护窗口。旧表保持只读证据，不再新增长期业务字段。
 
 ## 9. Phase 5：商品收录、组织与归档

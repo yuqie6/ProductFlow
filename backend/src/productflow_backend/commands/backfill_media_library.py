@@ -7,6 +7,8 @@ from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
+import sqlalchemy as sa
+
 from productflow_backend.application.media_library.backfill import (
     capture_gallery_snapshot,
     gallery_reconciliation_hash,
@@ -16,6 +18,13 @@ from productflow_backend.application.media_library.backfill import (
 from productflow_backend.application.media_library.migration_audit import MediaLibraryMigrationAudit
 from productflow_backend.infrastructure.db.session import get_session_factory
 from productflow_backend.infrastructure.storage import LocalStorage
+
+_BACKFILL_SCHEMA_REQUIREMENTS = {
+    "image_gallery_entries": frozenset({"id", "image_session_asset_id", "created_at"}),
+    "image_session_assets": frozenset({"id", "media_object_id"}),
+    "media_objects": frozenset({"id"}),
+    "media_library_assets": frozenset({"id", "source_type", "source_id"}),
+}
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -77,10 +86,44 @@ def _load_or_capture_snapshot(session, path: Path | None, *, require_existing: b
     return snapshot
 
 
+def _ensure_backfill_schema(session) -> None:
+    inspector = sa.inspect(session.connection())
+    table_names = frozenset(inspector.get_table_names())
+    missing_tables = sorted(set(_BACKFILL_SCHEMA_REQUIREMENTS) - table_names)
+    missing_columns = {
+        table_name: sorted(required - {str(column["name"]) for column in inspector.get_columns(table_name)})
+        for table_name, required in _BACKFILL_SCHEMA_REQUIREMENTS.items()
+        if table_name in table_names
+        and required - {str(column["name"]) for column in inspector.get_columns(table_name)}
+    }
+    if not missing_tables and not missing_columns:
+        return
+
+    revision = None
+    if "alembic_version" in table_names:
+        revision = session.scalar(sa.text("SELECT version_num FROM alembic_version ORDER BY version_num LIMIT 1"))
+    details: list[str] = []
+    if missing_tables:
+        details.append(f"缺少表: {', '.join(missing_tables)}")
+    if missing_columns:
+        details.append(
+            "缺少列: "
+            + ", ".join(f"{table_name}.{', '.join(columns)}" for table_name, columns in sorted(missing_columns.items()))
+        )
+    revision_label = str(revision) if revision is not None else "<missing>"
+    raise ValueError(
+        "当前数据库不是 Media Library backfill target "
+        f"(Alembic revision: {revision_label}; {'; '.join(details)})。"
+        "请先在支持的当前 schema 上完成迁移；若 source profile 是旧 Canvas revision，"
+        "先运行 audit_legacy_retirement 和 preflight_legacy_cutover，不能直接回填或 stamp。"
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     session = get_session_factory()()
     try:
+        _ensure_backfill_schema(session)
         snapshot = _load_or_capture_snapshot(
             session,
             args.snapshot_file,
@@ -118,6 +161,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         if verified is not None and verified != snapshot.gallery_count:
             return 2
         return 0
+    except (RuntimeError, ValueError) as exc:
+        session.rollback()
+        print(json.dumps({"detail": str(exc)}, ensure_ascii=False, sort_keys=True))
+        return 2
     finally:
         session.close()
 

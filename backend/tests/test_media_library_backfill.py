@@ -6,6 +6,8 @@ from hashlib import sha256
 from pathlib import Path
 
 import pytest
+import sqlalchemy as sa
+from sqlalchemy.orm import sessionmaker
 
 from productflow_backend.application.legacy_retirement.media_library import LEGACY_GALLERY_ENTRIES
 from productflow_backend.application.media_library.backfill import (
@@ -132,6 +134,42 @@ def test_backfill_command_returns_blocking_exit_code(db_session, configured_env:
     (configured_env / "media" / "backfill.png").unlink()
 
     assert main(["--snapshot-file", str(tmp_path / "gallery-snapshot.json")]) == 2
+
+
+def test_backfill_command_rejects_legacy_schema_with_bridge_guidance(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    engine = sa.create_engine(f"sqlite:///{tmp_path / 'legacy.db'}", future=True)
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "CREATE TABLE alembic_version (version_num VARCHAR(32) PRIMARY KEY)"
+            )
+            connection.exec_driver_sql(
+                "INSERT INTO alembic_version (version_num) VALUES ('20260518_0032')"
+            )
+            connection.exec_driver_sql(
+                "CREATE TABLE image_gallery_entries ("
+                "id VARCHAR(36) PRIMARY KEY, image_session_asset_id VARCHAR(36), created_at DATETIME)"
+            )
+            connection.exec_driver_sql(
+                "CREATE TABLE image_session_assets ("
+                "id VARCHAR(36) PRIMARY KEY, session_id VARCHAR(36), storage_path VARCHAR(500))"
+            )
+        monkeypatch.setattr(
+            "productflow_backend.commands.backfill_media_library.get_session_factory",
+            lambda: sessionmaker(bind=engine),
+        )
+
+        assert main(["--snapshot-file", str(tmp_path / "gallery-snapshot.json")]) == 2
+        output = capsys.readouterr().out
+        assert "20260518_0032" in output
+        assert "audit_legacy_retirement" in output
+        assert "media_object_id" in output
+    finally:
+        engine.dispose()
 
 
 def test_gallery_backfill_reconcile_rejects_extra_legacy_mapping(db_session, configured_env: Path) -> None:
