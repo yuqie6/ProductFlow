@@ -46,6 +46,6 @@ def test_media_library_assets_migration_creates_schema_and_constraints(
             "ck_media_library_assets_provenance_hash",
         } <= checks
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260816_0049"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260817_0050"
     finally:
         engine.dispose()

@@ -2,11 +2,12 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { AgentQuestion, AgentTurn, GalleryAsset, WorkflowDraft } from "../../lib/types";
+import type { AgentQuestion, AgentSession, AgentTurn, GalleryAsset, WorkflowDraft } from "../../lib/types";
 import { AgentComposer } from "./AgentComposer";
 import { hasUnsyncedWorkflowDraftRevision } from "./AgentConversationPanel";
 import { AgentMessageList } from "./AgentMessageList";
 import { AgentQuestionPrompt } from "./AgentQuestionPrompt";
+import { selectAgentSessionConversation } from "./AgentSessionSwitcher";
 import { AgentToolStepList } from "./AgentToolStepList";
 import { agentEventReducer, createAgentTurnEventState } from "./agentEventReducer";
 
@@ -35,6 +36,30 @@ function turn(overrides: Partial<AgentTurn> = {}): AgentTurn {
 }
 
 describe("Agent conversation components", () => {
+  it("opens the most recently updated product workspace when switching sessions", () => {
+    const session = {
+      id: "session-1",
+      title: "春季素材",
+      status: "active",
+      archived_at: null,
+      conversation_count: 2,
+      conversations: [
+        {
+          conversation_id: "conversation-new",
+          product_id: "product-new",
+          product_name: "新品",
+          conversation_status: "collecting",
+          updated_at: "2026-08-17T00:00:00Z",
+        },
+      ],
+      created_at: "2026-08-16T00:00:00Z",
+      updated_at: "2026-08-17T00:00:00Z",
+    } satisfies AgentSession;
+
+    expect(selectAgentSessionConversation(session)?.product_id).toBe("product-new");
+    expect(selectAgentSessionConversation({ ...session, conversations: [] })).toBeNull();
+  });
+
   it("refreshes the draft only after ProductFlow projects the proposed revision ID", () => {
     const staleDraft = {
       id: "draft-1",

@@ -17,6 +17,7 @@ from productflow_backend.application.agent_product_intake import (
     normalize_agent_product_idempotency_key,
     parse_workflow_intake,
 )
+from productflow_backend.application.agent_sessions import new_agent_session
 from productflow_backend.application.media_assets import get_product_image_assets_by_ids
 from productflow_backend.application.storage_compensation import compensate_storage_writes
 from productflow_backend.application.time import now_utc
@@ -323,8 +324,12 @@ def _stage_workspace_records(
     session.flush()
 
     conversation_id = new_id()
+    agent_session = new_agent_session(title=product.name)
+    session.add(agent_session)
+    session.flush()
     conversation = AgentConversation(
         id=conversation_id,
+        session_id=agent_session.id,
         product_id=product.id,
         workflow_draft_id=draft.id,
         harness_run_id=conversation_id,

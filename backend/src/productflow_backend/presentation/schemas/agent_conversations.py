@@ -240,6 +240,7 @@ class AgentQuestionAnswerRequest(StrictAgentRequest):
 
 class AgentConversationResponse(BaseModel):
     id: str
+    session_id: str | None
     product_id: str
     workflow_draft_id: str
     harness_run_id: str
@@ -290,6 +291,7 @@ class SubmitAgentTurnResponse(BaseModel):
 def serialize_agent_conversation(conversation: AgentConversation) -> AgentConversationResponse:
     return AgentConversationResponse(
         id=conversation.id,
+        session_id=conversation.session_id,
         product_id=conversation.product_id,
         workflow_draft_id=conversation.workflow_draft_id,
         harness_run_id=conversation.harness_run_id,

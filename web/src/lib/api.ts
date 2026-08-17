@@ -2,6 +2,8 @@ import type {
   AgentProductWorkspaceCreateResponse,
   AgentProductWorkspaceOptions,
   AgentProductWorkspaceSnapshot,
+  AgentSession,
+  AgentSessionListResponse,
   AgentQuestionAnswer,
   AgentTurn,
   AgentTurnPage,
@@ -320,8 +322,34 @@ export const api = {
       },
     );
   },
-  getAgentWorkbench(productId: string): Promise<AgentWorkbenchBootstrap> {
-    return request(`/api/v2/products/${encodeURIComponent(productId)}/agent-workbench`);
+  getAgentWorkbench(productId: string, agentSessionId?: string | null): Promise<AgentWorkbenchBootstrap> {
+    const params = new URLSearchParams();
+    if (agentSessionId) {
+      params.set("agent_session_id", agentSessionId);
+    }
+    const query = params.size ? `?${params}` : "";
+    return request(`/api/v2/products/${encodeURIComponent(productId)}/agent-workbench${query}`);
+  },
+  listAgentSessions(includeArchived = false): Promise<AgentSessionListResponse> {
+    const params = new URLSearchParams({ include_archived: String(includeArchived) });
+    return request(`/api/v2/agent-sessions?${params}`);
+  },
+  createAgentSession(input: { title: string }): Promise<AgentSession> {
+    return request("/api/v2/agent-sessions", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  renameAgentSession(sessionId: string, title: string): Promise<AgentSession> {
+    return request(`/api/v2/agent-sessions/${encodeURIComponent(sessionId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    });
+  },
+  archiveAgentSession(sessionId: string): Promise<AgentSession> {
+    return request(`/api/v2/agent-sessions/${encodeURIComponent(sessionId)}/archive`, {
+      method: "POST",
+    });
   },
   listAgentTurns(
     productId: string,

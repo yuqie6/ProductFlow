@@ -14,6 +14,7 @@ from productflow_backend.application.agent_conversations import (
     get_agent_conversation_by_id_or_raise,
     get_agent_conversation_or_raise,
 )
+from productflow_backend.application.agent_sessions import new_agent_session
 from productflow_backend.application.legacy_archives import (
     LegacyArchiveKind,
     LegacyArchiveListItem,
@@ -171,8 +172,12 @@ def create_legacy_archive_rebuild(
             request_hash=request_hash,
         )
         conversation_id = new_id()
+        agent_session = new_agent_session(title=detail.item.title)
+        session.add(agent_session)
+        session.flush()
         conversation = AgentConversation(
             id=conversation_id,
+            session_id=agent_session.id,
             product_id=normalized_product_id,
             workflow_draft_id=draft.id,
             harness_run_id=conversation_id,

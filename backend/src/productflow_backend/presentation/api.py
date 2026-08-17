@@ -23,6 +23,7 @@ from productflow_backend.presentation.routes.agent_product_workspaces import (
     router as agent_product_workspaces_router,
 )
 from productflow_backend.presentation.routes.agent_runtime import router as agent_runtime_router
+from productflow_backend.presentation.routes.agent_sessions import router as agent_sessions_router
 from productflow_backend.presentation.routes.agent_workbenches import router as agent_workbenches_router
 from productflow_backend.presentation.routes.auth import router as auth_router
 from productflow_backend.presentation.routes.delivery_renditions import router as delivery_renditions_router
@@ -74,6 +75,7 @@ def create_app() -> FastAPI:
 
     app.include_router(auth_router)
     app.include_router(agent_runtime_router)
+    app.include_router(agent_sessions_router)
     app.include_router(agent_internal_router)
     app.include_router(agent_conversations_router)
     app.include_router(agent_product_workspaces_router)

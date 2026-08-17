@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from productflow_backend.application.agent_workbenches import get_agent_workbench_bootstrap
@@ -20,10 +20,15 @@ router = APIRouter(
 @router.get("/{product_id}/agent-workbench", response_model=AgentWorkbenchBootstrapResponse)
 def get_agent_workbench_bootstrap_endpoint(
     product_id: str,
+    agent_session_id: str | None = Query(default=None),
     session: Session = Depends(get_session),
 ) -> AgentWorkbenchBootstrapResponse:
     return serialize_agent_workbench_bootstrap(
-        get_agent_workbench_bootstrap(session, product_id=product_id)
+        get_agent_workbench_bootstrap(
+            session,
+            product_id=product_id,
+            agent_session_id=agent_session_id,
+        )
     )
 
 

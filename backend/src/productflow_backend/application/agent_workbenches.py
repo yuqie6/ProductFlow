@@ -6,6 +6,7 @@ from typing import Literal
 from sqlalchemy.orm import Session
 
 from productflow_backend.application.agent_conversations import agent_conversation_query
+from productflow_backend.application.agent_sessions import get_agent_session_or_raise
 from productflow_backend.application.workflow_drafts.materialization import (
     ActiveV2WorkflowSnapshot,
     get_active_v2_workflow_snapshot,
@@ -35,18 +36,26 @@ def get_agent_workbench_bootstrap(
     session: Session,
     *,
     product_id: str,
+    agent_session_id: str | None = None,
 ) -> AgentWorkbenchBootstrap:
     product = session.get(Product, product_id)
     if product is None:
         raise NotFoundError("商品不存在")
 
+    conversation_statement = agent_conversation_query().where(AgentConversation.product_id == product_id)
+    if agent_session_id is not None:
+        get_agent_session_or_raise(session, agent_session_id)
+        conversation_statement = conversation_statement.where(
+            AgentConversation.session_id == agent_session_id,
+        )
     conversation = session.scalar(
-        agent_conversation_query()
-        .where(AgentConversation.product_id == product_id)
+        conversation_statement
         .order_by(AgentConversation.created_at.desc(), AgentConversation.id.desc())
         .limit(1)
     )
     if conversation is None:
+        if agent_session_id is not None:
+            raise ConflictError("当前 Agent Session 没有这个商品的工作区")
         raise ConflictError("商品还没有 Agent 工作区")
 
     draft = session.scalar(

@@ -28,7 +28,7 @@
 - 业务执行用例在 `backend/src/productflow_backend/application/product_workflow/v2_runs.py`，worker 从 `backend/src/productflow_backend/workers.py` 进入执行器。
 - `WorkflowRun` 和 `WorkflowNodeRun` 由 PostgreSQL 持有，Redis/Dramatiq 只承担投递和执行调度。
 
-当前 Agent 仍然以商品为边界：`AgentConversation` 绑定 `product_id` 和 `workflow_draft_id`。`ImageSession` 是连续生图会话，已有自己的会话列表和生图任务，但不承担全局业务 Agent 的职责。全局媒体库当前只有后端基础能力，工作流子图库关联、全局 Agent Session 和全局 Agent Dock 尚未交付。
+当前 Agent Turn 仍然以商品为业务边界：`AgentConversation` 绑定 `product_id` 和 `workflow_draft_id`，新建商品和旧归档重建会同时创建一个独立的 `AgentSession` 记录。Session 已有列表、创建、改名、归档、商品工作区摘要和按 Session 选择商品工作区的 API；当前工作台已提供会话切换入口。`ImageSession` 是连续生图会话，已有自己的会话列表和生图任务，但不承担全局业务 Agent 的职责。AgentTask、页面上下文快照、后台恢复、工作流子图库关联和全局 Agent Dock 仍未交付。
 
 ## 3. 产品原则
 
@@ -52,7 +52,7 @@ Workflow 是用户确认后保存的可编辑 DAG。它可以被用户直接运�
 
 | 对象 | 作用 | 当前状态 |
 |---|---|---|
-| `AgentSession` | 用户和全局 Agent 的长期交流入口，可包含多个任务 | 未实现 |
+| `AgentSession` | 用户和全局 Agent 的长期交流入口，可包含多个任务 | 已实现 Session 元数据、商品对话关联、列表/创建/改名/归档和工作区切换基础；摘要与 Task 仍未实现 |
 | `AgentTask` | 一个明确的业务目标，可跨页面、跨 Turn、后台运行 | 未实现 |
 | `AgentTurn` | 一次用户消息、本轮上下文、工具调用和结果投影 | 当前由商品级 Agent Turn 投影部分承担 |
 | `AgentRun` | harness 内部一次可恢复的执行运行 | 当前以商品 `AgentConversation` 的 harness run 存在 |
@@ -194,8 +194,10 @@ Session summary
 
 ### 阶段 1：建立全局 Agent 外壳
 
-- 新增独立的 Session、Task、Turn 关系和 API；当前商品 `AgentConversation` 作为兼容的产品 Agent，不直接改名充当全局 Session。
-- 提供 Session 列表/切换/归档和 Task 列表/暂停/恢复/取消的 bounded projection。
+- 已新增独立的 `AgentSession` 和 `AgentConversation.session_id` 关联；当前商品 `AgentConversation` 保持原有 Draft 绑定，不改名充当全局 Session。
+- 已提供 Session 列表/创建/改名/归档、商品工作区摘要和当前工作台切换入口；切换通过 Session 关联的商品工作区重新读取 bootstrap。
+- 当前工作台入口采用可搜索的会话面板，按进行中/已归档分组，显示会话关联的商品工作区；会话管理动作与商品工作流的编辑、审阅和人工运行入口保持分离。
+- 后续新增独立的 `AgentTask`、Turn 关系和 Task 列表/暂停/恢复/取消 bounded projection。
 - 先支持只读查询、问题等待、Draft 查看和 WorkflowRun 监控，不开放跨域副作用。
 
 ### 阶段 2：接入页面上下文和任务恢复

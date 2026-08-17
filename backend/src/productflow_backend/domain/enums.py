@@ -85,6 +85,13 @@ class AgentConversationStatus(StrEnum):
     UNKNOWN = "unknown"
 
 
+class AgentSessionStatus(StrEnum):
+    """全局 Agent Session 的生命周期状态。"""
+
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
+
 class AgentTurnStatus(StrEnum):
     """agent-harness Turn 状态的无损 ProductFlow 投影。"""
 

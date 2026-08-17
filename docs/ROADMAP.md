@@ -36,8 +36,9 @@
 ### 5. 全局 Agent 与人工工作流协作
 
 - 保留工作流画布的直接编辑、整图运行、单节点运行、取消、重试和运行记录入口；Agent 接入现有 `WorkflowRun`，不建立第二套执行器。
-- 设计并实现跨页面 `AgentSession`、独立 `AgentTask`、本轮 `AgentTurn` 和页面上下文快照；Session 切换不取消后台任务，Task 目标不随路由变化。
-- 为 Session 和 Task 建立有界列表、切换、归档、暂停、恢复、取消和待确认 Draft 投影。
+- 已实现 `AgentSession` 元数据、商品对话关联、列表/创建/改名/归档 API，以及工作台内按 Session 选择商品工作区的基础切换。
+- 继续实现独立 `AgentTask`、本轮 `AgentTurn` 和页面上下文快照；Session 切换不取消后台任务，Task 目标不随路由变化。
+- 为 Session 和 Task 补齐有界列表、切换、归档、暂停、恢复、取消和待确认 Draft 投影。
 - 按 Session 摘要、Task 目标、最近 Turn、当前页面上下文和执行前 Fresh Observation 分层组装上下文；完整 Agent journal 继续保留，模型工作上下文按 harness 规则压缩。
 - 先交付只读查询、运行监控和 Draft 提议，再开放跨商品、跨工作流和全局图库的有副作用操作。
 

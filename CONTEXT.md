@@ -12,7 +12,7 @@ The current repository targets a personal live demo and self-hosted deployments.
 2. Image types start unselected. Selecting a type initializes its quantity to 2.
 3. Each selected type has a quantity from 1 to 6; the total planned images cannot exceed 30.
 4. The user uploads 1 to 6 verified references and is expected to include at least one image that identifies the real product or an authoritative product rendering. The backend deterministically validates count, ownership, bytes, and media format; semantic adequacy remains an Agent/user review responsibility.
-5. ProductFlow persists the draft Product, uploaded `ProductImageAsset` records, one `WorkflowDraft`, and one `AgentConversation` before the first Agent Turn.
+5. ProductFlow persists the draft Product, uploaded `ProductImageAsset` records, one `WorkflowDraft`, one product-scoped `AgentConversation`, and its associated `AgentSession` before the first Agent Turn. `AgentSession` is the longer-lived conversation container; the current Turn runtime still uses the product-scoped conversation projection.
 6. The Agent asks for missing facts and proposes a versioned, structured Draft. It may suggest plan changes but cannot silently change confirmed user choices or facts.
 7. The user confirms an explicit Draft revision. A single application transaction materializes the complete workflow and reveal events.
 8. Reveal events control presentation only. Disconnecting or cancelling animation cannot leave a partial business graph.

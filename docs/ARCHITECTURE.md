@@ -80,7 +80,7 @@ TanStack Query 管理服务端状态；局部表单、选择和画布交互使�
 
 ```text
 image types + quantities + 1..6 uploads
-  -> Product + ProductImageAsset + WorkflowDraft + AgentConversation
+  -> Product + ProductImageAsset + WorkflowDraft + AgentSession + AgentConversation
   -> ProductFlow submits Agent Turn
   -> agent-service / agent-harness durable execution
   -> ProductFlow internal read and mutation tools
@@ -91,7 +91,7 @@ image types + quantities + 1..6 uploads
   -> product workbench
 ```
 
-ProductFlow 是业务数据权威。Agent service 保存 durable Turn transcript、tool call/result 和 token delta；PostgreSQL 保存 AgentConversation、AgentTurnProjection、问题状态和 WorkflowDraft revision。
+ProductFlow 是业务数据权威。Agent service 保存 durable Turn transcript、tool call/result 和 token delta；PostgreSQL 保存 AgentSession、AgentConversation、AgentTurnProjection、问题状态和 WorkflowDraft revision。当前 Session 负责跨商品容器和工作区选择，AgentTask、页面上下文快照与后台任务恢复仍在后续阶段。
 
 Agent service 通过 `tool.step` SSE 事件和 Turn 状态 `tool_steps` 暴露有界工具步骤投影，字段固定为 `step_id`、`kind`、`summary`、`status`。当前 kinds 为 `inspect_image`、`inspect_context`、`read_history`、`organize_assets`、`propose_draft`；statuses 为 `running`、`succeeded`、`failed`、`unknown`。`question.required` 继续独立拥有 Question，不投影为 tool step；当前没有真实 `generate_image` Agent tool，不提前加入。`AgentTurnProjection.tool_steps_json` 保存这份 web projection：缺失 `tool_steps` 表示兼容旧服务并保留现有 snapshot，显式 `[]` 才清空。
 

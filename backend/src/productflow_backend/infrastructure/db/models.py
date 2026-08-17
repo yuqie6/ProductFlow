@@ -25,6 +25,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from productflow_backend.domain.enums import (
     AgentConversationStatus,
+    AgentSessionStatus,
     AgentToolMutationStatus,
     AgentTurnStatus,
     AsyncDispatchStatus,
@@ -911,6 +912,28 @@ class WorkflowDraftRevision(Base):
     )
 
 
+class AgentSession(Base, TimestampMixin):
+    """跨商品持续存在的 Agent 对话容器。"""
+
+    __tablename__ = "agent_sessions"
+    __table_args__ = (
+        Index("ix_agent_sessions_status_updated", "status", "updated_at", "id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    status: Mapped[AgentSessionStatus] = mapped_column(
+        enum_value_column(AgentSessionStatus),
+        default=AgentSessionStatus.ACTIVE,
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    conversations: Mapped[list[AgentConversation]] = relationship(
+        back_populates="session",
+        order_by="AgentConversation.updated_at.desc(), AgentConversation.id.desc()",
+    )
+
+
 class AgentConversation(Base, TimestampMixin):
     """ProductFlow 对一个隔离 agent-harness run 的业务作用域绑定。"""
 
@@ -935,9 +958,15 @@ class AgentConversation(Base, TimestampMixin):
             name="ck_agent_conversations_intake_idempotency_pair",
         ),
         Index("ix_agent_conversations_product_status", "product_id", "status"),
+        Index("ix_agent_conversations_session_updated", "session_id", "updated_at", "id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    session_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("agent_sessions.id", ondelete="SET NULL", name="fk_agent_conversations_session_id"),
+        nullable=True,
+    )
     product_id: Mapped[str] = mapped_column(
         String(36),
         ForeignKey("products.id", ondelete="CASCADE", name="fk_agent_conversations_product_id"),
@@ -960,6 +989,7 @@ class AgentConversation(Base, TimestampMixin):
         default=AgentConversationStatus.COLLECTING,
     )
 
+    session: Mapped[AgentSession | None] = relationship(back_populates="conversations")
     product: Mapped[Product] = relationship(
         back_populates="agent_conversations",
         foreign_keys=[product_id],

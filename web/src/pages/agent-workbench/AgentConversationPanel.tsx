@@ -21,6 +21,7 @@ import {
 import { AgentComposer } from "./AgentComposer";
 import { AgentMessageList } from "./AgentMessageList";
 import { AgentQuestionPrompt } from "./AgentQuestionPrompt";
+import { AgentSessionSwitcher } from "./AgentSessionSwitcher";
 import { AgentResumeAfterAnswerError, useAgentConversation } from "./useAgentConversation";
 import { useAgentTurnEvents } from "./useAgentTurnEvents";
 
@@ -302,6 +303,8 @@ export function AgentConversationPanel({
           </>
         ) : null}
       </header>
+
+      <AgentSessionSwitcher conversation={conversation} productName={productName} />
 
       {listError ? (
         <PanelError

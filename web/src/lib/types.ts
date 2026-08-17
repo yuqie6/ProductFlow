@@ -912,12 +912,42 @@ export interface WorkflowRecipe extends WorkflowRecipeSummary {
 
 export interface AgentConversation {
   id: string;
+  session_id: string | null;
   product_id: string;
   workflow_draft_id: string;
   harness_run_id: string;
   status: "collecting" | "awaiting_confirmation" | "completed" | "failed" | "canceled" | "unknown";
   created_at: string;
   updated_at: string;
+}
+
+export type AgentSessionStatus = "active" | "archived";
+
+export interface AgentSessionConversation {
+  conversation_id: string;
+  product_id: string;
+  product_name: string;
+  conversation_status: AgentConversation["status"];
+  updated_at: string;
+}
+
+export interface AgentSession {
+  id: string;
+  title: string;
+  status: AgentSessionStatus;
+  archived_at: string | null;
+  conversation_count: number;
+  conversations: AgentSessionConversation[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentSessionListResponse {
+  items: AgentSession[];
+}
+
+export interface CreateAgentSessionInput {
+  title: string;
 }
 
 export type AgentTurnStatus =

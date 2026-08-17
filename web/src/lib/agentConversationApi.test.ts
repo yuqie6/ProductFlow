@@ -5,6 +5,43 @@ import { api } from "./api";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Agent conversation API", () => {
+  it("keeps Agent Session listing and workbench selection identities in the URL", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ items: [] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.listAgentSessions(true);
+    await api.getAgentWorkbench("product/1", "session/1");
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/api/v2/agent-sessions?include_archived=true",
+      "/api/v2/products/product%2F1/agent-workbench?agent_session_id=session%2F1",
+    ]);
+  });
+
+  it("encodes Agent Session mutation ids and preserves request methods", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.createAgentSession({ title: "春季素材" });
+    await api.renameAgentSession("session/1", "春季素材 v2");
+    await api.archiveAgentSession("session/1");
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/api/v2/agent-sessions",
+      "/api/v2/agent-sessions/session%2F1",
+      "/api/v2/agent-sessions/session%2F1/archive",
+    ]);
+    expect(fetchMock.mock.calls.map(([, init]) => init?.method)).toEqual(["POST", "PATCH", "POST"]);
+  });
+
   it("owns encoded Turn pagination, detail, and SSE URLs", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

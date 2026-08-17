@@ -11,6 +11,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from productflow_backend.application.agent_sessions import new_agent_session
 from productflow_backend.application.time import now_utc
 from productflow_backend.application.workflow_drafts.service import (
     append_workflow_draft_revision,
@@ -76,6 +77,7 @@ class _AgentTurnCursor:
 
 def agent_conversation_query():
     return select(AgentConversation).options(
+        selectinload(AgentConversation.session),
         selectinload(AgentConversation.workflow_draft).selectinload(WorkflowDraft.current_revision),
         selectinload(AgentConversation.workflow_draft)
         .selectinload(WorkflowDraft.recipe_seed)
@@ -126,7 +128,8 @@ def create_agent_conversation(
     product_id: str,
     workflow_draft_id: str,
 ) -> AgentConversation:
-    if session.get(Product, product_id) is None:
+    product = session.get(Product, product_id)
+    if product is None:
         raise NotFoundError("商品不存在")
     draft = session.scalar(
         select(WorkflowDraft).where(
@@ -145,8 +148,12 @@ def create_agent_conversation(
         raise ConflictError("当前 WorkflowDraft 状态不允许创建 Agent conversation")
 
     conversation_id = new_id()
+    agent_session = new_agent_session(title=product.name)
+    session.add(agent_session)
+    session.flush()
     conversation = AgentConversation(
         id=conversation_id,
+        session_id=agent_session.id,
         product_id=product_id,
         workflow_draft_id=workflow_draft_id,
         harness_run_id=conversation_id,

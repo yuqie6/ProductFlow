@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, RotateCw } from "lucide-react";
 import { lazy } from "react";
-import { Link, Navigate, useParams } from "react-router-dom";
+import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
 
 import { api, ApiError } from "../lib/api";
 import { useI18n } from "../lib/preferences";
@@ -18,9 +18,11 @@ const AgentProductWorkbenchPage = lazy(() =>
 
 export function ProductWorkbenchPage() {
   const { productId = "" } = useParams();
+  const [searchParams] = useSearchParams();
+  const agentSessionId = searchParams.get("agent_session_id");
   const query = useQuery({
-    queryKey: ["agent-workbench", productId],
-    queryFn: () => api.getAgentWorkbench(productId),
+    queryKey: ["agent-workbench", productId, agentSessionId],
+    queryFn: () => api.getAgentWorkbench(productId, agentSessionId),
     enabled: Boolean(productId),
     retry: (failureCount, error) => {
       if (error instanceof ApiError && error.status === 409) return false;

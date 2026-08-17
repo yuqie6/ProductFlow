@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from productflow_backend.application.agent_sessions import new_agent_session
 from productflow_backend.application.time import now_utc
 from productflow_backend.application.workflow_drafts.contracts import (
     VisualSystemDraftPayload,
@@ -332,8 +333,12 @@ def apply_workflow_recipe(
             request_hash=request_hash,
         )
         conversation_id = new_id()
+        agent_session = new_agent_session(title=recipe_version.title)
+        session.add(agent_session)
+        session.flush()
         conversation = AgentConversation(
             id=conversation_id,
+            session_id=agent_session.id,
             product_id=product_id,
             workflow_draft_id=draft.id,
             harness_run_id=conversation_id,

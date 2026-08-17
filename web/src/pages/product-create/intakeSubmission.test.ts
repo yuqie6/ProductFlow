@@ -50,6 +50,7 @@ function workspace(conversationId: string, intakeFinalized = false): AgentProduc
     },
     conversation: {
       id: conversationId,
+      session_id: null,
       product_id: productId,
       workflow_draft_id: draftId,
       harness_run_id: `run-${conversationId}`,
