@@ -28,7 +28,7 @@
 - 业务执行用例在 `backend/src/productflow_backend/application/product_workflow/v2_runs.py`，worker 从 `backend/src/productflow_backend/workers.py` 进入执行器。
 - `WorkflowRun` 和 `WorkflowNodeRun` 由 PostgreSQL 持有，Redis/Dramatiq 只承担投递和执行调度。
 
-当前 Agent Turn 仍然以商品工作区作为业务事实边界：`AgentConversation` 绑定 `product_id` 和 `workflow_draft_id`，新建商品和旧归档重建会同时创建一个独立的 `AgentSession` 记录。Session 已有列表、创建、改名、归档、商品工作区摘要和按 Session 选择商品工作区的 API；工作台和应用级 Global Agent Dock 都可以打开会话列表。`AgentTask`、任务专属 harness run、任务级 Turn 关联和有界页面上下文快照已经落库并接入 Turn 请求，取消任务也有 API 和 Dock 控件。Task 摘要、暂停/恢复、独立调度器、页面级 WorkflowRun 投影、工作流子图库关联和全局图库页面仍未全部交付。`ImageSession` 是连续生图会话，已有自己的会话列表和生图任务，但不承担全局业务 Agent 的职责。
+当前 Agent Turn 仍然以商品工作区作为业务事实边界：`AgentConversation` 绑定 `product_id` 和 `workflow_draft_id`，新建商品和旧归档重建会同时创建一个独立的 `AgentSession` 记录。Session 已有列表、创建、改名、归档、商品工作区摘要和按 Session 选择商品工作区的 API；工作台和应用级 Global Agent Dock 都可以打开会话列表。`AgentTask`、任务专属 harness run、任务级 Turn 关联和有界页面上下文快照已经落库并接入 Turn 请求，取消任务也有 API 和 Dock 控件。全局图库页面和工作流子图库关联层已落地，但 Agent Dock 仍是 Session/Task 控制面板，空 Session 还不能直接承载跨域聊天；Task 摘要、暂停/恢复、独立调度器、页面级 WorkflowRun 投影和全局图库整理 Draft 仍未交付。`ImageSession` 是连续生图会话，已有自己的会话列表和生图任务，但不承担全局业务 Agent 的职责。
 
 ## 3. 产品原则
 
@@ -52,7 +52,7 @@ Workflow 是用户确认后保存的可编辑 DAG。它可以被用户直接运�
 
 | 对象 | 作用 | 当前状态 |
 |---|---|---|
-| `AgentSession` | 用户和全局 Agent 的长期交流入口，可包含多个任务 | 已实现 Session 元数据、商品对话关联、列表/创建/改名/归档、工作区切换和 Global Agent Dock 基础；摘要仍未实现 |
+| `AgentSession` | 用户和全局 Agent 的长期交流入口，可包含多个任务 | 已实现 Session 元数据、商品对话关联、列表/创建/改名/归档、工作区切换和 Global Agent Dock 控制面板；跨域聊天入口和摘要仍未实现 |
 | `AgentTask` | 一个明确的业务目标，可跨页面、跨 Turn、后台运行 | 已实现独立记录、独立 harness run、列表/创建/改名/取消和工作台打开；暂停/恢复、Task 摘要、调度额度和待确认 Draft 聚影仍未实现 |
 | `AgentTurn` | 一次用户消息、本轮上下文、工具调用和结果投影 | 已关联 Task 和页面上下文快照；同一 Task 的活动 Turn 保持串行 |
 | `AgentRun` | harness 内部一次可恢复的执行运行 | 每个 AgentTask 使用自己的 harness run；未指定 Task 的旧工作区 Turn 继续使用 conversation run |
@@ -218,10 +218,10 @@ Session summary
 
 ### 阶段 4：完成全局图库与工作流子图库
 
-- 完成 `MediaLibraryAsset` 到工作流子图库的明确关联表和同步 command。
-- 完成全局图库页面、工作流子图库入口、用户明确保存、关联移除、归档保护和历史引用验证。
+- 已完成 `MediaLibraryAsset` 到工作流子图库的 `WorkflowMediaLibraryAsset` 关联表和同步 command；关联只保存关系，不复制媒体 bytes。
+- 已完成 `/media-library` 全局图库页面、工作流子图库入口、批量组织、归档/恢复、关联移除和工作流引用保护。
+- 旧 Gallery 的保存接口目前作为迁移桥接，同时创建 canonical 全局素材；`/gallery` 已重定向到 `/media-library`，旧表、旧 API 和历史 DTO 仍保留作迁移证据，尚未完成物理 owner 退休。
 - Agent 先支持 inspect，再支持生成图库整理 Draft；确认流程通过后才开放组织操作。
-- 全局图库前端真实验收通过后，才切换 `/gallery` 并退休旧 owner。
 
 ### 阶段 5：全局 Agent Dock 和跨域业务能力
 

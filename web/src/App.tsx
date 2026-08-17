@@ -7,8 +7,8 @@ import { GlobalAgentDock } from "./components/GlobalAgentDock";
 import { api } from "./lib/api";
 import { PreferencesProvider, useI18n } from "./lib/preferences";
 
-const GalleryPage = lazy(() =>
-  import("./pages/GalleryPage").then((module) => ({ default: module.GalleryPage })),
+const MediaLibraryPage = lazy(() =>
+  import("./pages/MediaLibraryPage").then((module) => ({ default: module.MediaLibraryPage })),
 );
 const HelpPage = lazy(() =>
   import("./pages/HelpPage").then((module) => ({ default: module.HelpPage })),
@@ -89,8 +89,12 @@ function AppRoutes() {
             element={authenticated ? <ImageChatPage /> : <Navigate to="/login" replace />}
           />
           <Route
+            path="/media-library"
+            element={authenticated ? <MediaLibraryPage /> : <Navigate to="/login" replace />}
+          />
+          <Route
             path="/gallery"
-            element={authenticated ? <GalleryPage /> : <Navigate to="/login" replace />}
+            element={<Navigate to="/media-library" replace />}
           />
           <Route
             path="/history"

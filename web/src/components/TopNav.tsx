@@ -2,7 +2,7 @@ import {
   BookOpen,
   Check,
   ChevronDown,
-  GalleryHorizontalEnd,
+  Images,
   Languages,
   LayoutGrid,
   LogOut,
@@ -40,10 +40,10 @@ const navItems = [
     match: (pathname: string) => pathname.includes("image-chat"),
   },
   {
-    labelKey: "nav.gallery",
-    to: "/gallery",
-    icon: GalleryHorizontalEnd,
-    match: (pathname: string) => pathname.startsWith("/gallery"),
+    labelKey: "nav.mediaLibrary",
+    to: "/media-library",
+    icon: Images,
+    match: (pathname: string) => pathname.startsWith("/media-library"),
   },
   {
     labelKey: "nav.help",

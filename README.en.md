@@ -35,6 +35,7 @@ The public instance is a personal live demo with one administrator and one merch
 
 ### Image Library and Iterative Generation
 
+- `/media-library` is the cross-product canonical media library with search, folders, tags, archive/restore, and batch organization. Workflow sub-libraries associate the same assets without copying media bytes.
 - The product image library provides an Explorer-style directory tree, folders, filters, sorting, rename, move, preview, multi-selection, and downloads.
 - Each image node binds one current image; the library retains every upload, workflow result, and image-session attachment for the product.
 - Product cover selection is automatic, with current cover APIs available for an explicit change.
@@ -65,7 +66,8 @@ The public instance is a personal live demo with one administrator and one merch
 | `/products/new` | Agent product creation |
 | `/products/:productId` | Agent conversation, V2 workflow, and image library |
 | `/image-chat` | Iterative text/image generation |
-| `/gallery` | Collected images |
+| `/media-library` | Global media library |
+| `/gallery` | Compatibility redirect for the retired collected-image bookmark |
 | `/history` | V1 history archives and Agent rebuild |
 | `/settings` | Providers and runtime settings |
 | `/help` | In-product help |

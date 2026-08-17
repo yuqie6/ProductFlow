@@ -125,6 +125,23 @@ class MediaLibraryCollectBatchToProductRequest(BaseModel):
     media_library_asset_ids: list[MediaLibraryAssetId] = Field(min_length=1, max_length=100)
 
 
+class WorkflowMediaLibraryAssetResponse(BaseModel):
+    asset: MediaLibraryAssetResponse
+    product_image_asset_id: str | None
+    linked_at: datetime
+
+
+class WorkflowMediaLibraryAssetListResponse(BaseModel):
+    workflow_id: str
+    items: list[WorkflowMediaLibraryAssetResponse]
+
+
+class WorkflowMediaLibrarySyncRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    media_library_asset_ids: list[MediaLibraryAssetId] = Field(min_length=1, max_length=100)
+
+
 def serialize_media_library_asset(asset: MediaLibraryAsset) -> MediaLibraryAssetResponse:
     media = asset.media_object
     if media is None:

@@ -27,6 +27,11 @@ from productflow_backend.application.media_library.service import (
     save_media_library_asset_from_product,
     save_media_library_asset_from_session,
 )
+from productflow_backend.application.media_library.workflow import (
+    list_workflow_media_library_assets,
+    remove_workflow_media_library_asset,
+    sync_workflow_media_library_assets,
+)
 from productflow_backend.domain.enums import MediaVerificationStatus
 from productflow_backend.domain.errors import ConflictError, NotFoundError
 from productflow_backend.presentation.deps import get_session, require_admin
@@ -45,6 +50,9 @@ from productflow_backend.presentation.schemas.media_library import (
     MediaLibrarySaveFromSessionRequest,
     MediaLibrarySetTagsRequest,
     MediaLibraryTagResponse,
+    WorkflowMediaLibraryAssetListResponse,
+    WorkflowMediaLibraryAssetResponse,
+    WorkflowMediaLibrarySyncRequest,
     serialize_media_library_asset,
 )
 from productflow_backend.presentation.schemas.products import (
@@ -57,6 +65,23 @@ router = APIRouter(
     tags=["media-library"],
     dependencies=[Depends(require_admin)],
 )
+
+
+def _serialize_workflow_media_library_assets(
+    workflow_id: str,
+    records,
+) -> WorkflowMediaLibraryAssetListResponse:
+    return WorkflowMediaLibraryAssetListResponse(
+        workflow_id=workflow_id,
+        items=[
+            WorkflowMediaLibraryAssetResponse(
+                asset=serialize_media_library_asset(record.asset),
+                product_image_asset_id=record.product_image_asset_id,
+                linked_at=record.linked_at,
+            )
+            for record in records
+        ],
+    )
 
 
 @router.get("", response_model=MediaLibraryAssetListResponse)
@@ -228,6 +253,63 @@ def collect_to_product_endpoint(
         library_asset_ids=payload.media_library_asset_ids,
     )
     return [serialize_product_image_asset(result.asset) for result in results]
+
+
+@router.get(
+    "/workflows/{workflow_id}/media-library",
+    response_model=WorkflowMediaLibraryAssetListResponse,
+)
+def list_workflow_media_library_endpoint(
+    workflow_id: str,
+    product_id: str = Query(..., min_length=1, max_length=36),
+    limit: int = Query(default=100, ge=1, le=100),
+    session: Session = Depends(get_session),
+) -> WorkflowMediaLibraryAssetListResponse:
+    records = list_workflow_media_library_assets(
+        session,
+        product_id=product_id,
+        workflow_id=workflow_id,
+        limit=limit,
+    )
+    return _serialize_workflow_media_library_assets(workflow_id, records)
+
+
+@router.post(
+    "/workflows/{workflow_id}/media-library/sync",
+    response_model=WorkflowMediaLibraryAssetListResponse,
+)
+def sync_workflow_media_library_endpoint(
+    workflow_id: str,
+    payload: WorkflowMediaLibrarySyncRequest,
+    product_id: str = Query(..., min_length=1, max_length=36),
+    session: Session = Depends(get_session),
+) -> WorkflowMediaLibraryAssetListResponse:
+    records = sync_workflow_media_library_assets(
+        session,
+        product_id=product_id,
+        workflow_id=workflow_id,
+        media_library_asset_ids=payload.media_library_asset_ids,
+    )
+    return _serialize_workflow_media_library_assets(workflow_id, records)
+
+
+@router.delete(
+    "/workflows/{workflow_id}/media-library/{media_library_asset_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def remove_workflow_media_library_endpoint(
+    workflow_id: str,
+    media_library_asset_id: str,
+    product_id: str = Query(..., min_length=1, max_length=36),
+    session: Session = Depends(get_session),
+) -> Response:
+    remove_workflow_media_library_asset(
+        session,
+        product_id=product_id,
+        workflow_id=workflow_id,
+        media_library_asset_id=media_library_asset_id,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/{asset_id}", response_model=MediaLibraryAssetResponse)

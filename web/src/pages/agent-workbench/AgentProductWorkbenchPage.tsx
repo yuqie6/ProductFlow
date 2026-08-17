@@ -29,6 +29,7 @@ import {
 } from "../product-workflow-v2/ProductWorkflowV2CanvasPanel";
 import { V2AddNodePanel } from "../product-workflow-v2/V2AddNodePanel";
 import { RecipeLibraryPanel } from "../product-workflow-v2/RecipeLibraryPanel";
+import { WorkflowMediaLibraryPanel } from "../product-workflow-v2/WorkflowMediaLibraryPanel";
 import {
   labelRecipeVersionSource,
   resolveRecipeVersionSource,
@@ -51,6 +52,7 @@ import { WorkflowDraftConfirmation } from "./WorkflowDraftConfirmation";
 
 export type AgentV2WorkbenchBootstrap = Extract<AgentWorkbenchBootstrap, { mode: "agent_v2" }>;
 type AgentSidebarToolId = "agent" | "add" | "details" | "runs" | "library" | "recipes";
+type LibraryMode = "product" | "workflow";
 type RecipeDialogState =
   | { kind: "create"; source: RecipeSourceSelection }
   | { kind: "append"; source: RecipeSourceSelection; recipe: WorkflowRecipeSummary }
@@ -96,6 +98,7 @@ export function AgentProductWorkbenchPage({
   const [dismissedRevisionId, setDismissedRevisionId] = useState<string | null>(null);
   const [conflictDetected, setConflictDetected] = useState(false);
   const [sidebarTool, setSidebarTool] = useState<AgentSidebarToolId>("agent");
+  const [libraryMode, setLibraryMode] = useState<LibraryMode>("product");
   const [topChromeCollapsed, setTopChromeCollapsed] = useState(false);
   const [canvasContext, setCanvasContext] = useState<ProductWorkflowV2CanvasContext>(EMPTY_CANVAS_CONTEXT);
   const [referenceNodeId, setReferenceNodeId] = useState<string | null>(null);
@@ -146,11 +149,11 @@ export function AgentProductWorkbenchPage({
     workflow_id: workflow?.id ?? null,
     selected_asset_ids: [],
     visible_asset_ids: [],
-    filters: { sidebar: sidebarTool },
+    filters: { sidebar: sidebarTool, library_mode: libraryMode },
     workflow_revision: workflow?.revision ?? null,
     library_revision: null,
     captured_at: new Date().toISOString(),
-  }), [bootstrap.product.id, location.pathname, location.search, sidebarTool, workflow?.id, workflow?.revision]);
+  }), [bootstrap.product.id, libraryMode, location.pathname, location.search, sidebarTool, workflow?.id, workflow?.revision]);
   const recipesQuery = useQuery({
     queryKey: ["workflow-recipes", false],
     queryFn: () => api.listWorkflowRecipes(false),
@@ -440,10 +443,36 @@ export function AgentProductWorkbenchPage({
               </button>
             </div>
           ) : null}
-          <div className="min-h-0 flex-1 overflow-y-auto p-3">
-            <ProductImageExplorer
+          <div className="flex shrink-0 gap-1 border-b border-slate-200 px-3 py-2 dark:border-slate-800">
+            <button type="button" onClick={() => setLibraryMode("product")} className={`inline-flex h-8 flex-1 items-center justify-center rounded-md text-[11px] font-semibold ${libraryMode === "product" ? "bg-indigo-50 text-indigo-700 dark:bg-violet-500/15 dark:text-violet-200" : "text-slate-500 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-800/70"}`}>
+              {t("workflowV2.mediaLibrary.productTab")}
+            </button>
+            <button type="button" onClick={() => setLibraryMode("workflow")} className={`inline-flex h-8 flex-1 items-center justify-center rounded-md text-[11px] font-semibold ${libraryMode === "workflow" ? "bg-indigo-50 text-indigo-700 dark:bg-violet-500/15 dark:text-violet-200" : "text-slate-500 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-800/70"}`}>
+              {t("workflowV2.mediaLibrary.workflowTab")}
+            </button>
+          </div>
+          {libraryMode === "product" ? (
+            <div className="min-h-0 flex-1 overflow-y-auto p-3">
+              <ProductImageExplorer
+                productId={bootstrap.product.id}
+                productName={bootstrap.product.name}
+                onPreviewImage={setPreviewImage}
+                referenceTarget={referenceNode ? {
+                  workflowId: workflow.id,
+                  nodeId: referenceNode.id,
+                  expectedWorkflowRevision: workflow.revision,
+                  expectedBoundAssetId: referenceNode.bound_image_asset_id,
+                  onBound: () => {
+                    setReferenceNodeId(null);
+                    void refetchWorkflow();
+                  },
+                } : undefined}
+              />
+            </div>
+          ) : (
+            <WorkflowMediaLibraryPanel
               productId={bootstrap.product.id}
-              productName={bootstrap.product.name}
+              workflowId={workflow.id}
               onPreviewImage={setPreviewImage}
               referenceTarget={referenceNode ? {
                 workflowId: workflow.id,
@@ -456,7 +485,7 @@ export function AgentProductWorkbenchPage({
                 },
               } : undefined}
             />
-          </div>
+          )}
         </>
       ),
     },

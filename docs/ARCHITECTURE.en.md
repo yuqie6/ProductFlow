@@ -50,6 +50,7 @@ Current code ownership:
 - `/products/new/agent`, redirect only
 - `/products/:productId`
 - `/image-chat`
+- `/media-library`
 - `/gallery`
 - `/history` and `/history/:archiveKind/:archiveId`
 - `/settings`
@@ -153,7 +154,7 @@ DeliveryRenditionJob reads a ProductImageAsset and asynchronously emits a crop, 
 
 GenerationSpec records model-generation intent. Provider-effective values and decoded actual output live in run/generation records. DeliverySpec is a separate deterministic contract and cannot invoke the image model.
 
-Library reads, asset detail, folder/move commands, ZIP construction, and media identity are owned by `gallery.py`, `gallery_assets.py`, `gallery_mutations.py`, `gallery_archives.py`, and `media_assets.py`. The browser's only library owner is `pages/product-detail/image-explorer/`, which uses bounded cursor pages and preview/thumbnail URLs.
+Global media-library reads, folder/tag/archive organization, source saves, and workflow associations are owned by `application/media_library/`, `routes/media_library.py`, `MediaLibraryPage.tsx`, and `WorkflowMediaLibraryPanel.tsx`, using bounded cursor pages and preview/thumbnail URLs. `/gallery` only preserves a compatibility redirect; the old `gallery.py`, `routes/gallery.py`, and `ImageGalleryEntry` remain in the migration window as historical owners. The product workbench's `product-detail/image-explorer/` continues to own product-scoped manual selection and binding.
 
 ## 8. Provider Architecture
 

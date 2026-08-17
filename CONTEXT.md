@@ -24,7 +24,7 @@ The current repository targets a personal live demo and self-hosted deployments.
 - The Go Agent service journal is authoritative for durable Agent Turns, transcript, questions, tool calls/results, token deltas, and event cursors.
 - ProductFlow stores a web projection of Agent state but does not reconstruct a second model transcript.
 - `AgentTask` stores one business goal and one task-specific harness run under an `AgentSession`; `AgentTurnProjection` may point to a task and a bounded `AgentPageContextSnapshot`. A route change updates ambient context for later turns and does not rewrite the task goal.
-- `MediaObject` identifies immutable media bytes. `ProductImageAsset` identifies one image inside a product namespace.
+- `MediaObject` identifies immutable media bytes. `MediaLibraryAsset` identifies one global library asset and its provenance. `ProductImageAsset` identifies one image inside a product namespace. `WorkflowMediaLibraryAsset` records a workflow usage association without owning another media copy.
 - Workflow nodes and covers reference `ProductImageAsset` ids, never storage paths or parallel-array positions.
 - Historical V1 source rows and immutable archives are migration evidence. They are not an online editor or executor.
 
@@ -52,8 +52,8 @@ The current repository targets a personal live demo and self-hosted deployments.
 ## Gallery And Library Terms
 
 - 收藏画廊是连续生图结果的收藏视图。它保存一条图片结果引用，并展示该结果所属轮次的提示词、尺寸、模型、供应商和候选信息；它不是独立的提示词参数库。
-- 目标态的工作流子图库是全局图库的工作流作用域关联和使用集合。工作流节点、封面、参考绑定和交付 lineage 使用稳定的工作流侧图片身份，并可追溯到全局素材身份；它不复制媒体 bytes，也不是另一套全局 owner。
-- 目标态的全局图库是跨会话、可归档、可跨工作流复用的长期图片集合。用户明确保存的图片进入全局图库，并按同步规则关联到工作流子图库。
+- 工作流子图库是全局图库的工作流作用域关联和使用集合。`WorkflowMediaLibraryAsset` 只保存关联；工作流节点、封面、参考绑定和交付 lineage 使用稳定的工作流侧图片身份，并可追溯到全局素材身份，不复制媒体 bytes。
+- 全局图库是跨会话、可归档、可跨工作流复用的长期图片集合。`/media-library` 是当前全局入口；旧 `/gallery` 只负责兼容重定向，旧 `ImageGalleryEntry` 和 `/api/gallery` 仍处于迁移桥接窗口。
 - 配方库保存可复用的工作流结构和配置，不等同于收藏画廊，也不保存商品图片或生成结果。
 - 工作流生成后仍然是用户可以直接编辑和执行的生产工具。Agent 可以辅助配置、检查、批量安排和解释执行结果，但不能取代工作流画布、运行按钮、节点重试和人工选择。
 - `WorkflowRun` 是独立的业务执行记录。用户从工作流页面点击执行可以直接创建它，不需要先创建 Agent Session 或 Agent Task；Agent 代为请求执行时也必须复用同一套工作流业务约束。

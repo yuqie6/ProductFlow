@@ -18,6 +18,10 @@ from productflow_backend.application.media_library.service import (
     save_media_library_asset_from_product,
     save_media_library_asset_from_session,
 )
+from productflow_backend.application.media_library.workflow import (
+    remove_workflow_media_library_asset,
+    sync_workflow_media_library_assets,
+)
 from productflow_backend.application.use_cases import create_canonical_product
 from productflow_backend.domain.enums import ImageSessionAssetKind, MediaVerificationStatus
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
@@ -28,6 +32,8 @@ from productflow_backend.infrastructure.db.models import (
     MediaObject,
     Product,
     ProductImageAsset,
+    ProductWorkflow,
+    WorkflowMediaLibraryAsset,
 )
 from productflow_backend.presentation.schemas.media_library import serialize_media_library_asset
 
@@ -282,3 +288,75 @@ def test_archive_and_restore_increment_revision(db_session) -> None:
     assert restored.is_archived is False
     assert restored.archived_at is None
     assert restored.revision == initial_revision + 2
+
+
+def test_workflow_media_library_sync_reuses_product_lineage_and_remove_is_non_destructive(db_session) -> None:
+    product, source_asset = _create_product_asset(db_session)
+    library_asset = save_media_library_asset_from_product(
+        db_session,
+        product_image_asset_id=source_asset.id,
+    ).asset
+    workflow = ProductWorkflow(product_id=product.id, title="素材工作流")
+    db_session.add(workflow)
+    db_session.commit()
+
+    records = sync_workflow_media_library_assets(
+        db_session,
+        product_id=product.id,
+        workflow_id=workflow.id,
+        media_library_asset_ids=[library_asset.id],
+    )
+
+    assert len(records) == 1
+    assert records[0].asset.id == library_asset.id
+    assert records[0].product_image_asset_id == source_asset.id
+    assert db_session.query(WorkflowMediaLibraryAsset).filter_by(workflow_id=workflow.id).count() == 1
+
+    remove_workflow_media_library_asset(
+        db_session,
+        product_id=product.id,
+        workflow_id=workflow.id,
+        media_library_asset_id=library_asset.id,
+    )
+    assert db_session.get(MediaLibraryAsset, library_asset.id) is not None
+    assert db_session.get(ProductImageAsset, source_asset.id) is not None
+
+
+def test_workflow_media_library_sync_rejects_archived_same_product_source(db_session) -> None:
+    product, source_asset = _create_product_asset(db_session)
+    library_asset = save_media_library_asset_from_product(
+        db_session,
+        product_image_asset_id=source_asset.id,
+    ).asset
+    workflow = ProductWorkflow(product_id=product.id, title="归档来源工作流")
+    db_session.add(workflow)
+    db_session.commit()
+    archive_media_library_asset(db_session, asset_id=library_asset.id)
+
+    with pytest.raises(ConflictError, match="归档素材"):
+        sync_workflow_media_library_assets(
+            db_session,
+            product_id=product.id,
+            workflow_id=workflow.id,
+            media_library_asset_ids=[library_asset.id],
+        )
+
+
+def test_archive_rejects_workflow_media_library_reference(db_session) -> None:
+    product, source_asset = _create_product_asset(db_session)
+    library_asset = save_media_library_asset_from_product(
+        db_session,
+        product_image_asset_id=source_asset.id,
+    ).asset
+    workflow = ProductWorkflow(product_id=product.id, title="归档保护工作流")
+    db_session.add(workflow)
+    db_session.commit()
+    sync_workflow_media_library_assets(
+        db_session,
+        product_id=product.id,
+        workflow_id=workflow.id,
+        media_library_asset_ids=[library_asset.id],
+    )
+
+    with pytest.raises(ConflictError, match="工作流素材库"):
+        archive_media_library_asset(db_session, asset_id=library_asset.id)

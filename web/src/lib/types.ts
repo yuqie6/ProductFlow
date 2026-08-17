@@ -34,6 +34,7 @@ export type GalleryDirectoryKind =
   | "unorganized"
   | "user_folder";
 export type GalleryAssetSort = "created_desc" | "created_asc" | "name_asc" | "name_desc";
+export type MediaLibrarySourceType = "legacy_gallery" | "image_session_generated" | "product_asset";
 export type WorkflowNodeTypeV2 =
   | "product_context"
   | "reference_image"
@@ -224,6 +225,69 @@ export interface GalleryDeleteFolderResult {
 export interface GalleryDirectorySelection {
   kind: GalleryDirectoryKind;
   key: string | null;
+}
+
+export interface MediaLibraryFolder {
+  id: string;
+  name: string;
+  count: number;
+}
+
+export interface MediaLibraryTag {
+  id: string;
+  name: string;
+  count: number;
+}
+
+export interface MediaLibraryAsset {
+  id: string;
+  media_object_id: string;
+  source_type: MediaLibrarySourceType;
+  source_id: string;
+  display_name: string;
+  folder_id: string | null;
+  folder_name: string | null;
+  tags: MediaLibraryTag[];
+  original_filename: string;
+  revision: number;
+  is_archived: boolean;
+  archived_at: string | null;
+  provenance_hash: string;
+  mime_type: string;
+  byte_size: number | null;
+  width: number | null;
+  height: number | null;
+  verification_status: MediaVerificationStatus;
+  download_url: string;
+  preview_url: string;
+  thumbnail_url: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MediaLibraryAssetPage {
+  items: MediaLibraryAsset[];
+  next_cursor: string | null;
+}
+
+export interface MediaLibraryBootstrap {
+  total_count: number;
+  active_count: number;
+  archived_count: number;
+  unorganized_count: number;
+  folders: MediaLibraryFolder[];
+  tags: MediaLibraryTag[];
+}
+
+export interface WorkflowMediaLibraryAsset {
+  asset: MediaLibraryAsset;
+  product_image_asset_id: string | null;
+  linked_at: string;
+}
+
+export interface WorkflowMediaLibraryAssetListResponse {
+  workflow_id: string;
+  items: WorkflowMediaLibraryAsset[];
 }
 
 export interface CanonicalProductDetail {

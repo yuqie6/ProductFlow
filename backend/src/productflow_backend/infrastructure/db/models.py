@@ -1602,6 +1602,11 @@ class ProductWorkflow(Base, TimestampMixin):
         back_populates="base_workflow",
         foreign_keys="WorkflowDraftRecipeSeed.base_workflow_id",
     )
+    media_library_links: Mapped[list[WorkflowMediaLibraryAsset]] = relationship(
+        back_populates="workflow",
+        cascade="all, delete-orphan",
+        order_by="WorkflowMediaLibraryAsset.created_at.desc(), WorkflowMediaLibraryAsset.media_library_asset_id.desc()",
+    )
 
 
 class WorkflowFolder(Base, TimestampMixin):
@@ -2686,3 +2691,44 @@ class MediaLibraryAsset(Base, TimestampMixin):
         foreign_keys=[source_image_session_asset_id]
     )
     source_product_asset: Mapped[ProductImageAsset | None] = relationship(foreign_keys=[source_product_asset_id])
+    workflow_links: Mapped[list[WorkflowMediaLibraryAsset]] = relationship(
+        back_populates="media_library_asset",
+        cascade="all, delete-orphan",
+    )
+
+
+class WorkflowMediaLibraryAsset(Base):
+    """工作流可用素材集合与全局素材的关联，不持有媒体 bytes。"""
+
+    __tablename__ = "workflow_media_library_assets"
+    __table_args__ = (
+        Index(
+            "ix_workflow_media_library_assets_workflow_created",
+            "workflow_id",
+            "created_at",
+            "media_library_asset_id",
+        ),
+        Index(
+            "ix_workflow_media_library_assets_library_asset_id",
+            "media_library_asset_id",
+        ),
+    )
+
+    workflow_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("product_workflows.id", ondelete="CASCADE", name="fk_workflow_media_library_assets_workflow_id"),
+        primary_key=True,
+    )
+    media_library_asset_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "media_library_assets.id",
+            ondelete="RESTRICT",
+            name="fk_workflow_media_library_assets_library_asset_id",
+        ),
+        primary_key=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    workflow: Mapped[ProductWorkflow] = relationship(back_populates="media_library_links")
+    media_library_asset: Mapped[MediaLibraryAsset] = relationship(back_populates="workflow_links")

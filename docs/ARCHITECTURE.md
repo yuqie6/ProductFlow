@@ -50,6 +50,7 @@ ProductFlow 是单管理员、单商家工作区，由六个运行单元组成�
 - `/products/new/agent`，只重定向到 `/products/new`
 - `/products/:productId`
 - `/image-chat`
+- `/media-library`
 - `/gallery`
 - `/history` 与 `/history/:archiveKind/:archiveId`
 - `/settings`
@@ -72,6 +73,7 @@ TanStack Query 管理服务端状态；局部表单、选择和画布交互使�
 | Agent 创建表单 | `AgentProductCreatePage.tsx`, `pages/product-create/` | selection/form/workspace API tests |
 | Agent 对话、SSE、Draft 确认 | `pages/agent-workbench/` | reducer, event, conversation, confirmation and reveal tests |
 | V2 画布与详情 | `pages/product-workflow-v2/` | graph, canvas, command, draft, history and rendition tests |
+| 全局素材库与工作流子图库 | `MediaLibraryPage.tsx`, `product-workflow-v2/WorkflowMediaLibraryPanel.tsx` | media library/application tests, web build |
 | 共享工作台与图片库 | `pages/product-detail/` | shortcuts, interaction and image-explorer tests |
 | HTTP 和 wire DTO | `lib/api.ts`, `lib/types.ts` | `lib/*Api.test.ts`, TypeScript build |
 | 历史只读页 | `LegacyHistoryPage.tsx`, `pages/legacy-history/` | legacy history/model/API tests |
@@ -155,7 +157,7 @@ DeliveryRenditionJob 从 ProductImageAsset 读取原始媒体，按裁切、缩�
 
 GenerationSpec 保存模型生成意图；provider effective values 和解码后的 actual output 保存在运行/生成记录中。DeliverySpec 是独立确定性合同，不能触发图片模型调用。
 
-图库读取、资产详情、文件夹/移动、ZIP 和媒体身份分别由 `gallery.py`、`gallery_assets.py`、`gallery_mutations.py`、`gallery_archives.py` 和 `media_assets.py` 负责。浏览器的唯一图库 owner 是 `pages/product-detail/image-explorer/`，列表使用有界 cursor page 和 preview/thumbnail URL。
+全局素材库读取、文件夹/标签/归档、来源保存和工作流关联由 `application/media_library/`、`routes/media_library.py`、`MediaLibraryPage.tsx` 和 `WorkflowMediaLibraryPanel.tsx` 负责，列表使用有界 cursor page 和 preview/thumbnail URL。`/gallery` 只保留旧书签兼容重定向；旧 `gallery.py`、`routes/gallery.py` 和 `ImageGalleryEntry` 仍作为迁移窗口的历史 owner，不是新的全局素材读取入口。商品工作台中的 `product-detail/image-explorer/` 继续负责商品作用域的人工选图和绑定。
 
 ## 8. Provider 架构
 

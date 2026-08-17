@@ -29,6 +29,7 @@ from productflow_backend.infrastructure.db.models import (
     MediaObject,
     Product,
     ProductImageAsset,
+    WorkflowMediaLibraryAsset,
 )
 
 
@@ -249,6 +250,15 @@ def _assert_library_asset_coherent(
             raise ConflictError("素材库会话来源与媒体不一致")
 
 
+def validate_media_library_asset_for_use(library_asset: MediaLibraryAsset) -> MediaObject:
+    """Validate the immutable media and provenance before another feature uses an asset."""
+    if library_asset.is_archived:
+        raise ConflictError("归档素材不能收录到商品")
+    media = _verified_media(library_asset.media_object)
+    _assert_library_asset_coherent(library_asset, media=media)
+    return media
+
+
 def _origin_type_for_library_asset(library_asset: MediaLibraryAsset) -> ProductImageOriginType:
     if library_asset.source_type == "image_session_generated":
         return ProductImageOriginType.IMAGE_SESSION_ATTACH
@@ -312,10 +322,7 @@ def collect_media_library_assets_to_product(
     existing_by_library_id: dict[str, ProductImageAsset] = {}
     new_by_library_id: dict[str, ProductImageAsset] = {}
     for library_asset in library_assets:
-        if library_asset.is_archived:
-            raise ConflictError("归档素材不能收录到商品")
-        media = _verified_media(library_asset.media_object)
-        _assert_library_asset_coherent(library_asset, media=media)
+        media = validate_media_library_asset_for_use(library_asset)
         existing = session.scalar(
             select(ProductImageAsset).where(
                 ProductImageAsset.product_id == product_id,
@@ -398,6 +405,14 @@ def _set_media_library_archive_state(
     asset = get_media_library_asset(session, asset_id=asset_id)
     if expected_revision is not None and asset.revision != expected_revision:
         raise ConflictError("素材库资产 revision 已变化")
+    if archived:
+        linked_workflow_id = session.scalar(
+            select(WorkflowMediaLibraryAsset.workflow_id)
+            .where(WorkflowMediaLibraryAsset.media_library_asset_id == asset.id)
+            .limit(1)
+        )
+        if linked_workflow_id is not None:
+            raise ConflictError("素材仍被工作流素材库使用，解除关联后才能归档")
     current_revision = asset.revision
     if asset.is_archived == archived:
         return asset
@@ -463,4 +478,5 @@ __all__ = [
     "restore_media_library_asset",
     "save_media_library_asset_from_product",
     "save_media_library_asset_from_session",
+    "validate_media_library_asset_for_use",
 ]

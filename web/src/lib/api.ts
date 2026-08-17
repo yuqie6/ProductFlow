@@ -25,6 +25,13 @@ import type {
   GalleryDeleteFolderResult,
   GalleryDirectoryKind,
   GalleryFolderMutation,
+  MediaLibraryAsset,
+  MediaLibraryAssetPage,
+  MediaLibraryBootstrap,
+  MediaLibraryFolder,
+  MediaLibrarySourceType,
+  MediaLibraryTag,
+  WorkflowMediaLibraryAssetListResponse,
   GenerationQueueOverview,
   CreateAgentProductWorkspaceInput,
   CreateAgentProductDraftWorkspaceInput,
@@ -704,6 +711,102 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ image_session_asset_id: imageSessionAssetId }),
     });
+  },
+  getMediaLibraryBootstrap(): Promise<MediaLibraryBootstrap> {
+    return request("/api/media-library/bootstrap");
+  },
+  listMediaLibraryAssets(input?: {
+    limit?: number;
+    cursor?: string | null;
+    includeArchived?: boolean;
+    q?: string;
+    sourceType?: MediaLibrarySourceType | null;
+    folderId?: string | null;
+    tag?: string | null;
+  }): Promise<MediaLibraryAssetPage> {
+    const params = new URLSearchParams({
+      limit: String(input?.limit ?? 48),
+      include_archived: String(input?.includeArchived ?? false),
+    });
+    if (input?.cursor) params.set("cursor", input.cursor);
+    if (input?.q?.trim()) params.set("q", input.q.trim());
+    if (input?.sourceType) params.set("source_type", input.sourceType);
+    if (input?.folderId) params.set("folder_id", input.folderId);
+    if (input?.tag?.trim()) params.set("tag", input.tag.trim());
+    return request(`/api/media-library?${params}`);
+  },
+  createMediaLibraryFolder(name: string): Promise<MediaLibraryFolder> {
+    return request("/api/media-library/folders", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+  },
+  createMediaLibraryTag(name: string): Promise<MediaLibraryTag> {
+    return request("/api/media-library/tags", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    });
+  },
+  moveMediaLibraryAssets(input: {
+    assetIds: string[];
+    folderId: string | null;
+    expectedRevisions: Record<string, number>;
+  }): Promise<MediaLibraryAsset[]> {
+    return request("/api/media-library/organize/move", {
+      method: "POST",
+      body: JSON.stringify({
+        asset_ids: input.assetIds,
+        folder_id: input.folderId,
+        expected_revisions: input.expectedRevisions,
+      }),
+    });
+  },
+  setMediaLibraryAssetTags(input: {
+    assetIds: string[];
+    tagNames: string[];
+    expectedRevisions: Record<string, number>;
+  }): Promise<MediaLibraryAsset[]> {
+    return request("/api/media-library/organize/tags", {
+      method: "POST",
+      body: JSON.stringify({
+        asset_ids: input.assetIds,
+        tag_names: input.tagNames,
+        expected_revisions: input.expectedRevisions,
+      }),
+    });
+  },
+  archiveMediaLibraryAsset(assetId: string, expectedRevision: number): Promise<MediaLibraryAsset> {
+    const params = new URLSearchParams({ expected_revision: String(expectedRevision) });
+    return request(`/api/media-library/${encodeURIComponent(assetId)}/archive?${params}`, { method: "POST" });
+  },
+  restoreMediaLibraryAsset(assetId: string, expectedRevision: number): Promise<MediaLibraryAsset> {
+    const params = new URLSearchParams({ expected_revision: String(expectedRevision) });
+    return request(`/api/media-library/${encodeURIComponent(assetId)}/restore?${params}`, { method: "POST" });
+  },
+  listWorkflowMediaLibraryAssets(
+    productId: string,
+    workflowId: string,
+  ): Promise<WorkflowMediaLibraryAssetListResponse> {
+    const params = new URLSearchParams({ product_id: productId });
+    return request(`/api/media-library/workflows/${encodeURIComponent(workflowId)}/media-library?${params}`);
+  },
+  syncWorkflowMediaLibraryAssets(
+    productId: string,
+    workflowId: string,
+    mediaLibraryAssetIds: string[],
+  ): Promise<WorkflowMediaLibraryAssetListResponse> {
+    const params = new URLSearchParams({ product_id: productId });
+    return request(`/api/media-library/workflows/${encodeURIComponent(workflowId)}/media-library/sync?${params}`, {
+      method: "POST",
+      body: JSON.stringify({ media_library_asset_ids: mediaLibraryAssetIds }),
+    });
+  },
+  removeWorkflowMediaLibraryAsset(productId: string, workflowId: string, mediaLibraryAssetId: string): Promise<void> {
+    const params = new URLSearchParams({ product_id: productId });
+    return request(
+      `/api/media-library/workflows/${encodeURIComponent(workflowId)}/media-library/${encodeURIComponent(mediaLibraryAssetId)}?${params}`,
+      { method: "DELETE" },
+    );
   },
   getActiveProductWorkflowV2(productId: string): Promise<ActiveProductWorkflowV2> {
     return request(`/api/v2/products/${productId}/workflow`);

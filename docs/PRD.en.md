@@ -53,6 +53,11 @@ The current release serves a personal project and live demo, but upgrades for de
 - Jobs expose queue state, progress, cancel, failure retry, and candidate branching.
 - A satisfactory result can be downloaded, collected in Gallery, or saved to a product library.
 
+### 3.5 Global Media Library
+
+- `/media-library` is the long-lived cross-product media entry with search, folders, tags, archive/restore, and batch organization.
+- Workflow sub-libraries store usage associations to global assets. One media object can be used by multiple workflows without copying its bytes.
+
 ## 4. Core Objects
 
 - `Product`: product identity and basic information.
@@ -74,7 +79,8 @@ The current release serves a personal project and live demo, but upgrades for de
 - `/products/new`: full-screen Agent creation flow.
 - `/products/:productId`: Agent, V2 canvas, inspector, runs, recipes, and image library.
 - `/image-chat`: iterative text/image generation.
-- `/gallery`: collected images.
+- `/media-library`: global media library.
+- `/gallery`: compatibility redirect for the retired collected-image bookmark.
 - `/history`: read-only V1 workflow, user-template, and Canvas Agent archives with export and Agent rebuild.
 - `/settings`: provider and runtime settings.
 - `/help`: current in-product help.

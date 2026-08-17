@@ -45,7 +45,8 @@ def test_media_library_assets_migration_creates_schema_and_constraints(
             "ck_media_library_assets_revision",
             "ck_media_library_assets_provenance_hash",
         } <= checks
+        assert "workflow_media_library_assets" in tables
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260817_0051"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260817_0052"
     finally:
         engine.dispose()

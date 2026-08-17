@@ -4,7 +4,7 @@
 
 - 文档状态：主方向已由用户确认，进入实施规划。
 - 产品范围：单管理员、单商家 ProductFlow 工作区。
-- 当前实现声明：当前 `/gallery` 仍是旧的 ImageSession 收藏画廊；全局图库后端核心已部分实现，但前端、工作流子图库同步、旧画廊切换和 Agent 整理 Draft 尚未整体交付。
+- 当前实现声明：全局图库页面已经由 `/media-library` 提供，工作流子图库关联、保存桥接和归档保护已交付；`/gallery` 只保留兼容重定向。旧表/API 的迁移对账、旧 owner 物理退休和 Agent 整理 Draft 尚未完成。
 - 本 PRD 定义目标产品行为；当前运行事实仍由代码、迁移、测试和 rollout evidence 共同证明。
 
 ## 2. 用户问题
@@ -179,7 +179,7 @@ ProductFlow 现在有一个跟连续生图会话绑定的旧收藏画廊。用�
 - 工作流节点、封面、参考图和交付 lineage 使用工作流侧稳定引用，并能追溯到全局图库资产。
 - 从某个工作流移除关联不删除全局资产。
 - 删除工作流不删除全局资产。
-- 当前仅有“显式收录到单个商品”的实现视为过渡基础，必须补足全局图库到工作流子图库的同步合同后，才能视为 ML-004 完成。
+- `WorkflowMediaLibraryAsset` 已提供全局图库到工作流子图库的关联合同；跨商品收录继续复用现有 ProductImageAsset lineage，工作流关联本身不复制媒体 bytes。
 
 ### ML-005 归档生命周期
 
@@ -211,8 +211,8 @@ ProductFlow 现在有一个跟连续生图会话绑定的旧收藏画廊。用�
 - 旧 `ImageGalleryEntry` 可以审计回填为全局图库资产，并尽量保留原 entry lineage。
 - 旧 Gallery 的图片收藏数据不能静默丢失。
 - 正式切换前必须完成 snapshot、preflight、apply、reconcile 和 zero-delta 证据。
-- 新全局图库前端验收通过后，顶层旧 `/gallery` 页面切换为全局图库页面。
-- 旧 `/api/gallery` route、旧 DTO、旧前端调用和旧 runtime owner 一起退休。
+- 新全局图库前端已由 `/media-library` 提供，顶层旧 `/gallery` 只保留兼容重定向。
+- 旧 `/api/gallery` route、旧 DTO、旧前端调用和旧 runtime owner 仍在迁移窗口保留，需在 backfill 对账和 owner 退休证据通过后一起处理。
 - 商品/工作流子图库不能因为旧 Gallery 退休而被删除。
 - 旧 `image_gallery_entries` 表作为迁移证据暂时保留；drop 需要单独确认和备份/恢复证据。
 

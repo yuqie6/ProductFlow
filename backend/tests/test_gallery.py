@@ -13,6 +13,7 @@ from productflow_backend.infrastructure.db.models import (
     ImageSession,
     ImageSessionAsset,
     ImageSessionRound,
+    MediaLibraryAsset,
     MediaObject,
 )
 from productflow_backend.infrastructure.db.session import get_session_factory
@@ -55,6 +56,10 @@ def test_generated_image_can_be_saved_to_gallery_idempotently(configured_env: Pa
     assert saved_again.status_code == 200
     assert saved_again.json()["id"] == payload["id"]
     assert db_session.query(ImageGalleryEntry).count() == 1
+    assert db_session.query(MediaLibraryAsset).filter_by(
+        source_type="image_session_generated",
+        source_id=asset_id,
+    ).count() == 1
 
     listed = client.get("/api/gallery")
     assert listed.status_code == 200

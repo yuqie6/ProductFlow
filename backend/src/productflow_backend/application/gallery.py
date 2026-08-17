@@ -6,6 +6,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from productflow_backend.application.media_library.service import save_media_library_asset_from_session
 from productflow_backend.domain.enums import ImageSessionAssetKind
 from productflow_backend.domain.errors import BusinessValidationError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
@@ -44,9 +45,6 @@ def _get_gallery_entry_by_asset_id(session: Session, image_session_asset_id: str
 
 def save_generated_asset_to_gallery(session: Session, *, image_session_asset_id: str) -> GallerySaveResult:
     existing = _get_gallery_entry_by_asset_id(session, image_session_asset_id)
-    if existing is not None:
-        return GallerySaveResult(entry=existing, created=False)
-
     asset = session.scalar(
         select(ImageSessionAsset)
         .options(selectinload(ImageSessionAsset.session))
@@ -60,6 +58,15 @@ def save_generated_asset_to_gallery(session: Session, *, image_session_asset_id:
     round_item = session.scalar(select(ImageSessionRound).where(ImageSessionRound.generated_asset_id == asset.id))
     if round_item is None:
         raise NotFoundError("生成记录不存在")
+
+    # Keep the legacy save endpoint as a migration bridge: a user's existing
+    # "save to gallery" action also establishes the canonical global asset.
+    save_media_library_asset_from_session(
+        session,
+        image_session_asset_id=asset.id,
+    )
+    if existing is not None:
+        return GallerySaveResult(entry=existing, created=False)
 
     entry = ImageGalleryEntry(
         image_session_asset_id=asset.id,
