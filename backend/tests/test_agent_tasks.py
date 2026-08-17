@@ -6,6 +6,7 @@ from sqlalchemy import select
 from test_agent_sessions import _create_workspace
 
 from productflow_backend.application.agent_conversations import reserve_agent_turn
+from productflow_backend.application.agent_sync import recover_unfinished_agent_turn_syncs
 from productflow_backend.application.agent_tasks import (
     create_agent_task,
     list_agent_tasks,
@@ -17,7 +18,12 @@ from productflow_backend.application.agent_tools import (
 from productflow_backend.config import get_settings
 from productflow_backend.domain.enums import AgentConversationScope, AgentTaskStatus, AgentTurnStatus
 from productflow_backend.domain.errors import ConflictError
-from productflow_backend.infrastructure.db.models import AgentConversation, AgentPageContextSnapshot, AgentTask
+from productflow_backend.infrastructure.db.models import (
+    AgentConversation,
+    AgentPageContextSnapshot,
+    AgentTask,
+    AgentTurnProjection,
+)
 from productflow_backend.presentation.api import create_app
 
 
@@ -47,6 +53,41 @@ def test_tasks_have_independent_harness_runs_and_share_a_session(db_session) -> 
         second.id,
         first.id,
     ]
+
+
+def test_agent_recovery_creates_one_initial_turn_for_queued_task(db_session) -> None:
+    workspace = _create_workspace(db_session, key="task-initial-recovery")
+    task = create_agent_task(
+        db_session,
+        session_id=workspace.conversation.session_id,
+        conversation_id=workspace.conversation.id,
+        title="浏览器关闭后的任务",
+        goal="检查商品 A 的主图素材",
+    )
+
+    enqueued: list[str] = []
+    summary = recover_unfinished_agent_turn_syncs(enqueue=enqueued.append)
+
+    assert summary.pending_turns == 1
+    assert summary.enqueued_turns == 1
+    assert summary.recovered_task_turns == 1
+    assert enqueued
+    db_session.expire_all()
+    task = db_session.get(AgentTask, task.id)
+    assert task is not None
+    assert task.current_turn_id == enqueued[0]
+    projection = db_session.get(AgentTurnProjection, enqueued[0])
+    assert projection is not None
+    assert projection.task_id == task.id
+    assert projection.input_text == task.goal
+    assert projection.idempotency_key == f"initial:{workspace.conversation.id}:{task.id}"
+
+    second_enqueued: list[str] = []
+    second = recover_unfinished_agent_turn_syncs(enqueue=second_enqueued.append)
+    assert second.pending_turns == 1
+    assert second.enqueued_turns == 1
+    assert second.recovered_task_turns == 0
+    assert second_enqueued == enqueued
 
 
 def test_global_agent_can_list_and_inspect_products_with_active_workflow_summary(db_session) -> None:

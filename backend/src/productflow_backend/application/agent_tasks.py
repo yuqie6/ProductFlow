@@ -38,6 +38,11 @@ AGENT_CONTEXT_PAGE_TYPE_MAX_LENGTH = 80
 AGENT_CONTEXT_MAX_ASSET_IDS = 100
 AGENT_CONTEXT_MAX_FILTERS = 20
 
+
+def initial_agent_task_turn_idempotency_key(*, conversation_id: str, task_id: str) -> str:
+    """Return the stable key shared by the UI and recovery path for a Task's first Turn."""
+    return f"initial:{conversation_id}:{task_id}"
+
 _ACTIVE_TASK_STATUSES = {
     AgentTaskStatus.QUEUED,
     AgentTaskStatus.RUNNING,
@@ -534,6 +539,7 @@ __all__ = [
     "cancel_agent_task",
     "ensure_task_for_turn",
     "get_agent_task_or_raise",
+    "initial_agent_task_turn_idempotency_key",
     "list_agent_tasks",
     "new_agent_task",
     "normalize_page_context",

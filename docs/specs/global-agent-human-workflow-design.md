@@ -226,7 +226,7 @@ Session summary
 - 全局图库的快照包含当前已选资产、当前已加载资产和搜索/来源/文件夹/标签/归档筛选；商品工作台的快照包含工作流 revision、侧栏模式、打开文件夹和有限数量的选中节点。
 - 已把 Task goal 注入任务专属 harness 的固定系统上下文；页面快照作为当前 Turn 的 ambient context，不会覆盖 Task goal。
 - 未指定 Task 的普通商品对话继续使用 conversation run，不会因为页面快照自动出现在后台 Task 列表中。
-- 已保留既有 Agent Turn 恢复同步，并让 Task Turn 通过任务专属运行路径恢复；Session summary、Task summary、stale observation 和独立调度器仍待实现。
+- 已保留既有 Agent Turn 恢复同步，并让 Task Turn 通过任务专属运行路径恢复。调度器还会发现已经落库但尚未创建首轮 Turn 的 `queued` Task，使用固定首轮幂等 key 补建一次 Turn；商品 onboarding 条件尚未满足的任务保持 `queued` 并记录恢复原因。Session summary、Task summary、stale observation 和独立调度器仍待实现。
 - 页面切换只更新后续 Turn 的 ambient context，不修改既有 Task 目标。
 
 ### 阶段 3：接入人工作流执行

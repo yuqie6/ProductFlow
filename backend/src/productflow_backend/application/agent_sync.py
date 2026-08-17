@@ -11,9 +11,10 @@ from productflow_backend.application.agent_control import (
     retry_unbound_agent_turn_start,
     synchronize_agent_turn_state,
 )
-from productflow_backend.application.agent_conversations import record_agent_turn_start_error
+from productflow_backend.application.agent_conversations import record_agent_turn_start_error, reserve_agent_turn
+from productflow_backend.application.agent_tasks import initial_agent_task_turn_idempotency_key
 from productflow_backend.config import get_settings
-from productflow_backend.domain.enums import AgentTurnStatus
+from productflow_backend.domain.enums import AgentConversationScope, AgentTaskStatus, AgentTurnStatus
 from productflow_backend.domain.errors import BusinessError
 from productflow_backend.infrastructure.agent_service import (
     AgentServiceClient,
@@ -22,6 +23,7 @@ from productflow_backend.infrastructure.agent_service import (
 )
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
+    AgentTask,
     AgentTurnProjection,
     WorkflowDraft,
 )
@@ -40,6 +42,7 @@ _POLLABLE_AGENT_TURN_STATUSES = {
 class AgentTurnRecoverySummary:
     pending_turns: int = 0
     enqueued_turns: int = 0
+    recovered_task_turns: int = 0
 
 
 def execute_agent_turn_sync(
@@ -149,6 +152,8 @@ def recover_unfinished_agent_turn_syncs(
                 .order_by(AgentTurnProjection.created_at.asc(), AgentTurnProjection.id.asc())
             ).all()
         )
+        recovered_task_projection_ids, recovered_task_turns = _recover_queued_task_turns(session)
+        projection_ids.extend(recovered_task_projection_ids)
         if stage_dispatch is not None:
             for projection_id in projection_ids:
                 stage_dispatch(session, projection_id)
@@ -173,7 +178,59 @@ def recover_unfinished_agent_turn_syncs(
     return AgentTurnRecoverySummary(
         pending_turns=len(projection_ids),
         enqueued_turns=enqueued,
+        recovered_task_turns=recovered_task_turns,
     )
+
+
+def _recover_queued_task_turns(session: Session) -> tuple[list[str], int]:
+    tasks = list(
+        session.scalars(
+            select(AgentTask)
+            .options(selectinload(AgentTask.conversation))
+            .where(
+                AgentTask.status == AgentTaskStatus.QUEUED,
+                AgentTask.current_turn_id.is_(None),
+                AgentTask.conversation_id.is_not(None),
+            )
+            .order_by(AgentTask.created_at.asc(), AgentTask.id.asc())
+        ).all()
+    )
+    projection_ids: list[str] = []
+    recovered_task_turns = 0
+    for task in tasks:
+        conversation = task.conversation
+        if conversation is None:
+            continue
+        product_id = (
+            conversation.product_id
+            if conversation.scope_type == AgentConversationScope.PRODUCT_WORKFLOW
+            else None
+        )
+        try:
+            reservation = reserve_agent_turn(
+                session,
+                product_id=product_id,
+                conversation_id=conversation.id,
+                input_text=task.goal,
+                input_asset_ids=[],
+                idempotency_key=initial_agent_task_turn_idempotency_key(
+                    conversation_id=conversation.id,
+                    task_id=task.id,
+                ),
+                task_id=task.id,
+            )
+        except BusinessError as exc:
+            session.rollback()
+            logger.warning(
+                "跳过尚未满足启动条件的 Agent Task 首轮恢复: task_id=%s detail=%s",
+                task.id,
+                exc,
+            )
+            continue
+        projection_ids.append(reservation.projection.id)
+        if reservation.created:
+            recovered_task_turns += 1
+    return projection_ids, recovered_task_turns
 
 
 def _poll_delay_ms() -> int:
