@@ -94,6 +94,8 @@ def submit_v2_workflow_run(
     product_id: str,
     workflow_id: str,
     enqueue: Callable[[str], None] | None = None,
+    commit: bool = True,
+    run_metadata: dict[str, Any] | None = None,
 ) -> V2WorkflowRunSubmission:
     workflow = _get_v2_workflow(
         session,
@@ -103,15 +105,45 @@ def submit_v2_workflow_run(
         lock=True,
     )
     ordered_node_ids = _validated_v2_run_node_ids(session, workflow=workflow)
+    progress_metadata = {"run_scope": V2_RUN_SCOPE_WORKFLOW}
+    if run_metadata:
+        progress_metadata.update(run_metadata)
+    request_id = progress_metadata.get("agent_workflow_run_request_id")
     return _submit_v2_run(
         session,
         workflow=workflow,
         ordered_node_ids=ordered_node_ids,
-        progress_metadata={"run_scope": V2_RUN_SCOPE_WORKFLOW},
+        progress_metadata=progress_metadata,
         enqueue=enqueue,
         enqueue_failure_node_id=None,
-        matches_idempotent_active=lambda run: _run_scope(run) == V2_RUN_SCOPE_WORKFLOW,
+        matches_idempotent_active=lambda run: (
+            _run_scope(run) == V2_RUN_SCOPE_WORKFLOW
+            and (
+                request_id is None
+                or _run_metadata_value(run, "agent_workflow_run_request_id") == request_id
+            )
+        ),
+        commit=commit,
     )
+
+
+def validate_v2_workflow_run(
+    session: Session,
+    *,
+    product_id: str,
+    workflow_id: str,
+    lock: bool = False,
+) -> tuple[ProductWorkflow, tuple[str, ...]]:
+    """读取并验证一次 v2 工作流运行所需的节点，不创建运行记录。"""
+
+    workflow = _get_v2_workflow(
+        session,
+        product_id=product_id,
+        workflow_id=workflow_id,
+        require_active=True,
+        lock=lock,
+    )
+    return workflow, _validated_v2_run_node_ids(session, workflow=workflow)
 
 
 def get_v2_workflow_run(
@@ -290,6 +322,7 @@ def _submit_v2_run(
     enqueue: Callable[[str], None] | None,
     enqueue_failure_node_id: str | None,
     matches_idempotent_active: Callable[[WorkflowRun], bool],
+    commit: bool = True,
 ) -> V2WorkflowRunSubmission:
     node_id_set = set(ordered_node_ids)
     active_run = _find_active_run_for_nodes(session, workflow_id=workflow.id, node_ids=node_id_set)
@@ -321,6 +354,8 @@ def _submit_v2_run(
             )
         )
     workflow.updated_at = now
+    if not commit and enqueue is not None:
+        raise ValueError("不能在延迟提交的工作流运行中直接 enqueue")
     try:
         if enqueue is None:
             stage_async_dispatch(
@@ -329,7 +364,8 @@ def _submit_v2_run(
                 actor_name=WORKFLOW_RUN_GENERATION_TASK_CONTRACT.actor_name,
                 aggregate_id=run.id,
             )
-        session.commit()
+        if commit:
+            session.commit()
     except IntegrityError:
         session.rollback()
         active_run = _find_active_run_for_nodes(session, workflow_id=workflow.id, node_ids=node_id_set)
@@ -354,9 +390,11 @@ def _submit_v2_run(
                 reason=reason,
             ),
         )
-    session.expire_all()
+    if commit:
+        session.expire_all()
+        run = _get_v2_workflow_run_by_id(session, run_id=run.id)
     return V2WorkflowRunSubmission(
-        run=_get_v2_workflow_run_by_id(session, run_id=run.id),
+        run=run,
         created=True,
     )
 
@@ -559,6 +597,11 @@ def _run_scope(run: WorkflowRun) -> str | None:
     return scope if isinstance(scope, str) else None
 
 
+def _run_metadata_value(run: WorkflowRun, key: str) -> Any:
+    metadata = run.progress_metadata if isinstance(run.progress_metadata, dict) else {}
+    return metadata.get(key)
+
+
 def _retry_progress_metadata(run: WorkflowRun) -> dict[str, Any]:
     metadata = workflow_run_failure_progress_metadata(
         reason=run.failure_reason or "工作流部分节点失败",
@@ -627,4 +670,5 @@ __all__ = [
     "retry_v2_workflow_run",
     "submit_v2_workflow_node_run",
     "submit_v2_workflow_run",
+    "validate_v2_workflow_run",
 ]

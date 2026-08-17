@@ -1089,7 +1089,8 @@ export type AgentToolStepKind =
   | "propose_draft"
   | "inspect_context"
   | "read_history"
-  | "organize_assets";
+  | "organize_assets"
+  | "request_workflow_run";
 
 export type AgentToolStepStatus = "running" | "succeeded" | "failed" | "unknown";
 
@@ -1130,8 +1131,35 @@ export interface AgentTurn {
   artifact_step_id: string | null;
   workflow_draft_revision_id: string | null;
   library_organization_draft_revision_id: string | null;
+  workflow_run_request_id: string | null;
   page_context_snapshot_id: string | null;
   sync_error: string | null;
+  finished_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type AgentWorkflowRunRequestStatus =
+  | "awaiting_confirmation"
+  | "confirmed"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+export interface AgentWorkflowRunRequest {
+  id: string;
+  conversation_id: string;
+  task_id: string | null;
+  product_id: string;
+  workflow_id: string;
+  workflow_title: string;
+  expected_workflow_revision: number;
+  status: AgentWorkflowRunRequestStatus;
+  workflow_run_id: string | null;
+  workflow_run_status: WorkflowRunStatus | null;
+  source_step_id: string;
+  failure_reason: string | null;
+  confirmed_at: string | null;
   finished_at: string | null;
   created_at: string;
   updated_at: string;

@@ -14,8 +14,11 @@ from productflow_backend.application.agent_tasks import (
     list_agent_tasks,
     rename_agent_task,
 )
+from productflow_backend.application.agent_workflow_run_requests import (
+    cancel_agent_workflow_run_request,
+)
 from productflow_backend.application.async_delivery import stage_async_dispatch_for_actor
-from productflow_backend.domain.enums import AgentTurnStatus
+from productflow_backend.domain.enums import AgentTaskStatus, AgentTurnStatus
 from productflow_backend.infrastructure.agent_service import get_agent_service_client
 from productflow_backend.presentation.deps import get_session, require_admin
 from productflow_backend.presentation.schemas.agent_tasks import (
@@ -92,6 +95,13 @@ def cancel_agent_task_endpoint(
     session: Session = Depends(get_session),
 ) -> AgentTaskResponse:
     task = get_agent_task_or_raise(session, task_id)
+    if task.status in {
+        AgentTaskStatus.SUCCEEDED,
+        AgentTaskStatus.FAILED,
+        AgentTaskStatus.CANCELED,
+        AgentTaskStatus.UNKNOWN,
+    }:
+        return serialize_agent_task(task)
     projection = None
     if task.current_turn_id is not None and task.conversation_id is not None:
         projection = get_agent_turn_or_raise(
@@ -100,6 +110,19 @@ def cancel_agent_task_endpoint(
             conversation_id=task.conversation_id,
             projection_id=task.current_turn_id,
         )
+    if (
+        projection is not None
+        and projection.workflow_run_request_id is not None
+        and task.product_id is not None
+        and task.conversation_id is not None
+    ):
+        cancel_agent_workflow_run_request(
+            session,
+            product_id=task.product_id,
+            conversation_id=task.conversation_id,
+            request_id=projection.workflow_run_request_id,
+        )
+        return serialize_agent_task(get_agent_task_or_raise(session, task_id))
     if (
         projection is not None
         and projection.harness_turn_id is not None

@@ -8,6 +8,7 @@ import {
   ScanEye,
   LoaderCircle,
   ScrollText,
+  Workflow,
 } from "lucide-react";
 import type { ComponentType } from "react";
 
@@ -21,6 +22,7 @@ const KIND_KEYS: Record<AgentToolStepKind, TranslationKey> = {
   inspect_context: "agentWorkbench.toolStep.kind.inspectContext",
   read_history: "agentWorkbench.toolStep.kind.readHistory",
   organize_assets: "agentWorkbench.toolStep.kind.organizeAssets",
+  request_workflow_run: "agentWorkbench.toolStep.kind.requestWorkflowRun",
 };
 
 const KIND_ICONS: Record<AgentToolStepKind, ComponentType<{ size?: number; className?: string }>> = {
@@ -29,6 +31,7 @@ const KIND_ICONS: Record<AgentToolStepKind, ComponentType<{ size?: number; class
   inspect_context: FileSearch,
   read_history: FileClock,
   organize_assets: FolderCog,
+  request_workflow_run: Workflow,
 };
 
 const STATUS_KEYS: Record<AgentToolStepStatus, TranslationKey> = {

@@ -322,6 +322,70 @@ func TestManagerUsesOptionalArtifactForGlobalOrganizationDraft(t *testing.T) {
 	}
 }
 
+func TestManagerDoesNotRequireWorkflowDraftForProductTask(t *testing.T) {
+	const taskID = "11111111-1111-4111-8111-111111111114"
+	provider := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writeProviderStream(t, writer, `{"id":"task-final","status":"completed","output":[{"id":"message","type":"message","role":"assistant","content":[{"type":"output_text","text":"后台任务已完成"}]}]}`)
+	}))
+	t.Cleanup(provider.Close)
+
+	productFlow := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer "+testInternalToken {
+			http.Error(writer, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if request.URL.Path != "/api/internal/v1/agent-tasks/"+taskID+"/contract" {
+			http.NotFound(writer, request)
+			return
+		}
+		writeFixtureJSON(writer, map[string]any{
+			"schema_version": 1, "scope_type": "product_workflow", "conversation_id": testConversationID,
+			"task_id": taskID, "task_goal": "执行已有工作流", "product_id": testProductID,
+			"workflow_draft_id": testDraftID, "harness_run_id": taskID, "current_draft_version": 1,
+			"system_prompt": "完成后台任务。", "workflow_draft_schema": map[string]any{
+				"type": "object", "additionalProperties": false,
+			},
+			"tool_contract_version": 3,
+		})
+	}))
+	t.Cleanup(productFlow.Close)
+	client, err := productflow.NewClient(productFlow.URL, testInternalToken, productFlow.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewManager(ManagerConfig{
+		DataRoot: t.TempDir(),
+		Provider: agenttask.ProviderConfig{
+			APIKey: "provider-secret", BaseURL: provider.URL, Model: "test-model", HTTPClient: provider.Client(),
+		},
+		Policy: agenttask.Policy{
+			MaxIterations: 4, ModelContextWindow: 100_000,
+			AutoCompactTokenLimit: 80_000, CompactionSummaryMaxChars: 4_000,
+		},
+		HTTPOptions: agenttask.HTTPOptions{EventPollInterval: time.Millisecond, HeartbeatInterval: 10 * time.Millisecond},
+		ProductFlow: client,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+
+	entry, err := manager.GetTask(t.Context(), taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, err := entry.Service.StartTurn(t.Context(), agenttask.StartTurnRequest{
+		RunID: entry.Scope.RunID, Input: agenttask.TextInput("执行已有工作流"), IdempotencyKey: "product-task-no-draft",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := awaitLiveTurn(t, entry.Service, started.RunID, started.TurnID)
+	if state.Status != agenttask.TurnSucceeded || state.Output != "后台任务已完成" {
+		t.Fatalf("product task state = %#v", state)
+	}
+}
+
 func TestManagerRetriesArtifactRejectedByProductFlow(t *testing.T) {
 	var providerCalls atomic.Int32
 	provider := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

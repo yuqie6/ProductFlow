@@ -49,7 +49,16 @@ def test_product_workspace_creates_an_active_global_agent_session(db_session) ->
     assert len(sessions) == 1
     assert sessions[0].status.value == "active"
     assert sessions[0].title == workspace.product.name
-    assert sessions[0].conversations[0].id == workspace.conversation.id
+    assert len(sessions[0].conversations) == 2
+    assert next(
+        conversation
+        for conversation in sessions[0].conversations
+        if conversation.id == workspace.conversation.id
+    ).scope_type == AgentConversationScope.PRODUCT_WORKFLOW
+    assert any(
+        conversation.scope_type == AgentConversationScope.GLOBAL
+        for conversation in sessions[0].conversations
+    )
 
 
 def test_agent_session_list_prioritizes_recent_conversation_activity(db_session) -> None:
@@ -140,7 +149,14 @@ def test_agent_session_api_returns_bounded_session_projection_and_mutations(conf
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["items"][0]["id"] == session_id
-    assert payload["items"][0]["conversations"][0]["product_id"] == product_id
+    assert any(
+        conversation["product_id"] == product_id
+        for conversation in payload["items"][0]["conversations"]
+    )
+    assert any(
+        conversation["scope_type"] == AgentConversationScope.GLOBAL.value
+        for conversation in payload["items"][0]["conversations"]
+    )
 
     rename_response = client.patch(
         f"/api/v2/agent-sessions/{session_id}",

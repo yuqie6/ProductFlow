@@ -133,7 +133,7 @@ func awaitLiveTurn(t *testing.T, service *agenttask.Service, runID, turnID strin
 			t.Fatal(err)
 		}
 		switch state.Status {
-		case agenttask.TurnAwaitingConfirmation:
+		case agenttask.TurnAwaitingConfirmation, agenttask.TurnSucceeded:
 			return state
 		case agenttask.TurnFailed, agenttask.TurnCanceled, agenttask.TurnUnknown, agenttask.TurnRequiresInput:
 			t.Fatalf("live provider turn stopped in %s: %s", state.Status, state.Error)

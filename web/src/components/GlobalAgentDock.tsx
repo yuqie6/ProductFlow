@@ -102,6 +102,7 @@ export function GlobalAgentDock() {
     queryKey: ["agent-tasks", null, true],
     queryFn: () => api.listAgentTasks({ includeTerminal: true, limit: 100 }),
     staleTime: 8_000,
+    refetchInterval: open ? 2_000 : false,
   });
 
   useEffect(() => {

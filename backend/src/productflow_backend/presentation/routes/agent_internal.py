@@ -29,6 +29,15 @@ from productflow_backend.application.agent_tools import (
     validate_agent_library_organization_draft,
     validate_agent_workflow_draft,
 )
+from productflow_backend.application.agent_workflow_run_requests import (
+    create_agent_workflow_run_request as create_agent_workflow_run_request_use_case,
+)
+from productflow_backend.application.agent_workflow_run_requests import (
+    prepare_agent_workflow_run_request as prepare_agent_workflow_run_request_use_case,
+)
+from productflow_backend.application.agent_workflow_run_requests import (
+    reconcile_agent_workflow_run_request as reconcile_agent_workflow_run_request_use_case,
+)
 from productflow_backend.application.agent_workflow_runs import list_agent_workflow_runs
 from productflow_backend.application.gallery_assets import GalleryAssetSort, GalleryDirectoryKind
 from productflow_backend.application.gallery_mutations import GalleryAssetMove
@@ -62,6 +71,10 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     AgentWorkflowDraftValidationRequest,
     AgentWorkflowDraftValidationResponse,
     AgentWorkflowRunListResponse,
+    AgentWorkflowRunRequestCreateRequest,
+    AgentWorkflowRunRequestPreparedResponse,
+    AgentWorkflowRunRequestReconcileResponse,
+    AgentWorkflowRunRequestResponse,
     InspectAgentAssetsRequest,
     InspectAgentAssetsResponse,
     InspectAgentLegacyArchiveRequest,
@@ -69,6 +82,8 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     PrepareAgentAssetRenameRequest,
     PrepareAgentFolderCreateRequest,
     PrepareAgentFolderRenameRequest,
+    PrepareAgentWorkflowRunRequest,
+    serialize_agent_workflow_run_request,
 )
 from productflow_backend.presentation.schemas.workflow_drafts import serialize_workflow_run_v2
 
@@ -140,6 +155,79 @@ def list_agent_workflow_runs_endpoint(
         workflow_id=page.workflow_id,
         workflow_revision=page.workflow_revision,
         items=[serialize_workflow_run_v2(run) for run in page.runs],
+    )
+
+
+@router.post(
+    "/{conversation_id}/workflow-run-requests/prepare",
+    response_model=AgentWorkflowRunRequestPreparedResponse,
+)
+def prepare_agent_workflow_run_request_endpoint(
+    conversation_id: str,
+    payload: PrepareAgentWorkflowRunRequest,
+    session: Session = Depends(get_session),
+) -> AgentWorkflowRunRequestPreparedResponse:
+    prepared = prepare_agent_workflow_run_request_use_case(
+        session,
+        conversation_id=conversation_id,
+        expected_workflow_revision=payload.expected_workflow_revision,
+        task_id=payload.task_id,
+    )
+    return AgentWorkflowRunRequestPreparedResponse(
+        product_id=prepared.product_id,
+        workflow_id=prepared.workflow_id,
+        workflow_title=prepared.workflow_title,
+        workflow_revision=prepared.workflow_revision,
+        runnable_node_count=prepared.runnable_node_count,
+        task_id=prepared.task_id,
+    )
+
+
+@router.post(
+    "/{conversation_id}/workflow-run-requests",
+    response_model=AgentWorkflowRunRequestResponse,
+)
+def create_agent_workflow_run_request_endpoint(
+    conversation_id: str,
+    payload: AgentWorkflowRunRequestCreateRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
+    session: Session = Depends(get_session),
+) -> AgentWorkflowRunRequestResponse:
+    request = create_agent_workflow_run_request_use_case(
+        session,
+        conversation_id=conversation_id,
+        expected_workflow_revision=payload.expected_workflow_revision,
+        workflow_id=payload.workflow_id,
+        source_step_id=payload.source_step_id,
+        idempotency_key=idempotency_key,
+        task_id=payload.task_id,
+    )
+    return serialize_agent_workflow_run_request(request)
+
+
+@router.post(
+    "/{conversation_id}/workflow-run-requests/reconcile",
+    response_model=AgentWorkflowRunRequestReconcileResponse,
+)
+def reconcile_agent_workflow_run_request_endpoint(
+    conversation_id: str,
+    payload: AgentWorkflowRunRequestCreateRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
+    session: Session = Depends(get_session),
+) -> AgentWorkflowRunRequestReconcileResponse:
+    result = reconcile_agent_workflow_run_request_use_case(
+        session,
+        conversation_id=conversation_id,
+        expected_workflow_revision=payload.expected_workflow_revision,
+        workflow_id=payload.workflow_id,
+        source_step_id=payload.source_step_id,
+        idempotency_key=idempotency_key,
+        task_id=payload.task_id,
+    )
+    return AgentWorkflowRunRequestReconcileResponse(
+        state=result.state,
+        result=serialize_agent_workflow_run_request(result.request) if result.request is not None else None,
+        detail=result.detail,
     )
 
 

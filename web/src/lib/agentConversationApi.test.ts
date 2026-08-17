@@ -110,6 +110,30 @@ describe("Agent conversation API", () => {
     expect(fetchMock.mock.calls[1][1]?.body).toBe(JSON.stringify({ option: 0 }));
   });
 
+  it("encodes workflow run request identity and keeps confirmation controls on the product route", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => null,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.getAgentWorkflowRunRequest("product/1", "conversation/1");
+    await api.confirmAgentWorkflowRunRequest("product/1", "conversation/1", "request/1");
+    await api.cancelAgentWorkflowRunRequest("product/1", "conversation/1", "request/1");
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/api/v2/products/product%2F1/agent-conversations/conversation%2F1/workflow-run-request",
+      "/api/v2/products/product%2F1/agent-conversations/conversation%2F1/workflow-run-request/request%2F1/confirm",
+      "/api/v2/products/product%2F1/agent-conversations/conversation%2F1/workflow-run-request/request%2F1/cancel",
+    ]);
+    expect(fetchMock.mock.calls.map(([, init]) => init?.method)).toEqual([
+      undefined,
+      "POST",
+      "POST",
+    ]);
+  });
+
   it("uses the global conversation route while preserving page context and task identity", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

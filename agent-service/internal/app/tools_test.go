@@ -71,6 +71,7 @@ func TestScopedToolCatalogContainsOnlyCurrentGalleryTools(t *testing.T) {
 		renameFolderToolName: true,
 		renameAssetToolName:  true,
 		moveAssetsToolName:   true,
+		requestWorkflowRunToolName: true,
 	}
 	if !reflect.DeepEqual(durableNames, wantDurable) {
 		t.Fatalf("durable catalog = %#v, want %#v", durableNames, wantDurable)

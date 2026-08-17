@@ -124,6 +124,34 @@ type ReconcileResult struct {
 	Detail string          `json:"detail,omitempty"`
 }
 
+type WorkflowRunRequestPrepared struct {
+	ProductID         string  `json:"product_id"`
+	WorkflowID        string  `json:"workflow_id"`
+	WorkflowTitle     string  `json:"workflow_title"`
+	WorkflowRevision  int     `json:"workflow_revision"`
+	RunnableNodeCount int     `json:"runnable_node_count"`
+	TaskID            *string `json:"task_id"`
+}
+
+type WorkflowRunRequest struct {
+	ID                       string  `json:"id"`
+	ConversationID           string  `json:"conversation_id"`
+	TaskID                   *string `json:"task_id"`
+	ProductID                string  `json:"product_id"`
+	WorkflowID               string  `json:"workflow_id"`
+	WorkflowTitle            string  `json:"workflow_title"`
+	ExpectedWorkflowRevision int     `json:"expected_workflow_revision"`
+	Status                   string  `json:"status"`
+	WorkflowRunID            *string `json:"workflow_run_id"`
+	WorkflowRunStatus        *string `json:"workflow_run_status"`
+	SourceStepID             string  `json:"source_step_id"`
+	FailureReason            *string `json:"failure_reason"`
+	ConfirmedAt              *string `json:"confirmed_at"`
+	FinishedAt               *string `json:"finished_at"`
+	CreatedAt                string  `json:"created_at"`
+	UpdatedAt                string  `json:"updated_at"`
+}
+
 type HTTPError struct {
 	StatusCode int
 	Code       string
@@ -184,6 +212,70 @@ func (client *Client) ListWorkflowRuns(ctx context.Context, conversationID strin
 		"",
 	)
 	return result, err
+}
+
+func (client *Client) PrepareWorkflowRunRequest(
+	ctx context.Context,
+	conversationID string,
+	expectedWorkflowRevision int,
+	taskID *string,
+) (WorkflowRunRequestPrepared, error) {
+	var result WorkflowRunRequestPrepared
+	err := client.json(
+		ctx,
+		http.MethodPost,
+		client.conversationPath(conversationID)+"/workflow-run-requests/prepare",
+		map[string]any{
+			"expected_workflow_revision": expectedWorkflowRevision,
+			"task_id":                    taskID,
+		},
+		&result,
+		"",
+	)
+	return result, err
+}
+
+func (client *Client) ExecuteWorkflowRunRequest(
+	ctx context.Context,
+	conversationID, idempotencyKey, sourceStepID string,
+	prepared WorkflowRunRequestPrepared,
+) (json.RawMessage, error) {
+	var result json.RawMessage
+	err := client.json(
+		ctx,
+		http.MethodPost,
+		client.conversationPath(conversationID)+"/workflow-run-requests",
+		workflowRunRequestPayload(prepared, sourceStepID),
+		&result,
+		idempotencyKey,
+	)
+	return result, err
+}
+
+func (client *Client) ReconcileWorkflowRunRequest(
+	ctx context.Context,
+	conversationID, idempotencyKey, sourceStepID string,
+	prepared WorkflowRunRequestPrepared,
+) (ReconcileResult, error) {
+	var result ReconcileResult
+	err := client.json(
+		ctx,
+		http.MethodPost,
+		client.conversationPath(conversationID)+"/workflow-run-requests/reconcile",
+		workflowRunRequestPayload(prepared, sourceStepID),
+		&result,
+		idempotencyKey,
+	)
+	return result, err
+}
+
+func workflowRunRequestPayload(prepared WorkflowRunRequestPrepared, sourceStepID string) map[string]any {
+	return map[string]any{
+		"expected_workflow_revision": prepared.WorkflowRevision,
+		"workflow_id":                prepared.WorkflowID,
+		"source_step_id":             sourceStepID,
+		"task_id":                    prepared.TaskID,
+	}
 }
 
 func (client *Client) ListLegacyArchives(

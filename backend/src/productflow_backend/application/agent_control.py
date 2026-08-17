@@ -18,12 +18,21 @@ from productflow_backend.application.agent_conversations import (
     reserve_agent_turn,
     set_agent_turn_resume_required,
 )
+from productflow_backend.application.agent_workflow_run_requests import (
+    attach_agent_workflow_run_request,
+    get_agent_workflow_run_request_by_source_step,
+)
 from productflow_backend.application.media_library.drafts import (
     LIBRARY_ORGANIZATION_DRAFT_ARTIFACT_NAME,
     append_library_organization_draft_revision,
 )
 from productflow_backend.application.time import now_utc
-from productflow_backend.domain.enums import AgentConversationScope, AgentTurnStatus
+from productflow_backend.domain.enums import (
+    AgentConversationScope,
+    AgentToolStepKind,
+    AgentToolStepStatus,
+    AgentTurnStatus,
+)
 from productflow_backend.domain.errors import (
     AgentServiceUnavailableError,
     BusinessValidationError,
@@ -300,12 +309,20 @@ def synchronize_agent_turn_state(
         projection_id=projection_id,
     )
     _validate_agent_state_scope(_expected_harness_run_id(conversation, projection), state)
+    pending_workflow_run_request = _find_pending_workflow_run_request(
+        session,
+        conversation=conversation,
+        projection=projection,
+        state=state,
+    )
     effective_status = state.status
     if (
         conversation.scope_type == AgentConversationScope.GLOBAL
         and state.status == AgentTurnStatus.SUCCEEDED
         and state.artifact is not None
     ):
+        effective_status = AgentTurnStatus.AWAITING_CONFIRMATION
+    elif pending_workflow_run_request is not None and state.status == AgentTurnStatus.SUCCEEDED:
         effective_status = AgentTurnStatus.AWAITING_CONFIRMATION
     projection = project_agent_turn_state(
         session,
@@ -326,9 +343,9 @@ def synchronize_agent_turn_state(
         commit=commit,
     )
     if effective_status == AgentTurnStatus.AWAITING_CONFIRMATION:
-        if state.artifact is None:
+        if state.artifact is None and pending_workflow_run_request is None:
             raise ConflictError("Agent Turn 待确认状态缺少 required artifact")
-        if conversation.scope_type == AgentConversationScope.GLOBAL:
+        if state.artifact is not None and conversation.scope_type == AgentConversationScope.GLOBAL:
             if product_id is not None:
                 raise ConflictError("全局 Agent Turn 不应包含商品作用域")
             projection = attach_agent_library_organization_draft_artifact(
@@ -341,7 +358,7 @@ def synchronize_agent_turn_state(
                 artifact_value=state.artifact.value,
                 commit=commit,
             )
-        else:
+        elif state.artifact is not None:
             if conversation.workflow_draft_id is None or product_id is None:
                 raise ConflictError("商品工作流 Agent Turn 缺少 WorkflowDraft artifact 作用域")
             projection = attach_agent_workflow_draft_artifact(
@@ -355,9 +372,45 @@ def synchronize_agent_turn_state(
                 artifact_value=state.artifact.value,
                 commit=commit,
             )
+        if pending_workflow_run_request is not None:
+            if product_id is None:
+                raise ConflictError("工作流执行请求不应出现在全局 Agent Turn")
+            projection = attach_agent_workflow_run_request(
+                session,
+                product_id=product_id,
+                conversation_id=conversation_id,
+                projection_id=projection.id,
+                request_id=pending_workflow_run_request.id,
+                commit=commit,
+            )
     elif state.artifact is not None:
         raise ConflictError("Agent Turn 在非待确认状态返回了 artifact")
     return projection
+
+
+def _find_pending_workflow_run_request(
+    session: Session,
+    *,
+    conversation,
+    projection: AgentTurnProjection,
+    state: AgentServiceTurnState,
+):
+    if conversation.scope_type != AgentConversationScope.PRODUCT_WORKFLOW:
+        return None
+    if not state.tool_steps:
+        return None
+    for tool_step in reversed(state.tool_steps):
+        if (
+            tool_step.kind == AgentToolStepKind.REQUEST_WORKFLOW_RUN
+            and tool_step.status == AgentToolStepStatus.SUCCEEDED
+        ):
+            return get_agent_workflow_run_request_by_source_step(
+                session,
+                conversation_id=conversation.id,
+                task_id=projection.task_id,
+                source_step_id=tool_step.step_id,
+            )
+    return None
 
 
 def attach_agent_library_organization_draft_artifact(

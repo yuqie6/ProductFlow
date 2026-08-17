@@ -18,6 +18,7 @@ import (
 const (
 	productContextToolName       = "get_product_workflow_context_v1"
 	inspectWorkflowRunsToolName  = "inspect_workflow_runs_v1"
+	requestWorkflowRunToolName   = "request_workflow_run_v1"
 	listLegacyArchivesToolName   = "list_legacy_archives_v1"
 	inspectLegacyArchiveToolName = "inspect_legacy_archive_v1"
 	listAssetsToolName           = "list_product_image_assets_v2"
@@ -390,6 +391,17 @@ func scopedGlobalReadTools(client *productflow.Client, scope Scope) []agenttask.
 func scopedDurableTools(client *productflow.Client, scope Scope) []agenttask.DurableTool {
 	return []agenttask.DurableTool{
 		{
+			Description: "Prepare a request to run the current active workflow. This never starts the workflow; a human must confirm the request in ProductFlow.",
+			Parameters: map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"expected_workflow_revision": map[string]any{"type": "integer", "minimum": 1},
+				},
+				"required": []string{"expected_workflow_revision"},
+			},
+			Tool: &requestWorkflowRunTool{client: client, scope: scope},
+		},
+		{
 			Description: "Create one top-level image folder in this conversation's product gallery.",
 			Parameters: map[string]any{
 				"type": "object", "additionalProperties": false,
@@ -440,6 +452,71 @@ func scopedDurableTools(client *productflow.Client, scope Scope) []agenttask.Dur
 			Tool: &moveAssetsTool{client: client, scope: scope},
 		},
 	}
+}
+
+type requestWorkflowRunTool struct {
+	client *productflow.Client
+	scope  Scope
+}
+
+func (*requestWorkflowRunTool) Name() string                { return requestWorkflowRunToolName }
+func (*requestWorkflowRunTool) Effect() durable.EffectClass { return durable.EffectReconcilable }
+
+func (tool *requestWorkflowRunTool) Prepare(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	var arguments struct {
+		ExpectedWorkflowRevision int `json:"expected_workflow_revision"`
+	}
+	if err := decodeStrictObject(raw, &arguments); err != nil {
+		return nil, err
+	}
+	if arguments.ExpectedWorkflowRevision < 1 {
+		return nil, errors.New("expected_workflow_revision must be at least 1")
+	}
+	var taskID *string
+	if tool.scope.TaskID != "" {
+		value := tool.scope.TaskID
+		taskID = &value
+	}
+	prepared, err := tool.client.PrepareWorkflowRunRequest(
+		ctx,
+		tool.scope.ConversationID,
+		arguments.ExpectedWorkflowRevision,
+		taskID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(prepared)
+}
+
+func (tool *requestWorkflowRunTool) Execute(ctx context.Context, invocation durable.Invocation) (json.RawMessage, error) {
+	var prepared productflow.WorkflowRunRequestPrepared
+	if err := json.Unmarshal(invocation.Prepared, &prepared); err != nil {
+		return nil, fmt.Errorf("decode prepared workflow run request: %w", err)
+	}
+	result, err := tool.client.ExecuteWorkflowRunRequest(
+		ctx,
+		tool.scope.ConversationID,
+		invocation.IdempotencyKey,
+		invocation.StepID,
+		prepared,
+	)
+	return durableExecutionResult(result, err, "workflow run request")
+}
+
+func (tool *requestWorkflowRunTool) Reconcile(ctx context.Context, invocation durable.Invocation) (durable.ReconcileResult, error) {
+	var prepared productflow.WorkflowRunRequestPrepared
+	if err := json.Unmarshal(invocation.Prepared, &prepared); err != nil {
+		return durable.ReconcileResult{}, fmt.Errorf("decode prepared workflow run request: %w", err)
+	}
+	result, err := tool.client.ReconcileWorkflowRunRequest(
+		ctx,
+		tool.scope.ConversationID,
+		invocation.IdempotencyKey,
+		invocation.StepID,
+		prepared,
+	)
+	return durableReconcileResult(result, err)
 }
 
 type createFolderTool struct {

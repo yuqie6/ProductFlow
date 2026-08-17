@@ -20,6 +20,8 @@ from productflow_backend.domain.enums import (
     AgentToolStepKind,
     AgentToolStepStatus,
     AgentTurnStatus,
+    AgentWorkflowRunRequestStatus,
+    WorkflowRunStatus,
 )
 from productflow_backend.infrastructure.agent_service import AgentServiceToolStep
 from productflow_backend.infrastructure.db.models import AgentConversation, AgentTurnProjection
@@ -307,6 +309,7 @@ class AgentTurnResponse(BaseModel):
     artifact_step_id: str | None
     workflow_draft_revision_id: str | None
     library_organization_draft_revision_id: str | None
+    workflow_run_request_id: str | None
     page_context_snapshot_id: str | None
     sync_error: str | None
     finished_at: datetime | None
@@ -323,6 +326,52 @@ class AgentWorkflowRunListResponse(BaseModel):
     workflow_id: str | None
     workflow_revision: int
     items: list[WorkflowRunV2Response]
+
+
+class PrepareAgentWorkflowRunRequest(StrictAgentRequest):
+    expected_workflow_revision: int = Field(ge=1)
+    task_id: str | None = Field(default=None, max_length=64)
+
+
+class AgentWorkflowRunRequestPreparedResponse(BaseModel):
+    product_id: str
+    workflow_id: str
+    workflow_title: str
+    workflow_revision: int
+    runnable_node_count: int = Field(ge=1)
+    task_id: str | None
+
+
+class AgentWorkflowRunRequestCreateRequest(StrictAgentRequest):
+    expected_workflow_revision: int = Field(ge=1)
+    workflow_id: str = Field(min_length=1, max_length=64)
+    source_step_id: str = Field(min_length=1, max_length=120)
+    task_id: str | None = Field(default=None, max_length=64)
+
+
+class AgentWorkflowRunRequestResponse(BaseModel):
+    id: str
+    conversation_id: str
+    task_id: str | None
+    product_id: str
+    workflow_id: str
+    workflow_title: str
+    expected_workflow_revision: int
+    status: AgentWorkflowRunRequestStatus
+    workflow_run_id: str | None
+    workflow_run_status: WorkflowRunStatus | None
+    source_step_id: str
+    failure_reason: str | None
+    confirmed_at: datetime | None
+    finished_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AgentWorkflowRunRequestReconcileResponse(BaseModel):
+    state: Literal["applied", "not_applied", "conflict", "unknown"]
+    result: AgentWorkflowRunRequestResponse | None = None
+    detail: str | None = None
 
 
 class SubmitAgentTurnResponse(BaseModel):
@@ -381,9 +430,35 @@ def serialize_agent_turn(projection: AgentTurnProjection) -> AgentTurnResponse:
         artifact_step_id=projection.artifact_step_id,
         workflow_draft_revision_id=projection.workflow_draft_revision_id,
         library_organization_draft_revision_id=projection.library_organization_draft_revision_id,
+        workflow_run_request_id=projection.workflow_run_request_id,
         page_context_snapshot_id=projection.page_context_snapshot_id,
         sync_error=projection.sync_error,
         finished_at=projection.finished_at,
         created_at=projection.created_at,
         updated_at=projection.updated_at,
+    )
+
+
+def serialize_agent_workflow_run_request(
+    request: Any,
+) -> AgentWorkflowRunRequestResponse:
+    workflow = request.workflow
+    workflow_run = request.workflow_run
+    return AgentWorkflowRunRequestResponse(
+        id=request.id,
+        conversation_id=request.conversation_id,
+        task_id=request.task_id,
+        product_id=request.product_id,
+        workflow_id=request.workflow_id,
+        workflow_title=workflow.title,
+        expected_workflow_revision=request.expected_workflow_revision,
+        status=request.status,
+        workflow_run_id=request.workflow_run_id,
+        workflow_run_status=workflow_run.status if workflow_run is not None else None,
+        source_step_id=request.source_step_id,
+        failure_reason=request.failure_reason,
+        confirmed_at=request.confirmed_at,
+        finished_at=request.finished_at,
+        created_at=request.created_at,
+        updated_at=request.updated_at,
     )

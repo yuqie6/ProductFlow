@@ -1,0 +1,278 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+
+import pytest
+from helpers import _make_demo_image_bytes
+from sqlalchemy import func, select
+from workflow_draft_helpers import make_workflow_draft_payload
+
+from productflow_backend.application.agent_control import synchronize_agent_turn_state
+from productflow_backend.application.agent_conversations import bind_harness_turn, reserve_agent_turn
+from productflow_backend.application.agent_product_intake import AgentProductSelectionV1
+from productflow_backend.application.agent_product_workspaces import create_agent_product_workspace
+from productflow_backend.application.agent_tasks import create_agent_task, get_agent_task_or_raise
+from productflow_backend.application.agent_workflow_run_requests import (
+    cancel_agent_workflow_run_request,
+    confirm_agent_workflow_run_request,
+    create_agent_workflow_run_request,
+    get_agent_workflow_run_request,
+    prepare_agent_workflow_run_request,
+)
+from productflow_backend.application.workflow_drafts.materialization import materialize_workflow_draft
+from productflow_backend.application.workflow_drafts.service import (
+    append_workflow_draft_revision,
+    confirm_workflow_draft_revision,
+)
+from productflow_backend.domain.enums import (
+    AgentTaskStatus,
+    AgentToolStepKind,
+    AgentToolStepStatus,
+    AgentTurnStatus,
+    AgentWorkflowRunRequestStatus,
+    WorkflowRunStatus,
+)
+from productflow_backend.domain.errors import ConflictError
+from productflow_backend.infrastructure.agent_service import AgentServiceToolStep, AgentServiceTurnState
+from productflow_backend.infrastructure.db.models import AgentWorkflowRunRequest, WorkflowRun
+
+
+def _create_requestable_workspace(db_session):
+    selection = AgentProductSelectionV1.model_validate(
+        {
+            "schema_version": 1,
+            "image_types": [{"key": "hero", "quantity": 2, "order": 0}],
+        }
+    )
+    workspace = create_agent_product_workspace(
+        db_session,
+        name="执行请求测试商品",
+        selection=selection,
+        image_uploads=[(_make_demo_image_bytes(), "reference.png", "image/png")],
+        idempotency_key="workflow-run-request-workspace",
+    )
+    append_workflow_draft_revision(
+        db_session,
+        product_id=workspace.product.id,
+        draft_id=workspace.workflow_draft.id,
+        expected_draft_version=0,
+        payload=make_workflow_draft_payload(reference_asset_id=workspace.created_assets[0].id),
+        ready_for_confirmation=True,
+        source_turn_id="request-test-turn",
+        source_artifact_step_id="request-test-artifact",
+    )
+    confirm_workflow_draft_revision(
+        db_session,
+        product_id=workspace.product.id,
+        draft_id=workspace.workflow_draft.id,
+        expected_draft_version=1,
+    )
+    materialized = materialize_workflow_draft(
+        db_session,
+        product_id=workspace.product.id,
+        draft_id=workspace.workflow_draft.id,
+        expected_draft_version=1,
+        expected_workflow_revision=0,
+        idempotency_key="request-test-materialization",
+    )
+    return workspace, materialized.workflow
+
+
+def test_agent_workflow_run_request_waits_for_confirmation_and_reuses_run_chain(db_session) -> None:
+    workspace, workflow = _create_requestable_workspace(db_session)
+    task = create_agent_task(
+        db_session,
+        session_id=workspace.conversation.session_id,
+        title="执行商品工作流",
+        goal="执行当前商品的完整工作流",
+        conversation_id=workspace.conversation.id,
+    )
+
+    prepared = prepare_agent_workflow_run_request(
+        db_session,
+        conversation_id=workspace.conversation.id,
+        expected_workflow_revision=workflow.revision,
+        task_id=task.id,
+    )
+    assert prepared.workflow_id == workflow.id
+    assert prepared.runnable_node_count > 0
+
+    request = create_agent_workflow_run_request(
+        db_session,
+        conversation_id=workspace.conversation.id,
+        expected_workflow_revision=prepared.workflow_revision,
+        workflow_id=prepared.workflow_id,
+        source_step_id="run-request-step-1",
+        idempotency_key="run-request-key-1",
+        task_id=task.id,
+    )
+    assert request.status == AgentWorkflowRunRequestStatus.AWAITING_CONFIRMATION
+    assert request.workflow_run_id is None
+    assert db_session.get(type(task), task.id).status == AgentTaskStatus.AWAITING_CONFIRMATION
+    assert db_session.scalar(select(func.count()).select_from(WorkflowRun)) == 0
+
+    replay = create_agent_workflow_run_request(
+        db_session,
+        conversation_id=workspace.conversation.id,
+        expected_workflow_revision=prepared.workflow_revision,
+        workflow_id=prepared.workflow_id,
+        source_step_id="run-request-step-1",
+        idempotency_key="run-request-key-1",
+        task_id=task.id,
+    )
+    assert replay.id == request.id
+    assert db_session.scalar(select(func.count()).select_from(AgentWorkflowRunRequest)) == 1
+
+    confirmed = confirm_agent_workflow_run_request(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        request_id=request.id,
+    )
+    assert confirmed.status == AgentWorkflowRunRequestStatus.CONFIRMED
+    assert confirmed.workflow_run_id is not None
+    assert db_session.get(WorkflowRun, confirmed.workflow_run_id) is not None
+    assert confirmed.workflow_run is not None
+    assert confirmed.workflow_run.status == WorkflowRunStatus.RUNNING
+    assert confirmed.workflow_run.progress_metadata == {
+        "run_scope": "workflow",
+        "requested_by": "agent",
+        "agent_workflow_run_request_id": request.id,
+        "agent_task_id": task.id,
+    }
+    assert db_session.scalar(select(func.count()).select_from(WorkflowRun)) == 1
+    assert db_session.get(type(task), task.id).status == AgentTaskStatus.RUNNING
+
+    run = db_session.get(WorkflowRun, confirmed.workflow_run_id)
+    assert run is not None
+    run.status = WorkflowRunStatus.SUCCEEDED
+    run.finished_at = datetime.now(UTC)
+    db_session.commit()
+
+    synchronized_task = get_agent_task_or_raise(db_session, task.id)
+    assert synchronized_task.status == AgentTaskStatus.SUCCEEDED
+    assert get_agent_workflow_run_request(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+    ).status == AgentWorkflowRunRequestStatus.SUCCEEDED
+
+    confirmed_replay = confirm_agent_workflow_run_request(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        request_id=request.id,
+    )
+    assert confirmed_replay.workflow_run_id == confirmed.workflow_run_id
+    assert db_session.scalar(select(func.count()).select_from(WorkflowRun)) == 1
+
+
+def test_agent_workflow_run_request_rejects_stale_revision_and_can_cancel_before_confirmation(db_session) -> None:
+    workspace, workflow = _create_requestable_workspace(db_session)
+    request = create_agent_workflow_run_request(
+        db_session,
+        conversation_id=workspace.conversation.id,
+        expected_workflow_revision=workflow.revision,
+        workflow_id=workflow.id,
+        source_step_id="run-request-step-stale",
+        idempotency_key="run-request-key-stale",
+    )
+    workflow.revision += 1
+    db_session.commit()
+
+    with pytest.raises(ConflictError, match="发生变化"):
+        confirm_agent_workflow_run_request(
+            db_session,
+            product_id=workspace.product.id,
+            conversation_id=workspace.conversation.id,
+            request_id=request.id,
+        )
+    assert db_session.scalar(select(func.count()).select_from(WorkflowRun)) == 0
+
+    cancelled = cancel_agent_workflow_run_request(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        request_id=request.id,
+    )
+    assert cancelled.status == AgentWorkflowRunRequestStatus.CANCELLED
+    assert cancelled.workflow_run_id is None
+    assert get_agent_workflow_run_request(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+    ).status == AgentWorkflowRunRequestStatus.CANCELLED
+
+
+def test_agent_turn_projects_workflow_run_request_as_human_confirmation(db_session) -> None:
+    workspace, workflow = _create_requestable_workspace(db_session)
+    task = create_agent_task(
+        db_session,
+        session_id=workspace.conversation.session_id,
+        title="等待执行确认",
+        goal="等待人工确认后执行工作流",
+        conversation_id=workspace.conversation.id,
+    )
+    projection = reserve_agent_turn(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        input_text="执行当前工作流",
+        input_asset_ids=[],
+        idempotency_key="run-request-turn",
+        task_id=task.id,
+    ).projection
+    projection = bind_harness_turn(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        projection_id=projection.id,
+        harness_turn_id="run-request-harness-turn",
+        status=AgentTurnStatus.RUNNING,
+    )
+    request = create_agent_workflow_run_request(
+        db_session,
+        conversation_id=workspace.conversation.id,
+        expected_workflow_revision=workflow.revision,
+        workflow_id=workflow.id,
+        source_step_id="run-request-tool-step",
+        idempotency_key="run-request-turn-key",
+        task_id=task.id,
+    )
+
+    projected = synchronize_agent_turn_state(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        projection_id=projection.id,
+        state=AgentServiceTurnState(
+            api_version="v1alpha1",
+            run_id=task.harness_run_id,
+            turn_id=projection.harness_turn_id or "",
+            status=AgentTurnStatus.SUCCEEDED,
+            tool_steps=[
+                AgentServiceToolStep(
+                    step_id=request.source_step_id,
+                    kind=AgentToolStepKind.REQUEST_WORKFLOW_RUN,
+                    summary="等待人工确认执行工作流",
+                    status=AgentToolStepStatus.SUCCEEDED,
+                )
+            ],
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+            finished_at=datetime.now(UTC),
+        ),
+    )
+    assert projected.status == AgentTurnStatus.AWAITING_CONFIRMATION
+    assert projected.workflow_run_request_id == request.id
+    assert db_session.get(type(task), task.id).status == AgentTaskStatus.AWAITING_CONFIRMATION
+
+    confirmed = confirm_agent_workflow_run_request(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        request_id=request.id,
+    )
+    assert confirmed.status == AgentWorkflowRunRequestStatus.CONFIRMED
+    assert db_session.get(type(projected), projected.id).status == AgentTurnStatus.SUCCEEDED
+    assert db_session.get(type(task), task.id).status == AgentTaskStatus.RUNNING

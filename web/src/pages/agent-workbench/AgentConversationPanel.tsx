@@ -1,4 +1,4 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, CircleAlert, ListChecks, Loader2, Play, RotateCw, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -12,6 +12,7 @@ import type {
   AgentPageContextSnapshotInput,
   AgentQuestionAnswer,
   AgentTurn,
+  AgentWorkflowRunRequest,
   GalleryAsset,
   WorkflowDraft,
 } from "../../lib/types";
@@ -23,6 +24,7 @@ import { AgentComposer } from "./AgentComposer";
 import { AgentMessageList } from "./AgentMessageList";
 import { AgentQuestionPrompt } from "./AgentQuestionPrompt";
 import { AgentSessionSwitcher } from "./AgentSessionSwitcher";
+import { AgentWorkflowRunRequestCard } from "./AgentWorkflowRunRequestCard";
 import { AgentResumeAfterAnswerError, useAgentConversation } from "./useAgentConversation";
 import { useAgentTurnEvents } from "./useAgentTurnEvents";
 
@@ -38,6 +40,7 @@ interface AgentConversationPanelProps {
   className?: string;
   reviewDraftAvailable?: boolean;
   onReviewDraft?: () => void;
+  onOpenRuns?: () => void;
 }
 
 export function AgentConversationPanel({
@@ -50,10 +53,26 @@ export function AgentConversationPanel({
   className = "",
   reviewDraftAvailable = false,
   onReviewDraft,
+  onOpenRuns,
 }: AgentConversationPanelProps) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const agent = useAgentConversation({ productId, conversation, workflowDraft, taskId, pageContext });
+  const workflowRunRequestQueryKey = [
+    "agent-workflow-run-request",
+    productId,
+    conversation.id,
+  ] as const;
+  const workflowRunRequestQuery = useQuery({
+    queryKey: workflowRunRequestQueryKey,
+    queryFn: () => api.getAgentWorkflowRunRequest(productId, conversation.id),
+    refetchInterval: (query) => {
+      const request = query.state.data;
+      return request?.status === "confirmed" && request.workflow_run_status === "running"
+        ? 1_200
+        : false;
+    },
+  });
   const [composerText, setComposerText] = useState("");
   const [composerAssets, setComposerAssets] = useState<GalleryAsset[]>([]);
   const [assetSelectorOpen, setAssetSelectorOpen] = useState(false);
@@ -61,6 +80,42 @@ export function AgentConversationPanel({
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [answeredQuestionId, setAnsweredQuestionId] = useState<string | null>(null);
   const composerKeyRef = useRef(globalThis.crypto.randomUUID());
+
+  const cacheWorkflowRunRequest = (request: AgentWorkflowRunRequest) => {
+    queryClient.setQueryData(workflowRunRequestQueryKey, request);
+    void Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["agent-turns", productId, conversation.id] }),
+      queryClient.invalidateQueries({ queryKey: ["agent-turn", productId, conversation.id] }),
+      queryClient.invalidateQueries({ queryKey: ["agent-workbench", productId] }),
+      queryClient.invalidateQueries({ queryKey: ["agent-tasks"] }),
+      queryClient.invalidateQueries({ queryKey: ["active-product-workflow-v2", productId] }),
+      queryClient.invalidateQueries({ queryKey: ["v2-workflow-runs", productId, request.workflow_id] }),
+      queryClient.invalidateQueries({ queryKey: ["product-image-library", productId] }),
+      queryClient.invalidateQueries({ queryKey: ["product-image-library-assets", productId] }),
+      queryClient.invalidateQueries({ queryKey: ["product", productId] }),
+      queryClient.invalidateQueries({ queryKey: ["products"] }),
+    ]);
+  };
+  const confirmWorkflowRunRequestMutation = useMutation({
+    mutationFn: () => {
+      const request = workflowRunRequestQuery.data;
+      if (!request) {
+        throw new Error(t("agentWorkbench.workflowRunRequest.notFound"));
+      }
+      return api.confirmAgentWorkflowRunRequest(productId, conversation.id, request.id);
+    },
+    onSuccess: cacheWorkflowRunRequest,
+  });
+  const cancelWorkflowRunRequestMutation = useMutation({
+    mutationFn: () => {
+      const request = workflowRunRequestQuery.data;
+      if (!request) {
+        throw new Error(t("agentWorkbench.workflowRunRequest.notFound"));
+      }
+      return api.cancelAgentWorkflowRunRequest(productId, conversation.id, request.id);
+    },
+    onSuccess: cacheWorkflowRunRequest,
+  });
 
   const events = useAgentTurnEvents({
     productId,
@@ -197,6 +252,9 @@ export function AgentConversationPanel({
     (!activeQuestion ? questionError : null) ??
     events.streamError ??
     previewError;
+  const workflowRunRequestError = errorDetailOrNull(workflowRunRequestQuery.error)
+    ?? errorDetailOrNull(confirmWorkflowRunRequestMutation.error)
+    ?? errorDetailOrNull(cancelWorkflowRunRequestMutation.error);
   const reviewDraftRevisionId = reviewDraftAvailable
     ? workflowDraft.current_revision?.id ?? null
     : null;
@@ -346,6 +404,16 @@ export function AgentConversationPanel({
         onLoadOlder={() => agent.turnsQuery.fetchNextPage()}
         onPreviewAsset={(assetId) => void previewTurnAsset(assetId)}
         onReviewDraft={onReviewDraft}
+      />
+
+      <AgentWorkflowRunRequestCard
+        request={workflowRunRequestQuery.data ?? null}
+        loading={workflowRunRequestQuery.isLoading}
+        busy={confirmWorkflowRunRequestMutation.isPending || cancelWorkflowRunRequestMutation.isPending}
+        error={workflowRunRequestError}
+        onConfirm={() => confirmWorkflowRunRequestMutation.mutate()}
+        onCancel={() => cancelWorkflowRunRequestMutation.mutate()}
+        onOpenRuns={onOpenRuns}
       />
 
       {activeQuestion && agent.activeTurn ? (

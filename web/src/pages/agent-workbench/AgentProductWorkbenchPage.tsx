@@ -589,6 +589,9 @@ export function AgentProductWorkbenchPage({
               setConflictDetected(false);
               setDismissedRevisionId(null);
             }}
+            onOpenRuns={() => {
+              void openSidebarTool("runs");
+            }}
             className="h-full"
           />
         )}

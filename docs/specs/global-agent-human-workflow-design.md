@@ -28,7 +28,7 @@
 - 业务执行用例在 `backend/src/productflow_backend/application/product_workflow/v2_runs.py`，worker 从 `backend/src/productflow_backend/workers.py` 进入执行器。
 - `WorkflowRun` 和 `WorkflowNodeRun` 由 PostgreSQL 持有，Redis/Dramatiq 只承担投递和执行调度。
 
-当前 Agent Turn 仍然以商品工作区或全局素材库作为 scope 边界：商品 `AgentConversation` 绑定 `product_id` 和 `workflow_draft_id`，新建商品和旧归档重建会同时创建一个独立的 `AgentSession` 记录；商品创建事务先返回商品 Conversation，商品创建路径产生的 Session 会在 Session 列表或 Global Agent Dock 访问时懒加载 Global Conversation，独立的新建 Session API 则在创建时直接生成 Global Conversation。Session 已有列表、创建、改名、归档、商品工作区摘要和按 Session 选择商品工作区的 API；工作台和应用级 Global Agent Dock 都可以打开会话列表。`AgentTask`、任务专属 harness run、任务级 Turn 关联和有界页面上下文快照已经落库并接入 Turn 请求，取消任务也有 API 和 Dock 控件。全局图库页面、工作流子图库关联层、Global Agent 素材查询和素材整理 Draft 的发布/确认已经落地；跨商品和跨工作流写操作、Task 摘要、暂停/恢复、独立调度器、页面级 WorkflowRun 投影和执行前 Fresh Observation 仍未交付。`ImageSession` 是连续生图会话，已有自己的会话列表和生图任务，但不承担全局业务 Agent 的职责。
+当前 Agent Turn 仍然以商品工作区或全局素材库作为 scope 边界：商品 `AgentConversation` 绑定 `product_id` 和 `workflow_draft_id`。新建商品时，同一事务会创建一个 `AgentSession`、一个商品工作区 Conversation 和一个 sibling Global Conversation；商品创建对话负责收集商品事实、确认输入和生成 WorkflowDraft，全局对话负责后续跨页面操作。迁移窗口内的旧 Session 仍由 Session 列表访问路径懒加载 Global Conversation。Session 已有列表、创建、改名、归档、商品工作区摘要和按 Session 选择商品工作区的 API；工作台和应用级 Global Agent Dock 都可以打开会话列表。`AgentTask`、任务专属 harness run、任务级 Turn 关联和有界页面上下文快照已经落库并接入 Turn 请求，取消任务、监控 Agent 请求创建的 WorkflowRun 也已经接入。全局图库页面、工作流子图库关联层、Global Agent 素材查询和素材整理 Draft 的发布/确认已经落地；跨商品和跨工作流写操作、Task 摘要、暂停/恢复、独立调度器、执行前 Fresh Observation 仍未交付。`ImageSession` 是连续生图会话，已有自己的会话列表和生图任务，但不承担全局业务 Agent 的职责。
 
 ## 3. 产品原则
 
@@ -53,7 +53,7 @@ Workflow 是用户确认后保存的可编辑 DAG。它可以被用户直接运�
 | 对象 | 作用 | 当前状态 |
 |---|---|---|
 | `AgentSession` | 用户和全局 Agent 的长期交流入口，可包含多个任务 | 已实现 Session 元数据、Global/Product Conversation 关联、列表/创建/改名/归档、工作区切换和 Global Agent Dock 控制面板；Session 摘要、跨商品/跨工作流写操作仍未实现 |
-| `AgentTask` | 一个明确的业务目标，可跨页面、跨 Turn、后台运行 | 已实现独立记录、独立 harness run、列表/创建/改名/取消、工作台打开和全局素材整理 Draft 投影；暂停/恢复、Task 摘要、调度额度仍未实现 |
+| `AgentTask` | 一个明确的业务目标，可跨页面、跨 Turn、后台运行 | 已实现独立记录、独立 harness run、列表/创建/改名/取消、工作台打开、全局素材整理 Draft 投影和 Agent 请求 WorkflowRun 的状态同步；暂停/恢复、Task 摘要、调度额度仍未实现 |
 | `AgentTurn` | 一次用户消息、本轮上下文、工具调用和结果投影 | 已关联 Task 和页面上下文快照；同一 Task 的活动 Turn 保持串行 |
 | `AgentRun` | harness 内部一次可恢复的执行运行 | 每个 AgentTask 使用自己的 harness run；未指定 Task 的旧工作区 Turn 继续使用 conversation run |
 | `PageContextSnapshot` | 某次消息发送时的路由、页面对象、选择、过滤器和 revision 摘要 | 已实现 FastAPI/Go 有界合同和持久化；可以挂在显式 Task Turn 或普通商品对话 Turn 上；执行前 Fresh Observation 仍需补齐 |
@@ -97,8 +97,10 @@ Agent 不能通过工具描述或自然语言结果直接写入正式 Workflow�
 ```text
 用户明确授权或确认执行范围
   -> AgentTask 记录目标和范围
+  -> Agent 只创建待确认的 WorkflowRunRequest
+  -> 用户在 Agent 工作台确认
   -> ProductFlow 复用现有 WorkflowRun application use case
-  -> AgentTask 只监控 Run，并把状态投影给用户
+  -> AgentTask 监控 Run，并把状态投影给用户
 ```
 
 Agent 请求执行时不能复制一套工作流执行器，也不能绕过工作流的取消、重试、队列和业务约束。用户可以在工作流页面直接查看或接管这个 Run。
@@ -123,6 +125,21 @@ Session 保存会话标题、摘要、用户偏好和任务索引。它不绑定
 ```
 
 切换 Session 只改变 Agent 对话入口，不取消后台 Task。
+
+### 6.1.1 商品创建时的会话关系
+
+商品创建需要 Agent 参与时，系统使用商品工作区 Conversation 作为 onboarding 对话。它绑定当前商品和 `WorkflowDraft`，负责：
+
+- 读取用户提交的参考图和图片需求；
+- 只追问会影响工作流的缺失事实；
+- 生成待确认的 WorkflowDraft；
+- 在用户确认后进入工作流工作台。
+
+这条创建对话属于一个 `AgentSession`，同一 Session 下还有一个 Global Conversation。两个 Conversation 共享 Session 的归属，但使用各自的 harness run 和对话历史，商品创建的长对话不会把全局图库对话的历史一起塞进模型上下文。
+
+商品创建阶段通常不额外创建 `AgentTask`，因为用户正在进行一个有明确页面反馈的交互式流程。用户之后要求 Agent 在后台执行、整理或检查时，才创建独立 `AgentTask`；Task 关联同一个 Session 和对应的商品 Conversation，并使用自己的 harness run。用户切换 Session 时，商品创建对话、全局对话和后台 Task 的身份都保持不变。
+
+商品创建 Conversation 的终态需要合法的 WorkflowDraft artifact；后台 Task 的固定目标由 Task 记录提供，使用自己的工具和执行结果，不要求每次后台执行都重新提交一份 WorkflowDraft。
 
 ### 6.2 Task 负责一个清晰目标
 
@@ -212,9 +229,10 @@ Session summary
 ### 阶段 3：接入人工作流执行
 
 - Agent 已有只读 `inspect_workflow_runs_v1` 工具，通过内部 API 读取有界 WorkflowRun/WorkflowNodeRun 列表。
-- Agent 请求运行、取消和重试尚未开放；这些操作仍由工作流页面直接触发，并继续复用 `v2_runs.py` 的现有 application use case。
-- 后续开放 Agent 请求运行时，需要记录来源类型和关联 Task 的审计信息，且保持 WorkflowRun 的业务 owner 不变。
-- UI 继续提供直接运行和人工接管；Global Agent Dock 当前提供任务取消，不接管工作流运行按钮。
+- Agent 请求运行已经开放：`request_workflow_run_v1` 只创建带 revision 和幂等键的待确认请求；确认接口复用 `v2_runs.py` 的现有 application use case，并在运行 metadata 中记录 Agent 来源和 Task 关联。
+- 用户确认后，WorkflowRun 仍由 PostgreSQL、队列和原有 worker 负责；工作流页面和 Agent 工作台读取同一条运行记录。工作流页面保留直接运行、取消、重试和运行历史。
+- 全局 Agent Dock 可以取消关联的 Agent Task；如果 Task 已关联 WorkflowRun，取消会进入现有 WorkflowRun 取消流程。Task 列表读取时会同步 WorkflowRun 的终态。
+- Agent 请求重试仍未开放。重试继续由工作流运行面板负责，避免在 Agent 侧重复设计运行重试策略。
 
 ### 阶段 4：完成全局图库与工作流子图库
 
@@ -228,7 +246,7 @@ Session summary
 - 在多个页面挂载同一个全局 Agent 入口，Session 不随路由改变。
 - 通过 Skill registry 暴露商品、工作流、图库和 Draft 能力。
 - 每个有副作用的 Skill 都绑定权限、scope、revision、confirmation policy、idempotency 和验证方式。
-- 全局素材整理 Draft 的跨页面确认已经可用；剩余工作是跨页面后台 Task 的完整恢复、WorkflowRun 监控和受影响对象跳转。
+- 全局素材整理 Draft 的跨页面确认已经可用；工作流执行请求的确认和运行状态投影已经可用；剩余工作是跨页面后台 Task 的完整恢复、Session/Task 摘要、Fresh Observation 和更完整的受影响对象跳转。
 
 ## 9. 验收条件
 
@@ -239,7 +257,7 @@ Session summary
 - 页面选区只作为意图辅助；执行前使用最新后端事实和 revision。
 - Agent 提议的 Workflow、图库和关联变更在确认前不产生副作用。
 - 用户点击执行和 Agent 请求执行最终经过同一个工作流 application use case、队列和 worker。
-- WorkflowRun 状态、节点状态、错误、取消和重试在工作流页面与 Agent Dock 中保持一致。
+- WorkflowRun 状态、节点状态、错误和取消结果在工作流页面与 Agent 工作台保持一致；重试仍由工作流页面提供。
 - 全局图库和多个工作流共享同一个媒体 bytes；解除工作流关联不删除全局资产。
 
 ## 10. 明确排除

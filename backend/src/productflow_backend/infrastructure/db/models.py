@@ -30,6 +30,7 @@ from productflow_backend.domain.enums import (
     AgentTaskStatus,
     AgentToolMutationStatus,
     AgentTurnStatus,
+    AgentWorkflowRunRequestStatus,
     AsyncDispatchStatus,
     ImageSessionAssetKind,
     JobStatus,
@@ -1122,6 +1123,10 @@ class AgentTask(Base, TimestampMixin):
         back_populates="task",
         order_by="AgentTurnProjection.created_at",
     )
+    workflow_run_requests: Mapped[list[AgentWorkflowRunRequest]] = relationship(
+        back_populates="task",
+        order_by="AgentWorkflowRunRequest.created_at.desc(), AgentWorkflowRunRequest.id.desc()",
+    )
 
 
 class AgentPageContextSnapshot(Base):
@@ -1260,6 +1265,11 @@ class AgentConversation(Base, TimestampMixin):
         back_populates="conversation",
         cascade="all, delete-orphan",
     )
+    workflow_run_requests: Mapped[list[AgentWorkflowRunRequest]] = relationship(
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="AgentWorkflowRunRequest.created_at.desc(), AgentWorkflowRunRequest.id.desc()",
+    )
 
 
 class AgentTurnProjection(Base, TimestampMixin):
@@ -1280,6 +1290,10 @@ class AgentTurnProjection(Base, TimestampMixin):
         UniqueConstraint(
             "library_organization_draft_revision_id",
             name="uq_agent_turn_projections_library_organization_draft_revision_id",
+        ),
+        UniqueConstraint(
+            "workflow_run_request_id",
+            name="uq_agent_turn_projections_workflow_run_request_id",
         ),
         CheckConstraint("length(request_hash) = 64", name="ck_agent_turn_projections_request_hash"),
         Index(
@@ -1340,6 +1354,15 @@ class AgentTurnProjection(Base, TimestampMixin):
         ),
         nullable=True,
     )
+    workflow_run_request_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "agent_workflow_run_requests.id",
+            ondelete="SET NULL",
+            name="fk_agent_turn_projections_workflow_run_request_id",
+        ),
+        nullable=True,
+    )
     page_context_snapshot_id: Mapped[str | None] = mapped_column(
         String(36),
         ForeignKey(
@@ -1364,6 +1387,11 @@ class AgentTurnProjection(Base, TimestampMixin):
     library_organization_draft_revision: Mapped[LibraryOrganizationDraftRevision | None] = relationship(
         back_populates="agent_turn_projection",
         foreign_keys=[library_organization_draft_revision_id],
+    )
+    workflow_run_request: Mapped[AgentWorkflowRunRequest | None] = relationship(
+        back_populates="turn_projection",
+        foreign_keys="AgentTurnProjection.workflow_run_request_id",
+        uselist=False,
     )
 
 
@@ -1414,6 +1442,93 @@ class AgentToolMutation(Base, TimestampMixin):
 
     conversation: Mapped[AgentConversation] = relationship(back_populates="tool_mutations")
     asset: Mapped[ProductImageAsset | None] = relationship()
+
+
+class AgentWorkflowRunRequest(Base, TimestampMixin):
+    """Agent 请求人工确认后执行一次现有 schema-v2 工作流的记录。"""
+
+    __tablename__ = "agent_workflow_run_requests"
+    __table_args__ = (
+        UniqueConstraint(
+            "conversation_id",
+            "idempotency_key",
+            name="uq_agent_workflow_run_requests_conversation_key",
+        ),
+        CheckConstraint(
+            "expected_workflow_revision > 0",
+            name="ck_agent_workflow_run_requests_positive_revision",
+        ),
+        CheckConstraint(
+            "length(request_hash) = 64",
+            name="ck_agent_workflow_run_requests_request_hash",
+        ),
+        CheckConstraint(
+            "length(source_step_id) > 0",
+            name="ck_agent_workflow_run_requests_source_step_id",
+        ),
+        Index(
+            "ix_agent_workflow_run_requests_conversation_status_updated",
+            "conversation_id",
+            "status",
+            "updated_at",
+            "id",
+        ),
+        Index("ix_agent_workflow_run_requests_task_status_updated", "task_id", "status", "updated_at", "id"),
+        Index("ix_agent_workflow_run_requests_workflow_run_id", "workflow_run_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    conversation_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "agent_conversations.id",
+            ondelete="CASCADE",
+            name="fk_agent_workflow_run_requests_conversation_id",
+        ),
+    )
+    task_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("agent_tasks.id", ondelete="SET NULL", name="fk_agent_workflow_run_requests_task_id"),
+        nullable=True,
+    )
+    product_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("products.id", ondelete="CASCADE", name="fk_agent_workflow_run_requests_product_id"),
+    )
+    workflow_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("product_workflows.id", ondelete="CASCADE", name="fk_agent_workflow_run_requests_workflow_id"),
+    )
+    expected_workflow_revision: Mapped[int] = mapped_column(Integer)
+    idempotency_key: Mapped[str] = mapped_column(String(200))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    source_step_id: Mapped[str] = mapped_column(String(120))
+    status: Mapped[AgentWorkflowRunRequestStatus] = mapped_column(
+        enum_value_column(AgentWorkflowRunRequestStatus),
+        default=AgentWorkflowRunRequestStatus.AWAITING_CONFIRMATION,
+    )
+    workflow_run_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("workflow_runs.id", ondelete="SET NULL", name="fk_agent_workflow_run_requests_workflow_run_id"),
+        nullable=True,
+    )
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    conversation: Mapped[AgentConversation] = relationship(back_populates="workflow_run_requests")
+    task: Mapped[AgentTask | None] = relationship(
+        back_populates="workflow_run_requests",
+        foreign_keys=[task_id],
+    )
+    product: Mapped[Product] = relationship(foreign_keys=[product_id])
+    workflow: Mapped[ProductWorkflow] = relationship(foreign_keys=[workflow_id])
+    workflow_run: Mapped[WorkflowRun | None] = relationship(foreign_keys=[workflow_run_id])
+    turn_projection: Mapped[AgentTurnProjection | None] = relationship(
+        back_populates="workflow_run_request",
+        foreign_keys="AgentTurnProjection.workflow_run_request_id",
+        uselist=False,
+    )
 
 
 class WorkflowRecipe(Base, TimestampMixin):

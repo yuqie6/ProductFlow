@@ -55,6 +55,8 @@ func productFlowToolStep(tool string) (string, string, bool) {
 		return "read_history", "Read product history", true
 	case createFolderToolName, renameFolderToolName, renameAssetToolName, moveAssetsToolName:
 		return "organize_assets", "Organize product image assets", true
+	case requestWorkflowRunToolName:
+		return "request_workflow_run", "Request workflow execution for human confirmation", true
 	default:
 		return "", "", false
 	}

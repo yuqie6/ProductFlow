@@ -144,6 +144,7 @@ class AgentToolStepKind(StrEnum):
     INSPECT_CONTEXT = "inspect_context"
     READ_HISTORY = "read_history"
     ORGANIZE_ASSETS = "organize_assets"
+    REQUEST_WORKFLOW_RUN = "request_workflow_run"
 
 
 class AgentToolStepStatus(StrEnum):
@@ -162,6 +163,16 @@ class AgentToolMutationStatus(StrEnum):
     APPLIED = "applied"
     FAILED = "failed"
     UNKNOWN = "unknown"
+
+
+class AgentWorkflowRunRequestStatus(StrEnum):
+    """Agent 请求执行工作流的业务状态。"""
+
+    AWAITING_CONFIRMATION = "awaiting_confirmation"
+    CONFIRMED = "confirmed"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class ProductFactStatus(StrEnum):

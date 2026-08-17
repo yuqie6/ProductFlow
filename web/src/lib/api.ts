@@ -9,6 +9,7 @@ import type {
   AgentQuestionAnswer,
   AgentTurn,
   AgentTurnPage,
+  AgentWorkflowRunRequest,
   AgentWorkbenchBootstrap,
   ActiveProductWorkflowV2,
   AppendWorkflowDraftRevisionInput,
@@ -435,6 +436,34 @@ export const api = {
   getAgentTurn(productId: string, conversationId: string, projectionId: string): Promise<AgentTurn> {
     return request(
       `${agentConversationPath(productId, conversationId)}/turns/${encodeURIComponent(projectionId)}`,
+    );
+  },
+  getAgentWorkflowRunRequest(
+    productId: string,
+    conversationId: string,
+  ): Promise<AgentWorkflowRunRequest | null> {
+    return request(
+      `${agentConversationPath(productId, conversationId)}/workflow-run-request`,
+    );
+  },
+  confirmAgentWorkflowRunRequest(
+    productId: string,
+    conversationId: string,
+    requestId: string,
+  ): Promise<AgentWorkflowRunRequest> {
+    return request(
+      `${agentConversationPath(productId, conversationId)}/workflow-run-request/${encodeURIComponent(requestId)}/confirm`,
+      { method: "POST" },
+    );
+  },
+  cancelAgentWorkflowRunRequest(
+    productId: string,
+    conversationId: string,
+    requestId: string,
+  ): Promise<AgentWorkflowRunRequest> {
+    return request(
+      `${agentConversationPath(productId, conversationId)}/workflow-run-request/${encodeURIComponent(requestId)}/cancel`,
+      { method: "POST" },
     );
   },
   cancelAgentTurn(productId: string, conversationId: string, projectionId: string): Promise<AgentTurn> {

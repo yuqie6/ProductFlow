@@ -180,14 +180,16 @@ func (manager *Manager) getEntry(
 		}
 	} else {
 		durableTools = scopedDurableTools(manager.config.ProductFlow, scope)
-		requiredArtifact = &agenttask.RequiredArtifact{
-			Name:                         agenttask.WorkflowDraftToolName,
-			Description:                  "Submit the complete validated ProductFlow workflow draft for user confirmation.",
-			Schema:                       contract.WorkflowDraftSchema,
-			AllowPriorTranscriptArtifact: true,
-			Validate: func(ctx context.Context, value json.RawMessage) error {
-				return manager.config.ProductFlow.ValidateWorkflowDraft(ctx, scope.ConversationID, value)
-			},
+		if scope.TaskID == "" {
+			requiredArtifact = &agenttask.RequiredArtifact{
+				Name:                         agenttask.WorkflowDraftToolName,
+				Description:                  "Submit the complete validated ProductFlow workflow draft for user confirmation.",
+				Schema:                       contract.WorkflowDraftSchema,
+				AllowPriorTranscriptArtifact: true,
+				Validate: func(ctx context.Context, value json.RawMessage) error {
+					return manager.config.ProductFlow.ValidateWorkflowDraft(ctx, scope.ConversationID, value)
+				},
+			}
 		}
 	}
 	runnerConfig := agenttask.Config{

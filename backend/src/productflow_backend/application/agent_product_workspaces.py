@@ -28,7 +28,11 @@ from productflow_backend.application.use_cases import (
     stage_canonical_product_with_assets,
 )
 from productflow_backend.application.workflow_drafts.service import workflow_draft_query
-from productflow_backend.domain.enums import AgentConversationStatus, WorkflowDraftStatus
+from productflow_backend.domain.enums import (
+    AgentConversationScope,
+    AgentConversationStatus,
+    WorkflowDraftStatus,
+)
 from productflow_backend.domain.errors import ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
@@ -327,6 +331,14 @@ def _stage_workspace_records(
     agent_session = new_agent_session(title=product.name)
     session.add(agent_session)
     session.flush()
+    session.add(
+        AgentConversation(
+            id=new_id(),
+            scope_type=AgentConversationScope.GLOBAL,
+            session_id=agent_session.id,
+            harness_run_id=new_id(),
+        )
+    )
     conversation = AgentConversation(
         id=conversation_id,
         session_id=agent_session.id,

@@ -11,7 +11,13 @@ from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.agent_sessions import get_agent_session_or_raise
 from productflow_backend.application.time import now_utc
-from productflow_backend.domain.enums import AgentConversationStatus, AgentTaskStatus, AgentTurnStatus
+from productflow_backend.domain.enums import (
+    AgentConversationStatus,
+    AgentTaskStatus,
+    AgentTurnStatus,
+    AgentWorkflowRunRequestStatus,
+    WorkflowRunStatus,
+)
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
@@ -19,6 +25,7 @@ from productflow_backend.infrastructure.db.models import (
     AgentSession,
     AgentTask,
     AgentTurnProjection,
+    AgentWorkflowRunRequest,
     new_id,
 )
 
@@ -108,11 +115,17 @@ def get_agent_task_or_raise(session: Session, task_id: str) -> AgentTask:
         .options(
             selectinload(AgentTask.session),
             selectinload(AgentTask.conversation),
+            selectinload(AgentTask.workflow_run_requests).selectinload(
+                AgentWorkflowRunRequest.workflow_run,
+            ),
         )
         .where(AgentTask.id == task_id)
     )
     if task is None:
         raise NotFoundError("Agent Task 不存在")
+    if _synchronize_task_workflow_run(task):
+        session.commit()
+        return get_agent_task_or_raise(session, task_id)
     return task
 
 
@@ -130,6 +143,9 @@ def list_agent_tasks(
     statement = select(AgentTask).options(
         selectinload(AgentTask.session),
         selectinload(AgentTask.conversation),
+        selectinload(AgentTask.workflow_run_requests).selectinload(
+            AgentWorkflowRunRequest.workflow_run,
+        ),
     )
     if session_id is not None:
         statement = statement.where(AgentTask.session_id == session_id)
@@ -140,6 +156,11 @@ def list_agent_tasks(
             statement.order_by(AgentTask.updated_at.desc(), AgentTask.id.desc()).limit(limit)
         ).all()
     )
+    changed = False
+    for task in rows:
+        changed = _synchronize_task_workflow_run(task) or changed
+    if changed:
+        session.commit()
     return AgentTaskPage(items=rows)
 
 
@@ -340,6 +361,77 @@ def update_agent_task_from_turn(
         task.failure_reason = error_text
         task.finished_at = finished_at or now
     return task
+
+
+def _synchronize_task_workflow_run(task: AgentTask) -> bool:
+    request = task.workflow_run_requests[0] if task.workflow_run_requests else None
+    run = request.workflow_run if request is not None else None
+    if request is None or run is None:
+        return False
+
+    finished_at = run.finished_at or now_utc()
+    if run.status == WorkflowRunStatus.RUNNING:
+        changed = (
+            request.status != AgentWorkflowRunRequestStatus.CONFIRMED
+            or task.status != AgentTaskStatus.RUNNING
+            or task.waiting_reason != "workflow_run_running"
+        )
+        request.status = AgentWorkflowRunRequestStatus.CONFIRMED
+        task.status = AgentTaskStatus.RUNNING
+        task.waiting_reason = "workflow_run_running"
+        task.failure_reason = None
+        task.started_at = task.started_at or run.started_at
+        task.finished_at = None
+        task.canceled_at = None
+    elif run.status == WorkflowRunStatus.SUCCEEDED:
+        changed = (
+            request.status != AgentWorkflowRunRequestStatus.SUCCEEDED
+            or task.status != AgentTaskStatus.SUCCEEDED
+            or task.finished_at != finished_at
+        )
+        request.status = AgentWorkflowRunRequestStatus.SUCCEEDED
+        request.failure_reason = None
+        request.finished_at = finished_at
+        task.status = AgentTaskStatus.SUCCEEDED
+        task.waiting_reason = None
+        task.failure_reason = None
+        task.finished_at = finished_at
+    elif run.status == WorkflowRunStatus.FAILED:
+        changed = (
+            request.status != AgentWorkflowRunRequestStatus.FAILED
+            or request.failure_reason != run.failure_reason
+            or task.status != AgentTaskStatus.FAILED
+        )
+        request.status = AgentWorkflowRunRequestStatus.FAILED
+        request.failure_reason = run.failure_reason
+        request.finished_at = finished_at
+        task.status = AgentTaskStatus.FAILED
+        task.waiting_reason = None
+        task.failure_reason = run.failure_reason
+        task.finished_at = finished_at
+    elif run.status == WorkflowRunStatus.CANCELLED:
+        failure_reason = run.failure_reason or "工作流运行已取消"
+        changed = (
+            request.status != AgentWorkflowRunRequestStatus.CANCELLED
+            or request.failure_reason != failure_reason
+            or task.status != AgentTaskStatus.CANCELED
+        )
+        request.status = AgentWorkflowRunRequestStatus.CANCELLED
+        request.failure_reason = failure_reason
+        request.finished_at = finished_at
+        task.status = AgentTaskStatus.CANCELED
+        task.waiting_reason = None
+        task.failure_reason = failure_reason
+        task.finished_at = finished_at
+        task.canceled_at = finished_at
+    else:
+        return False
+
+    if changed:
+        now = now_utc()
+        request.updated_at = now
+        task.updated_at = now
+    return changed
 
 
 def _get_task_for_update(session: Session, task_id: str) -> AgentTask:
