@@ -135,7 +135,9 @@ Session 保存会话标题、摘要、用户偏好和任务索引。它不绑定
 - 生成待确认的 WorkflowDraft；
 - 在用户确认后进入工作流工作台。
 
-这条创建对话属于一个 `AgentSession`，同一 Session 下还有一个 Global Conversation。用户从全局 Dock 的“创建商品”入口发起时，入口把当前 Session ID 带入 `/products/new`，商品创建对话加入原 Session；用户直接打开 `/products/new` 时没有指定 Session，系统为本次商品创建新建一个 Session。同一个 Session 创建多个商品时复用同一个 Global Conversation，不重复创建全局入口。两个 Conversation 共享 Session 的归属，但使用各自的 harness run 和对话历史，商品创建的长对话不会把全局图库对话的历史一起塞进模型上下文。
+这条创建对话属于一个 `AgentSession`，同一 Session 下还有一个 Global Conversation。用户从全局 Dock 的“创建商品”入口进入时，入口把当前 Session ID 带入 `/products/new`；用户在全局 Agent 中明确说“创建一个商品”时，Agent 通过 `create_product_workspace_v1` 建立同样的商品草稿工作区，并返回创建页入口。商品创建对话加入原 Session；用户直接打开 `/products/new` 时没有指定 Session，系统为本次商品创建新建一个 Session。同一个 Session 创建多个商品时复用同一个 Global Conversation，不重复创建全局入口。两个 Conversation 共享 Session 的归属，但使用各自的 harness run 和对话历史，商品创建的长对话不会把全局图库对话的历史一起塞进模型上下文。
+
+Global Agent Dock 的 Session 列表保留 Global Conversation 作为会话入口，并展开同一 Session 下的商品工作区行。用户点击商品行进入对应商品路由；空的 `WorkflowDraft` 会继续重定向到商品创建表单，已完成 intake 的商品进入工作台。这个入口只切换页面，不改变 Session、Conversation 或 Task 的归属。
 
 商品创建阶段通常不额外创建 `AgentTask`，因为用户正在进行一个有明确页面反馈的交互式流程。用户之后要求 Agent 在后台执行、整理或检查时，才创建独立 `AgentTask`；Task 关联同一个 Session 和对应的商品 Conversation，并使用自己的 harness run。用户切换 Session 时，商品创建对话、全局对话和后台 Task 的身份都保持不变。
 
@@ -215,7 +217,7 @@ Session summary
 - 已提供 Session 列表/创建/改名/归档、商品工作区摘要和当前工作台切换入口；切换通过 Session 关联的商品工作区重新读取 bootstrap。
 - 当前工作台入口采用可搜索的会话面板，按进行中/已归档分组，显示会话关联的商品工作区；会话管理动作与商品工作流的编辑、审阅和人工运行入口保持分离。
 - 已新增独立的 `AgentTask`、Task 专属 harness run、Turn 关系、Task 列表/创建/改名/取消 API，以及应用级 Global Agent Dock。
-- Dock 创建带目标的全局 Task 后，会为该 Task 提交一次固定幂等键的首轮 Turn；已有 Turn、非 `queued` Task 或缺少目标时不会重复启动。商品工作区的创建流程仍由页面上的人工输入和确认驱动。
+- Dock 创建带目标的全局 Task 后，会为该 Task 提交一次固定幂等键的首轮 Turn；已有 Turn、非 `queued` Task 或缺少目标时不会重复启动。商品工作区可以由 Dock 入口或全局 Agent 工具建立，参考图上传、图片需求提交和继续 onboarding 仍由创建页面承接。
 - Dock 采用控制面板定位，显示 Session/Task、目标、状态和进入对应商品工作区的入口；现有工作流画布和人工运行控件保持原有 owner。
 - 当前跨商品和跨工作流只开放有界只读商品、有效工作流摘要和明确 workflow ID 的最近运行状态查询；全局图库的整理 Draft 已有独立入口。跨商品和跨工作流写操作仍不在本阶段开放。
 
@@ -246,7 +248,7 @@ Session summary
 
 ### 阶段 5：全局 Agent Dock 和跨域业务能力
 
-- 在多个页面挂载同一个全局 Agent 入口，Session 不随路由改变。
+- 在多个页面挂载同一个全局 Agent 入口，Session 不随路由改变；全局 Agent 可以在当前 Session 下创建商品 onboarding 工作区，返回页面入口后继续使用现有人工创建流程。
 - 通过 Skill registry 暴露商品、工作流、图库和 Draft 能力；全局 Agent 已可分页查询商品，按明确的商品 ID 查询当前有效工作流摘要，并按明确的 workflow ID 比较最近运行状态。
 - 每个有副作用的 Skill 都绑定权限、scope、revision、confirmation policy、idempotency 和验证方式。
 - 全局素材整理 Draft 的跨页面确认已经可用；工作流执行请求的确认和运行状态投影已经可用；剩余工作是跨页面后台 Task 的完整恢复、Session/Task 摘要、Fresh Observation 和更完整的受影响对象跳转。

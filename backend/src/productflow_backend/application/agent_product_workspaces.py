@@ -6,7 +6,10 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.agent_conversations import agent_conversation_query
+from productflow_backend.application.agent_conversations import (
+    agent_conversation_query,
+    get_agent_conversation_or_raise,
+)
 from productflow_backend.application.agent_product_intake import (
     WORKFLOW_INTAKE_SCHEMA_VERSION,
     AgentProductSelectionV1,
@@ -120,6 +123,29 @@ def create_agent_product_draft_workspace(
         conversation=persisted,
         request_hash=request_hash,
         created=True,
+    )
+
+
+def create_agent_product_draft_workspace_from_global_conversation(
+    session: Session,
+    *,
+    global_conversation_id: str,
+    name: str,
+    idempotency_key: str,
+) -> AgentProductWorkspaceCreation:
+    """Start product onboarding from a global conversation without merging run histories."""
+    global_conversation = get_agent_conversation_or_raise(
+        session,
+        product_id=None,
+        conversation_id=global_conversation_id,
+    )
+    if global_conversation.session_id is None:
+        raise ConflictError("全局 Agent conversation 没有关联 Session")
+    return create_agent_product_draft_workspace(
+        session,
+        name=name,
+        idempotency_key=idempotency_key,
+        agent_session_id=global_conversation.session_id,
     )
 
 
@@ -445,6 +471,7 @@ def _load_workspace(
 __all__ = [
     "AgentProductWorkspaceCreation",
     "create_agent_product_draft_workspace",
+    "create_agent_product_draft_workspace_from_global_conversation",
     "create_agent_product_workspace",
     "finalize_agent_product_workspace_intake",
     "get_agent_product_workspace",

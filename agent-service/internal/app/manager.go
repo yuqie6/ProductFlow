@@ -19,7 +19,7 @@ import (
 var canonicalUUID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
 const (
-	productFlowToolContractVersion = 5
+	productFlowToolContractVersion = 6
 	scopeTypeProductWorkflow       = "product_workflow"
 	scopeTypeGlobal                = "global"
 	libraryOrganizationDraftName   = "propose_library_organization_draft"
@@ -169,6 +169,7 @@ func (manager *Manager) getEntry(
 	var optionalArtifact *agenttask.RequiredArtifact
 	if scope.ScopeType == scopeTypeGlobal {
 		readTools = scopedGlobalReadTools(manager.config.ProductFlow, scope)
+		durableTools = scopedGlobalDurableTools(manager.config.ProductFlow, scope)
 		optionalArtifact = &agenttask.RequiredArtifact{
 			Name:                         libraryOrganizationDraftName,
 			Description:                  "Submit a complete validated global media library organization draft for user confirmation.",

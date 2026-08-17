@@ -1092,7 +1092,8 @@ export type AgentToolStepKind =
   | "inspect_context"
   | "read_history"
   | "organize_assets"
-  | "request_workflow_run";
+  | "request_workflow_run"
+  | "create_product";
 
 export type AgentToolStepStatus = "running" | "succeeded" | "failed" | "unknown";
 

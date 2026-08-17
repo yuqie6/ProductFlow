@@ -78,6 +78,74 @@ func TestScopedToolCatalogContainsOnlyCurrentGalleryTools(t *testing.T) {
 	}
 }
 
+func TestGlobalToolCatalogContainsProductWorkspaceCreator(t *testing.T) {
+	tools := scopedGlobalDurableTools(nil, Scope{ConversationID: testConversationID})
+	if len(tools) != 1 || tools[0].Tool.Name() != createProductWorkspaceToolName {
+		t.Fatalf("global durable tools = %#v", tools)
+	}
+	if tools[0].Tool.Effect() != durable.EffectReconcilable {
+		t.Fatalf("global product workspace effect = %q", tools[0].Tool.Effect())
+	}
+}
+
+func TestCreateProductWorkspaceToolUsesGlobalConversationAndIdempotency(t *testing.T) {
+	basePath := "/api/internal/v1/agent-conversations/" + testConversationID + "/product-workspaces"
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer "+testInternalToken {
+			http.Error(writer, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if request.Method != http.MethodPost || request.URL.Path != basePath {
+			t.Fatalf("product workspace request = %s %s", request.Method, request.URL.Path)
+		}
+		if request.Header.Get("Idempotency-Key") != "product-workspace-key" {
+			t.Fatalf("idempotency key = %q", request.Header.Get("Idempotency-Key"))
+		}
+		var body map[string]string
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["name"] != "春季商品" {
+			t.Fatalf("request body = %#v", body)
+		}
+		writeFixtureJSON(writer, map[string]any{
+			"schema_version":          1,
+			"created":                 true,
+			"session_id":              "11111111-1111-4111-8111-111111111111",
+			"global_conversation_id":  testConversationID,
+			"product_conversation_id": "22222222-2222-4222-8222-222222222222",
+			"product_id":              testProductID,
+			"product_name":            "春季商品",
+			"workflow_draft_id":       "33333333-3333-4333-8333-333333333333",
+			"intake_finalized":        false,
+			"navigation_path":         "/products/new?workspace=22222222-2222-4222-8222-222222222222",
+		})
+	}))
+	t.Cleanup(server.Close)
+	client, err := productflow.NewClient(server.URL, testInternalToken, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := &createProductWorkspaceTool{
+		client: client,
+		scope:  Scope{ConversationID: testConversationID, ScopeType: scopeTypeGlobal},
+	}
+	prepared, err := tool.Prepare(context.Background(), json.RawMessage(`{"name":" 春季商品 "}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(prepared) != `{"name":"春季商品"}` {
+		t.Fatalf("prepared = %s", prepared)
+	}
+	result, err := tool.Execute(context.Background(), durable.Invocation{
+		Prepared:       prepared,
+		IdempotencyKey: "product-workspace-key",
+	})
+	if err != nil || !strings.Contains(string(result), "22222222-2222-4222-8222-222222222222") {
+		t.Fatalf("execute result = %s, %v", result, err)
+	}
+}
+
 func TestWorkflowRunReadToolUsesBoundedProductFlowEndpoint(t *testing.T) {
 	basePath := "/api/internal/v1/agent-conversations/" + testConversationID + "/workflow-runs"
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

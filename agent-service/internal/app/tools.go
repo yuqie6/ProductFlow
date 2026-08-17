@@ -283,6 +283,7 @@ const (
 	listGlobalProductsToolName        = "list_products_v1"
 	inspectGlobalProductsToolName     = "inspect_products_v1"
 	inspectGlobalWorkflowRunsToolName = "inspect_global_workflow_runs_v1"
+	createProductWorkspaceToolName    = "create_product_workspace_v1"
 	maxListedGlobalProducts           = 100
 	maxInspectedGlobalProducts        = 20
 	maxInspectedGlobalWorkflows       = 20
@@ -506,6 +507,22 @@ func scopedGlobalReadTools(client *productflow.Client, scope Scope) []agenttask.
 	}
 }
 
+func scopedGlobalDurableTools(client *productflow.Client, scope Scope) []agenttask.DurableTool {
+	return []agenttask.DurableTool{
+		{
+			Description: "Create an interactive product onboarding workspace under the current Agent Session. This creates only a blank product draft and never uploads images, submits intake, generates a workflow, or starts a run.",
+			Parameters: map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"name": map[string]any{"type": "string", "minLength": 1, "maxLength": 255},
+				},
+				"required": []string{"name"},
+			},
+			Tool: &createProductWorkspaceTool{client: client, scope: scope},
+		},
+	}
+}
+
 func scopedDurableTools(client *productflow.Client, scope Scope) []agenttask.DurableTool {
 	return []agenttask.DurableTool{
 		{
@@ -570,6 +587,82 @@ func scopedDurableTools(client *productflow.Client, scope Scope) []agenttask.Dur
 			Tool: &moveAssetsTool{client: client, scope: scope},
 		},
 	}
+}
+
+type createProductWorkspaceTool struct {
+	client *productflow.Client
+	scope  Scope
+}
+
+func (*createProductWorkspaceTool) Name() string                { return createProductWorkspaceToolName }
+func (*createProductWorkspaceTool) Effect() durable.EffectClass { return durable.EffectReconcilable }
+
+func (tool *createProductWorkspaceTool) Prepare(_ context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	var arguments struct {
+		Name string `json:"name"`
+	}
+	if err := decodeStrictObject(raw, &arguments); err != nil {
+		return nil, err
+	}
+	arguments.Name = strings.TrimSpace(arguments.Name)
+	if arguments.Name == "" || utf8.RuneCountInString(arguments.Name) > 255 {
+		return nil, errors.New("a product name of at most 255 characters is required")
+	}
+	return json.Marshal(arguments)
+}
+
+func (tool *createProductWorkspaceTool) Execute(ctx context.Context, invocation durable.Invocation) (json.RawMessage, error) {
+	var prepared struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(invocation.Prepared, &prepared); err != nil {
+		return nil, fmt.Errorf("decode prepared product workspace: %w", err)
+	}
+	result, err := tool.client.CreateAgentProductWorkspace(
+		ctx,
+		tool.scope.ConversationID,
+		invocation.IdempotencyKey,
+		prepared.Name,
+	)
+	encoded, marshalErr := json.Marshal(result)
+	if marshalErr != nil {
+		return nil, marshalErr
+	}
+	return durableExecutionResult(encoded, err, "product workspace create")
+}
+
+func (tool *createProductWorkspaceTool) Reconcile(
+	ctx context.Context,
+	invocation durable.Invocation,
+) (durable.ReconcileResult, error) {
+	var prepared struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(invocation.Prepared, &prepared); err != nil {
+		return durable.ReconcileResult{}, fmt.Errorf("decode prepared product workspace: %w", err)
+	}
+	result, err := tool.client.CreateAgentProductWorkspace(
+		ctx,
+		tool.scope.ConversationID,
+		invocation.IdempotencyKey,
+		prepared.Name,
+	)
+	if err == nil {
+		encoded, marshalErr := json.Marshal(result)
+		if marshalErr != nil {
+			return durable.ReconcileResult{}, marshalErr
+		}
+		return durable.ReconcileResult{State: durable.ReconcileApplied, Result: encoded}, nil
+	}
+	var httpErr *productflow.HTTPError
+	if errors.As(err, &httpErr) && httpErr.StatusCode >= http.StatusBadRequest && httpErr.StatusCode < http.StatusInternalServerError {
+		state := durable.ReconcileNotApplied
+		if httpErr.StatusCode == http.StatusConflict {
+			state = durable.ReconcileConflict
+		}
+		return durable.ReconcileResult{State: state, Detail: err.Error()}, nil
+	}
+	return durable.ReconcileResult{State: durable.ReconcileUnknown, Detail: err.Error()}, nil
 }
 
 type requestWorkflowRunTool struct {

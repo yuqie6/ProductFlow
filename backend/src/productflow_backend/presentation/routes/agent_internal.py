@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, Header, Query, Response
 from sqlalchemy.orm import Session
 
+from productflow_backend.application.agent_product_workspaces import (
+    create_agent_product_draft_workspace_from_global_conversation,
+)
 from productflow_backend.application.agent_tools import (
     AGENT_ASSET_LIST_DEFAULT_LIMIT,
     AGENT_ASSET_LIST_MAX_LIMIT,
@@ -54,6 +59,7 @@ from productflow_backend.application.legacy_archive_rebuilds import (
     list_agent_legacy_archives,
 )
 from productflow_backend.application.legacy_archives import LegacyArchiveKind
+from productflow_backend.domain.errors import ConflictError
 from productflow_backend.presentation.deps import get_session, require_agent_service
 from productflow_backend.presentation.schemas.agent_conversations import (
     AgentAssetListResponse,
@@ -76,6 +82,8 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     AgentGlobalProductResponse,
     AgentLegacyArchiveInspectResponse,
     AgentLegacyArchiveListResponse,
+    AgentProductWorkspaceLaunchRequest,
+    AgentProductWorkspaceLaunchResponse,
     AgentWorkflowDraftValidationRequest,
     AgentWorkflowDraftValidationResponse,
     AgentWorkflowRunListResponse,
@@ -359,6 +367,46 @@ def inspect_agent_global_products_endpoint(
     )
     return InspectAgentProductsResponse(
         items=[AgentGlobalProductResponse.model_validate(item) for item in items]
+    )
+
+
+@router.post(
+    "/{conversation_id}/product-workspaces",
+    response_model=AgentProductWorkspaceLaunchResponse,
+    status_code=201,
+)
+def create_agent_product_workspace_from_global_conversation_endpoint(
+    conversation_id: str,
+    payload: AgentProductWorkspaceLaunchRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
+    session: Session = Depends(get_session),
+) -> AgentProductWorkspaceLaunchResponse:
+    creation = create_agent_product_draft_workspace_from_global_conversation(
+        session,
+        global_conversation_id=conversation_id,
+        name=payload.name,
+        idempotency_key=idempotency_key,
+    )
+    session_id = creation.conversation.session_id
+    workflow_draft_id = creation.conversation.workflow_draft_id
+    if session_id is None or workflow_draft_id is None:
+        raise ConflictError("Agent 商品工作区缺少 Session 或 WorkflowDraft")
+    navigation_path = (
+        "/products/new?workspace="
+        + quote(creation.conversation.id, safe="")
+        + "&agent_session_id="
+        + quote(session_id, safe="")
+    )
+    return AgentProductWorkspaceLaunchResponse(
+        created=creation.created,
+        session_id=session_id,
+        global_conversation_id=conversation_id,
+        product_conversation_id=creation.conversation.id,
+        product_id=creation.product.id,
+        product_name=creation.product.name,
+        workflow_draft_id=workflow_draft_id,
+        intake_finalized=creation.workflow_draft.intake_json is not None,
+        navigation_path=navigation_path,
     )
 
 

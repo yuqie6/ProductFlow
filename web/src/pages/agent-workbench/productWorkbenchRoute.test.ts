@@ -62,8 +62,8 @@ describe("productWorkbenchRouteTarget", () => {
     } satisfies ProductWorkbenchRouteInput;
 
     expect(productWorkbenchRouteTarget(bootstrap)).toBe("agent_intake");
-    expect(agentProductIntakeResumePath("conversation/1")).toBe(
-      "/products/new?workspace=conversation%2F1",
+    expect(agentProductIntakeResumePath("conversation/1", "session/1")).toBe(
+      "/products/new?workspace=conversation%2F1&agent_session_id=session%2F1",
     );
   });
 });

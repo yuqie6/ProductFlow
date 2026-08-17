@@ -192,6 +192,19 @@ type WorkflowRunRequest struct {
 	UpdatedAt                string  `json:"updated_at"`
 }
 
+type ProductWorkspaceLaunch struct {
+	SchemaVersion         int    `json:"schema_version"`
+	Created               bool   `json:"created"`
+	SessionID             string `json:"session_id"`
+	GlobalConversationID  string `json:"global_conversation_id"`
+	ProductConversationID string `json:"product_conversation_id"`
+	ProductID             string `json:"product_id"`
+	ProductName           string `json:"product_name"`
+	WorkflowDraftID       string `json:"workflow_draft_id"`
+	IntakeFinalized       bool   `json:"intake_finalized"`
+	NavigationPath        string `json:"navigation_path"`
+}
+
 type HTTPError struct {
 	StatusCode int
 	Code       string
@@ -492,6 +505,22 @@ func (client *Client) InspectGlobalProducts(
 		"",
 	)
 	return result.Items, err
+}
+
+func (client *Client) CreateAgentProductWorkspace(
+	ctx context.Context,
+	globalConversationID, idempotencyKey, name string,
+) (ProductWorkspaceLaunch, error) {
+	var result ProductWorkspaceLaunch
+	err := client.json(
+		ctx,
+		http.MethodPost,
+		client.conversationPath(globalConversationID)+"/product-workspaces",
+		map[string]any{"name": name},
+		&result,
+		idempotencyKey,
+	)
+	return result, err
 }
 
 func (client *Client) InspectGlobalWorkflowRuns(

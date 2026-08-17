@@ -101,6 +101,7 @@ export function GlobalAgentDock() {
     queryKey: ["agent-sessions", true],
     queryFn: () => api.listAgentSessions(true),
     staleTime: 15_000,
+    refetchInterval: open ? 2_000 : false,
   });
   const tasksQuery = useQuery({
     queryKey: ["agent-tasks", null, true],
@@ -555,6 +556,13 @@ export function GlobalAgentDock() {
                           openWorkspace({ productId: product.product_id, conversationId: product.conversation_id }, session.id);
                         }
                       }}
+                      onOpenWorkspace={(session, conversation) => {
+                        if (!conversation.product_id) return;
+                        openWorkspace(
+                          { productId: conversation.product_id, conversationId: conversation.conversation_id },
+                          session.id,
+                        );
+                      }}
                       onArchive={setArchiveTarget}
                       emptyLabel={normalizedSearch ? t("globalAgent.noMatch") : t("globalAgent.noSessions")}
                     />
@@ -726,6 +734,7 @@ function SessionList({
   sessions,
   currentSessionId,
   onOpen,
+  onOpenWorkspace,
   onArchive,
   emptyLabel,
 }: {
@@ -733,6 +742,7 @@ function SessionList({
   sessions: AgentSession[];
   currentSessionId: string | null;
   onOpen: (session: AgentSession) => void;
+  onOpenWorkspace: (session: AgentSession, conversation: AgentSession["conversations"][number]) => void;
   onArchive: (session: AgentSession) => void;
   emptyLabel: string;
 }) {
@@ -747,41 +757,59 @@ function SessionList({
     <div className="space-y-1">
       {sessions.map((session) => {
         const conversation = preferredConversation(session);
+        const productWorkspaces = session.conversations.filter(
+          (item) => item.scope_type === "product_workflow" && item.product_id,
+        );
         const selected = currentSessionId === session.id;
         return (
-          <div
-            key={session.id}
-            className={`group flex min-w-0 items-start gap-2 rounded-md px-2.5 py-2.5 transition-colors ${selected ? "bg-accent-soft" : "hover:bg-surface-subtle"}`}
-          >
-            <button
-              type="button"
-              disabled={!conversation}
-              onClick={() => onOpen(session)}
-              className="flex min-w-0 flex-1 items-start gap-2.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:cursor-default"
-            >
-              <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${selected ? "bg-accent" : session.status === "active" ? "bg-state-success" : "bg-text-muted/50"}`} aria-hidden="true" />
-              <span className="min-w-0 flex-1">
-                <span className="flex min-w-0 items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate text-sm font-semibold text-text-primary" title={session.title}>
-                    {session.title}
-                  </span>
-                  {session.status === "archived" ? <span className="shrink-0 text-[10px] text-text-muted">{t("globalAgent.archived")}</span> : null}
-                </span>
-                <span className="mt-0.5 block truncate text-xs text-text-secondary">
-                  {conversation?.product_name ?? t("globalAgent.noWorkspace")}
-                </span>
-              </span>
-            </button>
-            {session.status === "active" ? (
+          <div key={session.id} className={`rounded-md px-2.5 py-2.5 transition-colors ${selected ? "bg-accent-soft" : "hover:bg-surface-subtle"}`}>
+            <div className="group flex min-w-0 items-start gap-2">
               <button
                 type="button"
-                onClick={() => onArchive(session)}
-                aria-label={t("globalAgent.archiveSession")}
-                title={t("globalAgent.archiveSession")}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted opacity-70 transition-colors hover:bg-state-error/10 hover:text-state-error focus:outline-none focus-visible:ring-2 focus-visible:ring-state-error/50 sm:opacity-0 sm:group-hover:opacity-100"
+                disabled={!conversation}
+                onClick={() => onOpen(session)}
+                className="flex min-w-0 flex-1 items-start gap-2.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:cursor-default"
               >
-                <Archive size={14} aria-hidden="true" />
+                <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${selected ? "bg-accent" : session.status === "active" ? "bg-state-success" : "bg-text-muted/50"}`} aria-hidden="true" />
+                <span className="min-w-0 flex-1">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate text-sm font-semibold text-text-primary" title={session.title}>
+                      {session.title}
+                    </span>
+                    {session.status === "archived" ? <span className="shrink-0 text-[10px] text-text-muted">{t("globalAgent.archived")}</span> : null}
+                  </span>
+                  <span className="mt-0.5 block truncate text-xs text-text-secondary">
+                    {conversation?.product_name ?? t("globalAgent.noWorkspace")}
+                  </span>
+                </span>
               </button>
+              {session.status === "active" ? (
+                <button
+                  type="button"
+                  onClick={() => onArchive(session)}
+                  aria-label={t("globalAgent.archiveSession")}
+                  title={t("globalAgent.archiveSession")}
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted opacity-70 transition-colors hover:bg-state-error/10 hover:text-state-error focus:outline-none focus-visible:ring-2 focus-visible:ring-state-error/50 sm:opacity-0 sm:group-hover:opacity-100"
+                >
+                  <Archive size={14} aria-hidden="true" />
+                </button>
+              ) : null}
+            </div>
+            {productWorkspaces.length ? (
+              <div className="mt-1 space-y-0.5 border-l border-border-l2 pl-4">
+                {productWorkspaces.map((workspace) => (
+                  <button
+                    key={workspace.conversation_id}
+                    type="button"
+                    onClick={() => onOpenWorkspace(session, workspace)}
+                    className="group/workspace flex min-w-0 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-text-secondary transition-colors hover:bg-surface-raised hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+                  >
+                    <PackagePlus size={13} className="shrink-0 text-accent" aria-hidden="true" />
+                    <span className="min-w-0 flex-1 truncate" title={workspace.product_name}>{workspace.product_name}</span>
+                    <ChevronRight size={13} className="shrink-0 text-text-muted opacity-0 transition-opacity group-hover/workspace:opacity-100" aria-hidden="true" />
+                  </button>
+                ))}
+              </div>
             ) : null}
           </div>
         );

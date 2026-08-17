@@ -17,6 +17,7 @@ from productflow_backend.application.agent_product_intake import (
 )
 from productflow_backend.application.agent_product_workspaces import (
     create_agent_product_draft_workspace,
+    create_agent_product_draft_workspace_from_global_conversation,
     create_agent_product_workspace,
     finalize_agent_product_workspace_intake,
     get_agent_product_workspace,
@@ -266,6 +267,82 @@ def test_agent_product_workspace_can_join_existing_session_without_duplicate_glo
             idempotency_key="session-draft-a",
             agent_session_id=other_session.id,
         )
+
+
+def test_global_conversation_launches_product_workspace_in_same_session(db_session) -> None:
+    agent_session = create_agent_session(db_session, title="全局创建入口")
+    global_conversation = db_session.scalar(
+        select(AgentConversation).where(
+            AgentConversation.session_id == agent_session.id,
+            AgentConversation.scope_type == AgentConversationScope.GLOBAL,
+        )
+    )
+    assert global_conversation is not None
+
+    first = create_agent_product_draft_workspace_from_global_conversation(
+        db_session,
+        global_conversation_id=global_conversation.id,
+        name="全局发起的商品",
+        idempotency_key="global-product-create-1",
+    )
+    replay = create_agent_product_draft_workspace_from_global_conversation(
+        db_session,
+        global_conversation_id=global_conversation.id,
+        name="全局发起的商品",
+        idempotency_key="global-product-create-1",
+    )
+
+    assert first.created is True
+    assert replay.created is False
+    assert first.conversation.session_id == agent_session.id
+    assert first.conversation.scope_type == AgentConversationScope.PRODUCT_WORKFLOW
+    assert replay.conversation.id == first.conversation.id
+    assert replay.conversation.harness_run_id != global_conversation.harness_run_id
+
+
+def test_global_agent_product_workspace_launch_endpoint_is_scoped_and_idempotent(
+    configured_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.config import get_settings
+    from productflow_backend.infrastructure.db.session import get_session_factory
+    from productflow_backend.presentation.api import create_app
+
+    session = get_session_factory()()
+    try:
+        agent_session = create_agent_session(session, title="全局 API 创建入口")
+        global_conversation = next(
+            conversation
+            for conversation in agent_session.conversations
+            if conversation.scope_type == AgentConversationScope.GLOBAL
+        )
+    finally:
+        session.close()
+
+    internal_token = "agent-internal-token-with-at-least-32-characters"
+    monkeypatch.setenv("AGENT_SERVICE_INTERNAL_TOKEN", internal_token)
+    get_settings.cache_clear()
+    client = TestClient(create_app())
+    path = f"/api/internal/v1/agent-conversations/{global_conversation.id}/product-workspaces"
+    headers = {
+        "Authorization": f"Bearer {internal_token}",
+        "Idempotency-Key": "global-product-api-create-1",
+    }
+
+    first = client.post(path, headers=headers, json={"name": "全局 API 商品"})
+    assert first.status_code == 201, first.text
+    payload = first.json()
+    assert payload["created"] is True
+    assert payload["session_id"] == agent_session.id
+    assert payload["global_conversation_id"] == global_conversation.id
+    assert payload["product_name"] == "全局 API 商品"
+    assert payload["navigation_path"].startswith("/products/new?workspace=")
+    assert f"agent_session_id={agent_session.id}" in payload["navigation_path"]
+
+    replay = client.post(path, headers=headers, json={"name": "全局 API 商品"})
+    assert replay.status_code == 201, replay.text
+    assert replay.json()["created"] is False
+    assert replay.json()["product_conversation_id"] == payload["product_conversation_id"]
 
 
 def test_agent_product_workspace_intake_finalization_is_atomic_idempotent_and_coverless(

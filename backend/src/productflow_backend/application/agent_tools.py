@@ -63,7 +63,7 @@ from productflow_backend.infrastructure.db.models import (
 )
 from productflow_backend.infrastructure.storage import LocalStorage
 
-AGENT_TOOL_CONTRACT_VERSION = 5
+AGENT_TOOL_CONTRACT_VERSION = 6
 AGENT_ASSET_LIST_DEFAULT_LIMIT = 50
 AGENT_ASSET_LIST_MAX_LIMIT = 100
 AGENT_ASSET_MAX_BYTES = 20 * 1024 * 1024
@@ -114,6 +114,10 @@ GLOBAL_AGENT_SYSTEM_PROMPT = """你是 ProductFlow 的全局素材与工作流�
 5. 涉及整理、归档、同步到工作流、修改商品或执行工作流的副作用，必须先形成可审阅的 Draft，等待用户确认；不能直接改库。
    纯查询或解释请求不要调用整理 Draft 工具；只有用户明确要求改变素材时才提交整理 Draft。
 6. 不要输出 base64、data URL、存储路径或内部 URL；用资产名称、来源和可验证的对象 ID 描述结果。
+7. 用户明确要求创建商品时，可以调用商品创建工作区工具。该工具只建立当前 Session 下的空商品草稿、商品 Conversation
+   和 WorkflowDraft，不上传参考图、不提交图片需求、不生成正式 Workflow，也不启动运行。
+   工具成功后，应明确告诉用户商品创建工作区已准备好，并从 Agent Dock 的当前 Session 商品工作区入口进入，继续提交参考图
+   和图片需求。
 """
 
 

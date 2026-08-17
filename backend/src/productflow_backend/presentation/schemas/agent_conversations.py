@@ -132,6 +132,23 @@ class AgentGlobalProductListResponse(BaseModel):
     next_cursor: str | None = None
 
 
+class AgentProductWorkspaceLaunchRequest(StrictAgentRequest):
+    name: str = Field(min_length=1, max_length=255)
+
+
+class AgentProductWorkspaceLaunchResponse(BaseModel):
+    schema_version: Literal[1] = 1
+    created: bool
+    session_id: str
+    global_conversation_id: str
+    product_conversation_id: str
+    product_id: str
+    product_name: str
+    workflow_draft_id: str
+    intake_finalized: bool
+    navigation_path: str
+
+
 class InspectAgentProductsRequest(StrictAgentRequest):
     product_ids: list[str] = Field(min_length=1, max_length=AGENT_GLOBAL_PRODUCT_INSPECT_MAX)
 

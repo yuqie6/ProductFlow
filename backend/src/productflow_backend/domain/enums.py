@@ -145,6 +145,7 @@ class AgentToolStepKind(StrEnum):
     READ_HISTORY = "read_history"
     ORGANIZE_ASSETS = "organize_assets"
     REQUEST_WORKFLOW_RUN = "request_workflow_run"
+    CREATE_PRODUCT = "create_product"
 
 
 class AgentToolStepStatus(StrEnum):

@@ -14,6 +14,8 @@ const AGENT_TOOL_STEP_KINDS = new Set<AgentToolStepKind>([
   "inspect_context",
   "read_history",
   "organize_assets",
+  "request_workflow_run",
+  "create_product",
 ]);
 const AGENT_TOOL_STEP_STATUSES = new Set<AgentToolStepStatus>([
   "running",
