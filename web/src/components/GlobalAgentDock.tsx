@@ -2,11 +2,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
   Bot,
+  Check,
   ChevronRight,
   ClipboardList,
   Loader2,
   MessagesSquare,
   PackagePlus,
+  Pencil,
   Plus,
   Search,
   X,
@@ -96,6 +98,8 @@ export function GlobalAgentDock() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [selectedTaskSnapshot, setSelectedTaskSnapshot] = useState<AgentTask | null>(null);
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
+  const [renamingTaskId, setRenamingTaskId] = useState<string | null>(null);
 
   const sessionsQuery = useQuery({
     queryKey: ["agent-sessions", true],
@@ -173,9 +177,19 @@ export function GlobalAgentDock() {
     [sessions],
   );
   const currentSessionId = new URLSearchParams(location.search).get("agent_session_id");
+  const routeSessionIdRef = useRef(currentSessionId);
   const activeSessionId = selectedSessionId ?? currentSessionId ?? workspaceSessions[0]?.id ?? sessions[0]?.id ?? null;
   const activeSession = sessions.find((session) => session.id === activeSessionId) ?? null;
   const globalConversation = activeSession?.conversations.find((conversation) => conversation.scope_type === "global") ?? null;
+  const globalTasksForSession = useMemo(
+    () => tasks.filter((task) => {
+      if (task.session_id !== activeSessionId || !task.conversation_id) {
+        return false;
+      }
+      return conversationById.get(task.conversation_id)?.scopeType === "global";
+    }),
+    [activeSessionId, conversationById, tasks],
+  );
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? (
     selectedTaskSnapshot?.id === selectedTaskId ? selectedTaskSnapshot : null
   );
@@ -229,10 +243,16 @@ export function GlobalAgentDock() {
   }, [taskConversationId, taskSessionId, workspaceSessions]);
 
   useEffect(() => {
-    if (!selectedSessionId && activeSessionId) {
-      setSelectedSessionId(activeSessionId);
+    if (routeSessionIdRef.current === currentSessionId) {
+      return;
     }
-  }, [activeSessionId, selectedSessionId]);
+    routeSessionIdRef.current = currentSessionId;
+    if (currentSessionId) {
+      setSelectedSessionId(currentSessionId);
+      setSelectedTaskId(null);
+      setSelectedTaskSnapshot(null);
+    }
+  }, [currentSessionId]);
 
   const invalidateAgentLists = () => {
     void queryClient.invalidateQueries({ queryKey: ["agent-sessions", true] });
@@ -286,6 +306,24 @@ export function GlobalAgentDock() {
       setArchiveTarget(null);
       invalidateAgentLists();
     },
+  });
+  const renameSessionMutation = useMutation({
+    mutationFn: ({ sessionId, title }: { sessionId: string; title: string }) =>
+      api.renameAgentSession(sessionId, title),
+    onSuccess: () => {
+      setRenamingSessionId(null);
+      invalidateAgentLists();
+    },
+    onError: () => setRenamingSessionId(null),
+  });
+  const renameTaskMutation = useMutation({
+    mutationFn: ({ taskId, title }: { taskId: string; title: string }) =>
+      api.renameAgentTask(taskId, title),
+    onSuccess: () => {
+      setRenamingTaskId(null);
+      invalidateAgentLists();
+    },
+    onError: () => setRenamingTaskId(null),
   });
   const cancelTaskMutation = useMutation({
     mutationFn: (taskId: string) => api.cancelAgentTask(taskId),
@@ -345,7 +383,8 @@ export function GlobalAgentDock() {
   };
 
   const queryError = sessionsQuery.error ?? tasksQuery.error;
-  const mutationError = createTaskMutation.error ?? createSessionMutation.error ?? archiveMutation.error ?? cancelTaskMutation.error;
+  const mutationError = createTaskMutation.error ?? createSessionMutation.error ?? archiveMutation.error
+    ?? renameSessionMutation.error ?? renameTaskMutation.error ?? cancelTaskMutation.error;
   const errorText = queryError || mutationError
     ? errorDetail(queryError ?? mutationError, t("globalAgent.requestFailed"))
     : null;
@@ -481,9 +520,30 @@ export function GlobalAgentDock() {
                       {sessions.map((session) => <option key={session.id} value={session.id}>{session.title}</option>)}
                     </select>
                   </div>
+                  {globalTasksForSession.length ? (
+                    <div className="shrink-0 border-b border-border-l1 bg-surface-subtle/30 px-3 py-2">
+                      <label className="sr-only" htmlFor="global-agent-task-select">{t("globalAgent.taskScope")}</label>
+                      <select
+                        id="global-agent-task-select"
+                        value={selectedTaskId ?? ""}
+                        onChange={(event) => {
+                          const taskId = event.target.value || null;
+                          setSelectedTaskId(taskId);
+                          setSelectedTaskSnapshot(taskId ? tasks.find((task) => task.id === taskId) ?? null : null);
+                        }}
+                        className="h-8 w-full rounded-md border border-border-l2 bg-surface-raised px-2.5 text-[11px] text-text-primary outline-none focus:border-accent focus:ring-2 focus:ring-accent/15"
+                      >
+                        <option value="">{t("globalAgent.allSessionMessages")}</option>
+                        {globalTasksForSession.map((task) => (
+                          <option key={task.id} value={task.id}>{task.title} · {t(TASK_STATUS_LABEL_KEYS[task.status])}</option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : null}
                   <GlobalAgentConversationPanel
                     conversationId={globalConversation?.conversation_id ?? null}
                     sessionTitle={activeSession?.title ?? t("globalAgent.title")}
+                    taskTitle={selectedTask?.title ?? null}
                     taskId={selectedTaskId}
                     taskGoal={selectedTask?.goal ?? null}
                     taskStatus={selectedTask?.status ?? null}
@@ -536,6 +596,12 @@ export function GlobalAgentDock() {
                         }
                       }}
                       onCancel={(task) => cancelTaskMutation.mutate(task.id)}
+                      onRename={(taskId, title) => {
+                        setRenamingTaskId(taskId);
+                        renameTaskMutation.mutate({ taskId, title });
+                      }}
+                      renamingTaskId={renameTaskMutation.isPending ? renameTaskMutation.variables?.taskId ?? renamingTaskId : renamingTaskId}
+                      renameError={renameTaskMutation.error ? errorDetail(renameTaskMutation.error, t("globalAgent.requestFailed")) : null}
                       cancelingTaskId={cancelTaskMutation.isPending ? cancelTaskMutation.variables : null}
                       emptyLabel={normalizedSearch ? t("globalAgent.noMatch") : t("globalAgent.noTasks")}
                       statusLabel={(status) => t(TASK_STATUS_LABEL_KEYS[status])}
@@ -563,6 +629,12 @@ export function GlobalAgentDock() {
                           session.id,
                         );
                       }}
+                      onRename={(sessionId, title) => {
+                        setRenamingSessionId(sessionId);
+                        renameSessionMutation.mutate({ sessionId, title });
+                      }}
+                      renamingSessionId={renameSessionMutation.isPending ? renameSessionMutation.variables?.sessionId ?? renamingSessionId : renamingSessionId}
+                      renameError={renameSessionMutation.error ? errorDetail(renameSessionMutation.error, t("globalAgent.requestFailed")) : null}
                       onArchive={setArchiveTarget}
                       emptyLabel={normalizedSearch ? t("globalAgent.noMatch") : t("globalAgent.noSessions")}
                     />
@@ -647,6 +719,9 @@ function TaskList({
   conversationById,
   onOpen,
   onCancel,
+  onRename,
+  renamingTaskId,
+  renameError,
   cancelingTaskId,
   emptyLabel,
   statusLabel,
@@ -662,11 +737,24 @@ function TaskList({
   conversationById: Map<string, AgentConversationTarget>;
   onOpen: (task: AgentTask, workspace: AgentWorkspaceTarget | null) => void;
   onCancel: (task: AgentTask) => void;
+  onRename: (taskId: string, title: string) => void;
+  renamingTaskId: string | null;
+  renameError: string | null;
   cancelingTaskId: string | null;
   emptyLabel: string;
   statusLabel: (status: AgentTaskStatus) => string;
 }) {
   const { t } = useI18n();
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
+
+  useEffect(() => {
+    if (editingTaskId && renamingTaskId === null) {
+      setEditingTaskId(null);
+      setEditingTitle("");
+    }
+  }, [editingTaskId, renamingTaskId]);
+
   if (loading) {
     return <LoadingDockState label={t("app.loading")} />;
   }
@@ -683,6 +771,64 @@ function TaskList({
           : null;
         const openable = Boolean(target || conversation?.scopeType === "global");
         const cancelable = ACTIVE_TASK_STATUSES.has(task.status);
+        if (editingTaskId === task.id) {
+          return (
+            <form
+              key={task.id}
+              className="rounded-md border border-accent/40 bg-accent-soft/40 p-2.5"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const title = editingTitle.trim();
+                if (title && renamingTaskId === null) {
+                  onRename(task.id, title);
+                }
+              }}
+            >
+              <label className="sr-only" htmlFor={`global-agent-task-title-${task.id}`}>
+                {t("globalAgent.taskTitle")}
+              </label>
+              <input
+                id={`global-agent-task-title-${task.id}`}
+                autoFocus
+                value={editingTitle}
+                maxLength={160}
+                onChange={(event) => setEditingTitle(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    setEditingTaskId(null);
+                    setEditingTitle("");
+                  }
+                }}
+                className="h-9 w-full rounded-md border border-border-l2 bg-surface-raised px-2.5 text-xs text-text-primary outline-none focus:border-accent focus:ring-2 focus:ring-accent/15"
+              />
+              {renameError ? <p role="alert" className="mt-1.5 text-[11px] leading-4 text-state-error">{renameError}</p> : null}
+              <div className="mt-2 flex justify-end gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingTaskId(null);
+                    setEditingTitle("");
+                  }}
+                  disabled={renamingTaskId === task.id}
+                  aria-label={t("globalAgent.cancelRename")}
+                  title={t("globalAgent.cancelRename")}
+                  className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary hover:bg-surface-raised focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:opacity-50"
+                >
+                  <X size={14} aria-hidden="true" />
+                </button>
+                <button
+                  type="submit"
+                  disabled={!editingTitle.trim() || renamingTaskId !== null}
+                  aria-label={t("globalAgent.saveTask")}
+                  title={t("globalAgent.saveTask")}
+                  className="flex h-8 w-8 items-center justify-center rounded-md bg-accent text-accent-fg hover:bg-accent-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {renamingTaskId === task.id ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Check size={14} aria-hidden="true" />}
+                </button>
+              </div>
+            </form>
+          );
+        }
         return (
           <div key={task.id} className="group flex w-full min-w-0 items-start gap-2 rounded-md px-2.5 py-2.5 transition-colors hover:bg-surface-subtle">
             <button
@@ -710,6 +856,18 @@ function TaskList({
             </span>
             {openable ? <ChevronRight size={14} className="mt-1 shrink-0 text-text-muted opacity-0 transition-opacity group-hover:opacity-100" aria-hidden="true" /> : null}
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                setEditingTaskId(task.id);
+                setEditingTitle(task.title);
+              }}
+              aria-label={t("globalAgent.renameTask")}
+              title={t("globalAgent.renameTask")}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted opacity-70 transition-colors hover:bg-accent-soft hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 sm:opacity-0 sm:group-hover:opacity-100"
+            >
+              <Pencil size={14} aria-hidden="true" />
+            </button>
             {cancelable ? (
               <button
                 type="button"
@@ -735,6 +893,9 @@ function SessionList({
   currentSessionId,
   onOpen,
   onOpenWorkspace,
+  onRename,
+  renamingSessionId,
+  renameError,
   onArchive,
   emptyLabel,
 }: {
@@ -743,10 +904,23 @@ function SessionList({
   currentSessionId: string | null;
   onOpen: (session: AgentSession) => void;
   onOpenWorkspace: (session: AgentSession, conversation: AgentSession["conversations"][number]) => void;
+  onRename: (sessionId: string, title: string) => void;
+  renamingSessionId: string | null;
+  renameError: string | null;
   onArchive: (session: AgentSession) => void;
   emptyLabel: string;
 }) {
   const { t } = useI18n();
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
+
+  useEffect(() => {
+    if (editingSessionId && renamingSessionId === null) {
+      setEditingSessionId(null);
+      setEditingTitle("");
+    }
+  }, [editingSessionId, renamingSessionId]);
+
   if (loading) {
     return <LoadingDockState label={t("app.loading")} />;
   }
@@ -761,6 +935,64 @@ function SessionList({
           (item) => item.scope_type === "product_workflow" && item.product_id,
         );
         const selected = currentSessionId === session.id;
+        if (editingSessionId === session.id) {
+          return (
+            <form
+              key={session.id}
+              className="rounded-md border border-accent/40 bg-accent-soft/40 p-2.5"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const title = editingTitle.trim();
+                if (title && renamingSessionId === null) {
+                  onRename(session.id, title);
+                }
+              }}
+            >
+              <label className="sr-only" htmlFor={`global-agent-session-title-${session.id}`}>
+                {t("agentWorkbench.session.titleLabel")}
+              </label>
+              <input
+                id={`global-agent-session-title-${session.id}`}
+                autoFocus
+                value={editingTitle}
+                maxLength={160}
+                onChange={(event) => setEditingTitle(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    setEditingSessionId(null);
+                    setEditingTitle("");
+                  }
+                }}
+                className="h-9 w-full rounded-md border border-border-l2 bg-surface-raised px-2.5 text-xs text-text-primary outline-none focus:border-accent focus:ring-2 focus:ring-accent/15"
+              />
+              {renameError ? <p role="alert" className="mt-1.5 text-[11px] leading-4 text-state-error">{renameError}</p> : null}
+              <div className="mt-2 flex justify-end gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingSessionId(null);
+                    setEditingTitle("");
+                  }}
+                  disabled={renamingSessionId === session.id}
+                  aria-label={t("agentWorkbench.session.cancel")}
+                  title={t("agentWorkbench.session.cancel")}
+                  className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary hover:bg-surface-raised focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:opacity-50"
+                >
+                  <X size={14} aria-hidden="true" />
+                </button>
+                <button
+                  type="submit"
+                  disabled={!editingTitle.trim() || renamingSessionId !== null}
+                  aria-label={t("agentWorkbench.session.save")}
+                  title={t("agentWorkbench.session.save")}
+                  className="flex h-8 w-8 items-center justify-center rounded-md bg-accent text-accent-fg hover:bg-accent-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {renamingSessionId === session.id ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Check size={14} aria-hidden="true" />}
+                </button>
+              </div>
+            </form>
+          );
+        }
         return (
           <div key={session.id} className={`rounded-md px-2.5 py-2.5 transition-colors ${selected ? "bg-accent-soft" : "hover:bg-surface-subtle"}`}>
             <div className="group flex min-w-0 items-start gap-2">
@@ -784,15 +1016,29 @@ function SessionList({
                 </span>
               </button>
               {session.status === "active" ? (
-                <button
-                  type="button"
-                  onClick={() => onArchive(session)}
-                  aria-label={t("globalAgent.archiveSession")}
-                  title={t("globalAgent.archiveSession")}
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted opacity-70 transition-colors hover:bg-state-error/10 hover:text-state-error focus:outline-none focus-visible:ring-2 focus-visible:ring-state-error/50 sm:opacity-0 sm:group-hover:opacity-100"
-                >
-                  <Archive size={14} aria-hidden="true" />
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingSessionId(session.id);
+                      setEditingTitle(session.title);
+                    }}
+                    aria-label={t("agentWorkbench.session.rename")}
+                    title={t("agentWorkbench.session.rename")}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted opacity-70 transition-colors hover:bg-accent-soft hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 sm:opacity-0 sm:group-hover:opacity-100"
+                  >
+                    <Pencil size={14} aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onArchive(session)}
+                    aria-label={t("globalAgent.archiveSession")}
+                    title={t("globalAgent.archiveSession")}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted opacity-70 transition-colors hover:bg-state-error/10 hover:text-state-error focus:outline-none focus-visible:ring-2 focus-visible:ring-state-error/50 sm:opacity-0 sm:group-hover:opacity-100"
+                  >
+                    <Archive size={14} aria-hidden="true" />
+                  </button>
+                </>
               ) : null}
             </div>
             {productWorkspaces.length ? (

@@ -19,6 +19,7 @@ import { useGlobalAgentConversation } from "./useGlobalAgentConversation";
 interface GlobalAgentConversationPanelProps {
   conversationId: string | null;
   sessionTitle: string;
+  taskTitle?: string | null;
   taskId?: string | null;
   taskGoal?: string | null;
   taskStatus?: AgentTaskStatus | null;
@@ -28,6 +29,7 @@ interface GlobalAgentConversationPanelProps {
 export function GlobalAgentConversationPanel({
   conversationId,
   sessionTitle,
+  taskTitle = null,
   taskId = null,
   taskGoal = null,
   taskStatus = null,
@@ -51,6 +53,12 @@ export function GlobalAgentConversationPanel({
   const previousTurnCount = useRef(0);
   const confirmationKeyRef = useRef<{ draftId: string; version: number; key: string } | null>(null);
 
+  useEffect(() => {
+    setComposerText("");
+    setAnsweredQuestionId(null);
+    composerKeyRef.current = globalThis.crypto.randomUUID();
+    confirmationKeyRef.current = null;
+  }, [conversationId, taskId]);
   useEffect(() => setAnsweredQuestionId(null), [activeQuestion?.id]);
   useEffect(() => {
     if (agent.turns.length > previousTurnCount.current || agent.activeTurn) {
@@ -143,8 +151,10 @@ export function GlobalAgentConversationPanel({
             <Bot size={16} aria-hidden="true" />
           </span>
           <div className="min-w-0 flex-1">
-            <h3 className="truncate text-sm font-semibold">{sessionTitle}</h3>
-            <p className="truncate text-[11px] text-text-secondary">{t("globalAgent.globalScope")}</p>
+            <h3 className="truncate text-sm font-semibold">{taskTitle ?? sessionTitle}</h3>
+            <p className="truncate text-[11px] text-text-secondary" title={taskGoal ?? undefined}>
+              {taskGoal ? `${t("globalAgent.taskContext")}: ${taskGoal}` : t("globalAgent.globalScope")}
+            </p>
           </div>
           <span className={`h-2 w-2 shrink-0 rounded-full ${agent.activeTurn ? "animate-pulse bg-accent" : "bg-state-success"}`} aria-hidden="true" />
         </div>
