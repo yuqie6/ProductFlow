@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from productflow_backend.infrastructure.provider_config import resolve_agent_provider_config
+from productflow_backend.application.settings import get_agent_provider_runtime_config
 from productflow_backend.presentation.deps import get_session, require_agent_service
 from productflow_backend.presentation.schemas.settings import AgentProviderRuntimeConfigResponse
 
@@ -19,7 +19,7 @@ def get_agent_provider_runtime_config_endpoint(
     session: Session = Depends(get_session),
 ) -> AgentProviderRuntimeConfigResponse:
     try:
-        config = resolve_agent_provider_config(session)
+        config = get_agent_provider_runtime_config(session)
     except RuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
     return AgentProviderRuntimeConfigResponse(

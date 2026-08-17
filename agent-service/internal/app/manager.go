@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/yuqie6/agent-harness/agenttask"
 	"github.com/yuqie6/productflow-agent-service/internal/config"
@@ -138,7 +139,11 @@ func (manager *Manager) Get(ctx context.Context, conversationID string) (*Conver
 
 func (manager *Manager) providerConfig(ctx context.Context) (agenttask.ProviderConfig, error) {
 	if strings.TrimSpace(manager.config.Provider.APIKey) != "" {
-		return manager.config.Provider, nil
+		provider := manager.config.Provider
+		if provider.HTTPClient == nil {
+			provider.HTTPClient = &http.Client{Timeout: 6 * time.Minute}
+		}
+		return provider, nil
 	}
 	resolved, err := manager.config.ProductFlow.AgentProviderConfig(ctx)
 	if err != nil {
@@ -165,6 +170,7 @@ func (manager *Manager) providerConfig(ctx context.Context) (agenttask.ProviderC
 		ReasoningSummary: optionalString(resolved.ReasoningSummary),
 		TextVerbosity:    optionalString(resolved.TextVerbosity),
 		ServiceTier:      optionalString(resolved.ServiceTier),
+		HTTPClient:       &http.Client{Timeout: 6 * time.Minute},
 	}, nil
 }
 

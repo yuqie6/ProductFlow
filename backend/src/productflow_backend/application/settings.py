@@ -22,6 +22,7 @@ from productflow_backend.infrastructure.provider_config import (
     PROVIDER_PURPOSES,
     PROVIDER_TYPES,
     UNSET_PROVIDER_FIELD,
+    ResolvedAgentProviderConfig,
     capability_for_provider_kind,
     ensure_provider_bindings_initialized,
     list_provider_bindings,
@@ -30,6 +31,7 @@ from productflow_backend.infrastructure.provider_config import (
     normalize_provider_binding_runtime_config,
     provider_config_tables_available,
     provider_kinds_for_purpose,
+    resolve_agent_provider_config,
     validate_provider_capabilities,
     validate_provider_profile_contract,
 )
@@ -172,6 +174,11 @@ def get_provider_config_view(session: Session) -> ProviderConfigView:
         profiles=[_provider_profile_view(profile) for profile in list_provider_profiles(session)],
         bindings=[_provider_binding_view(binding) for binding in list_provider_bindings(session)],
     )
+
+
+def get_agent_provider_runtime_config(session: Session) -> ResolvedAgentProviderConfig:
+    """Resolve the current workflow Agent provider binding for internal service consumers."""
+    return resolve_agent_provider_config(session)
 
 
 def initialize_provider_bindings_if_available() -> bool:
