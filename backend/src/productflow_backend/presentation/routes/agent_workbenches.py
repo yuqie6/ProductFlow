@@ -21,6 +21,7 @@ router = APIRouter(
 def get_agent_workbench_bootstrap_endpoint(
     product_id: str,
     agent_session_id: str | None = Query(default=None),
+    agent_task_id: str | None = Query(default=None),
     session: Session = Depends(get_session),
 ) -> AgentWorkbenchBootstrapResponse:
     return serialize_agent_workbench_bootstrap(
@@ -28,6 +29,7 @@ def get_agent_workbench_bootstrap_endpoint(
             session,
             product_id=product_id,
             agent_session_id=agent_session_id,
+            agent_task_id=agent_task_id,
         )
     )
 

@@ -25,6 +25,7 @@ from productflow_backend.application.agent_tools import (
     reconcile_agent_folder_rename,
     validate_agent_workflow_draft,
 )
+from productflow_backend.application.agent_workflow_runs import list_agent_workflow_runs
 from productflow_backend.application.gallery_assets import GalleryAssetSort, GalleryDirectoryKind
 from productflow_backend.application.gallery_mutations import GalleryAssetMove
 from productflow_backend.application.legacy_archive_rebuilds import (
@@ -56,6 +57,7 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     AgentLegacyArchiveListResponse,
     AgentWorkflowDraftValidationRequest,
     AgentWorkflowDraftValidationResponse,
+    AgentWorkflowRunListResponse,
     InspectAgentAssetsRequest,
     InspectAgentAssetsResponse,
     InspectAgentLegacyArchiveRequest,
@@ -64,6 +66,7 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     PrepareAgentFolderCreateRequest,
     PrepareAgentFolderRenameRequest,
 )
+from productflow_backend.presentation.schemas.workflow_drafts import serialize_workflow_run_v2
 
 router = APIRouter(
     prefix="/api/internal/v1/agent-conversations",
@@ -103,6 +106,20 @@ def get_agent_product_context_endpoint(
     session: Session = Depends(get_session),
 ) -> dict:
     return get_agent_product_context(session, conversation_id)
+
+
+@router.get("/{conversation_id}/workflow-runs", response_model=AgentWorkflowRunListResponse)
+def list_agent_workflow_runs_endpoint(
+    conversation_id: str,
+    limit: int = Query(default=20, ge=1, le=20),
+    session: Session = Depends(get_session),
+) -> AgentWorkflowRunListResponse:
+    page = list_agent_workflow_runs(session, conversation_id=conversation_id, limit=limit)
+    return AgentWorkflowRunListResponse(
+        workflow_id=page.workflow_id,
+        workflow_revision=page.workflow_revision,
+        items=[serialize_workflow_run_v2(run) for run in page.runs],
+    )
 
 
 @router.get("/{conversation_id}/assets", response_model=AgentAssetListResponse)

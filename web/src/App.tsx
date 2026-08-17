@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-quer
 import { Loader2 } from "lucide-react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
+import { GlobalAgentDock } from "./components/GlobalAgentDock";
 import { api } from "./lib/api";
 import { PreferencesProvider, useI18n } from "./lib/preferences";
 
@@ -67,52 +68,55 @@ function AppRoutes() {
   }
 
   return (
-    <Suspense fallback={<LoadingScreen />}>
-      <Routes>
-        <Route path="/login" element={<LoginPage authenticated={authenticated} />} />
-        <Route
-          path="/products"
-          element={authenticated ? <ProductListPage /> : <Navigate to="/login" replace />}
-        />
-        <Route
-          path="/products/new/agent"
-          element={authenticated ? <Navigate to="/products/new" replace /> : <Navigate to="/login" replace />}
-        />
-        <Route
-          path="/products/new"
-          element={authenticated ? <AgentProductCreatePage /> : <Navigate to="/login" replace />}
-        />
-        <Route
-          path="/image-chat"
-          element={authenticated ? <ImageChatPage /> : <Navigate to="/login" replace />}
-        />
-        <Route
-          path="/gallery"
-          element={authenticated ? <GalleryPage /> : <Navigate to="/login" replace />}
-        />
-        <Route
-          path="/history"
-          element={authenticated ? <LegacyHistoryPage /> : <Navigate to="/login" replace />}
-        />
-        <Route
-          path="/history/:archiveKind/:archiveId"
-          element={authenticated ? <LegacyHistoryPage /> : <Navigate to="/login" replace />}
-        />
-        <Route
-          path="/help"
-          element={authenticated ? <HelpPage /> : <Navigate to="/login" replace />}
-        />
-        <Route
-          path="/settings"
-          element={authenticated ? <SettingsPage /> : <Navigate to="/login" replace />}
-        />
-        <Route
-          path="/products/:productId"
-          element={authenticated ? <ProductWorkbenchPage /> : <Navigate to="/login" replace />}
-        />
-        <Route path="*" element={<Navigate to={authenticated ? "/products" : "/login"} replace />} />
-      </Routes>
-    </Suspense>
+    <>
+      <Suspense fallback={<LoadingScreen />}>
+        <Routes>
+          <Route path="/login" element={<LoginPage authenticated={authenticated} />} />
+          <Route
+            path="/products"
+            element={authenticated ? <ProductListPage /> : <Navigate to="/login" replace />}
+          />
+          <Route
+            path="/products/new/agent"
+            element={authenticated ? <Navigate to="/products/new" replace /> : <Navigate to="/login" replace />}
+          />
+          <Route
+            path="/products/new"
+            element={authenticated ? <AgentProductCreatePage /> : <Navigate to="/login" replace />}
+          />
+          <Route
+            path="/image-chat"
+            element={authenticated ? <ImageChatPage /> : <Navigate to="/login" replace />}
+          />
+          <Route
+            path="/gallery"
+            element={authenticated ? <GalleryPage /> : <Navigate to="/login" replace />}
+          />
+          <Route
+            path="/history"
+            element={authenticated ? <LegacyHistoryPage /> : <Navigate to="/login" replace />}
+          />
+          <Route
+            path="/history/:archiveKind/:archiveId"
+            element={authenticated ? <LegacyHistoryPage /> : <Navigate to="/login" replace />}
+          />
+          <Route
+            path="/help"
+            element={authenticated ? <HelpPage /> : <Navigate to="/login" replace />}
+          />
+          <Route
+            path="/settings"
+            element={authenticated ? <SettingsPage /> : <Navigate to="/login" replace />}
+          />
+          <Route
+            path="/products/:productId"
+            element={authenticated ? <ProductWorkbenchPage /> : <Navigate to="/login" replace />}
+          />
+          <Route path="*" element={<Navigate to={authenticated ? "/products" : "/login"} replace />} />
+        </Routes>
+      </Suspense>
+      {authenticated ? <GlobalAgentDock /> : null}
+    </>
   );
 }
 

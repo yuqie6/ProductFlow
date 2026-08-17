@@ -950,6 +950,61 @@ export interface CreateAgentSessionInput {
   title: string;
 }
 
+export type AgentTaskStatus =
+  | "queued"
+  | "running"
+  | "waiting_user"
+  | "awaiting_confirmation"
+  | "succeeded"
+  | "failed"
+  | "canceled"
+  | "paused"
+  | "unknown";
+
+export interface AgentTask {
+  id: string;
+  session_id: string;
+  conversation_id: string | null;
+  product_id: string | null;
+  workflow_id: string | null;
+  workflow_draft_id: string | null;
+  title: string;
+  goal: string;
+  status: AgentTaskStatus;
+  waiting_reason: string | null;
+  failure_reason: string | null;
+  current_turn_id: string | null;
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  canceled_at: string | null;
+}
+
+export interface AgentTaskListResponse {
+  items: AgentTask[];
+}
+
+export interface CreateAgentTaskInput {
+  session_id: string;
+  title: string;
+  goal: string;
+  conversation_id?: string | null;
+}
+
+export interface AgentPageContextSnapshotInput {
+  route: string;
+  page_type: string;
+  product_id?: string | null;
+  workflow_id?: string | null;
+  selected_asset_ids: string[];
+  visible_asset_ids: string[];
+  filters: Record<string, string>;
+  workflow_revision?: number | null;
+  library_revision?: number | null;
+  captured_at: string;
+}
+
 export type AgentTurnStatus =
   | "queued"
   | "running"
@@ -992,6 +1047,7 @@ export interface AgentQuestion {
 export interface AgentTurn {
   id: string;
   conversation_id: string;
+  task_id: string | null;
   harness_turn_id: string | null;
   idempotency_key: string;
   input_text: string;
@@ -1005,6 +1061,7 @@ export interface AgentTurn {
   artifact_name: string | null;
   artifact_step_id: string | null;
   workflow_draft_revision_id: string | null;
+  page_context_snapshot_id: string | null;
   sync_error: string | null;
   finished_at: string | null;
   created_at: string;
@@ -1020,6 +1077,8 @@ export interface SubmitAgentTurnInput {
   input_text: string;
   asset_ids: string[];
   idempotency_key: string;
+  task_id?: string | null;
+  page_context?: AgentPageContextSnapshotInput | null;
 }
 
 export interface SubmitAgentTurnResponse {

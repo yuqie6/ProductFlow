@@ -20,9 +20,10 @@ export function ProductWorkbenchPage() {
   const { productId = "" } = useParams();
   const [searchParams] = useSearchParams();
   const agentSessionId = searchParams.get("agent_session_id");
+  const agentTaskId = searchParams.get("agent_task_id");
   const query = useQuery({
-    queryKey: ["agent-workbench", productId, agentSessionId],
-    queryFn: () => api.getAgentWorkbench(productId, agentSessionId),
+    queryKey: ["agent-workbench", productId, agentSessionId, agentTaskId],
+    queryFn: () => api.getAgentWorkbench(productId, agentSessionId, agentTaskId),
     enabled: Boolean(productId),
     retry: (failureCount, error) => {
       if (error instanceof ApiError && error.status === 409) return false;
@@ -42,6 +43,7 @@ export function ProductWorkbenchPage() {
     <AgentProductWorkbenchPage
       key={query.data.product.id}
       bootstrap={query.data}
+      agentTaskId={agentTaskId}
       onRefetchBootstrap={() => query.refetch()}
     />
   );

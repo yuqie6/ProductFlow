@@ -183,7 +183,7 @@ def test_image_session_media_authority_migration_on_postgresql(
                     for foreign_key in inspector.get_foreign_keys("image_session_assets")
                 } >= {"fk_image_session_assets_media_object_id"}
                 with engine.connect() as connection:
-                    assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260817_0050"
+                    assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260817_0051"
                     assert connection.scalar(
                         sa.text(
                             "SELECT media_object_id FROM image_session_assets "

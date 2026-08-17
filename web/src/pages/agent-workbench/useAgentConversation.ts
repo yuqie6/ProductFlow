@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import { api } from "../../lib/api";
 import type {
   AgentConversation,
+  AgentPageContextSnapshotInput,
   AgentQuestionAnswer,
   AgentTurn,
   AgentTurnPage,
@@ -28,6 +29,8 @@ interface UseAgentConversationInput {
   productId: string;
   conversation: AgentConversation;
   workflowDraft: WorkflowDraft;
+  taskId?: string | null;
+  pageContext?: AgentPageContextSnapshotInput | null;
   enabled?: boolean;
 }
 
@@ -54,8 +57,8 @@ export class AgentResumeAfterAnswerError extends Error {
   }
 }
 
-export function agentTurnsQueryKey(productId: string, conversationId: string) {
-  return ["agent-turns", productId, conversationId] as const;
+export function agentTurnsQueryKey(productId: string, conversationId: string, taskId?: string | null) {
+  return ["agent-turns", productId, conversationId, taskId ?? null] as const;
 }
 
 export function agentTurnQueryKey(productId: string, conversationId: string, projectionId: string) {
@@ -65,12 +68,24 @@ export function agentTurnQueryKey(productId: string, conversationId: string, pro
 export function initialAgentTurnInput(
   conversationId: string,
   referenceAssetIds: readonly string[],
+  taskId?: string | null,
+  pageContext?: AgentPageContextSnapshotInput | null,
 ): SubmitAgentTurnInput {
-  return {
+  const initialIdempotencyKey = taskId
+    ? `initial:${conversationId}:${taskId}`
+    : `initial:${conversationId}`;
+  const input: SubmitAgentTurnInput = {
     input_text: INITIAL_AGENT_TURN_TEXT,
     asset_ids: [...referenceAssetIds],
-    idempotency_key: `initial:${conversationId}`,
+    idempotency_key: initialIdempotencyKey,
   };
+  if (taskId) {
+    input.task_id = taskId;
+  }
+  if (pageContext) {
+    input.page_context = pageContext;
+  }
+  return input;
 }
 
 export function flattenAgentTurnPages(pages: readonly AgentTurnPage[] | undefined): AgentTurn[] {
@@ -142,12 +157,14 @@ export function useAgentConversation({
   productId,
   conversation,
   workflowDraft,
+  taskId = null,
+  pageContext = null,
   enabled = true,
 }: UseAgentConversationInput) {
   const queryClient = useQueryClient();
   const turnsKey = useMemo(
-    () => agentTurnsQueryKey(productId, conversation.id),
-    [conversation.id, productId],
+    () => agentTurnsQueryKey(productId, conversation.id, taskId),
+    [conversation.id, productId, taskId],
   );
   const autoStartKeyRef = useRef<string | null>(null);
 
@@ -157,6 +174,7 @@ export function useAgentConversation({
       api.listAgentTurns(productId, conversation.id, {
         after: pageParam,
         limit: AGENT_TURN_PAGE_SIZE,
+        taskId,
       }),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
@@ -215,8 +233,10 @@ export function useAgentConversation({
       initialAgentTurnInput(
         conversation.id,
         workflowDraft.intake?.reference_asset_ids ?? [],
+        taskId,
+        pageContext,
       ),
-    [conversation.id, workflowDraft.intake?.reference_asset_ids],
+    [conversation.id, pageContext, taskId, workflowDraft.intake?.reference_asset_ids],
   );
 
   const initialTurnMutation = useMutation({
@@ -242,7 +262,11 @@ export function useAgentConversation({
 
   const submitTurnMutation = useMutation({
     mutationFn: (input: SubmitAgentTurnInput) =>
-      api.submitAgentTurn(productId, conversation.id, input),
+      api.submitAgentTurn(productId, conversation.id, {
+        ...input,
+        task_id: input.task_id ?? taskId,
+        page_context: input.page_context ?? pageContext,
+      }),
     onSuccess: (response) => cacheTurn(response.turn),
     onSettled: () => queryClient.invalidateQueries({ queryKey: turnsKey }),
   });

@@ -130,37 +130,58 @@ class AgentServiceClient:
         self,
         *,
         conversation_id: str,
+        task_id: str | None = None,
         input_text: str,
         asset_ids: list[str],
         idempotency_key: str,
+        page_context: dict[str, Any] | None = None,
     ) -> AgentServiceTurnState:
         return self._request_state(
             "POST",
-            self._conversation_path(conversation_id) + "/turns",
+            self._execution_path(conversation_id, task_id) + "/turns",
             json_body={
                 "input_text": input_text,
                 "asset_ids": asset_ids,
                 "idempotency_key": idempotency_key,
+                "page_context": page_context,
             },
         )
 
-    def get_turn(self, *, conversation_id: str, turn_id: str) -> AgentServiceTurnState:
+    def get_turn(
+        self,
+        *,
+        conversation_id: str,
+        turn_id: str,
+        task_id: str | None = None,
+    ) -> AgentServiceTurnState:
         return self._request_state(
             "GET",
-            self._turn_path(conversation_id, turn_id),
+            self._turn_path(conversation_id, turn_id, task_id=task_id),
         )
 
-    def cancel_turn(self, *, conversation_id: str, turn_id: str) -> AgentServiceTurnState:
+    def cancel_turn(
+        self,
+        *,
+        conversation_id: str,
+        turn_id: str,
+        task_id: str | None = None,
+    ) -> AgentServiceTurnState:
         return self._request_state(
             "POST",
-            self._turn_path(conversation_id, turn_id) + "/cancel",
+            self._turn_path(conversation_id, turn_id, task_id=task_id) + "/cancel",
             json_body={},
         )
 
-    def resume_turn(self, *, conversation_id: str, turn_id: str) -> AgentServiceTurnState:
+    def resume_turn(
+        self,
+        *,
+        conversation_id: str,
+        turn_id: str,
+        task_id: str | None = None,
+    ) -> AgentServiceTurnState:
         return self._request_state(
             "POST",
-            self._turn_path(conversation_id, turn_id) + "/resume",
+            self._turn_path(conversation_id, turn_id, task_id=task_id) + "/resume",
             json_body={},
         )
 
@@ -171,10 +192,11 @@ class AgentServiceClient:
         turn_id: str,
         question_id: str,
         answer: dict[str, Any],
+        task_id: str | None = None,
     ) -> AgentServiceTurnState:
         return self._request_state(
             "POST",
-            self._turn_path(conversation_id, turn_id)
+            self._turn_path(conversation_id, turn_id, task_id=task_id)
             + "/questions/"
             + quote(question_id, safe="")
             + "/answer",
@@ -187,6 +209,7 @@ class AgentServiceClient:
         conversation_id: str,
         turn_id: str,
         after: int,
+        task_id: str | None = None,
     ) -> AsyncIterator[bytes]:
         headers = self._headers()
         params = {"after": str(after)}
@@ -194,7 +217,7 @@ class AgentServiceClient:
             async with httpx.AsyncClient(timeout=None) as client:
                 async with client.stream(
                     "GET",
-                    self.base_url + self._turn_path(conversation_id, turn_id) + "/events",
+                    self.base_url + self._turn_path(conversation_id, turn_id, task_id=task_id) + "/events",
                     headers=headers,
                     params=params,
                 ) as response:
@@ -256,8 +279,14 @@ class AgentServiceClient:
         return f"/internal/v1/conversations/{quote(conversation_id, safe='')}"
 
     @classmethod
-    def _turn_path(cls, conversation_id: str, turn_id: str) -> str:
-        return cls._conversation_path(conversation_id) + f"/turns/{quote(turn_id, safe='')}"
+    def _execution_path(cls, conversation_id: str, task_id: str | None) -> str:
+        if task_id:
+            return f"/internal/v1/tasks/{quote(task_id, safe='')}"
+        return cls._conversation_path(conversation_id)
+
+    @classmethod
+    def _turn_path(cls, conversation_id: str, turn_id: str, *, task_id: str | None = None) -> str:
+        return cls._execution_path(conversation_id, task_id) + f"/turns/{quote(turn_id, safe='')}"
 
 
 def _response_error(status_code: int, body: bytes) -> AgentServiceRequestError:

@@ -15,6 +15,7 @@ from productflow_backend.application.agent_conversations import (
     get_agent_conversation_by_id_or_raise,
 )
 from productflow_backend.application.agent_product_intake import parse_workflow_intake
+from productflow_backend.application.agent_tasks import task_contract
 from productflow_backend.application.gallery_assets import (
     GalleryAssetRecord,
     GalleryAssetSort,
@@ -143,11 +144,26 @@ AgentAssetRenameReconcileResult = AgentToolReconcileResult
 
 def get_agent_contract(session: Session, conversation_id: str) -> dict[str, Any]:
     conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
+    return _agent_contract_for_conversation(conversation)
+
+
+def get_agent_task_contract(session: Session, task_id: str) -> dict[str, Any]:
+    task, conversation = task_contract(session, task_id)
+    contract = _agent_contract_for_conversation(conversation)
+    contract["task_id"] = task.id
+    contract["task_goal"] = task.goal
+    contract["harness_run_id"] = task.harness_run_id
+    return contract
+
+
+def _agent_contract_for_conversation(conversation: AgentConversation) -> dict[str, Any]:
     draft = conversation.workflow_draft
     current_revision = draft.current_revision
     return {
         "schema_version": 1,
         "conversation_id": conversation.id,
+        "task_id": None,
+        "task_goal": None,
         "product_id": conversation.product_id,
         "workflow_draft_id": conversation.workflow_draft_id,
         "harness_run_id": conversation.harness_run_id,
@@ -1291,6 +1307,7 @@ __all__ = [
     "apply_agent_folder_create",
     "apply_agent_folder_rename",
     "get_agent_contract",
+    "get_agent_task_contract",
     "get_agent_product_context",
     "inspect_agent_product_assets",
     "list_agent_product_assets",

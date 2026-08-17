@@ -9,6 +9,7 @@ import type { DownloadableImage } from "../../lib/image-downloads";
 import { useI18n } from "../../lib/preferences";
 import type {
   AgentConversation,
+  AgentPageContextSnapshotInput,
   AgentQuestionAnswer,
   AgentTurn,
   GalleryAsset,
@@ -32,6 +33,8 @@ interface AgentConversationPanelProps {
   productName: string;
   conversation: AgentConversation;
   workflowDraft: WorkflowDraft;
+  taskId?: string | null;
+  pageContext?: AgentPageContextSnapshotInput | null;
   className?: string;
   reviewDraftAvailable?: boolean;
   onReviewDraft?: () => void;
@@ -42,13 +45,15 @@ export function AgentConversationPanel({
   productName,
   conversation,
   workflowDraft,
+  taskId = null,
+  pageContext = null,
   className = "",
   reviewDraftAvailable = false,
   onReviewDraft,
 }: AgentConversationPanelProps) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
-  const agent = useAgentConversation({ productId, conversation, workflowDraft });
+  const agent = useAgentConversation({ productId, conversation, workflowDraft, taskId, pageContext });
   const [composerText, setComposerText] = useState("");
   const [composerAssets, setComposerAssets] = useState<GalleryAsset[]>([]);
   const [assetSelectorOpen, setAssetSelectorOpen] = useState(false);
@@ -109,6 +114,14 @@ export function AgentConversationPanel({
         input_text: normalized,
         asset_ids: composerAssets.map((asset) => asset.id),
         idempotency_key: composerKeyRef.current,
+        task_id: taskId ?? agent.latestTurn?.task_id ?? null,
+        page_context: pageContext
+          ? {
+              ...pageContext,
+              selected_asset_ids: composerAssets.map((asset) => asset.id),
+              captured_at: new Date().toISOString(),
+            }
+          : null,
       });
       setComposerText("");
       setComposerAssets([]);

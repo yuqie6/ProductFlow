@@ -74,6 +74,7 @@ def execute_agent_turn_sync(
             state = client.get_turn(
                 conversation_id=conversation.id,
                 turn_id=projection.harness_turn_id,
+                task_id=projection.task_id,
             )
             projection = synchronize_agent_turn_state(
                 session,

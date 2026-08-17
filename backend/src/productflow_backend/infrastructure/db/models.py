@@ -26,6 +26,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from productflow_backend.domain.enums import (
     AgentConversationStatus,
     AgentSessionStatus,
+    AgentTaskStatus,
     AgentToolMutationStatus,
     AgentTurnStatus,
     AsyncDispatchStatus,
@@ -932,6 +933,101 @@ class AgentSession(Base, TimestampMixin):
         back_populates="session",
         order_by="AgentConversation.updated_at.desc(), AgentConversation.id.desc()",
     )
+    tasks: Mapped[list[AgentTask]] = relationship(
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="AgentTask.updated_at.desc(), AgentTask.id.desc()",
+    )
+
+
+class AgentTask(Base, TimestampMixin):
+    """一个可跨页面持续运行、可与同一 Session 中其他任务并行的业务目标。"""
+
+    __tablename__ = "agent_tasks"
+    __table_args__ = (
+        UniqueConstraint("harness_run_id", name="uq_agent_tasks_harness_run_id"),
+        Index("ix_agent_tasks_session_status_updated", "session_id", "status", "updated_at", "id"),
+        Index("ix_agent_tasks_status_updated", "status", "updated_at", "id"),
+        Index("ix_agent_tasks_conversation_updated", "conversation_id", "updated_at", "id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    session_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("agent_sessions.id", ondelete="CASCADE", name="fk_agent_tasks_session_id"),
+    )
+    conversation_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("agent_conversations.id", ondelete="SET NULL", name="fk_agent_tasks_conversation_id"),
+        nullable=True,
+    )
+    product_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("products.id", ondelete="SET NULL", name="fk_agent_tasks_product_id"),
+        nullable=True,
+    )
+    workflow_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("product_workflows.id", ondelete="SET NULL", name="fk_agent_tasks_workflow_id"),
+        nullable=True,
+    )
+    workflow_draft_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("workflow_drafts.id", ondelete="SET NULL", name="fk_agent_tasks_workflow_draft_id"),
+        nullable=True,
+    )
+    harness_run_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    title: Mapped[str] = mapped_column(String(160), nullable=False)
+    goal: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[AgentTaskStatus] = mapped_column(
+        enum_value_column(AgentTaskStatus),
+        default=AgentTaskStatus.QUEUED,
+    )
+    waiting_reason: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    current_turn_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    canceled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    session: Mapped[AgentSession] = relationship(back_populates="tasks")
+    conversation: Mapped[AgentConversation | None] = relationship(foreign_keys=[conversation_id])
+    turns: Mapped[list[AgentTurnProjection]] = relationship(
+        back_populates="task",
+        order_by="AgentTurnProjection.created_at",
+    )
+
+
+class AgentPageContextSnapshot(Base):
+    """一次 Turn 发送时浏览器提交的有界页面事实快照。"""
+
+    __tablename__ = "agent_page_context_snapshots"
+    __table_args__ = (
+        CheckConstraint("length(digest) = 64", name="ck_agent_page_context_snapshots_digest"),
+        Index("ix_agent_page_context_snapshots_task_created", "task_id", "created_at", "id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    task_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("agent_tasks.id", ondelete="CASCADE", name="fk_agent_page_context_snapshots_task_id"),
+        nullable=True,
+    )
+    turn_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    route: Mapped[str] = mapped_column(String(512), nullable=False)
+    page_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    product_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    workflow_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    selected_asset_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    visible_asset_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    filters_json: Mapped[dict[str, str]] = mapped_column(JSON, default=dict)
+    workflow_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    library_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    task: Mapped[AgentTask | None] = relationship()
 
 
 class AgentConversation(Base, TimestampMixin):
@@ -1031,6 +1127,7 @@ class AgentTurnProjection(Base, TimestampMixin):
             "created_at",
             "id",
         ),
+        Index("ix_agent_turn_projections_task_created", "task_id", "created_at", "id"),
         Index("ix_agent_turn_projections_status", "status"),
     )
 
@@ -1042,6 +1139,11 @@ class AgentTurnProjection(Base, TimestampMixin):
             ondelete="CASCADE",
             name="fk_agent_turn_projections_conversation_id",
         ),
+    )
+    task_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("agent_tasks.id", ondelete="SET NULL", name="fk_agent_turn_projections_task_id"),
+        nullable=True,
     )
     harness_turn_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     idempotency_key: Mapped[str] = mapped_column(String(200))
@@ -1068,10 +1170,23 @@ class AgentTurnProjection(Base, TimestampMixin):
         ),
         nullable=True,
     )
+    page_context_snapshot_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "agent_page_context_snapshots.id",
+            ondelete="SET NULL",
+            name="fk_agent_turn_projections_page_context_snapshot_id",
+        ),
+        nullable=True,
+    )
     sync_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     conversation: Mapped[AgentConversation] = relationship(back_populates="turns")
+    task: Mapped[AgentTask | None] = relationship(back_populates="turns", foreign_keys=[task_id])
+    page_context_snapshot: Mapped[AgentPageContextSnapshot | None] = relationship(
+        foreign_keys=[page_context_snapshot_id],
+    )
     workflow_draft_revision: Mapped[WorkflowDraftRevision | None] = relationship(
         back_populates="agent_turn_projection",
         foreign_keys=[workflow_draft_revision_id],

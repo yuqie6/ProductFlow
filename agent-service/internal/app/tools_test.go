@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yuqie6/agent-harness/agenttask"
 	"github.com/yuqie6/agent-harness/durable"
 	"github.com/yuqie6/productflow-agent-service/internal/productflow"
 )
@@ -44,6 +45,7 @@ func TestScopedToolCatalogContainsOnlyCurrentGalleryTools(t *testing.T) {
 	}
 	wantRead := map[string]bool{
 		productContextToolName:       true,
+		inspectWorkflowRunsToolName:  true,
 		listLegacyArchivesToolName:   true,
 		inspectLegacyArchiveToolName: true,
 		listAssetsToolName:           true,
@@ -72,6 +74,45 @@ func TestScopedToolCatalogContainsOnlyCurrentGalleryTools(t *testing.T) {
 	}
 	if !reflect.DeepEqual(durableNames, wantDurable) {
 		t.Fatalf("durable catalog = %#v, want %#v", durableNames, wantDurable)
+	}
+}
+
+func TestWorkflowRunReadToolUsesBoundedProductFlowEndpoint(t *testing.T) {
+	basePath := "/api/internal/v1/agent-conversations/" + testConversationID + "/workflow-runs"
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != basePath || request.URL.Query().Get("limit") != "5" {
+			t.Fatalf("workflow run request = %s %s", request.Method, request.URL.String())
+		}
+		writeFixtureJSON(writer, map[string]any{
+			"workflow_id":       "55555555-5555-4555-8555-555555555555",
+			"workflow_revision": 7,
+			"items": []map[string]any{{
+				"id": "66666666-6666-4666-8666-666666666666", "status": "running",
+				"node_runs": []map[string]any{{"status": "running"}},
+			}},
+		})
+	}))
+	t.Cleanup(server.Close)
+	client, err := productflow.NewClient(server.URL, testInternalToken, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tool *agenttask.Tool
+	for _, candidate := range scopedReadTools(client, Scope{ConversationID: testConversationID}) {
+		if candidate.Name == inspectWorkflowRunsToolName {
+			tool = &candidate
+			break
+		}
+	}
+	if tool == nil {
+		t.Fatalf("tool %q is not registered", inspectWorkflowRunsToolName)
+	}
+	result, err := tool.Handler(context.Background(), json.RawMessage(`{"limit":5}`))
+	if err != nil || !strings.Contains(result, "66666666-6666-4666-8666-666666666666") {
+		t.Fatalf("workflow run result = %q, %v", result, err)
+	}
+	if _, err := tool.Handler(context.Background(), json.RawMessage(`{"limit":21}`)); err == nil {
+		t.Fatal("unbounded workflow run inspection was accepted")
 	}
 }
 

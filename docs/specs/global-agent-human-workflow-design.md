@@ -28,7 +28,7 @@
 - 业务执行用例在 `backend/src/productflow_backend/application/product_workflow/v2_runs.py`，worker 从 `backend/src/productflow_backend/workers.py` 进入执行器。
 - `WorkflowRun` 和 `WorkflowNodeRun` 由 PostgreSQL 持有，Redis/Dramatiq 只承担投递和执行调度。
 
-当前 Agent Turn 仍然以商品为业务边界：`AgentConversation` 绑定 `product_id` 和 `workflow_draft_id`，新建商品和旧归档重建会同时创建一个独立的 `AgentSession` 记录。Session 已有列表、创建、改名、归档、商品工作区摘要和按 Session 选择商品工作区的 API；当前工作台已提供会话切换入口。`ImageSession` 是连续生图会话，已有自己的会话列表和生图任务，但不承担全局业务 Agent 的职责。AgentTask、页面上下文快照、后台恢复、工作流子图库关联和全局 Agent Dock 仍未交付。
+当前 Agent Turn 仍然以商品工作区作为业务事实边界：`AgentConversation` 绑定 `product_id` 和 `workflow_draft_id`，新建商品和旧归档重建会同时创建一个独立的 `AgentSession` 记录。Session 已有列表、创建、改名、归档、商品工作区摘要和按 Session 选择商品工作区的 API；工作台和应用级 Global Agent Dock 都可以打开会话列表。`AgentTask`、任务专属 harness run、任务级 Turn 关联和有界页面上下文快照已经落库并接入 Turn 请求，取消任务也有 API 和 Dock 控件。Task 摘要、暂停/恢复、独立调度器、页面级 WorkflowRun 投影、工作流子图库关联和全局图库页面仍未全部交付。`ImageSession` 是连续生图会话，已有自己的会话列表和生图任务，但不承担全局业务 Agent 的职责。
 
 ## 3. 产品原则
 
@@ -52,11 +52,11 @@ Workflow 是用户确认后保存的可编辑 DAG。它可以被用户直接运�
 
 | 对象 | 作用 | 当前状态 |
 |---|---|---|
-| `AgentSession` | 用户和全局 Agent 的长期交流入口，可包含多个任务 | 已实现 Session 元数据、商品对话关联、列表/创建/改名/归档和工作区切换基础；摘要与 Task 仍未实现 |
-| `AgentTask` | 一个明确的业务目标，可跨页面、跨 Turn、后台运行 | 未实现 |
-| `AgentTurn` | 一次用户消息、本轮上下文、工具调用和结果投影 | 当前由商品级 Agent Turn 投影部分承担 |
-| `AgentRun` | harness 内部一次可恢复的执行运行 | 当前以商品 `AgentConversation` 的 harness run 存在 |
-| `PageContextSnapshot` | 某次消息发送时的路由、页面对象、选择、过滤器和 revision 摘要 | 未实现 |
+| `AgentSession` | 用户和全局 Agent 的长期交流入口，可包含多个任务 | 已实现 Session 元数据、商品对话关联、列表/创建/改名/归档、工作区切换和 Global Agent Dock 基础；摘要仍未实现 |
+| `AgentTask` | 一个明确的业务目标，可跨页面、跨 Turn、后台运行 | 已实现独立记录、独立 harness run、列表/创建/改名/取消和工作台打开；暂停/恢复、Task 摘要、调度额度和待确认 Draft 聚影仍未实现 |
+| `AgentTurn` | 一次用户消息、本轮上下文、工具调用和结果投影 | 已关联 Task 和页面上下文快照；同一 Task 的活动 Turn 保持串行 |
+| `AgentRun` | harness 内部一次可恢复的执行运行 | 每个 AgentTask 使用自己的 harness run；未指定 Task 的旧工作区 Turn 继续使用 conversation run |
+| `PageContextSnapshot` | 某次消息发送时的路由、页面对象、选择、过滤器和 revision 摘要 | 已实现 FastAPI/Go 有界合同和持久化；可以挂在显式 Task Turn 或普通商品对话 Turn 上；执行前 Fresh Observation 仍需补齐 |
 | `WorkflowDraft` | Agent 或用户提出的待确认工作流变更 | 已实现 |
 | `Workflow` | 用户确认后的可编辑、可执行 DAG | 已实现 |
 | `WorkflowRun` | 某次完整工作流执行记录 | 已实现 |
@@ -197,22 +197,24 @@ Session summary
 - 已新增独立的 `AgentSession` 和 `AgentConversation.session_id` 关联；当前商品 `AgentConversation` 保持原有 Draft 绑定，不改名充当全局 Session。
 - 已提供 Session 列表/创建/改名/归档、商品工作区摘要和当前工作台切换入口；切换通过 Session 关联的商品工作区重新读取 bootstrap。
 - 当前工作台入口采用可搜索的会话面板，按进行中/已归档分组，显示会话关联的商品工作区；会话管理动作与商品工作流的编辑、审阅和人工运行入口保持分离。
-- 后续新增独立的 `AgentTask`、Turn 关系和 Task 列表/暂停/恢复/取消 bounded projection。
-- 先支持只读查询、问题等待、Draft 查看和 WorkflowRun 监控，不开放跨域副作用。
+- 已新增独立的 `AgentTask`、Task 专属 harness run、Turn 关系、Task 列表/创建/改名/取消 API，以及应用级 Global Agent Dock。
+- Dock 采用控制面板定位，显示 Session/Task、目标、状态和进入对应商品工作区的入口；现有工作流画布和人工运行控件保持原有 owner。
+- 当前仍只接入商品工作区范围的 Agent 工具；跨商品、跨工作流和全局图库的副作用能力不在本阶段开放。
 
 ### 阶段 2：接入页面上下文和任务恢复
 
-- 在 Web 到 FastAPI 的 Turn 请求中加入结构化 PageContextSnapshot。
-- FastAPI 做对象归属和字段上限校验；Go harness 只接收有界合同。
-- 为 Session summary、Task summary、context digest 和 stale observation 增加持久化/恢复测试。
+- 已在 Web 到 FastAPI 的 Turn 请求中加入结构化 PageContextSnapshot；FastAPI 持久化快照并计算 digest，Go harness 只接收有界合同。
+- 已把 Task goal 注入任务专属 harness 的固定系统上下文；页面快照作为当前 Turn 的 ambient context，不会覆盖 Task goal。
+- 未指定 Task 的普通商品对话继续使用 conversation run，不会因为页面快照自动出现在后台 Task 列表中。
+- 已保留既有 Agent Turn 恢复同步，并让 Task Turn 通过任务专属运行路径恢复；Session summary、Task summary、stale observation 和独立调度器仍待实现。
 - 页面切换只更新后续 Turn 的 ambient context，不修改既有 Task 目标。
 
 ### 阶段 3：接入人工作流执行
 
-- Agent 读取 Workflow、WorkflowRun 和节点状态时使用有界查询。
-- Agent 请求运行时复用 `v2_runs.py` 的现有 application use case。
-- 为运行请求记录来源类型和关联 Task 的审计信息；不改变 WorkflowRun 的业务 owner。
-- UI 继续提供直接运行和人工接管；Agent Dock 只显示监控和跳转。
+- Agent 已有只读 `inspect_workflow_runs_v1` 工具，通过内部 API 读取有界 WorkflowRun/WorkflowNodeRun 列表。
+- Agent 请求运行、取消和重试尚未开放；这些操作仍由工作流页面直接触发，并继续复用 `v2_runs.py` 的现有 application use case。
+- 后续开放 Agent 请求运行时，需要记录来源类型和关联 Task 的审计信息，且保持 WorkflowRun 的业务 owner 不变。
+- UI 继续提供直接运行和人工接管；Global Agent Dock 当前提供任务取消，不接管工作流运行按钮。
 
 ### 阶段 4：完成全局图库与工作流子图库
 

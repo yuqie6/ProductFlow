@@ -48,6 +48,8 @@ def submit_agent_turn(
     input_text: str,
     input_asset_ids: list[str],
     idempotency_key: str,
+    task_id: str | None = None,
+    page_context: dict[str, Any] | None = None,
     gateway: AgentServiceClient,
     enqueue_sync: Callable[[Session, str], None],
 ) -> AgentTurnSubmission:
@@ -58,22 +60,26 @@ def submit_agent_turn(
         input_text=input_text,
         input_asset_ids=input_asset_ids,
         idempotency_key=idempotency_key,
+        task_id=task_id,
+        page_context=page_context,
     )
     projection = reservation.projection
     if projection.harness_turn_id is None:
         try:
             state = gateway.start_turn(
                 conversation_id=conversation_id,
+                task_id=projection.task_id,
                 input_text=projection.input_text,
                 asset_ids=list(projection.input_asset_ids_json),
                 idempotency_key=projection.id,
+                page_context=_agent_page_context_payload(projection),
             )
             conversation = get_agent_conversation_or_raise(
                 session,
                 product_id=product_id,
                 conversation_id=conversation_id,
             )
-            _validate_agent_state_scope(conversation.harness_run_id, state)
+            _validate_agent_state_scope(_expected_harness_run_id(conversation, projection), state)
             projection = bind_harness_turn(
                 session,
                 product_id=product_id,
@@ -139,6 +145,7 @@ def refresh_agent_turn(
         state = gateway.get_turn(
             conversation_id=conversation_id,
             turn_id=projection.harness_turn_id,
+            task_id=projection.task_id,
         )
     except AgentServiceRequestError as exc:
         _raise_agent_service_business_error(exc)
@@ -174,11 +181,13 @@ def control_agent_turn(
             state = gateway.cancel_turn(
                 conversation_id=conversation_id,
                 turn_id=projection.harness_turn_id,
+                task_id=projection.task_id,
             )
         else:
             state = gateway.resume_turn(
                 conversation_id=conversation_id,
                 turn_id=projection.harness_turn_id,
+                task_id=projection.task_id,
             )
     except AgentServiceRequestError as exc:
         _raise_agent_service_business_error(exc)
@@ -240,6 +249,7 @@ def answer_agent_question(
             turn_id=projection.harness_turn_id,
             question_id=question_id,
             answer=answer,
+            task_id=projection.task_id,
         )
     except AgentServiceRequestError as exc:
         _raise_agent_service_business_error(exc)
@@ -273,7 +283,13 @@ def synchronize_agent_turn_state(
         product_id=product_id,
         conversation_id=conversation_id,
     )
-    _validate_agent_state_scope(conversation.harness_run_id, state)
+    projection = get_agent_turn_or_raise(
+        session,
+        product_id=product_id,
+        conversation_id=conversation_id,
+        projection_id=projection_id,
+    )
+    _validate_agent_state_scope(_expected_harness_run_id(conversation, projection), state)
     projection = project_agent_turn_state(
         session,
         product_id=product_id,
@@ -322,9 +338,11 @@ def retry_unbound_agent_turn_start(
     try:
         state = gateway.start_turn(
             conversation_id=conversation.id,
+            task_id=projection.task_id,
             input_text=projection.input_text,
             asset_ids=list(projection.input_asset_ids_json),
             idempotency_key=projection.id,
+            page_context=_agent_page_context_payload(projection),
         )
     except AgentServiceRequestError as exc:
         record_agent_turn_start_error(
@@ -335,7 +353,7 @@ def retry_unbound_agent_turn_start(
             safe_error=_safe_agent_sync_error(exc),
         )
         raise
-    _validate_agent_state_scope(conversation.harness_run_id, state)
+    _validate_agent_state_scope(_expected_harness_run_id(conversation, projection), state)
     projection = bind_harness_turn(
         session,
         product_id=conversation.product_id,
@@ -358,6 +376,30 @@ def retry_unbound_agent_turn_start(
 def _validate_agent_state_scope(expected_run_id: str, state: AgentServiceTurnState) -> None:
     if state.run_id != expected_run_id or not state.turn_id:
         raise AgentServiceUnavailableError("Agent 服务返回了作用域不匹配的 Turn")
+
+
+def _expected_harness_run_id(conversation, projection: AgentTurnProjection) -> str:
+    return projection.task.harness_run_id if projection.task is not None else conversation.harness_run_id
+
+
+def _agent_page_context_payload(projection: AgentTurnProjection) -> dict[str, Any] | None:
+    snapshot = projection.page_context_snapshot
+    if snapshot is None:
+        return None
+    return {
+        "snapshot_id": snapshot.id,
+        "route": snapshot.route,
+        "page_type": snapshot.page_type,
+        "product_id": snapshot.product_id,
+        "workflow_id": snapshot.workflow_id,
+        "selected_asset_ids": list(snapshot.selected_asset_ids_json),
+        "visible_asset_ids": list(snapshot.visible_asset_ids_json),
+        "filters": dict(snapshot.filters_json),
+        "workflow_revision": snapshot.workflow_revision,
+        "library_revision": snapshot.library_revision,
+        "digest": snapshot.digest,
+        "captured_at": snapshot.captured_at.isoformat(),
+    }
 
 
 def _safe_agent_sync_error(exc: AgentServiceRequestError) -> str:

@@ -22,6 +22,7 @@ from productflow_backend.domain.enums import (
 )
 from productflow_backend.infrastructure.agent_service import AgentServiceToolStep
 from productflow_backend.infrastructure.db.models import AgentConversation, AgentTurnProjection
+from productflow_backend.presentation.schemas.workflow_drafts import WorkflowRunV2Response
 
 
 class StrictAgentRequest(BaseModel):
@@ -31,6 +32,8 @@ class StrictAgentRequest(BaseModel):
 class AgentContractResponse(BaseModel):
     schema_version: Literal[1]
     conversation_id: str
+    task_id: str | None = None
+    task_goal: str | None = None
     product_id: str
     workflow_draft_id: str
     harness_run_id: str
@@ -38,6 +41,29 @@ class AgentContractResponse(BaseModel):
     system_prompt: str
     workflow_draft_schema: dict[str, Any]
     tool_contract_version: int
+
+
+class AgentPageContextSnapshotRequest(StrictAgentRequest):
+    route: str = Field(min_length=1, max_length=512)
+    page_type: str = Field(min_length=1, max_length=80)
+    product_id: str | None = Field(default=None, max_length=64)
+    workflow_id: str | None = Field(default=None, max_length=64)
+    selected_asset_ids: list[str] = Field(default_factory=list, max_length=100)
+    visible_asset_ids: list[str] = Field(default_factory=list, max_length=100)
+    filters: dict[str, str] = Field(default_factory=dict, max_length=20)
+    workflow_revision: int | None = Field(default=None, ge=0)
+    library_revision: int | None = Field(default=None, ge=0)
+    captured_at: datetime
+
+    @model_validator(mode="after")
+    def validate_context_ids(self) -> AgentPageContextSnapshotRequest:
+        if len(set(self.selected_asset_ids)) != len(self.selected_asset_ids):
+            raise ValueError("selected_asset_ids 不能包含重复 ID")
+        if len(set(self.visible_asset_ids)) != len(self.visible_asset_ids):
+            raise ValueError("visible_asset_ids 不能包含重复 ID")
+        if self.captured_at.tzinfo is None:
+            raise ValueError("captured_at 必须包含时区")
+        return self
 
 
 class AgentWorkflowDraftValidationRequest(StrictAgentRequest):
@@ -215,6 +241,8 @@ class StartAgentTurnRequest(StrictAgentRequest):
     input_text: str = Field(min_length=1, max_length=AGENT_MAX_INPUT_TEXT_CHARS)
     asset_ids: list[str] = Field(default_factory=list, max_length=AGENT_MAX_INPUT_ASSETS)
     idempotency_key: str = Field(min_length=1, max_length=200)
+    task_id: str | None = Field(default=None, max_length=64)
+    page_context: AgentPageContextSnapshotRequest | None = None
 
 
 class AgentQuestionAnswerRequest(StrictAgentRequest):
@@ -259,6 +287,7 @@ class AgentToolStepResponse(BaseModel):
 class AgentTurnResponse(BaseModel):
     id: str
     conversation_id: str
+    task_id: str | None
     harness_turn_id: str | None
     idempotency_key: str
     input_text: str
@@ -272,6 +301,7 @@ class AgentTurnResponse(BaseModel):
     artifact_name: str | None
     artifact_step_id: str | None
     workflow_draft_revision_id: str | None
+    page_context_snapshot_id: str | None
     sync_error: str | None
     finished_at: datetime | None
     created_at: datetime
@@ -281,6 +311,12 @@ class AgentTurnResponse(BaseModel):
 class AgentTurnPageResponse(BaseModel):
     items: list[AgentTurnResponse]
     next_cursor: str | None = None
+
+
+class AgentWorkflowRunListResponse(BaseModel):
+    workflow_id: str | None
+    workflow_revision: int
+    items: list[WorkflowRunV2Response]
 
 
 class SubmitAgentTurnResponse(BaseModel):
@@ -323,6 +359,7 @@ def serialize_agent_turn(projection: AgentTurnProjection) -> AgentTurnResponse:
     return AgentTurnResponse(
         id=projection.id,
         conversation_id=projection.conversation_id,
+        task_id=projection.task_id,
         harness_turn_id=projection.harness_turn_id,
         idempotency_key=projection.idempotency_key,
         input_text=projection.input_text,
@@ -336,6 +373,7 @@ def serialize_agent_turn(projection: AgentTurnProjection) -> AgentTurnResponse:
         artifact_name=projection.artifact_name,
         artifact_step_id=projection.artifact_step_id,
         workflow_draft_revision_id=projection.workflow_draft_revision_id,
+        page_context_snapshot_id=projection.page_context_snapshot_id,
         sync_error=projection.sync_error,
         finished_at=projection.finished_at,
         created_at=projection.created_at,

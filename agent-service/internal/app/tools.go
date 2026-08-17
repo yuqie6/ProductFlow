@@ -17,6 +17,7 @@ import (
 
 const (
 	productContextToolName       = "get_product_workflow_context_v1"
+	inspectWorkflowRunsToolName  = "inspect_workflow_runs_v1"
 	listLegacyArchivesToolName   = "list_legacy_archives_v1"
 	inspectLegacyArchiveToolName = "inspect_legacy_archive_v1"
 	listAssetsToolName           = "list_product_image_assets_v2"
@@ -30,6 +31,7 @@ const (
 	maxInspectedArchiveItems     = 10
 	maxListedAssets              = 100
 	maxMovedAssets               = 100
+	maxListedWorkflowRuns        = 20
 )
 
 func scopedReadTools(client *productflow.Client, scope Scope) []agenttask.Tool {
@@ -44,6 +46,31 @@ func scopedReadTools(client *productflow.Client, scope Scope) []agenttask.Tool {
 					return "", err
 				}
 				result, err := client.ProductContext(ctx, scope.ConversationID)
+				return string(result), err
+			},
+		},
+		{
+			Name:        inspectWorkflowRunsToolName,
+			Description: "Read a bounded list of the current product workflow's recent WorkflowRun and WorkflowNodeRun statuses. This is read-only and does not start, cancel, or retry a run.",
+			Parameters: map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": maxListedWorkflowRuns},
+				},
+				"required": []string{"limit"},
+			},
+			Strict: true,
+			Handler: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var arguments struct {
+					Limit int `json:"limit"`
+				}
+				if err := decodeStrictObject(raw, &arguments); err != nil {
+					return "", err
+				}
+				if arguments.Limit < 1 || arguments.Limit > maxListedWorkflowRuns {
+					return "", fmt.Errorf("limit must be between 1 and %d", maxListedWorkflowRuns)
+				}
+				result, err := client.ListWorkflowRuns(ctx, scope.ConversationID, arguments.Limit)
 				return string(result), err
 			},
 		},

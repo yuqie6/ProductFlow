@@ -29,6 +29,8 @@ type Client struct {
 type Contract struct {
 	SchemaVersion       int            `json:"schema_version"`
 	ConversationID      string         `json:"conversation_id"`
+	TaskID              *string        `json:"task_id"`
+	TaskGoal            *string        `json:"task_goal"`
 	ProductID           string         `json:"product_id"`
 	WorkflowDraftID     string         `json:"workflow_draft_id"`
 	HarnessRunID        string         `json:"harness_run_id"`
@@ -148,6 +150,12 @@ func (client *Client) Contract(ctx context.Context, conversationID string) (Cont
 	return result, err
 }
 
+func (client *Client) TaskContract(ctx context.Context, taskID string) (Contract, error) {
+	var result Contract
+	err := client.json(ctx, http.MethodGet, client.taskPath(taskID)+"/contract", nil, &result, "")
+	return result, err
+}
+
 func (client *Client) AgentProviderConfig(ctx context.Context) (AgentProviderConfig, error) {
 	var result AgentProviderConfig
 	err := client.json(ctx, http.MethodGet, "/api/internal/v1/agent-runtime/provider-config", nil, &result, "")
@@ -157,6 +165,21 @@ func (client *Client) AgentProviderConfig(ctx context.Context) (AgentProviderCon
 func (client *Client) ProductContext(ctx context.Context, conversationID string) (json.RawMessage, error) {
 	var result json.RawMessage
 	err := client.json(ctx, http.MethodGet, client.conversationPath(conversationID)+"/product-context", nil, &result, "")
+	return result, err
+}
+
+func (client *Client) ListWorkflowRuns(ctx context.Context, conversationID string, limit int) (json.RawMessage, error) {
+	values := url.Values{}
+	values.Set("limit", strconv.Itoa(limit))
+	var result json.RawMessage
+	err := client.json(
+		ctx,
+		http.MethodGet,
+		client.conversationPath(conversationID)+"/workflow-runs?"+values.Encode(),
+		nil,
+		&result,
+		"",
+	)
 	return result, err
 }
 
@@ -451,6 +474,10 @@ func (client *Client) reconcileMutation(
 
 func (client *Client) conversationPath(conversationID string) string {
 	return "/api/internal/v1/agent-conversations/" + url.PathEscape(conversationID)
+}
+
+func (client *Client) taskPath(taskID string) string {
+	return "/api/internal/v1/agent-tasks/" + url.PathEscape(taskID)
 }
 
 func (client *Client) json(

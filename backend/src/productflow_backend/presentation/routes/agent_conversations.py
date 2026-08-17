@@ -93,6 +93,7 @@ def get_agent_conversation_endpoint(
 def list_agent_turns_endpoint(
     product_id: str,
     conversation_id: str,
+    task_id: str | None = Query(default=None, max_length=64),
     after: str = Query(default="", max_length=4096),
     limit: int = Query(default=AGENT_TURN_DEFAULT_PAGE_SIZE, ge=1, le=AGENT_TURN_MAX_PAGE_SIZE),
     session: Session = Depends(get_session),
@@ -101,6 +102,7 @@ def list_agent_turns_endpoint(
         session,
         product_id=product_id,
         conversation_id=conversation_id,
+        task_id=task_id,
         after=after,
         limit=limit,
     )
@@ -128,6 +130,8 @@ def submit_agent_turn_endpoint(
         input_text=payload.input_text,
         input_asset_ids=payload.asset_ids,
         idempotency_key=payload.idempotency_key,
+        task_id=payload.task_id,
+        page_context=payload.page_context.model_dump(mode="json") if payload.page_context is not None else None,
         gateway=_agent_gateway_or_raise(),
         enqueue_sync=enqueue_agent_turn_sync,
     )
@@ -255,6 +259,7 @@ async def stream_agent_turn_events_endpoint(
         gateway.get_turn(
             conversation_id=conversation_id,
             turn_id=projection.harness_turn_id,
+            task_id=projection.task_id,
         )
     except AgentServiceRequestError as exc:
         if exc.status_code in {404, 409}:
@@ -267,6 +272,7 @@ async def stream_agent_turn_events_endpoint(
                 conversation_id=conversation_id,
                 turn_id=projection.harness_turn_id or "",
                 after=cursor,
+                task_id=projection.task_id,
             ):
                 yield chunk
         except AgentServiceRequestError:

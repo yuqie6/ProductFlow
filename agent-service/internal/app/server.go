@@ -15,7 +15,12 @@ import (
 	"github.com/yuqie6/productflow-agent-service/internal/productflow"
 )
 
-const maxStartAssets = 6
+const (
+	maxStartAssets        = 6
+	maxPageContextBytes   = 32 << 10
+	maxPageContextIDs     = 100
+	maxPageContextFilters = 20
+)
 
 type Server struct {
 	manager     *Manager
@@ -25,9 +30,25 @@ type Server struct {
 }
 
 type startTurnRequest struct {
-	InputText      string   `json:"input_text"`
-	AssetIDs       []string `json:"asset_ids,omitempty"`
-	IdempotencyKey string   `json:"idempotency_key"`
+	InputText      string       `json:"input_text"`
+	AssetIDs       []string     `json:"asset_ids,omitempty"`
+	IdempotencyKey string       `json:"idempotency_key"`
+	PageContext    *pageContext `json:"page_context,omitempty"`
+}
+
+type pageContext struct {
+	SnapshotID       string            `json:"snapshot_id"`
+	Route            string            `json:"route"`
+	PageType         string            `json:"page_type"`
+	ProductID        *string           `json:"product_id"`
+	WorkflowID       *string           `json:"workflow_id"`
+	SelectedAssetIDs []string          `json:"selected_asset_ids"`
+	VisibleAssetIDs  []string          `json:"visible_asset_ids"`
+	Filters          map[string]string `json:"filters"`
+	WorkflowRevision *int              `json:"workflow_revision"`
+	LibraryRevision  *int              `json:"library_revision"`
+	Digest           string            `json:"digest"`
+	CapturedAt       string            `json:"captured_at"`
 }
 
 func NewServer(manager *Manager, internalKey string, maxBody int64) (*Server, error) {
@@ -49,6 +70,12 @@ func (server *Server) routes() {
 	server.mux.Handle("POST /internal/v1/conversations/{conversation_id}/turns/{turn_id}/resume", server.requireInternal(http.HandlerFunc(server.delegate)))
 	server.mux.Handle("POST /internal/v1/conversations/{conversation_id}/turns/{turn_id}/questions/{question_id}/answer", server.requireInternal(http.HandlerFunc(server.delegate)))
 	server.mux.Handle("GET /internal/v1/conversations/{conversation_id}/turns/{turn_id}/events", server.requireInternal(http.HandlerFunc(server.delegate)))
+	server.mux.Handle("POST /internal/v1/tasks/{task_id}/turns", server.requireInternal(http.HandlerFunc(server.startTaskTurn)))
+	server.mux.Handle("GET /internal/v1/tasks/{task_id}/turns/{turn_id}", server.requireInternal(http.HandlerFunc(server.delegate)))
+	server.mux.Handle("POST /internal/v1/tasks/{task_id}/turns/{turn_id}/cancel", server.requireInternal(http.HandlerFunc(server.delegate)))
+	server.mux.Handle("POST /internal/v1/tasks/{task_id}/turns/{turn_id}/resume", server.requireInternal(http.HandlerFunc(server.delegate)))
+	server.mux.Handle("POST /internal/v1/tasks/{task_id}/turns/{turn_id}/questions/{question_id}/answer", server.requireInternal(http.HandlerFunc(server.delegate)))
+	server.mux.Handle("GET /internal/v1/tasks/{task_id}/turns/{turn_id}/events", server.requireInternal(http.HandlerFunc(server.delegate)))
 }
 
 func (server *Server) health(writer http.ResponseWriter, _ *http.Request) {
@@ -74,6 +101,19 @@ func (server *Server) startTurn(writer http.ResponseWriter, request *http.Reques
 		writeMappedError(writer, err)
 		return
 	}
+	server.startTurnForEntry(writer, request, entry)
+}
+
+func (server *Server) startTaskTurn(writer http.ResponseWriter, request *http.Request) {
+	entry, err := server.manager.GetTask(request.Context(), request.PathValue("task_id"))
+	if err != nil {
+		writeMappedError(writer, err)
+		return
+	}
+	server.startTurnForEntry(writer, request, entry)
+}
+
+func (server *Server) startTurnForEntry(writer http.ResponseWriter, request *http.Request, entry *ConversationService) {
 	var body startTurnRequest
 	if !server.decodeJSON(writer, request, &body) {
 		return
@@ -89,7 +129,7 @@ func (server *Server) startTurn(writer http.ResponseWriter, request *http.Reques
 		writeError(writer, http.StatusBadRequest, "invalid_argument", err.Error())
 		return
 	}
-	input, err := server.turnInput(request, entry, body.InputText, assetIDs)
+	input, err := server.turnInput(request, entry, body.InputText, assetIDs, body.PageContext)
 	if err != nil {
 		writeMappedError(writer, err)
 		return
@@ -102,7 +142,7 @@ func (server *Server) startTurn(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 	writer.Header().Set("Location", fmt.Sprintf(
-		"/internal/v1/conversations/%s/turns/%s", url.PathEscape(entry.Scope.ConversationID), url.PathEscape(state.TurnID),
+		"%s/turns/%s", server.executionPath(entry), url.PathEscape(state.TurnID),
 	))
 	writeJSON(writer, http.StatusAccepted, state)
 }
@@ -112,8 +152,25 @@ func (server *Server) turnInput(
 	entry *ConversationService,
 	inputText string,
 	assetIDs []string,
+	contextSnapshot *pageContext,
 ) (agenttask.TurnInput, error) {
 	content := []agenttask.InputContent{{Type: agenttask.ContentInputText, Text: inputText}}
+	if contextSnapshot != nil {
+		if err := contextSnapshot.validate(); err != nil {
+			return agenttask.TurnInput{}, err
+		}
+		encoded, err := json.Marshal(contextSnapshot)
+		if err != nil {
+			return agenttask.TurnInput{}, err
+		}
+		if len(encoded) > maxPageContextBytes {
+			return agenttask.TurnInput{}, errors.New("page_context exceeds the Agent Turn context limit")
+		}
+		content = append(content, agenttask.InputContent{
+			Type: agenttask.ContentInputText,
+			Text: "ProductFlow 页面上下文快照（仅用于理解用户指代；执行前必须重新读取业务事实）：" + string(encoded),
+		})
+	}
 	var totalBytes int64
 	for _, assetID := range assetIDs {
 		image, err := server.manager.config.ProductFlow.AssetContent(request.Context(), entry.Scope.ConversationID, assetID)
@@ -140,7 +197,15 @@ func (server *Server) turnInput(
 }
 
 func (server *Server) delegate(writer http.ResponseWriter, request *http.Request) {
-	entry, err := server.manager.Get(request.Context(), request.PathValue("conversation_id"))
+	taskID := request.PathValue("task_id")
+	conversationID := request.PathValue("conversation_id")
+	var entry *ConversationService
+	var err error
+	if taskID != "" {
+		entry, err = server.manager.GetTask(request.Context(), taskID)
+	} else {
+		entry, err = server.manager.Get(request.Context(), conversationID)
+	}
 	if err != nil {
 		writeMappedError(writer, err)
 		return
@@ -164,6 +229,36 @@ func (server *Server) delegate(writer http.ResponseWriter, request *http.Request
 	clone.URL = &clonedURL
 	clone.RequestURI = ""
 	entry.Handler.ServeHTTP(writer, clone)
+}
+
+func (server *Server) executionPath(entry *ConversationService) string {
+	if entry.Scope.TaskID != "" {
+		return "/internal/v1/tasks/" + url.PathEscape(entry.Scope.TaskID)
+	}
+	return "/internal/v1/conversations/" + url.PathEscape(entry.Scope.ConversationID)
+}
+
+func (contextSnapshot *pageContext) validate() error {
+	if contextSnapshot == nil {
+		return nil
+	}
+	if strings.TrimSpace(contextSnapshot.SnapshotID) == "" || len(contextSnapshot.SnapshotID) > 64 {
+		return errors.New("page_context.snapshot_id is required")
+	}
+	if strings.TrimSpace(contextSnapshot.Route) == "" || len(contextSnapshot.Route) > 512 ||
+		strings.TrimSpace(contextSnapshot.PageType) == "" || len(contextSnapshot.PageType) > 80 {
+		return errors.New("page_context route and page_type are invalid")
+	}
+	if len(contextSnapshot.SelectedAssetIDs) > maxPageContextIDs || len(contextSnapshot.VisibleAssetIDs) > maxPageContextIDs {
+		return errors.New("page_context asset IDs exceed the limit")
+	}
+	if len(contextSnapshot.Filters) > maxPageContextFilters || strings.TrimSpace(contextSnapshot.CapturedAt) == "" {
+		return errors.New("page_context filters or captured_at are invalid")
+	}
+	if len(contextSnapshot.Digest) != 64 {
+		return errors.New("page_context.digest is invalid")
+	}
+	return nil
 }
 
 func (server *Server) decodeJSON(writer http.ResponseWriter, request *http.Request, target any) bool {

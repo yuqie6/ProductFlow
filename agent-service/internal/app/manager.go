@@ -70,15 +70,37 @@ func (manager *Manager) Get(ctx context.Context, conversationID string) (*Conver
 	if !canonicalUUID.MatchString(conversationID) {
 		return nil, errors.New("conversation_id must be a canonical UUID")
 	}
+	return manager.getEntry(ctx, conversationID, conversationID, "", func(ctx context.Context) (productflow.Contract, error) {
+		return manager.config.ProductFlow.Contract(ctx, conversationID)
+	})
+}
+
+func (manager *Manager) GetTask(ctx context.Context, taskID string) (*ConversationService, error) {
+	taskID = strings.ToLower(strings.TrimSpace(taskID))
+	if !canonicalUUID.MatchString(taskID) {
+		return nil, errors.New("task_id must be a canonical UUID")
+	}
+	return manager.getEntry(ctx, "task:"+taskID, "", taskID, func(ctx context.Context) (productflow.Contract, error) {
+		return manager.config.ProductFlow.TaskContract(ctx, taskID)
+	})
+}
+
+func (manager *Manager) getEntry(
+	ctx context.Context,
+	key string,
+	expectedConversationID string,
+	expectedTaskID string,
+	loadContract func(context.Context) (productflow.Contract, error),
+) (*ConversationService, error) {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 	if manager.closed {
 		return nil, errors.New("conversation manager is closed")
 	}
-	if entry := manager.entries[conversationID]; entry != nil {
+	if entry := manager.entries[key]; entry != nil {
 		return entry, nil
 	}
-	contract, err := manager.config.ProductFlow.Contract(ctx, conversationID)
+	contract, err := loadContract(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -88,17 +110,32 @@ func (manager *Manager) Get(ctx context.Context, conversationID string) (*Conver
 			contract.SchemaVersion, contract.ToolContractVersion, productFlowToolContractVersion,
 		)
 	}
+	contractTaskID := ""
+	if contract.TaskID != nil {
+		contractTaskID = strings.ToLower(strings.TrimSpace(*contract.TaskID))
+	}
+	if expectedTaskID != contractTaskID {
+		return nil, errors.New("ProductFlow returned an invalid task contract")
+	}
+	contractConversationID := strings.ToLower(strings.TrimSpace(contract.ConversationID))
+	if expectedConversationID != "" && contractConversationID != expectedConversationID {
+		return nil, errors.New("ProductFlow returned an invalid conversation scope")
+	}
 	providerConfig, err := manager.providerConfig(ctx)
 	if err != nil {
 		return nil, err
 	}
 	scope := Scope{
-		SchemaVersion: scopeSchemaVersion, ConversationID: contract.ConversationID,
+		SchemaVersion: scopeSchemaVersion, ConversationID: contractConversationID,
+		TaskID:    contractTaskID,
 		ProductID: contract.ProductID, WorkflowDraftID: contract.WorkflowDraftID, RunID: contract.HarnessRunID,
 	}
-	if scope.ConversationID != conversationID || !canonicalUUID.MatchString(strings.ToLower(scope.ProductID)) ||
+	if !canonicalUUID.MatchString(strings.ToLower(scope.ConversationID)) || !canonicalUUID.MatchString(strings.ToLower(scope.ProductID)) ||
 		!canonicalUUID.MatchString(strings.ToLower(scope.WorkflowDraftID)) || strings.TrimSpace(scope.RunID) == "" {
-		return nil, errors.New("ProductFlow returned an invalid conversation contract")
+		return nil, errors.New("ProductFlow returned an invalid Agent contract")
+	}
+	if expectedTaskID != "" && scope.TaskID != expectedTaskID {
+		return nil, errors.New("ProductFlow returned an invalid task scope")
 	}
 	database, workspace, err := ensureScope(manager.config.DataRoot, scope)
 	if err != nil {
@@ -107,7 +144,7 @@ func (manager *Manager) Get(ctx context.Context, conversationID string) (*Conver
 	runnerConfig := agenttask.Config{
 		Database: database, Workspace: workspace, SkillUserHome: workspace,
 		Provider: providerConfig, Policy: manager.config.Policy,
-		SystemPrompt: contract.SystemPrompt,
+		SystemPrompt: agentSystemPrompt(contract.SystemPrompt, contract.TaskGoal),
 		Tools:        scopedReadTools(manager.config.ProductFlow, scope),
 		DurableTools: scopedDurableTools(manager.config.ProductFlow, scope),
 		RequiredArtifact: &agenttask.RequiredArtifact{
@@ -133,8 +170,19 @@ func (manager *Manager) Get(ctx context.Context, conversationID string) (*Conver
 		return nil, fmt.Errorf("open harness HTTP handler: %w", err)
 	}
 	entry := &ConversationService{Scope: scope, Service: service, Handler: handler}
-	manager.entries[conversationID] = entry
+	manager.entries[key] = entry
 	return entry, nil
+}
+
+func agentSystemPrompt(base string, taskGoal *string) string {
+	goal := ""
+	if taskGoal != nil {
+		goal = strings.TrimSpace(*taskGoal)
+	}
+	if goal == "" {
+		return base
+	}
+	return base + "\n\n当前 Agent Task 的固定目标（不会随页面路由变化）：\n" + goal
 }
 
 func (manager *Manager) providerConfig(ctx context.Context) (agenttask.ProviderConfig, error) {

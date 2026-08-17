@@ -4,6 +4,8 @@ import type {
   AgentProductWorkspaceSnapshot,
   AgentSession,
   AgentSessionListResponse,
+  AgentTask,
+  AgentTaskListResponse,
   AgentQuestionAnswer,
   AgentTurn,
   AgentTurnPage,
@@ -322,10 +324,17 @@ export const api = {
       },
     );
   },
-  getAgentWorkbench(productId: string, agentSessionId?: string | null): Promise<AgentWorkbenchBootstrap> {
+  getAgentWorkbench(
+    productId: string,
+    agentSessionId?: string | null,
+    agentTaskId?: string | null,
+  ): Promise<AgentWorkbenchBootstrap> {
     const params = new URLSearchParams();
     if (agentSessionId) {
       params.set("agent_session_id", agentSessionId);
+    }
+    if (agentTaskId) {
+      params.set("agent_task_id", agentTaskId);
     }
     const query = params.size ? `?${params}` : "";
     return request(`/api/v2/products/${encodeURIComponent(productId)}/agent-workbench${query}`);
@@ -351,14 +360,53 @@ export const api = {
       method: "POST",
     });
   },
+  listAgentTasks(input: {
+    sessionId?: string | null;
+    includeTerminal?: boolean;
+    limit?: number;
+  } = {}): Promise<AgentTaskListResponse> {
+    const params = new URLSearchParams({
+      include_terminal: String(input.includeTerminal ?? true),
+      limit: String(input.limit ?? 50),
+    });
+    if (input.sessionId) {
+      params.set("session_id", input.sessionId);
+    }
+    return request(`/api/v2/agent-tasks?${params}`);
+  },
+  createAgentTask(input: {
+    session_id: string;
+    title: string;
+    goal: string;
+    conversation_id?: string | null;
+  }): Promise<AgentTask> {
+    return request("/api/v2/agent-tasks", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  renameAgentTask(taskId: string, title: string): Promise<AgentTask> {
+    return request(`/api/v2/agent-tasks/${encodeURIComponent(taskId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    });
+  },
+  cancelAgentTask(taskId: string): Promise<AgentTask> {
+    return request(`/api/v2/agent-tasks/${encodeURIComponent(taskId)}/cancel`, {
+      method: "POST",
+    });
+  },
   listAgentTurns(
     productId: string,
     conversationId: string,
-    input?: { after?: string | null; limit?: number },
+    input?: { after?: string | null; limit?: number; taskId?: string | null },
   ): Promise<AgentTurnPage> {
     const params = new URLSearchParams({ limit: String(input?.limit ?? 20) });
     if (input?.after) {
       params.set("after", input.after);
+    }
+    if (input?.taskId) {
+      params.set("task_id", input.taskId);
     }
     return request(`${agentConversationPath(productId, conversationId)}/turns?${params}`);
   },

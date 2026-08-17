@@ -23,6 +23,7 @@ The current repository targets a personal live demo and self-hosted deployments.
 - PostgreSQL is authoritative for products, facts, assets, Draft revisions, workflows, recipes, provider configuration, and business job state.
 - The Go Agent service journal is authoritative for durable Agent Turns, transcript, questions, tool calls/results, token deltas, and event cursors.
 - ProductFlow stores a web projection of Agent state but does not reconstruct a second model transcript.
+- `AgentTask` stores one business goal and one task-specific harness run under an `AgentSession`; `AgentTurnProjection` may point to a task and a bounded `AgentPageContextSnapshot`. A route change updates ambient context for later turns and does not rewrite the task goal.
 - `MediaObject` identifies immutable media bytes. `ProductImageAsset` identifies one image inside a product namespace.
 - Workflow nodes and covers reference `ProductImageAsset` ids, never storage paths or parallel-array positions.
 - Historical V1 source rows and immutable archives are migration evidence. They are not an online editor or executor.

@@ -12,6 +12,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.agent_sessions import new_agent_session
+from productflow_backend.application.agent_tasks import (
+    create_page_context_snapshot,
+    ensure_task_for_turn,
+    normalize_page_context,
+    update_agent_task_from_turn,
+)
 from productflow_backend.application.time import now_utc
 from productflow_backend.application.workflow_drafts.service import (
     append_workflow_draft_revision,
@@ -28,6 +34,7 @@ from productflow_backend.domain.enums import (
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
+    AgentTask,
     AgentTurnProjection,
     Product,
     ProductImageAsset,
@@ -182,6 +189,7 @@ def list_agent_turn_page(
     *,
     product_id: str,
     conversation_id: str,
+    task_id: str | None = None,
     after: str = "",
     limit: int = AGENT_TURN_DEFAULT_PAGE_SIZE,
 ) -> AgentTurnPage:
@@ -197,12 +205,18 @@ def list_agent_turn_page(
     cursor = _decode_agent_turn_cursor(after) if after.strip() else None
     if cursor is not None and cursor.conversation_id != conversation_id:
         raise BusinessValidationError("Agent Turn 分页 cursor 与当前 conversation 不匹配")
+    if task_id is not None:
+        task = session.get(AgentTask, task_id)
+        if task is None or task.conversation_id != conversation_id:
+            raise ConflictError("Agent Task 与当前 conversation 不匹配")
 
     statement = (
         select(AgentTurnProjection)
         .where(AgentTurnProjection.conversation_id == conversation_id)
         .order_by(AgentTurnProjection.created_at.desc(), AgentTurnProjection.id.desc())
     )
+    if task_id is not None:
+        statement = statement.where(AgentTurnProjection.task_id == task_id)
     if cursor is not None:
         statement = statement.where(
             or_(
@@ -311,12 +325,16 @@ def reserve_agent_turn(
     input_text: str,
     input_asset_ids: list[str],
     idempotency_key: str,
+    task_id: str | None = None,
+    page_context: dict[str, Any] | None = None,
 ) -> AgentTurnReservation:
     normalized_text = _normalize_input_text(input_text)
     normalized_asset_ids = _normalize_input_asset_ids(input_asset_ids)
     normalized_key = _normalize_idempotency_key(idempotency_key)
+    normalized_context = normalize_page_context(page_context) if page_context is not None else None
     request_hash = _turn_request_hash(
         conversation_id=conversation_id,
+        task_id=task_id,
         input_text=normalized_text,
         input_asset_ids=normalized_asset_ids,
     )
@@ -351,6 +369,12 @@ def reserve_agent_turn(
         session.commit()
         return AgentTurnReservation(projection=existing, created=False)
 
+    task = ensure_task_for_turn(
+        session,
+        conversation=conversation,
+        task_id=task_id,
+    )
+
     draft = session.scalar(
         workflow_draft_query().where(WorkflowDraft.id == conversation.workflow_draft_id)
     )
@@ -371,6 +395,7 @@ def reserve_agent_turn(
     )
     projection = AgentTurnProjection(
         conversation_id=conversation_id,
+        task_id=task.id if task is not None else None,
         idempotency_key=normalized_key,
         request_hash=request_hash,
         input_text=normalized_text,
@@ -381,6 +406,19 @@ def reserve_agent_turn(
     conversation.updated_at = now_utc()
     session.add(projection)
     try:
+        session.flush()
+        snapshot = None
+        if normalized_context is not None:
+            snapshot = create_page_context_snapshot(
+                session,
+                task=task,
+                turn_id=projection.id,
+                page_context=normalized_context,
+            )
+        if snapshot is not None:
+            projection.page_context_snapshot_id = snapshot.id
+        if task is not None:
+            task.current_turn_id = projection.id
         session.commit()
     except IntegrityError:
         session.rollback()
@@ -424,6 +462,13 @@ def bind_harness_turn(
     projection.status = status
     projection.updated_at = now_utc()
     _apply_conversation_status(projection.conversation, status)
+    update_agent_task_from_turn(
+        session,
+        projection=projection,
+        status=status,
+        error_text=None,
+        finished_at=None,
+    )
     try:
         if commit:
             session.commit()
@@ -488,6 +533,13 @@ def project_agent_turn_state(
     projection.finished_at = finished_at
     projection.updated_at = now_utc()
     _apply_conversation_status(projection.conversation, status)
+    update_agent_task_from_turn(
+        session,
+        projection=projection,
+        status=status,
+        error_text=projection.error_text,
+        finished_at=finished_at,
+    )
     if commit:
         session.commit()
         session.refresh(projection)
@@ -639,7 +691,8 @@ def _get_agent_turn_for_update(
         .options(
             selectinload(AgentTurnProjection.conversation)
             .selectinload(AgentConversation.workflow_draft)
-            .selectinload(WorkflowDraft.current_revision)
+            .selectinload(WorkflowDraft.current_revision),
+            selectinload(AgentTurnProjection.task),
         )
         .where(
             AgentTurnProjection.id == projection_id,
@@ -708,12 +761,14 @@ def _normalize_idempotency_key(value: str) -> str:
 def _turn_request_hash(
     *,
     conversation_id: str,
+    task_id: str | None,
     input_text: str,
     input_asset_ids: list[str],
 ) -> str:
     payload = {
         "schema_version": 1,
         "conversation_id": conversation_id,
+        "task_id": task_id,
         "input_text": input_text,
         "input_asset_ids": input_asset_ids,
     }

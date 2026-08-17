@@ -13,6 +13,7 @@ const scopeSchemaVersion = 1
 type Scope struct {
 	SchemaVersion   int    `json:"schema_version"`
 	ConversationID  string `json:"conversation_id"`
+	TaskID          string `json:"task_id,omitempty"`
 	ProductID       string `json:"product_id"`
 	WorkflowDraftID string `json:"workflow_draft_id"`
 	RunID           string `json:"run_id"`
@@ -23,6 +24,9 @@ func ensureScope(dataRoot string, expected Scope) (string, string, error) {
 		return "", "", fmt.Errorf("unsupported scope schema version %d", expected.SchemaVersion)
 	}
 	directory := filepath.Join(dataRoot, "conversations", expected.ConversationID)
+	if expected.TaskID != "" {
+		directory = filepath.Join(dataRoot, "tasks", expected.TaskID)
+	}
 	workspace := filepath.Join(directory, "workspace")
 	if err := os.MkdirAll(workspace, 0o700); err != nil {
 		return "", "", fmt.Errorf("create conversation workspace: %w", err)

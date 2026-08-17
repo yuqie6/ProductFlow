@@ -15,6 +15,7 @@ function turn(overrides: Partial<AgentTurn> = {}): AgentTurn {
   return {
     id: "projection-1",
     conversation_id: "conversation-1",
+    task_id: null,
     harness_turn_id: "harness-turn-1",
     idempotency_key: "key-1",
     input_text: "请整理商品信息",
@@ -27,6 +28,7 @@ function turn(overrides: Partial<AgentTurn> = {}): AgentTurn {
     artifact_name: null,
     artifact_step_id: null,
     workflow_draft_revision_id: null,
+    page_context_snapshot_id: null,
     sync_error: null,
     finished_at: null,
     created_at: "2026-08-14T00:00:00Z",

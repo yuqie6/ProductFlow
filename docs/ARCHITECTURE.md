@@ -91,11 +91,13 @@ image types + quantities + 1..6 uploads
   -> product workbench
 ```
 
-ProductFlow 是业务数据权威。Agent service 保存 durable Turn transcript、tool call/result 和 token delta；PostgreSQL 保存 AgentSession、AgentConversation、AgentTurnProjection、问题状态和 WorkflowDraft revision。当前 Session 负责跨商品容器和工作区选择，AgentTask、页面上下文快照与后台任务恢复仍在后续阶段。
+ProductFlow 是业务数据权威。Agent service 保存 durable Turn transcript、tool call/result 和 token delta；PostgreSQL 保存 AgentSession、AgentTask、AgentConversation、AgentTurnProjection、PageContextSnapshot、问题状态和 WorkflowDraft revision。每个 AgentTask 有自己的 harness run 和 scope；未指定 Task 的旧工作区 Turn 继续使用 conversation run，页面快照可以独立挂在这类 Turn 上。当前 Task 已支持独立 Turn、取消和恢复同步，Task 摘要、暂停/恢复、统一调度器和 Fresh Observation 仍在后续阶段。
 
 Agent service 通过 `tool.step` SSE 事件和 Turn 状态 `tool_steps` 暴露有界工具步骤投影，字段固定为 `step_id`、`kind`、`summary`、`status`。当前 kinds 为 `inspect_image`、`inspect_context`、`read_history`、`organize_assets`、`propose_draft`；statuses 为 `running`、`succeeded`、`failed`、`unknown`。`question.required` 继续独立拥有 Question，不投影为 tool step；当前没有真实 `generate_image` Agent tool，不提前加入。`AgentTurnProjection.tool_steps_json` 保存这份 web projection：缺失 `tool_steps` 表示兼容旧服务并保留现有 snapshot，显式 `[]` 才清空。
 
 Agent 读取商品资产时先获取有界元数据列表，再选择需要检查的图片。图片工具结果使用版本化多模态合同，不把整个图库或 data URL 拼进文本历史。
+
+应用级 `GlobalAgentDock` 位于认证后的应用壳层，负责 Session/Task 控制面板、状态搜索、任务创建、会话归档、任务取消和工作区跳转。它不承载商品工作流的编辑器、运行按钮或 WorkflowRun 状态 owner；这些能力继续由商品工作台和 `v2_runs.py` 提供。
 
 图库重命名、建文件夹、移动等 Agent 写操作使用 prepare/apply/reconcile 合同和幂等键，便于在网络中断或重启后对账。
 

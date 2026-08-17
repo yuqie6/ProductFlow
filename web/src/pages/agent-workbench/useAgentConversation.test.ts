@@ -14,6 +14,7 @@ function turn(id: string, status: AgentTurn["status"] = "succeeded"): AgentTurn 
   return {
     id,
     conversation_id: "conversation-1",
+    task_id: null,
     harness_turn_id: `harness-${id}`,
     idempotency_key: `key-${id}`,
     input_text: id,
@@ -26,6 +27,7 @@ function turn(id: string, status: AgentTurn["status"] = "succeeded"): AgentTurn 
     artifact_name: null,
     artifact_step_id: null,
     workflow_draft_revision_id: null,
+    page_context_snapshot_id: null,
     sync_error: null,
     finished_at: status === "succeeded" ? "2026-08-14T00:00:01Z" : null,
     created_at: `2026-08-14T00:00:0${id.slice(-1)}Z`,
@@ -44,6 +46,15 @@ describe("Agent conversation model", () => {
       asset_ids: ["asset-1", "asset-2"],
       idempotency_key: "initial:conversation-1",
     });
+  });
+
+  it("scopes the first-Turn idempotency key to an explicit parallel Task", () => {
+    const firstTask = initialAgentTurnInput("conversation-1", [], "task-1");
+    const secondTask = initialAgentTurnInput("conversation-1", [], "task-2");
+
+    expect(firstTask.idempotency_key).toBe("initial:conversation-1:task-1");
+    expect(secondTask.idempotency_key).toBe("initial:conversation-1:task-2");
+    expect(firstTask.idempotency_key).not.toBe(secondTask.idempotency_key);
   });
 
   it("prepends reverse-keyset pages into one chronological transcript and removes overlap", () => {

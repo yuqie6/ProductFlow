@@ -92,6 +92,20 @@ class AgentSessionStatus(StrEnum):
     ARCHIVED = "archived"
 
 
+class AgentTaskStatus(StrEnum):
+    """全局 Agent 业务任务的持久化状态。"""
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    WAITING_USER = "waiting_user"
+    AWAITING_CONFIRMATION = "awaiting_confirmation"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELED = "canceled"
+    PAUSED = "paused"
+    UNKNOWN = "unknown"
+
+
 class AgentTurnStatus(StrEnum):
     """agent-harness Turn 状态的无损 ProductFlow 投影。"""
 

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Boxes, CircleAlert, CircleDot, Eye, FolderOpen, Images, Plus, Workflow, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { GalleryImagePreviewDialog } from "../../components/GalleryImagePreviewDialog";
@@ -11,6 +11,7 @@ import type { DownloadableImage } from "../../lib/image-downloads";
 import { useI18n } from "../../lib/preferences";
 import type {
   ActiveProductWorkflowV2,
+  AgentPageContextSnapshotInput,
   AgentWorkbenchBootstrap,
   ProductWorkflowV2,
   WorkflowDraft,
@@ -68,6 +69,7 @@ type RecipeOperation =
 
 interface AgentProductWorkbenchPageProps {
   bootstrap: AgentV2WorkbenchBootstrap;
+  agentTaskId?: string | null;
   onRefetchBootstrap: () => Promise<unknown>;
 }
 
@@ -83,9 +85,11 @@ const EMPTY_CREATE_REFERENCE_CONTROL: V2CreateReferenceControl = {
 
 export function AgentProductWorkbenchPage({
   bootstrap,
+  agentTaskId = null,
   onRefetchBootstrap,
 }: AgentProductWorkbenchPageProps) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const [materialization, setMaterialization] = useState<WorkflowMaterializationResult | null>(null);
@@ -135,6 +139,18 @@ export function AgentProductWorkbenchPage({
     activeWorkflowQuery.data?.workflow ?? bootstrap.active_workflow,
     materialization?.workflow ?? null,
   );
+  const pageContext = useMemo<AgentPageContextSnapshotInput>(() => ({
+    route: `${location.pathname}${location.search}`,
+    page_type: "product_workbench",
+    product_id: bootstrap.product.id,
+    workflow_id: workflow?.id ?? null,
+    selected_asset_ids: [],
+    visible_asset_ids: [],
+    filters: { sidebar: sidebarTool },
+    workflow_revision: workflow?.revision ?? null,
+    library_revision: null,
+    captured_at: new Date().toISOString(),
+  }), [bootstrap.product.id, location.pathname, location.search, sidebarTool, workflow?.id, workflow?.revision]);
   const recipesQuery = useQuery({
     queryKey: ["workflow-recipes", false],
     queryFn: () => api.listWorkflowRecipes(false),
@@ -209,8 +225,8 @@ export function AgentProductWorkbenchPage({
   }, [referenceNode, referenceNodeId]);
 
   const updateBootstrapDraft = useCallback((draft: WorkflowDraft) => {
-    queryClient.setQueryData<AgentWorkbenchBootstrap>(
-      ["agent-workbench", bootstrap.product.id],
+    queryClient.setQueriesData<AgentWorkbenchBootstrap>(
+      { queryKey: ["agent-workbench", bootstrap.product.id] },
       (current) => current?.mode === "agent_v2"
         ? { ...current, workflow_draft: draft }
         : current,
@@ -288,8 +304,8 @@ export function AgentProductWorkbenchPage({
         const application = result as WorkflowRecipeApplicationResult;
         recipeApplyKeysRef.current.delete(operation.recipe.id);
         setRecipeApplication(application);
-        queryClient.setQueryData<AgentWorkbenchBootstrap>(
-          ["agent-workbench", bootstrap.product.id],
+        queryClient.setQueriesData<AgentWorkbenchBootstrap>(
+          { queryKey: ["agent-workbench", bootstrap.product.id] },
           (current) => current?.mode === "agent_v2"
             ? {
                 ...current,
@@ -537,6 +553,8 @@ export function AgentProductWorkbenchPage({
             productName={bootstrap.product.name}
             conversation={bootstrap.conversation}
             workflowDraft={bootstrap.workflow_draft}
+            taskId={agentTaskId}
+            pageContext={pageContext}
             reviewDraftAvailable={Boolean(reviewableRevision)}
             onReviewDraft={() => {
               setConflictDetected(false);
