@@ -212,7 +212,7 @@ ProductFlow 现在有一个跟连续生图会话绑定的旧收藏画廊。用�
 - 旧 Gallery 的图片收藏数据不能静默丢失。
 - 正式切换前必须完成 snapshot、preflight、apply、reconcile 和 zero-delta 证据。
 - 新全局图库前端已由 `/media-library` 提供，顶层旧 `/gallery` 只保留兼容重定向。
-- 旧 `/api/gallery` route、旧 DTO、旧前端调用和旧 runtime owner 仍在迁移窗口保留，需在 backfill 对账和 owner 退休证据通过后一起处理。
+- 旧 `/api/gallery` route、旧 DTO、旧前端调用和旧 runtime owner 已从在线代码移除；迁移 reader 和 backfill command 仍读取旧表，部署级 backfill 对账、引用审计和观察窗完成后才具备物理清理资格。
 - 商品/工作流子图库不能因为旧 Gallery 退休而被删除。
 - 旧 `image_gallery_entries` 表作为迁移证据暂时保留；drop 需要单独确认和备份/恢复证据。
 
@@ -225,7 +225,7 @@ ProductFlow 现在有一个跟连续生图会话绑定的旧收藏画廊。用�
 
 ### ML-010 旧收藏画廊删除一致性
 
-- 删除 ImageSession 时，旧 `ImageGalleryEntry` 必须由应用删除路径显式处理，不能只依赖 SQLite 默认关闭的 FK cascade。
+- 迁移窗口处理旧 ImageSession source 时，必须显式核对旧 `ImageGalleryEntry`；在线 ImageSession 删除路径不再写入或读取旧 Gallery，不能借物理删除旧条目来替代 canonical 素材保留。
 - 删除 ImageSession 后，旧收藏条目不能残留为孤儿记录。
 - 删除 ImageSession 不得删除已经保存到全局图库的资产，也不得删除仍被工作流使用的媒体。
 - 前端删除 ImageSession 后必须刷新旧 Gallery 和全局图库相关查询缓存。

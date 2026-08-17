@@ -1,6 +1,6 @@
 # 素材库转型发布与验收计划
 
-Last reviewed against the current working tree on 2026-08-16.
+Last reviewed against the current working tree on 2026-08-18.
 
 ## 1. 范围
 
@@ -182,7 +182,7 @@ cutover 条件：
 
 - 新 frontend 和 API 已不读取 `/api/gallery`。
 - old/new backfill report 为零 blocker。
-- `ImageGalleryEntry` runtime model、route、schema、api methods、types 和 tests 一起退休。
+- `ImageGalleryEntry` runtime model、旧 route、schema、api methods 和旧客户端调用已退休；迁移测试保留 source reader、backfill 和 retired-route 404 回归。
 - 旧物理表继续只读保留，直到 cleanup eligibility。
 
 ## 11. Phase 7：Agent 整理 Draft

@@ -35,7 +35,7 @@ ProductFlow 是单管理员、单商家工作区，由六个运行单元组成�
 | 全局素材整理 Draft | `media_library/draft_contracts.py`, `media_library/drafts.py`, `agent_control.py` | `routes/global_agent_conversations.py`, `routes/agent_internal.py` | `test_media_library_drafts.py` |
 | Draft 与物化 | `workflow_drafts/contracts.py`, `service.py`, `materialization.py` | `routes/workflow_drafts.py` | `test_workflow_draft_contracts.py`, `test_workflow_draft_materialization.py` |
 | V2 图与运行 | `domain/workflow_rules.py`, `product_workflow/v2_*.py`, `execution.py` | `routes/workflow_drafts.py`, `workers.py` | workflow domain/run/node/recovery tests |
-| 商品图片库 | `gallery.py`, `gallery_assets.py`, `gallery_mutations.py`, `gallery_archives.py`, `media_assets.py` | `routes/products.py` | `test_gallery.py`, `test_media_objects.py` |
+| 商品图片库 | `gallery_assets.py`, `gallery_mutations.py`, `gallery_archives.py`, `media_assets.py` | `routes/products.py` | `test_product_gallery_explorer.py`, `test_media_objects.py` |
 | 连续生图 | `image_sessions.py`, `image_generation_core.py` | `routes/image_sessions.py`, image adapters | image-session/provider tests |
 | 设置与 provider | `settings.py`, `runtime_settings.py` | `routes/settings.py`, `infrastructure/provider_config.py` | settings/provider/runtime tests |
 | V1 归档切换 | `legacy_archives.py`, `legacy_retirement/` | `routes/legacy_archives.py`, `commands/` | legacy archive/cutover/migration tests |
@@ -159,7 +159,7 @@ DeliveryRenditionJob 从 ProductImageAsset 读取原始媒体，按裁切、缩�
 
 GenerationSpec 保存模型生成意图；provider effective values 和解码后的 actual output 保存在运行/生成记录中。DeliverySpec 是独立确定性合同，不能触发图片模型调用。
 
-全局素材库读取、文件夹/标签/归档、来源保存和工作流关联由 `application/media_library/`、`routes/media_library.py`、`MediaLibraryPage.tsx` 和 `WorkflowMediaLibraryPanel.tsx` 负责，列表使用有界 cursor page 和 preview/thumbnail URL。`/gallery` 只保留旧书签兼容重定向；旧 `gallery.py`、`routes/gallery.py` 和 `ImageGalleryEntry` 仍作为迁移窗口的历史 owner，不是新的全局素材读取入口。商品工作台中的 `product-detail/image-explorer/` 继续负责商品作用域的人工选图和绑定。
+全局素材库读取、文件夹/标签/归档、来源保存和工作流关联由 `application/media_library/`、`routes/media_library.py`、`MediaLibraryPage.tsx` 和 `WorkflowMediaLibraryPanel.tsx` 负责，列表使用有界 cursor page 和 preview/thumbnail URL。`/gallery` 只保留旧书签兼容重定向；旧 `/api/gallery` route、DTO 和在线 runtime owner 已移除。`application/legacy_retirement/media_library.py` 与 `commands/backfill_media_library.py` 只为旧物理表提供有界迁移读取。商品工作台中的 `product-detail/image-explorer/` 继续负责商品作用域的人工选图和绑定。
 
 ## 8. Provider 架构
 

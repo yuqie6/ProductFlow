@@ -27,7 +27,7 @@ Decision owner：ProductFlow repository owner。2026-08-16 的基础媒体身份
 
 ADR 0002 已确定：`MediaObject` 拥有不可变媒体字节，`ProductImageAsset` 拥有商品命名空间内的图片身份，工作流和封面只引用 `ProductImageAsset`。
 
-当前 `/gallery` 的 `ImageGalleryEntry` 直接引用 `ImageSessionAsset`，并随 ImageSession 级联删除。它适合表达“某次连续生图会话中的收藏”，不能表达跨会话、跨商品长期保存的素材资产。与此同时，`ImageSessionAsset` 仍重复保存并读取 storage path/MIME，且数据库 migration 没有真正落实 ORM 声明的非空 `media_object_id`。
+历史 `/gallery` 的 `ImageGalleryEntry` 直接引用 `ImageSessionAsset`，并随 ImageSession 级联删除。它适合表达“某次连续生图会话中的收藏”，不能表达跨会话、跨商品长期保存的素材资产。旧在线 route、DTO 和 ORM owner 已退休，旧表只由迁移 reader 有界读取。
 
 用户需要把明确选择的图片积累为全局图库，并让这些图片同步/关联到每个工作流的子图库，供实际工作流使用；同一张全局图片可以被多个工作流复用。该能力不能把工作流引用、全局素材身份和底层 bytes 合并成一个不可治理的对象。
 
@@ -106,7 +106,7 @@ ADR 0002 已确定：`MediaObject` 拥有不可变媒体字节，`ProductImageAs
 - 媒体清理必须把全局图库和所有工作流侧引用纳入 owner 检查。
 - 新增了全局素材与工作流侧图片之间的一致性约束；普通 FK 不能证明两个 `media_object_id` 相等，必须由锁定 application transaction、同步关联约束、迁移审计和并发测试共同保证。
 - 第一版没有素材 hard delete；解除工作流关联不会删除全局素材或共享媒体。
-- 旧 ImageSession 删除路径必须显式清理旧 `ImageGalleryEntry`，但不能删除已保存的全局资产。
+- 迁移窗口必须核对旧 `ImageGalleryEntry` 的 source、media、provenance 和文件可读性；旧表清理不能删除已保存的全局资产。
 - Gallery cutover、workflow sync、attempt fencing、transactional delivery 和 Agent 整理是独立可验证阶段，不能打包成无法定位故障的一次切换。
 
 ## 排除方案

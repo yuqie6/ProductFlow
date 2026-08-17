@@ -6,8 +6,12 @@ from dataclasses import dataclass, replace
 from hashlib import sha256
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
+from productflow_backend.application.legacy_retirement.media_library import (
+    LegacyGalleryEntry,
+    load_legacy_gallery_entries,
+)
 from productflow_backend.application.media_library.contracts import (
     canonical_provenance_hash,
     parse_provenance_v1,
@@ -16,7 +20,6 @@ from productflow_backend.application.media_library.migration_audit import MediaL
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.enums import MediaVerificationStatus
 from productflow_backend.infrastructure.db.models import (
-    ImageGalleryEntry,
     ImageSessionAsset,
     MediaLibraryAsset,
     MediaObject,
@@ -42,7 +45,7 @@ class GalleryBackfillSummary:
 
 
 def capture_gallery_snapshot(session: Session) -> MediaLibraryMigrationAudit:
-    entries = list(session.scalars(_gallery_entry_query().order_by(ImageGalleryEntry.id)).all())
+    entries = load_legacy_gallery_entries(session)
     source_rows = tuple(
         (
             entry.id,
@@ -72,14 +75,7 @@ def capture_gallery_snapshot(session: Session) -> MediaLibraryMigrationAudit:
     )
 
 
-def _gallery_entry_query():
-    return select(ImageGalleryEntry).options(
-        selectinload(ImageGalleryEntry.asset).selectinload(ImageSessionAsset.media_object),
-        selectinload(ImageGalleryEntry.round),
-    )
-
-
-def _gallery_source(entry: ImageGalleryEntry) -> tuple[ImageSessionAsset, MediaObject]:
+def _gallery_source(entry: LegacyGalleryEntry) -> tuple[ImageSessionAsset, MediaObject]:
     asset = entry.asset
     if asset is None:
         raise RuntimeError(f"gallery entry {entry.id} has no source image session asset")
@@ -103,9 +99,11 @@ def _gallery_source(entry: ImageGalleryEntry) -> tuple[ImageSessionAsset, MediaO
 
 def _build_gallery_provenance(
     *,
-    entry: ImageGalleryEntry,
+    entry: LegacyGalleryEntry,
     media: MediaObject,
 ) -> dict[str, object]:
+    if entry.created_at is None:
+        raise RuntimeError(f"gallery entry {entry.id} has no created_at")
     return {
         "schema_version": 1,
         "source_type": "legacy_gallery",
@@ -136,7 +134,7 @@ def _append_blocker(
 def backfill_gallery_entry(
     session: Session,
     *,
-    entry: ImageGalleryEntry,
+    entry: LegacyGalleryEntry,
     storage: LocalStorage,
 ) -> bool:
     existing = session.scalar(
@@ -193,25 +191,14 @@ def run_gallery_backfill(
         if not page_ids:
             entries = []
         else:
-            loaded = list(
-                session.scalars(
-                    _gallery_entry_query().where(ImageGalleryEntry.id.in_(page_ids))
-                ).all()
-            )
+            loaded = load_legacy_gallery_entries(session, ids=page_ids)
             entries_by_id = {entry.id: entry for entry in loaded}
             missing_ids = [entry_id for entry_id in page_ids if entry_id not in entries_by_id]
             if missing_ids:
                 raise RuntimeError(f"media library snapshot entry missing: {missing_ids[0]}")
             entries = [entries_by_id[entry_id] for entry_id in page_ids]
     else:
-        entries = list(
-            session.scalars(
-                _gallery_entry_query()
-                .order_by(ImageGalleryEntry.created_at.asc(), ImageGalleryEntry.id.asc())
-                .limit(limit)
-                .offset(offset)
-            ).all()
-        )
+        entries = load_legacy_gallery_entries(session, order="created", limit=limit, offset=offset)
     summary = GalleryBackfillSummary(scanned=len(entries))
     for entry in entries:
         existing = session.scalar(
@@ -258,7 +245,7 @@ def verify_gallery_backfill(
         or current.source_rows != snapshot.source_rows
     ):
         raise RuntimeError("media library backfill source changed during migration")
-    entries = list(session.scalars(_gallery_entry_query().order_by(ImageGalleryEntry.id)).all())
+    entries = load_legacy_gallery_entries(session)
     entry_ids = {entry.id for entry in entries}
     legacy_assets = list(
         session.scalars(

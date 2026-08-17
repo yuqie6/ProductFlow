@@ -19,14 +19,14 @@
 | `backend/error-handling` | 吸收 | `backend/AGENTS.md` | `domain/errors.py`, `presentation/errors.py`, `test_error_handling.py` |
 | `backend/logging-guidelines` | 压缩吸收 | `backend/AGENTS.md`, `ARCHITECTURE.md` | `infrastructure/logging.py`, `presentation/api.py`, `workers.py`, `test_logging_behavior.py` |
 | `backend/quality-guidelines` | 吸收 | 根和后端 `AGENTS.md` | `justfile`, backend/Go test suites |
-| `backend/product-gallery-explorer` | 纠正后吸收 | `CONTEXT.md`, `ARCHITECTURE.md`, `backend/AGENTS.md` | `gallery.py`, `gallery_assets.py`, `gallery_mutations.py`, `gallery_archives.py`, `test_gallery.py` |
+| `backend/product-gallery-explorer` | 纠正后吸收 | `CONTEXT.md`, `ARCHITECTURE.md`, `backend/AGENTS.md` | `gallery_assets.py`, `gallery_mutations.py`, `gallery_archives.py`, `test_product_gallery_explorer.py` |
 | `backend/product-workflow-dag` | 吸收 | `CONTEXT.md`, ADR 0003, `ARCHITECTURE.md`, `backend/AGENTS.md` | `domain/workflow_rules.py`, `product_workflow/v2_*.py`, workflow tests |
 | `backend/workflow-agent-service` | 吸收 | ADR 0001, `ARCHITECTURE.md`, `backend/AGENTS.md` | `agent_*` application modules, `agent-service/`, `test_workflow_agent_service.py` |
 
 ### 后端纠正项
 
 - Session 生命周期与事务所有权已拆开。FastAPI dependency/worker 负责创建和关闭；当前 public application command 经常负责一次业务 commit/rollback，`stage_*` 等内部 helper 只 flush。旧 spec 的“创建 Session 者必然提交”与实际代码不符。
-- 图库所有权已从旧的 `gallery_queries.py` / `product_gallery.py` 名称更新为当前 `gallery.py`、`gallery_assets.py`、`gallery_mutations.py`、`gallery_archives.py`。
+- 商品图片库所有权由 `gallery_assets.py`、`gallery_mutations.py`、`gallery_archives.py` 和 `media_assets.py` 承担；旧顶层 Gallery 的迁移读取由 `legacy_retirement/media_library.py` 承担。
 - 日志 spec 中针对旧任务系统的模板段落不迁移；保留 request/worker context、敏感信息边界和 durable state 优先原则。
 - “禁止指标系统”不是长期产品合同，只保留“相关改动不得顺带引入另一套观测框架”的范围约束。
 

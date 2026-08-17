@@ -16,6 +16,7 @@ from alembic.config import Config
 from sqlalchemy.engine import URL, make_url
 
 from alembic import command
+from productflow_backend.application.legacy_retirement.media_library import LEGACY_GALLERY_ENTRIES
 from productflow_backend.application.media_library.backfill import (
     capture_gallery_snapshot,
     run_gallery_backfill,
@@ -28,7 +29,6 @@ from productflow_backend.application.media_library.service import (
 from productflow_backend.config import get_settings
 from productflow_backend.domain.enums import ImageSessionAssetKind, MediaVerificationStatus
 from productflow_backend.infrastructure.db.models import (
-    ImageGalleryEntry,
     ImageSession,
     ImageSessionAsset,
     MediaLibraryAsset,
@@ -150,13 +150,16 @@ def test_live_media_library_backfill_on_postgresql(
                 )
                 session.add(asset)
                 session.flush()
-                entry = ImageGalleryEntry(
-                    id="live-gallery-entry",
-                    image_session_asset_id=asset.id,
+                entry_id = "live-gallery-entry"
+                session.execute(
+                    LEGACY_GALLERY_ENTRIES.insert().values(
+                        id=entry_id,
+                        image_session_asset_id=asset.id,
+                        image_session_round_id=None,
+                        created_at=image_session.created_at,
+                    )
                 )
-                session.add(entry)
                 session.commit()
-                entry_id = entry.id
 
             with session_factory() as snapshot_session:
                 snapshot = capture_gallery_snapshot(snapshot_session)

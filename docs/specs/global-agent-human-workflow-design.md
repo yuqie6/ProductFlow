@@ -241,7 +241,7 @@ Session summary
 
 - 已完成 `MediaLibraryAsset` 到工作流子图库的 `WorkflowMediaLibraryAsset` 关联表和同步 command；关联只保存关系，不复制媒体 bytes。
 - 已完成 `/media-library` 全局图库页面、工作流子图库入口、批量组织、归档/恢复、关联移除和工作流引用保护。
-- ImageChat 的保存动作已经直接写入 `/api/media-library/from-session`；`/gallery` 已重定向到 `/media-library`。旧 `/api/gallery`、旧表和历史 DTO 仍保留作迁移桥接与对账证据，尚未完成物理 owner 退休。
+- ImageChat 的保存动作已经直接写入 `/api/media-library/from-session`；`/gallery` 已重定向到 `/media-library`。旧 `/api/gallery`、历史 DTO 和在线 runtime owner 已退休；旧表仍由迁移 reader 和 backfill command 提供对账证据，物理表清理继续受部署级迁移闸门约束。
 - Agent 已支持有界 inspect、生成图库整理 Draft，以及在 UI 中查看影响范围并确认；当前组织操作限于 rename、move、set_tags、archive、restore，工作流关联仍由独立的工作流同步 command 负责。
 
 ### 阶段 5：全局 Agent Dock 和跨域业务能力

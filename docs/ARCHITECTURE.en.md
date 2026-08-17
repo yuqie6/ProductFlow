@@ -34,7 +34,7 @@ Current code ownership:
 | Agent Turn and sync | `agent_conversations.py`, `agent_control.py`, `agent_sync.py` | `routes/agent_conversations.py`, `infrastructure/agent_service.py` | `test_workflow_agent_service.py` |
 | Draft and materialization | `workflow_drafts/contracts.py`, `service.py`, `materialization.py` | `routes/workflow_drafts.py` | Draft contract/materialization tests |
 | V2 graph and execution | `domain/workflow_rules.py`, `product_workflow/v2_*.py`, `execution.py` | `routes/workflow_drafts.py`, `workers.py` | workflow domain/run/node/recovery tests |
-| Product image library | `gallery.py`, `gallery_assets.py`, `gallery_mutations.py`, `gallery_archives.py`, `media_assets.py` | `routes/products.py` | gallery/media tests |
+| Product image library | `gallery_assets.py`, `gallery_mutations.py`, `gallery_archives.py`, `media_assets.py` | `routes/products.py` | product gallery explorer/media tests |
 | Iterative image generation | `image_sessions.py`, `image_generation_core.py` | `routes/image_sessions.py`, image adapters | image-session/provider tests |
 | Settings and providers | `settings.py`, `runtime_settings.py` | `routes/settings.py`, `infrastructure/provider_config.py` | settings/provider/runtime tests |
 | V1 archive cutover | `legacy_archives.py`, `legacy_retirement/` | `routes/legacy_archives.py`, `commands/` | archive/cutover/migration tests |
@@ -154,7 +154,7 @@ DeliveryRenditionJob reads a ProductImageAsset and asynchronously emits a crop, 
 
 GenerationSpec records model-generation intent. Provider-effective values and decoded actual output live in run/generation records. DeliverySpec is a separate deterministic contract and cannot invoke the image model.
 
-Global media-library reads, folder/tag/archive organization, source saves, and workflow associations are owned by `application/media_library/`, `routes/media_library.py`, `MediaLibraryPage.tsx`, and `WorkflowMediaLibraryPanel.tsx`, using bounded cursor pages and preview/thumbnail URLs. `/gallery` only preserves a compatibility redirect; the old `gallery.py`, `routes/gallery.py`, and `ImageGalleryEntry` remain in the migration window as historical owners. The product workbench's `product-detail/image-explorer/` continues to own product-scoped manual selection and binding.
+Global media-library reads, folder/tag/archive organization, source saves, and workflow associations are owned by `application/media_library/`, `routes/media_library.py`, `MediaLibraryPage.tsx`, and `WorkflowMediaLibraryPanel.tsx`, using bounded cursor pages and preview/thumbnail URLs. `/gallery` preserves a bookmark redirect; the old `/api/gallery` route, DTOs, and online runtime owner have been removed. `application/legacy_retirement/media_library.py` and `commands/backfill_media_library.py` provide bounded migration reads for the retained physical legacy table. The product workbench's `product-detail/image-explorer/` continues to own product-scoped manual selection and binding.
 
 ## 8. Provider Architecture
 

@@ -28,7 +28,7 @@ migration `20260811_0031` 只把 `media_object_id` 添加为 nullable 并回填�
 
 ### 2.2 旧 Gallery 依附 Session
 
-`ImageGalleryEntry` 通过 `ON DELETE CASCADE` 引用 `ImageSessionAsset`，并通过 nullable round FK 动态读取 prompt/provider/candidate metadata。`application/gallery.py` 无界返回全部条目；`GalleryPage.tsx` 一次读取并在展示型页面中渲染。
+历史 `ImageGalleryEntry` 通过 `ON DELETE CASCADE` 引用 `ImageSessionAsset`，并通过 nullable round FK 保存 prompt/provider/candidate metadata 的 lineage。旧在线查询和 `GalleryPage.tsx` 已移除；`application/legacy_retirement/media_library.py` 只在迁移命令中有界读取旧表。
 
 该模型没有独立名称、revision、archive、canonical content URL 或来源快照。旧收藏的目标生命周期跟随 ImageSession，但应用删除路径必须显式删除旧条目，不能依赖 SQLite 默认关闭的外键级联。已保存到全局图库的资产不受旧条目删除影响。
 
@@ -203,7 +203,7 @@ application/media_library/
 - batch lock 以 `(entity type, id)` 稳定排序。
 - expected revision mismatch 使用 `ConflictError`，不静默 last-write-wins。
 
-现有 `application/gallery.py` 只在迁移窗口服务旧 owner，cutover 后整个模块退休。工作流/商品侧 explorer 继续提供子图库体验，但其图片关系必须由全局图库同步/关联合同驱动，不得与全局 queries 形成第二个全局 owner。
+旧 `application/gallery.py` 已退休。工作流/商品侧 explorer 继续提供子图库体验，但其图片关系必须由全局图库同步/关联合同驱动，不得与全局 queries 形成第二个全局 owner。
 
 ## 6. Public API
 

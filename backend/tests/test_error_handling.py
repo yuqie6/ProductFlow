@@ -137,18 +137,6 @@ def test_image_session_route_uses_global_business_error_handler(configured_env) 
     assert "code" not in invalid.json()
 
 
-def test_gallery_route_uses_global_business_error_handler(configured_env) -> None:  # noqa: ARG001
-    app = create_app()
-    client = TestClient(app)
-    _login(client)
-
-    response = client.post("/api/gallery", json={"image_session_asset_id": "missing-asset"})
-
-    assert response.status_code == 404
-    assert response.json() == {"detail": "会话图片不存在"}
-    assert "code" not in response.json()
-
-
 def test_high_risk_business_paths_raise_typed_validation_errors(db_session, configured_env) -> None:  # noqa: ARG001
     with pytest.raises(BusinessValidationError, match="商品名不能为空"):
         create_canonical_product(
