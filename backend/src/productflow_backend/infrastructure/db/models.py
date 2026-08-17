@@ -2952,6 +2952,29 @@ class MediaLibraryAsset(Base, TimestampMixin):
     )
 
 
+class MediaLibraryCollectionKey(Base):
+    """商品收录请求使用过的 product-scoped idempotency key。"""
+
+    __tablename__ = "media_library_collection_keys"
+    __table_args__ = (
+        UniqueConstraint(
+            "product_id",
+            "idempotency_key",
+            name="uq_media_library_collection_keys_product_key",
+        ),
+        CheckConstraint("length(request_hash) = 64", name="ck_media_library_collection_keys_request_hash"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    product_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("products.id", ondelete="CASCADE", name="fk_media_library_collection_keys_product_id"),
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(200))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class WorkflowMediaLibraryAsset(Base):
     """工作流可用素材集合与全局素材的关联，不持有媒体 bytes。"""
 

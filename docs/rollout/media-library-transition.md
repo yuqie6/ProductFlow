@@ -152,7 +152,7 @@ Last reviewed against the current working tree on 2026-08-18.
 - `(product_id, source_library_asset_id)` 唯一。
 - `origin_type` 从素材 provenance 映射到既有 upload/workflow/ImageSession 来源；收录 lineage 只由 `source_library_asset_id` 表达。
 - 收录事务锁定 Product 与 LibraryAsset，拒绝 archived/missing/pending，复制 display/original name 并复用 exact media id。
-- 单次收录最多 100 个唯一素材，请求最大 256 KiB，锁按 asset id 稳定排序；并发重复收录返回同一个 ProductImageAsset。当前 core API 尚未实现 `Idempotency-Key`/canonical request hash，仍需完成后才能进入生产收录验收。
+- 单次收录最多 100 个唯一素材，请求最大 256 KiB，锁按 asset id 稳定排序；并发重复收录返回同一个 `ProductImageAsset`。`POST /api/media-library/collect` 要求 product-scoped `Idempotency-Key`，并把 canonical 请求 hash 持久化到 `media_library_collection_keys`；同 key 不同参数返回冲突，重试返回原收录结果。
 - Library rename/tag/folder/archive 不传播到已有商品资产。
 - `MediaLibraryFolder` 一层；删除时素材回到 unorganized。
 - `MediaLibraryTag.normalized_key` 全局唯一；关联表防重复。

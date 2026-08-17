@@ -29,6 +29,7 @@ def test_media_library_assets_migration_creates_schema_and_constraints(
         assert {
             "library_organization_drafts",
             "library_organization_draft_revisions",
+            "media_library_collection_keys",
         } <= tables
         columns = {column["name"] for column in inspector.get_columns("media_library_assets")}
         assert {
@@ -53,6 +54,6 @@ def test_media_library_assets_migration_creates_schema_and_constraints(
         } <= checks
         assert "workflow_media_library_assets" in tables
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260818_0055"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260818_0056"
     finally:
         engine.dispose()

@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 from productflow_backend.application.media_library.contracts import (
     MediaLibrarySourceType,
     canonical_provenance_hash,
+    media_library_collection_request_hash,
+    normalize_media_library_collection_idempotency_key,
     parse_provenance_v1,
 )
 from productflow_backend.application.media_library.queries import (
@@ -26,6 +28,7 @@ from productflow_backend.domain.errors import BusinessValidationError, ConflictE
 from productflow_backend.infrastructure.db.models import (
     ImageSessionAsset,
     MediaLibraryAsset,
+    MediaLibraryCollectionKey,
     MediaObject,
     Product,
     ProductImageAsset,
@@ -284,6 +287,7 @@ def collect_media_library_assets_to_product(
     *,
     product_id: str,
     library_asset_ids: list[str],
+    idempotency_key: str | None = None,
     commit: bool = True,
 ) -> list[MediaLibraryCollectionResult]:
     """Batch-collect up to 100 unique active library assets into one product.
@@ -308,12 +312,55 @@ def collect_media_library_assets_to_product(
     unique_ids = list(dict.fromkeys(library_asset_ids))
     if len(unique_ids) != len(library_asset_ids):
         raise BusinessValidationError("素材收录请求包含重复 ID")
+    normalized_idempotency_key = None
+    request_hash = None
+    if idempotency_key is not None:
+        try:
+            normalized_idempotency_key = normalize_media_library_collection_idempotency_key(idempotency_key)
+        except ValueError as exc:
+            raise BusinessValidationError(str(exc)) from exc
+        request_hash = media_library_collection_request_hash(
+            product_id=product_id,
+            library_asset_ids=library_asset_ids,
+        )
 
     product = session.scalar(
         select(Product).where(Product.id == product_id).with_for_update()
     )
     if product is None:
         raise NotFoundError("商品不存在")
+
+    if normalized_idempotency_key is not None:
+        prior_request = session.scalar(
+            select(MediaLibraryCollectionKey)
+            .where(
+                MediaLibraryCollectionKey.product_id == product_id,
+                MediaLibraryCollectionKey.idempotency_key == normalized_idempotency_key,
+            )
+            .with_for_update()
+        )
+        if prior_request is not None:
+            if prior_request.request_hash != request_hash:
+                raise ConflictError("相同 idempotency key 不能用于不同的素材收录参数")
+            replayed_assets = list(
+                session.scalars(
+                    select(ProductImageAsset).where(
+                        ProductImageAsset.product_id == product_id,
+                        ProductImageAsset.source_library_asset_id.in_(unique_ids),
+                    )
+                ).all()
+            )
+            replayed_by_source_id = {
+                asset.source_library_asset_id: asset
+                for asset in replayed_assets
+                if asset.source_library_asset_id is not None
+            }
+            if len(replayed_by_source_id) != len(unique_ids):
+                raise ConflictError("素材收录幂等记录与商品图片不一致")
+            return [
+                MediaLibraryCollectionResult(asset=replayed_by_source_id[asset_id], created=False)
+                for asset_id in unique_ids
+            ]
 
     library_assets = list(
         session.scalars(
@@ -367,12 +414,28 @@ def collect_media_library_assets_to_product(
                 if existing is None:
                     raise
                 reloaded.append(MediaLibraryCollectionResult(asset=existing, created=False))
+            if normalized_idempotency_key is not None:
+                session.add(
+                    MediaLibraryCollectionKey(
+                        product_id=product_id,
+                        idempotency_key=normalized_idempotency_key,
+                        request_hash=request_hash,
+                    )
+                )
             if commit:
                 session.commit()
             return reloaded
-        if commit:
-            session.commit()
-            session.expire_all()
+    if normalized_idempotency_key is not None:
+        session.add(
+            MediaLibraryCollectionKey(
+                product_id=product_id,
+                idempotency_key=normalized_idempotency_key,
+                request_hash=request_hash,
+            )
+        )
+    if commit and (new_by_library_id or normalized_idempotency_key is not None):
+        session.commit()
+        session.expire_all()
     results: list[MediaLibraryCollectionResult] = []
     for library_asset_id in unique_ids:
         asset = existing_by_library_id.get(library_asset_id)
@@ -395,11 +458,13 @@ def collect_media_library_asset_to_product(
     *,
     product_id: str,
     library_asset_id: str,
+    idempotency_key: str | None = None,
 ) -> MediaLibraryCollectionResult:
     results = collect_media_library_assets_to_product(
         session,
         product_id=product_id,
         library_asset_ids=[library_asset_id],
+        idempotency_key=idempotency_key,
     )
     return results[0]
 

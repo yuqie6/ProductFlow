@@ -45,3 +45,39 @@ def test_workflow_media_library_api_keeps_association_explicit_and_non_destructi
     )
     assert removed.status_code == 204, removed.text
     assert client.get(path, params=query).json()["items"] == []
+
+
+def test_collect_media_library_api_binds_idempotency_key_to_request(db_session) -> None:
+    product, source_asset = _create_product_asset(db_session)
+    library_asset = save_media_library_asset_from_product(
+        db_session,
+        product_image_asset_id=source_asset.id,
+    ).asset
+    _, other_source_asset = _create_product_asset(db_session)
+    other_library_asset = save_media_library_asset_from_product(
+        db_session,
+        product_image_asset_id=other_source_asset.id,
+    ).asset
+
+    client = TestClient(create_app())
+    _login(client)
+    payload = {
+        "product_id": product.id,
+        "media_library_asset_ids": [library_asset.id],
+    }
+    headers = {"Idempotency-Key": "collect-library-api-1"}
+
+    first = client.post("/api/media-library/collect", json=payload, headers=headers)
+    assert first.status_code == 200, first.text
+    assert len(first.json()) == 1
+
+    replay = client.post("/api/media-library/collect", json=payload, headers=headers)
+    assert replay.status_code == 200, replay.text
+    assert replay.json()[0]["id"] == first.json()[0]["id"]
+
+    changed = client.post(
+        "/api/media-library/collect",
+        json={**payload, "media_library_asset_ids": [other_library_asset.id]},
+        headers=headers,
+    )
+    assert changed.status_code == 409

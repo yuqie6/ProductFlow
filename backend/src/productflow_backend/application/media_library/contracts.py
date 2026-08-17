@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 MEDIA_LIBRARY_PROVENANCE_SCHEMA_VERSION = 1
 MAX_PROVENANCE_BYTES = 32 * 1024
+MEDIA_LIBRARY_COLLECTION_MAX_IDEMPOTENCY_KEY_BYTES = 200
 MediaLibrarySourceType = Literal["legacy_gallery", "image_session_generated", "product_asset"]
 
 
@@ -33,6 +34,27 @@ def canonical_provenance_hash(payload: dict[str, Any]) -> str:
     if len(encoded.encode("utf-8")) > MAX_PROVENANCE_BYTES:
         raise ValueError("media library provenance payload exceeds maximum size")
     return sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def normalize_media_library_collection_idempotency_key(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError("素材收录 Idempotency-Key 不能为空")
+    if len(normalized.encode("utf-8")) > MEDIA_LIBRARY_COLLECTION_MAX_IDEMPOTENCY_KEY_BYTES:
+        raise ValueError(
+            f"素材收录 Idempotency-Key 不能超过 {MEDIA_LIBRARY_COLLECTION_MAX_IDEMPOTENCY_KEY_BYTES} bytes"
+        )
+    return normalized
+
+
+def media_library_collection_request_hash(*, product_id: str, library_asset_ids: list[str]) -> str:
+    return canonical_provenance_hash(
+        {
+            "request_kind": "media_library_collect_to_product_v1",
+            "product_id": product_id,
+            "media_library_asset_ids": library_asset_ids,
+        }
+    )
 
 
 def parse_provenance_v1(payload: dict[str, Any]) -> MediaLibraryProvenanceV1:

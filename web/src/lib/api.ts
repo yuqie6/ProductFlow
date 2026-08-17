@@ -821,6 +821,17 @@ export const api = {
       body: JSON.stringify({ image_session_asset_id: imageSessionAssetId }),
     });
   },
+  collectMediaLibraryAssetsToProduct(
+    productId: string,
+    mediaLibraryAssetIds: string[],
+    idempotencyKey: string,
+  ): Promise<ProductImageAsset[]> {
+    return request("/api/media-library/collect", {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify({ product_id: productId, media_library_asset_ids: mediaLibraryAssetIds }),
+    });
+  },
   getMediaLibraryBootstrap(): Promise<MediaLibraryBootstrap> {
     return request("/api/media-library/bootstrap");
   },

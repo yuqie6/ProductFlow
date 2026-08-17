@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, Header, Query, Response, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -245,12 +245,14 @@ def save_from_product_endpoint(
 @router.post("/collect", response_model=list[ProductImageAssetResponse])
 def collect_to_product_endpoint(
     payload: MediaLibraryCollectBatchToProductRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
     session: Session = Depends(get_session),
 ) -> list[ProductImageAssetResponse]:
     results = collect_media_library_assets_to_product(
         session,
         product_id=payload.product_id,
         library_asset_ids=payload.media_library_asset_ids,
+        idempotency_key=idempotency_key,
     )
     return [serialize_product_image_asset(result.asset) for result in results]
 
