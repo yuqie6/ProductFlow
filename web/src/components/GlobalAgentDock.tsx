@@ -94,6 +94,7 @@ export function GlobalAgentDock() {
   const [archiveTarget, setArchiveTarget] = useState<AgentSession | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [selectedTaskSnapshot, setSelectedTaskSnapshot] = useState<AgentTask | null>(null);
 
   const sessionsQuery = useQuery({
     queryKey: ["agent-sessions", true],
@@ -173,6 +174,9 @@ export function GlobalAgentDock() {
   const activeSessionId = selectedSessionId ?? currentSessionId ?? workspaceSessions[0]?.id ?? sessions[0]?.id ?? null;
   const activeSession = sessions.find((session) => session.id === activeSessionId) ?? null;
   const globalConversation = activeSession?.conversations.find((conversation) => conversation.scope_type === "global") ?? null;
+  const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? (
+    selectedTaskSnapshot?.id === selectedTaskId ? selectedTaskSnapshot : null
+  );
   const basePageContext = useMemo(
     () => buildPageContext(location.pathname, location.search),
     [location.pathname, location.search],
@@ -255,16 +259,19 @@ export function GlobalAgentDock() {
       const workspace = task.conversation_id ? workspaceByConversationId.get(task.conversation_id) : null;
       const conversation = task.conversation_id ? conversationById.get(task.conversation_id) : null;
       if (task.product_id && task.session_id) {
+        setSelectedTaskSnapshot(task);
         navigate(
           `/products/${encodeURIComponent(task.product_id)}?agent_session_id=${encodeURIComponent(task.session_id)}&agent_task_id=${encodeURIComponent(task.id)}`,
         );
         setOpen(false);
       } else if (workspace) {
+        setSelectedTaskSnapshot(task);
         navigate(
           `/products/${encodeURIComponent(workspace.productId)}?agent_session_id=${encodeURIComponent(task.session_id)}&agent_task_id=${encodeURIComponent(task.id)}`,
         );
         setOpen(false);
       } else if (conversation?.scopeType === "global") {
+        setSelectedTaskSnapshot(task);
         setSelectedSessionId(task.session_id);
         setSelectedTaskId(task.id);
         setTab("chat");
@@ -294,6 +301,7 @@ export function GlobalAgentDock() {
   const openGlobalConversation = (sessionId: string, taskId: string | null = null) => {
     setSelectedSessionId(sessionId);
     setSelectedTaskId(taskId);
+    setSelectedTaskSnapshot(taskId ? tasks.find((task) => task.id === taskId) ?? null : null);
     setTab("chat");
   };
   const startTaskForm = () => {
@@ -459,6 +467,8 @@ export function GlobalAgentDock() {
                     conversationId={globalConversation?.conversation_id ?? null}
                     sessionTitle={activeSession?.title ?? t("globalAgent.title")}
                     taskId={selectedTaskId}
+                    taskGoal={selectedTask?.goal ?? null}
+                    taskStatus={selectedTask?.status ?? null}
                     pageContext={pageContext}
                   />
                 </div>

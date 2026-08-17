@@ -7,6 +7,7 @@ import { useI18n } from "../../lib/preferences";
 import type {
   AgentPageContextSnapshotInput,
   AgentQuestionAnswer,
+  AgentTaskStatus,
   AgentToolStep,
 } from "../../lib/types";
 import { AgentQuestionPrompt } from "./AgentQuestionPrompt";
@@ -19,6 +20,8 @@ interface GlobalAgentConversationPanelProps {
   conversationId: string | null;
   sessionTitle: string;
   taskId?: string | null;
+  taskGoal?: string | null;
+  taskStatus?: AgentTaskStatus | null;
   pageContext: AgentPageContextSnapshotInput;
 }
 
@@ -26,6 +29,8 @@ export function GlobalAgentConversationPanel({
   conversationId,
   sessionTitle,
   taskId = null,
+  taskGoal = null,
+  taskStatus = null,
   pageContext,
 }: GlobalAgentConversationPanelProps) {
   const { t } = useI18n();
@@ -35,6 +40,8 @@ export function GlobalAgentConversationPanel({
   const agent = useGlobalAgentConversation({
     conversationId: conversationId ?? "",
     taskId,
+    taskGoal,
+    taskStatus,
     pageContext,
     enabled: Boolean(conversationId),
   });

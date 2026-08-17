@@ -5,12 +5,13 @@ import {
   useQueryClient,
   type InfiniteData,
 } from "@tanstack/react-query";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { api } from "../../lib/api";
 import type {
   AgentPageContextSnapshotInput,
   AgentQuestionAnswer,
+  AgentTaskStatus,
   AgentTurn,
   AgentTurnPage,
   LibraryOrganizationDraft,
@@ -30,6 +31,8 @@ const PROJECTION_POLL_MS = 1_500;
 interface UseGlobalAgentConversationInput {
   conversationId: string;
   taskId?: string | null;
+  taskGoal?: string | null;
+  taskStatus?: AgentTaskStatus | null;
   pageContext?: AgentPageContextSnapshotInput | null;
   enabled?: boolean;
 }
@@ -52,13 +55,33 @@ export function globalLibraryOrganizationDraftQueryKey(conversationId: string) {
   return ["global-library-organization-draft", conversationId] as const;
 }
 
+export function initialGlobalTaskTurnInput(
+  conversationId: string,
+  taskId: string,
+  taskGoal: string,
+  pageContext?: AgentPageContextSnapshotInput | null,
+): SubmitAgentTurnInput {
+  return {
+    input_text: taskGoal.trim(),
+    asset_ids: [],
+    task_id: taskId,
+    idempotency_key: `initial:${conversationId}:${taskId}`,
+    page_context: pageContext
+      ? { ...pageContext, captured_at: new Date().toISOString() }
+      : null,
+  };
+}
+
 export function useGlobalAgentConversation({
   conversationId,
   taskId = null,
+  taskGoal = null,
+  taskStatus = null,
   pageContext = null,
   enabled = true,
 }: UseGlobalAgentConversationInput) {
   const queryClient = useQueryClient();
+  const autoStartKeyRef = useRef<string | null>(null);
   const turnsKey = useMemo(
     () => globalAgentTurnsQueryKey(conversationId, taskId),
     [conversationId, taskId],
@@ -126,6 +149,35 @@ export function useGlobalAgentConversation({
     onSuccess: (response) => cacheTurn(response.turn),
     onSettled: () => queryClient.invalidateQueries({ queryKey: turnsKey }),
   });
+  const initialTaskKey = taskId && taskStatus === "queued" ? `${conversationId}:${taskId}` : null;
+  useEffect(() => {
+    if (
+      !enabled ||
+      !initialTaskKey ||
+      !taskId ||
+      !taskGoal?.trim() ||
+      !turnsQuery.isSuccess ||
+      pageTurns.length > 0 ||
+      submitTurnMutation.isPending ||
+      autoStartKeyRef.current === initialTaskKey
+    ) {
+      return;
+    }
+    autoStartKeyRef.current = initialTaskKey;
+    submitTurnMutation.mutate(
+      initialGlobalTaskTurnInput(conversationId, taskId, taskGoal, pageContext),
+    );
+  }, [
+    conversationId,
+    enabled,
+    initialTaskKey,
+    pageContext,
+    pageTurns.length,
+    submitTurnMutation,
+    taskGoal,
+    taskId,
+    turnsQuery.isSuccess,
+  ]);
   const cancelTurnMutation = useMutation({
     mutationFn: (projectionId: string) => api.cancelGlobalAgentTurn(conversationId, projectionId),
     onSuccess: cacheTurn,
