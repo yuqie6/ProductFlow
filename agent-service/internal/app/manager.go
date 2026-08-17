@@ -31,6 +31,7 @@ type ManagerConfig struct {
 	Policy      agenttask.Policy
 	HTTPOptions agenttask.HTTPOptions
 	ProductFlow *productflow.Client
+	Admission   agenttask.Admission
 }
 
 type ConversationService struct {
@@ -67,6 +68,7 @@ func ManagerConfigFrom(configValue config.Config, client *productflow.Client) Ma
 			MaxBodyBytes:      configValue.MaxBodyBytes,
 		},
 		ProductFlow: client,
+		Admission:   agenttask.NewSemaphore(configValue.MaxConcurrentTurns),
 	}
 }
 
@@ -203,6 +205,7 @@ func (manager *Manager) getEntry(
 	service, err := agenttask.OpenService(agenttask.ServiceConfig{
 		Runner:        runnerConfig,
 		ToolProjector: productFlowToolProjector,
+		Admission:     manager.config.Admission,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open harness service for conversation: %w", err)

@@ -37,7 +37,7 @@
 - 保留工作流画布的直接编辑、整图运行、单节点运行、取消、重试和运行记录入口；Agent 接入现有 `WorkflowRun`，不建立第二套执行器。
 - 已实现 `AgentSession` 元数据、商品对话关联、列表/创建/改名/归档 API，以及工作台内按 Session 选择商品工作区的基础切换；全局 Agent 可以在当前 Session 下创建商品 onboarding 工作区，创建页继续负责参考图和图片需求。
 - 已实现独立 `AgentTask`、任务专属 harness run、本轮 `AgentTurn` 关联和页面上下文快照；Session 切换不取消后台任务，Task 目标不随路由变化。
-- Global Agent Dock 已提供 Session/Task 列表、搜索、新建、归档、打开工作区、取消任务和全局素材整理 Draft 投影/确认；暂停/恢复、Task 摘要和统一调度器仍待实现。
+- Global Agent Dock 已提供 Session/Task 列表、搜索、新建、归档、打开工作区、取消任务和全局素材整理 Draft 投影/确认；暂停/恢复、Task 摘要和业务级统一调度器仍待实现。Agent service 已通过 `AGENT_MAX_CONCURRENT_TURNS` 为所有 Task/Conversation Turn 设置进程级模型调用上限，等待中的 Turn 保持 durable queued。
 - 按 Session 摘要、Task 目标、最近 Turn、当前页面上下文和执行前 Fresh Observation 分层组装上下文；完整 Agent journal 继续保留，模型工作上下文按 harness 规则压缩。
 - 已交付商品工作区只读 WorkflowRun 监控工具；执行前 Fresh Observation、跨商品/跨工作流查询范围和更多有副作用操作仍待实现。全局素材到明确工作流的关联 Draft 已交付。
 

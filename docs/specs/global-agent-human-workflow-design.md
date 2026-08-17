@@ -30,6 +30,8 @@
 
 当前 Agent Turn 仍然以商品工作区或全局素材库作为 scope 边界：商品 `AgentConversation` 绑定 `product_id` 和 `workflow_draft_id`。新建商品时，同一事务会创建一个 `AgentSession`、一个商品工作区 Conversation 和一个 sibling Global Conversation；商品创建对话负责收集商品事实、确认输入和生成 WorkflowDraft，全局对话负责后续跨页面操作。迁移窗口内的旧 Session 仍由 Session 列表访问路径懒加载 Global Conversation。Session 已有列表、创建、改名、归档、商品工作区摘要和按 Session 选择商品工作区的 API；工作台和应用级 Global Agent Dock 都可以打开会话列表。`AgentTask`、任务专属 harness run、任务级 Turn 关联和有界页面上下文快照已经落库并接入 Turn 请求，取消任务、监控 Agent 请求创建的 WorkflowRun 也已经接入。Global Agent Dock 已挂在认证后的应用路由外层；页面通过 `web/src/lib/agentPageContext.ts` 发布当前页面的有界事实，全局图库发布真实选中/可见素材和筛选条件，商品工作台发布工作流 revision、打开文件夹和选中节点，Dock 只在 route 匹配时使用该快照。全局图库页面、工作流子图库关联层、Global Agent 素材查询、全局商品与当前有效工作流摘要查询、明确 workflow ID 的有界运行状态查询、素材整理 Draft 的发布/确认，以及把全局素材关联到明确工作流的 Draft 操作已经落地；跨商品写操作、Task 摘要、暂停/恢复、独立调度器、执行前 Fresh Observation 仍未交付。`ImageSession` 是连续生图会话，已有自己的会话列表和生图任务，但不承担全局业务 Agent 的职责。
 
+Agent service 当前还通过共享 admission 限制所有 Task/Conversation Turn 的活动执行数，等待中的 Turn 保持 durable queued；这项限制不等同于按业务优先级调度 Task。跨商品写操作、Task 摘要、暂停/恢复、业务级独立调度器和执行前 Fresh Observation 仍未交付。
+
 ## 3. 产品原则
 
 ### 3.1 人是主要操作者
@@ -198,7 +200,7 @@ Session summary
 ### 7.2 上下文长度
 
 - Go harness 继续保留完整 durable journal。
-- 模型使用的工作上下文按 token 预算压缩。
+- 每个 Conversation/Task 使用自己的 harness run；模型使用的工作上下文按 `AGENT_MODEL_CONTEXT_WINDOW` 和 `AGENT_AUTO_COMPACT_TOKEN_LIMIT` 的 token 预算压缩，完整 journal 仍可恢复。
 - Session summary 和 Task summary 分开维护，避免一条长期对话吞掉所有任务。
 - 页面快照只保存有界 ID、筛选和 revision，不把媒体 bytes 或全量图库塞入历史。
 - 执行有副作用的操作前重新读取 Fresh Observation；页面快照过期时要求刷新、重算 Draft 或明确处理冲突。
@@ -229,7 +231,7 @@ Session summary
 - 已把 Task goal 注入任务专属 harness 的固定系统上下文；页面快照作为当前 Turn 的 ambient context，不会覆盖 Task goal。
 - 未指定 Task 的普通商品对话继续使用 conversation run，不会因为页面快照自动出现在后台 Task 列表中。
 - 已保留既有 Agent Turn 恢复同步，并让 Task Turn 通过任务专属运行路径恢复。调度器还会发现已经落库但尚未创建首轮 Turn 的 `queued` Task，使用固定首轮幂等 key 补建一次 Turn；商品 onboarding 条件尚未满足的任务保持 `queued` 并记录恢复原因。Session summary、Task summary、stale observation 和独立调度器仍待实现。
-- 页面切换只更新后续 Turn 的 ambient context，不修改既有 Task 目标。
+- Agent service 的共享 admission 只限制活动 Turn 数量，不改变 durable queued 状态；页面切换只更新后续 Turn 的 ambient context，不修改既有 Task 目标。
 
 ### 阶段 3：接入人工作流执行
 

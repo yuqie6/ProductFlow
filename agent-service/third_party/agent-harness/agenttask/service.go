@@ -67,6 +67,7 @@ type journalReader interface {
 type ServiceConfig struct {
 	Runner        Config
 	ToolProjector ToolStepProjector
+	Admission     Admission
 }
 
 // Service is the asynchronous v1alpha1 control plane. Its metadata and event
@@ -78,6 +79,7 @@ type Service struct {
 	requiredArtifact string
 	artifactName     string
 	toolProjector    ToolStepProjector
+	admission        Admission
 	ctx              context.Context
 	cancel           context.CancelFunc
 
@@ -117,7 +119,8 @@ func OpenService(config ServiceConfig) (*Service, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	service := &Service{
 		store: store, requiredArtifact: requiredArtifact, artifactName: artifactName, toolProjector: config.ToolProjector,
-		ctx: ctx, cancel: cancel, workers: make(map[string]context.CancelFunc),
+		admission: config.Admission,
+		ctx:       ctx, cancel: cancel, workers: make(map[string]context.CancelFunc),
 	}
 	runner, err := open(config.Runner, service.persistTextDelta)
 	if err != nil {
@@ -517,6 +520,12 @@ func (s *Service) schedule(runID, turnID string) {
 }
 
 func (s *Service) drive(ctx context.Context, runID, turnID string) {
+	if s.admission != nil {
+		if err := s.admission.Acquire(ctx); err != nil {
+			return
+		}
+		defer s.admission.Release()
+	}
 	claimed, err := s.store.claimTurn(ctx, runID, turnID, time.Now().UTC())
 	if err != nil || !claimed {
 		return

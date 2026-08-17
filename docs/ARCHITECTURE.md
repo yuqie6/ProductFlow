@@ -94,7 +94,7 @@ image types + quantities + 1..6 uploads
   -> product workbench
 ```
 
-ProductFlow 是业务数据权威。Agent service 保存 durable Turn transcript、tool call/result 和 token delta；PostgreSQL 保存 AgentSession、AgentTask、AgentConversation、AgentTurnProjection、PageContextSnapshot、问题状态和 WorkflowDraft revision。每个 AgentTask 有自己的 harness run 和 scope；未指定 Task 的旧工作区 Turn 继续使用 conversation run，页面快照可以独立挂在这类 Turn 上。当前 Task 已支持独立 Turn、取消和恢复同步，Task 摘要、暂停/恢复、统一调度器和 Fresh Observation 仍在后续阶段。
+ProductFlow 是业务数据权威。Agent service 保存 durable Turn transcript、tool call/result 和 token delta；PostgreSQL 保存 AgentSession、AgentTask、AgentConversation、AgentTurnProjection、PageContextSnapshot、问题状态和 WorkflowDraft revision。每个 AgentTask 有自己的 harness run 和 scope；未指定 Task 的旧工作区 Turn 继续使用 conversation run，页面快照可以独立挂在这类 Turn 上。当前 Task 已支持独立 Turn、取消和恢复同步；Agent service 通过共享 admission 限制所有 Service 实例的活动 Turn 数量。Task 摘要、暂停/恢复、业务级统一调度器和 Fresh Observation 仍在后续阶段。
 商品创建会在一个业务事务中创建 Product、WorkflowDraft、商品工作区 AgentConversation 和 AgentSession；商品创建路径产生的 Session 会在 Session 列表或 Global Agent Dock 访问时懒加载 Global Conversation，独立的新建 Session API 则在创建时直接生成 Global Conversation。两种 Conversation 共用 Session 归属，但保留各自的 scope、harness run、Turn 和 Draft，不合并 transcript。
 
 Agent service 通过 `tool.step` SSE 事件和 Turn 状态 `tool_steps` 暴露有界工具步骤投影，字段固定为 `step_id`、`kind`、`summary`、`status`。当前 kinds 为 `inspect_image`、`inspect_context`、`read_history`、`organize_assets`、`propose_draft`；statuses 为 `running`、`succeeded`、`failed`、`unknown`。`question.required` 继续独立拥有 Question，不投影为 tool step；当前没有真实 `generate_image` Agent tool，不提前加入。`AgentTurnProjection.tool_steps_json` 保存这份 web projection：缺失 `tool_steps` 表示兼容旧服务并保留现有 snapshot，显式 `[]` 才清空。

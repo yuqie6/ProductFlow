@@ -24,6 +24,7 @@ type Config struct {
 	MaxIterations             int
 	ModelContextWindow        int
 	AutoCompactTokenLimit     int
+	MaxConcurrentTurns        int
 }
 
 func Load() (Config, error) {
@@ -59,6 +60,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	maxConcurrentTurns, err := intEnv("AGENT_MAX_CONCURRENT_TURNS", 3)
+	if err != nil {
+		return Config{}, err
+	}
 	result := Config{
 		ListenAddress:             envOr("AGENT_LISTEN_ADDRESS", ":29284"),
 		DataRoot:                  dataRoot,
@@ -71,6 +76,7 @@ func Load() (Config, error) {
 		MaxIterations:             maxIterations,
 		ModelContextWindow:        contextWindow,
 		AutoCompactTokenLimit:     compactLimit,
+		MaxConcurrentTurns:        maxConcurrentTurns,
 	}
 	if err := result.Validate(); err != nil {
 		return Config{}, err
@@ -99,6 +105,9 @@ func (config Config) Validate() error {
 	}
 	if config.AutoCompactTokenLimit <= 0 || config.AutoCompactTokenLimit >= config.ModelContextWindow {
 		return errors.New("AGENT_AUTO_COMPACT_TOKEN_LIMIT must be positive and below AGENT_MODEL_CONTEXT_WINDOW")
+	}
+	if config.MaxConcurrentTurns <= 0 {
+		return errors.New("AGENT_MAX_CONCURRENT_TURNS must be positive")
 	}
 	return nil
 }
