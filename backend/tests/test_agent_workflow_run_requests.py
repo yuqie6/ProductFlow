@@ -151,7 +151,9 @@ def test_agent_workflow_run_request_waits_for_confirmation_and_reuses_run_chain(
     )
     assert request.status == AgentWorkflowRunRequestStatus.AWAITING_CONFIRMATION
     assert request.workflow_run_id is None
-    assert db_session.get(type(task), task.id).status == AgentTaskStatus.AWAITING_CONFIRMATION
+    persisted_task = db_session.get(type(task), task.id)
+    assert persisted_task.status == AgentTaskStatus.AWAITING_CONFIRMATION
+    assert persisted_task.workflow_id == workflow.id
     assert db_session.scalar(select(func.count()).select_from(WorkflowRun)) == 0
 
     replay = create_agent_workflow_run_request(
@@ -177,6 +179,7 @@ def test_agent_workflow_run_request_waits_for_confirmation_and_reuses_run_chain(
     assert db_session.get(WorkflowRun, confirmed.workflow_run_id) is not None
     assert confirmed.workflow_run is not None
     assert confirmed.workflow_run.status == WorkflowRunStatus.RUNNING
+    assert db_session.get(type(task), task.id).workflow_id == workflow.id
     assert confirmed.workflow_run.progress_metadata == {
         "run_scope": "workflow",
         "requested_by": "agent",

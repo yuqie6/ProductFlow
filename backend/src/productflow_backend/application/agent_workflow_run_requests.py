@@ -146,7 +146,10 @@ def create_agent_workflow_run_request(
         status=AgentWorkflowRunRequestStatus.AWAITING_CONFIRMATION,
     )
     session.add(request)
-    _mark_request_waiting(conversation, _task_for_request(session, task_id))
+    task = _task_for_request(session, task_id)
+    if task is not None:
+        task.workflow_id = preparation.workflow_id
+    _mark_request_waiting(conversation, task)
     try:
         session.commit()
     except IntegrityError:

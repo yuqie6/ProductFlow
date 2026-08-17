@@ -522,13 +522,18 @@ def update_agent_task_from_turn(
 
 def _synchronize_task_workflow_run(task: AgentTask) -> bool:
     request = task.workflow_run_requests[0] if task.workflow_run_requests else None
-    run = request.workflow_run if request is not None else None
-    if request is None or run is None:
+    if request is None:
         return False
+    metadata_changed = task.workflow_id != request.workflow_id
+    if metadata_changed:
+        task.workflow_id = request.workflow_id
+    run = request.workflow_run
+    if run is None:
+        return metadata_changed
 
     finished_at = run.finished_at or now_utc()
     if run.status == WorkflowRunStatus.RUNNING:
-        changed = (
+        changed = metadata_changed or (
             request.status != AgentWorkflowRunRequestStatus.CONFIRMED
             or task.status != AgentTaskStatus.RUNNING
             or task.waiting_reason != "workflow_run_running"
@@ -542,7 +547,7 @@ def _synchronize_task_workflow_run(task: AgentTask) -> bool:
         task.canceled_at = None
         task_summary = "工作流运行中"
     elif run.status == WorkflowRunStatus.SUCCEEDED:
-        changed = (
+        changed = metadata_changed or (
             request.status != AgentWorkflowRunRequestStatus.SUCCEEDED
             or task.status != AgentTaskStatus.SUCCEEDED
             or task.finished_at != finished_at
@@ -556,7 +561,7 @@ def _synchronize_task_workflow_run(task: AgentTask) -> bool:
         task.finished_at = finished_at
         task_summary = "工作流运行已完成"
     elif run.status == WorkflowRunStatus.FAILED:
-        changed = (
+        changed = metadata_changed or (
             request.status != AgentWorkflowRunRequestStatus.FAILED
             or request.failure_reason != run.failure_reason
             or task.status != AgentTaskStatus.FAILED
@@ -571,7 +576,7 @@ def _synchronize_task_workflow_run(task: AgentTask) -> bool:
         task_summary = _bounded_summary(f"工作流运行失败：{run.failure_reason or '未知原因'}")
     elif run.status == WorkflowRunStatus.CANCELLED:
         failure_reason = run.failure_reason or "工作流运行已取消"
-        changed = (
+        changed = metadata_changed or (
             request.status != AgentWorkflowRunRequestStatus.CANCELLED
             or request.failure_reason != failure_reason
             or task.status != AgentTaskStatus.CANCELED
