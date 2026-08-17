@@ -135,7 +135,7 @@ Session 保存会话标题、摘要、用户偏好和任务索引。它不绑定
 - 生成待确认的 WorkflowDraft；
 - 在用户确认后进入工作流工作台。
 
-这条创建对话属于一个 `AgentSession`，同一 Session 下还有一个 Global Conversation。两个 Conversation 共享 Session 的归属，但使用各自的 harness run 和对话历史，商品创建的长对话不会把全局图库对话的历史一起塞进模型上下文。
+这条创建对话属于一个 `AgentSession`，同一 Session 下还有一个 Global Conversation。用户从全局 Dock 的“创建商品”入口发起时，入口把当前 Session ID 带入 `/products/new`，商品创建对话加入原 Session；用户直接打开 `/products/new` 时没有指定 Session，系统为本次商品创建新建一个 Session。同一个 Session 创建多个商品时复用同一个 Global Conversation，不重复创建全局入口。两个 Conversation 共享 Session 的归属，但使用各自的 harness run 和对话历史，商品创建的长对话不会把全局图库对话的历史一起塞进模型上下文。
 
 商品创建阶段通常不额外创建 `AgentTask`，因为用户正在进行一个有明确页面反馈的交互式流程。用户之后要求 Agent 在后台执行、整理或检查时，才创建独立 `AgentTask`；Task 关联同一个 Session 和对应的商品 Conversation，并使用自己的 harness run。用户切换 Session 时，商品创建对话、全局对话和后台 Task 的身份都保持不变。
 

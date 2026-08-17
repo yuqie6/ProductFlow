@@ -58,6 +58,7 @@ def create_agent_product_draft_workspace_endpoint(
             session,
             name=payload.name,
             idempotency_key=idempotency_key,
+            agent_session_id=payload.agent_session_id,
         )
     )
 
@@ -96,6 +97,7 @@ async def create_agent_product_workspace_endpoint(
     name: str = Form(...),
     selection: str = Form(...),
     images: list[UploadFile] = File(...),
+    agent_session_id: str | None = Form(default=None),
     idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
     session: Session = Depends(get_session),
 ) -> AgentProductWorkspaceCreateResponse:
@@ -108,6 +110,7 @@ async def create_agent_product_workspace_endpoint(
         selection=parsed_selection,
         image_uploads=image_payloads,
         idempotency_key=idempotency_key,
+        agent_session_id=agent_session_id,
     )
     return AgentProductWorkspaceCreateResponse(
         product=serialize_canonical_product_detail(creation.product),

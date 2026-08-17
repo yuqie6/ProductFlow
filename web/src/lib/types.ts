@@ -345,11 +345,13 @@ export interface CreateAgentProductWorkspaceInput {
   selection: AgentProductSelectionV1;
   images: File[];
   idempotency_key: string;
+  agent_session_id?: string | null;
 }
 
 export interface CreateAgentProductDraftWorkspaceInput {
   name: string;
   idempotency_key: string;
+  agent_session_id?: string | null;
 }
 
 export interface FinalizeAgentProductWorkspaceIntakeInput {

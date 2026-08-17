@@ -181,6 +181,7 @@ describe("pending draft recovery", () => {
         name: "Current product",
         idempotencyKey: "current-key",
         conversationId: "conversation-4",
+        agentSessionId: "session-4",
       }),
     );
     const legacy = parsePendingDraft(
@@ -188,6 +189,7 @@ describe("pending draft recovery", () => {
     );
 
     expect(resolveWorkspaceRestorationId(null, current)).toBe("conversation-4");
+    expect(current?.agentSessionId).toBe("session-4");
     expect(legacy).toEqual({ name: "Legacy product", idempotencyKey: "legacy-key" });
     expect(resolveWorkspaceRestorationId(null, legacy)).toBe("");
   });

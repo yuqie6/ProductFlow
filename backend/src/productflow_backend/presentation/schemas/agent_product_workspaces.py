@@ -60,6 +60,7 @@ class AgentProductDraftWorkspaceRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=255)
+    agent_session_id: str | None = Field(default=None, min_length=1, max_length=36)
 
 
 class AgentProductWorkspaceSnapshotResponse(BaseModel):

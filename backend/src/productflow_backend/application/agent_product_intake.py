@@ -166,6 +166,7 @@ def agent_product_workspace_request_hash(
     normalized_product_name: str,
     selection: AgentProductSelectionV1,
     image_uploads: list[tuple[bytes, str, str]],
+    agent_session_id: str | None = None,
 ) -> str:
     payload = {
         "product_name": normalized_product_name,
@@ -180,15 +181,23 @@ def agent_product_workspace_request_hash(
             for order, (content, filename, mime_type) in enumerate(image_uploads)
         ],
     }
+    if agent_session_id is not None:
+        payload["agent_session_id"] = agent_session_id
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
-def agent_product_draft_workspace_request_hash(*, normalized_product_name: str) -> str:
+def agent_product_draft_workspace_request_hash(
+    *,
+    normalized_product_name: str,
+    agent_session_id: str | None = None,
+) -> str:
     payload = {
         "request_kind": "agent_product_draft_workspace_v1",
         "product_name": normalized_product_name,
     }
+    if agent_session_id is not None:
+        payload["agent_session_id"] = agent_session_id
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 

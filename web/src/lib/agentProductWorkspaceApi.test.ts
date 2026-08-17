@@ -45,6 +45,7 @@ describe("Agent product workspace API", () => {
       },
       images: [front, detail],
       idempotency_key: "agent-create-1",
+      agent_session_id: "session-1",
     });
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -63,6 +64,7 @@ describe("Agent product workspace API", () => {
       ],
     });
     expect(formData.getAll("images")).toEqual([front, detail]);
+    expect(formData.get("agent_session_id")).toBe("session-1");
   });
 
   it("supports draft creation, workspace recovery, and bounded intake finalization", async () => {
@@ -77,6 +79,7 @@ describe("Agent product workspace API", () => {
     await api.createAgentProductDraftWorkspace({
       name: "硬质刀具收纳套装",
       idempotency_key: "draft-create-1",
+      agent_session_id: "session-1",
     });
     await api.getAgentProductWorkspace("conversation/1");
     await api.finalizeAgentProductWorkspaceIntake({
@@ -95,7 +98,10 @@ describe("Agent product workspace API", () => {
       "Content-Type": "application/json",
       "Idempotency-Key": "draft-create-1",
     });
-    expect(JSON.parse(String(draftInit.body))).toEqual({ name: "硬质刀具收纳套装" });
+    expect(JSON.parse(String(draftInit.body))).toEqual({
+      name: "硬质刀具收纳套装",
+      agent_session_id: "session-1",
+    });
     expect(fetchMock.mock.calls[1][0]).toBe(
       "/api/v2/agent-product-workspaces/conversation%2F1",
     );

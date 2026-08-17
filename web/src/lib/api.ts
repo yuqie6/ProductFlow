@@ -300,6 +300,9 @@ export const api = {
     input.images.forEach((image) => {
       formData.append("images", image);
     });
+    if (input.agent_session_id) {
+      formData.set("agent_session_id", input.agent_session_id);
+    }
     return request("/api/v2/agent-product-workspaces", {
       method: "POST",
       headers: { "Idempotency-Key": input.idempotency_key },
@@ -312,7 +315,10 @@ export const api = {
     return request("/api/v2/agent-product-workspaces/drafts", {
       method: "POST",
       headers: { "Idempotency-Key": input.idempotency_key },
-      body: JSON.stringify({ name: input.name }),
+      body: JSON.stringify({
+        name: input.name,
+        ...(input.agent_session_id ? { agent_session_id: input.agent_session_id } : {}),
+      }),
     });
   },
   getAgentProductWorkspace(conversationId: string): Promise<AgentProductWorkspaceSnapshot> {

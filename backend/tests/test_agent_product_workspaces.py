@@ -21,6 +21,7 @@ from productflow_backend.application.agent_product_workspaces import (
     finalize_agent_product_workspace_intake,
     get_agent_product_workspace,
 )
+from productflow_backend.application.agent_sessions import create_agent_session
 from productflow_backend.domain.enums import AgentConversationScope
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError
 from productflow_backend.infrastructure.db.models import (
@@ -218,6 +219,52 @@ def test_agent_product_draft_workspace_creates_only_durable_identity_and_replays
             db_session,
             name="不同商品",
             idempotency_key="draft-workspace-1",
+        )
+
+
+def test_agent_product_workspace_can_join_existing_session_without_duplicate_global_conversation(db_session) -> None:
+    agent_session = create_agent_session(db_session, title="春季商品素材")
+
+    first = create_agent_product_draft_workspace(
+        db_session,
+        name="商品 A",
+        idempotency_key="session-draft-a",
+        agent_session_id=agent_session.id,
+    )
+    second = create_agent_product_draft_workspace(
+        db_session,
+        name="商品 B",
+        idempotency_key="session-draft-b",
+        agent_session_id=agent_session.id,
+    )
+
+    conversations = list(
+        db_session.scalars(
+            select(AgentConversation).where(AgentConversation.session_id == agent_session.id)
+        ).all()
+    )
+    global_conversations = [
+        conversation
+        for conversation in conversations
+        if conversation.scope_type == AgentConversationScope.GLOBAL
+    ]
+    product_conversations = [
+        conversation
+        for conversation in conversations
+        if conversation.scope_type == AgentConversationScope.PRODUCT_WORKFLOW
+    ]
+    assert first.conversation.session_id == agent_session.id
+    assert second.conversation.session_id == agent_session.id
+    assert len(global_conversations) == 1
+    assert len(product_conversations) == 2
+
+    other_session = create_agent_session(db_session, title="另一个会话")
+    with pytest.raises(ConflictError, match="相同 Idempotency-Key"):
+        create_agent_product_draft_workspace(
+            db_session,
+            name="商品 A",
+            idempotency_key="session-draft-a",
+            agent_session_id=other_session.id,
         )
 
 
@@ -571,11 +618,18 @@ def test_agent_product_workspace_api_supports_draft_resume_and_intake_finalizati
     from productflow_backend.infrastructure.db.session import get_session_factory
     from productflow_backend.presentation.api import create_app
 
+    session_factory = get_session_factory()
+    session = session_factory()
+    try:
+        agent_session = create_agent_session(session, title="分阶段商品 Session")
+    finally:
+        session.close()
+
     client = TestClient(create_app())
     _login(client)
     draft_response = client.post(
         "/api/v2/agent-product-workspaces/drafts",
-        json={"name": "分阶段 API 商品"},
+        json={"name": "分阶段 API 商品", "agent_session_id": agent_session.id},
         headers={"Idempotency-Key": "api-draft-workspace-1"},
     )
     assert draft_response.status_code == 201, draft_response.text
@@ -594,10 +648,11 @@ def test_agent_product_workspace_api_supports_draft_resume_and_intake_finalizati
     assert draft["product"]["cover_image_asset_id"] is None
     assert draft["workflow_draft"]["current_version"] == 0
     assert draft["workflow_draft"]["intake"] is None
+    assert draft["conversation"]["session_id"] == agent_session.id
 
     replay_response = client.post(
         "/api/v2/agent-product-workspaces/drafts",
-        json={"name": "分阶段 API 商品"},
+        json={"name": "分阶段 API 商品", "agent_session_id": agent_session.id},
         headers={"Idempotency-Key": "api-draft-workspace-1"},
     )
     assert replay_response.status_code == 201

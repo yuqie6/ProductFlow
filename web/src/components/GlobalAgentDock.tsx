@@ -6,6 +6,7 @@ import {
   ClipboardList,
   Loader2,
   MessagesSquare,
+  PackagePlus,
   Plus,
   Search,
   X,
@@ -304,6 +305,13 @@ export function GlobalAgentDock() {
     setSelectedTaskSnapshot(taskId ? tasks.find((task) => task.id === taskId) ?? null : null);
     setTab("chat");
   };
+  const openProductCreation = () => {
+    const params = activeSession?.id
+      ? new URLSearchParams({ agent_session_id: activeSession.id })
+      : null;
+    navigate(params ? `/products/new?${params}` : "/products/new");
+    setOpen(false);
+  };
   const startTaskForm = () => {
     const initialSession = workspaceSessions[0];
     setTaskSessionId(initialSession?.id ?? "");
@@ -359,6 +367,15 @@ export function GlobalAgentDock() {
                 {t("globalAgent.activeTasks", { count: activeTaskCount })}
               </p>
             </div>
+            <button
+              type="button"
+              onClick={openProductCreation}
+              aria-label={t("globalAgent.newProduct")}
+              title={t("globalAgent.newProduct")}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-accent-soft hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+            >
+              <PackagePlus size={17} aria-hidden="true" />
+            </button>
             <button
               type="button"
               onClick={() => setOpen(false)}

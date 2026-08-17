@@ -17,7 +17,7 @@ from productflow_backend.application.agent_product_intake import (
     normalize_agent_product_idempotency_key,
     parse_workflow_intake,
 )
-from productflow_backend.application.agent_sessions import new_agent_session
+from productflow_backend.application.agent_sessions import get_agent_session_or_raise, new_agent_session
 from productflow_backend.application.media_assets import get_product_image_assets_by_ids
 from productflow_backend.application.storage_compensation import compensate_storage_writes
 from productflow_backend.application.time import now_utc
@@ -31,6 +31,7 @@ from productflow_backend.application.workflow_drafts.service import workflow_dra
 from productflow_backend.domain.enums import (
     AgentConversationScope,
     AgentConversationStatus,
+    AgentSessionStatus,
     WorkflowDraftStatus,
 )
 from productflow_backend.domain.errors import ConflictError, NotFoundError
@@ -59,12 +60,15 @@ def create_agent_product_draft_workspace(
     *,
     name: str,
     idempotency_key: str,
+    agent_session_id: str | None = None,
 ) -> AgentProductWorkspaceCreation:
     """Create the durable workspace identity before collecting bounded intake."""
     normalized_name = normalize_product_name(name)
     normalized_key = normalize_agent_product_idempotency_key(idempotency_key)
+    normalized_session_id = _normalize_agent_session_id(agent_session_id)
     request_hash = agent_product_draft_workspace_request_hash(
         normalized_product_name=normalized_name,
+        agent_session_id=normalized_session_id,
     )
 
     existing = _conversation_by_creation_key(session, normalized_key)
@@ -90,6 +94,7 @@ def create_agent_product_draft_workspace(
             creation_idempotency_key=normalized_key,
             creation_request_hash=request_hash,
             intake=None,
+            agent_session_id=normalized_session_id,
         )
         session.commit()
     except IntegrityError:
@@ -125,15 +130,18 @@ def create_agent_product_workspace(
     selection: AgentProductSelectionV1,
     image_uploads: list[tuple[bytes, str, str]],
     idempotency_key: str,
+    agent_session_id: str | None = None,
     storage: LocalStorage | None = None,
 ) -> AgentProductWorkspaceCreation:
     """Keep the original one-request creation contract for existing callers."""
     normalized_name = normalize_product_name(name)
     normalized_key = normalize_agent_product_idempotency_key(idempotency_key)
+    normalized_session_id = _normalize_agent_session_id(agent_session_id)
     request_hash = agent_product_workspace_request_hash(
         normalized_product_name=normalized_name,
         selection=selection,
         image_uploads=image_uploads,
+        agent_session_id=normalized_session_id,
     )
 
     existing = _conversation_by_creation_key(session, normalized_key)
@@ -169,6 +177,7 @@ def create_agent_product_workspace(
                 creation_idempotency_key=normalized_key,
                 creation_request_hash=request_hash,
                 intake=intake,
+                agent_session_id=normalized_session_id,
             )
             session.commit()
     except IntegrityError:
@@ -317,6 +326,7 @@ def _stage_workspace_records(
     creation_idempotency_key: str,
     creation_request_hash: str,
     intake: WorkflowIntakeV1 | None,
+    agent_session_id: str | None,
 ) -> tuple[WorkflowDraft, AgentConversation]:
     draft = WorkflowDraft(
         product_id=product.id,
@@ -328,17 +338,30 @@ def _stage_workspace_records(
     session.flush()
 
     conversation_id = new_id()
-    agent_session = new_agent_session(title=product.name)
-    session.add(agent_session)
-    session.flush()
-    session.add(
-        AgentConversation(
-            id=new_id(),
-            scope_type=AgentConversationScope.GLOBAL,
-            session_id=agent_session.id,
-            harness_run_id=new_id(),
+    if agent_session_id is None:
+        agent_session = new_agent_session(title=product.name)
+        session.add(agent_session)
+        session.flush()
+    else:
+        agent_session = get_agent_session_or_raise(session, agent_session_id)
+        if agent_session.status != AgentSessionStatus.ACTIVE:
+            raise ConflictError("已归档的 Agent Session 不能创建商品工作区")
+
+    global_conversation = session.scalar(
+        select(AgentConversation).where(
+            AgentConversation.session_id == agent_session.id,
+            AgentConversation.scope_type == AgentConversationScope.GLOBAL,
         )
     )
+    if global_conversation is None:
+        session.add(
+            AgentConversation(
+                id=new_id(),
+                scope_type=AgentConversationScope.GLOBAL,
+                session_id=agent_session.id,
+                harness_run_id=new_id(),
+            )
+        )
     conversation = AgentConversation(
         id=conversation_id,
         session_id=agent_session.id,
@@ -352,6 +375,13 @@ def _stage_workspace_records(
     session.add(conversation)
     session.flush()
     return draft, conversation
+
+
+def _normalize_agent_session_id(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
 
 
 def _conversation_by_creation_key(session: Session, idempotency_key: str) -> AgentConversation | None:

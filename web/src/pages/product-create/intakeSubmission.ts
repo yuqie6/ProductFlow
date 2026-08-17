@@ -5,6 +5,7 @@ export interface PendingDraftState {
   name: string;
   idempotencyKey: string;
   conversationId?: string;
+  agentSessionId?: string;
 }
 
 interface SubmitAgentProductIntakeInput {
@@ -28,6 +29,9 @@ export function parsePendingDraft(raw: string | null): PendingDraftState | null 
       idempotencyKey: parsed.idempotencyKey,
       ...(typeof parsed.conversationId === "string" && parsed.conversationId.trim()
         ? { conversationId: parsed.conversationId }
+        : {}),
+      ...(typeof parsed.agentSessionId === "string" && parsed.agentSessionId.trim()
+        ? { agentSessionId: parsed.agentSessionId }
         : {}),
     };
   } catch {

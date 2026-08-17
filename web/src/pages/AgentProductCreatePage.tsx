@@ -142,6 +142,7 @@ export function AgentProductCreatePage() {
   const navigationTimerRef = useRef<number | null>(null);
 
   const workspaceId = resolveWorkspaceRestorationId(searchParams.get("workspace"), pendingDraft);
+  const agentSessionId = searchParams.get("agent_session_id")?.trim() || pendingDraft?.agentSessionId || null;
   const workspaceQuery = useQuery({
     queryKey: ["agent-product-workspace", workspaceId],
     queryFn: () => api.getAgentProductWorkspace(workspaceId),
@@ -193,12 +194,19 @@ export function AgentProductCreatePage() {
       name: nextWorkspace.product.name,
       idempotencyKey: draftIdempotencyKeyRef.current,
       conversationId,
+      ...(nextWorkspace.conversation.session_id
+        ? { agentSessionId: nextWorkspace.conversation.session_id }
+        : {}),
     } satisfies PendingDraftState;
     writeSessionValue(PENDING_DRAFT_STORAGE_KEY, JSON.stringify(retainedPending));
     setLocalWorkspace(nextWorkspace);
     queryClient.setQueryData(["agent-product-workspace", conversationId], nextWorkspace);
     void queryClient.invalidateQueries({ queryKey: ["products"] });
-    setSearchParams({ workspace: conversationId }, { replace: true });
+    const params = new URLSearchParams({ workspace: conversationId });
+    if (nextWorkspace.conversation.session_id) {
+      params.set("agent_session_id", nextWorkspace.conversation.session_id);
+    }
+    setSearchParams(params, { replace: true });
   };
 
   const finalizeIntake = async (targetWorkspace: AgentProductWorkspaceSnapshot) => {
@@ -245,6 +253,7 @@ export function AgentProductCreatePage() {
         name: trimmedName,
         idempotencyKey: draftIdempotencyKeyRef.current,
         ...(workspace ? { conversationId: workspace.conversation.id } : {}),
+        ...(agentSessionId ? { agentSessionId } : {}),
       } satisfies PendingDraftState;
       if (!workspace) writeSessionValue(PENDING_DRAFT_STORAGE_KEY, JSON.stringify(pending));
       return submitAgentProductIntake({
@@ -253,6 +262,7 @@ export function AgentProductCreatePage() {
           api.createAgentProductDraftWorkspace({
             name: trimmedName,
             idempotency_key: pending.idempotencyKey,
+            agent_session_id: pending.agentSessionId,
           }),
         retainWorkspace,
         finalizeWorkspace: finalizeIntake,
