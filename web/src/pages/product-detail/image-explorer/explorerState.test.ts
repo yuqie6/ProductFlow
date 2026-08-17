@@ -33,6 +33,7 @@ function asset(id: string, verificationStatus: GalleryAsset["verification_status
     rendition: null,
     parent_asset_id: null,
     source_image_session_asset_id: null,
+    source_library_asset_id: null,
     mime_type: "image/png",
     byte_size: 1024,
     width: 100,
