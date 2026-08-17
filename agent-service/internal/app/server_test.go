@@ -231,14 +231,15 @@ func TestServerScopesMultimodalTurnAndReplaysTerminalEvents(t *testing.T) {
 
 func TestManagerUsesOptionalArtifactForGlobalOrganizationDraft(t *testing.T) {
 	const artifactValue = `{"schema_version":1,"confirmation_summary":"整理一张素材","operations":[{"operation":"rename","asset_id":"44444444-4444-4444-8444-444444444444","expected_revision":1,"before":{"revision":1,"display_name":"source.png","folder_id":null,"tag_names":[],"is_archived":false},"target":{"display_name":"hero.png"},"reason":"统一命名"}]}`
+	const globalArtifactValue = `{"schema_version":1,"draft_kind":"library_organization","product_id":null,"workflow_draft_id":null,"expected_draft_version":null,"workflow_payload":null,"library_payload":` + artifactValue + `}`
 	var providerCalls atomic.Int32
 	var validationCalls atomic.Int32
 	provider := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch providerCalls.Add(1) {
 		case 1:
 			response := fmt.Sprintf(
-				`{"id":"global-artifact","status":"completed","output":[{"id":"call","type":"function_call","call_id":"draft","name":"propose_library_organization_draft","arguments":%s}]}`,
-				strconv.Quote(artifactValue),
+				`{"id":"global-artifact","status":"completed","output":[{"id":"call","type":"function_call","call_id":"draft","name":"propose_global_draft","arguments":%s}]}`,
+				strconv.Quote(globalArtifactValue),
 			)
 			writeProviderStream(t, writer, response)
 		case 2:
@@ -265,11 +266,11 @@ func TestManagerUsesOptionalArtifactForGlobalOrganizationDraft(t *testing.T) {
 			writeFixtureJSON(writer, map[string]any{
 				"schema_version": 1, "scope_type": "global", "conversation_id": testGlobalConversationID,
 				"harness_run_id": testGlobalConversationID, "current_draft_version": 0,
-				"system_prompt": "整理全局素材并等待用户确认。", "draft_kind": "library_organization",
+				"system_prompt": "整理全局素材并等待用户确认。", "draft_kind": "global",
 				"draft_schema": map[string]any{"type": "object"}, "workflow_draft_schema": map[string]any{},
-				"tool_contract_version": 7,
+				"tool_contract_version": 8,
 			})
-		case base + "/library-organization-draft/validate":
+		case base + "/global-draft/validate":
 			validationCalls.Add(1)
 			writeFixtureJSON(writer, map[string]bool{"accepted": true})
 		default:
@@ -320,8 +321,8 @@ func TestManagerUsesOptionalArtifactForGlobalOrganizationDraft(t *testing.T) {
 	}
 	turnURL := api.URL + "/internal/v1/conversations/" + testGlobalConversationID + "/turns/" + turn.TurnID
 	turn = awaitHTTPStatus(t, api.Client(), turnURL, agenttask.TurnSucceeded)
-	if turn.Artifact == nil || turn.Artifact.Name != libraryOrganizationDraftName ||
-		string(turn.Artifact.Value) != artifactValue || turn.Output != "整理建议已准备" {
+	if turn.Artifact == nil || turn.Artifact.Name != globalDraftArtifactName ||
+		string(turn.Artifact.Value) != globalArtifactValue || turn.Output != "整理建议已准备" {
 		t.Fatalf("global turn = %#v", turn)
 	}
 	if providerCalls.Load() != 2 || validationCalls.Load() != 1 {
@@ -360,7 +361,7 @@ func TestManagerDoesNotRequireWorkflowDraftForProductTask(t *testing.T) {
 			"system_prompt": "完成后台任务。", "workflow_draft_schema": map[string]any{
 				"type": "object", "additionalProperties": false,
 			},
-			"tool_contract_version": 7,
+			"tool_contract_version": 8,
 		})
 	}))
 	t.Cleanup(productFlow.Close)
@@ -646,7 +647,7 @@ func TestManagerLoadsAgentProviderConfigOnceWhenOpeningConversation(t *testing.T
 					"properties": map[string]any{"title": map[string]any{"type": "string"}},
 					"required":   []string{"title"},
 				},
-				"tool_contract_version": 7,
+				"tool_contract_version": 8,
 			})
 		default:
 			http.NotFound(writer, request)
@@ -809,7 +810,7 @@ func newProductFlowFixtureWithAgentProvider(
 					"type": "object", "additionalProperties": false,
 					"properties": map[string]any{"title": map[string]any{"type": "string"}}, "required": []string{"title"},
 				},
-				"tool_contract_version": 7,
+				"tool_contract_version": 8,
 			})
 		case base + "/workflow-draft/validate":
 			var payload struct {

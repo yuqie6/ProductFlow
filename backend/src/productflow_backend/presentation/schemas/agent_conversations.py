@@ -32,7 +32,7 @@ from productflow_backend.domain.enums import (
 )
 from productflow_backend.infrastructure.agent_service import AgentServiceToolStep
 from productflow_backend.infrastructure.db.models import AgentConversation, AgentTurnProjection
-from productflow_backend.presentation.schemas.workflow_drafts import WorkflowRunV2Response
+from productflow_backend.presentation.schemas.workflow_drafts import WorkflowDraftResponse, WorkflowRunV2Response
 
 
 class StrictAgentRequest(BaseModel):
@@ -52,7 +52,7 @@ class AgentContractResponse(BaseModel):
     system_prompt: str
     workflow_draft_schema: dict[str, Any]
     tool_contract_version: int
-    draft_kind: Literal["workflow", "library_organization"] | None = None
+    draft_kind: Literal["workflow", "library_organization", "global"] | None = None
     draft_schema: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -94,6 +94,20 @@ class AgentWorkflowDraftValidationRequest(StrictAgentRequest):
 
 class AgentWorkflowDraftValidationResponse(BaseModel):
     accepted: Literal[True] = True
+
+
+class AgentGlobalWorkflowDraftReviewConfirmRequest(StrictAgentRequest):
+    expected_draft_version: int = Field(ge=1)
+
+
+class AgentGlobalWorkflowDraftReviewResponse(BaseModel):
+    schema_version: Literal[1] = 1
+    conversation_id: str
+    product_id: str
+    product_name: str
+    product_conversation_id: str
+    workflow_draft_id: str
+    draft: WorkflowDraftResponse
 
 
 class AgentAssetMetadataResponse(BaseModel):

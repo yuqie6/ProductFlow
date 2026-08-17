@@ -278,16 +278,17 @@ func scopedReadTools(client *productflow.Client, scope Scope) []agenttask.Tool {
 }
 
 const (
-	listGlobalMediaAssetsToolName     = "list_global_media_library_assets_v1"
-	inspectGlobalMediaAssetsToolName  = "inspect_global_media_library_assets_v1"
-	listGlobalProductsToolName        = "list_products_v1"
-	inspectGlobalProductsToolName     = "inspect_products_v1"
-	inspectGlobalWorkflowRunsToolName = "inspect_global_workflow_runs_v1"
-	createProductWorkspaceToolName    = "create_product_workspace_v1"
-	maxListedGlobalProducts           = 100
-	maxInspectedGlobalProducts        = 20
-	maxInspectedGlobalWorkflows       = 20
-	maxGlobalWorkflowRunsPerWorkflow  = 10
+	listGlobalMediaAssetsToolName        = "list_global_media_library_assets_v1"
+	inspectGlobalMediaAssetsToolName     = "inspect_global_media_library_assets_v1"
+	listGlobalProductsToolName           = "list_products_v1"
+	inspectGlobalProductsToolName        = "inspect_products_v1"
+	inspectGlobalWorkflowContextToolName = "inspect_global_workflow_context_v1"
+	inspectGlobalWorkflowRunsToolName    = "inspect_global_workflow_runs_v1"
+	createProductWorkspaceToolName       = "create_product_workspace_v1"
+	maxListedGlobalProducts              = 100
+	maxInspectedGlobalProducts           = 20
+	maxInspectedGlobalWorkflows          = 20
+	maxGlobalWorkflowRunsPerWorkflow     = 10
 )
 
 func scopedGlobalReadTools(client *productflow.Client, scope Scope) []agenttask.Tool {
@@ -361,6 +362,32 @@ func scopedGlobalReadTools(client *productflow.Client, scope Scope) []agenttask.
 				}
 				encoded, err := json.Marshal(result)
 				return string(encoded), err
+			},
+		},
+		{
+			Name:        inspectGlobalWorkflowContextToolName,
+			Description: "Read the bounded editable WorkflowDraft context for one explicit product, including the exact product conversation, WorkflowDraft ID, current version, intake, facts, and reference assets. This is read-only.",
+			Parameters: map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"product_id": map[string]any{"type": "string", "minLength": 1, "maxLength": 64},
+				},
+				"required": []string{"product_id"},
+			},
+			Strict: true,
+			Handler: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var arguments struct {
+					ProductID string `json:"product_id"`
+				}
+				if err := decodeStrictObject(raw, &arguments); err != nil {
+					return "", err
+				}
+				arguments.ProductID = strings.TrimSpace(arguments.ProductID)
+				if arguments.ProductID == "" {
+					return "", errors.New("product_id is required")
+				}
+				result, err := client.GlobalWorkflowContext(ctx, scope.ConversationID, arguments.ProductID)
+				return string(result), err
 			},
 		},
 		{

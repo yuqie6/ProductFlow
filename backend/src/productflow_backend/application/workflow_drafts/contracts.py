@@ -684,11 +684,11 @@ def workflow_draft_tool_schema() -> dict[str, Any]:
             {"type": "null"},
         ]
     }
-    _normalize_tool_schema(schema)
+    normalize_tool_schema(schema)
     return schema
 
 
-def _normalize_tool_schema(schema: dict[str, Any]) -> None:
+def normalize_tool_schema(schema: dict[str, Any]) -> None:
     schema.pop("default", None)
     schema.pop("deprecated", None)
     schema.pop("discriminator", None)
@@ -706,7 +706,7 @@ def _normalize_tool_schema(schema: dict[str, Any]) -> None:
         schema["required"] = list(properties)
         schema["additionalProperties"] = False
         for property_schema in properties.values():
-            _normalize_tool_schema(property_schema)
+            normalize_tool_schema(property_schema)
     elif schema.get("type") == "object":
         raise ValueError("工作流草稿工具 Schema 不允许开放对象")
 
@@ -715,11 +715,11 @@ def _normalize_tool_schema(schema: dict[str, Any]) -> None:
         if not isinstance(definitions, dict):
             raise TypeError("工作流草稿工具 Schema $defs 必须是对象")
         for definition in definitions.values():
-            _normalize_tool_schema(definition)
+            normalize_tool_schema(definition)
 
     items = schema.get("items")
     if isinstance(items, dict):
-        _normalize_tool_schema(items)
+        normalize_tool_schema(items)
 
     any_of = schema.get("anyOf")
     if any_of is not None:
@@ -728,7 +728,7 @@ def _normalize_tool_schema(schema: dict[str, Any]) -> None:
         for variant in any_of:
             if not isinstance(variant, dict):
                 raise TypeError("工作流草稿工具 Schema anyOf 分支必须是对象")
-            _normalize_tool_schema(variant)
+            normalize_tool_schema(variant)
 
 
 def workflow_draft_payload_dict(payload: WorkflowDraftPayloadV1 | dict[str, Any]) -> dict[str, Any]:

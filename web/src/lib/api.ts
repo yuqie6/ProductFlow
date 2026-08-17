@@ -47,6 +47,7 @@ import type {
   LegacyArchiveKind,
   LegacyArchivePage,
   LibraryOrganizationDraft,
+  GlobalWorkflowDraftReview,
   ProductListSort,
   ProviderBinding,
   ProviderBindingUpdateRequest,
@@ -590,6 +591,27 @@ export const api = {
           expected_draft_version: expectedDraftVersion,
           idempotency_key: idempotencyKey,
         }),
+      },
+    );
+  },
+  getGlobalWorkflowDraftReview(
+    conversationId: string,
+    revisionId: string,
+  ): Promise<GlobalWorkflowDraftReview> {
+    return request(
+      `${globalAgentConversationPath(conversationId)}/workflow-draft-reviews/${encodeURIComponent(revisionId)}`,
+    );
+  },
+  confirmGlobalWorkflowDraftReview(
+    conversationId: string,
+    revisionId: string,
+    expectedDraftVersion: number,
+  ): Promise<GlobalWorkflowDraftReview> {
+    return request(
+      `${globalAgentConversationPath(conversationId)}/workflow-draft-reviews/${encodeURIComponent(revisionId)}/confirm`,
+      {
+        method: "POST",
+        body: JSON.stringify({ expected_draft_version: expectedDraftVersion }),
       },
     );
   },

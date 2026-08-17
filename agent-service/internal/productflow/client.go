@@ -280,6 +280,25 @@ func (client *Client) ProductContext(ctx context.Context, conversationID string)
 	return result, err
 }
 
+func (client *Client) GlobalWorkflowContext(
+	ctx context.Context,
+	conversationID string,
+	productID string,
+) (json.RawMessage, error) {
+	values := url.Values{}
+	values.Set("product_id", productID)
+	var result json.RawMessage
+	err := client.json(
+		ctx,
+		http.MethodGet,
+		client.conversationPath(conversationID)+"/global-workflow-context?"+values.Encode(),
+		nil,
+		&result,
+		"",
+	)
+	return result, err
+}
+
 func (client *Client) ListWorkflowRuns(ctx context.Context, conversationID string, limit int) (json.RawMessage, error) {
 	values := url.Values{}
 	values.Set("limit", strconv.Itoa(limit))
@@ -450,6 +469,33 @@ func (client *Client) ValidateLibraryOrganizationDraft(
 	}
 	if !result.Accepted {
 		return errors.New("ProductFlow rejected library organization draft without an error")
+	}
+	return nil
+}
+
+func (client *Client) ValidateGlobalDraft(
+	ctx context.Context,
+	conversationID string,
+	value json.RawMessage,
+) error {
+	if !json.Valid(value) {
+		return errors.New("global draft validation value must be valid JSON")
+	}
+	var result struct {
+		Accepted bool `json:"accepted"`
+	}
+	if err := client.json(
+		ctx,
+		http.MethodPost,
+		client.conversationPath(conversationID)+"/global-draft/validate",
+		map[string]any{"value": value},
+		&result,
+		"",
+	); err != nil {
+		return err
+	}
+	if !result.Accepted {
+		return errors.New("ProductFlow rejected global draft without an error")
 	}
 	return nil
 }

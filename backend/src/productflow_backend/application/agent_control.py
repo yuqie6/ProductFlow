@@ -22,6 +22,8 @@ from productflow_backend.application.agent_workflow_run_requests import (
     attach_agent_workflow_run_request,
     get_agent_workflow_run_request_by_source_step,
 )
+from productflow_backend.application.global_agent_draft_contracts import GLOBAL_AGENT_DRAFT_ARTIFACT_NAME
+from productflow_backend.application.global_agent_drafts import attach_agent_global_draft_artifact
 from productflow_backend.application.media_library.drafts import (
     LIBRARY_ORGANIZATION_DRAFT_ARTIFACT_NAME,
     append_library_organization_draft_revision,
@@ -348,16 +350,30 @@ def synchronize_agent_turn_state(
         if state.artifact is not None and conversation.scope_type == AgentConversationScope.GLOBAL:
             if product_id is not None:
                 raise ConflictError("全局 Agent Turn 不应包含商品作用域")
-            projection = attach_agent_library_organization_draft_artifact(
-                session,
-                conversation_id=conversation_id,
-                projection_id=projection.id,
-                harness_turn_id=state.turn_id,
-                artifact_name=state.artifact.name,
-                artifact_step_id=state.artifact.step_id,
-                artifact_value=state.artifact.value,
-                commit=commit,
-            )
+            if state.artifact.name == GLOBAL_AGENT_DRAFT_ARTIFACT_NAME:
+                projection = attach_agent_global_draft_artifact(
+                    session,
+                    conversation_id=conversation_id,
+                    projection_id=projection.id,
+                    harness_turn_id=state.turn_id,
+                    artifact_name=state.artifact.name,
+                    artifact_step_id=state.artifact.step_id,
+                    artifact_value=state.artifact.value,
+                    commit=commit,
+                )
+            else:
+                # Keep already journaled turns from the pre-global-draft
+                # contract recoverable during the transition.
+                projection = attach_agent_library_organization_draft_artifact(
+                    session,
+                    conversation_id=conversation_id,
+                    projection_id=projection.id,
+                    harness_turn_id=state.turn_id,
+                    artifact_name=state.artifact.name,
+                    artifact_step_id=state.artifact.step_id,
+                    artifact_value=state.artifact.value,
+                    commit=commit,
+                )
         elif state.artifact is not None:
             if conversation.workflow_draft_id is None or product_id is None:
                 raise ConflictError("商品工作流 Agent Turn 缺少 WorkflowDraft artifact 作用域")

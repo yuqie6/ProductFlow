@@ -47,11 +47,11 @@ func productFlowToolStep(tool string) (string, string, bool) {
 	switch tool {
 	case inspectAssetsToolName:
 		return "inspect_image", "Inspect product image assets", true
-	case "propose_workflow_draft":
+	case "propose_workflow_draft", "propose_global_draft":
 		return "propose_draft", "Propose workflow draft", true
 	case productContextToolName, listAssetsToolName:
 		return "inspect_context", "Inspect product context and assets", true
-	case listGlobalProductsToolName, inspectGlobalProductsToolName, inspectGlobalWorkflowRunsToolName:
+	case listGlobalProductsToolName, inspectGlobalProductsToolName, inspectGlobalWorkflowContextToolName, inspectGlobalWorkflowRunsToolName:
 		return "inspect_context", "Inspect products and workflows", true
 	case listGlobalMediaAssetsToolName, inspectGlobalMediaAssetsToolName:
 		return "inspect_context", "Inspect global media assets", true

@@ -19,6 +19,10 @@ from productflow_backend.application.agent_conversations import (
     list_agent_turn_page,
 )
 from productflow_backend.application.async_delivery import stage_async_dispatch_for_actor
+from productflow_backend.application.global_agent_drafts import (
+    confirm_global_workflow_draft_review,
+    get_global_workflow_draft_review,
+)
 from productflow_backend.application.media_library.drafts import (
     confirm_library_organization_draft_revision,
     get_library_organization_draft_or_raise,
@@ -33,6 +37,8 @@ from productflow_backend.infrastructure.agent_service import (
 from productflow_backend.presentation.deps import get_session, require_admin
 from productflow_backend.presentation.routes.agent_conversations import _parse_event_cursor
 from productflow_backend.presentation.schemas.agent_conversations import (
+    AgentGlobalWorkflowDraftReviewConfirmRequest,
+    AgentGlobalWorkflowDraftReviewResponse,
     AgentQuestionAnswerRequest,
     AgentTurnPageResponse,
     AgentTurnResponse,
@@ -45,6 +51,7 @@ from productflow_backend.presentation.schemas.library_organization_drafts import
     LibraryOrganizationDraftResponse,
     serialize_library_organization_draft,
 )
+from productflow_backend.presentation.schemas.workflow_drafts import serialize_workflow_draft
 
 router = APIRouter(
     prefix="/api/v2/agent-conversations",
@@ -92,6 +99,44 @@ def confirm_global_library_organization_draft_endpoint(
             draft_id=draft.id,
             expected_draft_version=payload.expected_draft_version,
             idempotency_key=payload.idempotency_key,
+        )
+    )
+
+
+@router.get(
+    "/{conversation_id}/workflow-draft-reviews/{revision_id}",
+    response_model=AgentGlobalWorkflowDraftReviewResponse,
+)
+def get_global_workflow_draft_review_endpoint(
+    conversation_id: str,
+    revision_id: str,
+    session: Session = Depends(get_session),
+) -> AgentGlobalWorkflowDraftReviewResponse:
+    return _serialize_global_workflow_draft_review(
+        get_global_workflow_draft_review(
+            session,
+            conversation_id=conversation_id,
+            revision_id=revision_id,
+        )
+    )
+
+
+@router.post(
+    "/{conversation_id}/workflow-draft-reviews/{revision_id}/confirm",
+    response_model=AgentGlobalWorkflowDraftReviewResponse,
+)
+def confirm_global_workflow_draft_review_endpoint(
+    conversation_id: str,
+    revision_id: str,
+    payload: AgentGlobalWorkflowDraftReviewConfirmRequest,
+    session: Session = Depends(get_session),
+) -> AgentGlobalWorkflowDraftReviewResponse:
+    return _serialize_global_workflow_draft_review(
+        confirm_global_workflow_draft_review(
+            session,
+            conversation_id=conversation_id,
+            revision_id=revision_id,
+            expected_draft_version=payload.expected_draft_version,
         )
     )
 
@@ -295,6 +340,17 @@ def _agent_gateway_or_raise() -> AgentServiceClient:
         return get_agent_service_client()
     except AgentServiceRequestError as exc:
         raise AgentServiceUnavailableError("Agent 服务尚未配置或暂时不可用") from exc
+
+
+def _serialize_global_workflow_draft_review(review) -> AgentGlobalWorkflowDraftReviewResponse:
+    return AgentGlobalWorkflowDraftReviewResponse(
+        conversation_id=review.conversation_id,
+        product_id=review.product_id,
+        product_name=review.product_name,
+        product_conversation_id=review.product_conversation_id,
+        workflow_draft_id=review.workflow_draft_id,
+        draft=serialize_workflow_draft(review.draft),
+    )
 
 
 __all__ = ["router"]

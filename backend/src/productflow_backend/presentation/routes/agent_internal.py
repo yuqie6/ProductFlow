@@ -17,6 +17,7 @@ from productflow_backend.application.agent_tools import (
     apply_agent_folder_create,
     apply_agent_folder_rename,
     get_agent_contract,
+    get_agent_global_workflow_context,
     get_agent_product_context,
     get_agent_runtime_context,
     inspect_agent_global_media_assets,
@@ -35,6 +36,7 @@ from productflow_backend.application.agent_tools import (
     reconcile_agent_asset_rename,
     reconcile_agent_folder_create,
     reconcile_agent_folder_rename,
+    validate_agent_global_draft,
     validate_agent_library_organization_draft,
     validate_agent_workflow_draft,
 )
@@ -158,12 +160,42 @@ def validate_agent_library_organization_draft_endpoint(
     return AgentWorkflowDraftValidationResponse()
 
 
+@router.post(
+    "/{conversation_id}/global-draft/validate",
+    response_model=AgentWorkflowDraftValidationResponse,
+)
+def validate_agent_global_draft_endpoint(
+    conversation_id: str,
+    payload: AgentWorkflowDraftValidationRequest,
+    session: Session = Depends(get_session),
+) -> AgentWorkflowDraftValidationResponse:
+    validate_agent_global_draft(
+        session,
+        conversation_id=conversation_id,
+        value=payload.value,
+    )
+    return AgentWorkflowDraftValidationResponse()
+
+
 @router.get("/{conversation_id}/product-context")
 def get_agent_product_context_endpoint(
     conversation_id: str,
     session: Session = Depends(get_session),
 ) -> dict:
     return get_agent_product_context(session, conversation_id)
+
+
+@router.get("/{conversation_id}/global-workflow-context")
+def get_agent_global_workflow_context_endpoint(
+    conversation_id: str,
+    product_id: str = Query(min_length=1, max_length=64),
+    session: Session = Depends(get_session),
+) -> dict:
+    return get_agent_global_workflow_context(
+        session,
+        conversation_id=conversation_id,
+        product_id=product_id,
+    )
 
 
 @router.get("/{conversation_id}/runtime-context", response_model=AgentRuntimeContextResponse)

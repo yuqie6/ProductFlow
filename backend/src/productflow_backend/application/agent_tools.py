@@ -35,9 +35,9 @@ from productflow_backend.application.gallery_mutations import (
     stage_rename_gallery_asset,
     stage_rename_gallery_folder,
 )
+from productflow_backend.application.global_agent_draft_contracts import global_agent_draft_schema
 from productflow_backend.application.legacy_archive_rebuilds import legacy_archive_seed_summary
 from productflow_backend.application.media_assets import inspect_image_bytes
-from productflow_backend.application.media_library.draft_contracts import library_organization_draft_schema
 from productflow_backend.application.media_library.drafts import validate_library_organization_draft
 from productflow_backend.application.media_library.queries import get_media_library_asset, list_media_library_assets
 from productflow_backend.application.media_library.service import validate_media_library_asset_for_use
@@ -48,7 +48,12 @@ from productflow_backend.application.workflow_drafts.contracts import (
 )
 from productflow_backend.application.workflow_drafts.service import validate_workflow_draft_for_confirmation
 from productflow_backend.application.workflow_recipes.service import parse_recipe_payload_or_raise
-from productflow_backend.domain.enums import AgentConversationScope, AgentToolMutationStatus, MediaVerificationStatus
+from productflow_backend.domain.enums import (
+    AgentConversationScope,
+    AgentToolMutationStatus,
+    MediaVerificationStatus,
+    WorkflowDraftStatus,
+)
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
@@ -64,7 +69,7 @@ from productflow_backend.infrastructure.db.models import (
 )
 from productflow_backend.infrastructure.storage import LocalStorage
 
-AGENT_TOOL_CONTRACT_VERSION = 7
+AGENT_TOOL_CONTRACT_VERSION = 8
 AGENT_ASSET_LIST_DEFAULT_LIMIT = 50
 AGENT_ASSET_LIST_MAX_LIMIT = 100
 AGENT_ASSET_MAX_BYTES = 20 * 1024 * 1024
@@ -108,14 +113,21 @@ GLOBAL_AGENT_SYSTEM_PROMPT = """你是 ProductFlow 的全局素材与工作流�
 工作原则：
 1. 用户可以在任意页面询问全局素材；当前页面只帮助你理解“这些图片”和用户当下的工作位置。
 2. 查询素材时优先使用全局素材库的列表和明确图片的 inspect；不要凭文件名猜测图片内容。
-3. 你当前可以读取全局素材库、商品和当前工作流的有界元数据；用户明确要求查看图片时，单次最多 inspect 6 张。
+3. 你当前可以读取全局素材库、商品、目标商品的 WorkflowDraft 和当前工作流的有界元数据；
+   用户明确要求查看图片时，单次最多 inspect 6 张。
 4. 你可以跨商品和工作流理解范围，但必须以 ProductFlow 返回的真实数据为准；
    列表结果不代表完整业务事实。需要比较运行状态时，先取得明确的 workflow ID，
    再使用有界运行检查。
 5. 涉及整理、归档、同步到工作流、修改商品或执行工作流的副作用，必须先形成可审阅的 Draft，等待用户确认；不能直接改库。
    纯查询或解释请求不要调用整理 Draft 工具；只有用户明确要求改变素材时才提交整理 Draft。
-6. 不要输出 base64、data URL、存储路径或内部 URL；用资产名称、来源和可验证的对象 ID 描述结果。
-7. 用户明确要求创建商品时，可以调用商品创建工作区工具。该工具只建立当前 Session 下的空商品草稿、商品 Conversation
+6. 如果用户要求设计或修改某个商品的工作流，先用 inspect_global_workflow_context_v1 读取明确的 product_id，核对返回的
+   product_id、workflow_draft_id 和当前版本，再调用 propose_global_draft，draft_kind 必须为 workflow，
+   完整填写 product_id、workflow_draft_id、expected_draft_version 和 workflow_payload。
+   不要把全局会话当成当前商品会话，不能省略目标作用域。
+7. propose_global_draft 只生成待审核 Draft，不会确认、物化或执行工作流；
+   用户确认后仍可进入商品工作区检查、编辑并由人点击执行。
+8. 不要输出 base64、data URL、存储路径或内部 URL；用资产名称、来源和可验证的对象 ID 描述结果。
+9. 用户明确要求创建商品时，可以调用商品创建工作区工具。该工具只建立当前 Session 下的空商品草稿、商品 Conversation
    和 WorkflowDraft，不上传参考图、不提交图片需求、不生成正式 Workflow，也不启动运行。
    工具成功后，应明确告诉用户商品创建工作区已准备好，并从 Agent Dock 的当前 Session 商品工作区入口进入，继续提交参考图
    和图片需求。
@@ -239,8 +251,8 @@ def _agent_contract_for_conversation(conversation: AgentConversation) -> dict[st
             "harness_run_id": conversation.harness_run_id,
             "current_draft_version": current_revision.version if current_revision is not None else 0,
             "system_prompt": GLOBAL_AGENT_SYSTEM_PROMPT,
-            "draft_kind": "library_organization",
-            "draft_schema": library_organization_draft_schema(),
+            "draft_kind": "global",
+            "draft_schema": global_agent_draft_schema(),
             "workflow_draft_schema": {},
             "tool_contract_version": AGENT_TOOL_CONTRACT_VERSION,
         }
@@ -303,6 +315,21 @@ def validate_agent_library_organization_draft(
     )
 
 
+def validate_agent_global_draft(
+    session: Session,
+    *,
+    conversation_id: str,
+    value: dict[str, Any],
+):
+    from productflow_backend.application.global_agent_drafts import validate_global_agent_draft
+
+    return validate_global_agent_draft(
+        session,
+        conversation_id=conversation_id,
+        value=value,
+    )
+
+
 def get_agent_product_context(session: Session, conversation_id: str) -> dict[str, Any]:
     conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
     _require_product_conversation(conversation)
@@ -355,6 +382,55 @@ def get_agent_product_context(session: Session, conversation_id: str) -> dict[st
     if len(encoded) > AGENT_CONTEXT_MAX_BYTES:
         raise ConflictError("商品与 WorkflowDraft 上下文超过 Agent 工具输出上限")
     return payload
+
+
+def get_agent_global_workflow_target(
+    session: Session,
+    *,
+    product_id: str,
+    workflow_draft_id: str | None = None,
+) -> AgentConversation:
+    """Resolve one explicit product to its latest editable WorkflowDraft conversation."""
+    product = session.get(Product, product_id)
+    if product is None:
+        raise NotFoundError("商品不存在")
+    statement = (
+        select(AgentConversation)
+        .join(WorkflowDraft, WorkflowDraft.id == AgentConversation.workflow_draft_id)
+        .where(
+            AgentConversation.scope_type == AgentConversationScope.PRODUCT_WORKFLOW,
+            AgentConversation.product_id == product_id,
+            WorkflowDraft.status != WorkflowDraftStatus.CANCELLED,
+        )
+        .order_by(AgentConversation.updated_at.desc(), AgentConversation.id.desc())
+    )
+    if workflow_draft_id is not None:
+        statement = statement.where(WorkflowDraft.id == workflow_draft_id)
+    conversation = session.scalar(statement.limit(1))
+    if conversation is None:
+        raise NotFoundError("商品没有可编辑的 WorkflowDraft")
+    return conversation
+
+
+def get_agent_global_workflow_context(
+    session: Session,
+    *,
+    conversation_id: str,
+    product_id: str,
+) -> dict[str, Any]:
+    conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
+    _require_global_conversation(conversation)
+    target = get_agent_global_workflow_target(session, product_id=product_id)
+    context = get_agent_product_context(session, target.id)
+    context["target"] = {
+        "product_id": product_id,
+        "product_conversation_id": target.id,
+        "workflow_draft_id": target.workflow_draft_id,
+    }
+    encoded = json.dumps(context, ensure_ascii=False, separators=(",", ":")).encode()
+    if len(encoded) > AGENT_CONTEXT_MAX_BYTES:
+        raise ConflictError("全局目标商品 WorkflowDraft 上下文超过 Agent 工具输出上限")
+    return context
 
 
 def _load_workflow_intake_context(
@@ -1715,6 +1791,8 @@ __all__ = [
     "get_agent_runtime_context",
     "get_agent_task_contract",
     "get_agent_product_context",
+    "get_agent_global_workflow_context",
+    "get_agent_global_workflow_target",
     "inspect_agent_global_media_assets",
     "inspect_agent_global_products",
     "inspect_agent_product_assets",
@@ -1733,4 +1811,5 @@ __all__ = [
     "reconcile_agent_folder_rename",
     "validate_agent_workflow_draft",
     "validate_agent_library_organization_draft",
+    "validate_agent_global_draft",
 ]

@@ -342,6 +342,21 @@ def get_agent_turn_or_raise(
     return projection
 
 
+def lock_agent_turn_or_raise(
+    session: Session,
+    *,
+    product_id: str | None,
+    conversation_id: str,
+    projection_id: str,
+) -> AgentTurnProjection:
+    return _get_agent_turn_for_update(
+        session,
+        product_id=product_id,
+        conversation_id=conversation_id,
+        projection_id=projection_id,
+    )
+
+
 def reserve_agent_turn(
     session: Session,
     *,
@@ -879,6 +894,7 @@ __all__ = [
     "get_agent_conversation_by_id_or_raise",
     "get_agent_conversation_or_raise",
     "get_agent_turn_or_raise",
+    "lock_agent_turn_or_raise",
     "list_agent_turn_page",
     "mark_agent_conversation_completed_for_draft",
     "project_agent_turn_state",

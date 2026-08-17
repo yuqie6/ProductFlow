@@ -19,10 +19,10 @@ import (
 var canonicalUUID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
 const (
-	productFlowToolContractVersion = 7
+	productFlowToolContractVersion = 8
 	scopeTypeProductWorkflow       = "product_workflow"
 	scopeTypeGlobal                = "global"
-	libraryOrganizationDraftName   = "propose_library_organization_draft"
+	globalDraftArtifactName        = "propose_global_draft"
 )
 
 type ManagerConfig struct {
@@ -173,12 +173,12 @@ func (manager *Manager) getEntry(
 		readTools = scopedGlobalReadTools(manager.config.ProductFlow, scope)
 		durableTools = scopedGlobalDurableTools(manager.config.ProductFlow, scope)
 		optionalArtifact = &agenttask.RequiredArtifact{
-			Name:                         libraryOrganizationDraftName,
-			Description:                  "Submit a complete validated global media library organization draft for user confirmation.",
+			Name:                         globalDraftArtifactName,
+			Description:                  "Submit a complete validated global ProductFlow draft for user confirmation. The draft may organize media or propose a workflow for an explicit product.",
 			Schema:                       contract.DraftSchema,
 			AllowPriorTranscriptArtifact: true,
 			Validate: func(ctx context.Context, value json.RawMessage) error {
-				return manager.config.ProductFlow.ValidateLibraryOrganizationDraft(ctx, scope.ConversationID, value)
+				return manager.config.ProductFlow.ValidateGlobalDraft(ctx, scope.ConversationID, value)
 			},
 		}
 	} else {

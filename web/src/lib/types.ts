@@ -1244,6 +1244,16 @@ export interface LibraryOrganizationDraft {
   updated_at: string;
 }
 
+export interface GlobalWorkflowDraftReview {
+  schema_version: 1;
+  conversation_id: string;
+  product_id: string;
+  product_name: string;
+  product_conversation_id: string;
+  workflow_draft_id: string;
+  draft: WorkflowDraft;
+}
+
 export interface AgentTurnPage {
   items: AgentTurn[];
   next_cursor: string | null;

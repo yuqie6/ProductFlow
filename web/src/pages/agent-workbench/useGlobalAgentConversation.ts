@@ -14,6 +14,7 @@ import type {
   AgentTaskStatus,
   AgentTurn,
   AgentTurnPage,
+  GlobalWorkflowDraftReview,
   LibraryOrganizationDraft,
   SubmitAgentTurnInput,
 } from "../../lib/types";
@@ -53,6 +54,10 @@ export function globalAgentTurnQueryKey(conversationId: string, projectionId: st
 
 export function globalLibraryOrganizationDraftQueryKey(conversationId: string) {
   return ["global-library-organization-draft", conversationId] as const;
+}
+
+export function globalWorkflowDraftReviewQueryKey(conversationId: string, revisionId: string | null) {
+  return ["global-workflow-draft-review", conversationId, revisionId] as const;
 }
 
 export function initialGlobalTaskTurnInput(
@@ -120,6 +125,15 @@ export function useGlobalAgentConversation({
     enabled: Boolean(
       enabled && conversationId && pageTurns.some((turn) => turn.library_organization_draft_revision_id),
     ),
+  });
+  const workflowDraftRevisionId = useMemo(
+    () => [...pageTurns].reverse().find((turn) => turn.workflow_draft_revision_id)?.workflow_draft_revision_id ?? null,
+    [pageTurns],
+  );
+  const workflowDraftReviewQuery = useQuery({
+    queryKey: globalWorkflowDraftReviewQueryKey(conversationId, workflowDraftRevisionId),
+    queryFn: () => api.getGlobalWorkflowDraftReview(conversationId, workflowDraftRevisionId ?? ""),
+    enabled: Boolean(enabled && conversationId && workflowDraftRevisionId),
   });
   const turns = useMemo(
     () =>
@@ -233,6 +247,23 @@ export function useGlobalAgentConversation({
       void queryClient.invalidateQueries({ queryKey: ["agent-sessions"] });
     },
   });
+  const confirmWorkflowDraftReviewMutation = useMutation<
+    GlobalWorkflowDraftReview,
+    Error,
+    { revisionId: string; expectedDraftVersion: number }
+  >({
+    mutationFn: ({ revisionId, expectedDraftVersion }) =>
+      api.confirmGlobalWorkflowDraftReview(conversationId, revisionId, expectedDraftVersion),
+    onSuccess: (review) => {
+      queryClient.setQueryData(
+        globalWorkflowDraftReviewQueryKey(conversationId, review.draft.current_revision?.id ?? null),
+        review,
+      );
+      void queryClient.invalidateQueries({ queryKey: turnsKey });
+      void queryClient.invalidateQueries({ queryKey: ["agent-tasks"] });
+      void queryClient.invalidateQueries({ queryKey: ["agent-sessions"] });
+    },
+  });
 
   return {
     turns,
@@ -241,10 +272,13 @@ export function useGlobalAgentConversation({
     turnsQuery,
     latestProjectionQuery,
     libraryOrganizationDraftQuery,
+    workflowDraftRevisionId,
+    workflowDraftReviewQuery,
     submitTurnMutation,
     cancelTurnMutation,
     resumeTurnMutation,
     answerQuestionMutation,
     confirmLibraryOrganizationDraftMutation,
+    confirmWorkflowDraftReviewMutation,
   };
 }

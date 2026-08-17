@@ -278,6 +278,48 @@ func TestGlobalProductToolsUseBoundedProductFlowEndpoints(t *testing.T) {
 	}
 }
 
+func TestGlobalWorkflowContextToolUsesExplicitProductScope(t *testing.T) {
+	basePath := "/api/internal/v1/agent-conversations/" + testConversationID
+	productID := "77777777-7777-4777-8777-777777777777"
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != basePath+"/global-workflow-context" ||
+			request.URL.Query().Get("product_id") != productID {
+			t.Fatalf("global workflow context request = %s %s", request.Method, request.URL.String())
+		}
+		writeFixtureJSON(writer, map[string]any{
+			"target": map[string]any{
+				"product_id": productID, "workflow_draft_id": "88888888-8888-4888-8888-888888888888",
+			},
+			"workflow_draft": map[string]any{"version": 3, "status": "draft"},
+		})
+	}))
+	t.Cleanup(server.Close)
+	client, err := productflow.NewClient(server.URL, testInternalToken, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tool *agenttask.Tool
+	for _, candidate := range scopedGlobalReadTools(client, Scope{ConversationID: testConversationID}) {
+		if candidate.Name == inspectGlobalWorkflowContextToolName {
+			tool = &candidate
+			break
+		}
+	}
+	if tool == nil {
+		t.Fatalf("tool %q is not registered", inspectGlobalWorkflowContextToolName)
+	}
+	result, err := tool.Handler(
+		context.Background(),
+		json.RawMessage(`{"product_id":"`+productID+`"}`),
+	)
+	if err != nil || !strings.Contains(result, productID) || !strings.Contains(result, `"version":3`) {
+		t.Fatalf("global workflow context result = %q, %v", result, err)
+	}
+	if _, err := tool.Handler(context.Background(), json.RawMessage(`{"product_id":""}`)); err == nil {
+		t.Fatal("empty product scope was accepted")
+	}
+}
+
 func TestGlobalWorkflowRunToolUsesBoundedProductFlowEndpoint(t *testing.T) {
 	basePath := "/api/internal/v1/agent-conversations/" + testConversationID
 	workflowID := "88888888-8888-4888-8888-888888888888"
