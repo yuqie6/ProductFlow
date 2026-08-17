@@ -142,6 +142,8 @@ Last reviewed against the current working tree on 2026-08-16.
 9. 最终事务锁定 Gallery/Session source tables 进行稳定读，重算 high-watermark/count/hash，证明 source delta 为零，并记录 cutover-ready evidence。
 10. dry-run/apply/reconcile 都必须幂等；异常条目进入 blocker report，不静默跳过。
 
+当前 `backfill_media_library` command 已将坏文件和无效 source 以 entry id/code 写入 `summary.blockers`，存在 blocker 时返回退出码 `2`；reconcile 也会拒绝 canonical 侧多出的 `legacy_gallery` mapping。它仍然只证明应用层 source mapping，不能替代 PostgreSQL snapshot、storage backup identity、维护窗口和观察窗证据。
+
 新代码确认只读写 `MediaLibraryAsset` 后才解除维护窗口。旧表保持只读证据，不再新增长期业务字段。
 
 ## 9. Phase 5：商品收录、组织与归档

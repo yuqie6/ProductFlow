@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 
 from sqlalchemy import select
@@ -27,11 +27,18 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
+class GalleryBackfillBlocker:
+    entry_id: str
+    code: str
+
+
+@dataclass(frozen=True, slots=True)
 class GalleryBackfillSummary:
     scanned: int = 0
     created: int = 0
     skipped_existing: int = 0
     blocked: int = 0
+    blockers: tuple[GalleryBackfillBlocker, ...] = ()
 
 
 def capture_gallery_snapshot(session: Session) -> MediaLibraryMigrationAudit:
@@ -111,6 +118,19 @@ def _build_gallery_provenance(
         "original_filename": entry.asset.original_filename,
         "captured_at": entry.created_at.isoformat(),
     }
+
+
+def _append_blocker(
+    summary: GalleryBackfillSummary,
+    *,
+    entry_id: str,
+    code: str,
+) -> GalleryBackfillSummary:
+    return replace(
+        summary,
+        blocked=summary.blocked + 1,
+        blockers=(*summary.blockers, GalleryBackfillBlocker(entry_id=entry_id, code=code)),
+    )
 
 
 def backfill_gallery_entry(
@@ -201,41 +221,24 @@ def run_gallery_backfill(
             )
         )
         if existing is not None:
-            summary = GalleryBackfillSummary(
-                scanned=summary.scanned,
-                created=summary.created,
-                skipped_existing=summary.skipped_existing + 1,
-                blocked=summary.blocked,
-            )
+            summary = replace(summary, skipped_existing=summary.skipped_existing + 1)
             continue
         try:
             _, media = _gallery_source(entry)
             path = storage.resolve(media.storage_path)
             if not path.is_file():
                 raise FileNotFoundError(f"media file missing for gallery entry {entry.id}")
-        except (FileNotFoundError, RuntimeError, ValueError):
-            summary = GalleryBackfillSummary(
-                scanned=summary.scanned,
-                created=summary.created,
-                skipped_existing=summary.skipped_existing,
-                blocked=summary.blocked + 1,
-            )
+        except FileNotFoundError:
+            summary = _append_blocker(summary, entry_id=entry.id, code="media_file_missing")
+            continue
+        except (RuntimeError, ValueError):
+            summary = _append_blocker(summary, entry_id=entry.id, code="source_media_invalid")
             continue
         if not apply:
-            summary = GalleryBackfillSummary(
-                scanned=summary.scanned,
-                created=summary.created + 1,
-                skipped_existing=summary.skipped_existing,
-                blocked=summary.blocked,
-            )
+            summary = replace(summary, created=summary.created + 1)
             continue
         backfill_gallery_entry(session, entry=entry, storage=storage)
-        summary = GalleryBackfillSummary(
-            scanned=summary.scanned,
-            created=summary.created + 1,
-            skipped_existing=summary.skipped_existing,
-            blocked=summary.blocked,
-        )
+        summary = replace(summary, created=summary.created + 1)
     if apply:
         session.commit()
     return summary
@@ -256,6 +259,23 @@ def verify_gallery_backfill(
     ):
         raise RuntimeError("media library backfill source changed during migration")
     entries = list(session.scalars(_gallery_entry_query().order_by(ImageGalleryEntry.id)).all())
+    entry_ids = {entry.id for entry in entries}
+    legacy_assets = list(
+        session.scalars(
+            select(MediaLibraryAsset)
+            .where(MediaLibraryAsset.source_type == "legacy_gallery")
+            .order_by(MediaLibraryAsset.source_id, MediaLibraryAsset.id)
+        ).all()
+    )
+    legacy_source_ids = [asset.source_id for asset in legacy_assets]
+    unexpected_source_ids = sorted(set(legacy_source_ids) - entry_ids)
+    if unexpected_source_ids:
+        raise RuntimeError(f"media library has unmapped legacy gallery asset {unexpected_source_ids[0]}")
+    if len(legacy_source_ids) != len(set(legacy_source_ids)):
+        raise RuntimeError("media library has duplicate legacy gallery source mappings")
+    if set(legacy_source_ids) != entry_ids:
+        missing_source_id = sorted(entry_ids - set(legacy_source_ids))[0]
+        raise RuntimeError(f"missing media library asset for gallery entry {missing_source_id}")
     verified = 0
     for entry in entries:
         library_asset = session.scalar(

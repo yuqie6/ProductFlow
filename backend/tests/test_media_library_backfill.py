@@ -5,12 +5,15 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 
+import pytest
+
 from productflow_backend.application.media_library.backfill import (
+    GalleryBackfillBlocker,
     capture_gallery_snapshot,
     run_gallery_backfill,
     verify_gallery_backfill,
 )
-from productflow_backend.commands.backfill_media_library import _load_or_capture_snapshot
+from productflow_backend.commands.backfill_media_library import _load_or_capture_snapshot, main
 from productflow_backend.domain.enums import ImageSessionAssetKind, MediaVerificationStatus
 from productflow_backend.infrastructure.db.models import (
     ImageGalleryEntry,
@@ -103,6 +106,58 @@ def test_gallery_backfill_is_idempotent(db_session, configured_env: Path) -> Non
     assert first.created == 1
     assert second.created == 0
     assert second.skipped_existing == 1
+
+
+def test_gallery_backfill_reports_blocker_ids_and_codes(db_session, configured_env: Path) -> None:
+    entry = _create_gallery_entry(db_session, configured_env)
+    (configured_env / "media" / "backfill.png").unlink()
+
+    summary = run_gallery_backfill(
+        db_session,
+        storage=LocalStorage(root=configured_env),
+        apply=False,
+    )
+
+    assert summary.blocked == 1
+    assert summary.blockers == (GalleryBackfillBlocker(entry_id=entry.id, code="media_file_missing"),)
+
+
+def test_backfill_command_returns_blocking_exit_code(db_session, configured_env: Path, tmp_path: Path) -> None:
+    _create_gallery_entry(db_session, configured_env)
+    (configured_env / "media" / "backfill.png").unlink()
+
+    assert main(["--snapshot-file", str(tmp_path / "gallery-snapshot.json")]) == 2
+
+
+def test_gallery_backfill_reconcile_rejects_extra_legacy_mapping(db_session, configured_env: Path) -> None:
+    entry = _create_gallery_entry(db_session, configured_env)
+    run_gallery_backfill(
+        db_session,
+        storage=LocalStorage(root=configured_env),
+        apply=True,
+    )
+    library_asset = db_session.get(MediaLibraryAsset, entry.id)
+    assert library_asset is not None
+    db_session.add(
+        MediaLibraryAsset(
+            id="legacy-extra",
+            media_object_id=library_asset.media_object_id,
+            source_type="legacy_gallery",
+            source_id="legacy-extra",
+            provenance_json={},
+            provenance_hash="0" * 64,
+            display_name="extra",
+            original_filename="extra.png",
+        )
+    )
+    db_session.commit()
+
+    with pytest.raises(RuntimeError, match="unmapped legacy gallery asset legacy-extra"):
+        verify_gallery_backfill(
+            db_session,
+            storage=LocalStorage(root=configured_env),
+            snapshot=capture_gallery_snapshot(db_session),
+        )
 
 
 def test_snapshot_file_is_valid_json_with_a_real_trailing_newline(db_session, tmp_path: Path) -> None:

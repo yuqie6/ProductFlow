@@ -105,6 +105,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             "verified": verified,
         }
         print(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str))
+        if summary.blocked:
+            return 2
+        if verified is not None and verified != snapshot.gallery_count:
+            return 2
         return 0
     finally:
         session.close()
