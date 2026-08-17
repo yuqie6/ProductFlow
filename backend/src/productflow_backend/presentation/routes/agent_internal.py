@@ -26,6 +26,7 @@ from productflow_backend.application.agent_tools import (
     reconcile_agent_asset_rename,
     reconcile_agent_folder_create,
     reconcile_agent_folder_rename,
+    validate_agent_library_organization_draft,
     validate_agent_workflow_draft,
 )
 from productflow_backend.application.agent_workflow_runs import list_agent_workflow_runs
@@ -96,6 +97,23 @@ def validate_agent_workflow_draft_endpoint(
     session: Session = Depends(get_session),
 ) -> AgentWorkflowDraftValidationResponse:
     validate_agent_workflow_draft(
+        session,
+        conversation_id=conversation_id,
+        value=payload.value,
+    )
+    return AgentWorkflowDraftValidationResponse()
+
+
+@router.post(
+    "/{conversation_id}/library-organization-draft/validate",
+    response_model=AgentWorkflowDraftValidationResponse,
+)
+def validate_agent_library_organization_draft_endpoint(
+    conversation_id: str,
+    payload: AgentWorkflowDraftValidationRequest,
+    session: Session = Depends(get_session),
+) -> AgentWorkflowDraftValidationResponse:
+    validate_agent_library_organization_draft(
         session,
         conversation_id=conversation_id,
         value=payload.value,

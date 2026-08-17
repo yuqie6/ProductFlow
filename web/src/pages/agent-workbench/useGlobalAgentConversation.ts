@@ -13,6 +13,7 @@ import type {
   AgentQuestionAnswer,
   AgentTurn,
   AgentTurnPage,
+  LibraryOrganizationDraft,
   SubmitAgentTurnInput,
 } from "../../lib/types";
 import {
@@ -45,6 +46,10 @@ export function globalAgentTurnsQueryKey(conversationId: string, taskId?: string
 
 export function globalAgentTurnQueryKey(conversationId: string, projectionId: string) {
   return ["global-agent-turn", conversationId, projectionId] as const;
+}
+
+export function globalLibraryOrganizationDraftQueryKey(conversationId: string) {
+  return ["global-library-organization-draft", conversationId] as const;
 }
 
 export function useGlobalAgentConversation({
@@ -86,6 +91,13 @@ export function useGlobalAgentConversation({
     },
   });
   const latestTurn = selectNewestAgentTurnProjection(latestPageTurn, latestProjectionQuery.data);
+  const libraryOrganizationDraftQuery = useQuery({
+    queryKey: globalLibraryOrganizationDraftQueryKey(conversationId),
+    queryFn: () => api.getGlobalLibraryOrganizationDraft(conversationId),
+    enabled: Boolean(
+      enabled && conversationId && pageTurns.some((turn) => turn.library_organization_draft_revision_id),
+    ),
+  });
   const turns = useMemo(
     () =>
       latestTurn && latestPageTurn && latestTurn.id === latestPageTurn.id
@@ -151,6 +163,24 @@ export function useGlobalAgentConversation({
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: turnsKey }),
   });
+  const confirmLibraryOrganizationDraftMutation = useMutation<
+    LibraryOrganizationDraft,
+    Error,
+    { expectedDraftVersion: number; idempotencyKey: string }
+  >({
+    mutationFn: ({ expectedDraftVersion, idempotencyKey }) =>
+      api.confirmGlobalLibraryOrganizationDraft(
+        conversationId,
+        expectedDraftVersion,
+        idempotencyKey,
+      ),
+    onSuccess: (draft) => {
+      queryClient.setQueryData(globalLibraryOrganizationDraftQueryKey(conversationId), draft);
+      void queryClient.invalidateQueries({ queryKey: turnsKey });
+      void queryClient.invalidateQueries({ queryKey: ["agent-tasks"] });
+      void queryClient.invalidateQueries({ queryKey: ["agent-sessions"] });
+    },
+  });
 
   return {
     turns,
@@ -158,9 +188,11 @@ export function useGlobalAgentConversation({
     activeTurn: latestTurn && !isAgentTurnTerminal(latestTurn.status) ? latestTurn : null,
     turnsQuery,
     latestProjectionQuery,
+    libraryOrganizationDraftQuery,
     submitTurnMutation,
     cancelTurnMutation,
     resumeTurnMutation,
     answerQuestionMutation,
+    confirmLibraryOrganizationDraftMutation,
   };
 }

@@ -1129,9 +1129,75 @@ export interface AgentTurn {
   artifact_name: string | null;
   artifact_step_id: string | null;
   workflow_draft_revision_id: string | null;
+  library_organization_draft_revision_id: string | null;
   page_context_snapshot_id: string | null;
   sync_error: string | null;
   finished_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type LibraryOrganizationDraftStatus =
+  | "awaiting_confirmation"
+  | "confirmed"
+  | "failed"
+  | "cancelled";
+
+export type LibraryOrganizationOperationKind =
+  | "rename"
+  | "move"
+  | "set_tags"
+  | "archive"
+  | "restore";
+
+export interface LibraryOrganizationAssetBefore {
+  revision: number;
+  display_name: string;
+  folder_id: string | null;
+  tag_names: string[];
+  is_archived: boolean;
+}
+
+export type LibraryOrganizationOperation = {
+  operation: LibraryOrganizationOperationKind;
+  asset_id: string;
+  expected_revision: number;
+  before: LibraryOrganizationAssetBefore;
+  reason: string;
+  target:
+    | { display_name: string }
+    | { folder_id: string | null }
+    | { tag_names: string[] }
+    | { is_archived: true }
+    | { is_archived: false };
+};
+
+export interface LibraryOrganizationDraftPayload {
+  schema_version: 1;
+  confirmation_summary: string;
+  operations: LibraryOrganizationOperation[];
+}
+
+export interface LibraryOrganizationDraftRevision {
+  id: string;
+  version: number;
+  schema_version: number;
+  payload: LibraryOrganizationDraftPayload;
+  payload_hash: string;
+  source_turn_id: string | null;
+  source_artifact_step_id: string | null;
+  confirmed_at: string | null;
+  created_at: string;
+}
+
+export interface LibraryOrganizationDraft {
+  id: string;
+  conversation_id: string;
+  status: LibraryOrganizationDraftStatus;
+  current_revision: LibraryOrganizationDraftRevision | null;
+  confirmed_revision_id: string | null;
+  confirmation_result: Record<string, unknown> | null;
+  confirmed_at: string | null;
   created_at: string;
   updated_at: string;
 }

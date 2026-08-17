@@ -28,7 +28,7 @@
 - 业务执行用例在 `backend/src/productflow_backend/application/product_workflow/v2_runs.py`，worker 从 `backend/src/productflow_backend/workers.py` 进入执行器。
 - `WorkflowRun` 和 `WorkflowNodeRun` 由 PostgreSQL 持有，Redis/Dramatiq 只承担投递和执行调度。
 
-当前 Agent Turn 仍然以商品工作区作为业务事实边界：`AgentConversation` 绑定 `product_id` 和 `workflow_draft_id`，新建商品和旧归档重建会同时创建一个独立的 `AgentSession` 记录。Session 已有列表、创建、改名、归档、商品工作区摘要和按 Session 选择商品工作区的 API；工作台和应用级 Global Agent Dock 都可以打开会话列表。`AgentTask`、任务专属 harness run、任务级 Turn 关联和有界页面上下文快照已经落库并接入 Turn 请求，取消任务也有 API 和 Dock 控件。全局图库页面和工作流子图库关联层已落地，但 Agent Dock 仍是 Session/Task 控制面板，空 Session 还不能直接承载跨域聊天；Task 摘要、暂停/恢复、独立调度器、页面级 WorkflowRun 投影和全局图库整理 Draft 仍未交付。`ImageSession` 是连续生图会话，已有自己的会话列表和生图任务，但不承担全局业务 Agent 的职责。
+当前 Agent Turn 仍然以商品工作区或全局素材库作为 scope 边界：商品 `AgentConversation` 绑定 `product_id` 和 `workflow_draft_id`，新建商品和旧归档重建会同时创建一个独立的 `AgentSession` 记录；商品创建事务先返回商品 Conversation，商品创建路径产生的 Session 会在 Session 列表或 Global Agent Dock 访问时懒加载 Global Conversation，独立的新建 Session API 则在创建时直接生成 Global Conversation。Session 已有列表、创建、改名、归档、商品工作区摘要和按 Session 选择商品工作区的 API；工作台和应用级 Global Agent Dock 都可以打开会话列表。`AgentTask`、任务专属 harness run、任务级 Turn 关联和有界页面上下文快照已经落库并接入 Turn 请求，取消任务也有 API 和 Dock 控件。全局图库页面、工作流子图库关联层、Global Agent 素材查询和素材整理 Draft 的发布/确认已经落地；跨商品和跨工作流写操作、Task 摘要、暂停/恢复、独立调度器、页面级 WorkflowRun 投影和执行前 Fresh Observation 仍未交付。`ImageSession` 是连续生图会话，已有自己的会话列表和生图任务，但不承担全局业务 Agent 的职责。
 
 ## 3. 产品原则
 
@@ -52,8 +52,8 @@ Workflow 是用户确认后保存的可编辑 DAG。它可以被用户直接运�
 
 | 对象 | 作用 | 当前状态 |
 |---|---|---|
-| `AgentSession` | 用户和全局 Agent 的长期交流入口，可包含多个任务 | 已实现 Session 元数据、商品对话关联、列表/创建/改名/归档、工作区切换和 Global Agent Dock 控制面板；跨域聊天入口和摘要仍未实现 |
-| `AgentTask` | 一个明确的业务目标，可跨页面、跨 Turn、后台运行 | 已实现独立记录、独立 harness run、列表/创建/改名/取消和工作台打开；暂停/恢复、Task 摘要、调度额度和待确认 Draft 聚影仍未实现 |
+| `AgentSession` | 用户和全局 Agent 的长期交流入口，可包含多个任务 | 已实现 Session 元数据、Global/Product Conversation 关联、列表/创建/改名/归档、工作区切换和 Global Agent Dock 控制面板；Session 摘要、跨商品/跨工作流写操作仍未实现 |
+| `AgentTask` | 一个明确的业务目标，可跨页面、跨 Turn、后台运行 | 已实现独立记录、独立 harness run、列表/创建/改名/取消、工作台打开和全局素材整理 Draft 投影；暂停/恢复、Task 摘要、调度额度仍未实现 |
 | `AgentTurn` | 一次用户消息、本轮上下文、工具调用和结果投影 | 已关联 Task 和页面上下文快照；同一 Task 的活动 Turn 保持串行 |
 | `AgentRun` | harness 内部一次可恢复的执行运行 | 每个 AgentTask 使用自己的 harness run；未指定 Task 的旧工作区 Turn 继续使用 conversation run |
 | `PageContextSnapshot` | 某次消息发送时的路由、页面对象、选择、过滤器和 revision 摘要 | 已实现 FastAPI/Go 有界合同和持久化；可以挂在显式 Task Turn 或普通商品对话 Turn 上；执行前 Fresh Observation 仍需补齐 |
@@ -221,14 +221,14 @@ Session summary
 - 已完成 `MediaLibraryAsset` 到工作流子图库的 `WorkflowMediaLibraryAsset` 关联表和同步 command；关联只保存关系，不复制媒体 bytes。
 - 已完成 `/media-library` 全局图库页面、工作流子图库入口、批量组织、归档/恢复、关联移除和工作流引用保护。
 - 旧 Gallery 的保存接口目前作为迁移桥接，同时创建 canonical 全局素材；`/gallery` 已重定向到 `/media-library`，旧表、旧 API 和历史 DTO 仍保留作迁移证据，尚未完成物理 owner 退休。
-- Agent 先支持 inspect，再支持生成图库整理 Draft；确认流程通过后才开放组织操作。
+- Agent 已支持有界 inspect、生成图库整理 Draft，以及在 UI 中查看影响范围并确认；当前组织操作限于 rename、move、set_tags、archive、restore，工作流关联仍由独立的工作流同步 command 负责。
 
 ### 阶段 5：全局 Agent Dock 和跨域业务能力
 
 - 在多个页面挂载同一个全局 Agent 入口，Session 不随路由改变。
 - 通过 Skill registry 暴露商品、工作流、图库和 Draft 能力。
 - 每个有副作用的 Skill 都绑定权限、scope、revision、confirmation policy、idempotency 和验证方式。
-- 完成跨页面后台 Task、问题恢复、Draft 确认、WorkflowRun 监控和受影响对象跳转。
+- 全局素材整理 Draft 的跨页面确认已经可用；剩余工作是跨页面后台 Task 的完整恢复、WorkflowRun 监控和受影响对象跳转。
 
 ## 9. 验收条件
 

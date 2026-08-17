@@ -9,7 +9,7 @@
 - Rollout/acceptance：`docs/rollout/media-library-transition.md`
 - 当前运行事实：`docs/ARCHITECTURE.md`、代码、迁移和测试
 
-本设计分成可独立验证的阶段。canonical media repair、attempt fencing、durable delivery 和旧收藏条目删除一致性是基础修复；全局图库、工作流子图库同步、组织、Gallery cutover 和 Agent Draft 是目标能力。旧表/列物理删除不在本实施授权内。全局图库是目标态的主图片身份，工作流子图库是关联和使用层；现有商品图片身份只能作为工作流侧兼容引用，不能继续作为并行全局 owner。
+本设计分成可独立验证的阶段。canonical media repair、attempt fencing、durable delivery 和旧收藏条目删除一致性是基础修复；全局图库、工作流子图库同步、组织和素材整理 Draft 已有代码实现，Gallery cutover 仍处于迁移窗口。旧表/列物理删除不在本实施授权内。全局图库是目标态的主图片身份，工作流子图库是关联和使用层；现有商品图片身份只能作为工作流侧兼容引用，不能继续作为并行全局 owner。
 
 ## 2. 当前实现与缺陷
 
@@ -322,6 +322,8 @@ Media-library Agent tools：
 - bounded list metadata。
 - inspect explicit assets。
 - publish organization Draft revision。
+
+当前实现 owner 为 `application/media_library/drafts.py`、`application/media_library/draft_contracts.py`、`presentation/routes/global_agent_conversations.py` 和 `GlobalLibraryOrganizationDraftCard.tsx`。Draft 发布不修改图库；确认由 ProductFlow application transaction 锁定素材和目标文件夹，重新校验 asset revision、来源完整性、工作流引用保护和幂等请求后原子应用。Go Agent 使用 optional artifact 合同承载只读查询和可选 Draft，避免纯查询被错误地置为待确认。
 
 没有直接 rename/move/tag/archive/collect side-effect tool。ProductFlow internal API 返回 scope-specific contract；Go manager 依据 contract 注册对应 tools。Tool names/limits/version 由 ProductFlow contract 与 Go safety ceiling 分开命名并测试。
 

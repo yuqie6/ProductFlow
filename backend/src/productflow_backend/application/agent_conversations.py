@@ -29,6 +29,7 @@ from productflow_backend.domain.enums import (
     AgentConversationScope,
     AgentConversationStatus,
     AgentTurnStatus,
+    LibraryOrganizationDraftStatus,
     MediaVerificationStatus,
     WorkflowDraftStatus,
 )
@@ -37,6 +38,7 @@ from productflow_backend.infrastructure.db.models import (
     AgentConversation,
     AgentTask,
     AgentTurnProjection,
+    LibraryOrganizationDraft,
     Product,
     ProductImageAsset,
     WorkflowDraft,
@@ -102,6 +104,9 @@ def agent_conversation_query():
         selectinload(AgentConversation.workflow_draft)
         .selectinload(WorkflowDraft.legacy_archive_seed)
         .selectinload(WorkflowDraftLegacyArchiveSeed.user_template_archive),
+        selectinload(AgentConversation.library_organization_draft).selectinload(
+            LibraryOrganizationDraft.current_revision
+        ),
     )
 
 
@@ -827,11 +832,20 @@ def _apply_conversation_status(
     if turn_status == AgentTurnStatus.AWAITING_CONFIRMATION:
         conversation.status = AgentConversationStatus.AWAITING_CONFIRMATION
     elif turn_status == AgentTurnStatus.SUCCEEDED:
-        conversation.status = (
-            AgentConversationStatus.AWAITING_CONFIRMATION
-            if conversation.workflow_draft.status == WorkflowDraftStatus.AWAITING_CONFIRMATION
-            else AgentConversationStatus.COMPLETED
-        )
+        if conversation.scope_type == GLOBAL_SCOPE:
+            pending_library_draft = conversation.library_organization_draft
+            conversation.status = (
+                AgentConversationStatus.AWAITING_CONFIRMATION
+                if pending_library_draft is not None
+                and pending_library_draft.status == LibraryOrganizationDraftStatus.AWAITING_CONFIRMATION
+                else AgentConversationStatus.COMPLETED
+            )
+        else:
+            conversation.status = (
+                AgentConversationStatus.AWAITING_CONFIRMATION
+                if conversation.workflow_draft.status == WorkflowDraftStatus.AWAITING_CONFIRMATION
+                else AgentConversationStatus.COMPLETED
+            )
     elif turn_status == AgentTurnStatus.FAILED:
         conversation.status = AgentConversationStatus.FAILED
     elif turn_status == AgentTurnStatus.CANCELED:

@@ -12,6 +12,7 @@ import type {
 import { AgentQuestionPrompt } from "./AgentQuestionPrompt";
 import { AgentToolStepList } from "./AgentToolStepList";
 import { AgentTurnTail } from "./AgentTurnTail";
+import { GlobalLibraryOrganizationDraftCard } from "./GlobalLibraryOrganizationDraftCard";
 import { useGlobalAgentConversation } from "./useGlobalAgentConversation";
 
 interface GlobalAgentConversationPanelProps {
@@ -41,6 +42,7 @@ export function GlobalAgentConversationPanel({
   const activeTurnId = agent.activeTurn?.id ?? null;
   const listRef = useRef<HTMLDivElement | null>(null);
   const previousTurnCount = useRef(0);
+  const confirmationKeyRef = useRef<{ draftId: string; version: number; key: string } | null>(null);
 
   useEffect(() => setAnsweredQuestionId(null), [activeQuestion?.id]);
   useEffect(() => {
@@ -99,6 +101,23 @@ export function GlobalAgentConversationPanel({
   const questionAnswered = Boolean(
     activeQuestion && (answeredQuestionId === activeQuestion.id || agent.activeTurn?.resume_required),
   );
+  const confirmDraft = () => {
+    const draft = agent.libraryOrganizationDraftQuery.data;
+    const revision = draft?.current_revision;
+    if (!draft || !revision || draft.status !== "awaiting_confirmation") {
+      return;
+    }
+    const cached = confirmationKeyRef.current;
+    const key =
+      cached?.draftId === draft.id && cached.version === revision.version
+        ? cached.key
+        : globalThis.crypto.randomUUID();
+    confirmationKeyRef.current = { draftId: draft.id, version: revision.version, key };
+    agent.confirmLibraryOrganizationDraftMutation.mutate({
+      expectedDraftVersion: revision.version,
+      idempotencyKey: key,
+    });
+  };
 
   if (!conversationId) {
     return (
@@ -157,6 +176,21 @@ export function GlobalAgentConversationPanel({
                     ) : null}
                     <AgentToolStepList steps={steps} live={active} />
                     <AgentTurnTail turn={turn} active={active} reviewDraft={false} />
+                    {turn.library_organization_draft_revision_id &&
+                    turn.library_organization_draft_revision_id ===
+                      agent.libraryOrganizationDraftQuery.data?.current_revision?.id ? (
+                      <GlobalLibraryOrganizationDraftCard
+                        draft={agent.libraryOrganizationDraftQuery.data ?? null}
+                        loading={agent.libraryOrganizationDraftQuery.isLoading}
+                        error={errorDetail(
+                          agent.libraryOrganizationDraftQuery.error ??
+                            agent.confirmLibraryOrganizationDraftMutation.error,
+                          t("globalAgent.draft.loadFailed"),
+                        )}
+                        busy={agent.confirmLibraryOrganizationDraftMutation.isPending}
+                        onConfirm={confirmDraft}
+                      />
+                    ) : null}
                   </div>
                 </div>
               </div>

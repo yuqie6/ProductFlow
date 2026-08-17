@@ -362,6 +362,53 @@ func TestServiceRejectsProseOnlyCompletionWhenArtifactIsRequired(t *testing.T) {
 	}
 }
 
+func TestServiceProjectsOptionalArtifactWithoutGatingReadOnlyCompletion(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch calls.Add(1) {
+		case 1:
+			writeServiceStream(t, writer, `{"id":"optional-call","status":"completed","output":[{"id":"call","type":"function_call","call_id":"optional","name":"propose_optional_artifact","arguments":"{\"value\":\"organized\"}"}]}`)
+		case 2:
+			writeServiceStream(t, writer, `{"id":"optional-done","status":"completed","output":[{"id":"message","type":"message","role":"assistant","content":[{"type":"output_text","text":"已准备整理建议。"}]}]}`)
+		default:
+			t.Errorf("unexpected provider call %d", calls.Load())
+			http.Error(writer, "too many calls", http.StatusInternalServerError)
+		}
+	}))
+	t.Cleanup(server.Close)
+	workspace := t.TempDir()
+	service, err := agenttask.OpenService(agenttask.ServiceConfig{Runner: agenttask.Config{
+		Database: filepath.Join(t.TempDir(), "optional-artifact.db"), Workspace: workspace, SkillUserHome: workspace,
+		Provider: agenttask.ProviderConfig{APIKey: "secret", BaseURL: server.URL, Model: "model", HTTPClient: server.Client()},
+		Policy:   testPolicy(),
+		OptionalArtifact: &agenttask.RequiredArtifact{
+			Name: "propose_optional_artifact",
+			Schema: map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{"value": map[string]any{"type": "string"}},
+				"required":   []string{"value"},
+			},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = service.Close() })
+
+	state, err := service.StartTurn(t.Context(), agenttask.StartTurnRequest{
+		RunID: "run-optional-artifact", Input: agenttask.TextInput("整理最近生成的素材"), IdempotencyKey: "optional-artifact",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state = awaitTurn(t, service, state.RunID, state.TurnID, turn.StatusSucceeded)
+	if state.Artifact == nil || state.Artifact.Name != "propose_optional_artifact" ||
+		string(state.Artifact.Value) != `{"value":"organized"}` || state.Output != "已准备整理建议。" {
+		t.Fatalf("optional artifact state = %#v", state)
+	}
+}
+
 func TestServiceAllowsProseOnlyFollowUpAfterArtifact(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

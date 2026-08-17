@@ -76,6 +76,7 @@ type Service struct {
 	journal          journalReader
 	store            *controlStore
 	requiredArtifact string
+	artifactName     string
 	toolProjector    ToolStepProjector
 	ctx              context.Context
 	cancel           context.CancelFunc
@@ -99,14 +100,23 @@ func OpenService(config ServiceConfig) (*Service, error) {
 	}
 	requiredArtifact := ""
 	if config.Runner.RequiredArtifact != nil {
-		requiredArtifact = strings.TrimSpace(config.Runner.RequiredArtifact.Name)
-		if requiredArtifact == "" {
-			requiredArtifact = WorkflowDraftToolName
+		requiredArtifact = artifactContractName(config.Runner.RequiredArtifact)
+	}
+	optionalArtifact := ""
+	if config.Runner.OptionalArtifact != nil {
+		optionalArtifact = artifactContractName(config.Runner.OptionalArtifact)
+		if requiredArtifact != "" && requiredArtifact == optionalArtifact {
+			_ = store.db.Close()
+			return nil, fmt.Errorf("required and optional artifact tools must have different names: %s", requiredArtifact)
 		}
+	}
+	artifactName := requiredArtifact
+	if artifactName == "" {
+		artifactName = optionalArtifact
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	service := &Service{
-		store: store, requiredArtifact: requiredArtifact, toolProjector: config.ToolProjector,
+		store: store, requiredArtifact: requiredArtifact, artifactName: artifactName, toolProjector: config.ToolProjector,
 		ctx: ctx, cancel: cancel, workers: make(map[string]context.CancelFunc),
 	}
 	runner, err := open(config.Runner, service.persistTextDelta)
@@ -628,27 +638,32 @@ func (s *Service) finishDrive(runID, turnID string, advanced AdvanceResult, runE
 		_ = s.store.setOutcome(ctx, runID, turnID, turnprotocol.StatusUnknown, "", "durable task stopped without a terminal result", nil, nil, now)
 		return
 	}
-	if s.requiredArtifact != "" {
-		artifact, found, artifactErr := ArtifactFromJob(advanced.Job, s.requiredArtifact)
+	if s.artifactName != "" {
+		artifact, found, artifactErr := ArtifactFromJob(advanced.Job, s.artifactName)
 		if found {
-			_ = s.store.setOutcome(ctx, runID, turnID, turnprotocol.StatusAwaitingConfirmation, advanced.Output, "", nil, &artifact, now)
+			status := turnprotocol.StatusSucceeded
+			if s.requiredArtifact != "" {
+				status = turnprotocol.StatusAwaitingConfirmation
+			}
+			_ = s.store.setOutcome(ctx, runID, turnID, status, advanced.Output, "", nil, &artifact, now)
 			return
 		}
-		if artifactErr != nil {
+		if s.requiredArtifact != "" && artifactErr != nil {
 			_ = s.store.setOutcome(ctx, runID, turnID, turnprotocol.StatusFailed, "", errorText(errors.Join(ErrRequiredArtifactMissing, artifactErr)), nil, nil, now)
 			return
 		}
-		priorArtifact, priorArtifactErr := s.store.hasPriorArtifact(ctx, runID, turnID)
-		if priorArtifactErr != nil {
-			_ = s.store.setOutcome(ctx, runID, turnID, turnprotocol.StatusUnknown, "", errorText(priorArtifactErr), nil, nil, now)
-			return
+		if s.requiredArtifact != "" {
+			// Required-artifact runs may answer follow-up questions after an accepted draft.
+			priorArtifact, priorArtifactErr := s.store.hasPriorArtifact(ctx, runID, turnID)
+			if priorArtifactErr != nil {
+				_ = s.store.setOutcome(ctx, runID, turnID, turnprotocol.StatusUnknown, "", errorText(priorArtifactErr), nil, nil, now)
+				return
+			}
+			if !priorArtifact {
+				_ = s.store.setOutcome(ctx, runID, turnID, turnprotocol.StatusFailed, "", errorText(ErrRequiredArtifactMissing), nil, nil, now)
+				return
+			}
 		}
-		if !priorArtifact {
-			_ = s.store.setOutcome(ctx, runID, turnID, turnprotocol.StatusFailed, "", errorText(ErrRequiredArtifactMissing), nil, nil, now)
-			return
-		}
-		// Once a workflow draft exists, follow-up turns may answer questions without
-		// creating a new revision. A successful artifact still takes precedence above.
 	}
 	_ = s.store.setOutcome(ctx, runID, turnID, turnprotocol.StatusSucceeded, advanced.Output, "", nil, nil, now)
 }

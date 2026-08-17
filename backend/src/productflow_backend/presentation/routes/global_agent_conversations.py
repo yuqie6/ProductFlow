@@ -19,6 +19,10 @@ from productflow_backend.application.agent_conversations import (
     list_agent_turn_page,
 )
 from productflow_backend.application.async_delivery import stage_async_dispatch_for_actor
+from productflow_backend.application.media_library.drafts import (
+    confirm_library_organization_draft_revision,
+    get_library_organization_draft_or_raise,
+)
 from productflow_backend.domain.enums import AgentTurnStatus
 from productflow_backend.domain.errors import AgentServiceUnavailableError, ConflictError
 from productflow_backend.infrastructure.agent_service import (
@@ -36,6 +40,11 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     SubmitAgentTurnResponse,
     serialize_agent_turn,
 )
+from productflow_backend.presentation.schemas.library_organization_drafts import (
+    ConfirmLibraryOrganizationDraftRequest,
+    LibraryOrganizationDraftResponse,
+    serialize_library_organization_draft,
+)
 
 router = APIRouter(
     prefix="/api/v2/agent-conversations",
@@ -46,6 +55,45 @@ router = APIRouter(
 
 def enqueue_global_agent_turn_sync(session: Session, projection_id: str) -> None:
     stage_async_dispatch_for_actor(session, "run_agent_turn_sync", projection_id)
+
+
+@router.get(
+    "/{conversation_id}/library-organization-draft",
+    response_model=LibraryOrganizationDraftResponse,
+)
+def get_global_library_organization_draft_endpoint(
+    conversation_id: str,
+    session: Session = Depends(get_session),
+) -> LibraryOrganizationDraftResponse:
+    return serialize_library_organization_draft(
+        get_library_organization_draft_or_raise(
+            session,
+            conversation_id=conversation_id,
+        )
+    )
+
+
+@router.post(
+    "/{conversation_id}/library-organization-draft/confirm",
+    response_model=LibraryOrganizationDraftResponse,
+)
+def confirm_global_library_organization_draft_endpoint(
+    conversation_id: str,
+    payload: ConfirmLibraryOrganizationDraftRequest,
+    session: Session = Depends(get_session),
+) -> LibraryOrganizationDraftResponse:
+    draft = get_library_organization_draft_or_raise(
+        session,
+        conversation_id=conversation_id,
+    )
+    return serialize_library_organization_draft(
+        confirm_library_organization_draft_revision(
+            session,
+            draft_id=draft.id,
+            expected_draft_version=payload.expected_draft_version,
+            idempotency_key=payload.idempotency_key,
+        )
+    )
 
 
 _REFRESHABLE_AGENT_TURN_STATUSES = {
@@ -116,6 +164,7 @@ def get_global_agent_turn_endpoint(
     ) or (
         projection.status == AgentTurnStatus.AWAITING_CONFIRMATION
         and projection.workflow_draft_revision_id is None
+        and projection.library_organization_draft_revision_id is None
     ):
         projection = refresh_agent_turn(
             session,

@@ -47,6 +47,7 @@ import type {
   LegacyArchiveDetail,
   LegacyArchiveKind,
   LegacyArchivePage,
+  LibraryOrganizationDraft,
   ProductListSort,
   ProviderBinding,
   ProviderBindingUpdateRequest,
@@ -519,6 +520,27 @@ export const api = {
     return request(
       `${globalAgentConversationPath(conversationId)}/turns/${encodeURIComponent(projectionId)}/questions/${encodeURIComponent(questionId)}/answer`,
       { method: "POST", body: JSON.stringify(answer) },
+    );
+  },
+  getGlobalLibraryOrganizationDraft(conversationId: string): Promise<LibraryOrganizationDraft> {
+    return request(
+      `${globalAgentConversationPath(conversationId)}/library-organization-draft`,
+    );
+  },
+  confirmGlobalLibraryOrganizationDraft(
+    conversationId: string,
+    expectedDraftVersion: number,
+    idempotencyKey: string,
+  ): Promise<LibraryOrganizationDraft> {
+    return request(
+      `${globalAgentConversationPath(conversationId)}/library-organization-draft/confirm`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          expected_draft_version: expectedDraftVersion,
+          idempotency_key: idempotencyKey,
+        }),
+      },
     );
   },
   getProductImageAssetMediaUrl(

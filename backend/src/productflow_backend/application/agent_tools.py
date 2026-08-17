@@ -34,6 +34,8 @@ from productflow_backend.application.gallery_mutations import (
 )
 from productflow_backend.application.legacy_archive_rebuilds import legacy_archive_seed_summary
 from productflow_backend.application.media_assets import inspect_image_bytes
+from productflow_backend.application.media_library.draft_contracts import library_organization_draft_schema
+from productflow_backend.application.media_library.drafts import validate_library_organization_draft
 from productflow_backend.application.media_library.queries import get_media_library_asset, list_media_library_assets
 from productflow_backend.application.media_library.service import validate_media_library_asset_for_use
 from productflow_backend.application.workflow_drafts.contracts import (
@@ -104,6 +106,7 @@ GLOBAL_AGENT_SYSTEM_PROMPT = """你是 ProductFlow 的全局素材与工作流�
 3. 你当前可以读取全局素材库的元数据和用户明确要求查看的图片，单次最多 inspect 6 张。
 4. 你可以跨商品和工作流理解范围，但必须以 ProductFlow 返回的真实数据为准。
 5. 涉及整理、归档、同步到工作流、修改商品或执行工作流的副作用，必须先形成可审阅的 Draft，等待用户确认；不能直接改库。
+   纯查询或解释请求不要调用整理 Draft 工具；只有用户明确要求改变素材时才提交整理 Draft。
 6. 不要输出 base64、data URL、存储路径或内部 URL；用资产名称、来源和可验证的对象 ID 描述结果。
 """
 
@@ -173,6 +176,8 @@ def get_agent_task_contract(session: Session, task_id: str) -> dict[str, Any]:
 
 def _agent_contract_for_conversation(conversation: AgentConversation) -> dict[str, Any]:
     if conversation.scope_type == AgentConversationScope.GLOBAL:
+        organization_draft = conversation.library_organization_draft
+        current_revision = organization_draft.current_revision if organization_draft is not None else None
         return {
             "schema_version": 1,
             "scope_type": AgentConversationScope.GLOBAL,
@@ -182,8 +187,10 @@ def _agent_contract_for_conversation(conversation: AgentConversation) -> dict[st
             "product_id": None,
             "workflow_draft_id": None,
             "harness_run_id": conversation.harness_run_id,
-            "current_draft_version": 0,
+            "current_draft_version": current_revision.version if current_revision is not None else 0,
             "system_prompt": GLOBAL_AGENT_SYSTEM_PROMPT,
+            "draft_kind": "library_organization",
+            "draft_schema": library_organization_draft_schema(),
             "workflow_draft_schema": {},
             "tool_contract_version": AGENT_TOOL_CONTRACT_VERSION,
         }
@@ -202,6 +209,8 @@ def _agent_contract_for_conversation(conversation: AgentConversation) -> dict[st
         "harness_run_id": conversation.harness_run_id,
         "current_draft_version": current_revision.version if current_revision is not None else 0,
         "system_prompt": WORKFLOW_AGENT_SYSTEM_PROMPT,
+        "draft_kind": "workflow",
+        "draft_schema": workflow_draft_tool_schema(),
         "workflow_draft_schema": workflow_draft_tool_schema(),
         "tool_contract_version": AGENT_TOOL_CONTRACT_VERSION,
     }
@@ -229,6 +238,19 @@ def validate_agent_workflow_draft(
         artifact=artifact,
     )
     return artifact
+
+
+def validate_agent_library_organization_draft(
+    session: Session,
+    *,
+    conversation_id: str,
+    value: dict[str, Any],
+):
+    return validate_library_organization_draft(
+        session,
+        conversation_id=conversation_id,
+        value=value,
+    )
 
 
 def get_agent_product_context(session: Session, conversation_id: str) -> dict[str, Any]:
@@ -1485,4 +1507,5 @@ __all__ = [
     "reconcile_agent_folder_create",
     "reconcile_agent_folder_rename",
     "validate_agent_workflow_draft",
+    "validate_agent_library_organization_draft",
 ]

@@ -28,14 +28,22 @@ type RequiredArtifact struct {
 	AllowPriorTranscriptArtifact bool
 }
 
+func artifactContractName(contract *RequiredArtifact) string {
+	if contract == nil {
+		return ""
+	}
+	name := strings.TrimSpace(contract.Name)
+	if name == "" {
+		return WorkflowDraftToolName
+	}
+	return name
+}
+
 func requiredArtifactTool(contract *RequiredArtifact) (Tool, string, error) {
 	if contract == nil {
 		return Tool{}, "", nil
 	}
-	name := strings.TrimSpace(contract.Name)
-	if name == "" {
-		name = WorkflowDraftToolName
-	}
+	name := artifactContractName(contract)
 	description := strings.TrimSpace(contract.Description)
 	if description == "" {
 		description = "Submit the complete structured terminal artifact for application review."

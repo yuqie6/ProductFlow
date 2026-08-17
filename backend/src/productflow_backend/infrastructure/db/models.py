@@ -33,6 +33,7 @@ from productflow_backend.domain.enums import (
     AsyncDispatchStatus,
     ImageSessionAssetKind,
     JobStatus,
+    LibraryOrganizationDraftStatus,
     MediaVerificationStatus,
     ProductImageOriginType,
     WorkflowDraftStatus,
@@ -914,6 +915,130 @@ class WorkflowDraftRevision(Base):
     )
 
 
+class LibraryOrganizationDraft(Base, TimestampMixin):
+    """全局素材整理 Draft 的稳定身份和当前状态。"""
+
+    __tablename__ = "library_organization_drafts"
+    __table_args__ = (
+        UniqueConstraint("conversation_id", name="uq_library_organization_drafts_conversation_id"),
+        CheckConstraint(
+            "(confirmation_idempotency_key IS NULL AND confirmation_request_hash IS NULL) OR "
+            "(confirmation_idempotency_key IS NOT NULL AND length(confirmation_idempotency_key) > 0 "
+            "AND confirmation_request_hash IS NOT NULL AND length(confirmation_request_hash) = 64)",
+            name="ck_library_organization_drafts_confirmation_pair",
+        ),
+        Index("ix_library_organization_drafts_status_updated", "status", "updated_at", "id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    conversation_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "agent_conversations.id",
+            ondelete="CASCADE",
+            name="fk_library_organization_drafts_conversation_id",
+        ),
+    )
+    status: Mapped[LibraryOrganizationDraftStatus] = mapped_column(
+        enum_value_column(LibraryOrganizationDraftStatus),
+        default=LibraryOrganizationDraftStatus.AWAITING_CONFIRMATION,
+    )
+    current_revision_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "library_organization_draft_revisions.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_library_organization_drafts_current_revision_id",
+        ),
+        nullable=True,
+    )
+    confirmed_revision_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "library_organization_draft_revisions.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_library_organization_drafts_confirmed_revision_id",
+        ),
+        nullable=True,
+    )
+    confirmation_idempotency_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    confirmation_request_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    confirmation_result_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    conversation: Mapped[AgentConversation] = relationship(
+        back_populates="library_organization_draft",
+        foreign_keys=[conversation_id],
+    )
+    revisions: Mapped[list[LibraryOrganizationDraftRevision]] = relationship(
+        back_populates="draft",
+        cascade="all, delete-orphan",
+        foreign_keys="LibraryOrganizationDraftRevision.draft_id",
+        order_by="LibraryOrganizationDraftRevision.version",
+    )
+    current_revision: Mapped[LibraryOrganizationDraftRevision | None] = relationship(
+        foreign_keys=[current_revision_id],
+        post_update=True,
+    )
+    confirmed_revision: Mapped[LibraryOrganizationDraftRevision | None] = relationship(
+        foreign_keys=[confirmed_revision_id],
+        post_update=True,
+    )
+
+
+class LibraryOrganizationDraftRevision(Base):
+    """全局素材整理 Draft 的 append-only artifact 快照。"""
+
+    __tablename__ = "library_organization_draft_revisions"
+    __table_args__ = (
+        UniqueConstraint("draft_id", "version", name="uq_library_organization_draft_revisions_draft_version"),
+        UniqueConstraint(
+            "draft_id",
+            "source_turn_id",
+            "source_artifact_step_id",
+            name="uq_library_organization_draft_revisions_artifact_origin",
+        ),
+        CheckConstraint("version > 0", name="ck_library_organization_draft_revisions_positive_version"),
+        CheckConstraint("schema_version = 1", name="ck_library_organization_draft_revisions_schema_version"),
+        CheckConstraint("length(payload_hash) = 64", name="ck_library_organization_draft_revisions_payload_hash"),
+        CheckConstraint(
+            "(source_turn_id IS NULL AND source_artifact_step_id IS NULL) OR "
+            "(source_turn_id IS NOT NULL AND source_artifact_step_id IS NOT NULL)",
+            name="ck_library_organization_draft_revisions_artifact_origin_pair",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    draft_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "library_organization_drafts.id",
+            ondelete="CASCADE",
+            name="fk_library_organization_draft_revisions_draft_id",
+        ),
+    )
+    version: Mapped[int] = mapped_column(Integer)
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    payload_hash: Mapped[str] = mapped_column(String(64))
+    source_turn_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    source_artifact_step_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    draft: Mapped[LibraryOrganizationDraft] = relationship(
+        back_populates="revisions",
+        foreign_keys=[draft_id],
+    )
+    agent_turn_projection: Mapped[AgentTurnProjection | None] = relationship(
+        back_populates="library_organization_draft_revision",
+        foreign_keys="AgentTurnProjection.library_organization_draft_revision_id",
+        uselist=False,
+    )
+
+
 class AgentSession(Base, TimestampMixin):
     """跨商品持续存在的 Agent 对话容器。"""
 
@@ -1119,6 +1244,13 @@ class AgentConversation(Base, TimestampMixin):
         back_populates="agent_conversation",
         foreign_keys=[workflow_draft_id],
     )
+    library_organization_draft: Mapped[LibraryOrganizationDraft | None] = relationship(
+        back_populates="conversation",
+        foreign_keys="LibraryOrganizationDraft.conversation_id",
+        uselist=False,
+        cascade="all, delete-orphan",
+        single_parent=True,
+    )
     turns: Mapped[list[AgentTurnProjection]] = relationship(
         back_populates="conversation",
         cascade="all, delete-orphan",
@@ -1144,6 +1276,10 @@ class AgentTurnProjection(Base, TimestampMixin):
         UniqueConstraint(
             "workflow_draft_revision_id",
             name="uq_agent_turn_projections_workflow_draft_revision_id",
+        ),
+        UniqueConstraint(
+            "library_organization_draft_revision_id",
+            name="uq_agent_turn_projections_library_organization_draft_revision_id",
         ),
         CheckConstraint("length(request_hash) = 64", name="ck_agent_turn_projections_request_hash"),
         Index(
@@ -1195,6 +1331,15 @@ class AgentTurnProjection(Base, TimestampMixin):
         ),
         nullable=True,
     )
+    library_organization_draft_revision_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "library_organization_draft_revisions.id",
+            ondelete="SET NULL",
+            name="fk_agent_turn_projections_library_organization_draft_revision_id",
+        ),
+        nullable=True,
+    )
     page_context_snapshot_id: Mapped[str | None] = mapped_column(
         String(36),
         ForeignKey(
@@ -1215,6 +1360,10 @@ class AgentTurnProjection(Base, TimestampMixin):
     workflow_draft_revision: Mapped[WorkflowDraftRevision | None] = relationship(
         back_populates="agent_turn_projection",
         foreign_keys=[workflow_draft_revision_id],
+    )
+    library_organization_draft_revision: Mapped[LibraryOrganizationDraftRevision | None] = relationship(
+        back_populates="agent_turn_projection",
+        foreign_keys=[library_organization_draft_revision_id],
     )
 
 

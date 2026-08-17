@@ -22,6 +22,7 @@ const (
 	productFlowToolContractVersion = 3
 	scopeTypeProductWorkflow       = "product_workflow"
 	scopeTypeGlobal                = "global"
+	libraryOrganizationDraftName   = "propose_library_organization_draft"
 )
 
 type ManagerConfig struct {
@@ -165,8 +166,18 @@ func (manager *Manager) getEntry(
 	readTools := scopedReadTools(manager.config.ProductFlow, scope)
 	var durableTools []agenttask.DurableTool
 	var requiredArtifact *agenttask.RequiredArtifact
+	var optionalArtifact *agenttask.RequiredArtifact
 	if scope.ScopeType == scopeTypeGlobal {
 		readTools = scopedGlobalReadTools(manager.config.ProductFlow, scope)
+		optionalArtifact = &agenttask.RequiredArtifact{
+			Name:                         libraryOrganizationDraftName,
+			Description:                  "Submit a complete validated global media library organization draft for user confirmation.",
+			Schema:                       contract.DraftSchema,
+			AllowPriorTranscriptArtifact: true,
+			Validate: func(ctx context.Context, value json.RawMessage) error {
+				return manager.config.ProductFlow.ValidateLibraryOrganizationDraft(ctx, scope.ConversationID, value)
+			},
+		}
 	} else {
 		durableTools = scopedDurableTools(manager.config.ProductFlow, scope)
 		requiredArtifact = &agenttask.RequiredArtifact{
@@ -184,6 +195,7 @@ func (manager *Manager) getEntry(
 		Provider: providerConfig, Policy: manager.config.Policy,
 		SystemPrompt: agentSystemPrompt(contract.SystemPrompt, contract.TaskGoal),
 		Tools:        readTools, DurableTools: durableTools, RequiredArtifact: requiredArtifact,
+		OptionalArtifact: optionalArtifact,
 	}
 	service, err := agenttask.OpenService(agenttask.ServiceConfig{
 		Runner:        runnerConfig,

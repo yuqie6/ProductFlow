@@ -37,6 +37,8 @@ type Contract struct {
 	HarnessRunID        string         `json:"harness_run_id"`
 	CurrentDraftVersion int            `json:"current_draft_version"`
 	SystemPrompt        string         `json:"system_prompt"`
+	DraftKind           string         `json:"draft_kind"`
+	DraftSchema         map[string]any `json:"draft_schema"`
 	WorkflowDraftSchema map[string]any `json:"workflow_draft_schema"`
 	ToolContractVersion int            `json:"tool_contract_version"`
 }
@@ -248,6 +250,33 @@ func (client *Client) ValidateWorkflowDraft(
 	}
 	if !result.Accepted {
 		return errors.New("ProductFlow rejected workflow draft without an error")
+	}
+	return nil
+}
+
+func (client *Client) ValidateLibraryOrganizationDraft(
+	ctx context.Context,
+	conversationID string,
+	value json.RawMessage,
+) error {
+	if !json.Valid(value) {
+		return errors.New("library organization draft validation value must be valid JSON")
+	}
+	var result struct {
+		Accepted bool `json:"accepted"`
+	}
+	if err := client.json(
+		ctx,
+		http.MethodPost,
+		client.conversationPath(conversationID)+"/library-organization-draft/validate",
+		map[string]any{"value": value},
+		&result,
+		"",
+	); err != nil {
+		return err
+	}
+	if !result.Accepted {
+		return errors.New("ProductFlow rejected library organization draft without an error")
 	}
 	return nil
 }

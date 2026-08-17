@@ -43,6 +43,8 @@ class AgentContractResponse(BaseModel):
     system_prompt: str
     workflow_draft_schema: dict[str, Any]
     tool_contract_version: int
+    draft_kind: Literal["workflow", "library_organization"] | None = None
+    draft_schema: dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentPageContextSnapshotRequest(StrictAgentRequest):
@@ -304,6 +306,7 @@ class AgentTurnResponse(BaseModel):
     artifact_name: str | None
     artifact_step_id: str | None
     workflow_draft_revision_id: str | None
+    library_organization_draft_revision_id: str | None
     page_context_snapshot_id: str | None
     sync_error: str | None
     finished_at: datetime | None
@@ -377,6 +380,7 @@ def serialize_agent_turn(projection: AgentTurnProjection) -> AgentTurnResponse:
         artifact_name=projection.artifact_name,
         artifact_step_id=projection.artifact_step_id,
         workflow_draft_revision_id=projection.workflow_draft_revision_id,
+        library_organization_draft_revision_id=projection.library_organization_draft_revision_id,
         page_context_snapshot_id=projection.page_context_snapshot_id,
         sync_error=projection.sync_error,
         finished_at=projection.finished_at,

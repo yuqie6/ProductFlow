@@ -67,6 +67,15 @@ class WorkflowDraftStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class LibraryOrganizationDraftStatus(StrEnum):
+    """全局素材整理 Draft 的审核和执行状态。"""
+
+    AWAITING_CONFIRMATION = "awaiting_confirmation"
+    CONFIRMED = "confirmed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
 class WorkflowRecipeKind(StrEnum):
     """用户主动保存的完整工作流配方或局部片段。"""
 

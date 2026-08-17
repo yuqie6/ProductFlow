@@ -23,11 +23,12 @@ import (
 )
 
 const (
-	testConversationID = "11111111-1111-4111-8111-111111111111"
-	testProductID      = "22222222-2222-4222-8222-222222222222"
-	testDraftID        = "33333333-3333-4333-8333-333333333333"
-	testAssetID        = "44444444-4444-4444-8444-444444444444"
-	testInternalToken  = "internal-token-for-tests-with-32-chars"
+	testConversationID       = "11111111-1111-4111-8111-111111111111"
+	testGlobalConversationID = "11111111-1111-4111-8111-111111111113"
+	testProductID            = "22222222-2222-4222-8222-222222222222"
+	testDraftID              = "33333333-3333-4333-8333-333333333333"
+	testAssetID              = "44444444-4444-4444-8444-444444444444"
+	testInternalToken        = "internal-token-for-tests-with-32-chars"
 )
 
 var testAssetIDs = []string{
@@ -224,6 +225,100 @@ func TestServerScopesMultimodalTurnAndReplaysTerminalEvents(t *testing.T) {
 			bytes.Contains(data, []byte("data:image")) {
 			t.Fatalf("%s contains a credential or data URL", path)
 		}
+	}
+}
+
+func TestManagerUsesOptionalArtifactForGlobalOrganizationDraft(t *testing.T) {
+	const artifactValue = `{"schema_version":1,"confirmation_summary":"整理一张素材","operations":[{"operation":"rename","asset_id":"44444444-4444-4444-8444-444444444444","expected_revision":1,"before":{"revision":1,"display_name":"source.png","folder_id":null,"tag_names":[],"is_archived":false},"target":{"display_name":"hero.png"},"reason":"统一命名"}]}`
+	var providerCalls atomic.Int32
+	var validationCalls atomic.Int32
+	provider := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch providerCalls.Add(1) {
+		case 1:
+			response := fmt.Sprintf(
+				`{"id":"global-artifact","status":"completed","output":[{"id":"call","type":"function_call","call_id":"draft","name":"propose_library_organization_draft","arguments":%s}]}`,
+				strconv.Quote(artifactValue),
+			)
+			writeProviderStream(t, writer, response)
+		case 2:
+			writeProviderStream(t, writer, `{"id":"global-done","status":"completed","output":[{"id":"message","type":"message","role":"assistant","content":[{"type":"output_text","text":"整理建议已准备"}]}]}`)
+		default:
+			http.Error(writer, "unexpected provider call", http.StatusInternalServerError)
+		}
+	}))
+	t.Cleanup(provider.Close)
+	productFlow := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer "+testInternalToken {
+			http.Error(writer, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		base := "/api/internal/v1/agent-conversations/" + testGlobalConversationID
+		switch request.URL.Path {
+		case base + "/contract":
+			writeFixtureJSON(writer, map[string]any{
+				"schema_version": 1, "scope_type": "global", "conversation_id": testGlobalConversationID,
+				"harness_run_id": testGlobalConversationID, "current_draft_version": 0,
+				"system_prompt": "整理全局素材并等待用户确认。", "draft_kind": "library_organization",
+				"draft_schema": map[string]any{"type": "object"}, "workflow_draft_schema": map[string]any{},
+				"tool_contract_version": 3,
+			})
+		case base + "/library-organization-draft/validate":
+			validationCalls.Add(1)
+			writeFixtureJSON(writer, map[string]bool{"accepted": true})
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(productFlow.Close)
+	client, err := productflow.NewClient(productFlow.URL, testInternalToken, productFlow.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewManager(ManagerConfig{
+		DataRoot: t.TempDir(),
+		Provider: agenttask.ProviderConfig{
+			APIKey: "provider-secret", BaseURL: provider.URL, Model: "test-model", HTTPClient: provider.Client(),
+		},
+		Policy: agenttask.Policy{
+			MaxIterations: 10, ModelContextWindow: 100_000,
+			AutoCompactTokenLimit: 80_000, CompactionSummaryMaxChars: 4_000,
+		},
+		HTTPOptions: agenttask.HTTPOptions{EventPollInterval: time.Millisecond, HeartbeatInterval: 10 * time.Millisecond},
+		ProductFlow: client,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	server, err := NewServer(manager, testInternalToken, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := httptest.NewServer(server.Handler())
+	t.Cleanup(api.Close)
+
+	started := requestJSON(
+		t,
+		api.Client(),
+		http.MethodPost,
+		api.URL+"/internal/v1/conversations/"+testGlobalConversationID+"/turns",
+		map[string]any{"input_text": "整理最近生成的素材", "asset_ids": []string{}, "idempotency_key": "global-organization-1"},
+	)
+	if started.status != http.StatusAccepted {
+		t.Fatalf("start status=%d body=%s", started.status, started.body)
+	}
+	var turn agenttask.Turn
+	if err := json.Unmarshal(started.body, &turn); err != nil {
+		t.Fatal(err)
+	}
+	turnURL := api.URL + "/internal/v1/conversations/" + testGlobalConversationID + "/turns/" + turn.TurnID
+	turn = awaitHTTPStatus(t, api.Client(), turnURL, agenttask.TurnSucceeded)
+	if turn.Artifact == nil || turn.Artifact.Name != libraryOrganizationDraftName ||
+		string(turn.Artifact.Value) != artifactValue || turn.Output != "整理建议已准备" {
+		t.Fatalf("global turn = %#v", turn)
+	}
+	if providerCalls.Load() != 2 || validationCalls.Load() != 1 {
+		t.Fatalf("provider calls=%d validation calls=%d", providerCalls.Load(), validationCalls.Load())
 	}
 }
 

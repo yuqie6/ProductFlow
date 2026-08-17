@@ -26,6 +26,10 @@ def test_media_library_assets_migration_creates_schema_and_constraints(
             "media_library_tags",
             "media_library_asset_tags",
         } <= tables
+        assert {
+            "library_organization_drafts",
+            "library_organization_draft_revisions",
+        } <= tables
         columns = {column["name"] for column in inspector.get_columns("media_library_assets")}
         assert {
             "id",
@@ -39,6 +43,8 @@ def test_media_library_assets_migration_creates_schema_and_constraints(
         } <= columns
         product_asset_columns = {column["name"] for column in inspector.get_columns("product_image_assets")}
         assert "source_library_asset_id" in product_asset_columns
+        agent_turn_columns = {column["name"] for column in inspector.get_columns("agent_turn_projections")}
+        assert "library_organization_draft_revision_id" in agent_turn_columns
         checks = {check["name"] for check in inspector.get_check_constraints("media_library_assets")}
         assert {
             "ck_media_library_assets_source_type",
@@ -47,6 +53,6 @@ def test_media_library_assets_migration_creates_schema_and_constraints(
         } <= checks
         assert "workflow_media_library_assets" in tables
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260817_0053"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260817_0054"
     finally:
         engine.dispose()

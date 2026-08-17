@@ -111,6 +111,10 @@ type Config struct {
 	DurableTools  []DurableTool
 	// RequiredArtifact gates successful completion on one strict tool call.
 	RequiredArtifact *RequiredArtifact
+	// OptionalArtifact exposes one validated artifact tool without requiring it
+	// for read-only or conversational turns. A successful call is projected on
+	// the public Turn state for the application to interpret.
+	OptionalArtifact *RequiredArtifact
 	Usage            UsageHooks
 	EngineOptions    durable.Options
 }
@@ -199,6 +203,13 @@ func open(config Config, textDeltaSink durableagent.TextDeltaSink) (*Runner, err
 	if err != nil {
 		return nil, err
 	}
+	optionalArtifactTool, optionalArtifact, err := requiredArtifactTool(config.OptionalArtifact)
+	if err != nil {
+		return nil, err
+	}
+	if requiredArtifact != "" && requiredArtifact == optionalArtifact {
+		return nil, fmt.Errorf("required and optional artifact tools must have different names: %s", requiredArtifact)
+	}
 	publicTools := append([]Tool(nil), config.Tools...)
 	if requiredArtifact != "" {
 		publicTools = append(publicTools, artifactTool)
@@ -207,6 +218,9 @@ func open(config Config, textDeltaSink durableagent.TextDeltaSink) (*Runner, err
 			artifactInstruction = "You must successfully call the strict " + requiredArtifact + " tool before the first terminal draft answer and whenever the user requests a draft change. If the trusted transcript already contains an accepted artifact, a prose-only answer to a question about that draft is allowed."
 		}
 		system = strings.TrimSpace(system + "\n\n" + artifactInstruction)
+	}
+	if optionalArtifact != "" {
+		publicTools = append(publicTools, optionalArtifactTool)
 	}
 	readTools, err := internalReadTools(publicTools)
 	if err != nil {

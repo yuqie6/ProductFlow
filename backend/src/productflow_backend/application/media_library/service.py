@@ -250,13 +250,18 @@ def _assert_library_asset_coherent(
             raise ConflictError("素材库会话来源与媒体不一致")
 
 
+def validate_media_library_asset_integrity(library_asset: MediaLibraryAsset) -> MediaObject:
+    """Validate immutable media and provenance without applying archive-state policy."""
+    media = _verified_media(library_asset.media_object)
+    _assert_library_asset_coherent(library_asset, media=media)
+    return media
+
+
 def validate_media_library_asset_for_use(library_asset: MediaLibraryAsset) -> MediaObject:
     """Validate the immutable media and provenance before another feature uses an asset."""
     if library_asset.is_archived:
         raise ConflictError("归档素材不能收录到商品")
-    media = _verified_media(library_asset.media_object)
-    _assert_library_asset_coherent(library_asset, media=media)
-    return media
+    return validate_media_library_asset_integrity(library_asset)
 
 
 def _origin_type_for_library_asset(library_asset: MediaLibraryAsset) -> ProductImageOriginType:

@@ -5,7 +5,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.agent_conversations import (
     attach_agent_workflow_draft_artifact,
@@ -17,7 +18,12 @@ from productflow_backend.application.agent_conversations import (
     reserve_agent_turn,
     set_agent_turn_resume_required,
 )
-from productflow_backend.domain.enums import AgentTurnStatus
+from productflow_backend.application.media_library.drafts import (
+    LIBRARY_ORGANIZATION_DRAFT_ARTIFACT_NAME,
+    append_library_organization_draft_revision,
+)
+from productflow_backend.application.time import now_utc
+from productflow_backend.domain.enums import AgentConversationScope, AgentTurnStatus
 from productflow_backend.domain.errors import (
     AgentServiceUnavailableError,
     BusinessValidationError,
@@ -28,7 +34,11 @@ from productflow_backend.infrastructure.agent_service import (
     AgentServiceRequestError,
     AgentServiceTurnState,
 )
-from productflow_backend.infrastructure.db.models import AgentTurnProjection
+from productflow_backend.infrastructure.db.models import (
+    AgentTurnProjection,
+    LibraryOrganizationDraft,
+    LibraryOrganizationDraftRevision,
+)
 
 AgentControlCommand = Literal["cancel", "resume"]
 logger = logging.getLogger(__name__)
@@ -290,13 +300,20 @@ def synchronize_agent_turn_state(
         projection_id=projection_id,
     )
     _validate_agent_state_scope(_expected_harness_run_id(conversation, projection), state)
+    effective_status = state.status
+    if (
+        conversation.scope_type == AgentConversationScope.GLOBAL
+        and state.status == AgentTurnStatus.SUCCEEDED
+        and state.artifact is not None
+    ):
+        effective_status = AgentTurnStatus.AWAITING_CONFIRMATION
     projection = project_agent_turn_state(
         session,
         product_id=product_id,
         conversation_id=conversation_id,
         projection_id=projection_id,
         harness_turn_id=state.turn_id,
-        status=state.status,
+        status=effective_status,
         output_text=state.output or None,
         error_text=_safe_agent_turn_error(state),
         question_json=state.question.model_dump(mode="json") if state.question is not None else None,
@@ -308,24 +325,111 @@ def synchronize_agent_turn_state(
         finished_at=state.finished_at,
         commit=commit,
     )
-    if state.status == AgentTurnStatus.AWAITING_CONFIRMATION:
+    if effective_status == AgentTurnStatus.AWAITING_CONFIRMATION:
         if state.artifact is None:
             raise ConflictError("Agent Turn 待确认状态缺少 required artifact")
-        if conversation.workflow_draft_id is None or product_id is None:
-            raise ConflictError("全局 Agent Turn 不能返回 WorkflowDraft artifact")
-        projection = attach_agent_workflow_draft_artifact(
-            session,
-            product_id=product_id,
-            conversation_id=conversation_id,
-            projection_id=projection.id,
-            harness_turn_id=state.turn_id,
-            artifact_name=state.artifact.name,
-            artifact_step_id=state.artifact.step_id,
-            artifact_value=state.artifact.value,
-            commit=commit,
-        )
+        if conversation.scope_type == AgentConversationScope.GLOBAL:
+            if product_id is not None:
+                raise ConflictError("全局 Agent Turn 不应包含商品作用域")
+            projection = attach_agent_library_organization_draft_artifact(
+                session,
+                conversation_id=conversation_id,
+                projection_id=projection.id,
+                harness_turn_id=state.turn_id,
+                artifact_name=state.artifact.name,
+                artifact_step_id=state.artifact.step_id,
+                artifact_value=state.artifact.value,
+                commit=commit,
+            )
+        else:
+            if conversation.workflow_draft_id is None or product_id is None:
+                raise ConflictError("商品工作流 Agent Turn 缺少 WorkflowDraft artifact 作用域")
+            projection = attach_agent_workflow_draft_artifact(
+                session,
+                product_id=product_id,
+                conversation_id=conversation_id,
+                projection_id=projection.id,
+                harness_turn_id=state.turn_id,
+                artifact_name=state.artifact.name,
+                artifact_step_id=state.artifact.step_id,
+                artifact_value=state.artifact.value,
+                commit=commit,
+            )
     elif state.artifact is not None:
-        raise ConflictError("Agent Turn 在非待确认状态返回了 required artifact")
+        raise ConflictError("Agent Turn 在非待确认状态返回了 artifact")
+    return projection
+
+
+def attach_agent_library_organization_draft_artifact(
+    session: Session,
+    *,
+    conversation_id: str,
+    projection_id: str,
+    harness_turn_id: str,
+    artifact_name: str,
+    artifact_step_id: str,
+    artifact_value: dict[str, Any],
+    commit: bool = True,
+) -> AgentTurnProjection:
+    if artifact_name != LIBRARY_ORGANIZATION_DRAFT_ARTIFACT_NAME:
+        raise BusinessValidationError("Agent 返回了不受支持的素材整理 required artifact")
+    normalized_step_id = artifact_step_id.strip()
+    if not normalized_step_id or len(normalized_step_id) > 120:
+        raise BusinessValidationError("Agent artifact step ID 无效")
+    conversation = get_agent_conversation_or_raise(
+        session,
+        product_id=None,
+        conversation_id=conversation_id,
+    )
+    projection = get_agent_turn_or_raise(
+        session,
+        product_id=None,
+        conversation_id=conversation_id,
+        projection_id=projection_id,
+    )
+    if projection.status != AgentTurnStatus.AWAITING_CONFIRMATION:
+        raise ConflictError("Agent Turn 尚未进入待确认状态")
+    if projection.harness_turn_id not in {None, harness_turn_id}:
+        raise ConflictError("Agent turn projection 已绑定其他 harness Turn")
+    if projection.workflow_draft_revision_id is not None:
+        raise ConflictError("全局 Agent Turn 不能同时绑定 WorkflowDraft revision")
+
+    draft = session.scalar(
+        select(LibraryOrganizationDraft)
+        .options(selectinload(LibraryOrganizationDraft.current_revision))
+        .where(LibraryOrganizationDraft.conversation_id == conversation.id)
+        .with_for_update()
+    )
+    expected_version = draft.current_revision.version if draft is not None and draft.current_revision is not None else 0
+    draft = append_library_organization_draft_revision(
+        session,
+        conversation_id=conversation_id,
+        expected_draft_version=expected_version,
+        payload=artifact_value,
+        source_turn_id=harness_turn_id,
+        source_artifact_step_id=normalized_step_id,
+        commit=commit,
+    )
+    revision = session.scalar(
+        select(LibraryOrganizationDraftRevision).where(
+            LibraryOrganizationDraftRevision.draft_id == draft.id,
+            LibraryOrganizationDraftRevision.source_turn_id == harness_turn_id,
+            LibraryOrganizationDraftRevision.source_artifact_step_id == normalized_step_id,
+        )
+    )
+    if revision is None:
+        raise ConflictError("Agent artifact 未能同步为素材整理 Draft revision")
+    if projection.library_organization_draft_revision_id not in {None, revision.id}:
+        raise ConflictError("Agent turn projection 已关联其他素材整理 Draft revision")
+    projection.harness_turn_id = harness_turn_id
+    projection.artifact_name = artifact_name
+    projection.artifact_step_id = normalized_step_id
+    projection.library_organization_draft_revision_id = revision.id
+    projection.sync_error = None
+    projection.updated_at = now_utc()
+    if commit:
+        session.commit()
+        session.refresh(projection)
     return projection
 
 
@@ -442,6 +546,7 @@ def _raise_agent_service_business_error(exc: AgentServiceRequestError) -> None:
 
 __all__ = [
     "AgentTurnSubmission",
+    "attach_agent_library_organization_draft_artifact",
     "answer_agent_question",
     "control_agent_turn",
     "refresh_agent_turn",

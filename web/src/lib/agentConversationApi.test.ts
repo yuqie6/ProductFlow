@@ -155,4 +155,25 @@ describe("Agent conversation API", () => {
       }),
     );
   });
+
+  it("reads and confirms a global media organization Draft with an idempotent request", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.getGlobalLibraryOrganizationDraft("conversation/1");
+    await api.confirmGlobalLibraryOrganizationDraft("conversation/1", 3, "confirm-1");
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/api/v2/agent-conversations/conversation%2F1/library-organization-draft",
+      "/api/v2/agent-conversations/conversation%2F1/library-organization-draft/confirm",
+    ]);
+    expect(fetchMock.mock.calls[1][1]?.method).toBe("POST");
+    expect(fetchMock.mock.calls[1][1]?.body).toBe(
+      JSON.stringify({ expected_draft_version: 3, idempotency_key: "confirm-1" }),
+    );
+  });
 });
