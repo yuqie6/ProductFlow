@@ -40,7 +40,7 @@ ProductFlow 是面向单商家创作者的开源商品视觉工作台。用户�
 - 每个图片节点只绑定自己的当前承载图；图片库保存商品的全部上传图、工作流生成图和会话转入图。
 - 商品封面从图片资产自动选择，仍可通过当前封面 API 显式调整。
 - `/image-chat` 支持参考图、分支基图、多候选生成、取消、重试、下载和保存到商品图片库。
-- `/gallery` 保存用户主动收藏的连续生图结果。
+- `/gallery` 只保留旧收藏画廊书签兼容重定向；新的长期素材统一进入 `/media-library`。
 
 ### Provider 与运行
 
@@ -244,7 +244,7 @@ just release
 - `/api/v2/workflow-recipes`
 - `/api/v2/product-image-assets`
 - `/api/image-sessions`
-- `/api/gallery`
+- `/api/media-library`
 - `/api/settings`
 
 完整合同以 FastAPI OpenAPI 和 `backend/src/productflow_backend/presentation/routes/` 为准。

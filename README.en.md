@@ -40,7 +40,7 @@ The public instance is a personal live demo with one administrator and one merch
 - Each image node binds one current image; the library retains every upload, workflow result, and image-session attachment for the product.
 - Product cover selection is automatic, with current cover APIs available for an explicit change.
 - `/image-chat` supports reference images, branch bases, multiple candidates, cancel, retry, download, and save-to-product.
-- `/gallery` stores image-session results that the user explicitly collects.
+- `/gallery` only preserves a compatibility redirect for the retired collected-image bookmark; new long-lived media belongs in `/media-library`.
 
 ### Providers and Runtime
 
@@ -244,7 +244,7 @@ just release
 - `/api/v2/workflow-recipes`
 - `/api/v2/product-image-assets`
 - `/api/image-sessions`
-- `/api/gallery`
+- `/api/media-library`
 - `/api/settings`
 
 FastAPI OpenAPI and `backend/src/productflow_backend/presentation/routes/` are authoritative for the complete contract.
