@@ -28,10 +28,14 @@ def get_broker() -> RedisBroker:
 
 
 def _enqueue_actor(actor_name: str, task_id: str, *, delay_ms: int | None = None) -> None:
+    _enqueue_actor_args(actor_name, (task_id,), delay_ms=delay_ms)
+
+
+def _enqueue_actor_args(actor_name: str, args: tuple[str, ...], *, delay_ms: int | None = None) -> None:
     message = Message(
         queue_name=DEFAULT_DRAMATIQ_QUEUE_NAME,
         actor_name=actor_name,
-        args=(task_id,),
+        args=args,
         kwargs={},
         options={},
     )
@@ -76,3 +80,10 @@ def enqueue_agent_turn_sync_later(projection_id: str, *, delay_ms: int) -> None:
 
 def enqueue_delivery_rendition_job(job_id: str) -> None:
     _enqueue_actor(DELIVERY_RENDITION_TASK_CONTRACT.actor_name, job_id)
+
+
+ASYNC_DISPATCH_ACTOR_NAME = "run_async_dispatch"
+
+
+def enqueue_async_dispatch(dispatch_id: str, aggregate_id: str) -> None:
+    _enqueue_actor_args(ASYNC_DISPATCH_ACTOR_NAME, (dispatch_id, aggregate_id))

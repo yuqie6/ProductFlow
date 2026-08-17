@@ -49,7 +49,7 @@ def submit_agent_turn(
     input_asset_ids: list[str],
     idempotency_key: str,
     gateway: AgentServiceClient,
-    enqueue_sync: Callable[[str], None],
+    enqueue_sync: Callable[[Session, str], None],
 ) -> AgentTurnSubmission:
     reservation = reserve_agent_turn(
         session,
@@ -81,6 +81,7 @@ def submit_agent_turn(
                 projection_id=projection.id,
                 harness_turn_id=state.turn_id,
                 status=state.status,
+                commit=False,
             )
             projection = synchronize_agent_turn_state(
                 session,
@@ -88,6 +89,7 @@ def submit_agent_turn(
                 conversation_id=conversation_id,
                 projection_id=projection.id,
                 state=state,
+                commit=False,
             )
         except AgentServiceRequestError as exc:
             record_agent_turn_start_error(
@@ -100,8 +102,10 @@ def submit_agent_turn(
             _raise_agent_service_business_error(exc)
 
     try:
-        enqueue_sync(projection.id)
+        enqueue_sync(session, projection.id)
+        session.commit()
     except Exception as exc:  # noqa: BLE001
+        session.rollback()
         record_agent_turn_start_error(
             session,
             product_id=product_id,
@@ -155,7 +159,7 @@ def control_agent_turn(
     projection_id: str,
     command: AgentControlCommand,
     gateway: AgentServiceClient,
-    enqueue_sync: Callable[[str], None],
+    enqueue_sync: Callable[[Session, str], None],
 ) -> AgentTurnProjection:
     projection = get_agent_turn_or_raise(
         session,
@@ -184,6 +188,7 @@ def control_agent_turn(
         conversation_id=conversation_id,
         projection_id=projection.id,
         state=state,
+        commit=False,
     )
     projection = set_agent_turn_resume_required(
         session,
@@ -191,10 +196,13 @@ def control_agent_turn(
         conversation_id=conversation_id,
         projection_id=projection.id,
         required=False,
+        commit=False,
     )
     try:
-        enqueue_sync(projection.id)
+        enqueue_sync(session, projection.id)
+        session.commit()
     except Exception as exc:  # noqa: BLE001
+        session.rollback()
         record_agent_turn_start_error(
             session,
             product_id=product_id,
@@ -258,6 +266,7 @@ def synchronize_agent_turn_state(
     conversation_id: str,
     projection_id: str,
     state: AgentServiceTurnState,
+    commit: bool = True,
 ) -> AgentTurnProjection:
     conversation = get_agent_conversation_or_raise(
         session,
@@ -281,6 +290,7 @@ def synchronize_agent_turn_state(
             else None
         ),
         finished_at=state.finished_at,
+        commit=commit,
     )
     if state.status == AgentTurnStatus.AWAITING_CONFIRMATION:
         if state.artifact is None:
@@ -294,6 +304,7 @@ def synchronize_agent_turn_state(
             artifact_name=state.artifact.name,
             artifact_step_id=state.artifact.step_id,
             artifact_value=state.artifact.value,
+            commit=commit,
         )
     elif state.artifact is not None:
         raise ConflictError("Agent Turn 在非待确认状态返回了 required artifact")
@@ -305,6 +316,7 @@ def retry_unbound_agent_turn_start(
     *,
     projection: AgentTurnProjection,
     gateway: AgentServiceClient,
+    commit: bool = True,
 ) -> AgentTurnProjection:
     conversation = projection.conversation
     try:
@@ -331,6 +343,7 @@ def retry_unbound_agent_turn_start(
         projection_id=projection.id,
         harness_turn_id=state.turn_id,
         status=state.status,
+        commit=commit,
     )
     return synchronize_agent_turn_state(
         session,
@@ -338,6 +351,7 @@ def retry_unbound_agent_turn_start(
         conversation_id=conversation.id,
         projection_id=projection.id,
         state=state,
+        commit=commit,
     )
 
 

@@ -11,6 +11,7 @@ from PIL import Image
 from sqlalchemy import func, select
 from workflow_draft_helpers import make_workflow_draft_payload
 
+from productflow_backend.application.async_delivery import run_async_dispatcher_once
 from productflow_backend.application.delivery_renditions.renderer import render_delivery_rendition
 from productflow_backend.application.delivery_renditions.service import (
     _fail_delivery_rendition_job,
@@ -35,13 +36,20 @@ from productflow_backend.application.workflow_drafts.service import (
     confirm_workflow_draft_revision,
     create_workflow_draft,
 )
-from productflow_backend.domain.enums import JobStatus, WorkflowNodeStatus, WorkflowNodeType, WorkflowRunStatus
+from productflow_backend.domain.enums import (
+    AsyncDispatchStatus,
+    JobStatus,
+    WorkflowNodeStatus,
+    WorkflowNodeType,
+    WorkflowRunStatus,
+)
 from productflow_backend.domain.errors import (
     BusinessValidationError,
     ConflictError,
     QueueUnavailableError,
 )
 from productflow_backend.infrastructure.db.models import (
+    AsyncDispatch,
     DeliveryRenditionJob,
     Product,
     ProductImageAsset,
@@ -381,25 +389,23 @@ def test_delivery_spec_change_during_provider_call_does_not_invalidate_generated
     assert db_session.get(WorkflowNodeRun, node_run.id).status == WorkflowNodeStatus.SUCCEEDED
 
 
-def test_v2_rendition_enqueue_failure_does_not_reverse_image_success(
+def test_v2_rendition_dispatch_stage_does_not_reverse_image_success(
     db_session,
-    monkeypatch,
 ) -> None:
-    def fail_enqueue(_: str) -> None:
-        raise ConnectionError("redis unavailable")
-
-    monkeypatch.setattr(
-        "productflow_backend.application.product_workflow.v2_execution.enqueue_delivery_rendition_job",
-        fail_enqueue,
-    )
     source, run, node_run = _create_generated_source(db_session, auto_delivery=True)
 
     job = db_session.scalar(
         select(DeliveryRenditionJob).where(DeliveryRenditionJob.source_asset_id == source.id)
     )
     assert job is not None
-    assert job.status == JobStatus.FAILED
+    assert job.status == JobStatus.QUEUED
     assert job.is_retryable is True
+    db_session.expire_all()
+    dispatch = db_session.scalar(
+        select(AsyncDispatch).where(AsyncDispatch.aggregate_id == job.id)
+    )
+    assert dispatch is not None
+    assert dispatch.status == AsyncDispatchStatus.PENDING
     assert db_session.get(WorkflowRun, run.id).status == WorkflowRunStatus.SUCCEEDED
     assert db_session.get(WorkflowNodeRun, node_run.id).status == WorkflowNodeStatus.SUCCEEDED
 
@@ -626,17 +632,11 @@ def test_duplicate_submit_queue_failure_does_not_downgrade_existing_queued_job(d
 def test_delivery_rendition_http_contract_and_retry(
     configured_env,
     db_session,
-    monkeypatch,
 ) -> None:
     from productflow_backend.presentation.api import create_app
 
     source, _, _ = _create_generated_source(db_session)
     uploaded_source = source.product.image_assets[0]
-    enqueued: list[str] = []
-    monkeypatch.setattr(
-        "productflow_backend.application.delivery_renditions.service.enqueue_delivery_rendition_job",
-        enqueued.append,
-    )
     client = TestClient(create_app())
     _login(client)
     spec = {"width": 64, "height": 48, "format": "webp", "fit": "cover"}
@@ -658,13 +658,30 @@ def test_delivery_rendition_http_contract_and_retry(
     assert "spec_hash" not in payload
     assert "active_attempt_id" not in payload
 
+    db_session.expire_all()
+    dispatch = db_session.scalar(
+        select(AsyncDispatch).where(AsyncDispatch.aggregate_id == payload["id"])
+    )
+    assert dispatch is not None
+    assert dispatch.status == AsyncDispatchStatus.PENDING
+    assert dispatch.actor_name == "run_delivery_rendition_job"
+    assert dispatch.delivery_key == f"run_delivery_rendition_job:{payload['id']}"
+
     duplicate = client.post(
         f"/api/v2/product-image-assets/{source.id}/renditions",
         json=spec,
     )
     assert duplicate.status_code == 202
     assert duplicate.json()["id"] == payload["id"]
-    assert enqueued == [payload["id"], payload["id"]]
+    db_session.expire_all()
+    assert (
+        db_session.scalar(
+            select(func.count())
+            .select_from(AsyncDispatch)
+            .where(AsyncDispatch.aggregate_id == payload["id"])
+        )
+        == 1
+    )
 
     listed = client.get(f"/api/v2/product-image-assets/{source.id}/renditions")
     detail = client.get(f"/api/v2/delivery-rendition-jobs/{payload['id']}")
@@ -693,21 +710,24 @@ def test_delivery_rendition_http_contract_and_retry(
     assert retried.status_code == 202, retried.text
     assert retried.json()["status"] == "queued"
     assert retried.json()["failure_reason"] is None
-    assert enqueued[-1] == payload["id"]
+    db_session.expire_all()
+    assert (
+        db_session.scalar(
+            select(func.count())
+            .select_from(AsyncDispatch)
+            .where(AsyncDispatch.aggregate_id == payload["id"])
+        )
+        == 1
+    )
 
 
 def test_delivery_rendition_http_queue_failure_keeps_retryable_job(
     configured_env,
     db_session,
-    monkeypatch,
 ) -> None:
     from productflow_backend.presentation.api import create_app
 
     source, _, _ = _create_generated_source(db_session)
-    monkeypatch.setattr(
-        "productflow_backend.application.delivery_renditions.service.enqueue_delivery_rendition_job",
-        lambda _: (_ for _ in ()).throw(ConnectionError("redis down")),
-    )
     client = TestClient(create_app())
     _login(client)
 
@@ -716,11 +736,33 @@ def test_delivery_rendition_http_queue_failure_keeps_retryable_job(
         json={"width": 73, "height": 41, "format": "jpeg", "fit": "contain"},
     )
 
-    assert response.status_code == 503
+    assert response.status_code == 202, response.text
+    payload = response.json()
+    assert payload["status"] == "queued"
+    db_session.expire_all()
+    dispatch = db_session.scalar(
+        select(AsyncDispatch).where(AsyncDispatch.aggregate_id == payload["id"])
+    )
+    assert dispatch is not None
+    assert dispatch.status == AsyncDispatchStatus.PENDING
+
+    def fail_enqueue(dispatch_id: str, aggregate_id: str) -> None:
+        raise ConnectionError("redis down")
+
+    run_async_dispatcher_once(
+        enqueue=fail_enqueue,
+        max_attempts=1,
+    )
+
+    db_session.expire_all()
+    dispatch = db_session.get(AsyncDispatch, dispatch.id)
+    assert dispatch is not None
+    assert dispatch.status == AsyncDispatchStatus.SENT
+    assert dispatch.last_error == "redis down"
     listed = client.get(f"/api/v2/product-image-assets/{source.id}/renditions")
     assert listed.status_code == 200
     job = listed.json()["items"][0]
-    assert job["status"] == "failed"
+    assert job["status"] == "queued"
     assert job["is_retryable"] is True
     assert job["result_asset"] is None
 

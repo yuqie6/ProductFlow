@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 from io import BytesIO
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -79,4 +80,36 @@ def _execute_workflow_queue_inline(
     monkeypatch.setattr(
         "productflow_backend.application.product_workflow.execution.enqueue_workflow_node_run",
         execute_node_inline,
+    )
+
+    from productflow_backend.application.product_workflow import execution as execution_module
+
+    def _test_stage_workflow_dispatch(
+        session,
+        *,
+        delivery_key,
+        actor_name,
+        aggregate_id,
+        payload=None,
+        available_at=None,
+    ):
+        session.commit()
+        del delivery_key, payload, available_at
+        if actor_name == "run_product_workflow_node_run":
+            execution_module.enqueue_workflow_node_run(aggregate_id)
+        else:
+            execution_module.enqueue_workflow_run(aggregate_id)
+        return SimpleNamespace(id="test-workflow-dispatch", aggregate_id=aggregate_id)
+
+    monkeypatch.setattr(
+        "productflow_backend.application.product_workflow.execution.requeue_async_dispatch",
+        _test_stage_workflow_dispatch,
+    )
+    monkeypatch.setattr(
+        "productflow_backend.application.product_workflow.run_state.requeue_async_dispatch",
+        _test_stage_workflow_dispatch,
+    )
+    monkeypatch.setattr(
+        "productflow_backend.application.product_workflow.v2_runs.stage_async_dispatch",
+        _test_stage_workflow_dispatch,
     )

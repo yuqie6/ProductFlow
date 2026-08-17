@@ -10,11 +10,22 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
 from productflow_backend.application.admission import generation_running_capacity_available
+from productflow_backend.application.async_delivery import (
+    delivery_key_for_actor,
+    enqueue_async_dispatch_for_actor,
+    requeue_async_dispatch,
+)
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.durable_generation_tasks import WORKFLOW_RUN_GENERATION_TASK_CONTRACT
 from productflow_backend.domain.enums import WorkflowNodeStatus, WorkflowRunStatus
-from productflow_backend.infrastructure.db.models import WorkflowNode, WorkflowNodeRun, WorkflowRun, new_id
-from productflow_backend.infrastructure.queue import enqueue_workflow_node_run_later, enqueue_workflow_run_later
+from productflow_backend.infrastructure.db.models import (
+    ProductWorkflow,
+    WorkflowNode,
+    WorkflowNodeRun,
+    WorkflowRun,
+    new_id,
+)
+from productflow_backend.infrastructure.queue import WORKFLOW_NODE_RUN_ACTOR_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +118,68 @@ def workflow_node_failed_run_is_retryable(node: WorkflowNode, runs: list[Workflo
     return True
 
 
+def lock_workflow_run_aggregate(
+    session: Session,
+    *,
+    run_id: str,
+) -> tuple[WorkflowRun | None, list[WorkflowNodeRun], list[WorkflowNode], ProductWorkflow | None]:
+    """Lock a workflow run aggregate in deterministic member order.
+
+    The order is `WorkflowNodeRun -> WorkflowRun -> WorkflowNode -> ProductWorkflow`, which matches the
+    leaf-first order used by v2 result persistence. All run-level transitions (failure, cancellation, recovery)
+    must use this helper so concurrent success/cancel/recovery paths cannot deadlock or overwrite a newer state.
+    """
+    node_runs = list(
+        session.scalars(
+            select(WorkflowNodeRun)
+            .where(WorkflowNodeRun.workflow_run_id == run_id)
+            .order_by(WorkflowNodeRun.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).all()
+    )
+    run = session.scalar(
+        select(WorkflowRun)
+        .where(WorkflowRun.id == run_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if run is None:
+        return None, [], [], None
+    node_ids = sorted({node_run.node_id for node_run in node_runs})
+    nodes = (
+        list(
+            session.scalars(
+                select(WorkflowNode)
+                .where(WorkflowNode.id.in_(node_ids))
+                .order_by(WorkflowNode.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            ).all()
+        )
+        if node_ids
+        else []
+    )
+    workflow = session.scalar(
+        select(ProductWorkflow)
+        .where(ProductWorkflow.id == run.workflow_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    return run, node_runs, nodes, workflow
+
+
+def stage_workflow_run_dispatch(session: Session, *, run_id: str) -> None:
+    """Stage the scheduler wake-up in the caller's transaction."""
+
+    requeue_async_dispatch(
+        session,
+        delivery_key=delivery_key_for_actor(WORKFLOW_RUN_GENERATION_TASK_CONTRACT.actor_name, run_id),
+        actor_name=WORKFLOW_RUN_GENERATION_TASK_CONTRACT.actor_name,
+        aggregate_id=run_id,
+    )
+
+
 def claim_workflow_node_run(
     session: Session,
     *,
@@ -154,14 +227,24 @@ def claim_workflow_node_run(
 
 def requeue_workflow_run_after_capacity_wait(run_id: str) -> None:
     try:
-        enqueue_workflow_run_later(run_id, delay_ms=PRODUCT_WORKFLOW_CAPACITY_RETRY_DELAY_MS)
+        enqueue_async_dispatch_for_actor(
+            WORKFLOW_RUN_GENERATION_TASK_CONTRACT.actor_name,
+            run_id,
+            delay_ms=PRODUCT_WORKFLOW_CAPACITY_RETRY_DELAY_MS,
+            allow_active_lease=True,
+        )
     except Exception:  # noqa: BLE001
         logger.exception("商品工作流等待并发容量后重新入队失败: workflow_run_id=%s", run_id)
 
 
 def requeue_workflow_node_run_after_capacity_wait(node_run_id: str) -> None:
     try:
-        enqueue_workflow_node_run_later(node_run_id, delay_ms=PRODUCT_WORKFLOW_CAPACITY_RETRY_DELAY_MS)
+        enqueue_async_dispatch_for_actor(
+            WORKFLOW_NODE_RUN_ACTOR_NAME,
+            node_run_id,
+            delay_ms=PRODUCT_WORKFLOW_CAPACITY_RETRY_DELAY_MS,
+            allow_active_lease=True,
+        )
     except Exception:  # noqa: BLE001
         logger.exception("商品工作流节点等待并发容量后重新入队失败: workflow_node_run_id=%s", node_run_id)
 
@@ -175,6 +258,7 @@ def mark_workflow_node_run_failed(
     is_retryable: bool = True,
     retry_hint: str | None = None,
     failure_category: str | None = None,
+    commit: bool = True,
 ) -> str | None:
     node_run = session.scalar(
         select(WorkflowNodeRun)
@@ -191,12 +275,25 @@ def mark_workflow_node_run_failed(
     elif node_run.status != WorkflowNodeStatus.RUNNING or node_run.active_attempt_id != attempt_id:
         session.rollback()
         return None
-    run = node_run.workflow_run
+    run = session.scalar(
+        select(WorkflowRun)
+        .where(WorkflowRun.id == node_run.workflow_run_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if run is None:
+        session.rollback()
+        return None
     if WORKFLOW_RUN_GENERATION_TASK_CONTRACT.is_terminal(run.status):
         session.rollback()
         return None
     now = now_utc()
-    node = session.get(WorkflowNode, node_run.node_id)
+    node = session.scalar(
+        select(WorkflowNode)
+        .where(WorkflowNode.id == node_run.node_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     if node is not None:
         node.status = WorkflowNodeStatus.FAILED
         node.failure_reason = reason
@@ -216,8 +313,16 @@ def mark_workflow_node_run_failed(
                 failure_category=failure_category,
             ),
         }
-    run.workflow.updated_at = now
-    session.commit()
+    workflow = session.scalar(
+        select(ProductWorkflow)
+        .where(ProductWorkflow.id == run.workflow_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if workflow is not None:
+        workflow.updated_at = now
+    if commit:
+        session.commit()
     return run.id
 
 
@@ -231,26 +336,29 @@ def mark_workflow_run_failed(
     retry_hint: str | None = None,
     failure_category: str | None = None,
 ) -> None:
-    persisted_run = session.get(WorkflowRun, run_id)
+    persisted_run, node_runs, nodes, workflow = lock_workflow_run_aggregate(session, run_id=run_id)
     if persisted_run is None:
+        session.rollback()
         return
     if WORKFLOW_RUN_GENERATION_TASK_CONTRACT.is_terminal(persisted_run.status):
+        session.rollback()
         return
+    nodes_by_id = {node.id: node for node in nodes}
     now = now_utc()
     if failed_node_id is not None:
-        failed_node = session.get(WorkflowNode, failed_node_id)
+        failed_node = nodes_by_id.get(failed_node_id)
         if failed_node is not None:
             failed_node.status = WorkflowNodeStatus.FAILED
             failed_node.failure_reason = reason
             failed_node.last_run_at = now
-    for node_run in persisted_run.node_runs:
+    for node_run in node_runs:
         if node_run.node_id == failed_node_id:
             node_run.status = WorkflowNodeStatus.FAILED
             node_run.active_attempt_id = None
             node_run.failure_reason = reason
             node_run.finished_at = now
         elif failed_node_id is None and WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_running(node_run.status):
-            failed_node = session.get(WorkflowNode, node_run.node_id)
+            failed_node = nodes_by_id.get(node_run.node_id)
             if failed_node is not None:
                 failed_node.status = WorkflowNodeStatus.FAILED
                 failed_node.failure_reason = reason
@@ -260,7 +368,7 @@ def mark_workflow_run_failed(
             node_run.failure_reason = reason
             node_run.finished_at = now
         elif WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_queued(node_run.status):
-            skipped_node = session.get(WorkflowNode, node_run.node_id)
+            skipped_node = nodes_by_id.get(node_run.node_id)
             if skipped_node is not None:
                 skipped_node.status = WorkflowNodeStatus.IDLE
                 skipped_node.failure_reason = None
@@ -285,20 +393,24 @@ def mark_workflow_run_failed(
         ),
     }
     persisted_run.finished_at = now
-    persisted_run.workflow.updated_at = now
+    if workflow is not None:
+        workflow.updated_at = now
     session.commit()
 
 
 def mark_workflow_run_cancelled(session: Session, *, run_id: str) -> None:
-    persisted_run = session.get(WorkflowRun, run_id)
+    persisted_run, node_runs, nodes, workflow = lock_workflow_run_aggregate(session, run_id=run_id)
     if persisted_run is None:
+        session.rollback()
         return
     if WORKFLOW_RUN_GENERATION_TASK_CONTRACT.is_terminal(persisted_run.status):
+        session.rollback()
         return
+    nodes_by_id = {node.id: node for node in nodes}
     now = now_utc()
-    for node_run in persisted_run.node_runs:
+    for node_run in node_runs:
         if WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_queued(node_run.status):
-            skipped_node = session.get(WorkflowNode, node_run.node_id)
+            skipped_node = nodes_by_id.get(node_run.node_id)
             if skipped_node is not None:
                 skipped_node.status = WorkflowNodeStatus.IDLE
                 skipped_node.failure_reason = None
@@ -307,7 +419,7 @@ def mark_workflow_run_cancelled(session: Session, *, run_id: str) -> None:
             node_run.failure_reason = WORKFLOW_CANCELLED_REASON
             node_run.finished_at = now
         elif WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_running(node_run.status):
-            running_node = session.get(WorkflowNode, node_run.node_id)
+            running_node = nodes_by_id.get(node_run.node_id)
             if running_node is not None:
                 running_node.status = WorkflowNodeStatus.FAILED
                 running_node.failure_reason = WORKFLOW_CANCELLED_REASON
@@ -319,5 +431,6 @@ def mark_workflow_run_cancelled(session: Session, *, run_id: str) -> None:
     persisted_run.status = WorkflowRunStatus.CANCELLED
     persisted_run.failure_reason = WORKFLOW_CANCELLED_REASON
     persisted_run.finished_at = now
-    persisted_run.workflow.updated_at = now
+    if workflow is not None:
+        workflow.updated_at = now
     session.commit()

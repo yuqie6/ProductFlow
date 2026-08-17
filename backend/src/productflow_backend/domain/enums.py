@@ -37,6 +37,15 @@ class JobStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class AsyncDispatchStatus(StrEnum):
+    """可靠异步投递的数据库权威状态。"""
+
+    PENDING = "pending"
+    SENT = "sent"
+    CONSUMED = "consumed"
+    DEAD = "dead"
+
+
 class WorkflowNodeType(StrEnum):
     """商品工作流节点类型。"""
 

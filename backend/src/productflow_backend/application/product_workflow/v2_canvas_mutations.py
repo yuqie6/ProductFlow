@@ -69,6 +69,8 @@ def run_v2_canvas_mutation(
 
 
 def reject_active_v2_node_runs(session: Session, node_ids: Iterable[str]) -> None:
+    """Check node-run activity without taking a reverse leaf lock after workflow lock."""
+
     normalized_ids = sorted(set(node_ids))
     if not normalized_ids:
         return
@@ -79,7 +81,6 @@ def reject_active_v2_node_runs(session: Session, node_ids: Iterable[str]) -> Non
             WorkflowNodeRun.status.in_(ACTIVE_V2_NODE_RUN_STATUSES),
         )
         .order_by(WorkflowNodeRun.id)
-        .with_for_update()
     )
     if active_run_id is not None:
         raise ConflictError("受影响的工作流节点正在运行")

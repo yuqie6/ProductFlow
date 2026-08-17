@@ -5,7 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from sqlalchemy import or_, select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.agent_control import (
     retry_unbound_agent_turn_start,
@@ -46,7 +46,7 @@ def execute_agent_turn_sync(
     projection_id: str,
     *,
     gateway: AgentServiceClient | None = None,
-    enqueue_later: Callable[[str, int], None],
+    enqueue_later: Callable[[Session, str, int], None],
 ) -> None:
     session = get_session_factory()()
     try:
@@ -68,6 +68,7 @@ def execute_agent_turn_sync(
                 session,
                 projection=projection,
                 gateway=client,
+                commit=False,
             )
         else:
             state = client.get_turn(
@@ -80,9 +81,11 @@ def execute_agent_turn_sync(
                 conversation_id=conversation.id,
                 projection_id=projection.id,
                 state=state,
+                commit=False,
             )
         if projection.status in _POLLABLE_AGENT_TURN_STATUSES and not projection.resume_required:
-            enqueue_later(projection.id, _poll_delay_ms())
+            enqueue_later(session, projection.id, _poll_delay_ms())
+        session.commit()
     except AgentServiceRequestError as exc:
         session.rollback()
         projection = session.get(AgentTurnProjection, projection_id)
@@ -100,7 +103,8 @@ def execute_agent_turn_sync(
                 ),
             )
             if exc.status_code is None or exc.status_code >= 500:
-                enqueue_later(projection.id, _poll_delay_ms())
+                enqueue_later(session, projection.id, _poll_delay_ms())
+                session.commit()
     except BusinessError as exc:
         session.rollback()
         projection = session.get(AgentTurnProjection, projection_id)
@@ -123,7 +127,8 @@ def execute_agent_turn_sync(
 
 def recover_unfinished_agent_turn_syncs(
     *,
-    enqueue: Callable[[str], None],
+    enqueue: Callable[[str], None] | None = None,
+    stage_dispatch: Callable[[Session, str], None] | None = None,
 ) -> AgentTurnRecoverySummary:
     session = get_session_factory()()
     try:
@@ -143,20 +148,27 @@ def recover_unfinished_agent_turn_syncs(
                 .order_by(AgentTurnProjection.created_at.asc(), AgentTurnProjection.id.asc())
             ).all()
         )
+        if stage_dispatch is not None:
+            for projection_id in projection_ids:
+                stage_dispatch(session, projection_id)
+            session.commit()
     except Exception:
         session.rollback()
         logger.exception("读取待恢复 Agent Turn 投影失败")
-        return AgentTurnRecoverySummary()
+        raise
     finally:
         session.close()
 
-    enqueued = 0
-    for projection_id in projection_ids:
-        try:
-            enqueue(projection_id)
-            enqueued += 1
-        except Exception:
-            logger.exception("恢复 Agent Turn 同步任务入队失败: projection_id=%s", projection_id)
+    enqueued = len(projection_ids) if stage_dispatch is not None else 0
+    if stage_dispatch is None:
+        if enqueue is None:
+            raise ValueError("enqueue or stage_dispatch is required")
+        for projection_id in projection_ids:
+            try:
+                enqueue(projection_id)
+                enqueued += 1
+            except Exception:
+                logger.exception("恢复 Agent Turn 同步任务入队失败: projection_id=%s", projection_id)
     return AgentTurnRecoverySummary(
         pending_turns=len(projection_ids),
         enqueued_turns=enqueued,

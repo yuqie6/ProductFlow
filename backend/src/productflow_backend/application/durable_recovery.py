@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, or_, select, update
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.domain.durable_generation_tasks import (
@@ -20,8 +20,6 @@ from productflow_backend.domain.enums import JobStatus, WorkflowNodeStatus
 from productflow_backend.infrastructure.db.models import (
     DeliveryRenditionJob,
     ImageSessionGenerationTask,
-    WorkflowNode,
-    WorkflowNodeRun,
     WorkflowRun,
     utcnow,
 )
@@ -69,7 +67,8 @@ class DeliveryRenditionJobRecoverySummary:
 
 def recover_unfinished_workflow_runs(
     *,
-    enqueue: Callable[[str], None],
+    enqueue: Callable[[str], None] | None = None,
+    stage_dispatch: Callable[[Session, str], None] | None = None,
     reset_stale_running: bool = False,
     stale_running_after: timedelta = DEFAULT_STALE_RUNNING_AFTER,
 ) -> WorkflowRunRecoverySummary:
@@ -79,6 +78,8 @@ def recover_unfinished_workflow_runs(
     `running` 作为 active 状态：如果没有节点正在执行，说明消息可能丢失或还未消费，启动时可以补发；如果有节点正在
     `running`，只有 worker 启动并且节点运行超过 stale cutoff 时才把这些节点重置为 `queued` 再补发。
     """
+
+    from productflow_backend.application.product_workflow.run_state import lock_workflow_run_aggregate
 
     cutoff = utcnow() - stale_running_after
     session = get_session_factory()()
@@ -95,81 +96,106 @@ def recover_unfinished_workflow_runs(
             ).all()
         )
         for run in runs:
+            run_id = run.id
             delivery_state = classify_workflow_run_delivery(
                 run.status,
                 [node_run.status for node_run in run.node_runs],
             )
+            if delivery_state == WorkflowRunDeliveryState.QUEUED:
+                if stage_dispatch is None:
+                    queued_runs += 1
+                    runs_to_enqueue.append(run_id)
+                    continue
+                locked_run, locked_node_runs, _, _ = lock_workflow_run_aggregate(session, run_id=run_id)
+                if locked_run is None:
+                    session.rollback()
+                    continue
+                locked_delivery_state = classify_workflow_run_delivery(
+                    locked_run.status,
+                    [node_run.status for node_run in locked_node_runs],
+                )
+                if locked_delivery_state != WorkflowRunDeliveryState.QUEUED:
+                    session.rollback()
+                    continue
+                stage_dispatch(session, run_id)
+                session.commit()
+                queued_runs += 1
+                runs_to_enqueue.append(run_id)
+                continue
+            if delivery_state != WorkflowRunDeliveryState.RUNNING:
+                continue
             running_node_runs = [
                 node_run
                 for node_run in run.node_runs
                 if WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_running(node_run.status)
             ]
-            if delivery_state == WorkflowRunDeliveryState.RUNNING:
-                stale_node_runs = [
-                    node_run
-                    for node_run in running_node_runs
-                    if node_run.started_at is not None and _as_aware_utc(node_run.started_at) <= cutoff
-                ]
-                if not reset_stale_running or len(stale_node_runs) != len(running_node_runs):
-                    continue
-                reset_succeeded = True
-                for stale_node_run in sorted(stale_node_runs, key=lambda item: (item.node_id, item.id)):
-                    observed_attempt_id = stale_node_run.active_attempt_id
-                    if observed_attempt_id is None:
-                        reset_succeeded = False
-                        break
-                    reset = session.execute(
-                        update(WorkflowNodeRun)
-                        .where(
-                            WorkflowNodeRun.id == stale_node_run.id,
-                            WorkflowNodeRun.status == WorkflowNodeStatus.RUNNING,
-                            WorkflowNodeRun.active_attempt_id == observed_attempt_id,
-                            WorkflowNodeRun.started_at <= cutoff,
-                        )
-                        .values(
-                            status=WorkflowNodeStatus.QUEUED,
-                            active_attempt_id=None,
-                            failure_reason=None,
-                            finished_at=None,
-                        )
-                        .execution_options(synchronize_session=False)
-                    )
-                    if reset.rowcount != 1:
-                        reset_succeeded = False
-                        break
-                    node = session.get(WorkflowNode, stale_node_run.node_id)
-                    if node is not None and WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_running(node.status):
-                        node.status = WorkflowNodeStatus.QUEUED
-                        node.failure_reason = None
-                if not reset_succeeded:
-                    session.rollback()
-                    continue
-                run.failure_reason = None
-                session.commit()
-                stale_running_runs += 1
-                runs_to_enqueue.append(run.id)
+            stale_node_runs = [
+                node_run
+                for node_run in running_node_runs
+                if node_run.started_at is not None and _as_aware_utc(node_run.started_at) <= cutoff
+            ]
+            if not reset_stale_running or not stale_node_runs:
                 continue
-
-            if delivery_state == WorkflowRunDeliveryState.QUEUED:
-                queued_runs += 1
-                runs_to_enqueue.append(run.id)
-
-        if stale_running_runs:
+            locked_run, locked_node_runs, locked_nodes, _ = lock_workflow_run_aggregate(session, run_id=run_id)
+            if locked_run is None:
+                session.rollback()
+                continue
+            if WORKFLOW_RUN_GENERATION_TASK_CONTRACT.is_terminal(locked_run.status):
+                session.rollback()
+                continue
+            locked_running_node_runs = [
+                node_run
+                for node_run in locked_node_runs
+                if WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_running(node_run.status)
+            ]
+            locked_stale_node_runs = [
+                node_run
+                for node_run in locked_running_node_runs
+                if node_run.started_at is not None and _as_aware_utc(node_run.started_at) <= cutoff
+            ]
+            if not locked_stale_node_runs:
+                session.rollback()
+                continue
+            nodes_by_id = {node.id: node for node in locked_nodes}
+            reset_succeeded = True
+            for stale_node_run in sorted(locked_stale_node_runs, key=lambda item: (item.node_id, item.id)):
+                if stale_node_run.active_attempt_id is None:
+                    reset_succeeded = False
+                    break
+                stale_node_run.status = WorkflowNodeStatus.QUEUED
+                stale_node_run.active_attempt_id = None
+                stale_node_run.failure_reason = None
+                stale_node_run.finished_at = None
+                node = nodes_by_id.get(stale_node_run.node_id)
+                if node is not None and WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_running(node.status):
+                    node.status = WorkflowNodeStatus.QUEUED
+                    node.failure_reason = None
+            if not reset_succeeded:
+                session.rollback()
+                continue
+            locked_run.failure_reason = None
+            if stage_dispatch is not None:
+                stage_dispatch(session, run_id)
             session.commit()
+            stale_running_runs += 1
+            runs_to_enqueue.append(run_id)
     except Exception:
         session.rollback()
         logger.exception("恢复滞留工作流运行时读取数据库失败")
-        return WorkflowRunRecoverySummary()
+        raise
     finally:
         session.close()
 
-    enqueued_runs = 0
-    for run_id in runs_to_enqueue:
-        try:
-            enqueue(run_id)
-            enqueued_runs += 1
-        except Exception:
-            logger.exception("恢复滞留工作流运行入队失败: workflow_run_id=%s", run_id)
+    enqueued_runs = len(runs_to_enqueue) if stage_dispatch is not None else 0
+    if stage_dispatch is None:
+        if enqueue is None:
+            raise ValueError("enqueue or stage_dispatch is required")
+        for run_id in runs_to_enqueue:
+            try:
+                enqueue(run_id)
+                enqueued_runs += 1
+            except Exception:
+                logger.exception("恢复滞留工作流运行入队失败: workflow_run_id=%s", run_id)
 
     if runs_to_enqueue:
         logger.info(
@@ -187,7 +213,8 @@ def recover_unfinished_workflow_runs(
 
 def recover_unfinished_image_session_generation_tasks(
     *,
-    enqueue: Callable[[str], None],
+    enqueue: Callable[[str], None] | None = None,
+    stage_dispatch: Callable[[Session, str], None] | None = None,
     reset_stale_running: bool = False,
     stale_running_after: timedelta | None = None,
 ) -> ImageSessionGenerationTaskRecoverySummary:
@@ -265,29 +292,40 @@ def recover_unfinished_image_session_generation_tasks(
                     .execution_options(synchronize_session=False)
                 )
                 if reset.rowcount != 1:
-                    session.rollback()
+                    if stage_dispatch is None:
+                        session.rollback()
                     continue
-                session.commit()
                 if not task.completed_candidates:
                     task_ids_to_enqueue.append(task.id)
+                    if stage_dispatch is not None:
+                        stage_dispatch(session, task.id)
+                if stage_dispatch is None:
+                    session.commit()
                 stale_running_tasks += 1
             else:
                 queued_tasks += 1
                 task_ids_to_enqueue.append(task.id)
+                if stage_dispatch is not None:
+                    stage_dispatch(session, task.id)
+        if stage_dispatch is not None:
+            session.commit()
     except Exception:
         session.rollback()
         logger.exception("恢复滞留连续生图任务时读取数据库失败")
-        return ImageSessionGenerationTaskRecoverySummary()
+        raise
     finally:
         session.close()
 
-    enqueued_tasks = 0
-    for task_id in task_ids_to_enqueue:
-        try:
-            enqueue(task_id)
-            enqueued_tasks += 1
-        except Exception:
-            logger.exception("恢复滞留连续生图任务入队失败: task_id=%s", task_id)
+    enqueued_tasks = len(task_ids_to_enqueue) if stage_dispatch is not None else 0
+    if stage_dispatch is None:
+        if enqueue is None:
+            raise ValueError("enqueue or stage_dispatch is required")
+        for task_id in task_ids_to_enqueue:
+            try:
+                enqueue(task_id)
+                enqueued_tasks += 1
+            except Exception:
+                logger.exception("恢复滞留连续生图任务入队失败: task_id=%s", task_id)
 
     if task_ids_to_enqueue:
         logger.info(
@@ -305,7 +343,8 @@ def recover_unfinished_image_session_generation_tasks(
 
 def recover_unfinished_delivery_rendition_jobs(
     *,
-    enqueue: Callable[[str], None],
+    enqueue: Callable[[str], None] | None = None,
+    stage_dispatch: Callable[[Session, str], None] | None = None,
     reset_stale_running: bool = False,
     stale_running_after: timedelta = DEFAULT_STALE_RUNNING_AFTER,
 ) -> DeliveryRenditionJobRecoverySummary:
@@ -355,22 +394,29 @@ def recover_unfinished_delivery_rendition_jobs(
             else:
                 queued_jobs += 1
             job_ids_to_enqueue.append(job.id)
-        if stale_running_jobs:
+        if stage_dispatch is not None:
+            for job_id in job_ids_to_enqueue:
+                stage_dispatch(session, job_id)
+            session.commit()
+        elif stale_running_jobs:
             session.commit()
     except Exception:
         session.rollback()
         logger.exception("恢复滞留交付派生任务时读取数据库失败")
-        return DeliveryRenditionJobRecoverySummary()
+        raise
     finally:
         session.close()
 
-    enqueued_jobs = 0
-    for job_id in job_ids_to_enqueue:
-        try:
-            enqueue(job_id)
-            enqueued_jobs += 1
-        except Exception:
-            logger.exception("恢复滞留交付派生任务入队失败: job_id=%s", job_id)
+    enqueued_jobs = len(job_ids_to_enqueue) if stage_dispatch is not None else 0
+    if stage_dispatch is None:
+        if enqueue is None:
+            raise ValueError("enqueue or stage_dispatch is required")
+        for job_id in job_ids_to_enqueue:
+            try:
+                enqueue(job_id)
+                enqueued_jobs += 1
+            except Exception:
+                logger.exception("恢复滞留交付派生任务入队失败: job_id=%s", job_id)
     if job_ids_to_enqueue:
         logger.info(
             "已恢复滞留交付派生任务: queued=%s stale_running=%s enqueued=%s",

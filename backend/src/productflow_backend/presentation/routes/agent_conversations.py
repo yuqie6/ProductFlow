@@ -20,6 +20,7 @@ from productflow_backend.application.agent_conversations import (
     get_agent_turn_or_raise,
     list_agent_turn_page,
 )
+from productflow_backend.application.async_delivery import stage_async_dispatch_for_actor
 from productflow_backend.domain.enums import AgentTurnStatus
 from productflow_backend.domain.errors import AgentServiceUnavailableError, BusinessValidationError, ConflictError
 from productflow_backend.infrastructure.agent_service import (
@@ -27,7 +28,6 @@ from productflow_backend.infrastructure.agent_service import (
     AgentServiceRequestError,
     get_agent_service_client,
 )
-from productflow_backend.infrastructure.queue import enqueue_agent_turn_sync
 from productflow_backend.presentation.deps import get_session, require_admin
 from productflow_backend.presentation.schemas.agent_conversations import (
     AgentConversationResponse,
@@ -46,6 +46,11 @@ router = APIRouter(
     tags=["agent-conversations"],
     dependencies=[Depends(require_admin)],
 )
+
+
+def enqueue_agent_turn_sync(session: Session, projection_id: str) -> None:
+    stage_async_dispatch_for_actor(session, "run_agent_turn_sync", projection_id)
+
 
 _REFRESHABLE_AGENT_TURN_STATUSES = {
     AgentTurnStatus.QUEUED,

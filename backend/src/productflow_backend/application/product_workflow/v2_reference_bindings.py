@@ -40,13 +40,14 @@ def bind_v2_reference_node_asset(
     expected_workflow_revision: int,
     expected_bound_asset_id: str | None,
 ) -> V2ReferenceBindingResult:
-    product = session.scalar(select(Product).where(Product.id == product_id).with_for_update())
+    product = session.scalar(select(Product).where(Product.id == product_id))
     if product is None:
         raise NotFoundError("商品不存在")
     workflow = session.scalar(
-        select(ProductWorkflow)
-        .where(ProductWorkflow.id == workflow_id, ProductWorkflow.product_id == product_id)
-        .with_for_update()
+        select(ProductWorkflow).where(
+            ProductWorkflow.id == workflow_id,
+            ProductWorkflow.product_id == product_id,
+        )
     )
     if workflow is None:
         raise NotFoundError("商品工作流不存在")
@@ -58,9 +59,10 @@ def bind_v2_reference_node_asset(
         raise ConflictError("工作流 revision 已变化")
 
     reference_node = session.scalar(
-        select(WorkflowNode)
-        .where(WorkflowNode.id == node_id, WorkflowNode.workflow_id == workflow.id)
-        .with_for_update()
+        select(WorkflowNode).where(
+            WorkflowNode.id == node_id,
+            WorkflowNode.workflow_id == workflow.id,
+        )
     )
     if reference_node is None:
         raise NotFoundError("工作流节点不存在")
@@ -71,12 +73,85 @@ def bind_v2_reference_node_asset(
     if reference_node.bound_image_asset_id != expected_bound_asset_id:
         raise ConflictError("参考图节点绑定已被其他操作修改")
     asset = session.scalar(
-        select(ProductImageAsset)
-        .where(ProductImageAsset.id == asset_id, ProductImageAsset.product_id == product_id)
-        .with_for_update()
+        select(ProductImageAsset).where(
+            ProductImageAsset.id == asset_id,
+            ProductImageAsset.product_id == product_id,
+        )
     )
     if asset is None:
         raise NotFoundError("商品图片不存在")
+
+    affected_ids = reachable_v2_stale_node_ids(
+        session,
+        workflow_id=workflow.id,
+        source_node_id=reference_node.id,
+    )
+    active_runs = list(
+        session.scalars(
+            select(WorkflowNodeRun)
+            .where(
+                WorkflowNodeRun.node_id.in_(sorted(affected_ids)),
+                WorkflowNodeRun.status.in_(_ACTIVE_NODE_STATUSES),
+            )
+            .order_by(WorkflowNodeRun.node_id, WorkflowNodeRun.id)
+            .with_for_update()
+        )
+    ) if affected_ids else []
+    if active_runs:
+        raise ConflictError("受影响的提示词或图片节点正在运行")
+
+    node_ids = sorted({reference_node.id, *affected_ids})
+    locked_nodes = list(
+        session.scalars(
+            select(WorkflowNode)
+            .where(WorkflowNode.id.in_(node_ids))
+            .order_by(WorkflowNode.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    )
+    if {node.id for node in locked_nodes} != set(node_ids):
+        raise ConflictError("工作流节点已变化")
+
+    workflow = session.scalar(
+        select(ProductWorkflow)
+        .where(ProductWorkflow.id == workflow_id, ProductWorkflow.product_id == product_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if workflow is None:
+        raise NotFoundError("商品工作流不存在")
+    if workflow.schema_version != V2_WORKFLOW_SCHEMA_VERSION:
+        raise ConflictError("再次引用只支持 schema-v2 工作流")
+    if not workflow.active:
+        raise ConflictError("只能修改 active schema-v2 工作流")
+    if workflow.revision != expected_workflow_revision:
+        raise ConflictError("工作流 revision 已变化")
+    current_affected_ids = reachable_v2_stale_node_ids(
+        session,
+        workflow_id=workflow.id,
+        source_node_id=reference_node.id,
+    )
+    if current_affected_ids != affected_ids:
+        raise ConflictError("工作流结构已变化")
+
+    product = session.scalar(
+        select(Product).where(Product.id == product_id).with_for_update().execution_options(populate_existing=True)
+    )
+    if product is None:
+        raise NotFoundError("商品不存在")
+    asset = session.scalar(
+        select(ProductImageAsset)
+        .where(ProductImageAsset.id == asset_id, ProductImageAsset.product_id == product_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if asset is None:
+        raise NotFoundError("商品图片不存在")
+    nodes_by_id = {node.id: node for node in locked_nodes}
+    reference_node = nodes_by_id[reference_node.id]
+    if reference_node.bound_image_asset_id != expected_bound_asset_id:
+        raise ConflictError("参考图节点绑定已被其他操作修改")
 
     previous_asset_id = reference_node.bound_image_asset_id
     if previous_asset_id == asset.id:
@@ -88,37 +163,7 @@ def bind_v2_reference_node_asset(
             changed=False,
         )
 
-    affected_ids = reachable_v2_stale_node_ids(
-        session,
-        workflow_id=workflow.id,
-        source_node_id=reference_node.id,
-    )
-    affected_nodes = []
-    if affected_ids:
-        affected_nodes = list(
-            session.scalars(
-                select(WorkflowNode)
-                .where(WorkflowNode.id.in_(affected_ids))
-                .order_by(WorkflowNode.id)
-                .with_for_update()
-            )
-        )
-        if {node.id for node in affected_nodes} != affected_ids:
-            raise ConflictError("工作流下游节点已变化")
-        active_runs = list(
-            session.scalars(
-                select(WorkflowNodeRun)
-                .where(
-                    WorkflowNodeRun.node_id.in_(sorted(affected_ids)),
-                    WorkflowNodeRun.status.in_(_ACTIVE_NODE_STATUSES),
-                )
-                .order_by(WorkflowNodeRun.node_id, WorkflowNodeRun.id)
-                .with_for_update()
-            )
-        )
-        if active_runs:
-            raise ConflictError("受影响的提示词或图片节点正在运行")
-
+    affected_nodes = [nodes_by_id[node_id] for node_id in sorted(affected_ids)]
     changed_at = now_utc()
     reference_node.bound_image_asset_id = asset.id
     reference_node.updated_at = changed_at

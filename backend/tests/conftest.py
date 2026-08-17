@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine
@@ -52,11 +53,35 @@ def db_session(configured_env: Path):
 def _execute_image_session_queue_inline(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep image-session route tests deterministic while production delivery goes through Dramatiq."""
 
+    from productflow_backend.application import image_sessions as image_sessions_module
     from productflow_backend.application.image_sessions import execute_image_session_generation_task
 
     monkeypatch.setattr(
         "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
         execute_image_session_generation_task,
+    )
+
+    def _test_stage_image_session_dispatch(
+        session,
+        *,
+        delivery_key,
+        actor_name,
+        aggregate_id,
+        payload=None,
+        available_at=None,
+    ):
+        session.commit()
+        del delivery_key, actor_name, payload, available_at
+        image_sessions_module.enqueue_image_session_generation_task(aggregate_id)
+        return SimpleNamespace(id="test-image-dispatch", aggregate_id=aggregate_id)
+
+    monkeypatch.setattr(
+        "productflow_backend.application.image_sessions.stage_async_dispatch",
+        _test_stage_image_session_dispatch,
+    )
+    monkeypatch.setattr(
+        "productflow_backend.application.image_sessions.requeue_async_dispatch",
+        _test_stage_image_session_dispatch,
     )
     monkeypatch.setattr(
         "productflow_backend.application.product_workflow.v2_execution.enqueue_delivery_rendition_job",

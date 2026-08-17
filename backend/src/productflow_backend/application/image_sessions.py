@@ -19,6 +19,12 @@ from productflow_backend.application.admission import (
     get_generation_task_queue_metadata,
     get_queued_generation_positions,
 )
+from productflow_backend.application.async_delivery import (
+    delivery_key_for_actor,
+    enqueue_async_dispatch_for_actor,
+    requeue_async_dispatch,
+    stage_async_dispatch,
+)
 from productflow_backend.application.image_generation_core import (
     normalize_image_generation_tool_options,
     provider_output_with_actual_image_size,
@@ -72,8 +78,8 @@ from productflow_backend.infrastructure.db.models import (
 from productflow_backend.infrastructure.db.session import get_session_factory
 from productflow_backend.infrastructure.image.base import infer_extension
 from productflow_backend.infrastructure.queue import (
-    enqueue_image_session_generation_task,
-    enqueue_image_session_generation_task_later,
+    enqueue_image_session_generation_task,  # noqa: F401  # kept for test monkeypatch compatibility
+    enqueue_image_session_generation_task_later,  # noqa: F401  # kept for test monkeypatch compatibility
 )
 from productflow_backend.infrastructure.storage import LocalStorage
 
@@ -870,6 +876,7 @@ def create_image_session_generation_task(
     selected_reference_asset_ids: list[str] | None = None,
     generation_count: int = 1,
     tool_options: dict[str, Any] | None = None,
+    commit: bool = True,
 ) -> ImageSessionGenerationTaskCreationResult:
     """校验并创建连续生图 durable 任务；不调用 provider。"""
     image_session = _get_image_session_or_raise(session, image_session_id)
@@ -897,8 +904,10 @@ def create_image_session_generation_task(
     )
     session.add(task)
     image_session.updated_at = now_utc()
-    session.commit()
-    session.expire_all()
+    session.flush()
+    if commit:
+        session.commit()
+        session.expire_all()
     return ImageSessionGenerationTaskCreationResult(
         task=session.get(ImageSessionGenerationTask, task.id) or task,
         image_session=_get_image_session_or_raise(session, image_session.id),
@@ -926,16 +935,27 @@ def submit_image_session_generation_task(
         selected_reference_asset_ids=selected_reference_asset_ids,
         generation_count=generation_count,
         tool_options=tool_options,
+        commit=False,
     )
-    enqueue_or_mark_failed(
-        result.task.id,
-        enqueue=enqueue or enqueue_image_session_generation_task,
-        mark_failed=lambda task_id, reason: mark_image_session_generation_task_enqueue_failed(
+    if enqueue is None:
+        stage_async_dispatch(
             session,
-            task_id=task_id,
-            reason=reason,
-        ),
-    )
+            delivery_key=delivery_key_for_actor(IMAGE_SESSION_GENERATION_TASK_CONTRACT.actor_name, result.task.id),
+            actor_name=IMAGE_SESSION_GENERATION_TASK_CONTRACT.actor_name,
+            aggregate_id=result.task.id,
+        )
+        session.commit()
+    else:
+        session.commit()
+        enqueue_or_mark_failed(
+            result.task.id,
+            enqueue=enqueue,
+            mark_failed=lambda task_id, reason: mark_image_session_generation_task_enqueue_failed(
+                session,
+                task_id=task_id,
+                reason=reason,
+            ),
+        )
     session.expire_all()
     return get_image_session_detail(session, image_session_id)
 
@@ -966,15 +986,25 @@ def retry_image_session_generation_task(
         task=task,
         progress_phase="manual_retry_queued",
     )
-    enqueue_or_mark_failed(
-        task.id,
-        enqueue=enqueue or enqueue_image_session_generation_task,
-        mark_failed=lambda queued_task_id, reason: mark_image_session_generation_task_enqueue_failed(
+    if enqueue is None:
+        requeue_async_dispatch(
             session,
-            task_id=queued_task_id,
-            reason=reason,
-        ),
-    )
+            delivery_key=delivery_key_for_actor(IMAGE_SESSION_GENERATION_TASK_CONTRACT.actor_name, task.id),
+            actor_name=IMAGE_SESSION_GENERATION_TASK_CONTRACT.actor_name,
+            aggregate_id=task.id,
+        )
+        session.commit()
+    else:
+        session.commit()
+        enqueue_or_mark_failed(
+            task.id,
+            enqueue=enqueue,
+            mark_failed=lambda queued_task_id, reason: mark_image_session_generation_task_enqueue_failed(
+                session,
+                task_id=queued_task_id,
+                reason=reason,
+            ),
+        )
     session.expire_all()
     return get_image_session_detail(session, image_session_id)
 
@@ -1338,7 +1368,12 @@ def _mark_image_generation_task_running(
 
 def _requeue_image_generation_task_after_capacity_wait(task_id: str) -> None:
     try:
-        enqueue_image_session_generation_task_later(task_id, delay_ms=IMAGE_SESSION_CAPACITY_RETRY_DELAY_MS)
+        enqueue_async_dispatch_for_actor(
+            IMAGE_SESSION_GENERATION_TASK_CONTRACT.actor_name,
+            task_id,
+            delay_ms=IMAGE_SESSION_CAPACITY_RETRY_DELAY_MS,
+            allow_active_lease=True,
+        )
     except Exception:  # noqa: BLE001
         logger.exception("连续生图等待并发容量后重新入队失败: task_id=%s", task_id)
 
@@ -1388,9 +1423,15 @@ def _handle_image_generation_task_failure(
             expected_attempt_id=attempt_id,
         )
         try:
-            enqueue_image_session_generation_task(task.id)
+            requeue_async_dispatch(
+                session,
+                delivery_key=delivery_key_for_actor(IMAGE_SESSION_GENERATION_TASK_CONTRACT.actor_name, task.id),
+                actor_name=IMAGE_SESSION_GENERATION_TASK_CONTRACT.actor_name,
+                aggregate_id=task.id,
+            )
+            session.commit()
         except Exception:  # noqa: BLE001
-            logger.exception("连续生图自动重试入队失败: task_id=%s", task.id)
+            logger.exception("连续生图自动重试投递落库失败: task_id=%s", task.id)
             mark_image_session_generation_task_enqueue_failed(
                 session,
                 task_id=task_id,

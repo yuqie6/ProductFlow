@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from helpers import _login, _make_demo_image_bytes
+from sqlalchemy import select
 from workflow_draft_helpers import make_workflow_draft_payload
 
 from productflow_backend.application.image_sessions import create_image_session, create_image_session_generation_task
@@ -16,8 +17,14 @@ from productflow_backend.application.workflow_drafts.service import (
     confirm_workflow_draft_revision,
     create_workflow_draft,
 )
-from productflow_backend.domain.enums import JobStatus, WorkflowNodeStatus
-from productflow_backend.infrastructure.db.models import AppSetting, WorkflowNode, WorkflowNodeRun, WorkflowRun
+from productflow_backend.domain.enums import AsyncDispatchStatus, JobStatus, WorkflowNodeStatus
+from productflow_backend.infrastructure.db.models import (
+    AppSetting,
+    AsyncDispatch,
+    WorkflowNode,
+    WorkflowNodeRun,
+    WorkflowRun,
+)
 
 
 def _set_generation_cap(db_session, value: int) -> None:
@@ -65,12 +72,6 @@ def test_generation_cap_accepts_and_queues_workflow_run_creation(
     from productflow_backend.application.admission import get_workflow_run_queue_metadata
     from productflow_backend.presentation.api import create_app
 
-    sent_run_ids: list[str] = []
-    monkeypatch.setattr(
-        "productflow_backend.application.product_workflow.v2_runs.enqueue_workflow_run",
-        lambda run_id: sent_run_ids.append(run_id),
-    )
-
     busy_product, busy_workflow = _create_materialized_workflow(db_session, "占用并发商品")
     busy = submit_v2_workflow_run(
         db_session,
@@ -109,7 +110,13 @@ def test_generation_cap_accepts_and_queues_workflow_run_creation(
     assert workflow_response.status_code == 202
     queued_run_id = workflow_response.json()["workflow_run"]["id"]
     assert workflow_response.json()["workflow_run"]["status"] == "running"
-    assert sent_run_ids == [queued_run_id]
+    db_session.expire_all()
+    dispatch = db_session.scalar(
+        select(AsyncDispatch).where(AsyncDispatch.aggregate_id == queued_run_id)
+    )
+    assert dispatch is not None
+    assert dispatch.status == AsyncDispatchStatus.PENDING
+    assert dispatch.actor_name == "run_product_workflow_run"
     queued_run = db_session.get(WorkflowRun, queued_run_id)
     assert queued_run is not None
     queued_metadata = get_workflow_run_queue_metadata(db_session, queued_run)

@@ -10,6 +10,11 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from productflow_backend.application.async_delivery import (
+    delivery_key_for_actor,
+    requeue_async_dispatch,
+    stage_async_dispatch,
+)
 from productflow_backend.application.delivery_renditions.contracts import (
     DELIVERY_FORMAT_EXTENSIONS,
     DELIVERY_RENDITION_SPEC_SCHEMA_VERSION,
@@ -21,6 +26,7 @@ from productflow_backend.application.queue_submission import enqueue_or_mark_fai
 from productflow_backend.application.storage_compensation import StorageWriteCompensation
 from productflow_backend.application.time import now_utc
 from productflow_backend.application.workflow_drafts.contracts import DeliverySpec
+from productflow_backend.domain.durable_generation_tasks import DELIVERY_RENDITION_TASK_CONTRACT
 from productflow_backend.domain.enums import JobStatus, MediaVerificationStatus, ProductImageOriginType
 from productflow_backend.domain.errors import (
     BusinessError,
@@ -36,7 +42,6 @@ from productflow_backend.infrastructure.db.models import (
     new_id,
 )
 from productflow_backend.infrastructure.db.session import get_session_factory
-from productflow_backend.infrastructure.queue import enqueue_delivery_rendition_job
 from productflow_backend.infrastructure.storage import LocalStorage
 
 logger = logging.getLogger(__name__)
@@ -131,22 +136,29 @@ def submit_delivery_rendition_job(
         source_asset_id=source_asset_id,
         delivery_spec=delivery_spec,
     )
-    session.commit()
-    if creation.job.status == JobStatus.QUEUED:
-        resolved_enqueue = enqueue or enqueue_delivery_rendition_job
-        if creation.created:
+    if creation.job.status == JobStatus.QUEUED and enqueue is None:
+        stage_async_dispatch(
+            session,
+            delivery_key=delivery_key_for_actor(DELIVERY_RENDITION_TASK_CONTRACT.actor_name, creation.job.id),
+            actor_name=DELIVERY_RENDITION_TASK_CONTRACT.actor_name,
+            aggregate_id=creation.job.id,
+        )
+        session.commit()
+    else:
+        session.commit()
+        if creation.job.status == JobStatus.QUEUED and creation.created:
             enqueue_or_mark_failed(
                 creation.job.id,
-                enqueue=resolved_enqueue,
+                enqueue=enqueue,
                 mark_failed=lambda job_id, reason: mark_delivery_rendition_job_enqueue_failed(
                     session,
                     job_id=job_id,
                     reason=reason,
                 ),
             )
-        else:
+        elif creation.job.status == JobStatus.QUEUED and enqueue is not None:
             try:
-                resolved_enqueue(creation.job.id)
+                enqueue(creation.job.id)
             except Exception as exc:  # noqa: BLE001
                 raise_queue_unavailable(exc)
     session.expire_all()
@@ -191,16 +203,25 @@ def retry_delivery_rendition_job(
     job.started_at = None
     job.finished_at = None
     job.is_retryable = True
-    session.commit()
-    enqueue_or_mark_failed(
-        job.id,
-        enqueue=enqueue or enqueue_delivery_rendition_job,
-        mark_failed=lambda queued_job_id, reason: mark_delivery_rendition_job_enqueue_failed(
+    if enqueue is None:
+        requeue_async_dispatch(
             session,
-            job_id=queued_job_id,
-            reason=reason,
-        ),
-    )
+            delivery_key=delivery_key_for_actor(DELIVERY_RENDITION_TASK_CONTRACT.actor_name, job.id),
+            actor_name=DELIVERY_RENDITION_TASK_CONTRACT.actor_name,
+            aggregate_id=job.id,
+        )
+        session.commit()
+    else:
+        session.commit()
+        enqueue_or_mark_failed(
+            job.id,
+            enqueue=enqueue,
+            mark_failed=lambda queued_job_id, reason: mark_delivery_rendition_job_enqueue_failed(
+                session,
+                job_id=queued_job_id,
+                reason=reason,
+            ),
+        )
     session.expire_all()
     return get_delivery_rendition_job(session, job.id)
 

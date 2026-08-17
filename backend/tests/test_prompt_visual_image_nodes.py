@@ -13,6 +13,7 @@ from PIL import Image
 from sqlalchemy import func, select
 from workflow_draft_helpers import make_workflow_draft_payload
 
+from productflow_backend.application.async_delivery import run_async_dispatcher_once
 from productflow_backend.application.media_assets import clear_product_cover, delete_product_image_asset
 from productflow_backend.application.product_workflow import execution as workflow_execution
 from productflow_backend.application.product_workflow.execution import (
@@ -49,9 +50,15 @@ from productflow_backend.application.workflow_drafts.service import (
     confirm_workflow_draft_revision,
     create_workflow_draft,
 )
-from productflow_backend.domain.enums import WorkflowNodeStatus, WorkflowNodeType, WorkflowRunStatus
+from productflow_backend.domain.enums import (
+    AsyncDispatchStatus,
+    WorkflowNodeStatus,
+    WorkflowNodeType,
+    WorkflowRunStatus,
+)
 from productflow_backend.domain.errors import ConflictError, NotFoundError, QueueUnavailableError
 from productflow_backend.infrastructure.db.models import (
+    AsyncDispatch,
     ImagePromptArtifactVersion,
     ImagePromptArtifactVersionReference,
     Product,
@@ -667,35 +674,53 @@ def test_v2_workflow_scheduler_dispatches_single_queued_node_run(db_session, mon
     _, workflow = _create_materialized_workflow(db_session)
     prompt_node = next(node for node in workflow.nodes if node.node_type == WorkflowNodeType.PROMPT_GENERATION)
     submission = submit_v2_workflow_node_run(db_session, node_id=prompt_node.id, enqueue=lambda _: None)
-    enqueued_node_run_ids: list[str] = []
-    monkeypatch.setattr(workflow_execution, "enqueue_workflow_node_run", enqueued_node_run_ids.append)
 
     execute_product_workflow_run(submission.node_run.workflow_run_id)
 
-    assert enqueued_node_run_ids == [submission.node_run.id]
     db_session.expire_all()
+    dispatch = db_session.scalar(
+        select(AsyncDispatch).where(AsyncDispatch.aggregate_id == submission.node_run.id)
+    )
+    assert dispatch is not None
+    assert dispatch.actor_name == "run_product_workflow_node_run"
+    assert dispatch.status == AsyncDispatchStatus.PENDING
     queued = get_v2_workflow_node_run(db_session, node_run_id=submission.node_run.id)
     assert queued.status == WorkflowNodeStatus.QUEUED
     assert queued.workflow_run.status == WorkflowRunStatus.RUNNING
 
 
-def test_v2_workflow_scheduler_marks_queue_delivery_failure_on_run_and_node(db_session, monkeypatch) -> None:
+def test_v2_workflow_scheduler_queue_failure_keeps_run_retryable(db_session, monkeypatch) -> None:
     _, workflow = _create_materialized_workflow(db_session)
     prompt_node = next(node for node in workflow.nodes if node.node_type == WorkflowNodeType.PROMPT_GENERATION)
     submission = submit_v2_workflow_node_run(db_session, node_id=prompt_node.id, enqueue=lambda _: None)
 
-    def unavailable_queue(_: str) -> None:
-        raise RuntimeError("redis unavailable during recovery")
-
-    monkeypatch.setattr(workflow_execution, "enqueue_workflow_node_run", unavailable_queue)
     execute_product_workflow_run(submission.node_run.workflow_run_id)
 
     db_session.expire_all()
-    failed = get_v2_workflow_node_run(db_session, node_run_id=submission.node_run.id)
-    assert failed.status == WorkflowNodeStatus.FAILED
-    assert failed.failure_reason == "任务队列暂不可用，请稍后重试"
-    assert failed.workflow_run.status == WorkflowRunStatus.FAILED
-    assert failed.workflow_run.failure_reason == failed.failure_reason
+    dispatch = db_session.scalar(
+        select(AsyncDispatch).where(AsyncDispatch.aggregate_id == submission.node_run.id)
+    )
+    assert dispatch is not None
+    assert dispatch.status == AsyncDispatchStatus.PENDING
+
+    def unavailable_queue(dispatch_id: str, aggregate_id: str) -> None:
+        raise RuntimeError("redis unavailable during recovery")
+
+    run_async_dispatcher_once(
+        enqueue=unavailable_queue,
+        max_attempts=1,
+    )
+
+    db_session.expire_all()
+    dispatch = db_session.get(AsyncDispatch, dispatch.id)
+    persisted = get_v2_workflow_node_run(db_session, node_run_id=submission.node_run.id)
+    assert dispatch is not None
+    assert dispatch.status == AsyncDispatchStatus.SENT
+    assert dispatch.last_error == "redis unavailable during recovery"
+    assert persisted.status == WorkflowNodeStatus.QUEUED
+    assert persisted.failure_reason is None
+    assert persisted.workflow_run.status == WorkflowRunStatus.RUNNING
+    assert persisted.workflow_run.failure_reason is None
 
 
 def test_v2_full_workflow_submission_is_one_durable_run_and_rejects_partial_overlap(db_session) -> None:
@@ -1096,6 +1121,54 @@ def test_v2_full_workflow_cancel_and_durable_recovery_use_workflow_run(db_sessio
     assert recovered_node_run.active_attempt_id is None
 
 
+def test_workflow_recovery_resets_stale_sibling_without_touching_fresh_node(
+    db_session,
+    configured_env: Path,
+) -> None:
+    from productflow_backend.application.durable_recovery import recover_unfinished_workflow_runs
+
+    product, workflow = _create_materialized_workflow(db_session)
+    submission = submit_v2_workflow_run(
+        db_session,
+        product_id=product.id,
+        workflow_id=workflow.id,
+        enqueue=lambda _: None,
+    )
+    run = submission.run
+    node_runs = list(run.node_runs)
+    assert len(node_runs) >= 2
+    stale_node_run, fresh_node_run = node_runs[:2]
+    stale_node_run.status = WorkflowNodeStatus.RUNNING
+    stale_node_run.active_attempt_id = "stale-sibling-attempt"
+    stale_node_run.started_at = datetime.now(UTC) - timedelta(hours=2)
+    fresh_node_run.status = WorkflowNodeStatus.RUNNING
+    fresh_node_run.active_attempt_id = "fresh-sibling-attempt"
+    fresh_node_run.started_at = datetime.now(UTC) - timedelta(minutes=2)
+    stale_node_run.node.status = WorkflowNodeStatus.RUNNING
+    fresh_node_run.node.status = WorkflowNodeStatus.RUNNING
+    run.status = WorkflowRunStatus.RUNNING
+    db_session.commit()
+
+    recovered_run_ids: list[str] = []
+    summary = recover_unfinished_workflow_runs(
+        enqueue=recovered_run_ids.append,
+        reset_stale_running=True,
+        stale_running_after=timedelta(minutes=30),
+    )
+
+    db_session.expire_all()
+    recovered_stale = db_session.get(WorkflowNodeRun, stale_node_run.id)
+    recovered_fresh = db_session.get(WorkflowNodeRun, fresh_node_run.id)
+    assert summary.stale_running_runs == 1
+    assert recovered_run_ids == [run.id]
+    assert recovered_stale is not None
+    assert recovered_stale.status == WorkflowNodeStatus.QUEUED
+    assert recovered_stale.active_attempt_id is None
+    assert recovered_fresh is not None
+    assert recovered_fresh.status == WorkflowNodeStatus.RUNNING
+    assert recovered_fresh.active_attempt_id == "fresh-sibling-attempt"
+
+
 def test_v2_image_stale_attempt_cannot_write_media_or_child_rows(db_session, configured_env: Path) -> None:
     from productflow_backend.application.product_workflow.run_state import claim_workflow_node_run
 
@@ -1148,6 +1221,151 @@ def test_v2_image_stale_attempt_cannot_write_media_or_child_rows(db_session, con
     assert db_session.scalar(select(func.count()).select_from(WorkflowImageGenerationRecord)) == initial_record_count
     assert db_session.scalar(select(func.count()).select_from(ProductImageAsset)) == initial_asset_count
     assert final_files == initial_files
+
+
+def test_v2_workflow_stale_attempt_cannot_fail_reclaimed_node_or_run_metadata(db_session) -> None:
+    from productflow_backend.application.product_workflow.run_state import (
+        claim_workflow_node_run,
+        mark_workflow_node_run_failed,
+    )
+
+    _, workflow = _create_materialized_workflow(db_session)
+    prompt_node = next(node for node in workflow.nodes if node.node_type == WorkflowNodeType.PROMPT_GENERATION)
+    run, node_run = _queue_single_node_run(db_session, workflow=workflow, node=prompt_node)
+    old_claim = claim_workflow_node_run(
+        db_session,
+        node_run_id=node_run.id,
+        node_id=prompt_node.id,
+        attempt_id="old-workflow-attempt",
+    )
+    assert old_claim.claimed is True
+
+    db_session.expire_all()
+    node_run = db_session.get(WorkflowNodeRun, node_run.id)
+    assert node_run is not None
+    node_run.status = WorkflowNodeStatus.QUEUED
+    node_run.active_attempt_id = None
+    node_run.failure_reason = None
+    node_run.finished_at = None
+    db_session.commit()
+    new_claim = claim_workflow_node_run(
+        db_session,
+        node_run_id=node_run.id,
+        node_id=prompt_node.id,
+        attempt_id="new-workflow-attempt",
+    )
+    assert new_claim.claimed is True
+    before_metadata = dict(run.progress_metadata or {})
+
+    result = mark_workflow_node_run_failed(
+        db_session,
+        node_run_id=node_run.id,
+        attempt_id="old-workflow-attempt",
+        reason="late old failure",
+    )
+
+    assert result is None
+    db_session.expire_all()
+    persisted_run = db_session.get(WorkflowRun, run.id)
+    persisted_node_run = db_session.get(WorkflowNodeRun, node_run.id)
+    persisted_node = db_session.get(WorkflowNode, prompt_node.id)
+    assert persisted_run is not None
+    assert persisted_run.status == WorkflowRunStatus.RUNNING
+    assert persisted_run.failure_reason is None
+    assert (persisted_run.progress_metadata or {}) == before_metadata
+    assert persisted_node_run is not None
+    assert persisted_node_run.status == WorkflowNodeStatus.RUNNING
+    assert persisted_node_run.active_attempt_id == "new-workflow-attempt"
+    assert persisted_node_run.attempts == 2
+    assert persisted_node_run.failure_reason is None
+    assert persisted_node is not None
+    assert persisted_node.status == WorkflowNodeStatus.RUNNING
+    assert persisted_node.failure_reason is None
+
+
+def test_v2_workflow_stale_attempt_failure_does_not_mark_node_or_run_failed(db_session) -> None:
+    from productflow_backend.application.product_workflow.run_state import claim_workflow_node_run
+
+    _, workflow = _create_materialized_workflow(db_session)
+    prompt_node = next(node for node in workflow.nodes if node.node_type == WorkflowNodeType.PROMPT_GENERATION)
+    run, node_run = _queue_single_node_run(db_session, workflow=workflow, node=prompt_node)
+    provider = RecordingPromptProvider()
+
+    def generate_after_reclaim(request: PromptGenerationRequest) -> PromptGenerationResult:
+        db_session.expire_all()
+        claimed = db_session.get(WorkflowNodeRun, node_run.id)
+        assert claimed is not None
+        assert claimed.status == WorkflowNodeStatus.RUNNING
+        old_attempt_id = claimed.active_attempt_id
+        assert old_attempt_id is not None
+        claimed.status = WorkflowNodeStatus.QUEUED
+        claimed.active_attempt_id = None
+        db_session.commit()
+        new_claim = claim_workflow_node_run(
+            db_session,
+            node_run_id=node_run.id,
+            node_id=prompt_node.id,
+            attempt_id="new-prompt-attempt",
+        )
+        assert new_claim.claimed is True
+        raise RuntimeError("late old provider failure")
+
+    provider.generate_prompt = generate_after_reclaim  # type: ignore[method-assign]
+    changed = execute_v2_workflow_node_only(
+        db_session,
+        node_run_id=node_run.id,
+        dependencies=WorkflowExecutionDependencies(prompt_generation_provider_resolver=lambda: provider),
+    )
+
+    assert changed is False
+    db_session.expire_all()
+    persisted_run = db_session.get(WorkflowRun, run.id)
+    persisted_node_run = db_session.get(WorkflowNodeRun, node_run.id)
+    persisted_node = db_session.get(WorkflowNode, prompt_node.id)
+    assert persisted_run is not None
+    assert persisted_run.status == WorkflowRunStatus.RUNNING
+    assert persisted_run.failure_reason is None
+    assert "last_failure_reason" not in (persisted_run.progress_metadata or {})
+    assert persisted_node_run is not None
+    assert persisted_node_run.status == WorkflowNodeStatus.RUNNING
+    assert persisted_node_run.active_attempt_id == "new-prompt-attempt"
+    assert persisted_node_run.attempts == 2
+    assert persisted_node_run.failure_reason is None
+    assert persisted_node is not None
+    assert persisted_node.status == WorkflowNodeStatus.RUNNING
+    assert persisted_node.failure_reason is None
+
+
+def test_v2_workflow_cancellation_does_not_overwrite_terminal_success(db_session) -> None:
+    from productflow_backend.application.product_workflow.run_state import mark_workflow_run_cancelled
+
+    _, workflow = _create_materialized_workflow(db_session)
+    prompt_node = next(node for node in workflow.nodes if node.node_type == WorkflowNodeType.PROMPT_GENERATION)
+    run, node_run = _queue_single_node_run(db_session, workflow=workflow, node=prompt_node)
+    run.status = WorkflowRunStatus.SUCCEEDED
+    run.finished_at = datetime.now(UTC)
+    node_run.status = WorkflowNodeStatus.SUCCEEDED
+    node_run.active_attempt_id = None
+    node_run.finished_at = datetime.now(UTC)
+    prompt_node.status = WorkflowNodeStatus.SUCCEEDED
+    prompt_node.failure_reason = None
+    db_session.commit()
+
+    mark_workflow_run_cancelled(db_session, run_id=run.id)
+
+    db_session.expire_all()
+    persisted_run = db_session.get(WorkflowRun, run.id)
+    persisted_node_run = db_session.get(WorkflowNodeRun, node_run.id)
+    persisted_node = db_session.get(WorkflowNode, prompt_node.id)
+    assert persisted_run is not None
+    assert persisted_run.status == WorkflowRunStatus.SUCCEEDED
+    assert persisted_run.failure_reason is None
+    assert persisted_node_run is not None
+    assert persisted_node_run.status == WorkflowNodeStatus.SUCCEEDED
+    assert persisted_node_run.failure_reason is None
+    assert persisted_node is not None
+    assert persisted_node.status == WorkflowNodeStatus.SUCCEEDED
+    assert persisted_node.failure_reason is None
 
 
 def test_image_node_creates_one_canonical_asset_and_preserves_rerun_history(db_session) -> None:

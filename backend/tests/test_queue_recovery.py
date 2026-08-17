@@ -3,10 +3,14 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from sqlalchemy import select
+
+from productflow_backend.application.async_delivery import delivery_key_for_actor, stage_async_dispatch
 from productflow_backend.application.durable_recovery import recover_unfinished_image_session_generation_tasks
 from productflow_backend.application.image_sessions import create_image_session, create_image_session_generation_task
+from productflow_backend.domain.durable_generation_tasks import IMAGE_SESSION_GENERATION_TASK_CONTRACT
 from productflow_backend.domain.enums import JobStatus
-from productflow_backend.infrastructure.db.models import AppSetting
+from productflow_backend.infrastructure.db.models import AppSetting, AsyncDispatch
 
 
 def test_recover_unfinished_image_session_generation_tasks_requeues_queued_tasks(
@@ -27,6 +31,40 @@ def test_recover_unfinished_image_session_generation_tasks_requeues_queued_tasks
     assert summary.stale_running_tasks == 0
     assert summary.enqueued_tasks == 1
     assert sent == [result.task.id]
+
+
+def test_recovery_can_stage_dispatch_in_same_transaction(
+    db_session,
+    configured_env: Path,
+) -> None:
+    image_session = create_image_session(db_session, title="同事务恢复")
+    result = create_image_session_generation_task(
+        db_session,
+        image_session_id=image_session.id,
+        prompt="恢复必须和 intent 同提交",
+        size="1024x1024",
+    )
+
+    summary = recover_unfinished_image_session_generation_tasks(
+        stage_dispatch=lambda session, task_id: stage_async_dispatch(
+            session,
+            delivery_key=delivery_key_for_actor(
+                IMAGE_SESSION_GENERATION_TASK_CONTRACT.actor_name,
+                task_id,
+            ),
+            actor_name=IMAGE_SESSION_GENERATION_TASK_CONTRACT.actor_name,
+            aggregate_id=task_id,
+        )
+    )
+
+    dispatch = db_session.scalar(
+        select(AsyncDispatch).where(
+            AsyncDispatch.aggregate_id == result.task.id,
+        )
+    )
+    assert summary.enqueued_tasks == 1
+    assert dispatch is not None
+    assert dispatch.status.value == "pending"
 
 
 def test_recover_unfinished_image_session_generation_tasks_resets_stale_running_tasks(

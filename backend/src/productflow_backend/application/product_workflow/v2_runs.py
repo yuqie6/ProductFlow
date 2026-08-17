@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.admission import ensure_generation_capacity
+from productflow_backend.application.async_delivery import delivery_key_for_actor, stage_async_dispatch
 from productflow_backend.application.product_workflow.run_state import (
     WORKFLOW_CANCELLED_REASON,
     mark_workflow_run_cancelled,
@@ -35,7 +36,9 @@ from productflow_backend.infrastructure.db.models import (
     WorkflowNodeRun,
     WorkflowRun,
 )
-from productflow_backend.infrastructure.queue import enqueue_workflow_run
+from productflow_backend.infrastructure.queue import (
+    enqueue_workflow_run,  # noqa: F401  # kept for test monkeypatch compatibility
+)
 
 V2_WORKFLOW_SCHEMA_VERSION = 2
 V2_RUNNABLE_NODE_TYPES = {WorkflowNodeType.PROMPT_GENERATION, WorkflowNodeType.IMAGE_GENERATION}
@@ -319,6 +322,13 @@ def _submit_v2_run(
         )
     workflow.updated_at = now
     try:
+        if enqueue is None:
+            stage_async_dispatch(
+                session,
+                delivery_key=delivery_key_for_actor(WORKFLOW_RUN_GENERATION_TASK_CONTRACT.actor_name, run.id),
+                actor_name=WORKFLOW_RUN_GENERATION_TASK_CONTRACT.actor_name,
+                aggregate_id=run.id,
+            )
         session.commit()
     except IntegrityError:
         session.rollback()
@@ -333,16 +343,17 @@ def _submit_v2_run(
             raise ConflictError("相关节点已有运行中的任务") from None
         raise
 
-    enqueue_or_mark_failed(
-        run.id,
-        enqueue=enqueue or enqueue_workflow_run,
-        mark_failed=lambda run_id, reason: mark_workflow_run_failed(
-            session,
-            run_id=run_id,
-            failed_node_id=enqueue_failure_node_id,
-            reason=reason,
-        ),
-    )
+    if enqueue is not None:
+        enqueue_or_mark_failed(
+            run.id,
+            enqueue=enqueue,
+            mark_failed=lambda run_id, reason: mark_workflow_run_failed(
+                session,
+                run_id=run_id,
+                failed_node_id=enqueue_failure_node_id,
+                reason=reason,
+            ),
+        )
     session.expire_all()
     return V2WorkflowRunSubmission(
         run=_get_v2_workflow_run_by_id(session, run_id=run.id),

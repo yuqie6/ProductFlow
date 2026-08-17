@@ -113,6 +113,7 @@ def append_workflow_draft_revision(
     ready_for_confirmation: bool,
     source_turn_id: str | None = None,
     source_artifact_step_id: str | None = None,
+    commit: bool = True,
 ) -> WorkflowDraft:
     artifact = parse_workflow_draft_payload_or_raise(payload)
     payload_json = artifact.model_dump(mode="json")
@@ -132,7 +133,8 @@ def append_workflow_draft_revision(
         if existing_origin is not None:
             if existing_origin.payload_hash != payload_hash:
                 raise ConflictError("同一 Agent artifact 来源不能写入不同 WorkflowDraft 内容")
-            session.commit()
+            if commit:
+                session.commit()
             return get_workflow_draft_or_raise(session, product_id=product_id, draft_id=draft_id)
 
         current_revision = draft.current_revision
@@ -177,11 +179,14 @@ def append_workflow_draft_revision(
             else WorkflowDraftStatus.COLLECTING
         )
         draft.updated_at = now_utc()
-        session.commit()
+        if commit:
+            session.commit()
     except Exception:
-        session.rollback()
+        if commit:
+            session.rollback()
         raise
-    session.expire_all()
+    if commit:
+        session.expire_all()
     return get_workflow_draft_or_raise(session, product_id=product_id, draft_id=draft_id)
 
 

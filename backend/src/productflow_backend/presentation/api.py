@@ -7,12 +7,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from productflow_backend.application.agent_sync import recover_unfinished_agent_turn_syncs
-from productflow_backend.application.durable_recovery import (
-    recover_unfinished_delivery_rendition_jobs,
-    recover_unfinished_image_session_generation_tasks,
-    recover_unfinished_workflow_runs,
-)
 from productflow_backend.application.settings import initialize_provider_bindings_if_available
 from productflow_backend.config import get_settings
 from productflow_backend.infrastructure.logging import (
@@ -21,12 +15,6 @@ from productflow_backend.infrastructure.logging import (
     new_request_id,
     reset_request_id,
     set_request_id,
-)
-from productflow_backend.infrastructure.queue import (
-    enqueue_agent_turn_sync,
-    enqueue_delivery_rendition_job,
-    enqueue_image_session_generation_task,
-    enqueue_workflow_run,
 )
 from productflow_backend.presentation.errors import register_exception_handlers
 from productflow_backend.presentation.routes.agent_conversations import router as agent_conversations_router
@@ -60,10 +48,6 @@ def create_app() -> FastAPI:
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         cleanup_old_logs(settings)
         initialize_provider_bindings_if_available()
-        recover_unfinished_workflow_runs(enqueue=enqueue_workflow_run)
-        recover_unfinished_image_session_generation_tasks(enqueue=enqueue_image_session_generation_task)
-        recover_unfinished_agent_turn_syncs(enqueue=enqueue_agent_turn_sync)
-        recover_unfinished_delivery_rendition_jobs(enqueue=enqueue_delivery_rendition_job)
         yield
 
     app = FastAPI(title="ProductFlow API", version="0.1.0", lifespan=lifespan)

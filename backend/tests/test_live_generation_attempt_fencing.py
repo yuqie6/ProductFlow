@@ -13,6 +13,12 @@ import pytest
 import sqlalchemy as sa
 from helpers import _make_demo_image_bytes
 from sqlalchemy.engine import URL, make_url
+from test_prompt_visual_image_nodes import (
+    RecordingImageProvider,
+    _create_materialized_workflow,
+    _png_bytes,
+    _queue_single_node_run,
+)
 
 from productflow_backend.application.durable_recovery import (
     recover_unfinished_image_session_generation_tasks,
@@ -25,7 +31,12 @@ from productflow_backend.application.image_sessions import (
     create_image_session,
     create_image_session_generation_task,
 )
-from productflow_backend.application.product_workflow.run_state import claim_workflow_node_run
+from productflow_backend.application.product_workflow.run_state import (
+    claim_workflow_node_run,
+    mark_workflow_node_run_failed,
+)
+from productflow_backend.application.product_workflow.v2_execution import execute_v2_workflow_node_run
+from productflow_backend.application.product_workflow_dependencies import WorkflowExecutionDependencies
 from productflow_backend.config import get_settings
 from productflow_backend.domain.enums import JobStatus, WorkflowNodeStatus, WorkflowNodeType, WorkflowRunStatus
 from productflow_backend.infrastructure.db.models import (
@@ -34,7 +45,9 @@ from productflow_backend.infrastructure.db.models import (
     ImageSessionGenerationTask,
     ImageSessionRound,
     Product,
+    ProductImageAsset,
     ProductWorkflow,
+    WorkflowImageGenerationRecord,
     WorkflowNode,
     WorkflowNodeRun,
     WorkflowRun,
@@ -311,11 +324,12 @@ def test_postgres_workflow_recovery_cas_preserves_new_attempt(live_attempt_fenci
         run_id = run.id
         node_run_id = node_run.id
 
-    update_entered = Event()
-    continue_update = Event()
+    select_entered = Event()
+    continue_select = Event()
     engine = get_engine()
+    paused = False
 
-    def pause_recovery_update(
+    def pause_recovery_select(
         connection: object,
         cursor: object,
         statement: str,
@@ -323,14 +337,18 @@ def test_postgres_workflow_recovery_cas_preserves_new_attempt(live_attempt_fenci
         context: object,
         executemany: bool,
     ) -> None:
+        nonlocal paused
         del connection, cursor, parameters, context, executemany
-        if current_thread().name.startswith("workflow-recovery") and statement.startswith(
-            "UPDATE workflow_node_runs"
+        if (
+            current_thread().name.startswith("workflow-recovery")
+            and statement.startswith("SELECT workflow_node_runs")
+            and not paused
         ):
-            update_entered.set()
-            assert continue_update.wait(timeout=5)
+            paused = True
+            select_entered.set()
+            assert continue_select.wait(timeout=5)
 
-    sa.event.listen(engine, "before_cursor_execute", pause_recovery_update)
+    sa.event.listen(engine, "before_cursor_execute", pause_recovery_select)
     enqueued: list[str] = []
     try:
         with ThreadPoolExecutor(max_workers=1, thread_name_prefix="workflow-recovery") as executor:
@@ -340,7 +358,7 @@ def test_postgres_workflow_recovery_cas_preserves_new_attempt(live_attempt_fenci
                 reset_stale_running=True,
                 stale_running_after=timedelta(minutes=30),
             )
-            assert update_entered.wait(timeout=5)
+            assert select_entered.wait(timeout=5)
             with session_factory() as session:
                 replaced = session.execute(
                     sa.update(WorkflowNodeRun)
@@ -356,11 +374,11 @@ def test_postgres_workflow_recovery_cas_preserves_new_attempt(live_attempt_fenci
                 )
                 assert replaced.rowcount == 1
                 session.commit()
-            continue_update.set()
+            continue_select.set()
             summary = future.result(timeout=5)
     finally:
-        continue_update.set()
-        sa.event.remove(engine, "before_cursor_execute", pause_recovery_update)
+        continue_select.set()
+        sa.event.remove(engine, "before_cursor_execute", pause_recovery_select)
 
     with session_factory() as session:
         persisted_run = session.get(WorkflowRun, run_id)
@@ -452,3 +470,122 @@ def test_postgres_stale_image_result_writes_no_media_or_children(
     assert not live_attempt_fencing_database.exists() or not any(
         path.is_file() for path in live_attempt_fencing_database.rglob("*")
     )
+
+
+def test_postgres_stale_workflow_failure_does_not_fail_reclaimed_run(
+    live_attempt_fencing_database: Path,
+) -> None:
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _, workflow = _create_materialized_workflow(session)
+        prompt_node = next(
+            node for node in workflow.nodes if node.node_type == WorkflowNodeType.PROMPT_GENERATION
+        )
+        run, node_run = _queue_single_node_run(session, workflow=workflow, node=prompt_node)
+        old_claim = claim_workflow_node_run(
+            session,
+            node_run_id=node_run.id,
+            node_id=prompt_node.id,
+            attempt_id="old-live-failure-attempt",
+        )
+        assert old_claim.claimed is True
+
+        session.expire_all()
+        node_run = session.get(WorkflowNodeRun, node_run.id)
+        assert node_run is not None
+        node_run.status = WorkflowNodeStatus.QUEUED
+        node_run.active_attempt_id = None
+        node_run.failure_reason = None
+        node_run.finished_at = None
+        session.commit()
+        new_claim = claim_workflow_node_run(
+            session,
+            node_run_id=node_run.id,
+            node_id=prompt_node.id,
+            attempt_id="new-live-failure-attempt",
+        )
+        assert new_claim.claimed is True
+        before_metadata = dict(run.progress_metadata or {})
+
+        result = mark_workflow_node_run_failed(
+            session,
+            node_run_id=node_run.id,
+            attempt_id="old-live-failure-attempt",
+            reason="late old failure",
+        )
+
+        assert result is None
+        session.expire_all()
+        persisted_run = session.get(WorkflowRun, run.id)
+        persisted_node_run = session.get(WorkflowNodeRun, node_run.id)
+        persisted_node = session.get(WorkflowNode, prompt_node.id)
+        assert persisted_run is not None
+        assert persisted_run.status == WorkflowRunStatus.RUNNING
+        assert persisted_run.failure_reason is None
+        assert (persisted_run.progress_metadata or {}) == before_metadata
+        assert persisted_node_run is not None
+        assert persisted_node_run.status == WorkflowNodeStatus.RUNNING
+        assert persisted_node_run.active_attempt_id == "new-live-failure-attempt"
+        assert persisted_node_run.attempts == 2
+        assert persisted_node_run.failure_reason is None
+        assert persisted_node is not None
+        assert persisted_node.status == WorkflowNodeStatus.RUNNING
+        assert persisted_node.failure_reason is None
+
+
+def test_postgres_stale_workflow_result_writes_no_media_or_children(
+    live_attempt_fencing_database: Path,
+) -> None:
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _, workflow = _create_materialized_workflow(session)
+        image_node = next(
+            node
+            for node in workflow.nodes
+            if node.node_type == WorkflowNodeType.IMAGE_GENERATION and node.config_json["image_plan_key"] == "hero-1"
+        )
+        _, node_run = _queue_single_node_run(session, workflow=workflow, node=image_node)
+        initial_record_count = session.scalar(sa.select(sa.func.count()).select_from(WorkflowImageGenerationRecord))
+        initial_asset_count = session.scalar(sa.select(sa.func.count()).select_from(ProductImageAsset))
+        provider = RecordingImageProvider(image_bytes=_png_bytes(color=(25, 80, 160), size=(80, 64)))
+        original_generate = provider.generate_workflow_image
+
+        def generate_after_reclaim(request):
+            session.expire_all()
+            claimed = session.get(WorkflowNodeRun, node_run.id)
+            assert claimed is not None
+            assert claimed.status == WorkflowNodeStatus.RUNNING
+            old_attempt_id = claimed.active_attempt_id
+            assert old_attempt_id is not None
+            claimed.status = WorkflowNodeStatus.QUEUED
+            claimed.active_attempt_id = None
+            session.commit()
+            new_claim = claim_workflow_node_run(
+                session,
+                node_run_id=node_run.id,
+                node_id=image_node.id,
+                attempt_id="new-live-image-attempt",
+            )
+            assert new_claim.claimed is True
+            return original_generate(request)
+
+        provider.generate_workflow_image = generate_after_reclaim  # type: ignore[method-assign]
+        changed = execute_v2_workflow_node_run(
+            session,
+            node_run_id=node_run.id,
+            dependencies=WorkflowExecutionDependencies(image_provider_resolver=lambda: provider),
+            storage=LocalStorage(),
+        )
+
+        assert changed is False
+        session.expire_all()
+        persisted_node_run = session.get(WorkflowNodeRun, node_run.id)
+        assert persisted_node_run is not None
+        assert persisted_node_run.status == WorkflowNodeStatus.RUNNING
+        assert persisted_node_run.active_attempt_id == "new-live-image-attempt"
+        assert persisted_node_run.attempts == 2
+        assert (
+            session.scalar(sa.select(sa.func.count()).select_from(WorkflowImageGenerationRecord))
+            == initial_record_count
+        )
+        assert session.scalar(sa.select(sa.func.count()).select_from(ProductImageAsset)) == initial_asset_count

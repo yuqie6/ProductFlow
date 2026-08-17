@@ -10,16 +10,15 @@ from pydantic import ValidationError
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, selectinload
 
-from productflow_backend.application.delivery_renditions.service import (
-    create_delivery_rendition_job,
-    mark_delivery_rendition_job_enqueue_failed,
-)
+from productflow_backend.application.async_delivery import delivery_key_for_actor, stage_async_dispatch
+from productflow_backend.application.delivery_renditions.service import create_delivery_rendition_job
 from productflow_backend.application.media_assets import inspect_image_bytes, stage_product_image_asset
 from productflow_backend.application.product_workflow.run_state import (
     WorkflowSafeExecutionError,
     claim_workflow_node_run,
     mark_workflow_node_run_failed,
     requeue_workflow_node_run_after_capacity_wait,
+    stage_workflow_run_dispatch,
     workflow_run_failure_context,
 )
 from productflow_backend.application.product_workflow.v2_staleness import (
@@ -37,7 +36,9 @@ from productflow_backend.application.workflow_drafts.contracts import (
     ImagePromptPayloadV1,
     VisualSystemDraftPayload,
 )
+from productflow_backend.domain.durable_generation_tasks import DELIVERY_RENDITION_TASK_CONTRACT
 from productflow_backend.domain.enums import (
+    JobStatus,
     MediaVerificationStatus,
     ProductImageOriginType,
     WorkflowNodeStatus,
@@ -77,7 +78,9 @@ from productflow_backend.infrastructure.prompt.base import (
     PromptGenerationResult,
     PromptReferenceImage,
 )
-from productflow_backend.infrastructure.queue import enqueue_delivery_rendition_job
+from productflow_backend.infrastructure.queue import (
+    enqueue_delivery_rendition_job,  # noqa: F401  # kept for test monkeypatch compatibility
+)
 from productflow_backend.infrastructure.storage import LocalStorage
 
 V2_WORKFLOW_SCHEMA_VERSION = 2
@@ -168,7 +171,10 @@ def execute_v2_workflow_node_run(
                 prepared=prepared_prompt,
                 result=prompt_result,
                 provider_name=prompt_provider.provider_name,
+                commit=False,
             )
+            stage_workflow_run_dispatch(session, run_id=prepared_prompt.run_id)
+            session.commit()
         else:
             prepared_image = _prepare_image_generation(
                 session,
@@ -180,7 +186,7 @@ def execute_v2_workflow_node_run(
             image_provider = resolved_dependencies.image_provider()
             image_result = _generate_workflow_image(image_provider, prepared_image.request)
             generated_image = _validate_workflow_image_result(image_result)
-            rendition_job_id = _persist_image_result(
+            _persist_image_result(
                 session,
                 prepared=prepared_image,
                 result=image_result,
@@ -188,10 +194,11 @@ def execute_v2_workflow_node_run(
                 provider_name=image_provider.provider_name,
                 storage=resolved_storage,
                 storage_writes=storage_writes,
+                commit=False,
             )
+            stage_workflow_run_dispatch(session, run_id=prepared_image.run_id)
+            session.commit()
             storage_writes.release()
-            if rendition_job_id is not None:
-                _enqueue_delivery_rendition_without_affecting_workflow(session, rendition_job_id)
     except WorkflowNodeRunStaleAttemptError:
         session.rollback()
         storage_writes.cleanup()
@@ -206,8 +213,12 @@ def execute_v2_workflow_node_run(
             session,
             node_run_id=node_run.id,
             attempt_id=claim.attempt_id,
+            commit=False,
             **failure,
         )
+        if run_id is not None:
+            stage_workflow_run_dispatch(session, run_id=run_id)
+            session.commit()
         return run_id is not None
     return True
 
@@ -828,6 +839,7 @@ def _persist_prompt_result(
     prepared: PreparedPromptGeneration,
     result: PromptGenerationResult,
     provider_name: str,
+    commit: bool = True,
 ) -> None:
     node_run = session.scalar(
         select(WorkflowNodeRun)
@@ -902,7 +914,8 @@ def _persist_prompt_result(
     node_run.output_json = output
     node_run.finished_at = now
     run.workflow.updated_at = now
-    session.commit()
+    if commit:
+        session.commit()
 
 
 def _generate_workflow_image(
@@ -942,6 +955,7 @@ def _persist_image_result(
     provider_name: str,
     storage: LocalStorage,
     storage_writes: StorageWriteCompensation,
+    commit: bool = True,
 ) -> str | None:
     node_run = session.scalar(
         select(WorkflowNodeRun)
@@ -1072,6 +1086,13 @@ def _persist_image_result(
             delivery_spec=current_delivery_spec,
         )
         rendition_job_id = rendition.job.id
+        if rendition.job.status == JobStatus.QUEUED:
+            stage_async_dispatch(
+                session,
+                delivery_key=delivery_key_for_actor(DELIVERY_RENDITION_TASK_CONTRACT.actor_name, rendition.job.id),
+                actor_name=DELIVERY_RENDITION_TASK_CONTRACT.actor_name,
+                aggregate_id=rendition.job.id,
+            )
 
     output = {
         "contract_version": 2,
@@ -1098,7 +1119,8 @@ def _persist_image_result(
         product=product,
         workflow=workflow,
     )
-    session.commit()
+    if commit:
+        session.commit()
     return rendition_job_id
 
 
@@ -1156,22 +1178,6 @@ def _fill_empty_product_cover_from_current_v2_results(
     )
     if result.rowcount == 1:
         session.refresh(product, attribute_names=["cover_image_asset_id", "updated_at"])
-
-
-def _enqueue_delivery_rendition_without_affecting_workflow(session: Session, job_id: str) -> None:
-    try:
-        enqueue_delivery_rendition_job(job_id)
-    except Exception:  # noqa: BLE001
-        logger.exception("交付派生任务入队失败: job_id=%s", job_id)
-        try:
-            mark_delivery_rendition_job_enqueue_failed(
-                session,
-                job_id=job_id,
-                reason="任务队列暂不可用，请稍后重试",
-            )
-        except Exception:  # noqa: BLE001
-            session.rollback()
-            logger.exception("交付派生任务入队失败状态落库失败: job_id=%s", job_id)
 
 
 def _sanitize_provider_metadata(value: dict[str, Any] | None) -> dict[str, Any] | None:

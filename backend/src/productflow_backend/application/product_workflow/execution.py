@@ -6,9 +6,12 @@ from collections.abc import Callable
 from dramatiq.middleware.time_limit import TimeLimitExceeded
 from sqlalchemy.orm import Session
 
+from productflow_backend.application.async_delivery import delivery_key_for_actor, requeue_async_dispatch
 from productflow_backend.application.product_workflow.run_state import (
+    lock_workflow_run_aggregate,
     mark_workflow_node_run_failed,
     mark_workflow_run_failed,
+    stage_workflow_run_dispatch,
     workflow_run_failure_context,
     workflow_run_failure_progress_metadata,
 )
@@ -22,9 +25,13 @@ from productflow_backend.domain.durable_generation_tasks import (
 from productflow_backend.domain.enums import WorkflowNodeStatus, WorkflowNodeType, WorkflowRunStatus
 from productflow_backend.domain.errors import ConflictError, NotFoundError
 from productflow_backend.domain.workflow_rules import WorkflowRuleEdge, WorkflowRuleNode, ready_workflow_node_ids
-from productflow_backend.infrastructure.db.models import ProductWorkflow, WorkflowNode, WorkflowNodeRun, WorkflowRun
+from productflow_backend.infrastructure.db.models import ProductWorkflow, WorkflowNodeRun, WorkflowRun
 from productflow_backend.infrastructure.db.session import get_session_factory
-from productflow_backend.infrastructure.queue import enqueue_workflow_node_run, enqueue_workflow_run
+from productflow_backend.infrastructure.queue import (
+    WORKFLOW_NODE_RUN_ACTOR_NAME,
+    enqueue_workflow_node_run,  # noqa: F401  # kept for test monkeypatch compatibility
+    enqueue_workflow_run,  # noqa: F401  # kept for test monkeypatch compatibility
+)
 
 logger = logging.getLogger(__name__)
 
@@ -80,13 +87,11 @@ def execute_product_workflow_node_run(
                 or node_run.node.schema_version != V2_WORKFLOW_SCHEMA_VERSION
             ):
                 raise ConflictError("工作流节点运行不符合 schema-v2")
-            should_schedule = execute_v2_workflow_node_run(
+            execute_v2_workflow_node_run(
                 session,
                 node_run_id=node_run_id,
                 dependencies=dependencies,
             )
-            if should_schedule:
-                _enqueue_workflow_run_safely(node_run.workflow_run_id)
         except TimeLimitExceeded as exc:
             session.rollback()
             _mark_node_run_failed_and_schedule(session, node_run_id=node_run_id, exc=exc)
@@ -104,7 +109,12 @@ def _execute_product_workflow_run(
     enqueue_node_run: Callable[[str], None] | None = None,
     return_after_dispatch: bool = True,
 ) -> None:
-    dispatch_node_run = enqueue_node_run or enqueue_workflow_node_run
+    durable_dispatch = enqueue_node_run is None
+    if durable_dispatch:
+        def dispatch_node_run(node_run_id: str) -> None:
+            _stage_workflow_node_run_dispatch(session, node_run_id=node_run_id)
+    else:
+        dispatch_node_run = enqueue_node_run
     run = session.get(WorkflowRun, run_id)
     if run is None or not WORKFLOW_RUN_GENERATION_TASK_CONTRACT.is_running(run.status):
         return
@@ -153,6 +163,7 @@ def _execute_product_workflow_run(
                     dispatch_node_run(node_run.id)
                 except Exception:  # noqa: BLE001
                     logger.exception("工作流节点运行入队失败: workflow_node_run_id=%s", node_run.id)
+                    session.rollback()
                     mark_workflow_run_failed(
                         session,
                         run_id=run_id,
@@ -160,6 +171,8 @@ def _execute_product_workflow_run(
                         reason=QUEUE_UNAVAILABLE_DETAIL,
                     )
                     return
+            if durable_dispatch:
+                session.commit()
             if return_after_dispatch:
                 return
             continue
@@ -199,17 +212,21 @@ def _mark_node_run_failed_and_schedule(
     run_id = mark_workflow_node_run_failed(
         session,
         node_run_id=node_run_id,
+        commit=False,
         **workflow_run_failure_context(exc),
     )
     if run_id is not None:
-        _enqueue_workflow_run_safely(run_id)
+        stage_workflow_run_dispatch(session, run_id=run_id)
+        session.commit()
 
 
-def _enqueue_workflow_run_safely(run_id: str) -> None:
-    try:
-        enqueue_workflow_run(run_id)
-    except Exception:  # noqa: BLE001
-        logger.exception("工作流节点完成后调度运行失败: workflow_run_id=%s", run_id)
+def _stage_workflow_node_run_dispatch(session: Session, *, node_run_id: str) -> None:
+    requeue_async_dispatch(
+        session,
+        delivery_key=delivery_key_for_actor(WORKFLOW_NODE_RUN_ACTOR_NAME, node_run_id),
+        actor_name=WORKFLOW_NODE_RUN_ACTOR_NAME,
+        aggregate_id=node_run_id,
+    )
 
 
 def _workflow_rule_nodes(workflow: ProductWorkflow) -> list[WorkflowRuleNode]:
@@ -237,18 +254,27 @@ def _mark_blocked_workflow_node_runs_failed(
     run: WorkflowRun,
     workflow: ProductWorkflow,
 ) -> bool:
+    locked_run, node_runs, nodes, locked_workflow = lock_workflow_run_aggregate(session, run_id=run.id)
+    if locked_run is None or locked_workflow is None:
+        session.rollback()
+        return False
+    if WORKFLOW_RUN_GENERATION_TASK_CONTRACT.is_terminal(locked_run.status):
+        session.rollback()
+        return False
+
     incoming: dict[str, list[str]] = {}
-    for edge in _workflow_rule_edges(workflow):
+    for edge in _workflow_rule_edges(locked_workflow):
         incoming.setdefault(edge.target_node_id, []).append(edge.source_node_id)
-    run_node_ids = {node_run.node_id for node_run in run.node_runs}
+    run_node_ids = {node_run.node_id for node_run in node_runs}
     failed_node_ids = {
-        node_run.node_id for node_run in run.node_runs if node_run.status == WorkflowNodeStatus.FAILED
+        node_run.node_id for node_run in node_runs if node_run.status == WorkflowNodeStatus.FAILED
     }
+    nodes_by_id = {node.id: node for node in nodes}
     changed = False
     while True:
         changed_this_pass = False
         now = now_utc()
-        for node_run in run.node_runs:
+        for node_run in node_runs:
             if not WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_queued(node_run.status):
                 continue
             if not any(
@@ -256,12 +282,13 @@ def _mark_blocked_workflow_node_runs_failed(
                 for source_id in incoming.get(node_run.node_id, [])
             ):
                 continue
-            node = session.get(WorkflowNode, node_run.node_id)
+            node = nodes_by_id.get(node_run.node_id)
             if node is not None:
                 node.status = WorkflowNodeStatus.FAILED
                 node.failure_reason = "上游节点失败"
                 node.last_run_at = now
             node_run.status = WorkflowNodeStatus.FAILED
+            node_run.active_attempt_id = None
             node_run.failure_reason = "上游节点失败"
             node_run.finished_at = now
             failed_node_ids.add(node_run.node_id)
@@ -270,25 +297,35 @@ def _mark_blocked_workflow_node_runs_failed(
         if not changed_this_pass:
             break
     if changed:
-        run.workflow.updated_at = now_utc()
+        locked_workflow.updated_at = now_utc()
         session.commit()
+    else:
+        session.rollback()
     return changed
 
 
 def _finalize_workflow_run_if_terminal(session: Session, *, run: WorkflowRun) -> bool:
-    node_runs = list(run.node_runs)
+    locked_run, node_runs, _, workflow = lock_workflow_run_aggregate(session, run_id=run.id)
+    if locked_run is None:
+        session.rollback()
+        return True
+    if WORKFLOW_RUN_GENERATION_TASK_CONTRACT.is_terminal(locked_run.status):
+        session.rollback()
+        return True
     if any(
         WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_queued(node_run.status)
         or WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_running(node_run.status)
         for node_run in node_runs
     ):
+        session.rollback()
         return False
     now = now_utc()
     if node_runs and all(node_run.status == WorkflowNodeStatus.SUCCEEDED for node_run in node_runs):
-        run.status = WorkflowRunStatus.SUCCEEDED
-        run.finished_at = now
-        run.workflow.updated_at = now
-        logger.info("工作流运行成功: run_id=%s workflow_id=%s", run.id, run.workflow_id)
+        locked_run.status = WorkflowRunStatus.SUCCEEDED
+        locked_run.finished_at = now
+        if workflow is not None:
+            workflow.updated_at = now
+        logger.info("工作流运行成功: run_id=%s workflow_id=%s", locked_run.id, locked_run.workflow_id)
         session.commit()
         return True
 
@@ -305,7 +342,7 @@ def _finalize_workflow_run_if_terminal(session: Session, *, run: WorkflowRun) ->
         if failed_node_run is not None and failed_node_run.failure_reason
         else "工作流部分节点失败"
     )
-    failure_metadata = run.progress_metadata if isinstance(run.progress_metadata, dict) else {}
+    failure_metadata = locked_run.progress_metadata if isinstance(locked_run.progress_metadata, dict) else {}
     is_retryable = failure_metadata.get("last_failure_retryable")
     if not isinstance(is_retryable, bool):
         is_retryable = True
@@ -314,10 +351,10 @@ def _finalize_workflow_run_if_terminal(session: Session, *, run: WorkflowRun) ->
     metadata_reason = failure_metadata.get("last_failure_reason")
     if is_retryable is False and isinstance(metadata_reason, str):
         reason = metadata_reason
-    run.status = WorkflowRunStatus.FAILED
-    run.failure_reason = reason
-    run.is_retryable = is_retryable
-    run.progress_metadata = {
+    locked_run.status = WorkflowRunStatus.FAILED
+    locked_run.failure_reason = reason
+    locked_run.is_retryable = is_retryable
+    locked_run.progress_metadata = {
         **failure_metadata,
         **workflow_run_failure_progress_metadata(
             reason=reason,
@@ -326,9 +363,10 @@ def _finalize_workflow_run_if_terminal(session: Session, *, run: WorkflowRun) ->
             failure_category=failure_category if isinstance(failure_category, str) else None,
         ),
     }
-    run.finished_at = now
-    run.workflow.updated_at = now
-    logger.warning("工作流运行失败: run_id=%s reason=%s", run.id, reason)
+    locked_run.finished_at = now
+    if workflow is not None:
+        workflow.updated_at = now
+    logger.warning("工作流运行失败: run_id=%s reason=%s", locked_run.id, reason)
     session.commit()
     return True
 

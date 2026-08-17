@@ -16,8 +16,12 @@ from helpers import (
     _make_demo_image_bytes_with_size,
     _read_image_size,
 )
+from sqlalchemy import select
 
+from productflow_backend.application.async_delivery import run_async_dispatcher_once
+from productflow_backend.domain.enums import AsyncDispatchStatus, JobStatus
 from productflow_backend.infrastructure.db.models import (
+    AsyncDispatch,
     ImageSession,
     ImageSessionAsset,
     ImageSessionGenerationTask,
@@ -504,19 +508,47 @@ def test_image_session_generation_exposes_actual_size_when_provider_downscales(
     assert round_payload["provider_notes"] == ["供应商实际返回 1024x1024，请求尺寸为 2048x2048。"]
 
 
-def test_image_session_generate_enqueue_failure_marks_task_failed(
+def test_image_session_submission_rolls_back_task_when_dispatch_staging_fails(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.application.image_sessions import (
+        create_image_session,
+        submit_image_session_generation_task,
+    )
+
+    image_session = create_image_session(db_session, title="dispatch staging rollback")
+
+    def fail_stage(*args, **kwargs):
+        raise RuntimeError("dispatch staging failed")
+
+    monkeypatch.setattr("productflow_backend.application.image_sessions.stage_async_dispatch", fail_stage)
+
+    with pytest.raises(RuntimeError, match="dispatch staging failed"):
+        submit_image_session_generation_task(
+            db_session,
+            image_session_id=image_session.id,
+            prompt="must roll back",
+            size="1024x1024",
+        )
+
+    db_session.rollback()
+    assert db_session.scalar(
+        select(ImageSessionGenerationTask).where(ImageSessionGenerationTask.session_id == image_session.id)
+    ) is None
+
+
+def test_image_session_generate_enqueue_failure_keeps_task_retryable(
     configured_env: Path,
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from productflow_backend.application.async_delivery import stage_async_dispatch
     from productflow_backend.presentation.api import create_app
 
-    def fail_enqueue(task_id: str) -> None:
-        raise RuntimeError(f"redis down for {task_id}")
-
     monkeypatch.setattr(
-        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
-        fail_enqueue,
+        "productflow_backend.application.image_sessions.stage_async_dispatch",
+        stage_async_dispatch,
     )
     app = create_app()
     client = TestClient(app)
@@ -529,14 +561,34 @@ def test_image_session_generate_enqueue_failure_marks_task_failed(
         json={"prompt": "入队失败应落库", "size": "1024x1024"},
     )
 
-    assert response.status_code == 503
-    assert response.json()["detail"] == "任务队列暂不可用，请稍后重试"
+    assert response.status_code == 202, response.text
+    payload = response.json()
+    task_id = payload["generation_tasks"][0]["id"]
     db_session.expire_all()
-    tasks = db_session.query(ImageSessionGenerationTask).all()
-    assert len(tasks) == 1
-    assert tasks[0].status == "failed"
-    assert tasks[0].failure_reason == "任务队列暂不可用，请稍后重试"
-    assert tasks[0].is_retryable is True
+    dispatch = db_session.scalar(
+        select(AsyncDispatch).where(AsyncDispatch.aggregate_id == task_id)
+    )
+    assert dispatch is not None
+    assert dispatch.status == AsyncDispatchStatus.PENDING
+
+    def fail_enqueue(dispatch_id: str, aggregate_id: str) -> None:
+        raise RuntimeError(f"redis down for {aggregate_id}")
+
+    run_async_dispatcher_once(
+        enqueue=fail_enqueue,
+        max_attempts=1,
+    )
+
+    db_session.expire_all()
+    task = db_session.get(ImageSessionGenerationTask, task_id)
+    dispatch = db_session.get(AsyncDispatch, dispatch.id)
+    assert task is not None
+    assert task.status == JobStatus.QUEUED
+    assert task.failure_reason is None
+    assert task.is_retryable is True
+    assert dispatch is not None
+    assert dispatch.status == AsyncDispatchStatus.SENT
+    assert dispatch.last_error == "redis down for " + task_id
 
 
 def test_image_session_manual_retry_resets_failed_task_and_enqueues(
@@ -912,13 +964,19 @@ def test_image_session_manual_retry_enqueue_failure_keeps_task_retryable(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from productflow_backend.domain.enums import JobStatus
+    from productflow_backend.application.async_delivery import (
+        requeue_async_dispatch,
+        stage_async_dispatch,
+    )
     from productflow_backend.presentation.api import create_app
 
-    sent: list[str] = []
     monkeypatch.setattr(
-        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
-        lambda task_id: sent.append(task_id),
+        "productflow_backend.application.image_sessions.stage_async_dispatch",
+        stage_async_dispatch,
+    )
+    monkeypatch.setattr(
+        "productflow_backend.application.image_sessions.requeue_async_dispatch",
+        requeue_async_dispatch,
     )
     app = create_app()
     client = TestClient(app)
@@ -943,24 +1001,38 @@ def test_image_session_manual_retry_enqueue_failure_keeps_task_retryable(
     task.is_retryable = True
     db_session.commit()
 
-    def fail_enqueue(task_id: str) -> None:
-        raise RuntimeError(f"redis down for {task_id}")
-
-    monkeypatch.setattr(
-        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
-        fail_enqueue,
-    )
-
     retried = client.post(f"/api/image-sessions/{session_id}/generation-tasks/{task_id}/retry")
 
-    assert retried.status_code == 503
-    assert retried.json()["detail"] == "任务队列暂不可用，请稍后重试"
+    assert retried.status_code == 202, retried.text
     db_session.expire_all()
     task = db_session.get(ImageSessionGenerationTask, task_id)
+    dispatch = db_session.scalar(
+        select(AsyncDispatch).where(AsyncDispatch.aggregate_id == task_id)
+    )
     assert task is not None
-    assert task.status == JobStatus.FAILED
-    assert task.failure_reason == "任务队列暂不可用，请稍后重试"
+    assert task.status == JobStatus.QUEUED
+    assert task.failure_reason is None
+    assert dispatch is not None
+    assert dispatch.status == AsyncDispatchStatus.PENDING
+
+    def fail_enqueue(dispatch_id: str, aggregate_id: str) -> None:
+        raise RuntimeError(f"redis down for {aggregate_id}")
+
+    run_async_dispatcher_once(
+        enqueue=fail_enqueue,
+        max_attempts=1,
+    )
+
+    db_session.expire_all()
+    task = db_session.get(ImageSessionGenerationTask, task_id)
+    dispatch = db_session.get(AsyncDispatch, dispatch.id)
+    assert task is not None
+    assert task.status == JobStatus.QUEUED
+    assert task.failure_reason is None
     assert task.is_retryable is True
+    assert dispatch is not None
+    assert dispatch.status == AsyncDispatchStatus.SENT
+    assert dispatch.last_error == "redis down for " + task_id
 
 
 def test_image_session_worker_auto_retry_caps_and_uses_generic_safe_reason(
@@ -1706,7 +1778,6 @@ def test_image_session_worker_defers_queued_task_when_global_running_capacity_fu
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from productflow_backend.application.image_sessions import (
-        IMAGE_SESSION_CAPACITY_RETRY_DELAY_MS,
         create_image_session,
         execute_image_session_generation_task,
     )
@@ -1734,11 +1805,6 @@ def test_image_session_worker_defers_queued_task_when_global_running_capacity_fu
     db_session.add(AppSetting(key="generation_max_concurrent_tasks", value="1"))
     db_session.commit()
 
-    delayed_requeues: list[tuple[str, int]] = []
-    monkeypatch.setattr(
-        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task_later",
-        lambda task_id, *, delay_ms: delayed_requeues.append((task_id, delay_ms)),
-    )
     monkeypatch.setattr(
         "productflow_backend.infrastructure.image.chat_service.ImageChatService.generate",
         lambda *args, **kwargs: pytest.fail("capacity-blocked task must not call provider"),
@@ -1749,6 +1815,9 @@ def test_image_session_worker_defers_queued_task_when_global_running_capacity_fu
     db_session.expire_all()
     persisted = db_session.get(ImageSessionGenerationTask, queued.id)
     rounds = db_session.query(ImageSessionRound).filter(ImageSessionRound.session_id == image_session.id).all()
+    dispatch = db_session.scalar(
+        select(AsyncDispatch).where(AsyncDispatch.aggregate_id == queued.id)
+    )
 
     assert persisted is not None
     assert persisted.status == JobStatus.QUEUED
@@ -1756,7 +1825,9 @@ def test_image_session_worker_defers_queued_task_when_global_running_capacity_fu
     assert persisted.progress_phase == "waiting_for_capacity"
     assert persisted.progress_updated_at is not None
     assert rounds == []
-    assert delayed_requeues == [(queued.id, IMAGE_SESSION_CAPACITY_RETRY_DELAY_MS)]
+    assert dispatch is not None
+    assert dispatch.status == AsyncDispatchStatus.PENDING
+    assert dispatch.available_at is not None
 
 
 def test_image_session_branch_uses_selected_base_and_references_only(configured_env: Path, db_session) -> None:

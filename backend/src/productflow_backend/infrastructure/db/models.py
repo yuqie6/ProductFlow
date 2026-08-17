@@ -27,6 +27,7 @@ from productflow_backend.domain.enums import (
     AgentConversationStatus,
     AgentToolMutationStatus,
     AgentTurnStatus,
+    AsyncDispatchStatus,
     ImageSessionAssetKind,
     JobStatus,
     MediaVerificationStatus,
@@ -2195,6 +2196,46 @@ class DeliveryRenditionJob(Base, TimestampMixin):
         back_populates="result_rendition_job",
         foreign_keys=[result_asset_id],
     )
+
+
+class AsyncDispatch(Base, TimestampMixin):
+    """可靠异步投递的数据库权威记录。
+
+    Redis/Dramatiq 只是 delivery channel；`async_dispatches` 记录每个业务投递的
+    pending -> sent -> consumed / dead 生命周期，并提供 lease/token 防止 dispatcher 重复发送。
+    """
+
+    __tablename__ = "async_dispatches"
+    __table_args__ = (
+        UniqueConstraint("delivery_key", name="uq_async_dispatches_delivery_key"),
+        CheckConstraint(
+            "status IN ('pending', 'sent', 'consumed', 'dead')",
+            name="ck_async_dispatches_status",
+        ),
+        CheckConstraint(
+            "attempts >= 0",
+            name="ck_async_dispatches_non_negative_attempts",
+        ),
+        Index("ix_async_dispatches_status_available", "status", "available_at", "id"),
+        Index("ix_async_dispatches_lease_expiry", "status", "lease_expires_at", "id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    delivery_key: Mapped[str] = mapped_column(String(255))
+    actor_name: Mapped[str] = mapped_column(String(120))
+    aggregate_id: Mapped[str] = mapped_column(String(36))
+    payload_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[AsyncDispatchStatus] = mapped_column(
+        enum_value_column(AsyncDispatchStatus),
+        default=AsyncDispatchStatus.PENDING,
+    )
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    lease_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ImageSession(Base, TimestampMixin):

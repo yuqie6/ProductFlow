@@ -1350,7 +1350,11 @@ def test_public_agent_routes_keep_session_scope_idempotency_question_and_sse(
     gateway = _FakeAgentGateway()
     enqueued: list[str] = []
     monkeypatch.setattr(agent_routes, "_agent_gateway_or_raise", lambda: gateway)
-    monkeypatch.setattr(agent_routes, "enqueue_agent_turn_sync", enqueued.append)
+    monkeypatch.setattr(
+        agent_routes,
+        "enqueue_agent_turn_sync",
+        lambda _session, projection_id: enqueued.append(projection_id),
+    )
     client = TestClient(create_app())
     collection_path = f"/api/v2/products/{product.id}/agent-conversations"
 
@@ -1414,7 +1418,7 @@ def test_public_agent_routes_keep_session_scope_idempotency_question_and_sse(
     assert answered.json()["status"] == "queued"
     assert answered.json()["resume_required"] is True
 
-    def fail_enqueue(_: str) -> None:
+    def fail_enqueue(_session: object, _projection_id: str) -> None:
         raise RuntimeError("queue unavailable")
 
     monkeypatch.setattr(agent_routes, "enqueue_agent_turn_sync", fail_enqueue)
@@ -1422,11 +1426,15 @@ def test_public_agent_routes_keep_session_scope_idempotency_question_and_sse(
     assert failed_resume.status_code == 503, failed_resume.text
     persisted_after_failed_enqueue = client.get(f"{turn_path}/{projection_id}")
     assert persisted_after_failed_enqueue.status_code == 200
-    assert persisted_after_failed_enqueue.json()["status"] == "running"
-    assert persisted_after_failed_enqueue.json()["resume_required"] is False
+    assert persisted_after_failed_enqueue.json()["status"] == "queued"
+    assert persisted_after_failed_enqueue.json()["resume_required"] is True
     assert "无法入队" in persisted_after_failed_enqueue.json()["sync_error"]
 
-    monkeypatch.setattr(agent_routes, "enqueue_agent_turn_sync", enqueued.append)
+    monkeypatch.setattr(
+        agent_routes,
+        "enqueue_agent_turn_sync",
+        lambda _session, projection_id: enqueued.append(projection_id),
+    )
     resumed = client.post(f"{turn_path}/{projection_id}/resume")
     assert resumed.status_code == 200, resumed.text
     assert resumed.json()["status"] == "running"

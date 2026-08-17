@@ -1,32 +1,40 @@
 from __future__ import annotations
 
+import logging
 import sys
+from datetime import timedelta
 from pathlib import Path
+from threading import Event, Thread
 
 import dramatiq
+from sqlalchemy import update
 
-from productflow_backend.application.agent_sync import (
-    execute_agent_turn_sync,
-    recover_unfinished_agent_turn_syncs,
+from productflow_backend.application.agent_sync import execute_agent_turn_sync
+from productflow_backend.application.async_delivery import (
+    DEFAULT_DISPATCH_CONSUMER_LEASE_SECONDS,
+    DEFAULT_DISPATCH_MAX_ATTEMPTS,
+    claim_async_dispatch_for_consumption,
+    mark_async_dispatch_consumed,
+    mark_async_dispatch_failed,
+    stage_async_dispatch_for_actor,
 )
 from productflow_backend.application.delivery_renditions import execute_delivery_rendition_job
-from productflow_backend.application.durable_recovery import (
-    recover_unfinished_delivery_rendition_jobs,
-    recover_unfinished_image_session_generation_tasks,
-    recover_unfinished_workflow_runs,
-)
 from productflow_backend.application.image_sessions import execute_image_session_generation_task
 from productflow_backend.application.product_workflows import (
     execute_product_workflow_node_run,
     execute_product_workflow_run,
 )
 from productflow_backend.application.runtime_settings import get_runtime_settings
+from productflow_backend.application.time import now_utc
 from productflow_backend.domain.durable_generation_tasks import (
     DELIVERY_RENDITION_TASK_CONTRACT,
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
     WORKFLOW_RUN_GENERATION_TASK_CONTRACT,
     assert_actor_uses_durable_generation_contract,
 )
+from productflow_backend.domain.enums import AsyncDispatchStatus
+from productflow_backend.infrastructure.db.models import AsyncDispatch
+from productflow_backend.infrastructure.db.session import get_session_factory
 from productflow_backend.infrastructure.image.chat_service import ImageChatService
 from productflow_backend.infrastructure.logging import (
     cleanup_old_logs,
@@ -39,16 +47,13 @@ from productflow_backend.infrastructure.logging import (
     set_workflow_run_id,
 )
 from productflow_backend.infrastructure.queue import (
-    enqueue_agent_turn_sync,
-    enqueue_agent_turn_sync_later,
-    enqueue_delivery_rendition_job,
-    enqueue_image_session_generation_task,
-    enqueue_workflow_run,
+    WORKFLOW_NODE_RUN_ACTOR_NAME,
     get_broker,
 )
 
 configure_logging()
 get_broker()
+logger = logging.getLogger(__name__)
 
 
 def get_image_session_worker_failsafe_time_limit_ms() -> int:
@@ -61,6 +66,130 @@ def get_product_workflow_worker_failsafe_time_limit_ms() -> int:
 
 IMAGE_SESSION_WORKER_FAILSAFE_TIME_LIMIT_MS = get_image_session_worker_failsafe_time_limit_ms()
 PRODUCT_WORKFLOW_WORKER_FAILSAFE_TIME_LIMIT_MS = get_product_workflow_worker_failsafe_time_limit_ms()
+
+
+def _execute_async_dispatch_target(actor_name: str, aggregate_id: str) -> None:
+    if actor_name == WORKFLOW_RUN_GENERATION_TASK_CONTRACT.actor_name:
+        execute_product_workflow_run(aggregate_id)
+    elif actor_name == WORKFLOW_NODE_RUN_ACTOR_NAME:
+        execute_product_workflow_node_run(aggregate_id)
+    elif actor_name == IMAGE_SESSION_GENERATION_TASK_CONTRACT.actor_name:
+        execute_image_session_generation_task(aggregate_id, chat_service_factory=ImageChatService)
+    elif actor_name == "run_agent_turn_sync":
+        execute_agent_turn_sync(
+            aggregate_id,
+            enqueue_later=lambda worker_session, target_id, delay_ms: stage_async_dispatch_for_actor(
+                worker_session,
+                "run_agent_turn_sync",
+                target_id,
+                delay_ms=delay_ms,
+            ),
+        )
+    elif actor_name == DELIVERY_RENDITION_TASK_CONTRACT.actor_name:
+        execute_delivery_rendition_job(aggregate_id)
+    else:
+        raise RuntimeError(f"unknown async dispatch actor: {actor_name}")
+
+
+def _renew_async_dispatch_lease(
+    *,
+    dispatch_id: str,
+    aggregate_id: str,
+    lease_token: str,
+    stop: Event,
+    lease_seconds: int = DEFAULT_DISPATCH_CONSUMER_LEASE_SECONDS,
+) -> None:
+    interval_seconds = max(1.0, lease_seconds / 3)
+    while not stop.wait(interval_seconds):
+        session = get_session_factory()()
+        try:
+            now = now_utc()
+            result = session.execute(
+                update(AsyncDispatch)
+                .where(
+                    AsyncDispatch.id == dispatch_id,
+                    AsyncDispatch.aggregate_id == aggregate_id,
+                    AsyncDispatch.status == AsyncDispatchStatus.SENT,
+                    AsyncDispatch.lease_token == lease_token,
+                )
+                .values(
+                    lease_expires_at=now + timedelta(seconds=lease_seconds),
+                    updated_at=now,
+                )
+                .execution_options(synchronize_session=False)
+            )
+            session.commit()
+            if result.rowcount != 1:
+                return
+        except Exception:  # noqa: BLE001
+            session.rollback()
+        finally:
+            session.close()
+
+
+def execute_async_dispatch(dispatch_id: str, aggregate_id: str) -> None:
+    session = get_session_factory()()
+    lease_token: str | None = None
+    try:
+        dispatch = session.get(AsyncDispatch, dispatch_id)
+        if (
+            dispatch is None
+            or dispatch.aggregate_id != aggregate_id
+            or dispatch.status != AsyncDispatchStatus.SENT
+        ):
+            return
+        actor_name = dispatch.actor_name
+        lease_token = claim_async_dispatch_for_consumption(
+            session,
+            dispatch_id=dispatch_id,
+            aggregate_id=aggregate_id,
+        )
+        if lease_token is None:
+            return
+        stop_heartbeat = Event()
+        heartbeat = Thread(
+            target=_renew_async_dispatch_lease,
+            kwargs={
+                "dispatch_id": dispatch_id,
+                "aggregate_id": aggregate_id,
+                "lease_token": lease_token,
+                "stop": stop_heartbeat,
+            },
+            name=f"async-dispatch-lease-{dispatch_id}",
+            daemon=True,
+        )
+        heartbeat.start()
+        try:
+            _execute_async_dispatch_target(actor_name, aggregate_id)
+        finally:
+            stop_heartbeat.set()
+            heartbeat.join(timeout=2)
+        mark_async_dispatch_consumed(
+            session,
+            dispatch_id=dispatch_id,
+            aggregate_id=aggregate_id,
+            lease_token=lease_token,
+        )
+        session.commit()
+    except Exception:
+        session.rollback()
+        if lease_token is not None:
+            try:
+                mark_async_dispatch_failed(
+                    session,
+                    dispatch_id=dispatch_id,
+                    aggregate_id=aggregate_id,
+                    lease_token=lease_token,
+                    error="async target execution failed",
+                    max_attempts=DEFAULT_DISPATCH_MAX_ATTEMPTS,
+                )
+                session.commit()
+            except Exception:  # noqa: BLE001
+                session.rollback()
+                logger.exception("异步目标失败后无法落库 retry 状态: dispatch_id=%s", dispatch_id)
+        raise
+    finally:
+        session.close()
 
 
 @dramatiq.actor(max_retries=0, time_limit=PRODUCT_WORKFLOW_WORKER_FAILSAFE_TIME_LIMIT_MS)
@@ -97,7 +226,9 @@ def run_image_session_generation_task(task_id: str) -> None:
 def run_agent_turn_sync(projection_id: str) -> None:
     execute_agent_turn_sync(
         projection_id,
-        enqueue_later=lambda target_id, delay_ms: enqueue_agent_turn_sync_later(
+        enqueue_later=lambda worker_session, target_id, delay_ms: stage_async_dispatch_for_actor(
+            worker_session,
+            "run_agent_turn_sync",
             target_id,
             delay_ms=delay_ms,
         ),
@@ -107,6 +238,11 @@ def run_agent_turn_sync(projection_id: str) -> None:
 @dramatiq.actor(max_retries=0, time_limit=IMAGE_SESSION_WORKER_FAILSAFE_TIME_LIMIT_MS)
 def run_delivery_rendition_job(job_id: str) -> None:
     execute_delivery_rendition_job(job_id)
+
+
+@dramatiq.actor(max_retries=0, time_limit=PRODUCT_WORKFLOW_WORKER_FAILSAFE_TIME_LIMIT_MS)
+def run_async_dispatch(dispatch_id: str, aggregate_id: str) -> None:
+    execute_async_dispatch(dispatch_id, aggregate_id)
 
 
 assert_actor_uses_durable_generation_contract(WORKFLOW_RUN_GENERATION_TASK_CONTRACT, run_product_workflow_run)
@@ -126,13 +262,3 @@ def _running_under_dramatiq_cli() -> bool:
 
 if _running_under_dramatiq_cli():
     cleanup_old_logs()
-    recover_unfinished_workflow_runs(enqueue=enqueue_workflow_run, reset_stale_running=True)
-    recover_unfinished_image_session_generation_tasks(
-        enqueue=enqueue_image_session_generation_task,
-        reset_stale_running=True,
-    )
-    recover_unfinished_agent_turn_syncs(enqueue=enqueue_agent_turn_sync)
-    recover_unfinished_delivery_rendition_jobs(
-        enqueue=enqueue_delivery_rendition_job,
-        reset_stale_running=True,
-    )

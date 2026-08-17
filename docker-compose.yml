@@ -128,6 +128,46 @@ services:
       productflow-agent-service:
         condition: service_healthy
 
+  productflow-async-dispatcher:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      ADMIN_ACCESS_KEY: ${ADMIN_ACCESS_KEY:?set ADMIN_ACCESS_KEY in .env}
+      SETTINGS_ACCESS_TOKEN: ${SETTINGS_ACCESS_TOKEN:?set SETTINGS_ACCESS_TOKEN in .env}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET in .env}
+      DATABASE_URL: postgresql+psycopg://productflow:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@productflow-postgres:5432/productflow
+      REDIS_URL: redis://productflow-redis:6379/0
+      STORAGE_ROOT: /app/storage
+      AGENT_SERVICE_BASE_URL: http://productflow-agent-service:29284
+      AGENT_SERVICE_INTERNAL_TOKEN: ${AGENT_SERVICE_INTERNAL_TOKEN:?set AGENT_SERVICE_INTERNAL_TOKEN in .env}
+      AGENT_SERVICE_CONNECT_TIMEOUT_SECONDS: ${AGENT_SERVICE_CONNECT_TIMEOUT_SECONDS:-5}
+      AGENT_SERVICE_READ_TIMEOUT_SECONDS: ${AGENT_SERVICE_READ_TIMEOUT_SECONDS:-90}
+      AGENT_TURN_SYNC_POLL_SECONDS: ${AGENT_TURN_SYNC_POLL_SECONDS:-1}
+      LOG_DIR: /app/storage/logs
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_MAX_BYTES: ${LOG_MAX_BYTES:-10485760}
+      LOG_BACKUP_COUNT: ${LOG_BACKUP_COUNT:-5}
+      LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-14}
+      UPLOAD_MAX_IMAGE_BYTES: ${UPLOAD_MAX_IMAGE_BYTES:-10485760}
+      UPLOAD_MAX_REFERENCE_IMAGES: ${UPLOAD_MAX_REFERENCE_IMAGES:-6}
+      UPLOAD_MAX_PIXELS: ${UPLOAD_MAX_PIXELS:-16000000}
+      UPLOAD_ALLOWED_IMAGE_MIME_TYPES: ${UPLOAD_ALLOWED_IMAGE_MIME_TYPES:-image/png,image/jpeg,image/webp}
+      JOB_MAX_ATTEMPTS: ${JOB_MAX_ATTEMPTS:-3}
+      JOB_RETRY_DELAY_MS: ${JOB_RETRY_DELAY_MS:-10000}
+      GENERATION_MAX_CONCURRENT_TASKS: ${GENERATION_MAX_CONCURRENT_TASKS:-3}
+    command: >-
+      sh -c "while true; do python -m productflow_backend.commands.run_async_dispatcher --limit 100; sleep 1; done"
+    volumes:
+      - ${STORAGE_HOST_PATH:-productflow-storage}:/app/storage
+    depends_on:
+      productflow-backend:
+        condition: service_healthy
+      productflow-agent-service:
+        condition: service_healthy
+
   productflow-agent-service:
     build:
       context: .

@@ -400,6 +400,7 @@ def bind_harness_turn(
     projection_id: str,
     harness_turn_id: str,
     status: AgentTurnStatus,
+    commit: bool = True,
 ) -> AgentTurnProjection:
     normalized_turn_id = harness_turn_id.strip()
     if not normalized_turn_id or len(normalized_turn_id) > 120:
@@ -417,11 +418,13 @@ def bind_harness_turn(
     projection.updated_at = now_utc()
     _apply_conversation_status(projection.conversation, status)
     try:
-        session.commit()
+        if commit:
+            session.commit()
     except IntegrityError as exc:
         session.rollback()
         raise ConflictError("harness Turn 已绑定其他 Agent turn projection") from exc
-    session.refresh(projection)
+    if commit:
+        session.refresh(projection)
     return projection
 
 
@@ -459,6 +462,7 @@ def project_agent_turn_state(
     question_json: dict[str, Any] | None,
     finished_at: datetime | None,
     tool_steps_json: list[dict[str, Any]] | None = None,
+    commit: bool = True,
 ) -> AgentTurnProjection:
     projection = _get_agent_turn_for_update(
         session,
@@ -477,8 +481,9 @@ def project_agent_turn_state(
     projection.finished_at = finished_at
     projection.updated_at = now_utc()
     _apply_conversation_status(projection.conversation, status)
-    session.commit()
-    session.refresh(projection)
+    if commit:
+        session.commit()
+        session.refresh(projection)
     return projection
 
 
@@ -489,6 +494,7 @@ def set_agent_turn_resume_required(
     conversation_id: str,
     projection_id: str,
     required: bool,
+    commit: bool = True,
 ) -> AgentTurnProjection:
     projection = _get_agent_turn_for_update(
         session,
@@ -498,8 +504,9 @@ def set_agent_turn_resume_required(
     )
     projection.resume_required = required
     projection.updated_at = now_utc()
-    session.commit()
-    session.refresh(projection)
+    if commit:
+        session.commit()
+        session.refresh(projection)
     return projection
 
 
@@ -513,6 +520,7 @@ def attach_agent_workflow_draft_artifact(
     artifact_name: str,
     artifact_step_id: str,
     artifact_value: dict[str, Any],
+    commit: bool = True,
 ) -> AgentTurnProjection:
     if artifact_name != WORKFLOW_DRAFT_ARTIFACT_NAME:
         raise BusinessValidationError("Agent 返回了不受支持的 required artifact")
@@ -549,6 +557,7 @@ def attach_agent_workflow_draft_artifact(
         ready_for_confirmation=True,
         source_turn_id=normalized_turn_id,
         source_artifact_step_id=normalized_step_id,
+        commit=commit,
     )
 
     revision = session.scalar(
@@ -575,8 +584,9 @@ def attach_agent_workflow_draft_artifact(
     projection.updated_at = now_utc()
     projection.conversation.status = AgentConversationStatus.AWAITING_CONFIRMATION
     projection.conversation.updated_at = now_utc()
-    session.commit()
-    session.refresh(projection)
+    if commit:
+        session.commit()
+        session.refresh(projection)
     return projection
 
 
