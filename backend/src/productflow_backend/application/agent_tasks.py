@@ -184,7 +184,7 @@ def task_contract(session: Session, task_id: str) -> tuple[AgentTask, AgentConve
     if task is None:
         raise NotFoundError("Agent Task 不存在")
     if task.conversation is None:
-        raise ConflictError("当前 Agent Task 尚未绑定可执行的商品工作区")
+        raise ConflictError("当前 Agent Task 尚未绑定可执行的 Agent conversation")
     if task.status == AgentTaskStatus.CANCELED:
         raise ConflictError("已取消的 Agent Task 不能继续运行")
     return task, task.conversation
@@ -204,7 +204,7 @@ def ensure_task_for_turn(
 
     task = _get_task_for_update(session, task_id)
     if task.session_id != agent_session.id or task.conversation_id != conversation.id:
-        raise ConflictError("Agent Task 与当前商品工作区不匹配")
+        raise ConflictError("Agent Task 与当前 Agent conversation 不匹配")
     if task.status == AgentTaskStatus.CANCELED:
         raise ConflictError("已取消的 Agent Task 不能继续提交 Turn")
     if task.status == AgentTaskStatus.PAUSED:

@@ -26,6 +26,7 @@ from productflow_backend.application.workflow_drafts.service import (
     workflow_draft_query,
 )
 from productflow_backend.domain.enums import (
+    AgentConversationScope,
     AgentConversationStatus,
     AgentTurnStatus,
     MediaVerificationStatus,
@@ -52,6 +53,9 @@ AGENT_TURN_CURSOR_VERSION = 1
 AGENT_TURN_DEFAULT_PAGE_SIZE = 20
 AGENT_TURN_MAX_PAGE_SIZE = 50
 WORKFLOW_DRAFT_ARTIFACT_NAME = "propose_workflow_draft"
+
+PRODUCT_WORKFLOW_SCOPE = AgentConversationScope.PRODUCT_WORKFLOW
+GLOBAL_SCOPE = AgentConversationScope.GLOBAL
 
 _STARTABLE_CONVERSATION_STATUSES = {
     AgentConversationStatus.COLLECTING,
@@ -104,17 +108,25 @@ def agent_conversation_query():
 def get_agent_conversation_or_raise(
     session: Session,
     *,
-    product_id: str,
+    product_id: str | None,
     conversation_id: str,
 ) -> AgentConversation:
-    conversation = session.scalar(
-        agent_conversation_query().where(
-            AgentConversation.id == conversation_id,
+    scope_filter = (
+        AgentConversation.scope_type == GLOBAL_SCOPE
+        if product_id is None
+        else and_(
+            AgentConversation.scope_type == PRODUCT_WORKFLOW_SCOPE,
             AgentConversation.product_id == product_id,
         )
     )
+    conversation = session.scalar(
+        agent_conversation_query().where(
+            AgentConversation.id == conversation_id,
+            scope_filter,
+        )
+    )
     if conversation is None:
-        if session.get(Product, product_id) is None:
+        if product_id is not None and session.get(Product, product_id) is None:
             raise NotFoundError("商品不存在")
         raise NotFoundError("Agent conversation 不存在")
     return conversation
@@ -160,6 +172,7 @@ def create_agent_conversation(
     session.flush()
     conversation = AgentConversation(
         id=conversation_id,
+        scope_type=PRODUCT_WORKFLOW_SCOPE,
         session_id=agent_session.id,
         product_id=product_id,
         workflow_draft_id=workflow_draft_id,
@@ -187,7 +200,7 @@ def create_agent_conversation(
 def list_agent_turn_page(
     session: Session,
     *,
-    product_id: str,
+    product_id: str | None,
     conversation_id: str,
     task_id: str | None = None,
     after: str = "",
@@ -294,7 +307,7 @@ def _normalize_cursor_datetime(value: datetime) -> datetime:
 def get_agent_turn_or_raise(
     session: Session,
     *,
-    product_id: str,
+    product_id: str | None,
     conversation_id: str,
     projection_id: str,
 ) -> AgentTurnProjection:
@@ -304,7 +317,14 @@ def get_agent_turn_or_raise(
         .where(
             AgentTurnProjection.id == projection_id,
             AgentTurnProjection.conversation_id == conversation_id,
-            AgentConversation.product_id == product_id,
+            (
+                AgentConversation.scope_type == GLOBAL_SCOPE
+                if product_id is None
+                else and_(
+                    AgentConversation.scope_type == PRODUCT_WORKFLOW_SCOPE,
+                    AgentConversation.product_id == product_id,
+                )
+            ),
         )
     )
     if projection is None:
@@ -320,7 +340,7 @@ def get_agent_turn_or_raise(
 def reserve_agent_turn(
     session: Session,
     *,
-    product_id: str,
+    product_id: str | None,
     conversation_id: str,
     input_text: str,
     input_asset_ids: list[str],
@@ -343,7 +363,14 @@ def reserve_agent_turn(
         select(AgentConversation)
         .where(
             AgentConversation.id == conversation_id,
-            AgentConversation.product_id == product_id,
+            (
+                AgentConversation.scope_type == GLOBAL_SCOPE
+                if product_id is None
+                else and_(
+                    AgentConversation.scope_type == PRODUCT_WORKFLOW_SCOPE,
+                    AgentConversation.product_id == product_id,
+                )
+            ),
         )
         .with_for_update()
     )
@@ -375,24 +402,27 @@ def reserve_agent_turn(
         task_id=task_id,
     )
 
-    draft = session.scalar(
-        workflow_draft_query().where(WorkflowDraft.id == conversation.workflow_draft_id)
-    )
-    if draft is None:
-        raise ConflictError("Agent conversation 绑定的 WorkflowDraft 不存在")
-    if (
-        draft.intake_json is None
-        and draft.current_revision_id is None
-        and draft.recipe_seed is None
-        and draft.legacy_archive_seed is None
-    ):
-        raise ConflictError("请先完成商品图片需求和参考图，再启动 Agent Turn")
+    if conversation.scope_type == PRODUCT_WORKFLOW_SCOPE:
+        draft = session.scalar(
+            workflow_draft_query().where(WorkflowDraft.id == conversation.workflow_draft_id)
+        )
+        if draft is None:
+            raise ConflictError("Agent conversation 绑定的 WorkflowDraft 不存在")
+        if (
+            draft.intake_json is None
+            and draft.current_revision_id is None
+            and draft.recipe_seed is None
+            and draft.legacy_archive_seed is None
+        ):
+            raise ConflictError("请先完成商品图片需求和参考图，再启动 Agent Turn")
 
-    _validate_product_assets(
-        session,
-        product_id=product_id,
-        asset_ids=normalized_asset_ids,
-    )
+        if product_id is None:
+            raise ConflictError("商品工作流 Agent conversation 缺少商品作用域")
+        _validate_product_assets(
+            session,
+            product_id=product_id,
+            asset_ids=normalized_asset_ids,
+        )
     projection = AgentTurnProjection(
         conversation_id=conversation_id,
         task_id=task.id if task is not None else None,
@@ -440,7 +470,7 @@ def reserve_agent_turn(
 def bind_harness_turn(
     session: Session,
     *,
-    product_id: str,
+    product_id: str | None,
     conversation_id: str,
     projection_id: str,
     harness_turn_id: str,
@@ -483,7 +513,7 @@ def bind_harness_turn(
 def record_agent_turn_start_error(
     session: Session,
     *,
-    product_id: str,
+    product_id: str | None,
     conversation_id: str,
     projection_id: str,
     safe_error: str,
@@ -504,7 +534,7 @@ def record_agent_turn_start_error(
 def project_agent_turn_state(
     session: Session,
     *,
-    product_id: str,
+    product_id: str | None,
     conversation_id: str,
     projection_id: str,
     harness_turn_id: str,
@@ -549,7 +579,7 @@ def project_agent_turn_state(
 def set_agent_turn_resume_required(
     session: Session,
     *,
-    product_id: str,
+    product_id: str | None,
     conversation_id: str,
     projection_id: str,
     required: bool,
@@ -681,7 +711,7 @@ def mark_agent_conversation_completed_for_draft(
 def _get_agent_turn_for_update(
     session: Session,
     *,
-    product_id: str,
+    product_id: str | None,
     conversation_id: str,
     projection_id: str,
 ) -> AgentTurnProjection:
@@ -697,7 +727,14 @@ def _get_agent_turn_for_update(
         .where(
             AgentTurnProjection.id == projection_id,
             AgentTurnProjection.conversation_id == conversation_id,
-            AgentConversation.product_id == product_id,
+            (
+                AgentConversation.scope_type == GLOBAL_SCOPE
+                if product_id is None
+                else and_(
+                    AgentConversation.scope_type == PRODUCT_WORKFLOW_SCOPE,
+                    AgentConversation.product_id == product_id,
+                )
+            ),
         )
         .with_for_update()
     )

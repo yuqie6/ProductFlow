@@ -15,6 +15,7 @@ from productflow_backend.application.legacy_archive_rebuilds import (
 )
 from productflow_backend.application.legacy_archives import LegacyArchiveKind
 from productflow_backend.domain.enums import (
+    AgentConversationScope,
     AgentConversationStatus,
     AgentToolStepKind,
     AgentToolStepStatus,
@@ -31,11 +32,12 @@ class StrictAgentRequest(BaseModel):
 
 class AgentContractResponse(BaseModel):
     schema_version: Literal[1]
+    scope_type: AgentConversationScope
     conversation_id: str
     task_id: str | None = None
     task_goal: str | None = None
-    product_id: str
-    workflow_draft_id: str
+    product_id: str | None
+    workflow_draft_id: str | None
     harness_run_id: str
     current_draft_version: int
     system_prompt: str
@@ -268,9 +270,10 @@ class AgentQuestionAnswerRequest(StrictAgentRequest):
 
 class AgentConversationResponse(BaseModel):
     id: str
+    scope_type: AgentConversationScope
     session_id: str | None
-    product_id: str
-    workflow_draft_id: str
+    product_id: str | None
+    workflow_draft_id: str | None
     harness_run_id: str
     status: AgentConversationStatus
     created_at: datetime
@@ -327,6 +330,7 @@ class SubmitAgentTurnResponse(BaseModel):
 def serialize_agent_conversation(conversation: AgentConversation) -> AgentConversationResponse:
     return AgentConversationResponse(
         id=conversation.id,
+        scope_type=conversation.scope_type,
         session_id=conversation.session_id,
         product_id=conversation.product_id,
         workflow_draft_id=conversation.workflow_draft_id,

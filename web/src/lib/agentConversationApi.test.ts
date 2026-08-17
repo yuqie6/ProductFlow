@@ -109,4 +109,50 @@ describe("Agent conversation API", () => {
     );
     expect(fetchMock.mock.calls[1][1]?.body).toBe(JSON.stringify({ option: 0 }));
   });
+
+  it("uses the global conversation route while preserving page context and task identity", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+      json: async () => ({}),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.listGlobalAgentTurns("conversation/1", { after: "cursor+/=", limit: 10, taskId: "task/1" });
+    await api.submitGlobalAgentTurn("conversation/1", {
+      input_text: "检查全局素材",
+      asset_ids: [],
+      idempotency_key: "global-turn-1",
+      task_id: "task/1",
+      page_context: {
+        route: "/media-library",
+        page_type: "media_library",
+        selected_asset_ids: [],
+        visible_asset_ids: [],
+        filters: {},
+        captured_at: "2026-08-17T00:00:00Z",
+      },
+    });
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/api/v2/agent-conversations/conversation%2F1/turns?limit=10&after=cursor%2B%2F%3D&task_id=task%2F1",
+      "/api/v2/agent-conversations/conversation%2F1/turns",
+    ]);
+    expect(fetchMock.mock.calls[1][1]?.body).toBe(
+      JSON.stringify({
+        input_text: "检查全局素材",
+        asset_ids: [],
+        idempotency_key: "global-turn-1",
+        task_id: "task/1",
+        page_context: {
+          route: "/media-library",
+          page_type: "media_library",
+          selected_asset_ids: [],
+          visible_asset_ids: [],
+          filters: {},
+          captured_at: "2026-08-17T00:00:00Z",
+        },
+      }),
+    );
+  });
 });

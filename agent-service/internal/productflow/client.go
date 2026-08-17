@@ -28,11 +28,12 @@ type Client struct {
 
 type Contract struct {
 	SchemaVersion       int            `json:"schema_version"`
+	ScopeType           string         `json:"scope_type"`
 	ConversationID      string         `json:"conversation_id"`
 	TaskID              *string        `json:"task_id"`
 	TaskGoal            *string        `json:"task_goal"`
-	ProductID           string         `json:"product_id"`
-	WorkflowDraftID     string         `json:"workflow_draft_id"`
+	ProductID           *string        `json:"product_id"`
+	WorkflowDraftID     *string        `json:"workflow_draft_id"`
 	HarnessRunID        string         `json:"harness_run_id"`
 	CurrentDraftVersion int            `json:"current_draft_version"`
 	SystemPrompt        string         `json:"system_prompt"`
@@ -275,6 +276,25 @@ func (client *Client) ListAssets(
 	return result, err
 }
 
+func (client *Client) ListGlobalMediaAssets(
+	ctx context.Context,
+	conversationID, query, cursor string,
+	limit int,
+) (AssetList, error) {
+	values := url.Values{}
+	if strings.TrimSpace(query) != "" {
+		values.Set("query", strings.TrimSpace(query))
+	}
+	if strings.TrimSpace(cursor) != "" {
+		values.Set("cursor", strings.TrimSpace(cursor))
+	}
+	values.Set("limit", strconv.Itoa(limit))
+	path := client.conversationPath(conversationID) + "/media-library?" + values.Encode()
+	var result AssetList
+	err := client.json(ctx, http.MethodGet, path, nil, &result, "")
+	return result, err
+}
+
 func (client *Client) InspectAssets(
 	ctx context.Context,
 	conversationID string,
@@ -288,8 +308,42 @@ func (client *Client) InspectAssets(
 	return result.Items, err
 }
 
+func (client *Client) InspectGlobalMediaAssets(
+	ctx context.Context,
+	conversationID string,
+	assetIDs []string,
+) ([]AssetMetadata, error) {
+	body := map[string]any{"asset_ids": assetIDs}
+	var result struct {
+		Items []AssetMetadata `json:"items"`
+	}
+	err := client.json(
+		ctx,
+		http.MethodPost,
+		client.conversationPath(conversationID)+"/media-library/inspect",
+		body,
+		&result,
+		"",
+	)
+	return result.Items, err
+}
+
 func (client *Client) AssetContent(ctx context.Context, conversationID, assetID string) (AssetContent, error) {
-	request, err := client.request(ctx, http.MethodGet, client.conversationPath(conversationID)+"/assets/"+url.PathEscape(assetID)+"/content", nil)
+	return client.assetContent(
+		ctx,
+		client.conversationPath(conversationID)+"/assets/"+url.PathEscape(assetID)+"/content",
+	)
+}
+
+func (client *Client) GlobalMediaAssetContent(ctx context.Context, conversationID, assetID string) (AssetContent, error) {
+	return client.assetContent(
+		ctx,
+		client.conversationPath(conversationID)+"/media-library/"+url.PathEscape(assetID)+"/content",
+	)
+}
+
+func (client *Client) assetContent(ctx context.Context, path string) (AssetContent, error) {
+	request, err := client.request(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return AssetContent{}, err
 	}

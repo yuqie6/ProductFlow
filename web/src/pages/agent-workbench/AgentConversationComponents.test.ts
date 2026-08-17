@@ -48,6 +48,7 @@ describe("Agent conversation components", () => {
       conversations: [
         {
           conversation_id: "conversation-new",
+          scope_type: "product_workflow",
           product_id: "product-new",
           product_name: "新品",
           conversation_status: "collecting",

@@ -109,6 +109,10 @@ function agentConversationPath(productId: string, conversationId: string): strin
   return `/api/v2/products/${encodeURIComponent(productId)}/agent-conversations/${encodeURIComponent(conversationId)}`;
 }
 
+function globalAgentConversationPath(conversationId: string): string {
+  return `/api/v2/agent-conversations/${encodeURIComponent(conversationId)}`;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(toApiUrl(path), {
     ...init,
@@ -465,6 +469,56 @@ export const api = {
     const params = new URLSearchParams({ after: String(after) });
     return toApiUrl(
       `${agentConversationPath(productId, conversationId)}/turns/${encodeURIComponent(projectionId)}/events?${params}`,
+    );
+  },
+  listGlobalAgentTurns(
+    conversationId: string,
+    input?: { after?: string | null; limit?: number; taskId?: string | null },
+  ): Promise<AgentTurnPage> {
+    const params = new URLSearchParams({ limit: String(input?.limit ?? 20) });
+    if (input?.after) {
+      params.set("after", input.after);
+    }
+    if (input?.taskId) {
+      params.set("task_id", input.taskId);
+    }
+    return request(`${globalAgentConversationPath(conversationId)}/turns?${params}`);
+  },
+  submitGlobalAgentTurn(
+    conversationId: string,
+    input: SubmitAgentTurnInput,
+  ): Promise<SubmitAgentTurnResponse> {
+    return request(`${globalAgentConversationPath(conversationId)}/turns`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  getGlobalAgentTurn(conversationId: string, projectionId: string): Promise<AgentTurn> {
+    return request(
+      `${globalAgentConversationPath(conversationId)}/turns/${encodeURIComponent(projectionId)}`,
+    );
+  },
+  cancelGlobalAgentTurn(conversationId: string, projectionId: string): Promise<AgentTurn> {
+    return request(
+      `${globalAgentConversationPath(conversationId)}/turns/${encodeURIComponent(projectionId)}/cancel`,
+      { method: "POST" },
+    );
+  },
+  resumeGlobalAgentTurn(conversationId: string, projectionId: string): Promise<AgentTurn> {
+    return request(
+      `${globalAgentConversationPath(conversationId)}/turns/${encodeURIComponent(projectionId)}/resume`,
+      { method: "POST" },
+    );
+  },
+  answerGlobalAgentQuestion(
+    conversationId: string,
+    projectionId: string,
+    questionId: string,
+    answer: AgentQuestionAnswer,
+  ): Promise<AgentTurn> {
+    return request(
+      `${globalAgentConversationPath(conversationId)}/turns/${encodeURIComponent(projectionId)}/questions/${encodeURIComponent(questionId)}/answer`,
+      { method: "POST", body: JSON.stringify(answer) },
     );
   },
   getProductImageAssetMediaUrl(

@@ -24,6 +24,7 @@ from sqlalchemy import Enum as SqlEnum
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from productflow_backend.domain.enums import (
+    AgentConversationScope,
     AgentConversationStatus,
     AgentSessionStatus,
     AgentTaskStatus,
@@ -1053,27 +1054,51 @@ class AgentConversation(Base, TimestampMixin):
             "AND intake_request_hash IS NOT NULL AND length(intake_request_hash) = 64)",
             name="ck_agent_conversations_intake_idempotency_pair",
         ),
+        CheckConstraint(
+            "(scope_type = 'product_workflow' AND product_id IS NOT NULL AND workflow_draft_id IS NOT NULL) OR "
+            "(scope_type = 'global' AND product_id IS NULL AND workflow_draft_id IS NULL)",
+            name="ck_agent_conversations_scope_fields",
+        ),
+        CheckConstraint(
+            "scope_type IN ('product_workflow', 'global')",
+            name="ck_agent_conversations_scope_type",
+        ),
+        Index(
+            "ux_agent_conversations_session_global",
+            "session_id",
+            unique=True,
+            postgresql_where=text("scope_type = 'global'"),
+            sqlite_where=text("scope_type = 'global'"),
+        ),
         Index("ix_agent_conversations_product_status", "product_id", "status"),
         Index("ix_agent_conversations_session_updated", "session_id", "updated_at", "id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    scope_type: Mapped[AgentConversationScope] = mapped_column(
+        enum_value_column(AgentConversationScope),
+        default=AgentConversationScope.PRODUCT_WORKFLOW,
+        server_default=AgentConversationScope.PRODUCT_WORKFLOW.value,
+        nullable=False,
+    )
     session_id: Mapped[str | None] = mapped_column(
         String(36),
         ForeignKey("agent_sessions.id", ondelete="SET NULL", name="fk_agent_conversations_session_id"),
         nullable=True,
     )
-    product_id: Mapped[str] = mapped_column(
+    product_id: Mapped[str | None] = mapped_column(
         String(36),
         ForeignKey("products.id", ondelete="CASCADE", name="fk_agent_conversations_product_id"),
+        nullable=True,
     )
-    workflow_draft_id: Mapped[str] = mapped_column(
+    workflow_draft_id: Mapped[str | None] = mapped_column(
         String(36),
         ForeignKey(
             "workflow_drafts.id",
             ondelete="CASCADE",
             name="fk_agent_conversations_workflow_draft_id",
         ),
+        nullable=True,
     )
     harness_run_id: Mapped[str] = mapped_column(String(120))
     creation_idempotency_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
@@ -1086,11 +1111,11 @@ class AgentConversation(Base, TimestampMixin):
     )
 
     session: Mapped[AgentSession | None] = relationship(back_populates="conversations")
-    product: Mapped[Product] = relationship(
+    product: Mapped[Product | None] = relationship(
         back_populates="agent_conversations",
         foreign_keys=[product_id],
     )
-    workflow_draft: Mapped[WorkflowDraft] = relationship(
+    workflow_draft: Mapped[WorkflowDraft | None] = relationship(
         back_populates="agent_conversation",
         foreign_keys=[workflow_draft_id],
     )

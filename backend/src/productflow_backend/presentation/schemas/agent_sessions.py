@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from productflow_backend.domain.enums import AgentConversationStatus, AgentSessionStatus
+from productflow_backend.domain.enums import AgentConversationScope, AgentConversationStatus, AgentSessionStatus
 from productflow_backend.infrastructure.db.models import AgentSession
 
 
@@ -22,7 +22,8 @@ class RenameAgentSessionRequest(StrictAgentSessionRequest):
 
 class AgentSessionConversationResponse(BaseModel):
     conversation_id: str
-    product_id: str
+    scope_type: AgentConversationScope
+    product_id: str | None
     product_name: str
     conversation_status: AgentConversationStatus
     updated_at: datetime
@@ -47,13 +48,20 @@ def serialize_agent_session(agent_session: AgentSession) -> AgentSessionResponse
     conversations = [
         AgentSessionConversationResponse(
             conversation_id=conversation.id,
+            scope_type=conversation.scope_type,
             product_id=conversation.product_id,
-            product_name=conversation.product.name,
+            product_name=conversation.product.name if conversation.product is not None else "全局 Agent",
             conversation_status=conversation.status,
             updated_at=conversation.updated_at,
         )
-        for conversation in agent_session.conversations[:20]
-        if conversation.product is not None
+        for conversation in sorted(
+            agent_session.conversations,
+            key=lambda conversation: (
+                conversation.scope_type == AgentConversationScope.GLOBAL,
+                -conversation.updated_at.timestamp(),
+                conversation.id,
+            ),
+        )[:20]
     ]
     return AgentSessionResponse(
         id=agent_session.id,

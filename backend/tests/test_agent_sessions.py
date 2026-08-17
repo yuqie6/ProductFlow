@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import pytest
 from fastapi.testclient import TestClient
 from helpers import _login, _make_demo_image_bytes
+from sqlalchemy import select
 
 from productflow_backend.application.agent_product_intake import AgentProductSelectionV1
 from productflow_backend.application.agent_product_workspaces import create_agent_product_workspace
@@ -14,9 +15,12 @@ from productflow_backend.application.agent_sessions import (
     list_agent_sessions,
     rename_agent_session,
 )
+from productflow_backend.application.agent_tasks import create_agent_task
+from productflow_backend.application.agent_tools import get_agent_contract
 from productflow_backend.application.agent_workbenches import get_agent_workbench_bootstrap
+from productflow_backend.domain.enums import AgentConversationScope
 from productflow_backend.domain.errors import ConflictError
-from productflow_backend.infrastructure.db.models import AgentSession
+from productflow_backend.infrastructure.db.models import AgentConversation, AgentSession
 from productflow_backend.presentation.api import create_app
 
 
@@ -71,6 +75,34 @@ def test_agent_session_rename_and_archive_keep_conversations(db_session) -> None
     assert archived.archived_at is not None
     assert list_agent_sessions(db_session) == []
     assert list_agent_sessions(db_session, include_archived=True)[0].id == created.id
+
+
+def test_new_agent_session_has_one_global_conversation_and_contract(db_session) -> None:
+    created = create_agent_session(db_session, title="全局素材整理")
+
+    conversation = db_session.scalar(
+        select(AgentConversation).where(AgentConversation.session_id == created.id)
+    )
+    assert conversation is not None
+    assert conversation.scope_type == AgentConversationScope.GLOBAL
+    assert conversation.product_id is None
+    assert conversation.workflow_draft_id is None
+
+    contract = get_agent_contract(db_session, conversation.id)
+    assert contract["scope_type"] == AgentConversationScope.GLOBAL
+    assert contract["product_id"] is None
+    assert contract["workflow_draft_id"] is None
+    assert contract["workflow_draft_schema"] == {}
+
+    task = create_agent_task(
+        db_session,
+        session_id=created.id,
+        conversation_id=conversation.id,
+        title="检查全局素材",
+        goal="找出没有标签的图片",
+    )
+    assert task.product_id is None
+    assert task.workflow_draft_id is None
 
 
 def test_session_scoped_workbench_does_not_fall_back_to_another_session(db_session) -> None:

@@ -1,0 +1,166 @@
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type InfiniteData,
+} from "@tanstack/react-query";
+import { useCallback, useMemo } from "react";
+
+import { api } from "../../lib/api";
+import type {
+  AgentPageContextSnapshotInput,
+  AgentQuestionAnswer,
+  AgentTurn,
+  AgentTurnPage,
+  SubmitAgentTurnInput,
+} from "../../lib/types";
+import {
+  AgentResumeAfterAnswerError,
+  flattenAgentTurnPages,
+  selectNewestAgentTurnProjection,
+  upsertAgentTurnPageData,
+} from "./useAgentConversation";
+import { isAgentTurnTerminal } from "./agentEventReducer";
+
+const PAGE_SIZE = 20;
+const PROJECTION_POLL_MS = 1_500;
+
+interface UseGlobalAgentConversationInput {
+  conversationId: string;
+  taskId?: string | null;
+  pageContext?: AgentPageContextSnapshotInput | null;
+  enabled?: boolean;
+}
+
+interface AnswerQuestionInput {
+  projectionId: string;
+  questionId: string;
+  answer: AgentQuestionAnswer;
+}
+
+export function globalAgentTurnsQueryKey(conversationId: string, taskId?: string | null) {
+  return ["global-agent-turns", conversationId, taskId ?? null] as const;
+}
+
+export function globalAgentTurnQueryKey(conversationId: string, projectionId: string) {
+  return ["global-agent-turn", conversationId, projectionId] as const;
+}
+
+export function useGlobalAgentConversation({
+  conversationId,
+  taskId = null,
+  pageContext = null,
+  enabled = true,
+}: UseGlobalAgentConversationInput) {
+  const queryClient = useQueryClient();
+  const turnsKey = useMemo(
+    () => globalAgentTurnsQueryKey(conversationId, taskId),
+    [conversationId, taskId],
+  );
+
+  const turnsQuery = useInfiniteQuery({
+    queryKey: turnsKey,
+    queryFn: ({ pageParam }) =>
+      api.listGlobalAgentTurns(conversationId, {
+        after: pageParam,
+        limit: PAGE_SIZE,
+        taskId,
+      }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
+    enabled: Boolean(enabled && conversationId),
+  });
+  const pageTurns = useMemo(
+    () => flattenAgentTurnPages(turnsQuery.data?.pages),
+    [turnsQuery.data?.pages],
+  );
+  const latestPageTurn = pageTurns.at(-1) ?? null;
+  const latestProjectionQuery = useQuery({
+    queryKey: globalAgentTurnQueryKey(conversationId, latestPageTurn?.id ?? "none"),
+    queryFn: () => api.getGlobalAgentTurn(conversationId, latestPageTurn?.id ?? ""),
+    enabled: Boolean(enabled && conversationId && latestPageTurn && !isAgentTurnTerminal(latestPageTurn.status)),
+    refetchInterval: (query) => {
+      const projection = query.state.data;
+      return projection && isAgentTurnTerminal(projection.status) ? false : PROJECTION_POLL_MS;
+    },
+  });
+  const latestTurn = selectNewestAgentTurnProjection(latestPageTurn, latestProjectionQuery.data);
+  const turns = useMemo(
+    () =>
+      latestTurn && latestPageTurn && latestTurn.id === latestPageTurn.id
+        ? pageTurns.map((turn) => (turn.id === latestTurn.id ? latestTurn : turn))
+        : pageTurns,
+    [latestPageTurn, latestTurn, pageTurns],
+  );
+
+  const cacheTurn = useCallback(
+    (turn: AgentTurn) => {
+      queryClient.setQueryData<InfiniteData<AgentTurnPage, string | null>>(turnsKey, (current) =>
+        upsertAgentTurnPageData(current, turn),
+      );
+      queryClient.setQueryData(globalAgentTurnQueryKey(conversationId, turn.id), turn);
+    },
+    [conversationId, queryClient, turnsKey],
+  );
+
+  const submitTurnMutation = useMutation({
+    mutationFn: (input: SubmitAgentTurnInput) =>
+      api.submitGlobalAgentTurn(conversationId, {
+        ...input,
+        task_id: input.task_id ?? taskId,
+        page_context: input.page_context ?? pageContext,
+      }),
+    onSuccess: (response) => cacheTurn(response.turn),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: turnsKey }),
+  });
+  const cancelTurnMutation = useMutation({
+    mutationFn: (projectionId: string) => api.cancelGlobalAgentTurn(conversationId, projectionId),
+    onSuccess: cacheTurn,
+    onSettled: () => queryClient.invalidateQueries({ queryKey: turnsKey }),
+  });
+  const resumeTurnMutation = useMutation({
+    mutationFn: (projectionId: string) => api.resumeGlobalAgentTurn(conversationId, projectionId),
+    onSuccess: cacheTurn,
+    onSettled: () => queryClient.invalidateQueries({ queryKey: turnsKey }),
+  });
+  const answerQuestionMutation = useMutation({
+    mutationFn: async ({ projectionId, questionId, answer }: AnswerQuestionInput) => {
+      const answered = await api.answerGlobalAgentQuestion(
+        conversationId,
+        projectionId,
+        questionId,
+        answer,
+      );
+      cacheTurn(answered);
+      if (!answered.resume_required) {
+        return { answered, resumed: answered };
+      }
+      try {
+        const resumed = await api.resumeGlobalAgentTurn(conversationId, projectionId);
+        return { answered, resumed };
+      } catch (error) {
+        throw new AgentResumeAfterAnswerError(answered, error);
+      }
+    },
+    onSuccess: ({ resumed }) => cacheTurn(resumed),
+    onError: (error) => {
+      if (error instanceof AgentResumeAfterAnswerError) {
+        cacheTurn(error.answered);
+      }
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: turnsKey }),
+  });
+
+  return {
+    turns,
+    latestTurn,
+    activeTurn: latestTurn && !isAgentTurnTerminal(latestTurn.status) ? latestTurn : null,
+    turnsQuery,
+    latestProjectionQuery,
+    submitTurnMutation,
+    cancelTurnMutation,
+    resumeTurnMutation,
+    answerQuestionMutation,
+  };
+}

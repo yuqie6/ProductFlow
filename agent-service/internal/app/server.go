@@ -173,7 +173,17 @@ func (server *Server) turnInput(
 	}
 	var totalBytes int64
 	for _, assetID := range assetIDs {
-		image, err := server.manager.config.ProductFlow.AssetContent(request.Context(), entry.Scope.ConversationID, assetID)
+		var image productflow.AssetContent
+		var err error
+		if entry.Scope.ScopeType == scopeTypeGlobal {
+			image, err = server.manager.config.ProductFlow.GlobalMediaAssetContent(
+				request.Context(), entry.Scope.ConversationID, assetID,
+			)
+		} else {
+			image, err = server.manager.config.ProductFlow.AssetContent(
+				request.Context(), entry.Scope.ConversationID, assetID,
+			)
+		}
 		if err != nil {
 			return agenttask.TurnInput{}, err
 		}
@@ -182,7 +192,7 @@ func (server *Server) turnInput(
 			return agenttask.TurnInput{}, errors.New("selected assets exceed the Turn image byte limit")
 		}
 		content = append(content,
-			agenttask.InputContent{Type: agenttask.ContentInputText, Text: "Product reference asset ID: " + assetID},
+			agenttask.InputContent{Type: agenttask.ContentInputText, Text: assetReferenceLabel(entry.Scope) + assetID},
 			agenttask.InputContent{Type: agenttask.ContentInputImage, Image: &agenttask.InputImage{
 				Data: image.Data, MediaType: image.MediaType, SizeBytes: image.SizeBytes,
 				Detail: agenttask.ImageDetailHigh, CheckpointMode: agenttask.ImageCheckpointEmbed,
@@ -194,6 +204,13 @@ func (server *Server) turnInput(
 		return agenttask.TurnInput{}, err
 	}
 	return input, nil
+}
+
+func assetReferenceLabel(scope Scope) string {
+	if scope.ScopeType == scopeTypeGlobal {
+		return "Global media library asset ID: "
+	}
+	return "Product reference asset ID: "
 }
 
 func (server *Server) delegate(writer http.ResponseWriter, request *http.Request) {

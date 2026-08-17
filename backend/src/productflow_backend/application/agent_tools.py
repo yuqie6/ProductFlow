@@ -34,6 +34,8 @@ from productflow_backend.application.gallery_mutations import (
 )
 from productflow_backend.application.legacy_archive_rebuilds import legacy_archive_seed_summary
 from productflow_backend.application.media_assets import inspect_image_bytes
+from productflow_backend.application.media_library.queries import get_media_library_asset, list_media_library_assets
+from productflow_backend.application.media_library.service import validate_media_library_asset_for_use
 from productflow_backend.application.workflow_drafts.contracts import (
     WorkflowDraftPayloadV1,
     parse_workflow_draft_payload,
@@ -41,11 +43,12 @@ from productflow_backend.application.workflow_drafts.contracts import (
 )
 from productflow_backend.application.workflow_drafts.service import validate_workflow_draft_for_confirmation
 from productflow_backend.application.workflow_recipes.service import parse_recipe_payload_or_raise
-from productflow_backend.domain.enums import AgentToolMutationStatus, MediaVerificationStatus
+from productflow_backend.domain.enums import AgentConversationScope, AgentToolMutationStatus, MediaVerificationStatus
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
     AgentToolMutation,
+    MediaLibraryAsset,
     Product,
     ProductAssetFolder,
     ProductImageAsset,
@@ -90,6 +93,18 @@ WORKFLOW_AGENT_SYSTEM_PROMPT = """你是 ProductFlow 的商品工作流设计 Ag
    可以建议调整图片类型或数量，但必须明确说明变化并等待用户确认，不能静默改写。
 9. Logo、认证、工厂或其他专有素材只能来自用户提供的真实资产。
    缺失时应询问用户、降低对应设计要求或移除相关图片类型，不能臆造。
+"""
+
+GLOBAL_AGENT_SYSTEM_PROMPT = """你是 ProductFlow 的全局素材与工作流辅助 Agent。
+你的作用域是整个 ProductFlow 应用，不绑定某一个商品、工作流或当前页面。
+
+工作原则：
+1. 用户可以在任意页面询问全局素材；当前页面只帮助你理解“这些图片”和用户当下的工作位置。
+2. 查询素材时优先使用全局素材库的列表和明确图片的 inspect；不要凭文件名猜测图片内容。
+3. 你当前可以读取全局素材库的元数据和用户明确要求查看的图片，单次最多 inspect 6 张。
+4. 你可以跨商品和工作流理解范围，但必须以 ProductFlow 返回的真实数据为准。
+5. 涉及整理、归档、同步到工作流、修改商品或执行工作流的副作用，必须先形成可审阅的 Draft，等待用户确认；不能直接改库。
+6. 不要输出 base64、data URL、存储路径或内部 URL；用资产名称、来源和可验证的对象 ID 描述结果。
 """
 
 
@@ -157,10 +172,28 @@ def get_agent_task_contract(session: Session, task_id: str) -> dict[str, Any]:
 
 
 def _agent_contract_for_conversation(conversation: AgentConversation) -> dict[str, Any]:
+    if conversation.scope_type == AgentConversationScope.GLOBAL:
+        return {
+            "schema_version": 1,
+            "scope_type": AgentConversationScope.GLOBAL,
+            "conversation_id": conversation.id,
+            "task_id": None,
+            "task_goal": None,
+            "product_id": None,
+            "workflow_draft_id": None,
+            "harness_run_id": conversation.harness_run_id,
+            "current_draft_version": 0,
+            "system_prompt": GLOBAL_AGENT_SYSTEM_PROMPT,
+            "workflow_draft_schema": {},
+            "tool_contract_version": AGENT_TOOL_CONTRACT_VERSION,
+        }
     draft = conversation.workflow_draft
+    if conversation.product_id is None or draft is None:
+        raise ConflictError("商品工作流 Agent conversation 缺少商品或 WorkflowDraft")
     current_revision = draft.current_revision
     return {
         "schema_version": 1,
+        "scope_type": AgentConversationScope.PRODUCT_WORKFLOW,
         "conversation_id": conversation.id,
         "task_id": None,
         "task_goal": None,
@@ -181,6 +214,7 @@ def validate_agent_workflow_draft(
     value: dict[str, Any],
 ) -> WorkflowDraftPayloadV1:
     conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
+    _require_product_conversation(conversation)
     try:
         artifact = parse_workflow_draft_payload(value)
     except ValidationError as exc:
@@ -199,6 +233,7 @@ def validate_agent_workflow_draft(
 
 def get_agent_product_context(session: Session, conversation_id: str) -> dict[str, Any]:
     conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
+    _require_product_conversation(conversation)
     product = session.scalar(
         select(Product)
         .options(selectinload(Product.current_fact_set_version))
@@ -363,6 +398,7 @@ def list_agent_product_assets(
     limit: int = AGENT_ASSET_LIST_DEFAULT_LIMIT,
 ) -> AgentAssetPage:
     conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
+    _require_product_conversation(conversation)
     page = list_gallery_assets(
         session,
         product_id=conversation.product_id,
@@ -386,6 +422,7 @@ def inspect_agent_product_assets(
     asset_ids: list[str],
 ) -> list[dict[str, Any]]:
     conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
+    _require_product_conversation(conversation)
     normalized_ids = _normalize_explicit_asset_ids(asset_ids)
     assets = _load_scoped_assets(
         session,
@@ -404,6 +441,7 @@ def read_agent_product_asset_content(
     storage: LocalStorage | None = None,
 ) -> AgentAssetContent:
     conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
+    _require_product_conversation(conversation)
     assets = _load_scoped_assets(
         session,
         product_id=conversation.product_id,
@@ -435,6 +473,92 @@ def read_agent_product_asset_content(
         media_type=actual.mime_type,
         display_name=asset.display_name,
     )
+
+
+def list_agent_global_media_assets(
+    session: Session,
+    *,
+    conversation_id: str,
+    query: str = "",
+    cursor: str | None = None,
+    limit: int = AGENT_ASSET_LIST_DEFAULT_LIMIT,
+) -> AgentAssetPage:
+    conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
+    _require_global_conversation(conversation)
+    page = list_media_library_assets(
+        session,
+        limit=limit,
+        cursor=cursor,
+        include_archived=False,
+        search=query,
+    )
+    return AgentAssetPage(
+        items=[agent_media_library_asset_metadata(asset) for asset in page.items],
+        next_cursor=page.next_cursor,
+    )
+
+
+def inspect_agent_global_media_assets(
+    session: Session,
+    *,
+    conversation_id: str,
+    asset_ids: list[str],
+) -> list[dict[str, Any]]:
+    conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
+    _require_global_conversation(conversation)
+    normalized_ids = _normalize_explicit_asset_ids(asset_ids)
+    assets = list(
+        session.scalars(
+            select(MediaLibraryAsset)
+            .options(
+                selectinload(MediaLibraryAsset.media_object),
+                selectinload(MediaLibraryAsset.folder),
+            )
+            .where(
+                MediaLibraryAsset.id.in_(normalized_ids),
+                MediaLibraryAsset.is_archived.is_(False),
+            )
+        ).all()
+    )
+    if len(assets) != len(normalized_ids):
+        raise NotFoundError("全局素材不存在或已归档")
+    by_id = {asset.id: asset for asset in assets}
+    for asset in assets:
+        validate_media_library_asset_for_use(asset)
+    return [agent_media_library_asset_metadata(by_id[asset_id]) for asset_id in normalized_ids]
+
+
+def read_agent_global_media_asset_content(
+    session: Session,
+    *,
+    conversation_id: str,
+    asset_id: str,
+    storage: LocalStorage | None = None,
+) -> AgentAssetContent:
+    conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
+    _require_global_conversation(conversation)
+    asset = get_media_library_asset(session, asset_id=asset_id.strip())
+    media = validate_media_library_asset_for_use(asset)
+    if media.byte_size is None or media.byte_size > AGENT_ASSET_MAX_BYTES:
+        raise BusinessValidationError("图片超过 Agent 单张图片大小上限")
+    resolved_storage = storage or LocalStorage()
+    path = resolved_storage.resolve(media.storage_path)
+    try:
+        with path.open("rb") as file:
+            content = file.read(AGENT_ASSET_MAX_BYTES + 1)
+    except OSError as exc:
+        raise NotFoundError("全局素材文件不存在") from exc
+    if len(content) > AGENT_ASSET_MAX_BYTES:
+        raise BusinessValidationError("图片超过 Agent 单张图片大小上限")
+    actual = inspect_image_bytes(content, expected_mime_type=media.mime_type)
+    if (
+        actual.byte_size != media.byte_size
+        or actual.width != media.width
+        or actual.height != media.height
+        or actual.sha256 != media.sha256
+    ):
+        raise ConflictError("全局素材文件与已核验媒体元数据不一致")
+    return AgentAssetContent(content=content, media_type=actual.mime_type, display_name=asset.display_name)
 
 
 def prepare_agent_asset_rename(
@@ -950,6 +1074,42 @@ def agent_gallery_asset_metadata(record: GalleryAssetRecord) -> dict[str, Any]:
     return metadata
 
 
+def agent_media_library_asset_metadata(asset: MediaLibraryAsset) -> dict[str, Any]:
+    media = asset.media_object
+    return {
+        "id": asset.id,
+        "display_name": asset.display_name,
+        "original_filename": asset.original_filename,
+        "origin_type": asset.source_type,
+        "image_type_key": None,
+        "image_type_title": None,
+        "user_folder_id": asset.folder_id,
+        "user_folder_name": asset.folder.name if asset.folder is not None else None,
+        "mime_type": media.mime_type,
+        "byte_size": media.byte_size,
+        "width": media.width,
+        "height": media.height,
+        "verification_status": media.verification_status.value,
+        "parent_asset_id": None,
+        "generation": None,
+        "created_at": asset.created_at.isoformat(),
+    }
+
+
+def _require_product_conversation(conversation: AgentConversation) -> None:
+    if (
+        conversation.scope_type != AgentConversationScope.PRODUCT_WORKFLOW
+        or conversation.product_id is None
+        or conversation.workflow_draft_id is None
+    ):
+        raise ConflictError("当前 Agent conversation 不是商品工作流作用域")
+
+
+def _require_global_conversation(conversation: AgentConversation) -> None:
+    if conversation.scope_type != AgentConversationScope.GLOBAL:
+        raise ConflictError("当前 Agent conversation 不是全局作用域")
+
+
 def _load_scoped_assets(
     session: Session,
     *,
@@ -1302,6 +1462,7 @@ __all__ = [
     "AgentToolReconcileResult",
     "agent_asset_metadata",
     "agent_gallery_asset_metadata",
+    "agent_media_library_asset_metadata",
     "apply_agent_asset_move",
     "apply_agent_asset_rename",
     "apply_agent_folder_create",
@@ -1309,13 +1470,16 @@ __all__ = [
     "get_agent_contract",
     "get_agent_task_contract",
     "get_agent_product_context",
+    "inspect_agent_global_media_assets",
     "inspect_agent_product_assets",
+    "list_agent_global_media_assets",
     "list_agent_product_assets",
     "prepare_agent_asset_move",
     "prepare_agent_asset_rename",
     "prepare_agent_folder_create",
     "prepare_agent_folder_rename",
     "read_agent_product_asset_content",
+    "read_agent_global_media_asset_content",
     "reconcile_agent_asset_move",
     "reconcile_agent_asset_rename",
     "reconcile_agent_folder_create",

@@ -85,6 +85,13 @@ class AgentConversationStatus(StrEnum):
     UNKNOWN = "unknown"
 
 
+class AgentConversationScope(StrEnum):
+    """Agent conversation 的业务作用域。"""
+
+    PRODUCT_WORKFLOW = "product_workflow"
+    GLOBAL = "global"
+
+
 class AgentSessionStatus(StrEnum):
     """全局 Agent Session 的生命周期状态。"""
 

@@ -7,6 +7,7 @@ from productflow_backend.application.agent_sessions import (
     AGENT_SESSION_LIST_MAX_ITEMS,
     archive_agent_session,
     create_agent_session,
+    ensure_global_agent_conversations,
     list_agent_sessions,
     rename_agent_session,
 )
@@ -31,6 +32,7 @@ def list_agent_sessions_endpoint(
     include_archived: bool = Query(default=False),
     session: Session = Depends(get_session),
 ) -> AgentSessionListResponse:
+    ensure_global_agent_conversations(session)
     return AgentSessionListResponse(
         items=[
             serialize_agent_session(agent_session)

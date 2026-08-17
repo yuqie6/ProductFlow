@@ -43,7 +43,7 @@ class AgentTurnSubmission:
 def submit_agent_turn(
     session: Session,
     *,
-    product_id: str,
+    product_id: str | None,
     conversation_id: str,
     input_text: str,
     input_asset_ids: list[str],
@@ -128,7 +128,7 @@ def submit_agent_turn(
 def refresh_agent_turn(
     session: Session,
     *,
-    product_id: str,
+    product_id: str | None,
     conversation_id: str,
     projection_id: str,
     gateway: AgentServiceClient,
@@ -161,7 +161,7 @@ def refresh_agent_turn(
 def control_agent_turn(
     session: Session,
     *,
-    product_id: str,
+    product_id: str | None,
     conversation_id: str,
     projection_id: str,
     command: AgentControlCommand,
@@ -228,7 +228,7 @@ def control_agent_turn(
 def answer_agent_question(
     session: Session,
     *,
-    product_id: str,
+    product_id: str | None,
     conversation_id: str,
     projection_id: str,
     question_id: str,
@@ -272,7 +272,7 @@ def answer_agent_question(
 def synchronize_agent_turn_state(
     session: Session,
     *,
-    product_id: str,
+    product_id: str | None,
     conversation_id: str,
     projection_id: str,
     state: AgentServiceTurnState,
@@ -311,6 +311,8 @@ def synchronize_agent_turn_state(
     if state.status == AgentTurnStatus.AWAITING_CONFIRMATION:
         if state.artifact is None:
             raise ConflictError("Agent Turn 待确认状态缺少 required artifact")
+        if conversation.workflow_draft_id is None or product_id is None:
+            raise ConflictError("全局 Agent Turn 不能返回 WorkflowDraft artifact")
         projection = attach_agent_workflow_draft_artifact(
             session,
             product_id=product_id,

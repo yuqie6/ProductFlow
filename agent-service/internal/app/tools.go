@@ -276,6 +276,117 @@ func scopedReadTools(client *productflow.Client, scope Scope) []agenttask.Tool {
 	}
 }
 
+const (
+	listGlobalMediaAssetsToolName    = "list_global_media_library_assets_v1"
+	inspectGlobalMediaAssetsToolName = "inspect_global_media_library_assets_v1"
+)
+
+func scopedGlobalReadTools(client *productflow.Client, scope Scope) []agenttask.Tool {
+	return []agenttask.Tool{
+		{
+			Name:        listGlobalMediaAssetsToolName,
+			Description: "List a bounded page of metadata from the canonical global media library. This never returns image bytes or URLs.",
+			Parameters: map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"query":  map[string]any{"type": "string", "maxLength": 255},
+					"cursor": map[string]any{"type": "string", "maxLength": 4096},
+					"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": maxListedAssets},
+				},
+				"required": []string{"query", "cursor", "limit"},
+			},
+			Strict: true,
+			Handler: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var arguments struct {
+					Query  string `json:"query"`
+					Cursor string `json:"cursor"`
+					Limit  int    `json:"limit"`
+				}
+				if err := decodeStrictObject(raw, &arguments); err != nil {
+					return "", err
+				}
+				if arguments.Limit < 1 || arguments.Limit > maxListedAssets {
+					return "", fmt.Errorf("limit must be between 1 and %d", maxListedAssets)
+				}
+				result, err := client.ListGlobalMediaAssets(
+					ctx, scope.ConversationID, arguments.Query, arguments.Cursor, arguments.Limit,
+				)
+				if err != nil {
+					return "", err
+				}
+				encoded, err := json.Marshal(result)
+				return string(encoded), err
+			},
+		},
+		{
+			Name:        inspectGlobalMediaAssetsToolName,
+			Description: "Inspect up to six explicitly selected images from the canonical global media library as native multimodal content.",
+			Parameters: map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"asset_ids": map[string]any{
+						"type": "array", "minItems": 1, "maxItems": maxInspectedAssets,
+						"items": map[string]any{"type": "string", "minLength": 1, "maxLength": 64},
+					},
+				},
+				"required": []string{"asset_ids"},
+			},
+			Strict: true,
+			ResultHandler: func(ctx context.Context, raw json.RawMessage) (agenttask.ToolResult, error) {
+				var arguments struct {
+					AssetIDs []string `json:"asset_ids"`
+				}
+				if err := decodeStrictObject(raw, &arguments); err != nil {
+					return agenttask.ToolResult{}, err
+				}
+				assetIDs, err := uniqueAssetIDs(arguments.AssetIDs)
+				if err != nil {
+					return agenttask.ToolResult{}, err
+				}
+				metadata, err := client.InspectGlobalMediaAssets(ctx, scope.ConversationID, assetIDs)
+				if err != nil {
+					return agenttask.ToolResult{}, err
+				}
+				if len(metadata) != len(assetIDs) {
+					return agenttask.ToolResult{}, errors.New("ProductFlow returned an incomplete global asset inspection result")
+				}
+				byID := make(map[string]productflow.AssetMetadata, len(metadata))
+				for _, asset := range metadata {
+					byID[asset.ID] = asset
+				}
+				content := make([]agenttask.ToolResultContent, 0, len(assetIDs)*2)
+				var totalBytes int64
+				for _, assetID := range assetIDs {
+					asset, ok := byID[assetID]
+					if !ok {
+						return agenttask.ToolResult{}, fmt.Errorf("ProductFlow omitted requested global asset %s", assetID)
+					}
+					image, err := client.GlobalMediaAssetContent(ctx, scope.ConversationID, assetID)
+					if err != nil {
+						return agenttask.ToolResult{}, err
+					}
+					totalBytes += image.SizeBytes
+					if totalBytes > agenttask.MaxTotalToolResultImageBytes {
+						return agenttask.ToolResult{}, errors.New("selected global asset bytes exceed the tool result limit")
+					}
+					label, err := json.Marshal(asset)
+					if err != nil {
+						return agenttask.ToolResult{}, err
+					}
+					content = append(content,
+						agenttask.ToolResultContent{Type: agenttask.ContentInputText, Text: string(label)},
+						agenttask.ToolResultContent{Type: agenttask.ContentInputImage, Image: &agenttask.InputImage{
+							Data: image.Data, MediaType: image.MediaType, SizeBytes: image.SizeBytes,
+							Detail: agenttask.ImageDetailHigh, CheckpointMode: agenttask.ImageCheckpointEmbed,
+						}},
+					)
+				}
+				return agenttask.ToolResult{SchemaVersion: agenttask.ToolResultSchemaVersion, Content: content}, nil
+			},
+		},
+	}
+}
+
 func scopedDurableTools(client *productflow.Client, scope Scope) []agenttask.DurableTool {
 	return []agenttask.DurableTool{
 		{

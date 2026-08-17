@@ -93,7 +93,7 @@ def cancel_agent_task_endpoint(
 ) -> AgentTaskResponse:
     task = get_agent_task_or_raise(session, task_id)
     projection = None
-    if task.current_turn_id is not None and task.conversation_id is not None and task.product_id is not None:
+    if task.current_turn_id is not None and task.conversation_id is not None:
         projection = get_agent_turn_or_raise(
             session,
             product_id=task.product_id,

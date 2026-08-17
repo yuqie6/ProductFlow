@@ -18,7 +18,11 @@ import (
 
 var canonicalUUID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 
-const productFlowToolContractVersion = 3
+const (
+	productFlowToolContractVersion = 3
+	scopeTypeProductWorkflow       = "product_workflow"
+	scopeTypeGlobal                = "global"
+)
 
 type ManagerConfig struct {
 	DataRoot    string
@@ -117,6 +121,16 @@ func (manager *Manager) getEntry(
 	if expectedTaskID != contractTaskID {
 		return nil, errors.New("ProductFlow returned an invalid task contract")
 	}
+	scopeType := strings.TrimSpace(contract.ScopeType)
+	if scopeType == "" {
+		// Existing ProductFlow contracts and persisted journals predate explicit scope_type.
+		scopeType = scopeTypeProductWorkflow
+	}
+	if scopeType != scopeTypeProductWorkflow && scopeType != scopeTypeGlobal {
+		return nil, fmt.Errorf("ProductFlow returned an invalid Agent scope_type %q", scopeType)
+	}
+	productID := optionalContractValue(contract.ProductID)
+	workflowDraftID := optionalContractValue(contract.WorkflowDraftID)
 	contractConversationID := strings.ToLower(strings.TrimSpace(contract.ConversationID))
 	if expectedConversationID != "" && contractConversationID != expectedConversationID {
 		return nil, errors.New("ProductFlow returned an invalid conversation scope")
@@ -127,12 +141,19 @@ func (manager *Manager) getEntry(
 	}
 	scope := Scope{
 		SchemaVersion: scopeSchemaVersion, ConversationID: contractConversationID,
-		TaskID:    contractTaskID,
-		ProductID: contract.ProductID, WorkflowDraftID: contract.WorkflowDraftID, RunID: contract.HarnessRunID,
+		ScopeType: scopeType, TaskID: contractTaskID,
+		ProductID: productID, WorkflowDraftID: workflowDraftID, RunID: contract.HarnessRunID,
 	}
-	if !canonicalUUID.MatchString(strings.ToLower(scope.ConversationID)) || !canonicalUUID.MatchString(strings.ToLower(scope.ProductID)) ||
-		!canonicalUUID.MatchString(strings.ToLower(scope.WorkflowDraftID)) || strings.TrimSpace(scope.RunID) == "" {
+	if !canonicalUUID.MatchString(strings.ToLower(scope.ConversationID)) || strings.TrimSpace(scope.RunID) == "" {
 		return nil, errors.New("ProductFlow returned an invalid Agent contract")
+	}
+	if scope.ScopeType == scopeTypeProductWorkflow {
+		if !canonicalUUID.MatchString(strings.ToLower(scope.ProductID)) ||
+			!canonicalUUID.MatchString(strings.ToLower(scope.WorkflowDraftID)) {
+			return nil, errors.New("ProductFlow returned an invalid product Agent contract")
+		}
+	} else if scope.ProductID != "" || scope.WorkflowDraftID != "" {
+		return nil, errors.New("ProductFlow global Agent contract must not include product scope IDs")
 	}
 	if expectedTaskID != "" && scope.TaskID != expectedTaskID {
 		return nil, errors.New("ProductFlow returned an invalid task scope")
@@ -141,13 +162,14 @@ func (manager *Manager) getEntry(
 	if err != nil {
 		return nil, err
 	}
-	runnerConfig := agenttask.Config{
-		Database: database, Workspace: workspace, SkillUserHome: workspace,
-		Provider: providerConfig, Policy: manager.config.Policy,
-		SystemPrompt: agentSystemPrompt(contract.SystemPrompt, contract.TaskGoal),
-		Tools:        scopedReadTools(manager.config.ProductFlow, scope),
-		DurableTools: scopedDurableTools(manager.config.ProductFlow, scope),
-		RequiredArtifact: &agenttask.RequiredArtifact{
+	readTools := scopedReadTools(manager.config.ProductFlow, scope)
+	var durableTools []agenttask.DurableTool
+	var requiredArtifact *agenttask.RequiredArtifact
+	if scope.ScopeType == scopeTypeGlobal {
+		readTools = scopedGlobalReadTools(manager.config.ProductFlow, scope)
+	} else {
+		durableTools = scopedDurableTools(manager.config.ProductFlow, scope)
+		requiredArtifact = &agenttask.RequiredArtifact{
 			Name:                         agenttask.WorkflowDraftToolName,
 			Description:                  "Submit the complete validated ProductFlow workflow draft for user confirmation.",
 			Schema:                       contract.WorkflowDraftSchema,
@@ -155,7 +177,13 @@ func (manager *Manager) getEntry(
 			Validate: func(ctx context.Context, value json.RawMessage) error {
 				return manager.config.ProductFlow.ValidateWorkflowDraft(ctx, scope.ConversationID, value)
 			},
-		},
+		}
+	}
+	runnerConfig := agenttask.Config{
+		Database: database, Workspace: workspace, SkillUserHome: workspace,
+		Provider: providerConfig, Policy: manager.config.Policy,
+		SystemPrompt: agentSystemPrompt(contract.SystemPrompt, contract.TaskGoal),
+		Tools:        readTools, DurableTools: durableTools, RequiredArtifact: requiredArtifact,
 	}
 	service, err := agenttask.OpenService(agenttask.ServiceConfig{
 		Runner:        runnerConfig,
@@ -183,6 +211,13 @@ func agentSystemPrompt(base string, taskGoal *string) string {
 		return base
 	}
 	return base + "\n\n当前 Agent Task 的固定目标（不会随页面路由变化）：\n" + goal
+}
+
+func optionalContractValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
 }
 
 func (manager *Manager) providerConfig(ctx context.Context) (agenttask.ProviderConfig, error) {

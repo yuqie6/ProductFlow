@@ -17,14 +17,16 @@ import { ApiError, api } from "../lib/api";
 import type { TranslationKey } from "../lib/i18n";
 import { useI18n } from "../lib/preferences";
 import type {
+  AgentPageContextSnapshotInput,
   AgentSession,
   AgentTask,
   AgentTaskStatus,
   CreateAgentTaskInput,
 } from "../lib/types";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { GlobalAgentConversationPanel } from "../pages/agent-workbench/GlobalAgentConversationPanel";
 
-type GlobalAgentDockTab = "tasks" | "sessions";
+type GlobalAgentDockTab = "chat" | "tasks" | "sessions";
 
 const TASK_STATUS_LABEL_KEYS = {
   queued: "globalAgent.taskStatus.queued",
@@ -63,6 +65,14 @@ interface AgentWorkspaceTarget {
   conversationId: string;
 }
 
+interface AgentConversationTarget {
+  conversationId: string;
+  sessionId: string;
+  scopeType: "product_workflow" | "global";
+  productId: string | null;
+  productName: string;
+}
+
 export function GlobalAgentDock() {
   const { t } = useI18n();
   const navigate = useNavigate();
@@ -70,7 +80,7 @@ export function GlobalAgentDock() {
   const queryClient = useQueryClient();
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<GlobalAgentDockTab>("tasks");
+  const [tab, setTab] = useState<GlobalAgentDockTab>("chat");
   const [search, setSearch] = useState("");
   const [taskFormOpen, setTaskFormOpen] = useState(false);
   const [sessionFormOpen, setSessionFormOpen] = useState(false);
@@ -80,6 +90,8 @@ export function GlobalAgentDock() {
   const [taskTitle, setTaskTitle] = useState("");
   const [taskGoal, setTaskGoal] = useState("");
   const [archiveTarget, setArchiveTarget] = useState<AgentSession | null>(null);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 
   const sessionsQuery = useQuery({
     queryKey: ["agent-sessions", true],
@@ -127,12 +139,26 @@ export function GlobalAgentDock() {
   const activeTaskCount = tasks.filter((task) => ACTIVE_TASK_STATUSES.has(task.status)).length;
   const workspaceByConversationId = useMemo(() => {
     const entries = sessions.flatMap((session) =>
+      session.conversations
+        .filter((conversation) => conversation.scope_type === "product_workflow" && conversation.product_id)
+        .map((conversation) => [conversation.conversation_id, {
+          productId: conversation.product_id as string,
+          conversationId: conversation.conversation_id,
+          productName: conversation.product_name,
+          sessionId: session.id,
+        }] as const),
+    );
+    return new Map(entries);
+  }, [sessions]);
+  const conversationById = useMemo(() => {
+    const entries = sessions.flatMap((session) =>
       session.conversations.map((conversation) => [conversation.conversation_id, {
-        productId: conversation.product_id,
         conversationId: conversation.conversation_id,
-        productName: conversation.product_name,
         sessionId: session.id,
-      }] as const),
+        scopeType: conversation.scope_type,
+        productId: conversation.product_id,
+        productName: conversation.product_name,
+      }] satisfies [string, AgentConversationTarget]),
     );
     return new Map(entries);
   }, [sessions]);
@@ -141,6 +167,10 @@ export function GlobalAgentDock() {
     [sessions],
   );
   const currentSessionId = new URLSearchParams(location.search).get("agent_session_id");
+  const activeSessionId = selectedSessionId ?? currentSessionId ?? workspaceSessions[0]?.id ?? sessions[0]?.id ?? null;
+  const activeSession = sessions.find((session) => session.id === activeSessionId) ?? null;
+  const globalConversation = activeSession?.conversations.find((conversation) => conversation.scope_type === "global") ?? null;
+  const pageContext = buildPageContext(location.pathname, location.search);
   const normalizedSearch = search.trim().toLocaleLowerCase();
   const visibleSessions = useMemo(() => {
     if (!normalizedSearch) {
@@ -156,11 +186,11 @@ export function GlobalAgentDock() {
       return tasks;
     }
     return tasks.filter((task) => {
-      const workspace = task.conversation_id ? workspaceByConversationId.get(task.conversation_id) : null;
-      const productName = workspace?.productName ?? "";
+      const conversation = task.conversation_id ? conversationById.get(task.conversation_id) : null;
+      const productName = conversation?.productName ?? "";
       return `${task.title} ${task.goal} ${productName}`.toLocaleLowerCase().includes(normalizedSearch);
     });
-  }, [normalizedSearch, tasks, workspaceByConversationId]);
+  }, [conversationById, normalizedSearch, tasks]);
 
   const selectedTaskSession = workspaceSessions.find((session) => session.id === taskSessionId) ?? null;
   const taskWorkspaces = selectedTaskSession?.conversations ?? [];
@@ -175,13 +205,19 @@ export function GlobalAgentDock() {
     if (!selectedSession) {
       const nextSession = workspaceSessions[0];
       setTaskSessionId(nextSession.id);
-      setTaskConversationId(nextSession.conversations[0]?.conversation_id ?? "");
+      setTaskConversationId(preferredConversation(nextSession)?.conversation_id ?? "");
       return;
     }
     if (!selectedSession.conversations.some((conversation) => conversation.conversation_id === taskConversationId)) {
-      setTaskConversationId(selectedSession.conversations[0]?.conversation_id ?? "");
+      setTaskConversationId(preferredConversation(selectedSession)?.conversation_id ?? "");
     }
   }, [taskConversationId, taskSessionId, workspaceSessions]);
+
+  useEffect(() => {
+    if (!selectedSessionId && activeSessionId) {
+      setSelectedSessionId(activeSessionId);
+    }
+  }, [activeSessionId, selectedSessionId]);
 
   const invalidateAgentLists = () => {
     void queryClient.invalidateQueries({ queryKey: ["agent-sessions", true] });
@@ -190,9 +226,12 @@ export function GlobalAgentDock() {
 
   const createSessionMutation = useMutation({
     mutationFn: () => api.createAgentSession({ title: sessionTitle.trim() }),
-    onSuccess: () => {
+    onSuccess: (session) => {
       setSessionTitle("");
       setSessionFormOpen(false);
+      setSelectedSessionId(session.id);
+      setSelectedTaskId(null);
+      setTab("chat");
       invalidateAgentLists();
     },
   });
@@ -205,6 +244,7 @@ export function GlobalAgentDock() {
       setTab("tasks");
       invalidateAgentLists();
       const workspace = task.conversation_id ? workspaceByConversationId.get(task.conversation_id) : null;
+      const conversation = task.conversation_id ? conversationById.get(task.conversation_id) : null;
       if (task.product_id && task.session_id) {
         navigate(
           `/products/${encodeURIComponent(task.product_id)}?agent_session_id=${encodeURIComponent(task.session_id)}&agent_task_id=${encodeURIComponent(task.id)}`,
@@ -215,6 +255,10 @@ export function GlobalAgentDock() {
           `/products/${encodeURIComponent(workspace.productId)}?agent_session_id=${encodeURIComponent(task.session_id)}&agent_task_id=${encodeURIComponent(task.id)}`,
         );
         setOpen(false);
+      } else if (conversation?.scopeType === "global") {
+        setSelectedSessionId(task.session_id);
+        setSelectedTaskId(task.id);
+        setTab("chat");
       }
     },
   });
@@ -238,10 +282,15 @@ export function GlobalAgentDock() {
     navigate(`/products/${encodeURIComponent(target.productId)}?${params}`);
     setOpen(false);
   };
+  const openGlobalConversation = (sessionId: string, taskId: string | null = null) => {
+    setSelectedSessionId(sessionId);
+    setSelectedTaskId(taskId);
+    setTab("chat");
+  };
   const startTaskForm = () => {
     const initialSession = workspaceSessions[0];
     setTaskSessionId(initialSession?.id ?? "");
-    setTaskConversationId(initialSession?.conversations[0]?.conversation_id ?? "");
+    setTaskConversationId(initialSession ? preferredConversation(initialSession)?.conversation_id ?? "" : "");
     setTaskTitle("");
     setTaskGoal("");
     createTaskMutation.reset();
@@ -306,6 +355,18 @@ export function GlobalAgentDock() {
 
           <div className="flex shrink-0 items-center gap-1 border-b border-border-l1 bg-surface-subtle/60 px-3 py-2" role="tablist" aria-label={t("globalAgent.views")}>
             <DockTab
+              active={tab === "chat"}
+              count={sessions.length}
+              icon={<Bot size={14} aria-hidden="true" />}
+              label={t("globalAgent.chat")}
+              onClick={() => {
+                setTaskFormOpen(false);
+                setSessionFormOpen(false);
+                setSelectedTaskId(null);
+                setTab("chat");
+              }}
+            />
+            <DockTab
               active={tab === "tasks"}
               count={tasks.length}
               icon={<ClipboardList size={14} aria-hidden="true" />}
@@ -348,7 +409,7 @@ export function GlobalAgentDock() {
                 onSessionChange={(sessionId) => {
                   const nextSession = workspaceSessions.find((session) => session.id === sessionId);
                   setTaskSessionId(sessionId);
-                  setTaskConversationId(nextSession?.conversations[0]?.conversation_id ?? "");
+                  setTaskConversationId(nextSession ? preferredConversation(nextSession)?.conversation_id ?? "" : "");
                 }}
                 onWorkspaceChange={setTaskConversationId}
                 sessions={workspaceSessions}
@@ -366,6 +427,33 @@ export function GlobalAgentDock() {
                 onSubmit={submitSession}
                 value={sessionTitle}
               />
+            ) : tab === "chat" ? (
+              <>
+                {errorText ? (
+                  <p role="alert" className="shrink-0 border-b border-state-error/20 bg-state-error/10 px-3 py-2 text-xs leading-5 text-state-error">
+                    {errorText}
+                  </p>
+                ) : null}
+                <div className="flex min-h-0 flex-1 flex-col">
+                  <div className="shrink-0 border-b border-border-l1 bg-surface-subtle/60 px-3 py-2">
+                    <label className="sr-only" htmlFor="global-agent-session-select">{t("globalAgent.sessions")}</label>
+                    <select
+                      id="global-agent-session-select"
+                      value={activeSession?.id ?? ""}
+                      onChange={(event) => openGlobalConversation(event.target.value)}
+                      className="h-9 w-full rounded-md border border-border-l2 bg-surface-raised px-2.5 text-xs text-text-primary outline-none focus:border-accent focus:ring-2 focus:ring-accent/15"
+                    >
+                      {sessions.map((session) => <option key={session.id} value={session.id}>{session.title}</option>)}
+                    </select>
+                  </div>
+                  <GlobalAgentConversationPanel
+                    conversationId={globalConversation?.conversation_id ?? null}
+                    sessionTitle={activeSession?.title ?? t("globalAgent.title")}
+                    taskId={selectedTaskId}
+                    pageContext={pageContext}
+                  />
+                </div>
+              </>
             ) : (
               <>
                 <div className="shrink-0 border-b border-border-l1 p-3">
@@ -402,9 +490,12 @@ export function GlobalAgentDock() {
                       loading={tasksQuery.isLoading}
                       tasks={visibleTasks}
                       workspaceByConversationId={workspaceByConversationId}
+                      conversationById={conversationById}
                       onOpen={(task, workspace) => {
                         if (workspace) {
                           openWorkspace(workspace, task.session_id, task.id);
+                        } else if (task.conversation_id && conversationById.get(task.conversation_id)?.scopeType === "global") {
+                          openGlobalConversation(task.session_id, task.id);
                         }
                       }}
                       onCancel={(task) => cancelTaskMutation.mutate(task.id)}
@@ -416,10 +507,16 @@ export function GlobalAgentDock() {
                     <SessionList
                       loading={sessionsQuery.isLoading}
                       sessions={visibleSessions}
-                      currentSessionId={currentSessionId}
-                      onOpen={(session, workspace) => {
-                        if (workspace) {
-                          openWorkspace(workspace, session.id);
+                      currentSessionId={activeSessionId}
+                      onOpen={(session) => {
+                        const global = session.conversations.find((conversation) => conversation.scope_type === "global");
+                        if (global) {
+                          openGlobalConversation(session.id);
+                          return;
+                        }
+                        const product = session.conversations.find((conversation) => conversation.scope_type === "product_workflow" && conversation.product_id);
+                        if (product?.product_id) {
+                          openWorkspace({ productId: product.product_id, conversationId: product.conversation_id }, session.id);
                         }
                       }}
                       onArchive={setArchiveTarget}
@@ -503,6 +600,7 @@ function TaskList({
   loading,
   tasks,
   workspaceByConversationId,
+  conversationById,
   onOpen,
   onCancel,
   cancelingTaskId,
@@ -517,6 +615,7 @@ function TaskList({
     productName: string;
     sessionId: string;
   }>;
+  conversationById: Map<string, AgentConversationTarget>;
   onOpen: (task: AgentTask, workspace: AgentWorkspaceTarget | null) => void;
   onCancel: (task: AgentTask) => void;
   cancelingTaskId: string | null;
@@ -534,15 +633,17 @@ function TaskList({
     <div className="space-y-1">
       {tasks.map((task) => {
         const workspace = task.conversation_id ? workspaceByConversationId.get(task.conversation_id) : null;
+        const conversation = task.conversation_id ? conversationById.get(task.conversation_id) : null;
         const target = workspace
           ? { productId: workspace.productId, conversationId: workspace.conversationId }
           : null;
+        const openable = Boolean(target || conversation?.scopeType === "global");
         const cancelable = ACTIVE_TASK_STATUSES.has(task.status);
         return (
           <div key={task.id} className="group flex w-full min-w-0 items-start gap-2 rounded-md px-2.5 py-2.5 transition-colors hover:bg-surface-subtle">
             <button
               type="button"
-              disabled={!target}
+              disabled={!openable}
               onClick={() => onOpen(task, target)}
               className="flex min-w-0 flex-1 items-start gap-2.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:cursor-default"
             >
@@ -560,10 +661,10 @@ function TaskList({
                 {task.goal}
               </span>
               <span className="mt-1 block truncate text-[11px] text-text-muted">
-                {workspace?.productName ?? t("globalAgent.noWorkspace")}
+                {conversation?.productName ?? workspace?.productName ?? t("globalAgent.noWorkspace")}
               </span>
             </span>
-            {target ? <ChevronRight size={14} className="mt-1 shrink-0 text-text-muted opacity-0 transition-opacity group-hover:opacity-100" aria-hidden="true" /> : null}
+            {openable ? <ChevronRight size={14} className="mt-1 shrink-0 text-text-muted opacity-0 transition-opacity group-hover:opacity-100" aria-hidden="true" /> : null}
             </button>
             {cancelable ? (
               <button
@@ -595,7 +696,7 @@ function SessionList({
   loading: boolean;
   sessions: AgentSession[];
   currentSessionId: string | null;
-  onOpen: (session: AgentSession, workspace: AgentWorkspaceTarget | null) => void;
+  onOpen: (session: AgentSession) => void;
   onArchive: (session: AgentSession) => void;
   emptyLabel: string;
 }) {
@@ -609,10 +710,7 @@ function SessionList({
   return (
     <div className="space-y-1">
       {sessions.map((session) => {
-        const conversation = session.conversations[0] ?? null;
-        const workspace = conversation
-          ? { productId: conversation.product_id, conversationId: conversation.conversation_id }
-          : null;
+        const conversation = preferredConversation(session);
         const selected = currentSessionId === session.id;
         return (
           <div
@@ -621,8 +719,8 @@ function SessionList({
           >
             <button
               type="button"
-              disabled={!workspace}
-              onClick={() => onOpen(session, workspace)}
+              disabled={!conversation}
+              onClick={() => onOpen(session)}
               className="flex min-w-0 flex-1 items-start gap-2.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:cursor-default"
             >
               <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${selected ? "bg-accent" : session.status === "active" ? "bg-state-success" : "bg-text-muted/50"}`} aria-hidden="true" />
@@ -796,4 +894,46 @@ function errorDetail(error: unknown, fallback: string): string {
     return error.detail;
   }
   return error instanceof Error ? error.message : fallback;
+}
+
+function preferredConversation(session: AgentSession): AgentSession["conversations"][number] | null {
+  return session.conversations.find((conversation) => conversation.scope_type === "global")
+    ?? session.conversations.find((conversation) => conversation.scope_type === "product_workflow" && conversation.product_id)
+    ?? session.conversations[0]
+    ?? null;
+}
+
+function buildPageContext(pathname: string, search: string): AgentPageContextSnapshotInput {
+  const productId = routeSegment(pathname, /\/products\/([^/]+)/);
+  const workflowId = routeSegment(pathname, /\/workflows\/([^/]+)/);
+  let pageType = "app";
+  if (pathname.startsWith("/media-library") || pathname.startsWith("/gallery")) {
+    pageType = "media_library";
+  } else if (workflowId) {
+    pageType = "workflow";
+  } else if (productId) {
+    pageType = "product";
+  }
+  return {
+    route: `${pathname}${search}`.slice(0, 512),
+    page_type: pageType,
+    product_id: productId,
+    workflow_id: workflowId,
+    selected_asset_ids: [],
+    visible_asset_ids: [],
+    filters: {},
+    captured_at: new Date().toISOString(),
+  };
+}
+
+function routeSegment(pathname: string, pattern: RegExp): string | null {
+  const match = pathname.match(pattern);
+  if (!match?.[1]) {
+    return null;
+  }
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return match[1];
+  }
 }

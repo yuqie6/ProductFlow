@@ -12,12 +12,15 @@ from productflow_backend.application.agent_tools import (
     apply_agent_folder_rename,
     get_agent_contract,
     get_agent_product_context,
+    inspect_agent_global_media_assets,
     inspect_agent_product_assets,
+    list_agent_global_media_assets,
     list_agent_product_assets,
     prepare_agent_asset_move,
     prepare_agent_asset_rename,
     prepare_agent_folder_create,
     prepare_agent_folder_rename,
+    read_agent_global_media_asset_content,
     read_agent_product_asset_content,
     reconcile_agent_asset_move,
     reconcile_agent_asset_rename,
@@ -163,6 +166,41 @@ def inspect_agent_product_assets_endpoint(
     return InspectAgentAssetsResponse(items=[AgentAssetMetadataResponse.model_validate(item) for item in items])
 
 
+@router.get("/{conversation_id}/media-library", response_model=AgentAssetListResponse)
+def list_agent_global_media_assets_endpoint(
+    conversation_id: str,
+    query: str = Query(default="", max_length=255),
+    cursor: str | None = Query(default=None, max_length=4096),
+    limit: int = Query(default=AGENT_ASSET_LIST_DEFAULT_LIMIT, ge=1, le=AGENT_ASSET_LIST_MAX_LIMIT),
+    session: Session = Depends(get_session),
+) -> AgentAssetListResponse:
+    page = list_agent_global_media_assets(
+        session,
+        conversation_id=conversation_id,
+        query=query,
+        cursor=cursor,
+        limit=limit,
+    )
+    return AgentAssetListResponse(
+        items=[AgentAssetMetadataResponse.model_validate(item) for item in page.items],
+        next_cursor=page.next_cursor,
+    )
+
+
+@router.post("/{conversation_id}/media-library/inspect", response_model=InspectAgentAssetsResponse)
+def inspect_agent_global_media_assets_endpoint(
+    conversation_id: str,
+    payload: InspectAgentAssetsRequest,
+    session: Session = Depends(get_session),
+) -> InspectAgentAssetsResponse:
+    items = inspect_agent_global_media_assets(
+        session,
+        conversation_id=conversation_id,
+        asset_ids=payload.asset_ids,
+    )
+    return InspectAgentAssetsResponse(items=[AgentAssetMetadataResponse.model_validate(item) for item in items])
+
+
 @router.get(
     "/{conversation_id}/legacy-archives",
     response_model=AgentLegacyArchiveListResponse,
@@ -220,6 +258,28 @@ def read_agent_product_asset_content_endpoint(
     session: Session = Depends(get_session),
 ) -> Response:
     result = read_agent_product_asset_content(
+        session,
+        conversation_id=conversation_id,
+        asset_id=asset_id,
+    )
+    return Response(
+        content=result.content,
+        media_type=result.media_type,
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Length": str(len(result.content)),
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@router.get("/{conversation_id}/media-library/{asset_id}/content")
+def read_agent_global_media_asset_content_endpoint(
+    conversation_id: str,
+    asset_id: str,
+    session: Session = Depends(get_session),
+) -> Response:
+    result = read_agent_global_media_asset_content(
         session,
         conversation_id=conversation_id,
         asset_id=asset_id,

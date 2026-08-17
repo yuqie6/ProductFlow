@@ -29,7 +29,9 @@ type SessionEditor = { mode: "create" | "rename"; value: string } | null;
 export function selectAgentSessionConversation(
   agentSession: AgentSession,
 ): AgentSessionConversation | null {
-  return agentSession.conversations[0] ?? null;
+  return agentSession.conversations.find(
+    (conversation) => conversation.scope_type === "product_workflow" && conversation.product_id,
+  ) ?? null;
 }
 
 export function AgentSessionSwitcher({ conversation, productName }: AgentSessionSwitcherProps) {
@@ -153,7 +155,7 @@ export function AgentSessionSwitcher({ conversation, productName }: AgentSession
     }
     const target = sessionsQuery.data?.items.find((agentSession) => agentSession.id === sessionId);
     const targetConversation = target ? selectAgentSessionConversation(target) : null;
-    if (!targetConversation) {
+    if (!targetConversation?.product_id) {
       setNotice(t("agentWorkbench.session.noConversation"));
       return;
     }

@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const scopeSchemaVersion = 1
 
 type Scope struct {
 	SchemaVersion   int    `json:"schema_version"`
+	ScopeType       string `json:"scope_type"`
 	ConversationID  string `json:"conversation_id"`
 	TaskID          string `json:"task_id,omitempty"`
 	ProductID       string `json:"product_id"`
@@ -20,6 +22,7 @@ type Scope struct {
 }
 
 func ensureScope(dataRoot string, expected Scope) (string, string, error) {
+	expected = normalizeScope(expected)
 	if expected.SchemaVersion != scopeSchemaVersion {
 		return "", "", fmt.Errorf("unsupported scope schema version %d", expected.SchemaVersion)
 	}
@@ -37,6 +40,7 @@ func ensureScope(dataRoot string, expected Scope) (string, string, error) {
 		if err := json.Unmarshal(data, &stored); err != nil {
 			return "", "", fmt.Errorf("decode persisted conversation scope: %w", err)
 		}
+		stored = normalizeScope(stored)
 		if stored != expected {
 			return "", "", errors.New("persisted conversation scope conflicts with ProductFlow contract")
 		}
@@ -73,4 +77,11 @@ func ensureScope(dataRoot string, expected Scope) (string, string, error) {
 		return "", "", fmt.Errorf("persist conversation scope: %w", err)
 	}
 	return filepath.Join(directory, "agent.db"), workspace, nil
+}
+
+func normalizeScope(scope Scope) Scope {
+	if strings.TrimSpace(scope.ScopeType) == "" {
+		scope.ScopeType = scopeTypeProductWorkflow
+	}
+	return scope
 }

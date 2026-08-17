@@ -974,11 +974,14 @@ export interface WorkflowRecipe extends WorkflowRecipeSummary {
   versions: WorkflowRecipeVersion[];
 }
 
+export type AgentConversationScope = "product_workflow" | "global";
+
 export interface AgentConversation {
   id: string;
+  scope_type: AgentConversationScope;
   session_id: string | null;
-  product_id: string;
-  workflow_draft_id: string;
+  product_id: string | null;
+  workflow_draft_id: string | null;
   harness_run_id: string;
   status: "collecting" | "awaiting_confirmation" | "completed" | "failed" | "canceled" | "unknown";
   created_at: string;
@@ -989,7 +992,8 @@ export type AgentSessionStatus = "active" | "archived";
 
 export interface AgentSessionConversation {
   conversation_id: string;
-  product_id: string;
+  scope_type: AgentConversationScope;
+  product_id: string | null;
   product_name: string;
   conversation_status: AgentConversation["status"];
   updated_at: string;
