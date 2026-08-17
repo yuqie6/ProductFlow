@@ -5,8 +5,8 @@ import { Drawer } from "vaul";
 import {
   ChevronRight,
   Download,
-  GalleryHorizontalEnd,
   History,
+  Images,
   Layers3,
   Loader2,
   Menu,
@@ -668,15 +668,18 @@ export function ImageChatPage() {
     },
   });
 
-  const saveGalleryMutation = useMutation({
-    mutationFn: (assetId: string) => api.saveGalleryEntry(assetId),
+  const saveMediaLibraryMutation = useMutation({
+    mutationFn: (assetId: string) => api.saveMediaLibraryAssetFromSession(assetId),
     onSuccess: async () => {
-      setSuccessMessage(t("chat.savedGallery"));
+      setSuccessMessage(t("chat.savedMediaLibrary"));
       setErrorMessage("");
-      await queryClient.invalidateQueries({ queryKey: ["gallery"] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["media-library-bootstrap"] }),
+        queryClient.invalidateQueries({ queryKey: ["media-library-assets"] }),
+      ]);
     },
     onError: (error) => {
-      setErrorMessage(error instanceof ApiError ? error.detail : t("chat.saveGalleryFailed"));
+      setErrorMessage(error instanceof ApiError ? error.detail : t("chat.saveMediaLibraryFailed"));
     },
   });
 
@@ -775,11 +778,11 @@ export function ImageChatPage() {
     });
   }
 
-  function handleSaveSelectedToGallery() {
-    if (!selectedRound || saveGalleryMutation.isPending) {
+  function handleSaveSelectedToMediaLibrary() {
+    if (!selectedRound || saveMediaLibraryMutation.isPending) {
       return;
     }
-    saveGalleryMutation.mutate(selectedRound.generated_asset.id);
+    saveMediaLibraryMutation.mutate(selectedRound.generated_asset.id);
   }
 
   function handleSelectHistoryRound(assetId: string) {
@@ -1143,18 +1146,18 @@ export function ImageChatPage() {
                     </a>
                     <button
                       type="button"
-                      onClick={handleSaveSelectedToGallery}
-                      disabled={saveGalleryMutation.isPending}
-                      title={t("chat.saveSelectedGallery")}
-                      aria-label={t("chat.saveSelectedGallery")}
+                      onClick={handleSaveSelectedToMediaLibrary}
+                      disabled={saveMediaLibraryMutation.isPending}
+                      title={t("chat.saveSelectedMediaLibrary")}
+                      aria-label={t("chat.saveSelectedMediaLibrary")}
                       className="inline-flex h-10 shrink-0 items-center justify-center rounded-xl bg-indigo-600 px-4 text-sm font-semibold text-white shadow-sm shadow-indigo-500/20 ring-1 ring-indigo-500 transition-colors hover:bg-indigo-700 disabled:opacity-60 dark:bg-gradient-to-r dark:from-indigo-500 dark:to-violet-500 dark:shadow-violet-900/35 dark:ring-violet-300/35"
                     >
-                      {saveGalleryMutation.isPending ? (
+                      {saveMediaLibraryMutation.isPending ? (
                         <Loader2 size={16} className="mr-2 animate-spin" />
                       ) : (
-                        <GalleryHorizontalEnd size={16} className="mr-2" />
+                        <Images size={16} className="mr-2" />
                       )}
-                      {t("chat.sendGallery")}
+                      {t("chat.sendMediaLibrary")}
                     </button>
                   </>
                 ) : selectedPlaceholder ? (
@@ -1488,14 +1491,14 @@ export function ImageChatPage() {
               </a>
               <button
                 type="button"
-                onClick={handleSaveSelectedToGallery}
-                disabled={saveGalleryMutation.isPending}
-                title={t("chat.saveSelectedGallery")}
-                aria-label={t("chat.saveSelectedGallery")}
+                onClick={handleSaveSelectedToMediaLibrary}
+                disabled={saveMediaLibraryMutation.isPending}
+                title={t("chat.saveSelectedMediaLibrary")}
+                aria-label={t("chat.saveSelectedMediaLibrary")}
                 className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-indigo-200 bg-indigo-50 px-2.5 text-xs font-semibold text-indigo-700 shadow-sm transition-colors active:scale-[0.98] hover:border-indigo-300 hover:bg-indigo-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-60 dark:border-violet-400/35 dark:bg-violet-500/15 dark:text-violet-100 dark:hover:border-violet-300/55 dark:hover:bg-violet-500/25 dark:focus-visible:ring-violet-400"
               >
-                {saveGalleryMutation.isPending ? <Loader2 size={15} className="shrink-0 animate-spin" /> : <GalleryHorizontalEnd size={15} className="shrink-0" />}
-                <span>{t("chat.sendGalleryShort")}</span>
+                {saveMediaLibraryMutation.isPending ? <Loader2 size={15} className="shrink-0 animate-spin" /> : <Images size={15} className="shrink-0" />}
+                <span>{t("chat.sendMediaLibraryShort")}</span>
               </button>
             </div>
           ) : null}

@@ -17,8 +17,6 @@ import type {
   ConfigUpdateRequest,
   CreateReferenceWorkflowNodeV2Input,
   CreateWorkflowEdgeV2Input,
-  GalleryEntry,
-  GalleryEntryListResponse,
   GalleryAsset,
   GalleryAssetPage,
   GalleryAssetSort,
@@ -808,11 +806,8 @@ export const api = {
       body: JSON.stringify({ product_id: productId }),
     });
   },
-  listGalleryEntries(): Promise<GalleryEntryListResponse> {
-    return request("/api/gallery");
-  },
-  saveGalleryEntry(imageSessionAssetId: string): Promise<GalleryEntry> {
-    return request("/api/gallery", {
+  saveMediaLibraryAssetFromSession(imageSessionAssetId: string): Promise<MediaLibraryAsset> {
+    return request("/api/media-library/from-session", {
       method: "POST",
       body: JSON.stringify({ image_session_asset_id: imageSessionAssetId }),
     });
