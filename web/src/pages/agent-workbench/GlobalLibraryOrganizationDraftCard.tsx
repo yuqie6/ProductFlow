@@ -4,6 +4,7 @@ import {
   CircleAlert,
   CircleCheck,
   FolderInput,
+  Link2,
   Loader2,
   Pencil,
   RotateCcw,
@@ -24,6 +25,7 @@ const OPERATION_LABEL_KEYS: Record<LibraryOrganizationOperation["operation"], Tr
   set_tags: "globalAgent.draft.operation.setTags",
   archive: "globalAgent.draft.operation.archive",
   restore: "globalAgent.draft.operation.restore",
+  link_workflow: "globalAgent.draft.operation.linkWorkflow",
 };
 
 const OPERATION_ICONS: Record<LibraryOrganizationOperation["operation"], ReactNode> = {
@@ -32,6 +34,7 @@ const OPERATION_ICONS: Record<LibraryOrganizationOperation["operation"], ReactNo
   set_tags: <Tags size={13} aria-hidden="true" />,
   archive: <Archive size={13} aria-hidden="true" />,
   restore: <RotateCcw size={13} aria-hidden="true" />,
+  link_workflow: <Link2 size={13} aria-hidden="true" />,
 };
 
 interface GlobalLibraryOrganizationDraftCardProps {
@@ -128,6 +131,7 @@ export function GlobalLibraryOrganizationDraftCard({
 
 function OperationRow({ operation }: { operation: LibraryOrganizationOperation }) {
   const { t } = useI18n();
+  const workflowTitle = "workflow_title" in operation.target ? operation.target.workflow_title : null;
   return (
     <div className="flex min-w-0 items-center gap-2 text-xs">
       <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-surface-raised text-text-secondary">
@@ -136,6 +140,11 @@ function OperationRow({ operation }: { operation: LibraryOrganizationOperation }
       <span className="min-w-0 flex-1 truncate text-text-secondary" title={operation.before.display_name}>
         {operation.before.display_name}
       </span>
+      {workflowTitle ? (
+        <span className="min-w-0 max-w-[42%] truncate text-[11px] text-text-muted" title={workflowTitle}>
+          {workflowTitle}
+        </span>
+      ) : null}
       <span className="shrink-0 text-[11px] font-medium text-text-muted">
         {t(OPERATION_LABEL_KEYS[operation.operation])}
       </span>

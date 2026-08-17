@@ -48,6 +48,41 @@ function draft(status: LibraryOrganizationDraft["status"]): LibraryOrganizationD
   };
 }
 
+function workflowLinkDraft(): LibraryOrganizationDraft {
+  const value = draft("awaiting_confirmation");
+  return {
+    ...value,
+    current_revision: {
+      ...value.current_revision!,
+      payload: {
+        schema_version: 1,
+        confirmation_summary: "把场景图关联到主图工作流",
+        operations: [
+          {
+            operation: "link_workflow",
+            asset_id: "asset-1",
+            expected_revision: 4,
+            before: {
+              revision: 4,
+              display_name: "scene-old.png",
+              folder_id: null,
+              tag_names: [],
+              is_archived: false,
+            },
+            target: {
+              workflow_id: "workflow-1",
+              workflow_title: "主图工作流",
+              expected_workflow_revision: 2,
+              expected_linked: false,
+            },
+            reason: "让主图工作流使用全局素材",
+          },
+        ],
+      },
+    },
+  };
+}
+
 describe("GlobalLibraryOrganizationDraftCard", () => {
   it("shows the impact and explicit confirmation action while awaiting approval", () => {
     const markup = renderToStaticMarkup(
@@ -64,6 +99,21 @@ describe("GlobalLibraryOrganizationDraftCard", () => {
     expect(markup).toContain("确认整理");
     expect(markup).toContain("scene-old.png");
     expect(markup).toContain("改名");
+  });
+
+  it("shows the target workflow for a link operation", () => {
+    const markup = renderToStaticMarkup(
+      createElement(GlobalLibraryOrganizationDraftCard, {
+        draft: workflowLinkDraft(),
+        loading: false,
+        error: null,
+        busy: false,
+        onConfirm: vi.fn(),
+      }),
+    );
+
+    expect(markup).toContain("主图工作流");
+    expect(markup).toContain("关联到工作流");
   });
 
   it("keeps the completed state from rendering another confirmation action", () => {

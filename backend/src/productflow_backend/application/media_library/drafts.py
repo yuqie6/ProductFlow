@@ -16,6 +16,7 @@ from productflow_backend.application.agent_conversations import (
 from productflow_backend.application.media_library.draft_contracts import (
     LibraryArchiveOperationV1,
     LibraryAssetBeforeV1,
+    LibraryLinkWorkflowOperationV1,
     LibraryMoveOperationV1,
     LibraryOrganizationDraftPayloadV1,
     LibraryRenameOperationV1,
@@ -24,7 +25,11 @@ from productflow_backend.application.media_library.draft_contracts import (
     library_organization_draft_payload_hash,
     parse_library_organization_draft_payload,
 )
-from productflow_backend.application.media_library.service import validate_media_library_asset_integrity
+from productflow_backend.application.media_library.service import (
+    validate_media_library_asset_for_use,
+    validate_media_library_asset_integrity,
+)
+from productflow_backend.application.media_library.workflow import sync_workflow_media_library_assets
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.enums import (
     AgentConversationStatus,
@@ -42,6 +47,7 @@ from productflow_backend.infrastructure.db.models import (
     MediaLibraryAssetTag,
     MediaLibraryFolder,
     MediaLibraryTag,
+    ProductWorkflow,
     WorkflowMediaLibraryAsset,
 )
 
@@ -194,12 +200,14 @@ def confirm_library_organization_draft_revision(
         if library_organization_draft_payload_hash(artifact) != revision.payload_hash:
             raise ConflictError("素材整理 Draft revision payload hash 不一致")
 
-        assets, folders = _observe_operations(session, artifact)
+        assets, folders, workflows = _observe_operations(session, artifact)
         tags = _load_or_create_tags(session, artifact)
         result = _apply_operations(
+            session=session,
             artifact=artifact,
             assets=assets,
             folders=folders,
+            workflows=workflows,
             tags=tags,
             draft_id=draft.id,
             revision_version=revision.version,
@@ -324,7 +332,11 @@ def _confirmation_request_hash(draft_id: str, expected_draft_version: int) -> st
 def _observe_operations(
     session: Session,
     artifact: LibraryOrganizationDraftPayloadV1,
-) -> tuple[dict[str, MediaLibraryAsset], dict[str, MediaLibraryFolder]]:
+) -> tuple[
+    dict[str, MediaLibraryAsset],
+    dict[str, MediaLibraryFolder],
+    dict[str, ProductWorkflow],
+]:
     asset_ids = sorted({operation.asset_id for operation in artifact.operations})
     assets = list(
         session.scalars(
@@ -366,11 +378,56 @@ def _observe_operations(
     if len(folders_by_id) != len(folder_ids):
         raise NotFoundError("素材整理 Draft 引用了不存在的文件夹")
 
+    workflow_ids = sorted(
+        {
+            operation.target.workflow_id
+            for operation in artifact.operations
+            if isinstance(operation, LibraryLinkWorkflowOperationV1)
+        }
+    )
+    workflows = list(
+        session.scalars(
+            select(ProductWorkflow)
+            .where(ProductWorkflow.id.in_(workflow_ids))
+            .order_by(ProductWorkflow.id)
+            .with_for_update()
+        ).all()
+        if workflow_ids
+        else []
+    )
+    workflows_by_id = {workflow.id: workflow for workflow in workflows}
+    if len(workflows_by_id) != len(workflow_ids):
+        raise NotFoundError("素材整理 Draft 引用了不存在的工作流")
+
+    existing_workflow_links = {
+        (workflow_id, asset_id)
+        for workflow_id, asset_id in session.execute(
+            select(
+                WorkflowMediaLibraryAsset.workflow_id,
+                WorkflowMediaLibraryAsset.media_library_asset_id,
+            ).where(
+                WorkflowMediaLibraryAsset.workflow_id.in_(workflow_ids),
+                WorkflowMediaLibraryAsset.media_library_asset_id.in_(asset_ids),
+            )
+        ).all()
+    }
+
     for operation in artifact.operations:
         asset = assets_by_id[operation.asset_id]
         validate_media_library_asset_integrity(asset)
         _validate_before_summary(asset, operation.before, operation.expected_revision)
-        if isinstance(operation, LibraryArchiveOperationV1):
+        if isinstance(operation, LibraryLinkWorkflowOperationV1):
+            workflow = workflows_by_id[operation.target.workflow_id]
+            if (
+                workflow.title != operation.target.workflow_title
+                or workflow.revision != operation.target.expected_workflow_revision
+            ):
+                raise ConflictError(f"工作流 {workflow.id} 当前状态已变化，请重新生成素材关联 Draft")
+            currently_linked = (workflow.id, asset.id) in existing_workflow_links
+            if currently_linked != operation.target.expected_linked:
+                raise ConflictError(f"素材 {asset.id} 与工作流 {workflow.id} 的关联状态已变化")
+            validate_media_library_asset_for_use(asset)
+        elif isinstance(operation, LibraryArchiveOperationV1):
             if asset.is_archived:
                 raise ConflictError("只有 active 素材才能执行归档")
             _ensure_not_linked_to_workflow(session, asset.id)
@@ -379,7 +436,7 @@ def _observe_operations(
                 raise ConflictError("只有已归档素材才能执行恢复")
         elif asset.is_archived:
             raise ConflictError("归档素材只能先恢复，不能直接整理")
-    return assets_by_id, folders_by_id
+    return assets_by_id, folders_by_id, workflows_by_id
 
 
 def _validate_before_summary(
@@ -440,18 +497,40 @@ def _load_or_create_tags(
 
 def _apply_operations(
     *,
+    session: Session,
     artifact: LibraryOrganizationDraftPayloadV1,
     assets: dict[str, MediaLibraryAsset],
     folders: dict[str, MediaLibraryFolder],
+    workflows: dict[str, ProductWorkflow],
     tags: dict[str, MediaLibraryTag],
     draft_id: str,
     revision_version: int,
 ) -> dict[str, Any]:
     result_assets: list[dict[str, Any]] = []
+    result_workflow_links: list[dict[str, Any]] = []
     for operation in artifact.operations:
         asset = assets[operation.asset_id]
         changed = False
-        if isinstance(operation, LibraryRenameOperationV1):
+        if isinstance(operation, LibraryLinkWorkflowOperationV1):
+            workflow = workflows[operation.target.workflow_id]
+            sync_workflow_media_library_assets(
+                session,
+                product_id=workflow.product_id,
+                workflow_id=workflow.id,
+                media_library_asset_ids=[asset.id],
+                commit=False,
+            )
+            result_workflow_links.append(
+                {
+                    "asset_id": asset.id,
+                    "product_id": workflow.product_id,
+                    "workflow_id": workflow.id,
+                    "workflow_title": workflow.title,
+                    "linked": True,
+                    "changed": not operation.target.expected_linked,
+                }
+            )
+        elif isinstance(operation, LibraryRenameOperationV1):
             target_name = operation.target.display_name
             changed = asset.display_name != target_name
             asset.display_name = target_name
@@ -484,12 +563,15 @@ def _apply_operations(
             asset.revision += 1
             asset.updated_at = now_utc()
         result_assets.append(_result_asset(asset))
-    return {
+    result = {
         "schema_version": 1,
         "draft_id": draft_id,
         "revision_version": revision_version,
         "assets": result_assets,
     }
+    if result_workflow_links:
+        result["workflow_links"] = result_workflow_links
+    return result
 
 
 def _result_asset(asset: MediaLibraryAsset) -> dict[str, Any]:

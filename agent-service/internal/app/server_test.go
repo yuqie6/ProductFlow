@@ -260,7 +260,7 @@ func TestManagerUsesOptionalArtifactForGlobalOrganizationDraft(t *testing.T) {
 				"harness_run_id": testGlobalConversationID, "current_draft_version": 0,
 				"system_prompt": "整理全局素材并等待用户确认。", "draft_kind": "library_organization",
 				"draft_schema": map[string]any{"type": "object"}, "workflow_draft_schema": map[string]any{},
-				"tool_contract_version": 6,
+				"tool_contract_version": 7,
 			})
 		case base + "/library-organization-draft/validate":
 			validationCalls.Add(1)
@@ -345,7 +345,7 @@ func TestManagerDoesNotRequireWorkflowDraftForProductTask(t *testing.T) {
 			"system_prompt": "完成后台任务。", "workflow_draft_schema": map[string]any{
 				"type": "object", "additionalProperties": false,
 			},
-			"tool_contract_version": 6,
+			"tool_contract_version": 7,
 		})
 	}))
 	t.Cleanup(productFlow.Close)
@@ -631,7 +631,7 @@ func TestManagerLoadsAgentProviderConfigOnceWhenOpeningConversation(t *testing.T
 					"properties": map[string]any{"title": map[string]any{"type": "string"}},
 					"required":   []string{"title"},
 				},
-				"tool_contract_version": 6,
+				"tool_contract_version": 7,
 			})
 		default:
 			http.NotFound(writer, request)
@@ -788,7 +788,7 @@ func newProductFlowFixtureWithAgentProvider(
 					"type": "object", "additionalProperties": false,
 					"properties": map[string]any{"title": map[string]any{"type": "string"}}, "required": []string{"title"},
 				},
-				"tool_contract_version": 6,
+				"tool_contract_version": 7,
 			})
 		case base + "/workflow-draft/validate":
 			var payload struct {

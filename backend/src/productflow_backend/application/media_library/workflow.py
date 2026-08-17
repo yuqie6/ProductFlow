@@ -108,6 +108,7 @@ def sync_workflow_media_library_assets(
     product_id: str,
     workflow_id: str,
     media_library_asset_ids: list[str],
+    commit: bool = True,
 ) -> list[WorkflowMediaLibraryAssetRecord]:
     if not media_library_asset_ids:
         raise BusinessValidationError("至少选择一个素材")
@@ -149,6 +150,7 @@ def sync_workflow_media_library_assets(
             session,
             product_id=product_id,
             library_asset_ids=ids_to_collect,
+            commit=False,
         )
 
     workflow = session.scalar(
@@ -172,7 +174,8 @@ def sync_workflow_media_library_assets(
                     media_library_asset_id=asset_id,
                 )
             )
-    session.commit()
+    if commit:
+        session.commit()
     return list_workflow_media_library_assets(
         session,
         product_id=product_id,

@@ -1179,7 +1179,8 @@ export type LibraryOrganizationOperationKind =
   | "move"
   | "set_tags"
   | "archive"
-  | "restore";
+  | "restore"
+  | "link_workflow";
 
 export interface LibraryOrganizationAssetBefore {
   revision: number;
@@ -1200,7 +1201,13 @@ export type LibraryOrganizationOperation = {
     | { folder_id: string | null }
     | { tag_names: string[] }
     | { is_archived: true }
-    | { is_archived: false };
+    | { is_archived: false }
+    | {
+        workflow_id: string;
+        workflow_title: string;
+        expected_workflow_revision: number;
+        expected_linked: boolean;
+      };
 };
 
 export interface LibraryOrganizationDraftPayload {

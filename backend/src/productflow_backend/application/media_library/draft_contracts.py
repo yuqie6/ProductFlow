@@ -141,12 +141,29 @@ class LibraryRestoreOperationV1(_LibraryOrganizationOperationBase):
     target: LibraryRestoreTargetV1
 
 
+class LibraryWorkflowLinkTargetV1(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    workflow_id: str = Field(min_length=1, max_length=36)
+    workflow_title: str = Field(min_length=1, max_length=255)
+    expected_workflow_revision: int = Field(ge=1)
+    expected_linked: bool = False
+
+    _normalize_workflow_title = field_validator("workflow_title")(_display_name)
+
+
+class LibraryLinkWorkflowOperationV1(_LibraryOrganizationOperationBase):
+    operation: Literal["link_workflow"]
+    target: LibraryWorkflowLinkTargetV1
+
+
 LibraryOrganizationOperationV1 = Annotated[
     LibraryRenameOperationV1
     | LibraryMoveOperationV1
     | LibrarySetTagsOperationV1
     | LibraryArchiveOperationV1
-    | LibraryRestoreOperationV1,
+    | LibraryRestoreOperationV1
+    | LibraryLinkWorkflowOperationV1,
     Field(discriminator="operation"),
 ]
 
@@ -172,9 +189,16 @@ class LibraryOrganizationDraftPayloadV1(BaseModel):
     @model_validator(mode="after")
     def validate_limits_and_unique_assets(self):
         asset_ids = [operation.asset_id for operation in self.operations]
-        if len(set(asset_ids)) != len(asset_ids):
-            raise ValueError("同一个素材在一个整理 Draft 中只能出现一次")
-        if len(asset_ids) > MAX_LIBRARY_ORGANIZATION_ASSETS:
+        operation_keys = [
+            (
+                operation.asset_id,
+                operation.target.workflow_id if isinstance(operation, LibraryLinkWorkflowOperationV1) else None,
+            )
+            for operation in self.operations
+        ]
+        if len(set(operation_keys)) != len(operation_keys):
+            raise ValueError("同一个素材对同一个目标只能出现一次")
+        if len(set(asset_ids)) > MAX_LIBRARY_ORGANIZATION_ASSETS:
             raise ValueError(f"一次整理最多包含 {MAX_LIBRARY_ORGANIZATION_ASSETS} 个素材")
         payload_size = len(
             json.dumps(
@@ -213,8 +237,10 @@ __all__ = [
     "MAX_LIBRARY_ORGANIZATION_OPERATIONS",
     "MAX_LIBRARY_ORGANIZATION_PAYLOAD_BYTES",
     "LibraryAssetBeforeV1",
+    "LibraryLinkWorkflowOperationV1",
     "LibraryOrganizationDraftPayloadV1",
     "LibraryOrganizationOperationV1",
+    "LibraryWorkflowLinkTargetV1",
     "parse_library_organization_draft_payload",
     "library_organization_draft_payload_hash",
     "library_organization_draft_schema",

@@ -23,7 +23,11 @@ from productflow_backend.application.use_cases import create_canonical_product
 from productflow_backend.domain.enums import AgentConversationStatus, AgentTurnStatus, LibraryOrganizationDraftStatus
 from productflow_backend.domain.errors import ConflictError
 from productflow_backend.infrastructure.agent_service import AgentServiceArtifact, AgentServiceTurnState
-from productflow_backend.infrastructure.db.models import AgentConversation
+from productflow_backend.infrastructure.db.models import (
+    AgentConversation,
+    ProductWorkflow,
+    WorkflowMediaLibraryAsset,
+)
 from productflow_backend.presentation.api import create_app
 
 
@@ -53,6 +57,55 @@ def _rename_payload(asset, *, target_name: str = "整理后的主图") -> dict[s
                 "before": _before(asset),
                 "target": {"display_name": target_name},
                 "reason": "统一场景图命名",
+            }
+        ],
+    }
+
+
+def _asset_with_workflows(db_session, workflow_titles: list[str]):
+    product = create_canonical_product(
+        db_session,
+        name="素材关联测试商品",
+        category=None,
+        price=None,
+        source_note=None,
+        image_uploads=[(_make_demo_image_bytes(), "asset.png", "image/png")],
+    )
+    asset = save_media_library_asset_from_product(
+        db_session,
+        product_image_asset_id=product.image_assets[0].id,
+    ).asset
+    workflows = [
+        ProductWorkflow(
+            product_id=product.id,
+            title=title,
+            active=index == 0,
+            revision=index + 1,
+        )
+        for index, title in enumerate(workflow_titles)
+    ]
+    db_session.add_all(workflows)
+    db_session.commit()
+    return asset, workflows
+
+
+def _link_payload(asset, workflow, *, expected_linked: bool = False) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "confirmation_summary": f"关联素材到工作流 {workflow.title}",
+        "operations": [
+            {
+                "operation": "link_workflow",
+                "asset_id": asset.id,
+                "expected_revision": asset.revision,
+                "before": _before(asset),
+                "target": {
+                    "workflow_id": workflow.id,
+                    "workflow_title": workflow.title,
+                    "expected_workflow_revision": workflow.revision,
+                    "expected_linked": expected_linked,
+                },
+                "reason": "让工作流使用全局素材",
             }
         ],
     }
@@ -313,6 +366,110 @@ def test_library_organization_draft_rejects_stale_revision_without_partial_apply
 
     db_session.refresh(first)
     assert first.display_name != "第一张整理图"
+
+
+def test_library_organization_draft_can_link_asset_to_workflow_without_copying_media(db_session) -> None:
+    asset, [workflow] = _asset_with_workflows(db_session, ["场景图工作流"])
+    conversation = _global_conversation(db_session)
+    append_library_organization_draft_revision(
+        db_session,
+        conversation_id=conversation.id,
+        expected_draft_version=0,
+        payload=_link_payload(asset, workflow),
+        source_turn_id="turn-library-link-1",
+        source_artifact_step_id="artifact-library-link-1",
+    )
+
+    assert db_session.get(WorkflowMediaLibraryAsset, (workflow.id, asset.id)) is None
+    confirmed = confirm_library_organization_draft_revision(
+        db_session,
+        draft_id=get_library_organization_draft_or_raise(db_session, conversation_id=conversation.id).id,
+        expected_draft_version=1,
+        idempotency_key="confirm-library-link-1",
+    )
+
+    link = db_session.get(WorkflowMediaLibraryAsset, (workflow.id, asset.id))
+    assert link is not None
+    assert confirmed.confirmation_result_json["workflow_links"] == [
+        {
+            "asset_id": asset.id,
+            "product_id": workflow.product_id,
+            "workflow_id": workflow.id,
+            "workflow_title": workflow.title,
+            "linked": True,
+            "changed": True,
+        }
+    ]
+
+
+def test_library_organization_draft_can_link_one_global_asset_to_multiple_workflows(db_session) -> None:
+    asset, workflows = _asset_with_workflows(db_session, ["主图工作流", "详情页工作流"])
+    conversation = _global_conversation(db_session)
+    payload = _link_payload(asset, workflows[0])
+    payload["operations"].append(_link_payload(asset, workflows[1])["operations"][0])
+    append_library_organization_draft_revision(
+        db_session,
+        conversation_id=conversation.id,
+        expected_draft_version=0,
+        payload=payload,
+        source_turn_id="turn-library-link-2",
+        source_artifact_step_id="artifact-library-link-2",
+    )
+
+    confirm_library_organization_draft_revision(
+        db_session,
+        draft_id=get_library_organization_draft_or_raise(db_session, conversation_id=conversation.id).id,
+        expected_draft_version=1,
+        idempotency_key="confirm-library-link-2",
+    )
+
+    assert db_session.get(WorkflowMediaLibraryAsset, (workflows[0].id, asset.id)) is not None
+    assert db_session.get(WorkflowMediaLibraryAsset, (workflows[1].id, asset.id)) is not None
+
+
+def test_library_organization_draft_rechecks_workflow_link_state_before_apply(db_session) -> None:
+    asset, [workflow] = _asset_with_workflows(db_session, ["并发关联工作流"])
+    conversation = _global_conversation(db_session)
+    payload = _link_payload(asset, workflow)
+    payload["operations"].append(
+        {
+            "operation": "rename",
+            "asset_id": asset.id,
+            "expected_revision": asset.revision,
+            "before": _before(asset),
+            "target": {"display_name": "不应被应用的名称"},
+            "reason": "验证 Draft 失败时整体回滚",
+        }
+    )
+    append_library_organization_draft_revision(
+        db_session,
+        conversation_id=conversation.id,
+        expected_draft_version=0,
+        payload=payload,
+        source_turn_id="turn-library-link-3",
+        source_artifact_step_id="artifact-library-link-3",
+    )
+    db_session.add(
+        WorkflowMediaLibraryAsset(
+            workflow_id=workflow.id,
+            media_library_asset_id=asset.id,
+        )
+    )
+    db_session.commit()
+
+    draft = get_library_organization_draft_or_raise(db_session, conversation_id=conversation.id)
+    with pytest.raises(ConflictError, match="关联状态已变化"):
+        confirm_library_organization_draft_revision(
+            db_session,
+            draft_id=draft.id,
+            expected_draft_version=1,
+            idempotency_key="confirm-library-link-3",
+        )
+
+    db_session.refresh(asset)
+    assert asset.display_name != "不应被应用的名称"
+    db_session.refresh(draft)
+    assert draft.status == LibraryOrganizationDraftStatus.AWAITING_CONFIRMATION
 
 
 def test_library_organization_draft_rejects_duplicate_asset_operations() -> None:

@@ -284,11 +284,13 @@ def collect_media_library_assets_to_product(
     *,
     product_id: str,
     library_asset_ids: list[str],
+    commit: bool = True,
 ) -> list[MediaLibraryCollectionResult]:
     """Batch-collect up to 100 unique active library assets into one product.
 
     Locks Product then MediaLibraryAsset rows in stable id order. All product assets
     are created in one transaction; unique-race conflicts are re-queried idempotently.
+    Set commit=False when the caller owns a larger atomic transaction.
     """
     if len(library_asset_ids) > MAX_COLLECTION_ASSETS:
         raise BusinessValidationError(f"一次最多收录 {MAX_COLLECTION_ASSETS} 个素材")
@@ -365,10 +367,12 @@ def collect_media_library_assets_to_product(
                 if existing is None:
                     raise
                 reloaded.append(MediaLibraryCollectionResult(asset=existing, created=False))
-            session.commit()
+            if commit:
+                session.commit()
             return reloaded
-        session.commit()
-        session.expire_all()
+        if commit:
+            session.commit()
+            session.expire_all()
     results: list[MediaLibraryCollectionResult] = []
     for library_asset_id in unique_ids:
         asset = existing_by_library_id.get(library_asset_id)

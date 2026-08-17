@@ -30,7 +30,7 @@
 - `/media-library` 已提供全局素材列表、搜索、文件夹、标签、归档/恢复、批量组织和选择反馈。
 - `WorkflowMediaLibraryAsset` 已把全局素材关联到工作流子图库；同一图片可被多个工作流使用，关联不复制媒体 bytes。
 - ImageChat 的保存动作已切换到 canonical `/api/media-library/from-session`，`/gallery` 已重定向到 `/media-library`；旧 `/api/gallery`、历史 DTO 和在线 runtime owner 已移除，旧表的部署级回填、引用审计、观察窗和物理清理资格仍待完成。
-- Agent 图库整理已接入有界读取、可确认 Draft、revision 校验、幂等确认、原子应用和结果投影；剩余工作是旧 Gallery 对账/owner 退休，以及跨工作流同步等更高范围的 Agent 写操作。
+- Agent 图库整理已接入有界读取、可确认 Draft、revision 校验、幂等确认、原子应用和结果投影；全局素材关联到明确工作流也已通过同一 Draft 机制落地，使用工作流 revision 和当前关联状态校验，不复制媒体 bytes。剩余工作是旧 Gallery 对账/owner 退休，以及跨商品等更高范围的 Agent 写操作。
 
 ### 5. 全局 Agent 与人工工作流协作
 
@@ -39,7 +39,7 @@
 - 已实现独立 `AgentTask`、任务专属 harness run、本轮 `AgentTurn` 关联和页面上下文快照；Session 切换不取消后台任务，Task 目标不随路由变化。
 - Global Agent Dock 已提供 Session/Task 列表、搜索、新建、归档、打开工作区、取消任务和全局素材整理 Draft 投影/确认；暂停/恢复、Task 摘要和统一调度器仍待实现。
 - 按 Session 摘要、Task 目标、最近 Turn、当前页面上下文和执行前 Fresh Observation 分层组装上下文；完整 Agent journal 继续保留，模型工作上下文按 harness 规则压缩。
-- 已交付商品工作区只读 WorkflowRun 监控工具；执行前 Fresh Observation、跨商品/跨工作流/全局图库范围和有副作用操作仍待实现。
+- 已交付商品工作区只读 WorkflowRun 监控工具；执行前 Fresh Observation、跨商品/跨工作流查询范围和更多有副作用操作仍待实现。全局素材到明确工作流的关联 Draft 已交付。
 
 落地策略和当前缺口见 `specs/global-agent-human-workflow-design.md`。
 
