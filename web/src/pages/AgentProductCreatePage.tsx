@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, Loader2, RotateCw, Settings2, X } from "lucide-react";
+import { Bot, CircleAlert, Loader2, RotateCw, Settings2, Sparkles, TriangleAlert, X } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
 import { api, ApiError } from "../lib/api";
@@ -409,13 +409,13 @@ export function AgentProductCreatePage() {
 
   return (
     <div
-      className={`flex h-dvh min-h-[560px] flex-col overflow-hidden bg-surface-base text-text-primary transition-opacity duration-200 motion-reduce:transition-none ${
+      className={`relative flex h-dvh min-h-[560px] flex-col overflow-hidden bg-surface-base text-text-primary transition-opacity duration-200 motion-reduce:transition-none ${
         leaving ? "opacity-0" : "opacity-100"
       }`}
     >
-      <header className="z-10 flex h-14 shrink-0 items-center justify-between border-b border-border-l1 bg-surface-raised px-4 sm:px-6">
+      <header className="relative z-20 flex h-14 shrink-0 items-center justify-between border-b border-border-l1 bg-surface-raised/85 px-4 backdrop-blur-md sm:px-6">
         <div className="flex min-w-0 items-center gap-2.5">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-surface-inverse text-surface-raised">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent text-surface-raised shadow-sm">
             <Bot size={17} aria-hidden="true" />
           </div>
           <div className="min-w-0 truncate text-sm font-semibold">
@@ -429,7 +429,7 @@ export function AgentProductCreatePage() {
             title={t("agentCreate.settings")}
             aria-label={t("agentCreate.settings")}
             onClick={() => navigate("/settings?section=agent")}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-surface-subtle hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface-subtle hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           >
             <Settings2 size={17} />
           </button>
@@ -438,30 +438,38 @@ export function AgentProductCreatePage() {
             title={t("agentCreate.close")}
             aria-label={t("agentCreate.close")}
             onClick={() => navigate("/products")}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-surface-subtle hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-surface-subtle hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           >
             <X size={18} />
           </button>
         </div>
       </header>
 
-      <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <main className="relative z-10 min-h-0 flex-1 overflow-y-auto overscroll-contain">
         {restoring ? (
-          <div className="flex min-h-full items-center justify-center px-5 text-sm text-text-secondary">
-            <Loader2 size={18} className="mr-2 animate-spin motion-reduce:animate-none" />
-            {t("agentCreate.restoring")}
+          <div className="flex min-h-full flex-col items-center justify-center gap-3 px-5">
+            <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-border-l2 bg-surface-raised shadow-sm">
+              <Loader2
+                size={20}
+                className="animate-spin text-accent motion-reduce:animate-none"
+              />
+            </span>
+            <p className="text-sm text-text-secondary">{t("agentCreate.restoring")}</p>
           </div>
         ) : null}
 
         {restoreError ? (
           <div className="mx-auto flex min-h-full w-full max-w-md flex-col items-center justify-center px-5 text-center">
-            <p role="alert" className="text-sm leading-6 text-red-700 dark:text-red-200">
+            <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-state-error/30 bg-state-error/10 text-state-error">
+              <CircleAlert size={20} aria-hidden="true" />
+            </span>
+            <p role="alert" className="mt-4 text-sm leading-6 text-text-secondary">
               {errorDetail(restoreError, t("agentCreate.error.failed"))}
             </p>
             <button
               type="button"
               onClick={() => void workspaceQuery.refetch()}
-              className="mt-4 inline-flex h-10 items-center gap-2 rounded-md border border-border-l3 px-3 text-sm font-semibold text-text-secondary hover:border-text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              className="mt-4 inline-flex h-10 items-center gap-2 rounded-lg border border-border-l3 bg-surface-raised px-3 text-sm font-semibold text-text-secondary shadow-sm transition-colors hover:border-accent/50 hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             >
               <RotateCw size={15} />
               {t("agentCreate.retryOptions")}
@@ -470,17 +478,29 @@ export function AgentProductCreatePage() {
         ) : null}
 
         {!restoring && !restoreError && !workspace?.intake_finalized ? (
-          <div className="mx-auto w-full max-w-[880px] px-4 py-7 sm:px-6 sm:py-9">
-            <h1 className="text-2xl font-semibold tracking-normal text-text-primary">
-              {t("agentCreate.title")}
-            </h1>
-            <p className="mt-1.5 text-sm leading-6 text-text-secondary">
-              {t("agentCreate.description")}
-            </p>
+          <div className="mx-auto w-full max-w-[920px] px-4 py-7 sm:px-6 sm:py-10">
+            <div className="mb-6 flex items-start gap-3.5 sm:mb-8 sm:items-center">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-accent text-surface-raised shadow-sm">
+                <Sparkles size={20} aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <h1 className="text-xl font-semibold leading-7 tracking-tight text-text-primary sm:text-[26px] sm:leading-8">
+                  {t("agentCreate.title")}
+                </h1>
+                <p className="mt-1 text-sm leading-6 text-text-secondary">
+                  {t("agentCreate.description")}
+                </p>
+              </div>
+            </div>
             {restoredUnfinalizedWorkspace ? (
-              <p className="mt-4 border-l-2 border-amber-500 bg-amber-50 px-3 py-2.5 text-sm leading-5 text-amber-900 dark:bg-amber-400/10 dark:text-amber-100">
-                {t("agentCreate.recoveryNotice")}
-              </p>
+              <div className="mb-5 flex items-start gap-2.5 rounded-xl border border-state-warning/30 bg-state-warning/10 px-4 py-3 text-sm leading-5 text-text-primary">
+                <TriangleAlert
+                  size={16}
+                  className="mt-0.5 shrink-0 text-state-warning"
+                  aria-hidden="true"
+                />
+                <span>{t("agentCreate.recoveryNotice")}</span>
+              </div>
             ) : null}
             <AgentProductCreateForm
               productName={workspace?.product.name ?? name}

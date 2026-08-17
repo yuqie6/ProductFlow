@@ -99,6 +99,12 @@ describe("AgentWorkbenchShell", () => {
     expect(shellSource).not.toContain("paddingRight");
   });
 
+  it("allows mobile tab labels to truncate instead of overflowing the viewport", () => {
+    const markup = renderShell(true);
+
+    expect(markup).toContain("min-w-0 truncate");
+  });
+
   it("keeps the canvas absolute below lg and makes it a normal grid child on desktop", () => {
     const markup = renderShell(true);
 
@@ -165,6 +171,8 @@ describe("AgentWorkbenchShell", () => {
     expect(collapsedGridChild).toContain("data-product-workbench-collapsed-tools");
     expect(collapsedGridChild).toContain(`style="width:${INSPECTOR_RAIL_WIDTH}px"`);
     expect(collapsedGridChild).toContain("lg:relative lg:inset-auto lg:z-auto lg:h-full lg:justify-self-stretch");
+    expect(collapsedGridChild).toContain("lg:hidden");
+    expect(collapsedGridChild).not.toContain("lg:invisible");
     expect(collapsedGridChild).toContain("aria-hidden=\"true\" inert=\"\"");
   });
 

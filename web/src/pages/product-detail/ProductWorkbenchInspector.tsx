@@ -202,7 +202,7 @@ export function ProductWorkbenchInspector({
                   : desktopPositionClassName
               }`
             : ""
-        } ${workflowAvailable && collapsed ? "lg:invisible lg:pointer-events-none lg:opacity-0" : ""}`}
+        } ${workflowAvailable && collapsed ? "lg:hidden" : ""}`}
         style={inspectorStyle}
       >
         {workflowAvailable ? (

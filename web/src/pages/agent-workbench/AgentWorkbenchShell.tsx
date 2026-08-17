@@ -263,7 +263,7 @@ function MobileViewTab({
       }`}
     >
       <span className="shrink-0">{icon}</span>
-      <span className="truncate">{label}</span>
+      <span className="min-w-0 truncate">{label}</span>
     </button>
   );
 }
