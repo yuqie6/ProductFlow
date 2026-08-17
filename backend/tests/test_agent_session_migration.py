@@ -68,8 +68,11 @@ def test_agent_session_migration_backfills_existing_conversations_and_downgrades
         assert [(row[1], row[2]) for row in rows] == [("商品 a", "active"), ("商品 b", "active")]
         assert rows[0][0] != rows[1][0]
 
-    command.downgrade(config, "20260816_0049")
+    command.downgrade(config, "20260818_0057")
+    with engine.connect() as connection:
+        assert "summary" not in {column["name"] for column in sa.inspect(connection).get_columns("agent_sessions")}
+        assert "summary" not in {column["name"] for column in sa.inspect(connection).get_columns("agent_tasks")}
     inspector = sa.inspect(engine)
-    assert "agent_sessions" not in inspector.get_table_names()
-    assert "session_id" not in {column["name"] for column in inspector.get_columns("agent_conversations")}
+    assert "agent_sessions" in inspector.get_table_names()
+    assert "session_id" in {column["name"] for column in inspector.get_columns("agent_conversations")}
     engine.dispose()

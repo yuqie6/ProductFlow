@@ -32,6 +32,7 @@ class AgentSessionConversationResponse(BaseModel):
 class AgentSessionResponse(BaseModel):
     id: str
     title: str
+    summary: str | None
     status: AgentSessionStatus
     archived_at: datetime | None
     conversation_count: int
@@ -66,6 +67,7 @@ def serialize_agent_session(agent_session: AgentSession) -> AgentSessionResponse
     return AgentSessionResponse(
         id=agent_session.id,
         title=agent_session.title,
+        summary=agent_session.summary,
         status=agent_session.status,
         archived_at=agent_session.archived_at,
         conversation_count=len(agent_session.conversations),

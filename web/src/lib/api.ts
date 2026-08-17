@@ -384,6 +384,7 @@ export const api = {
     sessionId?: string | null;
     includeTerminal?: boolean;
     limit?: number;
+    after?: string | null;
   } = {}): Promise<AgentTaskListResponse> {
     const params = new URLSearchParams({
       include_terminal: String(input.includeTerminal ?? true),
@@ -391,6 +392,9 @@ export const api = {
     });
     if (input.sessionId) {
       params.set("session_id", input.sessionId);
+    }
+    if (input.after) {
+      params.set("after", input.after);
     }
     return request(`/api/v2/agent-tasks?${params}`);
   },
@@ -413,6 +417,16 @@ export const api = {
   },
   cancelAgentTask(taskId: string): Promise<AgentTask> {
     return request(`/api/v2/agent-tasks/${encodeURIComponent(taskId)}/cancel`, {
+      method: "POST",
+    });
+  },
+  pauseAgentTask(taskId: string): Promise<AgentTask> {
+    return request(`/api/v2/agent-tasks/${encodeURIComponent(taskId)}/pause`, {
+      method: "POST",
+    });
+  },
+  resumeAgentTask(taskId: string): Promise<AgentTask> {
+    return request(`/api/v2/agent-tasks/${encodeURIComponent(taskId)}/resume`, {
       method: "POST",
     });
   },

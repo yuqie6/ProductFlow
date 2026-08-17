@@ -44,6 +44,7 @@ describe("Agent conversation components", () => {
     const session = {
       id: "session-1",
       title: "春季素材",
+      summary: null,
       status: "active",
       archived_at: null,
       conversation_count: 2,

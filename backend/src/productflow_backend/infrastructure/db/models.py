@@ -1050,6 +1050,7 @@ class AgentSession(Base, TimestampMixin):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     title: Mapped[str] = mapped_column(String(160), nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[AgentSessionStatus] = mapped_column(
         enum_value_column(AgentSessionStatus),
         default=AgentSessionStatus.ACTIVE,
@@ -1106,6 +1107,7 @@ class AgentTask(Base, TimestampMixin):
     harness_run_id: Mapped[str] = mapped_column(String(120), nullable=False)
     title: Mapped[str] = mapped_column(String(160), nullable=False)
     goal: Mapped[str] = mapped_column(Text, nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[AgentTaskStatus] = mapped_column(
         enum_value_column(AgentTaskStatus),
         default=AgentTaskStatus.QUEUED,

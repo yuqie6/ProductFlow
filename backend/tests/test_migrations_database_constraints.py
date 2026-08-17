@@ -199,11 +199,17 @@ def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch:
         assert {"id", "title", "status", "archived_at"} <= {
             column["name"] for column in inspector.get_columns("agent_sessions")
         }
+        assert {"summary"} <= {
+            column["name"] for column in inspector.get_columns("agent_sessions")
+        }
+        assert {"summary"} <= {
+            column["name"] for column in inspector.get_columns("agent_tasks")
+        }
         assert {"task_id", "page_context_snapshot_id"} <= {
             column["name"] for column in inspector.get_columns("agent_turn_projections")
         }
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260818_0057"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260818_0058"
     finally:
         engine.dispose()
 
@@ -357,7 +363,7 @@ def test_agent_tool_step_projection_migration_backfills_existing_turns(
                 sa.text("SELECT tool_steps_json FROM agent_turn_projections WHERE id = 'turn-tool-step'")
             )
             assert value == "[]"
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260818_0057"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260818_0058"
     finally:
         engine.dispose()
 

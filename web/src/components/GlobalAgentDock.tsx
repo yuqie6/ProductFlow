@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
   Bot,
@@ -8,7 +8,9 @@ import {
   Loader2,
   MessagesSquare,
   PackagePlus,
+  Pause,
   Pencil,
+  Play,
   Plus,
   Search,
   X,
@@ -49,7 +51,17 @@ const ACTIVE_TASK_STATUSES = new Set<AgentTaskStatus>([
   "running",
   "waiting_user",
   "awaiting_confirmation",
+]);
+
+const CANCELABLE_TASK_STATUSES = new Set<AgentTaskStatus>([
+  ...ACTIVE_TASK_STATUSES,
   "paused",
+]);
+
+const PAUSABLE_TASK_STATUSES = new Set<AgentTaskStatus>([
+  "queued",
+  "waiting_user",
+  "awaiting_confirmation",
 ]);
 
 const TASK_STATUS_CLASSES: Record<AgentTaskStatus, string> = {
@@ -107,9 +119,15 @@ export function GlobalAgentDock() {
     staleTime: 15_000,
     refetchInterval: open ? 2_000 : false,
   });
-  const tasksQuery = useQuery({
+  const tasksQuery = useInfiniteQuery({
     queryKey: ["agent-tasks", null, true],
-    queryFn: () => api.listAgentTasks({ includeTerminal: true, limit: 100 }),
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => api.listAgentTasks({
+      includeTerminal: true,
+      limit: 100,
+      after: pageParam,
+    }),
+    getNextPageParam: (lastPage) => lastPage.next_cursor,
     staleTime: 8_000,
     refetchInterval: open ? 2_000 : false,
   });
@@ -145,7 +163,7 @@ export function GlobalAgentDock() {
   }, [open]);
 
   const sessions = sessionsQuery.data?.items ?? [];
-  const tasks = tasksQuery.data?.items ?? [];
+  const tasks = tasksQuery.data?.pages.flatMap((page) => page.items) ?? [];
   const activeTaskCount = tasks.filter((task) => ACTIVE_TASK_STATUSES.has(task.status)).length;
   const workspaceByConversationId = useMemo(() => {
     const entries = sessions.flatMap((session) =>
@@ -207,7 +225,7 @@ export function GlobalAgentDock() {
     }
     return sessions.filter((session) => {
       const workspaceNames = session.conversations.map((item) => item.product_name).join(" ");
-      return `${session.title} ${workspaceNames}`.toLocaleLowerCase().includes(normalizedSearch);
+      return `${session.title} ${session.summary ?? ""} ${workspaceNames}`.toLocaleLowerCase().includes(normalizedSearch);
     });
   }, [normalizedSearch, sessions]);
   const visibleTasks = useMemo(() => {
@@ -217,7 +235,7 @@ export function GlobalAgentDock() {
     return tasks.filter((task) => {
       const conversation = task.conversation_id ? conversationById.get(task.conversation_id) : null;
       const productName = conversation?.productName ?? "";
-      return `${task.title} ${task.goal} ${productName}`.toLocaleLowerCase().includes(normalizedSearch);
+      return `${task.title} ${task.goal} ${task.summary ?? ""} ${productName}`.toLocaleLowerCase().includes(normalizedSearch);
     });
   }, [conversationById, normalizedSearch, tasks]);
 
@@ -329,6 +347,14 @@ export function GlobalAgentDock() {
     mutationFn: (taskId: string) => api.cancelAgentTask(taskId),
     onSuccess: invalidateAgentLists,
   });
+  const pauseTaskMutation = useMutation({
+    mutationFn: (taskId: string) => api.pauseAgentTask(taskId),
+    onSuccess: invalidateAgentLists,
+  });
+  const resumeTaskMutation = useMutation({
+    mutationFn: (taskId: string) => api.resumeAgentTask(taskId),
+    onSuccess: invalidateAgentLists,
+  });
 
   const openWorkspace = (target: AgentWorkspaceTarget, sessionId: string, taskId?: string) => {
     const params = new URLSearchParams({ agent_session_id: sessionId });
@@ -384,7 +410,8 @@ export function GlobalAgentDock() {
 
   const queryError = sessionsQuery.error ?? tasksQuery.error;
   const mutationError = createTaskMutation.error ?? createSessionMutation.error ?? archiveMutation.error
-    ?? renameSessionMutation.error ?? renameTaskMutation.error ?? cancelTaskMutation.error;
+    ?? renameSessionMutation.error ?? renameTaskMutation.error ?? cancelTaskMutation.error
+    ?? pauseTaskMutation.error ?? resumeTaskMutation.error;
   const errorText = queryError || mutationError
     ? errorDetail(queryError ?? mutationError, t("globalAgent.requestFailed"))
     : null;
@@ -583,29 +610,46 @@ export function GlobalAgentDock() {
                 ) : null}
                 <div className="min-h-0 flex-1 overflow-y-auto p-2">
                   {tab === "tasks" ? (
-                    <TaskList
-                      loading={tasksQuery.isLoading}
-                      tasks={visibleTasks}
-                      workspaceByConversationId={workspaceByConversationId}
-                      conversationById={conversationById}
-                      onOpen={(task, workspace) => {
-                        if (workspace) {
-                          openWorkspace(workspace, task.session_id, task.id);
-                        } else if (task.conversation_id && conversationById.get(task.conversation_id)?.scopeType === "global") {
-                          openGlobalConversation(task.session_id, task.id);
-                        }
-                      }}
-                      onCancel={(task) => cancelTaskMutation.mutate(task.id)}
-                      onRename={(taskId, title) => {
-                        setRenamingTaskId(taskId);
-                        renameTaskMutation.mutate({ taskId, title });
-                      }}
-                      renamingTaskId={renameTaskMutation.isPending ? renameTaskMutation.variables?.taskId ?? renamingTaskId : renamingTaskId}
-                      renameError={renameTaskMutation.error ? errorDetail(renameTaskMutation.error, t("globalAgent.requestFailed")) : null}
-                      cancelingTaskId={cancelTaskMutation.isPending ? cancelTaskMutation.variables : null}
-                      emptyLabel={normalizedSearch ? t("globalAgent.noMatch") : t("globalAgent.noTasks")}
-                      statusLabel={(status) => t(TASK_STATUS_LABEL_KEYS[status])}
-                    />
+                    <>
+                      <TaskList
+                        loading={tasksQuery.isLoading}
+                        tasks={visibleTasks}
+                        workspaceByConversationId={workspaceByConversationId}
+                        conversationById={conversationById}
+                        onOpen={(task, workspace) => {
+                          if (workspace) {
+                            openWorkspace(workspace, task.session_id, task.id);
+                          } else if (task.conversation_id && conversationById.get(task.conversation_id)?.scopeType === "global") {
+                            openGlobalConversation(task.session_id, task.id);
+                          }
+                        }}
+                        onCancel={(task) => cancelTaskMutation.mutate(task.id)}
+                        onPause={(task) => pauseTaskMutation.mutate(task.id)}
+                        onResume={(task) => resumeTaskMutation.mutate(task.id)}
+                        onRename={(taskId, title) => {
+                          setRenamingTaskId(taskId);
+                          renameTaskMutation.mutate({ taskId, title });
+                        }}
+                        renamingTaskId={renameTaskMutation.isPending ? renameTaskMutation.variables?.taskId ?? renamingTaskId : renamingTaskId}
+                        renameError={renameTaskMutation.error ? errorDetail(renameTaskMutation.error, t("globalAgent.requestFailed")) : null}
+                        cancelingTaskId={cancelTaskMutation.isPending ? cancelTaskMutation.variables : null}
+                        pausingTaskId={pauseTaskMutation.isPending ? pauseTaskMutation.variables : null}
+                        resumingTaskId={resumeTaskMutation.isPending ? resumeTaskMutation.variables : null}
+                        emptyLabel={normalizedSearch ? t("globalAgent.noMatch") : t("globalAgent.noTasks")}
+                        statusLabel={(status) => t(TASK_STATUS_LABEL_KEYS[status])}
+                      />
+                      {tasksQuery.hasNextPage ? (
+                        <button
+                          type="button"
+                          onClick={() => void tasksQuery.fetchNextPage()}
+                          disabled={tasksQuery.isFetchingNextPage}
+                          className="mt-2 flex h-9 w-full items-center justify-center gap-2 rounded-md border border-border-l2 bg-surface-raised text-xs font-medium text-text-secondary transition-colors hover:border-accent/40 hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:cursor-wait disabled:opacity-60"
+                        >
+                          {tasksQuery.isFetchingNextPage ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : null}
+                          {tasksQuery.isFetchingNextPage ? t("globalAgent.loadingMoreTasks") : t("globalAgent.loadMoreTasks")}
+                        </button>
+                      ) : null}
+                    </>
                   ) : (
                     <SessionList
                       loading={sessionsQuery.isLoading}
@@ -719,10 +763,14 @@ function TaskList({
   conversationById,
   onOpen,
   onCancel,
+  onPause,
+  onResume,
   onRename,
   renamingTaskId,
   renameError,
   cancelingTaskId,
+  pausingTaskId,
+  resumingTaskId,
   emptyLabel,
   statusLabel,
 }: {
@@ -737,10 +785,14 @@ function TaskList({
   conversationById: Map<string, AgentConversationTarget>;
   onOpen: (task: AgentTask, workspace: AgentWorkspaceTarget | null) => void;
   onCancel: (task: AgentTask) => void;
+  onPause: (task: AgentTask) => void;
+  onResume: (task: AgentTask) => void;
   onRename: (taskId: string, title: string) => void;
   renamingTaskId: string | null;
   renameError: string | null;
   cancelingTaskId: string | null;
+  pausingTaskId: string | null;
+  resumingTaskId: string | null;
   emptyLabel: string;
   statusLabel: (status: AgentTaskStatus) => string;
 }) {
@@ -770,7 +822,9 @@ function TaskList({
           ? { productId: workspace.productId, conversationId: workspace.conversationId }
           : null;
         const openable = Boolean(target || conversation?.scopeType === "global");
-        const cancelable = ACTIVE_TASK_STATUSES.has(task.status);
+        const cancelable = CANCELABLE_TASK_STATUSES.has(task.status);
+        const pausable = PAUSABLE_TASK_STATUSES.has(task.status);
+        const resumable = task.status === "paused";
         if (editingTaskId === task.id) {
           return (
             <form
@@ -850,6 +904,11 @@ function TaskList({
               <span className="mt-0.5 block truncate text-xs text-text-secondary" title={task.goal}>
                 {task.goal}
               </span>
+              {task.summary && task.summary !== task.goal ? (
+                <span className="mt-0.5 block truncate text-[11px] text-text-muted" title={task.summary}>
+                  {task.summary}
+                </span>
+              ) : null}
               <span className="mt-1 block truncate text-[11px] text-text-muted">
                 {conversation?.productName ?? workspace?.productName ?? t("globalAgent.noWorkspace")}
               </span>
@@ -878,6 +937,30 @@ function TaskList({
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted opacity-70 transition-colors hover:bg-state-error/10 hover:text-state-error focus:outline-none focus-visible:ring-2 focus-visible:ring-state-error/50 sm:opacity-0 sm:group-hover:opacity-100 disabled:cursor-wait disabled:opacity-100"
               >
                 {cancelingTaskId === task.id ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <X size={14} aria-hidden="true" />}
+              </button>
+            ) : null}
+            {pausable ? (
+              <button
+                type="button"
+                onClick={() => onPause(task)}
+                disabled={pausingTaskId !== null || resumingTaskId !== null}
+                aria-label={pausingTaskId === task.id ? t("globalAgent.pausingTask") : t("globalAgent.pauseTask")}
+                title={pausingTaskId === task.id ? t("globalAgent.pausingTask") : t("globalAgent.pauseTask")}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted opacity-70 transition-colors hover:bg-state-warning/10 hover:text-state-warning focus:outline-none focus-visible:ring-2 focus-visible:ring-state-warning/50 sm:opacity-0 sm:group-hover:opacity-100 disabled:cursor-wait disabled:opacity-100"
+              >
+                {pausingTaskId === task.id ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Pause size={14} aria-hidden="true" />}
+              </button>
+            ) : null}
+            {resumable ? (
+              <button
+                type="button"
+                onClick={() => onResume(task)}
+                disabled={pausingTaskId !== null || resumingTaskId !== null}
+                aria-label={resumingTaskId === task.id ? t("globalAgent.resumingTask") : t("globalAgent.resumeTask")}
+                title={resumingTaskId === task.id ? t("globalAgent.resumingTask") : t("globalAgent.resumeTask")}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-muted opacity-70 transition-colors hover:bg-state-success/10 hover:text-state-success focus:outline-none focus-visible:ring-2 focus-visible:ring-state-success/50 sm:opacity-0 sm:group-hover:opacity-100 disabled:cursor-wait disabled:opacity-100"
+              >
+                {resumingTaskId === task.id ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Play size={14} aria-hidden="true" />}
               </button>
             ) : null}
           </div>
@@ -1013,6 +1096,11 @@ function SessionList({
                   <span className="mt-0.5 block truncate text-xs text-text-secondary">
                     {conversation?.product_name ?? t("globalAgent.noWorkspace")}
                   </span>
+                  {session.summary ? (
+                    <span className="mt-0.5 block truncate text-[11px] text-text-muted" title={session.summary}>
+                      {session.summary}
+                    </span>
+                  ) : null}
                 </span>
               </button>
               {session.status === "active" ? (

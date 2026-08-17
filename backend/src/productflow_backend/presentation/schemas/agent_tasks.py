@@ -34,6 +34,7 @@ class AgentTaskResponse(BaseModel):
     workflow_draft_id: str | None
     title: str
     goal: str
+    summary: str | None
     status: AgentTaskStatus
     waiting_reason: str | None
     failure_reason: str | None
@@ -47,6 +48,7 @@ class AgentTaskResponse(BaseModel):
 
 class AgentTaskListResponse(BaseModel):
     items: list[AgentTaskResponse]
+    next_cursor: str | None = None
 
 
 def serialize_agent_task(task: AgentTask) -> AgentTaskResponse:
@@ -59,6 +61,7 @@ def serialize_agent_task(task: AgentTask) -> AgentTaskResponse:
         workflow_draft_id=task.workflow_draft_id,
         title=task.title,
         goal=task.goal,
+        summary=task.summary,
         status=task.status,
         waiting_reason=task.waiting_reason,
         failure_reason=task.failure_reason,

@@ -10,6 +10,8 @@ from productflow_backend.application.agent_sync import recover_unfinished_agent_
 from productflow_backend.application.agent_tasks import (
     create_agent_task,
     list_agent_tasks,
+    pause_agent_task,
+    resume_agent_task,
 )
 from productflow_backend.application.agent_tools import (
     inspect_agent_global_products,
@@ -21,6 +23,7 @@ from productflow_backend.domain.errors import ConflictError
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
     AgentPageContextSnapshot,
+    AgentSession,
     AgentTask,
     AgentTurnProjection,
 )
@@ -53,6 +56,108 @@ def test_tasks_have_independent_harness_runs_and_share_a_session(db_session) -> 
         second.id,
         first.id,
     ]
+
+
+def test_task_list_uses_cursor_and_session_summary(db_session) -> None:
+    workspace = _create_workspace(db_session, key="task-cursor")
+    session_id = workspace.conversation.session_id
+    tasks = [
+        create_agent_task(
+            db_session,
+            session_id=session_id,
+            conversation_id=workspace.conversation.id,
+            title=f"任务 {index}",
+            goal=f"检查第 {index} 个任务",
+        )
+        for index in range(3)
+    ]
+
+    first = list_agent_tasks(db_session, session_id=session_id, limit=1)
+    assert [task.id for task in first.items] == [tasks[-1].id]
+    assert first.next_cursor is not None
+    second = list_agent_tasks(
+        db_session,
+        session_id=session_id,
+        limit=1,
+        after=first.next_cursor,
+    )
+    assert [task.id for task in second.items] == [tasks[-2].id]
+    assert second.next_cursor is not None
+    third = list_agent_tasks(
+        db_session,
+        session_id=session_id,
+        limit=1,
+        after=second.next_cursor,
+    )
+    assert [task.id for task in third.items] == [tasks[-3].id]
+    assert third.next_cursor is None
+    agent_session = db_session.get(AgentSession, session_id)
+    assert agent_session is not None
+    assert agent_session.summary is not None
+    assert "任务 3 个" in agent_session.summary
+
+
+def test_task_can_pause_before_first_turn_and_resume_idempotently(db_session) -> None:
+    workspace = _create_workspace(db_session, key="task-pause-before-turn")
+    task = create_agent_task(
+        db_session,
+        session_id=workspace.conversation.session_id,
+        conversation_id=workspace.conversation.id,
+        title="可暂停任务",
+        goal="等待用户确认后再开始检查",
+    )
+
+    paused = pause_agent_task(db_session, task_id=task.id)
+    assert paused.status == AgentTaskStatus.PAUSED
+    assert paused.waiting_reason == "user_paused"
+    session = db_session.get(AgentSession, workspace.conversation.session_id)
+    assert session is not None
+    assert "未完成 1 个" in (session.summary or "")
+
+    recovery_enqueued: list[str] = []
+    recovery = recover_unfinished_agent_turn_syncs(enqueue=recovery_enqueued.append)
+    assert recovery.recovered_task_turns == 0
+    assert recovery_enqueued == []
+
+    resumed = resume_agent_task(db_session, task_id=task.id)
+    assert resumed.task.status == AgentTaskStatus.QUEUED
+    assert resumed.projection_id is not None
+    projection = db_session.get(AgentTurnProjection, resumed.projection_id)
+    assert projection is not None
+    assert projection.task_id == task.id
+    assert projection.idempotency_key == f"initial:{workspace.conversation.id}:{task.id}"
+
+    repeated = resume_agent_task(db_session, task_id=task.id)
+    assert repeated.projection_id is None
+    assert repeated.task.status == AgentTaskStatus.QUEUED
+
+
+def test_running_task_cannot_be_paused(db_session) -> None:
+    workspace = _create_workspace(db_session, key="task-pause-running")
+    task = create_agent_task(
+        db_session,
+        session_id=workspace.conversation.session_id,
+        conversation_id=workspace.conversation.id,
+        title="运行中任务",
+        goal="验证运行中任务不能伪装成已暂停",
+    )
+    reservation = reserve_agent_turn(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        task_id=task.id,
+        input_text="开始运行",
+        input_asset_ids=[],
+        idempotency_key="pause-running-turn",
+    )
+
+    try:
+        pause_agent_task(db_session, task_id=task.id)
+    except ConflictError as exc:
+        assert "需要先取消" in str(exc)
+    else:
+        raise AssertionError("expected a running task to reject pause")
+    assert db_session.get(AgentTurnProjection, reservation.projection.id).status == AgentTurnStatus.QUEUED
 
 
 def test_agent_recovery_creates_one_initial_turn_for_queued_task(db_session) -> None:
@@ -297,6 +402,16 @@ def test_agent_task_api_lists_creates_and_renames(configured_env) -> None:
     )
     assert rename_response.status_code == 200, rename_response.text
     assert rename_response.json()["title"] == "检查最近运行"
+
+    pause_response = client.post(f"/api/v2/agent-tasks/{task['id']}/pause")
+    assert pause_response.status_code == 200, pause_response.text
+    assert pause_response.json()["status"] == "paused"
+    assert pause_response.json()["waiting_reason"] == "user_paused"
+
+    resume_response = client.post(f"/api/v2/agent-tasks/{task['id']}/resume")
+    assert resume_response.status_code == 200, resume_response.text
+    assert resume_response.json()["status"] == "queued"
+    assert resume_response.json()["current_turn_id"]
 
     cancel_response = client.post(f"/api/v2/agent-tasks/{task['id']}/cancel")
     assert cancel_response.status_code == 200, cancel_response.text

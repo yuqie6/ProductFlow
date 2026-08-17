@@ -12,7 +12,9 @@ from productflow_backend.application.agent_tasks import (
     create_agent_task,
     get_agent_task_or_raise,
     list_agent_tasks,
+    pause_agent_task,
     rename_agent_task,
+    resume_agent_task,
 )
 from productflow_backend.application.agent_workflow_run_requests import (
     cancel_agent_workflow_run_request,
@@ -44,6 +46,7 @@ def enqueue_agent_turn_sync(session: Session, projection_id: str) -> None:
 def list_agent_tasks_endpoint(
     session_id: str | None = Query(default=None, max_length=64),
     include_terminal: bool = Query(default=True),
+    after: str = Query(default="", max_length=4096),
     limit: int = Query(default=AGENT_TASK_LIST_DEFAULT_LIMIT, ge=1, le=AGENT_TASK_LIST_MAX_LIMIT),
     session: Session = Depends(get_session),
 ) -> AgentTaskListResponse:
@@ -52,8 +55,12 @@ def list_agent_tasks_endpoint(
         session_id=session_id,
         include_terminal=include_terminal,
         limit=limit,
+        after=after,
     )
-    return AgentTaskListResponse(items=[serialize_agent_task(item) for item in page.items])
+    return AgentTaskListResponse(
+        items=[serialize_agent_task(item) for item in page.items],
+        next_cursor=page.next_cursor,
+    )
 
 
 @router.post("", response_model=AgentTaskResponse, status_code=status.HTTP_201_CREATED)
@@ -147,6 +154,26 @@ def cancel_agent_task_endpoint(
     else:
         task = cancel_agent_task(session, task_id=task_id)
     return serialize_agent_task(task)
+
+
+@router.post("/{task_id}/pause", response_model=AgentTaskResponse)
+def pause_agent_task_endpoint(
+    task_id: str,
+    session: Session = Depends(get_session),
+) -> AgentTaskResponse:
+    return serialize_agent_task(pause_agent_task(session, task_id=task_id))
+
+
+@router.post("/{task_id}/resume", response_model=AgentTaskResponse)
+def resume_agent_task_endpoint(
+    task_id: str,
+    session: Session = Depends(get_session),
+) -> AgentTaskResponse:
+    result = resume_agent_task(session, task_id=task_id)
+    if result.projection_id is not None:
+        enqueue_agent_turn_sync(session, result.projection_id)
+        session.commit()
+    return serialize_agent_task(get_agent_task_or_raise(session, task_id))
 
 
 __all__ = ["router"]

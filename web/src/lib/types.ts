@@ -1005,6 +1005,7 @@ export interface AgentSessionConversation {
 export interface AgentSession {
   id: string;
   title: string;
+  summary: string | null;
   status: AgentSessionStatus;
   archived_at: string | null;
   conversation_count: number;
@@ -1041,6 +1042,7 @@ export interface AgentTask {
   workflow_draft_id: string | null;
   title: string;
   goal: string;
+  summary: string | null;
   status: AgentTaskStatus;
   waiting_reason: string | null;
   failure_reason: string | null;
@@ -1054,6 +1056,7 @@ export interface AgentTask {
 
 export interface AgentTaskListResponse {
   items: AgentTask[];
+  next_cursor: string | null;
 }
 
 export interface CreateAgentTaskInput {
