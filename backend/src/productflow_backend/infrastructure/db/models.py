@@ -1289,7 +1289,7 @@ class AgentTurnProjection(Base, TimestampMixin):
         ),
         UniqueConstraint(
             "library_organization_draft_revision_id",
-            name="uq_agent_turn_projections_library_organization_draft_revision_id",
+            name="uq_agent_turn_proj_library_org_draft_rev_id",
         ),
         UniqueConstraint(
             "workflow_run_request_id",
@@ -1350,7 +1350,7 @@ class AgentTurnProjection(Base, TimestampMixin):
         ForeignKey(
             "library_organization_draft_revisions.id",
             ondelete="SET NULL",
-            name="fk_agent_turn_projections_library_organization_draft_revision_id",
+            name="fk_agent_turn_proj_library_org_draft_rev_id",
         ),
         nullable=True,
     )

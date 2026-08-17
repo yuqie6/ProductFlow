@@ -28,8 +28,8 @@ LIBRARY_ORGANIZATION_DRAFT_STATUS = postgresql.ENUM(
 
 DRAFT_CURRENT_REVISION_FK = "fk_library_organization_drafts_current_revision_id"
 DRAFT_CONFIRMED_REVISION_FK = "fk_library_organization_drafts_confirmed_revision_id"
-TURN_REVISION_FK = "fk_agent_turn_projections_library_organization_draft_revision_id"
-TURN_REVISION_UNIQUE = "uq_agent_turn_projections_library_organization_draft_revision_id"
+TURN_REVISION_FK = "fk_agent_turn_proj_library_org_draft_rev_id"
+TURN_REVISION_UNIQUE = "uq_agent_turn_proj_library_org_draft_rev_id"
 
 
 def _alter_existing_table(table_name: str):
