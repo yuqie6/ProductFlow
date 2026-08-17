@@ -21,6 +21,7 @@ from productflow_backend.application.agent_product_workspaces import (
     finalize_agent_product_workspace_intake,
     get_agent_product_workspace,
 )
+from productflow_backend.domain.enums import AgentConversationScope
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
@@ -150,6 +151,16 @@ def test_create_agent_product_workspace_is_atomic_coverless_and_has_no_dag(
     ]
     assert intake.reference_asset_ids == [asset.id for asset in creation.created_assets]
     assert creation.conversation.harness_run_id == creation.conversation.id
+    global_conversation = db_session.scalar(
+        select(AgentConversation).where(
+            AgentConversation.session_id == creation.conversation.session_id,
+            AgentConversation.scope_type == AgentConversationScope.GLOBAL,
+        )
+    )
+    assert global_conversation is not None
+    assert global_conversation.product_id is None
+    assert global_conversation.workflow_draft_id is None
+    assert global_conversation.harness_run_id != creation.conversation.harness_run_id
     assert creation.conversation.creation_idempotency_key == "workspace-create-1"
     assert len(creation.conversation.creation_request_hash or "") == 64
 
