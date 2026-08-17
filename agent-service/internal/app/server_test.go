@@ -205,7 +205,8 @@ func TestServerScopesMultimodalTurnAndReplaysTerminalEvents(t *testing.T) {
 	providerMu.Lock()
 	captured := append([][]byte(nil), providerBodies...)
 	providerMu.Unlock()
-	if len(captured) != 2 || bytes.Count(captured[0], []byte("data:image/png;base64,")) != len(testAssetIDs) {
+	if len(captured) != 2 || bytes.Count(captured[0], []byte("data:image/png;base64,")) != len(testAssetIDs) ||
+		!bytes.Contains(captured[0], []byte("Session 正在处理商品素材")) {
 		t.Fatalf("provider requests = %s", captured)
 	}
 	for _, assetID := range testAssetIDs {
@@ -254,6 +255,12 @@ func TestManagerUsesOptionalArtifactForGlobalOrganizationDraft(t *testing.T) {
 		}
 		base := "/api/internal/v1/agent-conversations/" + testGlobalConversationID
 		switch request.URL.Path {
+		case base + "/runtime-context":
+			writeFixtureJSON(writer, map[string]any{
+				"schema_version": 1, "session_id": "55555555-5555-4555-8555-555555555555",
+				"conversation_id": testGlobalConversationID, "task_id": nil,
+				"session_summary": "全局 Session 摘要", "task_summary": nil,
+			})
 		case base + "/contract":
 			writeFixtureJSON(writer, map[string]any{
 				"schema_version": 1, "scope_type": "global", "conversation_id": testGlobalConversationID,
@@ -332,6 +339,14 @@ func TestManagerDoesNotRequireWorkflowDraftForProductTask(t *testing.T) {
 	productFlow := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Header.Get("Authorization") != "Bearer "+testInternalToken {
 			http.Error(writer, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if request.URL.Path == "/api/internal/v1/agent-conversations/"+testConversationID+"/runtime-context" {
+			writeFixtureJSON(writer, map[string]any{
+				"schema_version": 1, "session_id": "55555555-5555-4555-8555-555555555555",
+				"conversation_id": testConversationID, "task_id": taskID,
+				"session_summary": "后台任务 Session 摘要", "task_summary": "后台任务摘要",
+			})
 			return
 		}
 		if request.URL.Path != "/api/internal/v1/agent-tasks/"+taskID+"/contract" {
@@ -779,6 +794,12 @@ func newProductFlowFixtureWithAgentProvider(
 				return
 			}
 			writeFixtureJSON(writer, agentProvider)
+		case base + "/runtime-context":
+			writeFixtureJSON(writer, map[string]any{
+				"schema_version": 1, "session_id": "55555555-5555-4555-8555-555555555555",
+				"conversation_id": testConversationID, "task_id": nil,
+				"session_summary": "Session 正在处理商品素材", "task_summary": nil,
+			})
 		case base + "/contract":
 			writeFixtureJSON(writer, map[string]any{
 				"schema_version": 1, "conversation_id": testConversationID, "product_id": productID,

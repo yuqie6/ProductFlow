@@ -14,6 +14,7 @@ from sqlalchemy.engine import URL, make_url
 
 from alembic import command
 from productflow_backend.application.agent_product_intake import AgentProductSelectionV1
+from productflow_backend.application.agent_sessions import list_agent_sessions
 from productflow_backend.application.agent_product_workspaces import (
     create_agent_product_draft_workspace,
     create_agent_product_workspace,
@@ -165,17 +166,24 @@ def test_agent_product_intake_round_trips_and_creates_atomically_on_postgresql(
                         (_make_demo_image_bytes(), "detail.png", "image/png"),
                     ],
                     idempotency_key="postgres-agent-create",
-                ).created is False
+                    ).created is False
+                assert any(
+                    item.id == created.conversation.session_id
+                    for item in list_agent_sessions(session)
+                )
 
             _reset_database_state()
-            command.downgrade(config, "20260814_0037")
+            with pytest.raises(RuntimeError, match="media library cutover evidence"):
+                command.downgrade(config, "20260814_0037")
             engine = sa.create_engine(database_url, future=True)
             inspector = sa.inspect(engine)
-            assert "intake_json" not in {column["name"] for column in inspector.get_columns("workflow_drafts")}
+            assert "intake_json" in {column["name"] for column in inspector.get_columns("workflow_drafts")}
+            assert "summary" in {column["name"] for column in inspector.get_columns("agent_sessions")}
+            assert "summary" in {column["name"] for column in inspector.get_columns("agent_tasks")}
             with engine.connect() as connection:
                 assert connection.scalar(sa.text("SELECT COUNT(*) FROM products")) == 2
                 assert connection.scalar(sa.text("SELECT COUNT(*) FROM workflow_drafts")) == 2
-                assert connection.scalar(sa.text("SELECT COUNT(*) FROM agent_conversations")) == 2
+                assert connection.scalar(sa.text("SELECT COUNT(*) FROM agent_conversations")) == 3
                 assert connection.scalar(
                     sa.text("SELECT COUNT(*) FROM products WHERE id = :id"), {"id": product_id}
                 ) == 1
@@ -186,24 +194,6 @@ def test_agent_product_intake_round_trips_and_creates_atomically_on_postgresql(
                     sa.text("SELECT COUNT(*) FROM agent_conversations WHERE id = :id"),
                     {"id": conversation_id},
                 ) == 1
-            engine.dispose()
-
-            command.upgrade(config, "20260814_0038")
-            engine = sa.create_engine(database_url, future=True)
-            with engine.connect() as connection:
-                assert connection.execute(
-                    sa.text(
-                        "SELECT intake_schema_version, intake_json FROM workflow_drafts WHERE id = :id"
-                    ),
-                    {"id": draft_id},
-                ).one() == (None, None)
-                assert connection.execute(
-                    sa.text(
-                        "SELECT creation_idempotency_key, creation_request_hash "
-                        "FROM agent_conversations WHERE id = :id"
-                    ),
-                    {"id": conversation_id},
-                ).one() == (None, None)
             engine.dispose()
             _reset_database_state()
 

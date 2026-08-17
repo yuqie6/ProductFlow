@@ -131,7 +131,7 @@ def create_agent_task(
         conversation=conversation,
     )
     session.add(task)
-    _refresh_agent_session_summary(session, agent_session.id)
+    refresh_agent_session_summary(session, agent_session.id)
     session.commit()
     return get_agent_task_or_raise(session, task.id)
 
@@ -151,7 +151,7 @@ def get_agent_task_or_raise(session: Session, task_id: str) -> AgentTask:
     if task is None:
         raise NotFoundError("Agent Task 不存在")
     if _synchronize_task_workflow_run(task):
-        _refresh_agent_session_summary(session, task.session_id)
+        refresh_agent_session_summary(session, task.session_id)
         session.commit()
         return get_agent_task_or_raise(session, task_id)
     return task
@@ -205,7 +205,7 @@ def list_agent_tasks(
     for task in rows:
         synchronized = _synchronize_task_workflow_run(task)
         if synchronized:
-            _refresh_agent_session_summary(session, task.session_id)
+            refresh_agent_session_summary(session, task.session_id)
         changed = synchronized or changed
     if changed:
         session.commit()
@@ -227,7 +227,7 @@ def rename_agent_task(session: Session, *, task_id: str, title: str) -> AgentTas
     task = _get_task_for_update(session, task_id)
     task.title = _normalize_task_title(title)
     task.updated_at = now_utc()
-    _refresh_agent_session_summary(session, task.session_id)
+    refresh_agent_session_summary(session, task.session_id)
     session.commit()
     return get_agent_task_or_raise(session, task.id)
 
@@ -250,7 +250,7 @@ def cancel_agent_task(session: Session, *, task_id: str) -> AgentTask:
                 if projection.conversation is not None:
                     projection.conversation.status = AgentConversationStatus.CANCELED
                     projection.conversation.updated_at = now
-        _refresh_agent_session_summary(session, task.session_id)
+        refresh_agent_session_summary(session, task.session_id)
         session.commit()
     return get_agent_task_or_raise(session, task.id)
 
@@ -279,7 +279,7 @@ def pause_agent_task(session: Session, *, task_id: str) -> AgentTask:
     task.status = AgentTaskStatus.PAUSED
     task.waiting_reason = "user_paused"
     task.updated_at = now_utc()
-    _refresh_agent_session_summary(session, task.session_id)
+    refresh_agent_session_summary(session, task.session_id)
     session.commit()
     return get_agent_task_or_raise(session, task.id)
 
@@ -299,7 +299,7 @@ def resume_agent_task(session: Session, *, task_id: str) -> AgentTaskResumeResul
         else:
             raise ConflictError("暂停的 Agent Task 当前 Turn 状态已变化，请刷新后处理")
         task.updated_at = now_utc()
-        _refresh_agent_session_summary(session, task.session_id)
+        refresh_agent_session_summary(session, task.session_id)
         session.commit()
         return AgentTaskResumeResult(task=get_agent_task_or_raise(session, task.id))
 
@@ -334,7 +334,7 @@ def resume_agent_task(session: Session, *, task_id: str) -> AgentTaskResumeResul
         ),
         task_id=task.id,
     )
-    _refresh_agent_session_summary(session, task.session_id)
+    refresh_agent_session_summary(session, task.session_id)
     session.commit()
     return AgentTaskResumeResult(
         task=get_agent_task_or_raise(session, task.id),
@@ -478,7 +478,7 @@ def update_agent_task_from_turn(
         AgentTurnStatus.AWAITING_CONFIRMATION,
     }:
         task.summary = _agent_task_turn_summary(projection, status=status, error_text=error_text)
-        _refresh_agent_session_summary(session, task.session_id)
+        refresh_agent_session_summary(session, task.session_id)
         return task
     if status in {AgentTurnStatus.QUEUED, AgentTurnStatus.RUNNING, AgentTurnStatus.CANCEL_REQUESTED}:
         task.status = AgentTaskStatus.RUNNING if status != AgentTurnStatus.QUEUED else AgentTaskStatus.QUEUED
@@ -516,7 +516,7 @@ def update_agent_task_from_turn(
         task.failure_reason = error_text
         task.finished_at = finished_at or now
     task.summary = _agent_task_turn_summary(projection, status=status, error_text=error_text)
-    _refresh_agent_session_summary(session, task.session_id)
+    refresh_agent_session_summary(session, task.session_id)
     return task
 
 
@@ -630,7 +630,7 @@ def _bounded_summary(value: str) -> str:
     return normalized[:AGENT_TASK_SUMMARY_MAX_LENGTH]
 
 
-def _refresh_agent_session_summary(session: Session, session_id: str) -> None:
+def refresh_agent_session_summary(session: Session, session_id: str) -> None:
     agent_session = session.get(AgentSession, session_id)
     if agent_session is None:
         return
@@ -656,7 +656,10 @@ def _refresh_agent_session_summary(session: Session, session_id: str) -> None:
     else:
         recent_text = "；".join(f"{title}（{status.value}）" for title, status in recent)
         summary = f"任务 {total} 个，未完成 {active} 个。最近任务：{recent_text}"
-    agent_session.summary = _bounded_summary(summary)
+    bounded = _bounded_summary(summary)
+    if agent_session.summary != bounded:
+        agent_session.summary = bounded
+        agent_session.updated_at = now_utc()
 
 
 def _encode_agent_task_cursor(cursor: _AgentTaskCursor) -> str:
@@ -826,6 +829,7 @@ __all__ = [
     "new_agent_task",
     "normalize_page_context",
     "page_context_digest",
+    "refresh_agent_session_summary",
     "rename_agent_task",
     "task_contract",
     "update_agent_task_from_turn",

@@ -56,6 +56,15 @@ class AgentContractResponse(BaseModel):
     draft_schema: dict[str, Any] = Field(default_factory=dict)
 
 
+class AgentRuntimeContextResponse(BaseModel):
+    schema_version: Literal[1]
+    session_id: str
+    conversation_id: str
+    task_id: str | None
+    session_summary: str | None
+    task_summary: str | None
+
+
 class AgentPageContextSnapshotRequest(StrictAgentRequest):
     route: str = Field(min_length=1, max_length=512)
     page_type: str = Field(min_length=1, max_length=80)

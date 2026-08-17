@@ -230,7 +230,7 @@ Session summary
 - 全局图库的快照包含当前已选资产、当前已加载资产和搜索/来源/文件夹/标签/归档筛选；商品工作台的快照包含工作流 revision、侧栏模式、打开文件夹和有限数量的选中节点。
 - 已把 Task goal 注入任务专属 harness 的固定系统上下文；页面快照作为当前 Turn 的 ambient context，不会覆盖 Task goal。
 - 未指定 Task 的普通商品对话继续使用 conversation run，不会因为页面快照自动出现在后台 Task 列表中。
-- 已保留既有 Agent Turn 恢复同步，并让 Task Turn 通过任务专属运行路径恢复。恢复逻辑会发现已经落库但尚未创建首轮 Turn 的 `queued` Task，使用固定首轮幂等 key 补建一次 Turn；显式暂停的 Task 不会被恢复逻辑重新排入队列。商品 onboarding Task 在人工 Intake 完成前保持 `waiting_user`，不自动创建模型 Turn。PostgreSQL 保存有界的 Session/Task operational summary，供 Dock、任务列表和恢复索引使用；完整 transcript 仍由 harness journal 和 compaction 负责。Fresh Observation 和独立业务优先级调度器仍待实现。
+- 已保留既有 Agent Turn 恢复同步，并让 Task Turn 通过任务专属运行路径恢复。恢复逻辑会发现已经落库但尚未创建首轮 Turn 的 `queued` Task，使用固定首轮幂等 key 补建一次 Turn；显式暂停的 Task 不会被恢复逻辑重新排入队列。商品 onboarding Task 在人工 Intake 完成前保持 `waiting_user`，不自动创建模型 Turn。PostgreSQL 保存有界的 Session/Task operational summary，供 Dock、任务列表和恢复索引使用；每次 Turn 启动前 Agent service 重新读取这两个摘要并与页面快照一起作为有界输入，完整 transcript 仍由 harness journal 和 compaction 负责。副作用执行时的 Fresh Observation 继续由各业务 application use case 读取当前 revision、权限和引用状态来完成，独立业务优先级调度器仍待实现。
 - Agent service 的共享 admission 只限制活动 Turn 数量，不改变 durable queued 状态；页面切换只更新后续 Turn 的 ambient context，不修改既有 Task 目标。暂停/恢复 API 对运行中的模型 Turn fail closed，避免前端状态与 harness 执行状态分离。
 
 ### 阶段 3：接入人工作流执行
@@ -253,7 +253,7 @@ Session summary
 - 在多个页面挂载同一个全局 Agent 入口，Session 不随路由改变；全局 Agent 可以在当前 Session 下创建商品 onboarding 工作区，返回页面入口后继续使用现有人工创建流程。Dock 支持 Task 状态摘要、cursor 分页和安全暂停/恢复；运行中的模型 Turn 仍由取消链控制。
 - 通过 Skill registry 暴露商品、工作流、图库和 Draft 能力；全局 Agent 已可分页查询商品，按明确的商品 ID 查询当前有效工作流摘要，并按明确的 workflow ID 比较最近运行状态。
 - 每个有副作用的 Skill 都绑定权限、scope、revision、confirmation policy、idempotency 和验证方式。
-- 全局素材整理和明确工作流关联 Draft 的跨页面确认已经可用；工作流执行请求的确认和运行状态投影已经可用；剩余工作是跨页面后台 Task 的完整恢复、summary 参与模型上下文的动态注入、Fresh Observation、业务优先级调度和更完整的受影响对象跳转。
+- 全局素材整理和明确工作流关联 Draft 的跨页面确认已经可用；工作流执行请求的确认和运行状态投影已经可用；Session/Task 摘要会在每个 Turn 启动时动态注入；剩余工作是统一的 Fresh Observation harness 抽象、业务优先级调度和更完整的受影响对象跳转。
 
 ## 9. 验收条件
 

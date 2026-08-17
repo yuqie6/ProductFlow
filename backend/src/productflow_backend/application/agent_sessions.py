@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.time import now_utc
@@ -59,8 +59,13 @@ def list_agent_sessions(
         .correlate(AgentSession)
         .scalar_subquery()
     )
+    latest_activity_at = case(
+        (latest_conversation_at.is_(None), AgentSession.updated_at),
+        (latest_conversation_at > AgentSession.updated_at, latest_conversation_at),
+        else_=AgentSession.updated_at,
+    )
     statement = agent_session_query().order_by(
-        func.coalesce(latest_conversation_at, AgentSession.updated_at).desc(),
+        latest_activity_at.desc(),
         AgentSession.id.desc(),
     )
     if not include_archived:

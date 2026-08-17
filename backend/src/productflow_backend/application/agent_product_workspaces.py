@@ -21,7 +21,11 @@ from productflow_backend.application.agent_product_intake import (
     parse_workflow_intake,
 )
 from productflow_backend.application.agent_sessions import get_agent_session_or_raise, new_agent_session
-from productflow_backend.application.agent_tasks import AGENT_TASK_TITLE_MAX_LENGTH, new_agent_task
+from productflow_backend.application.agent_tasks import (
+    AGENT_TASK_TITLE_MAX_LENGTH,
+    new_agent_task,
+    refresh_agent_session_summary,
+)
 from productflow_backend.application.media_assets import get_product_image_assets_by_ids
 from productflow_backend.application.storage_compensation import compensate_storage_writes
 from productflow_backend.application.time import now_utc
@@ -352,6 +356,7 @@ def finalize_agent_product_workspace_intake(
                 onboarding_task.failure_reason = None
                 onboarding_task.finished_at = now
                 onboarding_task.updated_at = now
+            refresh_agent_session_summary(session, conversation.session_id)
             session.commit()
     except IntegrityError:
         session.rollback()
@@ -437,6 +442,7 @@ def _stage_workspace_records(
         task.status = AgentTaskStatus.WAITING_USER
         task.waiting_reason = PRODUCT_ONBOARDING_TASK_WAITING_REASON
         session.add(task)
+    refresh_agent_session_summary(session, agent_session.id)
     return draft, conversation
 
 

@@ -27,6 +27,7 @@ from productflow_backend.domain.enums import AgentConversationScope, AgentTaskSt
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
+    AgentSession,
     AgentTask,
     MediaObject,
     Product,
@@ -195,6 +196,10 @@ def test_agent_product_draft_workspace_creates_only_durable_identity_and_replays
     assert first.conversation.creation_idempotency_key == "draft-workspace-1"
     assert first.conversation.intake_idempotency_key is None
     assert first.conversation.intake_request_hash is None
+    agent_session = db_session.get(AgentSession, first.conversation.session_id)
+    assert agent_session is not None
+    assert "任务 1 个" in (agent_session.summary or "")
+    assert "未完成 1 个" in (agent_session.summary or "")
 
     replay = create_agent_product_draft_workspace(
         db_session,
@@ -390,6 +395,9 @@ def test_agent_product_workspace_intake_finalization_is_atomic_idempotent_and_co
     assert finalized.workflow_draft.revisions == []
     assert finalized.conversation.intake_idempotency_key == "intake-finalize-1"
     assert len(finalized.conversation.intake_request_hash or "") == 64
+    agent_session = db_session.get(AgentSession, finalized.conversation.session_id)
+    assert agent_session is not None
+    assert "未完成 0 个" in (agent_session.summary or "")
     assert db_session.scalar(select(func.count()).select_from(ProductWorkflow)) == 0
     assert db_session.scalar(select(func.count()).select_from(WorkflowNode)) == 0
     assert db_session.scalar(select(func.count()).select_from(WorkflowEdge)) == 0

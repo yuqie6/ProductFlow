@@ -18,6 +18,7 @@ from productflow_backend.application.agent_tools import (
     apply_agent_folder_rename,
     get_agent_contract,
     get_agent_product_context,
+    get_agent_runtime_context,
     inspect_agent_global_media_assets,
     inspect_agent_global_products,
     inspect_agent_product_assets,
@@ -84,6 +85,7 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     AgentLegacyArchiveListResponse,
     AgentProductWorkspaceLaunchRequest,
     AgentProductWorkspaceLaunchResponse,
+    AgentRuntimeContextResponse,
     AgentWorkflowDraftValidationRequest,
     AgentWorkflowDraftValidationResponse,
     AgentWorkflowRunListResponse,
@@ -162,6 +164,21 @@ def get_agent_product_context_endpoint(
     session: Session = Depends(get_session),
 ) -> dict:
     return get_agent_product_context(session, conversation_id)
+
+
+@router.get("/{conversation_id}/runtime-context", response_model=AgentRuntimeContextResponse)
+def get_agent_runtime_context_endpoint(
+    conversation_id: str,
+    task_id: str | None = Query(default=None, max_length=64),
+    session: Session = Depends(get_session),
+) -> AgentRuntimeContextResponse:
+    return AgentRuntimeContextResponse.model_validate(
+        get_agent_runtime_context(
+            session,
+            conversation_id=conversation_id,
+            task_id=task_id,
+        )
+    )
 
 
 @router.get("/{conversation_id}/workflow-runs", response_model=AgentWorkflowRunListResponse)

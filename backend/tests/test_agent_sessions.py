@@ -73,6 +73,26 @@ def test_agent_session_list_prioritizes_recent_conversation_activity(db_session)
     assert [item.id for item in sessions] == [newer.conversation.session_id, older.conversation.session_id]
 
 
+def test_agent_session_list_prioritizes_recent_task_activity(db_session) -> None:
+    older = _create_workspace(db_session, key="session-task-older")
+    newer = _create_workspace(db_session, key="session-task-newer")
+    older.conversation.updated_at = datetime(2020, 1, 1, tzinfo=UTC)
+    newer.conversation.updated_at = datetime(2020, 1, 2, tzinfo=UTC)
+    db_session.commit()
+
+    create_agent_task(
+        db_session,
+        session_id=older.conversation.session_id,
+        conversation_id=older.conversation.id,
+        title="最近的任务",
+        goal="检查最近任务活动是否影响 Session 排序",
+    )
+
+    sessions = list_agent_sessions(db_session)
+
+    assert [item.id for item in sessions] == [older.conversation.session_id, newer.conversation.session_id]
+
+
 def test_agent_session_rename_and_archive_keep_conversations(db_session) -> None:
     created = create_agent_session(db_session, title="春季素材")
 

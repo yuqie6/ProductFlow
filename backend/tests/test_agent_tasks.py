@@ -484,3 +484,18 @@ def test_internal_agent_task_contract_uses_task_run(configured_env, monkeypatch)
         "workflow_revision": 0,
         "items": [],
     }
+
+    runtime_context_path = f"/api/internal/v1/agent-conversations/{task.conversation_id}/runtime-context"
+    runtime_context_response = client.get(
+        runtime_context_path,
+        params={"task_id": task.id},
+        headers={"Authorization": f"Bearer {internal_token}"},
+    )
+    assert runtime_context_response.status_code == 200, runtime_context_response.text
+    runtime_context = runtime_context_response.json()
+    assert runtime_context["schema_version"] == 1
+    assert runtime_context["session_id"] == task.session_id
+    assert runtime_context["conversation_id"] == task.conversation_id
+    assert runtime_context["task_id"] == task.id
+    assert runtime_context["session_summary"]
+    assert runtime_context["task_summary"] == task.summary

@@ -43,6 +43,15 @@ type Contract struct {
 	ToolContractVersion int            `json:"tool_contract_version"`
 }
 
+type RuntimeContext struct {
+	SchemaVersion  int     `json:"schema_version"`
+	SessionID      string  `json:"session_id"`
+	ConversationID string  `json:"conversation_id"`
+	TaskID         *string `json:"task_id"`
+	SessionSummary *string `json:"session_summary"`
+	TaskSummary    *string `json:"task_summary"`
+}
+
 type AgentProviderConfig struct {
 	SchemaVersion    int     `json:"schema_version"`
 	ProviderKind     string  `json:"provider_kind"`
@@ -238,6 +247,24 @@ func (client *Client) Contract(ctx context.Context, conversationID string) (Cont
 func (client *Client) TaskContract(ctx context.Context, taskID string) (Contract, error) {
 	var result Contract
 	err := client.json(ctx, http.MethodGet, client.taskPath(taskID)+"/contract", nil, &result, "")
+	return result, err
+}
+
+func (client *Client) RuntimeContext(
+	ctx context.Context,
+	conversationID string,
+	taskID *string,
+) (RuntimeContext, error) {
+	values := url.Values{}
+	if taskID != nil && strings.TrimSpace(*taskID) != "" {
+		values.Set("task_id", strings.TrimSpace(*taskID))
+	}
+	path := client.conversationPath(conversationID) + "/runtime-context"
+	if encoded := values.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var result RuntimeContext
+	err := client.json(ctx, http.MethodGet, path, nil, &result, "")
 	return result, err
 }
 

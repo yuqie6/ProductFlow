@@ -17,6 +17,7 @@ from productflow_backend.application.agent_conversations import (
     get_agent_conversation_by_id_or_raise,
 )
 from productflow_backend.application.agent_product_intake import parse_workflow_intake
+from productflow_backend.application.agent_sessions import get_agent_session_or_raise
 from productflow_backend.application.agent_tasks import task_contract
 from productflow_backend.application.gallery_assets import (
     GalleryAssetRecord,
@@ -188,6 +189,39 @@ def get_agent_task_contract(session: Session, task_id: str) -> dict[str, Any]:
     contract["task_goal"] = task.goal
     contract["harness_run_id"] = task.harness_run_id
     return contract
+
+
+def get_agent_runtime_context(
+    session: Session,
+    *,
+    conversation_id: str,
+    task_id: str | None = None,
+) -> dict[str, Any]:
+    """Return the bounded operational summaries needed to resume a Turn."""
+    conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
+    if conversation.session_id is None:
+        raise ConflictError("Agent conversation 尚未绑定 Session")
+    agent_session = get_agent_session_or_raise(session, conversation.session_id)
+
+    task_summary: str | None = None
+    if task_id is not None:
+        task, task_conversation = task_contract(session, task_id)
+        if task_conversation.id != conversation.id or task.session_id != agent_session.id:
+            raise ConflictError("Agent Task 与当前 Agent conversation 不匹配")
+        task_summary = task.summary
+
+    payload = {
+        "schema_version": 1,
+        "session_id": agent_session.id,
+        "conversation_id": conversation.id,
+        "task_id": task_id,
+        "session_summary": agent_session.summary,
+        "task_summary": task_summary,
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
+    if len(encoded) > 16 * 1024:
+        raise ConflictError("Agent 运行时摘要超过上下文上限")
+    return payload
 
 
 def _agent_contract_for_conversation(conversation: AgentConversation) -> dict[str, Any]:
@@ -1678,6 +1712,7 @@ __all__ = [
     "apply_agent_folder_create",
     "apply_agent_folder_rename",
     "get_agent_contract",
+    "get_agent_runtime_context",
     "get_agent_task_contract",
     "get_agent_product_context",
     "inspect_agent_global_media_assets",

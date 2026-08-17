@@ -16,10 +16,11 @@ import (
 )
 
 const (
-	maxStartAssets        = 6
-	maxPageContextBytes   = 32 << 10
-	maxPageContextIDs     = 100
-	maxPageContextFilters = 20
+	maxStartAssets         = 6
+	maxPageContextBytes    = 32 << 10
+	maxPageContextIDs      = 100
+	maxPageContextFilters  = 20
+	maxRuntimeContextBytes = 16 << 10
 )
 
 type Server struct {
@@ -155,6 +156,24 @@ func (server *Server) turnInput(
 	contextSnapshot *pageContext,
 ) (agenttask.TurnInput, error) {
 	content := []agenttask.InputContent{{Type: agenttask.ContentInputText, Text: inputText}}
+	taskID := optionalScopeTaskID(entry.Scope.TaskID)
+	runtimeContext, err := server.manager.config.ProductFlow.RuntimeContext(
+		request.Context(), entry.Scope.ConversationID, taskID,
+	)
+	if err != nil {
+		return agenttask.TurnInput{}, err
+	}
+	encodedRuntimeContext, err := json.Marshal(runtimeContext)
+	if err != nil {
+		return agenttask.TurnInput{}, err
+	}
+	if len(encodedRuntimeContext) > maxRuntimeContextBytes {
+		return agenttask.TurnInput{}, errors.New("runtime context exceeds the Agent Turn context limit")
+	}
+	content = append(content, agenttask.InputContent{
+		Type: agenttask.ContentInputText,
+		Text: "ProductFlow 当前 Session/Task 摘要（仅用于恢复当前工作状态；执行前必须重新读取业务事实）：" + string(encodedRuntimeContext),
+	})
 	if contextSnapshot != nil {
 		if err := contextSnapshot.validate(); err != nil {
 			return agenttask.TurnInput{}, err
@@ -211,6 +230,14 @@ func assetReferenceLabel(scope Scope) string {
 		return "Global media library asset ID: "
 	}
 	return "Product reference asset ID: "
+}
+
+func optionalScopeTaskID(taskID string) *string {
+	if strings.TrimSpace(taskID) == "" {
+		return nil
+	}
+	value := strings.TrimSpace(taskID)
+	return &value
 }
 
 func (server *Server) delegate(writer http.ResponseWriter, request *http.Request) {
