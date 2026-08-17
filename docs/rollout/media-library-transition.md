@@ -142,7 +142,7 @@ Last reviewed against the current working tree on 2026-08-18.
 9. 最终事务锁定 Gallery/Session source tables 进行稳定读，重算 high-watermark/count/hash，证明 source delta 为零，并记录 cutover-ready evidence。
 10. dry-run/apply/reconcile 都必须幂等；异常条目进入 blocker report，不静默跳过。
 
-当前 `backfill_media_library` command 已将坏文件和无效 source 以 entry id/code 写入 `summary.blockers`，存在 blocker 时返回退出码 `2`；reconcile 也会拒绝 canonical 侧多出的 `legacy_gallery` mapping。它仍然只证明应用层 source mapping，不能替代 PostgreSQL snapshot、storage backup identity、维护窗口和观察窗证据。
+当前 `backfill_media_library` command 已将坏文件和无效 source 以 entry id/code 写入 `summary.blockers`，存在 blocker 时返回退出码 `2`；`--verify` 还会输出包含 workflow 子图库关联和商品收录引用计数的 `reconciliation_report_sha256`。reconcile 也会拒绝 canonical 侧多出的 `legacy_gallery` mapping。它仍然只证明应用层 source mapping，不能替代 PostgreSQL snapshot、storage backup identity、维护窗口和观察窗证据。
 
 新代码确认只读写 `MediaLibraryAsset` 后才解除维护窗口。旧表保持只读证据，不再新增长期业务字段。
 
@@ -183,7 +183,7 @@ cutover 条件：
 - 新 frontend 和 API 已不读取 `/api/gallery`。
 - old/new backfill report 为零 blocker。
 - `ImageGalleryEntry` runtime model、旧 route、schema、api methods 和旧客户端调用已退休；迁移测试保留 source reader、backfill 和 retired-route 404 回归。
-- 旧物理表继续只读保留，直到 cleanup eligibility。
+- 旧物理表继续只读保留，直到独立素材库 cutover gate 进入 `ready_for_cleanup`。
 
 ## 11. Phase 7：Agent 整理 Draft
 
@@ -272,11 +272,11 @@ git diff --check
 
 ## 16. Destructive cleanup guard
 
-本计划不授权 drop `image_gallery_entries`、删除 duplicate session path/MIME 列、物理删除 archive/library media 或修改 V1 source/archive 表。
+本计划不授权通过 Alembic、应用启动或普通用户 API drop `image_gallery_entries`、删除 duplicate session path/MIME 列、物理删除 archive/library media 或修改 V1 source/archive 表。代码已经提供独立的素材库证据闸门和一次性退休命令，但命令默认只做 dry-run，部署证据不齐时会拒绝执行。
 
 未来清理必须满足：
 
-1. 独立 migration、独立实施计划、独立人工评审和明确 scoped confirmation。
+1. 独立 `media_library_cutover_gates` migration、实施计划、人工评审和明确 scoped confirmation。
 2. 至少一个已验证部署观察窗内旧 reader/writer/count 为零。
 3. 数据库和 storage backup restore 有真实证据。
 4. dry-run 输出精确 rows/columns/files 和稳定 hash。
@@ -285,3 +285,27 @@ git diff --check
 7. residue scan 覆盖代码、测试、配置、docs、migration readers 和浏览器 client。
 
 违反任一条件时，不允许用 `alembic stamp`、手工 SQL、force flag 或 fallback reader 绕过。
+
+退休前先在受限证据目录保存回填快照和报告，然后批准闸门：
+
+```bash
+python -m productflow_backend.commands.backfill_media_library \
+  --snapshot-file "$EVIDENCE_DIR/gallery-snapshot.json" \
+  --apply --verify > "$EVIDENCE_DIR/gallery-backfill.json"
+python -m productflow_backend.commands.manage_media_library_cutover_gate approve \
+  --source-snapshot-token '<postgres snapshot token>' \
+  --source-report-sha256 '<source hash>' \
+  --reconciliation-report-sha256 '<reconciliation hash>' \
+  --backup-restore-verified-at '<UTC ISO-8601 timestamp>' \
+  --zero-delta-observed-at '<UTC ISO-8601 timestamp>'
+```
+
+批准后仍需在同一候选版本执行 dry-run；只有重新锁定 source table、source hash 和 reconciliation hash 全部一致时，才允许带确认字符串执行：
+
+```bash
+python -m productflow_backend.commands.retire_legacy_gallery
+python -m productflow_backend.commands.retire_legacy_gallery \
+  --apply --confirm RETIRE_LEGACY_GALLERY
+```
+
+该命令只删除 `image_gallery_entries`，保留 `MediaLibraryAsset`、`MediaObject`、工作流子图库关联、商品图片和历史引用；数据库 drop 与 gate 标记在同一事务内完成。命令执行成功后 gate 进入 `cleaned`，不能重新批准。

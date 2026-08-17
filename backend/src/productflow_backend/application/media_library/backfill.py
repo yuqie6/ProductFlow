@@ -5,9 +5,10 @@ import logging
 from dataclasses import dataclass, replace
 from hashlib import sha256
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from productflow_backend.application.legacy_retirement.contracts import canonical_json_bytes
 from productflow_backend.application.legacy_retirement.media_library import (
     LegacyGalleryEntry,
     load_legacy_gallery_entries,
@@ -23,6 +24,8 @@ from productflow_backend.infrastructure.db.models import (
     ImageSessionAsset,
     MediaLibraryAsset,
     MediaObject,
+    ProductImageAsset,
+    WorkflowMediaLibraryAsset,
 )
 from productflow_backend.infrastructure.storage import LocalStorage
 
@@ -290,3 +293,68 @@ def verify_gallery_backfill(
             raise RuntimeError(f"media library mapping mismatch for gallery entry {entry.id}")
         verified += 1
     return verified
+
+
+def gallery_reconciliation_hash(
+    session: Session,
+    *,
+    storage: LocalStorage,
+    snapshot: MediaLibraryMigrationAudit,
+) -> str:
+    """Return a stable hash for the verified old-to-new Gallery mapping.
+
+    The source snapshot alone cannot prove that the canonical mapping and
+    workflow-side references stayed unchanged.  Include those relationships
+    in the report hash so the retirement gate can recheck the same facts
+    immediately before dropping the legacy table.
+    """
+
+    verify_gallery_backfill(session, storage=storage, snapshot=snapshot)
+    rows: list[dict[str, object]] = []
+    for entry in load_legacy_gallery_entries(session):
+        if entry.asset is None or entry.asset.media_object is None:
+            raise RuntimeError(f"gallery entry {entry.id} has no verified canonical source")
+        library_asset = session.scalar(
+            select(MediaLibraryAsset).where(
+                MediaLibraryAsset.source_type == "legacy_gallery",
+                MediaLibraryAsset.source_id == entry.id,
+            )
+        )
+        if library_asset is None:
+            raise RuntimeError(f"missing media library asset for gallery entry {entry.id}")
+        workflow_link_count = int(
+            session.scalar(
+                select(func.count())
+                .select_from(WorkflowMediaLibraryAsset)
+                .where(WorkflowMediaLibraryAsset.media_library_asset_id == library_asset.id)
+            )
+            or 0
+        )
+        product_reference_count = int(
+            session.scalar(
+                select(func.count())
+                .select_from(ProductImageAsset)
+                .where(ProductImageAsset.source_library_asset_id == library_asset.id)
+            )
+            or 0
+        )
+        rows.append(
+            {
+                "entry_id": entry.id,
+                "image_session_asset_id": entry.asset.id,
+                "media_object_id": entry.asset.media_object.id,
+                "media_sha256": entry.asset.media_object.sha256,
+                "library_asset_id": library_asset.id,
+                "provenance_hash": library_asset.provenance_hash,
+                "workflow_link_count": workflow_link_count,
+                "product_reference_count": product_reference_count,
+            }
+        )
+    payload = {
+        "schema_version": 1,
+        "snapshot_token": snapshot.snapshot_token,
+        "source_hash": snapshot.source_hash,
+        "gallery_count": snapshot.gallery_count,
+        "rows": rows,
+    }
+    return sha256(canonical_json_bytes(payload)).hexdigest()

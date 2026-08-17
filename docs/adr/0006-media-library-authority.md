@@ -88,7 +88,7 @@ ADR 0002 已确定：`MediaObject` 拥有不可变媒体字节，`ProductImageAs
 - 新表从 `ImageGalleryEntry` 可审计回填，尽量保留 entry ID，并核对 source/media/provenance/count。
 - cutover 后 `MediaLibraryAsset` 是唯一在线全局素材 owner；旧 Gallery 表只读保留有界窗口，不长期双写。
 - 旧 API、DTO、前端调用、测试和 runtime model 一起退休。
-- drop 旧表属于持久化 destructive cleanup，必须在备份、恢复和对账证据齐全后单独确认。
+- drop 旧表属于持久化 destructive cleanup，必须在备份、恢复和对账证据齐全后单独确认。`media_library_cutover_gates` 记录独立证据；`retire_legacy_gallery` 会在同一事务内重新锁定 source table、核对 source/reconciliation hash 后才删除旧表，不删除全局素材、共享媒体或工作流子图库关联。
 
 ## 与现有 ADR 的关系
 

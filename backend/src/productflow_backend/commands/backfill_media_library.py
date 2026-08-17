@@ -9,6 +9,7 @@ from pathlib import Path
 
 from productflow_backend.application.media_library.backfill import (
     capture_gallery_snapshot,
+    gallery_reconciliation_hash,
     run_gallery_backfill,
     verify_gallery_backfill,
 )
@@ -94,8 +95,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             snapshot=snapshot,
         )
         verified = None
+        reconciliation_hash = None
         if args.verify:
             verified = verify_gallery_backfill(session, storage=LocalStorage(), snapshot=snapshot)
+            reconciliation_hash = gallery_reconciliation_hash(
+                session,
+                storage=LocalStorage(),
+                snapshot=snapshot,
+            )
         payload = {
             "snapshot_token": snapshot.snapshot_token,
             "gallery_count": snapshot.gallery_count,
@@ -103,6 +110,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "source_hash": snapshot.source_hash,
             "summary": asdict(summary),
             "verified": verified,
+            "reconciliation_report_sha256": reconciliation_hash,
         }
         print(json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str))
         if summary.blocked:
