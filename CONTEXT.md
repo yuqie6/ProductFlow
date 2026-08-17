@@ -45,8 +45,19 @@ The current repository targets a personal live demo and self-hosted deployments.
 - The product library contains every current and historical product image result; the product does not assign automatic reject/draft status to successful images.
 - System directories are query projections. User folders are one level deep and do not replace system classification.
 - Deleting a user folder removes organization only. It does not delete assets or break node, cover, lineage, or rendition references.
-- The Agent lists bounded metadata and inspects only selected images. It never receives the entire product library in one Turn.
+- The current product-scoped Agent lists bounded product-library metadata and inspects only selected images. The target global Agent must keep the same bound for global and workflow sub-libraries; no Agent Turn receives an entire library.
 - Product cover is display metadata. Changing it does not change product facts or workflow reference bindings.
+
+## Gallery And Library Terms
+
+- 收藏画廊是连续生图结果的收藏视图。它保存一条图片结果引用，并展示该结果所属轮次的提示词、尺寸、模型、供应商和候选信息；它不是独立的提示词参数库。
+- 目标态的工作流子图库是全局图库的工作流作用域关联和使用集合。工作流节点、封面、参考绑定和交付 lineage 使用稳定的工作流侧图片身份，并可追溯到全局素材身份；它不复制媒体 bytes，也不是另一套全局 owner。
+- 目标态的全局图库是跨会话、可归档、可跨工作流复用的长期图片集合。用户明确保存的图片进入全局图库，并按同步规则关联到工作流子图库。
+- 配方库保存可复用的工作流结构和配置，不等同于收藏画廊，也不保存商品图片或生成结果。
+- 工作流生成后仍然是用户可以直接编辑和执行的生产工具。Agent 可以辅助配置、检查、批量安排和解释执行结果，但不能取代工作流画布、运行按钮、节点重试和人工选择。
+- `WorkflowRun` 是独立的业务执行记录。用户从工作流页面点击执行可以直接创建它，不需要先创建 Agent Session 或 Agent Task；Agent 代为请求执行时也必须复用同一套工作流业务约束。
+- Agent Session、Agent Task、WorkflowRun 和图片生成会话分别表达长期交流、业务目标、工作流执行和连续生图，不能通过重命名一个现有对象来合并这些职责。
+- 收藏画廊条目的旧生命周期跟随连续生图会话资产；删除来源会话的目标行为是移除旧收藏。SQLite 默认关闭外键时不能仅依赖数据库级联，应用删除路径必须显式处理这类旧条目。
 
 ## Legacy Cutover State
 

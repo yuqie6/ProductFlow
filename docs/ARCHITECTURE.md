@@ -93,6 +93,8 @@ image types + quantities + 1..6 uploads
 
 ProductFlow 是业务数据权威。Agent service 保存 durable Turn transcript、tool call/result 和 token delta；PostgreSQL 保存 AgentConversation、AgentTurnProjection、问题状态和 WorkflowDraft revision。
 
+Agent service 通过 `tool.step` SSE 事件和 Turn 状态 `tool_steps` 暴露有界工具步骤投影，字段固定为 `step_id`、`kind`、`summary`、`status`。当前 kinds 为 `inspect_image`、`inspect_context`、`read_history`、`organize_assets`、`propose_draft`；statuses 为 `running`、`succeeded`、`failed`、`unknown`。`question.required` 继续独立拥有 Question，不投影为 tool step；当前没有真实 `generate_image` Agent tool，不提前加入。`AgentTurnProjection.tool_steps_json` 保存这份 web projection：缺失 `tool_steps` 表示兼容旧服务并保留现有 snapshot，显式 `[]` 才清空。
+
 Agent 读取商品资产时先获取有界元数据列表，再选择需要检查的图片。图片工具结果使用版本化多模态合同，不把整个图库或 data URL 拼进文本历史。
 
 图库重命名、建文件夹、移动等 Agent 写操作使用 prepare/apply/reconcile 合同和幂等键，便于在网络中断或重启后对账。
@@ -126,6 +128,8 @@ WorkflowFolder 是局部视觉分组；它不改变 DAG 执行语义。WorkflowE
 文件夹只支持一层，不拥有运行状态、端口、嵌套、取消或重试语义。聚合状态由成员节点推导。
 
 WorkflowRun 和 WorkflowNodeRun 保存运行状态。worker 根据已成功的上游节点调度 ready 节点。提示词产物使用版本记录；图片结果写入 ProductImageAsset，并绑定回目标节点。
+
+工作流运行由 ProductFlow 业务接口直接创建和校验。工作流页面可以直接提交整个 DAG 或单个节点，用户不需要先创建 Agent Conversation；未来 Agent 代为请求运行时，必须复用这些 application use case、权限、版本和队列约束。
 
 WorkflowRecipe 保存用户主动创建的完整工作流或局部片段。recipe payload 只保存可复用结构和配置，不保存商品身份、生成结果或媒体字节。
 

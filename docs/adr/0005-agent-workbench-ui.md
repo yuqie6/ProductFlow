@@ -26,29 +26,30 @@ Agent 商品工作台（`pages/agent-workbench/`）目前是"能用的功能拼�
 
 #### 1.2 工具调用降噪：新增有界工具步骤投影（跨层）
 
-这是唯一跨层的一项。当前 `agent-service/third_party/agent-harness/turn/protocol.go` 只定义 `text.delta` 与 `artifact`，前端 `agentEventReducer.ts` 只消费 7 种 event kind。Agent 的中间动作（读资产、生成图片、写 draft）对用户不可见。
+这是唯一跨层的一项。`agent-service/third_party/agent-harness/turn/protocol.go` 已新增 `tool.step` 事件与 `ToolStep` 状态；前端 `agentEventReducer.ts` 严格解析该事件并按 `step_id` 合并快照与 live 步骤。Agent 的中间动作（读资产、整理资产、读历史、写 draft）通过有界投影对用户可见。
 
-决策：在 Agent service 侧新增**有界工具步骤投影事件**，作为 web projection 的一部分，与 ADR 0001 的"ProductFlow 存 web projection，不重建 transcript"边界一致。投影只能包含：
+决策：在 Agent service 侧新增**有界工具步骤投影事件**，作为 web projection 的一部分，与 ADR 0001 的"ProductFlow 存 web projection，不重建 transcript"边界一致。当前投影只包含四个字段：
 
 - `step_id`（幂等、可审计的步骤标识）
 - `kind`（ProductFlow 自有工具类别，见下）
 - `summary`（单行、有界长度的人类可读摘要）
-- `status`（`running` / `succeeded` / `failed` / `canceled` / `unknown`）
-- 失败时的 `error_first_line`
-- 结果引用（`product_image_asset_id` 或 `workflow_draft_revision_id`），不携带完整 payload
+- `status`（`running` / `succeeded` / `failed` / `unknown`）
 
-不允许把工具原始参数、完整输出、storage path、图片 bytes 或私密 transport 内容放入投影。这与 CONTEXT.md 的"Agent lists bounded metadata and inspects only selected images"对齐。
+不允许把工具原始参数、完整输出、storage path、图片 bytes、私密 transport 内容、`error_first_line` 或结果引用放入投影。`error_first_line` 与结果引用（`product_image_asset_id` / `workflow_draft_revision_id`）尚无安全合同，当前不实现，也不提供可点击的工具详情。这与 CONTEXT.md 的"Agent lists bounded metadata and inspects only selected images"对齐。
 
 ProductFlow 自有工具类别（非 DeepSeek Harness 的 terminal/read/search/web）：
 
-| kind | 摘要语义 | 结果引用 |
-|---|---|---|
-| `inspect_image` | 查看商品图库资产 | `product_image_asset_id` |
-| `generate_image` | 生成一张候选图 | 生成结果 asset |
-| `propose_draft` | 提出/修订 WorkflowDraft | `workflow_draft_revision_id` |
-| `ask_question` | 向用户提问 | 复用现有 `question.required`，不重复建模 |
+| kind | 摘要语义 |
+|---|---|
+| `inspect_image` | 查看商品图库资产 |
+| `inspect_context` | 查看商品上下文与资产元数据 |
+| `read_history` | 读取商品历史 |
+| `organize_assets` | 整理商品图片资产 |
+| `propose_draft` | 提出/修订 WorkflowDraft |
 
-工具步骤投影是一个**新增的可选能力**，不影响现有 `text.delta`/`artifact` 语义。前端在投影事件缺失时优雅降级为当前的纯 prose 渲染。
+当前没有真实 `generate_image` Agent tool，不得提前加入投影；`ask_question` 继续由现有 `question.required` 独立拥有，不重复投影为 tool step。
+
+工具步骤投影是**可选能力**：Turn 快照缺失 `tool_steps` 时保留现有快照并兼容旧服务，显式 `[]` 才清空。前端在投影事件缺失时优雅降级为纯 prose 渲染。
 
 #### 1.3 状态节点化：收敛散弹枪式错误横幅
 
@@ -73,7 +74,7 @@ chip token（`/name`、`@subagent` 这类在文本流里按"单个实体"渲染�
 
 #### 1.5 详情面板：第二阅读面
 
-为工具步骤结果提供"第二阅读面"：对话流里只显示单行摘要（可展开），点击后右侧 inspector 详情面板显示该步骤的完整有界结果。复用 `ProductWorkbenchInspector` 的 tool 机制，新增一个 `ToolStepDetails` tool，而不是另建面板。这依赖 1.2 的投影契约。
+当前**不实现**工具步骤结果详情面板。对话流只显示紧凑的 `AgentToolStepList`（单行摘要 + 状态），因为 `tool.step` 尚未包含可安全暴露的结果引用或 `error_first_line`。待 1.2 的投影契约扩展出有界结果引用后，再复用 `ProductWorkbenchInspector` 的 tool 机制新增 `ToolStepDetails` 第二阅读面，而不是另建面板。
 
 #### 1.6 Turn 尾结构
 
@@ -90,6 +91,7 @@ chip token（`/name`、`@subagent` 这类在文本流里按"单个实体"渲染�
 ## 后果
 
 - 工具步骤投影是 wire 契约的新增，需要 Agent service 与 ProductFlow 双向同步，且前端要对缺失事件降级。
+- 当前 `tool.step` 只含 `step_id`/`kind`/`summary`/`status` 四字段；`error_first_line`、结果引用和可点击详情均 deferred，直到有安全合同。
 - 布局改造有回归风险（画布拖拽/缩放/选择/edge 编辑/inspector/run history 必须保留，见 `web/AGENTS.md` 的 Canvas And Image Workflows）。
 - token 体系改造面大（现有组件散落硬编码），需分阶段，先建 token 再逐组件迁移，避免一次大爆炸。
 - 这些决策不改变 Agent 的权威边界（ADR 0001）、canonical 图片身份（ADR 0002）、schema-v2 工作流（ADR 0003）、V1 cutover（ADR 0004）。
@@ -108,6 +110,6 @@ chip token（`/name`、`@subagent` 这类在文本流里按"单个实体"渲染�
 2. **布局收敛**（纯前端）：`AgentWorkbenchShell` 的 padding/列宽由 grid track 收敛。
 3. **状态节点化 + turn 尾**（纯前端）：错误横幅收敛、turn 尾结构化。
 4. **输入框状态机**（纯前端）：Send/Stop 切换。
-5. **工具步骤投影**（跨层，最后）：Agent service 契约 + ProductFlow 消费 + 详情面板第二阅读面 + 降级路径。
+5. **工具步骤投影**（跨层，最后）：Agent service 契约 + ProductFlow 消费 + 降级路径；详情面板第二阅读面在结果引用安全合同明确后另行落地。
 
 每阶段独立可验证、独立可回滚，不互相阻塞。

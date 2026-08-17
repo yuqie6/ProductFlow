@@ -93,6 +93,8 @@ image types + quantities + 1..6 uploads
 
 ProductFlow is authoritative for business data. The Agent service stores durable Turn transcript, tool calls/results, and token deltas. PostgreSQL stores AgentConversation, AgentTurnProjection, question state, and WorkflowDraft revisions.
 
+The Agent service exposes a bounded tool-step projection through `tool.step` SSE events and Turn state `tool_steps`, with fields fixed to `step_id`, `kind`, `summary`, and `status`. Current kinds are `inspect_image`, `inspect_context`, `read_history`, `organize_assets`, and `propose_draft`; current statuses are `running`, `succeeded`, `failed`, and `unknown`. `question.required` remains owned by Question and is not projected as a tool step; there is no real `generate_image` Agent tool yet, so it is not added prematurely. `AgentTurnProjection.tool_steps_json` stores this web projection: a missing `tool_steps` keeps the existing snapshot for compatibility with older services, while an explicit `[]` clears it.
+
 When reading product assets, the Agent first receives bounded metadata and then inspects selected images. Image tool results use a versioned multimodal contract; the full library and data URLs are not concatenated into text history.
 
 Agent mutations such as rename, folder creation, and move use prepare/apply/reconcile contracts with idempotency keys so network interruption and restart can be reconciled.
@@ -126,6 +128,8 @@ WorkflowFolder is a local visual group and does not alter DAG execution. Workflo
 Folders are one level deep and own no run state, ports, nesting, cancel, or retry semantics. Aggregate state is derived from member nodes.
 
 WorkflowRun and WorkflowNodeRun store execution state. The worker schedules ready nodes after their upstream dependencies succeed. Prompt artifacts are versioned. Image results become ProductImageAsset records and bind back to target nodes.
+
+Workflow execution is created and validated through ProductFlow business endpoints. The workflow page can submit the whole DAG or one node directly, without creating an Agent Conversation first; future Agent-triggered runs must reuse the same application use cases, permission, revision, and queue constraints.
 
 WorkflowRecipe stores user-created full workflows and fragments. Recipe payloads store reusable structure and configuration, without product identity, generated results, or media bytes.
 

@@ -1,178 +1,259 @@
-# 素材库转型 PRD
+# 全局图库与工作流子图库升级 PRD
 
-## 1. 状态
+## 1. 状态与范围
 
-- 文档状态：Approved for implementation
-- 批准依据：Accepted `docs/adr/0006-media-library-authority.md`；该 ADR 记录仓库 owner 在 2026-08-16 的直接决策。
-- 产品范围：单管理员、单商家 ProductFlow 工作区
-- 当前实现声明：本文定义目标合同；当前 `/gallery` 仍是依附 `ImageSessionAsset` 的收藏画廊，不能据此宣称素材库已经交付。
-- 当前事实仍由 `docs/PRD.md`、`docs/ARCHITECTURE.md`、代码、迁移和测试共同定义。
+- 文档状态：主方向已由用户确认，进入实施规划。
+- 产品范围：单管理员、单商家 ProductFlow 工作区。
+- 当前实现声明：当前 `/gallery` 仍是旧的 ImageSession 收藏画廊；全局图库后端核心已部分实现，但前端、工作流子图库同步、旧画廊切换和 Agent 整理 Draft 尚未整体交付。
+- 本 PRD 定义目标产品行为；当前运行事实仍由代码、迁移、测试和 rollout evidence 共同证明。
 
-## 2. 问题
+## 2. 用户问题
 
-ProductFlow 已用 `MediaObject` 统一不可变媒体字节，并用 `ProductImageAsset` 表达商品作用域图片身份。当前全局 `/gallery` 只保存 `ImageGalleryEntry -> ImageSessionAsset` 引用：
+ProductFlow 现在有一个跟连续生图会话绑定的旧收藏画廊。用户收藏一张生成结果后，可以看到这张图以及它的提示词、尺寸、模型和候选信息，但这张收藏依赖 ImageSession 生命周期，不能作为长期、跨工作流使用的图库。
 
-- 收藏会随 ImageSession 删除而消失。
-- 下载、MIME 和路径仍经过 session 资产的重复字段。
-- 列表一次加载全部条目，没有面向长期积累的搜索、分页和组织合同。
-- 商品只能直接从 ImageSession 附加图片，无法从一个长期素材池显式收录。
-- Agent 只能整理某个商品的图片库，没有全局素材整理的可确认业务对象。
+同时，工作流内部有自己的图片使用范围。全局图片和工作流实际使用的图片之间没有一个统一的、可持续积累的关系，导致：
 
-用户需要一个跨会话、跨商品长期积累的素材库。素材库保存用户明确选中的图片资产，并允许商品显式收录；它不自动吸纳所有商品图片，也不替代商品作用域身份。
+- 用户很难把值得保留的图片沉淀成长期资产。
+- 同一张图片无法自然地被多个工作流复用。
+- 全局图片和工作流图片容易形成两套互相不一致的图库。
+- 旧收藏画廊、商品图片库和工作流图片使用范围容易被混为一谈。
+- Agent 没有一个独立、可确认、可审计的全局图库整理对象。
 
-## 3. 目标
+## 3. 核心目标
 
-1. 建立全局、长期、可归档的 `MediaLibraryAsset` 业务身份。
-2. 保持 `MediaObject`、`MediaLibraryAsset`、`ProductImageAsset` 三种身份各自只有一个 owner。
-3. 删除来源 ImageSession 后，已保存素材及其有界 provenance 仍可使用。
-4. 用户从素材库显式收录到商品时创建 `ProductImageAsset`，复用同一个 `MediaObject`，不复制 bytes。
-5. 提供适合长期增长的有界分页、搜索、文件夹、标签、归档和恢复能力。
-6. Agent 只提交结构化整理 Draft；用户确认明确版本后才原子应用。
-7. 在素材库上线前修复 canonical media 和异步执行中已确认的可靠性缺陷。
+1. 把现有图库升级成一个全局图库/全局素材库。
+2. 用户明确想保留的图片进入全局图库并长期积累。
+3. 全局图库中的图片按同步规则关联到每个工作流的子图库，供工作流实际使用。
+4. 一张全局图片可以被多个工作流使用；工作流子图库不复制媒体 bytes。
+5. 工作流子图库是全局图库的使用和关联层，不再成为另一套独立的全局图片 owner。
+6. 旧的顶层收藏 Gallery 作为旧界面和旧 owner 逐步退休。
+7. 用户可以在全局图库中搜索、组织、归档和恢复图片。
+8. Agent 只能提出可审阅的图库整理 Draft；用户确认后才应用。
+9. 保留现有工作流、封面、参考图、交付和历史 lineage 的稳定引用，不因图库升级而断裂。
 
 ## 4. 非目标
 
 - 多租户、团队权限、计费和跨商家共享。
-- 工作流节点、封面或历史记录直接引用 `MediaLibraryAsset`。
-- 自动把全部上传图、工作流结果或 ImageSession 结果加入素材库。
-- 按 SHA 或视觉相似度自动合并不同逻辑资产。
-- 嵌套文件夹、自动标签本体或数字资产管理审批流。
-- 普通用户永久删除媒体 bytes；本期删除语义只有归档。
-- 一次把整个素材库、完整 provenance 或媒体 bytes 送入 Agent 文本上下文。
-- 为旧 `/api/gallery` 建立长期兼容 API 或并行写入 owner。
+- 自动把所有生成结果、上传图或会话图加入全局图库。
+- 按 SHA、文件名或视觉相似度自动合并不同逻辑图片。
+- 嵌套文件夹、自动标签本体或数字资产审批流。
+- 普通用户永久删除媒体 bytes；第一版删除语义只有可恢复归档。
+- 把全局图库完整内容、完整 provenance 或媒体 bytes 发送给 Agent。
+- 继续维护一套长期独立、与全局图库重复的旧收藏 Gallery owner。
+- 让工作流直接绕过工作流子图库关联，使用未经过图库授权的全局资产。
 
-## 5. 核心对象与关系
+## 5. 术语和身份
 
-- `MediaObject`：不可变 bytes、storage path、MIME、尺寸、字节数、hash 和核验状态。
-- `MediaLibraryAsset`：全局素材身份、显示名、来源快照、revision 和归档状态；一个素材引用一个 `MediaObject`。
-- `ProductImageAsset`：商品命名空间中的图片身份；从素材库收录时引用同一个 `MediaObject`，并记录 nullable、不可变的 `source_library_asset_id`。
-- `ImageSessionAsset`：ImageSession 内的图片身份；保存到素材库后只作为可失效来源链接，不继续拥有素材生命周期。
-- `MediaLibraryFolder`：一层用户文件夹；删除只解除组织关系。
-- `MediaLibraryTag`：全局规范化标签；同一素材可有多个标签。
-- `LibraryOrganizationDraft` / `LibraryOrganizationDraftRevision`：Agent 提出的可审阅整理计划及不可变版本。
+### 5.1 全局图库
 
-同一 `MediaObject` 可以被多个不同的 `MediaLibraryAsset` 或 `ProductImageAsset` 引用。字节相同不等于用户语义、来源和命名相同。
+全局图库是用户长期积累图片的主入口和主集合。它保存用户明确选择留下来的图片，并负责统一的名称、来源、文件夹、标签、归档和查询能力。
+
+### 5.2 工作流子图库
+
+工作流子图库是某个工作流可以使用的图片集合。它通过关联指向全局图库中的图片，不复制文件 bytes，也不另造一套全局图片来源。
+
+工作流子图库负责：
+
+- 展示当前工作流可用的全局图片。
+- 让工作流节点选择图片。
+- 保存全局图片与工作流之间的使用关系。
+- 在当前工作流范围内支持选择、移除关联和引用检查。
+
+移除某个工作流中的关联，不删除全局图片；删除工作流，也不删除全局图片。
+
+### 5.3 媒体和身份
+
+- `MediaObject`：不可变媒体 bytes、storage path、MIME、尺寸、字节数、hash 和核验状态的 owner。
+- `MediaLibraryAsset`：全局图库中的逻辑图片身份、来源快照、revision、组织和归档状态的 owner。
+- 工作流侧图片身份：工作流运行、节点、封面、参考绑定和交付 lineage 使用的稳定工作流/商品作用域引用。现有 `ProductImageAsset` 可以作为过渡兼容身份，但不能继续承担独立的全局图库 owner 职责。
+- `ImageSessionAsset`：连续生图会话中的临时/来源身份。保存到全局图库后，不能继续控制全局图片生命周期。
+- `ImageGalleryEntry`：旧收藏画廊的迁移证据和过渡数据；目标态全局图库身份由 `MediaLibraryAsset` 表达。
+
+同一个 `MediaObject` 可以被一个全局图库身份和多个工作流侧引用关系使用。图片 bytes 不复制，逻辑名称、来源和工作流关系可以独立保存。
+
+### 5.4 配方库
+
+配方库保存可复用的工作流结构、提示词策略和配置。它不等同于全局图库，不保存图片结果，也不代替工作流子图库。
+
+### 5.5 Agent 整理 Draft
+
+`LibraryOrganizationDraft` / `LibraryOrganizationDraftRevision` 是 Agent 对全局图库提出的整理计划。它必须经过用户确认，不能直接修改图库或工作流关系。
 
 ## 6. 用户流程
 
-### 6.1 保存到素材库
+### 6.1 图片进入全局图库
 
-1. 用户在 ImageSession 生成结果或商品图片详情中执行“保存到素材库”。
-2. 系统校验来源作用域、媒体核验状态和来源幂等身份。
-3. 系统创建或返回同一来源已有的 `MediaLibraryAsset`，复用 `MediaObject`。
-4. 系统保存有界、版本化、无秘密信息的 provenance snapshot。
-5. 用户可在 `/gallery` 的素材库界面搜索和管理该素材。
+1. 用户在连续生图、工作流或其他图片入口看到一张图片。
+2. 用户明确选择保存/保留这张图片。
+3. 系统校验媒体已核验、来源范围和幂等身份。
+4. 系统创建或返回同一来源已有的 `MediaLibraryAsset`。
+5. 系统保存有界、版本化、无秘密信息的 provenance snapshot。
+6. 系统按照工作流同步规则，把该全局图片关联到各个工作流的子图库。
+7. 页面显示全局图片以及它当前关联的工作流范围。
 
-### 6.2 收录到商品
+没有用户明确选择的图片，不得因为“生成过”“上传过”或“被某个节点看过”就自动进入全局图库。
 
-1. 用户在素材库选择一张或多张活跃素材并选择目标商品。
-2. 系统锁定目标商品和素材，校验素材未归档且媒体已核验。
-3. 每个素材创建一个商品作用域 `ProductImageAsset`，复用同一个 `MediaObject`。
-4. 重复收录同一素材到同一商品返回已有商品资产，不创建重复项。
-5. 后续工作流、封面、目录和派生关系只引用 `ProductImageAsset`。
+### 6.2 全局图库同步到工作流子图库
 
-### 6.3 归档和恢复
+1. 全局图库中的图片拥有唯一全局身份。
+2. 系统为工作流建立图片关联；媒体文件保持单份存储。
+3. 同一全局图片可以出现在多个工作流子图库中。
+4. 工作流子图库可以移除当前工作流的关联，但不能删除全局图片。
+5. 全局图片的归档、恢复和可用性状态要被工作流选择器正确反映。
+6. 已经存在的工作流历史引用必须继续可解析；图库整理不能破坏历史记录。
+7. 工作流节点和运行时继续使用工作流侧稳定引用，不能把 storage path 或临时 session asset id 当作身份。
 
-- 归档素材后，默认素材库、选择器和新增商品收录不再展示或接受该素材。
-- 归档不影响现有商品资产、工作流、封面、生成历史、provenance 或 bytes。
-- 恢复沿用原素材 ID、revision 历史和来源快照。
-- 来源 ImageSession 删除不改变素材的 active/archive 状态。
+默认产品目标是：用户明确保留的全局图片能够同步到每个工作流的子图库。具体同步触发时机、批量范围和工作流关联表结构在实现设计中确定，但不得退回到“全局图库和工作流图库长期各自维护”的模式。
 
-### 6.4 组织素材
+### 6.3 工作流使用图片
 
-- 用户可重命名素材、移动到一个一层文件夹并增删多个标签。
-- 文件夹和标签筛选与列表使用相同过滤条件和有界 cursor pagination。
-- 删除文件夹只把素材移到未整理状态；删除标签只解除标签关系。
-- 组织变化不修改 `MediaObject`、商品图片名称或历史 provenance。
+1. 用户在工作流子图库中选择图片。
+2. 工作流节点保存稳定的工作流侧图片引用。
+3. 工作流可以使用来自全局图库的同一张图片。
+4. 工作流生成的新图片不会自动进入全局图库。
+5. 用户明确保留生成结果后，该结果进入全局图库，并按同步规则进入工作流子图库。
 
-### 6.5 Agent 整理
+### 6.4 图片组织
 
-1. 用户在素材库打开独立的 Agent 整理入口，并选择范围或输入整理目标。
-2. Agent 读取有界元数据，并只检查明确选择的图片。
-3. Agent 发布一个版本化 `LibraryOrganizationDraftRevision`，包含目标 asset、expected revision、目标名称/文件夹/标签/归档状态和理由。
-4. 发布 Draft 不产生业务副作用。
-5. 用户确认明确 revision 后，ProductFlow 在一个事务中校验全部 expected revision 并原子应用；任何冲突导致整批拒绝。
+用户可以在全局图库中：
+
+- 修改图片名称。
+- 放入一个一层文件夹。
+- 添加多个规范化标签。
+- 搜索名称和文件名。
+- 按来源、文件夹、标签、创建时间和归档状态筛选。
+- 归档和恢复图片。
+
+文件夹和标签属于全局图库组织，不改变媒体 bytes、工作流历史引用或图片来源。
+
+删除文件夹只把图片变为未整理；删除标签只移除标签关系。
+
+### 6.5 归档和恢复
+
+- 用户界面中的“删除全局图片”第一版统一解释为归档。
+- 归档图片默认不出现在可用选择器中。
+- 归档图片不能被新的工作流关联使用。
+- 已经存在的工作流历史引用、运行记录和 provenance 不被破坏。
+- 恢复后沿用原全局图片 ID、来源快照和 revision 历史。
+- 第一版没有全局图片 hard-delete API、自动 retention 或物理媒体清理调度。
+
+### 6.6 Agent 整理
+
+1. 用户在全局图库打开 Agent 整理入口。
+2. Agent 只能读取有界图片元数据，并检查用户明确选择的图片。
+3. Agent 可以提出重命名、移动文件夹、设置标签、归档和恢复建议。
+4. Agent 发布一个版本化 `LibraryOrganizationDraftRevision`。
+5. 发布 Draft 不产生业务副作用。
+6. 用户确认明确 revision 后，系统锁定目标图片，校验 expected revision，并在一个事务中原子应用。
+7. 任意图片发生冲突时，整批拒绝，不执行部分修改。
+8. Agent 不直接把图片加入工作流，不直接修改工作流图，不直接删除媒体 bytes。
 
 ## 7. 产品需求
 
-### ML-001 Canonical 媒体修复
+### ML-001 媒体权威
 
-- 所有在线 ImageSession 路径和 MIME 读取必须来自 `MediaObject`。
-- `ImageSessionAsset.media_object_id` 在 ORM 和真实数据库中均为非空。
-- 重复的 session `storage_path` / `mime_type` 只允许作为有界迁移 carrier，并在零读写、零 mismatch 后退休。
+- 所有在线媒体路径、MIME、尺寸和核验状态读取来自 `MediaObject`。
+- ImageSession 的重复 carrier 字段只能用于迁移兼容，不能继续作为在线 owner。
+- 删除会话、商品或工作流时，媒体清理必须检查全局图库和工作流侧引用。
 
-### ML-002 全局素材身份
+### ML-002 全局图库身份
 
-- 只有用户明确保存的图片进入素材库。
-- 同一 `ImageSessionAsset` 的重复保存幂等返回同一素材。
-- 不对 `media_object_id` 设置唯一约束；不同来源可共享 bytes 而保持不同逻辑身份。
-- 素材列表和详情始终通过 `MediaObject` 提供预览、下载和媒体元数据。
-- 把 `ProductImageAsset` 保存到素材库不会授权删除源商品资产，也不能绕过现有 `require_deletion_enabled` 门禁；后续单独授权删除源商品资产时，素材与共享 `MediaObject` 仍可读取，nullable source-product FK 可清空，immutable provenance 不变。
+- 只有用户明确选择保留的图片进入全局图库。
+- 同一来源重复保存必须幂等返回同一全局图库资产。
+- 不对 `media_object_id` 设置全局唯一约束。
+- 全局资产提供原图、预览图和缩略图 URL，不在列表加载媒体 bytes。
+- 全局资产可以关联多个工作流子图库。
 
-### ML-003 Session-independent provenance
+### ML-003 来源和 provenance
 
-- provenance 使用严格、版本化、限长合同和 canonical hash。
-- 最少保留 source kind、可用 source ids、来源时间、生成模型/provider 标识、候选/组标识、生成规格摘要和实测尺寸。
-- 不保存完整 provider request/output、storage path、密钥、图片 bytes 或原始工具 payload。
-- 来源被删除后，FK 可变为 null，但 snapshot 不重写。
+- provenance 使用严格、版本化、限长和 canonical hash 合同。
+- 最少保留来源类型、可用来源 ID、来源时间、模型/provider 标识、候选/组标识、生成规格摘要和实测尺寸。
+- 不保存完整 provider request/output、storage path、密钥、媒体 bytes 或原始 Agent 工具 payload。
+- 来源会话删除后，来源 FK 可以为空，但 immutable provenance 不重写。
 
-### ML-004 显式商品收录
+### ML-004 全局图库与工作流子图库同步
 
-- 收录使用唯一约束 `(product_id, source_library_asset_id)`。
-- `ProductImageAsset.media_object_id` 必须等于来源素材的 `media_object_id`；由锁定事务、应用校验和迁移审计保证。
-- `source_library_asset_id` 只对非素材库收录的商品资产为 null；收录后不可改绑，并使用 `ON DELETE RESTRICT` 保留幂等 lineage。
-- 来源素材未来归档不改变已收录商品资产；归档素材不能新收录，必须先恢复。
-- 收录后的 `origin_type` 延续 provenance 对应的上传、工作流生成或 ImageSession 来源分类；`source_library_asset_id` 单独表达收录 lineage。
+- 全局图库资产与工作流子图库之间使用明确的关联关系。
+- 同一全局资产可以关联多个工作流。
+- 同步不复制媒体 bytes，也不产生多个全局逻辑身份。
+- 工作流节点、封面、参考图和交付 lineage 使用工作流侧稳定引用，并能追溯到全局图库资产。
+- 从某个工作流移除关联不删除全局资产。
+- 删除工作流不删除全局资产。
+- 当前仅有“显式收录到单个商品”的实现视为过渡基础，必须补足全局图库到工作流子图库的同步合同后，才能视为 ML-004 完成。
 
 ### ML-005 归档生命周期
 
 - 普通删除等价于可恢复归档。
-- 默认查询排除归档素材；归档视图可单独浏览和恢复。
-- 本期没有 hard-delete API、自动 retention 或物理清理调度。
-- `MediaObject` 清理判断必须包含 session、library 和 product 三类引用。
+- 默认查询和新增工作流选择器排除归档资产。
+- 归档不删除媒体、不破坏既有工作流引用、不修改 provenance。
+- 本期没有 hard-delete API 或物理清理调度。
 
 ### ML-006 有界浏览和组织
 
-- 列表支持 cursor pagination、名称搜索、来源、文件夹、标签、归档状态和创建时间排序。
-- 列表只返回 thumbnail/preview URL 与有界摘要，不返回原图 bytes 或完整 provenance JSON。
-- cursor 必须绑定过滤条件，并使用稳定 ID 作为排序 tie-breaker。
-- 文件夹一层；标签名使用可移植的规范化 key 唯一约束。
-- 单次 move/tag/archive/restore/collect 最多包含 100 个唯一素材；request JSON 最大 256 KiB，重复 asset id 被拒绝，锁按 asset id 稳定排序。
+- 列表支持 cursor pagination、搜索、来源、文件夹、标签、归档状态和创建时间排序。
+- bootstrap counts 与 list 使用完全一致的过滤条件。
+- cursor 绑定版本、排序、过滤 hash、排序 key、资产 ID 和需要时的 as-of。
+- folder 只支持一层；tag 使用可移植的 Unicode 规范化规则。
+- 单次批量操作最多 100 个唯一资产，request JSON 最大 256 KiB，重复 ID 拒绝，锁按资产 ID 稳定排序。
 
 ### ML-007 Agent 确认式整理
 
-- 素材库 Agent 与商品 Workflow Agent 使用不同业务 scope，不伪造 Product 或 WorkflowDraft。
-- Go journal 继续拥有 durable Turn、transcript、工具事件和 cursor；PostgreSQL 拥有整理 Draft 和业务变更。
-- v1 Draft operation 仅限 `rename | move | set_tags | archive | restore`；商品收录保留为 collect dialog 中的显式用户命令。
-- 一个 Draft revision 最多涉及 100 个唯一素材、包含 256 个 operation，JSON 最大 256 KiB；同一 Draft 对同一素材的冲突 operation 被拒绝。
-- Agent 只能发布整理 Draft，不能直接 hard delete 或绕过用户确认。
-- 确认使用 idempotency key、request hash、明确 revision 和 expected asset revision，并按 asset id 稳定加锁。
+- 素材库 Agent 使用独立 `media_library` scope，不伪造 Product 或 WorkflowDraft。
+- Go journal 继续拥有 durable Turn、transcript、tool events 和 cursor；PostgreSQL 拥有 Draft 和确认副作用。
+- v1 operation 仅限 `rename | move | set_tags | archive | restore`。
+- 一个 revision 最多涉及 100 个唯一资产、256 个 operation、256 KiB canonical JSON。
+- Agent 只能发布 Draft，不能直接修改业务状态、直接同步工作流或物理删除媒体。
+- 确认使用 idempotency key、request hash、明确 revision、expected asset revision 和稳定锁序。
+- Agent UI 只展示有界列表、明确 inspect 和 Draft 结果，不展示完整 payload、path 或 bytes。
 
-### ML-008 Gallery 迁移与退休
+### ML-008 旧 Gallery 迁移和退休
 
-- 现有 `ImageGalleryEntry` 可审计回填为素材，并尽量保留原 entry ID。
-- 显式 preflight/backfill/post-reconcile 必须核对 count、source id、media id、provenance hash、文件存在性和重复来源；Alembic migration 本身不读取 storage。
-- cutover 后只有 `MediaLibraryAsset` 是在线 owner；旧表只读保留有界窗口。
-- 旧 API、DTO、前端调用和运行时模型一起退休；旧表 drop 必须单独确认并有备份/恢复证据。
+- 旧 `ImageGalleryEntry` 可以审计回填为全局图库资产，并尽量保留原 entry lineage。
+- 旧 Gallery 的图片收藏数据不能静默丢失。
+- 正式切换前必须完成 snapshot、preflight、apply、reconcile 和 zero-delta 证据。
+- 新全局图库前端验收通过后，顶层旧 `/gallery` 页面切换为全局图库页面。
+- 旧 `/api/gallery` route、旧 DTO、旧前端调用和旧 runtime owner 一起退休。
+- 商品/工作流子图库不能因为旧 Gallery 退休而被删除。
+- 旧 `image_gallery_entries` 表作为迁移证据暂时保留；drop 需要单独确认和备份/恢复证据。
 
-### ML-009 异步可靠性先决条件
+### ML-009 异步可靠性
 
-- ImageSession task 和 WorkflowNodeRun 使用 active attempt fencing；旧 attempt 的 progress、结果、失败和媒体写入不能提交。
-- 数据库业务状态与 broker delivery intent 在同一事务持久化。
-- Redis/Dramatiq 维持 at-least-once delivery；重复消息由 durable identity、atomic claim 和 attempt fence 收敛。
-- API startup 不承担最终恢复 owner；dispatcher/reconciler 持续恢复 queued delivery。
+- ImageSession task 和 WorkflowNodeRun 使用 active attempt fencing。
+- 数据库业务状态和 broker delivery intent 在同一事务内持久化。
+- Redis/Dramatiq 继续使用 at-least-once delivery，重复消息通过 durable identity、atomic claim 和 attempt fence 收敛。
+- API startup 不作为唯一恢复 owner。
+
+### ML-010 旧收藏画廊删除一致性
+
+- 删除 ImageSession 时，旧 `ImageGalleryEntry` 必须由应用删除路径显式处理，不能只依赖 SQLite 默认关闭的 FK cascade。
+- 删除 ImageSession 后，旧收藏条目不能残留为孤儿记录。
+- 删除 ImageSession 不得删除已经保存到全局图库的资产，也不得删除仍被工作流使用的媒体。
+- 前端删除 ImageSession 后必须刷新旧 Gallery 和全局图库相关查询缓存。
+- 现有孤儿 Gallery 条目必须先审计，再按有界、可回滚的迁移/清理流程处理，禁止静默批量删除。
 
 ## 8. 成功标准
 
-- 删除来源 ImageSession 后，已保存素材、provenance、预览和下载 100% 可解析。
-- 同一来源重复保存和同一商品重复收录均不产生重复逻辑记录。
-- 商品收录复用同一 `MediaObject`，不复制原图、preview 或 thumbnail。
-- 归档/恢复不改变素材 ID，不破坏任何既有商品和历史引用。
-- 纳入迁移的旧 Gallery 条目 100% 映射成功或进入明确异常报告，无静默丢失。
-- 默认列表、搜索和 Agent 读取均有明确上限，不存在全库 bytes/JSON 加载路径。
-- Redis 故障、重复 delivery、stale worker 和进程重启均产生可解释、可恢复的数据库状态。
-- Agent 整理变更中未经用户确认直接生效的比例为 0%。
+- 用户明确保留的图片能够进入全局图库，并在刷新、切换会话和切换工作流后继续可见。
+- 同一全局图片可以出现在多个工作流子图库中，媒体 bytes 只保留一份。
+- 工作流能使用全局图库图片，历史引用和运行记录持续可解析。
+- 删除来源 ImageSession 后，全局图库资产仍可预览和下载。
+- 从一个工作流移除图片关联不会删除全局图库资产。
+- 同一来源重复保存不会创建重复全局资产。
+- 归档/恢复不改变全局资产 ID，不破坏工作流历史引用。
+- 旧 Gallery 条目 100% 映射成功或进入明确异常报告，无静默丢失。
+- 默认列表、搜索和 Agent 读取均有明确上限，不加载全库 bytes 或完整 JSON。
+- Agent 整理未经用户确认直接生效的比例为 0%。
+- 旧 `/gallery` 退休后，商品/工作流子图库仍然可用，且没有 read fallback 回到旧 Gallery。
 
-## 9. 发布边界
+## 9. 发布顺序
 
-本文要求按 `canonical media repair -> attempt fencing -> durable delivery -> library core -> product collection -> organization -> Gallery cutover -> Agent curation` 顺序交付。每阶段必须独立验证、可停止，并遵循 `docs/rollout/media-library-transition.md` 的证据和停止条件。
+按以下顺序交付，每阶段可以独立停止：
+
+1. 修复 canonical media、attempt fencing、transactional delivery 和旧 Gallery 删除一致性。
+2. 完成全局图库核心、旧数据回填、来源快照和归档能力。
+3. 建立全局图库与工作流子图库的明确关联和同步合同。
+4. 完成文件夹、标签、有界查询和批量组织。
+5. 完成全局图库前端、工作流子图库入口、保存和同步后的选择流程。
+6. 在真实数据库、浏览器和迁移证据通过后，把 `/gallery` 切换为全局图库并退休旧 owner。
+7. 完成 Agent 整理 Draft、确认、原子物化和跨语言验收。
+8. 同步当前文档、部署证据和用户指南；旧表/列/媒体物理清理另行确认。

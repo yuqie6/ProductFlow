@@ -9,7 +9,7 @@
 - Rollout/acceptance：`docs/rollout/media-library-transition.md`
 - 当前运行事实：`docs/ARCHITECTURE.md`、代码、迁移和测试
 
-本设计分成可独立验证的八个阶段。canonical media repair、attempt fencing 和 durable delivery 是现有缺陷修复；素材库、组织、Gallery cutover 和 Agent Draft 是目标能力。旧表/列物理删除不在本实施授权内。
+本设计分成可独立验证的阶段。canonical media repair、attempt fencing、durable delivery 和旧收藏条目删除一致性是基础修复；全局图库、工作流子图库同步、组织、Gallery cutover 和 Agent Draft 是目标能力。旧表/列物理删除不在本实施授权内。全局图库是目标态的主图片身份，工作流子图库是关联和使用层；现有商品图片身份只能作为工作流侧兼容引用，不能继续作为并行全局 owner。
 
 ## 2. 当前实现与缺陷
 
@@ -26,11 +26,11 @@
 
 migration `20260811_0031` 只把 `media_object_id` 添加为 nullable 并回填，没有 alter to NOT NULL。当前 fresh-head regression 记录了该 schema 状态，而 ORM metadata 声明 non-null；Phase 1 新增 repair revision 后必须同步更新 head expectation。
 
-### 2.2 全局 Gallery 依附 Session
+### 2.2 旧 Gallery 依附 Session
 
 `ImageGalleryEntry` 通过 `ON DELETE CASCADE` 引用 `ImageSessionAsset`，并通过 nullable round FK 动态读取 prompt/provider/candidate metadata。`application/gallery.py` 无界返回全部条目；`GalleryPage.tsx` 一次读取并在展示型页面中渲染。
 
-该模型没有独立名称、revision、archive、canonical content URL 或来源快照。删除 ImageSession 会同时删除收藏。
+该模型没有独立名称、revision、archive、canonical content URL 或来源快照。旧收藏的目标生命周期跟随 ImageSession，但应用删除路径必须显式删除旧条目，不能依赖 SQLite 默认关闭的外键级联。已保存到全局图库的资产不受旧条目删除影响。
 
 ### 2.3 异步 crash window 和 stale attempt
 
@@ -47,20 +47,23 @@ FastAPI/Pydantic 拥有 ProductFlow HTTP schema；Go 手写 internal API DTO、t
 ## 3. 目标组件图
 
 ```text
-ImageSession / ProductImageAsset
+ImageSession / workflow result / user-selected image
            │ explicit save
            ▼
-MediaLibrary application
+Global Media Library
   ├─ MediaLibraryAsset + provenance
   ├─ folders / tags / archive
-  ├─ product collection
+  ├─ workflow sub-library sync/associations
   └─ organization Draft materialization
-           │
-           ▼
-       MediaObject ───── immutable bytes
-           ▲
-           │ shared FK
-ProductImageAsset ───── workflow / cover / lineage / rendition
+           │ shared logical asset
+           ├──────────────► Workflow sub-library A
+           ├──────────────► Workflow sub-library B
+           └──────────────► Workflow sub-library C
+                                  │ stable workflow reference
+                                  ▼
+                         node / cover / lineage / rendition
+
+MediaObject ───── immutable bytes shared by the global asset and references
 
 PostgreSQL business task + AsyncDispatch (same transaction)
            │ leased dispatcher
@@ -134,23 +137,26 @@ Python owner 位于 `application/media_library/contracts.py`，使用 Pydantic `
 
 禁止字段：provider request/output body、storage path、API key/token、cookies、base64/data URL、图片 bytes、raw Agent tool input/result。Prompt 最大长度使用明确常量；未知字段保持 null 或省略，不推断。
 
-### 4.3 product collection lineage
+### 4.3 工作流子图库关联
 
-`ProductImageAsset` 增加：
+全局图库与工作流子图库之间必须有明确的关联身份。关联应满足：
 
-- nullable FK `source_library_asset_id ON DELETE RESTRICT`；仅非素材库收录的商品资产为 null。
-- unique `(product_id, source_library_asset_id)`。
-- `origin_type` 继续表达底层图片来源：product-source 保存时复制原 origin；ImageSession/legacy 素材按 provenance 映射到现有 origin。收录 lineage 只由 `source_library_asset_id` 表达，不新增 `library_collection` origin。
+- 一个 `MediaLibraryAsset` 可以关联多个工作流。
+- 一个工作流可以使用多个全局图库资产。
+- 关联不复制 `MediaObject` bytes。
+- 移除单个工作流关联不删除全局资产。
+- 工作流节点、封面、参考绑定和交付 lineage 继续使用工作流侧稳定引用，并可追溯到全局图库资产。
+- 现有 `ProductImageAsset`/`source_library_asset_id` 可以作为迁移和运行时兼容基础，但不能把每个商品的图片集合继续当成独立的全局图库。
 
 同一事务内：
 
-1. 按 deterministic 顺序锁 Product 和 LibraryAsset。
-2. 校验 active、MediaObject verified、source still coherent。
-3. 查询既有 `(product, source)`；存在则返回。
-4. 创建 ProductImageAsset，复制 display/original name，写 exact library media id。
-5. commit 后通过 canonical product query 返回。
+1. 按 deterministic 顺序锁全局资产和工作流作用域。
+2. 校验全局资产 active、MediaObject verified、来源仍然 coherent。
+3. 查询既有关联；存在则幂等返回。
+4. 创建或更新工作流子图库引用，写入 exact global asset/media identity。
+5. commit 后通过 canonical workflow query 返回。
 
-该 lineage 创建后没有改绑 API。普通 FK 不能约束 product asset media == library media，因此 use case、migration audit 和并发 test 都必须断言。
+普通 FK 不能证明工作流侧引用和全局资产指向同一个 `MediaObject`；use case、migration audit 和并发 test 必须断言该不变量。关联创建后是否允许改绑必须由工作流边界明确控制，不能通过任意 ID 替换绕过 lineage。
 
 ### 4.4 folder/tag
 
@@ -166,7 +172,7 @@ Python owner 位于 `application/media_library/contracts.py`，使用 Pydantic `
 
 - `LibraryOrganizationDraft`：status、current_revision_id、Agent scope binding。
 - `LibraryOrganizationDraftRevision`：version、payload_json、payload_hash、created_at。
-- v1 payload operation union：rename、move、set_tags、archive、restore。商品收录保留为显式用户 command，不进入 Agent Draft。
+- v1 payload operation union：rename、move、set_tags、archive、restore。工作流子图库关联仍由明确的工作流 command/同步规则负责，不进入 Agent Draft。
 - 每项带 asset id、expected revision、before summary、target 和 reason。
 - 一个 revision 最多 100 个唯一 asset、256 个 operation、256 KiB canonical JSON；重复或冲突 operation 被拒绝。
 - confirm table/字段记录 confirmed revision、idempotency key 和 request hash；materialization result 可重放。
@@ -181,7 +187,8 @@ application/media_library/
   queries.py         bounded bootstrap/list/detail
   service.py         save/archive/restore/rename
   organization.py    folder/tag mutations
-  product_collection.py
+  workflow_sync.py   global asset to workflow sub-library associations
+  product_collection.py  transition adapter for existing ProductImageAsset lineage
   drafts.py          append/confirm/materialize
 ```
 
@@ -196,7 +203,7 @@ application/media_library/
 - batch lock 以 `(entity type, id)` 稳定排序。
 - expected revision mismatch 使用 `ConflictError`，不静默 last-write-wins。
 
-现有 `application/gallery.py` 只在迁移窗口服务旧 owner，cutover 后整个模块退休。商品 `gallery_assets.py` 继续拥有 ProductImageAsset explorer，不与全局 queries 合并。
+现有 `application/gallery.py` 只在迁移窗口服务旧 owner，cutover 后整个模块退休。工作流/商品侧 explorer 继续提供子图库体验，但其图片关系必须由全局图库同步/关联合同驱动，不得与全局 queries 形成第二个全局 owner。
 
 ## 6. Public API
 
@@ -218,14 +225,17 @@ DELETE /folders/{folder_id}
 POST   /assets/move
 POST   /tags
 POST   /assets/{asset_id}/tags
-POST   /assets/collect-to-product
+GET    /workflows/{workflow_id}/assets
+POST   /workflows/{workflow_id}/assets/sync
+DELETE /workflows/{workflow_id}/assets/{asset_id}
+POST   /assets/collect-to-product  # transition adapter only
 ```
 
 Mutation contract：
 
 - create/save/collect 使用 `Idempotency-Key` + canonical request hash。
 - rename/move/tag/archive/restore 使用 `expected_revision`。
-- move/tag/archive/restore/collect 每次最多 100 个唯一素材；request body 最大 256 KiB，在 HTTP parse 和 application command 两层验证。
+- move/tag/archive/restore/sync 每次最多 100 个唯一素材；request body 最大 256 KiB，在 HTTP parse 和 application command 两层验证。
 - list query：`after`、`limit<=100`、`query`、`source_kind`、`folder_id`、`tag_ids`、`archive_state`、`sort`。
 - cursor 包含 version、sort、filter hash、sort key、asset id 和需要时的 as-of snapshot。
 - archived asset content 默认仍允许历史读取；新增 collect 明确拒绝 archived。
@@ -252,11 +262,11 @@ ImageSession 删除：
 - provenance snapshot 保留。
 - `_media_has_references` 包含 LibraryAsset。
 
-`save_product_image_asset_to_library` 复用相同的 media 和 source-idempotency 模式。该命令只保存素材，不调用、放宽或暗示通过商品资产删除门禁。后续经过 `require_deletion_enabled` 单独授权删除源 ProductImageAsset 时，`source_product_image_asset_id ON DELETE SET NULL`，LibraryAsset 和 MediaObject 保持可读，immutable provenance 不重写。
+保存工作流侧图片到全局图库复用相同的 media 和 source-idempotency 模式。保存动作完成后按同步规则建立全局资产与工作流子图库的关联。该流程不调用、放宽或暗示通过工作流/商品图片删除门禁；删除某个工作流侧引用只解除关联，LibraryAsset、MediaObject 和 immutable provenance 保持可读。现有 `save_product_image_asset_to_library`/商品收录逻辑只能作为过渡适配器，不能替代全局到工作流的同步合同。
 
 ## 8. Archive 和 media prune
 
-Archive 是可逆 visibility state，不是 deletion。Archive/restore 锁 asset、校验 expected revision、更新 timestamp/revision。
+Archive 是可逆 visibility state；Archive/restore 锁 asset、校验 expected revision、更新 timestamp/revision。
 
 本期不调用 `prune_unreferenced_media_objects` 删除 LibraryAsset。未来 hard delete 必须：
 
@@ -295,11 +305,11 @@ Archive 是可逆 visibility state，不是 deletion。Archive/restore 锁 asset
 Business transition 和 pending intent 同事务。独立 dispatcher service/process：
 
 1. `FOR UPDATE SKIP LOCKED` lease available intents。
-2. enqueue Dramatiq message，payload 含 dispatch id 和 aggregate id。
-3. 成功后 mark sent；crash before mark 只导致 duplicate delivery。
+2. dispatcher 将 intent 标记 sent 后 enqueue Dramatiq message，payload 含 dispatch id 和 aggregate id；crash 会由 stale reconcile 补发。
+3. worker 先以 consumer lease 原子领取 sent intent，再执行目标；重复消息不能抢走已有 consumer lease。
 4. worker atomic business claim 后 mark consumed。
-5. sent but unconsumed 过期可重新 pending。
-6. Redis outage 更新 last error/backoff，不伪造业务 failure。
+5. sent but unconsumed 且没有有效 consumer lease 的 intent 可重新 pending；长任务的有效 lease 不被 stale reconcile 打断。
+6. Redis outage 更新 last error/backoff；达到尝试上限的 dead intent 冷却后自动回到 pending，不伪造业务 failure。
 
 迁移顺序：ImageSession -> Workflow scheduler/node -> Agent sync -> rendition。全部迁移后删除 API lifespan recovery 和 Dramatiq import-time scans；dispatcher/reconciler 是单一 owner。
 

@@ -112,8 +112,8 @@ Last reviewed against the current working tree on 2026-08-16.
 
 - 新增由 PostgreSQL 持久化的 delivery intent/outbox owner。
 - 业务任务和对应 delivery intent 在同一事务创建或转换。
-- dispatcher 通过 lease/`FOR UPDATE SKIP LOCKED` 领取 pending intent，Redis enqueue 成功后记录 sent；crash 可重试并允许重复 delivery。
-- worker atomic claim 后确认 intent consumed；sent 未 consumed 超时后可重新投递。
+- dispatcher 通过 lease/`FOR UPDATE SKIP LOCKED` 领取 pending intent，先记录 sent 再 enqueue；crash 可由 stale reconcile 补发并允许重复 delivery。
+- worker 先以 consumer lease 原子领取 sent intent，再执行目标并确认 consumed；目标异常会清除 consumer lease，按 attempts 有界回到 pending 或 dead；进程崩溃则由 lease expiry 重新投递。没有有效 consumer lease 的 sent intent 才可重新投递。
 - API startup 不再扫描和 enqueue；dispatcher/reconciler 是持续恢复 owner。
 - workflow scheduler wake-up、capacity retry、ImageSession、Agent sync 和 rendition 分阶段迁移。
 - 全部 writer 迁移前保留现有 recovery 作为 compatibility；最终 residue scan 为零后一起删除直接 enqueue/recovery 分支。
@@ -132,7 +132,7 @@ Last reviewed against the current working tree on 2026-08-16.
 回填按 maintenance freeze -> expand -> explicit backfill -> reconcile -> cutover 执行：
 
 1. 在 preflight 前进入维护窗口，停止旧 backend、worker 和 Agent mutation ingress；旧 Gallery 写入与来源 ImageSession 删除必须不可达。冻结持续到最终零 delta 事务和新 owner 部署完成。
-2. 记录 PostgreSQL snapshot token、Gallery/Session high-watermark、row counts 和稳定 source hash；每个 dry-run/apply/reconcile report 都携带并校验这些字段。
+2. 生产迁移必须记录 PostgreSQL snapshot token、Gallery/Session high-watermark、row counts 和稳定 source hash；每个 dry-run/apply/reconcile report 都携带并校验这些字段。当前命令的 `--snapshot-file` 只冻结 source row mapping/hash，尚未提供 PostgreSQL token、storage snapshot identity 或完整 durable blocker report，因此不能作为 cutover evidence。
 3. Alembic revision 只创建素材库 schema，不读取 storage，不调用 provider/Redis，也不假定文件系统已挂载。
 4. 显式运行可重入 preflight command，读取 database + storage，按 source id 分页输出可回填数、blocker、文件可读性和 stable report hash；此步骤默认 dry-run。
 5. 对已通过 preflight 的 frozen snapshot 运行 bounded `--apply`：每个合法 `ImageGalleryEntry` 创建一个素材，尽量复用 entry id；media id 来自 source `ImageSessionAsset.media_object_id`。
@@ -150,7 +150,7 @@ Last reviewed against the current working tree on 2026-08-16.
 - `(product_id, source_library_asset_id)` 唯一。
 - `origin_type` 从素材 provenance 映射到既有 upload/workflow/ImageSession 来源；收录 lineage 只由 `source_library_asset_id` 表达。
 - 收录事务锁定 Product 与 LibraryAsset，拒绝 archived/missing/pending，复制 display/original name 并复用 exact media id。
-- 单次收录最多 100 个唯一素材，请求最大 256 KiB，锁按 asset id 稳定排序；并发重复收录返回同一个 ProductImageAsset。
+- 单次收录最多 100 个唯一素材，请求最大 256 KiB，锁按 asset id 稳定排序；并发重复收录返回同一个 ProductImageAsset。当前 core API 尚未实现 `Idempotency-Key`/canonical request hash，仍需完成后才能进入生产收录验收。
 - Library rename/tag/folder/archive 不传播到已有商品资产。
 - `MediaLibraryFolder` 一层；删除时素材回到 unorganized。
 - `MediaLibraryTag.normalized_key` 全局唯一；关联表防重复。
