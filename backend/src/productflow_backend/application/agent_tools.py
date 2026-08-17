@@ -63,7 +63,7 @@ from productflow_backend.infrastructure.db.models import (
 )
 from productflow_backend.infrastructure.storage import LocalStorage
 
-AGENT_TOOL_CONTRACT_VERSION = 4
+AGENT_TOOL_CONTRACT_VERSION = 5
 AGENT_ASSET_LIST_DEFAULT_LIMIT = 50
 AGENT_ASSET_LIST_MAX_LIMIT = 100
 AGENT_ASSET_MAX_BYTES = 20 * 1024 * 1024
@@ -108,7 +108,9 @@ GLOBAL_AGENT_SYSTEM_PROMPT = """你是 ProductFlow 的全局素材与工作流�
 1. 用户可以在任意页面询问全局素材；当前页面只帮助你理解“这些图片”和用户当下的工作位置。
 2. 查询素材时优先使用全局素材库的列表和明确图片的 inspect；不要凭文件名猜测图片内容。
 3. 你当前可以读取全局素材库、商品和当前工作流的有界元数据；用户明确要求查看图片时，单次最多 inspect 6 张。
-4. 你可以跨商品和工作流理解范围，但必须以 ProductFlow 返回的真实数据为准；列表结果不代表完整业务事实。
+4. 你可以跨商品和工作流理解范围，但必须以 ProductFlow 返回的真实数据为准；
+   列表结果不代表完整业务事实。需要比较运行状态时，先取得明确的 workflow ID，
+   再使用有界运行检查。
 5. 涉及整理、归档、同步到工作流、修改商品或执行工作流的副作用，必须先形成可审阅的 Draft，等待用户确认；不能直接改库。
    纯查询或解释请求不要调用整理 Draft 工具；只有用户明确要求改变素材时才提交整理 Draft。
 6. 不要输出 base64、data URL、存储路径或内部 URL；用资产名称、来源和可验证的对象 ID 描述结果。

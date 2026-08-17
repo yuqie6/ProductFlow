@@ -12,6 +12,10 @@ from productflow_backend.application.agent_conversations import (
 from productflow_backend.application.agent_tools import (
     AGENT_GLOBAL_PRODUCT_INSPECT_MAX,
 )
+from productflow_backend.application.agent_workflow_runs import (
+    AGENT_GLOBAL_WORKFLOW_INSPECT_MAX,
+    AGENT_GLOBAL_WORKFLOW_RUN_LIST_MAX,
+)
 from productflow_backend.application.legacy_archive_rebuilds import (
     AGENT_LEGACY_ARCHIVE_INSPECT_MAX_ITEMS,
     AgentLegacyArchiveSection,
@@ -134,6 +138,34 @@ class InspectAgentProductsRequest(StrictAgentRequest):
 
 class InspectAgentProductsResponse(BaseModel):
     items: list[AgentGlobalProductResponse]
+
+
+class AgentGlobalWorkflowRunResponse(BaseModel):
+    id: str
+    status: WorkflowRunStatus
+    failure_reason: str | None
+    started_at: datetime
+    finished_at: datetime | None
+    node_status_counts: dict[str, int]
+
+
+class AgentGlobalWorkflowRunsResponse(BaseModel):
+    product_id: str
+    product_name: str
+    workflow_id: str
+    workflow_title: str
+    workflow_revision: int = Field(ge=1)
+    active: bool
+    runs: list[AgentGlobalWorkflowRunResponse]
+
+
+class InspectAgentWorkflowRunsRequest(StrictAgentRequest):
+    workflow_ids: list[str] = Field(min_length=1, max_length=AGENT_GLOBAL_WORKFLOW_INSPECT_MAX)
+    limit: int = Field(default=5, ge=1, le=AGENT_GLOBAL_WORKFLOW_RUN_LIST_MAX)
+
+
+class InspectAgentWorkflowRunsResponse(BaseModel):
+    items: list[AgentGlobalWorkflowRunsResponse]
 
 
 class InspectAgentAssetsRequest(StrictAgentRequest):

@@ -100,6 +100,25 @@ type GlobalProductList struct {
 	NextCursor string                 `json:"next_cursor,omitempty"`
 }
 
+type GlobalWorkflowRunSummary struct {
+	ID               string         `json:"id"`
+	Status           string         `json:"status"`
+	FailureReason    *string        `json:"failure_reason"`
+	StartedAt        string         `json:"started_at"`
+	FinishedAt       *string        `json:"finished_at"`
+	NodeStatusCounts map[string]int `json:"node_status_counts"`
+}
+
+type GlobalWorkflowRunInspection struct {
+	ProductID        string                     `json:"product_id"`
+	ProductName      string                     `json:"product_name"`
+	WorkflowID       string                     `json:"workflow_id"`
+	WorkflowTitle    string                     `json:"workflow_title"`
+	WorkflowRevision int                        `json:"workflow_revision"`
+	Active           bool                       `json:"active"`
+	Runs             []GlobalWorkflowRunSummary `json:"runs"`
+}
+
 type AssetContent struct {
 	Data      []byte
 	MediaType string
@@ -469,6 +488,26 @@ func (client *Client) InspectGlobalProducts(
 		http.MethodPost,
 		client.conversationPath(conversationID)+"/products/inspect",
 		map[string]any{"product_ids": productIDs},
+		&result,
+		"",
+	)
+	return result.Items, err
+}
+
+func (client *Client) InspectGlobalWorkflowRuns(
+	ctx context.Context,
+	conversationID string,
+	workflowIDs []string,
+	limit int,
+) ([]GlobalWorkflowRunInspection, error) {
+	var result struct {
+		Items []GlobalWorkflowRunInspection `json:"items"`
+	}
+	err := client.json(
+		ctx,
+		http.MethodPost,
+		client.conversationPath(conversationID)+"/workflow-runs/inspect",
+		map[string]any{"workflow_ids": workflowIDs, "limit": limit},
 		&result,
 		"",
 	)

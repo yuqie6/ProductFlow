@@ -278,12 +278,15 @@ func scopedReadTools(client *productflow.Client, scope Scope) []agenttask.Tool {
 }
 
 const (
-	listGlobalMediaAssetsToolName    = "list_global_media_library_assets_v1"
-	inspectGlobalMediaAssetsToolName = "inspect_global_media_library_assets_v1"
-	listGlobalProductsToolName       = "list_products_v1"
-	inspectGlobalProductsToolName    = "inspect_products_v1"
-	maxListedGlobalProducts          = 100
-	maxInspectedGlobalProducts       = 20
+	listGlobalMediaAssetsToolName     = "list_global_media_library_assets_v1"
+	inspectGlobalMediaAssetsToolName  = "inspect_global_media_library_assets_v1"
+	listGlobalProductsToolName        = "list_products_v1"
+	inspectGlobalProductsToolName     = "inspect_products_v1"
+	inspectGlobalWorkflowRunsToolName = "inspect_global_workflow_runs_v1"
+	maxListedGlobalProducts           = 100
+	maxInspectedGlobalProducts        = 20
+	maxInspectedGlobalWorkflows       = 20
+	maxGlobalWorkflowRunsPerWorkflow  = 10
 )
 
 func scopedGlobalReadTools(client *productflow.Client, scope Scope) []agenttask.Tool {
@@ -354,6 +357,46 @@ func scopedGlobalReadTools(client *productflow.Client, scope Scope) []agenttask.
 				}
 				if len(result) != len(productIDs) {
 					return "", errors.New("ProductFlow returned an incomplete product inspection result")
+				}
+				encoded, err := json.Marshal(result)
+				return string(encoded), err
+			},
+		},
+		{
+			Name:        inspectGlobalWorkflowRunsToolName,
+			Description: "Inspect recent WorkflowRun status summaries for up to twenty explicitly selected workflows. This is read-only and never starts, cancels, retries, or returns node configuration or image URLs.",
+			Parameters: map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"workflow_ids": map[string]any{
+						"type": "array", "minItems": 1, "maxItems": maxInspectedGlobalWorkflows,
+						"items": map[string]any{"type": "string", "minLength": 1, "maxLength": 64},
+					},
+					"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": maxGlobalWorkflowRunsPerWorkflow},
+				},
+				"required": []string{"workflow_ids", "limit"},
+			},
+			Strict: true,
+			Handler: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var arguments struct {
+					WorkflowIDs []string `json:"workflow_ids"`
+					Limit       int      `json:"limit"`
+				}
+				if err := decodeStrictObject(raw, &arguments); err != nil {
+					return "", err
+				}
+				workflowIDs, err := strictWorkflowIDs(arguments.WorkflowIDs)
+				if err != nil {
+					return "", err
+				}
+				if arguments.Limit < 1 || arguments.Limit > maxGlobalWorkflowRunsPerWorkflow {
+					return "", fmt.Errorf("limit must be between 1 and %d", maxGlobalWorkflowRunsPerWorkflow)
+				}
+				result, err := client.InspectGlobalWorkflowRuns(
+					ctx, scope.ConversationID, workflowIDs, arguments.Limit,
+				)
+				if err != nil {
+					return "", err
 				}
 				encoded, err := json.Marshal(result)
 				return string(encoded), err
@@ -895,6 +938,26 @@ func strictProductIDs(values []string) ([]string, error) {
 		}
 		if seen[value] {
 			return nil, errors.New("product_ids cannot contain duplicate values")
+		}
+		seen[value] = true
+		result = append(result, value)
+	}
+	return result, nil
+}
+
+func strictWorkflowIDs(values []string) ([]string, error) {
+	if len(values) == 0 || len(values) > maxInspectedGlobalWorkflows {
+		return nil, fmt.Errorf("workflow_ids must contain between 1 and %d values", maxInspectedGlobalWorkflows)
+	}
+	seen := make(map[string]bool, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil, errors.New("workflow_ids cannot contain empty values")
+		}
+		if seen[value] {
+			return nil, errors.New("workflow_ids cannot contain duplicate values")
 		}
 		seen[value] = true
 		result = append(result, value)

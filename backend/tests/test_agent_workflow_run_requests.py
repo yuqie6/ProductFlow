@@ -19,12 +19,15 @@ from productflow_backend.application.agent_workflow_run_requests import (
     get_agent_workflow_run_request,
     prepare_agent_workflow_run_request,
 )
+from productflow_backend.application.agent_workflow_runs import inspect_agent_global_workflow_runs
+from productflow_backend.application.product_workflow.v2_runs import submit_v2_workflow_run
 from productflow_backend.application.workflow_drafts.materialization import materialize_workflow_draft
 from productflow_backend.application.workflow_drafts.service import (
     append_workflow_draft_revision,
     confirm_workflow_draft_revision,
 )
 from productflow_backend.domain.enums import (
+    AgentConversationScope,
     AgentTaskStatus,
     AgentToolStepKind,
     AgentToolStepStatus,
@@ -34,10 +37,15 @@ from productflow_backend.domain.enums import (
 )
 from productflow_backend.domain.errors import ConflictError
 from productflow_backend.infrastructure.agent_service import AgentServiceToolStep, AgentServiceTurnState
-from productflow_backend.infrastructure.db.models import AgentWorkflowRunRequest, WorkflowRun
+from productflow_backend.infrastructure.db.models import AgentConversation, AgentWorkflowRunRequest, WorkflowRun
 
 
-def _create_requestable_workspace(db_session):
+def _create_requestable_workspace(
+    db_session,
+    *,
+    name: str = "执行请求测试商品",
+    idempotency_key: str = "workflow-run-request-workspace",
+):
     selection = AgentProductSelectionV1.model_validate(
         {
             "schema_version": 1,
@@ -46,10 +54,10 @@ def _create_requestable_workspace(db_session):
     )
     workspace = create_agent_product_workspace(
         db_session,
-        name="执行请求测试商品",
+        name=name,
         selection=selection,
         image_uploads=[(_make_demo_image_bytes(), "reference.png", "image/png")],
-        idempotency_key="workflow-run-request-workspace",
+        idempotency_key=idempotency_key,
     )
     append_workflow_draft_revision(
         db_session,
@@ -76,6 +84,41 @@ def _create_requestable_workspace(db_session):
         idempotency_key="request-test-materialization",
     )
     return workspace, materialized.workflow
+
+
+def test_global_agent_can_inspect_recent_runs_for_selected_workflows(db_session) -> None:
+    first, first_workflow = _create_requestable_workspace(db_session)
+    _, second_workflow = _create_requestable_workspace(
+        db_session,
+        name="执行请求测试商品 2",
+        idempotency_key="workflow-run-request-workspace-2",
+    )
+    global_conversation = db_session.scalar(
+        select(AgentConversation).where(
+            AgentConversation.session_id == first.conversation.session_id,
+            AgentConversation.scope_type == AgentConversationScope.GLOBAL,
+        )
+    )
+    assert global_conversation is not None
+
+    submitted = submit_v2_workflow_run(
+        db_session,
+        product_id=first.product.id,
+        workflow_id=first_workflow.id,
+    )
+    inspected = inspect_agent_global_workflow_runs(
+        db_session,
+        conversation_id=global_conversation.id,
+        workflow_ids=[second_workflow.id, first_workflow.id],
+        limit=1,
+    )
+
+    assert [item["workflow_id"] for item in inspected] == [second_workflow.id, first_workflow.id]
+    assert inspected[0]["product_name"] == "执行请求测试商品 2"
+    assert inspected[0]["runs"] == []
+    assert inspected[1]["runs"][0]["id"] == submitted.run.id
+    assert inspected[1]["runs"][0]["status"] == WorkflowRunStatus.RUNNING
+    assert inspected[1]["runs"][0]["node_status_counts"]
 
 
 def test_agent_workflow_run_request_waits_for_confirmation_and_reuses_run_chain(db_session) -> None:

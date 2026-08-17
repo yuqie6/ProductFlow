@@ -209,6 +209,62 @@ func TestGlobalProductToolsUseBoundedProductFlowEndpoints(t *testing.T) {
 	}
 }
 
+func TestGlobalWorkflowRunToolUsesBoundedProductFlowEndpoint(t *testing.T) {
+	basePath := "/api/internal/v1/agent-conversations/" + testConversationID
+	workflowID := "88888888-8888-4888-8888-888888888888"
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != basePath+"/workflow-runs/inspect" {
+			t.Fatalf("global workflow run request = %s %s", request.Method, request.URL.String())
+		}
+		var body struct {
+			WorkflowIDs []string `json:"workflow_ids"`
+			Limit       int      `json:"limit"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(body.WorkflowIDs, []string{workflowID}) || body.Limit != 3 {
+			t.Fatalf("global workflow run body = %#v", body)
+		}
+		writeFixtureJSON(writer, map[string]any{
+			"items": []map[string]any{{
+				"product_id": testProductID, "product_name": "商品 A", "workflow_id": workflowID,
+				"workflow_title": "主图工作流", "workflow_revision": 7, "active": true,
+				"runs": []map[string]any{{
+					"id": "99999999-9999-4999-8999-999999999999", "status": "running",
+					"failure_reason": nil, "started_at": "2026-08-18T00:00:00Z", "finished_at": nil,
+					"node_status_counts": map[string]int{"running": 1, "queued": 2},
+				}},
+			}},
+		})
+	}))
+	t.Cleanup(server.Close)
+	client, err := productflow.NewClient(server.URL, testInternalToken, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tool *agenttask.Tool
+	for _, candidate := range scopedGlobalReadTools(client, Scope{ConversationID: testConversationID}) {
+		if candidate.Name == inspectGlobalWorkflowRunsToolName {
+			tool = &candidate
+			break
+		}
+	}
+	if tool == nil {
+		t.Fatalf("tool %q is not registered", inspectGlobalWorkflowRunsToolName)
+	}
+	result, err := tool.Handler(
+		context.Background(),
+		json.RawMessage(`{"workflow_ids":["`+workflowID+`"],"limit":3}`),
+	)
+	if err != nil || !strings.Contains(result, "running") || strings.Contains(result, "node_config") {
+		t.Fatalf("global workflow run result = %q, %v", result, err)
+	}
+	if _, err := tool.Handler(context.Background(), json.RawMessage(`{"workflow_ids":["a"],"limit":11}`)); err == nil {
+		t.Fatal("unbounded global workflow run inspection was accepted")
+	}
+}
+
 func TestLegacyArchiveReadToolsUseBoundedProductFlowEndpoints(t *testing.T) {
 	basePath := "/api/internal/v1/agent-conversations/" + testConversationID
 	requestCount := 0

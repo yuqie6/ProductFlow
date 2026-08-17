@@ -41,7 +41,10 @@ from productflow_backend.application.agent_workflow_run_requests import (
 from productflow_backend.application.agent_workflow_run_requests import (
     reconcile_agent_workflow_run_request as reconcile_agent_workflow_run_request_use_case,
 )
-from productflow_backend.application.agent_workflow_runs import list_agent_workflow_runs
+from productflow_backend.application.agent_workflow_runs import (
+    inspect_agent_global_workflow_runs,
+    list_agent_workflow_runs,
+)
 from productflow_backend.application.gallery_assets import GalleryAssetSort, GalleryDirectoryKind
 from productflow_backend.application.gallery_mutations import GalleryAssetMove
 from productflow_backend.application.legacy_archive_rebuilds import (
@@ -85,6 +88,8 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     InspectAgentLegacyArchiveRequest,
     InspectAgentProductsRequest,
     InspectAgentProductsResponse,
+    InspectAgentWorkflowRunsRequest,
+    InspectAgentWorkflowRunsResponse,
     PrepareAgentAssetMoveRequest,
     PrepareAgentAssetRenameRequest,
     PrepareAgentFolderCreateRequest,
@@ -355,6 +360,24 @@ def inspect_agent_global_products_endpoint(
     return InspectAgentProductsResponse(
         items=[AgentGlobalProductResponse.model_validate(item) for item in items]
     )
+
+
+@router.post(
+    "/{conversation_id}/workflow-runs/inspect",
+    response_model=InspectAgentWorkflowRunsResponse,
+)
+def inspect_agent_global_workflow_runs_endpoint(
+    conversation_id: str,
+    payload: InspectAgentWorkflowRunsRequest,
+    session: Session = Depends(get_session),
+) -> InspectAgentWorkflowRunsResponse:
+    items = inspect_agent_global_workflow_runs(
+        session,
+        conversation_id=conversation_id,
+        workflow_ids=payload.workflow_ids,
+        limit=payload.limit,
+    )
+    return InspectAgentWorkflowRunsResponse.model_validate({"items": items})
 
 
 @router.get(
