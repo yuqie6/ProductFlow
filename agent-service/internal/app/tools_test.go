@@ -67,10 +67,10 @@ func TestScopedToolCatalogContainsOnlyCurrentGalleryTools(t *testing.T) {
 		}
 	}
 	wantDurable := map[string]bool{
-		createFolderToolName: true,
-		renameFolderToolName: true,
-		renameAssetToolName:  true,
-		moveAssetsToolName:   true,
+		createFolderToolName:       true,
+		renameFolderToolName:       true,
+		renameAssetToolName:        true,
+		moveAssetsToolName:         true,
 		requestWorkflowRunToolName: true,
 	}
 	if !reflect.DeepEqual(durableNames, wantDurable) {
@@ -114,6 +114,98 @@ func TestWorkflowRunReadToolUsesBoundedProductFlowEndpoint(t *testing.T) {
 	}
 	if _, err := tool.Handler(context.Background(), json.RawMessage(`{"limit":21}`)); err == nil {
 		t.Fatal("unbounded workflow run inspection was accepted")
+	}
+}
+
+func TestGlobalProductToolsUseBoundedProductFlowEndpoints(t *testing.T) {
+	basePath := "/api/internal/v1/agent-conversations/" + testConversationID
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requestCount++
+		switch request.URL.Path {
+		case basePath + "/products":
+			if request.Method != http.MethodGet || request.URL.Query().Get("query") != "春季" ||
+				request.URL.Query().Get("cursor") != "cursor-1" || request.URL.Query().Get("limit") != "10" {
+				t.Fatalf("global product list request = %s %s", request.Method, request.URL.String())
+			}
+			writeFixtureJSON(writer, map[string]any{
+				"items": []map[string]any{{
+					"id": "77777777-7777-4777-8777-777777777777", "name": "春季商品", "category": "收纳",
+					"updated_at": "2026-08-18T00:00:00Z",
+					"active_workflow": map[string]any{
+						"id": "88888888-8888-4888-8888-888888888888", "title": "主图工作流",
+						"revision": 4, "edit_version": 2, "node_count": 3,
+					},
+				}},
+				"next_cursor": "cursor-2",
+			})
+		case basePath + "/products/inspect":
+			if request.Method != http.MethodPost {
+				t.Fatalf("global product inspect method = %s", request.Method)
+			}
+			var body struct {
+				ProductIDs []string `json:"product_ids"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(body.ProductIDs, []string{testProductID}) {
+				t.Fatalf("global product inspect body = %#v", body)
+			}
+			writeFixtureJSON(writer, map[string]any{
+				"items": []map[string]any{{
+					"id": testProductID, "name": "商品 A", "category": nil,
+					"updated_at": "2026-08-18T00:00:00Z", "active_workflow": nil,
+				}},
+			})
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client, err := productflow.NewClient(server.URL, testInternalToken, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	invoke := func(name, arguments string) (string, error) {
+		t.Helper()
+		for _, tool := range scopedGlobalReadTools(client, Scope{ConversationID: testConversationID}) {
+			if tool.Name == name {
+				return tool.Handler(context.Background(), json.RawMessage(arguments))
+			}
+		}
+		t.Fatalf("tool %q is not registered", name)
+		return "", nil
+	}
+
+	listed, err := invoke(
+		listGlobalProductsToolName,
+		`{"query":"春季","cursor":"cursor-1","limit":10}`,
+	)
+	if err != nil || !strings.Contains(listed, "主图工作流") || strings.Contains(listed, "image_url") {
+		t.Fatalf("global product list result = %q, %v", listed, err)
+	}
+	inspected, err := invoke(
+		inspectGlobalProductsToolName,
+		`{"product_ids":["`+testProductID+`"]}`,
+	)
+	if err != nil || !strings.Contains(inspected, testProductID) {
+		t.Fatalf("global product inspect result = %q, %v", inspected, err)
+	}
+	if _, err := invoke(
+		listGlobalProductsToolName,
+		`{"query":"","cursor":"","limit":101}`,
+	); err == nil {
+		t.Fatal("unbounded global product list was accepted")
+	}
+	if _, err := invoke(
+		inspectGlobalProductsToolName,
+		`{"product_ids":["a","b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q","r","s","t","u"]}`,
+	); err == nil {
+		t.Fatal("unbounded global product inspection was accepted")
+	}
+	if requestCount != 2 {
+		t.Fatalf("ProductFlow request count = %d, want 2", requestCount)
 	}
 }
 

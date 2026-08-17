@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -61,11 +63,13 @@ from productflow_backend.infrastructure.db.models import (
 )
 from productflow_backend.infrastructure.storage import LocalStorage
 
-AGENT_TOOL_CONTRACT_VERSION = 3
+AGENT_TOOL_CONTRACT_VERSION = 4
 AGENT_ASSET_LIST_DEFAULT_LIMIT = 50
 AGENT_ASSET_LIST_MAX_LIMIT = 100
 AGENT_ASSET_MAX_BYTES = 20 * 1024 * 1024
 AGENT_CONTEXT_MAX_BYTES = 512 * 1024
+AGENT_GLOBAL_PRODUCT_LIST_MAX_LIMIT = 100
+AGENT_GLOBAL_PRODUCT_INSPECT_MAX = 20
 RENAME_ASSET_TOOL_NAME = "rename_product_image_asset_v1"
 CREATE_FOLDER_TOOL_NAME = "create_product_image_folder_v1"
 RENAME_FOLDER_TOOL_NAME = "rename_product_image_folder_v1"
@@ -103,8 +107,8 @@ GLOBAL_AGENT_SYSTEM_PROMPT = """你是 ProductFlow 的全局素材与工作流�
 工作原则：
 1. 用户可以在任意页面询问全局素材；当前页面只帮助你理解“这些图片”和用户当下的工作位置。
 2. 查询素材时优先使用全局素材库的列表和明确图片的 inspect；不要凭文件名猜测图片内容。
-3. 你当前可以读取全局素材库的元数据和用户明确要求查看的图片，单次最多 inspect 6 张。
-4. 你可以跨商品和工作流理解范围，但必须以 ProductFlow 返回的真实数据为准。
+3. 你当前可以读取全局素材库、商品和当前工作流的有界元数据；用户明确要求查看图片时，单次最多 inspect 6 张。
+4. 你可以跨商品和工作流理解范围，但必须以 ProductFlow 返回的真实数据为准；列表结果不代表完整业务事实。
 5. 涉及整理、归档、同步到工作流、修改商品或执行工作流的副作用，必须先形成可审阅的 Draft，等待用户确认；不能直接改库。
    纯查询或解释请求不要调用整理 Draft 工具；只有用户明确要求改变素材时才提交整理 Draft。
 6. 不要输出 base64、data URL、存储路径或内部 URL；用资产名称、来源和可验证的对象 ID 描述结果。
@@ -113,6 +117,12 @@ GLOBAL_AGENT_SYSTEM_PROMPT = """你是 ProductFlow 的全局素材与工作流�
 
 @dataclass(frozen=True, slots=True)
 class AgentAssetPage:
+    items: list[dict[str, Any]]
+    next_cursor: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class AgentProductPage:
     items: list[dict[str, Any]]
     next_cursor: str | None
 
@@ -518,6 +528,175 @@ def list_agent_global_media_assets(
         items=[agent_media_library_asset_metadata(asset) for asset in page.items],
         next_cursor=page.next_cursor,
     )
+
+
+def list_agent_global_products(
+    session: Session,
+    *,
+    conversation_id: str,
+    query: str = "",
+    cursor: str | None = None,
+    limit: int = AGENT_ASSET_LIST_DEFAULT_LIMIT,
+) -> AgentProductPage:
+    conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
+    _require_global_conversation(conversation)
+    normalized_query = query.strip()
+    if len(normalized_query) > 255:
+        raise BusinessValidationError("商品搜索词不能超过 255 个字符")
+    if not 1 <= limit <= AGENT_GLOBAL_PRODUCT_LIST_MAX_LIMIT:
+        raise BusinessValidationError(
+            f"商品分页 limit 必须在 1 到 {AGENT_GLOBAL_PRODUCT_LIST_MAX_LIMIT} 之间"
+        )
+
+    statement = select(Product).where(
+        Product.name.icontains(normalized_query, autoescape=True)
+        if normalized_query
+        else True
+    )
+    if cursor:
+        cursor_updated_at, cursor_product_id = _decode_global_product_cursor(
+            cursor,
+            query=normalized_query,
+        )
+        statement = statement.where(
+            or_(
+                Product.updated_at < cursor_updated_at,
+                and_(
+                    Product.updated_at == cursor_updated_at,
+                    Product.id < cursor_product_id,
+                ),
+            )
+        )
+    rows = list(
+        session.scalars(
+            statement.order_by(Product.updated_at.desc(), Product.id.desc()).limit(limit + 1)
+        ).all()
+    )
+    has_more = len(rows) > limit
+    items = rows[:limit]
+    summaries = _agent_global_product_summaries(session, items)
+    next_cursor = (
+        _encode_global_product_cursor(
+            updated_at=items[-1].updated_at,
+            product_id=items[-1].id,
+            query=normalized_query,
+        )
+        if has_more and items
+        else None
+    )
+    return AgentProductPage(items=summaries, next_cursor=next_cursor)
+
+
+def inspect_agent_global_products(
+    session: Session,
+    *,
+    conversation_id: str,
+    product_ids: list[str],
+) -> list[dict[str, Any]]:
+    conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
+    _require_global_conversation(conversation)
+    normalized_ids = _normalize_global_product_ids(product_ids)
+    products = list(
+        session.scalars(select(Product).where(Product.id.in_(normalized_ids))).all()
+    )
+    if len(products) != len(normalized_ids):
+        raise NotFoundError("部分商品不存在")
+    summaries = _agent_global_product_summaries(session, products)
+    by_id = {item["id"]: item for item in summaries}
+    return [by_id[product_id] for product_id in normalized_ids]
+
+
+def _agent_global_product_summaries(
+    session: Session,
+    products: list[Product],
+) -> list[dict[str, Any]]:
+    if not products:
+        return []
+    product_ids = [product.id for product in products]
+    workflows = list(
+        session.scalars(
+            select(ProductWorkflow)
+            .options(selectinload(ProductWorkflow.nodes))
+            .where(
+                ProductWorkflow.product_id.in_(product_ids),
+                ProductWorkflow.active.is_(True),
+                ProductWorkflow.schema_version == 2,
+            )
+        ).unique().all()
+    )
+    workflows_by_product = {workflow.product_id: workflow for workflow in workflows}
+    return [_agent_global_product_summary(product, workflows_by_product.get(product.id)) for product in products]
+
+
+def _agent_global_product_summary(
+    product: Product,
+    workflow: ProductWorkflow | None,
+) -> dict[str, Any]:
+    return {
+        "id": product.id,
+        "name": product.name,
+        "category": product.category,
+        "updated_at": product.updated_at.isoformat(),
+        "active_workflow": (
+            {
+                "id": workflow.id,
+                "title": workflow.title,
+                "revision": workflow.revision,
+                "edit_version": workflow.edit_version,
+                "node_count": len(workflow.nodes),
+            }
+            if workflow is not None
+            else None
+        ),
+    }
+
+
+def _normalize_global_product_ids(values: list[str]) -> list[str]:
+    if not 1 <= len(values) <= AGENT_GLOBAL_PRODUCT_INSPECT_MAX:
+        raise BusinessValidationError(
+            f"product_ids 必须包含 1 到 {AGENT_GLOBAL_PRODUCT_INSPECT_MAX} 个商品"
+        )
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        product_id = value.strip()
+        if not product_id:
+            raise BusinessValidationError("product_ids 不能包含空值")
+        if product_id in seen:
+            raise BusinessValidationError("product_ids 不能包含重复值")
+        seen.add(product_id)
+        normalized.append(product_id)
+    return normalized
+
+
+def _encode_global_product_cursor(*, updated_at: datetime, product_id: str, query: str) -> str:
+    normalized_updated_at = (
+        updated_at.replace(tzinfo=UTC)
+        if updated_at.tzinfo is None
+        else updated_at.astimezone(UTC)
+    )
+    payload = {
+        "updated_at": normalized_updated_at.isoformat(),
+        "product_id": product_id,
+        "query": query,
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(encoded).decode().rstrip("=")
+
+
+def _decode_global_product_cursor(value: str, *, query: str) -> tuple[datetime, str]:
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded).decode())
+        if payload.get("query") != query:
+            raise ValueError
+        updated_at = datetime.fromisoformat(payload["updated_at"])
+        product_id = str(payload["product_id"]).strip()
+        if updated_at.tzinfo is None or not product_id:
+            raise ValueError
+        return updated_at.astimezone(UTC), product_id
+    except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise BusinessValidationError("商品分页 cursor 无效或与当前查询条件不匹配") from exc
 
 
 def inspect_agent_global_media_assets(
@@ -1469,6 +1648,8 @@ def _commit_tool_mutation(
 __all__ = [
     "AGENT_ASSET_LIST_DEFAULT_LIMIT",
     "AGENT_ASSET_LIST_MAX_LIMIT",
+    "AGENT_GLOBAL_PRODUCT_INSPECT_MAX",
+    "AGENT_GLOBAL_PRODUCT_LIST_MAX_LIMIT",
     "AGENT_TOOL_CONTRACT_VERSION",
     "CREATE_FOLDER_TOOL_NAME",
     "MOVE_ASSETS_TOOL_NAME",
@@ -1476,6 +1657,7 @@ __all__ = [
     "RENAME_ASSET_TOOL_NAME",
     "AgentAssetContent",
     "AgentAssetPage",
+    "AgentProductPage",
     "AgentAssetRenamePrepared",
     "AgentAssetRenameReconcileResult",
     "AgentAssetMovePrepared",
@@ -1493,8 +1675,10 @@ __all__ = [
     "get_agent_task_contract",
     "get_agent_product_context",
     "inspect_agent_global_media_assets",
+    "inspect_agent_global_products",
     "inspect_agent_product_assets",
     "list_agent_global_media_assets",
+    "list_agent_global_products",
     "list_agent_product_assets",
     "prepare_agent_asset_move",
     "prepare_agent_asset_rename",

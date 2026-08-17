@@ -9,6 +9,9 @@ from productflow_backend.application.agent_conversations import (
     AGENT_MAX_INPUT_ASSETS,
     AGENT_MAX_INPUT_TEXT_CHARS,
 )
+from productflow_backend.application.agent_tools import (
+    AGENT_GLOBAL_PRODUCT_INSPECT_MAX,
+)
 from productflow_backend.application.legacy_archive_rebuilds import (
     AGENT_LEGACY_ARCHIVE_INSPECT_MAX_ITEMS,
     AgentLegacyArchiveSection,
@@ -102,6 +105,35 @@ class AgentAssetMetadataResponse(BaseModel):
 class AgentAssetListResponse(BaseModel):
     items: list[AgentAssetMetadataResponse]
     next_cursor: str | None = None
+
+
+class AgentActiveWorkflowSummaryResponse(BaseModel):
+    id: str
+    title: str
+    revision: int = Field(ge=1)
+    edit_version: int = Field(ge=0)
+    node_count: int = Field(ge=0)
+
+
+class AgentGlobalProductResponse(BaseModel):
+    id: str
+    name: str
+    category: str | None = None
+    updated_at: str
+    active_workflow: AgentActiveWorkflowSummaryResponse | None = None
+
+
+class AgentGlobalProductListResponse(BaseModel):
+    items: list[AgentGlobalProductResponse]
+    next_cursor: str | None = None
+
+
+class InspectAgentProductsRequest(StrictAgentRequest):
+    product_ids: list[str] = Field(min_length=1, max_length=AGENT_GLOBAL_PRODUCT_INSPECT_MAX)
+
+
+class InspectAgentProductsResponse(BaseModel):
+    items: list[AgentGlobalProductResponse]
 
 
 class InspectAgentAssetsRequest(StrictAgentRequest):

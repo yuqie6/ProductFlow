@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 from helpers import _login
+from sqlalchemy import select
 from test_agent_sessions import _create_workspace
 
 from productflow_backend.application.agent_conversations import reserve_agent_turn
@@ -9,10 +10,14 @@ from productflow_backend.application.agent_tasks import (
     create_agent_task,
     list_agent_tasks,
 )
+from productflow_backend.application.agent_tools import (
+    inspect_agent_global_products,
+    list_agent_global_products,
+)
 from productflow_backend.config import get_settings
-from productflow_backend.domain.enums import AgentTaskStatus, AgentTurnStatus
+from productflow_backend.domain.enums import AgentConversationScope, AgentTaskStatus, AgentTurnStatus
 from productflow_backend.domain.errors import ConflictError
-from productflow_backend.infrastructure.db.models import AgentPageContextSnapshot, AgentTask
+from productflow_backend.infrastructure.db.models import AgentConversation, AgentPageContextSnapshot, AgentTask
 from productflow_backend.presentation.api import create_app
 
 
@@ -42,6 +47,48 @@ def test_tasks_have_independent_harness_runs_and_share_a_session(db_session) -> 
         second.id,
         first.id,
     ]
+
+
+def test_global_agent_can_list_and_inspect_products_with_active_workflow_summary(db_session) -> None:
+    first = _create_workspace(db_session, key="global-products-first")
+    second = _create_workspace(db_session, key="global-products-second")
+    global_conversation = db_session.scalar(
+        select(AgentConversation).where(
+            AgentConversation.session_id == first.conversation.session_id,
+            AgentConversation.scope_type == AgentConversationScope.GLOBAL,
+        )
+    )
+    assert global_conversation is not None
+
+    page = list_agent_global_products(
+        db_session,
+        conversation_id=global_conversation.id,
+        query="Agent Session 商品",
+        limit=1,
+    )
+    assert len(page.items) == 1
+    assert page.next_cursor is not None
+
+    next_page = list_agent_global_products(
+        db_session,
+        conversation_id=global_conversation.id,
+        query="Agent Session 商品",
+        cursor=page.next_cursor,
+        limit=1,
+    )
+    assert len(next_page.items) == 1
+    assert {page.items[0]["id"], next_page.items[0]["id"]} == {
+        first.product.id,
+        second.product.id,
+    }
+
+    inspected = inspect_agent_global_products(
+        db_session,
+        conversation_id=global_conversation.id,
+        product_ids=[first.product.id, second.product.id],
+    )
+    assert [item["id"] for item in inspected] == [first.product.id, second.product.id]
+    assert all(item["active_workflow"] is None for item in inspected)
 
 
 def test_turn_reservation_persists_task_and_bounded_page_context(db_session) -> None:

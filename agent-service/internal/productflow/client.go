@@ -79,6 +79,27 @@ type AssetList struct {
 	NextCursor string          `json:"next_cursor,omitempty"`
 }
 
+type GlobalWorkflowSummary struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Revision    int    `json:"revision"`
+	EditVersion int    `json:"edit_version"`
+	NodeCount   int    `json:"node_count"`
+}
+
+type GlobalProductSummary struct {
+	ID             string                 `json:"id"`
+	Name           string                 `json:"name"`
+	Category       *string                `json:"category"`
+	UpdatedAt      string                 `json:"updated_at"`
+	ActiveWorkflow *GlobalWorkflowSummary `json:"active_workflow"`
+}
+
+type GlobalProductList struct {
+	Items      []GlobalProductSummary `json:"items"`
+	NextCursor string                 `json:"next_cursor,omitempty"`
+}
+
 type AssetContent struct {
 	Data      []byte
 	MediaType string
@@ -414,6 +435,44 @@ func (client *Client) ListGlobalMediaAssets(
 	var result AssetList
 	err := client.json(ctx, http.MethodGet, path, nil, &result, "")
 	return result, err
+}
+
+func (client *Client) ListGlobalProducts(
+	ctx context.Context,
+	conversationID, query, cursor string,
+	limit int,
+) (GlobalProductList, error) {
+	values := url.Values{}
+	if strings.TrimSpace(query) != "" {
+		values.Set("query", strings.TrimSpace(query))
+	}
+	if strings.TrimSpace(cursor) != "" {
+		values.Set("cursor", strings.TrimSpace(cursor))
+	}
+	values.Set("limit", strconv.Itoa(limit))
+	path := client.conversationPath(conversationID) + "/products?" + values.Encode()
+	var result GlobalProductList
+	err := client.json(ctx, http.MethodGet, path, nil, &result, "")
+	return result, err
+}
+
+func (client *Client) InspectGlobalProducts(
+	ctx context.Context,
+	conversationID string,
+	productIDs []string,
+) ([]GlobalProductSummary, error) {
+	var result struct {
+		Items []GlobalProductSummary `json:"items"`
+	}
+	err := client.json(
+		ctx,
+		http.MethodPost,
+		client.conversationPath(conversationID)+"/products/inspect",
+		map[string]any{"product_ids": productIDs},
+		&result,
+		"",
+	)
+	return result.Items, err
 }
 
 func (client *Client) InspectAssets(

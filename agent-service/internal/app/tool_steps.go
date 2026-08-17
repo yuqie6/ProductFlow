@@ -51,6 +51,10 @@ func productFlowToolStep(tool string) (string, string, bool) {
 		return "propose_draft", "Propose workflow draft", true
 	case productContextToolName, listAssetsToolName:
 		return "inspect_context", "Inspect product context and assets", true
+	case listGlobalProductsToolName, inspectGlobalProductsToolName:
+		return "inspect_context", "Inspect products and workflows", true
+	case listGlobalMediaAssetsToolName, inspectGlobalMediaAssetsToolName:
+		return "inspect_context", "Inspect global media assets", true
 	case listLegacyArchivesToolName, inspectLegacyArchiveToolName:
 		return "read_history", "Read product history", true
 	case createFolderToolName, renameFolderToolName, renameAssetToolName, moveAssetsToolName:

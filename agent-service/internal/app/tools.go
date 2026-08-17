@@ -280,10 +280,85 @@ func scopedReadTools(client *productflow.Client, scope Scope) []agenttask.Tool {
 const (
 	listGlobalMediaAssetsToolName    = "list_global_media_library_assets_v1"
 	inspectGlobalMediaAssetsToolName = "inspect_global_media_library_assets_v1"
+	listGlobalProductsToolName       = "list_products_v1"
+	inspectGlobalProductsToolName    = "inspect_products_v1"
+	maxListedGlobalProducts          = 100
+	maxInspectedGlobalProducts       = 20
 )
 
 func scopedGlobalReadTools(client *productflow.Client, scope Scope) []agenttask.Tool {
 	return []agenttask.Tool{
+		{
+			Name:        listGlobalProductsToolName,
+			Description: "List a bounded page of ProductFlow products with the current active workflow summary. This is read-only and never returns image URLs or node configuration.",
+			Parameters: map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"query":  map[string]any{"type": "string", "maxLength": 255},
+					"cursor": map[string]any{"type": "string", "maxLength": 4096},
+					"limit":  map[string]any{"type": "integer", "minimum": 1, "maximum": maxListedGlobalProducts},
+				},
+				"required": []string{"query", "cursor", "limit"},
+			},
+			Strict: true,
+			Handler: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var arguments struct {
+					Query  string `json:"query"`
+					Cursor string `json:"cursor"`
+					Limit  int    `json:"limit"`
+				}
+				if err := decodeStrictObject(raw, &arguments); err != nil {
+					return "", err
+				}
+				if arguments.Limit < 1 || arguments.Limit > maxListedGlobalProducts {
+					return "", fmt.Errorf("limit must be between 1 and %d", maxListedGlobalProducts)
+				}
+				result, err := client.ListGlobalProducts(
+					ctx, scope.ConversationID, arguments.Query, arguments.Cursor, arguments.Limit,
+				)
+				if err != nil {
+					return "", err
+				}
+				encoded, err := json.Marshal(result)
+				return string(encoded), err
+			},
+		},
+		{
+			Name:        inspectGlobalProductsToolName,
+			Description: "Inspect up to twenty explicitly selected products and their current active workflow summaries. This is read-only and does not edit or run a workflow.",
+			Parameters: map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"product_ids": map[string]any{
+						"type": "array", "minItems": 1, "maxItems": maxInspectedGlobalProducts,
+						"items": map[string]any{"type": "string", "minLength": 1, "maxLength": 64},
+					},
+				},
+				"required": []string{"product_ids"},
+			},
+			Strict: true,
+			Handler: func(ctx context.Context, raw json.RawMessage) (string, error) {
+				var arguments struct {
+					ProductIDs []string `json:"product_ids"`
+				}
+				if err := decodeStrictObject(raw, &arguments); err != nil {
+					return "", err
+				}
+				productIDs, err := strictProductIDs(arguments.ProductIDs)
+				if err != nil {
+					return "", err
+				}
+				result, err := client.InspectGlobalProducts(ctx, scope.ConversationID, productIDs)
+				if err != nil {
+					return "", err
+				}
+				if len(result) != len(productIDs) {
+					return "", errors.New("ProductFlow returned an incomplete product inspection result")
+				}
+				encoded, err := json.Marshal(result)
+				return string(encoded), err
+			},
+		},
 		{
 			Name:        listGlobalMediaAssetsToolName,
 			Description: "List a bounded page of metadata from the canonical global media library. This never returns image bytes or URLs.",
@@ -800,6 +875,26 @@ func strictUniqueIDs(values []string, maximum int) ([]string, error) {
 		}
 		if seen[value] {
 			return nil, errors.New("asset_ids cannot contain duplicate values")
+		}
+		seen[value] = true
+		result = append(result, value)
+	}
+	return result, nil
+}
+
+func strictProductIDs(values []string) ([]string, error) {
+	if len(values) == 0 || len(values) > maxInspectedGlobalProducts {
+		return nil, fmt.Errorf("product_ids must contain between 1 and %d values", maxInspectedGlobalProducts)
+	}
+	seen := make(map[string]bool, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil, errors.New("product_ids cannot contain empty values")
+		}
+		if seen[value] {
+			return nil, errors.New("product_ids cannot contain duplicate values")
 		}
 		seen[value] = true
 		result = append(result, value)

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from productflow_backend.application.agent_tools import (
     AGENT_ASSET_LIST_DEFAULT_LIMIT,
     AGENT_ASSET_LIST_MAX_LIMIT,
+    AGENT_GLOBAL_PRODUCT_LIST_MAX_LIMIT,
     apply_agent_asset_move,
     apply_agent_asset_rename,
     apply_agent_folder_create,
@@ -13,8 +14,10 @@ from productflow_backend.application.agent_tools import (
     get_agent_contract,
     get_agent_product_context,
     inspect_agent_global_media_assets,
+    inspect_agent_global_products,
     inspect_agent_product_assets,
     list_agent_global_media_assets,
+    list_agent_global_products,
     list_agent_product_assets,
     prepare_agent_asset_move,
     prepare_agent_asset_rename,
@@ -66,6 +69,8 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     AgentFolderRenamePreparedRequest,
     AgentFolderRenameReconcileResponse,
     AgentFolderRenameResultResponse,
+    AgentGlobalProductListResponse,
+    AgentGlobalProductResponse,
     AgentLegacyArchiveInspectResponse,
     AgentLegacyArchiveListResponse,
     AgentWorkflowDraftValidationRequest,
@@ -78,6 +83,8 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     InspectAgentAssetsRequest,
     InspectAgentAssetsResponse,
     InspectAgentLegacyArchiveRequest,
+    InspectAgentProductsRequest,
+    InspectAgentProductsResponse,
     PrepareAgentAssetMoveRequest,
     PrepareAgentAssetRenameRequest,
     PrepareAgentFolderCreateRequest,
@@ -305,6 +312,49 @@ def inspect_agent_global_media_assets_endpoint(
         asset_ids=payload.asset_ids,
     )
     return InspectAgentAssetsResponse(items=[AgentAssetMetadataResponse.model_validate(item) for item in items])
+
+
+@router.get(
+    "/{conversation_id}/products",
+    response_model=AgentGlobalProductListResponse,
+)
+def list_agent_global_products_endpoint(
+    conversation_id: str,
+    query: str = Query(default="", max_length=255),
+    cursor: str | None = Query(default=None, max_length=4096),
+    limit: int = Query(default=AGENT_ASSET_LIST_DEFAULT_LIMIT, ge=1, le=AGENT_GLOBAL_PRODUCT_LIST_MAX_LIMIT),
+    session: Session = Depends(get_session),
+) -> AgentGlobalProductListResponse:
+    page = list_agent_global_products(
+        session,
+        conversation_id=conversation_id,
+        query=query,
+        cursor=cursor,
+        limit=limit,
+    )
+    return AgentGlobalProductListResponse(
+        items=[AgentGlobalProductResponse.model_validate(item) for item in page.items],
+        next_cursor=page.next_cursor,
+    )
+
+
+@router.post(
+    "/{conversation_id}/products/inspect",
+    response_model=InspectAgentProductsResponse,
+)
+def inspect_agent_global_products_endpoint(
+    conversation_id: str,
+    payload: InspectAgentProductsRequest,
+    session: Session = Depends(get_session),
+) -> InspectAgentProductsResponse:
+    items = inspect_agent_global_products(
+        session,
+        conversation_id=conversation_id,
+        product_ids=payload.product_ids,
+    )
+    return InspectAgentProductsResponse(
+        items=[AgentGlobalProductResponse.model_validate(item) for item in items]
+    )
 
 
 @router.get(
