@@ -158,7 +158,7 @@ queued -> running -> waiting_user -> succeeded
                     └-> paused
 ```
 
-同一个 Task 内的 Agent Turn 默认串行，避免同一目标互相覆盖。不同 Task 可以并行，但由共享 admission 控制模型 Turn 的并发额度。用户可以暂停尚未开始的 Task，或暂停等待回答/确认的 Task；正在运行模型 Turn 或 WorkflowRun 的任务必须使用现有取消链。拥有一百个 Task 不代表同时启动一百个模型请求，Dock 使用 cursor 分页读取任务列表。
+同一个 Task 内的 Agent Turn 默认串行，避免同一目标互相覆盖。不同 Task 可以并行，但由共享 admission 控制模型 Turn 的并发额度；资源紧张时，直接人工 Turn 优先于后台 Task，后台 Task 仍保持 durable queued。用户可以暂停尚未开始的 Task，或暂停等待回答/确认的 Task；正在运行模型 Turn 或 WorkflowRun 的任务必须使用现有取消链。拥有一百个 Task 不代表同时启动一百个模型请求，Dock 使用 cursor 分页读取任务列表。
 
 ### 6.3 前端投影
 
@@ -231,7 +231,7 @@ Session summary
 - 已把 Task goal 注入任务专属 harness 的固定系统上下文；页面快照作为当前 Turn 的 ambient context，不会覆盖 Task goal。
 - 未指定 Task 的普通商品对话继续使用 conversation run，不会因为页面快照自动出现在后台 Task 列表中。
 - 已保留既有 Agent Turn 恢复同步，并让 Task Turn 通过任务专属运行路径恢复。恢复逻辑会发现已经落库但尚未创建首轮 Turn 的 `queued` Task，使用固定首轮幂等 key 补建一次 Turn；显式暂停的 Task 不会被恢复逻辑重新排入队列。商品 onboarding Task 在人工 Intake 完成前保持 `waiting_user`，不自动创建模型 Turn。PostgreSQL 保存有界的 Session/Task operational summary，供 Dock、任务列表和恢复索引使用；每次 Turn 启动前 Agent service 重新读取这两个摘要并与页面快照一起作为有界输入，完整 transcript 仍由 harness journal 和 compaction 负责。副作用执行时的 Fresh Observation 继续由各业务 application use case 读取当前 revision、权限和引用状态来完成，独立业务优先级调度器仍待实现。
-- Agent service 的共享 admission 只限制活动 Turn 数量，不改变 durable queued 状态；页面切换只更新后续 Turn 的 ambient context，不修改既有 Task 目标。暂停/恢复 API 对运行中的模型 Turn fail closed，避免前端状态与 harness 执行状态分离。
+- Agent service 的共享 admission 只限制活动 Turn 数量，并在同一进程内让直接人工 Turn 优先于后台 Task，不改变 durable queued 状态；按商品、工作流或用户配置的业务级调度器仍未交付。页面切换只更新后续 Turn 的 ambient context，不修改既有 Task 目标。暂停/恢复 API 对运行中的模型 Turn fail closed，避免前端状态与 harness 执行状态分离。
 
 ### 阶段 3：接入人工作流执行
 

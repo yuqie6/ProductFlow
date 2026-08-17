@@ -65,23 +65,25 @@ type journalReader interface {
 }
 
 type ServiceConfig struct {
-	Runner        Config
-	ToolProjector ToolStepProjector
-	Admission     Admission
+	Runner            Config
+	ToolProjector     ToolStepProjector
+	Admission         Admission
+	AdmissionPriority AdmissionPriority
 }
 
 // Service is the asynchronous v1alpha1 control plane. Its metadata and event
 // cursor live beside, but do not replace, the durable model/tool journal.
 type Service struct {
-	runner           *Runner
-	journal          journalReader
-	store            *controlStore
-	requiredArtifact string
-	artifactName     string
-	toolProjector    ToolStepProjector
-	admission        Admission
-	ctx              context.Context
-	cancel           context.CancelFunc
+	runner            *Runner
+	journal           journalReader
+	store             *controlStore
+	requiredArtifact  string
+	artifactName      string
+	toolProjector     ToolStepProjector
+	admission         Admission
+	admissionPriority AdmissionPriority
+	ctx               context.Context
+	cancel            context.CancelFunc
 
 	mu      sync.Mutex
 	workers map[string]context.CancelFunc
@@ -119,8 +121,8 @@ func OpenService(config ServiceConfig) (*Service, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	service := &Service{
 		store: store, requiredArtifact: requiredArtifact, artifactName: artifactName, toolProjector: config.ToolProjector,
-		admission: config.Admission,
-		ctx:       ctx, cancel: cancel, workers: make(map[string]context.CancelFunc),
+		admission: config.Admission, admissionPriority: config.AdmissionPriority,
+		ctx: ctx, cancel: cancel, workers: make(map[string]context.CancelFunc),
 	}
 	runner, err := open(config.Runner, service.persistTextDelta)
 	if err != nil {
@@ -521,7 +523,13 @@ func (s *Service) schedule(runID, turnID string) {
 
 func (s *Service) drive(ctx context.Context, runID, turnID string) {
 	if s.admission != nil {
-		if err := s.admission.Acquire(ctx); err != nil {
+		var err error
+		if prioritized, ok := s.admission.(PriorityAdmission); ok {
+			err = prioritized.AcquirePriority(ctx, s.admissionPriority)
+		} else {
+			err = s.admission.Acquire(ctx)
+		}
+		if err != nil {
 			return
 		}
 		defer s.admission.Release()

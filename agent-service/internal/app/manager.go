@@ -161,6 +161,10 @@ func (manager *Manager) getEntry(
 	if expectedTaskID != "" && scope.TaskID != expectedTaskID {
 		return nil, errors.New("ProductFlow returned an invalid task scope")
 	}
+	admissionPriority := agenttask.AdmissionPriorityInteractive
+	if scope.TaskID != "" {
+		admissionPriority = agenttask.AdmissionPriorityBackground
+	}
 	database, workspace, err := ensureScope(manager.config.DataRoot, scope)
 	if err != nil {
 		return nil, err
@@ -203,9 +207,10 @@ func (manager *Manager) getEntry(
 		OptionalArtifact: optionalArtifact,
 	}
 	service, err := agenttask.OpenService(agenttask.ServiceConfig{
-		Runner:        runnerConfig,
-		ToolProjector: productFlowToolProjector,
-		Admission:     manager.config.Admission,
+		Runner:            runnerConfig,
+		ToolProjector:     productFlowToolProjector,
+		Admission:         manager.config.Admission,
+		AdmissionPriority: admissionPriority,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open harness service for conversation: %w", err)
