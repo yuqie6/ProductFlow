@@ -143,6 +143,7 @@ export function AgentProductCreatePage() {
 
   const workspaceId = resolveWorkspaceRestorationId(searchParams.get("workspace"), pendingDraft);
   const agentSessionId = searchParams.get("agent_session_id")?.trim() || pendingDraft?.agentSessionId || null;
+  const routeAgentTaskId = searchParams.get("agent_task_id")?.trim() || pendingDraft?.agentTaskId || null;
   const workspaceQuery = useQuery({
     queryKey: ["agent-product-workspace", workspaceId],
     queryFn: () => api.getAgentProductWorkspace(workspaceId),
@@ -153,6 +154,7 @@ export function AgentProductCreatePage() {
     localWorkspace?.conversation.id === workspaceId || !workspaceId ? localWorkspace : null;
   const workspace = workspaceQuery.data ?? workspaceFromMutation;
   const conversationId = workspace?.conversation.id ?? "";
+  const agentTaskId = routeAgentTaskId || workspace?.task_id || null;
 
   const optionsQuery = useQuery({
     queryKey: ["agent-product-workspace-options"],
@@ -197,6 +199,7 @@ export function AgentProductCreatePage() {
       ...(nextWorkspace.conversation.session_id
         ? { agentSessionId: nextWorkspace.conversation.session_id }
         : {}),
+      ...(nextWorkspace.task_id ? { agentTaskId: nextWorkspace.task_id } : {}),
     } satisfies PendingDraftState;
     writeSessionValue(PENDING_DRAFT_STORAGE_KEY, JSON.stringify(retainedPending));
     setLocalWorkspace(nextWorkspace);
@@ -205,6 +208,9 @@ export function AgentProductCreatePage() {
     const params = new URLSearchParams({ workspace: conversationId });
     if (nextWorkspace.conversation.session_id) {
       params.set("agent_session_id", nextWorkspace.conversation.session_id);
+    }
+    if (nextWorkspace.task_id) {
+      params.set("agent_task_id", nextWorkspace.task_id);
     }
     setSearchParams(params, { replace: true });
   };
@@ -224,6 +230,7 @@ export function AgentProductCreatePage() {
       selection: buildAgentProductSelection(selections),
       images: referenceFiles,
       idempotency_key: idempotencyState.idempotencyKey,
+      task_id: agentTaskId,
     });
   };
 
@@ -254,6 +261,7 @@ export function AgentProductCreatePage() {
         idempotencyKey: draftIdempotencyKeyRef.current,
         ...(workspace ? { conversationId: workspace.conversation.id } : {}),
         ...(agentSessionId ? { agentSessionId } : {}),
+        ...(agentTaskId ? { agentTaskId } : {}),
       } satisfies PendingDraftState;
       if (!workspace) writeSessionValue(PENDING_DRAFT_STORAGE_KEY, JSON.stringify(pending));
       return submitAgentProductIntake({

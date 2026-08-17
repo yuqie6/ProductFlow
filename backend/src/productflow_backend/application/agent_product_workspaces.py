@@ -21,6 +21,7 @@ from productflow_backend.application.agent_product_intake import (
     parse_workflow_intake,
 )
 from productflow_backend.application.agent_sessions import get_agent_session_or_raise, new_agent_session
+from productflow_backend.application.agent_tasks import AGENT_TASK_TITLE_MAX_LENGTH, new_agent_task
 from productflow_backend.application.media_assets import get_product_image_assets_by_ids
 from productflow_backend.application.storage_compensation import compensate_storage_writes
 from productflow_backend.application.time import now_utc
@@ -35,11 +36,13 @@ from productflow_backend.domain.enums import (
     AgentConversationScope,
     AgentConversationStatus,
     AgentSessionStatus,
+    AgentTaskStatus,
     WorkflowDraftStatus,
 )
 from productflow_backend.domain.errors import ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
+    AgentTask,
     AgentTurnProjection,
     Product,
     ProductImageAsset,
@@ -55,7 +58,11 @@ class AgentProductWorkspaceCreation:
     created_assets: list[ProductImageAsset]
     workflow_draft: WorkflowDraft
     conversation: AgentConversation
+    onboarding_task_id: str | None
     created: bool
+
+
+PRODUCT_ONBOARDING_TASK_WAITING_REASON = "product_onboarding_intake"
 
 
 def create_agent_product_draft_workspace(
@@ -98,6 +105,7 @@ def create_agent_product_draft_workspace(
             creation_request_hash=request_hash,
             intake=None,
             agent_session_id=normalized_session_id,
+            create_onboarding_task=True,
         )
         session.commit()
     except IntegrityError:
@@ -204,6 +212,7 @@ def create_agent_product_workspace(
                 creation_request_hash=request_hash,
                 intake=intake,
                 agent_session_id=normalized_session_id,
+                create_onboarding_task=False,
             )
             session.commit()
     except IntegrityError:
@@ -249,6 +258,7 @@ def finalize_agent_product_workspace_intake(
     selection: AgentProductSelectionV1,
     image_uploads: list[tuple[bytes, str, str]],
     idempotency_key: str,
+    task_id: str | None = None,
     storage: LocalStorage | None = None,
 ) -> AgentProductWorkspaceCreation:
     """Atomically bind verified references and immutable intake to a version-zero draft."""
@@ -275,6 +285,14 @@ def finalize_agent_product_workspace_intake(
     )
     if draft is None or product is None:
         raise ConflictError("Agent 商品工作空间聚合不完整")
+
+    onboarding_task = _get_onboarding_task_for_update(
+        session,
+        conversation_id=conversation.id,
+        task_id=task_id,
+    )
+    if onboarding_task is not None and onboarding_task.status == AgentTaskStatus.CANCELED:
+        raise ConflictError("商品创建 Task 已取消，不能继续提交商品输入")
 
     if conversation.intake_idempotency_key is not None:
         if (
@@ -327,6 +345,13 @@ def finalize_agent_product_workspace_intake(
             conversation.intake_idempotency_key = normalized_key
             conversation.intake_request_hash = request_hash
             conversation.updated_at = now_utc()
+            if onboarding_task is not None:
+                now = now_utc()
+                onboarding_task.status = AgentTaskStatus.SUCCEEDED
+                onboarding_task.waiting_reason = None
+                onboarding_task.failure_reason = None
+                onboarding_task.finished_at = now
+                onboarding_task.updated_at = now
             session.commit()
     except IntegrityError:
         session.rollback()
@@ -353,6 +378,7 @@ def _stage_workspace_records(
     creation_request_hash: str,
     intake: WorkflowIntakeV1 | None,
     agent_session_id: str | None,
+    create_onboarding_task: bool,
 ) -> tuple[WorkflowDraft, AgentConversation]:
     draft = WorkflowDraft(
         product_id=product.id,
@@ -400,6 +426,17 @@ def _stage_workspace_records(
     )
     session.add(conversation)
     session.flush()
+    if create_onboarding_task:
+        title_prefix = "创建商品："
+        task = new_agent_task(
+            session_id=agent_session.id,
+            title=(title_prefix + product.name)[:AGENT_TASK_TITLE_MAX_LENGTH],
+            goal=f"完成商品“{product.name}”创建，收集参考图和图片需求并初始化商品工作区",
+            conversation=conversation,
+        )
+        task.status = AgentTaskStatus.WAITING_USER
+        task.waiting_reason = PRODUCT_ONBOARDING_TASK_WAITING_REASON
+        session.add(task)
     return draft, conversation
 
 
@@ -459,17 +496,47 @@ def _load_workspace(
         if intake is not None
         else []
     )
+    onboarding_task = session.scalar(
+        select(AgentTask)
+        .where(
+            AgentTask.conversation_id == conversation.id,
+            AgentTask.waiting_reason == PRODUCT_ONBOARDING_TASK_WAITING_REASON,
+        )
+        .order_by(AgentTask.created_at.desc(), AgentTask.id.desc())
+    )
     return AgentProductWorkspaceCreation(
         product=product,
         created_assets=assets,
         workflow_draft=draft,
         conversation=conversation,
+        onboarding_task_id=onboarding_task.id if onboarding_task is not None else None,
         created=created,
+    )
+
+
+def _get_onboarding_task_for_update(
+    session: Session,
+    *,
+    conversation_id: str,
+    task_id: str | None,
+) -> AgentTask | None:
+    statement = select(AgentTask).where(AgentTask.conversation_id == conversation_id).with_for_update()
+    if task_id is not None:
+        task = session.scalar(statement.where(AgentTask.id == task_id))
+        if task is None:
+            raise ConflictError("商品创建 Task 与当前商品工作区不匹配")
+        return task
+    return session.scalar(
+        statement.where(
+            AgentTask.status == AgentTaskStatus.WAITING_USER,
+            AgentTask.waiting_reason == PRODUCT_ONBOARDING_TASK_WAITING_REASON,
+        )
     )
 
 
 __all__ = [
     "AgentProductWorkspaceCreation",
+    "PRODUCT_ONBOARDING_TASK_WAITING_REASON",
     "create_agent_product_draft_workspace",
     "create_agent_product_draft_workspace_from_global_conversation",
     "create_agent_product_workspace",

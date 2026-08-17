@@ -13,6 +13,7 @@ function workspace(conversationId: string, intakeFinalized = false): AgentProduc
   const productId = `product-${conversationId}`;
   const draftId = `draft-${conversationId}`;
   return {
+    task_id: null,
     created: true,
     intake_finalized: intakeFinalized,
     product: {

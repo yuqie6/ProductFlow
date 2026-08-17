@@ -332,6 +332,9 @@ export const api = {
     input.images.forEach((image) => {
       formData.append("images", image);
     });
+    if (input.task_id) {
+      formData.set("task_id", input.task_id);
+    }
     return request(
       `/api/v2/agent-product-workspaces/${encodeURIComponent(input.conversation_id)}/intake`,
       {

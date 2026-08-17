@@ -117,8 +117,9 @@ func TestCreateProductWorkspaceToolUsesGlobalConversationAndIdempotency(t *testi
 			"product_id":              testProductID,
 			"product_name":            "春季商品",
 			"workflow_draft_id":       "33333333-3333-4333-8333-333333333333",
+			"task_id":                 "44444444-4444-4444-8444-444444444444",
 			"intake_finalized":        false,
-			"navigation_path":         "/products/new?workspace=22222222-2222-4222-8222-222222222222",
+			"navigation_path":         "/products/new?workspace=22222222-2222-4222-8222-222222222222&agent_task_id=44444444-4444-4444-8444-444444444444",
 		})
 	}))
 	t.Cleanup(server.Close)

@@ -78,6 +78,7 @@ async def finalize_agent_product_workspace_intake_endpoint(
     conversation_id: str,
     selection: str = Form(...),
     images: list[UploadFile] = File(...),
+    task_id: str | None = Form(default=None, max_length=64),
     idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
     session: Session = Depends(get_session),
 ) -> AgentProductWorkspaceSnapshotResponse:
@@ -88,6 +89,7 @@ async def finalize_agent_product_workspace_intake_endpoint(
         selection=parse_agent_product_selection(selection),
         image_uploads=image_payloads,
         idempotency_key=idempotency_key,
+        task_id=task_id,
     )
     return _serialize_workspace_snapshot(creation)
 
@@ -113,6 +115,7 @@ async def create_agent_product_workspace_endpoint(
         agent_session_id=agent_session_id,
     )
     return AgentProductWorkspaceCreateResponse(
+        task_id=creation.onboarding_task_id,
         product=serialize_canonical_product_detail(creation.product),
         created_assets=[serialize_product_image_asset(asset) for asset in creation.created_assets],
         workflow_draft=serialize_workflow_draft(creation.workflow_draft),
@@ -140,6 +143,7 @@ def _serialize_workspace_snapshot(
     creation: AgentProductWorkspaceCreation,
 ) -> AgentProductWorkspaceSnapshotResponse:
     return AgentProductWorkspaceSnapshotResponse(
+        task_id=creation.onboarding_task_id,
         created=creation.created,
         intake_finalized=creation.workflow_draft.intake_json is not None,
         product=serialize_canonical_product_detail(creation.product),

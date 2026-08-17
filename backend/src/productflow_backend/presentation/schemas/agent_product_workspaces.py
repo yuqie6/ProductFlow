@@ -50,6 +50,7 @@ class AgentProductWorkspaceOptionsResponse(BaseModel):
 
 
 class AgentProductWorkspaceCreateResponse(BaseModel):
+    task_id: str | None = None
     product: CanonicalProductDetailResponse
     created_assets: list[ProductImageAssetResponse]
     workflow_draft: WorkflowDraftResponse
@@ -64,6 +65,7 @@ class AgentProductDraftWorkspaceRequest(BaseModel):
 
 
 class AgentProductWorkspaceSnapshotResponse(BaseModel):
+    task_id: str | None = None
     created: bool
     intake_finalized: bool
     product: CanonicalProductDetailResponse

@@ -65,5 +65,8 @@ describe("productWorkbenchRouteTarget", () => {
     expect(agentProductIntakeResumePath("conversation/1", "session/1")).toBe(
       "/products/new?workspace=conversation%2F1&agent_session_id=session%2F1",
     );
+    expect(agentProductIntakeResumePath("conversation/1", "session/1", "task/1")).toBe(
+      "/products/new?workspace=conversation%2F1&agent_session_id=session%2F1&agent_task_id=task%2F1",
+    );
   });
 });

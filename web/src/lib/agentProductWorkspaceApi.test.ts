@@ -90,6 +90,7 @@ describe("Agent product workspace API", () => {
       },
       images: [front],
       idempotency_key: "intake-finalize-1",
+      task_id: "task-1",
     });
 
     const [draftUrl, draftInit] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -116,5 +117,6 @@ describe("Agent product workspace API", () => {
       image_types: [{ key: "hero", quantity: 2, order: 0 }],
     });
     expect(formData.getAll("images")).toEqual([front]);
+    expect(formData.get("task_id")).toBe("task-1");
   });
 });

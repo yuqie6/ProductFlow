@@ -201,6 +201,7 @@ type ProductWorkspaceLaunch struct {
 	ProductID             string `json:"product_id"`
 	ProductName           string `json:"product_name"`
 	WorkflowDraftID       string `json:"workflow_draft_id"`
+	TaskID                string `json:"task_id"`
 	IntakeFinalized       bool   `json:"intake_finalized"`
 	NavigationPath        string `json:"navigation_path"`
 }

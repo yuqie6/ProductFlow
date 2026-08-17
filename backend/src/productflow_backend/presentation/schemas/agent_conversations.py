@@ -145,6 +145,7 @@ class AgentProductWorkspaceLaunchResponse(BaseModel):
     product_id: str
     product_name: str
     workflow_draft_id: str
+    task_id: str
     intake_finalized: bool
     navigation_path: str
 

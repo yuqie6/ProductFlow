@@ -389,13 +389,16 @@ def create_agent_product_workspace_from_global_conversation_endpoint(
     )
     session_id = creation.conversation.session_id
     workflow_draft_id = creation.conversation.workflow_draft_id
-    if session_id is None or workflow_draft_id is None:
+    task_id = creation.onboarding_task_id
+    if session_id is None or workflow_draft_id is None or task_id is None:
         raise ConflictError("Agent 商品工作区缺少 Session 或 WorkflowDraft")
     navigation_path = (
         "/products/new?workspace="
         + quote(creation.conversation.id, safe="")
         + "&agent_session_id="
         + quote(session_id, safe="")
+        + "&agent_task_id="
+        + quote(task_id, safe="")
     )
     return AgentProductWorkspaceLaunchResponse(
         created=creation.created,
@@ -405,6 +408,7 @@ def create_agent_product_workspace_from_global_conversation_endpoint(
         product_id=creation.product.id,
         product_name=creation.product.name,
         workflow_draft_id=workflow_draft_id,
+        task_id=task_id,
         intake_finalized=creation.workflow_draft.intake_json is not None,
         navigation_path=navigation_path,
     )

@@ -23,10 +23,11 @@ from productflow_backend.application.agent_product_workspaces import (
     get_agent_product_workspace,
 )
 from productflow_backend.application.agent_sessions import create_agent_session
-from productflow_backend.domain.enums import AgentConversationScope
+from productflow_backend.domain.enums import AgentConversationScope, AgentTaskStatus
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
+    AgentTask,
     MediaObject,
     Product,
     ProductImageAsset,
@@ -336,8 +337,18 @@ def test_global_agent_product_workspace_launch_endpoint_is_scoped_and_idempotent
     assert payload["session_id"] == agent_session.id
     assert payload["global_conversation_id"] == global_conversation.id
     assert payload["product_name"] == "全局 API 商品"
+    assert payload["task_id"]
     assert payload["navigation_path"].startswith("/products/new?workspace=")
     assert f"agent_session_id={agent_session.id}" in payload["navigation_path"]
+    assert f"agent_task_id={payload['task_id']}" in payload["navigation_path"]
+    check_session = get_session_factory()()
+    try:
+        task = check_session.scalar(select(AgentTask).where(AgentTask.id == payload["task_id"]))
+        assert task is not None
+        assert task.status == AgentTaskStatus.WAITING_USER
+        assert task.conversation_id == payload["product_conversation_id"]
+    finally:
+        check_session.close()
 
     replay = client.post(path, headers=headers, json={"name": "全局 API 商品"})
     assert replay.status_code == 201, replay.text
@@ -658,7 +669,8 @@ def test_agent_product_workspace_api_exposes_options_and_bounded_create(configur
     created_response = client.post("/api/v2/agent-product-workspaces", **request)
     assert created_response.status_code == 201, created_response.text
     created = created_response.json()
-    assert set(created) == {"product", "created_assets", "workflow_draft", "conversation"}
+    assert set(created) == {"task_id", "product", "created_assets", "workflow_draft", "conversation"}
+    assert created["task_id"] is None
     assert created["product"]["cover_image_asset_id"] is None
     assert [asset["original_filename"] for asset in created["created_assets"]] == [
         "front.png",
@@ -712,6 +724,7 @@ def test_agent_product_workspace_api_supports_draft_resume_and_intake_finalizati
     assert draft_response.status_code == 201, draft_response.text
     draft = draft_response.json()
     assert set(draft) == {
+        "task_id",
         "created",
         "intake_finalized",
         "product",
@@ -726,6 +739,17 @@ def test_agent_product_workspace_api_supports_draft_resume_and_intake_finalizati
     assert draft["workflow_draft"]["current_version"] == 0
     assert draft["workflow_draft"]["intake"] is None
     assert draft["conversation"]["session_id"] == agent_session.id
+    assert draft["task_id"]
+    session = session_factory()
+    try:
+        task = session.get(AgentTask, draft["task_id"])
+        assert task is not None
+        assert task.session_id == agent_session.id
+        assert task.conversation_id == draft["conversation"]["id"]
+        assert task.status == AgentTaskStatus.WAITING_USER
+        assert task.waiting_reason == "product_onboarding_intake"
+    finally:
+        session.close()
 
     replay_response = client.post(
         "/api/v2/agent-product-workspaces/drafts",
@@ -769,6 +793,15 @@ def test_agent_product_workspace_api_supports_draft_resume_and_intake_finalizati
     assert finalized["workflow_draft"]["intake"]["reference_asset_ids"] == [
         asset["id"] for asset in finalized["created_assets"]
     ]
+    assert finalized["task_id"] is None
+    session = session_factory()
+    try:
+        task = session.get(AgentTask, draft["task_id"])
+        assert task is not None
+        assert task.status == AgentTaskStatus.SUCCEEDED
+        assert task.waiting_reason is None
+    finally:
+        session.close()
 
     finalization_replay = client.post(
         f"/api/v2/agent-product-workspaces/{draft['conversation']['id']}/intake",

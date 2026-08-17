@@ -28,7 +28,7 @@
 - 业务执行用例在 `backend/src/productflow_backend/application/product_workflow/v2_runs.py`，worker 从 `backend/src/productflow_backend/workers.py` 进入执行器。
 - `WorkflowRun` 和 `WorkflowNodeRun` 由 PostgreSQL 持有，Redis/Dramatiq 只承担投递和执行调度。
 
-当前 Agent Turn 仍然以商品工作区或全局素材库作为 scope 边界：商品 `AgentConversation` 绑定 `product_id` 和 `workflow_draft_id`。新建商品时，同一事务会创建一个 `AgentSession`、一个商品工作区 Conversation 和一个 sibling Global Conversation；商品创建对话负责收集商品事实、确认输入和生成 WorkflowDraft，全局对话负责后续跨页面操作。迁移窗口内的旧 Session 仍由 Session 列表访问路径懒加载 Global Conversation。Session 已有列表、创建、改名、归档、商品工作区摘要和按 Session 选择商品工作区的 API；工作台和应用级 Global Agent Dock 都可以打开会话列表。`AgentTask`、任务专属 harness run、任务级 Turn 关联和有界页面上下文快照已经落库并接入 Turn 请求，取消任务、监控 Agent 请求创建的 WorkflowRun 也已经接入。Global Agent Dock 已挂在认证后的应用路由外层；页面通过 `web/src/lib/agentPageContext.ts` 发布当前页面的有界事实，全局图库发布真实选中/可见素材和筛选条件，商品工作台发布工作流 revision、打开文件夹和选中节点，Dock 只在 route 匹配时使用该快照。全局图库页面、工作流子图库关联层、Global Agent 素材查询、全局商品与当前有效工作流摘要查询、明确 workflow ID 的有界运行状态查询、素材整理 Draft 的发布/确认，以及把全局素材关联到明确工作流的 Draft 操作已经落地；跨商品写操作、Task 摘要、暂停/恢复、独立调度器、执行前 Fresh Observation 仍未交付。`ImageSession` 是连续生图会话，已有自己的会话列表和生图任务，但不承担全局业务 Agent 的职责。
+当前 Agent Turn 仍然以商品工作区或全局素材库作为 scope 边界：商品 `AgentConversation` 绑定 `product_id` 和 `workflow_draft_id`。新建商品时，同一事务会创建一个 `AgentSession`、一个商品工作区 Conversation、一个商品 onboarding `AgentTask` 和一个 sibling Global Conversation；商品创建对话负责收集商品事实、确认输入和生成 WorkflowDraft，全局对话负责后续跨页面操作，onboarding Task 记录等待人工 Intake 的业务目标。迁移窗口内的旧 Session 仍由 Session 列表访问路径懒加载 Global Conversation。Session 已有列表、创建、改名、归档、商品工作区摘要和按 Session 选择商品工作区的 API；工作台和应用级 Global Agent Dock 都可以打开会话列表。`AgentTask`、任务专属 harness run、任务级 Turn 关联和有界页面上下文快照已经落库并接入 Turn 请求，取消任务、监控 Agent 请求创建的 WorkflowRun 也已经接入。Global Agent Dock 已挂在认证后的应用路由外层；页面通过 `web/src/lib/agentPageContext.ts` 发布当前页面的有界事实，全局图库发布真实选中/可见素材和筛选条件，商品工作台发布工作流 revision、打开文件夹和选中节点，Dock 只在 route 匹配时使用该快照。全局图库页面、工作流子图库关联层、Global Agent 素材查询、全局商品与当前有效工作流摘要查询、明确 workflow ID 的有界运行状态查询、素材整理 Draft 的发布/确认，以及把全局素材关联到明确工作流的 Draft 操作已经落地；跨商品写操作、Task 摘要、暂停/恢复、独立调度器、执行前 Fresh Observation 仍未交付。`ImageSession` 是连续生图会话，已有自己的会话列表和生图任务，但不承担全局业务 Agent 的职责。
 
 Agent service 当前还通过共享 admission 限制所有 Task/Conversation Turn 的活动执行数，等待中的 Turn 保持 durable queued；这项限制不等同于按业务优先级调度 Task。跨商品写操作、Task 摘要、暂停/恢复、业务级独立调度器和执行前 Fresh Observation 仍未交付。
 
@@ -130,18 +130,18 @@ Session 保存会话标题、摘要、用户偏好和任务索引。它不绑定
 
 ### 6.1.1 商品创建时的会话关系
 
-商品创建需要 Agent 参与时，系统使用商品工作区 Conversation 作为 onboarding 对话。它绑定当前商品和 `WorkflowDraft`，负责：
+商品创建需要 Agent 参与时，系统使用商品工作区 Conversation 作为 onboarding 对话，并创建一个绑定该 Conversation 的商品 onboarding `AgentTask`。Conversation 绑定当前商品和 `WorkflowDraft`，负责：
 
 - 读取用户提交的参考图和图片需求；
 - 只追问会影响工作流的缺失事实；
 - 生成待确认的 WorkflowDraft；
-- 在用户确认后进入工作流工作台。
+- 在用户确认后进入工作流工作台。Task 初始处于 `WAITING_USER`，表示等待人工提交参考图和图片需求；Intake 成功后变为 `SUCCEEDED`。这个 Task 只覆盖商品创建输入收集，不替代人工工作流编辑和执行。
 
-这条创建对话属于一个 `AgentSession`，同一 Session 下还有一个 Global Conversation。用户从全局 Dock 的“创建商品”入口进入时，入口把当前 Session ID 带入 `/products/new`；用户在全局 Agent 中明确说“创建一个商品”时，Agent 通过 `create_product_workspace_v1` 建立同样的商品草稿工作区，并返回创建页入口。商品创建对话加入原 Session；用户直接打开 `/products/new` 时没有指定 Session，系统为本次商品创建新建一个 Session。同一个 Session 创建多个商品时复用同一个 Global Conversation，不重复创建全局入口。两个 Conversation 共享 Session 的归属，但使用各自的 harness run 和对话历史，商品创建的长对话不会把全局图库对话的历史一起塞进模型上下文。
+这条创建对话和 onboarding Task 都属于一个 `AgentSession`，同一 Session 下还有一个 Global Conversation。用户从全局 Dock 的“创建商品”入口进入时，入口把当前 Session ID 带入 `/products/new`；用户在全局 Agent 中明确说“创建一个商品”时，Agent 通过 `create_product_workspace_v1` 在原 Session 下建立商品草稿工作区和 `WAITING_USER` onboarding Task，并返回带有 `workspace`、`agent_session_id` 和 `agent_task_id` 的创建页入口。商品创建对话加入原 Session；用户直接打开 `/products/new` 时没有指定 Session，系统为本次商品创建新建一个 Session。两阶段创建页完成 Intake 后，ProductFlow 在同一业务事务中把 onboarding Task 收口。已完成的 Task 不会自动启动工作流。同一个 Session 创建多个商品时复用同一个 Global Conversation，不重复创建全局入口。两个 Conversation 共享 Session 的归属，但使用各自的 harness run 和对话历史，商品创建的长对话不会把全局图库对话的历史一起塞进模型上下文。
 
 Global Agent Dock 的 Session 列表保留 Global Conversation 作为会话入口，并展开同一 Session 下的商品工作区行。用户点击商品行进入对应商品路由；空的 `WorkflowDraft` 会继续重定向到商品创建表单，已完成 intake 的商品进入工作台。这个入口只切换页面，不改变 Session、Conversation 或 Task 的归属。
 
-商品创建阶段通常不额外创建 `AgentTask`，因为用户正在进行一个有明确页面反馈的交互式流程。用户之后要求 Agent 在后台执行、整理或检查时，才创建独立 `AgentTask`；Task 关联同一个 Session 和对应的商品 Conversation，并使用自己的 harness run。用户切换 Session 时，商品创建对话、全局对话和后台 Task 的身份都保持不变。
+商品创建阶段会创建一个专门的 onboarding `AgentTask`，但它不会把人工表单变成后台自动执行。Task 在等待参考图和图片需求时保持 `WAITING_USER`，用户之后要求 Agent 在后台执行、整理或检查时，可以再创建其他独立 `AgentTask`；所有 Task 都关联同一个 Session 和对应的商品 Conversation，并使用自己的 harness run。用户切换 Session 时，商品创建对话、全局对话和后台 Task 的身份都保持不变。
 
 商品创建 Conversation 的终态需要合法的 WorkflowDraft artifact；后台 Task 的固定目标由 Task 记录提供，使用自己的工具和执行结果，不要求每次后台执行都重新提交一份 WorkflowDraft。
 
@@ -230,7 +230,7 @@ Session summary
 - 全局图库的快照包含当前已选资产、当前已加载资产和搜索/来源/文件夹/标签/归档筛选；商品工作台的快照包含工作流 revision、侧栏模式、打开文件夹和有限数量的选中节点。
 - 已把 Task goal 注入任务专属 harness 的固定系统上下文；页面快照作为当前 Turn 的 ambient context，不会覆盖 Task goal。
 - 未指定 Task 的普通商品对话继续使用 conversation run，不会因为页面快照自动出现在后台 Task 列表中。
-- 已保留既有 Agent Turn 恢复同步，并让 Task Turn 通过任务专属运行路径恢复。调度器还会发现已经落库但尚未创建首轮 Turn 的 `queued` Task，使用固定首轮幂等 key 补建一次 Turn；商品 onboarding 条件尚未满足的任务保持 `queued` 并记录恢复原因。Session summary、Task summary、stale observation 和独立调度器仍待实现。
+- 已保留既有 Agent Turn 恢复同步，并让 Task Turn 通过任务专属运行路径恢复。调度器还会发现已经落库但尚未创建首轮 Turn 的 `queued` Task，使用固定首轮幂等 key 补建一次 Turn；商品 onboarding Task 在人工 Intake 完成前保持 `waiting_user`，不自动创建模型 Turn。Session summary、Task summary、stale observation 和独立调度器仍待实现。
 - Agent service 的共享 admission 只限制活动 Turn 数量，不改变 durable queued 状态；页面切换只更新后续 Turn 的 ambient context，不修改既有 Task 目标。
 
 ### 阶段 3：接入人工作流执行

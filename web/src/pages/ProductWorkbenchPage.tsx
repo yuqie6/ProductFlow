@@ -37,7 +37,16 @@ export function ProductWorkbenchPage() {
 
   const target = productWorkbenchRouteTarget(query.data);
   if (target === "agent_intake") {
-    return <Navigate to={agentProductIntakeResumePath(query.data.conversation.id, query.data.conversation.session_id)} replace />;
+    return (
+      <Navigate
+        to={agentProductIntakeResumePath(
+          query.data.conversation.id,
+          query.data.conversation.session_id,
+          agentTaskId,
+        )}
+        replace
+      />
+    );
   }
   return (
     <AgentProductWorkbenchPage

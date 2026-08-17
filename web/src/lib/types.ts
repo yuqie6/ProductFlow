@@ -359,6 +359,7 @@ export interface FinalizeAgentProductWorkspaceIntakeInput {
   selection: AgentProductSelectionV1;
   images: File[];
   idempotency_key: string;
+  task_id?: string | null;
 }
 
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
@@ -1273,6 +1274,7 @@ export interface AgentTurnEvent {
 }
 
 export interface AgentProductWorkspaceCreateResponse {
+  task_id: string | null;
   product: CanonicalProductDetail;
   created_assets: ProductImageAsset[];
   workflow_draft: WorkflowDraft;

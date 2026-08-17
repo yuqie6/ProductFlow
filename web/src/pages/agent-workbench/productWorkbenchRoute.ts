@@ -27,10 +27,17 @@ export function productWorkbenchRouteTarget(
   return "agent_v2";
 }
 
-export function agentProductIntakeResumePath(conversationId: string, agentSessionId?: string | null): string {
+export function agentProductIntakeResumePath(
+  conversationId: string,
+  agentSessionId?: string | null,
+  agentTaskId?: string | null,
+): string {
   const params = new URLSearchParams({ workspace: conversationId });
   if (agentSessionId) {
     params.set("agent_session_id", agentSessionId);
+  }
+  if (agentTaskId) {
+    params.set("agent_task_id", agentTaskId);
   }
   return `/products/new?${params}`;
 }
