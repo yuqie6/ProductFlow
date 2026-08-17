@@ -157,10 +157,16 @@ describe("Agent conversation API", () => {
         captured_at: "2026-08-17T00:00:00Z",
       },
     });
+    await api.getGlobalWorkflowRunRequest("conversation/1", "task/1");
+    await api.confirmGlobalWorkflowRunRequest("conversation/1", "request/1");
+    await api.cancelGlobalWorkflowRunRequest("conversation/1", "request/1");
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       "/api/v2/agent-conversations/conversation%2F1/turns?limit=10&after=cursor%2B%2F%3D&task_id=task%2F1",
       "/api/v2/agent-conversations/conversation%2F1/turns",
+      "/api/v2/agent-conversations/conversation%2F1/workflow-run-request?task_id=task%2F1",
+      "/api/v2/agent-conversations/conversation%2F1/workflow-run-request/request%2F1/confirm",
+      "/api/v2/agent-conversations/conversation%2F1/workflow-run-request/request%2F1/cancel",
     ]);
     expect(fetchMock.mock.calls[1][1]?.body).toBe(
       JSON.stringify({
@@ -178,6 +184,11 @@ describe("Agent conversation API", () => {
         },
       }),
     );
+    expect(fetchMock.mock.calls.slice(2).map(([, init]) => init?.method)).toEqual([
+      undefined,
+      "POST",
+      "POST",
+    ]);
   });
 
   it("reads and confirms a global media organization Draft with an idempotent request", async () => {

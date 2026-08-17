@@ -550,6 +550,37 @@ export const api = {
       `${globalAgentConversationPath(conversationId)}/turns/${encodeURIComponent(projectionId)}`,
     );
   },
+  getGlobalWorkflowRunRequest(
+    conversationId: string,
+    taskId?: string | null,
+  ): Promise<AgentWorkflowRunRequest | null> {
+    const params = new URLSearchParams();
+    if (taskId) {
+      params.set("task_id", taskId);
+    }
+    const query = params.toString();
+    return request(
+      `${globalAgentConversationPath(conversationId)}/workflow-run-request${query ? `?${query}` : ""}`,
+    );
+  },
+  confirmGlobalWorkflowRunRequest(
+    conversationId: string,
+    requestId: string,
+  ): Promise<AgentWorkflowRunRequest> {
+    return request(
+      `${globalAgentConversationPath(conversationId)}/workflow-run-request/${encodeURIComponent(requestId)}/confirm`,
+      { method: "POST" },
+    );
+  },
+  cancelGlobalWorkflowRunRequest(
+    conversationId: string,
+    requestId: string,
+  ): Promise<AgentWorkflowRunRequest> {
+    return request(
+      `${globalAgentConversationPath(conversationId)}/workflow-run-request/${encodeURIComponent(requestId)}/cancel`,
+      { method: "POST" },
+    );
+  },
   cancelGlobalAgentTurn(conversationId: string, projectionId: string): Promise<AgentTurn> {
     return request(
       `${globalAgentConversationPath(conversationId)}/turns/${encodeURIComponent(projectionId)}/cancel`,

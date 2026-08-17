@@ -389,8 +389,6 @@ def synchronize_agent_turn_state(
                 commit=commit,
             )
         if pending_workflow_run_request is not None:
-            if product_id is None:
-                raise ConflictError("工作流执行请求不应出现在全局 Agent Turn")
             projection = attach_agent_workflow_run_request(
                 session,
                 product_id=product_id,
@@ -411,8 +409,6 @@ def _find_pending_workflow_run_request(
     projection: AgentTurnProjection,
     state: AgentServiceTurnState,
 ):
-    if conversation.scope_type != AgentConversationScope.PRODUCT_WORKFLOW:
-        return None
     if not state.tool_steps:
         return None
     for tool_step in reversed(state.tool_steps):

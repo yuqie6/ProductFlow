@@ -438,6 +438,13 @@ class PrepareAgentWorkflowRunRequest(StrictAgentRequest):
     task_id: str | None = Field(default=None, max_length=64)
 
 
+class PrepareAgentGlobalWorkflowRunRequest(StrictAgentRequest):
+    product_id: str = Field(min_length=1, max_length=64)
+    workflow_id: str = Field(min_length=1, max_length=64)
+    expected_workflow_revision: int = Field(ge=1)
+    task_id: str | None = Field(default=None, max_length=64)
+
+
 class AgentWorkflowRunRequestPreparedResponse(BaseModel):
     product_id: str
     workflow_id: str
@@ -454,11 +461,16 @@ class AgentWorkflowRunRequestCreateRequest(StrictAgentRequest):
     task_id: str | None = Field(default=None, max_length=64)
 
 
+class AgentGlobalWorkflowRunRequestCreateRequest(AgentWorkflowRunRequestCreateRequest):
+    product_id: str = Field(min_length=1, max_length=64)
+
+
 class AgentWorkflowRunRequestResponse(BaseModel):
     id: str
     conversation_id: str
     task_id: str | None
     product_id: str
+    product_name: str
     workflow_id: str
     workflow_title: str
     expected_workflow_revision: int
@@ -554,6 +566,7 @@ def serialize_agent_workflow_run_request(
         conversation_id=request.conversation_id,
         task_id=request.task_id,
         product_id=request.product_id,
+        product_name=request.product.name,
         workflow_id=request.workflow_id,
         workflow_title=workflow.title,
         expected_workflow_revision=request.expected_workflow_revision,

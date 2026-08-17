@@ -19,6 +19,7 @@ interface AgentWorkflowRunRequestCardProps {
   loading: boolean;
   busy: boolean;
   error: string | null;
+  targetLabel?: string | null;
   onConfirm: () => void;
   onCancel: () => void;
   onOpenRuns?: () => void;
@@ -29,6 +30,7 @@ export function AgentWorkflowRunRequestCard({
   loading,
   busy,
   error,
+  targetLabel = null,
   onConfirm,
   onCancel,
   onOpenRuns,
@@ -110,6 +112,11 @@ export function AgentWorkflowRunRequestCard({
                 <p className="mt-0.5 break-words text-xs text-zinc-700 dark:text-slate-300">
                   {request.workflow_title}
                 </p>
+                {targetLabel ? (
+                  <p className="mt-0.5 break-words text-[11px] text-zinc-600 dark:text-slate-400">
+                    {targetLabel}
+                  </p>
+                ) : null}
               </div>
               <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-current/20 px-2 py-1 text-[11px] font-semibold text-zinc-700 dark:text-slate-200">
                 {statusIcon}

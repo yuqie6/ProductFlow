@@ -335,6 +335,29 @@ func (client *Client) PrepareWorkflowRunRequest(
 	return result, err
 }
 
+func (client *Client) PrepareGlobalWorkflowRunRequest(
+	ctx context.Context,
+	conversationID, productID, workflowID string,
+	expectedWorkflowRevision int,
+	taskID *string,
+) (WorkflowRunRequestPrepared, error) {
+	var result WorkflowRunRequestPrepared
+	err := client.json(
+		ctx,
+		http.MethodPost,
+		client.conversationPath(conversationID)+"/global-workflow-run-requests/prepare",
+		map[string]any{
+			"product_id":                 productID,
+			"workflow_id":                workflowID,
+			"expected_workflow_revision": expectedWorkflowRevision,
+			"task_id":                    taskID,
+		},
+		&result,
+		"",
+	)
+	return result, err
+}
+
 func (client *Client) ExecuteWorkflowRunRequest(
 	ctx context.Context,
 	conversationID, idempotencyKey, sourceStepID string,
@@ -346,6 +369,23 @@ func (client *Client) ExecuteWorkflowRunRequest(
 		http.MethodPost,
 		client.conversationPath(conversationID)+"/workflow-run-requests",
 		workflowRunRequestPayload(prepared, sourceStepID),
+		&result,
+		idempotencyKey,
+	)
+	return result, err
+}
+
+func (client *Client) ExecuteGlobalWorkflowRunRequest(
+	ctx context.Context,
+	conversationID, idempotencyKey, sourceStepID string,
+	prepared WorkflowRunRequestPrepared,
+) (json.RawMessage, error) {
+	var result json.RawMessage
+	err := client.json(
+		ctx,
+		http.MethodPost,
+		client.conversationPath(conversationID)+"/global-workflow-run-requests",
+		globalWorkflowRunRequestPayload(prepared, sourceStepID),
 		&result,
 		idempotencyKey,
 	)
@@ -369,6 +409,23 @@ func (client *Client) ReconcileWorkflowRunRequest(
 	return result, err
 }
 
+func (client *Client) ReconcileGlobalWorkflowRunRequest(
+	ctx context.Context,
+	conversationID, idempotencyKey, sourceStepID string,
+	prepared WorkflowRunRequestPrepared,
+) (ReconcileResult, error) {
+	var result ReconcileResult
+	err := client.json(
+		ctx,
+		http.MethodPost,
+		client.conversationPath(conversationID)+"/global-workflow-run-requests/reconcile",
+		globalWorkflowRunRequestPayload(prepared, sourceStepID),
+		&result,
+		idempotencyKey,
+	)
+	return result, err
+}
+
 func workflowRunRequestPayload(prepared WorkflowRunRequestPrepared, sourceStepID string) map[string]any {
 	return map[string]any{
 		"expected_workflow_revision": prepared.WorkflowRevision,
@@ -376,6 +433,12 @@ func workflowRunRequestPayload(prepared WorkflowRunRequestPrepared, sourceStepID
 		"source_step_id":             sourceStepID,
 		"task_id":                    prepared.TaskID,
 	}
+}
+
+func globalWorkflowRunRequestPayload(prepared WorkflowRunRequestPrepared, sourceStepID string) map[string]any {
+	payload := workflowRunRequestPayload(prepared, sourceStepID)
+	payload["product_id"] = prepared.ProductID
+	return payload
 }
 
 func (client *Client) ListLegacyArchives(

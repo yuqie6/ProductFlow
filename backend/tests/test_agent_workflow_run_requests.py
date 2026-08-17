@@ -15,8 +15,10 @@ from productflow_backend.application.agent_tasks import create_agent_task, get_a
 from productflow_backend.application.agent_workflow_run_requests import (
     cancel_agent_workflow_run_request,
     confirm_agent_workflow_run_request,
+    create_agent_global_workflow_run_request,
     create_agent_workflow_run_request,
     get_agent_workflow_run_request,
+    prepare_agent_global_workflow_run_request,
     prepare_agent_workflow_run_request,
 )
 from productflow_backend.application.agent_workflow_runs import inspect_agent_global_workflow_runs
@@ -211,6 +213,140 @@ def test_agent_workflow_run_request_waits_for_confirmation_and_reuses_run_chain(
     )
     assert confirmed_replay.workflow_run_id == confirmed.workflow_run_id
     assert db_session.scalar(select(func.count()).select_from(WorkflowRun)) == 1
+
+
+def test_global_agent_workflow_run_request_targets_explicit_product_and_reuses_run_chain(db_session) -> None:
+    workspace, workflow = _create_requestable_workspace(db_session)
+    global_conversation = db_session.scalar(
+        select(AgentConversation).where(
+            AgentConversation.session_id == workspace.conversation.session_id,
+            AgentConversation.scope_type == AgentConversationScope.GLOBAL,
+        )
+    )
+    assert global_conversation is not None
+    task = create_agent_task(
+        db_session,
+        session_id=global_conversation.session_id,
+        title="从全局执行商品工作流",
+        goal="执行商品 A 的主图工作流",
+        conversation_id=global_conversation.id,
+    )
+
+    prepared = prepare_agent_global_workflow_run_request(
+        db_session,
+        conversation_id=global_conversation.id,
+        product_id=workspace.product.id,
+        workflow_id=workflow.id,
+        expected_workflow_revision=workflow.revision,
+        task_id=task.id,
+    )
+    request = create_agent_global_workflow_run_request(
+        db_session,
+        conversation_id=global_conversation.id,
+        product_id=workspace.product.id,
+        expected_workflow_revision=prepared.workflow_revision,
+        workflow_id=prepared.workflow_id,
+        source_step_id="global-run-request-step",
+        idempotency_key="global-run-request-key",
+        task_id=task.id,
+    )
+
+    assert request.conversation_id == global_conversation.id
+    assert request.product_id == workspace.product.id
+    assert request.status == AgentWorkflowRunRequestStatus.AWAITING_CONFIRMATION
+    assert db_session.get(type(task), task.id).status == AgentTaskStatus.AWAITING_CONFIRMATION
+
+    confirmed = confirm_agent_workflow_run_request(
+        db_session,
+        product_id=None,
+        conversation_id=global_conversation.id,
+        request_id=request.id,
+    )
+    assert confirmed.status == AgentWorkflowRunRequestStatus.CONFIRMED
+    assert confirmed.workflow_run_id is not None
+    assert confirmed.workflow_run is not None
+    assert confirmed.workflow_run.workflow_id == workflow.id
+    assert confirmed.workflow_run.status == WorkflowRunStatus.RUNNING
+    assert get_agent_workflow_run_request(
+        db_session,
+        product_id=None,
+        conversation_id=global_conversation.id,
+        task_id=task.id,
+    ).product_id == workspace.product.id
+    assert db_session.get(type(task), task.id).status == AgentTaskStatus.RUNNING
+
+
+def test_global_agent_turn_projects_workflow_run_request_for_dock_confirmation(db_session) -> None:
+    workspace, workflow = _create_requestable_workspace(db_session)
+    global_conversation = db_session.scalar(
+        select(AgentConversation).where(
+            AgentConversation.session_id == workspace.conversation.session_id,
+            AgentConversation.scope_type == AgentConversationScope.GLOBAL,
+        )
+    )
+    assert global_conversation is not None
+    task = create_agent_task(
+        db_session,
+        session_id=global_conversation.session_id,
+        title="等待全局执行确认",
+        goal="等待人工确认后执行商品 A 的工作流",
+        conversation_id=global_conversation.id,
+    )
+    projection = reserve_agent_turn(
+        db_session,
+        product_id=None,
+        conversation_id=global_conversation.id,
+        input_text="执行商品 A 的工作流",
+        input_asset_ids=[],
+        idempotency_key="global-run-request-turn",
+        task_id=task.id,
+    ).projection
+    projection = bind_harness_turn(
+        db_session,
+        product_id=None,
+        conversation_id=global_conversation.id,
+        projection_id=projection.id,
+        harness_turn_id="global-run-request-harness-turn",
+        status=AgentTurnStatus.RUNNING,
+    )
+    request = create_agent_global_workflow_run_request(
+        db_session,
+        conversation_id=global_conversation.id,
+        product_id=workspace.product.id,
+        expected_workflow_revision=workflow.revision,
+        workflow_id=workflow.id,
+        source_step_id="global-run-request-tool-step",
+        idempotency_key="global-run-request-turn-key",
+        task_id=task.id,
+    )
+
+    projected = synchronize_agent_turn_state(
+        db_session,
+        product_id=None,
+        conversation_id=global_conversation.id,
+        projection_id=projection.id,
+        state=AgentServiceTurnState(
+            api_version="v1alpha1",
+            run_id=task.harness_run_id,
+            turn_id=projection.harness_turn_id or "",
+            status=AgentTurnStatus.SUCCEEDED,
+            tool_steps=[
+                AgentServiceToolStep(
+                    step_id=request.source_step_id,
+                    kind=AgentToolStepKind.REQUEST_WORKFLOW_RUN,
+                    summary="等待人工确认执行指定商品工作流",
+                    status=AgentToolStepStatus.SUCCEEDED,
+                )
+            ],
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+            finished_at=datetime.now(UTC),
+        ),
+    )
+
+    assert projected.status == AgentTurnStatus.AWAITING_CONFIRMATION
+    assert projected.workflow_run_request_id == request.id
+    assert db_session.get(type(task), task.id).status == AgentTaskStatus.AWAITING_CONFIRMATION
 
 
 def test_agent_workflow_run_request_rejects_stale_revision_and_can_cancel_before_confirmation(db_session) -> None:

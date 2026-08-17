@@ -14,6 +14,7 @@ import type {
 import { AgentQuestionPrompt } from "./AgentQuestionPrompt";
 import { AgentToolStepList } from "./AgentToolStepList";
 import { AgentTurnTail } from "./AgentTurnTail";
+import { AgentWorkflowRunRequestCard } from "./AgentWorkflowRunRequestCard";
 import { GlobalLibraryOrganizationDraftCard } from "./GlobalLibraryOrganizationDraftCard";
 import { GlobalWorkflowDraftCard } from "./GlobalWorkflowDraftCard";
 import { useGlobalAgentConversation } from "./useGlobalAgentConversation";
@@ -115,7 +116,10 @@ export function GlobalAgentConversationPanel({
       agent.resumeTurnMutation.error ??
       agent.answerQuestionMutation.error ??
       agent.workflowDraftReviewQuery.error ??
-      agent.confirmWorkflowDraftReviewMutation.error,
+      agent.confirmWorkflowDraftReviewMutation.error ??
+      agent.workflowRunRequestQuery.error ??
+      agent.confirmWorkflowRunRequestMutation.error ??
+      agent.cancelWorkflowRunRequestMutation.error,
     t("globalAgent.requestFailed"),
   );
   const questionAnswered = Boolean(
@@ -148,6 +152,18 @@ export function GlobalAgentConversationPanel({
       revisionId: revision.id,
       expectedDraftVersion: revision.version,
     });
+  };
+  const confirmWorkflowRunRequest = () => {
+    const request = agent.workflowRunRequestQuery.data;
+    if (request) {
+      agent.confirmWorkflowRunRequestMutation.mutate(request.id);
+    }
+  };
+  const cancelWorkflowRunRequest = () => {
+    const request = agent.workflowRunRequestQuery.data;
+    if (request) {
+      agent.cancelWorkflowRunRequestMutation.mutate(request.id);
+    }
   };
 
   if (!conversationId) {
@@ -253,6 +269,33 @@ export function GlobalAgentConversationPanel({
           {!agent.turnsQuery.isLoading && !agent.turns.length ? <div className="flex min-h-32 items-center justify-center px-4 text-center text-sm text-text-muted">{t("globalAgent.emptyChat")}</div> : null}
         </div>
       </div>
+
+      <AgentWorkflowRunRequestCard
+        request={agent.workflowRunRequestQuery.data ?? null}
+        loading={agent.workflowRunRequestQuery.isLoading}
+        busy={
+          agent.confirmWorkflowRunRequestMutation.isPending ||
+          agent.cancelWorkflowRunRequestMutation.isPending
+        }
+        error={errorDetail(
+          agent.workflowRunRequestQuery.error ??
+            agent.confirmWorkflowRunRequestMutation.error ??
+            agent.cancelWorkflowRunRequestMutation.error,
+          t("globalAgent.requestFailed"),
+        )}
+        targetLabel={
+          agent.workflowRunRequestQuery.data?.product_name ??
+          agent.workflowRunRequestQuery.data?.product_id
+        }
+        onConfirm={confirmWorkflowRunRequest}
+        onCancel={cancelWorkflowRunRequest}
+        onOpenRuns={() => {
+          const request = agent.workflowRunRequestQuery.data;
+          if (request) {
+            navigate(`/products/${encodeURIComponent(request.product_id)}`);
+          }
+        }}
+      />
 
       {activeQuestion && agent.activeTurn ? (
         <AgentQuestionPrompt

@@ -78,13 +78,85 @@ func TestScopedToolCatalogContainsOnlyCurrentGalleryTools(t *testing.T) {
 	}
 }
 
-func TestGlobalToolCatalogContainsProductWorkspaceCreator(t *testing.T) {
+func TestGlobalToolCatalogContainsProductWorkspaceCreatorAndWorkflowRunner(t *testing.T) {
 	tools := scopedGlobalDurableTools(nil, Scope{ConversationID: testConversationID})
-	if len(tools) != 1 || tools[0].Tool.Name() != createProductWorkspaceToolName {
+	if len(tools) != 2 || tools[0].Tool.Name() != createProductWorkspaceToolName || tools[1].Tool.Name() != requestWorkflowRunToolName {
 		t.Fatalf("global durable tools = %#v", tools)
 	}
-	if tools[0].Tool.Effect() != durable.EffectReconcilable {
-		t.Fatalf("global product workspace effect = %q", tools[0].Tool.Effect())
+	for _, tool := range tools {
+		if tool.Tool.Effect() != durable.EffectReconcilable {
+			t.Fatalf("global durable tool %q effect = %q", tool.Tool.Name(), tool.Tool.Effect())
+		}
+	}
+}
+
+func TestGlobalWorkflowRunRequestToolUsesExplicitTargetAndConfirmationRequest(t *testing.T) {
+	basePath := "/api/internal/v1/agent-conversations/" + testConversationID
+	productID := "77777777-7777-4777-8777-777777777777"
+	workflowID := "88888888-8888-4888-8888-888888888888"
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer "+testInternalToken {
+			http.Error(writer, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		switch request.URL.Path {
+		case basePath + "/global-workflow-run-requests/prepare":
+			if request.Method != http.MethodPost {
+				t.Fatalf("global workflow prepare method = %s", request.Method)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body["product_id"] != productID || body["workflow_id"] != workflowID || body["expected_workflow_revision"] != float64(7) {
+				t.Fatalf("global workflow prepare body = %#v", body)
+			}
+			writeFixtureJSON(writer, map[string]any{
+				"product_id": productID, "workflow_id": workflowID, "workflow_title": "主图工作流",
+				"workflow_revision": 7, "runnable_node_count": 3, "task_id": "99999999-9999-4999-8999-999999999999",
+			})
+		case basePath + "/global-workflow-run-requests":
+			if request.Method != http.MethodPost || request.Header.Get("Idempotency-Key") != "global-run-key" {
+				t.Fatalf("global workflow execute request = %s %s", request.Method, request.URL.String())
+			}
+			writeFixtureJSON(writer, map[string]any{
+				"id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "product_id": productID, "workflow_id": workflowID,
+				"status": "awaiting_confirmation",
+			})
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client, err := productflow.NewClient(server.URL, testInternalToken, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tool *requestGlobalWorkflowRunTool
+	for _, candidate := range scopedGlobalDurableTools(client, Scope{
+		ConversationID: testConversationID,
+		ScopeType:      scopeTypeGlobal,
+		TaskID:         "99999999-9999-4999-8999-999999999999",
+	}) {
+		if candidate.Tool.Name() == requestWorkflowRunToolName {
+			tool, _ = candidate.Tool.(*requestGlobalWorkflowRunTool)
+			break
+		}
+	}
+	if tool == nil {
+		t.Fatalf("global workflow run tool is not registered")
+	}
+	prepared, err := tool.Prepare(context.Background(), json.RawMessage(`{"product_id":"`+productID+`","workflow_id":"`+workflowID+`","expected_workflow_revision":7}`))
+	if err != nil || !strings.Contains(string(prepared), workflowID) {
+		t.Fatalf("global workflow prepared = %s, %v", prepared, err)
+	}
+	result, err := tool.Execute(context.Background(), durable.Invocation{
+		Prepared:       prepared,
+		IdempotencyKey: "global-run-key",
+		StepID:         "global-run-step",
+	})
+	if err != nil || !strings.Contains(string(result), "awaiting_confirmation") {
+		t.Fatalf("global workflow execute result = %s, %v", result, err)
 	}
 }
 

@@ -41,10 +41,19 @@ from productflow_backend.application.agent_tools import (
     validate_agent_workflow_draft,
 )
 from productflow_backend.application.agent_workflow_run_requests import (
+    create_agent_global_workflow_run_request as create_agent_global_workflow_run_request_use_case,
+)
+from productflow_backend.application.agent_workflow_run_requests import (
     create_agent_workflow_run_request as create_agent_workflow_run_request_use_case,
 )
 from productflow_backend.application.agent_workflow_run_requests import (
+    prepare_agent_global_workflow_run_request as prepare_agent_global_workflow_run_request_use_case,
+)
+from productflow_backend.application.agent_workflow_run_requests import (
     prepare_agent_workflow_run_request as prepare_agent_workflow_run_request_use_case,
+)
+from productflow_backend.application.agent_workflow_run_requests import (
+    reconcile_agent_global_workflow_run_request as reconcile_agent_global_workflow_run_request_use_case,
 )
 from productflow_backend.application.agent_workflow_run_requests import (
     reconcile_agent_workflow_run_request as reconcile_agent_workflow_run_request_use_case,
@@ -83,6 +92,7 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     AgentFolderRenameResultResponse,
     AgentGlobalProductListResponse,
     AgentGlobalProductResponse,
+    AgentGlobalWorkflowRunRequestCreateRequest,
     AgentLegacyArchiveInspectResponse,
     AgentLegacyArchiveListResponse,
     AgentProductWorkspaceLaunchRequest,
@@ -106,6 +116,7 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     PrepareAgentAssetRenameRequest,
     PrepareAgentFolderCreateRequest,
     PrepareAgentFolderRenameRequest,
+    PrepareAgentGlobalWorkflowRunRequest,
     PrepareAgentWorkflowRunRequest,
     serialize_agent_workflow_run_request,
 )
@@ -253,6 +264,33 @@ def prepare_agent_workflow_run_request_endpoint(
 
 
 @router.post(
+    "/{conversation_id}/global-workflow-run-requests/prepare",
+    response_model=AgentWorkflowRunRequestPreparedResponse,
+)
+def prepare_agent_global_workflow_run_request_endpoint(
+    conversation_id: str,
+    payload: PrepareAgentGlobalWorkflowRunRequest,
+    session: Session = Depends(get_session),
+) -> AgentWorkflowRunRequestPreparedResponse:
+    prepared = prepare_agent_global_workflow_run_request_use_case(
+        session,
+        conversation_id=conversation_id,
+        product_id=payload.product_id,
+        workflow_id=payload.workflow_id,
+        expected_workflow_revision=payload.expected_workflow_revision,
+        task_id=payload.task_id,
+    )
+    return AgentWorkflowRunRequestPreparedResponse(
+        product_id=prepared.product_id,
+        workflow_id=prepared.workflow_id,
+        workflow_title=prepared.workflow_title,
+        workflow_revision=prepared.workflow_revision,
+        runnable_node_count=prepared.runnable_node_count,
+        task_id=prepared.task_id,
+    )
+
+
+@router.post(
     "/{conversation_id}/workflow-run-requests",
     response_model=AgentWorkflowRunRequestResponse,
 )
@@ -275,6 +313,29 @@ def create_agent_workflow_run_request_endpoint(
 
 
 @router.post(
+    "/{conversation_id}/global-workflow-run-requests",
+    response_model=AgentWorkflowRunRequestResponse,
+)
+def create_agent_global_workflow_run_request_endpoint(
+    conversation_id: str,
+    payload: AgentGlobalWorkflowRunRequestCreateRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
+    session: Session = Depends(get_session),
+) -> AgentWorkflowRunRequestResponse:
+    request = create_agent_global_workflow_run_request_use_case(
+        session,
+        conversation_id=conversation_id,
+        product_id=payload.product_id,
+        expected_workflow_revision=payload.expected_workflow_revision,
+        workflow_id=payload.workflow_id,
+        source_step_id=payload.source_step_id,
+        idempotency_key=idempotency_key,
+        task_id=payload.task_id,
+    )
+    return serialize_agent_workflow_run_request(request)
+
+
+@router.post(
     "/{conversation_id}/workflow-run-requests/reconcile",
     response_model=AgentWorkflowRunRequestReconcileResponse,
 )
@@ -287,6 +348,33 @@ def reconcile_agent_workflow_run_request_endpoint(
     result = reconcile_agent_workflow_run_request_use_case(
         session,
         conversation_id=conversation_id,
+        expected_workflow_revision=payload.expected_workflow_revision,
+        workflow_id=payload.workflow_id,
+        source_step_id=payload.source_step_id,
+        idempotency_key=idempotency_key,
+        task_id=payload.task_id,
+    )
+    return AgentWorkflowRunRequestReconcileResponse(
+        state=result.state,
+        result=serialize_agent_workflow_run_request(result.request) if result.request is not None else None,
+        detail=result.detail,
+    )
+
+
+@router.post(
+    "/{conversation_id}/global-workflow-run-requests/reconcile",
+    response_model=AgentWorkflowRunRequestReconcileResponse,
+)
+def reconcile_agent_global_workflow_run_request_endpoint(
+    conversation_id: str,
+    payload: AgentGlobalWorkflowRunRequestCreateRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
+    session: Session = Depends(get_session),
+) -> AgentWorkflowRunRequestReconcileResponse:
+    result = reconcile_agent_global_workflow_run_request_use_case(
+        session,
+        conversation_id=conversation_id,
+        product_id=payload.product_id,
         expected_workflow_revision=payload.expected_workflow_revision,
         workflow_id=payload.workflow_id,
         source_step_id=payload.source_step_id,

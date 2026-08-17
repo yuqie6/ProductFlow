@@ -18,6 +18,11 @@ from productflow_backend.application.agent_conversations import (
     get_agent_turn_or_raise,
     list_agent_turn_page,
 )
+from productflow_backend.application.agent_workflow_run_requests import (
+    cancel_agent_workflow_run_request,
+    confirm_agent_workflow_run_request,
+    get_agent_workflow_run_request,
+)
 from productflow_backend.application.async_delivery import stage_async_dispatch_for_actor
 from productflow_backend.application.global_agent_drafts import (
     confirm_global_workflow_draft_review,
@@ -42,9 +47,11 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     AgentQuestionAnswerRequest,
     AgentTurnPageResponse,
     AgentTurnResponse,
+    AgentWorkflowRunRequestResponse,
     StartAgentTurnRequest,
     SubmitAgentTurnResponse,
     serialize_agent_turn,
+    serialize_agent_workflow_run_request,
 )
 from productflow_backend.presentation.schemas.library_organization_drafts import (
     ConfirmLibraryOrganizationDraftRequest,
@@ -137,6 +144,62 @@ def confirm_global_workflow_draft_review_endpoint(
             conversation_id=conversation_id,
             revision_id=revision_id,
             expected_draft_version=payload.expected_draft_version,
+        )
+    )
+
+
+@router.get(
+    "/{conversation_id}/workflow-run-request",
+    response_model=AgentWorkflowRunRequestResponse | None,
+)
+def get_global_workflow_run_request_endpoint(
+    conversation_id: str,
+    task_id: str | None = Query(default=None, max_length=64),
+    session: Session = Depends(get_session),
+) -> AgentWorkflowRunRequestResponse | None:
+    request = get_agent_workflow_run_request(
+        session,
+        product_id=None,
+        conversation_id=conversation_id,
+        task_id=task_id,
+    )
+    return serialize_agent_workflow_run_request(request) if request is not None else None
+
+
+@router.post(
+    "/{conversation_id}/workflow-run-request/{request_id}/confirm",
+    response_model=AgentWorkflowRunRequestResponse,
+)
+def confirm_global_workflow_run_request_endpoint(
+    conversation_id: str,
+    request_id: str,
+    session: Session = Depends(get_session),
+) -> AgentWorkflowRunRequestResponse:
+    return serialize_agent_workflow_run_request(
+        confirm_agent_workflow_run_request(
+            session,
+            product_id=None,
+            conversation_id=conversation_id,
+            request_id=request_id,
+        )
+    )
+
+
+@router.post(
+    "/{conversation_id}/workflow-run-request/{request_id}/cancel",
+    response_model=AgentWorkflowRunRequestResponse,
+)
+def cancel_global_workflow_run_request_endpoint(
+    conversation_id: str,
+    request_id: str,
+    session: Session = Depends(get_session),
+) -> AgentWorkflowRunRequestResponse:
+    return serialize_agent_workflow_run_request(
+        cancel_agent_workflow_run_request(
+            session,
+            product_id=None,
+            conversation_id=conversation_id,
+            request_id=request_id,
         )
     )
 

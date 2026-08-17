@@ -11,6 +11,7 @@ function request(status: AgentWorkflowRunRequest["status"]): AgentWorkflowRunReq
     conversation_id: "conversation-1",
     task_id: "task-1",
     product_id: "product-1",
+    product_name: "春季新品",
     workflow_id: "workflow-1",
     workflow_title: "春季新品主图",
     expected_workflow_revision: 7,

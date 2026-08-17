@@ -1158,6 +1158,7 @@ export interface AgentWorkflowRunRequest {
   conversation_id: string;
   task_id: string | null;
   product_id: string;
+  product_name: string;
   workflow_id: string;
   workflow_title: string;
   expected_workflow_revision: number;

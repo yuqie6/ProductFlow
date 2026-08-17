@@ -135,7 +135,7 @@ WorkflowFolder 是局部视觉分组；它不改变 DAG 执行语义。WorkflowE
 
 WorkflowRun 和 WorkflowNodeRun 保存运行状态。worker 根据已成功的上游节点调度 ready 节点。提示词产物使用版本记录；图片结果写入 ProductImageAsset，并绑定回目标节点。
 
-工作流运行由 ProductFlow 业务接口直接创建和校验。工作流页面可以直接提交整个 DAG 或单个节点，用户不需要先创建 Agent Conversation；未来 Agent 代为请求运行时，必须复用这些 application use case、权限、版本和队列约束。
+工作流运行由 ProductFlow 业务接口直接创建和校验。工作流页面可以直接提交整个 DAG 或单个节点，用户不需要先创建 Agent Conversation。Agent 通过 `agent_workflow_run_requests.py` 创建带明确商品、工作流和 revision 的待确认请求；用户确认后复用 `v2_runs.py` 的 application use case、权限、版本和队列约束，仍由同一 WorkflowRun 和 worker 链路执行。
 
 WorkflowRecipe 保存用户主动创建的完整工作流或局部片段。recipe payload 只保存可复用结构和配置，不保存商品身份、生成结果或媒体字节。
 

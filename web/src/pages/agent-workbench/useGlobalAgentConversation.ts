@@ -14,6 +14,7 @@ import type {
   AgentTaskStatus,
   AgentTurn,
   AgentTurnPage,
+  AgentWorkflowRunRequest,
   GlobalWorkflowDraftReview,
   LibraryOrganizationDraft,
   SubmitAgentTurnInput,
@@ -58,6 +59,10 @@ export function globalLibraryOrganizationDraftQueryKey(conversationId: string) {
 
 export function globalWorkflowDraftReviewQueryKey(conversationId: string, revisionId: string | null) {
   return ["global-workflow-draft-review", conversationId, revisionId] as const;
+}
+
+export function globalWorkflowRunRequestQueryKey(conversationId: string, taskId?: string | null) {
+  return ["global-workflow-run-request", conversationId, taskId ?? null] as const;
 }
 
 export function initialGlobalTaskTurnInput(
@@ -134,6 +139,19 @@ export function useGlobalAgentConversation({
     queryKey: globalWorkflowDraftReviewQueryKey(conversationId, workflowDraftRevisionId),
     queryFn: () => api.getGlobalWorkflowDraftReview(conversationId, workflowDraftRevisionId ?? ""),
     enabled: Boolean(enabled && conversationId && workflowDraftRevisionId),
+  });
+  const workflowRunRequestId = useMemo(
+    () => [...pageTurns].reverse().find((turn) => turn.workflow_run_request_id)?.workflow_run_request_id ?? null,
+    [pageTurns],
+  );
+  const workflowRunRequestQuery = useQuery({
+    queryKey: globalWorkflowRunRequestQueryKey(conversationId, taskId),
+    queryFn: () => api.getGlobalWorkflowRunRequest(conversationId, taskId),
+    enabled: Boolean(enabled && conversationId && workflowRunRequestId),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "awaiting_confirmation" || status === "confirmed" ? 1_500 : false;
+    },
   });
   const turns = useMemo(
     () =>
@@ -264,6 +282,24 @@ export function useGlobalAgentConversation({
       void queryClient.invalidateQueries({ queryKey: ["agent-sessions"] });
     },
   });
+  const confirmWorkflowRunRequestMutation = useMutation<AgentWorkflowRunRequest, Error, string>({
+    mutationFn: (requestId) => api.confirmGlobalWorkflowRunRequest(conversationId, requestId),
+    onSuccess: (request) => {
+      queryClient.setQueryData(globalWorkflowRunRequestQueryKey(conversationId, taskId), request);
+      void queryClient.invalidateQueries({ queryKey: turnsKey });
+      void queryClient.invalidateQueries({ queryKey: ["agent-tasks"] });
+      void queryClient.invalidateQueries({ queryKey: ["agent-sessions"] });
+    },
+  });
+  const cancelWorkflowRunRequestMutation = useMutation<AgentWorkflowRunRequest, Error, string>({
+    mutationFn: (requestId) => api.cancelGlobalWorkflowRunRequest(conversationId, requestId),
+    onSuccess: (request) => {
+      queryClient.setQueryData(globalWorkflowRunRequestQueryKey(conversationId, taskId), request);
+      void queryClient.invalidateQueries({ queryKey: turnsKey });
+      void queryClient.invalidateQueries({ queryKey: ["agent-tasks"] });
+      void queryClient.invalidateQueries({ queryKey: ["agent-sessions"] });
+    },
+  });
 
   return {
     turns,
@@ -274,11 +310,15 @@ export function useGlobalAgentConversation({
     libraryOrganizationDraftQuery,
     workflowDraftRevisionId,
     workflowDraftReviewQuery,
+    workflowRunRequestId,
+    workflowRunRequestQuery,
     submitTurnMutation,
     cancelTurnMutation,
     resumeTurnMutation,
     answerQuestionMutation,
     confirmLibraryOrganizationDraftMutation,
     confirmWorkflowDraftReviewMutation,
+    confirmWorkflowRunRequestMutation,
+    cancelWorkflowRunRequestMutation,
   };
 }

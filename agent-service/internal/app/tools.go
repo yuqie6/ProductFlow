@@ -547,6 +547,19 @@ func scopedGlobalDurableTools(client *productflow.Client, scope Scope) []agentta
 			},
 			Tool: &createProductWorkspaceTool{client: client, scope: scope},
 		},
+		{
+			Description: "Prepare a request to run one explicitly selected product's active workflow. This never starts the workflow; a human must confirm the request in ProductFlow.",
+			Parameters: map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"product_id":                 map[string]any{"type": "string", "minLength": 1, "maxLength": 64},
+					"workflow_id":                map[string]any{"type": "string", "minLength": 1, "maxLength": 64},
+					"expected_workflow_revision": map[string]any{"type": "integer", "minimum": 1},
+				},
+				"required": []string{"product_id", "workflow_id", "expected_workflow_revision"},
+			},
+			Tool: &requestGlobalWorkflowRunTool{client: client, scope: scope},
+		},
 	}
 }
 
@@ -695,6 +708,83 @@ func (tool *createProductWorkspaceTool) Reconcile(
 type requestWorkflowRunTool struct {
 	client *productflow.Client
 	scope  Scope
+}
+
+type requestGlobalWorkflowRunTool struct {
+	client *productflow.Client
+	scope  Scope
+}
+
+func (*requestGlobalWorkflowRunTool) Name() string                { return requestWorkflowRunToolName }
+func (*requestGlobalWorkflowRunTool) Effect() durable.EffectClass { return durable.EffectReconcilable }
+
+func (tool *requestGlobalWorkflowRunTool) Prepare(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+	var arguments struct {
+		ProductID                string `json:"product_id"`
+		WorkflowID               string `json:"workflow_id"`
+		ExpectedWorkflowRevision int    `json:"expected_workflow_revision"`
+	}
+	if err := decodeStrictObject(raw, &arguments); err != nil {
+		return nil, err
+	}
+	arguments.ProductID = strings.TrimSpace(arguments.ProductID)
+	arguments.WorkflowID = strings.TrimSpace(arguments.WorkflowID)
+	if arguments.ProductID == "" || arguments.WorkflowID == "" {
+		return nil, errors.New("product_id and workflow_id are required")
+	}
+	if arguments.ExpectedWorkflowRevision < 1 {
+		return nil, errors.New("expected_workflow_revision must be at least 1")
+	}
+	var taskID *string
+	if tool.scope.TaskID != "" {
+		value := tool.scope.TaskID
+		taskID = &value
+	}
+	prepared, err := tool.client.PrepareGlobalWorkflowRunRequest(
+		ctx,
+		tool.scope.ConversationID,
+		arguments.ProductID,
+		arguments.WorkflowID,
+		arguments.ExpectedWorkflowRevision,
+		taskID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(prepared)
+}
+
+func (tool *requestGlobalWorkflowRunTool) Execute(ctx context.Context, invocation durable.Invocation) (json.RawMessage, error) {
+	var prepared productflow.WorkflowRunRequestPrepared
+	if err := json.Unmarshal(invocation.Prepared, &prepared); err != nil {
+		return nil, fmt.Errorf("decode prepared global workflow run request: %w", err)
+	}
+	result, err := tool.client.ExecuteGlobalWorkflowRunRequest(
+		ctx,
+		tool.scope.ConversationID,
+		invocation.IdempotencyKey,
+		invocation.StepID,
+		prepared,
+	)
+	return durableExecutionResult(result, err, "global workflow run request")
+}
+
+func (tool *requestGlobalWorkflowRunTool) Reconcile(
+	ctx context.Context,
+	invocation durable.Invocation,
+) (durable.ReconcileResult, error) {
+	var prepared productflow.WorkflowRunRequestPrepared
+	if err := json.Unmarshal(invocation.Prepared, &prepared); err != nil {
+		return durable.ReconcileResult{}, fmt.Errorf("decode prepared global workflow run request: %w", err)
+	}
+	result, err := tool.client.ReconcileGlobalWorkflowRunRequest(
+		ctx,
+		tool.scope.ConversationID,
+		invocation.IdempotencyKey,
+		invocation.StepID,
+		prepared,
+	)
+	return durableReconcileResult(result, err)
 }
 
 func (*requestWorkflowRunTool) Name() string                { return requestWorkflowRunToolName }

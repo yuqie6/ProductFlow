@@ -221,7 +221,7 @@ Session summary
 - 已新增独立的 `AgentTask`、Task 专属 harness run、Turn 关系、Task 列表/创建/改名/取消 API，以及应用级 Global Agent Dock。
 - Dock 创建带目标的全局 Task 后，会为该 Task 提交一次固定幂等键的首轮 Turn；已有 Turn、非 `queued` Task 或缺少目标时不会重复启动。商品工作区可以由 Dock 入口或全局 Agent 工具建立，参考图上传、图片需求提交和继续 onboarding 仍由创建页面承接。
 - Dock 采用控制面板定位，显示 Session/Task、目标、状态和进入对应商品工作区的入口；支持在 Dock 内改名，并在 Global Conversation 与具体 Global Task 之间切换消息范围；现有工作流画布和人工运行控件保持原有 owner。
-- 当前跨商品和跨工作流开放有界只读商品、有效工作流摘要、明确 workflow ID 的最近运行状态查询，以及针对明确商品的 WorkflowDraft 生成/审核；全局图库的整理 Draft 仍有独立入口。工作流正式物化和执行仍由商品工作区及现有人工流程负责。
+- 当前跨商品和跨工作流开放有界只读商品、有效工作流摘要、明确 workflow ID 的最近运行状态查询，以及针对明确商品的 WorkflowDraft 生成/审核；全局图库的整理 Draft 仍有独立入口。全局 Agent 现在还可以针对明确商品和明确工作流创建待确认的 WorkflowRun 请求，确认后复用现有人工执行链；工作流正式编辑、直接运行、取消和重试仍由商品工作区负责。
 
 ### 阶段 2：接入页面上下文和任务恢复
 
@@ -236,7 +236,7 @@ Session summary
 ### 阶段 3：接入人工作流执行
 
 - Agent 已有只读 `inspect_workflow_runs_v1` 工具，通过内部 API 读取商品工作区的有界 WorkflowRun/WorkflowNodeRun 列表；全局 Agent 另有 `inspect_global_workflow_runs_v1`，按明确 workflow ID 返回多个商品/工作流的最近运行状态摘要和节点状态计数。
-- Agent 请求运行已经开放：`request_workflow_run_v1` 只创建带 revision 和幂等键的待确认请求；确认接口复用 `v2_runs.py` 的现有 application use case，并在运行 metadata 中记录 Agent 来源和 Task 关联。
+- Agent 请求运行已经开放：商品工作区和 Global Agent 都使用 `request_workflow_run_v1`，但 Global Agent 必须显式提供 `product_id`、`workflow_id` 和 `expected_workflow_revision`；工具只创建带 revision 和幂等键的待确认请求，从不直接启动运行。确认接口复用 `v2_runs.py` 的现有 application use case，并在运行 metadata 中记录 Agent 来源和 Task 关联。
 - 用户确认后，WorkflowRun 仍由 PostgreSQL、队列和原有 worker 负责；工作流页面和 Agent 工作台读取同一条运行记录。工作流页面保留直接运行、取消、重试和运行历史。
 - 全局 Agent Dock 可以取消关联的 Agent Task；如果 Task 已关联 WorkflowRun，取消会进入现有 WorkflowRun 取消流程。Task 列表读取时会同步 WorkflowRun 的终态。
 - Agent 请求重试仍未开放。重试继续由工作流运行面板负责，避免在 Agent 侧重复设计运行重试策略。
@@ -253,7 +253,7 @@ Session summary
 - 在多个页面挂载同一个全局 Agent 入口，Session 不随路由改变；全局 Agent 可以在当前 Session 下创建商品 onboarding 工作区，返回页面入口后继续使用现有人工创建流程。Dock 支持 Task 状态摘要、cursor 分页和安全暂停/恢复；运行中的模型 Turn 仍由取消链控制。
 - 通过 Skill registry 暴露商品、工作流、图库和 Draft 能力；全局 Agent 已可分页查询商品，按明确的商品 ID 查询当前有效工作流摘要，并按明确的 workflow ID 比较最近运行状态。
 - 每个有副作用的 Skill 都绑定权限、scope、revision、confirmation policy、idempotency 和验证方式。
-- 全局素材整理、明确工作流关联 Draft，以及全局会话针对明确商品的 WorkflowDraft 跨页面确认已经可用；工作流执行请求的确认和运行状态投影已经可用；Session/Task 摘要会在每个 Turn 启动时动态注入；剩余工作是统一的 Fresh Observation harness 抽象、业务优先级调度和更完整的受影响对象跳转。
+- 全局素材整理、明确工作流关联 Draft，以及全局会话针对明确商品的 WorkflowDraft 跨页面确认已经可用；Global Agent 针对明确商品和工作流的执行请求、Global Dock 中的确认卡和按 Task 隔离的运行状态投影已经可用；Session/Task 摘要会在每个 Turn 启动时动态注入；剩余工作是统一的 Fresh Observation harness 抽象、业务优先级调度和更完整的受影响对象跳转。
 
 ## 9. 验收条件
 
