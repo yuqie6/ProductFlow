@@ -54,6 +54,7 @@ class ProductImageAssetResponse(BaseModel):
     user_folder_id: str | None = None
     parent_asset_id: str | None = None
     source_image_session_asset_id: str | None = None
+    source_library_asset_id: str | None = None
     mime_type: str
     byte_size: int | None = None
     width: int | None = None
@@ -218,6 +219,7 @@ def serialize_product_image_asset(asset: ProductImageAsset) -> ProductImageAsset
         user_folder_id=asset.user_folder_id,
         parent_asset_id=asset.parent_asset_id,
         source_image_session_asset_id=asset.source_image_session_asset_id,
+        source_library_asset_id=asset.source_library_asset_id,
         mime_type=media.mime_type,
         byte_size=media.byte_size,
         width=media.width,

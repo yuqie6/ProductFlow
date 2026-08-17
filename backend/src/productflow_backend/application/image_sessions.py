@@ -84,6 +84,30 @@ from productflow_backend.infrastructure.queue import (
 from productflow_backend.infrastructure.storage import LocalStorage
 
 DEFAULT_SESSION_TITLE = "未命名会话"
+
+
+@dataclass(frozen=True, slots=True)
+class ImageSessionAssetDownload:
+    storage_path: str
+    original_filename: str
+    mime_type: str
+
+
+def get_image_session_asset_download(session: Session, *, asset_id: str) -> ImageSessionAssetDownload:
+    """Resolve the canonical media file metadata needed to serve a session asset download."""
+    asset = session.get(ImageSessionAsset, asset_id)
+    if asset is None:
+        raise NotFoundError("会话图片不存在")
+    media = asset.media_object
+    if media is None:
+        raise NotFoundError("会话图片文件不存在")
+    return ImageSessionAssetDownload(
+        storage_path=media.storage_path,
+        original_filename=asset.original_filename,
+        mime_type=media.mime_type,
+    )
+
+
 DEFAULT_ASSISTANT_MESSAGE = "已按本轮选择的图片上下文生成候选，你可以从任意候选继续。"
 MAX_BRANCH_CONTEXT_IMAGES = 6
 IMAGE_SESSION_GENERATION_MAX_ATTEMPTS = 3

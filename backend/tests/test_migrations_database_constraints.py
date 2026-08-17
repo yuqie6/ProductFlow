@@ -9,6 +9,7 @@ from alembic.config import Config
 from alembic import command
 from productflow_backend.config import get_settings
 from productflow_backend.domain.enums import (
+    AsyncDispatchStatus,
     ImageSessionAssetKind,
     JobStatus,
     MediaVerificationStatus,
@@ -21,6 +22,7 @@ from productflow_backend.domain.enums import (
     WorkflowRunStatus,
 )
 from productflow_backend.infrastructure.db.models import (
+    AsyncDispatch,
     Base,
     DeliveryRenditionJob,
     ImageSessionAsset,
@@ -75,6 +77,7 @@ def _configure_sqlite_alembic(
 
 def test_current_enum_columns_use_database_values() -> None:
     enum_contracts = [
+        (AsyncDispatch.__table__.c.status, AsyncDispatchStatus),
         (MediaObject.__table__.c.verification_status, MediaVerificationStatus),
         (ProductImageAsset.__table__.c.origin_type, ProductImageOriginType),
         (ImageSessionAsset.__table__.c.kind, ImageSessionAssetKind),
@@ -141,6 +144,11 @@ def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch:
             "workflow_drafts",
             "provider_profiles",
             "provider_bindings",
+            "async_dispatches",
+            "media_library_assets",
+            "media_library_folders",
+            "media_library_tags",
+            "media_library_asset_tags",
         } <= tables
         assert {"copy_set_id", "poster_variant_id"} <= {
             column["name"] for column in inspector.get_columns("workflow_node_runs")
@@ -181,7 +189,7 @@ def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch:
         )
         assert tool_steps_column["nullable"] is False
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260816_0045"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260816_0049"
     finally:
         engine.dispose()
 
@@ -335,7 +343,7 @@ def test_agent_tool_step_projection_migration_backfills_existing_turns(
                 sa.text("SELECT tool_steps_json FROM agent_turn_projections WHERE id = 'turn-tool-step'")
             )
             assert value == "[]"
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260816_0045"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260816_0049"
     finally:
         engine.dispose()
 

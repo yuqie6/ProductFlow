@@ -21,6 +21,7 @@ from productflow_backend.infrastructure.db.models import (
     ImagePromptArtifactVersionReference,
     ImageSessionAsset,
     LegacyWorkflowArchiveAsset,
+    MediaLibraryAsset,
     MediaObject,
     Product,
     ProductImageAsset,
@@ -301,6 +302,7 @@ def _media_has_references(session: Session, media_object_id: str) -> bool:
         for model, column in (
             (ProductImageAsset, ProductImageAsset.media_object_id),
             (ImageSessionAsset, ImageSessionAsset.media_object_id),
+            (MediaLibraryAsset, MediaLibraryAsset.media_object_id),
         )
     )
 

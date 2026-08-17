@@ -79,6 +79,7 @@ export interface ProductImageAsset {
   user_folder_id: string | null;
   parent_asset_id: string | null;
   source_image_session_asset_id: string | null;
+  source_library_asset_id: string | null;
   mime_type: string;
   byte_size: number | null;
   width: number | null;

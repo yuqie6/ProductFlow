@@ -142,9 +142,7 @@ class MediaObject(Base):
     width: Mapped[int | None] = mapped_column(Integer, nullable=True)
     height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    verification_status: Mapped[MediaVerificationStatus] = mapped_column(
-        enum_value_column(MediaVerificationStatus)
-    )
+    verification_status: Mapped[MediaVerificationStatus] = mapped_column(enum_value_column(MediaVerificationStatus))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -297,10 +295,17 @@ class ProductImageAsset(Base, TimestampMixin):
         Index("ix_product_image_assets_media_object_id", "media_object_id"),
         Index("ix_product_image_assets_parent_asset_id", "parent_asset_id"),
         Index("ix_product_image_assets_source_image_session_asset_id", "source_image_session_asset_id"),
+        Index("ix_product_image_assets_source_library_asset_id", "source_library_asset_id"),
         Index(
             "uq_product_image_assets_product_session_asset",
             "product_id",
             "source_image_session_asset_id",
+            unique=True,
+        ),
+        Index(
+            "uq_product_image_assets_product_library_asset",
+            "product_id",
+            "source_library_asset_id",
             unique=True,
         ),
     )
@@ -345,6 +350,16 @@ class ProductImageAsset(Base, TimestampMixin):
         ),
         nullable=True,
     )
+    source_library_asset_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "media_library_assets.id",
+            ondelete="RESTRICT",
+            use_alter=True,
+            name="fk_product_image_assets_source_library_asset_id",
+        ),
+        nullable=True,
+    )
 
     product: Mapped[Product] = relationship(back_populates="image_assets", foreign_keys=[product_id])
     user_folder: Mapped[ProductAssetFolder | None] = relationship(back_populates="assets")
@@ -372,19 +387,14 @@ class ProductImageAsset(Base, TimestampMixin):
     source_image_session_asset: Mapped[ImageSessionAsset | None] = relationship(
         foreign_keys=[source_image_session_asset_id]
     )
+    source_library_asset: Mapped[MediaLibraryAsset | None] = relationship(
+        foreign_keys=[source_library_asset_id],
+    )
     legacy_archive_references: Mapped[list[LegacyWorkflowArchiveAsset]] = relationship(
         back_populates="asset",
         foreign_keys="LegacyWorkflowArchiveAsset.product_image_asset_id",
         passive_deletes=True,
     )
-
-
-
-
-
-
-
-
 
 
 class LegacyWorkflowArchive(Base):
@@ -893,9 +903,7 @@ class WorkflowDraftRevision(Base):
         foreign_keys="ProductFactSetVersion.source_draft_revision_id",
         uselist=False,
     )
-    visual_system_version: Mapped[VisualSystemVersion | None] = relationship(
-        foreign_keys=[visual_system_version_id]
-    )
+    visual_system_version: Mapped[VisualSystemVersion | None] = relationship(foreign_keys=[visual_system_version_id])
     agent_turn_projection: Mapped[AgentTurnProjection | None] = relationship(
         back_populates="workflow_draft_revision",
         foreign_keys="AgentTurnProjection.workflow_draft_revision_id",
@@ -1255,8 +1263,6 @@ class WorkflowDraftRecipeSeed(Base):
     )
 
 
-
-
 class WorkflowDraftLegacyArchiveSeed(Base):
     """把一个不可变旧归档绑定到新的 Agent WorkflowDraft。"""
 
@@ -1428,12 +1434,8 @@ class ProductWorkflow(Base, TimestampMixin):
         cascade="all, delete-orphan",
         order_by="WorkflowFolder.sort_order",
     )
-    source_draft_revision: Mapped[WorkflowDraftRevision | None] = relationship(
-        foreign_keys=[source_draft_revision_id]
-    )
-    visual_system_version: Mapped[VisualSystemVersion | None] = relationship(
-        foreign_keys=[visual_system_version_id]
-    )
+    source_draft_revision: Mapped[WorkflowDraftRevision | None] = relationship(foreign_keys=[source_draft_revision_id])
+    visual_system_version: Mapped[VisualSystemVersion | None] = relationship(foreign_keys=[visual_system_version_id])
     prompt_artifacts: Mapped[list[ImagePromptArtifact]] = relationship(
         back_populates="workflow",
         cascade="all, delete-orphan",
@@ -1546,9 +1548,7 @@ class WorkflowNode(Base, TimestampMixin):
         foreign_keys="WorkflowEdge.target_node_id",
     )
     node_runs: Mapped[list[WorkflowNodeRun]] = relationship(back_populates="node")
-    image_generation_records: Mapped[list[WorkflowImageGenerationRecord]] = relationship(
-        back_populates="node"
-    )
+    image_generation_records: Mapped[list[WorkflowImageGenerationRecord]] = relationship(back_populates="node")
 
 
 class WorkflowEdge(Base):
@@ -2030,9 +2030,7 @@ class WorkflowImageGenerationRecord(Base):
     workflow: Mapped[ProductWorkflow] = relationship(back_populates="image_generation_records")
     node: Mapped[WorkflowNode] = relationship(back_populates="image_generation_records")
     result_asset: Mapped[ProductImageAsset] = relationship(foreign_keys=[result_asset_id])
-    visual_system_version: Mapped[VisualSystemVersion] = relationship(
-        foreign_keys=[visual_system_version_id]
-    )
+    visual_system_version: Mapped[VisualSystemVersion] = relationship(foreign_keys=[visual_system_version_id])
     prompt_artifact_version: Mapped[ImagePromptArtifactVersion] = relationship(
         foreign_keys=[prompt_artifact_version_id]
     )
@@ -2427,3 +2425,119 @@ class ImageGalleryEntry(Base):
 
     asset: Mapped[ImageSessionAsset] = relationship(foreign_keys=[image_session_asset_id])
     round: Mapped[ImageSessionRound | None] = relationship(foreign_keys=[image_session_round_id])
+
+
+class MediaLibraryFolder(Base, TimestampMixin):
+    """全局素材库的一层文件夹；删除文件夹只解除组织关系。"""
+
+    __tablename__ = "media_library_folders"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String(120))
+    normalized_name: Mapped[str] = mapped_column(String(120), unique=True)
+
+    assets: Mapped[list[MediaLibraryAsset]] = relationship(back_populates="folder")
+
+
+class MediaLibraryTag(Base, TimestampMixin):
+    """全局素材库的规范化标签。"""
+
+    __tablename__ = "media_library_tags"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String(80))
+    normalized_name: Mapped[str] = mapped_column(String(80), unique=True)
+
+    assets: Mapped[list[MediaLibraryAssetTag]] = relationship(back_populates="tag", cascade="all, delete-orphan")
+
+
+class MediaLibraryAssetTag(Base):
+    """素材库资产与标签的多对多 assignment。"""
+
+    __tablename__ = "media_library_asset_tags"
+    __table_args__ = (Index("ix_media_library_asset_tags_tag_id", "tag_id"),)
+
+    asset_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("media_library_assets.id", ondelete="CASCADE"), primary_key=True
+    )
+    tag_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("media_library_tags.id", ondelete="CASCADE"), primary_key=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    asset: Mapped[MediaLibraryAsset] = relationship(back_populates="tag_assignments")
+    tag: Mapped[MediaLibraryTag] = relationship(back_populates="assets")
+
+
+class MediaLibraryAsset(Base, TimestampMixin):
+    """全局素材库资产，持有 MediaObject 的全局身份和来源 provenance。"""
+
+    __tablename__ = "media_library_assets"
+    __table_args__ = (
+        UniqueConstraint("source_type", "source_id", name="uq_media_library_assets_source"),
+        CheckConstraint(
+            "source_type IN ('legacy_gallery', 'image_session_generated', 'product_asset')",
+            name="ck_media_library_assets_source_type",
+        ),
+        CheckConstraint("revision >= 1", name="ck_media_library_assets_revision"),
+        CheckConstraint(
+            "length(provenance_hash) = 64",
+            name="ck_media_library_assets_provenance_hash",
+        ),
+        Index("ix_media_library_assets_media_object_id", "media_object_id"),
+        Index("ix_media_library_assets_source_image_session_asset_id", "source_image_session_asset_id"),
+        Index("ix_media_library_assets_source_product_asset_id", "source_product_asset_id"),
+        Index("ix_media_library_assets_folder_id", "folder_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    media_object_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "media_objects.id",
+            ondelete="RESTRICT",
+            name="fk_media_library_assets_media_object_id",
+        ),
+    )
+    source_type: Mapped[str] = mapped_column(String(40))
+    source_id: Mapped[str] = mapped_column(String(36))
+    source_image_session_asset_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "image_session_assets.id",
+            ondelete="SET NULL",
+            name="fk_media_library_assets_source_image_session_asset_id",
+        ),
+        nullable=True,
+    )
+    source_product_asset_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "product_image_assets.id",
+            ondelete="SET NULL",
+            name="fk_media_library_assets_source_product_asset_id",
+        ),
+        nullable=True,
+    )
+    provenance_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    provenance_hash: Mapped[str] = mapped_column(String(64))
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    display_name: Mapped[str] = mapped_column(String(255))
+    original_filename: Mapped[str] = mapped_column(String(255))
+    folder_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("media_library_folders.id", ondelete="SET NULL", name="fk_media_library_assets_folder_id"),
+        nullable=True,
+    )
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    media_object: Mapped[MediaObject] = relationship()
+    folder: Mapped[MediaLibraryFolder | None] = relationship(back_populates="assets")
+    tag_assignments: Mapped[list[MediaLibraryAssetTag]] = relationship(
+        back_populates="asset", cascade="all, delete-orphan"
+    )
+    source_image_session_asset: Mapped[ImageSessionAsset | None] = relationship(
+        foreign_keys=[source_image_session_asset_id]
+    )
+    source_product_asset: Mapped[ProductImageAsset | None] = relationship(foreign_keys=[source_product_asset_id])

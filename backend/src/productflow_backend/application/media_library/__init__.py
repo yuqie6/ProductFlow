@@ -1,0 +1,1 @@
+"""MediaLibraryAsset core application package."""

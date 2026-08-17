@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -11,6 +11,7 @@ from productflow_backend.application.image_sessions import (
     create_image_session,
     delete_image_session,
     delete_image_session_reference_image,
+    get_image_session_asset_download,
     get_image_session_detail,
     get_image_session_status,
     list_image_sessions,
@@ -18,10 +19,8 @@ from productflow_backend.application.image_sessions import (
     submit_image_session_generation_task,
     update_image_session,
 )
-from productflow_backend.infrastructure.db.models import ImageSessionAsset
-from productflow_backend.infrastructure.storage import ImageVariantName
 from productflow_backend.presentation.deps import get_session, require_admin, require_deletion_enabled
-from productflow_backend.presentation.image_variants import serve_image_variant
+from productflow_backend.presentation.image_variants import ImageVariantName, serve_image_variant
 from productflow_backend.presentation.schemas.image_sessions import (
     AttachCanonicalImageSessionAssetRequest,
     CreateImageSessionRequest,
@@ -228,13 +227,11 @@ def download_image_session_asset_endpoint(
     variant: ImageVariantName = Query(default="original"),
     session: Session = Depends(get_session),
 ) -> FileResponse:
-    asset = session.get(ImageSessionAsset, asset_id)
-    if asset is None:
-        raise HTTPException(status_code=404, detail="会话图片不存在")
+    asset = get_image_session_asset_download(session, asset_id=asset_id)
     return serve_image_variant(
-        storage_path=asset.media_object.storage_path,
+        storage_path=asset.storage_path,
         original_filename=asset.original_filename,
-        mime_type=asset.media_object.mime_type,
+        mime_type=asset.mime_type,
         variant=variant,
         missing_file_detail="会话图片文件不存在",
     )
