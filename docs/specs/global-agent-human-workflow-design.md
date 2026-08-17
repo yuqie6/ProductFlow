@@ -28,7 +28,7 @@
 - 业务执行用例在 `backend/src/productflow_backend/application/product_workflow/v2_runs.py`，worker 从 `backend/src/productflow_backend/workers.py` 进入执行器。
 - `WorkflowRun` 和 `WorkflowNodeRun` 由 PostgreSQL 持有，Redis/Dramatiq 只承担投递和执行调度。
 
-当前 Agent Turn 仍然以商品工作区或全局素材库作为 scope 边界：商品 `AgentConversation` 绑定 `product_id` 和 `workflow_draft_id`。新建商品时，同一事务会创建一个 `AgentSession`、一个商品工作区 Conversation 和一个 sibling Global Conversation；商品创建对话负责收集商品事实、确认输入和生成 WorkflowDraft，全局对话负责后续跨页面操作。迁移窗口内的旧 Session 仍由 Session 列表访问路径懒加载 Global Conversation。Session 已有列表、创建、改名、归档、商品工作区摘要和按 Session 选择商品工作区的 API；工作台和应用级 Global Agent Dock 都可以打开会话列表。`AgentTask`、任务专属 harness run、任务级 Turn 关联和有界页面上下文快照已经落库并接入 Turn 请求，取消任务、监控 Agent 请求创建的 WorkflowRun 也已经接入。全局图库页面、工作流子图库关联层、Global Agent 素材查询和素材整理 Draft 的发布/确认已经落地；跨商品和跨工作流写操作、Task 摘要、暂停/恢复、独立调度器、执行前 Fresh Observation 仍未交付。`ImageSession` 是连续生图会话，已有自己的会话列表和生图任务，但不承担全局业务 Agent 的职责。
+当前 Agent Turn 仍然以商品工作区或全局素材库作为 scope 边界：商品 `AgentConversation` 绑定 `product_id` 和 `workflow_draft_id`。新建商品时，同一事务会创建一个 `AgentSession`、一个商品工作区 Conversation 和一个 sibling Global Conversation；商品创建对话负责收集商品事实、确认输入和生成 WorkflowDraft，全局对话负责后续跨页面操作。迁移窗口内的旧 Session 仍由 Session 列表访问路径懒加载 Global Conversation。Session 已有列表、创建、改名、归档、商品工作区摘要和按 Session 选择商品工作区的 API；工作台和应用级 Global Agent Dock 都可以打开会话列表。`AgentTask`、任务专属 harness run、任务级 Turn 关联和有界页面上下文快照已经落库并接入 Turn 请求，取消任务、监控 Agent 请求创建的 WorkflowRun 也已经接入。Global Agent Dock 已挂在认证后的应用路由外层；页面通过 `web/src/lib/agentPageContext.ts` 发布当前页面的有界事实，全局图库发布真实选中/可见素材和筛选条件，商品工作台发布工作流 revision、打开文件夹和选中节点，Dock 只在 route 匹配时使用该快照。全局图库页面、工作流子图库关联层、Global Agent 素材查询和素材整理 Draft 的发布/确认已经落地；跨商品和跨工作流写操作、Task 摘要、暂停/恢复、独立调度器、执行前 Fresh Observation 仍未交付。`ImageSession` 是连续生图会话，已有自己的会话列表和生图任务，但不承担全局业务 Agent 的职责。
 
 ## 3. 产品原则
 
@@ -221,6 +221,8 @@ Session summary
 ### 阶段 2：接入页面上下文和任务恢复
 
 - 已在 Web 到 FastAPI 的 Turn 请求中加入结构化 PageContextSnapshot；FastAPI 持久化快照并计算 digest，Go harness 只接收有界合同。
+- Global Agent Dock 读取当前页面注册的快照；页面卸载会清理注册内容，route 不匹配时回退到路由级基础上下文，避免把上一个页面的选区带入新页面。
+- 全局图库的快照包含当前已选资产、当前已加载资产和搜索/来源/文件夹/标签/归档筛选；商品工作台的快照包含工作流 revision、侧栏模式、打开文件夹和有限数量的选中节点。
 - 已把 Task goal 注入任务专属 harness 的固定系统上下文；页面快照作为当前 Turn 的 ambient context，不会覆盖 Task goal。
 - 未指定 Task 的普通商品对话继续使用 conversation run，不会因为页面快照自动出现在后台 Task 列表中。
 - 已保留既有 Agent Turn 恢复同步，并让 Task Turn 通过任务专属运行路径恢复；Session summary、Task summary、stale observation 和独立调度器仍待实现。

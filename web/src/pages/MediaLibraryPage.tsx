@@ -15,11 +15,12 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { GalleryImagePreviewDialog } from "../components/GalleryImagePreviewDialog";
 import { TopNav } from "../components/TopNav";
+import { useRegisterAgentPageContext } from "../lib/agentPageContext";
 import { api, ApiError } from "../lib/api";
 import { formatDateTime } from "../lib/format";
 import { useI18n } from "../lib/preferences";
@@ -40,6 +41,7 @@ type LibraryDialog =
 
 export function MediaLibraryPage() {
   const { locale, t } = useI18n();
+  const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [searchInput, setSearchInput] = useState("");
@@ -89,6 +91,25 @@ export function MediaLibraryPage() {
     [assets, selectedIds],
   );
   const bootstrap = bootstrapQuery.data;
+  const agentPageContext = useMemo(() => ({
+    route: `${location.pathname}${location.search}`,
+    page_type: "media_library",
+    product_id: null,
+    workflow_id: null,
+    selected_asset_ids: [...selectedIds].sort().slice(0, 100),
+    visible_asset_ids: assets.map((asset) => asset.id).slice(0, 100),
+    filters: {
+      ...(search ? { search } : {}),
+      ...(sourceType ? { source_type: sourceType } : {}),
+      ...(folderId ? { folder_id: folderId } : {}),
+      ...(tag ? { tag } : {}),
+      ...(includeArchived ? { include_archived: "true" } : {}),
+    },
+    workflow_revision: null,
+    library_revision: null,
+    captured_at: new Date().toISOString(),
+  }), [assets, folderId, includeArchived, location.pathname, location.search, search, selectedIds, sourceType, tag]);
+  useRegisterAgentPageContext(agentPageContext);
 
   const invalidate = async () => {
     await Promise.all([

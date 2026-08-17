@@ -6,6 +6,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { GalleryImagePreviewDialog } from "../../components/GalleryImagePreviewDialog";
 import { TopNav } from "../../components/TopNav";
+import { useRegisterAgentPageContext } from "../../lib/agentPageContext";
 import { ApiError, api } from "../../lib/api";
 import type { DownloadableImage } from "../../lib/image-downloads";
 import { useI18n } from "../../lib/preferences";
@@ -149,11 +150,19 @@ export function AgentProductWorkbenchPage({
     workflow_id: workflow?.id ?? null,
     selected_asset_ids: [],
     visible_asset_ids: [],
-    filters: { sidebar: sidebarTool, library_mode: libraryMode },
+    filters: {
+      sidebar: sidebarTool,
+      library_mode: libraryMode,
+      ...(canvasContext.openFolderId ? { open_folder_id: canvasContext.openFolderId } : {}),
+      ...(canvasContext.selectedNodeIds.length
+        ? { selected_node_ids: canvasContext.selectedNodeIds.slice(0, 20).join(",") }
+        : {}),
+    },
     workflow_revision: workflow?.revision ?? null,
     library_revision: null,
     captured_at: new Date().toISOString(),
-  }), [bootstrap.product.id, libraryMode, location.pathname, location.search, sidebarTool, workflow?.id, workflow?.revision]);
+  }), [bootstrap.product.id, canvasContext.openFolderId, canvasContext.selectedNodeIds, libraryMode, location.pathname, location.search, sidebarTool, workflow?.id, workflow?.revision]);
+  useRegisterAgentPageContext(pageContext);
   const recipesQuery = useQuery({
     queryKey: ["workflow-recipes", false],
     queryFn: () => api.listWorkflowRecipes(false),

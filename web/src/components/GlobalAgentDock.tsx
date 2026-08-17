@@ -14,6 +14,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { ApiError, api } from "../lib/api";
+import { useAgentPageContext } from "../lib/agentPageContext";
 import type { TranslationKey } from "../lib/i18n";
 import { useI18n } from "../lib/preferences";
 import type {
@@ -78,6 +79,7 @@ export function GlobalAgentDock() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
+  const registeredPageContext = useAgentPageContext();
   const rootRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<GlobalAgentDockTab>("chat");
@@ -171,7 +173,13 @@ export function GlobalAgentDock() {
   const activeSessionId = selectedSessionId ?? currentSessionId ?? workspaceSessions[0]?.id ?? sessions[0]?.id ?? null;
   const activeSession = sessions.find((session) => session.id === activeSessionId) ?? null;
   const globalConversation = activeSession?.conversations.find((conversation) => conversation.scope_type === "global") ?? null;
-  const pageContext = buildPageContext(location.pathname, location.search);
+  const basePageContext = useMemo(
+    () => buildPageContext(location.pathname, location.search),
+    [location.pathname, location.search],
+  );
+  const pageContext = registeredPageContext?.route === basePageContext.route
+    ? registeredPageContext
+    : basePageContext;
   const normalizedSearch = search.trim().toLocaleLowerCase();
   const visibleSessions = useMemo(() => {
     if (!normalizedSearch) {
