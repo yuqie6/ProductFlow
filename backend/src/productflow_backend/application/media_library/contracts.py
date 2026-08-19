@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from datetime import datetime
 from hashlib import sha256
 from typing import Any, Literal
@@ -10,7 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field
 MEDIA_LIBRARY_PROVENANCE_SCHEMA_VERSION = 1
 MAX_PROVENANCE_BYTES = 32 * 1024
 MEDIA_LIBRARY_COLLECTION_MAX_IDEMPOTENCY_KEY_BYTES = 200
-MediaLibrarySourceType = Literal["legacy_gallery", "image_session_generated", "product_asset"]
+MEDIA_LIBRARY_UPLOAD_MAX_IDEMPOTENCY_KEY_BYTES = 200
+MediaLibrarySourceType = Literal["legacy_gallery", "image_session_generated", "product_asset", "direct_upload"]
 
 
 class MediaLibraryProvenanceV1(BaseModel):
@@ -53,6 +55,35 @@ def media_library_collection_request_hash(*, product_id: str, library_asset_ids:
             "request_kind": "media_library_collect_to_product_v1",
             "product_id": product_id,
             "media_library_asset_ids": library_asset_ids,
+        }
+    )
+
+
+def normalize_media_library_upload_idempotency_key(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError("素材库上传 Idempotency-Key 不能为空")
+    if len(normalized.encode("utf-8")) > MEDIA_LIBRARY_UPLOAD_MAX_IDEMPOTENCY_KEY_BYTES:
+        raise ValueError(
+            f"素材库上传 Idempotency-Key 不能超过 {MEDIA_LIBRARY_UPLOAD_MAX_IDEMPOTENCY_KEY_BYTES} bytes"
+        )
+    return normalized
+
+
+def media_library_upload_request_hash(
+    *,
+    folder_id: str | None,
+    files: Sequence[tuple[str, bytes, str | None]],
+) -> str:
+    """files: (filename, content, mime_type). Content bytes are hashed, not embedded."""
+
+    return canonical_provenance_hash(
+        {
+            "request_kind": "media_library_upload_v1",
+            "folder_id": folder_id,
+            "files": sorted(
+                (filename, sha256(content).hexdigest(), mime_type) for filename, content, mime_type in files
+            ),
         }
     )
 

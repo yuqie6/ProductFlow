@@ -154,6 +154,7 @@ def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch:
             "media_library_folders",
             "media_library_tags",
             "media_library_asset_tags",
+            "media_library_upload_keys",
             "agent_sessions",
             "agent_tasks",
             "agent_page_context_snapshots",
@@ -212,7 +213,7 @@ def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch:
             column["name"] for column in inspector.get_columns("agent_workflow_run_requests")
         }
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260819_0059"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260819_0061"
     finally:
         engine.dispose()
 
@@ -366,7 +367,7 @@ def test_agent_tool_step_projection_migration_backfills_existing_turns(
                 sa.text("SELECT tool_steps_json FROM agent_turn_projections WHERE id = 'turn-tool-step'")
             )
             assert value == "[]"
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260819_0059"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260819_0061"
     finally:
         engine.dispose()
 
@@ -558,5 +559,59 @@ def test_cutover_migration_preserves_legacy_data_and_installs_pending_gate(
                 )
             ).one()
             assert tuple(gate) == ("pending", 0, None, None, None, None)
+    finally:
+        engine.dispose()
+
+
+def test_media_library_upload_keys_migration_upgrade_and_downgrade(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """0061 upload-keys table round-trips and 0060's SQLite downgrade drops source_run_id."""
+    database_path, config = _configure_sqlite_alembic(tmp_path, monkeypatch, filename="upload-keys.db")
+    command.upgrade(config, "head")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}", future=True)
+    try:
+        assert "media_library_upload_keys" in sa.inspect(engine).get_table_names()
+        with engine.connect() as connection:
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260819_0061"
+    finally:
+        engine.dispose()
+
+    # one-step downgrade to 0060 removes the upload-keys table
+    command.downgrade(config, "20260819_0060")
+    engine = sa.create_engine(f"sqlite:///{database_path}", future=True)
+    try:
+        assert "media_library_upload_keys" not in sa.inspect(engine).get_table_names()
+        with engine.connect() as connection:
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260819_0060"
+    finally:
+        engine.dispose()
+
+    # further down to 0058 runs the 0060 and 0059 downgrades and drops source_run_id
+    command.downgrade(config, "20260818_0058")
+    engine = sa.create_engine(f"sqlite:///{database_path}", future=True)
+    try:
+        source_run_columns = {
+            column["name"] for column in sa.inspect(engine).get_columns("agent_workflow_run_requests")
+        }
+        assert "source_run_id" not in source_run_columns
+        with engine.connect() as connection:
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260818_0058"
+    finally:
+        engine.dispose()
+
+    # full re-upgrade restores everything (round-trip)
+    command.upgrade(config, "head")
+    engine = sa.create_engine(f"sqlite:///{database_path}", future=True)
+    try:
+        assert "media_library_upload_keys" in sa.inspect(engine).get_table_names()
+        source_run_columns = {
+            column["name"] for column in sa.inspect(engine).get_columns("agent_workflow_run_requests")
+        }
+        assert "source_run_id" in source_run_columns
+        with engine.connect() as connection:
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260819_0061"
     finally:
         engine.dispose()

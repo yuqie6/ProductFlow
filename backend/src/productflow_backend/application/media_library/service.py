@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -7,17 +9,21 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from productflow_backend.application.media_assets import stage_verified_media_object
 from productflow_backend.application.media_library.contracts import (
     MediaLibrarySourceType,
     canonical_provenance_hash,
     media_library_collection_request_hash,
+    media_library_upload_request_hash,
     normalize_media_library_collection_idempotency_key,
+    normalize_media_library_upload_idempotency_key,
     parse_provenance_v1,
 )
 from productflow_backend.application.media_library.queries import (
     get_media_library_asset,
     list_media_library_assets,
 )
+from productflow_backend.application.storage_compensation import compensate_storage_writes
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.enums import (
     ImageSessionAssetKind,
@@ -29,11 +35,14 @@ from productflow_backend.infrastructure.db.models import (
     ImageSessionAsset,
     MediaLibraryAsset,
     MediaLibraryCollectionKey,
+    MediaLibraryFolder,
+    MediaLibraryUploadKey,
     MediaObject,
     Product,
     ProductImageAsset,
     WorkflowMediaLibraryAsset,
 )
+from productflow_backend.infrastructure.storage import LocalStorage
 
 
 @dataclass(frozen=True, slots=True)
@@ -542,6 +551,155 @@ def restore_media_library_asset(
     )
 
 
+MEDIA_LIBRARY_FILENAME_MAX_LENGTH = 255
+
+
+def _normalize_upload_names(filename: str, *, display_name: str | None = None) -> tuple[str, str]:
+    """Normalize and bound an uploaded filename so provenance and column agree.
+
+    Bounding happens before provenance/column construction (and therefore before
+    any storage work) so a >255-char name can never produce a provenance that
+    fails validation or drifts from the stored column value.
+    """
+
+    normalized = (filename or "").strip() or "upload.png"
+    bounded_display = (display_name or normalized).strip() or normalized
+    return (
+        normalized[:MEDIA_LIBRARY_FILENAME_MAX_LENGTH],
+        bounded_display[:MEDIA_LIBRARY_FILENAME_MAX_LENGTH] or normalized[:MEDIA_LIBRARY_FILENAME_MAX_LENGTH],
+    )
+
+
+def save_media_library_assets_from_upload(
+    session: Session,
+    *,
+    items: Sequence[tuple[bytes, str, str | None]],
+    folder_id: str | None = None,
+    display_names: Sequence[str | None] | None = None,
+    idempotency_key: str | None = None,
+    storage: LocalStorage | None = None,
+) -> list[MediaLibrarySaveResult]:
+    """Atomically persist a batch of direct-upload media library assets.
+
+    All files are staged under a single transaction and a single
+    storage-compensation scope, then committed once. A failure anywhere rolls
+    the whole batch back and removes exactly the files created by this attempt
+    (AGENTS.md storage compensation rules), so the client never sees a half-committed
+    batch with an error response.
+
+    When ``idempotency_key`` is supplied, reusing the key with the same upload
+    parameters returns the previously created assets instead of creating new ones
+    (mirroring ``collect_media_library_assets_to_product``); reusing it with
+    different parameters is a conflict.
+    """
+
+    storage = storage or LocalStorage()
+    if folder_id is not None:
+        folder = session.get(MediaLibraryFolder, folder_id)
+        if folder is None:
+            raise NotFoundError("文件夹不存在")
+
+    normalized_idempotency_key: str | None = None
+    request_hash: str | None = None
+    if idempotency_key is not None:
+        try:
+            normalized_idempotency_key = normalize_media_library_upload_idempotency_key(idempotency_key)
+        except ValueError as exc:
+            raise BusinessValidationError(str(exc)) from exc
+        request_hash = media_library_upload_request_hash(
+            folder_id=folder_id,
+            files=[(filename, content, mime_type) for content, filename, mime_type in items],
+        )
+        existing_key = session.scalar(
+            select(MediaLibraryUploadKey).where(
+                MediaLibraryUploadKey.idempotency_key == normalized_idempotency_key,
+            )
+        )
+        if existing_key is not None:
+            if existing_key.request_hash != request_hash:
+                raise ConflictError("相同 idempotency key 不能用于不同的上传参数")
+            return [
+                MediaLibrarySaveResult(
+                    asset=get_media_library_asset(session, asset_id=asset_id),
+                    created=False,
+                )
+                for asset_id in json.loads(existing_key.asset_ids_json)
+            ]
+
+    normalized_items: list[tuple[bytes, str, str, str | None]] = []
+    for index, (content, filename, expected_mime_type) in enumerate(items):
+        display_name = display_names[index] if display_names is not None else None
+        bounded_filename, bounded_display = _normalize_upload_names(filename, display_name=display_name)
+        normalized_items.append((content, bounded_filename, bounded_display, expected_mime_type))
+
+    results: list[MediaLibrarySaveResult] = []
+    with compensate_storage_writes(session) as storage_writes:
+        for content, bounded_filename, bounded_display, expected_mime_type in normalized_items:
+            media = stage_verified_media_object(
+                session,
+                content=content,
+                filename=bounded_filename,
+                expected_mime_type=expected_mime_type,
+                storage=storage,
+                storage_writes=storage_writes,
+            )
+            captured_at = now_utc()
+            provenance = _provenance_from_media_object(
+                source_type="direct_upload",
+                source_id=media.id,
+                media=media,
+                original_filename=bounded_filename,
+                captured_at=captured_at,
+            )
+            library_asset = MediaLibraryAsset(
+                media_object_id=media.id,
+                source_type="direct_upload",
+                source_id=media.id,
+                provenance_json=provenance,
+                provenance_hash=canonical_provenance_hash(parse_provenance_v1(provenance).model_dump(mode="json")),
+                display_name=bounded_display,
+                original_filename=bounded_filename,
+                folder_id=folder_id,
+            )
+            session.add(library_asset)
+            session.flush()
+            results.append(MediaLibrarySaveResult(asset=library_asset, created=True))
+        if normalized_idempotency_key is not None:
+            session.add(
+                MediaLibraryUploadKey(
+                    idempotency_key=normalized_idempotency_key,
+                    request_hash=request_hash or "",
+                    asset_ids_json=json.dumps([result.asset.id for result in results]),
+                )
+            )
+        session.commit()
+    session.expire_all()
+    return [
+        MediaLibrarySaveResult(asset=get_media_library_asset(session, asset_id=result.asset.id), created=True)
+        for result in results
+    ]
+
+
+def save_media_library_asset_from_upload(
+    session: Session,
+    *,
+    content: bytes,
+    filename: str,
+    expected_mime_type: str | None,
+    folder_id: str | None = None,
+    display_name: str | None = None,
+    storage: LocalStorage | None = None,
+) -> MediaLibrarySaveResult:
+    saved = save_media_library_assets_from_upload(
+        session,
+        items=[(content, filename, expected_mime_type)],
+        folder_id=folder_id,
+        display_names=[display_name],
+        storage=storage,
+    )
+    return saved[0]
+
+
 __all__ = [
     "MediaLibraryCollectionResult",
     "MediaLibrarySaveResult",
@@ -552,5 +710,7 @@ __all__ = [
     "restore_media_library_asset",
     "save_media_library_asset_from_product",
     "save_media_library_asset_from_session",
+    "save_media_library_asset_from_upload",
+    "save_media_library_assets_from_upload",
     "validate_media_library_asset_for_use",
 ]

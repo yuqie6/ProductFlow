@@ -81,3 +81,58 @@ def test_collect_media_library_api_binds_idempotency_key_to_request(db_session) 
         headers=headers,
     )
     assert changed.status_code == 409
+
+
+def test_upload_media_library_api_creates_verified_direct_upload_asset(db_session) -> None:
+    from helpers import _make_demo_image_bytes
+
+    client = TestClient(create_app())
+    _login(client)
+
+    image_bytes = _make_demo_image_bytes()
+    files = [("files", ("test_direct_upload.png", image_bytes, "image/png"))]
+
+    response = client.post("/api/media-library/upload", files=files)
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert len(payload) == 1
+    asset = payload[0]
+    assert asset["display_name"] == "test_direct_upload.png"
+    assert asset["original_filename"] == "test_direct_upload.png"
+    assert asset["source_type"] == "direct_upload"
+    assert asset["verification_status"] == "verified"
+    assert asset["is_archived"] is False
+
+
+
+def test_upload_media_library_api_idempotency_key_dedups(db_session) -> None:
+    from helpers import _make_demo_image_bytes, _make_demo_image_bytes_with_size
+
+    client = TestClient(create_app())
+    _login(client)
+
+    image_bytes = _make_demo_image_bytes()
+    files = [("files", ("dup.png", image_bytes, "image/png"))]
+
+    first = client.post("/api/media-library/upload", files=files, headers={"Idempotency-Key": "upload-dup-1"})
+    assert first.status_code == 201
+    first_ids = [asset["id"] for asset in first.json()]
+
+    # reusing the same key + same params returns the SAME assets (no duplicates)
+    second = client.post("/api/media-library/upload", files=files, headers={"Idempotency-Key": "upload-dup-1"})
+    assert second.status_code == 201
+    assert [asset["id"] for asset in second.json()] == first_ids
+
+    # a different key with identical files still creates a NEW batch (key-scoped, not content-dedup)
+    third = client.post("/api/media-library/upload", files=files, headers={"Idempotency-Key": "upload-dup-2"})
+    assert third.status_code == 201
+    assert [asset["id"] for asset in third.json()] != first_ids
+
+    # same key with different params is a conflict (mirrors /collect)
+    other_bytes = _make_demo_image_bytes_with_size(64, 64)
+    conflict = client.post(
+        "/api/media-library/upload",
+        files=[("files", ("other.png", other_bytes, "image/png"))],
+        headers={"Idempotency-Key": "upload-dup-1"},
+    )
+    assert conflict.status_code == 409

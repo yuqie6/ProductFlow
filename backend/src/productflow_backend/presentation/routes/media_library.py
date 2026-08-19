@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Header, Query, Response, status
+from fastapi import APIRouter, Depends, File, Form, Header, Query, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -26,6 +26,7 @@ from productflow_backend.application.media_library.service import (
     restore_media_library_asset,
     save_media_library_asset_from_product,
     save_media_library_asset_from_session,
+    save_media_library_assets_from_upload,
 )
 from productflow_backend.application.media_library.workflow import (
     list_workflow_media_library_assets,
@@ -58,6 +59,9 @@ from productflow_backend.presentation.schemas.media_library import (
 from productflow_backend.presentation.schemas.products import (
     ProductImageAssetResponse,
     serialize_product_image_asset,
+)
+from productflow_backend.presentation.upload_validation import (
+    read_validated_image_uploads_batch,
 )
 
 router = APIRouter(
@@ -240,6 +244,23 @@ def save_from_product_endpoint(
     )
     response.status_code = status.HTTP_201_CREATED if result.created else status.HTTP_200_OK
     return serialize_media_library_asset(result.asset)
+
+
+@router.post("/upload", response_model=list[MediaLibraryAssetResponse], status_code=status.HTTP_201_CREATED)
+async def upload_media_library_assets_endpoint(
+    files: list[UploadFile] = File(...),
+    folder_id: str | None = Form(default=None),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", min_length=1, max_length=200),
+    session: Session = Depends(get_session),
+) -> list[MediaLibraryAssetResponse]:
+    validated_uploads = await read_validated_image_uploads_batch(files, fallback_prefix="library-upload")
+    created = save_media_library_assets_from_upload(
+        session,
+        items=[(upload.content, upload.filename, upload.mime_type) for upload in validated_uploads],
+        folder_id=folder_id,
+        idempotency_key=idempotency_key,
+    )
+    return [serialize_media_library_asset(result.asset) for result in created]
 
 
 @router.post("/collect", response_model=list[ProductImageAssetResponse])

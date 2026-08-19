@@ -2890,7 +2890,7 @@ class MediaLibraryAsset(Base, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("source_type", "source_id", name="uq_media_library_assets_source"),
         CheckConstraint(
-            "source_type IN ('legacy_gallery', 'image_session_generated', 'product_asset')",
+            "source_type IN ('legacy_gallery', 'image_session_generated', 'product_asset', 'direct_upload')",
             name="ck_media_library_assets_source_type",
         ),
         CheckConstraint("revision >= 1", name="ck_media_library_assets_revision"),
@@ -2981,6 +2981,22 @@ class MediaLibraryCollectionKey(Base):
     )
     idempotency_key: Mapped[str] = mapped_column(String(200))
     request_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class MediaLibraryUploadKey(Base):
+    """批量直接上传请求使用过的 idempotency key 到所建资产的映射。"""
+
+    __tablename__ = "media_library_upload_keys"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_media_library_upload_keys_key"),
+        CheckConstraint("length(request_hash) = 64", name="ck_media_library_upload_keys_request_hash"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    idempotency_key: Mapped[str] = mapped_column(String(200))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    asset_ids_json: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 

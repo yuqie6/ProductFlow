@@ -126,6 +126,8 @@ class Settings(BaseSettings):
     prompt_image_chat_template: str = DEFAULT_PROMPT_IMAGE_CHAT_TEMPLATE
 
     upload_max_image_bytes: int = 10 * 1024 * 1024
+    upload_max_batch_bytes: int = 50 * 1024 * 1024
+    upload_max_batch_files: int = 20
     upload_max_reference_images: int = 6
     upload_max_pixels: int = 16_000_000
     upload_allowed_image_mime_types: str = "image/png,image/jpeg,image/webp"
@@ -340,6 +342,20 @@ CONFIG_DEFINITIONS: tuple[ConfigDefinition, ...] = (
     ConfigDefinition(
         key="upload_max_image_bytes",
         label="单图最大字节数",
+        category="图片与上传",
+        input_type="number",
+        minimum=1,
+    ),
+    ConfigDefinition(
+        key="upload_max_batch_bytes",
+        label="批量上传最大总字节数",
+        category="图片与上传",
+        input_type="number",
+        minimum=1,
+    ),
+    ConfigDefinition(
+        key="upload_max_batch_files",
+        label="批量上传最多文件数",
         category="图片与上传",
         input_type="number",
         minimum=1,
