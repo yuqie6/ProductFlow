@@ -60,6 +60,9 @@ describe("Agent conversation API", () => {
     expect(api.getAgentTurnEventsUrl("product/1", "conversation/1", "projection/1", 17)).toBe(
       "/api/v2/products/product%2F1/agent-conversations/conversation%2F1/turns/projection%2F1/events?after=17",
     );
+    expect(api.getGlobalAgentTurnEventsUrl("conversation/1", "projection/1", 17)).toBe(
+      "/api/v2/agent-conversations/conversation%2F1/turns/projection%2F1/events?after=17",
+    );
     expect(api.getProductImageAssetMediaUrl("asset/1", "thumbnail")).toBe(
       "/api/v2/product-image-assets/asset%2F1/download?variant=thumbnail",
     );

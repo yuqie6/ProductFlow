@@ -70,7 +70,7 @@ export type AgentTurnEventAction =
   | { type: "event"; event: AgentTurnEvent };
 
 export interface AgentTurnEventScope {
-  run_id: string;
+  run_id: string | null;
   turn_id: string;
 }
 
@@ -112,7 +112,12 @@ export function parseAgentTurnEvent(
   if (value.schema_version !== 1) {
     throw new AgentEventProtocolError("Agent 事件 schema_version 不受支持");
   }
-  if (value.run_id !== expectedScope.run_id || value.turn_id !== expectedScope.turn_id) {
+  if (
+    typeof value.run_id !== "string" ||
+    !value.run_id ||
+    (expectedScope.run_id !== null && value.run_id !== expectedScope.run_id) ||
+    value.turn_id !== expectedScope.turn_id
+  ) {
     throw new AgentEventProtocolError("Agent 事件作用域与当前 Turn 不匹配");
   }
   if (!Number.isSafeInteger(value.sequence) || (value.sequence as number) <= 0) {

@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, selectinload
 from productflow_backend.application.agent_conversations import (
     attach_agent_workflow_draft_artifact,
     bind_harness_turn,
+    cancel_unbound_agent_turn,
     get_agent_conversation_or_raise,
     get_agent_turn_or_raise,
     project_agent_turn_state,
@@ -161,7 +162,7 @@ def refresh_agent_turn(
         projection_id=projection_id,
     )
     if projection.harness_turn_id is None:
-        raise ConflictError("Agent turn projection 尚未绑定 harness Turn")
+        raise ConflictError("Agent Turn 尚未绑定 runtime Turn")
     try:
         state = gateway.get_turn(
             conversation_id=conversation_id,
@@ -186,7 +187,7 @@ def control_agent_turn(
     conversation_id: str,
     projection_id: str,
     command: AgentControlCommand,
-    gateway: AgentServiceClient,
+    gateway: AgentServiceClient | None,
     enqueue_sync: Callable[[Session, str], None],
 ) -> AgentTurnProjection:
     projection = get_agent_turn_or_raise(
@@ -196,7 +197,16 @@ def control_agent_turn(
         projection_id=projection_id,
     )
     if projection.harness_turn_id is None:
-        raise ConflictError("Agent turn projection 尚未绑定 harness Turn")
+        if command == "cancel":
+            return cancel_unbound_agent_turn(
+                session,
+                product_id=product_id,
+                conversation_id=conversation_id,
+                projection_id=projection.id,
+            )
+        raise ConflictError("Agent Turn 尚未绑定 runtime Turn")
+    if gateway is None:
+        raise AgentServiceUnavailableError("Agent 服务暂时不可用")
     try:
         if command == "cancel":
             state = gateway.cancel_turn(

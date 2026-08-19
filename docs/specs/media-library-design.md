@@ -40,7 +40,7 @@ Rendition 已有 `active_attempt_id` 和 compare-and-set success/failure。Image
 
 ### 2.4 跨语言合同
 
-FastAPI/Pydantic 拥有 ProductFlow HTTP schema；Go 手写 internal API DTO、tool names/limits；Go Agent/harness 拥有 SSE event。当前工作树正在增加 `tool.step`，前端消费仍需与事件 owner 同步。
+FastAPI/Pydantic 拥有 ProductFlow HTTP schema；main 的 TypeScript Pi adapter 拥有 internal client、tool names/limits 和 SSE event translation；`agent-service/src/contracts.ts` 与 Web parser 共同校验 wire event。`exp` 的 Go adapter 只作为实验线实现，不是 main 的 event owner。
 
 生成合同只用于真实 wire 边界。SQLAlchemy models、Python application dataclasses 和 provider 内部 DTO 不进入统一生成计划。
 
@@ -74,7 +74,7 @@ Redis/Dramatiq at-least-once message
 provider/storage effect + fenced persistence
 ```
 
-浏览器只通过 FastAPI public API；Go Agent 只通过 internal Agent contract。没有 frontend/Go 对数据库或 storage path 的直接依赖。
+浏览器只通过 FastAPI public API；Pi adapter 只通过 internal Agent contract。没有 frontend/adapter 对数据库或 storage path 的直接依赖。
 
 ## 4. 数据模型
 
@@ -323,11 +323,11 @@ Media-library Agent tools：
 - inspect explicit assets。
 - publish organization Draft revision。
 
-当前实现 owner 为 `application/media_library/drafts.py`、`application/media_library/draft_contracts.py`、`presentation/routes/global_agent_conversations.py` 和 `GlobalLibraryOrganizationDraftCard.tsx`。Draft 发布不修改图库；确认由 ProductFlow application transaction 锁定素材和目标文件夹，重新校验 asset revision、来源完整性、工作流引用保护和幂等请求后原子应用。Go Agent 使用 optional artifact 合同承载只读查询和可选 Draft，避免纯查询被错误地置为待确认。
+当前实现 owner 为 `application/media_library/drafts.py`、`application/media_library/draft_contracts.py`、`presentation/routes/global_agent_conversations.py` 和 `GlobalLibraryOrganizationDraftCard.tsx`。Draft 发布不修改图库；确认由 ProductFlow application transaction 锁定素材和目标文件夹，重新校验 asset revision、来源完整性、工作流引用保护和幂等请求后原子应用。main Pi adapter 使用 `propose_global_draft` artifact 合同承载只读查询和可选 Draft，避免纯查询被错误地置为待确认。
 
-没有直接 rename/move/tag/archive/collect side-effect tool。ProductFlow internal API 返回 scope-specific contract；Go manager 依据 contract 注册对应 tools。Tool names/limits/version 由 ProductFlow contract 与 Go safety ceiling 分开命名并测试。
+没有直接 rename/move/tag/archive/collect side-effect tool。ProductFlow internal API 返回 scope-specific contract；Pi adapter 依据 contract 注册对应 tools。Tool names/limits/version 由 ProductFlow contract 与 TypeScript safety ceiling 分开命名并测试。
 
-确认 use case 属于 PostgreSQL application；Go journal 不保存第二份 Draft authority。
+确认 use case 属于 PostgreSQL application；Pi session/event store 不保存第二份 Draft authority。
 
 ## 12. Frontend
 
@@ -355,8 +355,8 @@ pages/media-library/
 
 ## 13. Contract generation policy
 
-- FastAPI OpenAPI/Pydantic 是 ProductFlow public/internal HTTP schema owner；为稳定跨 Go/TS DTO 生成或检查 artifact。
-- Go Agent/harness 是 SSE event schema owner；导出 discriminated event schema/fixtures给 TypeScript parser。
+- FastAPI OpenAPI/Pydantic 是 ProductFlow public/internal HTTP schema owner；为稳定跨 TypeScript/exp DTO 生成或检查 artifact。
+- main Pi adapter 是 SSE event translation owner；导出 discriminated event schema/fixtures 给 Web parser，exp 通过共享 fixtures 比较行为。
 - unknown additive event 使用显式 policy：安全忽略并保留 cursor，不使用 unchecked cast。
 - provider request/result、SQLAlchemy model、Python-only provenance dataclass 不生成跨语言 contract。
 - CI regeneration 必须 deterministic，dirty diff 失败。

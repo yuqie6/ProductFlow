@@ -86,8 +86,8 @@ wait_for_agent_health() {
   echo "[release] 等待 agent service /healthz"
   for ((attempt = 1; attempt <= attempts; attempt++)); do
     local body=""
-    if body="$(docker compose exec -T productflow-agent-service wget -qO- http://127.0.0.1:29284/healthz 2>/dev/null)" &&
-      grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"' <<<"$body"; then
+    if body="$(docker compose exec -T productflow-agent-service node -e 'fetch("http://127.0.0.1:29284/healthz").then(async response => { const body = await response.text(); if (!response.ok) process.exit(1); process.stdout.write(body); }).catch(() => process.exit(1))' 2>/dev/null)" &&
+      grep -Eq '"runtime"[[:space:]]*:[[:space:]]*"productflow-pi"' <<<"$body"; then
       echo "[release] agent service /healthz OK: $body"
       return 0
     fi

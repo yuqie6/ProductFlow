@@ -21,9 +21,9 @@ The current repository targets a personal live demo and self-hosted deployments.
 ## Authorities
 
 - PostgreSQL is authoritative for products, facts, assets, Draft revisions, workflows, recipes, provider configuration, and business job state.
-- The Go Agent service journal is authoritative for durable Agent Turns, transcript, questions, tool calls/results, token deltas, and event cursors.
+- ProductFlow PostgreSQL remains authoritative for business state. The main Node.js/Pi adapter owns its session and event files for interactive Agent Turn execution; those files are not a durable business authority and do not prove background recovery, effect reconciliation, or multi-instance claims.
 - ProductFlow stores a web projection of Agent state but does not reconstruct a second model transcript.
-- `AgentTask` stores one business goal and one task-specific harness run under an `AgentSession`; `AgentTurnProjection` may point to a task and a bounded `AgentPageContextSnapshot`. A route change updates ambient context for later turns and does not rewrite the task goal.
+- `AgentTask` stores one business goal and one task-specific run under an `AgentSession` (the persisted compatibility column is still named `harness_run_id`); `AgentTurnProjection` may point to a task and a bounded `AgentPageContextSnapshot`. A route change updates ambient context for later turns and does not rewrite the task goal.
 - `MediaObject` identifies immutable media bytes. `MediaLibraryAsset` identifies one global library asset and its provenance. `ProductImageAsset` identifies one image inside a product namespace. `WorkflowMediaLibraryAsset` records a workflow usage association without owning another media copy.
 - Workflow nodes and covers reference `ProductImageAsset` ids, never storage paths or parallel-array positions.
 - Historical V1 source rows and immutable archives are migration evidence. They are not an online editor or executor.
@@ -58,7 +58,7 @@ The current repository targets a personal live demo and self-hosted deployments.
 - 工作流生成后仍然是用户可以直接编辑和执行的生产工具。Agent 可以辅助配置、检查、批量安排和解释执行结果，但不能取代工作流画布、运行按钮、节点重试和人工选择。
 - `WorkflowRun` 是独立的业务执行记录。用户从工作流页面点击执行可以直接创建它，不需要先创建 Agent Session 或 Agent Task；Agent 代为请求执行时也必须复用同一套工作流业务约束。
 - Agent Session、Agent Task、WorkflowRun 和图片生成会话分别表达长期交流、业务目标、工作流执行和连续生图，不能通过重命名一个现有对象来合并这些职责。
-- Agent Session 和 Agent Task 保存有界 operational summary 供 Dock、列表和恢复索引使用；完整 Agent transcript、tool effect 和 compaction 事实仍由 agent-harness durable journal 保存。Task 可以在首轮 Turn 或等待回答/确认时暂停，运行中的模型 Turn 和 WorkflowRun 继续通过现有取消链处理。
+- Agent Session 和 Agent Task 保存有界 operational summary 供 Dock、列表和恢复索引使用；main 的 Pi session/event files 保存交互式 transcript、tool events 和 compaction 所需 runtime state。后台 durable Task、tool effect reconciliation 和多实例 claim 仍属于 `exp` 实验方向。Task 可以在首轮 Turn 或等待回答/确认时暂停，运行中的模型 Turn 和 WorkflowRun 继续通过现有取消链处理。
 - 收藏画廊条目的旧生命周期跟随连续生图会话资产；删除来源会话的目标行为是移除旧收藏。SQLite 默认关闭外键时不能仅依赖数据库级联，应用删除路径必须显式处理这类旧条目。
 
 ## Legacy Cutover State

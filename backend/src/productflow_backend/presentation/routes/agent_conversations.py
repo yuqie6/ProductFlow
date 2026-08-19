@@ -246,6 +246,12 @@ def cancel_agent_turn_endpoint(
     projection_id: str,
     session: Session = Depends(get_session),
 ) -> AgentTurnResponse:
+    projection = get_agent_turn_or_raise(
+        session,
+        product_id=product_id,
+        conversation_id=conversation_id,
+        projection_id=projection_id,
+    )
     return serialize_agent_turn(
         control_agent_turn(
             session,
@@ -253,7 +259,7 @@ def cancel_agent_turn_endpoint(
             conversation_id=conversation_id,
             projection_id=projection_id,
             command="cancel",
-            gateway=_agent_gateway_or_raise(),
+            gateway=None if projection.harness_turn_id is None else _agent_gateway_or_raise(),
             enqueue_sync=enqueue_agent_turn_sync,
         )
     )
@@ -266,6 +272,12 @@ def resume_agent_turn_endpoint(
     projection_id: str,
     session: Session = Depends(get_session),
 ) -> AgentTurnResponse:
+    projection = get_agent_turn_or_raise(
+        session,
+        product_id=product_id,
+        conversation_id=conversation_id,
+        projection_id=projection_id,
+    )
     return serialize_agent_turn(
         control_agent_turn(
             session,
@@ -273,7 +285,7 @@ def resume_agent_turn_endpoint(
             conversation_id=conversation_id,
             projection_id=projection_id,
             command="resume",
-            gateway=_agent_gateway_or_raise(),
+            gateway=None if projection.harness_turn_id is None else _agent_gateway_or_raise(),
             enqueue_sync=enqueue_agent_turn_sync,
         )
     )

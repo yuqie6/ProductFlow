@@ -199,7 +199,7 @@ ProductFlow 现在有一个跟连续生图会话绑定的旧收藏画廊。用�
 ### ML-007 Agent 确认式整理
 
 - 素材库 Agent 使用独立 `media_library` scope，不伪造 Product 或 WorkflowDraft。
-- Go journal 继续拥有 durable Turn、transcript、tool events 和 cursor；PostgreSQL 拥有 Draft 和确认副作用。
+- main Pi adapter 的 session/event store 保存交互式 Turn、transcript、tool events 和 cursor；PostgreSQL 拥有 Draft 和确认副作用，`exp` 负责 durable runtime 研究。
 - v1 operation 仅限 `rename | move | set_tags | archive | restore`。
 - 一个 revision 最多涉及 100 个唯一资产、256 个 operation、256 KiB canonical JSON。
 - Agent 只能发布 Draft，不能直接修改业务状态、直接同步工作流或物理删除媒体。

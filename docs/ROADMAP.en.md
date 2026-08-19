@@ -4,13 +4,13 @@ This document records only directions that remain unimplemented or lack real val
 
 ## Near-Term Priorities
 
-### 0. Migrate the Agent Runtime to Pi
+### 0. Migrate the Agent Runtime to Pi (main switched; acceptance evidence pending)
 
-- `main` currently still uses the Go Agent service and the `agent-harness` snapshot. This remains the current-state description until migration is delivered.
-- The target `main` runtime is a Pi SDK-based ProductFlow Agent adapter. ProductFlow keeps ownership of the FastAPI, Draft, confirmation, WorkflowRun, media, and Web projection contracts.
-- The current self-built harness moves to the `exp` branch for durable Turns, background Tasks, crash recovery, effect reconciliation, and scheduling research. It is not an implicit runtime fallback on `main`.
+- `main` now uses the Node.js 22 + Pi SDK ProductFlow Agent adapter. ProductFlow keeps ownership of the FastAPI, Draft, confirmation, WorkflowRun, media, and Web projection contracts.
+- The old Go Agent service and `agent-harness` are retained on `exp` for durable Turns, background Tasks, crash recovery, effect reconciliation, and scheduling research. They are not an implicit runtime fallback on `main`.
 - Both lines share Tool, Context, Draft, event, and quality fixtures while keeping runtime journals, session storage, and schedulers separate.
 - Implementation rules and exit criteria live in `docs/adr/0007-pi-agent-runtime-boundary.md` and `docs/specs/pi-agent-runtime-integration.md`.
+- Remaining validation: real provider, PostgreSQL/Redis, browser, SSE reconnect, and background durable/reconciliation gates.
 - Phases 0 through 4 focus on interactive Turns, bounded reads, Questions, Drafts, and pending WorkflowRun requests. Background Task and durable recovery support expands only after its dedicated gate passes.
 
 ### 1. Agent Creation Quality

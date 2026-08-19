@@ -1,16 +1,19 @@
-FROM golang:1.26.5-alpine AS build
+FROM node:22.20.0-alpine AS build
 
 WORKDIR /src/agent-service
 
-COPY agent-service/go.mod agent-service/go.sum ./
-COPY agent-service/third_party/agent-harness ./third_party/agent-harness
-RUN go mod download
+RUN corepack enable
+COPY agent-service/package.json agent-service/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
-COPY agent-service/cmd ./cmd
-COPY agent-service/internal ./internal
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/productflow-agent-service ./cmd/productflow-agent-service
+COPY agent-service/tsconfig.json ./
+COPY agent-service/src ./src
+COPY agent-service/.pi ./.pi
+RUN pnpm run build
 
-FROM alpine:3.22 AS runtime
+FROM node:22.20.0-alpine AS runtime
+
+WORKDIR /app/agent-service
 
 RUN apk add --no-cache ca-certificates \
     && addgroup -S -g 10001 productflow \
@@ -18,17 +21,21 @@ RUN apk add --no-cache ca-certificates \
     && mkdir -p /data \
     && chown productflow:productflow /data
 
-COPY --from=build /out/productflow-agent-service /usr/local/bin/productflow-agent-service
+RUN corepack enable
+COPY --from=build /src/agent-service/package.json /src/agent-service/pnpm-lock.yaml ./
+RUN pnpm install --prod --frozen-lockfile
+COPY --from=build /src/agent-service/dist ./dist
+COPY --from=build /src/agent-service/.pi ./.pi
 
 USER productflow
 
-ENV AGENT_LISTEN_ADDRESS=:29284 \
+ENV AGENT_LISTEN_ADDRESS=0.0.0.0:29284 \
     AGENT_DATA_ROOT=/data
 
 EXPOSE 29284
 VOLUME ["/data"]
 
 HEALTHCHECK --interval=10s --timeout=5s --retries=12 --start-period=10s \
-    CMD wget -qO- http://127.0.0.1:29284/healthz | grep -q '"status":"ok"'
+    CMD node -e "fetch('http://127.0.0.1:29284/healthz').then(async r => { const b = await r.json(); if (!r.ok || b.runtime !== 'productflow-pi') process.exit(1) }).catch(() => process.exit(1))"
 
-ENTRYPOINT ["/usr/local/bin/productflow-agent-service"]
+ENTRYPOINT ["node", "dist/main.js"]

@@ -63,7 +63,7 @@ Current ownership:
 
 - Use `domain/workflow_rules.py` instead of local DAG algorithms. Current workflow and node schema is 2; current node types come from `domain/enums.py`.
 - Draft confirmation targets an explicit revision. Materialization validates the complete artifact and commits graph plus reveal events atomically.
-- Agent durable execution and transcript live in the Go service; ProductFlow owns business objects and a projection. Turn/tool idempotency requires both key and request hash; ambiguous mutations reconcile and remain `unknown` when unprovable.
+- The main Agent runtime and session/event transcript live in the Node.js Pi adapter; ProductFlow owns business objects and the Web projection. Main does not promise background durable execution, effect reconciliation, or multi-instance claims. Turn/tool idempotency requires both key and request hash; ambiguous mutations reconcile and remain `unknown` when unprovable.
 - Agent asset reads are bounded metadata followed by explicit image inspection. Never send a full library, data URLs, or media bytes in text history.
 - `MediaObject` owns immutable byte metadata; `ProductImageAsset` owns product-scoped identity. Folder deletion changes organization only. Reference rebinding uses one explicit asset id and preserves historical lineage.
 - Generation intent, provider-effective values, measured output, and delivery rendition are distinct contracts. Candidate quantity is business input, not an advanced provider field.

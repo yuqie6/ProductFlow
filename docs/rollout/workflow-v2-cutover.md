@@ -7,7 +7,7 @@ Last reviewed against `main` on 2026-08-16.
 - Canonical MediaObject/ProductImageAsset model and product library.
 - WorkflowDraft revisions, confirmation, atomic schema-v2 materialization, and reveal events.
 - Versioned product facts, visual systems, prompt artifacts, image nodes, workflow runs, folders, recipes, and delivery renditions.
-- Go Agent service integration, durable Turns, bounded ProductFlow tools, questions, replay, and artifact synchronization.
+- ProductFlow Agent integration, bounded ProductFlow tools, questions, SSE replay, and artifact synchronization. Main now runs the Node.js/Pi adapter; the former Go durable implementation is retained on `exp`.
 - `/products/new` Agent-first creation and the unified `/products/:productId` workbench.
 - Immutable V1 workflow/template/Canvas Agent archives, paged export/backfill, read-only history UI, and Agent rebuild seed.
 - V1 online editor, executor, mutation routes, built-in template catalog, and read-time default-DAG creation removed.
@@ -19,7 +19,7 @@ Current local gate on 2026-08-16:
 
 - Backend: 384 passed, 8 skipped.
 - Frontend: 47 test files and 217 tests passed; ESLint, TypeScript, and Vite build passed.
-- Agent service: `go test -count=1 ./...` passed.
+- Agent service baseline: the former Go service passed `go test -count=1 ./...` before the main runtime switch; current main validation uses `pnpm --dir agent-service test` and `pnpm --dir agent-service build`.
 - Ruff: passed.
 
 These results validate the checkout. They do not substitute for deployment-specific production data and browser evidence.

@@ -153,6 +153,8 @@ describe("agentEventReducer", () => {
     expect(() =>
       parseAgentTurnEvent(JSON.stringify(event(1, "text.delta", { delta: "x" })), "text.delta", scope),
     ).toThrow("text.delta payload");
+    expect(parseAgentTurnEvent(JSON.stringify(event(1, "turn.started")), "turn.started", { run_id: null, turn_id: "harness-turn-1" }).run_id)
+      .toBe("run-1");
   });
 
   it("strictly validates bounded tool.step payloads", () => {

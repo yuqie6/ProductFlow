@@ -10,7 +10,7 @@
 | `USER_GUIDE.md` | 用户可以执行的页面操作和故障提示 | 内部事务、模型表、未来计划 |
 | `ROADMAP.md` | 尚未实现或尚未验证的产品与工程方向 | 已交付能力清单、当前架构复述 |
 | `specs/` | scoped PRD 与实现设计；状态必须标注 Draft/Approved，Approved 必须给出批准 issue、decision 或任务 evidence | 冒充当前运行事实、部署证据、会频繁变化的任务状态 |
-| `specs/pi-agent-runtime-integration.md` | Pi runtime、Skill、动态 Context、ProductFlow Tool 的目标设计、实施阶段和验收标准 | 当前 Go Agent service 的实现事实、业务 authority 的重新定义 |
+| `specs/pi-agent-runtime-integration.md` | Pi runtime、Skill、动态 Context、ProductFlow Tool 的实现规则、当前交付边界和验收标准 | 取代 FastAPI/Web 业务 authority，或代替 rollout 部署证据 |
 | `adr/` | 已接受决策的背景、选择、后果 | 会频繁随重构变化的文件列表 |
 | `rollout/` | 某次迁移或发布的已完成项、缺失证据和停止条件 | 长期工程规则 |
 | `operations/` | 操作者命令、前置条件、回滚和证据处理 | 产品愿景、普通开发流程 |

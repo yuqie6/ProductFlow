@@ -11,12 +11,12 @@ Agent 需要通过多轮对话读取图片、补齐商品事实并提出工作�
 ## 决策
 
 - ProductFlow PostgreSQL 持有商品、事实、资产、WorkflowDraft、最终 DAG 和业务任务状态。
-- Go Agent service journal 持有 durable Turn、transcript、Question、工具步骤、token delta 和事件游标。
+- main 的 Node.js/Pi adapter session/event store 持有交互式 Turn transcript、Question、工具步骤和事件游标；后台 durable Turn、效果对账和多实例恢复属于 `exp` 实验线，不能由这些文件自动推出。
 - Agent 只产出版本化的结构化 WorkflowDraft artifact。
 - 用户确认针对一个明确的 Draft revision。
 - ProductFlow 在一个事务内校验并物化完整 DAG，同时写入 reveal events。
 - reveal events 只决定展示顺序，不驱动业务对象逐个落库。
-- Agent 业务工具通过有界、作用域明确、可幂等对账的 ProductFlow internal API 执行。
+- Agent 业务工具通过有界、作用域明确、可幂等对账的 ProductFlow internal API 执行；Pi、Skill 和 adapter 不直接访问 PostgreSQL、Redis、storage 或 provider。
 
 ## 后果
 

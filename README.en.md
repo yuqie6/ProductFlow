@@ -48,7 +48,7 @@ The public instance is a personal live demo with one administrator and one merch
 - A profile stores Base URL, API key, capabilities, and default models. Secrets are never echoed back.
 - Image bindings support OpenAI Responses, OpenAI Images-compatible APIs, and Google Gemini image capabilities.
 - Advanced image fields include quality, format, compression, background, moderation, action, input fidelity, and partial images. Business selections own generation count.
-- Agent Turns run in a separate Go service backed by the vendored `agent-harness` durable runtime. SSE supports reconnect and replay.
+- Agent Turns run in a separate Node.js 22 service backed by the Pi SDK ProductFlow adapter. SSE supports reconnect and replay; Pi operating-system tools are disabled.
 - Dramatiq and Redis execute image and delivery jobs. PostgreSQL stores business state, and storage holds media bytes.
 
 ## Current Scope
@@ -84,9 +84,9 @@ Repository documentation:
 ## Technology
 
 - Backend: Python 3.12+, FastAPI, SQLAlchemy, Alembic, Dramatiq, Redis, PostgreSQL, and Pillow.
-- Agent service: Go, vendored `agent-harness`, SQLite durable journal, and Responses API.
+- Agent service: Node.js 22, Pi SDK, ProductFlow Tool adapter, JSONL session files, and JSON event files.
 - Frontend: React 19, Vite, TypeScript, React Router, TanStack Query, XYFlow, and Tailwind CSS 4.
-- Model SDKs: OpenAI Python/Go ecosystem and Google GenAI.
+- Model SDKs: OpenAI Python/TypeScript provider adapters and Google GenAI.
 
 ## Repository Layout
 
@@ -97,9 +97,9 @@ ProductFlow/
     src/productflow_backend/
     tests/
   agent-service/
-    cmd/productflow-agent-service/
-    internal/
-    third_party/agent-harness/
+    src/
+    .pi/skills/
+    package.json
   web/
     src/
     public/
@@ -162,8 +162,7 @@ Set `STORAGE_HOST_PATH=/absolute/host/path` to use a host directory. When omitte
 ### 1. Prerequisites
 
 - Python 3.12+ and `uv`
-- Go 1.26.5+
-- Node.js 20+ and `pnpm`
+- Node.js 22.19+ and `pnpm`
 - Docker / Docker Compose
 - `just` (recommended)
 
@@ -182,19 +181,32 @@ Keep the PostgreSQL password consistent between `.env` and `.env.dev`. Use separ
 ```bash
 docker compose up -d productflow-postgres productflow-redis
 just backend-install
+just agent-service-install
 just web-install
 just backend-migrate
 ```
 
-### 4. Start Four Development Processes
+### 4. Start the Local Development Environment
 
-Run each command in a separate terminal:
+After installation, one command starts PostgreSQL, Redis, migrations, FastAPI, the worker, the Pi Agent, and Web:
+
+```bash
+just dev
+```
+
+You can also run the four processes in separate terminals when you need separate logs:
 
 ```bash
 just backend-run
 just backend-worker
 just agent-service-run
 just web-dev
+```
+
+`backend-run`, `backend-worker`, `agent-service-run`, and `web-dev` all load `.env.dev`. The PostgreSQL and Redis containers started by `just dev` remain running; stop them with:
+
+```bash
+docker compose down
 ```
 
 Default development endpoints:
@@ -220,8 +232,9 @@ Live PostgreSQL/Redis recovery and provider checks are opt-in:
 just backend-test-live-recovery
 just backend-test-live-delivery-renditions
 just backend-test-live-agent-product-intake
-just agent-service-test-live
 ```
+
+Live Pi provider/dependency validation requires an explicitly configured ProductFlow, provider, and browser environment; it is not represented as an ordinary unit-test command.
 
 ## Release Script
 

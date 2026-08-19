@@ -12,14 +12,14 @@ backend-run-prod:
 backend-worker:
     bash scripts/with_dev_env.sh uv run --directory backend dramatiq --processes 2 --threads 4 productflow_backend.workers
 
+agent-service-install:
+    pnpm --dir agent-service install --frozen-lockfile
+
 agent-service-run:
-    bash scripts/with_dev_env.sh bash -lc 'cd agent-service && go run ./cmd/productflow-agent-service'
+    bash scripts/with_dev_env.sh bash -lc 'pnpm --dir agent-service dev'
 
 agent-service-test:
-    bash scripts/with_dev_env.sh bash -lc 'cd agent-service && go test ./...'
-
-agent-service-test-live:
-    PRODUCTFLOW_RUN_LIVE_AGENT=1 bash scripts/with_dev_env.sh bash -lc 'cd agent-service && go test -run TestLiveProviderTwoTurnTranscript -count=1 ./internal/app'
+    bash scripts/with_dev_env.sh bash -lc 'pnpm --dir agent-service test'
 
 backend-migrate:
     bash scripts/with_dev_env.sh uv run --directory backend alembic upgrade head
@@ -70,6 +70,15 @@ web-install:
 
 web-dev:
     bash scripts/with_dev_env.sh bash -lc 'web_port="${WEB_PORT:-29283}"; api_target="${VITE_DEV_PROXY_TARGET:-http://127.0.0.1:${APP_PORT:-29282}}"; VITE_API_BASE_URL= VITE_DEV_PROXY_TARGET="$api_target" pnpm --dir web dev -- --host 0.0.0.0 --port "$web_port" --strictPort'
+
+[parallel]
+[private]
+dev-services: backend-run backend-worker agent-service-run web-dev
+
+dev:
+    bash scripts/with_dev_env.sh docker compose up -d --wait productflow-postgres productflow-redis
+    bash scripts/with_dev_env.sh uv run --directory backend alembic upgrade head
+    just dev-services
 
 web-preview-prod:
     pnpm --dir web preview -- --host 0.0.0.0 --port ${WEB_PORT:-29281} --strictPort

@@ -1,23 +1,28 @@
 import { Bot, Loader2, Send, Square, User } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { ApiError } from "../../lib/api";
+import { ApiError, api } from "../../lib/api";
 import { formatDateTime } from "../../lib/format";
 import { useI18n } from "../../lib/preferences";
 import type {
   AgentPageContextSnapshotInput,
   AgentQuestionAnswer,
   AgentTaskStatus,
-  AgentToolStep,
 } from "../../lib/types";
+import {
+  selectAgentAssistantText,
+  selectAgentToolSteps,
+} from "./agentEventReducer";
 import { AgentQuestionPrompt } from "./AgentQuestionPrompt";
 import { AgentToolStepList } from "./AgentToolStepList";
 import { AgentTurnTail } from "./AgentTurnTail";
 import { AgentWorkflowRunRequestCard } from "./AgentWorkflowRunRequestCard";
 import { GlobalLibraryOrganizationDraftCard } from "./GlobalLibraryOrganizationDraftCard";
 import { GlobalWorkflowDraftCard } from "./GlobalWorkflowDraftCard";
+import { toolStepSignature } from "./toolStepSignature";
 import { useGlobalAgentConversation } from "./useGlobalAgentConversation";
+import { useAgentTurnEvents } from "./useAgentTurnEvents";
 
 interface GlobalAgentConversationPanelProps {
   conversationId: string | null;
@@ -51,11 +56,26 @@ export function GlobalAgentConversationPanel({
     pageContext,
     enabled: Boolean(conversationId),
   });
-  const activeQuestion = agent.activeTurn?.question ?? null;
+  const events = useAgentTurnEvents({
+    getEventsUrl: (turnId, after) => api.getGlobalAgentTurnEventsUrl(conversationId ?? "", turnId, after),
+    runId: null,
+    turn: agent.activeTurn,
+    enabled: Boolean(conversationId),
+    onTerminal: () => void agent.refreshLatestTurn(),
+  });
+  const activeQuestion =
+    events.state.turn_key === agent.activeTurn?.id && events.state.question
+      ? events.state.question
+      : agent.activeTurn?.question ?? null;
   const activeTurnId = agent.activeTurn?.id ?? null;
   const listRef = useRef<HTMLDivElement | null>(null);
-  const previousTurnCount = useRef(0);
+  const nearBottomRef = useRef(true);
   const confirmationKeyRef = useRef<{ draftId: string; version: number; key: string } | null>(null);
+  const latestLiveSignature = useMemo(() => {
+    const activeTurn = agent.turns.find((turn) => turn.id === activeTurnId);
+    if (!activeTurn) return "";
+    return `${selectAgentAssistantText(activeTurn, events.state)}\u0000${toolStepSignature(selectAgentToolSteps(activeTurn, events.state))}`;
+  }, [activeTurnId, agent.turns, events.state]);
 
   useEffect(() => {
     setComposerText("");
@@ -65,14 +85,11 @@ export function GlobalAgentConversationPanel({
   }, [conversationId, taskId]);
   useEffect(() => setAnsweredQuestionId(null), [activeQuestion?.id]);
   useEffect(() => {
-    if (agent.turns.length > previousTurnCount.current || agent.activeTurn) {
-      const element = listRef.current;
-      if (element) {
-        element.scrollTop = element.scrollHeight;
-      }
+    const element = listRef.current;
+    if (element && nearBottomRef.current) {
+      element.scrollTop = element.scrollHeight;
     }
-    previousTurnCount.current = agent.turns.length;
-  }, [agent.activeTurn, agent.turns.length]);
+  }, [agent.turns.length, latestLiveSignature]);
 
   const canSubmit = Boolean(conversationId && composerText.trim() && !agent.activeTurn);
   const submit = async () => {
@@ -119,7 +136,8 @@ export function GlobalAgentConversationPanel({
       agent.confirmWorkflowDraftReviewMutation.error ??
       agent.workflowRunRequestQuery.error ??
       agent.confirmWorkflowRunRequestMutation.error ??
-      agent.cancelWorkflowRunRequestMutation.error,
+      agent.cancelWorkflowRunRequestMutation.error ??
+      events.streamError,
     t("globalAgent.requestFailed"),
   );
   const questionAnswered = Boolean(
@@ -198,12 +216,21 @@ export function GlobalAgentConversationPanel({
 
       {error ? <p role="alert" className="shrink-0 border-b border-state-error/20 bg-state-error/10 px-4 py-2 text-xs leading-5 text-state-error">{error}</p> : null}
 
-      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-4">
+      <div
+        ref={listRef}
+        onScroll={(event) => {
+          const element = event.currentTarget;
+          nearBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 96;
+        }}
+        className="min-h-0 flex-1 overflow-y-auto px-3 py-4"
+      >
         <div className="space-y-5">
           {agent.turns.map((turn) => {
             const active = turn.id === activeTurnId;
             const waiting = active && turn.status !== "requires_input" && turn.status !== "awaiting_confirmation";
-            const steps: AgentToolStep[] = turn.tool_steps ?? [];
+            const eventState = events.state.turn_key === turn.id ? events.state : null;
+            const assistantText = selectAgentAssistantText(turn, eventState);
+            const steps = selectAgentToolSteps(turn, eventState);
             return (
               <div key={turn.id} className="space-y-3">
                 <div className="flex justify-end gap-2">
@@ -218,9 +245,9 @@ export function GlobalAgentConversationPanel({
                 <div className="flex gap-2">
                   <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-text-primary text-surface-raised"><Bot size={14} /></span>
                   <div className="min-w-0 flex-1">
-                    {turn.output_text || waiting ? (
+                    {assistantText || waiting ? (
                       <div className="border-l-2 border-border-l3 pl-3 text-sm leading-6">
-                        {turn.output_text ? <div className="whitespace-pre-wrap break-words">{turn.output_text}</div> : <div className="flex items-center gap-2 text-text-secondary"><Loader2 size={14} className="animate-spin motion-reduce:animate-none" />{t("agentWorkbench.waitingForAgent")}</div>}
+                        {assistantText ? <div className="whitespace-pre-wrap break-words">{assistantText}</div> : <div className="flex items-center gap-2 text-text-secondary"><Loader2 size={14} className="animate-spin motion-reduce:animate-none" />{t("agentWorkbench.waitingForAgent")}</div>}
                       </div>
                     ) : null}
                     <AgentToolStepList steps={steps} live={active} />

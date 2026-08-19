@@ -7,13 +7,13 @@ ProductFlow 是单管理员、单商家工作区，由六个运行单元组成�
 1. React/Vite Web。
 2. FastAPI 业务 API。
 3. Dramatiq worker。
-4. Go workflow Agent service。
+4. Node.js 22 + Pi SDK ProductFlow Agent service。
 5. PostgreSQL。
 6. Redis 与媒体 storage。
 
 浏览器只访问 Web 和 FastAPI。Agent service 使用独立 bearer token 调用 FastAPI internal API；FastAPI 通过 agent-service internal HTTP/SSE 控制 Turn。API 和 worker 共享 PostgreSQL、Redis 和 storage。
 
-本文只描述当前实现。模块所有权来自当前源码树，行为证据来自对应测试；产品合同见 `PRD.md`，长期理由见 `adr/`，未完成部署证据见 `rollout/`。Pi runtime 迁移目标和实施准则见 `adr/0007-pi-agent-runtime-boundary.md` 与 `specs/pi-agent-runtime-integration.md`，在迁移完成前不覆盖本文的当前实现事实。
+本文只描述当前实现。模块所有权来自当前源码树，行为证据来自对应测试；产品合同见 `PRD.md`，长期理由见 `adr/`，未完成部署证据见 `rollout/`。Pi runtime 的边界和实施准则见 `adr/0007-pi-agent-runtime-boundary.md` 与 `specs/pi-agent-runtime-integration.md`。
 
 ## 2. 后端分层
 
@@ -85,8 +85,8 @@ TanStack Query 管理服务端状态；局部表单、选择和画布交互使�
 image types + quantities + 1..6 uploads
   -> Product + ProductImageAsset + WorkflowDraft + AgentSession + AgentConversation
   -> ProductFlow submits Agent Turn
-  -> agent-service / agent-harness durable execution
-  -> ProductFlow internal read and mutation tools
+  -> agent-service / Pi SDK ProductFlow adapter
+  -> ProductFlow internal read, proposal, and pending-request tools
   -> versioned WorkflowDraft artifact
   -> user confirmation
   -> schema-v2 workflow materialization
@@ -94,10 +94,10 @@ image types + quantities + 1..6 uploads
   -> product workbench
 ```
 
-ProductFlow 是业务数据权威。Agent service 保存 durable Turn transcript、tool call/result 和 token delta；PostgreSQL 保存 AgentSession、AgentTask、AgentConversation、AgentTurnProjection、PageContextSnapshot、问题状态和 WorkflowDraft revision。每个 AgentTask 有自己的 harness run 和 scope；未指定 Task 的旧工作区 Turn 继续使用 conversation run，页面快照可以独立挂在这类 Turn 上。当前 Task 已支持独立 Turn、取消、恢复同步、bounded Session/Task summary、cursor 分页，以及在首轮 Turn 或等待用户回答/确认时暂停和恢复；正在执行的模型 Turn 和 WorkflowRun 继续使用现有取消链。Agent service 通过共享 admission 限制所有 Service 实例的活动 Turn 数量，并让直接人工 Turn 优先于后台 Task；按业务范围配置的优先级调度和 Fresh Observation 仍在后续阶段。
-商品创建会在一个业务事务中创建 Product、WorkflowDraft、商品工作区 AgentConversation、商品 onboarding AgentTask 和 AgentSession；onboarding Task 初始为 `WAITING_USER`，等待人工提交参考图和图片需求，Intake 成功后在同一事务中收口为 `SUCCEEDED`。商品创建路径产生的 Session 会在 Session 列表或 Global Agent Dock 访问时懒加载 Global Conversation，独立的新建 Session API 则在创建时直接生成 Global Conversation。Global Conversation 与商品 Conversation 共用 Session 归属，但保留各自的 scope、harness run、Turn 和 Draft，不合并 transcript。onboarding Task 只记录创建商品这段业务目标，不取得工作流执行权；人工编辑、运行、取消和重试继续走工作流页面的原有链路。
+ProductFlow 是业务数据权威。Agent service 使用 Pi SDK 管理模型 loop、会话消息、工具选择、事件和上下文压缩，并在自己的数据根保存 JSONL session 文件和 JSON event 文件；PostgreSQL 保存 AgentSession、AgentTask、AgentConversation、AgentTurnProjection、PageContextSnapshot、问题状态和 WorkflowDraft revision。每个 AgentTask 仍有自己的 ProductFlow scope 和 run ID，未指定 Task 的工作区 Turn 继续使用 conversation run。当前主线承诺交互式 Turn、取消、问题回答、SSE 重连和当前进程内的会话恢复；Pi session persistence 不被当作后台 Task durable execution、崩溃后副作用对账或多实例调度的证明。
+商品创建会在一个业务事务中创建 Product、WorkflowDraft、商品工作区 AgentConversation、商品 onboarding AgentTask 和 AgentSession；onboarding Task 初始为 `WAITING_USER`，等待人工提交参考图和图片需求，Intake 成功后在同一事务中收口为 `SUCCEEDED`。商品创建路径产生的 Session 会在 Session 列表或 Global Agent Dock 访问时懒加载 Global Conversation，独立的新建 Session API 则在创建时直接生成 Global Conversation。Global Conversation 与商品 Conversation 共用 Session 归属，但保留各自的 scope、run ID、Turn 和 Draft，不合并 transcript。onboarding Task 只记录创建商品这段业务目标，不取得工作流执行权；人工编辑、运行、取消和重试继续走工作流页面的原有链路。
 
-Agent service 通过 `tool.step` SSE 事件和 Turn 状态 `tool_steps` 暴露有界工具步骤投影，字段固定为 `step_id`、`kind`、`summary`、`status`。当前 kinds 为 `inspect_image`、`inspect_context`、`read_history`、`organize_assets`、`propose_draft`；statuses 为 `running`、`succeeded`、`failed`、`unknown`。`question.required` 继续独立拥有 Question，不投影为 tool step；当前没有真实 `generate_image` Agent tool，不提前加入。`AgentTurnProjection.tool_steps_json` 保存这份 web projection：缺失 `tool_steps` 表示兼容旧服务并保留现有 snapshot，显式 `[]` 才清空。
+Agent service 通过 `tool.step` SSE 事件和 Turn 状态 `tool_steps` 暴露有界工具步骤投影，字段固定为 `step_id`、`kind`、`summary`、`status`。当前 kinds 为 `inspect_image`、`inspect_context`、`read_history`、`organize_assets`、`request_workflow_run`、`create_product`、`propose_draft`；statuses 为 `running`、`succeeded`、`failed`、`unknown`。`question.required` 继续独立拥有 Question，不投影为 tool step；当前没有真实 `generate_image` Agent tool，不提前加入。`AgentTurnProjection.tool_steps_json` 保存这份 web projection：缺失 `tool_steps` 表示兼容旧服务并保留现有 snapshot，显式 `[]` 才清空。
 
 Agent 读取商品资产时先获取有界元数据列表，再选择需要检查的图片。图片工具结果使用版本化多模态合同，不把整个图库或 data URL 拼进文本历史。
 
@@ -105,7 +105,7 @@ Agent 读取商品资产时先获取有界元数据列表，再选择需要检�
 
 全局图库 Agent 的重命名、移动、标签和归档/恢复通过 `LibraryOrganizationDraft` 完成：发布只写 Draft revision，用户确认后由 ProductFlow 重新观察事实、校验 revision 和引用保护，再在一个事务中应用；确认请求使用幂等键和 request hash。
 
-实现链路：`routes/agent_product_workspaces.py` 创建 workspace，`agent_product_workspaces.py` 在一个业务事务中保存 Product、资产、WorkflowDraft、Session 与 Conversation；`agent_control.py` 调用 `infrastructure/agent_service.py`；`agent_sync.py` 投影 durable Turn；商品 artifact 由 `workflow_drafts/service.py` 接收并校验，`workflow_drafts/materialization.py` 原子写入 V2 图和 reveal events；全局素材 artifact 由 `media_library/drafts.py` 接收、确认并物化。
+实现链路：`routes/agent_product_workspaces.py` 创建 workspace，`agent_product_workspaces.py` 在一个业务事务中保存 Product、资产、WorkflowDraft、Session 与 Conversation；`agent_control.py` 调用 `infrastructure/agent_service.py`；`agent-service/src/pi-runtime.ts` 通过 Pi session 和版本化 ProductFlow Tools 生成 wire state/events；`agent_sync.py` 投影 Turn；商品 artifact 由 `workflow_drafts/service.py` 接收并校验，`workflow_drafts/materialization.py` 原子写入 V2 图和 reveal events；全局素材 artifact 由 `media_library/drafts.py` 接收、确认并物化。
 
 ## 5. WorkflowDraft
 
@@ -179,8 +179,8 @@ FastAPI 解析 prompt/image 绑定；Agent service 通过受内部 token 保护�
 - Redis 承担 broker 和并发 admission。
 - PostgreSQL 保存 queued/running/terminal 状态、attempt 和错误摘要。
 - worker 启动恢复可安全重投的未完成任务。
-- Agent service 依赖 agent-harness durable journal；SSE event sequence 支持 Last-Event-ID 重放。
-- ProductFlow 的 Turn sync 只信任可对账的 harness 状态，未知结果保留 unknown 语义。
+- Agent service 依赖 Pi session 和文件事件日志；SSE event sequence 支持游标重连和重放。后台 durable Task、效果对账和多实例 claim 不属于当前 main runtime 的承诺。
+- ProductFlow 的 Turn sync 只信任符合 Agent service wire contract 的状态；无法证明的外部结果继续保留 `unknown` 语义。
 
 ## 10. 配置与安全
 
@@ -205,7 +205,7 @@ SQLAlchemy metadata 只描述当前在线模型与有边界的 archive/cutover �
 
 - Backend：Ruff、完整 pytest、SQLite migration 和 opt-in PostgreSQL/Redis live tests。
 - Frontend：Vitest、ESLint、TypeScript 和 Vite production build。
-- Agent service：`go test ./...` 和 opt-in live provider transcript test。
+- Agent service：`pnpm --dir agent-service test`、`pnpm --dir agent-service build`，以及真实 provider/依赖的显式 live gate。
 - 跨层变更补真实浏览器、真实数据库或真实 provider 验证，验证强度由变更风险决定。
 
 代码与文档同步规则：

@@ -48,7 +48,7 @@ ProductFlow 是面向单商家创作者的开源商品视觉工作台。用户�
 - 供应商档案保存 Base URL、API Key、能力和默认模型；secret 不回显。
 - 图片用途支持 OpenAI Responses、OpenAI Images 兼容接口和 Google Gemini 图片能力。
 - 高级图片参数包括质量、格式、压缩、背景、审核、action、input fidelity 和 partial images；生成数量由业务选择决定。
-- Agent Turn 使用独立 Go 服务和内置的 `agent-harness` durable runtime，SSE 支持断线续传。
+- Agent Turn 使用独立 Node.js 22 服务和 Pi SDK ProductFlow adapter，SSE 支持断线续传；Pi 不启用操作系统工具。
 - 图片生成和交付图任务由 Dramatiq + Redis 执行，PostgreSQL 保存业务状态，storage 保存媒体字节。
 
 ## 当前边界
@@ -84,9 +84,9 @@ ProductFlow 是面向单商家创作者的开源商品视觉工作台。用户�
 ## 技术栈
 
 - 后端：Python 3.12+、FastAPI、SQLAlchemy、Alembic、Dramatiq、Redis、PostgreSQL、Pillow。
-- Agent service：Go、同仓 `agent-harness`、SQLite durable journal、Responses API。
+- Agent service：Node.js 22、Pi SDK、ProductFlow Tool adapter、JSONL session 文件和 JSON event 文件。
 - 前端：React 19、Vite、TypeScript、React Router、TanStack Query、XYFlow、Tailwind CSS 4。
-- 模型 SDK：OpenAI Python/Go 生态和 Google GenAI。
+- 模型 SDK：OpenAI Python/TypeScript provider adapter 和 Google GenAI。
 
 ## 仓库结构
 
@@ -97,9 +97,9 @@ ProductFlow/
     src/productflow_backend/
     tests/
   agent-service/
-    cmd/productflow-agent-service/
-    internal/
-    third_party/agent-harness/
+    src/
+    .pi/skills/
+    package.json
   web/
     src/
     public/
@@ -162,8 +162,7 @@ docker compose down -v
 ### 1. 准备工具
 
 - Python 3.12+ 与 `uv`
-- Go 1.26.5+
-- Node.js 20+ 与 `pnpm`
+- Node.js 22.19+ 与 `pnpm`
 - Docker / Docker Compose
 - `just`（推荐）
 
@@ -182,19 +181,32 @@ cp web/.env.example web/.env
 ```bash
 docker compose up -d productflow-postgres productflow-redis
 just backend-install
+just agent-service-install
 just web-install
 just backend-migrate
 ```
 
-### 4. 启动四个开发进程
+### 4. 启动本地开发环境
 
-分别在四个终端运行：
+准备完成后可以用一个命令启动 PostgreSQL、Redis、数据库迁移、FastAPI、worker、Pi Agent 和 Web：
+
+```bash
+just dev
+```
+
+也可以分别在四个终端运行进程，便于单独查看日志：
 
 ```bash
 just backend-run
 just backend-worker
 just agent-service-run
 just web-dev
+```
+
+`backend-run`、`backend-worker`、`agent-service-run` 和 `web-dev` 都会读取 `.env.dev`。`just dev` 启动的 PostgreSQL 和 Redis 会继续保留在 Docker 中，停止它们执行：
+
+```bash
+docker compose down
 ```
 
 默认开发地址：
@@ -220,8 +232,9 @@ just agent-service-test
 just backend-test-live-recovery
 just backend-test-live-delivery-renditions
 just backend-test-live-agent-product-intake
-just agent-service-test-live
 ```
+
+Pi 的真实 provider/依赖验收需要显式配置真实 ProductFlow、provider 和浏览器环境；当前没有把它伪装成普通单元测试命令。
 
 ## 发布脚本
 

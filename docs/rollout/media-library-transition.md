@@ -33,7 +33,7 @@ Last reviewed against the current working tree on 2026-08-19.
 - `ProductImageAsset`：商品作用域图片身份与所有工作流引用。
 - PostgreSQL：业务状态、delivery intent、attempt token 和整理 Draft。
 - Redis/Dramatiq：at-least-once delivery，不是任务 authority。
-- Go Agent journal：durable Turn、transcript、tool event 和 cursor。
+- main Pi adapter session/event store：交互式 Turn、transcript、tool event 和 cursor；`exp` 保留 durable runtime 研究实现。
 
 发布状态：
 
@@ -204,7 +204,7 @@ cutover 条件：
 - 一个 revision 最多 100 个唯一素材、256 个 operation、256 KiB canonical JSON；重复/冲突 operation 在合同边界拒绝。
 - Agent contract 只允许 bounded list、selected inspect 和 publish-draft；没有直接 archive/move/tag/hard-delete 工具。
 - 用户确认明确 revision 后，单一事务按 asset id 稳定锁定全部 target、验证 hash/idempotency/expected revision 并原子应用。
-- Go/TypeScript 对新增 contract 使用 boundary-owned schema/fixtures；tool-step projection 只暴露有界摘要和业务引用。
+- TypeScript/Go experimental adapters 对新增 contract 使用 boundary-owned schema/fixtures；tool-step projection 只暴露有界摘要和业务引用。
 
 停止条件：Agent 可绕过 Draft 直接修改；素材库 scope 复用假的 Product；一次向模型发送全库元数据或 bytes。
 
@@ -226,7 +226,7 @@ cutover 条件：
 | A12 | frontend | query identity、分页、选择、archive、收录、错误恢复通过 |
 | A13 | Agent Draft | publish 无副作用、operation scope、100 assets/256 operations/256 KiB 上限、明确 revision 确认、冲突整批拒绝、replay 通过 |
 | A14 | residue | 旧 Gallery route/DTO/client/model 无在线引用；旧 table 仅迁移证据 |
-| A15 | full gates | Ruff、backend full、Go、web tests/lint/build、docs-check 全通过 |
+| A15 | full gates | Ruff、backend full、Pi service tests/build、web tests/lint/build、docs-check 全通过 |
 
 标准命令：
 

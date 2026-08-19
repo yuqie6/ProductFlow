@@ -11,6 +11,8 @@ class FakeEventSource implements AgentEventSourceLike {
   listeners = new Map<string, EventListener[]>();
   closed = false;
 
+  constructor(readonly url = "") {}
+
   addEventListener(type: string, listener: EventListener): void {
     this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
   }
@@ -38,38 +40,48 @@ function event(sequence: number, kind: string, payload: Record<string, unknown> 
 }
 
 describe("subscribeToAgentTurnEvents", () => {
-  it("keeps native reconnect active and closes immediately after a terminal event", () => {
-    const source = new FakeEventSource();
+  it("reconnects from the last contiguous cursor and closes after a terminal event", () => {
+    vi.useFakeTimers();
+    const sources: FakeEventSource[] = [];
     const states: AgentEventConnectionState[] = [];
     const events: AgentTurnEvent[] = [];
-    subscribeToAgentTurnEvents({
+    const close = subscribeToAgentTurnEvents({
       url: "/events?after=0",
       scope: { run_id: "run-1", turn_id: "turn-1" },
-      createEventSource: () => source,
+      createEventSource: (url) => {
+        const source = new FakeEventSource(url);
+        sources.push(source);
+        return source;
+      },
       onEvent: (value) => events.push(value),
       onConnectionState: (state) => states.push(state),
     });
 
-    source.emit("open");
-    source.emit("error");
-    expect(source.closed).toBe(false);
-    source.emit("text.delta", event(2, "text.delta", {
+    sources[0].emit("open");
+    sources[0].emit("text.delta", event(1, "text.delta", {
       delta: "hello",
       step_id: "step-1",
       attempt_id: "attempt-1",
     }));
-    source.emit("turn.succeeded", event(5, "turn.succeeded"));
+    sources[0].emit("error");
+    expect(sources[0].closed).toBe(true);
+    vi.advanceTimersByTime(250);
+    expect(sources[1].url).toBe("/events?after=1");
+    sources[1].emit("open");
+    sources[1].emit("turn.succeeded", event(2, "turn.succeeded"));
 
-    expect(events.map((item) => item.sequence)).toEqual([2, 5]);
-    expect(states).toEqual(["connecting", "open", "reconnecting", "closed"]);
-    expect(source.closed).toBe(true);
+    expect(events.map((item) => item.sequence)).toEqual([1, 2]);
+    expect(states).toEqual(["connecting", "open", "reconnecting", "connecting", "open", "closed"]);
+    expect(sources[1].closed).toBe(true);
+    close();
+    vi.useRealTimers();
   });
 
   it("parses and dispatches scoped tool.step events and reports invalid payloads", () => {
     const source = new FakeEventSource();
     const onEvent = vi.fn();
     const onProtocolError = vi.fn();
-    subscribeToAgentTurnEvents({
+    const close = subscribeToAgentTurnEvents({
       url: "/events?after=0",
       scope: { run_id: "run-1", turn_id: "turn-1" },
       createEventSource: () => source,
@@ -92,7 +104,7 @@ describe("subscribeToAgentTurnEvents", () => {
         status: "running",
       })), turn_id: "other-turn" }),
     );
-    source.emit("tool.step", event(3, "tool.step", {
+    source.emit("tool.step", event(2, "tool.step", {
       step_id: "step-3",
       kind: "inspect_image",
       summary: "invalid",
@@ -105,13 +117,60 @@ describe("subscribeToAgentTurnEvents", () => {
       payload: expect.objectContaining({ step_id: "step-1", status: "running" }),
     }));
     expect(onProtocolError).toHaveBeenCalledTimes(2);
+    close();
+  });
+
+  it("repairs a sequence gap by replaying from the last accepted cursor", () => {
+    vi.useFakeTimers();
+    const sources: FakeEventSource[] = [];
+    const events: AgentTurnEvent[] = [];
+    const protocolErrors: Error[] = [];
+    const close = subscribeToAgentTurnEvents({
+      url: "/events?after=0",
+      scope: { run_id: "run-1", turn_id: "turn-1" },
+      createEventSource: (url) => {
+        const source = new FakeEventSource(url);
+        sources.push(source);
+        return source;
+      },
+      onEvent: (value) => events.push(value),
+      onProtocolError: (error) => protocolErrors.push(error),
+    });
+
+    sources[0].emit("text.delta", event(1, "text.delta", {
+      delta: "a",
+      step_id: "step-1",
+      attempt_id: "attempt-1",
+    }));
+    sources[0].emit("text.delta", event(3, "text.delta", {
+      delta: "c",
+      step_id: "step-1",
+      attempt_id: "attempt-1",
+    }));
+    expect(protocolErrors).toHaveLength(1);
+    vi.advanceTimersByTime(250);
+    expect(sources[1].url).toBe("/events?after=1");
+    sources[1].emit("text.delta", event(2, "text.delta", {
+      delta: "b",
+      step_id: "step-1",
+      attempt_id: "attempt-1",
+    }));
+    sources[1].emit("text.delta", event(3, "text.delta", {
+      delta: "c",
+      step_id: "step-1",
+      attempt_id: "attempt-1",
+    }));
+
+    expect(events.map((item) => item.sequence)).toEqual([1, 2, 3]);
+    close();
+    vi.useRealTimers();
   });
 
   it("rejects a mismatched scope without exposing the event", () => {
     const source = new FakeEventSource();
     const onEvent = vi.fn();
     const onProtocolError = vi.fn();
-    subscribeToAgentTurnEvents({
+    const close = subscribeToAgentTurnEvents({
       url: "/events?after=0",
       scope: { run_id: "run-1", turn_id: "turn-1" },
       createEventSource: () => source,
@@ -126,12 +185,14 @@ describe("subscribeToAgentTurnEvents", () => {
 
     expect(onEvent).not.toHaveBeenCalled();
     expect(onProtocolError).toHaveBeenCalledOnce();
+    close();
   });
 
   it("reports structured stream errors separately from connection reconnects", () => {
+    vi.useFakeTimers();
     const source = new FakeEventSource();
     const onStreamError = vi.fn();
-    subscribeToAgentTurnEvents({
+    const close = subscribeToAgentTurnEvents({
       url: "/events?after=0",
       scope: { run_id: "run-1", turn_id: "turn-1" },
       createEventSource: () => source,
@@ -142,6 +203,8 @@ describe("subscribeToAgentTurnEvents", () => {
     source.emit("error", JSON.stringify({ error: { message: "upstream unavailable" } }));
 
     expect(onStreamError).toHaveBeenCalledWith("upstream unavailable");
-    expect(source.closed).toBe(false);
+    expect(source.closed).toBe(true);
+    close();
+    vi.useRealTimers();
   });
 });

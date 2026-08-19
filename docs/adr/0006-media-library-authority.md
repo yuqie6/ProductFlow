@@ -76,7 +76,7 @@ ADR 0002 已确定：`MediaObject` 拥有不可变媒体字节，`ProductImageAs
 ### 6. Agent 只发布整理 Draft
 
 - 素材库 Agent 使用独立业务 scope，不伪造 Product 或 WorkflowDraft。
-- Go Agent journal 继续拥有 durable Turn、transcript、tool event 和 cursor；PostgreSQL 拥有素材、整理 Draft revision 和确认副作用。
+- main 的 Node.js/Pi adapter session/event store 保存交互式 Turn、transcript、tool event 和 cursor；PostgreSQL 拥有素材、整理 Draft revision 和确认副作用。后台 durable runtime 只在 `exp` 线研究。
 - Agent 读取有界素材元数据，并只检查明确选择的图片。
 - Agent 发布 `LibraryOrganizationDraftRevision`，v1 operation 只包含 rename、move、set-tags、archive 和 restore，不直接批量修改业务状态，也不承担商品收录。
 - 一个 revision 最多涉及 100 个唯一素材、256 个 operation、256 KiB canonical JSON；重复或冲突 operation 被拒绝。
@@ -92,7 +92,7 @@ ADR 0002 已确定：`MediaObject` 拥有不可变媒体字节，`ProductImageAs
 
 ## 与现有 ADR 的关系
 
-- ADR 0001 不变：Go Agent journal 与 PostgreSQL 业务状态的 authority split 继续成立。
+- ADR 0001 的业务 authority split 不变：main Pi adapter 的运行时 session/event state 与 PostgreSQL 业务状态分离；不可证明的后台效果继续保留 unknown。
 - ADR 0002 不变：`MediaObject` 与 `ProductImageAsset` 的职责继续成立；`ProductImageAsset`/工作流侧稳定引用现在作为全局图库到工作流子图库的关联层使用。全局图片身份由本 ADR 的 `MediaLibraryAsset` 拥有，工作流不得绕过子图库关联直接持有未治理的全局引用。
 - ADR 0003 不变：在线工作流仍只有 schema-v2。
 - ADR 0004 不变：V1 archive/cutover 不作为素材库运行时 fallback。

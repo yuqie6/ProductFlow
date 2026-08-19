@@ -1,7 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 
-import { api } from "../../lib/api";
-import type { AgentConversation, AgentTurn, AgentTurnEvent } from "../../lib/types";
+import type { AgentTurn, AgentTurnEvent } from "../../lib/types";
 import {
   AGENT_TERMINAL_EVENT_KINDS,
   agentEventReducer,
@@ -38,16 +37,17 @@ export type AgentEventSourceFactory = (url: string) => AgentEventSourceLike;
 interface AgentEventSubscriptionInput {
   url: string;
   scope: AgentTurnEventScope;
+  after?: number;
   createEventSource?: AgentEventSourceFactory;
   onEvent: (event: AgentTurnEvent) => void;
   onConnectionState?: (state: AgentEventConnectionState) => void;
   onProtocolError?: (error: Error) => void;
-  onStreamError?: (message: string) => void;
+  onStreamError?: (message: string | null) => void;
 }
 
 interface UseAgentTurnEventsInput {
-  productId: string;
-  conversation: AgentConversation;
+  getEventsUrl: (turnId: string, after: number) => string;
+  runId: string | null;
   turn: AgentTurn | null;
   enabled?: boolean;
   onEvent?: (event: AgentTurnEvent) => void;
@@ -63,62 +63,97 @@ export interface UseAgentTurnEventsResult {
 
 export function subscribeToAgentTurnEvents(input: AgentEventSubscriptionInput): () => void {
   const createEventSource = input.createEventSource ?? createBrowserEventSource;
-  const source = createEventSource(input.url);
   let closed = false;
+  let source: AgentEventSourceLike | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  let reconnectAttempt = 0;
+  let cursor = input.after ?? 0;
+  let reconnectScheduled = false;
+
   const close = () => {
-    if (!closed) {
-      closed = true;
-      source.close();
-      input.onConnectionState?.("closed");
-    }
+    if (closed) return;
+    closed = true;
+    if (reconnectTimer !== undefined) clearTimeout(reconnectTimer);
+    reconnectTimer = undefined;
+    source?.close();
+    source = null;
+    input.onConnectionState?.("closed");
   };
 
-  input.onConnectionState?.("connecting");
-  source.addEventListener("open", () => {
-    if (!closed) {
+  const scheduleReconnect = () => {
+    if (closed || reconnectScheduled) return;
+    reconnectScheduled = true;
+    source?.close();
+    source = null;
+    input.onConnectionState?.("reconnecting");
+    const delay = Math.min(5_000, 250 * 2 ** Math.min(reconnectAttempt, 5));
+    reconnectAttempt += 1;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = undefined;
+      reconnectScheduled = false;
+      connect();
+    }, delay);
+  };
+
+  const connect = () => {
+    if (closed) return;
+    input.onConnectionState?.("connecting");
+    let nextSource: AgentEventSourceLike;
+    try {
+      nextSource = createEventSource(withEventCursor(input.url, cursor));
+    } catch (error) {
+      input.onStreamError?.(error instanceof Error ? error.message : "Agent SSE 连接失败");
+      scheduleReconnect();
+      return;
+    }
+    source = nextSource;
+    nextSource.addEventListener("open", () => {
+      if (closed || source !== nextSource) return;
+      reconnectAttempt = 0;
       input.onConnectionState?.("open");
-    }
-  });
-  source.addEventListener("error", (event) => {
-    if (closed) {
-      return;
-    }
-    const data = readEventData(event);
-    if (data === null) {
-      input.onConnectionState?.("reconnecting");
-      return;
-    }
-    input.onStreamError?.(readStreamError(data));
-  });
-
-  AGENT_EVENT_TYPES.forEach((eventType) => {
-    source.addEventListener(eventType, (event) => {
-      if (closed) {
-        return;
-      }
-      const data = readEventData(event);
-      if (data === null) {
-        input.onProtocolError?.(new Error(`Agent SSE ${eventType} 缺少 data`));
-        return;
-      }
-      try {
-        const parsed = parseAgentTurnEvent(data, eventType, input.scope);
-        input.onEvent(parsed);
-        if (AGENT_TERMINAL_EVENT_KINDS.some((kind) => kind === parsed.kind)) {
-          close();
-        }
-      } catch (error) {
-        input.onProtocolError?.(error instanceof Error ? error : new Error("Agent SSE 事件无效"));
-      }
+      input.onStreamError?.(null);
     });
-  });
+    nextSource.addEventListener("error", (event) => {
+      if (closed || source !== nextSource) return;
+      const data = readEventData(event);
+      if (data !== null) input.onStreamError?.(readStreamError(data));
+      scheduleReconnect();
+    });
+    AGENT_EVENT_TYPES.forEach((eventType) => {
+      nextSource.addEventListener(eventType, (event) => {
+        if (closed || source !== nextSource) return;
+        const data = readEventData(event);
+        if (data === null) {
+          input.onProtocolError?.(new Error(`Agent SSE ${eventType} 缺少 data`));
+          return;
+        }
+        try {
+          const parsed = parseAgentTurnEvent(data, eventType, input.scope);
+          if (parsed.sequence <= cursor) return;
+          if (parsed.sequence !== cursor + 1) {
+            input.onProtocolError?.(
+              new Error(`Agent SSE 事件序列断档：当前为 ${cursor}，收到 ${parsed.sequence}`),
+            );
+            scheduleReconnect();
+            return;
+          }
+          cursor = parsed.sequence;
+          input.onEvent(parsed);
+          if (AGENT_TERMINAL_EVENT_KINDS.some((kind) => kind === parsed.kind)) close();
+        } catch (error) {
+          input.onProtocolError?.(error instanceof Error ? error : new Error("Agent SSE 事件无效"));
+        }
+      });
+    });
+  };
 
+  connect();
   return close;
 }
 
 export function useAgentTurnEvents({
-  productId,
-  conversation,
+  getEventsUrl,
+  runId,
   turn,
   enabled = true,
   onEvent,
@@ -128,6 +163,7 @@ export function useAgentTurnEvents({
   const turnKey = turn?.id ?? "";
   const harnessTurnId = turn?.harness_turn_id ?? "";
   const shouldSubscribe = Boolean(enabled && turn && agentTurnNeedsEventStream(turn) && harnessTurnId);
+  const eventURL = getEventsUrl(turnKey, 0);
   const [state, dispatch] = useReducer(agentEventReducer, turnKey, createAgentTurnEventState);
   const [connectionState, setConnectionState] = useState<AgentEventConnectionState>("idle");
   const [streamError, setStreamError] = useState<string | null>(null);
@@ -146,11 +182,11 @@ export function useAgentTurnEvents({
       setConnectionState("idle");
       return;
     }
-    const url = api.getAgentTurnEventsUrl(productId, conversation.id, turnKey, 0);
+    const url = eventURL;
     try {
       return subscribeToAgentTurnEvents({
         url,
-        scope: { run_id: conversation.harness_run_id, turn_id: harnessTurnId },
+        scope: { run_id: runId, turn_id: harnessTurnId },
         onConnectionState: setConnectionState,
         onProtocolError: (error) => setStreamError(error.message),
         onStreamError: setStreamError,
@@ -169,7 +205,7 @@ export function useAgentTurnEvents({
       setConnectionState("closed");
       setStreamError(error instanceof Error ? error.message : "Agent SSE 连接失败");
     }
-  }, [conversation.harness_run_id, conversation.id, harnessTurnId, productId, shouldSubscribe, turnKey]);
+  }, [eventURL, harnessTurnId, runId, shouldSubscribe, turnKey]);
 
   return {
     state,
@@ -183,6 +219,13 @@ function createBrowserEventSource(url: string): AgentEventSourceLike {
     throw new Error("当前浏览器不支持 Agent 事件流");
   }
   return new EventSource(url, { withCredentials: true });
+}
+
+function withEventCursor(url: string, cursor: number): string {
+  const isAbsolute = /^[a-z][a-z\d+.-]*:\/\//i.test(url);
+  const parsed = new URL(url, "http://agent-events.local");
+  parsed.searchParams.set("after", String(cursor));
+  return isAbsolute ? parsed.toString() : `${parsed.pathname}${parsed.search}${parsed.hash}`;
 }
 
 function readEventData(event: Event): string | null {

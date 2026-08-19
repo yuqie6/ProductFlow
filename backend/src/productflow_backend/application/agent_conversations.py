@@ -530,6 +530,55 @@ def bind_harness_turn(
     return projection
 
 
+def cancel_unbound_agent_turn(
+    session: Session,
+    *,
+    product_id: str | None,
+    conversation_id: str,
+    projection_id: str,
+    commit: bool = True,
+) -> AgentTurnProjection:
+    """Cancel a reserved Turn before the Agent runtime has accepted it."""
+    projection = _get_agent_turn_for_update(
+        session,
+        product_id=product_id,
+        conversation_id=conversation_id,
+        projection_id=projection_id,
+    )
+    if projection.harness_turn_id is not None:
+        raise ConflictError("Agent Turn 已绑定 runtime Turn")
+    if projection.status in {
+        AgentTurnStatus.SUCCEEDED,
+        AgentTurnStatus.FAILED,
+        AgentTurnStatus.CANCELED,
+        AgentTurnStatus.UNKNOWN,
+    }:
+        return projection
+    if projection.status not in {AgentTurnStatus.QUEUED, AgentTurnStatus.CANCEL_REQUESTED}:
+        raise ConflictError("当前 Agent Turn 状态不允许在未绑定 runtime 时取消")
+
+    finished_at = now_utc()
+    projection.status = AgentTurnStatus.CANCELED
+    projection.resume_required = False
+    projection.error_text = None
+    projection.question_json = None
+    projection.sync_error = None
+    projection.finished_at = finished_at
+    projection.updated_at = finished_at
+    _apply_conversation_status(projection.conversation, AgentTurnStatus.CANCELED)
+    update_agent_task_from_turn(
+        session,
+        projection=projection,
+        status=AgentTurnStatus.CANCELED,
+        error_text=None,
+        finished_at=finished_at,
+    )
+    if commit:
+        session.commit()
+        session.refresh(projection)
+    return projection
+
+
 def record_agent_turn_start_error(
     session: Session,
     *,
@@ -890,6 +939,7 @@ __all__ = [
     "agent_conversation_query",
     "attach_agent_workflow_draft_artifact",
     "bind_harness_turn",
+    "cancel_unbound_agent_turn",
     "create_agent_conversation",
     "get_agent_conversation_by_id_or_raise",
     "get_agent_conversation_or_raise",

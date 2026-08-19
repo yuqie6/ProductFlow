@@ -4,13 +4,13 @@
 
 ## 近期优先级
 
-### 0. Agent 运行底座迁移到 Pi
+### 0. Agent 运行底座迁移到 Pi（main 已切换，验收证据待补）
 
-- 当前 `main` 仍使用 Go Agent service + `agent-harness` snapshot；这条描述在迁移完成前保持为当前事实。
-- 目标 `main` 使用基于 Pi SDK 的 ProductFlow Agent adapter。ProductFlow 的 FastAPI、Draft、确认、WorkflowRun、素材 owner 和 Web projection 合同继续由现有模块负责。
-- 现有自研 harness 迁到 `exp` 分支，继续验证 durable Turn、后台 Task、崩溃恢复、效果对账和调度；它不作为 `main` 的隐式运行时 fallback。
+- 当前 `main` 使用 Node.js 22 + Pi SDK ProductFlow Agent adapter。ProductFlow 的 FastAPI、Draft、确认、WorkflowRun、素材 owner 和 Web projection 合同继续由现有模块负责。
+- 旧 Go Agent service 与 `agent-harness` 已保留在 `exp` 分支，继续验证 durable Turn、后台 Task、崩溃恢复、效果对账和调度；它不作为 `main` 的隐式运行时 fallback。
 - 两条线共享 Tool/Context/Draft/事件合同和质量样本，隔离 runtime journal、session storage 和调度实现。
-- 实施顺序、Skill 编写规则、动态 Context、Tool 边界和完成定义见 `docs/adr/0007-pi-agent-runtime-boundary.md` 与 `docs/specs/pi-agent-runtime-integration.md`。
+- 实施规则、当前交付边界、Skill 编写规则、动态 Context、Tool 边界和完成定义见 `docs/adr/0007-pi-agent-runtime-boundary.md` 与 `docs/specs/pi-agent-runtime-integration.md`。
+- 当前未完成：真实 provider、真实 PostgreSQL/Redis、真实浏览器、SSE 断线恢复和后台 durable/reconciliation gate。
 - 阶段 0 至 4 以交互式 Turn、只读能力、Question、Draft 和待确认 WorkflowRun 为主；后台 Task 和 durable recovery 只有在单独 gate 通过后才扩大默认能力。
 
 ### 1. Agent 创建质量
@@ -45,9 +45,9 @@
 
 - 保留工作流画布的直接编辑、整图运行、单节点运行、取消、重试和运行记录入口；Agent 接入现有 `WorkflowRun`，不建立第二套执行器。
 - 已实现 `AgentSession` 元数据、商品对话关联、列表/创建/改名/归档 API，以及工作台内按 Session 选择商品工作区的基础切换；全局 Agent 可以在当前 Session 下创建商品 onboarding 工作区，并在同一事务中创建等待人工输入的 onboarding `AgentTask`。创建页继续负责参考图和图片需求，Intake 成功后收口该 Task。
-- 已实现独立 `AgentTask`、任务专属 harness run、本轮 `AgentTurn` 关联和页面上下文快照；Session 切换不取消后台任务，Task 目标不随路由变化。
-- Global Agent Dock 已提供 Session/Task 列表、搜索、新建、归档、打开工作区、取消任务、暂停/恢复、Task 摘要和全局素材整理 Draft 投影/确认；业务级统一调度器仍待实现。Agent service 已通过 `AGENT_MAX_CONCURRENT_TURNS` 为所有 Task/Conversation Turn 设置进程级模型调用上限，并让直接人工 Turn 优先于后台 Task，等待中的 Turn 保持 durable queued。
-- 按 Session 摘要、Task 目标、最近 Turn、当前页面上下文和执行前 Fresh Observation 分层组装上下文；完整 Agent journal 继续保留，模型工作上下文按 harness 规则压缩。
+- 已实现独立 `AgentTask`、任务专属 run（兼容字段仍叫 harness run）、本轮 `AgentTurn` 关联和页面上下文快照；Session 切换不取消已落库业务目标，Task 目标不随路由变化。
+- Global Agent Dock 已提供 Session/Task 列表、搜索、新建、归档、打开工作区、取消任务、暂停/恢复、Task 摘要和全局素材整理 Draft 投影/确认；业务级统一调度器仍待实现。Agent service 已通过 `AGENT_MAX_CONCURRENT_TURNS` 为当前进程的模型调用设置上限；跨进程 durable admission 仍未在 main 承诺。
+- 按 Session 摘要、Task 目标、最近 Turn、当前页面上下文和执行前 Fresh Observation 分层组装上下文；Pi 负责当前 session 的消息和压缩，业务事实仍由 ProductFlow backend 重新观察。
 - 已交付商品工作区和全局 Agent 的 WorkflowRun 监控工具；全局 Agent 可以针对明确商品、明确工作流和 revision 创建待确认执行请求，确认后复用现有 WorkflowRun 链路。统一的执行前 Fresh Observation harness 抽象、更多有副作用操作和更完整的受影响对象跳转仍待实现。全局素材到明确工作流的关联 Draft 已交付。
 
 Global Agent、Session、Task 和人工工作流的产品落地策略见 `specs/global-agent-human-workflow-design.md`；Pi runtime 迁移策略见 `specs/pi-agent-runtime-integration.md`。

@@ -2,13 +2,13 @@
 
 ## 状态
 
-Accepted direction; implementation pending
+Accepted; main interactive Pi adapter implemented, live rollout gates pending
 
-Decision owner：ProductFlow repository owner。本文记录主线运行底座的选择和边界；当前 checkout 仍运行 Go Agent service + `agent-harness`，迁移完成前不得把目标设计描述成当前实现。
+Decision owner：ProductFlow repository owner。本文记录主线运行底座的选择和边界；当前 `main` checkout 使用 Node.js 22 + Pi SDK ProductFlow adapter。真实 provider、PostgreSQL/Redis、浏览器和长时间恢复验收仍需单独完成，不能把未验证能力描述成已支持。
 
 ## 背景
 
-当前 `agent-service/` 使用 Go Agent service 和仓库内的 `agent-harness` snapshot 处理 Agent Turn、工具调用、问题、artifact、SSE 和 durable journal。ProductFlow 后端通过 internal HTTP/SSE 调用它，前端只消费 ProductFlow 的 Web projection。
+当前 `agent-service/` 使用 Node.js 22 + Pi SDK ProductFlow adapter 处理 Agent Turn、工具调用、问题、artifact、SSE、session 和事件文件。ProductFlow 后端通过 internal HTTP/SSE 调用它，前端只消费 ProductFlow 的 Web projection。
 
 现有底座已经覆盖了不少 durable、恢复、Task 和工具投影语义，但它仍然承担了通用 Agent loop、Skill 读取、模型适配、会话处理和 ProductFlow 业务适配。后续继续扩大自研底座，会让通用运行时和 ProductFlow 业务规则同时增长，验证成本也会继续叠加。
 
@@ -21,7 +21,7 @@ Pi 当前官方提供 SDK、RPC、Skills、Extensions、会话管理、事件流
 ### 1. 主线和实验线
 
 - `main` 的目标运行时是基于 Pi SDK 的 ProductFlow Agent adapter。`agent-service` 对 FastAPI 的 HTTP/SSE 外部合同继续作为稳定边界；实现语言或内部包可以替换。
-- `exp` 保留当前 Go Agent service、`third_party/agent-harness` snapshot 和相关 durable runtime，研究后台 Task、崩溃恢复、效果重放、调度和更深的 ProductFlow 定制能力。
+- `exp` 保留主线切换前的 Go Agent service、`third_party/agent-harness` snapshot 和相关 durable runtime，研究后台 Task、崩溃恢复、效果重放、调度和更深的 ProductFlow 定制能力。
 - 两条线共享 ProductFlow 的业务 API、Draft schema、Context schema、Tool schema、事件 projection 和验收样本。两条线不共享各自的 runtime journal、session storage 或调度实现。
 - 运行时切换不能作为 ProductFlow 后端的隐式 fallback。每个部署必须明确使用一个 runtime，并在 health/status 中报告 runtime 名称和版本。
 
@@ -40,7 +40,7 @@ Pi 当前官方提供 SDK、RPC、Skills、Extensions、会话管理、事件流
 
 ### 3. Pi 接入方式
 
-- 主路径使用 Pi SDK 直接嵌入 ProductFlow Agent service。SDK 的 `createAgentSession`、`ResourceLoader`、custom tools 和事件订阅负责运行时组合。
+- 主路径使用 Pi SDK 直接嵌入 ProductFlow Agent service。SDK 的 `createAgentSession`、隔离的 `DefaultResourceLoader`、custom tools 和事件订阅负责运行时组合；ProductFlow Skill metadata 由 adapter 管理，正文通过受控 loader 按需进入 Pi Turn。
 - Pi RPC 只作为进程隔离、故障域隔离或独立升级的备选方案。不能因为使用 RPC 就把 Pi 的原始 JSONL 直接暴露给浏览器。
 - ProductFlow runtime 默认关闭 Pi 的 `read`、`write`、`edit`、`bash`、`grep`、`find`、`ls` 等 filesystem/process 工具，只注册 ProductFlow 明确允许的 custom tools。
 - Skills 和 Extensions 由仓库版本管理并经过代码审查。用户输入不能动态写入 Skill 文件、Extension 文件或运行时配置。
@@ -52,11 +52,11 @@ Pi 当前官方提供 SDK、RPC、Skills、Extensions、会话管理、事件流
 - `confirm_workflow_draft`、`confirm_library_organization` 和实际 WorkflowRun materialization 由用户 UI/API 触发，不注册为可由 Agent 自主调用的确认工具。
 - 所有副作用通过 FastAPI application use case 完成。Pi Extension 和 Tool adapter 不直接访问 PostgreSQL、Redis、storage 或 provider。
 - 需要修改素材、工作流或工作流关联时，工具必须携带 scope、expected revision、canonical payload 和 idempotency key。后端重新读取当前事实，冲突时拒绝整次操作或要求重新生成 Draft。
-- Tool 名称、参数和返回值使用版本化 JSON Schema。Schema 变化必须同步 Go/TypeScript adapter、FastAPI client、Web projection 和 contract tests。
+- Tool 名称、参数和返回值使用版本化 JSON Schema。Schema 变化必须同步 TypeScript adapter、FastAPI client、Web projection、exp adapter 和 contract tests。
 
 ### 5. 当前功能与目标功能的关系
 
-当前 `docs/ARCHITECTURE.md` 描述的 Go Agent service + `agent-harness` 仍是 live truth。迁移到 Pi 后，ProductFlow 的业务权威边界、WorkflowDraft 确认流程、WorkflowRun 执行器、素材身份和 Session/Task 产品语义保持不变；变化集中在 Agent loop、Skill loading、runtime session 和事件翻译层。
+当前 `docs/ARCHITECTURE.md` 描述的 Node.js + Pi Agent service 是 main 的 live truth。ProductFlow 的业务权威边界、WorkflowDraft 确认流程、WorkflowRun 执行器、素材身份和 Session/Task 产品语义保持不变；变化集中在 Agent loop、Skill loading、runtime session 和事件翻译层。旧 Go runtime 只在 `exp` 分支保留。
 
 长期后台 Task、进程崩溃后的模型 Turn 恢复、工具效果重放和跨实例调度不因为 Pi 有 session persistence 就自动成立。主线要把这些能力单独列为验收项；在证明之前，Pi runtime 只承诺已经验证的交互式 Turn 和短任务能力。
 

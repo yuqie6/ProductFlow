@@ -324,6 +324,7 @@ export function useGlobalAgentConversation({
     activeTurn: latestTurn && !isAgentTurnTerminal(latestTurn.status) ? latestTurn : null,
     turnsQuery,
     latestProjectionQuery,
+    refreshLatestTurn: latestProjectionQuery.refetch,
     libraryOrganizationDraftQuery,
     workflowDraftRevisionId,
     workflowDraftReviewQuery,

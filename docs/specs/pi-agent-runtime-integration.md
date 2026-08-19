@@ -2,10 +2,10 @@
 
 ## 1. 状态
 
-- 文档状态：Approved direction; implementation pending
+- 文档状态：Main adapter implemented; live rollout gates pending
 - 批准依据：`docs/adr/0007-pi-agent-runtime-boundary.md`
-- 当前实现：Go Agent service + 仓库内 `agent-harness` snapshot，见 `docs/ARCHITECTURE.md`
-- 目标实现：Pi SDK + ProductFlow Agent adapter
+- 当前实现：Node.js 22 + `@earendil-works/pi-coding-agent` ProductFlow adapter，入口为 `agent-service/src/main.ts`
+- 实验实现：`exp` 分支保留 Go Agent service + `agent-harness` snapshot
 
 本文负责 Pi runtime、Skill、动态 Context、ProductFlow Tool 和迁移验收的实现规则。全局 Session/Task 产品语义仍由 `docs/specs/global-agent-human-workflow-design.md` 负责；Draft、素材和 WorkflowRun 的业务权威仍由现有 ADR 与 application use case 负责。
 
@@ -36,7 +36,7 @@ Pi 只位于 Agent service adapter 内。Web、FastAPI 业务层和 worker 不�
 |---|---|---|---|
 | Skill | Agent 应该怎样理解和处理一类工作 | “整理素材需要列出有界资产，随后提交整理 Draft” | 不能单独阻止 |
 | Context | Agent 这一轮面对的真实背景是什么 | 当前商品、Task 目标、选中资产、页面 revision | 不能授予权限 |
-| Tool | Agent 能请求哪个业务能力 | `inspect_product_context_v1`、`propose_workflow_draft_v1` | 只能把请求交给后端 |
+| Tool | Agent 能请求哪个业务能力 | `get_product_workflow_context_v1`、`propose_workflow_draft` | 只能把请求交给后端 |
 | Backend | 这次请求是否有效以及如何产生副作用 | scope、revision、幂等、事务、队列、确认 | 可以并且必须阻止 |
 
 把 ProductFlow 操作封装给 Pi 时，业务知识放进 Skill，动态事实放进 Context，机器可执行的入口放进 Tool。Tool 不能只是一段 Skill 文本，Skill 也不能承担后端校验。
@@ -54,10 +54,12 @@ Pi 只位于 Agent service adapter 内。Web、FastAPI 业务层和 worker 不�
 
 ### 4.2 使用 Pi SDK
 
-主实现使用 Pi SDK 的 `createAgentSession` 和 `ResourceLoader`：
+主实现使用 Pi SDK 的 `createAgentSession` 和隔离配置的 `DefaultResourceLoader`：
 
-- `ResourceLoader` 发现并加载项目 Skills、ProductFlow Extensions 和静态上下文文件。
-- `customTools` 或 Extension `registerTool` 注册 ProductFlow tools。
+- `DefaultResourceLoader` 关闭默认 Skill、Extension、prompt template、context file 和操作系统工具发现。main 不加载用户目录或工作区里的资源，只保留一个 adapter-owned 的隐藏 request hook 映射后端 provider 选项，该 hook 不注册业务工具、不访问外部资源。
+- `agent-service/src/skills.ts` 使用 Pi 的 Agent Skills parser 做 metadata discovery 和标准校验；完整 `SKILL.md` 不在启动时注入，而是由 adapter-owned 的 `load_productflow_skill` custom tool 按名称按需加载。
+- `references/` 里的静态文本可以通过同一个受控 loader 按相对路径读取；`scripts/` 不执行，`assets/` 不通过 Agent tool 暴露。这样保留 Skill 的可移植目录格式，同时不把 `read`、`bash` 或宿主文件系统权限带入 ProductFlow Agent。
+- `customTools` 在 `agent-service/src/tools.ts` 注册 Skill loader 和 ProductFlow business tools。
 - session event subscription 负责把 Pi 的文本、工具调用、工具结果、错误和结束事件翻译成 ProductFlow wire events。
 - Pi 的 `abort`、session switch 和 compaction 通过 adapter 映射到现有 Turn 控制语义。
 - Pi RPC 仅在 SDK 直接嵌入无法满足隔离要求时评估，不能作为第一版默认实现。
@@ -102,6 +104,10 @@ Skill 先按用户任务组织，不按后端模块拆分：
 7. 明确禁止的行为，例如臆造商品特征、读取整个图库、跳过 revision 或直接执行。
 8. 一个成功样例和一个冲突/过期样例。
 
+目录和 frontmatter 遵循 Agent Skills 格式：每个 Skill 是包含 `SKILL.md` 的目录，`name` 与父目录相同，使用 1--64 个小写字母、数字和单连字符；`description` 必须同时说明能力和适用任务，长度不超过 1024 个字符。`license`、`compatibility` 和 `metadata` 可按需要增加，但不能承载当前业务事实或权限。标准中的实验性 `allowed-tools` 不授予 ProductFlow 权限，实际可用 Tool 仍由 adapter 的显式 allowlist 和后端校验决定。
+
+`SKILL.md` 正文是激活时加载的工作指引，建议控制在 500 行以内。较长的稳定参考资料放入 `references/` 并在任务需要时读取；不要把每个 backend endpoint 或完整 JSON Schema 原样复制进 Skill。
+
 Skill 不应包含以下内容：
 
 - 当前商品 ID、资产列表、Workflow revision、文件路径或 provider secret。
@@ -112,24 +118,23 @@ Skill 不应包含以下内容：
 ### 5.3 Skill 版本和测试
 
 - Skill 文件随代码提交，使用小而清晰的目录和稳定名称。
-- 每次 Skill 变化记录 catalog hash，并在 adapter 日志中记录本轮实际加载的 Skill names/hash。
+- 每次 Skill 变化都进入 catalog hash；启动提示只包含 Skill metadata，实际正文通过 `load_productflow_skill` 进入当前 Pi Turn。
 - Skill 变更至少补一个离线场景测试：工具顺序、追问条件、禁止动作或停止条件中至少有一项可以被断言。
 - Skill 只提供行为指导；工具 schema、后端校验和用户确认仍是强制边界。
 
-推荐目录：
+main 当前目录：
 
 ```text
-.pi/
-  agent/
-    skills/
-      productflow-core/SKILL.md
-      product-intake/SKILL.md
-      workflow-draft/SKILL.md
-      media-library-organization/SKILL.md
-      workflow-run-request/SKILL.md
-    extensions/
-      productflow-runtime.ts
-      productflow-tools.ts
+agent-service/
+  .pi/skills/
+    productflow-core/SKILL.md
+    product-intake/SKILL.md
+    workflow-draft/SKILL.md
+    media-library-organization/SKILL.md
+    workflow-run-request/SKILL.md
+  src/skills.ts
+  src/tools.ts
+  src/pi-runtime.ts
 ```
 
 实际部署可以把 Skills 打包进 Agent service 镜像；部署目录变化不能改变 Skill 的版本、hash 和测试方式。
@@ -220,9 +225,9 @@ Task goal 是业务目标，不能被 route 或页面选区覆盖。Page context
 
 | 类别 | 作用 | 例子 | 是否产生业务副作用 |
 |---|---|---|---|
-| Read | 查询有界事实 | `inspect_product_context_v1`、`list_media_assets_v1` | 否 |
-| Inspect | 检查明确选择的图片或对象 | `inspect_media_asset_v1`、`inspect_workflow_run_v1` | 否 |
-| Propose | 保存待审核 Draft revision | `propose_workflow_draft_v1`、`propose_library_organization_draft_v1` | 只写 Draft 记录，不改正式状态 |
+| Read | 查询有界事实 | `get_product_workflow_context_v1`、`list_global_media_library_assets_v1` | 否 |
+| Inspect | 检查明确选择的图片或对象 | `inspect_product_image_assets_v1`、`inspect_global_workflow_runs_v1` | 否 |
+| Propose | 保存待审核 Draft revision | `propose_workflow_draft`、`propose_global_draft` | 只写 Draft 记录，不改正式状态 |
 | Request | 创建待确认业务请求 | `request_workflow_run_v1` | 只写 pending request，不启动执行 |
 | Confirm | 用户点击确认后的业务命令 | FastAPI confirmation route | 是；不注册给 Agent |
 
@@ -252,8 +257,8 @@ Tool 返回值分成三部分：
 
 Tool 按用户意图设计，避免把数据库 CRUD 原样暴露给模型：
 
-- 使用 `propose_library_organization_draft_v1` 表达一次有范围的整理方案，后端负责重复操作、引用保护、revision 和原子应用。
-- 使用 `propose_workflow_draft_v1` 表达完整 WorkflowDraft，后端负责 schema、真实资产 ID、商品事实和当前 Draft revision。
+- 使用 `propose_global_draft` 表达一次有范围的整理方案，后端负责重复操作、引用保护、revision 和原子应用。
+- 使用 `propose_workflow_draft` 表达完整 WorkflowDraft，后端负责 schema、真实资产 ID、商品事实和当前 Draft revision。
 - 使用 `request_workflow_run_v1` 表达一次明确工作流执行请求，后端负责 workflow revision、队列、幂等和用户确认。
 - 只有确实需要模型分步探索时才增加低层 Read/Inspect Tool；不要为了复刻所有页面按钮而创建同等数量的 Tool。
 
@@ -310,55 +315,55 @@ Pi 的 session file、compaction 和 resume API 不能直接证明以下语义�
 
 因此，Pi 主线把长期后台 Task 作为独立阶段。实现该阶段前需要额外的 coordinator、Turn claim、effect journal 或等价的可审计机制；具体实现可来自 ProductFlow application 或后续自研 runtime，但不能把 Pi 默认 session persistence 当作替代品。
 
-`exp` 分支继续验证现有 harness 的 durable runtime。实验结果通过共享 contract/eval 反馈给主线，不把实验 runtime 内部 API 直接带回 ProductFlow 业务层。
+`exp` 分支继续验证现有 harness 的 durable runtime。实验结果通过共享 contract/eval 反馈给 main，不把实验 runtime 内部 API 直接带回 ProductFlow 业务层。
 
 ## 10. 分阶段实施
 
-### 阶段 0：冻结合同和质量基线
+### 阶段 0：冻结合同和质量基线（main 已实现）
 
 - 固定 FastAPI Agent service HTTP/SSE 合同、Question、Draft、tool-step 和错误映射。
-- 从当前 Go harness 生成一组 golden conversation、Tool call、Draft validation、冲突和恢复样本。
+- 从 `exp` 的旧 harness 生成一组 golden conversation、Tool call、Draft validation、冲突和恢复样本。
 - 定义 Skill catalog、Context schema、Tool schema 和 runtime status 字段。
 - 增加 adapter contract tests，测试不依赖真实 provider。
 
-出口条件：Pi adapter 可以使用 fake provider 通过 contract tests；当前 Web 和 FastAPI 行为不变。
+当前结果：HTTP/SSE、Question、Draft、tool-step、错误映射、Skill/Context/Tool 版本字段和基础 contract tests 已落地；fake provider 的完整端到端矩阵和真实依赖 gate 仍待补齐。
 
-### 阶段 1：Pi runtime 最小验证
+### 阶段 1：Pi runtime 最小验证（main 已实现）
 
-- 建立 Bun/TypeScript Pi adapter，使用 SDK 直接创建 session。
+- 建立 Node.js 22/TypeScript Pi adapter，使用 SDK 直接创建 session。
 - 加载一个最小 `productflow-core` Skill。
 - 注册一个只读 ProductFlow Tool，验证 scope、参数 schema、tool result 和事件翻译。
 - 注入一份动态 Context，验证 PageContext 不覆盖 Task goal。
 - 显式断言 Pi session 中没有默认 filesystem/process tools。
 
-出口条件：fake provider 下完成一轮文本 + Tool + SSE + 取消，且不存在未授权 OS tool。
+当前结果：SDK session、文本/工具事件翻译、SSE、取消、上下文压缩配置和显式 `noTools: "all"` 已落地；fake provider 端到端回归仍需补到仓库测试。
 
-### 阶段 2：只读 ProductFlow 能力
+### 阶段 2：只读 ProductFlow 能力（main 已实现）
 
 - 接入商品上下文、全局素材列表、明确资产 inspect、工作流摘要和运行状态读取。
 - 保留当前分页、数量上限和图片按需 inspect 规则。
 - 对 Global Conversation、商品 Conversation、独立 Task 做 scope isolation tests。
 - 用真实页面上下文验证路由切换不会改写 Task goal。
 
-出口条件：只读请求在 Pi 和当前 harness 上使用同一组输入样本，scope 泄漏和越界读取均为零。
+当前结果：商品/全局读取、分页、选中图片 inspect、scope allowlist 和越界测试已落地；与 `exp` harness 的共享 golden 样本比较仍是验收工作。
 
-### 阶段 3：Question 和 Draft
+### 阶段 3：Question 和 Draft（main 已实现）
 
 - 接入 `product-intake`、`workflow-draft`、`media-library-organization` Skills。
 - 接入 Question、WorkflowDraft、LibraryOrganizationDraft 的 proposal tools。
 - 强制后端校验真实资产 ID、事实来源、Draft schema、expected revision 和 payload 上限。
 - 验证无效 artifact 的可修订路径、用户回答恢复和确认前无正式业务副作用。
 
-出口条件：Draft review UI、revision、确认入口和现有 materialization 流程不需要认识 Pi 内部对象。
+当前结果：Question 回答/resume、后端 Draft validate、artifact 投影和确认前无正式 materialization 已接入现有 FastAPI/Web 合同；真实浏览器确认链仍需 gate。
 
-### 阶段 4：待确认执行请求
+### 阶段 4：待确认执行请求（main 已实现）
 
 - 接入 `workflow-run-request` Skill 和 `request_workflow_run_v1`。
 - Agent 只能创建 pending request；确认后复用现有 `v2_runs.py` 和 worker。
 - 在 Web 中统一显示 Agent 请求和用户直接运行的 WorkflowRun 状态。
 - 验证 stale workflow revision、重复请求、取消和队列拒绝。
 
-出口条件：Agent 请求执行与用户点击执行最终经过同一个业务 application use case，且没有第二套运行器。
+当前结果：Pi 只创建 pending request，执行/对账继续使用 ProductFlow 现有 application/worker；stale revision、幂等和取消的完整 live 验收仍需 gate。
 
 ### 阶段 5：后台 Task 和恢复
 
@@ -369,14 +374,14 @@ Pi 的 session file、compaction 和 resume API 不能直接证明以下语义�
 
 出口条件：恢复语义有可重复测试和运行证据，且不会依赖模型“记得自己做过什么”。
 
-### 阶段 6：主线切换和实验线留存
+### 阶段 6：主线切换和实验线留存（main 已实现）
 
-- `main` 的 Agent service 镜像只包含 Pi adapter 和 ProductFlow runtime；移除对 `third_party/agent-harness` 的编译依赖。
-- `exp` 保留当前 harness，并记录与主线共享合同的适配状态。
+- `main` 的 Agent service 镜像只包含 Pi adapter 和 ProductFlow runtime；不编译或启动 `third_party/agent-harness`。
+- `exp` 保留主线切换前的 harness，并记录与主线共享合同的适配状态。
 - 更新 `docs/ARCHITECTURE.md`、`ARCHITECTURE.en.md`、运行命令、Docker health/status、发布说明和回滚说明。
 - 发布前完成真实 provider、真实 PostgreSQL/Redis、真实浏览器和断线恢复所需的 gate。
 
-出口条件：部署使用的 runtime 唯一明确；回滚是部署版本回滚，不是同一运行中的隐式 runtime fallback。
+当前结果：main 的启动、Docker health、runtime status 和 `exp` 分支边界已明确；真实 provider、真实 PostgreSQL/Redis、真实浏览器和断线恢复 gate 尚未完成，不启用隐式 runtime fallback。
 
 ## 11. 实施准则
 

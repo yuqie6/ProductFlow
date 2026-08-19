@@ -120,8 +120,8 @@ export function AgentConversationPanel({
   });
 
   const events = useAgentTurnEvents({
-    productId,
-    conversation,
+    getEventsUrl: (turnId, after) => api.getAgentTurnEventsUrl(productId, conversation.id, turnId, after),
+    runId: conversation.harness_run_id,
     turn: agent.activeTurn,
     onTerminal: () => void agent.refreshLatestTurn(),
   });

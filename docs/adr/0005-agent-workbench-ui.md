@@ -26,7 +26,7 @@ Agent 商品工作台（`pages/agent-workbench/`）目前是"能用的功能拼�
 
 #### 1.2 工具调用降噪：新增有界工具步骤投影（跨层）
 
-这是唯一跨层的一项。`agent-service/third_party/agent-harness/turn/protocol.go` 已新增 `tool.step` 事件与 `ToolStep` 状态；前端 `agentEventReducer.ts` 严格解析该事件并按 `step_id` 合并快照与 live 步骤。Agent 的中间动作（读资产、整理资产、读历史、写 draft）通过有界投影对用户可见。
+这是唯一跨层的一项。main 的 `agent-service/src/contracts.ts`、`store.ts` 和 `pi-runtime.ts` 产生 `tool.step` 事件与 `ToolStep` 状态；前端 `agentEventReducer.ts` 严格解析该事件并按 `step_id` 合并快照与 live 步骤。Agent 的中间动作（读资产、读取历史、提出 Draft、创建待确认请求）通过有界投影对用户可见。
 
 决策：在 Agent service 侧新增**有界工具步骤投影事件**，作为 web projection 的一部分，与 ADR 0001 的"ProductFlow 存 web projection，不重建 transcript"边界一致。当前投影只包含四个字段：
 
@@ -37,7 +37,7 @@ Agent 商品工作台（`pages/agent-workbench/`）目前是"能用的功能拼�
 
 不允许把工具原始参数、完整输出、storage path、图片 bytes、私密 transport 内容、`error_first_line` 或结果引用放入投影。`error_first_line` 与结果引用（`product_image_asset_id` / `workflow_draft_revision_id`）尚无安全合同，当前不实现，也不提供可点击的工具详情。这与 CONTEXT.md 的"Agent lists bounded metadata and inspects only selected images"对齐。
 
-ProductFlow 自有工具类别（非 DeepSeek Harness 的 terminal/read/search/web）：
+ProductFlow 自有工具类别（不包含文件系统、进程、搜索或网络 coding tools）：
 
 | kind | 摘要语义 |
 |---|---|
@@ -45,6 +45,8 @@ ProductFlow 自有工具类别（非 DeepSeek Harness 的 terminal/read/search/w
 | `inspect_context` | 查看商品上下文与资产元数据 |
 | `read_history` | 读取商品历史 |
 | `organize_assets` | 整理商品图片资产 |
+| `request_workflow_run` | 创建待用户确认的 WorkflowRun 请求 |
+| `create_product` | 创建用户明确要求的空商品工作区 |
 | `propose_draft` | 提出/修订 WorkflowDraft |
 
 当前没有真实 `generate_image` Agent tool，不得提前加入投影；`ask_question` 继续由现有 `question.required` 独立拥有，不重复投影为 tool step。

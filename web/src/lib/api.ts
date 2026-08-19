@@ -550,6 +550,12 @@ export const api = {
       `${globalAgentConversationPath(conversationId)}/turns/${encodeURIComponent(projectionId)}`,
     );
   },
+  getGlobalAgentTurnEventsUrl(conversationId: string, projectionId: string, after = 0): string {
+    const params = new URLSearchParams({ after: String(after) });
+    return toApiUrl(
+      `${globalAgentConversationPath(conversationId)}/turns/${encodeURIComponent(projectionId)}/events?${params}`,
+    );
+  },
   getGlobalWorkflowRunRequest(
     conversationId: string,
     taskId?: string | null,

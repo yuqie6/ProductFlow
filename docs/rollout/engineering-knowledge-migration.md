@@ -18,7 +18,7 @@
 | `backend/database-guidelines` | 纠正后吸收 | `backend/AGENTS.md`, ADR 0001-0004 | `db/models.py`, `workflow_drafts/materialization.py`, `gallery_mutations.py`, migration tests |
 | `backend/error-handling` | 吸收 | `backend/AGENTS.md` | `domain/errors.py`, `presentation/errors.py`, `test_error_handling.py` |
 | `backend/logging-guidelines` | 压缩吸收 | `backend/AGENTS.md`, `ARCHITECTURE.md` | `infrastructure/logging.py`, `presentation/api.py`, `workers.py`, `test_logging_behavior.py` |
-| `backend/quality-guidelines` | 吸收 | 根和后端 `AGENTS.md` | `justfile`, backend/Go test suites |
+| `backend/quality-guidelines` | 吸收 | 根和后端 `AGENTS.md` | `justfile`, backend/Pi test suites |
 | `backend/product-gallery-explorer` | 纠正后吸收 | `CONTEXT.md`, `ARCHITECTURE.md`, `backend/AGENTS.md` | `gallery_assets.py`, `gallery_mutations.py`, `gallery_archives.py`, `test_product_gallery_explorer.py` |
 | `backend/product-workflow-dag` | 吸收 | `CONTEXT.md`, ADR 0003, `ARCHITECTURE.md`, `backend/AGENTS.md` | `domain/workflow_rules.py`, `product_workflow/v2_*.py`, workflow tests |
 | `backend/workflow-agent-service` | 吸收 | ADR 0001, `ARCHITECTURE.md`, `backend/AGENTS.md` | `agent_*` application modules, `agent-service/`, `test_workflow_agent_service.py` |

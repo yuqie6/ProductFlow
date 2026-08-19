@@ -174,7 +174,7 @@ services:
       dockerfile: agent-service/Dockerfile
     restart: unless-stopped
     environment:
-      AGENT_LISTEN_ADDRESS: :29284
+      AGENT_LISTEN_ADDRESS: 0.0.0.0:29284
       AGENT_DATA_ROOT: /data
       PRODUCTFLOW_INTERNAL_BASE_URL: http://productflow-backend:29280
       PRODUCTFLOW_REQUEST_TIMEOUT: ${PRODUCTFLOW_REQUEST_TIMEOUT:-30s}

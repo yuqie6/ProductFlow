@@ -1455,6 +1455,52 @@ def test_public_agent_routes_keep_session_scope_idempotency_question_and_sse(
     assert canceled.json()["status"] == "canceled"
 
 
+def test_public_agent_cancel_terminates_unbound_turn_when_agent_service_is_unavailable(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.presentation.api import create_app
+    from productflow_backend.presentation.routes import agent_conversations as agent_routes
+
+    product, _, draft, _ = _create_product_and_draft(db_session, name="Agent 服务不可用取消")
+    conversation = create_agent_conversation(
+        db_session,
+        product_id=product.id,
+        workflow_draft_id=draft.id,
+    )
+    projection = reserve_agent_turn(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        input_text="这条 Turn 在 Agent 服务不可用时也必须可以取消",
+        input_asset_ids=[],
+        idempotency_key="cancel-unbound-public-turn",
+    ).projection
+
+    monkeypatch.setattr(
+        agent_routes,
+        "_agent_gateway_or_raise",
+        lambda: pytest.fail("unbound Turn cancellation must not construct the Agent service client"),
+    )
+    client = TestClient(create_app())
+    _login(client)
+
+    response = client.post(
+        f"/api/v2/products/{product.id}/agent-conversations/{conversation.id}/turns/{projection.id}/cancel"
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "canceled"
+    assert body["harness_turn_id"] is None
+    assert body["sync_error"] is None
+    db_session.expire_all()
+    persisted = db_session.get(AgentTurnProjection, projection.id)
+    assert persisted is not None
+    assert persisted.status == AgentTurnStatus.CANCELED
+    assert persisted.finished_at is not None
+
+
 def test_stored_malformed_agent_tool_steps_degrade_safely_in_detail_and_list_routes(
     db_session,
 ) -> None:

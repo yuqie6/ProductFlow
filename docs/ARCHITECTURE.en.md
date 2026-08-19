@@ -7,13 +7,13 @@ ProductFlow is a single-administrator, single-merchant workspace with six runtim
 1. React/Vite Web.
 2. FastAPI business API.
 3. Dramatiq worker.
-4. Go workflow Agent service.
+4. Node.js 22 + Pi SDK ProductFlow Agent service.
 5. PostgreSQL.
 6. Redis and media storage.
 
 The browser reaches only Web and FastAPI. The Agent service calls FastAPI internal endpoints with a dedicated bearer token; FastAPI controls Agent Turns over the agent-service internal HTTP/SSE API. API and worker share PostgreSQL, Redis, and storage.
 
-This document describes the current implementation only. Module ownership comes from the live source tree and behavior evidence comes from the referenced tests. Product contracts live in `PRD.en.md`, durable rationale in `adr/`, and incomplete deployment evidence in `rollout/`. The Pi runtime migration target and implementation rules live in `adr/0007-pi-agent-runtime-boundary.md` and `specs/pi-agent-runtime-integration.md`; they do not replace current implementation facts until the migration is delivered.
+This document describes the current implementation only. Module ownership comes from the live source tree and behavior evidence comes from the referenced tests. Product contracts live in `PRD.en.md`, durable rationale in `adr/`, and incomplete deployment evidence in `rollout/`. The Pi runtime boundary and implementation rules live in `adr/0007-pi-agent-runtime-boundary.md` and `specs/pi-agent-runtime-integration.md`.
 
 ## 2. Backend Layers
 
@@ -83,8 +83,8 @@ Current frontend ownership:
 image types + quantities + 1..6 uploads
   -> Product + ProductImageAsset + WorkflowDraft + AgentConversation
   -> ProductFlow submits Agent Turn
-  -> agent-service / agent-harness durable execution
-  -> ProductFlow internal read and mutation tools
+  -> agent-service / Pi SDK ProductFlow adapter
+  -> ProductFlow internal read, proposal, and pending-request tools
   -> versioned WorkflowDraft artifact
   -> user confirmation
   -> schema-v2 workflow materialization
@@ -92,15 +92,15 @@ image types + quantities + 1..6 uploads
   -> product workbench
 ```
 
-ProductFlow is authoritative for business data. The Agent service stores durable Turn transcript, tool calls/results, and token deltas. PostgreSQL stores AgentConversation, AgentTurnProjection, question state, and WorkflowDraft revisions.
+ProductFlow is authoritative for business data. The Agent service uses the Pi SDK for the model loop, session messages, tool selection, events, and context compaction, and stores JSONL session files and JSON event files under its data root. PostgreSQL stores AgentConversation, AgentTask, AgentTurnProjection, question state, and WorkflowDraft revisions. Pi session persistence is not treated as proof of durable background execution, side-effect reconciliation, or multi-instance scheduling.
 
-The Agent service exposes a bounded tool-step projection through `tool.step` SSE events and Turn state `tool_steps`, with fields fixed to `step_id`, `kind`, `summary`, and `status`. Current kinds are `inspect_image`, `inspect_context`, `read_history`, `organize_assets`, and `propose_draft`; current statuses are `running`, `succeeded`, `failed`, and `unknown`. `question.required` remains owned by Question and is not projected as a tool step; there is no real `generate_image` Agent tool yet, so it is not added prematurely. `AgentTurnProjection.tool_steps_json` stores this web projection: a missing `tool_steps` keeps the existing snapshot for compatibility with older services, while an explicit `[]` clears it.
+The Agent service exposes a bounded tool-step projection through `tool.step` SSE events and Turn state `tool_steps`, with fields fixed to `step_id`, `kind`, `summary`, and `status`. Current kinds are `inspect_image`, `inspect_context`, `read_history`, `organize_assets`, `request_workflow_run`, `create_product`, and `propose_draft`; current statuses are `running`, `succeeded`, `failed`, and `unknown`. `question.required` remains owned by Question and is not projected as a tool step; there is no real `generate_image` Agent tool yet, so it is not added prematurely. `AgentTurnProjection.tool_steps_json` stores this web projection: a missing `tool_steps` keeps the existing snapshot for compatibility with older services, while an explicit `[]` clears it.
 
 When reading product assets, the Agent first receives bounded metadata and then inspects selected images. Image tool results use a versioned multimodal contract; the full library and data URLs are not concatenated into text history.
 
-Agent mutations such as rename, folder creation, and move use prepare/apply/reconcile contracts with idempotency keys so network interruption and restart can be reconciled.
+Global media rename, move, tag, and archive operations are represented by a reviewable `propose_global_draft`; Pi does not expose low-level media mutation tools. ProductFlow re-reads facts and applies the Draft only after revision, idempotency, and reference checks plus user confirmation.
 
-The implementation path is: `routes/agent_product_workspaces.py` receives workspace creation; `agent_product_workspaces.py` persists Product, assets, Draft, and Conversation in one business transaction; `agent_control.py` calls `infrastructure/agent_service.py`; `agent_sync.py` projects the durable Turn; `workflow_drafts/service.py` validates the artifact; and `workflow_drafts/materialization.py` atomically writes the V2 graph and reveal events.
+The implementation path is: `routes/agent_product_workspaces.py` receives workspace creation; `agent_product_workspaces.py` persists Product, assets, Draft, and Conversation in one business transaction; `agent_control.py` calls `infrastructure/agent_service.py`; `agent-service/src/pi-runtime.ts` translates Pi sessions and versioned ProductFlow tools into the wire state/events; `agent_sync.py` projects the Turn; `workflow_drafts/service.py` validates the artifact; and `workflow_drafts/materialization.py` atomically writes the V2 graph and reveal events.
 
 ## 5. WorkflowDraft
 
@@ -174,8 +174,8 @@ Runtime image-tool settings are filtered through the allowed-field contract befo
 - Redis provides the broker and concurrency admission.
 - PostgreSQL stores queued/running/terminal states, attempts, and safe errors.
 - Worker startup recovers unfinished jobs that can be safely redelivered.
-- Agent service uses the agent-harness durable journal; SSE event sequences support Last-Event-ID replay.
-- ProductFlow Turn sync trusts only reconcilable harness state and preserves unknown outcomes as unknown.
+- Agent service uses Pi sessions and a file-backed event log; SSE event sequences support cursor reconnect and replay. Durable background Tasks, effect reconciliation, and multi-instance claims are outside the current main runtime promise.
+- ProductFlow Turn sync trusts only state that satisfies the Agent service wire contract and preserves unprovable outcomes as unknown.
 
 ## 10. Configuration and Security
 
@@ -200,7 +200,7 @@ SQLAlchemy metadata describes current online models and bounded archive/cutover 
 
 - Backend: Ruff, full pytest, SQLite migration, and opt-in PostgreSQL/Redis live tests.
 - Frontend: Vitest, ESLint, TypeScript, and Vite production build.
-- Agent service: `go test ./...` and an opt-in live-provider transcript test.
+- Agent service: `pnpm --dir agent-service test`, `pnpm --dir agent-service build`, and explicit live provider/dependency gates.
 - Cross-layer changes add real browser, database, or provider validation according to risk.
 
 Code/document synchronization rules:
