@@ -5,10 +5,14 @@ import {
   Check,
   ChevronRight,
   ClipboardList,
+  Columns2,
   LayoutGrid,
   List,
   Loader2,
+  Maximize2,
   MessagesSquare,
+  Minimize2,
+  Minus,
   PackagePlus,
   Pause,
   Pencil,
@@ -91,6 +95,12 @@ interface AgentConversationTarget {
   productName: string;
 }
 
+export function openGlobalAgent(options?: { tab?: GlobalAgentDockTab; sessionId?: string; taskId?: string }) {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("productflow:open-agent", { detail: options }));
+  }
+}
+
 export function GlobalAgentDock() {
   const { t } = useI18n();
   const navigate = useNavigate();
@@ -115,6 +125,77 @@ export function GlobalAgentDock() {
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renamingTaskId, setRenamingTaskId] = useState<string | null>(null);
   const [taskViewMode, setTaskViewMode] = useState<"list" | "board">("list");
+  const [dockMode, setDockMode] = useState<"compact" | "wide" | "fullscreen">(() => {
+    try {
+      return (localStorage.getItem("productflow_agent_dock_mode") as "compact" | "wide" | "fullscreen") || "compact";
+    } catch {
+      return "compact";
+    }
+  });
+  const [customWidth, setCustomWidth] = useState<number>(() => {
+    try {
+      return Number(localStorage.getItem("productflow_agent_dock_width")) || 440;
+    } catch {
+      return 440;
+    }
+  });
+  const [isDraggingResize, setIsDraggingResize] = useState(false);
+
+  const changeDockMode = (nextMode: "compact" | "wide" | "fullscreen") => {
+    setDockMode(nextMode);
+    try {
+      localStorage.setItem("productflow_agent_dock_mode", nextMode);
+    } catch (_error) {
+      void _error;
+    }
+  };
+
+  const handleResizeMouseDown = (event: React.MouseEvent) => {
+    if (dockMode === "fullscreen") return;
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDraggingResize(true);
+    const startX = event.clientX;
+    const startWidth = dockMode === "wide" ? Math.max(customWidth, 740) : Math.min(customWidth, 540);
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const deltaX = startX - moveEvent.clientX;
+      const nextWidth = Math.min(Math.max(380, startWidth + deltaX), window.innerWidth - 48);
+      setCustomWidth(nextWidth);
+      try {
+        localStorage.setItem("productflow_agent_dock_width", String(nextWidth));
+      } catch (_error) {
+        void _error;
+      }
+    };
+
+    const onMouseUp = () => {
+      setIsDraggingResize(false);
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  };
+
+  useEffect(() => {
+    const handleOpenAgent = (event: Event) => {
+      const custom = event as CustomEvent<{ tab?: GlobalAgentDockTab; sessionId?: string; taskId?: string }>;
+      setOpen(true);
+      if (custom.detail?.tab) {
+        setTab(custom.detail.tab);
+      }
+      if (custom.detail?.sessionId) {
+        setSelectedSessionId(custom.detail.sessionId);
+      }
+      if (custom.detail?.taskId !== undefined) {
+        setSelectedTaskId(custom.detail.taskId);
+      }
+    };
+    window.addEventListener("productflow:open-agent", handleOpenAgent);
+    return () => window.removeEventListener("productflow:open-agent", handleOpenAgent);
+  }, []);
 
   const sessionsQuery = useQuery({
     queryKey: ["agent-sessions", true],
@@ -419,42 +500,98 @@ export function GlobalAgentDock() {
     ? errorDetail(queryError ?? mutationError, t("globalAgent.requestFailed"))
     : null;
 
+  const panelClass = dockMode === "fullscreen"
+    ? "pointer-events-auto fixed inset-2 sm:inset-4 z-[70] flex flex-col overflow-hidden rounded-2xl border border-border-l2 bg-surface-raised text-text-primary shadow-[0_25px_80px_rgb(0_0_0_/_0.5)] backdrop-blur"
+    : `pointer-events-auto absolute bottom-[calc(8.25rem+env(safe-area-inset-bottom))] left-3 right-3 flex max-h-[min(880px,calc(100dvh-5.5rem))] flex-col overflow-hidden rounded-xl border border-border-l2 bg-surface-raised text-text-primary shadow-[0_20px_60px_rgb(15_23_42_/_0.22)] dark:shadow-[0_24px_70px_rgb(0_0_0_/_0.46)] sm:bottom-0 sm:left-auto sm:right-0 transition-[width] duration-150 ${
+        isDraggingResize ? "transition-none select-none" : ""
+      }`;
+
+  const panelStyle = dockMode === "fullscreen"
+    ? undefined
+    : {
+        width: typeof window !== "undefined" && window.innerWidth < 640
+          ? undefined
+          : `${dockMode === "wide" ? Math.max(customWidth, 760) : Math.min(customWidth, 540)}px`,
+        maxWidth: "calc(100vw - 24px)",
+      };
+
   return (
     <div ref={rootRef} data-global-agent-dock className="pointer-events-none fixed inset-x-0 bottom-0 z-[60] sm:inset-x-auto sm:bottom-5 sm:right-5">
       {open ? (
         <section
           id="global-agent-dock-panel"
           aria-label={t("globalAgent.title")}
-          className="pointer-events-auto absolute bottom-[calc(8.25rem+env(safe-area-inset-bottom))] left-3 right-3 flex max-h-[min(720px,calc(100dvh-11.5rem))] flex-col overflow-hidden rounded-lg border border-border-l2 bg-surface-raised text-text-primary shadow-[0_20px_60px_rgb(15_23_42_/_0.22)] dark:shadow-[0_24px_70px_rgb(0_0_0_/_0.46)] sm:bottom-0 sm:left-auto sm:right-0 sm:w-[min(92vw,400px)]"
+          style={panelStyle}
+          className={panelClass}
         >
-          <header className="flex shrink-0 items-center gap-3 border-b border-border-l1 px-4 py-3">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent text-accent-fg">
-              <Bot size={18} aria-hidden="true" />
+          {/* 左侧可拖拽拉伸边沿 */}
+          {dockMode !== "fullscreen" ? (
+            <div
+              onMouseDown={handleResizeMouseDown}
+              title="拖拽调节宽度"
+              className="group/handle absolute left-0 top-0 bottom-0 z-30 hidden w-2 cursor-ew-resize items-center justify-center transition-colors hover:bg-accent/30 sm:flex"
+            >
+              <div className="h-8 w-1 rounded-full bg-border-l3 group-hover/handle:bg-accent" />
+            </div>
+          ) : null}
+
+          <header className="flex shrink-0 items-center gap-3 border-b border-border-l1 px-4 py-2.5">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-fg shadow-sm">
+              <Bot size={17} aria-hidden="true" />
             </span>
             <div className="min-w-0 flex-1">
               <h2 className="truncate text-sm font-semibold">{t("globalAgent.title")}</h2>
-              <p className="mt-0.5 truncate text-xs text-text-secondary">
+              <p className="truncate text-[11px] text-text-secondary">
                 {t("globalAgent.activeTasks", { count: activeTaskCount })}
               </p>
             </div>
-            <button
-              type="button"
-              onClick={openProductCreation}
-              aria-label={t("globalAgent.newProduct")}
-              title={t("globalAgent.newProduct")}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-accent-soft hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
-            >
-              <PackagePlus size={17} aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setOpen(false)}
-              aria-label={t("globalAgent.close")}
-              title={t("globalAgent.close")}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-surface-subtle hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
-            >
-              <X size={17} aria-hidden="true" />
-            </button>
+            <div className="flex items-center gap-0.5">
+              <button
+                type="button"
+                onClick={openProductCreation}
+                aria-label={t("globalAgent.newProduct")}
+                title={t("globalAgent.newProduct")}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-accent-soft hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+              >
+                <PackagePlus size={15} aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                onClick={() => changeDockMode(dockMode === "wide" ? "compact" : "wide")}
+                aria-label={t(dockMode === "wide" ? "globalAgent.mode.compact" : "globalAgent.mode.wide")}
+                title={t(dockMode === "wide" ? "globalAgent.mode.compact" : "globalAgent.mode.wide")}
+                className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-surface-subtle hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 sm:flex"
+              >
+                <Columns2 size={15} aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                onClick={() => changeDockMode(dockMode === "fullscreen" ? (customWidth > 600 ? "wide" : "compact") : "fullscreen")}
+                aria-label={t(dockMode === "fullscreen" ? "globalAgent.mode.exitFullscreen" : "globalAgent.mode.fullscreen")}
+                title={t(dockMode === "fullscreen" ? "globalAgent.mode.exitFullscreen" : "globalAgent.mode.fullscreen")}
+                className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-surface-subtle hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 sm:flex"
+              >
+                {dockMode === "fullscreen" ? <Minimize2 size={15} aria-hidden="true" /> : <Maximize2 size={15} aria-hidden="true" />}
+              </button>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                aria-label={t("globalAgent.minimize")}
+                title={t("globalAgent.minimize")}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-surface-subtle hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+              >
+                <Minus size={15} aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                aria-label={t("globalAgent.close")}
+                title={t("globalAgent.close")}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-surface-subtle hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+              >
+                <X size={15} aria-hidden="true" />
+              </button>
+            </div>
           </header>
 
           <div className="flex shrink-0 items-center gap-1 border-b border-border-l1 bg-surface-subtle/60 px-3 py-2" role="tablist" aria-label={t("globalAgent.views")}>

@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import type { AgentTask } from "../lib/types";
-import { TaskBoard, TaskList } from "./GlobalAgentDock";
+import { openGlobalAgent, TaskBoard, TaskList } from "./GlobalAgentDock";
 
 function sampleTask(id: string, title: string, status: AgentTask["status"]): AgentTask {
   return {
@@ -114,5 +114,39 @@ describe("GlobalAgentDock Task Views", () => {
     expect(markup).toContain("成功任务");
     expect(markup).toContain("失败任务");
     expect(markup).toContain("春季卫衣");
+  });
+
+  it("dispatches productflow:open-agent custom event when calling openGlobalAgent in browser environment", () => {
+    const originalWindow = globalThis.window;
+    const listeners: Record<string, ((e: unknown) => void)[]> = {};
+    const mockWindow = {
+      dispatchEvent: (event: { type: string }) => {
+        listeners[event.type]?.forEach((fn) => fn(event));
+        return true;
+      },
+      addEventListener: (type: string, fn: (e: unknown) => void) => {
+        listeners[type] = listeners[type] || [];
+        listeners[type].push(fn);
+      },
+      removeEventListener: (type: string, fn: (e: unknown) => void) => {
+        listeners[type] = (listeners[type] || []).filter((f) => f !== fn);
+      },
+    };
+    (globalThis as unknown as { window: unknown }).window = mockWindow;
+
+    const listener = vi.fn();
+    mockWindow.addEventListener("productflow:open-agent", listener);
+
+    openGlobalAgent({ tab: "tasks", sessionId: "session-xyz" });
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    const event = listener.mock.calls[0][0] as { detail: { tab: string; sessionId: string } };
+    expect(event.detail).toEqual({ tab: "tasks", sessionId: "session-xyz" });
+
+    if (originalWindow) {
+      (globalThis as unknown as { window: unknown }).window = originalWindow;
+    } else {
+      delete (globalThis as unknown as { window?: unknown }).window;
+    }
   });
 });
