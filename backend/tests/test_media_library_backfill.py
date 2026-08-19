@@ -212,3 +212,95 @@ def test_snapshot_file_is_valid_json_with_a_real_trailing_newline(db_session, tm
 
     assert content.endswith("\n")
     assert json.loads(content)["snapshot_token"] == snapshot.snapshot_token
+
+
+def test_capture_gallery_snapshot_includes_database_and_storage_evidence(
+    db_session,
+    configured_env: Path,
+) -> None:
+    _create_gallery_entry(db_session, configured_env)
+
+    snapshot = capture_gallery_snapshot(
+        db_session,
+        storage=LocalStorage(root=configured_env),
+    )
+
+    assert snapshot.database_snapshot_token == "sqlite:single-connection"
+    assert snapshot.storage_snapshot_id
+    assert len(snapshot.storage_snapshot_id) == 64
+
+
+def test_snapshot_file_roundtrips_database_and_storage_evidence(
+    db_session,
+    configured_env: Path,
+    tmp_path: Path,
+) -> None:
+    _create_gallery_entry(db_session, configured_env)
+    snapshot_path = tmp_path / "gallery-evidence.json"
+    storage = LocalStorage(root=configured_env)
+
+    snapshot = _load_or_capture_snapshot(
+        db_session,
+        snapshot_path,
+        require_existing=False,
+        storage=storage,
+    )
+    loaded = _load_or_capture_snapshot(
+        db_session,
+        snapshot_path,
+        require_existing=True,
+        storage=storage,
+    )
+
+    content = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    assert content["database_snapshot_token"] == snapshot.database_snapshot_token
+    assert content["storage_snapshot_id"] == snapshot.storage_snapshot_id
+    assert loaded.database_snapshot_token == snapshot.database_snapshot_token
+    assert loaded.storage_snapshot_id == snapshot.storage_snapshot_id
+    assert loaded.blocker_report == snapshot.blocker_report
+
+
+def test_snapshot_file_includes_durable_blocker_report(
+    db_session,
+    configured_env: Path,
+    tmp_path: Path,
+) -> None:
+    entry_id = _create_gallery_entry(db_session, configured_env)
+    (configured_env / "media" / "backfill.png").unlink()
+    snapshot_path = tmp_path / "gallery-blockers.json"
+    storage = LocalStorage(root=configured_env)
+
+    snapshot = _load_or_capture_snapshot(
+        db_session,
+        snapshot_path,
+        require_existing=False,
+        storage=storage,
+    )
+
+    assert snapshot.blocker_report == ((entry_id, "media_file_missing"),)
+    content = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    assert content["blocker_report"] == [[entry_id, "media_file_missing"]]
+
+
+def test_verify_recomputes_and_checks_storage_fingerprint(db_session, configured_env: Path, tmp_path: Path) -> None:
+    """--verify re-derives the storage fingerprint and fails closed on drift."""
+    _create_gallery_entry(db_session, configured_env)
+    storage = LocalStorage(root=configured_env)
+    snapshot_path = tmp_path / "gallery-fingerprint.json"
+    snapshot = _load_or_capture_snapshot(
+        db_session,
+        snapshot_path,
+        require_existing=False,
+        storage=storage,
+    )
+    assert snapshot.storage_snapshot_id
+
+    summary = run_gallery_backfill(db_session, storage=storage, apply=True)
+    assert summary.created == 1
+    assert verify_gallery_backfill(db_session, storage=storage, snapshot=snapshot) == 1
+
+    # Backfill never relocates originals, so the fingerprint is stable; changing
+    # the on-disk bytes must make verification fail closed.
+    (configured_env / "media" / "backfill.png").write_bytes(b"fake-png-tampered")
+    with pytest.raises(RuntimeError, match="storage fingerprint changed"):
+        verify_gallery_backfill(db_session, storage=storage, snapshot=snapshot)

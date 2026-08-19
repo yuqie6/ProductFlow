@@ -12,3 +12,6 @@ class MediaLibraryMigrationAudit:
     captured_at: datetime
     source_hash: str
     source_rows: tuple[tuple[str, str | None, str | None], ...] = ()
+    database_snapshot_token: str | None = None
+    storage_snapshot_id: str | None = None
+    blocker_report: tuple[tuple[str, str], ...] = ()

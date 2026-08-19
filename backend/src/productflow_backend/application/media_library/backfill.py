@@ -4,8 +4,9 @@ import json
 import logging
 from dataclasses import dataclass, replace
 from hashlib import sha256
+from pathlib import Path
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from productflow_backend.application.legacy_retirement.contracts import canonical_json_bytes
@@ -47,7 +48,11 @@ class GalleryBackfillSummary:
     blockers: tuple[GalleryBackfillBlocker, ...] = ()
 
 
-def capture_gallery_snapshot(session: Session) -> MediaLibraryMigrationAudit:
+def capture_gallery_snapshot(
+    session: Session,
+    *,
+    storage: LocalStorage | None = None,
+) -> MediaLibraryMigrationAudit:
     entries = load_legacy_gallery_entries(session)
     source_rows = tuple(
         (
@@ -75,7 +80,96 @@ def capture_gallery_snapshot(session: Session) -> MediaLibraryMigrationAudit:
         captured_at=now_utc(),
         source_hash=source_hash,
         source_rows=source_rows,
+        database_snapshot_token=_database_snapshot_token(session),
+        storage_snapshot_id=_storage_snapshot_id(session, storage=storage) if storage is not None else None,
     )
+
+
+def _database_snapshot_token(session: Session) -> str | None:
+    """Return a monotonic, comparable database anchor for the capture transaction.
+
+    ``pg_current_wal_lsn`` is chosen over ``pg_current_snapshot`` because it is
+    monotonic: a later observation can prove the WAL is at or past the recorded
+    point, so the token can actually be compared across runs. A fresh
+    ``pg_current_snapshot`` id is a brand-new value in every transaction and can
+    never be matched again, which made it record-only evidence. SQLite has no
+    snapshot machinery, so it is honestly reported as single-connection.
+    """
+
+    dialect = session.get_bind().dialect.name
+    if dialect == "postgresql":
+        lsn = session.execute(text("SELECT pg_current_wal_lsn()")).scalar()
+        return f"postgres:pg_current_wal_lsn:{lsn}"
+    if dialect == "sqlite":
+        return "sqlite:single-connection"
+    return None
+
+
+def _storage_snapshot_id(session: Session, *, storage: LocalStorage) -> str:
+    entries = load_legacy_gallery_entries(session)
+    files: list[tuple[str, int, str | None]] = []
+    for entry in entries:
+        if entry.asset is not None and entry.asset.media_object is not None:
+            media = entry.asset.media_object
+            path = storage.resolve(media.storage_path) if media.storage_path else None
+            if path is not None and path.is_file():
+                byte_size = media.byte_size
+                file_sha256 = sha256(path.read_bytes()).hexdigest()
+            else:
+                byte_size = media.byte_size
+                file_sha256 = None
+            relative = Path(media.storage_path).as_posix() if media.storage_path else "<none>"
+            files.append((relative, byte_size, file_sha256))
+    payload = {
+        "schema_version": 1,
+        "storage_root": str(Path(storage.root).resolve()),
+        "files": sorted(set(files)),
+    }
+    return sha256(canonical_json_bytes(payload)).hexdigest()
+
+
+def collect_gallery_backfill_blockers(
+    session: Session,
+    *,
+    storage: LocalStorage,
+    snapshot: MediaLibraryMigrationAudit,
+) -> tuple[tuple[str, str], ...]:
+    """Return a durable full-preflight blocker report for a frozen snapshot.
+
+    This is independent from ``run_gallery_backfill`` page execution so the
+    snapshot JSON can carry the complete blocker evidence even when a later
+    apply step only processes a bounded page.
+    """
+
+    snapshot_ids = [row[0] for row in snapshot.source_rows]
+    blockers: list[tuple[str, str]] = []
+    for offset in range(0, len(snapshot_ids), 100):
+        page_ids = snapshot_ids[offset : offset + 100]
+        entries_by_id = {
+            entry.id: entry for entry in load_legacy_gallery_entries(session, ids=page_ids)
+        }
+        for entry_id in page_ids:
+            entry = entries_by_id.get(entry_id)
+            if entry is None:
+                blockers.append((entry_id, "missing_snapshot_row"))
+                continue
+            code = _entry_blocker_code(entry, storage=storage)
+            if code is not None:
+                blockers.append((entry.id, code))
+    return tuple(blockers)
+
+
+def _entry_blocker_code(entry: LegacyGalleryEntry, *, storage: LocalStorage) -> str | None:
+    try:
+        _, media = _gallery_source(entry)
+        path = storage.resolve(media.storage_path)
+        if not path.is_file():
+            return "media_file_missing"
+        return None
+    except FileNotFoundError:
+        return "media_file_missing"
+    except (RuntimeError, ValueError):
+        return "source_media_invalid"
 
 
 def _gallery_source(entry: LegacyGalleryEntry) -> tuple[ImageSessionAsset, MediaObject]:
@@ -213,16 +307,9 @@ def run_gallery_backfill(
         if existing is not None:
             summary = replace(summary, skipped_existing=summary.skipped_existing + 1)
             continue
-        try:
-            _, media = _gallery_source(entry)
-            path = storage.resolve(media.storage_path)
-            if not path.is_file():
-                raise FileNotFoundError(f"media file missing for gallery entry {entry.id}")
-        except FileNotFoundError:
-            summary = _append_blocker(summary, entry_id=entry.id, code="media_file_missing")
-            continue
-        except (RuntimeError, ValueError):
-            summary = _append_blocker(summary, entry_id=entry.id, code="source_media_invalid")
+        code = _entry_blocker_code(entry, storage=storage)
+        if code is not None:
+            summary = _append_blocker(summary, entry_id=entry.id, code=code)
             continue
         if not apply:
             summary = replace(summary, created=summary.created + 1)
@@ -248,6 +335,15 @@ def verify_gallery_backfill(
         or current.source_rows != snapshot.source_rows
     ):
         raise RuntimeError("media library backfill source changed during migration")
+    # Recompute the storage fingerprint over the original files and compare it
+    # against the recorded snapshot so an unverified storage change is caught
+    # here instead of being accepted on the strength of a recorded hash.  The
+    # recompute re-reads every media file; this runs only during the bounded
+    # maintenance-window reconcile, never in page execution.
+    if snapshot.storage_snapshot_id is not None:
+        current_storage_id = _storage_snapshot_id(session, storage=storage)
+        if current_storage_id != snapshot.storage_snapshot_id:
+            raise RuntimeError("media library storage fingerprint changed since snapshot capture")
     entries = load_legacy_gallery_entries(session)
     entry_ids = {entry.id for entry in entries}
     legacy_assets = list(

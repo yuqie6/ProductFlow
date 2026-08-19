@@ -134,6 +134,8 @@ def test_retire_legacy_gallery_rechecks_mapping_and_preserves_canonical_asset(
     report = inspect_legacy_gallery_retirement(db_session, storage=storage)
     assert report.source_row_count == 1
     assert report.reconciliation_report_sha256 == reconciliation_hash
+    assert report.database_snapshot_token == "sqlite:single-connection"
+    assert report.storage_snapshot_id
 
     retired = retire_legacy_gallery(
         db_session,
@@ -142,6 +144,8 @@ def test_retire_legacy_gallery_rechecks_mapping_and_preserves_canonical_asset(
     )
     assert retired.dropped is True
     assert retired.gate_phase == MEDIA_LIBRARY_CUTOVER_PHASE_CLEANED
+    assert retired.database_snapshot_token == "sqlite:single-connection"
+    assert retired.storage_snapshot_id
     assert sa.inspect(db_session.get_bind()).has_table("image_gallery_entries") is False
     assert db_session.get(MediaLibraryAsset, entry_id) is not None
 

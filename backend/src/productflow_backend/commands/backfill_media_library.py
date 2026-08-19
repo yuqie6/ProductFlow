@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections.abc import Sequence
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
 
@@ -11,6 +11,7 @@ import sqlalchemy as sa
 
 from productflow_backend.application.media_library.backfill import (
     capture_gallery_snapshot,
+    collect_gallery_backfill_blockers,
     gallery_reconciliation_hash,
     run_gallery_backfill,
     verify_gallery_backfill,
@@ -58,6 +59,18 @@ def _snapshot_from_payload(payload: dict[str, object]) -> MediaLibraryMigrationA
     captured_at = payload.get("captured_at")
     if not isinstance(captured_at, str):
         raise ValueError("snapshot captured_at 无效")
+    blocker_report_raw = payload.get("blocker_report", [])
+    if blocker_report_raw is None:
+        blocker_report_raw = []
+    if not isinstance(blocker_report_raw, list):
+        raise ValueError("snapshot blocker_report 无效")
+    blocker_report: list[tuple[str, str]] = []
+    for item in blocker_report_raw:
+        if not isinstance(item, list) or len(item) != 2:
+            raise ValueError("snapshot blocker_report 无效")
+        blocker_report.append((str(item[0]), str(item[1])))
+    database_snapshot_token = payload.get("database_snapshot_token")
+    storage_snapshot_id = payload.get("storage_snapshot_id")
     return MediaLibraryMigrationAudit(
         snapshot_token=str(payload["snapshot_token"]),
         gallery_count=int(payload["gallery_count"]),
@@ -65,10 +78,19 @@ def _snapshot_from_payload(payload: dict[str, object]) -> MediaLibraryMigrationA
         captured_at=datetime.fromisoformat(captured_at),
         source_hash=str(payload["source_hash"]),
         source_rows=tuple(source_rows),
+        database_snapshot_token=str(database_snapshot_token) if database_snapshot_token is not None else None,
+        storage_snapshot_id=str(storage_snapshot_id) if storage_snapshot_id is not None else None,
+        blocker_report=tuple(blocker_report),
     )
 
 
-def _load_or_capture_snapshot(session, path: Path | None, *, require_existing: bool) -> MediaLibraryMigrationAudit:
+def _load_or_capture_snapshot(
+    session,
+    path: Path | None,
+    *,
+    require_existing: bool,
+    storage: LocalStorage | None = None,
+) -> MediaLibraryMigrationAudit:
     if path is not None and path.exists():
         payload = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
@@ -76,7 +98,12 @@ def _load_or_capture_snapshot(session, path: Path | None, *, require_existing: b
         return _snapshot_from_payload(payload)
     if require_existing:
         raise ValueError("--apply/--verify 必须指定已存在的 --snapshot-file")
-    snapshot = capture_gallery_snapshot(session)
+    snapshot = capture_gallery_snapshot(session, storage=storage)
+    if storage is not None:
+        snapshot = replace(
+            snapshot,
+            blocker_report=collect_gallery_backfill_blockers(session, storage=storage, snapshot=snapshot),
+        )
     if path is not None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
@@ -122,16 +149,18 @@ def _ensure_backfill_schema(session) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     session = get_session_factory()()
+    storage = LocalStorage()
     try:
         _ensure_backfill_schema(session)
         snapshot = _load_or_capture_snapshot(
             session,
             args.snapshot_file,
             require_existing=args.apply or args.verify,
+            storage=storage,
         )
         summary = run_gallery_backfill(
             session,
-            storage=LocalStorage(),
+            storage=storage,
             limit=args.limit,
             offset=args.offset,
             apply=args.apply,
@@ -140,10 +169,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         verified = None
         reconciliation_hash = None
         if args.verify:
-            verified = verify_gallery_backfill(session, storage=LocalStorage(), snapshot=snapshot)
+            verified = verify_gallery_backfill(session, storage=storage, snapshot=snapshot)
             reconciliation_hash = gallery_reconciliation_hash(
                 session,
-                storage=LocalStorage(),
+                storage=storage,
                 snapshot=snapshot,
             )
         payload = {
@@ -151,6 +180,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             "gallery_count": snapshot.gallery_count,
             "session_asset_count": snapshot.session_asset_count,
             "source_hash": snapshot.source_hash,
+            "database_snapshot_token": snapshot.database_snapshot_token,
+            "storage_snapshot_id": snapshot.storage_snapshot_id,
+            "blocker_report": list(snapshot.blocker_report),
             "summary": asdict(summary),
             "verified": verified,
             "reconciliation_report_sha256": reconciliation_hash,

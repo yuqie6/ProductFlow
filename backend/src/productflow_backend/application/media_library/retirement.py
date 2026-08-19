@@ -54,6 +54,8 @@ class LegacyGalleryRetirementReport:
     source_row_count: int
     library_asset_count: int
     dropped: bool
+    database_snapshot_token: str | None = None
+    storage_snapshot_id: str | None = None
 
 
 def read_media_library_cutover_gate(connection: Connection) -> MediaLibraryCutoverGateState:
@@ -152,7 +154,7 @@ def inspect_legacy_gallery_retirement(
     *,
     storage: LocalStorage,
 ) -> LegacyGalleryRetirementReport:
-    snapshot = capture_gallery_snapshot(session)
+    snapshot = capture_gallery_snapshot(session, storage=storage)
     reconciliation_hash = gallery_reconciliation_hash(session, storage=storage, snapshot=snapshot)
     library_asset_count = int(
         session.scalar(
@@ -172,6 +174,8 @@ def inspect_legacy_gallery_retirement(
         source_row_count=snapshot.gallery_count,
         library_asset_count=library_asset_count,
         dropped=False,
+        database_snapshot_token=snapshot.database_snapshot_token,
+        storage_snapshot_id=snapshot.storage_snapshot_id,
     )
 
 
@@ -191,7 +195,7 @@ def retire_legacy_gallery(
         raise ConflictError("旧 Gallery 表不存在，不能重复执行清理")
 
     _lock_legacy_gallery_table(connection)
-    snapshot = capture_gallery_snapshot(session)
+    snapshot = capture_gallery_snapshot(session, storage=storage)
     if snapshot.source_hash != gate.source_report_sha256:
         raise ConflictError("旧 Gallery source snapshot 在清理前发生变化")
     reconciliation_hash = gallery_reconciliation_hash(session, storage=storage, snapshot=snapshot)
@@ -218,6 +222,8 @@ def retire_legacy_gallery(
         source_row_count=snapshot.gallery_count,
         library_asset_count=library_asset_count,
         dropped=True,
+        database_snapshot_token=snapshot.database_snapshot_token,
+        storage_snapshot_id=snapshot.storage_snapshot_id,
     )
 
 

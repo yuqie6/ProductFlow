@@ -132,7 +132,7 @@ Last reviewed against the current working tree on 2026-08-18.
 回填按 maintenance freeze -> expand -> explicit backfill -> reconcile -> cutover 执行：
 
 1. 在 preflight 前进入维护窗口，停止旧 backend、worker 和 Agent mutation ingress；旧 Gallery 写入与来源 ImageSession 删除必须不可达。冻结持续到最终零 delta 事务和新 owner 部署完成。
-2. 生产迁移必须记录 PostgreSQL snapshot token、Gallery/Session high-watermark、row counts 和稳定 source hash；每个 dry-run/apply/reconcile report 都携带并校验这些字段。当前命令的 `--snapshot-file` 只冻结 source row mapping/hash，尚未提供 PostgreSQL token、storage snapshot identity 或完整 durable blocker report，因此不能作为 cutover evidence。
+2. 生产迁移必须记录 PostgreSQL WAL LSN 锚点（单调、可比对）、Gallery/Session high-watermark、row counts 和稳定 source hash；每个 report 都携带这些字段。当前命令的 `--snapshot-file` 已冻结 source row mapping/hash、PostgreSQL WAL LSN 锚点、storage snapshot identity（`--verify`/reconcile 会重算比对）和完整 durable blocker report；要作为 cutover evidence 仍必须叠加维护窗口、真实备份恢复验证和观察窗证据。
 3. Alembic revision 只创建素材库 schema，不读取 storage，不调用 provider/Redis，也不假定文件系统已挂载。
 4. 显式运行可重入 preflight command，读取 database + storage，按 source id 分页输出可回填数、blocker、文件可读性和 stable report hash；此步骤默认 dry-run。
 5. 对已通过 preflight 的 frozen snapshot 运行 bounded `--apply`：每个合法 `ImageGalleryEntry` 创建一个素材，尽量复用 entry id；media id 来自 source `ImageSessionAsset.media_object_id`。
@@ -142,7 +142,7 @@ Last reviewed against the current working tree on 2026-08-18.
 9. 最终事务锁定 Gallery/Session source tables 进行稳定读，重算 high-watermark/count/hash，证明 source delta 为零，并记录 cutover-ready evidence。
 10. dry-run/apply/reconcile 都必须幂等；异常条目进入 blocker report，不静默跳过。
 
-当前 `backfill_media_library` command 已将坏文件和无效 source 以 entry id/code 写入 `summary.blockers`，存在 blocker 时返回退出码 `2`；`--verify` 还会输出包含 workflow 子图库关联和商品收录引用计数的 `reconciliation_report_sha256`。reconcile 也会拒绝 canonical 侧多出的 `legacy_gallery` mapping。它仍然只证明应用层 source mapping，不能替代 PostgreSQL snapshot、storage backup identity、维护窗口和观察窗证据。
+当前 `backfill_media_library` command 已将坏文件和无效 source 以 entry id/code 写入 `summary.blockers`，存在 blocker 时返回退出码 `2`；`--snapshot-file` 会同时保存 PostgreSQL WAL LSN 锚点、storage snapshot identity（`--verify` 重算比对）和完整 durable blocker report；`--verify` 还会输出包含 workflow 子图库关联和商品收录引用计数的 `reconciliation_report_sha256`。reconcile 也会拒绝 canonical 侧多出的 `legacy_gallery` mapping。这些快照字段仍不能替代真实维护窗口、备份恢复验证和观察窗证据。
 
 ### 4.1 旧 Canvas revision 的桥接边界
 
@@ -304,7 +304,7 @@ python -m productflow_backend.commands.backfill_media_library \
   --snapshot-file "$EVIDENCE_DIR/gallery-snapshot.json" \
   --apply --verify > "$EVIDENCE_DIR/gallery-backfill.json"
 python -m productflow_backend.commands.manage_media_library_cutover_gate approve \
-  --source-snapshot-token '<postgres snapshot token>' \
+  --source-snapshot-token '<snapshot JSON 的 database_snapshot_token 字段（PostgreSQL 为 WAL LSN 锚点）>' \
   --source-report-sha256 '<source hash>' \
   --reconciliation-report-sha256 '<reconciliation hash>' \
   --backup-restore-verified-at '<UTC ISO-8601 timestamp>' \
