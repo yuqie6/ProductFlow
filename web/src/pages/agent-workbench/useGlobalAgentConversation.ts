@@ -82,6 +82,19 @@ export function initialGlobalTaskTurnInput(
   };
 }
 
+export function selectLatestGlobalAgentTurn(
+  turns: readonly AgentTurn[],
+  taskId: string | null | undefined,
+): AgentTurn | null {
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index];
+    if (turn.task_id === (taskId ?? null)) {
+      return turn;
+    }
+  }
+  return null;
+}
+
 export function useGlobalAgentConversation({
   conversationId,
   taskId = null,
@@ -113,7 +126,11 @@ export function useGlobalAgentConversation({
     () => flattenAgentTurnPages(turnsQuery.data?.pages),
     [turnsQuery.data?.pages],
   );
-  const latestPageTurn = pageTurns.at(-1) ?? null;
+  const interactionTurns = useMemo(
+    () => pageTurns.filter((turn) => turn.task_id === (taskId ?? null)),
+    [pageTurns, taskId],
+  );
+  const latestPageTurn = selectLatestGlobalAgentTurn(interactionTurns, taskId);
   const latestProjectionQuery = useQuery({
     queryKey: globalAgentTurnQueryKey(conversationId, latestPageTurn?.id ?? "none"),
     queryFn: () => api.getGlobalAgentTurn(conversationId, latestPageTurn?.id ?? ""),
@@ -128,12 +145,12 @@ export function useGlobalAgentConversation({
     queryKey: globalLibraryOrganizationDraftQueryKey(conversationId),
     queryFn: () => api.getGlobalLibraryOrganizationDraft(conversationId),
     enabled: Boolean(
-      enabled && conversationId && pageTurns.some((turn) => turn.library_organization_draft_revision_id),
+      enabled && conversationId && interactionTurns.some((turn) => turn.library_organization_draft_revision_id),
     ),
   });
   const workflowDraftRevisionId = useMemo(
-    () => [...pageTurns].reverse().find((turn) => turn.workflow_draft_revision_id)?.workflow_draft_revision_id ?? null,
-    [pageTurns],
+    () => [...interactionTurns].reverse().find((turn) => turn.workflow_draft_revision_id)?.workflow_draft_revision_id ?? null,
+    [interactionTurns],
   );
   const workflowDraftReviewQuery = useQuery({
     queryKey: globalWorkflowDraftReviewQueryKey(conversationId, workflowDraftRevisionId),
@@ -141,8 +158,8 @@ export function useGlobalAgentConversation({
     enabled: Boolean(enabled && conversationId && workflowDraftRevisionId),
   });
   const workflowRunRequestId = useMemo(
-    () => [...pageTurns].reverse().find((turn) => turn.workflow_run_request_id)?.workflow_run_request_id ?? null,
-    [pageTurns],
+    () => [...interactionTurns].reverse().find((turn) => turn.workflow_run_request_id)?.workflow_run_request_id ?? null,
+    [interactionTurns],
   );
   const workflowRunRequestQuery = useQuery({
     queryKey: globalWorkflowRunRequestQueryKey(conversationId, taskId),

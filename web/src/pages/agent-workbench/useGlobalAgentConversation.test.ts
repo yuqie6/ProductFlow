@@ -1,6 +1,37 @@
 import { describe, expect, it } from "vitest";
 
-import { initialGlobalTaskTurnInput } from "./useGlobalAgentConversation";
+import type { AgentTurn } from "../../lib/types";
+import {
+  initialGlobalTaskTurnInput,
+  selectLatestGlobalAgentTurn,
+} from "./useGlobalAgentConversation";
+
+function turn(id: string, taskId: string | null, status: AgentTurn["status"]): AgentTurn {
+  return {
+    id,
+    conversation_id: "global-conversation",
+    task_id: taskId,
+    harness_turn_id: `harness-${id}`,
+    idempotency_key: `key-${id}`,
+    input_text: id,
+    input_asset_ids: [],
+    status,
+    resume_required: false,
+    output_text: null,
+    error_text: null,
+    question: null,
+    artifact_name: null,
+    artifact_step_id: null,
+    workflow_draft_revision_id: null,
+    library_organization_draft_revision_id: null,
+    workflow_run_request_id: null,
+    page_context_snapshot_id: null,
+    sync_error: null,
+    finished_at: null,
+    created_at: `2026-08-19T00:00:0${id.slice(-1)}Z`,
+    updated_at: `2026-08-19T00:00:0${id.slice(-1)}Z`,
+  };
+}
 
 describe("global Agent Task bootstrap input", () => {
   it("uses the task goal and a task-scoped idempotency key", () => {
@@ -30,5 +61,13 @@ describe("global Agent Task bootstrap input", () => {
       route: "/media-library",
       selected_asset_ids: ["asset-1"],
     }));
+  });
+
+  it("keeps a background Task Turn out of the direct global conversation controls", () => {
+    const directTurn = turn("direct-1", null, "succeeded");
+    const backgroundTurn = turn("task-1", "task-1", "running");
+
+    expect(selectLatestGlobalAgentTurn([directTurn, backgroundTurn], null)).toBe(directTurn);
+    expect(selectLatestGlobalAgentTurn([directTurn, backgroundTurn], "task-1")).toBe(backgroundTurn);
   });
 });
