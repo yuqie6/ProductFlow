@@ -47,12 +47,20 @@ def _restore_logging_state() -> Iterator[None]:
         logging.getLogger("uvicorn.error"),
         logging.getLogger("uvicorn.access"),
     )
-    original_state = {logger.name: (list(logger.handlers), logger.level, logger.propagate) for logger in loggers}
+    original_state = {
+        logger.name: (list(logger.handlers), logger.level, logger.propagate, logger.disabled)
+        for logger in loggers
+    }
+    # Alembic env.py calls logging.config.fileConfig, which can disable existing
+    # uvicorn loggers in the same pytest process. These tests intentionally
+    # exercise uvicorn mirroring, so start from an enabled baseline.
+    for logger in loggers:
+        logger.disabled = False
     try:
         yield
     finally:
         for logger in loggers:
-            saved_handlers, saved_level, saved_propagate = original_state[logger.name]
+            saved_handlers, saved_level, saved_propagate, saved_disabled = original_state[logger.name]
             for handler in list(logger.handlers):
                 if handler not in saved_handlers:
                     logger.removeHandler(handler)
@@ -60,6 +68,7 @@ def _restore_logging_state() -> Iterator[None]:
             logger.handlers = saved_handlers
             logger.setLevel(saved_level)
             logger.propagate = saved_propagate
+            logger.disabled = saved_disabled
 
 
 def test_default_log_dir_uses_backend_storage_when_running_from_backend(
