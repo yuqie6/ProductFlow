@@ -7,6 +7,7 @@ import type {
   AgentTask,
   AgentTaskListResponse,
   AgentQuestionAnswer,
+  AgentQuestionAnswerResponse,
   AgentTurn,
   AgentTurnPage,
   AgentWorkflowRunRequest,
@@ -506,7 +507,7 @@ export const api = {
     projectionId: string,
     questionId: string,
     answer: AgentQuestionAnswer,
-  ): Promise<AgentTurn> {
+  ): Promise<AgentQuestionAnswerResponse> {
     return request(
       `${agentConversationPath(productId, conversationId)}/turns/${encodeURIComponent(projectionId)}/questions/${encodeURIComponent(questionId)}/answer`,
       { method: "POST", body: JSON.stringify(answer) },
@@ -604,7 +605,7 @@ export const api = {
     projectionId: string,
     questionId: string,
     answer: AgentQuestionAnswer,
-  ): Promise<AgentTurn> {
+  ): Promise<AgentQuestionAnswerResponse> {
     return request(
       `${globalAgentConversationPath(conversationId)}/turns/${encodeURIComponent(projectionId)}/questions/${encodeURIComponent(questionId)}/answer`,
       { method: "POST", body: JSON.stringify(answer) },

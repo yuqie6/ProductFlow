@@ -26,7 +26,7 @@ import { AgentMessageList } from "./AgentMessageList";
 import { AgentQuestionPrompt } from "./AgentQuestionPrompt";
 import { AgentSessionSwitcher } from "./AgentSessionSwitcher";
 import { AgentWorkflowRunRequestCard } from "./AgentWorkflowRunRequestCard";
-import { AgentResumeAfterAnswerError, useAgentConversation } from "./useAgentConversation";
+import { useAgentConversation } from "./useAgentConversation";
 import { useAgentTurnEvents } from "./useAgentTurnEvents";
 
 interface AgentConversationPanelProps {
@@ -197,10 +197,8 @@ export function AgentConversationPanel({
         answer,
       });
       setAnsweredQuestionId(activeQuestion.id);
-    } catch (error) {
-      if (error instanceof AgentResumeAfterAnswerError) {
-        setAnsweredQuestionId(activeQuestion.id);
-      }
+    } catch {
+      // The persisted answer and continuation remain retryable through the same question key.
     }
   };
   const previewSelectedAsset = (asset: AgentAttachment) => {

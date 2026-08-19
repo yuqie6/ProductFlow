@@ -292,8 +292,8 @@ Tool 按用户意图设计，避免把数据库 CRUD 原样暴露给模型：
 
 - Agent 需要用户补充信息时调用 ProductFlow `ask_user` 能力或等价的 adapter 机制。
 - FastAPI 持久化 Question，Web 显示选项/文本输入。
-- 用户回答后继续同一个 ProductFlow Conversation 和 Pi session；答案只能作为新一轮输入，不能修改原始 Task goal 或历史事实。
-- 问题等待期间，Turn 状态必须可恢复；重复回答使用 question resolution target/idempotency 处理。
+- 用户回答后继续同一个 ProductFlow Conversation 和 Pi session；答案只能作为新 continuation Turn 的输入，不能修改原始 Task goal 或历史事实。
+- ProductFlow 在原始 Turn projection 中保存问题答案和 continuation Turn ID。重复回答复用稳定 idempotency key；Agent service 可用时取消旧 waiter，进程不可用时由 queued continuation 和 lease recovery 接管。
 
 ### Draft
 
@@ -378,7 +378,7 @@ Pi 的 session file、compaction 和 resume API 不能直接证明以下语义�
 - 强制后端校验真实资产 ID、事实来源、Draft schema、expected revision 和 payload 上限。
 - 验证无效 artifact 的可修订路径、用户回答恢复和确认前无正式业务副作用。
 
-当前结果：Question 回答/resume、后端 Draft validate、artifact 投影和确认前无正式 materialization 已接入现有 FastAPI/Web 合同；真实浏览器确认链仍需 gate。
+当前结果：Question 持久化、答案幂等、continuation Turn、后端 Draft validate、artifact 投影和确认前无正式 materialization 已接入现有 FastAPI/Web 合同；真实浏览器确认链仍需 gate。
 
 ### 阶段 4：待确认执行请求（main 已实现）
 

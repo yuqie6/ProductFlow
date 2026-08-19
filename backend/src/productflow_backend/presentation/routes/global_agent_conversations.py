@@ -45,6 +45,7 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     AgentGlobalWorkflowDraftReviewConfirmRequest,
     AgentGlobalWorkflowDraftReviewResponse,
     AgentQuestionAnswerRequest,
+    AgentQuestionAnswerResponse,
     AgentTurnPageResponse,
     AgentTurnResponse,
     AgentWorkflowRunRequestResponse,
@@ -336,7 +337,7 @@ def resume_global_agent_turn_endpoint(
 
 @router.post(
     "/{conversation_id}/turns/{projection_id}/questions/{question_id}/answer",
-    response_model=AgentTurnResponse,
+    response_model=AgentQuestionAnswerResponse,
 )
 def answer_global_agent_question_endpoint(
     conversation_id: str,
@@ -344,17 +345,20 @@ def answer_global_agent_question_endpoint(
     question_id: str,
     payload: AgentQuestionAnswerRequest,
     session: Session = Depends(get_session),
-) -> AgentTurnResponse:
-    return serialize_agent_turn(
-        answer_agent_question(
-            session,
-            product_id=None,
-            conversation_id=conversation_id,
-            projection_id=projection_id,
-            question_id=question_id,
-            answer=payload.to_gateway_payload(),
-            gateway=_agent_gateway_or_raise(),
-        )
+) -> AgentQuestionAnswerResponse:
+    result = answer_agent_question(
+        session,
+        product_id=None,
+        conversation_id=conversation_id,
+        projection_id=projection_id,
+        question_id=question_id,
+        answer=payload.to_gateway_payload(),
+        gateway=_agent_gateway_or_raise(),
+        enqueue_sync=enqueue_global_agent_turn_sync,
+    )
+    return AgentQuestionAnswerResponse(
+        answered_turn=serialize_agent_turn(result.answered_turn),
+        continuation_turn=serialize_agent_turn(result.continuation_turn),
     )
 
 

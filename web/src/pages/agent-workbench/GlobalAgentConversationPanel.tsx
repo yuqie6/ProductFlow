@@ -160,7 +160,7 @@ export function GlobalAgentConversationPanel({
       });
       setAnsweredQuestionId(activeQuestion.id);
     } catch {
-      // The mutation surface keeps the answer available for a resume retry.
+      // The mutation surface keeps the answer and continuation key retryable.
     }
   };
   const error = errorDetail(

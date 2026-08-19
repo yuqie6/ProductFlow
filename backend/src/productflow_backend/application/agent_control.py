@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ from productflow_backend.application.agent_conversations import (
     cancel_unbound_agent_turn,
     get_agent_conversation_or_raise,
     get_agent_turn_or_raise,
+    lock_agent_turn_or_raise,
     project_agent_turn_state,
     record_agent_turn_start_error,
     reserve_agent_turn,
@@ -62,6 +64,12 @@ logger = logging.getLogger(__name__)
 class AgentTurnSubmission:
     projection: AgentTurnProjection
     created: bool
+
+
+@dataclass(frozen=True, slots=True)
+class AgentQuestionAnswerResult:
+    answered_turn: AgentTurnProjection
+    continuation_turn: AgentTurnProjection
 
 
 def submit_agent_turn(
@@ -267,39 +275,151 @@ def answer_agent_question(
     question_id: str,
     answer: dict[str, Any],
     gateway: AgentServiceClient,
-) -> AgentTurnProjection:
-    projection = get_agent_turn_or_raise(
+    enqueue_sync: Callable[[Session, str], None],
+) -> AgentQuestionAnswerResult:
+    projection = lock_agent_turn_or_raise(
         session,
         product_id=product_id,
         conversation_id=conversation_id,
         projection_id=projection_id,
     )
-    if projection.harness_turn_id is None:
-        raise ConflictError("Agent turn projection 尚未绑定 harness Turn")
-    try:
-        state = gateway.answer_question(
+    continuation_key = _question_continuation_key(projection.id, question_id)
+    continuation = None
+    created_continuation = False
+    question: dict[str, Any] | None = None
+    if projection.continuation_turn_id is not None:
+        continuation = session.get(AgentTurnProjection, projection.continuation_turn_id)
+        if continuation is None:
+            raise ConflictError("Agent question continuation Turn 不存在")
+        if projection.question_json is None or projection.question_json.get("id") != question_id:
+            raise ConflictError("当前 Agent 问题不存在或已经过期")
+        if projection.question_answer_json != answer:
+            raise ConflictError("当前问题已经使用其他答案创建 continuation Turn")
+    else:
+        if projection.status != AgentTurnStatus.REQUIRES_INPUT:
+            raise ConflictError("当前 Agent Turn 没有可回答的问题")
+        question = _validate_question_for_answer(projection.question_json, question_id, answer)
+        continuation_input = _question_continuation_input(question, answer)
+        reservation = reserve_agent_turn(
+            session,
+            product_id=product_id,
             conversation_id=conversation_id,
-            turn_id=projection.harness_turn_id,
-            question_id=question_id,
-            answer=answer,
+            input_text=continuation_input,
+            input_asset_ids=list(projection.input_asset_ids_json),
+            idempotency_key=continuation_key,
             task_id=projection.task_id,
         )
-    except AgentServiceRequestError as exc:
-        _raise_agent_service_business_error(exc)
-    projection = synchronize_agent_turn_state(
-        session,
-        product_id=product_id,
-        conversation_id=conversation_id,
-        projection_id=projection.id,
-        state=state,
+        continuation = reservation.projection
+        created_continuation = reservation.created
+        projection.question_answer_json = dict(answer)
+        projection.continuation_turn_id = continuation.id
+        projection.resume_required = False
+        projection.sync_error = None
+        projection.updated_at = now_utc()
+        session.flush()
+
+        # Stop a live waiter when possible. If the Agent process is unavailable,
+        # the persisted continuation remains queued and the old wait is left for
+        # lease recovery to reconcile.
+        if projection.harness_turn_id is not None:
+            try:
+                state = gateway.cancel_turn(
+                    conversation_id=conversation_id,
+                    turn_id=projection.harness_turn_id,
+                    task_id=projection.task_id,
+                )
+                synchronize_agent_turn_state(
+                    session,
+                    product_id=product_id,
+                    conversation_id=conversation_id,
+                    projection_id=projection.id,
+                    state=state,
+                    commit=False,
+                )
+                projection.question_json = dict(question)
+                projection.updated_at = now_utc()
+            except AgentServiceRequestError as exc:
+                projection.sync_error = (
+                    "问题答案已持久化；原等待 Turn 尚未确认取消，等待执行恢复对账"
+                    if exc.status_code is None or exc.status_code >= 500
+                    else "原问题 Turn 已不可用，继续执行由 continuation Turn 接管"
+                )
+
+    if continuation is None:
+        raise ConflictError("Agent question continuation Turn 创建失败")
+    if created_continuation or continuation.harness_turn_id is None or not _is_terminal_turn(continuation.status):
+        continuation = submit_agent_turn(
+            session,
+            product_id=product_id,
+            conversation_id=conversation_id,
+            input_text=continuation.input_text,
+            input_asset_ids=list(continuation.input_asset_ids_json),
+            idempotency_key=continuation.idempotency_key,
+            task_id=continuation.task_id,
+            gateway=gateway,
+            enqueue_sync=enqueue_sync,
+        ).projection
+    session.refresh(projection)
+    session.refresh(continuation)
+    return AgentQuestionAnswerResult(
+        answered_turn=projection,
+        continuation_turn=continuation,
     )
-    return set_agent_turn_resume_required(
-        session,
-        product_id=product_id,
-        conversation_id=conversation_id,
-        projection_id=projection.id,
-        required=True,
+
+
+def _question_continuation_key(projection_id: str, question_id: str) -> str:
+    digest = hashlib.sha256(question_id.encode("utf-8")).hexdigest()
+    return f"question-continuation:{projection_id}:{digest}"
+
+
+def _validate_question_for_answer(
+    question: dict[str, Any] | None,
+    question_id: str,
+    answer: dict[str, Any],
+) -> dict[str, Any]:
+    if question is None or question.get("id") != question_id:
+        raise ConflictError("当前 Agent 问题不存在或已经过期")
+    if "option" in answer:
+        option = answer.get("option")
+        options = question.get("options")
+        if (
+            isinstance(option, bool)
+            or not isinstance(option, int)
+            or not isinstance(options, list)
+            or option < 0
+            or option >= len(options)
+        ):
+            raise BusinessValidationError("Agent 问题选项无效")
+    elif not isinstance(answer.get("text"), str) or not answer["text"].strip():
+        raise BusinessValidationError("Agent 问题文本回答不能为空")
+    return question
+
+
+def _question_continuation_input(question: dict[str, Any], answer: dict[str, Any]) -> str:
+    question_text = str(question.get("question", "")).strip()
+    if "option" in answer:
+        option = int(answer["option"])
+        options = question.get("options")
+        selected = options[option] if isinstance(options, list) and option < len(options) else None
+        label = selected.get("label") if isinstance(selected, dict) else None
+        answer_text = f"选择第 {option + 1} 项" + (f"（{label}）" if isinstance(label, str) and label else "")
+    else:
+        answer_text = str(answer.get("text", "")).strip()
+    return (
+        "继续当前 Agent 任务。"
+        f"针对问题“{question_text}”，用户回答：{answer_text}。"
+        "请基于这个回答继续执行，并再次通过 ProductFlow 工具确认业务事实。"
     )
+
+
+def _is_terminal_turn(status: AgentTurnStatus) -> bool:
+    return status in {
+        AgentTurnStatus.AWAITING_CONFIRMATION,
+        AgentTurnStatus.SUCCEEDED,
+        AgentTurnStatus.FAILED,
+        AgentTurnStatus.CANCELED,
+        AgentTurnStatus.UNKNOWN,
+    }
 
 
 def synchronize_agent_turn_state(
@@ -676,6 +796,7 @@ def _raise_agent_service_business_error(exc: AgentServiceRequestError) -> None:
 
 
 __all__ = [
+    "AgentQuestionAnswerResult",
     "AgentTurnSubmission",
     "attach_agent_library_organization_draft_artifact",
     "answer_agent_question",

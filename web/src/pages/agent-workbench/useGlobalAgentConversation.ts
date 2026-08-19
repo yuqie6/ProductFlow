@@ -20,7 +20,6 @@ import type {
   SubmitAgentTurnInput,
 } from "../../lib/types";
 import {
-  AgentResumeAfterAnswerError,
   flattenAgentTurnPages,
   selectNewestAgentTurnProjection,
   upsertAgentTurnPageData,
@@ -239,28 +238,22 @@ export function useGlobalAgentConversation({
   });
   const answerQuestionMutation = useMutation({
     mutationFn: async ({ projectionId, questionId, answer }: AnswerQuestionInput) => {
-      const answered = await api.answerGlobalAgentQuestion(
+      const result = await api.answerGlobalAgentQuestion(
         conversationId,
         projectionId,
         questionId,
         answer,
       );
-      cacheTurn(answered);
-      if (!answered.resume_required) {
-        return { answered, resumed: answered };
-      }
-      try {
-        const resumed = await api.resumeGlobalAgentTurn(conversationId, projectionId);
-        return { answered, resumed };
-      } catch (error) {
-        throw new AgentResumeAfterAnswerError(answered, error);
-      }
+      cacheTurn(result.answered_turn);
+      cacheTurn(result.continuation_turn);
+      return {
+        answered: result.answered_turn,
+        continuation: result.continuation_turn,
+      };
     },
-    onSuccess: ({ resumed }) => cacheTurn(resumed),
-    onError: (error) => {
-      if (error instanceof AgentResumeAfterAnswerError) {
-        cacheTurn(error.answered);
-      }
+    onSuccess: ({ answered, continuation }) => {
+      cacheTurn(answered);
+      cacheTurn(continuation);
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: turnsKey }),
   });

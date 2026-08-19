@@ -1143,6 +1143,8 @@ export interface AgentTurn {
   error_text: string | null;
   tool_steps?: AgentToolStep[];
   question: AgentQuestion | null;
+  question_answer: AgentQuestionAnswer | null;
+  continuation_turn_id: string | null;
   artifact_name: string | null;
   artifact_step_id: string | null;
   workflow_draft_revision_id: string | null;
@@ -1281,6 +1283,11 @@ export interface SubmitAgentTurnInput {
 export interface SubmitAgentTurnResponse {
   created: boolean;
   turn: AgentTurn;
+}
+
+export interface AgentQuestionAnswerResponse {
+  answered_turn: AgentTurn;
+  continuation_turn: AgentTurn;
 }
 
 export type AgentQuestionAnswer =

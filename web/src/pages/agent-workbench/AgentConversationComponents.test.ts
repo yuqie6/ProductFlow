@@ -26,6 +26,8 @@ function turn(overrides: Partial<AgentTurn> = {}): AgentTurn {
     output_text: null,
     error_text: null,
     question: null,
+    question_answer: null,
+    continuation_turn_id: null,
     artifact_name: null,
     artifact_step_id: null,
     workflow_draft_revision_id: null,

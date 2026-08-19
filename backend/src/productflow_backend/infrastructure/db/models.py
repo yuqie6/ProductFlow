@@ -1337,6 +1337,8 @@ class AgentTurnProjection(Base, TimestampMixin):
     output_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     question_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    question_answer_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    continuation_turn_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     tool_steps_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     artifact_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     artifact_step_id: Mapped[str | None] = mapped_column(String(120), nullable=True)

@@ -234,11 +234,14 @@ def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch:
         assert {"task_id", "page_context_snapshot_id"} <= {
             column["name"] for column in inspector.get_columns("agent_turn_projections")
         }
+        assert {"question_answer_json", "continuation_turn_id"} <= {
+            column["name"] for column in inspector.get_columns("agent_turn_projections")
+        }
         assert {"source_run_id"} <= {
             column["name"] for column in inspector.get_columns("agent_workflow_run_requests")
         }
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0063"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0064"
     finally:
         engine.dispose()
 
@@ -392,7 +395,7 @@ def test_agent_tool_step_projection_migration_backfills_existing_turns(
                 sa.text("SELECT tool_steps_json FROM agent_turn_projections WHERE id = 'turn-tool-step'")
             )
             assert value == "[]"
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0063"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0064"
     finally:
         engine.dispose()
 
@@ -600,7 +603,7 @@ def test_media_library_upload_keys_migration_upgrade_and_downgrade(
     try:
         assert "media_library_upload_keys" in sa.inspect(engine).get_table_names()
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0063"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0064"
     finally:
         engine.dispose()
 
@@ -637,6 +640,6 @@ def test_media_library_upload_keys_migration_upgrade_and_downgrade(
         }
         assert "source_run_id" in source_run_columns
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0063"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0064"
     finally:
         engine.dispose()

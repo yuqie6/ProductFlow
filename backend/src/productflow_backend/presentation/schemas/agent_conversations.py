@@ -465,6 +465,8 @@ class AgentTurnResponse(BaseModel):
     output_text: str | None
     error_text: str | None
     question: dict[str, Any] | None
+    question_answer: dict[str, Any] | None
+    continuation_turn_id: str | None
     tool_steps: list[AgentToolStepResponse]
     artifact_name: str | None
     artifact_step_id: str | None
@@ -476,6 +478,11 @@ class AgentTurnResponse(BaseModel):
     finished_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class AgentQuestionAnswerResponse(BaseModel):
+    answered_turn: AgentTurnResponse
+    continuation_turn: AgentTurnResponse
 
 
 class AgentTurnPageResponse(BaseModel):
@@ -603,6 +610,12 @@ def serialize_agent_turn(projection: AgentTurnProjection) -> AgentTurnResponse:
         output_text=projection.output_text,
         error_text=projection.error_text,
         question=dict(projection.question_json) if projection.question_json is not None else None,
+        question_answer=(
+            dict(projection.question_answer_json)
+            if projection.question_answer_json is not None
+            else None
+        ),
+        continuation_turn_id=projection.continuation_turn_id,
         tool_steps=_serialize_agent_tool_steps(projection.tool_steps_json),
         artifact_name=projection.artifact_name,
         artifact_step_id=projection.artifact_step_id,

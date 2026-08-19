@@ -1297,6 +1297,9 @@ class _FakeAgentGateway:
 
     def start_turn(self, **kwargs) -> AgentServiceTurnState:
         self.start_calls.append(kwargs)
+        self.turn_id = f"harness-turn-{len(self.start_calls)}"
+        if self.status != AgentTurnStatus.AWAITING_CONFIRMATION:
+            self.status = AgentTurnStatus.REQUIRES_INPUT if len(self.start_calls) == 1 else AgentTurnStatus.RUNNING
         return self.state()
 
     def get_turn(self, **_kwargs) -> AgentServiceTurnState:
@@ -1311,6 +1314,7 @@ class _FakeAgentGateway:
         return self.state()
 
     def cancel_turn(self, **_kwargs) -> AgentServiceTurnState:
+        self.turn_id = _kwargs["turn_id"]
         self.status = AgentTurnStatus.CANCELED
         return self.state()
 
@@ -1431,31 +1435,31 @@ def test_public_agent_routes_keep_session_scope_idempotency_question_and_sse(
         json={"option": 0},
     )
     assert answered.status_code == 200, answered.text
-    assert answered.json()["status"] == "queued"
-    assert answered.json()["resume_required"] is True
+    answer_body = answered.json()
+    assert answer_body["answered_turn"]["status"] == "canceled"
+    assert answer_body["answered_turn"]["question_answer"] == {"option": 0}
+    continuation = answer_body["continuation_turn"]
+    assert continuation["status"] == "running"
+    assert continuation["harness_turn_id"] == "harness-turn-2"
+    assert continuation["continuation_turn_id"] is None
+    assert answer_body["answered_turn"]["continuation_turn_id"] == continuation["id"]
+    assert "选择第 1 项" in continuation["input_text"]
+    assert enqueued[-1] == continuation["id"]
+    assert enqueued.count(continuation["id"]) == 1
 
-    def fail_enqueue(_session: object, _projection_id: str) -> None:
-        raise RuntimeError("queue unavailable")
-
-    monkeypatch.setattr(agent_routes, "enqueue_agent_turn_sync", fail_enqueue)
-    failed_resume = client.post(f"{turn_path}/{projection_id}/resume")
-    assert failed_resume.status_code == 503, failed_resume.text
-    persisted_after_failed_enqueue = client.get(f"{turn_path}/{projection_id}")
-    assert persisted_after_failed_enqueue.status_code == 200
-    assert persisted_after_failed_enqueue.json()["status"] == "queued"
-    assert persisted_after_failed_enqueue.json()["resume_required"] is True
-    assert "无法入队" in persisted_after_failed_enqueue.json()["sync_error"]
-
-    monkeypatch.setattr(
-        agent_routes,
-        "enqueue_agent_turn_sync",
-        lambda _session, projection_id: enqueued.append(projection_id),
+    repeated_answer = client.post(
+        f"{turn_path}/{projection_id}/questions/question-1/answer",
+        json={"option": 0},
     )
-    resumed = client.post(f"{turn_path}/{projection_id}/resume")
-    assert resumed.status_code == 200, resumed.text
-    assert resumed.json()["status"] == "running"
-    assert resumed.json()["resume_required"] is False
-    assert resumed.json()["sync_error"] is None
+    assert repeated_answer.status_code == 200, repeated_answer.text
+    assert repeated_answer.json()["continuation_turn"]["id"] == continuation["id"]
+    assert len(gateway.start_calls) == 2
+
+    wrong_question = client.post(
+        f"{turn_path}/{projection_id}/questions/question-2/answer",
+        json={"option": 0},
+    )
+    assert wrong_question.status_code == 409, wrong_question.text
 
     events = client.get(
         f"{turn_path}/{projection_id}/events?after=3",
@@ -1699,6 +1703,7 @@ def test_sync_worker_recovers_unbound_turn_and_idempotently_attaches_artifact(db
     db_session.expire_all()
     assert db_session.scalar(select(func.count()).select_from(WorkflowDraftRevision)) == 2
     assert recover_unfinished_agent_turn_syncs(enqueue=recovery_enqueued.append).pending_turns == 0
+
 
     from productflow_backend.presentation.api import create_app
 

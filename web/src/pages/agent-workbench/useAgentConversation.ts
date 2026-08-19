@@ -42,19 +42,7 @@ interface AnswerQuestionInput {
 
 interface AnswerQuestionResult {
   answered: AgentTurn;
-  resumed: AgentTurn;
-}
-
-export class AgentResumeAfterAnswerError extends Error {
-  answered: AgentTurn;
-  cause: unknown;
-
-  constructor(answered: AgentTurn, cause: unknown) {
-    super(cause instanceof Error ? cause.message : "Agent 回答已保存，但恢复执行失败");
-    this.name = "AgentResumeAfterAnswerError";
-    this.answered = answered;
-    this.cause = cause;
-  }
+  continuation: AgentTurn;
 }
 
 export function agentTurnsQueryKey(productId: string, conversationId: string, taskId?: string | null) {
@@ -284,29 +272,23 @@ export function useAgentConversation({
   });
   const answerQuestionMutation = useMutation<AnswerQuestionResult, Error, AnswerQuestionInput>({
     mutationFn: async ({ projectionId, questionId, answer }) => {
-      const answered = await api.answerAgentQuestion(
+      const result = await api.answerAgentQuestion(
         productId,
         conversation.id,
         projectionId,
         questionId,
         answer,
       );
-      cacheTurn(answered);
-      if (!answered.resume_required) {
-        return { answered, resumed: answered };
-      }
-      try {
-        const resumed = await api.resumeAgentTurn(productId, conversation.id, projectionId);
-        return { answered, resumed };
-      } catch (error) {
-        throw new AgentResumeAfterAnswerError(answered, error);
-      }
+      cacheTurn(result.answered_turn);
+      cacheTurn(result.continuation_turn);
+      return {
+        answered: result.answered_turn,
+        continuation: result.continuation_turn,
+      };
     },
-    onSuccess: ({ resumed }) => cacheTurn(resumed),
-    onError: (error) => {
-      if (error instanceof AgentResumeAfterAnswerError) {
-        cacheTurn(error.answered);
-      }
+    onSuccess: ({ answered, continuation }) => {
+      cacheTurn(answered);
+      cacheTurn(continuation);
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: turnsKey }),
   });
