@@ -7,7 +7,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import { useRef } from "react";
+import { useId } from "react";
 
 import { useI18n } from "../../../lib/preferences";
 import type { GalleryAssetSort } from "../../../lib/types";
@@ -45,7 +45,7 @@ export function ImageExplorerToolbar({
   onUpload,
 }: ImageExplorerToolbarProps) {
   const { t } = useI18n();
-  const uploadRef = useRef<HTMLInputElement | null>(null);
+  const uploadInputId = useId();
   return (
     <div className="space-y-2 border-b border-slate-200 pb-3 dark:border-slate-800">
       <div className="flex min-w-0 items-center gap-1.5">
@@ -75,29 +75,29 @@ export function ImageExplorerToolbar({
           <Plus size={15} />
         </button>
         <input
-          ref={uploadRef}
+          id={uploadInputId}
           type="file"
           accept="image/png,image/jpeg,image/webp"
           multiple
+          disabled={busy}
           className="sr-only"
           onChange={(event) => {
             const files = Array.from(event.target.files ?? []);
             if (files.length) {
               onUpload(files);
             }
-            event.target.value = "";
+            event.currentTarget.value = "";
           }}
         />
-        <button
-          type="button"
-          onClick={() => uploadRef.current?.click()}
-          disabled={busy}
-          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-indigo-600 text-white hover:bg-indigo-500 disabled:opacity-50 dark:bg-violet-500 dark:hover:bg-violet-400"
+        <label
+          htmlFor={uploadInputId}
+          aria-disabled={busy}
+          className="inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-md bg-indigo-600 text-white hover:bg-indigo-500 focus-within:ring-2 focus-within:ring-indigo-400 disabled:opacity-50 aria-disabled:cursor-wait aria-disabled:opacity-50 dark:bg-violet-500 dark:hover:bg-violet-400"
           title={t("detail.library.upload")}
           aria-label={t("detail.library.upload")}
         >
           <Upload size={15} />
-        </button>
+        </label>
       </div>
 
       <div className="flex min-w-0 items-center gap-1.5">
