@@ -54,7 +54,7 @@ export function AgentQuestionPrompt({
   }
 
   return (
-    <section className="border-t border-zinc-200 bg-amber-50/80 px-4 py-4 dark:border-slate-800 dark:bg-amber-400/5" aria-labelledby={`agent-question-${question.id}`}>
+    <section className="agent-question-prompt min-h-0 max-h-[42dvh] shrink overflow-y-auto border-t border-zinc-200 bg-amber-50/80 px-4 py-4 dark:border-slate-800 dark:bg-amber-400/5 sm:max-h-none sm:overflow-visible" aria-labelledby={`agent-question-${question.id}`}>
       <div className="text-xs font-semibold text-amber-800 dark:text-amber-300">{question.header}</div>
       <h3 id={`agent-question-${question.id}`} className="mt-1 text-sm font-semibold leading-6 text-zinc-950 dark:text-white">
         {question.question}

@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import type { AgentTask } from "../lib/types";
-import { openGlobalAgent, TaskBoard, TaskList } from "./GlobalAgentDock";
+import { isGlobalAgentDockModalTarget, openGlobalAgent, TaskBoard, TaskList } from "./GlobalAgentDock";
 
 function sampleTask(id: string, title: string, status: AgentTask["status"]): AgentTask {
   return {
@@ -148,5 +148,16 @@ describe("GlobalAgentDock Task Views", () => {
     } else {
       delete (globalThis as unknown as { window?: unknown }).window;
     }
+  });
+
+  it("treats portal modal targets as inside the dock interaction surface", () => {
+    const modalTarget = {
+      closest: (selector: string) => selector === "[data-global-agent-modal]" ? {} : null,
+    } as unknown as EventTarget;
+    const pageTarget = {} as EventTarget;
+
+    expect(isGlobalAgentDockModalTarget(modalTarget)).toBe(true);
+    expect(isGlobalAgentDockModalTarget(pageTarget)).toBe(false);
+    expect(isGlobalAgentDockModalTarget(null)).toBe(false);
   });
 });

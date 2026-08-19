@@ -8,6 +8,7 @@ import { api, ApiError } from "../../lib/api";
 import type { DownloadableImage } from "../../lib/image-downloads";
 import { useI18n } from "../../lib/preferences";
 import type {
+  AgentAttachment,
   AgentConversation,
   AgentPageContextSnapshotInput,
   AgentQuestionAnswer,
@@ -20,15 +21,13 @@ import {
   ProductImageExplorer,
   type ImageExplorerSelectionTarget,
 } from "../product-detail/image-explorer/ProductImageExplorer";
-import { AgentComposer } from "./AgentComposer";
+import { AgentComposer, AGENT_COMPOSER_MAX_ASSETS } from "./AgentComposer";
 import { AgentMessageList } from "./AgentMessageList";
 import { AgentQuestionPrompt } from "./AgentQuestionPrompt";
 import { AgentSessionSwitcher } from "./AgentSessionSwitcher";
 import { AgentWorkflowRunRequestCard } from "./AgentWorkflowRunRequestCard";
 import { AgentResumeAfterAnswerError, useAgentConversation } from "./useAgentConversation";
 import { useAgentTurnEvents } from "./useAgentTurnEvents";
-
-const AGENT_COMPOSER_MAX_ASSETS = 6;
 
 interface AgentConversationPanelProps {
   productId: string;
@@ -204,7 +203,7 @@ export function AgentConversationPanel({
       }
     }
   };
-  const previewSelectedAsset = (asset: GalleryAsset) => {
+  const previewSelectedAsset = (asset: AgentAttachment) => {
     setPreviewError(null);
     setPreview({
       previewUrl: api.toApiUrl(asset.preview_url),
@@ -335,15 +334,15 @@ export function AgentConversationPanel({
   return (
     <section
       data-agent-conversation-panel
-      className={`flex min-h-0 flex-col overflow-hidden bg-[#f7f8fa] text-zinc-900 dark:bg-[#070b11] dark:text-slate-100 ${className}`}
+      className={`flex min-h-0 flex-col overflow-hidden bg-surface-base text-text-primary ${className}`}
     >
-      <header className="flex min-h-16 shrink-0 items-center gap-3 border-b border-zinc-200 bg-white px-4 py-3 dark:border-slate-800 dark:bg-[#090d13]">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-zinc-950 text-white dark:bg-cyan-400 dark:text-[#071018]">
+      <header className="flex min-h-14 shrink-0 items-center gap-3 border-b border-border-l1 bg-surface-raised/90 px-4 py-2.5 backdrop-blur">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent">
           <Bot size={18} />
         </span>
         <div className="min-w-0 flex-1">
-          <h2 className="truncate text-sm font-semibold text-zinc-950 dark:text-white">{t("agentWorkbench.agent")}</h2>
-          <p className="truncate text-xs text-zinc-500 dark:text-slate-400">{productName}</p>
+          <h2 className="truncate text-sm font-semibold text-text-primary">{t("agentWorkbench.agent")}</h2>
+          <p className="truncate text-xs text-text-secondary">{productName}</p>
         </div>
         {reviewDraftAvailable && !reviewDraftTurnAvailable && onReviewDraft ? (
           <button
@@ -457,31 +456,30 @@ export function AgentConversationPanel({
         </div>
       ) : null}
 
-      <AgentComposer
-        value={composerText}
-        selectedAssets={composerAssets}
-        isSubmitting={agent.submitTurnMutation.isPending}
-        canSubmit={canSubmitMessage}
-        stopAvailable={Boolean(agent.activeTurn)}
-        isStopping={
-          agent.cancelTurnMutation.isPending ||
-          agent.activeTurn?.status === "cancel_requested" ||
-          Boolean(events.state.terminal_kind)
-        }
-        error={composerError}
-        onChange={(value) => {
-          setComposerText(value);
-          rotateComposerKey();
-        }}
-        onOpenAssets={() => setAssetSelectorOpen(true)}
-        onRemoveAsset={(assetId) => {
-          setComposerAssets((current) => current.filter((asset) => asset.id !== assetId));
-          rotateComposerKey();
-        }}
-        onPreviewAsset={previewSelectedAsset}
-        onSubmit={() => void submitMessage()}
-        onStop={() => agent.cancelTurnMutation.mutate(agent.activeTurn?.id ?? "")}
-      />
+      {!activeQuestion ? (
+        <AgentComposer
+          value={composerText}
+          selectedAssets={composerAssets}
+          isSubmitting={agent.submitTurnMutation.isPending}
+          canSubmit={canSubmitMessage}
+          stopAvailable={Boolean(agent.activeTurn)}
+          isStopping={
+            agent.cancelTurnMutation.isPending ||
+            agent.activeTurn?.status === "cancel_requested" ||
+            Boolean(events.state.terminal_kind)
+          }
+          error={composerError}
+          onChange={setComposerText}
+          onOpenAssets={() => setAssetSelectorOpen(true)}
+          onRemoveAsset={(assetId) => {
+            setComposerAssets((current) => current.filter((asset) => asset.id !== assetId));
+            rotateComposerKey();
+          }}
+          onPreviewAsset={previewSelectedAsset}
+          onSubmit={() => void submitMessage()}
+          onStop={() => agent.cancelTurnMutation.mutate(agent.activeTurn?.id ?? "")}
+        />
+      ) : null}
 
       {typeof document === "undefined" ? dialogs : createPortal(dialogs, document.body)}
     </section>

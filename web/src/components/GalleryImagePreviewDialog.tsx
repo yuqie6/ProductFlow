@@ -75,6 +75,7 @@ export function GalleryImagePreviewDialog({
 
   return (
     <div
+      data-global-agent-modal
       className="fixed inset-0 z-[80] flex items-center justify-center overflow-hidden bg-slate-950/86 p-2 backdrop-blur-sm sm:p-4"
       role="dialog"
       aria-modal="true"

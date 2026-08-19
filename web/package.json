@@ -12,12 +12,14 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@xyflow/react": "^12.10.2",
     "@tanstack/react-query": "^5.90.5",
+    "@xyflow/react": "^12.10.2",
     "lucide-react": "^0.542.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "^7.9.3",
+    "remark-gfm": "^4.0.1",
     "vaul": "^1.1.2"
   },
   "devDependencies": {

@@ -52,10 +52,12 @@ describe("Agent conversation API", () => {
 
     await api.listAgentTurns("product/1", "conversation/1", { after: "cursor+/=", limit: 50 });
     await api.getAgentTurn("product/1", "conversation/1", "projection/1");
+    await api.getMediaLibraryAsset("asset/1");
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       "/api/v2/products/product%2F1/agent-conversations/conversation%2F1/turns?limit=50&after=cursor%2B%2F%3D",
       "/api/v2/products/product%2F1/agent-conversations/conversation%2F1/turns/projection%2F1",
+      "/api/media-library/asset%2F1",
     ]);
     expect(api.getAgentTurnEventsUrl("product/1", "conversation/1", "projection/1", 17)).toBe(
       "/api/v2/products/product%2F1/agent-conversations/conversation%2F1/turns/projection%2F1/events?after=17",
@@ -65,6 +67,9 @@ describe("Agent conversation API", () => {
     );
     expect(api.getProductImageAssetMediaUrl("asset/1", "thumbnail")).toBe(
       "/api/v2/product-image-assets/asset%2F1/download?variant=thumbnail",
+    );
+    expect(api.getMediaLibraryAssetMediaUrl("asset/1", "thumbnail")).toBe(
+      "/api/media-library/asset%2F1/download?variant=thumbnail",
     );
   });
 
@@ -148,13 +153,13 @@ describe("Agent conversation API", () => {
     await api.listGlobalAgentTurns("conversation/1", { after: "cursor+/=", limit: 10, taskId: "task/1" });
     await api.submitGlobalAgentTurn("conversation/1", {
       input_text: "检查全局素材",
-      asset_ids: [],
+      asset_ids: ["media-asset-1"],
       idempotency_key: "global-turn-1",
       task_id: "task/1",
       page_context: {
         route: "/media-library",
         page_type: "media_library",
-        selected_asset_ids: [],
+        selected_asset_ids: ["media-asset-1"],
         visible_asset_ids: [],
         filters: {},
         captured_at: "2026-08-17T00:00:00Z",
@@ -174,13 +179,13 @@ describe("Agent conversation API", () => {
     expect(fetchMock.mock.calls[1][1]?.body).toBe(
       JSON.stringify({
         input_text: "检查全局素材",
-        asset_ids: [],
+        asset_ids: ["media-asset-1"],
         idempotency_key: "global-turn-1",
         task_id: "task/1",
         page_context: {
           route: "/media-library",
           page_type: "media_library",
-          selected_asset_ids: [],
+          selected_asset_ids: ["media-asset-1"],
           visible_asset_ids: [],
           filters: {},
           captured_at: "2026-08-17T00:00:00Z",

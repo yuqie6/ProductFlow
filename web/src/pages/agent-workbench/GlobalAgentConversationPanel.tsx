@@ -1,26 +1,27 @@
-import { Bot, Loader2, Send, Square, User } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Bot } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 
+import { GalleryImagePreviewDialog } from "../../components/GalleryImagePreviewDialog";
 import { ApiError, api } from "../../lib/api";
-import { formatDateTime } from "../../lib/format";
+import type { DownloadableImage } from "../../lib/image-downloads";
 import { useI18n } from "../../lib/preferences";
 import type {
+  AgentAttachment,
   AgentPageContextSnapshotInput,
   AgentQuestionAnswer,
   AgentTaskStatus,
+  AgentTurn,
+  MediaLibraryAsset,
 } from "../../lib/types";
-import {
-  selectAgentAssistantText,
-  selectAgentToolSteps,
-} from "./agentEventReducer";
+import { AgentComposer, AGENT_COMPOSER_MAX_ASSETS } from "./AgentComposer";
+import { AgentMediaLibraryPicker } from "./AgentMediaLibraryPicker";
+import { AgentMessageList } from "./AgentMessageList";
 import { AgentQuestionPrompt } from "./AgentQuestionPrompt";
-import { AgentToolStepList } from "./AgentToolStepList";
-import { AgentTurnTail } from "./AgentTurnTail";
 import { AgentWorkflowRunRequestCard } from "./AgentWorkflowRunRequestCard";
 import { GlobalLibraryOrganizationDraftCard } from "./GlobalLibraryOrganizationDraftCard";
 import { GlobalWorkflowDraftCard } from "./GlobalWorkflowDraftCard";
-import { toolStepSignature } from "./toolStepSignature";
 import { useGlobalAgentConversation } from "./useGlobalAgentConversation";
 import { useAgentTurnEvents } from "./useAgentTurnEvents";
 
@@ -46,8 +47,13 @@ export function GlobalAgentConversationPanel({
   const { t } = useI18n();
   const navigate = useNavigate();
   const [composerText, setComposerText] = useState("");
+  const [composerAssets, setComposerAssets] = useState<MediaLibraryAsset[]>([]);
+  const [assetPickerOpen, setAssetPickerOpen] = useState(false);
+  const [preview, setPreview] = useState<DownloadableImage | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const [answeredQuestionId, setAnsweredQuestionId] = useState<string | null>(null);
   const composerKeyRef = useRef(globalThis.crypto.randomUUID());
+  const confirmationKeyRef = useRef<{ draftId: string; version: number; key: string } | null>(null);
   const agent = useGlobalAgentConversation({
     conversationId: conversationId ?? "",
     taskId,
@@ -67,29 +73,55 @@ export function GlobalAgentConversationPanel({
     events.state.turn_key === agent.activeTurn?.id && events.state.question
       ? events.state.question
       : agent.activeTurn?.question ?? null;
-  const activeTurnId = agent.activeTurn?.id ?? null;
-  const listRef = useRef<HTMLDivElement | null>(null);
-  const nearBottomRef = useRef(true);
-  const confirmationKeyRef = useRef<{ draftId: string; version: number; key: string } | null>(null);
-  const latestLiveSignature = useMemo(() => {
-    const activeTurn = agent.turns.find((turn) => turn.id === activeTurnId);
-    if (!activeTurn) return "";
-    return `${selectAgentAssistantText(activeTurn, events.state)}\u0000${toolStepSignature(selectAgentToolSteps(activeTurn, events.state))}`;
-  }, [activeTurnId, agent.turns, events.state]);
 
   useEffect(() => {
     setComposerText("");
+    setComposerAssets([]);
+    setAssetPickerOpen(false);
+    setPreview(null);
+    setPreviewError(null);
     setAnsweredQuestionId(null);
     composerKeyRef.current = globalThis.crypto.randomUUID();
     confirmationKeyRef.current = null;
   }, [conversationId, taskId]);
   useEffect(() => setAnsweredQuestionId(null), [activeQuestion?.id]);
   useEffect(() => {
-    const element = listRef.current;
-    if (element && nearBottomRef.current) {
-      element.scrollTop = element.scrollHeight;
+    if (!assetPickerOpen && !preview) {
+      return;
     }
-  }, [agent.turns.length, latestLiveSignature]);
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        if (preview) {
+          setPreview(null);
+        } else {
+          setAssetPickerOpen(false);
+        }
+      }
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [assetPickerOpen, preview]);
+
+  const rotateComposerKey = () => {
+    composerKeyRef.current = globalThis.crypto.randomUUID();
+  };
+  const previewSelectedAsset = (asset: AgentAttachment) => {
+    setPreviewError(null);
+    setPreview({
+      previewUrl: api.toApiUrl(asset.preview_url),
+      downloadUrl: api.toApiUrl(asset.download_url),
+      filename: asset.original_filename,
+      alt: asset.display_name,
+    });
+  };
+  const previewTurnAsset = async (assetId: string) => {
+    setPreviewError(null);
+    try {
+      previewSelectedAsset(await api.getMediaLibraryAsset(assetId));
+    } catch (error) {
+      setPreviewError(errorDetail(error, t("agentWorkbench.previewFailed")));
+    }
+  };
 
   const canSubmit = Boolean(conversationId && composerText.trim() && !agent.activeTurn);
   const submit = async () => {
@@ -100,13 +132,18 @@ export function GlobalAgentConversationPanel({
     try {
       await agent.submitTurnMutation.mutateAsync({
         input_text: input,
-        asset_ids: [],
+        asset_ids: composerAssets.map((asset) => asset.id),
         idempotency_key: composerKeyRef.current,
         task_id: taskId,
-        page_context: { ...pageContext, captured_at: new Date().toISOString() },
+        page_context: {
+          ...pageContext,
+          selected_asset_ids: composerAssets.map((asset) => asset.id),
+          captured_at: new Date().toISOString(),
+        },
       });
       setComposerText("");
-      composerKeyRef.current = globalThis.crypto.randomUUID();
+      setComposerAssets([]);
+      rotateComposerKey();
     } catch {
       // Keep the text and idempotency key so a failed request can be retried safely.
     }
@@ -137,7 +174,8 @@ export function GlobalAgentConversationPanel({
       agent.workflowRunRequestQuery.error ??
       agent.confirmWorkflowRunRequestMutation.error ??
       agent.cancelWorkflowRunRequestMutation.error ??
-      events.streamError,
+      events.streamError ??
+      previewError,
     t("globalAgent.requestFailed"),
   );
   const questionAnswered = Boolean(
@@ -183,6 +221,77 @@ export function GlobalAgentConversationPanel({
       agent.cancelWorkflowRunRequestMutation.mutate(request.id);
     }
   };
+  const renderTurnExtras = (turn: AgentTurn) => (
+    <>
+      {turn.library_organization_draft_revision_id &&
+      turn.library_organization_draft_revision_id ===
+        agent.libraryOrganizationDraftQuery.data?.current_revision?.id ? (
+        <GlobalLibraryOrganizationDraftCard
+          draft={agent.libraryOrganizationDraftQuery.data ?? null}
+          loading={agent.libraryOrganizationDraftQuery.isLoading}
+          error={errorDetail(
+            agent.libraryOrganizationDraftQuery.error ??
+              agent.confirmLibraryOrganizationDraftMutation.error,
+            t("globalAgent.draft.loadFailed"),
+          )}
+          busy={agent.confirmLibraryOrganizationDraftMutation.isPending}
+          onConfirm={confirmDraft}
+        />
+      ) : null}
+      {turn.workflow_draft_revision_id &&
+      turn.workflow_draft_revision_id === agent.workflowDraftRevisionId ? (
+        <GlobalWorkflowDraftCard
+          review={agent.workflowDraftReviewQuery.data ?? null}
+          loading={agent.workflowDraftReviewQuery.isLoading}
+          error={errorDetail(
+            agent.workflowDraftReviewQuery.error ??
+              agent.confirmWorkflowDraftReviewMutation.error,
+            t("globalAgent.workflowDraft.loadFailed"),
+          )}
+          busy={agent.confirmWorkflowDraftReviewMutation.isPending}
+          onConfirm={confirmWorkflowDraft}
+          onOpenProduct={() => {
+            const review = agent.workflowDraftReviewQuery.data;
+            if (review) {
+              navigate(`/products/${encodeURIComponent(review.product_id)}`);
+            }
+          }}
+        />
+      ) : null}
+    </>
+  );
+
+  const dialogs = (
+    <>
+      {assetPickerOpen ? (
+        <AgentMediaLibraryPicker
+          selectedAssets={composerAssets}
+          onClose={() => setAssetPickerOpen(false)}
+          onConfirm={(assets) => {
+            setComposerAssets(assets);
+            rotateComposerKey();
+            setAssetPickerOpen(false);
+          }}
+          onPreview={previewSelectedAsset}
+        />
+      ) : null}
+      {preview ? (
+        <GalleryImagePreviewDialog
+          ariaLabel={t("agentWorkbench.previewAsset", { name: preview.alt })}
+          imageUrl={preview.previewUrl}
+          imageAlt={preview.alt}
+          title={preview.alt}
+          subtitle={preview.filename}
+          body={preview.filename}
+          providerNotesTitle={t("agentWorkbench.assetDetails")}
+          downloadUrl={preview.downloadUrl}
+          downloadLabel={t("agentWorkbench.downloadAsset")}
+          closeLabel={t("agentWorkbench.closePreview")}
+          onClose={() => setPreview(null)}
+        />
+      ) : null}
+    </>
+  );
 
   if (!conversationId) {
     return (
@@ -194,10 +303,10 @@ export function GlobalAgentConversationPanel({
   }
 
   return (
-    <section data-global-agent-conversation className="flex min-h-0 flex-1 flex-col bg-surface-raised text-text-primary">
-      <header className="shrink-0 border-b border-border-l1 px-4 py-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-accent text-accent-fg">
+    <section data-global-agent-conversation className="flex min-h-0 flex-1 flex-col bg-surface-base text-text-primary">
+      <header className="shrink-0 border-b border-border-l1 bg-surface-raised/90 px-4 py-3 backdrop-blur">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent">
             <Bot size={16} aria-hidden="true" />
           </span>
           <div className="min-w-0 flex-1">
@@ -206,7 +315,11 @@ export function GlobalAgentConversationPanel({
               {taskGoal ? `${t("globalAgent.taskContext")}: ${taskGoal}` : t("globalAgent.globalScope")}
             </p>
           </div>
-          <span className={`h-2 w-2 shrink-0 rounded-full ${agent.activeTurn ? "animate-pulse bg-accent" : "bg-state-success"}`} aria-hidden="true" />
+          <span
+            role="status"
+            aria-label={agent.activeTurn ? t("agentWorkbench.connection.open") : t("agentWorkbench.status.succeeded")}
+            className={`h-2.5 w-2.5 shrink-0 rounded-full ${agent.activeTurn ? "animate-pulse bg-accent" : "bg-state-success"}`}
+          />
         </div>
         <div className="mt-2 flex min-w-0 items-center gap-1.5 text-[11px] text-text-muted">
           <span className="shrink-0">{t("globalAgent.currentPage")}</span>
@@ -216,86 +329,16 @@ export function GlobalAgentConversationPanel({
 
       {error ? <p role="alert" className="shrink-0 border-b border-state-error/20 bg-state-error/10 px-4 py-2 text-xs leading-5 text-state-error">{error}</p> : null}
 
-      <div
-        ref={listRef}
-        onScroll={(event) => {
-          const element = event.currentTarget;
-          nearBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 96;
-        }}
-        className="min-h-0 flex-1 overflow-y-auto px-3 py-4"
-      >
-        <div className="space-y-5">
-          {agent.turns.map((turn) => {
-            const active = turn.id === activeTurnId;
-            const waiting = active && turn.status !== "requires_input" && turn.status !== "awaiting_confirmation";
-            const eventState = events.state.turn_key === turn.id ? events.state : null;
-            const assistantText = selectAgentAssistantText(turn, eventState);
-            const steps = selectAgentToolSteps(turn, eventState);
-            return (
-              <div key={turn.id} className="space-y-3">
-                <div className="flex justify-end gap-2">
-                  <div className="min-w-0 max-w-[88%]">
-                    <div className="rounded-md bg-accent px-3 py-2 text-sm leading-6 text-accent-fg">
-                      <div className="whitespace-pre-wrap break-words">{turn.input_text}</div>
-                    </div>
-                    <div className="mt-1 text-right text-[10px] text-text-muted">{formatDateTime(turn.created_at, t.locale)}</div>
-                  </div>
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-surface-subtle text-text-secondary"><User size={14} /></span>
-                </div>
-                <div className="flex gap-2">
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-text-primary text-surface-raised"><Bot size={14} /></span>
-                  <div className="min-w-0 flex-1">
-                    {assistantText || waiting ? (
-                      <div className="border-l-2 border-border-l3 pl-3 text-sm leading-6">
-                        {assistantText ? <div className="whitespace-pre-wrap break-words">{assistantText}</div> : <div className="flex items-center gap-2 text-text-secondary"><Loader2 size={14} className="animate-spin motion-reduce:animate-none" />{t("agentWorkbench.waitingForAgent")}</div>}
-                      </div>
-                    ) : null}
-                    <AgentToolStepList steps={steps} live={active} />
-                    <AgentTurnTail turn={turn} active={active} reviewDraft={false} />
-                    {turn.library_organization_draft_revision_id &&
-                    turn.library_organization_draft_revision_id ===
-                      agent.libraryOrganizationDraftQuery.data?.current_revision?.id ? (
-                      <GlobalLibraryOrganizationDraftCard
-                        draft={agent.libraryOrganizationDraftQuery.data ?? null}
-                        loading={agent.libraryOrganizationDraftQuery.isLoading}
-                        error={errorDetail(
-                          agent.libraryOrganizationDraftQuery.error ??
-                            agent.confirmLibraryOrganizationDraftMutation.error,
-                          t("globalAgent.draft.loadFailed"),
-                        )}
-                        busy={agent.confirmLibraryOrganizationDraftMutation.isPending}
-                        onConfirm={confirmDraft}
-                      />
-                    ) : null}
-                    {turn.workflow_draft_revision_id &&
-                    turn.workflow_draft_revision_id === agent.workflowDraftRevisionId ? (
-                      <GlobalWorkflowDraftCard
-                        review={agent.workflowDraftReviewQuery.data ?? null}
-                        loading={agent.workflowDraftReviewQuery.isLoading}
-                        error={errorDetail(
-                          agent.workflowDraftReviewQuery.error ??
-                            agent.confirmWorkflowDraftReviewMutation.error,
-                          t("globalAgent.workflowDraft.loadFailed"),
-                        )}
-                        busy={agent.confirmWorkflowDraftReviewMutation.isPending}
-                        onConfirm={confirmWorkflowDraft}
-                        onOpenProduct={() => {
-                          const review = agent.workflowDraftReviewQuery.data;
-                          if (review) {
-                            navigate(`/products/${encodeURIComponent(review.product_id)}`);
-                          }
-                        }}
-                      />
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-          {agent.turnsQuery.isLoading ? <div className="flex min-h-32 items-center justify-center gap-2 text-xs text-text-muted"><Loader2 size={16} className="animate-spin" />{t("app.loading")}</div> : null}
-          {!agent.turnsQuery.isLoading && !agent.turns.length ? <div className="flex min-h-32 items-center justify-center px-4 text-center text-sm text-text-muted">{t("globalAgent.emptyChat")}</div> : null}
-        </div>
-      </div>
+      <AgentMessageList
+        turns={agent.turns}
+        activeTurnId={agent.activeTurn?.id ?? null}
+        eventState={events.state}
+        initialTurnPending={agent.turnsQuery.isLoading}
+        onPreviewAsset={(assetId) => void previewTurnAsset(assetId)}
+        getAssetThumbnailUrl={(assetId) => api.getMediaLibraryAssetMediaUrl(assetId, "thumbnail")}
+        renderTurnExtras={renderTurnExtras}
+        emptyLabel={t("globalAgent.emptyChat")}
+      />
 
       <AgentWorkflowRunRequestCard
         request={agent.workflowRunRequestQuery.data ?? null}
@@ -336,35 +379,38 @@ export function GlobalAgentConversationPanel({
         />
       ) : null}
 
-      <div className="shrink-0 border-t border-border-l1 bg-surface-subtle/50 p-3">
-        <div className="grid grid-cols-[minmax(0,1fr)_42px] items-end gap-2 rounded-md border border-border-l2 bg-surface-raised p-2 focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/15">
-          <textarea
-            value={composerText}
-            maxLength={20_000}
-            rows={1}
-            onChange={(event) => setComposerText(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && canSubmit) {
-                event.preventDefault();
-                void submit();
-              }
-            }}
-            placeholder={t("globalAgent.chatPlaceholder")}
-            aria-label={t("agentWorkbench.composerLabel")}
-            className="max-h-28 min-h-10 resize-none border-0 bg-transparent px-1 py-2 text-sm leading-6 text-text-primary outline-none placeholder:text-text-muted"
-          />
-          <button
-            type="button"
-            onClick={agent.activeTurn ? () => agent.cancelTurnMutation.mutate(agent.activeTurn?.id ?? "") : () => void submit()}
-            disabled={agent.activeTurn ? agent.cancelTurnMutation.isPending : !canSubmit || agent.submitTurnMutation.isPending}
-            aria-label={agent.activeTurn ? t("agentWorkbench.cancelTurn") : t("agentWorkbench.send")}
-            title={agent.activeTurn ? t("agentWorkbench.cancelTurn") : t("agentWorkbench.send")}
-            className={`flex h-10 w-10 items-center justify-center rounded-md text-accent-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-40 ${agent.activeTurn ? "bg-state-error" : "bg-accent hover:bg-accent-strong"}`}
-          >
-            {agent.activeTurn ? (agent.cancelTurnMutation.isPending ? <Loader2 size={16} className="animate-spin" /> : <Square size={15} fill="currentColor" />) : <Send size={17} />}
-          </button>
-        </div>
-      </div>
+      {!activeQuestion ? (
+        <AgentComposer
+          value={composerText}
+          selectedAssets={composerAssets}
+          isSubmitting={agent.submitTurnMutation.isPending}
+          canSubmit={canSubmit}
+          stopAvailable={Boolean(agent.activeTurn)}
+          isStopping={
+            agent.cancelTurnMutation.isPending ||
+            agent.activeTurn?.status === "cancel_requested" ||
+            Boolean(events.state.terminal_kind)
+          }
+          error={errorDetail(agent.submitTurnMutation.error, t("globalAgent.requestFailed"))}
+          placeholder={t("globalAgent.chatPlaceholder")}
+          assetPickerLabel={t("globalAgent.attachImage")}
+          selectedAssetsCountLabel={t("globalAgent.assetPicker.selected", {
+            count: composerAssets.length,
+            maximum: AGENT_COMPOSER_MAX_ASSETS,
+          })}
+          onChange={setComposerText}
+          onOpenAssets={() => setAssetPickerOpen(true)}
+          onRemoveAsset={(assetId) => {
+            setComposerAssets((current) => current.filter((asset) => asset.id !== assetId));
+            rotateComposerKey();
+          }}
+          onPreviewAsset={previewSelectedAsset}
+          onSubmit={() => void submit()}
+          onStop={() => agent.cancelTurnMutation.mutate(agent.activeTurn?.id ?? "")}
+        />
+      ) : null}
+
+      {typeof document === "undefined" ? dialogs : createPortal(dialogs, document.body)}
     </section>
   );
 }

@@ -1,5 +1,5 @@
-import { Bot, ChevronUp, Image, Loader2, User } from "lucide-react";
-import { useEffect, useMemo, useRef } from "react";
+import { Check, ChevronDown, ChevronUp, Copy, Loader2, MessagesSquare } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { api } from "../../lib/api";
 import { formatDateTime } from "../../lib/format";
@@ -10,6 +10,7 @@ import {
   selectAgentToolSteps,
   type AgentTurnEventState,
 } from "./agentEventReducer";
+import { AgentAssistantMarkdown } from "./AgentAssistantMarkdown";
 import { AgentToolStepList } from "./AgentToolStepList";
 import { AgentTurnTail } from "./AgentTurnTail";
 import { toolStepSignature } from "./toolStepSignature";
@@ -19,12 +20,15 @@ interface AgentMessageListProps {
   activeTurnId: string | null;
   eventState: AgentTurnEventState | null;
   initialTurnPending: boolean;
-  hasOlder: boolean;
-  loadingOlder: boolean;
+  hasOlder?: boolean;
+  loadingOlder?: boolean;
   reviewDraftRevisionId?: string | null;
-  onLoadOlder: () => Promise<unknown>;
-  onPreviewAsset: (assetId: string) => void;
+  onLoadOlder?: () => Promise<unknown>;
+  onPreviewAsset?: (assetId: string) => void;
+  getAssetThumbnailUrl?: (assetId: string) => string;
   onReviewDraft?: () => void;
+  renderTurnExtras?: (turn: AgentTurn) => ReactNode;
+  emptyLabel?: string;
 }
 
 export function AgentMessageList({
@@ -32,16 +36,20 @@ export function AgentMessageList({
   activeTurnId,
   eventState,
   initialTurnPending,
-  hasOlder,
-  loadingOlder,
+  hasOlder = false,
+  loadingOlder = false,
   reviewDraftRevisionId = null,
   onLoadOlder,
   onPreviewAsset,
+  getAssetThumbnailUrl = (assetId) => api.getProductImageAssetMediaUrl(assetId, "thumbnail"),
   onReviewDraft,
+  renderTurnExtras,
+  emptyLabel,
 }: AgentMessageListProps) {
   const { t } = useI18n();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const nearBottomRef = useRef(true);
+  const [atLatest, setAtLatest] = useState(true);
   const latestLiveSignature = useMemo(() => {
     const eventTurnId = activeTurnId ?? eventState?.turn_key ?? null;
     const eventTurn = turns.find((turn) => turn.id === eventTurnId);
@@ -61,6 +69,9 @@ export function AgentMessageList({
   }, [latestLiveSignature, turns.length]);
 
   const loadOlder = async () => {
+    if (!onLoadOlder) {
+      return;
+    }
     const element = scrollRef.current;
     const previousHeight = element?.scrollHeight ?? 0;
     await onLoadOlder();
@@ -71,25 +82,37 @@ export function AgentMessageList({
     }
   };
 
+  const scrollToLatest = () => {
+    const element = scrollRef.current;
+    if (!element) {
+      return;
+    }
+    element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
+    nearBottomRef.current = true;
+    setAtLatest(true);
+  };
+
   return (
     <div
       ref={scrollRef}
       data-agent-message-list
       onScroll={(event) => {
         const element = event.currentTarget;
-        nearBottomRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 96;
+        const nextAtLatest = element.scrollHeight - element.scrollTop - element.clientHeight < 96;
+        nearBottomRef.current = nextAtLatest;
+        setAtLatest((current) => current === nextAtLatest ? current : nextAtLatest);
       }}
-      className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-4 sm:px-5"
+      className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain bg-surface-base px-4 py-7 sm:px-6 sm:py-9"
     >
-      <div className="mx-auto w-full max-w-3xl space-y-5">
-        {hasOlder ? (
+      <div className="mx-auto w-full max-w-[47rem] space-y-10">
+        {hasOlder && onLoadOlder ? (
           <button
             type="button"
             onClick={() => void loadOlder()}
             disabled={loadingOlder}
-            className="mx-auto flex h-10 items-center gap-2 rounded-md px-3 text-xs font-semibold text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 disabled:opacity-50 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+            className="mx-auto flex h-9 items-center gap-2 rounded-full border border-border-l2 bg-surface-raised px-3.5 text-xs font-medium text-text-secondary shadow-sm transition-colors hover:border-accent/40 hover:text-text-primary disabled:cursor-wait disabled:opacity-50"
           >
-            {loadingOlder ? <Loader2 size={14} className="animate-spin" /> : <ChevronUp size={14} />}
+            {loadingOlder ? <Loader2 size={14} className="animate-spin motion-reduce:animate-none" /> : <ChevronUp size={14} />}
             {t("agentWorkbench.loadEarlier")}
           </button>
         ) : null}
@@ -104,22 +127,24 @@ export function AgentMessageList({
           const reviewDraft = Boolean(
             reviewDraftRevisionId && turn.workflow_draft_revision_id === reviewDraftRevisionId,
           );
+          const canPreviewAssets = Boolean(onPreviewAsset);
+
           return (
-            <div key={turn.id} data-agent-turn-id={turn.id} className="space-y-3">
-              <div className="flex justify-end gap-2.5">
-                <div className="min-w-0 max-w-[88%]">
-                  {turn.input_asset_ids.length ? (
-                    <div className="mb-2 flex flex-wrap justify-end gap-2">
+            <article key={turn.id} data-agent-turn-id={turn.id} className="group/turn space-y-5">
+              <div className="flex justify-end">
+                <div className="min-w-0 max-w-[88%] sm:max-w-[34rem]">
+                  {turn.input_asset_ids.length && canPreviewAssets ? (
+                    <div className="mb-2.5 flex flex-wrap justify-end gap-2">
                       {turn.input_asset_ids.map((assetId) => (
                         <button
                           key={assetId}
                           type="button"
-                          onClick={() => onPreviewAsset(assetId)}
+                          onClick={() => onPreviewAsset?.(assetId)}
                           aria-label={t("agentWorkbench.previewTurnAsset")}
-                          className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-md border border-zinc-200 bg-zinc-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 dark:border-slate-700 dark:bg-slate-900"
+                          className="h-16 w-16 overflow-hidden rounded-xl border border-border-l2 bg-surface-subtle shadow-sm transition-transform hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                         >
                           <img
-                            src={api.getProductImageAssetMediaUrl(assetId, "thumbnail")}
+                            src={getAssetThumbnailUrl(assetId)}
                             alt=""
                             className="h-full w-full object-cover"
                           />
@@ -127,64 +152,138 @@ export function AgentMessageList({
                       ))}
                     </div>
                   ) : null}
-                  <div className="rounded-md bg-blue-600 px-3.5 py-2.5 text-sm leading-6 text-white shadow-sm dark:bg-cyan-400 dark:text-[#071018]">
+                  <div className="rounded-[20px] border border-blue-200/80 bg-blue-50 px-4 py-3 text-sm leading-6 text-slate-900 shadow-sm dark:border-blue-400/20 dark:bg-blue-400/10 dark:text-slate-100">
                     <div className="whitespace-pre-wrap break-words">{turn.input_text}</div>
                   </div>
-                  <div className="mt-1 text-right text-[10px] text-zinc-400 dark:text-slate-500">
-                    {formatDateTime(turn.created_at, t.locale)}
+                  <div className="mt-1.5 flex min-h-6 items-center justify-end gap-2 text-[11px] text-text-muted opacity-100 transition-opacity sm:opacity-0 sm:group-hover/turn:opacity-100 sm:group-focus-within/turn:opacity-100">
+                    <time dateTime={turn.created_at}>{formatDateTime(turn.created_at, t.locale)}</time>
+                    <CopyAction text={turn.input_text} label={t("agentWorkbench.copy")} copiedLabel={t("agentWorkbench.copied")} />
                   </div>
                 </div>
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-zinc-200 text-zinc-600 dark:bg-slate-800 dark:text-slate-300">
-                  <User size={15} />
-                </span>
               </div>
 
-              <div className="flex gap-2.5">
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-zinc-950 text-white dark:bg-cyan-400 dark:text-[#071018]">
-                  <Bot size={15} />
-                </span>
-                <div className="min-w-0 max-w-[88%] flex-1">
-                  {assistantText || waitingForAssistant ? (
-                    <div
-                      aria-live={active ? "polite" : undefined}
-                      className="border-l-2 border-border-l3 pl-3 text-sm leading-6 text-text-primary"
-                    >
-                      {assistantText ? (
-                        <div className="whitespace-pre-wrap break-words">{assistantText}</div>
-                      ) : (
-                        <div className="flex h-8 items-center gap-2 text-text-secondary">
-                          <Loader2 size={14} className="animate-spin motion-reduce:animate-none" />
-                          {t("agentWorkbench.waitingForAgent")}
-                        </div>
-                      )}
-                    </div>
-                  ) : null}
-                  <AgentToolStepList steps={toolSteps} live={active} />
-                  <AgentTurnTail
-                    turn={turn}
-                    active={active}
-                    reviewDraft={reviewDraft}
-                    onReviewDraft={onReviewDraft}
-                  />
-                </div>
+              <div className="min-w-0">
+                {assistantText || waitingForAssistant ? (
+                  <div aria-live={active ? "polite" : undefined} className="min-w-0 text-[15px] leading-7 text-text-primary">
+                    {assistantText ? (
+                      <AgentAssistantMarkdown text={assistantText} streaming={active} />
+                    ) : (
+                      <div className="flex h-8 items-center gap-2 text-sm text-text-secondary">
+                        <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-accent-soft text-accent">
+                          <Loader2 size={13} className="animate-spin motion-reduce:animate-none" />
+                        </span>
+                        {t("agentWorkbench.waitingForAgent")}
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+                <AgentToolStepList steps={toolSteps} live={active} />
+                {!active && assistantText ? (
+                  <div className="mt-2 flex min-h-7 items-center gap-2 text-[11px] text-text-muted opacity-100 transition-opacity sm:opacity-0 sm:group-hover/turn:opacity-100 sm:group-focus-within/turn:opacity-100">
+                    <CopyAction text={assistantText} label={t("agentWorkbench.copy")} copiedLabel={t("agentWorkbench.copied")} />
+                  </div>
+                ) : null}
+                <AgentTurnTail
+                  turn={turn}
+                  active={active}
+                  reviewDraft={reviewDraft}
+                  onReviewDraft={onReviewDraft}
+                />
+                {renderTurnExtras?.(turn)}
               </div>
-            </div>
+            </article>
           );
         })}
 
         {!turns.length && initialTurnPending ? (
-          <div className="flex min-h-36 flex-col items-center justify-center gap-3 text-sm text-zinc-500 dark:text-slate-400">
-            <Loader2 size={20} className="animate-spin" />
+          <div className="flex min-h-36 flex-col items-center justify-center gap-3 text-sm text-text-secondary">
+            <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-accent-soft text-accent">
+              <Loader2 size={18} className="animate-spin motion-reduce:animate-none" />
+            </span>
             {t("agentWorkbench.starting")}
           </div>
         ) : null}
         {!turns.length && !initialTurnPending ? (
-          <div className="flex min-h-36 flex-col items-center justify-center gap-2 text-center text-sm text-zinc-500 dark:text-slate-400">
-            <Image size={20} />
-            {t("agentWorkbench.emptyConversation")}
+          <div className="flex min-h-36 flex-col items-center justify-center gap-2 text-center text-sm text-text-secondary">
+            <MessagesSquare size={22} className="text-text-muted" />
+            {emptyLabel ?? t("agentWorkbench.emptyConversation")}
           </div>
         ) : null}
       </div>
+
+      {!atLatest && turns.length ? (
+        <button
+          type="button"
+          onClick={scrollToLatest}
+          aria-label={t("agentWorkbench.scrollToLatest")}
+          title={t("agentWorkbench.scrollToLatest")}
+          className="sticky bottom-3 ml-auto mt-3 flex h-9 w-9 items-center justify-center rounded-full border border-border-l2 bg-surface-raised text-text-secondary shadow-lg transition-colors hover:border-accent/50 hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+        >
+          <ChevronDown size={17} />
+        </button>
+      ) : null}
     </div>
+  );
+}
+
+function CopyAction({
+  text,
+  label,
+  copiedLabel,
+}: {
+  text: string;
+  label: string;
+  copiedLabel: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+    }
+  }, []);
+
+  const copy = async () => {
+    if (!text || typeof navigator === "undefined") {
+      return;
+    }
+    try {
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const fallback = document.createElement("textarea");
+        fallback.value = text;
+        fallback.setAttribute("readonly", "");
+        fallback.style.position = "fixed";
+        fallback.style.opacity = "0";
+        document.body.appendChild(fallback);
+        fallback.select();
+        const copied = document.execCommand("copy");
+        fallback.remove();
+        if (!copied) {
+          throw new Error("Clipboard is unavailable");
+        }
+      }
+      setCopied(true);
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+      timerRef.current = setTimeout(() => setCopied(false), 1_500);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={() => void copy()}
+      aria-label={copied ? copiedLabel : label}
+      title={copied ? copiedLabel : label}
+      className="inline-flex h-6 w-6 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-surface-subtle hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+    >
+      {copied ? <Check size={13} /> : <Copy size={13} />}
+    </button>
   );
 }

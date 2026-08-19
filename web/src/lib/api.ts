@@ -665,6 +665,17 @@ export const api = {
       `/api/v2/product-image-assets/${encodeURIComponent(assetId)}/download${query}`,
     );
   },
+  getMediaLibraryAssetMediaUrl(
+    assetId: string,
+    variant?: "thumbnail" | "preview",
+  ): string {
+    const params = new URLSearchParams();
+    if (variant) {
+      params.set("variant", variant);
+    }
+    const query = params.size ? `?${params}` : "";
+    return toApiUrl(`/api/media-library/${encodeURIComponent(assetId)}/download${query}`);
+  },
   listLegacyArchives(input?: {
     kind?: LegacyArchiveKind;
     product_id?: string;
@@ -907,6 +918,9 @@ export const api = {
   },
   getMediaLibraryBootstrap(): Promise<MediaLibraryBootstrap> {
     return request("/api/media-library/bootstrap");
+  },
+  getMediaLibraryAsset(assetId: string): Promise<MediaLibraryAsset> {
+    return request(`/api/media-library/${encodeURIComponent(assetId)}`);
   },
   listMediaLibraryAssets(input?: {
     limit?: number;

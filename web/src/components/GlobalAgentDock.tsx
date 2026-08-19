@@ -60,6 +60,17 @@ import { GlobalAgentConversationPanel } from "../pages/agent-workbench/GlobalAge
 
 type GlobalAgentDockTab = "chat" | "tasks" | "sessions";
 
+const GLOBAL_AGENT_MODAL_SELECTOR = "[data-global-agent-modal]";
+
+export function isGlobalAgentDockModalTarget(target: EventTarget | null): boolean {
+  if (!target || (typeof target !== "object" && typeof target !== "function")) {
+    return false;
+  }
+  const closest = (target as { closest?: unknown }).closest;
+  return typeof closest === "function"
+    && Boolean((closest as (selector: string) => unknown).call(target, GLOBAL_AGENT_MODAL_SELECTOR));
+}
+
 const TASK_STATUS_LABEL_KEYS = {
   queued: "globalAgent.taskStatus.queued",
   running: "globalAgent.taskStatus.running",
@@ -411,9 +422,10 @@ export function GlobalAgentDock() {
       }
     };
     const onPointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) {
-        setOpen(false);
+      if (rootRef.current?.contains(event.target as Node) || isGlobalAgentDockModalTarget(event.target)) {
+        return;
       }
+      setOpen(false);
     };
     window.addEventListener("keydown", onKeyDown);
     document.addEventListener("pointerdown", onPointerDown);

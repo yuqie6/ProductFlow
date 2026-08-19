@@ -72,7 +72,7 @@ export function AgentTurnTail({
     <div
       data-agent-turn-tail
       data-agent-turn-status={turn.status}
-      className="mt-2 border-t border-border-l1 pt-2"
+      className="mt-4 border-t border-dashed border-border-l1 pt-2"
     >
       <div className="flex min-h-8 items-center gap-2">
         <span
@@ -91,7 +91,7 @@ export function AgentTurnTail({
           <button
             type="button"
             onClick={onReviewDraft}
-            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-accent-soft px-2.5 text-xs font-semibold text-accent-strong hover:bg-accent-soft/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-accent-soft px-2.5 text-xs font-semibold text-accent-strong transition-colors hover:bg-accent-soft/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           >
             <ListChecks size={14} />
             {t("agentWorkbench.reviewDraft")}

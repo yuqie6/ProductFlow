@@ -165,6 +165,15 @@ export interface GalleryRenditionSummary {
   status: DeliveryRenditionStatus;
 }
 
+export interface AgentAttachment {
+  id: string;
+  display_name: string;
+  original_filename: string;
+  download_url: string;
+  preview_url: string;
+  thumbnail_url: string;
+}
+
 export interface GalleryAsset extends ProductImageAsset {
   user_folder_name: string | null;
   image_type_title: string | null;

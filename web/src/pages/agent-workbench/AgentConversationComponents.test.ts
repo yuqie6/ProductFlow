@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { AgentQuestion, AgentSession, AgentTurn, GalleryAsset, WorkflowDraft } from "../../lib/types";
+import { AgentAssistantMarkdown } from "./AgentAssistantMarkdown";
 import { AgentComposer } from "./AgentComposer";
 import { hasUnsyncedWorkflowDraftRevision } from "./AgentConversationPanel";
 import { AgentMessageList } from "./AgentMessageList";
@@ -64,6 +65,19 @@ describe("Agent conversation components", () => {
 
     expect(selectAgentSessionConversation(session)?.product_id).toBe("product-new");
     expect(selectAgentSessionConversation({ ...session, conversations: [] })).toBeNull();
+  });
+
+  it("renders assistant markdown as structured, safe output", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AgentAssistantMarkdown, {
+        text: "# 商品方案\n\n请保留 **商品材质**，并使用 `hero` 作为首图类型。",
+      }),
+    );
+
+    expect(markup).toContain("<h1>商品方案</h1>");
+    expect(markup).toContain("<strong>商品材质</strong>");
+    expect(markup).toContain("<code>hero</code>");
+    expect(markup).not.toContain("<script");
   });
 
   it("refreshes the draft only after ProductFlow projects the proposed revision ID", () => {
@@ -247,11 +261,22 @@ describe("Agent conversation components", () => {
         onPreviewAsset: () => undefined,
       }),
     );
+    const globalMarkup = renderToStaticMarkup(
+      createElement(AgentMessageList, {
+        turns: [turn({ input_asset_ids: ["media/1"] })],
+        activeTurnId: null,
+        eventState: null,
+        initialTurnPending: false,
+        onPreviewAsset: () => undefined,
+        getAssetThumbnailUrl: (assetId) => `/api/media-library/${encodeURIComponent(assetId)}/download?variant=thumbnail`,
+      }),
+    );
 
     expect(activeMarkup).toContain("流式回答");
     expect(activeMarkup).toContain("/api/v2/product-image-assets/asset%2F1/download?variant=thumbnail");
     expect(terminalMarkup).toContain("最终回答");
     expect(terminalMarkup).not.toContain("流式回答");
+    expect(globalMarkup).toContain("/api/media-library/media%2F1/download?variant=thumbnail");
   });
 
   it("renders compact localized tool step rows with textual statuses", () => {
@@ -490,6 +515,23 @@ describe("Agent conversation components", () => {
 
     expect(markup).not.toContain("stale-step");
     expect(markup).not.toContain("上一轮步骤");
+  });
+
+  it("adds copy actions to settled user and assistant messages", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AgentMessageList, {
+        turns: [turn({ status: "succeeded", output_text: "已整理完成" })],
+        activeTurnId: null,
+        eventState: null,
+        initialTurnPending: false,
+        hasOlder: false,
+        loadingOlder: false,
+        onLoadOlder: async () => undefined,
+      }),
+    );
+
+    expect(markup.match(/aria-label="复制消息"/g)).toHaveLength(2);
+    expect(markup).toContain("agent-markdown");
   });
 
   it("renders turn status, failures, and the matching Draft action in the turn tail", () => {

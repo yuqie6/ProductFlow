@@ -784,3 +784,141 @@ textarea {
   background-color: rgb(139 92 246 / 0.2);
   border-color: rgb(167 139 250 / 0.55);
 }
+
+/* Assistant transcript typography: quiet prose, explicit code surfaces, and
+   predictable wrapping for model output in both the workbench and Agent dock. */
+.agent-markdown {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text-primary);
+}
+
+.agent-markdown > :first-child {
+  margin-top: 0;
+}
+
+.agent-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.agent-markdown p,
+.agent-markdown ul,
+.agent-markdown ol,
+.agent-markdown blockquote,
+.agent-markdown pre,
+.agent-markdown table {
+  margin: 0.7rem 0;
+}
+
+.agent-markdown p {
+  white-space: pre-wrap;
+}
+
+.agent-markdown h1,
+.agent-markdown h2,
+.agent-markdown h3 {
+  margin: 1.1rem 0 0.5rem;
+  color: var(--color-text-primary);
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.agent-markdown h1 {
+  font-size: 1.2rem;
+}
+
+.agent-markdown h2 {
+  font-size: 1.05rem;
+}
+
+.agent-markdown h3 {
+  font-size: 0.98rem;
+}
+
+.agent-markdown ul,
+.agent-markdown ol {
+  padding-left: 1.35rem;
+}
+
+.agent-markdown li + li {
+  margin-top: 0.25rem;
+}
+
+.agent-markdown a {
+  color: var(--color-accent-strong);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 38%, transparent);
+  text-underline-offset: 3px;
+}
+
+.agent-markdown a:hover {
+  text-decoration-color: currentColor;
+}
+
+.agent-markdown blockquote {
+  border-left: 2px solid var(--color-border-l3);
+  padding-left: 0.9rem;
+  color: var(--color-text-secondary);
+}
+
+.agent-markdown code {
+  border-radius: 5px;
+  background: var(--color-surface-subtle);
+  padding: 0.12rem 0.35rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.86em;
+}
+
+.agent-markdown pre {
+  overflow-x: auto;
+  border: 1px solid var(--color-border-l2);
+  border-radius: 10px;
+  background: rgb(15 23 42 / 0.045);
+  padding: 0.8rem 0.95rem;
+  line-height: 1.55;
+}
+
+.agent-markdown pre code {
+  display: block;
+  overflow-wrap: normal;
+  background: transparent;
+  padding: 0;
+  white-space: pre;
+}
+
+.agent-markdown hr {
+  margin: 1rem 0;
+  border: 0;
+  border-top: 1px solid var(--color-border-l1);
+}
+
+.agent-markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 0.9em;
+}
+
+.agent-markdown th,
+.agent-markdown td {
+  border: 1px solid var(--color-border-l2);
+  padding: 0.4rem 0.65rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.agent-markdown th {
+  background: var(--color-surface-subtle);
+  font-weight: 650;
+}
+
+.dark .agent-markdown pre {
+  background: rgb(2 6 23 / 0.52);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-markdown * {
+    scroll-behavior: auto !important;
+  }
+}
