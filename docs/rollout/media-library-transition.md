@@ -1,6 +1,6 @@
 # 素材库转型发布与验收计划
 
-Last reviewed against the current working tree on 2026-08-18.
+Last reviewed against the current working tree on 2026-08-19.
 
 ## 1. 范围
 
@@ -144,18 +144,19 @@ Last reviewed against the current working tree on 2026-08-18.
 
 当前 `backfill_media_library` command 已将坏文件和无效 source 以 entry id/code 写入 `summary.blockers`，存在 blocker 时返回退出码 `2`；`--snapshot-file` 会同时保存 PostgreSQL WAL LSN 锚点、storage snapshot identity（`--verify` 重算比对）和完整 durable blocker report；`--verify` 还会输出包含 workflow 子图库关联和商品收录引用计数的 `reconciliation_report_sha256`。reconcile 也会拒绝 canonical 侧多出的 `legacy_gallery` mapping。这些快照字段仍不能替代真实维护窗口、备份恢复验证和观察窗证据。
 
-### 4.1 旧 Canvas revision 的桥接边界
+### 4.1 旧 Canvas revision 的 Gallery 兼容桥接
 
-若 source audit 报告的 `source.schema_profile` 为 `legacy_canvas_agent_20260518_0032`，该数据库仍处于旧 Canvas Agent 分支。它没有当前素材库回填所需的 `media_objects`、`image_session_assets.media_object_id` 和 `media_library_assets` 目标结构。`backfill_media_library` 会在命令入口返回退出码 `2`，报告缺少的表/列，并要求先完成旧库审计和切换预检。
+若 source schema profile 为 `legacy_canvas_agent_20260518_0032`，该数据库没有当前素材库回填所需的 `media_objects`、`image_session_assets.media_object_id` 和 `media_library_assets` 目标结构。`backfill_media_library` 仍面向 current schema，遇到该 source 会返回退出码 `2`。旧库的 Gallery 迁移使用独立的 Gallery-only bridge，保留旧库的 Agent 表、线程、run、计划和时间线，不改变它们的迁移归属。
 
-当前仓库没有把该旧 revision 原地升级为当前 head 的 migration bridge。旧 Canvas Agent 仍有数据时，历史删除 migration 也不能作为升级捷径，因为它会丢失尚未归档的线程、run、计划和时间线事实。生产处理必须保留以下边界：
+bridge 的边界固定为：
 
-1. 使用只读 source connection 生成 `audit_legacy_retirement`、`preflight_legacy_cutover` 和必要的 archive page；source audit 的 `migration_bridge_required` 保持 blocking。
-2. 处理 active/needs-approval run、V1 写入冻结、媒体文件恢复和 provider binding 缺口；报告中的 missing 文件不能用空文件或人工成功状态填平。
-3. 由单独评审批准目标数据库和桥接实现后，才可在目标 current schema 执行 Media Library backfill。当前命令不跨库复制旧 Gallery，也不接受 `alembic stamp`、手工 SQL 或 force flag 代替桥接。
-4. 桥接演练必须证明旧 Gallery、商品图片、工作流关联和 Agent archive 的 source/hash 对账；完成前不得执行 `retire_legacy_gallery`。
+1. source 只允许 revision `20260518_0032`，只读读取 `image_gallery_entries`、`image_session_assets` 和对应文件。未知 revision、缺少表/列、非法路径、缺失文件、非图片文件、声明 MIME 与内容不一致都会进入 blocker。
+2. `export_legacy_gallery_bridge` 生成版本化 manifest。manifest 同时记录 source report hash、包含文件 hash 的 snapshot token、Gallery entry/source asset 身份、文件元数据和 blocker；导出连接强制只读。
+3. `backfill_legacy_gallery_bridge` 在 current schema 中重新核验 source 文件，把文件复制到新的 `media/<uuid>/` 命名空间，创建已验证的 `MediaObject` 与 `source_type=legacy_gallery` 的 `MediaLibraryAsset`。目标 id 按 source entry 稳定生成，重复执行只接受一致映射。
+4. `--verify` 会重读 source 文件和目标文件，核对 byte hash、尺寸、MIME、provenance 和 target mapping，并输出 `target_reconciliation_sha256`。任何 blocker 或 mapping drift 都不能生成物理退休批准证据。
+5. `approve_legacy_gallery_bridge` 把 source manifest、target reconciliation、备份恢复验证时间和 zero-delta 观察时间绑定成独立 approval。`retire_legacy_gallery_source` 在旧库事务中重新锁表、重算 manifest hash，再删除旧 `image_gallery_entries`；目标素材、共享媒体和工作流引用不受删除影响。
 
-新代码确认只读写 `MediaLibraryAsset` 后才解除维护窗口。旧表保持只读证据，不再新增长期业务字段。
+这一条 bridge 不迁移旧 Canvas Agent archive，也不解除 `audit_legacy_retirement` 对 Agent source 的 `migration_bridge_required` 判断。Agent archive 的去留、映射和新 Agent 决策继续独立评审。Gallery bridge 完成后，旧库仍可保留其它旧表；这里只退休 Gallery 物理 owner。
 
 ## 9. Phase 5：商品收录、组织与归档
 
@@ -192,7 +193,7 @@ Last reviewed against the current working tree on 2026-08-18.
 cutover 条件：
 
 - 新 frontend 和 API 已不读取 `/api/gallery`。
-- old/new backfill report 为零 blocker。
+- current-schema backfill 或 Gallery bridge report 为零 blocker，并且 verify 已生成稳定 target reconciliation hash。
 - `ImageGalleryEntry` runtime model、旧 route、schema、api methods 和旧客户端调用已退休；迁移测试保留 source reader、backfill 和 retired-route 404 回归。
 - 旧物理表继续只读保留，直到独立素材库 cutover gate 进入 `ready_for_cleanup`。
 
@@ -287,7 +288,7 @@ git diff --check
 
 未来清理必须满足：
 
-1. 独立 `media_library_cutover_gates` migration、实施计划、人工评审和明确 scoped confirmation。
+1. current schema 的独立 `media_library_cutover_gates`，或旧 Canvas source bridge 的独立 approval artifact；两者都需要实施计划、人工评审和明确 scoped confirmation。
 2. 至少一个已验证部署观察窗内旧 reader/writer/count 为零。
 3. 数据库和 storage backup restore 有真实证据。
 4. dry-run 输出精确 rows/columns/files 和稳定 hash。
@@ -319,4 +320,36 @@ python -m productflow_backend.commands.retire_legacy_gallery \
   --apply --confirm RETIRE_LEGACY_GALLERY
 ```
 
-该命令只删除 `image_gallery_entries`，保留 `MediaLibraryAsset`、`MediaObject`、工作流子图库关联、商品图片和历史引用；数据库 drop 与 gate 标记在同一事务内完成。命令执行成功后 gate 进入 `cleaned`，不能重新批准。
+旧 Canvas source 使用下面的独立 bridge 流程；`--apply` 之前必须保存 manifest、bridge report、target reconciliation 和 approval：
+
+```bash
+python -m productflow_backend.commands.export_legacy_gallery_bridge \
+  --database-url '<legacy database url>' \
+  --source-storage-root '<legacy storage root>' \
+  --output "$EVIDENCE_DIR/legacy-gallery-manifest.json"
+python -m productflow_backend.commands.backfill_legacy_gallery_bridge \
+  --input "$EVIDENCE_DIR/legacy-gallery-manifest.json" \
+  --source-storage-root '<legacy storage root>' \
+  --expected-source-report-sha256 '<manifest source_report_sha256>' \
+  --apply --verify \
+  --output "$EVIDENCE_DIR/legacy-gallery-bridge.json"
+python -m productflow_backend.commands.approve_legacy_gallery_bridge \
+  --manifest "$EVIDENCE_DIR/legacy-gallery-manifest.json" \
+  --target-reconciliation-sha256 '<bridge report target_reconciliation_sha256>' \
+  --backup-restore-verified-at '<UTC ISO-8601 timestamp>' \
+  --zero-delta-observed-at '<UTC ISO-8601 timestamp>' \
+  --output "$EVIDENCE_DIR/legacy-gallery-approval.json"
+python -m productflow_backend.commands.retire_legacy_gallery_source \
+  --database-url '<legacy database url>' \
+  --source-storage-root '<legacy storage root>' \
+  --manifest "$EVIDENCE_DIR/legacy-gallery-manifest.json" \
+  --approval "$EVIDENCE_DIR/legacy-gallery-approval.json"
+python -m productflow_backend.commands.retire_legacy_gallery_source \
+  --database-url '<legacy database url>' \
+  --source-storage-root '<legacy storage root>' \
+  --manifest "$EVIDENCE_DIR/legacy-gallery-manifest.json" \
+  --approval "$EVIDENCE_DIR/legacy-gallery-approval.json" \
+  --apply --confirm RETIRE_LEGACY_GALLERY
+```
+
+current-schema `retire_legacy_gallery` 只删除 `image_gallery_entries`，保留 `MediaLibraryAsset`、`MediaObject`、工作流子图库关联、商品图片和历史引用；数据库 drop 与 gate 标记在同一事务内完成。旧 Canvas source 的 `retire_legacy_gallery_source` 只删除 source Gallery 表，不删除 Agent archive 或其它旧表。命令执行成功后相应 owner 进入 retired/cleaned，不能重新批准同一份 evidence。

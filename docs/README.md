@@ -10,9 +10,11 @@
 | `USER_GUIDE.md` | 用户可以执行的页面操作和故障提示 | 内部事务、模型表、未来计划 |
 | `ROADMAP.md` | 尚未实现或尚未验证的产品与工程方向 | 已交付能力清单、当前架构复述 |
 | `specs/` | scoped PRD 与实现设计；状态必须标注 Draft/Approved，Approved 必须给出批准 issue、decision 或任务 evidence | 冒充当前运行事实、部署证据、会频繁变化的任务状态 |
+| `specs/pi-agent-runtime-integration.md` | Pi runtime、Skill、动态 Context、ProductFlow Tool 的目标设计、实施阶段和验收标准 | 当前 Go Agent service 的实现事实、业务 authority 的重新定义 |
 | `adr/` | 已接受决策的背景、选择、后果 | 会频繁随重构变化的文件列表 |
 | `rollout/` | 某次迁移或发布的已完成项、缺失证据和停止条件 | 长期工程规则 |
 | `operations/` | 操作者命令、前置条件、回滚和证据处理 | 产品愿景、普通开发流程 |
+| `archive/` | 已退出默认阅读路径的历史设计和过程记录 | 当前实现、当前决策、部署操作依据 |
 | `aegis/` | 长任务 intent、实施计划、checkpoint 与证据草稿 | 取代 PRD、ADR、ARCHITECTURE 或 runtime authority |
 | `../AGENTS.md` | 全仓开发方法和验证要求 | 领域需求复述 |
 | `../backend/AGENTS.md` | 后端可执行工程约束 | 产品路线图 |
@@ -24,8 +26,13 @@
 
 开发前按改动类型读取最小集合：
 
+### 默认阅读
+
+普通功能开发只需要：`CONTEXT.md`、本文件、对应 package `AGENTS.md`，以及相关的 `PRD.md` / `ARCHITECTURE.md` 段落。只有改动触及对应边界时，才继续读取 ADR、spec、rollout 或 operations；`aegis/` 和 `archive/` 默认跳过。
+
 - 当前产品语义：`CONTEXT.md`、`PRD.md`、相关 ADR。
-- 已批准但未交付的产品/设计变更：相关 `specs/`、ADR、rollout 和实施计划；不得提前写成当前事实。
+- 已批准但未交付的产品/设计变更：相关 `specs/`、ADR、rollout 和实施计划；不得提前写成当前事实。历史长版设计默认跳过，必要时再查 `archive/`。
+- Agent runtime 迁移：`adr/0007-pi-agent-runtime-boundary.md`、`specs/pi-agent-runtime-integration.md`，并回看 `ARCHITECTURE.md` 的当前实现段落。
 - 后端：`backend/AGENTS.md`、`ARCHITECTURE.md` 中对应所有权、相关代码和测试。
 - 前端：`web/AGENTS.md`、`ARCHITECTURE.md` 中对应所有权、相关代码和测试。
 - 跨层合同：以上两份 package `AGENTS.md`，沿 wire DTO、应用用例、持久化、API client 和 UI projection 验证完整链路。

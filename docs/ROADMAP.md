@@ -4,6 +4,15 @@
 
 ## 近期优先级
 
+### 0. Agent 运行底座迁移到 Pi
+
+- 当前 `main` 仍使用 Go Agent service + `agent-harness` snapshot；这条描述在迁移完成前保持为当前事实。
+- 目标 `main` 使用基于 Pi SDK 的 ProductFlow Agent adapter。ProductFlow 的 FastAPI、Draft、确认、WorkflowRun、素材 owner 和 Web projection 合同继续由现有模块负责。
+- 现有自研 harness 迁到 `exp` 分支，继续验证 durable Turn、后台 Task、崩溃恢复、效果对账和调度；它不作为 `main` 的隐式运行时 fallback。
+- 两条线共享 Tool/Context/Draft/事件合同和质量样本，隔离 runtime journal、session storage 和调度实现。
+- 实施顺序、Skill 编写规则、动态 Context、Tool 边界和完成定义见 `docs/adr/0007-pi-agent-runtime-boundary.md` 与 `docs/specs/pi-agent-runtime-integration.md`。
+- 阶段 0 至 4 以交互式 Turn、只读能力、Question、Draft 和待确认 WorkflowRun 为主；后台 Task 和 durable recovery 只有在单独 gate 通过后才扩大默认能力。
+
 ### 1. Agent 创建质量
 
 - 用真实商品和真实 provider 建立端到端回归样本。
@@ -29,7 +38,7 @@
 
 - `/media-library` 已提供全局素材列表、搜索、文件夹、标签、归档/恢复、批量组织和选择反馈。
 - `WorkflowMediaLibraryAsset` 已把全局素材关联到工作流子图库；同一图片可被多个工作流使用，关联不复制媒体 bytes。
-- ImageChat 的保存动作已切换到 canonical `/api/media-library/from-session`，`/gallery` 已重定向到 `/media-library`；旧 `/api/gallery`、历史 DTO 和在线 runtime owner 已移除，旧表的部署级回填、引用审计、观察窗和物理清理资格仍待完成。旧 `legacy_canvas_agent_20260518_0032` 数据库需要单独批准和演练 migration bridge，当前回填命令会拒绝该 schema。
+- ImageChat 的保存动作已切换到 canonical `/api/media-library/from-session`，`/gallery` 已重定向到 `/media-library`；旧 `/api/gallery`、历史 DTO 和在线 runtime owner 已移除，current schema 的旧表部署级回填、引用审计、观察窗和物理清理资格仍待完成。旧 `legacy_canvas_agent_20260518_0032` 数据库已有 Gallery-only migration bridge：manifest、目标素材导入、source/hash 对账和独立 source retirement command 已实现；真实部署演练、备份恢复证据和 approval 仍待完成。Agent archive 不在这条 bridge 范围内。
 - Agent 图库整理已接入有界读取、可确认 Draft、revision 校验、幂等确认、原子应用和结果投影；全局素材关联到明确工作流也已通过同一 Draft 机制落地，使用工作流 revision 和当前关联状态校验，不复制媒体 bytes。剩余工作是旧 Gallery 对账/owner 退休，以及跨商品等更高范围的 Agent 写操作。
 
 ### 5. 全局 Agent 与人工工作流协作
@@ -41,7 +50,7 @@
 - 按 Session 摘要、Task 目标、最近 Turn、当前页面上下文和执行前 Fresh Observation 分层组装上下文；完整 Agent journal 继续保留，模型工作上下文按 harness 规则压缩。
 - 已交付商品工作区和全局 Agent 的 WorkflowRun 监控工具；全局 Agent 可以针对明确商品、明确工作流和 revision 创建待确认执行请求，确认后复用现有 WorkflowRun 链路。统一的执行前 Fresh Observation harness 抽象、更多有副作用操作和更完整的受影响对象跳转仍待实现。全局素材到明确工作流的关联 Draft 已交付。
 
-落地策略和当前缺口见 `specs/global-agent-human-workflow-design.md`。
+Global Agent、Session、Task 和人工工作流的产品落地策略见 `specs/global-agent-human-workflow-design.md`；Pi runtime 迁移策略见 `specs/pi-agent-runtime-integration.md`。
 
 ### 6. 配方
 

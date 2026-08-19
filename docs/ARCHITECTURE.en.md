@@ -13,7 +13,7 @@ ProductFlow is a single-administrator, single-merchant workspace with six runtim
 
 The browser reaches only Web and FastAPI. The Agent service calls FastAPI internal endpoints with a dedicated bearer token; FastAPI controls Agent Turns over the agent-service internal HTTP/SSE API. API and worker share PostgreSQL, Redis, and storage.
 
-This document describes the current implementation only. Module ownership comes from the live source tree and behavior evidence comes from the referenced tests. Product contracts live in `PRD.en.md`, durable rationale in `adr/`, and incomplete deployment evidence in `rollout/`.
+This document describes the current implementation only. Module ownership comes from the live source tree and behavior evidence comes from the referenced tests. Product contracts live in `PRD.en.md`, durable rationale in `adr/`, and incomplete deployment evidence in `rollout/`. The Pi runtime migration target and implementation rules live in `adr/0007-pi-agent-runtime-boundary.md` and `specs/pi-agent-runtime-integration.md`; they do not replace current implementation facts until the migration is delivered.
 
 ## 2. Backend Layers
 
@@ -154,7 +154,7 @@ DeliveryRenditionJob reads a ProductImageAsset and asynchronously emits a crop, 
 
 GenerationSpec records model-generation intent. Provider-effective values and decoded actual output live in run/generation records. DeliverySpec is a separate deterministic contract and cannot invoke the image model.
 
-Global media-library reads, folder/tag/archive organization, source saves, and workflow associations are owned by `application/media_library/`, `routes/media_library.py`, `MediaLibraryPage.tsx`, and `WorkflowMediaLibraryPanel.tsx`, using bounded cursor pages and preview/thumbnail URLs. `/gallery` preserves a bookmark redirect; the old `/api/gallery` route, DTOs, and online runtime owner have been removed. `application/legacy_retirement/media_library.py` and `commands/backfill_media_library.py` provide bounded migration reads for the retained physical legacy table. The product workbench's `product-detail/image-explorer/` continues to own product-scoped manual selection and binding.
+Global media-library reads, folder/tag/archive organization, source saves, and workflow associations are owned by `application/media_library/`, `routes/media_library.py`, `MediaLibraryPage.tsx`, and `WorkflowMediaLibraryPanel.tsx`, using bounded cursor pages and preview/thumbnail URLs. `/gallery` preserves a bookmark redirect; the old `/api/gallery` route, DTOs, and online runtime owner have been removed. `application/legacy_retirement/media_library.py` and `commands/backfill_media_library.py` provide bounded migration reads for the retained current-schema table; `legacy_retirement/gallery_bridge.py` and the four `legacy_gallery_bridge` commands own the old Canvas revision's Gallery-only manifest, target import, reconciliation, and source retirement. The product workbench's `product-detail/image-explorer/` continues to own product-scoped manual selection and binding.
 
 ## 8. Provider Architecture
 

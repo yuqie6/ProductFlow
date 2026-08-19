@@ -13,7 +13,7 @@ ProductFlow 是单管理员、单商家工作区，由六个运行单元组成�
 
 浏览器只访问 Web 和 FastAPI。Agent service 使用独立 bearer token 调用 FastAPI internal API；FastAPI 通过 agent-service internal HTTP/SSE 控制 Turn。API 和 worker 共享 PostgreSQL、Redis 和 storage。
 
-本文只描述当前实现。模块所有权来自当前源码树，行为证据来自对应测试；产品合同见 `PRD.md`，长期理由见 `adr/`，未完成部署证据见 `rollout/`。
+本文只描述当前实现。模块所有权来自当前源码树，行为证据来自对应测试；产品合同见 `PRD.md`，长期理由见 `adr/`，未完成部署证据见 `rollout/`。Pi runtime 迁移目标和实施准则见 `adr/0007-pi-agent-runtime-boundary.md` 与 `specs/pi-agent-runtime-integration.md`，在迁移完成前不覆盖本文的当前实现事实。
 
 ## 2. 后端分层
 
@@ -159,7 +159,7 @@ DeliveryRenditionJob 从 ProductImageAsset 读取原始媒体，按裁切、缩�
 
 GenerationSpec 保存模型生成意图；provider effective values 和解码后的 actual output 保存在运行/生成记录中。DeliverySpec 是独立确定性合同，不能触发图片模型调用。
 
-全局素材库读取、文件夹/标签/归档、来源保存和工作流关联由 `application/media_library/`、`routes/media_library.py`、`MediaLibraryPage.tsx` 和 `WorkflowMediaLibraryPanel.tsx` 负责，列表使用有界 cursor page 和 preview/thumbnail URL。`/gallery` 只保留旧书签兼容重定向；旧 `/api/gallery` route、DTO 和在线 runtime owner 已移除。`application/legacy_retirement/media_library.py` 与 `commands/backfill_media_library.py` 只为旧物理表提供有界迁移读取。商品工作台中的 `product-detail/image-explorer/` 继续负责商品作用域的人工选图和绑定。
+全局素材库读取、文件夹/标签/归档、来源保存和工作流关联由 `application/media_library/`、`routes/media_library.py`、`MediaLibraryPage.tsx` 和 `WorkflowMediaLibraryPanel.tsx` 负责，列表使用有界 cursor page 和 preview/thumbnail URL。`/gallery` 只保留旧书签兼容重定向；旧 `/api/gallery` route、DTO 和在线 runtime owner 已移除。`application/legacy_retirement/media_library.py` 与 `commands/backfill_media_library.py` 为 current schema 的旧物理表提供有界迁移读取；`legacy_retirement/gallery_bridge.py` 与四个 `legacy_gallery_bridge` command 负责旧 Canvas revision 的 Gallery-only manifest、目标导入、对账和 source retirement。商品工作台中的 `product-detail/image-explorer/` 继续负责商品作用域的人工选图和绑定。
 
 ## 8. Provider 架构
 
