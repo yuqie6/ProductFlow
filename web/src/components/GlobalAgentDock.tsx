@@ -36,6 +36,26 @@ import type {
   CreateAgentTaskInput,
 } from "../lib/types";
 import { ConfirmDialog } from "./ConfirmDialog";
+import {
+  applyDockModeWidth,
+  BUBBLE_POSITION_STORAGE_KEY,
+  clampBubblePosition,
+  clampWindowPosition,
+  DOCK_HEIGHT_STORAGE_KEY,
+  DOCK_MODE_STORAGE_KEY,
+  DOCK_POSITION_STORAGE_KEY,
+  DOCK_WIDTH_STORAGE_KEY,
+  defaultBubblePosition,
+  defaultWindowPosition,
+  readDockPoint,
+  readDockSize,
+  resizeDockWindow,
+  resolveDockMode,
+  type DockPoint,
+  type DockSize,
+  type GlobalAgentDockMode,
+  type ResizeDirection,
+} from "./globalAgentDockState";
 import { GlobalAgentConversationPanel } from "../pages/agent-workbench/GlobalAgentConversationPanel";
 
 type GlobalAgentDockTab = "chat" | "tasks" | "sessions";
@@ -105,6 +125,7 @@ export function GlobalAgentDock() {
   const { t } = useI18n();
   const navigate = useNavigate();
   const location = useLocation();
+  const isWorkbench = location.pathname.startsWith("/products/") && location.pathname.includes("/workbench");
   const queryClient = useQueryClient();
   const registeredPageContext = useAgentPageContext();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -125,58 +146,214 @@ export function GlobalAgentDock() {
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renamingTaskId, setRenamingTaskId] = useState<string | null>(null);
   const [taskViewMode, setTaskViewMode] = useState<"list" | "board">("list");
-  const [dockMode, setDockMode] = useState<"compact" | "wide" | "fullscreen">(() => {
+
+  const [dockMode, setDockMode] = useState<GlobalAgentDockMode>(() => {
     try {
-      return (localStorage.getItem("productflow_agent_dock_mode") as "compact" | "wide" | "fullscreen") || "compact";
+      return resolveDockMode(localStorage.getItem(DOCK_MODE_STORAGE_KEY));
     } catch {
       return "compact";
     }
   });
-  const [customWidth, setCustomWidth] = useState<number>(() => {
+
+  const [windowSize, setWindowSize] = useState<DockSize>(() => {
     try {
-      return Number(localStorage.getItem("productflow_agent_dock_width")) || 440;
+      return readDockSize(
+        localStorage.getItem(DOCK_WIDTH_STORAGE_KEY),
+        localStorage.getItem(DOCK_HEIGHT_STORAGE_KEY),
+      );
     } catch {
-      return 440;
+      return { width: 480, height: 680 };
     }
   });
-  const [isDraggingResize, setIsDraggingResize] = useState(false);
 
-  const changeDockMode = (nextMode: "compact" | "wide" | "fullscreen") => {
+  const [windowPos, setWindowPos] = useState<DockPoint | null>(() => {
+    try {
+      return readDockPoint(localStorage.getItem(DOCK_POSITION_STORAGE_KEY));
+    } catch (_error) {
+      void _error;
+      return null;
+    }
+  });
+
+  const [bubblePos, setBubblePos] = useState<DockPoint | null>(() => {
+    try {
+      return readDockPoint(localStorage.getItem(BUBBLE_POSITION_STORAGE_KEY));
+    } catch (_error) {
+      void _error;
+      return null;
+    }
+  });
+
+  const [isDraggingWindow, setIsDraggingWindow] = useState(false);
+  const [isResizingWindow, setIsResizingWindow] = useState(false);
+  const [isDraggingBubble, setIsDraggingBubble] = useState(false);
+
+  const changeDockMode = (nextMode: GlobalAgentDockMode) => {
     setDockMode(nextMode);
     try {
-      localStorage.setItem("productflow_agent_dock_mode", nextMode);
+      localStorage.setItem(DOCK_MODE_STORAGE_KEY, nextMode);
     } catch (_error) {
       void _error;
     }
+    if (nextMode === "wide" || nextMode === "compact") {
+      setWindowSize((cur) => applyDockModeWidth(cur, nextMode));
+    }
   };
 
-  const handleResizeMouseDown = (event: React.MouseEvent) => {
-    if (dockMode === "fullscreen") return;
+  // 悬浮球自由拖拽
+  const handleBubblePointerDown = (event: React.PointerEvent) => {
+    if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
-    setIsDraggingResize(true);
     const startX = event.clientX;
-    const startWidth = dockMode === "wide" ? Math.max(customWidth, 740) : Math.min(customWidth, 540);
+    const startY = event.clientY;
+    const startPos = bubblePos ?? defaultBubblePosition(window.innerWidth, window.innerHeight);
+    let hasMoved = false;
 
-    const onMouseMove = (moveEvent: MouseEvent) => {
-      const deltaX = startX - moveEvent.clientX;
-      const nextWidth = Math.min(Math.max(380, startWidth + deltaX), window.innerWidth - 48);
-      setCustomWidth(nextWidth);
-      try {
-        localStorage.setItem("productflow_agent_dock_width", String(nextWidth));
-      } catch (_error) {
-        void _error;
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const deltaX = moveEvent.clientX - startX;
+      const deltaY = moveEvent.clientY - startY;
+      if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) {
+        hasMoved = true;
+        setIsDraggingBubble(true);
+      }
+      setBubblePos(
+        clampBubblePosition(
+          { x: startPos.x + deltaX, y: startPos.y + deltaY },
+          window.innerWidth,
+          window.innerHeight,
+        ),
+      );
+    };
+
+    const onPointerUp = () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      setIsDraggingBubble(false);
+      if (!hasMoved) {
+        setOpen((cur) => !cur);
+      } else {
+        setBubblePos((cur) => {
+          if (cur) {
+            try {
+              localStorage.setItem(BUBBLE_POSITION_STORAGE_KEY, JSON.stringify(cur));
+            } catch (_error) {
+              void _error;
+            }
+          }
+          return cur;
+        });
       }
     };
 
-    const onMouseUp = () => {
-      setIsDraggingResize(false);
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("mouseup", onMouseUp);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+  };
+
+  // 窗口顶部 Header 拖拽平移移动
+  const handleHeaderPointerDown = (event: React.PointerEvent) => {
+    if (dockMode === "fullscreen" || event.button !== 0) return;
+    if ((event.target as HTMLElement).closest("button, a, input, textarea, select")) return;
+    event.preventDefault();
+    setIsDraggingWindow(true);
+
+    const startClientX = event.clientX;
+    const startClientY = event.clientY;
+    const effectivePos = windowPos ?? defaultWindowPosition(window.innerWidth, window.innerHeight, windowSize);
+    const startX = effectivePos.x;
+    const startY = effectivePos.y;
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const deltaX = moveEvent.clientX - startClientX;
+      const deltaY = moveEvent.clientY - startClientY;
+      setWindowPos(
+        clampWindowPosition(
+          { x: startX + deltaX, y: startY + deltaY },
+          windowSize,
+          window.innerWidth,
+          window.innerHeight,
+        ),
+      );
     };
 
-    window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup", onMouseUp);
+    const onPointerUp = () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      setIsDraggingWindow(false);
+      setWindowPos((cur) => {
+        if (cur) {
+          try {
+            localStorage.setItem(DOCK_POSITION_STORAGE_KEY, JSON.stringify(cur));
+          } catch (_error) {
+            void _error;
+          }
+        }
+        return cur;
+      });
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+  };
+
+  // 窗口八个方向自由缩放
+  const handleResizePointerDown = (dir: ResizeDirection, event: React.PointerEvent) => {
+    if (dockMode === "fullscreen" || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setIsResizingWindow(true);
+
+    const startClientX = event.clientX;
+    const startClientY = event.clientY;
+    const effectivePos = windowPos ?? defaultWindowPosition(window.innerWidth, window.innerHeight, windowSize);
+    const startX = effectivePos.x;
+    const startY = effectivePos.y;
+    const startW = windowSize.width;
+    const startH = windowSize.height;
+
+    const onPointerMove = (moveEvent: PointerEvent) => {
+      const deltaX = moveEvent.clientX - startClientX;
+      const deltaY = moveEvent.clientY - startClientY;
+      const next = resizeDockWindow(
+        { width: startW, height: startH },
+        { x: startX, y: startY },
+        dir,
+        deltaX,
+        deltaY,
+        window.innerWidth,
+        window.innerHeight,
+      );
+      setWindowSize(next.size);
+      setWindowPos(next.pos);
+    };
+
+    const onPointerUp = () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      setIsResizingWindow(false);
+      setWindowSize((curSize) => {
+        try {
+          localStorage.setItem(DOCK_WIDTH_STORAGE_KEY, String(curSize.width));
+          localStorage.setItem(DOCK_HEIGHT_STORAGE_KEY, String(curSize.height));
+        } catch (_error) {
+          void _error;
+        }
+        return curSize;
+      });
+      setWindowPos((curPos) => {
+        if (curPos) {
+          try {
+            localStorage.setItem(DOCK_POSITION_STORAGE_KEY, JSON.stringify(curPos));
+          } catch (_error) {
+            void _error;
+          }
+        }
+        return curPos;
+      });
+    };
+
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
   };
 
   useEffect(() => {
@@ -500,23 +677,37 @@ export function GlobalAgentDock() {
     ? errorDetail(queryError ?? mutationError, t("globalAgent.requestFailed"))
     : null;
 
+  const isMobile = typeof window !== "undefined" && window.innerWidth < 640;
+
   const panelClass = dockMode === "fullscreen"
     ? "pointer-events-auto fixed inset-2 sm:inset-4 z-[70] flex flex-col overflow-hidden rounded-2xl border border-border-l2 bg-surface-raised text-text-primary shadow-[0_25px_80px_rgb(0_0_0_/_0.5)] backdrop-blur"
-    : `pointer-events-auto absolute bottom-[calc(8.25rem+env(safe-area-inset-bottom))] left-3 right-3 flex max-h-[min(880px,calc(100dvh-5.5rem))] flex-col overflow-hidden rounded-xl border border-border-l2 bg-surface-raised text-text-primary shadow-[0_20px_60px_rgb(15_23_42_/_0.22)] dark:shadow-[0_24px_70px_rgb(0_0_0_/_0.46)] sm:bottom-0 sm:left-auto sm:right-0 transition-[width] duration-150 ${
-        isDraggingResize ? "transition-none select-none" : ""
+    : `pointer-events-auto fixed z-[70] flex flex-col overflow-hidden rounded-2xl border border-border-l2 bg-surface-raised text-text-primary shadow-[0_20px_60px_rgb(15_23_42_/_0.25)] dark:shadow-[0_24px_70px_rgb(0_0_0_/_0.55)] ${
+        isDraggingWindow || isResizingWindow ? "select-none transition-none" : "transition-[width,height,transform] duration-150"
       }`;
 
   const panelStyle = dockMode === "fullscreen"
     ? undefined
-    : {
-        width: typeof window !== "undefined" && window.innerWidth < 640
-          ? undefined
-          : `${dockMode === "wide" ? Math.max(customWidth, 760) : Math.min(customWidth, 540)}px`,
-        maxWidth: "calc(100vw - 24px)",
-      };
+    : isMobile
+      ? {
+          left: "12px",
+          right: "12px",
+          bottom: "calc(4.5rem + env(safe-area-inset-bottom))",
+          maxHeight: "calc(100dvh - 5.5rem)",
+          height: "75dvh",
+        }
+      : {
+          width: `${windowSize.width}px`,
+          height: `${windowSize.height}px`,
+          maxWidth: "calc(100vw - 24px)",
+          maxHeight: "calc(100vh - 24px)",
+          left: windowPos ? `${windowPos.x}px` : undefined,
+          top: windowPos ? `${windowPos.y}px` : undefined,
+          right: windowPos ? undefined : "20px",
+          bottom: windowPos ? undefined : "20px",
+        };
 
   return (
-    <div ref={rootRef} data-global-agent-dock className="pointer-events-none fixed inset-x-0 bottom-0 z-[60] sm:inset-x-auto sm:bottom-5 sm:right-5">
+    <div ref={rootRef} data-global-agent-dock className="pointer-events-none">
       {open ? (
         <section
           id="global-agent-dock-panel"
@@ -524,18 +715,74 @@ export function GlobalAgentDock() {
           style={panelStyle}
           className={panelClass}
         >
-          {/* 左侧可拖拽拉伸边沿 */}
-          {dockMode !== "fullscreen" ? (
-            <div
-              onMouseDown={handleResizeMouseDown}
-              title="拖拽调节宽度"
-              className="group/handle absolute left-0 top-0 bottom-0 z-30 hidden w-2 cursor-ew-resize items-center justify-center transition-colors hover:bg-accent/30 sm:flex"
-            >
-              <div className="h-8 w-1 rounded-full bg-border-l3 group-hover/handle:bg-accent" />
-            </div>
+          {/* 桌面端 8 个方向自由缩放把手 (8-Directional Resizing Handles) */}
+          {dockMode !== "fullscreen" && !isMobile ? (
+            <>
+              {/* 上边框 N */}
+              <div
+                onPointerDown={(e) => handleResizePointerDown("n", e)}
+                className="group/n absolute inset-x-4 top-0 z-30 flex h-2 cursor-ns-resize items-center justify-center hover:bg-accent/20 transition-colors"
+                title="上下拖拽调整高度"
+              >
+                <div className="h-1 w-10 rounded-full bg-border-l3/60 group-hover/n:bg-accent" />
+              </div>
+              {/* 下边框 S */}
+              <div
+                onPointerDown={(e) => handleResizePointerDown("s", e)}
+                className="group/s absolute inset-x-4 bottom-0 z-30 flex h-2 cursor-ns-resize items-center justify-center hover:bg-accent/20 transition-colors"
+                title="上下拖拽调整高度"
+              >
+                <div className="h-1 w-10 rounded-full bg-border-l3/60 group-hover/s:bg-accent" />
+              </div>
+              {/* 左边框 W */}
+              <div
+                onPointerDown={(e) => handleResizePointerDown("w", e)}
+                className="group/w absolute inset-y-4 left-0 z-30 flex w-2 cursor-ew-resize items-center justify-center hover:bg-accent/20 transition-colors"
+                title="左右拖拽调整宽度"
+              >
+                <div className="h-10 w-1 rounded-full bg-border-l3/60 group-hover/w:bg-accent" />
+              </div>
+              {/* 右边框 E */}
+              <div
+                onPointerDown={(e) => handleResizePointerDown("e", e)}
+                className="group/e absolute inset-y-4 right-0 z-30 flex w-2 cursor-ew-resize items-center justify-center hover:bg-accent/20 transition-colors"
+                title="左右拖拽调整宽度"
+              >
+                <div className="h-10 w-1 rounded-full bg-border-l3/60 group-hover/e:bg-accent" />
+              </div>
+
+              {/* 四个角 Corner Handles */}
+              <div
+                onPointerDown={(e) => handleResizePointerDown("nw", e)}
+                className="absolute -left-1 -top-1 z-40 h-4 w-4 cursor-nwse-resize rounded-tl-lg transition-colors hover:bg-accent/30"
+                title="斜向缩放"
+              />
+              <div
+                onPointerDown={(e) => handleResizePointerDown("ne", e)}
+                className="absolute -right-1 -top-1 z-40 h-4 w-4 cursor-nesw-resize rounded-tr-lg transition-colors hover:bg-accent/30"
+                title="斜向缩放"
+              />
+              <div
+                onPointerDown={(e) => handleResizePointerDown("sw", e)}
+                className="absolute -bottom-1 -left-1 z-40 h-4 w-4 cursor-nesw-resize rounded-bl-lg transition-colors hover:bg-accent/30"
+                title="斜向缩放"
+              />
+              <div
+                onPointerDown={(e) => handleResizePointerDown("se", e)}
+                className="absolute -bottom-1 -right-1 z-40 h-4 w-4 cursor-nwse-resize rounded-br-lg transition-colors hover:bg-accent/30"
+                title="斜向缩放"
+              />
+            </>
           ) : null}
 
-          <header className="flex shrink-0 items-center gap-3 border-b border-border-l1 px-4 py-2.5">
+          {/* 可拖拽移动的顶部 Header */}
+          <header
+            onPointerDown={handleHeaderPointerDown}
+            className={`flex shrink-0 items-center gap-3 border-b border-border-l1 px-4 py-2.5 bg-surface-raised/80 select-none ${
+              dockMode !== "fullscreen" && !isMobile ? "cursor-grab active:cursor-grabbing" : ""
+            }`}
+            title={dockMode !== "fullscreen" && !isMobile ? "按住可拖动窗口位置" : undefined}
+          >
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent text-accent-fg shadow-sm">
               <Bot size={17} aria-hidden="true" />
             </span>
@@ -566,7 +813,7 @@ export function GlobalAgentDock() {
               </button>
               <button
                 type="button"
-                onClick={() => changeDockMode(dockMode === "fullscreen" ? (customWidth > 600 ? "wide" : "compact") : "fullscreen")}
+                onClick={() => changeDockMode(dockMode === "fullscreen" ? (windowSize.width > 600 ? "wide" : "compact") : "fullscreen")}
                 aria-label={t(dockMode === "fullscreen" ? "globalAgent.mode.exitFullscreen" : "globalAgent.mode.fullscreen")}
                 title={t(dockMode === "fullscreen" ? "globalAgent.mode.exitFullscreen" : "globalAgent.mode.fullscreen")}
                 className="hidden h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-surface-subtle hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 sm:flex"
@@ -892,23 +1139,33 @@ export function GlobalAgentDock() {
         </section>
       ) : null}
 
-      <button
-        type="button"
-        data-global-agent-launcher
-        aria-expanded={open}
-        aria-controls="global-agent-dock-panel"
-        aria-label={open ? t("globalAgent.close") : t("globalAgent.open")}
-        title={open ? t("globalAgent.close") : t("globalAgent.open")}
-        onClick={() => setOpen((current) => !current)}
-        className="pointer-events-auto absolute bottom-[calc(4.25rem+env(safe-area-inset-bottom))] right-3 flex h-12 w-12 items-center justify-center rounded-full border border-accent/30 bg-accent text-accent-fg shadow-[0_10px_28px_rgb(15_23_42_/_0.2)] transition-transform hover:-translate-y-0.5 hover:bg-accent-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 dark:shadow-[0_12px_32px_rgb(0_0_0_/_0.42)] sm:bottom-0 sm:right-0"
-      >
-        <Bot size={20} aria-hidden="true" />
-        {activeTaskCount > 0 ? (
-          <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-surface-raised bg-state-warning px-1 text-[10px] font-bold text-text-primary">
-            {activeTaskCount > 99 ? "99+" : activeTaskCount}
-          </span>
-        ) : null}
-      </button>
+      {!isWorkbench || open ? (
+        <button
+          type="button"
+          data-global-agent-launcher
+          aria-expanded={open}
+          aria-controls="global-agent-dock-panel"
+          aria-label={open ? t("globalAgent.close") : t("globalAgent.open")}
+          title={open ? t("globalAgent.close") : t("globalAgent.open")}
+          onPointerDown={handleBubblePointerDown}
+          style={bubblePos ? {
+            left: `${bubblePos.x}px`,
+            top: `${bubblePos.y}px`,
+            right: "auto",
+            bottom: "auto",
+          } : undefined}
+          className={`pointer-events-auto fixed z-[60] flex h-12 w-12 items-center justify-center rounded-full border border-accent/30 bg-accent text-accent-fg shadow-[0_10px_28px_rgb(15_23_42_/_0.25)] dark:shadow-[0_12px_32px_rgb(0_0_0_/_0.45)] transition-transform hover:scale-105 active:scale-95 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
+            bubblePos ? "" : "bottom-[calc(4.25rem+env(safe-area-inset-bottom))] right-3 sm:bottom-5 sm:right-5"
+          } ${isDraggingBubble ? "cursor-grabbing select-none transition-none" : "cursor-grab"}`}
+        >
+          <Bot size={20} aria-hidden="true" />
+          {activeTaskCount > 0 ? (
+            <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-surface-raised bg-state-warning px-1 text-[10px] font-bold text-text-primary">
+              {activeTaskCount > 99 ? "99+" : activeTaskCount}
+            </span>
+          ) : null}
+        </button>
+      ) : null}
 
       <ConfirmDialog
         open={archiveTarget !== null}
