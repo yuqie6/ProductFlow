@@ -66,7 +66,7 @@ export function AgentComposer({
     <div className="border-t border-border-l1 bg-surface-raised px-3 py-3">
       {/* 快捷建议胶囊：仅在尚未输入且未选图时展示 */}
       {!value.trim() && !selectedAssets.length && !stopAvailable ? (
-        <div className="mb-2.5 flex items-center gap-1.5 overflow-x-auto pb-0.5 text-xs text-text-secondary">
+        <div className="mb-2.5 flex items-center gap-1.5 overflow-x-auto scrollbar-none [&::-webkit-scrollbar]:hidden pb-0.5 text-xs text-text-secondary">
           <Sparkles size={13} className="shrink-0 text-accent" aria-hidden="true" />
           <div className="flex items-center gap-1.5">
             {QUICK_PROMPTS.map((promptKey) => {
@@ -102,7 +102,7 @@ export function AgentComposer({
               <span>{t("agentWorkbench.composer.clearAssets")}</span>
             </button>
           </div>
-          <div className="flex gap-2 overflow-x-auto pb-0.5">
+          <div className="flex gap-2 overflow-x-auto scrollbar-none [&::-webkit-scrollbar]:hidden pb-0.5">
             {selectedAssets.map((asset) => (
               <div
                 key={asset.id}

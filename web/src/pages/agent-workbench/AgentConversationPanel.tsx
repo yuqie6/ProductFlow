@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, CircleAlert, ListChecks, Loader2, Play, RotateCw, X } from "lucide-react";
+import { Bot, CircleAlert, ListChecks, Loader2, Maximize2, Play, RotateCw, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -41,6 +41,7 @@ interface AgentConversationPanelProps {
   reviewDraftAvailable?: boolean;
   onReviewDraft?: () => void;
   onOpenRuns?: () => void;
+  onExpandGlobalAgent?: () => void;
 }
 
 export function AgentConversationPanel({
@@ -54,6 +55,7 @@ export function AgentConversationPanel({
   reviewDraftAvailable = false,
   onReviewDraft,
   onOpenRuns,
+  onExpandGlobalAgent,
 }: AgentConversationPanelProps) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
@@ -352,6 +354,17 @@ export function AgentConversationPanel({
             className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-blue-200 bg-blue-50 text-blue-700 hover:border-blue-400 hover:bg-blue-100 dark:border-cyan-400/25 dark:bg-cyan-400/10 dark:text-cyan-200 dark:hover:border-cyan-400/50"
           >
             <ListChecks size={16} />
+          </button>
+        ) : null}
+        {onExpandGlobalAgent ? (
+          <button
+            type="button"
+            onClick={onExpandGlobalAgent}
+            aria-label={t("agentWorkbench.expandGlobalAgent")}
+            title={t("agentWorkbench.expandGlobalAgent")}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-white text-slate-600 hover:border-indigo-300 hover:bg-indigo-50/50 hover:text-indigo-700 dark:border-slate-800 dark:bg-[#0c121e] dark:text-slate-300 dark:hover:border-violet-500/40 dark:hover:text-violet-200 transition-colors"
+          >
+            <Maximize2 size={15} />
           </button>
         ) : null}
         {agent.activeTurn ? (

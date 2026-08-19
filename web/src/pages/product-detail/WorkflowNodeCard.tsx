@@ -2,6 +2,7 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 import {
   Braces,
   Check,
+  Clock,
   FileText,
   Image as ImageIcon,
   ImagePlus,
@@ -14,7 +15,6 @@ import { useI18n } from "../../lib/preferences";
 import type { WorkflowNodeStatus, WorkflowNodeTypeV2 } from "../../lib/types";
 import { DownloadLink } from "./ImageDownloadComponents";
 import { IMAGE_PREVIEW_SURFACE_CLASS_NAME } from "./constants";
-import { statusClass } from "./utils";
 
 export type WorkflowNodePresentationKind = WorkflowNodeTypeV2;
 
@@ -45,6 +45,42 @@ export interface WorkflowNodePresentationCardProps {
   onSelect: (event: ReactMouseEvent<HTMLElement>) => void;
 }
 
+const KIND_THEMES: Record<WorkflowNodePresentationKind, {
+  icon: typeof FileText;
+  iconBox: string;
+  badge: string;
+}> = {
+  product_context: {
+    icon: FileText,
+    iconBox: "border-purple-200/80 bg-purple-50 text-purple-700 dark:border-purple-500/30 dark:bg-purple-950/60 dark:text-purple-300",
+    badge: "text-purple-700 bg-purple-100/70 border-purple-200/60 dark:text-purple-300 dark:bg-purple-950/60 dark:border-purple-800/50",
+  },
+  reference_image: {
+    icon: ImagePlus,
+    iconBox: "border-indigo-200/80 bg-indigo-50 text-indigo-700 dark:border-indigo-500/30 dark:bg-indigo-950/60 dark:text-indigo-300",
+    badge: "text-indigo-700 bg-indigo-100/70 border-indigo-200/60 dark:text-indigo-300 dark:bg-indigo-950/60 dark:border-indigo-800/50",
+  },
+  prompt_generation: {
+    icon: Braces,
+    iconBox: "border-amber-200/80 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-950/60 dark:text-amber-300",
+    badge: "text-amber-700 bg-amber-100/70 border-amber-200/60 dark:text-amber-300 dark:bg-amber-950/60 dark:border-amber-800/50",
+  },
+  image_generation: {
+    icon: ImageIcon,
+    iconBox: "border-cyan-200/80 bg-cyan-50 text-cyan-700 dark:border-cyan-500/30 dark:bg-cyan-950/60 dark:text-cyan-300",
+    badge: "text-cyan-700 bg-cyan-100/70 border-cyan-200/60 dark:text-cyan-300 dark:bg-cyan-950/60 dark:border-cyan-800/50",
+  },
+};
+
+const STATUS_BADGE_CLASSES: Record<WorkflowNodeStatus, string> = {
+  idle: "border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-300",
+  queued: "border-amber-300 bg-amber-100/80 text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/60 dark:text-amber-200 animate-pulse",
+  running: "border-blue-300 bg-blue-100/90 text-blue-900 dark:border-cyan-700/60 dark:bg-cyan-950/80 dark:text-cyan-200",
+  succeeded: "border-emerald-300 bg-emerald-100/80 text-emerald-900 dark:border-emerald-700/50 dark:bg-emerald-950/60 dark:text-emerald-200",
+  failed: "border-red-300 bg-red-100/80 text-red-900 dark:border-red-700/50 dark:bg-red-950/60 dark:text-red-200",
+  cancelled: "border-zinc-200 bg-zinc-100 text-zinc-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400",
+};
+
 export function WorkflowNodePresentationCard({
   id,
   kind,
@@ -72,39 +108,37 @@ export function WorkflowNodePresentationCard({
   onSelect,
 }: WorkflowNodePresentationCardProps) {
   const { t } = useI18n();
-  const Icon = {
-    product_context: FileText,
-    reference_image: ImagePlus,
-    prompt_generation: Braces,
-    image_generation: ImageIcon,
-  }[kind];
+  const theme = KIND_THEMES[kind] ?? KIND_THEMES.product_context;
+  const Icon = theme.icon;
+
   const selectedClassName = primarySelected
-    ? "border-indigo-300 shadow-lg shadow-indigo-950/10 ring-2 ring-indigo-200/70 dark:border-violet-400 dark:shadow-indigo-950/30 dark:ring-violet-300/60"
+    ? "border-indigo-400 ring-2 ring-indigo-400/40 shadow-xl shadow-indigo-950/15 dark:border-cyan-400 dark:ring-cyan-400/40 dark:shadow-cyan-950/40"
     : secondarySelected || previewSelected
-      ? "border-sky-300 shadow-md shadow-sky-950/5 ring-2 ring-sky-100 dark:border-sky-400 dark:shadow-sky-950/25 dark:ring-sky-300/45"
-      : "border-slate-200 dark:border-slate-500/85 dark:ring-1 dark:ring-slate-200/10";
+      ? "border-sky-300 ring-2 ring-sky-300/30 shadow-md shadow-sky-950/10 dark:border-sky-400 dark:ring-sky-400/30"
+      : "border-slate-200/90 dark:border-slate-700/80";
+
   const selected = primarySelected || secondarySelected || previewSelected;
 
   return (
     <div
       ref={nodeRef}
       data-workflow-node-id={id}
-      className={`nopan relative w-[248px] touch-none select-none rounded-2xl border bg-white/95 p-3 text-left shadow-sm backdrop-blur transition-[border-color,box-shadow,transform] transition-spring dark:bg-[#1c2940]/96 dark:shadow-[0_18px_42px_rgba(0,0,0,0.34)] ${
+      className={`nopan relative w-[248px] touch-none select-none rounded-2xl border bg-white/95 p-3 text-left shadow-sm backdrop-blur-md transition-all duration-200 dark:bg-[#0d1424]/95 dark:shadow-[0_18px_42px_rgba(0,0,0,0.36)] ${
         revealActive ? "animate-spring-node-in" : ""
       } ${
         dragging
           ? "cursor-grabbing"
-          : "hover:-translate-y-0.5 hover:shadow-md dark:hover:border-slate-400/85 dark:hover:shadow-[0_20px_46px_rgba(0,0,0,0.42)]"
+          : "hover:-translate-y-1 hover:shadow-lg dark:hover:border-slate-500 dark:hover:shadow-[0_22px_48px_rgba(0,0,0,0.5)]"
       } ${selectedClassName} ${
         status === "running" ? "animate-running-glow" : status === "queued" ? "animate-queued-glow" : ""
       }`}
     >
       {selected ? (
         <div
-          className={`pointer-events-none absolute right-2 top-2 z-20 flex h-5 w-5 items-center justify-center rounded-full border bg-white shadow-sm dark:bg-[#111b2d] ${
+          className={`pointer-events-none absolute right-2.5 top-2.5 z-20 flex h-5 w-5 items-center justify-center rounded-full border bg-white shadow-sm dark:bg-[#111b2d] ${
             primarySelected
-              ? "border-indigo-200 text-indigo-600 dark:border-indigo-300 dark:text-indigo-200"
-              : "border-sky-200 text-sky-600 dark:border-sky-300 dark:text-sky-200"
+              ? "border-indigo-300 text-indigo-600 dark:border-cyan-400 dark:text-cyan-300"
+              : "border-sky-200 text-sky-600 dark:border-sky-300 dark:text-sky-300"
           }`}
           aria-hidden="true"
         >
@@ -113,49 +147,53 @@ export function WorkflowNodePresentationCard({
       ) : null}
 
       <div onClick={onSelect} className="cursor-grab active:cursor-grabbing">
-        <div className="mb-3 flex items-start justify-between gap-2">
-          <div className="flex min-w-0 gap-2">
-            <span className="mt-0.5 rounded-xl border border-slate-200 bg-slate-50 p-1.5 text-slate-500 dark:border-slate-500/70 dark:bg-[#111b2d] dark:text-slate-100">
-              <Icon size={14} />
+        {/* 卡片头部：图标、标题与类型胶囊 */}
+        <div className="mb-2 flex items-start justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border shadow-sm ${theme.iconBox}`}>
+              <Icon size={15} />
             </span>
             <div className="min-w-0">
-              <div className="truncate text-sm font-semibold text-zinc-900 dark:text-white" title={title}>
+              <div className="truncate text-xs font-bold tracking-tight text-zinc-950 dark:text-slate-100" title={title}>
                 {title}
               </div>
-              <div className="mt-0.5 truncate text-[10px] uppercase tracking-wider text-zinc-400 dark:text-slate-400">
+              <span className={`inline-block mt-0.5 truncate rounded px-1.5 py-0.2 text-[9px] font-semibold uppercase tracking-wider ${theme.badge}`}>
                 {label}
-              </div>
+              </span>
             </div>
           </div>
-          <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium ${statusClass(status)}`}>
+          <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${STATUS_BADGE_CLASSES[status]}`}>
+            {status === "running" ? <Loader2 size={10} className="animate-spin motion-reduce:animate-none" /> : null}
             {statusLabel}
           </span>
         </div>
 
+        {/* 图片预览区 */}
         {image ? (
           <div
-            className={`relative mb-2 flex h-28 items-center justify-center overflow-hidden rounded-xl border border-zinc-100 p-2 ${IMAGE_PREVIEW_SURFACE_CLASS_NAME}`}
+            className={`relative mb-2 flex h-28 items-center justify-center overflow-hidden rounded-xl border border-zinc-200/80 bg-zinc-900/5 p-1.5 transition-all dark:border-slate-800 dark:bg-black/30 ${IMAGE_PREVIEW_SURFACE_CLASS_NAME}`}
           >
-            <img src={image.previewUrl} alt={image.alt} className="h-full w-full object-contain" draggable={false} />
+            <img src={image.previewUrl} alt={image.alt} className="h-full w-full rounded-lg object-contain" draggable={false} />
             <DownloadLink image={image} variant="overlay" />
             {imageWaiting ? <WaitingBadge label={waitingLabel ?? statusLabel} /> : null}
           </div>
         ) : imageWaiting ? (
-          <div className="relative mb-2 flex h-28 flex-col items-center justify-center overflow-hidden rounded-xl border border-indigo-200/50 bg-indigo-50/70 text-indigo-700 shadow-inner dark:border-indigo-400/20 dark:bg-slate-950/30 dark:text-indigo-100">
-            <Loader2 size={20} className="animate-spin text-indigo-500 opacity-80 dark:text-indigo-300" />
-            <div className="mt-2 rounded-md bg-white/70 px-2 py-0.5 text-xs font-semibold tracking-wide shadow-sm backdrop-blur dark:bg-slate-900/60">
+          <div className="relative mb-2 flex h-28 flex-col items-center justify-center overflow-hidden rounded-xl border border-cyan-300/50 bg-gradient-to-br from-cyan-50/70 to-blue-50/70 text-cyan-800 shadow-inner dark:border-cyan-500/25 dark:from-cyan-950/30 dark:to-blue-950/30 dark:text-cyan-200">
+            <Loader2 size={22} className="animate-spin text-cyan-600 opacity-90 dark:text-cyan-300" />
+            <div className="mt-2 rounded-md bg-white/80 px-2.5 py-0.5 text-xs font-semibold tracking-wide shadow-sm backdrop-blur dark:bg-slate-900/80">
               {waitingLabel ?? statusLabel}
             </div>
           </div>
         ) : null}
 
+        {/* 活动执行摘要 */}
         {activityText && !imageWaiting ? (
-          <div className="mb-2 flex items-start gap-2 rounded-lg border border-indigo-100 bg-indigo-50 px-2.5 py-2 text-xs leading-5 text-indigo-700 dark:border-violet-400/30 dark:bg-violet-500/10 dark:text-violet-100">
-            <Loader2 size={13} className="mt-0.5 shrink-0 animate-spin" />
+          <div className="mb-2 flex items-start gap-2 rounded-lg border border-blue-200/80 bg-blue-50/70 px-2.5 py-1.5 text-xs leading-5 text-blue-900 dark:border-cyan-800/40 dark:bg-cyan-950/30 dark:text-cyan-100">
+            <Loader2 size={12} className="mt-1 shrink-0 animate-spin" />
             <div className="min-w-0">
-              <div className="font-semibold">{activityText}</div>
+              <div className="font-semibold text-xs">{activityText}</div>
               {lastRunAt ? (
-                <div className="mt-0.5 text-[10px] text-indigo-600/70 dark:text-violet-100/70">
+                <div className="text-[10px] text-blue-700/80 dark:text-cyan-300/70">
                   {t("detail.recent", { time: formatDateTime(lastRunAt, t.locale) })}
                 </div>
               ) : null}
@@ -163,12 +201,13 @@ export function WorkflowNodePresentationCard({
           </div>
         ) : null}
 
+        {/* 失败与重试分析 */}
         {failureReason ? (
           <div
             className={`rounded-lg border px-2.5 py-1.5 text-xs leading-relaxed ${
               status === "cancelled"
-                ? "border-zinc-100 bg-zinc-50 text-zinc-600 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-300"
-                : "border-red-100 bg-red-50 text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200"
+                ? "border-zinc-200 bg-zinc-50 text-zinc-600 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-300"
+                : "border-red-200 bg-red-50 text-red-800 dark:border-red-800/40 dark:bg-red-950/30 dark:text-red-200"
             }`}
           >
             <div className="line-clamp-2">{failureReason}</div>
@@ -195,7 +234,9 @@ export function WorkflowNodePresentationCard({
         ) : null}
       </div>
 
-      <div className="mt-3 flex items-center gap-2 text-[10px] text-zinc-400 dark:text-slate-300">
+      {/* 底部时间线 */}
+      <div className="mt-2.5 flex items-center gap-1.5 border-t border-border-l1/60 pt-1.5 text-[10px] text-text-tertiary">
+        <Clock size={11} className="shrink-0 opacity-70" />
         <span className="min-w-0 flex-1 truncate text-left leading-tight">
           {lastRunAt ? t("detail.recent", { time: formatDateTime(lastRunAt, t.locale) }) : label}
         </span>
@@ -206,7 +247,7 @@ export function WorkflowNodePresentationCard({
 
 function WaitingBadge({ label }: { label: string }) {
   return (
-    <div className="absolute inset-x-2 bottom-2 flex items-center justify-center rounded-lg bg-white/90 px-2 py-1 text-[11px] font-medium text-indigo-700 shadow-sm ring-1 ring-indigo-100 backdrop-blur dark:bg-slate-950/90 dark:text-indigo-100 dark:ring-indigo-400/30">
+    <div className="absolute inset-x-2 bottom-2 flex items-center justify-center rounded-lg bg-white/90 px-2 py-1 text-[11px] font-medium text-cyan-800 shadow-sm ring-1 ring-cyan-200 backdrop-blur dark:bg-slate-950/90 dark:text-cyan-200 dark:ring-cyan-500/30">
       <Loader2 size={11} className="mr-1 animate-spin" />
       {label}
     </div>

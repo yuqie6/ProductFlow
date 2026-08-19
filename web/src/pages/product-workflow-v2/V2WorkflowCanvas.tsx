@@ -28,10 +28,8 @@ import type {
   Viewport,
 } from "@xyflow/react";
 import {
-  Box,
   CopyPlus,
-  FolderOpen,
-  Images,
+  Folder,
   Link2,
   Loader2,
   Play,
@@ -56,7 +54,9 @@ import {
   WorkflowCanvasNodeToolbarButton,
   type WorkflowCanvasPortVisualState,
 } from "../product-detail/WorkflowCanvasChrome";
-import { WorkflowNodePresentationCard } from "../product-detail/WorkflowNodeCard";
+import {
+  WorkflowNodePresentationCard,
+} from "../product-detail/WorkflowNodeCard";
 import type { CanvasInteractionMode } from "../product-detail/types";
 import {
   WORKFLOW_CANVAS_PAN_ACTIVATION_KEY_CODE,
@@ -85,8 +85,6 @@ import {
 } from "./graph";
 import { workflowAssetThumbnailUrl, workflowNodeDownloadableImage } from "./nodeImages";
 
-const FOLDER_CARD_WIDTH = 340;
-const FOLDER_CARD_HEIGHT = 210;
 const assetThumbnailUrl = workflowAssetThumbnailUrl;
 const V2_SNAP_GRID: [number, number] = [24, 24];
 const V2_PRO_OPTIONS = { hideAttribution: true };
@@ -153,7 +151,7 @@ interface V2WorkflowCanvasProps {
   structureBusy: boolean;
   runningNodeId: string | null;
   selectedNodeIds: string[];
-  onOpenFolder: (folderId: string) => void;
+  onOpenFolder: (folderId: string | null) => void;
   onRunNode: (node: WorkflowNodeV2) => void;
   onBindReference: (node: WorkflowNodeV2) => void;
   onDuplicateNode?: (node: WorkflowNodeV2) => void;
@@ -167,15 +165,6 @@ interface V2WorkflowCanvasProps {
   mobileInteractionMode?: CanvasInteractionMode;
   mobileCanvasControlsActive?: boolean;
 }
-
-const statusClasses: Record<WorkflowNodeStatus, string> = {
-  idle: "bg-slate-300 dark:bg-slate-600",
-  queued: "bg-amber-400",
-  running: "bg-blue-500",
-  succeeded: "bg-emerald-500",
-  failed: "bg-red-500",
-  cancelled: "bg-slate-400",
-};
 
 function nodeTypeLabel(type: WorkflowNodeTypeV2, t: ReturnType<typeof useI18n>["t"]): string {
   const keys = {
@@ -398,91 +387,33 @@ export const WorkflowFolderCard = memo(function WorkflowFolderCard({
 }: NodeProps<Node<WorkflowFolderData>>) {
   const { t } = useI18n();
   const { projection } = data;
-  const { folder, summary } = projection;
+  const { folder, summary, bounds } = projection;
 
   return (
     <div
-      className={`relative h-[210px] w-[340px] rounded-lg border bg-white shadow-md transition-[border-color,box-shadow] dark:!bg-[#10151c] ${data.revealActive ? "animate-spring-pop-in" : ""} ${
+      style={{
+        width: bounds.width,
+        height: bounds.height,
+      }}
+      className={`group relative rounded-2xl border-2 border-dashed transition-all pointer-events-none ${
         selected
-          ? "border-indigo-500 shadow-[0_0_0_3px_rgba(99,102,241,0.16)] dark:border-violet-400"
-          : "border-slate-300 dark:border-slate-700"
+          ? "border-indigo-400/90 bg-indigo-50/20 shadow-sm dark:border-violet-400/80 dark:bg-violet-950/15"
+          : "border-slate-300/80 bg-slate-50/30 hover:border-indigo-300/70 dark:border-slate-700/80 dark:bg-[#0c1322]/25"
       }`}
       data-workflow-folder-id={folder.id}
     >
-      {summary.inbound_edge_count > 0 ? (
-        <WorkflowCanvasNodePort
-          type="target"
-          top="50%"
-          label={t("workflowV2.folder.inbound", { count: summary.inbound_edge_count })}
-          connectable={false}
-          visualScale={0.8}
-        />
-      ) : null}
-      {summary.outbound_edge_count > 0 ? (
-        <WorkflowCanvasNodePort
-          type="source"
-          top="50%"
-          label={t("workflowV2.folder.outbound", { count: summary.outbound_edge_count })}
-          connectable={false}
-          visualScale={0.8}
-        />
-      ) : null}
-      <div className="flex h-14 items-center gap-3 border-b border-slate-100 px-4 dark:border-slate-800">
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-indigo-50 text-indigo-700 dark:bg-violet-500/15 dark:text-violet-200">
-          <Box size={17} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-semibold text-slate-950 dark:text-slate-100" title={folder.title}>{folder.title}</div>
-          <div className="mt-0.5 flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
-            <span>{t("workflowV2.folder.memberCount", { count: summary.member_count })}</span>
-            <span className={`h-1.5 w-1.5 rounded-full ${statusClasses[summary.status]}`} />
-            <span>{nodeStatusLabel(summary.status, t)}</span>
-          </div>
-        </div>
-        <button
-          type="button"
-          className="nodrag nopan inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-slate-200 text-slate-600 hover:border-indigo-300 hover:text-indigo-700 disabled:opacity-40 dark:border-slate-700 dark:text-slate-300 dark:hover:border-violet-400 dark:hover:text-violet-200"
-          onClick={(event) => {
-            event.stopPropagation();
-            data.onOpen(folder.id);
-          }}
-          disabled={data.structureBusy}
-          aria-label={t("workflowV2.folder.open")}
-          title={t("workflowV2.folder.open")}
-        >
-          <FolderOpen size={15} />
-        </button>
-      </div>
-
-      <div className="grid h-[154px] grid-cols-[1fr_126px] gap-3 p-4">
-        <div className="min-w-0">
-          <div className="flex flex-wrap gap-1.5">
-            {summary.node_types.map((type) => (
-              <span key={type} className="rounded bg-slate-100 px-2 py-1 text-[10px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                {nodeTypeLabel(type, t)}
-              </span>
-            ))}
-          </div>
-          <div className="mt-4 grid grid-cols-2 gap-2 text-[10px] text-slate-500 dark:text-slate-400">
-            <span className="flex items-center gap-1"><Link2 size={11} /> {t("workflowV2.folder.inbound", { count: summary.inbound_edge_count })}</span>
-            <span className="flex items-center gap-1"><Link2 size={11} /> {t("workflowV2.folder.outbound", { count: summary.outbound_edge_count })}</span>
-          </div>
-        </div>
-        <div className="grid h-[92px] grid-cols-3 gap-1 overflow-hidden rounded-md bg-slate-100 p-1 dark:bg-slate-950">
-          {summary.preview_asset_ids.length ? summary.preview_asset_ids.map((assetId) => (
-            <img
-              key={assetId}
-              src={assetThumbnailUrl(assetId)}
-              alt=""
-              className="h-full min-w-0 object-cover"
-              loading="lazy"
-              draggable={false}
-            />
-          )) : (
-            <div className="col-span-3 flex items-center justify-center text-slate-400 dark:text-slate-600">
-              <Images size={20} />
-            </div>
-          )}
+      {/* 顶部标题栏手柄：pointer-events-auto 允许拖动整组与交互 */}
+      <div className="pointer-events-auto flex items-center justify-between gap-2 border-b border-dashed border-slate-200/80 bg-white/70 px-3.5 py-2 backdrop-blur-sm dark:border-slate-800/80 dark:bg-[#0f172a]/60 rounded-t-2xl">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-indigo-100/80 text-indigo-700 dark:bg-violet-900/60 dark:text-violet-300">
+            <Folder size={13} />
+          </span>
+          <span className="truncate text-xs font-bold text-slate-800 dark:text-slate-200" title={folder.title}>
+            {folder.title}
+          </span>
+          <span className="rounded-full bg-slate-200/70 px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+            {t("workflowV2.folder.memberCount", { count: summary.member_count })}
+          </span>
         </div>
       </div>
     </div>
@@ -601,11 +532,13 @@ function toCanvasNodes(
   },
 ): WorkflowCanvasNode[] {
   const revealVisibility = options.revealVisibility;
+
   const toRealCanvasNode = (
     node: WorkflowNodeV2,
     position: { x: number; y: number },
   ): Node<WorkflowNodeData, "workflow-node-v2"> => {
     const handles = nodeHandleIds(node.node_type);
+
     return {
       id: node.id,
       type: "workflow-node-v2",
@@ -676,11 +609,14 @@ function toCanvasNodes(
       id: item.id,
       type: "workflow-folder-v2",
       position: item.position,
-      width: FOLDER_CARD_WIDTH,
-      height: FOLDER_CARD_HEIGHT,
+      width: item.bounds.width,
+      height: item.bounds.height,
+      zIndex: -1,
       selected: false,
       hidden: Boolean(revealVisibility && !revealVisibility.folderIds.has(item.folder.id)),
       connectable: false,
+      draggable: true,
+      selectable: true,
       data: {
         kind: "folder",
         projection: revealVisibility
@@ -737,10 +673,7 @@ function toCanvasEdges(
     const revealedEdgeIds = revealVisibility
       ? edge.original_edge_ids.filter((edgeId) => revealVisibility.edgeIds.has(edgeId))
       : edge.original_edge_ids;
-    const count = revealedEdgeIds.length;
-    const originalEdge = edge.projected
-      ? null
-      : workflow.edges.find((candidate) => candidate.id === edge.original_edge_ids[0]) ?? null;
+    const realEdge = workflow.edges.find((candidate) => candidate.id === edge.original_edge_ids[0]) ?? null;
     return {
       id: edge.id,
       source: edge.source,
@@ -748,17 +681,13 @@ function toCanvasEdges(
       sourceHandle: edge.source_handle,
       targetHandle: edge.target_handle,
       type: "workflow-edge-v2",
-      hidden: Boolean(revealVisibility && count === 0),
-      animated: edge.projected && count > 1,
-      style: {
-        stroke: edge.projected ? "#6366f1" : "#94a3b8",
-        strokeWidth: edge.projected ? 2.2 : 1.8,
-      },
+      hidden: Boolean(revealVisibility && revealedEdgeIds.length === 0),
+      style: { stroke: "#94a3b8", strokeWidth: 1.8 },
       data: {
-        projected: edge.projected,
+        projected: false,
         originalEdgeIds: revealedEdgeIds,
-        count,
-        protected: Boolean(originalEdge && isV2WorkflowLineageEdge(workflow, originalEdge)),
+        count: revealedEdgeIds.length,
+        protected: Boolean(realEdge && isV2WorkflowLineageEdge(workflow, realEdge)),
         structureBusy: options?.structureBusy ?? false,
         deleteLabel: options?.deleteLabel ?? "",
         protectedLabel: options?.protectedLabel ?? "",
@@ -1030,7 +959,7 @@ export function V2WorkflowCanvas({
   );
 
   return (
-    <div ref={surfaceRef} className="h-full min-h-0 w-full overflow-hidden">
+    <div ref={surfaceRef} className="relative h-full min-h-0 w-full overflow-hidden">
       <ReactFlow<WorkflowCanvasNode, WorkflowCanvasEdge>
         key={`${workflow.id}:${openFolderId ?? "global"}:${layoutMode}:${restoredViewport ? "restore" : "fit"}`}
         nodes={nodes}
@@ -1152,3 +1081,5 @@ function WorkflowRevealFitView({
 }
 
 export { assetThumbnailUrl, folderSyntheticNodeId };
+
+

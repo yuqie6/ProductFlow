@@ -1,10 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
-  CircleDot,
+  Braces,
   Eye,
-  FileText,
   Image as ImageIcon,
+  ImagePlus,
   Link2,
   Loader2,
   Package,
@@ -62,6 +62,7 @@ import {
   type ReferenceEditorDraft,
 } from "./nodeEditorDrafts";
 import { useV2NodeDraftAutosave, type V2NodeDraftAutosave } from "./useV2NodeDraftAutosave";
+import { V2CanvasDashboard } from "./V2CanvasDashboard";
 
 export type V2NodeInspectorFlush = () => Promise<number | null>;
 
@@ -74,6 +75,10 @@ interface V2NodeInspectorProps {
   onPreviewImage: (image: DownloadableImage) => void;
   onWorkflowChanged: () => Promise<unknown>;
   onFlushRegistration?: (flush: V2NodeInspectorFlush | null) => void;
+  onOpenAddPanel?: () => void;
+  onOpenLibraryPanel?: () => void;
+  onRunWorkflow?: () => void;
+  runWorkflowBusy?: boolean;
 }
 
 interface EditorSaveState {
@@ -120,6 +125,10 @@ export function V2NodeInspector({
   onPreviewImage,
   onWorkflowChanged,
   onFlushRegistration,
+  onOpenAddPanel,
+  onOpenLibraryPanel,
+  onRunWorkflow,
+  runWorkflowBusy,
 }: V2NodeInspectorProps) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
@@ -154,26 +163,26 @@ export function V2NodeInspector({
   });
   const activeRun = runsQuery.data?.items.find((run) => ACTIVE_RUN_STATUSES.has(run.status)) ?? null;
 
-  const refreshNodeViews = async () => {
+  const refreshNodeViews = useCallback(async () => {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["v2-workflow-node-detail", product.id, workflow.id, node?.id] }),
+      detailQuery.refetch(),
       queryClient.invalidateQueries({ queryKey: runsQueryKey }),
       onWorkflowChanged(),
     ]);
-  };
+  }, [detailQuery.refetch, onWorkflowChanged, queryClient, runsQueryKey]);
   const updateMutation = useMutation({
-    mutationFn: (input: UpdateWorkflowNodeV2Input) =>
-      api.updateWorkflowNodeV2(product.id, workflow.id, node!.id, input),
-    onSuccess: async (result) => {
-      queryClient.setQueryData(
-        ["active-product-workflow-v2", product.id],
-        { latest_revision: result.workflow.revision, workflow: result.workflow },
-      );
-      await refreshNodeViews();
-    },
-    onError: (error) => {
+    mutationFn: (input: UpdateWorkflowNodeV2Input) => api.updateWorkflowNodeV2(
+      product.id,
+      workflow.id,
+      node!.id,
+      input,
+    ),
+    onSuccess: refreshNodeViews,
+    onError: async (error) => {
       if (error instanceof ApiError && error.status === 409) {
-        void refreshNodeViews();
+        // A concurrent edit won on the server: re-pull authoritative state so
+        // the inspector converges instead of showing a stale edit.
+        await refreshNodeViews();
       }
     },
   });
@@ -195,7 +204,17 @@ export function V2NodeInspector({
   });
 
   if (!node) {
-    return <PanelState icon={<CircleDot size={20} />} text={t("agentWorkbench.nodeEditor.select")} />;
+    return (
+      <V2CanvasDashboard
+        product={product}
+        workflow={workflow}
+        facts={facts}
+        onOpenAddPanel={onOpenAddPanel}
+        onOpenLibraryPanel={onOpenLibraryPanel}
+        onRunWorkflow={onRunWorkflow}
+        runWorkflowBusy={runWorkflowBusy}
+      />
+    );
   }
   if (detailQuery.isLoading) {
     return <PanelState icon={<Loader2 size={20} className="animate-spin" />} text={t("app.loading")} />;
@@ -219,7 +238,15 @@ export function V2NodeInspector({
     <div className="space-y-3 pb-4" data-v2-node-inspector>
       <section className="config-bubble rounded-2xl p-4 shadow-sm">
         <div className="flex items-start gap-3">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-indigo-100 bg-indigo-50 text-indigo-700 dark:border-violet-400/35 dark:bg-violet-500/15 dark:text-violet-100">
+          <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border shadow-sm ${
+            node.node_type === "product_context"
+              ? "border-purple-200/80 bg-purple-50 text-purple-700 dark:border-purple-500/30 dark:bg-purple-950/60 dark:text-purple-300"
+              : node.node_type === "reference_image"
+                ? "border-indigo-200/80 bg-indigo-50 text-indigo-700 dark:border-indigo-500/30 dark:bg-indigo-950/60 dark:text-indigo-300"
+                : node.node_type === "prompt_generation"
+                  ? "border-amber-200/80 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-950/60 dark:text-amber-300"
+                  : "border-cyan-200/80 bg-cyan-50 text-cyan-700 dark:border-cyan-500/30 dark:bg-cyan-950/60 dark:text-cyan-300"
+          }`}>
             <NodeTypeIcon type={node.node_type} />
           </span>
           <div className="min-w-0 flex-1">
@@ -1070,8 +1097,8 @@ function PanelState({ icon, text, action, onAction }: { icon?: React.ReactNode; 
 
 function NodeTypeIcon({ type }: { type: WorkflowNodeTypeV2 }) {
   if (type === "product_context") return <Package size={16} />;
-  if (type === "reference_image") return <Link2 size={16} />;
-  if (type === "prompt_generation") return <FileText size={16} />;
+  if (type === "reference_image") return <ImagePlus size={16} />;
+  if (type === "prompt_generation") return <Braces size={16} />;
   return <ImageIcon size={16} />;
 }
 

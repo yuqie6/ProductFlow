@@ -113,6 +113,8 @@ function renderImageNodeCard({ selected, connectable }: { selected: boolean; con
       workflow,
       inputHandleIds: ["facts", "reference", "prompt"],
       outputHandleIds: ["image"],
+      externalInbounds: [],
+      externalOutbounds: [],
     },
     dragging: false,
     zIndex: 0,
@@ -134,20 +136,12 @@ function handleMarkup(markup: string): string[] {
   return markup.match(/<div[^>]*class="react-flow__handle [^>]*><\/div>/g) ?? [];
 }
 
-describe("v2 workflow folder projection card", () => {
-  it("renders presentation-only handles for projected inbound and outbound edges", () => {
+describe("v2 workflow folder group frame", () => {
+  it("renders group frame with title and member count without fake handles", () => {
     const markup = renderFolderCard({ inbound: 2, outbound: 1 });
 
-    expect(markup.match(/class="react-flow__handle /g)).toHaveLength(2);
-    expect(markup).toContain('data-handlepos="left"');
-    expect(markup).toContain('data-handlepos="right"');
-    expect(markup).toContain('aria-label="输入 2"');
-    expect(markup).toContain('aria-label="输出 1"');
-  });
-
-  it("omits handles when the folder has no projected boundary edges", () => {
-    const markup = renderFolderCard({ inbound: 0, outbound: 0 });
-
+    expect(markup).toContain("首屏海报图");
+    expect(markup).toContain("2 个节点");
     expect(markup).not.toContain('class="react-flow__handle ');
   });
 });

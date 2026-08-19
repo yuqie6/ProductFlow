@@ -113,16 +113,16 @@ function makeWorkflow(): ProductWorkflowV2 {
 }
 
 describe("schema-v2 workflow graph projection", () => {
-  it("collapses 15 image types while keeping cross-boundary provenance", () => {
+  it("projects global graph with real nodes and folder group frames", () => {
     const workflow = makeWorkflow();
     const projection = projectGlobalGraph(workflow);
 
-    expect(projection.nodes).toHaveLength(16);
+    expect(projection.nodes).toHaveLength(61);
     expect(projection.nodes.filter((node) => node.kind === "folder")).toHaveLength(15);
-    expect(projection.edges).toHaveLength(15);
-    expect(projection.edges.every((edge) => edge.projected && edge.count === 1)).toBe(true);
+    expect(projection.nodes.filter((node) => node.kind === "node")).toHaveLength(46);
+    expect(projection.edges).toHaveLength(45);
+    expect(projection.edges.every((edge) => !edge.projected && edge.count === 1)).toBe(true);
     expect(projection.edges[0].original_edge_ids[0]).toMatch(/^context-/);
-    expect(projection.edges.some((edge) => edge.id.startsWith("prompt-image"))).toBe(false);
   });
 
   it("returns real local nodes, edge ids, endpoints, and handles", () => {
@@ -172,7 +172,7 @@ describe("schema-v2 workflow graph projection", () => {
   it("matches selectable real nodes to the global or local projection", () => {
     const workflow = makeWorkflow();
 
-    expect(visibleRealNodeIds(workflow, null)).toEqual(["product"]);
+    expect(visibleRealNodeIds(workflow, null)).toHaveLength(46);
     expect(visibleRealNodeIds(workflow, "folder-4").sort()).toEqual([
       "image-4-0",
       "image-4-1",
@@ -180,22 +180,13 @@ describe("schema-v2 workflow graph projection", () => {
     ]);
   });
 
-  it("auto-layouts folders as compounds while returning one batch of real node positions", () => {
+  it("auto-layouts real nodes based on topological layers", () => {
     const workflow = makeWorkflow();
-    const folderMembers = workflow.nodes.filter((node) => node.folder_id === "folder-0");
-    const beforeOffset = {
-      x: folderMembers[1].position_x - folderMembers[0].position_x,
-      y: folderMembers[1].position_y - folderMembers[0].position_y,
-    };
 
     const positions = buildAutoLayoutNodePositions(workflow, null);
     const positionById = new Map(positions.map((position) => [position.node_id, position]));
-    const prompt = positionById.get(folderMembers[0].id)!;
-    const image = positionById.get(folderMembers[1].id)!;
 
     expect(positions.length).toBe(workflow.nodes.length);
-    expect(image.position_x - prompt.position_x).toBe(beforeOffset.x);
-    expect(image.position_y - prompt.position_y).toBe(beforeOffset.y);
     expect(positionById.get("product")!.position_x % 24).toBe(0);
     expect(positionById.get("product")!.position_y % 24).toBe(0);
   });

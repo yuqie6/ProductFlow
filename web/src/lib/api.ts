@@ -922,16 +922,62 @@ export const api = {
     if (input?.tag?.trim()) params.set("tag", input.tag.trim());
     return request(`/api/media-library?${params}`);
   },
+  uploadMediaLibraryAsset(file: File, folderId?: string | null): Promise<MediaLibraryAsset> {
+    const formData = new FormData();
+    formData.append("files", file);
+    if (folderId) {
+      formData.append("folder_id", folderId);
+    }
+    return request<MediaLibraryAsset[]>("/api/media-library/upload", {
+      method: "POST",
+      body: formData,
+    }).then((items) => items[0]);
+  },
+  uploadMediaLibraryAssets(files: File[], folderId?: string | null): Promise<MediaLibraryAsset[]> {
+    const formData = new FormData();
+    for (const file of files) {
+      formData.append("files", file);
+    }
+    if (folderId) {
+      formData.append("folder_id", folderId);
+    }
+    return request("/api/media-library/upload", {
+      method: "POST",
+      body: formData,
+    });
+  },
   createMediaLibraryFolder(name: string): Promise<MediaLibraryFolder> {
     return request("/api/media-library/folders", {
       method: "POST",
       body: JSON.stringify({ name }),
     });
   },
+  renameMediaLibraryFolder(folderId: string, expectedName: string, name: string): Promise<MediaLibraryFolder> {
+    return request(`/api/media-library/folders/${encodeURIComponent(folderId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ expected_name: expectedName, name }),
+    });
+  },
+  deleteMediaLibraryFolder(folderId: string): Promise<{ folder_id: string; unorganized_count: number }> {
+    return request(`/api/media-library/folders/${encodeURIComponent(folderId)}`, {
+      method: "DELETE",
+    });
+  },
   createMediaLibraryTag(name: string): Promise<MediaLibraryTag> {
     return request("/api/media-library/tags", {
       method: "POST",
       body: JSON.stringify({ name }),
+    });
+  },
+  renameMediaLibraryTag(tagId: string, expectedName: string, name: string): Promise<MediaLibraryTag> {
+    return request(`/api/media-library/tags/${encodeURIComponent(tagId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ expected_name: expectedName, name }),
+    });
+  },
+  deleteMediaLibraryTag(tagId: string): Promise<{ tag_id: string; removed_assignment_count: number }> {
+    return request(`/api/media-library/tags/${encodeURIComponent(tagId)}`, {
+      method: "DELETE",
     });
   },
   moveMediaLibraryAssets(input: {

@@ -34,7 +34,7 @@ export type GalleryDirectoryKind =
   | "unorganized"
   | "user_folder";
 export type GalleryAssetSort = "created_desc" | "created_asc" | "name_asc" | "name_desc";
-export type MediaLibrarySourceType = "legacy_gallery" | "image_session_generated" | "product_asset";
+export type MediaLibrarySourceType = "legacy_gallery" | "image_session_generated" | "product_asset" | "direct_upload";
 export type WorkflowNodeTypeV2 =
   | "product_context"
   | "reference_image"

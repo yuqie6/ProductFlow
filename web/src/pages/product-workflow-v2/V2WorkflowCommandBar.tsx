@@ -141,17 +141,21 @@ export function V2WorkflowCommandBar({
         </CommandIconButton>
       ) : null}
       {onRunWorkflow ? (
-        <CommandIconButton
-          label={t(workflowRunBusy ? "detail.workflowRunning" : "detail.runWorkflow")}
-          disabled={structureBusy || workflowRunBusy}
+        <button
+          type="button"
           onClick={onRunWorkflow}
+          disabled={structureBusy || workflowRunBusy}
+          className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-accent-fg shadow-sm shadow-accent/20 transition-all hover:bg-accent-strong active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+          aria-label={t(workflowRunBusy ? "detail.workflowRunning" : "detail.runWorkflow")}
+          title={t(workflowRunBusy ? "detail.workflowRunning" : "detail.runWorkflow")}
         >
-          {workflowRunBusy ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />}
-        </CommandIconButton>
+          {workflowRunBusy ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} className="fill-current" />}
+          <span className="hidden sm:inline">{t(workflowRunBusy ? "detail.workflowRunning" : "detail.runWorkflow")}</span>
+        </button>
       ) : null}
 
       {selectedNodeIds.length ? (
-        <span className="hidden rounded-md bg-indigo-50 px-2 py-1.5 text-[11px] font-semibold text-indigo-700 dark:bg-violet-500/15 dark:text-violet-200 md:inline-flex">
+        <span className="hidden rounded-lg border border-accent/20 bg-accent-soft px-2.5 py-1 text-[11px] font-semibold text-accent dark:bg-accent-soft dark:text-accent-fg md:inline-flex">
           {t("workflowV2.canvas.selected", { count: selectedNodeIds.length })}
         </span>
       ) : null}

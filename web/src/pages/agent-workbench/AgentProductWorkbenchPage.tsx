@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Boxes, CircleAlert, CircleDot, Eye, FolderOpen, Images, Plus, Workflow, X } from "lucide-react";
+import { Boxes, CircleAlert, CircleDot, Eye, FolderOpen, Images, Plus, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { GalleryImagePreviewDialog } from "../../components/GalleryImagePreviewDialog";
+import { openGlobalAgent } from "../../components/GlobalAgentDock";
 import { TopNav } from "../../components/TopNav";
 import { useRegisterAgentPageContext } from "../../lib/agentPageContext";
 import { ApiError, api } from "../../lib/api";
@@ -50,6 +51,7 @@ import {
 import { useWorkflowMaterialization } from "./useWorkflowMaterialization";
 import { useWorkflowReveal } from "./useWorkflowReveal";
 import { WorkflowDraftConfirmation } from "./WorkflowDraftConfirmation";
+import { WorkflowOnboardingHero } from "./WorkflowOnboardingHero";
 
 export type AgentV2WorkbenchBootstrap = Extract<AgentWorkbenchBootstrap, { mode: "agent_v2" }>;
 type AgentSidebarToolId = "agent" | "add" | "details" | "runs" | "library" | "recipes";
@@ -98,7 +100,7 @@ export function AgentProductWorkbenchPage({
   const [materialization, setMaterialization] = useState<WorkflowMaterializationResult | null>(null);
   const [dismissedRevisionId, setDismissedRevisionId] = useState<string | null>(null);
   const [conflictDetected, setConflictDetected] = useState(false);
-  const [sidebarTool, setSidebarTool] = useState<AgentSidebarToolId>("agent");
+  const [sidebarTool, setSidebarTool] = useState<AgentSidebarToolId>("details");
   const [libraryMode, setLibraryMode] = useState<LibraryMode>("product");
   const [topChromeCollapsed, setTopChromeCollapsed] = useState(false);
   const [canvasContext, setCanvasContext] = useState<ProductWorkflowV2CanvasContext>(EMPTY_CANVAS_CONTEXT);
@@ -390,6 +392,9 @@ export function AgentProductWorkbenchPage({
         <V2AddNodePanel
           busy={createReferenceControl.busy}
           onCreateReference={createReferenceControl.request}
+          hasSelectedNode={Boolean(selectedNode)}
+          onOpenRecipesTab={() => requestSidebarTool("recipes")}
+          onOpenLibraryTab={() => requestSidebarTool("library")}
         />
       ),
     },
@@ -411,6 +416,8 @@ export function AgentProductWorkbenchPage({
           onPreviewImage={setPreviewImage}
           onWorkflowChanged={refetchWorkflow}
           onFlushRegistration={registerInspectorFlush}
+          onOpenAddPanel={() => requestSidebarTool("add")}
+          onOpenLibraryPanel={() => requestSidebarTool("library")}
         />
       ),
     },
@@ -583,7 +590,18 @@ export function AgentProductWorkbenchPage({
             }}
           />
         ) : (
-          <PendingWorkflowCanvas />
+          <WorkflowOnboardingHero
+            productName={bootstrap.product.name}
+            onOpenAgent={() => {
+              openGlobalAgent({ tab: "chat", sessionId: bootstrap.conversation.session_id ?? undefined });
+            }}
+            onOpenRecipes={() => {
+              void requestSidebarTool("recipes");
+            }}
+            onOpenAddPanel={() => {
+              void requestSidebarTool("add");
+            }}
+          />
         )}
         agentContent={(
           <AgentConversationPanel
@@ -600,6 +618,9 @@ export function AgentProductWorkbenchPage({
             }}
             onOpenRuns={() => {
               void openSidebarTool("runs");
+            }}
+            onExpandGlobalAgent={() => {
+              openGlobalAgent({ tab: "chat", sessionId: bootstrap.conversation.session_id ?? undefined });
             }}
             className="h-full"
           />
@@ -738,18 +759,6 @@ export function preferActiveWorkflowSnapshot(
   }
   const selected = selectAgentWorkbenchWorkflow(current.workflow, incoming.workflow);
   return selected === incoming.workflow ? incoming : current;
-}
-
-function PendingWorkflowCanvas() {
-  const { t } = useI18n();
-  return (
-    <div className="flex h-full min-h-0 items-center justify-center bg-zinc-50 p-8 text-center text-sm text-zinc-500 dark:bg-[#080c12] dark:text-slate-400">
-      <div className="flex max-w-sm flex-col items-center gap-3">
-        <Workflow size={24} className="text-zinc-400 dark:text-slate-500" />
-        <span>{t("agentWorkbench.canvasPending")}</span>
-      </div>
-    </div>
-  );
 }
 
 function SidebarError({
