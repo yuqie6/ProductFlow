@@ -22,7 +22,13 @@ from productflow_backend.application.agent_workflow_run_requests import (
     prepare_agent_workflow_run_request,
 )
 from productflow_backend.application.agent_workflow_runs import inspect_agent_global_workflow_runs
-from productflow_backend.application.product_workflow.v2_runs import submit_v2_workflow_run
+from productflow_backend.application.product_workflow.run_state import WORKFLOW_CANCELLED_REASON
+from productflow_backend.application.product_workflow.v2_runs import (
+    retry_v2_workflow_run,
+    retryable_node_run_ids,
+    submit_v2_workflow_run,
+    validate_retry_workflow_run,
+)
 from productflow_backend.application.workflow_drafts.materialization import materialize_workflow_draft
 from productflow_backend.application.workflow_drafts.service import (
     append_workflow_draft_revision,
@@ -35,6 +41,7 @@ from productflow_backend.domain.enums import (
     AgentToolStepStatus,
     AgentTurnStatus,
     AgentWorkflowRunRequestStatus,
+    WorkflowNodeStatus,
     WorkflowRunStatus,
 )
 from productflow_backend.domain.errors import ConflictError
@@ -458,3 +465,175 @@ def test_agent_turn_projects_workflow_run_request_as_human_confirmation(db_sessi
     assert confirmed.status == AgentWorkflowRunRequestStatus.CONFIRMED
     assert db_session.get(type(projected), projected.id).status == AgentTurnStatus.SUCCEEDED
     assert db_session.get(type(task), task.id).status == AgentTaskStatus.RUNNING
+
+
+def test_agent_can_request_workflow_run_retry(db_session) -> None:
+    workspace, workflow = _create_requestable_workspace(db_session)
+    submission = submit_v2_workflow_run(
+        db_session,
+        product_id=workspace.product.id,
+        workflow_id=workflow.id,
+    )
+    run = submission.run
+    run.status = WorkflowRunStatus.FAILED
+    run.is_retryable = True
+    for node_run in run.node_runs:
+        node_run.status = WorkflowRunStatus.FAILED
+        node_run.failure_reason = "generation_failed"
+    db_session.commit()
+
+    prepared = prepare_agent_workflow_run_request(
+        db_session,
+        conversation_id=workspace.conversation.id,
+        expected_workflow_revision=workflow.revision,
+        source_run_id=run.id,
+    )
+    assert prepared.source_run_id == run.id
+    assert prepared.workflow_id == workflow.id
+
+    request = create_agent_workflow_run_request(
+        db_session,
+        conversation_id=workspace.conversation.id,
+        expected_workflow_revision=workflow.revision,
+        workflow_id=workflow.id,
+        source_step_id="step-retry-1",
+        idempotency_key="request-retry-1",
+        source_run_id=run.id,
+    )
+    assert request.source_run_id == run.id
+    assert request.status == AgentWorkflowRunRequestStatus.AWAITING_CONFIRMATION
+
+    confirmed = confirm_agent_workflow_run_request(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        request_id=request.id,
+    )
+    assert confirmed.status == AgentWorkflowRunRequestStatus.CONFIRMED
+    assert confirmed.workflow_run_id is not None
+    assert confirmed.workflow_run_id != run.id
+    new_run = db_session.get(WorkflowRun, confirmed.workflow_run_id)
+    assert new_run is not None
+    assert new_run.progress_metadata.get("source_run_id") == run.id
+    assert new_run.progress_metadata.get("manual_retry") is True
+
+
+def test_global_agent_can_request_workflow_run_retry(db_session) -> None:
+    workspace, workflow = _create_requestable_workspace(db_session)
+    submission = submit_v2_workflow_run(
+        db_session,
+        product_id=workspace.product.id,
+        workflow_id=workflow.id,
+    )
+    run = submission.run
+    run.status = WorkflowRunStatus.FAILED
+    run.is_retryable = True
+    for node_run in run.node_runs:
+        node_run.status = WorkflowRunStatus.FAILED
+        node_run.failure_reason = "generation_failed"
+    db_session.commit()
+
+    global_conversation = db_session.scalar(
+        select(AgentConversation).where(
+            AgentConversation.session_id == workspace.conversation.session_id,
+            AgentConversation.scope_type == AgentConversationScope.GLOBAL,
+        )
+    )
+    assert global_conversation is not None
+
+    prepared = prepare_agent_global_workflow_run_request(
+        db_session,
+        conversation_id=global_conversation.id,
+        product_id=workspace.product.id,
+        workflow_id=workflow.id,
+        expected_workflow_revision=workflow.revision,
+        source_run_id=run.id,
+    )
+    assert prepared.source_run_id == run.id
+
+    request = create_agent_global_workflow_run_request(
+        db_session,
+        conversation_id=global_conversation.id,
+        product_id=workspace.product.id,
+        expected_workflow_revision=workflow.revision,
+        workflow_id=workflow.id,
+        source_step_id="step-global-retry-1",
+        idempotency_key="request-global-retry-1",
+        source_run_id=run.id,
+    )
+    assert request.source_run_id == run.id
+
+    confirmed = confirm_agent_workflow_run_request(
+        db_session,
+        product_id=None,
+        conversation_id=global_conversation.id,
+        request_id=request.id,
+    )
+    assert confirmed.status == AgentWorkflowRunRequestStatus.CONFIRMED
+    assert confirmed.workflow_run_id is not None
+    new_run = db_session.get(WorkflowRun, confirmed.workflow_run_id)
+    assert new_run is not None
+    assert new_run.progress_metadata.get("source_run_id") == run.id
+
+
+
+def test_retryable_node_rule_excludes_cancelled_reason_failures(db_session) -> None:
+    """Single-owner rule: only non-cancelled failed nodes are marked for retry."""
+    workspace, workflow = _create_requestable_workspace(db_session)
+    submission = submit_v2_workflow_run(
+        db_session,
+        product_id=workspace.product.id,
+        workflow_id=workflow.id,
+    )
+    run = submission.run
+    run.status = WorkflowRunStatus.FAILED
+    run.is_retryable = True
+    node_runs = list(run.node_runs)
+    assert node_runs
+    for node_run in node_runs:
+        node_run.status = WorkflowNodeStatus.FAILED
+        node_run.failure_reason = "generation_failed"
+    node_runs[0].failure_reason = WORKFLOW_CANCELLED_REASON
+    db_session.commit()
+
+    assert retryable_node_run_ids(run) == {node_run.node_id for node_run in node_runs[1:]}
+
+
+def test_retry_node_rule_agrees_between_validate_and_execute(db_session) -> None:
+    """The retry set announced by validation always equals the set that re-runs."""
+    workspace, workflow = _create_requestable_workspace(db_session)
+    submission = submit_v2_workflow_run(
+        db_session,
+        product_id=workspace.product.id,
+        workflow_id=workflow.id,
+    )
+    run = submission.run
+    run.status = WorkflowRunStatus.FAILED
+    run.is_retryable = True
+    node_runs = list(run.node_runs)
+    assert node_runs
+    for node_run in node_runs:
+        node_run.status = WorkflowNodeStatus.FAILED
+        node_run.failure_reason = "generation_failed"
+    db_session.commit()
+
+    workflow_v, ordered = validate_retry_workflow_run(
+        db_session,
+        product_id=workspace.product.id,
+        workflow_id=workflow.id,
+        run_id=run.id,
+    )
+    assert workflow_v.id == workflow.id
+    expected = {node_run.node_id for node_run in node_runs}
+    assert set(ordered) == expected
+
+    retried = retry_v2_workflow_run(
+        db_session,
+        product_id=workspace.product.id,
+        workflow_id=workflow.id,
+        run_id=run.id,
+    )
+    new_run = retried.run
+    assert {node_run.node_id for node_run in new_run.node_runs} == expected
+    assert new_run.progress_metadata.get("source_run_id") == run.id
+    assert new_run.progress_metadata.get("manual_retry") is True

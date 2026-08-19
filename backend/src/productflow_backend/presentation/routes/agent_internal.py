@@ -252,6 +252,7 @@ def prepare_agent_workflow_run_request_endpoint(
         conversation_id=conversation_id,
         expected_workflow_revision=payload.expected_workflow_revision,
         task_id=payload.task_id,
+        source_run_id=payload.source_run_id,
     )
     return AgentWorkflowRunRequestPreparedResponse(
         product_id=prepared.product_id,
@@ -260,6 +261,7 @@ def prepare_agent_workflow_run_request_endpoint(
         workflow_revision=prepared.workflow_revision,
         runnable_node_count=prepared.runnable_node_count,
         task_id=prepared.task_id,
+        source_run_id=prepared.source_run_id,
     )
 
 
@@ -279,6 +281,7 @@ def prepare_agent_global_workflow_run_request_endpoint(
         workflow_id=payload.workflow_id,
         expected_workflow_revision=payload.expected_workflow_revision,
         task_id=payload.task_id,
+        source_run_id=payload.source_run_id,
     )
     return AgentWorkflowRunRequestPreparedResponse(
         product_id=prepared.product_id,
@@ -287,6 +290,7 @@ def prepare_agent_global_workflow_run_request_endpoint(
         workflow_revision=prepared.workflow_revision,
         runnable_node_count=prepared.runnable_node_count,
         task_id=prepared.task_id,
+        source_run_id=prepared.source_run_id,
     )
 
 
@@ -308,6 +312,7 @@ def create_agent_workflow_run_request_endpoint(
         source_step_id=payload.source_step_id,
         idempotency_key=idempotency_key,
         task_id=payload.task_id,
+        source_run_id=payload.source_run_id,
     )
     return serialize_agent_workflow_run_request(request)
 
@@ -331,6 +336,7 @@ def create_agent_global_workflow_run_request_endpoint(
         source_step_id=payload.source_step_id,
         idempotency_key=idempotency_key,
         task_id=payload.task_id,
+        source_run_id=payload.source_run_id,
     )
     return serialize_agent_workflow_run_request(request)
 
@@ -353,6 +359,7 @@ def reconcile_agent_workflow_run_request_endpoint(
         source_step_id=payload.source_step_id,
         idempotency_key=idempotency_key,
         task_id=payload.task_id,
+        source_run_id=payload.source_run_id,
     )
     return AgentWorkflowRunRequestReconcileResponse(
         state=result.state,
@@ -380,6 +387,7 @@ def reconcile_agent_global_workflow_run_request_endpoint(
         source_step_id=payload.source_step_id,
         idempotency_key=idempotency_key,
         task_id=payload.task_id,
+        source_run_id=payload.source_run_id,
     )
     return AgentWorkflowRunRequestReconcileResponse(
         state=result.state,

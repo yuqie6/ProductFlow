@@ -1163,6 +1163,7 @@ export interface AgentWorkflowRunRequest {
   workflow_title: string;
   expected_workflow_revision: number;
   status: AgentWorkflowRunRequestStatus;
+  source_run_id?: string | null;
   workflow_run_id: string | null;
   workflow_run_status: WorkflowRunStatus | null;
   source_step_id: string;

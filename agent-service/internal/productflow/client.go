@@ -180,6 +180,7 @@ type WorkflowRunRequestPrepared struct {
 	WorkflowRevision  int     `json:"workflow_revision"`
 	RunnableNodeCount int     `json:"runnable_node_count"`
 	TaskID            *string `json:"task_id"`
+	SourceRunID       *string `json:"source_run_id,omitempty"`
 }
 
 type WorkflowRunRequest struct {
@@ -191,6 +192,7 @@ type WorkflowRunRequest struct {
 	WorkflowTitle            string  `json:"workflow_title"`
 	ExpectedWorkflowRevision int     `json:"expected_workflow_revision"`
 	Status                   string  `json:"status"`
+	SourceRunID              *string `json:"source_run_id,omitempty"`
 	WorkflowRunID            *string `json:"workflow_run_id"`
 	WorkflowRunStatus        *string `json:"workflow_run_status"`
 	SourceStepID             string  `json:"source_step_id"`
@@ -319,6 +321,7 @@ func (client *Client) PrepareWorkflowRunRequest(
 	conversationID string,
 	expectedWorkflowRevision int,
 	taskID *string,
+	sourceRunID *string,
 ) (WorkflowRunRequestPrepared, error) {
 	var result WorkflowRunRequestPrepared
 	err := client.json(
@@ -328,6 +331,7 @@ func (client *Client) PrepareWorkflowRunRequest(
 		map[string]any{
 			"expected_workflow_revision": expectedWorkflowRevision,
 			"task_id":                    taskID,
+			"source_run_id":              sourceRunID,
 		},
 		&result,
 		"",
@@ -340,6 +344,7 @@ func (client *Client) PrepareGlobalWorkflowRunRequest(
 	conversationID, productID, workflowID string,
 	expectedWorkflowRevision int,
 	taskID *string,
+	sourceRunID *string,
 ) (WorkflowRunRequestPrepared, error) {
 	var result WorkflowRunRequestPrepared
 	err := client.json(
@@ -351,6 +356,7 @@ func (client *Client) PrepareGlobalWorkflowRunRequest(
 			"workflow_id":                workflowID,
 			"expected_workflow_revision": expectedWorkflowRevision,
 			"task_id":                    taskID,
+			"source_run_id":              sourceRunID,
 		},
 		&result,
 		"",
@@ -427,12 +433,16 @@ func (client *Client) ReconcileGlobalWorkflowRunRequest(
 }
 
 func workflowRunRequestPayload(prepared WorkflowRunRequestPrepared, sourceStepID string) map[string]any {
-	return map[string]any{
+	payload := map[string]any{
 		"expected_workflow_revision": prepared.WorkflowRevision,
 		"workflow_id":                prepared.WorkflowID,
 		"source_step_id":             sourceStepID,
 		"task_id":                    prepared.TaskID,
 	}
+	if prepared.SourceRunID != nil {
+		payload["source_run_id"] = prepared.SourceRunID
+	}
+	return payload
 }
 
 func globalWorkflowRunRequestPayload(prepared WorkflowRunRequestPrepared, sourceStepID string) map[string]any {

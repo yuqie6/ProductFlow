@@ -1477,6 +1477,7 @@ class AgentWorkflowRunRequest(Base, TimestampMixin):
         ),
         Index("ix_agent_workflow_run_requests_task_status_updated", "task_id", "status", "updated_at", "id"),
         Index("ix_agent_workflow_run_requests_workflow_run_id", "workflow_run_id"),
+        Index("ix_agent_workflow_run_requests_source_run_id", "source_run_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -1500,6 +1501,11 @@ class AgentWorkflowRunRequest(Base, TimestampMixin):
     workflow_id: Mapped[str] = mapped_column(
         String(36),
         ForeignKey("product_workflows.id", ondelete="CASCADE", name="fk_agent_workflow_run_requests_workflow_id"),
+    )
+    source_run_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("workflow_runs.id", ondelete="RESTRICT", name="fk_agent_workflow_run_requests_source_run_id"),
+        nullable=True,
     )
     expected_workflow_revision: Mapped[int] = mapped_column(Integer)
     idempotency_key: Mapped[str] = mapped_column(String(200))
@@ -1525,6 +1531,7 @@ class AgentWorkflowRunRequest(Base, TimestampMixin):
     )
     product: Mapped[Product] = relationship(foreign_keys=[product_id])
     workflow: Mapped[ProductWorkflow] = relationship(foreign_keys=[workflow_id])
+    source_run: Mapped[WorkflowRun | None] = relationship(foreign_keys=[source_run_id])
     workflow_run: Mapped[WorkflowRun | None] = relationship(foreign_keys=[workflow_run_id])
     turn_projection: Mapped[AgentTurnProjection | None] = relationship(
         back_populates="workflow_run_request",

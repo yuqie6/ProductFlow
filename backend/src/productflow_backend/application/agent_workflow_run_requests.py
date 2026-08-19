@@ -15,7 +15,9 @@ from productflow_backend.application.agent_tasks import get_agent_task_or_raise
 from productflow_backend.application.product_workflow.run_state import WORKFLOW_CANCELLED_REASON
 from productflow_backend.application.product_workflow.v2_runs import (
     cancel_v2_workflow_run,
+    retry_v2_workflow_run,
     submit_v2_workflow_run,
+    validate_retry_workflow_run,
     validate_v2_workflow_run,
 )
 from productflow_backend.application.time import now_utc
@@ -50,6 +52,7 @@ class AgentWorkflowRunRequestPreparation:
     workflow_revision: int
     runnable_node_count: int
     task_id: str | None
+    source_run_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,12 +68,14 @@ def prepare_agent_workflow_run_request(
     conversation_id: str,
     expected_workflow_revision: int,
     task_id: str | None = None,
+    source_run_id: str | None = None,
 ) -> AgentWorkflowRunRequestPreparation:
     conversation = _get_product_conversation(session, conversation_id)
     workflow, ordered_node_ids = _prepare_current_workflow(
         session,
         product_id=conversation.product_id or "",
         expected_workflow_revision=expected_workflow_revision,
+        source_run_id=source_run_id,
     )
     _validate_task_scope(
         session,
@@ -84,6 +89,7 @@ def prepare_agent_workflow_run_request(
         workflow_revision=workflow.revision,
         runnable_node_count=len(ordered_node_ids),
         task_id=task_id,
+        source_run_id=source_run_id,
     )
 
 
@@ -95,6 +101,7 @@ def prepare_agent_global_workflow_run_request(
     workflow_id: str,
     expected_workflow_revision: int,
     task_id: str | None = None,
+    source_run_id: str | None = None,
 ) -> AgentWorkflowRunRequestPreparation:
     conversation = _get_global_conversation(session, conversation_id)
     normalized_product_id = _normalize_required_id(product_id, "product_id")
@@ -109,6 +116,7 @@ def prepare_agent_global_workflow_run_request(
         product_id=normalized_product_id,
         workflow_id=normalized_workflow_id,
         expected_workflow_revision=expected_workflow_revision,
+        source_run_id=source_run_id,
     )
     return AgentWorkflowRunRequestPreparation(
         product_id=normalized_product_id,
@@ -117,6 +125,7 @@ def prepare_agent_global_workflow_run_request(
         workflow_revision=workflow.revision,
         runnable_node_count=len(ordered_node_ids),
         task_id=task_id,
+        source_run_id=source_run_id,
     )
 
 
@@ -129,6 +138,7 @@ def create_agent_workflow_run_request(
     source_step_id: str,
     idempotency_key: str,
     task_id: str | None = None,
+    source_run_id: str | None = None,
 ) -> AgentWorkflowRunRequest:
     return _create_agent_workflow_run_request(
         session,
@@ -140,12 +150,14 @@ def create_agent_workflow_run_request(
         task_id=task_id,
         target_product_id=None,
         request_hash_product_id=None,
+        source_run_id=source_run_id,
         load_conversation=lambda lock: _get_product_conversation(session, conversation_id, lock=lock),
         prepare=lambda: prepare_agent_workflow_run_request(
             session,
             conversation_id=conversation_id,
             expected_workflow_revision=expected_workflow_revision,
             task_id=task_id,
+            source_run_id=source_run_id,
         ),
     )
 
@@ -160,6 +172,7 @@ def create_agent_global_workflow_run_request(
     source_step_id: str,
     idempotency_key: str,
     task_id: str | None = None,
+    source_run_id: str | None = None,
 ) -> AgentWorkflowRunRequest:
     normalized_product_id = _normalize_required_id(product_id, "product_id")
     return _create_agent_workflow_run_request(
@@ -172,6 +185,7 @@ def create_agent_global_workflow_run_request(
         task_id=task_id,
         target_product_id=normalized_product_id,
         request_hash_product_id=normalized_product_id,
+        source_run_id=source_run_id,
         load_conversation=lambda lock: _get_global_conversation(session, conversation_id, lock=lock),
         prepare=lambda: prepare_agent_global_workflow_run_request(
             session,
@@ -180,6 +194,7 @@ def create_agent_global_workflow_run_request(
             workflow_id=workflow_id,
             expected_workflow_revision=expected_workflow_revision,
             task_id=task_id,
+            source_run_id=source_run_id,
         ),
     )
 
@@ -195,12 +210,16 @@ def _create_agent_workflow_run_request(
     task_id: str | None,
     target_product_id: str | None,
     request_hash_product_id: str | None,
+    source_run_id: str | None,
     load_conversation: Callable[[bool], AgentConversation],
     prepare: Callable[[], AgentWorkflowRunRequestPreparation],
 ) -> AgentWorkflowRunRequest:
     normalized_key = _normalize_idempotency_key(idempotency_key)
     normalized_step_id = _normalize_source_step_id(source_step_id)
     normalized_workflow_id = _normalize_required_id(workflow_id, "workflow_id")
+    normalized_source_run_id = (
+        _normalize_required_id(source_run_id, "source_run_id") if source_run_id is not None else None
+    )
     conversation = load_conversation(True)
     normalized_product_id = _normalize_required_id(
         target_product_id or conversation.product_id or "",
@@ -213,6 +232,7 @@ def _create_agent_workflow_run_request(
         workflow_id=normalized_workflow_id,
         expected_workflow_revision=expected_workflow_revision,
         source_step_id=normalized_step_id,
+        source_run_id=normalized_source_run_id,
     )
     existing = session.scalar(
         select(AgentWorkflowRunRequest)
@@ -244,6 +264,7 @@ def _create_agent_workflow_run_request(
         task_id=task_id,
         product_id=preparation.product_id,
         workflow_id=preparation.workflow_id,
+        source_run_id=preparation.source_run_id,
         expected_workflow_revision=preparation.workflow_revision,
         idempotency_key=normalized_key,
         request_hash=request_hash,
@@ -280,6 +301,7 @@ def reconcile_agent_workflow_run_request(
     source_step_id: str,
     idempotency_key: str,
     task_id: str | None = None,
+    source_run_id: str | None = None,
 ) -> AgentWorkflowRunRequestReconcileResult:
     return _reconcile_agent_workflow_run_request(
         session,
@@ -289,6 +311,7 @@ def reconcile_agent_workflow_run_request(
         source_step_id=source_step_id,
         idempotency_key=idempotency_key,
         task_id=task_id,
+        source_run_id=source_run_id,
         request_hash_product_id=None,
         load_conversation=lambda: _get_product_conversation(session, conversation_id),
     )
@@ -304,6 +327,7 @@ def reconcile_agent_global_workflow_run_request(
     source_step_id: str,
     idempotency_key: str,
     task_id: str | None = None,
+    source_run_id: str | None = None,
 ) -> AgentWorkflowRunRequestReconcileResult:
     normalized_product_id = _normalize_required_id(product_id, "product_id")
     return _reconcile_agent_workflow_run_request(
@@ -314,6 +338,7 @@ def reconcile_agent_global_workflow_run_request(
         source_step_id=source_step_id,
         idempotency_key=idempotency_key,
         task_id=task_id,
+        source_run_id=source_run_id,
         request_hash_product_id=normalized_product_id,
         load_conversation=lambda: _get_global_conversation(session, conversation_id),
     )
@@ -329,11 +354,15 @@ def _reconcile_agent_workflow_run_request(
     idempotency_key: str,
     task_id: str | None,
     request_hash_product_id: str | None,
+    source_run_id: str | None,
     load_conversation: Callable[[], AgentConversation],
 ) -> AgentWorkflowRunRequestReconcileResult:
     normalized_key = _normalize_idempotency_key(idempotency_key)
     normalized_step_id = _normalize_source_step_id(source_step_id)
     normalized_workflow_id = _normalize_required_id(workflow_id, "workflow_id")
+    normalized_source_run_id = (
+        _normalize_required_id(source_run_id, "source_run_id") if source_run_id is not None else None
+    )
     request_hash = _request_hash(
         conversation_id=conversation_id,
         task_id=task_id,
@@ -341,6 +370,7 @@ def _reconcile_agent_workflow_run_request(
         workflow_id=normalized_workflow_id,
         expected_workflow_revision=expected_workflow_revision,
         source_step_id=normalized_step_id,
+        source_run_id=normalized_source_run_id,
     )
     load_conversation()
     request = session.scalar(
@@ -503,17 +533,31 @@ def confirm_agent_workflow_run_request(
     )
     if workflow.revision != request.expected_workflow_revision:
         raise ConflictError("工作流已经发生变化，请重新让 Agent 检查后再确认")
-    submission = submit_v2_workflow_run(
-        session,
-        product_id=request.product_id,
-        workflow_id=request.workflow_id,
-        commit=False,
-        run_metadata={
-            "requested_by": "agent",
-            "agent_workflow_run_request_id": request.id,
-            "agent_task_id": request.task_id,
-        },
-    )
+    if request.source_run_id is not None:
+        submission = retry_v2_workflow_run(
+            session,
+            product_id=request.product_id,
+            workflow_id=request.workflow_id,
+            run_id=request.source_run_id,
+            commit=False,
+            run_metadata={
+                "requested_by": "agent",
+                "agent_workflow_run_request_id": request.id,
+                "agent_task_id": request.task_id,
+            },
+        )
+    else:
+        submission = submit_v2_workflow_run(
+            session,
+            product_id=request.product_id,
+            workflow_id=request.workflow_id,
+            commit=False,
+            run_metadata={
+                "requested_by": "agent",
+                "agent_workflow_run_request_id": request.id,
+                "agent_task_id": request.task_id,
+            },
+        )
     request.workflow_run_id = submission.run.id
     request.status = AgentWorkflowRunRequestStatus.CONFIRMED
     request.confirmed_at = now_utc()
@@ -625,6 +669,7 @@ def _prepare_current_workflow(
     *,
     product_id: str,
     expected_workflow_revision: int,
+    source_run_id: str | None = None,
 ) -> tuple[ProductWorkflow, tuple[str, ...]]:
     if expected_workflow_revision <= 0:
         raise BusinessValidationError("expected_workflow_revision 必须大于 0")
@@ -633,6 +678,13 @@ def _prepare_current_workflow(
         raise ConflictError("当前商品还没有可执行的 active schema-v2 工作流")
     if snapshot.workflow.revision != expected_workflow_revision:
         raise ConflictError("工作流 revision 已变化，请重新读取当前工作流")
+    if source_run_id is not None:
+        return validate_retry_workflow_run(
+            session,
+            product_id=product_id,
+            workflow_id=snapshot.workflow.id,
+            run_id=source_run_id,
+        )
     return validate_v2_workflow_run(
         session,
         product_id=product_id,
@@ -647,9 +699,17 @@ def _prepare_explicit_workflow(
     product_id: str,
     workflow_id: str,
     expected_workflow_revision: int,
+    source_run_id: str | None = None,
 ) -> tuple[ProductWorkflow, tuple[str, ...]]:
     if expected_workflow_revision <= 0:
         raise BusinessValidationError("expected_workflow_revision 必须大于 0")
+    if source_run_id is not None:
+        return validate_retry_workflow_run(
+            session,
+            product_id=product_id,
+            workflow_id=workflow_id,
+            run_id=source_run_id,
+        )
     workflow, ordered_node_ids = validate_v2_workflow_run(
         session,
         product_id=product_id,
@@ -879,8 +939,9 @@ def _request_hash(
     workflow_id: str,
     expected_workflow_revision: int,
     source_step_id: str,
+    source_run_id: str | None = None,
 ) -> str:
-    payload = {
+    payload: dict[str, object] = {
         "schema_version": 1,
         "conversation_id": conversation_id,
         "task_id": task_id,
@@ -890,6 +951,8 @@ def _request_hash(
     }
     if product_id is not None:
         payload["product_id"] = product_id
+    if source_run_id is not None:
+        payload["source_run_id"] = source_run_id
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()
 

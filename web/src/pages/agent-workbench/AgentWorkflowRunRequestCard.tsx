@@ -72,42 +72,44 @@ export function AgentWorkflowRunRequestCard({
             ? t("agentWorkbench.workflowRunRequest.status.confirmed")
             : t("agentWorkbench.workflowRunRequest.status.awaitingConfirmation");
   const statusTone = awaitingConfirmation
-    ? "border-amber-300 bg-amber-50/80 dark:border-amber-300/25 dark:bg-amber-400/5"
+    ? "border-amber-300/80 bg-amber-50/90 shadow-amber-500/5 dark:border-amber-400/30 dark:bg-amber-400/10"
     : failed
-      ? "border-red-300 bg-red-50/80 dark:border-red-300/25 dark:bg-red-400/5"
+      ? "border-red-300/80 bg-red-50/90 shadow-red-500/5 dark:border-red-400/30 dark:bg-red-400/10"
       : cancelled
-        ? "border-zinc-300 bg-zinc-50 dark:border-slate-700 dark:bg-slate-900/60"
+        ? "border-zinc-300 bg-zinc-50 dark:border-slate-700 dark:bg-slate-900/70"
         : succeeded
-          ? "border-emerald-300 bg-emerald-50/80 dark:border-emerald-300/25 dark:bg-emerald-400/5"
-          : "border-blue-300 bg-blue-50/80 dark:border-cyan-300/25 dark:bg-cyan-400/5";
+          ? "border-emerald-300/80 bg-emerald-50/90 shadow-emerald-500/5 dark:border-emerald-400/30 dark:bg-emerald-400/10"
+          : "border-blue-300/80 bg-blue-50/90 shadow-cyan-500/5 dark:border-cyan-400/30 dark:bg-cyan-400/10";
   const statusIcon = awaitingConfirmation ? (
-    <Clock3 size={15} aria-hidden="true" />
+    <Clock3 size={14} className="text-amber-600 dark:text-amber-400" aria-hidden="true" />
   ) : failed ? (
-    <CircleAlert size={15} aria-hidden="true" />
+    <CircleAlert size={14} className="text-red-600 dark:text-red-400" aria-hidden="true" />
   ) : succeeded ? (
-    <CircleCheck size={15} aria-hidden="true" />
+    <CircleCheck size={14} className="text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
   ) : cancelled ? (
-    <Square size={14} aria-hidden="true" />
+    <Square size={13} className="text-zinc-500 dark:text-slate-400" aria-hidden="true" />
   ) : (
-    <Loader2 size={15} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
+    <Loader2 size={14} className="animate-spin text-blue-600 motion-reduce:animate-none dark:text-cyan-400" aria-hidden="true" />
   );
 
   return (
     <section
       data-agent-workflow-run-request
       aria-labelledby={`agent-workflow-run-request-${request.id}`}
-      className={`shrink-0 border-y px-4 py-3.5 ${statusTone}`}
+      className={`shrink-0 border-y px-4 py-4 backdrop-blur-sm transition-all sm:mx-3 sm:my-2 sm:rounded-xl sm:border ${statusTone}`}
     >
       <div className="mx-auto w-full max-w-3xl">
-        <div className="flex items-start gap-3">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-zinc-950 text-white dark:bg-cyan-400 dark:text-[#071018]">
-            <Workflow size={17} aria-hidden="true" />
+        <div className="flex items-start gap-3.5">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-zinc-950 text-white shadow-sm dark:bg-cyan-400 dark:text-[#071018]">
+            <Workflow size={19} aria-hidden="true" />
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-start gap-2">
               <div className="min-w-0 flex-1">
-                <h3 id={`agent-workflow-run-request-${request.id}`} className="text-sm font-semibold text-zinc-950 dark:text-white">
-                  {t("agentWorkbench.workflowRunRequest.title")}
+                <h3 id={`agent-workflow-run-request-${request.id}`} className="text-sm font-semibold tracking-tight text-zinc-950 dark:text-white">
+                  {request.source_run_id
+                    ? t("agentWorkbench.workflowRunRequest.retryTitle")
+                    : t("agentWorkbench.workflowRunRequest.title")}
                 </h3>
                 <p className="mt-0.5 break-words text-xs text-zinc-700 dark:text-slate-300">
                   {request.workflow_title}
@@ -118,7 +120,7 @@ export function AgentWorkflowRunRequestCard({
                   </p>
                 ) : null}
               </div>
-              <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-current/20 px-2 py-1 text-[11px] font-semibold text-zinc-700 dark:text-slate-200">
+              <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border border-current/20 px-2.5 py-1 text-[11px] font-semibold text-zinc-800 dark:text-slate-100 ${awaitingConfirmation ? "animate-pulse" : ""}`}>
                 {statusIcon}
                 {statusLabel}
               </span>
@@ -134,7 +136,9 @@ export function AgentWorkflowRunRequestCard({
 
             {awaitingConfirmation ? (
               <p className="mt-2 text-xs leading-5 text-amber-900 dark:text-amber-100">
-                {t("agentWorkbench.workflowRunRequest.confirmDescription")}
+                {request.source_run_id
+                  ? t("agentWorkbench.workflowRunRequest.confirmRetryDescription")
+                  : t("agentWorkbench.workflowRunRequest.confirmDescription")}
               </p>
             ) : null}
             {active ? (
@@ -164,7 +168,11 @@ export function AgentWorkflowRunRequestCard({
                     className="inline-flex min-h-10 items-center gap-2 rounded-md bg-blue-600 px-3 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 disabled:cursor-wait disabled:opacity-50 dark:bg-cyan-400 dark:text-[#071018] dark:hover:bg-cyan-300"
                   >
                     {busy ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
-                    {busy ? t("agentWorkbench.workflowRunRequest.confirming") : t("agentWorkbench.workflowRunRequest.confirm")}
+                    {busy
+                      ? t("agentWorkbench.workflowRunRequest.confirming")
+                      : request.source_run_id
+                        ? t("agentWorkbench.workflowRunRequest.confirmRetry")
+                        : t("agentWorkbench.workflowRunRequest.confirm")}
                   </button>
                   <button
                     type="button"

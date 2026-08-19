@@ -436,6 +436,7 @@ class AgentWorkflowRunListResponse(BaseModel):
 class PrepareAgentWorkflowRunRequest(StrictAgentRequest):
     expected_workflow_revision: int = Field(ge=1)
     task_id: str | None = Field(default=None, max_length=64)
+    source_run_id: str | None = Field(default=None, max_length=36)
 
 
 class PrepareAgentGlobalWorkflowRunRequest(StrictAgentRequest):
@@ -443,6 +444,7 @@ class PrepareAgentGlobalWorkflowRunRequest(StrictAgentRequest):
     workflow_id: str = Field(min_length=1, max_length=64)
     expected_workflow_revision: int = Field(ge=1)
     task_id: str | None = Field(default=None, max_length=64)
+    source_run_id: str | None = Field(default=None, max_length=36)
 
 
 class AgentWorkflowRunRequestPreparedResponse(BaseModel):
@@ -452,6 +454,7 @@ class AgentWorkflowRunRequestPreparedResponse(BaseModel):
     workflow_revision: int
     runnable_node_count: int = Field(ge=1)
     task_id: str | None
+    source_run_id: str | None = None
 
 
 class AgentWorkflowRunRequestCreateRequest(StrictAgentRequest):
@@ -459,6 +462,7 @@ class AgentWorkflowRunRequestCreateRequest(StrictAgentRequest):
     workflow_id: str = Field(min_length=1, max_length=64)
     source_step_id: str = Field(min_length=1, max_length=120)
     task_id: str | None = Field(default=None, max_length=64)
+    source_run_id: str | None = Field(default=None, max_length=36)
 
 
 class AgentGlobalWorkflowRunRequestCreateRequest(AgentWorkflowRunRequestCreateRequest):
@@ -475,6 +479,7 @@ class AgentWorkflowRunRequestResponse(BaseModel):
     workflow_title: str
     expected_workflow_revision: int
     status: AgentWorkflowRunRequestStatus
+    source_run_id: str | None = None
     workflow_run_id: str | None
     workflow_run_status: WorkflowRunStatus | None
     source_step_id: str
@@ -571,6 +576,7 @@ def serialize_agent_workflow_run_request(
         workflow_title=workflow.title,
         expected_workflow_revision=request.expected_workflow_revision,
         status=request.status,
+        source_run_id=request.source_run_id,
         workflow_run_id=request.workflow_run_id,
         workflow_run_status=workflow_run.status if workflow_run is not None else None,
         source_step_id=request.source_step_id,

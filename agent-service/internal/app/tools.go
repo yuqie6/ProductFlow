@@ -548,13 +548,14 @@ func scopedGlobalDurableTools(client *productflow.Client, scope Scope) []agentta
 			Tool: &createProductWorkspaceTool{client: client, scope: scope},
 		},
 		{
-			Description: "Prepare a request to run one explicitly selected product's active workflow. This never starts the workflow; a human must confirm the request in ProductFlow.",
+			Description: "Prepare a request to run or retry one explicitly selected product's active workflow. This never starts the workflow; a human must confirm the request in ProductFlow.",
 			Parameters: map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
 					"product_id":                 map[string]any{"type": "string", "minLength": 1, "maxLength": 64},
 					"workflow_id":                map[string]any{"type": "string", "minLength": 1, "maxLength": 64},
 					"expected_workflow_revision": map[string]any{"type": "integer", "minimum": 1},
+					"source_run_id":              map[string]any{"type": "string", "minLength": 1, "maxLength": 36, "description": "Optional failed WorkflowRun ID to retry instead of running from scratch."},
 				},
 				"required": []string{"product_id", "workflow_id", "expected_workflow_revision"},
 			},
@@ -566,11 +567,12 @@ func scopedGlobalDurableTools(client *productflow.Client, scope Scope) []agentta
 func scopedDurableTools(client *productflow.Client, scope Scope) []agenttask.DurableTool {
 	return []agenttask.DurableTool{
 		{
-			Description: "Prepare a request to run the current active workflow. This never starts the workflow; a human must confirm the request in ProductFlow.",
+			Description: "Prepare a request to run or retry the current active workflow. This never starts the workflow; a human must confirm the request in ProductFlow.",
 			Parameters: map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
 					"expected_workflow_revision": map[string]any{"type": "integer", "minimum": 1},
+					"source_run_id":              map[string]any{"type": "string", "minLength": 1, "maxLength": 36, "description": "Optional failed WorkflowRun ID to retry instead of running from scratch."},
 				},
 				"required": []string{"expected_workflow_revision"},
 			},
@@ -720,9 +722,10 @@ func (*requestGlobalWorkflowRunTool) Effect() durable.EffectClass { return durab
 
 func (tool *requestGlobalWorkflowRunTool) Prepare(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	var arguments struct {
-		ProductID                string `json:"product_id"`
-		WorkflowID               string `json:"workflow_id"`
-		ExpectedWorkflowRevision int    `json:"expected_workflow_revision"`
+		ProductID                string  `json:"product_id"`
+		WorkflowID               string  `json:"workflow_id"`
+		ExpectedWorkflowRevision int     `json:"expected_workflow_revision"`
+		SourceRunID              *string `json:"source_run_id,omitempty"`
 	}
 	if err := decodeStrictObject(raw, &arguments); err != nil {
 		return nil, err
@@ -740,6 +743,13 @@ func (tool *requestGlobalWorkflowRunTool) Prepare(ctx context.Context, raw json.
 		value := tool.scope.TaskID
 		taskID = &value
 	}
+	var sourceRunID *string
+	if arguments.SourceRunID != nil {
+		trimmed := strings.TrimSpace(*arguments.SourceRunID)
+		if trimmed != "" {
+			sourceRunID = &trimmed
+		}
+	}
 	prepared, err := tool.client.PrepareGlobalWorkflowRunRequest(
 		ctx,
 		tool.scope.ConversationID,
@@ -747,6 +757,7 @@ func (tool *requestGlobalWorkflowRunTool) Prepare(ctx context.Context, raw json.
 		arguments.WorkflowID,
 		arguments.ExpectedWorkflowRevision,
 		taskID,
+		sourceRunID,
 	)
 	if err != nil {
 		return nil, err
@@ -792,7 +803,8 @@ func (*requestWorkflowRunTool) Effect() durable.EffectClass { return durable.Eff
 
 func (tool *requestWorkflowRunTool) Prepare(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
 	var arguments struct {
-		ExpectedWorkflowRevision int `json:"expected_workflow_revision"`
+		ExpectedWorkflowRevision int     `json:"expected_workflow_revision"`
+		SourceRunID              *string `json:"source_run_id,omitempty"`
 	}
 	if err := decodeStrictObject(raw, &arguments); err != nil {
 		return nil, err
@@ -805,11 +817,19 @@ func (tool *requestWorkflowRunTool) Prepare(ctx context.Context, raw json.RawMes
 		value := tool.scope.TaskID
 		taskID = &value
 	}
+	var sourceRunID *string
+	if arguments.SourceRunID != nil {
+		trimmed := strings.TrimSpace(*arguments.SourceRunID)
+		if trimmed != "" {
+			sourceRunID = &trimmed
+		}
+	}
 	prepared, err := tool.client.PrepareWorkflowRunRequest(
 		ctx,
 		tool.scope.ConversationID,
 		arguments.ExpectedWorkflowRevision,
 		taskID,
+		sourceRunID,
 	)
 	if err != nil {
 		return nil, err

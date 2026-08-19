@@ -219,6 +219,61 @@ def cancel_v2_workflow_run(
     )
 
 
+def retryable_node_run_ids(run: WorkflowRun) -> set[str]:
+    """Return the node ids of a failed run's retryable (non-cancelled) failed nodes.
+
+    Single owner of the "which nodes to retry" rule.  Validation
+    (``validate_retry_workflow_run`` / agent request prepare) and execution
+    (``retry_v2_workflow_run``) must agree on this set so the nodes announced
+    to a human before confirmation always equal the nodes that actually re-run.
+    """
+
+    return {
+        node_run.node_id
+        for node_run in run.node_runs
+        if node_run.status == WorkflowNodeStatus.FAILED
+        and node_run.failure_reason != WORKFLOW_CANCELLED_REASON
+    }
+
+
+def validate_retry_workflow_run(
+    session: Session,
+    *,
+    product_id: str,
+    workflow_id: str,
+    run_id: str,
+    lock: bool = False,
+) -> tuple[ProductWorkflow, tuple[str, ...]]:
+    """Validate a failed run as a retry target and return (workflow, ordered retry node ids).
+
+    Uses the same node-selection rule as ``retry_v2_workflow_run`` so the retry
+    set can be checked and announced before a human authorizes execution.
+    """
+
+    source_run = get_v2_workflow_run(
+        session,
+        product_id=product_id,
+        workflow_id=workflow_id,
+        run_id=run_id,
+    )
+    if source_run.status != WorkflowRunStatus.FAILED:
+        raise BusinessValidationError("只有失败的工作流运行可以重试")
+    if not source_run.is_retryable:
+        raise BusinessValidationError("该工作流运行不可重试")
+    retry_node_ids = retryable_node_run_ids(source_run)
+    if not retry_node_ids:
+        raise BusinessValidationError("工作流运行没有可重试节点")
+    workflow = _get_v2_workflow(
+        session,
+        product_id=product_id,
+        workflow_id=workflow_id,
+        require_active=True,
+        lock=lock,
+    )
+    ordered_node_ids = _validated_v2_run_node_ids(session, workflow=workflow, selected_node_ids=retry_node_ids)
+    return workflow, ordered_node_ids
+
+
 def retry_v2_workflow_run(
     session: Session,
     *,
@@ -226,6 +281,8 @@ def retry_v2_workflow_run(
     workflow_id: str,
     run_id: str,
     enqueue: Callable[[str], None] | None = None,
+    commit: bool = True,
+    run_metadata: dict[str, Any] | None = None,
 ) -> V2WorkflowRunSubmission:
     source_run = get_v2_workflow_run(
         session,
@@ -237,12 +294,7 @@ def retry_v2_workflow_run(
         raise BusinessValidationError("只有失败的工作流运行可以重试")
     if not source_run.is_retryable:
         raise BusinessValidationError("该工作流运行不可重试")
-    retry_node_ids = {
-        node_run.node_id
-        for node_run in source_run.node_runs
-        if node_run.status == WorkflowNodeStatus.FAILED
-        and node_run.failure_reason != WORKFLOW_CANCELLED_REASON
-    }
+    retry_node_ids = retryable_node_run_ids(source_run)
     if not retry_node_ids:
         raise BusinessValidationError("工作流运行没有可重试节点")
 
@@ -255,6 +307,8 @@ def retry_v2_workflow_run(
     )
     ordered_node_ids = _validated_v2_run_node_ids(session, workflow=workflow, selected_node_ids=retry_node_ids)
     metadata = _retry_progress_metadata(source_run)
+    if run_metadata:
+        metadata.update(run_metadata)
     return _submit_v2_run(
         session,
         workflow=workflow,
@@ -262,6 +316,7 @@ def retry_v2_workflow_run(
         progress_metadata=metadata,
         enqueue=enqueue,
         enqueue_failure_node_id=None,
+        commit=commit,
         matches_idempotent_active=lambda run: (
             isinstance(run.progress_metadata, dict)
             and run.progress_metadata.get("source_run_id") == source_run.id
@@ -504,6 +559,11 @@ def _validate_image_node(
         raise ConflictError("图片节点 GenerationSpec 不符合 schema") from exc
     prompt_node = get_image_prompt_node(session, image_node=image_node)
     if prompt_node.id not in selected_node_ids:
+        # Selected-node validation is intentionally side-effectful: when an image
+        # node is (re-)selected but its upstream prompt node is not (e.g. a retry
+        # that only re-runs the failed image node), re-point the prompt reference
+        # at the current artifact so the retried node consumes a live prompt.
+        # This write happens inside the confirm transaction and commits atomically.
         ensure_image_prompt_references_current(session, image_node=image_node)
     _validate_prompt_node(prompt_node)
     prompt_payload = ImagePromptPayloadV1.model_validate(
