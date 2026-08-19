@@ -480,7 +480,7 @@ class AgentTurnResponse(BaseModel):
     updated_at: datetime
 
 
-class AgentQuestionAnswerResponse(BaseModel):
+class AgentQuestionAnswerResponse(AgentTurnResponse):
     answered_turn: AgentTurnResponse
     continuation_turn: AgentTurnResponse
 

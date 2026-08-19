@@ -356,8 +356,10 @@ def answer_global_agent_question_endpoint(
         gateway=_agent_gateway_or_raise(),
         enqueue_sync=enqueue_global_agent_turn_sync,
     )
+    answered_turn = serialize_agent_turn(result.answered_turn)
     return AgentQuestionAnswerResponse(
-        answered_turn=serialize_agent_turn(result.answered_turn),
+        **answered_turn.model_dump(),
+        answered_turn=answered_turn,
         continuation_turn=serialize_agent_turn(result.continuation_turn),
     )
 

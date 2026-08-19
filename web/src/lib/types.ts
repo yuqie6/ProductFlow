@@ -1285,7 +1285,7 @@ export interface SubmitAgentTurnResponse {
   turn: AgentTurn;
 }
 
-export interface AgentQuestionAnswerResponse {
+export interface AgentQuestionAnswerResponse extends AgentTurn {
   answered_turn: AgentTurn;
   continuation_turn: AgentTurn;
 }
