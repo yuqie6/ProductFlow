@@ -1,0 +1,118 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it, vi } from "vitest";
+
+import type { AgentTask } from "../lib/types";
+import { TaskBoard, TaskList } from "./GlobalAgentDock";
+
+function sampleTask(id: string, title: string, status: AgentTask["status"]): AgentTask {
+  return {
+    id,
+    session_id: "session-1",
+    conversation_id: "conv-1",
+    product_id: "prod-1",
+    workflow_id: null,
+    workflow_draft_id: null,
+    title,
+    goal: "生成春季商品主图并调整参数",
+    summary: "已完成 2 个步骤",
+    status,
+    waiting_reason: null,
+    failure_reason: null,
+    current_turn_id: null,
+    created_at: "2026-08-18T00:00:00Z",
+    updated_at: "2026-08-18T00:00:00Z",
+    started_at: null,
+    finished_at: null,
+    canceled_at: null,
+  };
+}
+
+describe("GlobalAgentDock Task Views", () => {
+  const dummyWorkspaceMap = new Map([
+    ["conv-1", { productId: "prod-1", conversationId: "conv-1", productName: "春季卫衣", sessionId: "session-1" }],
+  ]);
+  const dummyConversationMap = new Map([
+    ["conv-1", { conversationId: "conv-1", sessionId: "session-1", scopeType: "product_workflow" as const, productId: "prod-1", productName: "春季卫衣" }],
+  ]);
+
+  it("renders tasks in list mode with correct status and product association", () => {
+    const tasks: AgentTask[] = [
+      sampleTask("task-1", "优化卫衣主图", "running"),
+      sampleTask("task-2", "生成详情海报", "succeeded"),
+    ];
+
+    const markup = renderToStaticMarkup(
+      createElement(TaskList, {
+        loading: false,
+        tasks,
+        workspaceByConversationId: dummyWorkspaceMap,
+        conversationById: dummyConversationMap,
+        onOpen: vi.fn(),
+        onCancel: vi.fn(),
+        onPause: vi.fn(),
+        onResume: vi.fn(),
+        onRename: vi.fn(),
+        renamingTaskId: null,
+        renameError: null,
+        cancelingTaskId: null,
+        pausingTaskId: null,
+        resumingTaskId: null,
+        emptyLabel: "暂无任务",
+        statusLabel: (status) => (status === "running" ? "处理中" : "已完成"),
+      }),
+    );
+
+    expect(markup).toContain("优化卫衣主图");
+    expect(markup).toContain("生成详情海报");
+    expect(markup).toContain("春季卫衣");
+    expect(markup).toContain("处理中");
+    expect(markup).toContain("已完成");
+  });
+
+  it("groups tasks into 5 semantic columns in Kanban TaskBoard mode", () => {
+    const tasks: AgentTask[] = [
+      sampleTask("task-1", "排队中任务", "queued"),
+      sampleTask("task-2", "执行中任务", "running"),
+      sampleTask("task-3", "待确认任务", "awaiting_confirmation"),
+      sampleTask("task-4", "成功任务", "succeeded"),
+      sampleTask("task-5", "失败任务", "failed"),
+    ];
+
+    const markup = renderToStaticMarkup(
+      createElement(TaskBoard, {
+        loading: false,
+        tasks,
+        workspaceByConversationId: dummyWorkspaceMap,
+        conversationById: dummyConversationMap,
+        onOpen: vi.fn(),
+        onCancel: vi.fn(),
+        onPause: vi.fn(),
+        onResume: vi.fn(),
+        onRename: vi.fn(),
+        renamingTaskId: null,
+        renameError: null,
+        cancelingTaskId: null,
+        pausingTaskId: null,
+        resumingTaskId: null,
+        emptyLabel: "暂无任务",
+        statusLabel: (status) => status,
+      }),
+    );
+
+    // 检查 5 个看板泳道标题
+    expect(markup).toContain("排队与暂停");
+    expect(markup).toContain("执行中");
+    expect(markup).toContain("待确认与响应");
+    expect(markup).toContain("已完成");
+    expect(markup).toContain("失败与已取消");
+
+    // 检查任务卡片在各自泳道中渲染
+    expect(markup).toContain("排队中任务");
+    expect(markup).toContain("执行中任务");
+    expect(markup).toContain("待确认任务");
+    expect(markup).toContain("成功任务");
+    expect(markup).toContain("失败任务");
+    expect(markup).toContain("春季卫衣");
+  });
+});

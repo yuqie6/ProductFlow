@@ -146,6 +146,31 @@ describe("Agent conversation components", () => {
     expect(markup).not.toContain("aria-label=\"发送消息\"");
   });
 
+  it("renders quick prompt suggestion pills when composer is empty and no assets are selected", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AgentComposer, {
+        value: "",
+        selectedAssets: [],
+        isSubmitting: false,
+        canSubmit: false,
+        stopAvailable: false,
+        isStopping: false,
+        error: null,
+        onChange: () => undefined,
+        onOpenAssets: () => undefined,
+        onRemoveAsset: () => undefined,
+        onPreviewAsset: () => undefined,
+        onSubmit: () => undefined,
+        onStop: () => undefined,
+      }),
+    );
+
+    expect(markup).toContain("优化构图与主图排版");
+    expect(markup).toContain("分析视觉风格与打光");
+    expect(markup).toContain("生成当前工作流执行草案");
+    expect(markup).toContain("Enter 发送，Shift + Enter 换行");
+  });
+
   it("renders listed Question options, free text, and the recoverable resume state", () => {
     const question: AgentQuestion = {
       id: "question-1",

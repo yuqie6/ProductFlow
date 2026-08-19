@@ -5,6 +5,8 @@ import {
   Check,
   ChevronRight,
   ClipboardList,
+  LayoutGrid,
+  List,
   Loader2,
   MessagesSquare,
   PackagePlus,
@@ -112,6 +114,7 @@ export function GlobalAgentDock() {
   const [selectedTaskSnapshot, setSelectedTaskSnapshot] = useState<AgentTask | null>(null);
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renamingTaskId, setRenamingTaskId] = useState<string | null>(null);
+  const [taskViewMode, setTaskViewMode] = useState<"list" | "board">("list");
 
   const sessionsQuery = useQuery({
     queryKey: ["agent-sessions", true],
@@ -580,8 +583,8 @@ export function GlobalAgentDock() {
               </>
             ) : (
               <>
-                <div className="shrink-0 border-b border-border-l1 p-3">
-                  <label className="flex h-9 items-center gap-2 rounded-md border border-border-l2 bg-surface-subtle px-2.5 focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/15">
+                <div className="flex shrink-0 items-center gap-2 border-b border-border-l1 p-3">
+                  <label className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-md border border-border-l2 bg-surface-subtle px-2.5 focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/15">
                     <Search size={14} className="shrink-0 text-text-muted" aria-hidden="true" />
                     <span className="sr-only">{t("globalAgent.search")}</span>
                     <input
@@ -602,6 +605,38 @@ export function GlobalAgentDock() {
                       </button>
                     ) : null}
                   </label>
+                  {tab === "tasks" ? (
+                    <div className="flex shrink-0 items-center rounded-lg border border-border-l2 bg-surface-subtle p-0.5" role="group" aria-label={t("globalAgent.tasks")}>
+                      <button
+                        type="button"
+                        onClick={() => setTaskViewMode("list")}
+                        className={`flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors ${
+                          taskViewMode === "list"
+                            ? "bg-surface-raised text-text-primary shadow-sm"
+                            : "text-text-muted hover:text-text-secondary"
+                        }`}
+                        title={t("globalAgent.taskView.list")}
+                        aria-pressed={taskViewMode === "list"}
+                      >
+                        <List size={13} aria-hidden="true" />
+                        <span>{t("globalAgent.taskView.list")}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTaskViewMode("board")}
+                        className={`flex h-8 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors ${
+                          taskViewMode === "board"
+                            ? "bg-surface-raised text-text-primary shadow-sm"
+                            : "text-text-muted hover:text-text-secondary"
+                        }`}
+                        title={t("globalAgent.taskView.board")}
+                        aria-pressed={taskViewMode === "board"}
+                      >
+                        <LayoutGrid size={13} aria-hidden="true" />
+                        <span>{t("globalAgent.taskView.board")}</span>
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
                 {errorText ? (
                   <p role="alert" className="shrink-0 border-b border-state-error/20 bg-state-error/10 px-3 py-2 text-xs leading-5 text-state-error">
@@ -611,33 +646,63 @@ export function GlobalAgentDock() {
                 <div className="min-h-0 flex-1 overflow-y-auto p-2">
                   {tab === "tasks" ? (
                     <>
-                      <TaskList
-                        loading={tasksQuery.isLoading}
-                        tasks={visibleTasks}
-                        workspaceByConversationId={workspaceByConversationId}
-                        conversationById={conversationById}
-                        onOpen={(task, workspace) => {
-                          if (workspace) {
-                            openWorkspace(workspace, task.session_id, task.id);
-                          } else if (task.conversation_id && conversationById.get(task.conversation_id)?.scopeType === "global") {
-                            openGlobalConversation(task.session_id, task.id);
-                          }
-                        }}
-                        onCancel={(task) => cancelTaskMutation.mutate(task.id)}
-                        onPause={(task) => pauseTaskMutation.mutate(task.id)}
-                        onResume={(task) => resumeTaskMutation.mutate(task.id)}
-                        onRename={(taskId, title) => {
-                          setRenamingTaskId(taskId);
-                          renameTaskMutation.mutate({ taskId, title });
-                        }}
-                        renamingTaskId={renameTaskMutation.isPending ? renameTaskMutation.variables?.taskId ?? renamingTaskId : renamingTaskId}
-                        renameError={renameTaskMutation.error ? errorDetail(renameTaskMutation.error, t("globalAgent.requestFailed")) : null}
-                        cancelingTaskId={cancelTaskMutation.isPending ? cancelTaskMutation.variables : null}
-                        pausingTaskId={pauseTaskMutation.isPending ? pauseTaskMutation.variables : null}
-                        resumingTaskId={resumeTaskMutation.isPending ? resumeTaskMutation.variables : null}
-                        emptyLabel={normalizedSearch ? t("globalAgent.noMatch") : t("globalAgent.noTasks")}
-                        statusLabel={(status) => t(TASK_STATUS_LABEL_KEYS[status])}
-                      />
+                      {taskViewMode === "board" ? (
+                        <TaskBoard
+                          loading={tasksQuery.isLoading}
+                          tasks={visibleTasks}
+                          workspaceByConversationId={workspaceByConversationId}
+                          conversationById={conversationById}
+                          onOpen={(task, workspace) => {
+                            if (workspace) {
+                              openWorkspace(workspace, task.session_id, task.id);
+                            } else if (task.conversation_id && conversationById.get(task.conversation_id)?.scopeType === "global") {
+                              openGlobalConversation(task.session_id, task.id);
+                            }
+                          }}
+                          onCancel={(task) => cancelTaskMutation.mutate(task.id)}
+                          onPause={(task) => pauseTaskMutation.mutate(task.id)}
+                          onResume={(task) => resumeTaskMutation.mutate(task.id)}
+                          onRename={(taskId, title) => {
+                            setRenamingTaskId(taskId);
+                            renameTaskMutation.mutate({ taskId, title });
+                          }}
+                          renamingTaskId={renameTaskMutation.isPending ? renameTaskMutation.variables?.taskId ?? renamingTaskId : renamingTaskId}
+                          renameError={renameTaskMutation.error ? errorDetail(renameTaskMutation.error, t("globalAgent.requestFailed")) : null}
+                          cancelingTaskId={cancelTaskMutation.isPending ? cancelTaskMutation.variables : null}
+                          pausingTaskId={pauseTaskMutation.isPending ? pauseTaskMutation.variables : null}
+                          resumingTaskId={resumeTaskMutation.isPending ? resumeTaskMutation.variables : null}
+                          emptyLabel={normalizedSearch ? t("globalAgent.noMatch") : t("globalAgent.noTasks")}
+                          statusLabel={(status) => t(TASK_STATUS_LABEL_KEYS[status])}
+                        />
+                      ) : (
+                        <TaskList
+                          loading={tasksQuery.isLoading}
+                          tasks={visibleTasks}
+                          workspaceByConversationId={workspaceByConversationId}
+                          conversationById={conversationById}
+                          onOpen={(task, workspace) => {
+                            if (workspace) {
+                              openWorkspace(workspace, task.session_id, task.id);
+                            } else if (task.conversation_id && conversationById.get(task.conversation_id)?.scopeType === "global") {
+                              openGlobalConversation(task.session_id, task.id);
+                            }
+                          }}
+                          onCancel={(task) => cancelTaskMutation.mutate(task.id)}
+                          onPause={(task) => pauseTaskMutation.mutate(task.id)}
+                          onResume={(task) => resumeTaskMutation.mutate(task.id)}
+                          onRename={(taskId, title) => {
+                            setRenamingTaskId(taskId);
+                            renameTaskMutation.mutate({ taskId, title });
+                          }}
+                          renamingTaskId={renameTaskMutation.isPending ? renameTaskMutation.variables?.taskId ?? renamingTaskId : renamingTaskId}
+                          renameError={renameTaskMutation.error ? errorDetail(renameTaskMutation.error, t("globalAgent.requestFailed")) : null}
+                          cancelingTaskId={cancelTaskMutation.isPending ? cancelTaskMutation.variables : null}
+                          pausingTaskId={pauseTaskMutation.isPending ? pauseTaskMutation.variables : null}
+                          resumingTaskId={resumeTaskMutation.isPending ? resumeTaskMutation.variables : null}
+                          emptyLabel={normalizedSearch ? t("globalAgent.noMatch") : t("globalAgent.noTasks")}
+                          statusLabel={(status) => t(TASK_STATUS_LABEL_KEYS[status])}
+                        />
+                      )}
                       {tasksQuery.hasNextPage ? (
                         <button
                           type="button"
@@ -756,7 +821,7 @@ function DockTab({
   );
 }
 
-function TaskList({
+export function TaskList({
   loading,
   tasks,
   workspaceByConversationId,
@@ -966,6 +1031,284 @@ function TaskList({
           </div>
         );
       })}
+    </div>
+  );
+}
+
+export function TaskBoard({
+  loading,
+  tasks,
+  workspaceByConversationId,
+  conversationById,
+  onOpen,
+  onCancel,
+  onPause,
+  onResume,
+  onRename,
+  renamingTaskId,
+  renameError,
+  cancelingTaskId,
+  pausingTaskId,
+  resumingTaskId,
+  emptyLabel,
+  statusLabel,
+}: {
+  loading: boolean;
+  tasks: AgentTask[];
+  workspaceByConversationId: Map<string, {
+    productId: string;
+    conversationId: string;
+    productName: string;
+    sessionId: string;
+  }>;
+  conversationById: Map<string, AgentConversationTarget>;
+  onOpen: (task: AgentTask, workspace: AgentWorkspaceTarget | null) => void;
+  onCancel: (task: AgentTask) => void;
+  onPause: (task: AgentTask) => void;
+  onResume: (task: AgentTask) => void;
+  onRename: (taskId: string, title: string) => void;
+  renamingTaskId: string | null;
+  renameError: string | null;
+  cancelingTaskId: string | null;
+  pausingTaskId: string | null;
+  resumingTaskId: string | null;
+  emptyLabel: string;
+  statusLabel: (status: AgentTaskStatus) => string;
+}) {
+  const { t } = useI18n();
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
+
+  useEffect(() => {
+    if (editingTaskId && renamingTaskId === null) {
+      setEditingTaskId(null);
+      setEditingTitle("");
+    }
+  }, [editingTaskId, renamingTaskId]);
+
+  if (loading) {
+    return <LoadingDockState label={t("app.loading")} />;
+  }
+  if (!tasks.length) {
+    return <EmptyDockState icon={<ClipboardList size={18} />} label={emptyLabel} />;
+  }
+
+  const columns = [
+    {
+      id: "queued",
+      title: t("globalAgent.taskBoard.colQueued"),
+      tasks: tasks.filter((task) => task.status === "queued" || task.status === "paused"),
+      headerTone: "border-text-muted/20 bg-surface-subtle/50",
+      badgeTone: "bg-surface-raised text-text-secondary border border-border-l2",
+    },
+    {
+      id: "running",
+      title: t("globalAgent.taskBoard.colRunning"),
+      tasks: tasks.filter((task) => task.status === "running"),
+      headerTone: "border-accent/30 bg-accent/5 dark:bg-cyan-950/20",
+      badgeTone: "bg-accent text-accent-fg font-semibold",
+    },
+    {
+      id: "awaiting",
+      title: t("globalAgent.taskBoard.colAwaiting"),
+      tasks: tasks.filter((task) => task.status === "waiting_user" || task.status === "awaiting_confirmation"),
+      headerTone: "border-state-warning/30 bg-state-warning/10",
+      badgeTone: "bg-state-warning text-zinc-950 font-bold",
+    },
+    {
+      id: "succeeded",
+      title: t("globalAgent.taskBoard.colSucceeded"),
+      tasks: tasks.filter((task) => task.status === "succeeded"),
+      headerTone: "border-state-success/30 bg-state-success/10",
+      badgeTone: "bg-state-success text-white font-semibold",
+    },
+    {
+      id: "failed",
+      title: t("globalAgent.taskBoard.colFailed"),
+      tasks: tasks.filter((task) => task.status === "failed" || task.status === "canceled"),
+      headerTone: "border-state-error/30 bg-state-error/10",
+      badgeTone: "bg-state-error text-white font-semibold",
+    },
+  ];
+
+  return (
+    <div className="flex gap-3 overflow-x-auto pb-3 pt-1" tabIndex={0} aria-label={t("globalAgent.taskView.board")}>
+      {columns.map((column) => (
+        <div
+          key={column.id}
+          className={`flex w-64 min-w-[240px] shrink-0 flex-col rounded-xl border p-2.5 transition-colors ${column.headerTone}`}
+        >
+          <div className="mb-2 flex items-center justify-between px-1">
+            <span className="text-xs font-semibold tracking-tight text-text-primary">{column.title}</span>
+            <span className={`inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] ${column.badgeTone}`}>
+              {column.tasks.length}
+            </span>
+          </div>
+
+          <div className="flex-1 space-y-2 overflow-y-auto pr-0.5">
+            {column.tasks.length === 0 ? (
+              <div className="flex h-20 items-center justify-center rounded-lg border border-dashed border-border-l2 bg-surface/30 text-center text-[11px] text-text-muted">
+                {t("globalAgent.noMatch")}
+              </div>
+            ) : (
+              column.tasks.map((task) => {
+                const workspace = task.conversation_id ? workspaceByConversationId.get(task.conversation_id) : null;
+                const conversation = task.conversation_id ? conversationById.get(task.conversation_id) : null;
+                const target = workspace
+                  ? { productId: workspace.productId, conversationId: workspace.conversationId }
+                  : null;
+                const openable = Boolean(target || conversation?.scopeType === "global");
+                const cancelable = CANCELABLE_TASK_STATUSES.has(task.status);
+                const pausable = PAUSABLE_TASK_STATUSES.has(task.status);
+                const resumable = task.status === "paused";
+
+                if (editingTaskId === task.id) {
+                  return (
+                    <form
+                      key={task.id}
+                      className="rounded-lg border border-accent/40 bg-surface-raised p-2 shadow-sm"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        const title = editingTitle.trim();
+                        if (title && renamingTaskId === null) {
+                          onRename(task.id, title);
+                        }
+                      }}
+                    >
+                      <input
+                        autoFocus
+                        value={editingTitle}
+                        maxLength={160}
+                        onChange={(event) => setEditingTitle(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") {
+                            setEditingTaskId(null);
+                            setEditingTitle("");
+                          }
+                        }}
+                        className="h-8 w-full rounded-md border border-border-l2 bg-surface px-2 text-xs text-text-primary outline-none focus:border-accent focus:ring-1 focus:ring-accent"
+                      />
+                      {renameError ? <p role="alert" className="mt-1 text-[11px] text-state-error">{renameError}</p> : null}
+                      <div className="mt-1.5 flex justify-end gap-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingTaskId(null);
+                            setEditingTitle("");
+                          }}
+                          className="flex h-7 w-7 items-center justify-center rounded text-text-secondary hover:bg-surface"
+                        >
+                          <X size={13} />
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={!editingTitle.trim()}
+                          className="flex h-7 w-7 items-center justify-center rounded bg-accent text-accent-fg hover:bg-accent-strong"
+                        >
+                          {renamingTaskId === task.id ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                        </button>
+                      </div>
+                    </form>
+                  );
+                }
+
+                return (
+                  <div
+                    key={task.id}
+                    className="group flex flex-col justify-between rounded-lg border border-border-l2 bg-surface-raised p-2.5 shadow-sm transition-all hover:border-accent/40 hover:shadow"
+                  >
+                    <div>
+                      <div className="flex items-start justify-between gap-1.5">
+                        <div className="flex min-w-0 items-center gap-1.5">
+                          <span className={`h-2 w-2 shrink-0 rounded-full ${TASK_STATUS_CLASSES[task.status]}`} aria-hidden="true" />
+                          <h4 className="truncate text-xs font-semibold text-text-primary" title={task.title}>
+                            {task.title}
+                          </h4>
+                        </div>
+                        {openable ? (
+                          <button
+                            type="button"
+                            onClick={() => onOpen(task, target)}
+                            aria-label={task.title}
+                            title={task.title}
+                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-text-muted hover:bg-surface hover:text-accent focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                          >
+                            <ChevronRight size={13} />
+                          </button>
+                        ) : null}
+                      </div>
+
+                      <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-text-secondary" title={task.goal}>
+                        {task.goal}
+                      </p>
+
+                      <div className="mt-2 flex items-center gap-1 text-[10px] text-text-muted">
+                        <span className="truncate rounded bg-surface px-1.5 py-0.5 font-medium">
+                          {conversation?.productName ?? workspace?.productName ?? t("globalAgent.noWorkspace")}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="mt-2.5 flex items-center justify-between border-t border-border-l1 pt-1.5 text-[11px]">
+                      <span className="text-text-muted font-medium">{statusLabel(task.status)}</span>
+                      <div className="flex items-center gap-0.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingTaskId(task.id);
+                            setEditingTitle(task.title);
+                          }}
+                          aria-label={t("globalAgent.renameTask")}
+                          title={t("globalAgent.renameTask")}
+                          className="flex h-6 w-6 items-center justify-center rounded text-text-muted hover:bg-surface hover:text-accent"
+                        >
+                          <Pencil size={12} />
+                        </button>
+                        {pausable ? (
+                          <button
+                            type="button"
+                            onClick={() => onPause(task)}
+                            disabled={pausingTaskId !== null}
+                            aria-label={t("globalAgent.pauseTask")}
+                            title={t("globalAgent.pauseTask")}
+                            className="flex h-6 w-6 items-center justify-center rounded text-text-muted hover:bg-surface hover:text-state-warning"
+                          >
+                            {pausingTaskId === task.id ? <Loader2 size={12} className="animate-spin" /> : <Pause size={12} />}
+                          </button>
+                        ) : null}
+                        {resumable ? (
+                          <button
+                            type="button"
+                            onClick={() => onResume(task)}
+                            disabled={resumingTaskId !== null}
+                            aria-label={t("globalAgent.resumeTask")}
+                            title={t("globalAgent.resumeTask")}
+                            className="flex h-6 w-6 items-center justify-center rounded text-text-muted hover:bg-surface hover:text-state-success"
+                          >
+                            {resumingTaskId === task.id ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />}
+                          </button>
+                        ) : null}
+                        {cancelable ? (
+                          <button
+                            type="button"
+                            onClick={() => onCancel(task)}
+                            disabled={cancelingTaskId !== null}
+                            aria-label={t("globalAgent.cancelTask")}
+                            title={t("globalAgent.cancelTask")}
+                            className="flex h-6 w-6 items-center justify-center rounded text-text-muted hover:bg-surface hover:text-state-error"
+                          >
+                            {cancelingTaskId === task.id ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />}
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
