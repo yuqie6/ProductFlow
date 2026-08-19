@@ -18,6 +18,10 @@ from productflow_backend.application.agent_conversations import (
     project_agent_turn_state,
     reserve_agent_turn,
 )
+from productflow_backend.application.agent_execution import (
+    claim_agent_turn_execution,
+    recover_expired_agent_turn_executions,
+)
 from productflow_backend.application.agent_product_intake import AgentProductSelectionV1
 from productflow_backend.application.agent_product_workspaces import create_agent_product_workspace
 from productflow_backend.application.agent_sync import (
@@ -68,6 +72,7 @@ from productflow_backend.infrastructure.agent_service import (
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
     AgentToolMutation,
+    AgentTurnExecution,
     AgentTurnProjection,
     ProviderBinding,
     ProviderProfile,
@@ -1314,6 +1319,17 @@ class _FakeAgentGateway:
         yield b'id: 8\nevent: text.delta\ndata: {"delta":"ok"}\n\n'
 
 
+class _QueuedResumeAgentGateway(_FakeAgentGateway):
+    def __init__(self) -> None:
+        super().__init__()
+        self.status = AgentTurnStatus.QUEUED
+        self.resume_calls: list[dict] = []
+
+    def resume_turn(self, **kwargs) -> AgentServiceTurnState:
+        self.resume_calls.append(kwargs)
+        return self.state()
+
+
 class _ArtifactAgentGateway(_FakeAgentGateway):
     def __init__(self, payload: dict) -> None:
         super().__init__()
@@ -1708,3 +1724,61 @@ def test_sync_worker_recovers_unbound_turn_and_idempotently_attaches_artifact(db
     assert followup.created is True
     assert followup.projection.conversation.status == AgentConversationStatus.COLLECTING
     assert followup.projection.conversation.harness_run_id == conversation.harness_run_id
+
+
+def test_sync_worker_requeues_local_turn_after_expired_claim_recovery(db_session) -> None:
+    product, asset, draft, _ = _create_product_and_draft(db_session)
+    conversation = create_agent_conversation(
+        db_session,
+        product_id=product.id,
+        workflow_draft_id=draft.id,
+    )
+    projection = reserve_agent_turn(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        input_text="恢复过期 claim",
+        input_asset_ids=[asset.id],
+        idempotency_key="expired-claim-requeue",
+    ).projection
+    projection = bind_harness_turn(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        projection_id=projection.id,
+        harness_turn_id="harness-expired-claim",
+        status=AgentTurnStatus.QUEUED,
+    )
+    lease = claim_agent_turn_execution(
+        db_session,
+        conversation_id=conversation.id,
+        task_id=None,
+        idempotency_key=projection.idempotency_key,
+        harness_turn_id=projection.harness_turn_id or "",
+        owner_id="agent-instance-1",
+    )
+    execution = db_session.get(AgentTurnExecution, lease.execution_id)
+    assert execution is not None
+    execution.lease_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    db_session.commit()
+    recovery = recover_expired_agent_turn_executions(db_session)
+    assert recovery.requeued == 1
+
+    gateway = _QueuedResumeAgentGateway()
+    gateway.run_id = conversation.harness_run_id
+    gateway.turn_id = "harness-expired-claim"
+    delayed: list[tuple[str, int]] = []
+    execute_agent_turn_sync(
+        projection.id,
+        gateway=gateway,
+        enqueue_later=lambda _session, target_id, delay_ms: delayed.append((target_id, delay_ms)),
+    )
+
+    assert gateway.resume_calls == [
+        {
+            "conversation_id": conversation.id,
+            "turn_id": "harness-expired-claim",
+            "task_id": None,
+        }
+    ]
+    assert delayed and delayed[0][0] == projection.id

@@ -1,4 +1,14 @@
-import { ProductFlowError, type JsonObject, type ProductFlowContract, type ProviderConfig, type RuntimeContext } from "./contracts.js";
+import {
+  ProductFlowError,
+  type AgentCheckpointReceipt,
+  type AgentExecutionLease,
+  type CheckpointKind,
+  type ExecutionPhase,
+  type JsonObject,
+  type ProductFlowContract,
+  type ProviderConfig,
+  type RuntimeContext,
+} from "./contracts.js";
 
 const JSON_LIMIT = 2 << 20;
 const IMAGE_LIMIT = 20 << 20;
@@ -46,6 +56,60 @@ export class ProductFlowClient {
   async runtimeContext(conversationID: string, taskID: string | null, signal?: AbortSignal): Promise<RuntimeContext> {
     const query = taskID ? `?${new URLSearchParams({ task_id: taskID })}` : "";
     return this.json<RuntimeContext>(this.conversationPath(conversationID) + "/runtime-context" + query, { signal });
+  }
+
+  async claimTurnExecution(
+    conversationID: string,
+    args: { task_id: string | null; idempotency_key: string; harness_turn_id: string; owner_id: string },
+    signal?: AbortSignal,
+  ): Promise<AgentExecutionLease> {
+    return this.json<AgentExecutionLease>(this.conversationPath(conversationID) + "/turn-executions/claim", {
+      method: "POST",
+      body: args,
+      signal,
+    });
+  }
+
+  async appendTurnCheckpoint(
+    conversationID: string,
+    executionID: string,
+    args: {
+      owner_id: string;
+      lease_token: string;
+      sequence: number;
+      kind: CheckpointKind;
+      payload: JsonObject;
+    },
+    signal?: AbortSignal,
+  ): Promise<AgentCheckpointReceipt> {
+    return this.json<AgentCheckpointReceipt>(
+      this.conversationPath(conversationID) + `/turn-executions/${encodeURIComponent(executionID)}/checkpoints`,
+      { method: "POST", body: args, signal },
+    );
+  }
+
+  async heartbeatTurnExecution(
+    conversationID: string,
+    executionID: string,
+    args: { owner_id: string; lease_token: string; phase: ExecutionPhase },
+    signal?: AbortSignal,
+  ): Promise<AgentExecutionLease> {
+    return this.json<AgentExecutionLease>(
+      this.conversationPath(conversationID) + `/turn-executions/${encodeURIComponent(executionID)}/heartbeat`,
+      { method: "POST", body: args, signal },
+    );
+  }
+
+  async releaseTurnExecution(
+    conversationID: string,
+    executionID: string,
+    args: { owner_id: string; lease_token: string; phase: ExecutionPhase },
+    signal?: AbortSignal,
+  ): Promise<{ released: boolean }> {
+    return this.json<{ released: boolean }>(
+      this.conversationPath(conversationID) + `/turn-executions/${encodeURIComponent(executionID)}/release`,
+      { method: "POST", body: args, signal },
+    );
   }
 
   async providerConfig(signal?: AbortSignal): Promise<ProviderConfig> {

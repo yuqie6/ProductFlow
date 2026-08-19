@@ -5,6 +5,12 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, Header, Query, Response
 from sqlalchemy.orm import Session
 
+from productflow_backend.application.agent_execution import (
+    append_agent_turn_checkpoint,
+    claim_agent_turn_execution,
+    heartbeat_agent_turn_execution,
+    release_agent_turn_execution,
+)
 from productflow_backend.application.agent_product_workspaces import (
     create_agent_product_draft_workspace_from_global_conversation,
 )
@@ -98,6 +104,13 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     AgentProductWorkspaceLaunchRequest,
     AgentProductWorkspaceLaunchResponse,
     AgentRuntimeContextResponse,
+    AgentTurnCheckpointRequest,
+    AgentTurnCheckpointResponse,
+    AgentTurnExecutionClaimRequest,
+    AgentTurnExecutionHeartbeatRequest,
+    AgentTurnExecutionLeaseResponse,
+    AgentTurnExecutionReleaseRequest,
+    AgentTurnExecutionReleaseResponse,
     AgentWorkflowDraftValidationRequest,
     AgentWorkflowDraftValidationResponse,
     AgentWorkflowRunListResponse,
@@ -222,6 +235,120 @@ def get_agent_runtime_context_endpoint(
             task_id=task_id,
         )
     )
+
+
+@router.post(
+    "/{conversation_id}/turn-executions/claim",
+    response_model=AgentTurnExecutionLeaseResponse,
+)
+def claim_agent_turn_execution_endpoint(
+    conversation_id: str,
+    payload: AgentTurnExecutionClaimRequest,
+    session: Session = Depends(get_session),
+) -> AgentTurnExecutionLeaseResponse:
+    lease = claim_agent_turn_execution(
+        session,
+        conversation_id=conversation_id,
+        task_id=payload.task_id,
+        idempotency_key=payload.idempotency_key,
+        harness_turn_id=payload.harness_turn_id,
+        owner_id=payload.owner_id,
+    )
+    return AgentTurnExecutionLeaseResponse(
+        execution_id=lease.execution_id,
+        projection_id=lease.projection_id,
+        harness_turn_id=lease.harness_turn_id,
+        owner_id=lease.owner_id,
+        lease_token=lease.lease_token,
+        attempt=lease.attempt,
+        fencing_token=lease.fencing_token,
+        phase=lease.phase,
+        lease_expires_at=lease.lease_expires_at,
+    )
+
+
+@router.post(
+    "/{conversation_id}/turn-executions/{execution_id}/heartbeat",
+    response_model=AgentTurnExecutionLeaseResponse,
+)
+def heartbeat_agent_turn_execution_endpoint(
+    conversation_id: str,
+    execution_id: str,
+    payload: AgentTurnExecutionHeartbeatRequest,
+    session: Session = Depends(get_session),
+) -> AgentTurnExecutionLeaseResponse:
+    lease = heartbeat_agent_turn_execution(
+        session,
+        conversation_id=conversation_id,
+        execution_id=execution_id,
+        owner_id=payload.owner_id,
+        lease_token=payload.lease_token,
+        phase=payload.phase,
+    )
+    return AgentTurnExecutionLeaseResponse(
+        execution_id=lease.execution_id,
+        projection_id=lease.projection_id,
+        harness_turn_id=lease.harness_turn_id,
+        owner_id=lease.owner_id,
+        lease_token=lease.lease_token,
+        attempt=lease.attempt,
+        fencing_token=lease.fencing_token,
+        phase=lease.phase,
+        lease_expires_at=lease.lease_expires_at,
+    )
+
+
+@router.post(
+    "/{conversation_id}/turn-executions/{execution_id}/checkpoints",
+    response_model=AgentTurnCheckpointResponse,
+)
+def append_agent_turn_checkpoint_endpoint(
+    conversation_id: str,
+    execution_id: str,
+    payload: AgentTurnCheckpointRequest,
+    session: Session = Depends(get_session),
+) -> AgentTurnCheckpointResponse:
+    checkpoint = append_agent_turn_checkpoint(
+        session,
+        conversation_id=conversation_id,
+        execution_id=execution_id,
+        owner_id=payload.owner_id,
+        lease_token=payload.lease_token,
+        sequence=payload.sequence,
+        kind=payload.kind,
+        payload=payload.payload,
+    )
+    return AgentTurnCheckpointResponse(
+        id=checkpoint.id,
+        projection_id=checkpoint.projection_id,
+        execution_id=checkpoint.execution_id,
+        attempt=checkpoint.attempt,
+        fencing_token=checkpoint.fencing_token,
+        sequence=checkpoint.sequence,
+        kind=checkpoint.kind,
+        created_at=checkpoint.created_at,
+    )
+
+
+@router.post(
+    "/{conversation_id}/turn-executions/{execution_id}/release",
+    response_model=AgentTurnExecutionReleaseResponse,
+)
+def release_agent_turn_execution_endpoint(
+    conversation_id: str,
+    execution_id: str,
+    payload: AgentTurnExecutionReleaseRequest,
+    session: Session = Depends(get_session),
+) -> AgentTurnExecutionReleaseResponse:
+    released = release_agent_turn_execution(
+        session,
+        conversation_id=conversation_id,
+        execution_id=execution_id,
+        owner_id=payload.owner_id,
+        lease_token=payload.lease_token,
+        phase=payload.phase,
+    )
+    return AgentTurnExecutionReleaseResponse(released=released)
 
 
 @router.get("/{conversation_id}/workflow-runs", response_model=AgentWorkflowRunListResponse)

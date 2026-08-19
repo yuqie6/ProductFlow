@@ -15,6 +15,7 @@ import {
 import type { ImageContent, Model } from "@earendil-works/pi-ai/compat";
 import {
   API_VERSION,
+  type AgentExecutionLease,
   CONTEXT_SCHEMA_VERSION,
   EVENT_SCHEMA_VERSION,
   MAX_DYNAMIC_CONTEXT_BYTES,
@@ -24,6 +25,9 @@ import {
   RUNTIME_NAME,
   RuntimeContext,
   RuntimeStatus,
+  type CheckpointKind,
+  type ExecutionPhase,
+  type JsonObject,
   Scope,
   StartTurnInput,
   TurnAnswer,
@@ -72,6 +76,7 @@ export class PiRuntimeManager {
   private readonly runs = new Map<string, RunRuntime>();
   private readonly pending: Array<{ runtime: RunRuntime; turnID: string }> = [];
   private readonly scheduled = new Set<string>();
+  readonly instanceID = randomUUID();
   private running = 0;
   private closed = false;
 
@@ -81,6 +86,20 @@ export class PiRuntimeManager {
     readonly productFlow: ProductFlowClient,
     readonly skills: SkillCatalog,
   ) {}
+
+  async recoverAfterRestart(): Promise<RuntimeRecoverySummary> {
+    this.assertOpen();
+    const recovered = await this.store.recoverAfterRestart();
+    for (const candidate of recovered.queued) {
+      const runtime = await this.runtimeFor(candidate.scope);
+      this.enqueue(runtime, candidate.turnID);
+    }
+    return {
+      queued_turns: recovered.queued.length,
+      restored_terminal_turns: recovered.restoredTerminal,
+      unknown_turns: recovered.unknown,
+    };
+  }
 
   async start(request: StartRequest): Promise<TurnState> {
     this.assertOpen();
@@ -265,6 +284,12 @@ export interface TurnStateAndEvents {
   events: Awaited<ReturnType<TurnStore["events"]>>;
 }
 
+export interface RuntimeRecoverySummary {
+  queued_turns: number;
+  restored_terminal_turns: number;
+  unknown_turns: number;
+}
+
 class RunRuntime implements ToolRuntime {
   private modelRuntime?: ModelRuntime;
   private model?: Model<any>;
@@ -286,6 +311,14 @@ class RunRuntime implements ToolRuntime {
   private persistenceError?: Error;
   private iterationError?: Error;
   private activeTurnID?: string;
+  private executionLease?: AgentExecutionLease;
+  private executionPhase: ExecutionPhase = "claimed";
+  private executionHeartbeat?: ReturnType<typeof setInterval>;
+  private executionStopping = false;
+  private executionLeaseError?: Error;
+  private effectUnknownError?: string;
+  private readonly unknownToolStepIDs = new Set<string>();
+  private checkpointSequence = 0;
   private providerRequestOptions: ProviderRequestOptions = {
     reasoningSummary: null,
     textVerbosity: null,
@@ -328,8 +361,23 @@ class RunRuntime implements ToolRuntime {
     this.resetTurnState();
     this.currentTurn = turnID;
     this.abortController = new AbortController();
+    let executionClaimed = false;
     try {
-      await this.manager.store.updateState(this.scope.run_id, turnID, { status: "running", started_at: nowISO() });
+      this.executionLease = await this.claimExecution(initial.input.idempotency_key, turnID);
+      executionClaimed = true;
+      this.attemptID = `${this.executionLease.attempt}:${randomUUID()}`;
+      await this.updateExecutionPhase("model");
+      await this.checkpoint("before_model_request", {
+        attempt: this.executionLease.attempt,
+        fencing_token: this.executionLease.fencing_token,
+      });
+      this.startExecutionHeartbeat();
+      await this.manager.store.updateState(this.scope.run_id, turnID, {
+        status: "running",
+        execution_attempt: this.executionLease.attempt,
+        execution_fencing_token: this.executionLease.fencing_token,
+        started_at: nowISO(),
+      });
       await this.manager.store.appendEvent(this.scope.run_id, turnID, "turn.started", { status: "running" });
       const runtimeContext = await this.client.runtimeContext(this.scope.conversation_id, this.scope.task_id, this.signal);
       const images = await this.loadInputImages(initial.input);
@@ -349,39 +397,51 @@ class RunRuntime implements ToolRuntime {
       if (this.iterationError) throw this.iterationError;
       const current = await this.manager.store.getState(this.scope.run_id, turnID);
       if (current.status === "cancel_requested" || this.abortController.signal.aborted) {
-        await this.manager.store.terminal(this.scope.run_id, turnID, "canceled", { output: this.output });
+        await this.finishTurn(turnID, "canceled", { output: this.output });
       } else if (this.artifact) {
         const status = this.scope.scope_type === "global" ? "succeeded" : "awaiting_confirmation";
-        await this.manager.store.terminal(this.scope.run_id, turnID, status, { output: this.output, artifact: this.artifact });
+        await this.finishTurn(turnID, status, { output: this.output, artifact: this.artifact });
       } else if (
         this.scope.scope_type === "product_workflow" &&
         this.scope.task_id === null &&
         !this.workflowRunRequested
       ) {
-        await this.manager.store.terminal(this.scope.run_id, turnID, "failed", {
+        await this.finishTurn(turnID, "failed", {
           output: this.output,
           error: "ProductFlow required a validated workflow draft proposal, but Pi completed without one",
         });
       } else {
-        await this.manager.store.terminal(this.scope.run_id, turnID, "succeeded", { output: this.output });
+        await this.finishTurn(turnID, "succeeded", { output: this.output });
       }
     } catch (error) {
       await this.eventChain;
+      if (!executionClaimed) return;
       const current = await this.manager.store.getState(this.scope.run_id, turnID).catch(() => initial);
-      if (this.iterationError) {
-        await this.manager.store.terminal(this.scope.run_id, turnID, "failed", {
+      if (this.effectUnknownError) {
+        await this.finishTurn(turnID, "unknown", {
+          output: this.output,
+          error: this.effectUnknownError,
+        });
+      } else if (this.executionLeaseError) {
+        await this.finishTurn(turnID, "unknown", {
+          output: this.output,
+          error: "Agent execution lease was lost before this Turn reached a provable terminal state",
+        });
+      } else if (this.iterationError) {
+        await this.finishTurn(turnID, "failed", {
           output: this.output,
           error: safeErrorMessage(this.iterationError),
         });
       } else if (current.status === "cancel_requested" || this.abortController.signal.aborted) {
-        await this.manager.store.terminal(this.scope.run_id, turnID, "canceled", { output: this.output });
+        await this.finishTurn(turnID, "canceled", { output: this.output });
       } else {
-        await this.manager.store.terminal(this.scope.run_id, turnID, "failed", {
+        await this.finishTurn(turnID, "failed", {
           output: this.output,
           error: safeErrorMessage(error),
         });
       }
     } finally {
+      await this.stopExecutionHeartbeat();
       this.questionWaiter?.reject(new RuntimeError(409, "turn_finished", "Agent Turn finished before the question was answered"));
       this.questionWaiter = undefined;
       this.pendingQuestionAnswer = undefined;
@@ -391,6 +451,143 @@ class RunRuntime implements ToolRuntime {
       this.abortController = undefined;
       this.model = undefined;
       this.currentTurn = undefined;
+    }
+  }
+
+  private async claimExecution(idempotencyKey: string, turnID: string): Promise<AgentExecutionLease> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await this.client.claimTurnExecution(
+          this.scope.conversation_id,
+          {
+            task_id: this.scope.task_id,
+            idempotency_key: idempotencyKey,
+            harness_turn_id: turnID,
+            owner_id: this.manager.instanceID,
+          },
+          this.signal,
+        );
+      } catch (error) {
+        if (!(error instanceof ProductFlowError) || error.status < 500 || attempt === 2) throw error;
+        await new Promise<void>((resolve, reject) => {
+          let settled = false;
+          const onAbort = () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            this.signal.removeEventListener("abort", onAbort);
+            reject(new RuntimeError(499, "canceled", "Agent Turn was canceled"));
+          };
+          const timer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            this.signal.removeEventListener("abort", onAbort);
+            resolve();
+          }, 500 * 2 ** attempt);
+          this.signal.addEventListener("abort", onAbort, { once: true });
+          timer.unref?.();
+        });
+      }
+    }
+    throw new Error("Agent execution claim exhausted retries");
+  }
+
+  async checkpoint(kind: CheckpointKind, payload: JsonObject): Promise<void> {
+    const lease = this.executionLease;
+    if (!lease || this.executionLeaseError || this.executionStopping) {
+      throw this.executionLeaseError ?? new RuntimeError(409, "execution_unavailable", "Agent execution lease is unavailable");
+    }
+    const sequence = this.checkpointSequence + 1;
+    try {
+      await this.client.appendTurnCheckpoint(
+        this.scope.conversation_id,
+        lease.execution_id,
+        {
+          owner_id: lease.owner_id,
+          lease_token: lease.lease_token,
+          sequence,
+          kind,
+          payload,
+        },
+        this.signal,
+      );
+      this.checkpointSequence = sequence;
+    } catch (error) {
+      this.executionLeaseError = error instanceof Error ? error : new Error("Agent checkpoint persistence failed");
+      this.abortController?.abort();
+      void this.session?.abort();
+      throw this.executionLeaseError;
+    }
+  }
+
+  private async finishTurn(
+    turnID: string,
+    status: Extract<TurnStatus, "succeeded" | "failed" | "canceled" | "unknown" | "awaiting_confirmation">,
+    details: { output?: string; error?: string; question?: TurnQuestion; artifact?: TurnArtifact },
+  ): Promise<void> {
+    await this.manager.store.terminal(this.scope.run_id, turnID, status, details);
+    this.executionPhase = "terminal";
+    try {
+      await this.checkpoint("terminal", {
+        status,
+        ...(details.output ? { output: details.output } : {}),
+        ...(details.error ? { error: details.error } : {}),
+        ...(details.artifact ? { artifact: details.artifact as unknown as JsonObject } : {}),
+      });
+    } catch {
+      // The local terminal event remains authoritative for this attempt; stale fencing prevents overwrites.
+    }
+  }
+
+  private startExecutionHeartbeat(): void {
+    if (this.executionHeartbeat) clearInterval(this.executionHeartbeat);
+    this.executionHeartbeat = setInterval(() => {
+      void this.updateExecutionPhase(this.executionPhase).catch(() => undefined);
+    }, 20_000);
+    this.executionHeartbeat.unref?.();
+  }
+
+  private async updateExecutionPhase(phase: ExecutionPhase): Promise<void> {
+    const lease = this.executionLease;
+    if (!lease || this.executionStopping || this.executionLeaseError) return;
+    this.executionPhase = phase;
+    try {
+      const refreshed = await this.client.heartbeatTurnExecution(
+        this.scope.conversation_id,
+        lease.execution_id,
+        {
+          owner_id: lease.owner_id,
+          lease_token: lease.lease_token,
+          phase,
+        },
+      );
+      if (!this.executionStopping && this.executionLease === lease) this.executionLease = refreshed;
+    } catch (error) {
+      if (this.executionStopping) return;
+      this.executionLeaseError = error instanceof Error ? error : new Error("Agent execution lease was lost");
+      this.abortController?.abort();
+      void this.session?.abort();
+      throw this.executionLeaseError;
+    }
+  }
+
+  private async stopExecutionHeartbeat(): Promise<void> {
+    this.executionStopping = true;
+    if (this.executionHeartbeat) {
+      clearInterval(this.executionHeartbeat);
+      this.executionHeartbeat = undefined;
+    }
+    const lease = this.executionLease;
+    this.executionLease = undefined;
+    if (!lease) return;
+    try {
+      await this.client.releaseTurnExecution(this.scope.conversation_id, lease.execution_id, {
+        owner_id: lease.owner_id,
+        lease_token: lease.lease_token,
+        phase: this.executionPhase,
+      });
+    } catch {
+      // An expired lease is recovered by ProductFlow's durable scanner.
     }
   }
 
@@ -415,6 +612,7 @@ class RunRuntime implements ToolRuntime {
   }
 
   async resumeQuestion(turnID: string): Promise<void> {
+    await this.updateExecutionPhase("model");
     const waiter = this.questionWaiter;
     const answer = this.pendingQuestionAnswer;
     if (!waiter || waiter.turnID !== turnID || !answer) {
@@ -433,6 +631,8 @@ class RunRuntime implements ToolRuntime {
     const answerPromise = new Promise<TurnAnswer>((resolve, reject) => {
       this.questionWaiter = { turnID: state.turn_id, questionID: question.id, resolve, reject };
     });
+    await this.updateExecutionPhase("waiting_input");
+    await this.checkpoint("question_required", { question: question as unknown as JsonObject });
     await this.manager.store.updateState(this.scope.run_id, state.turn_id, { status: "requires_input", question });
     await this.manager.store.appendEvent(this.scope.run_id, state.turn_id, "turn.requires_input", {
       status: "requires_input",
@@ -481,6 +681,12 @@ class RunRuntime implements ToolRuntime {
 
   markWorkflowRunRequested(): void {
     this.workflowRunRequested = true;
+    void this.updateExecutionPhase("external_job").catch(() => undefined);
+  }
+
+  markEffectUnknown(toolCallID: string, reason = "ProductFlow side effect result is unknown"): void {
+    this.effectUnknownError = reason;
+    this.unknownToolStepIDs.add(toolCallID);
   }
 
   idempotencyKey(toolCallID: string): string {
@@ -568,6 +774,7 @@ class RunRuntime implements ToolRuntime {
         return;
       }
       if (event.type === "tool_execution_start") {
+        void this.updateExecutionPhase("tool").catch(() => undefined);
         this.toolCount += 1;
         if (this.toolCount > this.manager.config.maxIterations) {
           this.iterationError = new Error(`Pi Agent exceeded the maximum tool iteration limit of ${this.manager.config.maxIterations}`);
@@ -587,6 +794,9 @@ class RunRuntime implements ToolRuntime {
         }
         return;
       }
+      if (event.type === "tool_execution_end") {
+        void this.updateExecutionPhase("model").catch(() => undefined);
+      }
       if (
         event.type === "tool_execution_end" &&
         event.toolName !== "ask_user" &&
@@ -597,7 +807,11 @@ class RunRuntime implements ToolRuntime {
             step_id: event.toolCallId,
             kind: toolStepKind(event.toolName),
             summary: toolStepSummary(event.toolName),
-            status: event.isError ? "failed" : "succeeded",
+            status: this.unknownToolStepIDs.has(event.toolCallId)
+              ? "unknown"
+              : event.isError
+                ? "failed"
+                : "succeeded",
           }),
         );
       }
@@ -702,6 +916,17 @@ class RunRuntime implements ToolRuntime {
   private resetTurnState(): void {
     this.output = "";
     this.artifact = undefined;
+    this.executionLease = undefined;
+    this.checkpointSequence = 0;
+    this.executionPhase = "claimed";
+    this.executionStopping = false;
+    this.executionLeaseError = undefined;
+    this.effectUnknownError = undefined;
+    this.unknownToolStepIDs.clear();
+    if (this.executionHeartbeat) {
+      clearInterval(this.executionHeartbeat);
+      this.executionHeartbeat = undefined;
+    }
     this.workflowRunRequested = false;
     this.attemptID = randomUUID();
     this.toolCount = 0;

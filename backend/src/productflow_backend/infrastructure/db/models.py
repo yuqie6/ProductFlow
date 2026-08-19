@@ -24,8 +24,10 @@ from sqlalchemy import Enum as SqlEnum
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from productflow_backend.domain.enums import (
+    AgentCheckpointKind,
     AgentConversationScope,
     AgentConversationStatus,
+    AgentExecutionPhase,
     AgentSessionStatus,
     AgentTaskStatus,
     AgentToolMutationStatus,
@@ -1395,6 +1397,104 @@ class AgentTurnProjection(Base, TimestampMixin):
         foreign_keys="AgentTurnProjection.workflow_run_request_id",
         uselist=False,
     )
+    execution: Mapped[AgentTurnExecution | None] = relationship(
+        back_populates="turn_projection",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    checkpoints: Mapped[list[AgentTurnCheckpoint]] = relationship(
+        back_populates="turn_projection",
+        order_by="AgentTurnCheckpoint.sequence",
+    )
+
+
+class AgentTurnExecution(Base, TimestampMixin):
+    """跨进程 Agent Turn claim、lease 和执行阶段的持久记录。"""
+
+    __tablename__ = "agent_turn_executions"
+    __table_args__ = (
+        UniqueConstraint("turn_projection_id", name="uq_agent_turn_executions_projection_id"),
+        CheckConstraint("attempt >= 0", name="ck_agent_turn_executions_non_negative_attempt"),
+        CheckConstraint("fencing_token >= 0", name="ck_agent_turn_executions_non_negative_fencing"),
+        Index("ix_agent_turn_executions_lease", "lease_expires_at", "id"),
+        Index("ix_agent_turn_executions_owner", "owner_id", "lease_expires_at", "id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    turn_projection_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "agent_turn_projections.id",
+            ondelete="CASCADE",
+            name="fk_agent_turn_executions_turn_projection_id",
+        ),
+    )
+    harness_turn_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    owner_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    lease_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attempt: Mapped[int] = mapped_column(Integer, default=0)
+    fencing_token: Mapped[int] = mapped_column(Integer, default=0)
+    phase: Mapped[AgentExecutionPhase] = mapped_column(
+        enum_value_column(AgentExecutionPhase),
+        default=AgentExecutionPhase.CLAIMED,
+    )
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_checkpoint_sequence: Mapped[int] = mapped_column(Integer, default=0)
+    last_checkpoint_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    turn_projection: Mapped[AgentTurnProjection] = relationship(back_populates="execution")
+    checkpoints: Mapped[list[AgentTurnCheckpoint]] = relationship(
+        back_populates="execution",
+        cascade="all, delete-orphan",
+        order_by="AgentTurnCheckpoint.sequence",
+    )
+
+
+class AgentTurnCheckpoint(Base):
+    """Agent Turn 的有界、可审计语义 checkpoint。"""
+
+    __tablename__ = "agent_turn_checkpoints"
+    __table_args__ = (
+        UniqueConstraint(
+            "execution_id",
+            "attempt",
+            "sequence",
+            name="uq_agent_turn_checkpoints_execution_attempt_sequence",
+        ),
+        CheckConstraint("attempt > 0", name="ck_agent_turn_checkpoints_positive_attempt"),
+        CheckConstraint("sequence > 0", name="ck_agent_turn_checkpoints_positive_sequence"),
+        CheckConstraint("fencing_token > 0", name="ck_agent_turn_checkpoints_positive_fencing"),
+        Index("ix_agent_turn_checkpoints_projection_sequence", "turn_projection_id", "sequence"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    turn_projection_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "agent_turn_projections.id",
+            ondelete="CASCADE",
+            name="fk_agent_turn_checkpoints_turn_projection_id",
+        ),
+    )
+    execution_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "agent_turn_executions.id",
+            ondelete="CASCADE",
+            name="fk_agent_turn_checkpoints_execution_id",
+        ),
+    )
+    attempt: Mapped[int] = mapped_column(Integer)
+    fencing_token: Mapped[int] = mapped_column(Integer)
+    sequence: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[AgentCheckpointKind] = mapped_column(enum_value_column(AgentCheckpointKind))
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    turn_projection: Mapped[AgentTurnProjection] = relationship(back_populates="checkpoints")
+    execution: Mapped[AgentTurnExecution] = relationship(back_populates="checkpoints")
 
 
 class AgentToolMutation(Base, TimestampMixin):

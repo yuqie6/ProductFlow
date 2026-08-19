@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 from fastapi.testclient import TestClient
 from helpers import _login
 from sqlalchemy import select
 from test_agent_sessions import _create_workspace
 
 from productflow_backend.application.agent_conversations import reserve_agent_turn
+from productflow_backend.application.agent_execution import (
+    append_agent_turn_checkpoint,
+    claim_agent_turn_execution,
+    heartbeat_agent_turn_execution,
+    recover_expired_agent_turn_executions,
+    release_agent_turn_execution,
+)
 from productflow_backend.application.agent_sync import recover_unfinished_agent_turn_syncs
 from productflow_backend.application.agent_tasks import (
     create_agent_task,
@@ -17,14 +26,23 @@ from productflow_backend.application.agent_tools import (
     inspect_agent_global_products,
     list_agent_global_products,
 )
+from productflow_backend.application.time import now_utc
 from productflow_backend.config import get_settings
-from productflow_backend.domain.enums import AgentConversationScope, AgentTaskStatus, AgentTurnStatus
+from productflow_backend.domain.enums import (
+    AgentCheckpointKind,
+    AgentConversationScope,
+    AgentExecutionPhase,
+    AgentTaskStatus,
+    AgentTurnStatus,
+)
 from productflow_backend.domain.errors import ConflictError
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
     AgentPageContextSnapshot,
     AgentSession,
     AgentTask,
+    AgentTurnCheckpoint,
+    AgentTurnExecution,
     AgentTurnProjection,
 )
 from productflow_backend.presentation.api import create_app
@@ -158,6 +176,265 @@ def test_running_task_cannot_be_paused(db_session) -> None:
     else:
         raise AssertionError("expected a running task to reject pause")
     assert db_session.get(AgentTurnProjection, reservation.projection.id).status == AgentTurnStatus.QUEUED
+
+
+def test_agent_turn_execution_claims_are_fenced_and_idempotent(db_session) -> None:
+    workspace = _create_workspace(db_session, key="agent-execution-lease")
+    reservation = reserve_agent_turn(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        input_text="执行一次可恢复检查",
+        input_asset_ids=[],
+        idempotency_key="execution-lease-turn",
+    )
+
+    first = claim_agent_turn_execution(
+        db_session,
+        conversation_id=workspace.conversation.id,
+        task_id=None,
+        idempotency_key=reservation.projection.idempotency_key,
+        harness_turn_id="harness-turn-1",
+        owner_id="agent-instance-1",
+    )
+    repeated = claim_agent_turn_execution(
+        db_session,
+        conversation_id=workspace.conversation.id,
+        task_id=None,
+        idempotency_key=reservation.projection.idempotency_key,
+        harness_turn_id="harness-turn-1",
+        owner_id="agent-instance-1",
+    )
+    assert repeated.lease_token == first.lease_token
+    assert repeated.attempt == first.attempt == 1
+
+    try:
+        claim_agent_turn_execution(
+            db_session,
+            conversation_id=workspace.conversation.id,
+            task_id=None,
+            idempotency_key=reservation.projection.idempotency_key,
+            harness_turn_id="harness-turn-1",
+            owner_id="agent-instance-2",
+        )
+    except ConflictError:
+        pass
+    else:
+        raise AssertionError("an active execution lease must fence a second owner")
+
+    heartbeat = heartbeat_agent_turn_execution(
+        db_session,
+        conversation_id=workspace.conversation.id,
+        execution_id=first.execution_id,
+        owner_id=first.owner_id,
+        lease_token=first.lease_token,
+        phase=AgentExecutionPhase.TOOL,
+    )
+    assert heartbeat.phase == AgentExecutionPhase.TOOL
+    intent = append_agent_turn_checkpoint(
+        db_session,
+        conversation_id=workspace.conversation.id,
+        execution_id=first.execution_id,
+        owner_id=first.owner_id,
+        lease_token=first.lease_token,
+        sequence=1,
+        kind=AgentCheckpointKind.TOOL_EFFECT_INTENT,
+        payload={"operation": "workflow_run_request", "idempotency_key": "effect-1"},
+    )
+    repeated_intent = append_agent_turn_checkpoint(
+        db_session,
+        conversation_id=workspace.conversation.id,
+        execution_id=first.execution_id,
+        owner_id=first.owner_id,
+        lease_token=first.lease_token,
+        sequence=1,
+        kind=AgentCheckpointKind.TOOL_EFFECT_INTENT,
+        payload={"operation": "workflow_run_request", "idempotency_key": "effect-1"},
+    )
+    assert repeated_intent.id == intent.id
+    result_checkpoint = append_agent_turn_checkpoint(
+        db_session,
+        conversation_id=workspace.conversation.id,
+        execution_id=first.execution_id,
+        owner_id=first.owner_id,
+        lease_token=first.lease_token,
+        sequence=2,
+        kind=AgentCheckpointKind.TOOL_EFFECT_RESULT,
+        payload={"result": "applied"},
+    )
+    assert result_checkpoint.sequence == 2
+    stored_checkpoints = db_session.query(AgentTurnCheckpoint).filter_by(execution_id=first.execution_id).all()
+    assert [checkpoint.sequence for checkpoint in stored_checkpoints] == [1, 2]
+    assert release_agent_turn_execution(
+        db_session,
+        conversation_id=workspace.conversation.id,
+        execution_id=first.execution_id,
+        owner_id=first.owner_id,
+        lease_token=first.lease_token,
+    )
+    expired = db_session.get(AgentTurnExecution, first.execution_id)
+    assert expired is not None
+    expired.phase = AgentExecutionPhase.CLAIMED
+    expired.owner_id = first.owner_id
+    expired.lease_token = first.lease_token
+    expired.lease_expires_at = now_utc() - timedelta(seconds=1)
+    db_session.commit()
+
+    second = claim_agent_turn_execution(
+        db_session,
+        conversation_id=workspace.conversation.id,
+        task_id=None,
+        idempotency_key=reservation.projection.idempotency_key,
+        harness_turn_id="harness-turn-1",
+        owner_id="agent-instance-2",
+    )
+    assert second.attempt == 2
+    assert second.fencing_token == 2
+    assert second.lease_token != first.lease_token
+
+
+def test_agent_turn_execution_does_not_claim_a_confirmation_turn(db_session) -> None:
+    workspace = _create_workspace(db_session, key="agent-execution-confirmation")
+    reservation = reserve_agent_turn(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        input_text="已完成草案",
+        input_asset_ids=[],
+        idempotency_key="execution-confirmation-turn",
+    )
+    projection = db_session.get(AgentTurnProjection, reservation.projection.id)
+    assert projection is not None
+    projection.status = AgentTurnStatus.AWAITING_CONFIRMATION
+    db_session.commit()
+
+    try:
+        claim_agent_turn_execution(
+            db_session,
+            conversation_id=workspace.conversation.id,
+            task_id=None,
+            idempotency_key=projection.idempotency_key,
+            harness_turn_id="confirmation-harness-turn",
+            owner_id="agent-instance-1",
+        )
+    except ConflictError:
+        pass
+    else:
+        raise AssertionError("a confirmation Turn must not acquire an execution lease")
+
+
+def test_expired_agent_execution_requeues_unstarted_turn_and_closes_active_turn_unknown(db_session) -> None:
+    queued_workspace = _create_workspace(db_session, key="agent-execution-requeue")
+    queued_reservation = reserve_agent_turn(
+        db_session,
+        product_id=queued_workspace.product.id,
+        conversation_id=queued_workspace.conversation.id,
+        input_text="尚未开始",
+        input_asset_ids=[],
+        idempotency_key="execution-requeue-turn",
+    )
+    queued_lease = claim_agent_turn_execution(
+        db_session,
+        conversation_id=queued_workspace.conversation.id,
+        task_id=None,
+        idempotency_key=queued_reservation.projection.idempotency_key,
+        harness_turn_id="queued-harness-turn",
+        owner_id="agent-instance-1",
+    )
+
+    active_workspace = _create_workspace(db_session, key="agent-execution-unknown")
+    active_reservation = reserve_agent_turn(
+        db_session,
+        product_id=active_workspace.product.id,
+        conversation_id=active_workspace.conversation.id,
+        input_text="已经开始",
+        input_asset_ids=[],
+        idempotency_key="execution-unknown-turn",
+    )
+    active_projection = db_session.get(AgentTurnProjection, active_reservation.projection.id)
+    assert active_projection is not None
+    active_projection.status = AgentTurnStatus.RUNNING
+    active_projection.tool_steps_json = [
+        {"step_id": "step-1", "kind": "inspect_context", "summary": "读取上下文", "status": "running"}
+    ]
+    active_lease = claim_agent_turn_execution(
+        db_session,
+        conversation_id=active_workspace.conversation.id,
+        task_id=None,
+        idempotency_key=active_reservation.projection.idempotency_key,
+        harness_turn_id="active-harness-turn",
+        owner_id="agent-instance-1",
+    )
+    active_execution = db_session.get(AgentTurnExecution, active_lease.execution_id)
+    queued_execution = db_session.get(AgentTurnExecution, queued_lease.execution_id)
+    assert active_execution is not None and queued_execution is not None
+    active_fencing_token = active_execution.fencing_token
+    active_execution.phase = AgentExecutionPhase.TOOL
+    active_execution.lease_expires_at = now_utc() - timedelta(seconds=1)
+    queued_execution.lease_expires_at = now_utc() - timedelta(seconds=1)
+    db_session.commit()
+
+    summary = recover_expired_agent_turn_executions(db_session)
+
+    assert summary.requeued == 1
+    assert summary.unknown == 1
+    db_session.expire_all()
+    recovered_queued = db_session.get(AgentTurnProjection, queued_reservation.projection.id)
+    recovered_active = db_session.get(AgentTurnProjection, active_reservation.projection.id)
+    recovered_active_execution = db_session.get(AgentTurnExecution, active_lease.execution_id)
+    assert recovered_queued is not None and recovered_queued.status == AgentTurnStatus.QUEUED
+    assert recovered_active is not None and recovered_active.status == AgentTurnStatus.UNKNOWN
+    assert recovered_active.tool_steps_json[0]["status"] == "unknown"
+    recovery_checkpoint = db_session.scalar(
+        select(AgentTurnCheckpoint).where(AgentTurnCheckpoint.execution_id == active_lease.execution_id)
+    )
+    assert recovery_checkpoint is not None
+    assert recovery_checkpoint.kind == AgentCheckpointKind.TERMINAL
+    assert recovery_checkpoint.payload_json["status"] == AgentTurnStatus.UNKNOWN.value
+    assert recovered_active_execution is not None
+    assert recovered_active_execution.fencing_token == active_fencing_token + 1
+
+
+def test_before_model_checkpoint_blocks_expired_queued_turn_requeue(db_session) -> None:
+    workspace = _create_workspace(db_session, key="agent-execution-before-model-checkpoint")
+    reservation = reserve_agent_turn(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        input_text="模型边界已记录",
+        input_asset_ids=[],
+        idempotency_key="execution-before-model-checkpoint-turn",
+    )
+    lease = claim_agent_turn_execution(
+        db_session,
+        conversation_id=workspace.conversation.id,
+        task_id=None,
+        idempotency_key=reservation.projection.idempotency_key,
+        harness_turn_id="before-model-harness-turn",
+        owner_id="agent-instance-1",
+    )
+    append_agent_turn_checkpoint(
+        db_session,
+        conversation_id=workspace.conversation.id,
+        execution_id=lease.execution_id,
+        owner_id=lease.owner_id,
+        lease_token=lease.lease_token,
+        sequence=1,
+        kind=AgentCheckpointKind.BEFORE_MODEL_REQUEST,
+        payload={"attempt": lease.attempt, "fencing_token": lease.fencing_token},
+    )
+    execution = db_session.get(AgentTurnExecution, lease.execution_id)
+    assert execution is not None
+    execution.lease_expires_at = now_utc() - timedelta(seconds=1)
+    db_session.commit()
+
+    summary = recover_expired_agent_turn_executions(db_session)
+
+    assert summary.requeued == 0
+    assert summary.unknown == 1
+    db_session.expire_all()
+    recovered = db_session.get(AgentTurnProjection, reservation.projection.id)
+    assert recovered is not None and recovered.status == AgentTurnStatus.UNKNOWN
 
 
 def test_agent_recovery_creates_one_initial_turn_for_queued_task(db_session) -> None:

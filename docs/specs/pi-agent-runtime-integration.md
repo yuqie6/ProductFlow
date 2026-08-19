@@ -75,6 +75,30 @@ ProductFlow 业务 Agent 不需要代码编辑能力。创建 Pi session 时必�
 
 Pi 官方说明默认运行时没有文件、进程、网络和 credential 的内置权限系统；这条约束属于 ProductFlow adapter 的强制配置，不依赖模型是否“听话”。
 
+### 4.4 连接、长任务与重启恢复
+
+Agent 的执行所有权与浏览器连接分离：浏览器只观察 FastAPI 的 Web projection 和 SSE，FastAPI 只负责业务状态、权限和 Agent service 的状态同步，Pi Agent service 持有当前进程内的模型 Turn。SSE 连接关闭只停止事件订阅的等待，不调用 Agent cancel；重新订阅时使用事件 sequence cursor 从已持久化事件继续读取。实现与回归测试分别位于 `agent-service/src/server.ts`、`agent-service/src/pi-runtime.ts`、`agent-service/src/server.test.ts` 和 `web/src/pages/agent-workbench/useAgentTurnEvents.test.ts`。
+
+长任务按执行类型分层：
+
+- Pi 模型 Turn 可以在浏览器关闭后继续，直到 Agent service 进程完成、取消或失败。
+- WorkflowRun、图片生成和 delivery rendition 继续由 PostgreSQL/Redis/Dramatiq 的 durable worker 承担；Agent 只提交待确认请求或读取结果。
+- Pi session 文件和 JSON event 文件保存对话与 Turn 投影恢复所需的事实，不构成跨进程的业务执行队列，也不证明工具副作用已经完成。
+
+Agent service 启动时在 HTTP 监听前调用 `TurnStore.recoverAfterRestart()`：
+
+| 持久状态 | 启动处理 | 原因 |
+|---|---|---|
+| `queued`，且没有问题恢复痕迹 | 重新加入当前进程队列并重新 claim | 首次执行尚未开始，重复风险可控 |
+| `queued`，execution phase 已进入模型或工具 | 不自动重放，等待后端 lease recovery | state 可能落后于实际副作用，不能按 queued 处理 |
+| `running`、`cancel_requested`、`requires_input` | 追加 `turn.unknown` 并结束为 `unknown` | 模型请求、工具副作用和内存中的问题 waiter 可能已经发生，不能盲目重放 |
+| 已有终态事件但 state 文件未完成更新 | 从终态事件修复 state | 事件先于 state 写入，恢复可以保留已经提交的事实 |
+| 已有终态 state | 保持原状态 | 幂等恢复 |
+
+每个 Turn 真正开始模型调用前，Agent service 还会向 ProductFlow claim 一个 PostgreSQL execution lease。lease 记录 owner、attempt、fencing token 和执行 phase；运行期间 heartbeat，模型和工具阶段使用不同 phase。旧 worker 的 heartbeat、终态同步和副作用继续动作必须带当前 fencing token，过期 worker 不能覆盖新 attempt。`agent_turn_executions` 的恢复扫描由 `agent_sync.py` 调用：仍处于 `claimed` 且尚未进入模型的过期 lease 可以重新入队，已经进入 `model`、`tool`、`waiting_input` 或 `external_job` 的过期 lease 结束为 `unknown`。
+
+这套策略保证 Agent service 重启后不会让 Turn 永久停留在 `running`，也不会把未知副作用伪装成成功。对 `unknown` Turn 的继续执行需要后续增加显式的业务对账和新的 continuation Turn；当前恢复入口不自动重复模型或工具调用。当前 lease 解决 claim、心跳和 stale-writer fencing，不包含 Pi session 的跨进程重建。`agent_turn_checkpoints` 保存 `before_model_request`、副作用 intent/result、问题等待、外部任务提交和终态等有界语义事实；副作用工具必须先写 intent checkpoint，再调用 ProductFlow application。checkpoint 使用 execution 的 attempt 和 fencing token，过期 writer 不能追加或改写旧 attempt。跨实例事件存储、进程重启后的原地模型请求恢复和后台 Agent Task 调度仍属于后续 rollout gate，不由本版本的 `background_durable_tasks: false` 健康状态承诺。
+
 ## 5. Skills 设计
 
 ### 5.1 初始 Skill 集合

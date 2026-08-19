@@ -21,6 +21,42 @@ export const TURN_STATUSES = [
 ] as const;
 export type TurnStatus = (typeof TURN_STATUSES)[number];
 
+export const EXECUTION_PHASES = ["claimed", "model", "tool", "waiting_input", "external_job", "terminal"] as const;
+export type ExecutionPhase = (typeof EXECUTION_PHASES)[number];
+
+export interface AgentExecutionLease {
+  execution_id: string;
+  projection_id: string;
+  harness_turn_id: string;
+  owner_id: string;
+  lease_token: string;
+  attempt: number;
+  fencing_token: number;
+  phase: ExecutionPhase;
+  lease_expires_at: string;
+}
+
+export const CHECKPOINT_KINDS = [
+  "before_model_request",
+  "tool_effect_intent",
+  "tool_effect_result",
+  "question_required",
+  "external_job_submitted",
+  "terminal",
+] as const;
+export type CheckpointKind = (typeof CHECKPOINT_KINDS)[number];
+
+export interface AgentCheckpointReceipt {
+  id: string;
+  projection_id: string;
+  execution_id: string;
+  attempt: number;
+  fencing_token: number;
+  sequence: number;
+  kind: CheckpointKind;
+  created_at: string;
+}
+
 export const TOOL_STEP_KINDS = [
   "inspect_image",
   "propose_draft",
@@ -146,6 +182,8 @@ export interface TurnState {
   run_id: string;
   turn_id: string;
   status: TurnStatus;
+  execution_attempt?: number;
+  execution_fencing_token?: number;
   input: StartTurnInput;
   question?: TurnQuestion;
   artifact?: TurnArtifact;

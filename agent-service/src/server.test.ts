@@ -81,6 +81,42 @@ describe("ProductFlow Pi HTTP contract", () => {
         `id: 6\nevent: text.delta\ndata: ${JSON.stringify(event)}\n\n`,
       );
       expect(stream).toHaveBeenCalledOnce();
+
+      let observedSignal: AbortSignal | undefined;
+      let resolveStreamStopped!: () => void;
+      const streamStopped = new Promise<void>((resolve) => {
+        resolveStreamStopped = resolve;
+      });
+      stream.mockImplementation(async function* (_lookup, _turnID, after, signal) {
+        expect(after).toBe(5);
+        observedSignal = signal;
+        yield event;
+        if (signal.aborted) {
+          resolveStreamStopped();
+          return;
+        }
+        await new Promise<void>((resolve) => {
+          signal.addEventListener("abort", () => {
+            resolveStreamStopped();
+            resolve();
+          }, { once: true });
+        });
+      });
+      const cancel = vi.spyOn(manager, "cancel");
+      const disconnect = new AbortController();
+      const liveEvents = await fetch(
+        `http://127.0.0.1:${address.port}/internal/v1/conversations/test/turns/turn-1/events?after=5`,
+        { headers: { Authorization: `Bearer ${token}` }, signal: disconnect.signal },
+      );
+      const reader = liveEvents.body?.getReader();
+      expect(reader).toBeDefined();
+      await reader?.read();
+      disconnect.abort();
+      await streamStopped;
+      expect(observedSignal?.aborted).toBe(true);
+      expect(cancel).not.toHaveBeenCalled();
+      cancel.mockRestore();
+      await reader?.cancel().catch(() => undefined);
     } finally {
       await manager.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));

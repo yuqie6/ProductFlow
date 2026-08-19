@@ -12,6 +12,8 @@ function runtime(scope: Scope): ToolRuntime {
     askUser: async () => ({ text: "answer" }),
     proposeArtifact: async () => undefined,
     markWorkflowRunRequested: () => undefined,
+    checkpoint: async () => undefined,
+    markEffectUnknown: () => undefined,
     idempotencyKey: (id) => `pi-test-${id}`,
   };
 }

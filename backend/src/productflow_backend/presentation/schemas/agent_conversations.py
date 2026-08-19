@@ -22,8 +22,10 @@ from productflow_backend.application.legacy_archive_rebuilds import (
 )
 from productflow_backend.application.legacy_archives import LegacyArchiveKind
 from productflow_backend.domain.enums import (
+    AgentCheckpointKind,
     AgentConversationScope,
     AgentConversationStatus,
+    AgentExecutionPhase,
     AgentToolStepKind,
     AgentToolStepStatus,
     AgentTurnStatus,
@@ -63,6 +65,60 @@ class AgentRuntimeContextResponse(BaseModel):
     task_id: str | None
     session_summary: str | None
     task_summary: str | None
+
+
+class AgentTurnExecutionClaimRequest(StrictAgentRequest):
+    task_id: str | None = Field(default=None, max_length=64)
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    harness_turn_id: str = Field(min_length=1, max_length=120)
+    owner_id: str = Field(min_length=1, max_length=120)
+
+
+class AgentTurnExecutionHeartbeatRequest(StrictAgentRequest):
+    owner_id: str = Field(min_length=1, max_length=120)
+    lease_token: str = Field(min_length=1, max_length=36)
+    phase: AgentExecutionPhase
+
+
+class AgentTurnCheckpointRequest(StrictAgentRequest):
+    owner_id: str = Field(min_length=1, max_length=120)
+    lease_token: str = Field(min_length=1, max_length=36)
+    sequence: int = Field(ge=1, le=10_000)
+    kind: AgentCheckpointKind
+    payload: dict[str, Any]
+
+
+class AgentTurnExecutionReleaseRequest(StrictAgentRequest):
+    owner_id: str = Field(min_length=1, max_length=120)
+    lease_token: str = Field(min_length=1, max_length=36)
+    phase: AgentExecutionPhase = AgentExecutionPhase.TERMINAL
+
+
+class AgentTurnExecutionLeaseResponse(BaseModel):
+    execution_id: str
+    projection_id: str
+    harness_turn_id: str
+    owner_id: str
+    lease_token: str
+    attempt: int
+    fencing_token: int
+    phase: AgentExecutionPhase
+    lease_expires_at: datetime
+
+
+class AgentTurnExecutionReleaseResponse(BaseModel):
+    released: bool
+
+
+class AgentTurnCheckpointResponse(BaseModel):
+    id: str
+    projection_id: str
+    execution_id: str
+    attempt: int
+    fencing_token: int
+    sequence: int
+    kind: AgentCheckpointKind
+    created_at: datetime
 
 
 class AgentPageContextSnapshotRequest(StrictAgentRequest):

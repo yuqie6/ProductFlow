@@ -59,6 +59,71 @@ describe("TurnStore", () => {
     }
   });
 
+  it("requeues untouched queued turns and marks interrupted turns unknown", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-recovery-"));
+    try {
+      const store = new TurnStore(root);
+      await store.init();
+      const queuedScope = { ...scope, run_id: "queued-run" };
+      const runningScope = { ...scope, run_id: "running-run" };
+      const waitingScope = { ...scope, run_id: "waiting-run" };
+      const queued = await store.createTurn(queuedScope, input);
+      const running = await store.createTurn(runningScope, input);
+      await store.updateState(runningScope.run_id, running.state.turn_id, {
+        status: "running",
+        tool_steps: [{ step_id: "step-1", kind: "inspect_context", summary: "Read context", status: "running" }],
+      });
+      const waiting = await store.createTurn(waitingScope, input);
+      await store.updateState(waitingScope.run_id, waiting.state.turn_id, { status: "requires_input" });
+
+      const result = await store.recoverAfterRestart();
+
+      expect(result.queued).toEqual([{ scope: queuedScope, turnID: queued.state.turn_id }]);
+      expect(result.unknown).toBe(2);
+      const recoveredRunning = await store.getState(runningScope.run_id, running.state.turn_id);
+      expect(recoveredRunning.status).toBe("unknown");
+      expect(recoveredRunning.tool_steps?.[0]?.status).toBe("unknown");
+      expect((await store.getState(waitingScope.run_id, waiting.state.turn_id)).status).toBe("unknown");
+      expect((await store.events(runningScope.run_id, running.state.turn_id, 0)).at(-1)?.kind).toBe("turn.unknown");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("restores a terminal event when the state write was interrupted", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-terminal-recovery-"));
+    try {
+      const store = new TurnStore(root);
+      await store.init();
+      const turn = await store.createTurn(scope, input);
+      await store.appendEvent(scope.run_id, turn.state.turn_id, "turn.awaiting_confirmation", {
+        status: "awaiting_confirmation",
+        output: "recovered",
+        error: "",
+        artifact: {
+          name: "propose_workflow_draft",
+          value: { schema_version: 2 },
+          step_id: "step-1",
+        },
+      });
+
+      const result = await store.recoverAfterRestart();
+      const state = await store.getState(scope.run_id, turn.state.turn_id);
+
+      expect(result.restoredTerminal).toBe(1);
+      expect(state.status).toBe("awaiting_confirmation");
+      expect(state.output).toBe("recovered");
+      expect(state.artifact).toEqual({
+        name: "propose_workflow_draft",
+        value: { schema_version: 2 },
+        step_id: "step-1",
+      });
+      expect(state.finished_at).toBeTruthy();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("serializes event sequence writes for one turn", async () => {
     const root = await mkdtemp(join(tmpdir(), "productflow-pi-events-"));
     try {

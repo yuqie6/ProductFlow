@@ -1,10 +1,11 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   API_VERSION,
   EVENT_SCHEMA_VERSION,
   JsonObject,
+  JsonValue,
   Scope,
   StartTurnInput,
   TurnArtifact,
@@ -50,6 +51,19 @@ interface EventWaiter {
   signal: AbortSignal | undefined;
   onAbort: (() => void) | undefined;
 }
+
+export interface TurnRecoveryCandidate {
+  scope: Scope;
+  turnID: string;
+}
+
+export interface TurnRecoverySummary {
+  queued: TurnRecoveryCandidate[];
+  restoredTerminal: number;
+  unknown: number;
+}
+
+const RESTART_UNKNOWN_ERROR = "Agent service restarted before this Turn reached a provable terminal state";
 
 export class TurnStore {
   private readonly locks = new Map<string, Promise<void>>();
@@ -100,6 +114,32 @@ export class TurnStore {
     return result;
   }
 
+  async recoverAfterRestart(): Promise<TurnRecoverySummary> {
+    const queued: TurnRecoveryCandidate[] = [];
+    let restoredTerminal = 0;
+    let unknown = 0;
+    let runEntries: import("node:fs").Dirent[] = [];
+    try {
+      runEntries = await readdir(join(this.root, "runs"), { withFileTypes: true });
+    } catch (error: unknown) {
+      if (isENOENT(error)) return { queued, restoredTerminal, unknown };
+      throw error;
+    }
+    for (const entry of runEntries.filter((candidate) => candidate.isDirectory()).sort((left, right) => left.name.localeCompare(right.name))) {
+      const record = await this.loadRun(entry.name);
+      for (const turnID of record.turn_ids) {
+        const state = await this.getState(record.scope.run_id, turnID);
+        if (isTerminalStatus(state.status)) continue;
+        const events = await this.events(record.scope.run_id, turnID, 0);
+        const result = await this.recoverTurnAfterRestart(record.scope, state, events);
+        if (result === "queued") queued.push({ scope: record.scope, turnID });
+        else if (result === "restored_terminal") restoredTerminal += 1;
+        else if (result === "unknown") unknown += 1;
+      }
+    }
+    return { queued, restoredTerminal, unknown };
+  }
+
   async createTurn(scope: Scope, input: StartTurnInput): Promise<{ state: TurnState; created: boolean }> {
     return this.serial(`run:${scope.run_id}`, async () => {
       const record = await this.ensureRunUnlocked(scope);
@@ -146,10 +186,62 @@ export class TurnStore {
     }
   }
 
+  private async recoverTurnAfterRestart(
+    scope: Scope,
+    state: TurnState,
+    events: TurnEvent[],
+  ): Promise<"queued" | "terminal" | "restored_terminal" | "unknown"> {
+    return this.serial(this.eventKey(scope.run_id, state.turn_id), async () => {
+      const current = await this.getState(scope.run_id, state.turn_id);
+      const terminalEvent = [...events].reverse().find((event) => terminalStatusFromEvent(event) !== null);
+      if (terminalEvent) {
+        const status = terminalStatusFromEvent(terminalEvent);
+        if (status === null) return "terminal";
+        if (isTerminalStatus(current.status)) return "terminal";
+        const artifact = artifactFromTerminalEvents(events, terminalEvent);
+        await this.updateStateUnlocked(scope.run_id, state.turn_id, {
+          status,
+          output: stringPayload(terminalEvent.payload.output) ?? current.output,
+          error: stringPayload(terminalEvent.payload.error) ?? "",
+          artifact,
+          finished_at: terminalEvent.created_at,
+          question: undefined,
+        });
+        return "restored_terminal";
+      }
+      if (isTerminalStatus(current.status)) return "terminal";
+      if (current.status === "queued") {
+        const hasQuestionContinuation = events.some(
+          (event) => event.kind === "question.answered" || event.kind === "turn.requires_input",
+        );
+        if (!hasQuestionContinuation) return "queued";
+      }
+      const recoveredToolSteps = unknownRunningToolSteps(current.tool_steps);
+      for (const step of recoveredToolSteps ?? []) {
+        if (current.tool_steps?.some((candidate) => candidate.step_id === step.step_id && candidate.status !== step.status)) {
+          await this.appendEventUnlocked(scope.run_id, state.turn_id, "tool.step", step as unknown as JsonObject);
+        }
+      }
+      await this.appendEventUnlocked(scope.run_id, state.turn_id, "turn.unknown", {
+        status: "unknown",
+        output: current.output,
+        error: RESTART_UNKNOWN_ERROR,
+      });
+      await this.updateStateUnlocked(scope.run_id, state.turn_id, {
+        status: "unknown",
+        error: RESTART_UNKNOWN_ERROR,
+        question: undefined,
+        tool_steps: recoveredToolSteps,
+        finished_at: nowISO(),
+      });
+      return "unknown";
+    });
+  }
+
   async updateState(
     runID: string,
     turnID: string,
-    patch: Partial<Pick<TurnState, "status" | "question" | "artifact" | "tool_steps" | "output" | "error" | "started_at" | "finished_at">>,
+    patch: Partial<Pick<TurnState, "status" | "execution_attempt" | "execution_fencing_token" | "question" | "artifact" | "tool_steps" | "output" | "error" | "started_at" | "finished_at">>,
   ): Promise<TurnState> {
     return this.serial(runID + ":" + turnID, () => this.updateStateUnlocked(runID, turnID, patch));
   }
@@ -292,7 +384,7 @@ export class TurnStore {
   private async updateStateUnlocked(
     runID: string,
     turnID: string,
-    patch: Partial<Pick<TurnState, "status" | "question" | "artifact" | "tool_steps" | "output" | "error" | "started_at" | "finished_at">>,
+    patch: Partial<Pick<TurnState, "status" | "execution_attempt" | "execution_fencing_token" | "question" | "artifact" | "tool_steps" | "output" | "error" | "started_at" | "finished_at">>,
   ): Promise<TurnState> {
     const state = await this.getState(runID, turnID);
     const next: TurnState = { ...state, ...patch, updated_at: nowISO() };
@@ -356,6 +448,48 @@ export class TurnStore {
 
 function stateOutput(state: TurnState): string {
   return state.output;
+}
+
+function terminalStatusFromEvent(event: TurnEvent): Extract<TurnStatus, "succeeded" | "failed" | "canceled" | "unknown" | "awaiting_confirmation"> | null {
+  if (!event.kind.startsWith("turn.")) return null;
+  const candidate = event.kind.slice("turn.".length);
+  if (!isTerminalStatus(candidate as TurnStatus)) return null;
+  if (event.payload.status !== candidate) return null;
+  return candidate as Extract<TurnStatus, "succeeded" | "failed" | "canceled" | "unknown" | "awaiting_confirmation">;
+}
+
+function artifactFromTerminalEvents(events: TurnEvent[], terminalEvent: TurnEvent): TurnArtifact | undefined {
+  const nested = parseArtifact(terminalEvent.payload.artifact);
+  if (nested) return nested;
+  const proposed = [...events].reverse().find((event) => event.kind === "artifact.proposed");
+  return proposed ? parseArtifact(proposed.payload) : undefined;
+}
+
+function parseArtifact(value: JsonValue | undefined): TurnArtifact | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const candidate = value as Record<string, JsonValue>;
+  if (
+    typeof candidate.name !== "string" ||
+    typeof candidate.step_id !== "string" ||
+    !candidate.value ||
+    typeof candidate.value !== "object" ||
+    Array.isArray(candidate.value)
+  ) {
+    return undefined;
+  }
+  return {
+    name: candidate.name,
+    step_id: candidate.step_id,
+    value: candidate.value as JsonObject,
+  };
+}
+
+function stringPayload(value: JsonValue | undefined): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function unknownRunningToolSteps(steps: ToolStep[] | undefined): ToolStep[] | undefined {
+  return steps?.map((step) => (step.status === "running" ? { ...step, status: "unknown" } : step));
 }
 
 function isENOENT(error: unknown): boolean {

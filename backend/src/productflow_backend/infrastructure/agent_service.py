@@ -74,6 +74,8 @@ class AgentServiceTurnState(BaseModel):
     run_id: str
     turn_id: str
     status: AgentTurnStatus
+    execution_attempt: int | None = Field(default=None, ge=1)
+    execution_fencing_token: int | None = Field(default=None, ge=1)
     question: AgentServiceQuestion | None = None
     artifact: AgentServiceArtifact | None = None
     tool_steps: list[AgentServiceToolStep] | None = Field(default=None, max_length=100)

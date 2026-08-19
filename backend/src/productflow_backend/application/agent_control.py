@@ -32,6 +32,7 @@ from productflow_backend.application.media_library.drafts import (
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.enums import (
     AgentConversationScope,
+    AgentExecutionPhase,
     AgentToolStepKind,
     AgentToolStepStatus,
     AgentTurnStatus,
@@ -47,6 +48,7 @@ from productflow_backend.infrastructure.agent_service import (
     AgentServiceTurnState,
 )
 from productflow_backend.infrastructure.db.models import (
+    AgentTurnExecution,
     AgentTurnProjection,
     LibraryOrganizationDraft,
     LibraryOrganizationDraftRevision,
@@ -321,6 +323,9 @@ def synchronize_agent_turn_state(
         projection_id=projection_id,
     )
     _validate_agent_state_scope(_expected_harness_run_id(conversation, projection), state)
+    _validate_agent_execution_fence(session, projection=projection, state=state)
+    if _is_stale_queued_execution_snapshot(session, projection=projection, state=state):
+        return projection
     pending_workflow_run_request = _find_pending_workflow_run_request(
         session,
         conversation=conversation,
@@ -551,6 +556,57 @@ def retry_unbound_agent_turn_start(
         projection_id=projection.id,
         state=state,
         commit=commit,
+    )
+
+
+def _validate_agent_execution_fence(
+    session: Session,
+    *,
+    projection: AgentTurnProjection,
+    state: AgentServiceTurnState,
+) -> None:
+    execution = session.scalar(
+        select(AgentTurnExecution).where(AgentTurnExecution.turn_projection_id == projection.id)
+    )
+    if execution is None:
+        if state.execution_attempt is not None or state.execution_fencing_token is not None:
+            raise ConflictError("Agent Turn 返回了不存在的 execution lease")
+        return
+    if execution.phase == AgentExecutionPhase.TERMINAL and state.status not in {
+        AgentTurnStatus.SUCCEEDED,
+        AgentTurnStatus.FAILED,
+        AgentTurnStatus.CANCELED,
+        AgentTurnStatus.UNKNOWN,
+        AgentTurnStatus.AWAITING_CONFIRMATION,
+    }:
+        raise ConflictError("Agent execution 已进入终态，不能回写活动状态")
+    if state.execution_attempt is None or state.execution_fencing_token is None:
+        if state.status == AgentTurnStatus.QUEUED:
+            return
+        raise ConflictError("Agent Turn 缺少 execution fencing 信息")
+    if (
+        state.execution_attempt != execution.attempt
+        or state.execution_fencing_token != execution.fencing_token
+    ):
+        raise ConflictError("Agent Turn execution fencing token 已过期")
+
+
+def _is_stale_queued_execution_snapshot(
+    session: Session,
+    *,
+    projection: AgentTurnProjection,
+    state: AgentServiceTurnState,
+) -> bool:
+    if state.status != AgentTurnStatus.QUEUED:
+        return False
+    if state.execution_attempt is not None or state.execution_fencing_token is not None:
+        return False
+    execution = session.scalar(
+        select(AgentTurnExecution).where(AgentTurnExecution.turn_projection_id == projection.id)
+    )
+    return execution is not None and (
+        projection.status != AgentTurnStatus.QUEUED
+        or execution.phase != AgentExecutionPhase.CLAIMED
     )
 
 

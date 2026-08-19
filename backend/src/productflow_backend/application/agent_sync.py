@@ -12,9 +12,15 @@ from productflow_backend.application.agent_control import (
     synchronize_agent_turn_state,
 )
 from productflow_backend.application.agent_conversations import record_agent_turn_start_error, reserve_agent_turn
+from productflow_backend.application.agent_execution import recover_expired_agent_turn_executions
 from productflow_backend.application.agent_tasks import initial_agent_task_turn_idempotency_key
 from productflow_backend.config import get_settings
-from productflow_backend.domain.enums import AgentConversationScope, AgentTaskStatus, AgentTurnStatus
+from productflow_backend.domain.enums import (
+    AgentConversationScope,
+    AgentExecutionPhase,
+    AgentTaskStatus,
+    AgentTurnStatus,
+)
 from productflow_backend.domain.errors import BusinessError
 from productflow_backend.infrastructure.agent_service import (
     AgentServiceClient,
@@ -24,6 +30,7 @@ from productflow_backend.infrastructure.agent_service import (
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
     AgentTask,
+    AgentTurnExecution,
     AgentTurnProjection,
     WorkflowDraft,
 )
@@ -79,6 +86,20 @@ def execute_agent_turn_sync(
                 turn_id=projection.harness_turn_id,
                 task_id=projection.task_id,
             )
+            if projection.status == AgentTurnStatus.QUEUED and state.status == AgentTurnStatus.QUEUED:
+                execution = session.scalar(
+                    select(AgentTurnExecution).where(AgentTurnExecution.turn_projection_id == projection.id)
+                )
+                if (
+                    execution is not None
+                    and execution.owner_id is None
+                    and execution.phase == AgentExecutionPhase.CLAIMED
+                ):
+                    state = client.resume_turn(
+                        conversation_id=conversation.id,
+                        turn_id=projection.harness_turn_id,
+                        task_id=projection.task_id,
+                    )
             projection = synchronize_agent_turn_state(
                 session,
                 product_id=conversation.product_id,
@@ -136,6 +157,7 @@ def recover_unfinished_agent_turn_syncs(
 ) -> AgentTurnRecoverySummary:
     session = get_session_factory()()
     try:
+        recover_expired_agent_turn_executions(session)
         projection_ids = list(
             session.scalars(
                 select(AgentTurnProjection.id)

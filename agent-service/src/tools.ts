@@ -6,7 +6,9 @@ import {
 import { Type, type TSchema } from "typebox";
 import type { ImageContent } from "@earendil-works/pi-ai/compat";
 import {
+  CheckpointKind,
   JsonObject,
+  ProductFlowError,
   Scope,
   TurnAnswer,
   TurnArtifact,
@@ -16,6 +18,7 @@ import {
 import {
   PreparedWorkflowRunRequest,
   ProductFlowClient,
+  ReconcileResult,
 } from "./productflow.js";
 import { PRODUCTFLOW_SKILL_TOOL_NAME } from "./skills.js";
 
@@ -50,6 +53,8 @@ export interface ToolRuntime {
   askUser(question: TurnQuestion): Promise<TurnAnswer>;
   proposeArtifact(artifact: TurnArtifact): Promise<void>;
   markWorkflowRunRequested(): void;
+  checkpoint(kind: CheckpointKind, payload: JsonObject): Promise<void>;
+  markEffectUnknown(toolCallID: string, reason?: string): void;
   idempotencyKey(toolCallID: string): string;
 }
 
@@ -439,19 +444,48 @@ function createWorkflowRunRequestTool(runtime: ToolRuntime, global: boolean): To
         );
       }
       const idempotencyKey = runtime.idempotencyKey(toolCallID);
+      await runtime.checkpoint("tool_effect_intent", {
+        tool_name: "request_workflow_run_v1",
+        tool_call_id: toolCallID,
+        idempotency_key: idempotencyKey,
+        workflow_id: prepared.workflow_id,
+        workflow_revision: prepared.workflow_revision,
+        source_run_id: prepared.source_run_id ?? null,
+      });
       try {
         const result = global
           ? await runtime.client.executeGlobalWorkflowRunRequest(runtime.scope.conversation_id, prepared, toolCallID, idempotencyKey, runtime.signal)
           : await runtime.client.executeWorkflowRunRequest(runtime.scope.conversation_id, prepared, toolCallID, idempotencyKey, runtime.signal);
+        await runtime.checkpoint("external_job_submitted", {
+          tool_name: "request_workflow_run_v1",
+          tool_call_id: toolCallID,
+          idempotency_key: idempotencyKey,
+          workflow_id: prepared.workflow_id,
+        });
         runtime.markWorkflowRunRequested();
         return { ...textResult(result, { pending_confirmation: true, request_idempotency_key: idempotencyKey }), terminate: true };
       } catch (error) {
-        const reconciled = global
-          ? await runtime.client.reconcileWorkflowRunRequest(runtime.scope.conversation_id, prepared, toolCallID, idempotencyKey, true, runtime.signal)
-          : await runtime.client.reconcileWorkflowRunRequest(runtime.scope.conversation_id, prepared, toolCallID, idempotencyKey, false, runtime.signal);
+        let reconciled: ReconcileResult;
+        try {
+          reconciled = global
+            ? await runtime.client.reconcileWorkflowRunRequest(runtime.scope.conversation_id, prepared, toolCallID, idempotencyKey, true, runtime.signal)
+            : await runtime.client.reconcileWorkflowRunRequest(runtime.scope.conversation_id, prepared, toolCallID, idempotencyKey, false, runtime.signal);
+        } catch (reconcileError) {
+          runtime.markEffectUnknown(toolCallID, "WorkflowRun request reconciliation failed");
+          throw reconcileError;
+        }
         if (reconciled.state === "applied") {
+          await runtime.checkpoint("tool_effect_result", {
+            tool_name: "request_workflow_run_v1",
+            tool_call_id: toolCallID,
+            idempotency_key: idempotencyKey,
+            result: "applied",
+          });
           runtime.markWorkflowRunRequested();
           return { ...textResult(reconciled.result, { pending_confirmation: true, reconciled: true }), terminate: true };
+        }
+        if (reconciled.state === "unknown") {
+          runtime.markEffectUnknown(toolCallID, "WorkflowRun request result is unknown");
         }
         throw error;
       }
@@ -470,13 +504,49 @@ function createGlobalWorkspaceTool(runtime: ToolRuntime): ToolDefinition {
       { additionalProperties: false },
     ),
     execute: async (toolCallID: string, params: { name: string }): Promise<Result> => {
-      const result = await runtime.client.createProductWorkspace(
-        runtime.scope.conversation_id,
-        params.name.trim(),
-        runtime.idempotencyKey(toolCallID),
-        runtime.signal,
-      );
-      return textResult(result, { product_workspace_created: true });
+      const idempotencyKey = runtime.idempotencyKey(toolCallID);
+      await runtime.checkpoint("tool_effect_intent", {
+        tool_name: "create_product_workspace_v1",
+        tool_call_id: toolCallID,
+        idempotency_key: idempotencyKey,
+        product_name: params.name.trim(),
+      });
+      try {
+        const result = await runtime.client.createProductWorkspace(
+          runtime.scope.conversation_id,
+          params.name.trim(),
+          idempotencyKey,
+          runtime.signal,
+        );
+        await runtime.checkpoint("tool_effect_result", {
+          tool_name: "create_product_workspace_v1",
+          tool_call_id: toolCallID,
+          idempotency_key: idempotencyKey,
+          result: "applied",
+        });
+        return textResult(result, { product_workspace_created: true });
+      } catch (error) {
+        if (!(error instanceof ProductFlowError) || error.status < 500) throw error;
+        let replay: unknown;
+        try {
+          replay = await runtime.client.createProductWorkspace(
+            runtime.scope.conversation_id,
+            params.name.trim(),
+            idempotencyKey,
+            runtime.signal,
+          );
+        } catch (replayError) {
+          runtime.markEffectUnknown(toolCallID, "Product workspace creation result is unknown");
+          throw replayError;
+        }
+        await runtime.checkpoint("tool_effect_result", {
+          tool_name: "create_product_workspace_v1",
+          tool_call_id: toolCallID,
+          idempotency_key: idempotencyKey,
+          result: "reconciled",
+        });
+        return textResult(replay, { product_workspace_created: true, reconciled: true });
+      }
     },
   });
 }

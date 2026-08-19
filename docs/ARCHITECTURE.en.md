@@ -92,7 +92,7 @@ image types + quantities + 1..6 uploads
   -> product workbench
 ```
 
-ProductFlow is authoritative for business data. The Agent service uses the Pi SDK for the model loop, session messages, tool selection, events, and context compaction, and stores JSONL session files and JSON event files under its data root. PostgreSQL stores AgentConversation, AgentTask, AgentTurnProjection, question state, and WorkflowDraft revisions. Pi session persistence is not treated as proof of durable background execution, side-effect reconciliation, or multi-instance scheduling.
+ProductFlow is authoritative for business data. The Agent service uses the Pi SDK for the model loop, session messages, tool selection, events, and context compaction, and stores JSONL session files and JSON event files under its data root. PostgreSQL stores AgentConversation, AgentTask, AgentTurnProjection, question state, WorkflowDraft revisions, Agent Turn execution leases, and semantic checkpoints. Agent service startup requeues turns that never started; execution claims record attempts, phases, and fencing tokens, while in-flight turns whose execution cannot be proven are closed as `unknown`. Pi session persistence is not treated as proof of durable background execution, crash-time side-effect reconciliation, or multi-instance scheduling.
 
 The Agent service exposes a bounded tool-step projection through `tool.step` SSE events and Turn state `tool_steps`, with fields fixed to `step_id`, `kind`, `summary`, and `status`. Current kinds are `inspect_image`, `inspect_context`, `read_history`, `organize_assets`, `request_workflow_run`, `create_product`, and `propose_draft`; current statuses are `running`, `succeeded`, `failed`, and `unknown`. `question.required` remains owned by Question and is not projected as a tool step; there is no real `generate_image` Agent tool yet, so it is not added prematurely. `AgentTurnProjection.tool_steps_json` stores this web projection: a missing `tool_steps` keeps the existing snapshot for compatibility with older services, while an explicit `[]` clears it.
 
@@ -174,7 +174,7 @@ Runtime image-tool settings are filtered through the allowed-field contract befo
 - Redis provides the broker and concurrency admission.
 - PostgreSQL stores queued/running/terminal states, attempts, and safe errors.
 - Worker startup recovers unfinished jobs that can be safely redelivered.
-- Agent service uses Pi sessions and a file-backed event log; SSE event sequences support cursor reconnect and replay. Durable background Tasks, effect reconciliation, and multi-instance claims are outside the current main runtime promise.
+- Agent service uses Pi sessions and a file-backed event log; SSE event sequences support cursor reconnect and replay, and browser disconnect does not cancel the Agent. Startup recovery only requeues never-started queued Turns. PostgreSQL execution leases provide claim, heartbeat, and stale-writer fencing; durable background Tasks, automatic replay of in-flight Turns, and effect reconciliation are outside the current main runtime promise.
 - ProductFlow Turn sync trusts only state that satisfies the Agent service wire contract and preserves unprovable outcomes as unknown.
 
 ## 10. Configuration and Security

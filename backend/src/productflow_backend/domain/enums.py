@@ -46,6 +46,28 @@ class AsyncDispatchStatus(StrEnum):
     DEAD = "dead"
 
 
+class AgentExecutionPhase(StrEnum):
+    """Agent Turn 的可恢复执行阶段。"""
+
+    CLAIMED = "claimed"
+    MODEL = "model"
+    TOOL = "tool"
+    WAITING_INPUT = "waiting_input"
+    EXTERNAL_JOB = "external_job"
+    TERMINAL = "terminal"
+
+
+class AgentCheckpointKind(StrEnum):
+    """Agent Turn 的持久语义 checkpoint 类型。"""
+
+    BEFORE_MODEL_REQUEST = "before_model_request"
+    TOOL_EFFECT_INTENT = "tool_effect_intent"
+    TOOL_EFFECT_RESULT = "tool_effect_result"
+    QUESTION_REQUIRED = "question_required"
+    EXTERNAL_JOB_SUBMITTED = "external_job_submitted"
+    TERMINAL = "terminal"
+
+
 class WorkflowNodeType(StrEnum):
     """商品工作流节点类型。"""
 

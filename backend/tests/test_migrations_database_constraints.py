@@ -158,7 +158,32 @@ def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch:
             "agent_sessions",
             "agent_tasks",
             "agent_page_context_snapshots",
+            "agent_turn_executions",
         } <= tables
+        execution_columns = {column["name"] for column in inspector.get_columns("agent_turn_executions")}
+        assert {
+            "turn_projection_id",
+            "harness_turn_id",
+            "owner_id",
+            "lease_token",
+            "lease_expires_at",
+            "attempt",
+            "fencing_token",
+            "phase",
+            "last_checkpoint_sequence",
+            "last_checkpoint_at",
+        } <= execution_columns
+        execution_checks = {
+            check["name"] for check in inspector.get_check_constraints("agent_turn_executions")
+        }
+        assert {
+            "ck_agent_turn_executions_non_negative_attempt",
+            "ck_agent_turn_executions_non_negative_fencing",
+        } <= execution_checks
+        checkpoint_tables = set(inspector.get_table_names())
+        assert "agent_turn_checkpoints" in checkpoint_tables
+        checkpoint_columns = {column["name"] for column in inspector.get_columns("agent_turn_checkpoints")}
+        assert {"execution_id", "attempt", "fencing_token", "sequence", "kind", "payload_json"} <= checkpoint_columns
         assert {"copy_set_id", "poster_variant_id"} <= {
             column["name"] for column in inspector.get_columns("workflow_node_runs")
         }
@@ -213,7 +238,7 @@ def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch:
             column["name"] for column in inspector.get_columns("agent_workflow_run_requests")
         }
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260819_0061"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0063"
     finally:
         engine.dispose()
 
@@ -367,7 +392,7 @@ def test_agent_tool_step_projection_migration_backfills_existing_turns(
                 sa.text("SELECT tool_steps_json FROM agent_turn_projections WHERE id = 'turn-tool-step'")
             )
             assert value == "[]"
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260819_0061"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0063"
     finally:
         engine.dispose()
 
@@ -575,7 +600,7 @@ def test_media_library_upload_keys_migration_upgrade_and_downgrade(
     try:
         assert "media_library_upload_keys" in sa.inspect(engine).get_table_names()
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260819_0061"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0063"
     finally:
         engine.dispose()
 
@@ -612,6 +637,6 @@ def test_media_library_upload_keys_migration_upgrade_and_downgrade(
         }
         assert "source_run_id" in source_run_columns
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260819_0061"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0063"
     finally:
         engine.dispose()
