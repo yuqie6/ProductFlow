@@ -20,12 +20,17 @@ This document records only directions that remain unimplemented or lack real val
 - Improve confirmation density, conflict handling, and edit feedback.
 - Validate Turn reconnect, restart, question answering, and materialization recovery.
 
-### 2. Workbench Interaction
+### 2. Schema-v3 Free Canvas and Agent Graph Collaboration
 
-- Continue refining the existing node cards, inspector, command bar, and sidebar.
-- Improve automatic layout, folder organization, cross-folder routing, and navigation for large DAGs.
-- Verify node creation, edges, multi-select, shortcuts, and mobile touch in real browsers.
-- Control workbench bundle size and initial load time.
+- The target contract lives in `docs/adr/0008-free-canvas-agent-graph-authority.md`. The current governance checkout is at the `e6cf9e66` schema-v2 baseline and contains no schema-v3 graph, run, API, workbench, or migration implementation.
+- Validate the governance baseline by assigning one online owner to Product, WorkflowDraft, ProductWorkflow, WorkflowRun, Agent Session/Task/Conversation, MediaLibraryAsset, and ProductImageAsset, then produce repeatable full-test, live-service, and browser evidence for e6.
+- Build one application service from a confirmed WorkflowDraft to the initial v3 graph, followed by the Node Catalog, typed edges, Graph Context Compiler, ChangeSets, graph revisions, operation groups, GraphProposals, and revision-snapshot runs.
+- Reuse the mature v1/v2 canvas shell, node presentation, inspector, run sidebar, and asset-selection experience while replacing their data contracts with v3 graph/revision contracts. Do not reintroduce old DTOs, queries, mutations, plan keys, or hidden reference merging.
+- Complete the `MediaLibraryAsset -> ProductImageAsset -> WorkflowMediaLibraryAsset -> image_asset node -> reference edge` flow, including drop, bind, rebind, unused state, multiple consumers, and aggregate reference inputs.
+- Route Agent proposals, direct user edits, and recipes through one Graph Command Service. Route Agent run requests, page controls, and workers through one v3 WorkflowRun contract.
+- Retire v2 routes, schemas, application services, pages, hooks, API clients, types, and tests only after the v3 user journey passes its complete gate. Each deletion slice must preserve V1 archives, the Gallery bridge, and historical canvas readers.
+- The current migration head is `20260820_0070`. A restarted v3 implementation must create a new migration chain from the current schema; the discarded `0071-0074` migrations do not count as current implementation or acceptance evidence.
+- The final gate covers a real provider, PostgreSQL/Redis/worker, Agent ChangeSets, concurrency conflicts, desktop and 390px browsers, console/network errors, context recompilation after edge changes, run history, cancellation, retry, and retired-runtime residue scans.
 
 ### 3. Image Production Quality
 

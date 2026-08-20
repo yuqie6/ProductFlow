@@ -20,12 +20,17 @@
 - 优化确认面板的信息密度、冲突处理和修改反馈。
 - 验证 Turn 断线、重启、问题回答和 materialization 恢复。
 
-### 2. 工作台交互打磨
+### 2. Schema-v3 自由画布与 Agent 图协作
 
-- 继续复用和完善现有节点卡片、详情面板、命令栏和侧栏。
-- 优化大型 DAG 的自动布局、文件夹收纳、跨文件夹连线和定位。
-- 完善节点添加、连线、批量选择、快捷键和移动端触控的真实浏览器验收。
-- 控制工作台 bundle 体积和初次加载时间。
+- 目标合同见 `docs/adr/0008-free-canvas-agent-graph-authority.md`。当前治理 checkout 位于 `e6cf9e66` 的 schema-v2 基线，代码树中没有 schema-v3 graph、run、API、前端工作台或迁移实现。
+- 完成治理基线验证：确认 Product、WorkflowDraft、ProductWorkflow、WorkflowRun、Agent Session/Task/Conversation、MediaLibraryAsset 和 ProductImageAsset 的唯一在线 owner，并让 e6 全量测试、真实服务和浏览器主链路形成可重复证据。
+- 从 confirmed WorkflowDraft 到 v3 初始图建立单一应用服务，再实现 Node Catalog、typed edge、Graph Context Compiler、ChangeSet、graph revision、operation group、GraphProposal 和 revision snapshot run。
+- 工作台使用成熟 v1/v2 画布 shell、节点呈现、Inspector、运行侧栏和素材选择体验，数据源统一为 v3 graph/revision；不引入旧 DTO、query、mutation、plan key 或隐藏 reference merge。
+- 完成 `MediaLibraryAsset -> ProductImageAsset -> WorkflowMediaLibraryAsset -> image_asset node -> reference edge` 的端到端适配，覆盖拖入空白处、绑定、换绑、未使用提示、一个素材节点连接多个下游和多个素材进入单一聚合端口。
+- Agent 提案、人工编辑和配方应用统一进入 Graph Command Service；Agent run request、页面运行控制和 worker 统一进入 v3 WorkflowRun。
+- v3 主链路通过完整 gate 后，再删除在线 v2 route、schema、application、page、hook、API、type 和对应测试。每个删除切片都要确认 v1 archive、Gallery bridge 和历史画布读路径不受影响。
+- 当前迁移头为 `20260820_0070`。v3 实现重新开始时从当前 schema 设计新的迁移链，不复用已经从代码树删除的 `0071-0074` 作为当前实现或验收证据。
+- 最终 gate 包括真实 provider、PostgreSQL/Redis/worker、Agent ChangeSet、并发冲突、桌面与 390px 浏览器、console/network error、edge 变化后的上下文重编译、运行历史、取消、retry 和无 retired runtime fallback residue scan。
 
 ### 3. 图片生产质量
 
@@ -38,6 +43,7 @@
 
 - `/media-library` 已提供全局素材列表、搜索、文件夹、标签、归档/恢复、批量组织和选择反馈。
 - `WorkflowMediaLibraryAsset` 已把全局素材关联到工作流子图库；同一图片可被多个工作流使用，关联不复制媒体 bytes。
+- v3 继续使用这套素材库身份和组织能力。工作流子图库关联、图片节点绑定和 `reference` edge 分别表达“可选择”“节点持有”“运行实际使用”；前端适配与浏览器验收仍未完成。
 - ImageChat 的保存动作已切换到 canonical `/api/media-library/from-session`，`/gallery` 已重定向到 `/media-library`；旧 `/api/gallery`、历史 DTO 和在线 runtime owner 已移除，current schema 的旧表部署级回填、引用审计、观察窗和物理清理资格仍待完成。旧 `legacy_canvas_agent_20260518_0032` 数据库已有 Gallery-only migration bridge：manifest、目标素材导入、source/hash 对账和独立 source retirement command 已实现；真实部署演练、备份恢复证据和 approval 仍待完成。Agent archive 不在这条 bridge 范围内。
 - Agent 图库整理已接入有界读取、可确认 Draft、revision 校验、幂等确认、原子应用和结果投影；全局素材关联到明确工作流也已通过同一 Draft 机制落地，使用工作流 revision 和当前关联状态校验，不复制媒体 bytes。剩余工作是旧 Gallery 对账/owner 退休，以及跨商品等更高范围的 Agent 写操作。
 

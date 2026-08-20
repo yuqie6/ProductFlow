@@ -2,7 +2,7 @@
 
 ## 状态
 
-Accepted
+Accepted，current governance baseline
 
 ## 背景
 
@@ -32,3 +32,7 @@ V1 使用批量生图动作节点和下游结果槽位，运行血缘依赖 JSON
 - 用一个批量节点隐藏多个结果身份。
 - 为导出增加 DAG 节点。
 - 把画布文件夹升级为嵌套、带端口的执行组件。
+
+## 后续决策
+
+ADR 0008 已接受 schema-v3 自由画布、typed edge、图权威和 Agent WorkflowChangeSet 目标合同。当前治理 checkout 已回到 `e6cf9e66`，schema-v2 继续作为架构治理期间的当前实现合同，不再增加新能力。v3 完整业务链路通过验收后，schema-v2 才进入 reader、writer、API、测试和迁移的退役阶段。

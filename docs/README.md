@@ -33,6 +33,8 @@
 - 当前产品语义：`CONTEXT.md`、`PRD.md`、相关 ADR。
 - 已批准但未交付的产品/设计变更：相关 `specs/`、ADR、rollout 和实施计划；不得提前写成当前事实。历史长版设计默认跳过，必要时再查 `archive/`。
 - Agent runtime 迁移：`adr/0007-pi-agent-runtime-boundary.md`、`specs/pi-agent-runtime-integration.md`，并回看 `ARCHITECTURE.md` 的当前实现段落。
+- 自由画布与 Agent 图协作目标：`adr/0008-free-canvas-agent-graph-authority.md`。该 ADR 已接受，当前治理 checkout 已回到 schema-v2 基线，v3 实现尚未重新开始。当前已交付产品说明读取 `CONTEXT.md`、`ARCHITECTURE.md` 和 ADR 0003，后续切片和验收状态读取 `ROADMAP.md` 与对应 rollout 文档。
+- 自由画布 v3 重建的交互继承与浏览器验收：`rollout/free-canvas-v3-interaction-parity.md`。
 - 后端：`backend/AGENTS.md`、`ARCHITECTURE.md` 中对应所有权、相关代码和测试。
 - 前端：`web/AGENTS.md`、`ARCHITECTURE.md` 中对应所有权、相关代码和测试。
 - 跨层合同：以上两份 package `AGENTS.md`，沿 wire DTO、应用用例、持久化、API client 和 UI projection 验证完整链路。
