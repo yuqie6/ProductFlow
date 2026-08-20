@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import importlib
 import os
+import subprocess
 import sys
+import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -27,11 +29,14 @@ from test_prompt_visual_image_nodes import (
 )
 
 from alembic import command
+from productflow_backend.application.async_delivery import (
+    run_async_dispatcher_once,
+    stage_async_dispatch_for_actor,
+)
 from productflow_backend.application.delivery_renditions.service import (
     _fail_delivery_rendition_job,
     claim_delivery_rendition_job,
     create_delivery_rendition_job,
-    execute_delivery_rendition_job,
     get_delivery_rendition_job,
     retry_delivery_rendition_job,
     submit_delivery_rendition_job,
@@ -43,18 +48,21 @@ from productflow_backend.application.product_workflow_dependencies import Workfl
 from productflow_backend.config import get_settings
 from productflow_backend.domain.enums import JobStatus, WorkflowNodeStatus, WorkflowRunStatus
 from productflow_backend.infrastructure.db.models import (
+    AsyncDispatch,
     DeliveryRenditionJob,
     Product,
+    ProductImageAsset,
     WorkflowImageGenerationRecord,
     WorkflowNode,
     WorkflowNodeRun,
     WorkflowRun,
 )
 from productflow_backend.infrastructure.db.session import get_engine, get_session_factory
-from productflow_backend.infrastructure.queue import get_broker
+from productflow_backend.infrastructure.queue import enqueue_async_dispatch, get_broker
 from productflow_backend.infrastructure.storage import LocalStorage
 
 LIVE_DELIVERY_RENDITION_SWITCH = "PRODUCTFLOW_RUN_LIVE_DELIVERY_RENDITIONS"
+LIVE_DELIVERY_RENDITION_WORKER_EFFECTS_SWITCH = "PRODUCTFLOW_RUN_LIVE_DELIVERY_RENDITION_WORKER_EFFECTS"
 WORKERS_MODULE = "productflow_backend.workers"
 REDIS_TEST_DATABASE = 14
 
@@ -192,15 +200,24 @@ def live_delivery_dependencies(
         _reset_runtime_state()
 
 
-def _consume_delivery_message(broker: RedisBroker, workers: ModuleType, *, job_id: str) -> None:
-    consumer = broker.consume(workers.run_delivery_rendition_job.queue_name, prefetch=1, timeout=5_000)
+def _consume_delivery_dispatch_message(
+    broker: RedisBroker,
+    workers: ModuleType,
+    *,
+    dispatch_id: str,
+    job_id: str,
+) -> None:
+    consumer = broker.consume(workers.run_async_dispatch.queue_name, prefetch=1, timeout=5_000)
     try:
-        message = next(consumer)
-        assert message is not None
-        assert message.actor_name == "run_delivery_rendition_job"
-        assert message.args == (job_id,)
-        assert message.kwargs == {}
-        consumer.ack(message)
+        while True:
+            message = next(consumer)
+            if message is None:
+                break
+            if message.actor_name == "run_async_dispatch" and message.args == (dispatch_id, job_id):
+                consumer.ack(message)
+                return
+            consumer.ack(message)
+        raise AssertionError(f"did not receive durable delivery dispatch for job_id={job_id}")
     finally:
         consumer.close()
 
@@ -228,6 +245,7 @@ def test_delivery_renditions_migrate_enqueue_and_render_real_files(
         {"width": 50, "height": 70, "format": "webp", "fit": "cover", "crop_anchor": "top"},
     )
     job_ids: list[str] = []
+    dispatch_ids: list[str] = []
     with session_factory() as session:
         for spec in specs:
             job = submit_delivery_rendition_job(
@@ -236,11 +254,27 @@ def test_delivery_renditions_migrate_enqueue_and_render_real_files(
                 delivery_spec=spec,
             )
             job_ids.append(job.id)
+            dispatch = session.scalar(
+                sa.select(AsyncDispatch).where(
+                    AsyncDispatch.actor_name == "run_delivery_rendition_job",
+                    AsyncDispatch.aggregate_id == job.id,
+                )
+            )
+            assert dispatch is not None
+            dispatch_ids.append(dispatch.id)
 
-    for job_id in job_ids:
-        _consume_delivery_message(broker, workers, job_id=job_id)
-        execute_delivery_rendition_job(job_id)
-    broker.join(workers.run_delivery_rendition_job.queue_name, timeout=5_000)
+    sent = run_async_dispatcher_once(enqueue=enqueue_async_dispatch, limit=20)
+    assert sent.sent >= len(job_ids)
+
+    for job_id, dispatch_id in zip(job_ids, dispatch_ids, strict=True):
+        _consume_delivery_dispatch_message(
+            broker,
+            workers,
+            dispatch_id=dispatch_id,
+            job_id=job_id,
+        )
+        workers.execute_async_dispatch(dispatch_id, job_id)
+    broker.join(workers.run_async_dispatch.queue_name, timeout=5_000)
 
     expected = (
         ("image/png", 48, 48),
@@ -263,6 +297,194 @@ def test_delivery_renditions_migrate_enqueue_and_render_real_files(
         assert session.get(WorkflowRun, workflow_run_id).status == WorkflowRunStatus.SUCCEEDED
         assert session.get(WorkflowNodeRun, node_run_id).status == WorkflowNodeStatus.SUCCEEDED
         assert session.query(WorkflowImageGenerationRecord).count() == 1
+
+
+def test_delivery_rendition_worker_termination_replays_one_result(
+    live_delivery_dependencies: tuple[RedisBroker, ModuleType],
+) -> None:
+    if os.getenv(LIVE_DELIVERY_RENDITION_WORKER_EFFECTS_SWITCH) != "1":
+        pytest.skip(
+            f"set {LIVE_DELIVERY_RENDITION_WORKER_EFFECTS_SWITCH}=1 to run the delivery rendition worker effect gate"
+        )
+
+    _, _ = live_delivery_dependencies
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        source, _, _ = _create_generated_source(session)
+        job = submit_delivery_rendition_job(
+            session,
+            source_asset_id=source.id,
+            delivery_spec={"width": 47, "height": 31, "format": "png", "fit": "contain"},
+        )
+        job_id = job.id
+        source_id = source.id
+        dispatch = session.scalar(
+            sa.select(AsyncDispatch).where(
+                AsyncDispatch.actor_name == "run_delivery_rendition_job",
+                AsyncDispatch.aggregate_id == job_id,
+            )
+        )
+        assert dispatch is not None
+        dispatch_id = dispatch.id
+
+    sent = run_async_dispatcher_once(enqueue=lambda *_args: None, limit=10)
+    assert sent.sent >= 1
+    with session_factory() as session:
+        persisted_dispatch = session.get(AsyncDispatch, dispatch_id)
+        assert persisted_dispatch is not None
+        assert persisted_dispatch.status.value == "sent"
+        assert persisted_dispatch.attempts == 1
+
+    marker = Path(os.environ["LOG_DIR"]) / "delivery-rendition-renderer-entered"
+    child_script = """
+import sys
+import time
+from pathlib import Path
+
+import productflow_backend.workers as workers
+from productflow_backend.application.delivery_renditions import service
+
+
+original_render = service.render_delivery_rendition
+marker = Path(sys.argv[3])
+
+
+def hold_renderer(source_bytes, delivery_spec):
+    marker.write_text("entered", encoding="utf-8")
+    time.sleep(120)
+    return original_render(source_bytes, delivery_spec)
+
+
+service.render_delivery_rendition = hold_renderer
+workers.execute_async_dispatch(sys.argv[1], sys.argv[2])
+"""
+    backend_dir = Path(__file__).resolve().parents[1]
+    first_worker = subprocess.Popen(
+        [sys.executable, "-c", child_script, dispatch_id, job_id, str(marker)],
+        cwd=backend_dir,
+        env=os.environ.copy(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    old_lease_expires_at = None
+    try:
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            with session_factory() as session:
+                persisted_dispatch = session.get(AsyncDispatch, dispatch_id)
+                persisted_job = session.get(DeliveryRenditionJob, job_id)
+                if (
+                    persisted_dispatch is not None
+                    and persisted_dispatch.lease_token is not None
+                    and persisted_job is not None
+                    and persisted_job.status == JobStatus.RUNNING
+                    and marker.exists()
+                ):
+                    old_lease_expires_at = persisted_dispatch.lease_expires_at
+                    break
+            if first_worker.poll() is not None:
+                output, _ = first_worker.communicate(timeout=2)
+                pytest.fail(f"rendition worker exited before renderer started: {output!r}")
+            time.sleep(0.05)
+
+        assert old_lease_expires_at is not None
+        first_worker.kill()
+        first_worker.communicate(timeout=10)
+        first_worker = None
+    finally:
+        if first_worker is not None and first_worker.poll() is None:
+            first_worker.kill()
+            first_worker.communicate(timeout=10)
+
+    with session_factory() as session:
+        persisted_job = session.get(DeliveryRenditionJob, job_id)
+        assert persisted_job is not None
+        persisted_job.started_at = datetime.now(UTC) - timedelta(hours=1)
+        session.commit()
+
+    recovery = recover_unfinished_delivery_rendition_jobs(
+        stage_dispatch=lambda session, target_id: stage_async_dispatch_for_actor(
+            session,
+            "run_delivery_rendition_job",
+            target_id,
+        ),
+        reset_stale_running=True,
+        stale_running_after=timedelta(minutes=30),
+    )
+    assert recovery.stale_running_jobs == 1
+    resent = run_async_dispatcher_once(
+        enqueue=lambda *_args: None,
+        now=old_lease_expires_at + timedelta(seconds=1),
+        limit=10,
+    )
+    assert resent.reconciled >= 1
+    with session_factory() as session:
+        persisted_dispatch = session.get(AsyncDispatch, dispatch_id)
+        assert persisted_dispatch is not None
+        assert persisted_dispatch.status.value == "sent"
+        assert persisted_dispatch.attempts == 2
+
+    replay_script = """
+import sys
+
+import productflow_backend.workers as workers
+
+
+workers.execute_async_dispatch(sys.argv[1], sys.argv[2])
+"""
+    second_worker = subprocess.Popen(
+        [sys.executable, "-c", replay_script, dispatch_id, job_id],
+        cwd=backend_dir,
+        env=os.environ.copy(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            with session_factory() as session:
+                persisted_dispatch = session.get(AsyncDispatch, dispatch_id)
+                persisted_job = session.get(DeliveryRenditionJob, job_id)
+                if (
+                    persisted_dispatch is not None
+                    and persisted_dispatch.status.value == "consumed"
+                    and persisted_job is not None
+                    and persisted_job.status == JobStatus.SUCCEEDED
+                ):
+                    break
+            if second_worker.poll() is not None:
+                output, _ = second_worker.communicate(timeout=2)
+                pytest.fail(f"replayed rendition worker exited before completion: {output!r}")
+            time.sleep(0.05)
+        else:
+            pytest.fail("replayed rendition worker did not complete before timeout")
+        second_worker.communicate(timeout=10)
+        second_worker = None
+    finally:
+        if second_worker is not None and second_worker.poll() is None:
+            second_worker.kill()
+            second_worker.communicate(timeout=10)
+
+    with session_factory() as session:
+        persisted_dispatch = session.get(AsyncDispatch, dispatch_id)
+        persisted_job = session.get(DeliveryRenditionJob, job_id)
+        assert persisted_dispatch is not None
+        assert persisted_dispatch.attempts == 2
+        assert persisted_dispatch.status.value == "consumed"
+        assert persisted_job is not None
+        assert persisted_job.attempts == 2
+        assert persisted_job.status == JobStatus.SUCCEEDED
+        assert persisted_job.result_asset_id is not None
+        assert (
+            session.scalar(
+                sa.select(sa.func.count())
+                .select_from(ProductImageAsset)
+                .where(ProductImageAsset.parent_asset_id == source_id)
+            )
+            == 1
+        )
 
 
 def test_delivery_rendition_claim_recovery_retry_and_attempt_fencing_on_postgres(

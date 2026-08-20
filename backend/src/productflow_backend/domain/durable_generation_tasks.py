@@ -8,6 +8,17 @@ from typing import Any
 from productflow_backend.domain.enums import JobStatus, WorkflowNodeStatus, WorkflowRunStatus
 
 QUEUE_UNAVAILABLE_DETAIL = "任务队列暂不可用，请稍后重试"
+WORKFLOW_PROVIDER_EFFECT_SAFE_REQUEUE_PHASES = frozenset({"claimed", "prepared"})
+WORKFLOW_PROVIDER_EFFECT_CALL_PHASE = "provider_call"
+WORKFLOW_PROVIDER_EFFECT_RESULT_PHASE = "provider_result_received"
+WORKFLOW_PROVIDER_EFFECT_UNKNOWN_DETAIL = (
+    "工作流供应商请求结果未知，系统未自动重试。请检查供应商记录后重新发起工作流。"
+)
+WORKFLOW_PROVIDER_EFFECT_UNKNOWN_PHASE = "unknown_provider_effect"
+IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL = (
+    "图片供应商请求结果未知，系统未自动重试。请检查供应商记录后重新发起生成。"
+)
+IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_PHASE = "unknown_provider_effect"
 
 
 class WorkflowRunDeliveryState(StrEnum):
@@ -73,7 +84,12 @@ WORKFLOW_RUN_GENERATION_TASK_CONTRACT = DurableGenerationTaskContract(
     active_statuses=(WorkflowRunStatus.RUNNING,),
     queued_statuses=(),
     running_statuses=(WorkflowRunStatus.RUNNING,),
-    terminal_statuses=(WorkflowRunStatus.SUCCEEDED, WorkflowRunStatus.FAILED, WorkflowRunStatus.CANCELLED),
+    terminal_statuses=(
+        WorkflowRunStatus.SUCCEEDED,
+        WorkflowRunStatus.FAILED,
+        WorkflowRunStatus.CANCELLED,
+        WorkflowRunStatus.UNKNOWN,
+    ),
     execution_queued_statuses=(WorkflowNodeStatus.QUEUED,),
     execution_running_statuses=(WorkflowNodeStatus.RUNNING,),
     status_snapshot_source="ProductWorkflowStatusSnapshot",
@@ -87,7 +103,7 @@ IMAGE_SESSION_GENERATION_TASK_CONTRACT = DurableGenerationTaskContract(
     active_statuses=(JobStatus.QUEUED, JobStatus.RUNNING),
     queued_statuses=(JobStatus.QUEUED,),
     running_statuses=(JobStatus.RUNNING,),
-    terminal_statuses=(JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.CANCELLED),
+    terminal_statuses=(JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.UNKNOWN, JobStatus.CANCELLED),
     execution_queued_statuses=(JobStatus.QUEUED,),
     execution_running_statuses=(JobStatus.RUNNING,),
     status_snapshot_source="ImageSessionStatusSnapshot",

@@ -2,24 +2,49 @@ from __future__ import annotations
 
 import importlib
 import os
+import signal
+import socket
+import subprocess
 import sys
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Event
 from types import ModuleType
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import uuid4
 
+import dramatiq
 import pytest
 from dramatiq.brokers.redis import RedisBroker
+from dramatiq.message import Message
+from dramatiq.worker import Worker
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.engine import URL, make_url
 
+from productflow_backend.application.agent_conversations import reserve_agent_turn
+from productflow_backend.application.agent_sessions import create_agent_session
+from productflow_backend.application.agent_sync import recover_unfinished_agent_turn_syncs
+from productflow_backend.application.async_delivery import (
+    claim_async_dispatch_for_consumption,
+    mark_async_dispatch_consumed,
+    run_async_dispatcher_once,
+    stage_async_dispatch_for_actor,
+)
 from productflow_backend.application.durable_recovery import recover_unfinished_workflow_runs
 from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.config import get_settings
-from productflow_backend.domain.enums import WorkflowNodeStatus, WorkflowNodeType, WorkflowRunStatus
+from productflow_backend.domain.enums import (
+    AsyncDispatchStatus,
+    WorkflowNodeStatus,
+    WorkflowNodeType,
+    WorkflowRunStatus,
+)
 from productflow_backend.infrastructure.db.models import (
+    AgentTurnProjection,
+    AsyncDispatch,
     Base,
     Product,
     ProductWorkflow,
@@ -28,9 +53,12 @@ from productflow_backend.infrastructure.db.models import (
     WorkflowRun,
 )
 from productflow_backend.infrastructure.db.session import get_engine, get_session_factory
-from productflow_backend.infrastructure.queue import enqueue_workflow_run, get_broker
+from productflow_backend.infrastructure.queue import enqueue_async_dispatch, enqueue_workflow_run, get_broker
 
 LIVE_RECOVERY_SWITCH = "PRODUCTFLOW_RUN_LIVE_RECOVERY"
+LIVE_REDIS_RESTART_SWITCH = "PRODUCTFLOW_RUN_LIVE_AGENT_REDIS_RESTART"
+LIVE_REDIS_CONNECTION_SWITCH = "PRODUCTFLOW_RUN_LIVE_AGENT_REDIS_CONNECTION"
+LIVE_DISPATCHER_WATCH_SWITCH = "PRODUCTFLOW_RUN_LIVE_AGENT_DISPATCHER_WATCH"
 WORKERS_MODULE = "productflow_backend.workers"
 REDIS_TEST_DATABASE = 15
 
@@ -56,6 +84,31 @@ def _redis_url_for_database(base_url: str, database: int) -> str:
         pytest.fail("REDIS_URL must use redis:// or rediss:// for the live recovery gate", pytrace=False)
     query = urlencode([(key, value) for key, value in parse_qsl(parsed.query) if key != "db"])
     return urlunsplit(parsed._replace(path=f"/{database}", query=query))
+
+
+def _unused_tcp_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        return int(listener.getsockname()[1])
+
+
+def _compose(*arguments: str) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    subprocess.run(
+        ["bash", "scripts/with_dev_env.sh", "docker", "compose", *arguments],
+        cwd=repo_root,
+        check=True,
+        timeout=90,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _restart_redis_service() -> None:
+    try:
+        _compose("restart", "productflow-redis")
+    finally:
+        _compose("up", "-d", "--wait", "productflow-redis")
 
 
 @contextmanager
@@ -218,6 +271,434 @@ def test_recover_queued_workflow_run_through_postgres_and_redis(
         broker.join(workers.run_product_workflow_run.queue_name, timeout=5_000)
     finally:
         consumer.close()
+
+
+def test_recover_queued_agent_turn_sync_through_postgres_and_redis(
+    live_recovery_dependencies: tuple[RedisBroker, ModuleType],
+) -> None:
+    broker, workers = live_recovery_dependencies
+    session_factory = get_session_factory()
+
+    with session_factory() as session:
+        agent_session = create_agent_session(session, title="Live Agent recovery gate")
+        conversation = agent_session.conversations[0]
+        reservation = reserve_agent_turn(
+            session,
+            product_id=None,
+            conversation_id=conversation.id,
+            input_text="验证 Agent Turn durable recovery 投递",
+            input_asset_ids=[],
+            idempotency_key=f"live-agent-recovery-turn-{uuid4().hex}",
+        )
+        projection_id = reservation.projection.id
+
+    recovery = recover_unfinished_agent_turn_syncs(
+        stage_dispatch=lambda session, target_id: stage_async_dispatch_for_actor(
+            session,
+            "run_agent_turn_sync",
+            target_id,
+        )
+    )
+
+    assert recovery.pending_turns == 1
+    assert recovery.enqueued_turns == 1
+    with session_factory() as session:
+        dispatch = session.scalar(
+            select(AsyncDispatch).where(
+                AsyncDispatch.actor_name == "run_agent_turn_sync",
+                AsyncDispatch.aggregate_id == projection_id,
+            )
+        )
+        projection = session.get(AgentTurnProjection, projection_id)
+        assert dispatch is not None
+        assert projection is not None
+        assert dispatch.status.value == "pending"
+        assert projection.status.value == "queued"
+        dispatch_id = dispatch.id
+
+    dispatched = run_async_dispatcher_once(enqueue=enqueue_async_dispatch, limit=10)
+
+    assert dispatched.sent == 1
+    consumer = broker.consume(workers.run_async_dispatch.queue_name, prefetch=1, timeout=5_000)
+    try:
+        message = next(consumer)
+        assert message is not None
+        assert message.actor_name == "run_async_dispatch"
+        assert message.args == (dispatch_id, projection_id)
+        assert message.kwargs == {}
+        consumer.ack(message)
+        broker.join(workers.run_async_dispatch.queue_name, timeout=5_000)
+    finally:
+        consumer.close()
+
+    with session_factory() as session:
+        persisted = session.get(AsyncDispatch, dispatch_id)
+        assert persisted is not None
+        assert persisted.status.value == "sent"
+
+
+def test_redis_publish_failure_reconciles_from_postgres_before_resend(
+    live_recovery_dependencies: tuple[RedisBroker, ModuleType],
+) -> None:
+    broker, workers = live_recovery_dependencies
+    session_factory = get_session_factory()
+    aggregate_id = "live-redis-outage-agent-turn"
+
+    with session_factory() as session:
+        dispatch = stage_async_dispatch_for_actor(session, "run_agent_turn_sync", aggregate_id)
+        session.commit()
+        dispatch_id = dispatch.id
+
+    unavailable_broker = RedisBroker(url=f"redis://127.0.0.1:{_unused_tcp_port()}/{REDIS_TEST_DATABASE}")
+    try:
+        failed = run_async_dispatcher_once(
+            enqueue=lambda current_dispatch_id, current_aggregate_id: unavailable_broker.enqueue(
+                Message(
+                    queue_name=workers.run_async_dispatch.queue_name,
+                    actor_name="run_async_dispatch",
+                    args=(current_dispatch_id, current_aggregate_id),
+                    kwargs={},
+                    options={},
+                )
+            ),
+            limit=10,
+        )
+    finally:
+        unavailable_broker.client.connection_pool.disconnect()
+
+    assert failed.pending == 1
+    assert failed.sent == 0
+    with session_factory() as session:
+        persisted = session.get(AsyncDispatch, dispatch_id)
+        assert persisted is not None
+        assert persisted.status.value == "sent"
+        assert persisted.attempts == 1
+        assert persisted.last_error
+        assert persisted.sent_at is not None
+        stale_at = persisted.sent_at + timedelta(minutes=6)
+
+    recovered = run_async_dispatcher_once(
+        enqueue=enqueue_async_dispatch,
+        now=stale_at,
+        limit=10,
+    )
+    assert recovered.reconciled >= 1
+    assert recovered.sent == 1
+
+    with session_factory() as session:
+        persisted = session.get(AsyncDispatch, dispatch_id)
+        assert persisted is not None
+        assert persisted.status.value == "sent"
+        assert persisted.attempts == 2
+
+    consumer = broker.consume(workers.run_async_dispatch.queue_name, prefetch=1, timeout=5_000)
+    try:
+        message = next(consumer)
+        assert message is not None
+        assert message.actor_name == "run_async_dispatch"
+        assert message.args == (dispatch_id, aggregate_id)
+        consumer.ack(message)
+        broker.join(workers.run_async_dispatch.queue_name, timeout=5_000)
+    finally:
+        consumer.close()
+
+
+def test_redis_server_restart_preserves_async_dispatch_delivery(
+    live_recovery_dependencies: tuple[RedisBroker, ModuleType],
+) -> None:
+    if os.getenv(LIVE_REDIS_RESTART_SWITCH) != "1":
+        pytest.skip(f"set {LIVE_REDIS_RESTART_SWITCH}=1 to run the Redis server restart gate")
+
+    broker, workers = live_recovery_dependencies
+    session_factory = get_session_factory()
+    aggregate_id = "live-redis-server-restart-agent-turn"
+
+    with session_factory() as session:
+        dispatch = stage_async_dispatch_for_actor(session, "run_agent_turn_sync", aggregate_id)
+        session.commit()
+        dispatch_id = dispatch.id
+
+    sent = run_async_dispatcher_once(enqueue=enqueue_async_dispatch, limit=10)
+    assert sent.sent == 1
+    with session_factory() as session:
+        persisted = session.get(AsyncDispatch, dispatch_id)
+        assert persisted is not None
+        assert persisted.status.value == "sent"
+        assert persisted.attempts == 1
+
+    _restart_redis_service()
+    assert broker.client.ping() is True
+
+    consumer = broker.consume(workers.run_async_dispatch.queue_name, prefetch=1, timeout=5_000)
+    try:
+        message = next(consumer)
+        assert message is not None
+        assert message.actor_name == "run_async_dispatch"
+        assert message.args == (dispatch_id, aggregate_id)
+        consumer.ack(message)
+        broker.join(workers.run_async_dispatch.queue_name, timeout=5_000)
+    finally:
+        consumer.close()
+
+    with session_factory() as session:
+        lease_token = claim_async_dispatch_for_consumption(
+            session,
+            dispatch_id=dispatch_id,
+            aggregate_id=aggregate_id,
+        )
+        assert lease_token is not None
+        assert mark_async_dispatch_consumed(
+            session,
+            dispatch_id=dispatch_id,
+            aggregate_id=aggregate_id,
+            lease_token=lease_token,
+        )
+        session.commit()
+        persisted = session.get(AsyncDispatch, dispatch_id)
+        assert persisted is not None
+        assert persisted.status.value == "consumed"
+
+
+def test_dramatiq_worker_reconnects_after_redis_connection_interruption(
+    live_recovery_dependencies: tuple[RedisBroker, ModuleType],
+) -> None:
+    if os.getenv(LIVE_REDIS_CONNECTION_SWITCH) != "1":
+        pytest.skip(f"set {LIVE_REDIS_CONNECTION_SWITCH}=1 to run the Redis connection interruption gate")
+
+    broker, _ = live_recovery_dependencies
+    before_restart = Event()
+    after_restart = Event()
+    received: list[str] = []
+
+    @dramatiq.actor(queue_name="default", max_retries=0)
+    def reconnect_probe(marker: str) -> None:
+        received.append(marker)
+        if marker == "before-restart":
+            before_restart.set()
+        elif marker == "after-restart":
+            after_restart.set()
+
+    worker = Worker(broker, worker_threads=1, worker_timeout=100)
+    worker.start()
+    try:
+        reconnect_probe.send("before-restart")
+        assert before_restart.wait(timeout=10), f"worker did not consume the pre-restart message: {received!r}"
+
+        _restart_redis_service()
+
+        reconnect_probe.send("after-restart")
+        assert after_restart.wait(timeout=15), f"worker did not recover after Redis restart: {received!r}"
+    finally:
+        worker.stop(timeout=15_000)
+
+    assert received == ["before-restart", "after-restart"]
+
+
+def test_resident_dispatcher_reconciles_and_republishes_stale_dispatch(
+    live_recovery_dependencies: tuple[RedisBroker, ModuleType],
+) -> None:
+    if os.getenv(LIVE_DISPATCHER_WATCH_SWITCH) != "1":
+        pytest.skip(f"set {LIVE_DISPATCHER_WATCH_SWITCH}=1 to run the resident dispatcher gate")
+
+    broker, workers = live_recovery_dependencies
+    session_factory = get_session_factory()
+    aggregate_id = "live-resident-dispatcher-agent-turn"
+    stale_sent_at = datetime.now(UTC) - timedelta(minutes=6)
+
+    with session_factory() as session:
+        dispatch = stage_async_dispatch_for_actor(session, "run_agent_turn_sync", aggregate_id)
+        dispatch.status = AsyncDispatchStatus.SENT
+        dispatch.attempts = 1
+        dispatch.sent_at = stale_sent_at
+        dispatch.lease_token = None
+        dispatch.lease_expires_at = None
+        dispatch.updated_at = stale_sent_at
+        session.commit()
+        dispatch_id = dispatch.id
+
+    consumer = broker.consume(workers.run_async_dispatch.queue_name, prefetch=1, timeout=1_000)
+    backend_dir = Path(__file__).resolve().parents[1]
+    child = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "productflow_backend.commands.run_async_dispatcher",
+            "--watch",
+            "--interval",
+            "0.1",
+            "--limit",
+            "10",
+        ],
+        cwd=backend_dir,
+        env=os.environ.copy(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        message = None
+        deadline = time.monotonic() + 20
+        while message is None and time.monotonic() < deadline:
+            message = next(consumer)
+            if message is None and child.poll() is not None:
+                stdout, stderr = child.communicate(timeout=2)
+                pytest.fail(
+                    "resident dispatcher exited before publishing a recovered dispatch: "
+                    f"returncode={child.returncode} stdout={stdout[-4000:]!r} stderr={stderr[-4000:]!r}"
+                )
+        if message is None:
+            child.send_signal(signal.SIGTERM)
+            child.wait(timeout=10)
+            stdout, stderr = child.communicate(timeout=2)
+            pytest.fail(
+                "resident dispatcher did not publish a recovered dispatch: "
+                f"returncode={child.returncode} stdout={stdout[-4000:]!r} stderr={stderr[-4000:]!r}"
+            )
+        assert message.actor_name == "run_async_dispatch"
+        assert message.args == (dispatch_id, aggregate_id)
+        consumer.ack(message)
+        with session_factory() as session:
+            persisted = session.get(AsyncDispatch, dispatch_id)
+            assert persisted is not None
+            assert persisted.status == AsyncDispatchStatus.SENT
+            assert persisted.attempts == 2
+        child.send_signal(signal.SIGTERM)
+        child.wait(timeout=10)
+        stdout, stderr = child.communicate(timeout=2)
+        assert child.returncode == 0, f"resident dispatcher failed: stdout={stdout!r} stderr={stderr!r}"
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait(timeout=10)
+        consumer.close()
+
+
+def test_worker_termination_reconciles_consumer_lease_before_redelivery(
+    live_recovery_dependencies: tuple[RedisBroker, ModuleType],
+) -> None:
+    broker, workers = live_recovery_dependencies
+    session_factory = get_session_factory()
+    aggregate_id = "live-worker-termination-agent-turn"
+
+    with session_factory() as session:
+        dispatch = stage_async_dispatch_for_actor(session, "run_agent_turn_sync", aggregate_id)
+        session.commit()
+        dispatch_id = dispatch.id
+
+    sent = run_async_dispatcher_once(enqueue=enqueue_async_dispatch, limit=10)
+    assert sent.sent == 1
+
+    consumer = broker.consume(workers.run_async_dispatch.queue_name, prefetch=1, timeout=5_000)
+    message = next(consumer)
+    assert message is not None
+    assert message.actor_name == "run_async_dispatch"
+    assert message.args == (dispatch_id, aggregate_id)
+
+    child_script = """
+import sys
+import time
+
+import productflow_backend.workers as workers
+
+
+def hold_target(_actor_name, _aggregate_id):
+    time.sleep(120)
+
+
+workers._execute_async_dispatch_target = hold_target
+workers.execute_async_dispatch(sys.argv[1], sys.argv[2])
+"""
+    child = subprocess.Popen(
+        [sys.executable, "-c", child_script, dispatch_id, aggregate_id],
+        cwd=Path(__file__).resolve().parents[1],
+        env=os.environ.copy(),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    old_lease_token: str | None = None
+    old_lease_expires_at = None
+    try:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            with session_factory() as session:
+                persisted = session.get(AsyncDispatch, dispatch_id)
+                if persisted is not None and persisted.lease_token is not None:
+                    old_lease_token = persisted.lease_token
+                    old_lease_expires_at = persisted.lease_expires_at
+                    break
+            if child.poll() is not None:
+                stdout, stderr = child.communicate(timeout=2)
+                pytest.fail(f"worker child exited before claiming dispatch: stdout={stdout!r} stderr={stderr!r}")
+            time.sleep(0.05)
+        assert old_lease_token is not None
+        assert old_lease_expires_at is not None
+        child.kill()
+        child.wait(timeout=10)
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait(timeout=10)
+        consumer.ack(message)
+        broker.join(workers.run_async_dispatch.queue_name, timeout=5_000)
+        consumer.close()
+
+    with session_factory() as session:
+        persisted = session.get(AsyncDispatch, dispatch_id)
+        assert persisted is not None
+        assert persisted.status.value == "sent"
+        assert persisted.lease_token == old_lease_token
+
+    recovered = run_async_dispatcher_once(
+        enqueue=enqueue_async_dispatch,
+        now=old_lease_expires_at + timedelta(seconds=1),
+        limit=10,
+    )
+    assert recovered.reconciled >= 1
+    assert recovered.sent == 1
+
+    with session_factory() as session:
+        assert (
+            mark_async_dispatch_consumed(
+                session,
+                dispatch_id=dispatch_id,
+                aggregate_id=aggregate_id,
+                lease_token=old_lease_token,
+            )
+            is False
+        )
+        session.rollback()
+        persisted = session.get(AsyncDispatch, dispatch_id)
+        assert persisted is not None
+        assert persisted.status.value == "sent"
+        assert persisted.attempts == 2
+
+    recovered_consumer = broker.consume(workers.run_async_dispatch.queue_name, prefetch=1, timeout=5_000)
+    recovered_message = next(recovered_consumer)
+    assert recovered_message is not None
+    assert recovered_message.actor_name == "run_async_dispatch"
+    assert recovered_message.args == (dispatch_id, aggregate_id)
+    recovered_consumer.ack(recovered_message)
+    broker.join(workers.run_async_dispatch.queue_name, timeout=5_000)
+    recovered_consumer.close()
+
+    with session_factory() as session:
+        new_lease_token = claim_async_dispatch_for_consumption(
+            session,
+            dispatch_id=dispatch_id,
+            aggregate_id=aggregate_id,
+        )
+        assert new_lease_token is not None
+        assert mark_async_dispatch_consumed(
+            session,
+            dispatch_id=dispatch_id,
+            aggregate_id=aggregate_id,
+            lease_token=new_lease_token,
+        )
+        session.commit()
+        persisted = session.get(AsyncDispatch, dispatch_id)
+        assert persisted is not None
+        assert persisted.status.value == "consumed"
 
 
 def test_runtime_settings_fallback_preserves_postgres_transaction(

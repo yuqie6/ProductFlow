@@ -12,6 +12,11 @@ from productflow_backend.application.runtime_settings import get_runtime_setting
 from productflow_backend.domain.durable_generation_tasks import (
     DELIVERY_RENDITION_TASK_CONTRACT,
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
+    IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL,
+    IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_PHASE,
+    WORKFLOW_PROVIDER_EFFECT_SAFE_REQUEUE_PHASES,
+    WORKFLOW_PROVIDER_EFFECT_UNKNOWN_DETAIL,
+    WORKFLOW_PROVIDER_EFFECT_UNKNOWN_PHASE,
     WORKFLOW_RUN_GENERATION_TASK_CONTRACT,
     WorkflowRunDeliveryState,
     classify_workflow_run_delivery,
@@ -20,6 +25,7 @@ from productflow_backend.domain.enums import JobStatus, WorkflowNodeStatus
 from productflow_backend.infrastructure.db.models import (
     DeliveryRenditionJob,
     ImageSessionGenerationTask,
+    ImageSessionProviderEffect,
     WorkflowRun,
     utcnow,
 )
@@ -47,6 +53,7 @@ class WorkflowRunRecoverySummary:
     queued_runs: int = 0
     stale_running_runs: int = 0
     enqueued_runs: int = 0
+    unknown_runs: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +63,7 @@ class ImageSessionGenerationTaskRecoverySummary:
     queued_tasks: int = 0
     stale_running_tasks: int = 0
     enqueued_tasks: int = 0
+    unknown_tasks: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,13 +87,17 @@ def recover_unfinished_workflow_runs(
     `running`，只有 worker 启动并且节点运行超过 stale cutoff 时才把这些节点重置为 `queued` 再补发。
     """
 
-    from productflow_backend.application.product_workflow.run_state import lock_workflow_run_aggregate
+    from productflow_backend.application.product_workflow.run_state import (
+        _apply_workflow_run_unknown,
+        lock_workflow_run_aggregate,
+    )
 
     cutoff = utcnow() - stale_running_after
     session = get_session_factory()()
     runs_to_enqueue: list[str] = []
     queued_runs = 0
     stale_running_runs = 0
+    unknown_runs = 0
 
     try:
         runs = list(
@@ -136,7 +148,10 @@ def recover_unfinished_workflow_runs(
             ]
             if not reset_stale_running or not stale_node_runs:
                 continue
-            locked_run, locked_node_runs, locked_nodes, _ = lock_workflow_run_aggregate(session, run_id=run_id)
+            locked_run, locked_node_runs, locked_nodes, locked_workflow = lock_workflow_run_aggregate(
+                session,
+                run_id=run_id,
+            )
             if locked_run is None:
                 session.rollback()
                 continue
@@ -157,6 +172,35 @@ def recover_unfinished_workflow_runs(
                 session.rollback()
                 continue
             nodes_by_id = {node.id: node for node in locked_nodes}
+            unknown_node_runs = [
+                node_run
+                for node_run in locked_stale_node_runs
+                if node_run.progress_phase not in WORKFLOW_PROVIDER_EFFECT_SAFE_REQUEUE_PHASES
+            ]
+            if unknown_node_runs:
+                unknown_node_run = sorted(unknown_node_runs, key=lambda item: (item.node_id, item.id))[0]
+                observed_phase = unknown_node_run.progress_phase
+                current_metadata = (
+                    unknown_node_run.progress_metadata if isinstance(unknown_node_run.progress_metadata, dict) else {}
+                )
+                _apply_workflow_run_unknown(
+                    session,
+                    persisted_run=locked_run,
+                    node_runs=locked_node_runs,
+                    nodes=locked_nodes,
+                    workflow=locked_workflow,
+                    unknown_node_id=unknown_node_run.node_id,
+                    reason=WORKFLOW_PROVIDER_EFFECT_UNKNOWN_DETAIL,
+                    metadata={
+                        "attempt_id": unknown_node_run.active_attempt_id,
+                        "observed_phase": observed_phase,
+                        "effect_operation_key": current_metadata.get("effect_operation_key"),
+                        "progress_phase": WORKFLOW_PROVIDER_EFFECT_UNKNOWN_PHASE,
+                    },
+                    commit=True,
+                )
+                unknown_runs += 1
+                continue
             reset_succeeded = True
             for stale_node_run in sorted(locked_stale_node_runs, key=lambda item: (item.node_id, item.id)):
                 if stale_node_run.active_attempt_id is None:
@@ -166,6 +210,7 @@ def recover_unfinished_workflow_runs(
                 stale_node_run.active_attempt_id = None
                 stale_node_run.failure_reason = None
                 stale_node_run.finished_at = None
+                stale_node_run.progress_phase = "requeued_after_idle"
                 node = nodes_by_id.get(stale_node_run.node_id)
                 if node is not None and WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_running(node.status):
                     node.status = WorkflowNodeStatus.QUEUED
@@ -197,17 +242,19 @@ def recover_unfinished_workflow_runs(
             except Exception:
                 logger.exception("恢复滞留工作流运行入队失败: workflow_run_id=%s", run_id)
 
-    if runs_to_enqueue:
+    if runs_to_enqueue or unknown_runs:
         logger.info(
-            "已恢复滞留工作流运行: queued=%s stale_running=%s enqueued=%s",
+            "已恢复滞留工作流运行: queued=%s stale_running=%s unknown=%s enqueued=%s",
             queued_runs,
             stale_running_runs,
+            unknown_runs,
             enqueued_runs,
         )
     return WorkflowRunRecoverySummary(
         queued_runs=queued_runs,
         stale_running_runs=stale_running_runs,
         enqueued_runs=enqueued_runs,
+        unknown_runs=unknown_runs,
     )
 
 
@@ -228,6 +275,7 @@ def recover_unfinished_image_session_generation_tasks(
     task_ids_to_enqueue: list[str] = []
     queued_tasks = 0
     stale_running_tasks = 0
+    unknown_tasks = 0
 
     try:
         last_progress_at = func.coalesce(
@@ -253,21 +301,66 @@ def recover_unfinished_image_session_generation_tasks(
                 if observed_attempt_id is None:
                     continue
                 now = utcnow()
+                safe_requeue_phases = {"running", "candidate_saved"}
+                next_candidate_index = task.completed_candidates + 1
+                has_unmaterialized_provider_effect = session.scalar(
+                    select(ImageSessionProviderEffect.id)
+                    .where(
+                        ImageSessionProviderEffect.generation_task_id == task.id,
+                        ImageSessionProviderEffect.effect_result.in_(
+                            ("pending", "applied", "unknown")
+                        ),
+                        ImageSessionProviderEffect.candidate_start_index <= next_candidate_index,
+                        (
+                            ImageSessionProviderEffect.candidate_start_index
+                            + ImageSessionProviderEffect.candidate_count
+                            - 1
+                        )
+                        >= next_candidate_index,
+                    )
+                    .limit(1)
+                ) is not None
+                provider_effect_unknown = (
+                    task.active_candidate_index is not None
+                    or task.progress_phase not in safe_requeue_phases
+                    or has_unmaterialized_provider_effect
+                )
                 values: dict[str, object]
-                if task.completed_candidates:
+                if provider_effect_unknown:
+                    metadata = dict(task.progress_metadata) if isinstance(task.progress_metadata, dict) else {}
+                    metadata["unknown_provider_effect"] = {
+                        "attempt_id": observed_attempt_id,
+                        "active_candidate_index": task.active_candidate_index,
+                        "observed_phase": task.progress_phase,
+                        "next_candidate_index": next_candidate_index,
+                        "has_unmaterialized_provider_effect": has_unmaterialized_provider_effect,
+                    }
                     values = {
-                        "status": JobStatus.FAILED,
+                        "status": JobStatus.UNKNOWN,
                         "active_attempt_id": None,
                         "finished_at": now,
                         "is_retryable": False,
                         "active_candidate_index": None,
-                        "progress_phase": "failed_idle_timeout",
+                        "progress_phase": IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_PHASE,
                         "progress_updated_at": now,
-                        "failure_reason": (
-                            f"已生成 {task.completed_candidates}/{task.generation_count} 张候选，"
-                            "但任务超时，剩余候选未完成。"
-                        ),
+                        "failure_reason": IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL,
+                        "progress_metadata": metadata,
                     }
+                    session.execute(
+                        update(ImageSessionProviderEffect)
+                        .where(
+                            ImageSessionProviderEffect.generation_task_id == task.id,
+                            ImageSessionProviderEffect.attempt_id == observed_attempt_id,
+                            ImageSessionProviderEffect.effect_result == "pending",
+                        )
+                        .values(
+                            effect_result="unknown",
+                            reconciliation_state="unknown",
+                            detail=IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL,
+                            updated_at=now,
+                        )
+                        .execution_options(synchronize_session=False)
+                    )
                 else:
                     values = {
                         "status": JobStatus.QUEUED,
@@ -295,13 +388,16 @@ def recover_unfinished_image_session_generation_tasks(
                     if stage_dispatch is None:
                         session.rollback()
                     continue
-                if not task.completed_candidates:
+                if provider_effect_unknown:
+                    unknown_tasks += 1
+                else:
+                    stale_running_tasks += 1
+                if not provider_effect_unknown:
                     task_ids_to_enqueue.append(task.id)
                     if stage_dispatch is not None:
                         stage_dispatch(session, task.id)
                 if stage_dispatch is None:
                     session.commit()
-                stale_running_tasks += 1
             else:
                 queued_tasks += 1
                 task_ids_to_enqueue.append(task.id)
@@ -327,17 +423,19 @@ def recover_unfinished_image_session_generation_tasks(
             except Exception:
                 logger.exception("恢复滞留连续生图任务入队失败: task_id=%s", task_id)
 
-    if task_ids_to_enqueue:
+    if task_ids_to_enqueue or unknown_tasks:
         logger.info(
-            "已恢复滞留连续生图任务: queued=%s stale_running=%s enqueued=%s",
+            "已恢复滞留连续生图任务: queued=%s stale_running=%s unknown=%s enqueued=%s",
             queued_tasks,
             stale_running_tasks,
+            unknown_tasks,
             enqueued_tasks,
         )
     return ImageSessionGenerationTaskRecoverySummary(
         queued_tasks=queued_tasks,
         stale_running_tasks=stale_running_tasks,
         enqueued_tasks=enqueued_tasks,
+        unknown_tasks=unknown_tasks,
     )
 
 

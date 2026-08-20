@@ -8,9 +8,13 @@ from sqlalchemy import select
 from productflow_backend.application.async_delivery import delivery_key_for_actor, stage_async_dispatch
 from productflow_backend.application.durable_recovery import recover_unfinished_image_session_generation_tasks
 from productflow_backend.application.image_sessions import create_image_session, create_image_session_generation_task
-from productflow_backend.domain.durable_generation_tasks import IMAGE_SESSION_GENERATION_TASK_CONTRACT
+from productflow_backend.domain.durable_generation_tasks import (
+    IMAGE_SESSION_GENERATION_TASK_CONTRACT,
+    IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL,
+    IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_PHASE,
+)
 from productflow_backend.domain.enums import JobStatus
-from productflow_backend.infrastructure.db.models import AppSetting, AsyncDispatch
+from productflow_backend.infrastructure.db.models import AppSetting, AsyncDispatch, ImageSessionProviderEffect
 
 
 def test_recover_unfinished_image_session_generation_tasks_requeues_queued_tasks(
@@ -82,6 +86,7 @@ def test_recover_unfinished_image_session_generation_tasks_resets_stale_running_
     result.task.active_attempt_id = "stale-running-attempt"
     result.task.started_at = datetime.now(UTC) - timedelta(hours=2)
     result.task.progress_updated_at = datetime.now(UTC) - timedelta(hours=2)
+    result.task.progress_phase = "running"
     db_session.commit()
     sent: list[str] = []
     summary = recover_unfinished_image_session_generation_tasks(
@@ -132,7 +137,7 @@ def test_recover_unfinished_image_session_generation_tasks_uses_progress_heartbe
     assert result.task.active_attempt_id == "fresh-heartbeat-attempt"
 
 
-def test_recover_unfinished_image_session_generation_tasks_fails_stale_partial_task(
+def test_recover_unfinished_image_session_generation_tasks_marks_provider_effect_unknown(
     db_session,
     configured_env: Path,
 ) -> None:
@@ -150,6 +155,8 @@ def test_recover_unfinished_image_session_generation_tasks_fails_stale_partial_t
     result.task.progress_updated_at = datetime.now(UTC) - timedelta(hours=2)
     result.task.completed_candidates = 1
     result.task.result_generation_group_id = "group-partial"
+    result.task.progress_phase = "provider_polling"
+    result.task.active_candidate_index = 2
     db_session.commit()
     sent: list[str] = []
     summary = recover_unfinished_image_session_generation_tasks(
@@ -160,14 +167,87 @@ def test_recover_unfinished_image_session_generation_tasks_fails_stale_partial_t
     db_session.refresh(result.task)
 
     assert summary.queued_tasks == 0
-    assert summary.stale_running_tasks == 1
+    assert summary.stale_running_tasks == 0
     assert summary.enqueued_tasks == 0
+    assert summary.unknown_tasks == 1
     assert sent == []
-    assert result.task.status == JobStatus.FAILED
+    assert result.task.status == JobStatus.UNKNOWN
     assert result.task.active_attempt_id is None
     assert result.task.is_retryable is False
-    assert result.task.failure_reason == "已生成 1/2 张候选，但任务超时，剩余候选未完成。"
-    assert result.task.progress_phase == "failed_idle_timeout"
+    assert result.task.failure_reason == IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL
+    assert result.task.progress_phase == IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_PHASE
+    assert result.task.progress_metadata == {
+        "unknown_provider_effect": {
+            "attempt_id": "stale-running-attempt",
+            "active_candidate_index": 2,
+            "observed_phase": "provider_polling",
+            "next_candidate_index": 2,
+            "has_unmaterialized_provider_effect": False,
+        }
+    }
+
+
+def test_recovery_does_not_replay_batch_provider_effect_after_partial_materialization(
+    db_session,
+    configured_env: Path,
+) -> None:
+    image_session = create_image_session(db_session, title="批量 provider effect 恢复")
+    result = create_image_session_generation_task(
+        db_session,
+        image_session_id=image_session.id,
+        prompt="批量请求只落下一张也不能重复提交",
+        size="1024x1024",
+        generation_count=3,
+    )
+    result.task.status = JobStatus.RUNNING
+    result.task.active_attempt_id = "batch-attempt"
+    result.task.started_at = datetime.now(UTC) - timedelta(hours=2)
+    result.task.progress_updated_at = datetime.now(UTC) - timedelta(hours=2)
+    result.task.completed_candidates = 1
+    result.task.progress_phase = "candidate_saved"
+    db_session.add(
+        ImageSessionProviderEffect(
+            generation_task_id=result.task.id,
+            candidate_start_index=1,
+            candidate_count=3,
+            operation_key=f"image-session-task:{result.task.id}:candidates:1-3",
+            request_hash="a" * 64,
+            provider_name="openai_images",
+            attempt_id="batch-attempt",
+            effect_result="applied",
+            reconciliation_state="applied",
+            provider_response_id="resp-batch",
+        )
+    )
+    db_session.commit()
+    sent: list[str] = []
+
+    summary = recover_unfinished_image_session_generation_tasks(
+        enqueue=sent.append,
+        reset_stale_running=True,
+        stale_running_after=timedelta(minutes=30),
+    )
+    db_session.refresh(result.task)
+
+    assert summary.queued_tasks == 0
+    assert summary.stale_running_tasks == 0
+    assert summary.enqueued_tasks == 0
+    assert summary.unknown_tasks == 1
+    assert sent == []
+    assert result.task.status == JobStatus.UNKNOWN
+    assert result.task.active_attempt_id is None
+    assert result.task.is_retryable is False
+    assert result.task.failure_reason == IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL
+    assert result.task.progress_phase == IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_PHASE
+    assert result.task.progress_metadata == {
+        "unknown_provider_effect": {
+            "attempt_id": "batch-attempt",
+            "active_candidate_index": None,
+            "observed_phase": "candidate_saved",
+            "next_candidate_index": 2,
+            "has_unmaterialized_provider_effect": True,
+        }
+    }
 
 
 def test_recover_unfinished_image_session_generation_tasks_uses_runtime_stale_cutoff_by_default(
@@ -184,6 +264,7 @@ def test_recover_unfinished_image_session_generation_tasks_uses_runtime_stale_cu
     result.task.status = JobStatus.RUNNING
     result.task.active_attempt_id = "runtime-cutoff-attempt"
     result.task.started_at = datetime.now(UTC) - timedelta(minutes=60)
+    result.task.progress_phase = "running"
     db_session.commit()
     sent: list[str] = []
     default_summary = recover_unfinished_image_session_generation_tasks(
