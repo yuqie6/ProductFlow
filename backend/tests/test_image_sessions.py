@@ -1040,7 +1040,7 @@ def test_image_session_worker_auto_retry_caps_and_uses_generic_safe_reason(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from productflow_backend.application.image_sessions import IMAGE_SESSION_GENERATION_MAX_ATTEMPTS
+    from productflow_backend.domain.durable_generation_tasks import IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL
     from productflow_backend.presentation.api import create_app
 
     calls = {"count": 0}
@@ -1066,18 +1066,18 @@ def test_image_session_worker_auto_retry_caps_and_uses_generic_safe_reason(
 
     assert response.status_code == 202
     payload = response.json()
-    assert payload["generation_tasks"][0]["status"] == "failed"
-    assert payload["generation_tasks"][0]["failure_reason"] == "图片生成失败，请稍后重试"
-    assert "sk-test" not in payload["generation_tasks"][0]["failure_reason"]
-    assert payload["generation_tasks"][0]["attempts"] == IMAGE_SESSION_GENERATION_MAX_ATTEMPTS
-    assert payload["generation_tasks"][0]["is_retryable"] is True
+    assert payload["generation_tasks"][0]["status"] == "unknown"
+    assert payload["generation_tasks"][0]["failure_reason"] == IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL
+    assert payload["generation_tasks"][0]["attempts"] == 1
+    assert payload["generation_tasks"][0]["is_retryable"] is False
+    assert payload["generation_tasks"][0]["provider_effects"][0]["effect_result"] == "unknown"
     db_session.expire_all()
     task = db_session.get(ImageSessionGenerationTask, payload["generation_tasks"][0]["id"])
     assert task is not None
-    assert task.failure_reason == "图片生成失败，请稍后重试"
-    assert task.attempts == IMAGE_SESSION_GENERATION_MAX_ATTEMPTS
-    assert task.is_retryable is True
-    assert calls["count"] == IMAGE_SESSION_GENERATION_MAX_ATTEMPTS
+    assert task.failure_reason == IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL
+    assert task.attempts == 1
+    assert task.is_retryable is False
+    assert calls["count"] == 1
 
 
 def test_image_session_worker_auto_retry_exposes_last_failure_metadata(
@@ -1086,11 +1086,11 @@ def test_image_session_worker_auto_retry_exposes_last_failure_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from productflow_backend.application.image_sessions import (
-        IMAGE_SESSION_GENERATION_MAX_ATTEMPTS,
         create_image_session,
         create_image_session_generation_task,
         execute_image_session_generation_task,
     )
+    from productflow_backend.domain.durable_generation_tasks import IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL
     from productflow_backend.domain.enums import JobStatus
 
     sent: list[str] = []
@@ -1120,20 +1120,18 @@ def test_image_session_worker_auto_retry_exposes_last_failure_metadata(
     db_session.expire_all()
     task = db_session.get(ImageSessionGenerationTask, result.task.id)
     assert task is not None
-    assert task.status == JobStatus.QUEUED
-    assert task.failure_reason is None
-    assert task.progress_phase == "auto_retry_queued"
+    assert task.status == JobStatus.UNKNOWN
+    assert task.failure_reason == IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL
+    assert task.progress_phase == "unknown_provider_effect"
     assert task.progress_metadata == {
+        "candidate_index": 1,
+        "candidate_count": 1,
+        "provider_effect_uncertain": True,
         "last_failure_reason": "图片供应商请求超时，请稍后重试",
-        "last_failure_category": "timeout",
-        "last_failure_retryable": True,
-        "retry_hint": "retry_later",
-        "auto_retry_attempt": 1,
-        "max_attempts": IMAGE_SESSION_GENERATION_MAX_ATTEMPTS,
     }
-    assert task.is_retryable is True
+    assert task.is_retryable is False
     assert task.attempts == 1
-    assert sent == [result.task.id]
+    assert sent == []
 
 
 def test_image_session_worker_non_retryable_policy_failure_stops_without_auto_retry(
@@ -1276,6 +1274,7 @@ def test_image_session_worker_categorizes_wrapped_connection_failure(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from productflow_backend.domain.durable_generation_tasks import IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL
     from productflow_backend.presentation.api import create_app
 
     def fail_generate(*args, **kwargs) -> None:
@@ -1300,12 +1299,12 @@ def test_image_session_worker_categorizes_wrapped_connection_failure(
 
     assert response.status_code == 202
     payload = response.json()
-    assert payload["generation_tasks"][0]["status"] == "failed"
-    assert payload["generation_tasks"][0]["failure_reason"] == "图片供应商连接中断，请检查网络或代理后重试"
+    assert payload["generation_tasks"][0]["status"] == "unknown"
+    assert payload["generation_tasks"][0]["failure_reason"] == IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL
     db_session.expire_all()
     task = db_session.get(ImageSessionGenerationTask, payload["generation_tasks"][0]["id"])
     assert task is not None
-    assert task.failure_reason == "图片供应商连接中断，请检查网络或代理后重试"
+    assert task.failure_reason == IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL
 
 
 def test_image_session_worker_surfaces_completed_text_without_image_reason(
@@ -1360,7 +1359,7 @@ def test_image_session_worker_surfaces_completed_text_without_image_reason(
     assert sent == [result.task.id, result.task.id]
 
 
-def test_image_session_worker_partial_retry_continues_remaining_candidates_without_duplicates(
+def test_image_session_worker_partial_provider_failure_stops_without_duplicate_generation(
     configured_env: Path,
     db_session,
     monkeypatch: pytest.MonkeyPatch,
@@ -1370,6 +1369,7 @@ def test_image_session_worker_partial_retry_continues_remaining_candidates_witho
         create_image_session_generation_task,
         execute_image_session_generation_task,
     )
+    from productflow_backend.domain.durable_generation_tasks import IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL
     from productflow_backend.infrastructure.image.chat_service import GeneratedChatImage
 
     calls = {"count": 0}
@@ -1416,24 +1416,21 @@ def test_image_session_worker_partial_retry_continues_remaining_candidates_witho
     )
 
     assert task is not None
-    assert task.status == "succeeded"
-    assert task.failure_reason is None
+    assert task.status == "unknown"
+    assert task.failure_reason == IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL
     assert task.result_generation_group_id is not None
-    assert task.completed_candidates == 2
+    assert task.completed_candidates == 1
     assert task.active_candidate_index is None
-    assert task.progress_phase == "succeeded"
+    assert task.progress_phase == "unknown_provider_effect"
     assert task.progress_updated_at is not None
     assert task.finished_at is not None
     assert task.is_retryable is False
-    assert task.attempts == 2
-    assert calls["count"] == 3
-    assert len(rounds) == 2
+    assert task.attempts == 1
+    assert calls["count"] == 2
+    assert len(rounds) == 1
     assert rounds[0].candidate_index == 1
     assert rounds[0].candidate_count == 2
     assert rounds[0].generation_group_id == task.result_generation_group_id
-    assert rounds[1].candidate_index == 2
-    assert rounds[1].candidate_count == 2
-    assert rounds[1].generation_group_id == task.result_generation_group_id
     assert Path(configured_env, rounds[0].generated_asset.storage_path).exists()
 
 

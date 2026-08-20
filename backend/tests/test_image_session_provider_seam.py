@@ -6,20 +6,30 @@ from io import BytesIO
 import pytest
 from dramatiq.middleware.time_limit import TimeLimitExceeded
 from PIL import Image
+from sqlalchemy import select
 
 from productflow_backend.application.image_session_dependencies import (
     IMAGE_SESSION_TEXT_OUTPUT_FAILURE_REASON,
     GeneratedChatImage,
     ImageSessionProviderFailure,
 )
+from productflow_backend.application.image_session_provider_effects import (
+    reconcile_image_session_provider_effect,
+)
 from productflow_backend.application.image_sessions import (
     create_image_session,
     create_image_session_generation_task,
     execute_image_session_generation_task,
 )
-from productflow_backend.infrastructure.db.models import ImageSessionGenerationTask, ImageSessionRound
+from productflow_backend.domain.durable_generation_tasks import IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL
+from productflow_backend.infrastructure.db.models import (
+    ImageSessionGenerationTask,
+    ImageSessionProviderEffect,
+    ImageSessionRound,
+)
 from productflow_backend.infrastructure.image.chat_service import ImageChatService
 from productflow_backend.infrastructure.provider_config import ResolvedImageProviderConfig
+from productflow_backend.infrastructure.provider_effects import ProviderEffectQueryResult
 
 
 def _make_png_bytes() -> bytes:
@@ -110,6 +120,14 @@ def test_image_session_executor_accepts_fake_service_and_persists_result(
     assert len(rounds) == 1
     assert rounds[0].provider_name == "fake"
     assert rounds[0].provider_request_json == {"candidate": 1}
+    effects = db_session.scalars(
+        select(ImageSessionProviderEffect).where(
+            ImageSessionProviderEffect.generation_task_id == result.task.id,
+        )
+    ).all()
+    assert len(effects) == 1
+    assert effects[0].effect_result == "applied"
+    assert effects[0].operation_key == f"image-session-task:{result.task.id}:candidates:1-1"
 
 
 def test_image_session_typed_provider_failure_reaches_terminal_safe_reason(
@@ -194,7 +212,7 @@ def test_image_session_fake_rate_limit_keeps_existing_classifier_and_retry_metad
     assert sent == [result.task.id]
 
 
-def test_image_session_fake_partial_failure_retries_remaining_candidate_without_duplicate(
+def test_image_session_fake_partial_failure_stops_with_unknown_provider_effect(
     configured_env,
     db_session,
     monkeypatch: pytest.MonkeyPatch,
@@ -216,10 +234,7 @@ def test_image_session_fake_partial_failure_retries_remaining_candidate_without_
         [_generated_image(candidate=1), TimeLimitExceeded(), _generated_image(candidate=2)],
     )
 
-    execute_image_session_generation_task(
-        result.task.id,
-        chat_service_factory=lambda: fake,
-    )
+    execute_image_session_generation_task(result.task.id, chat_service_factory=lambda: fake)
     execute_image_session_generation_task(
         result.task.id,
         chat_service_factory=lambda: fake,
@@ -235,15 +250,102 @@ def test_image_session_fake_partial_failure_retries_remaining_candidate_without_
     )
 
     assert task is not None
-    assert task.status == "succeeded"
-    assert task.failure_reason is None
-    assert task.attempts == 2
-    assert task.completed_candidates == 2
+    assert task.status == "unknown"
+    assert task.failure_reason == IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL
+    assert task.progress_phase == "unknown_provider_effect"
+    assert task.attempts == 1
+    assert task.completed_candidates == 1
     assert task.result_generation_group_id is not None
-    assert sent == [result.task.id]
-    assert fake.calls == 3
-    assert [round_item.candidate_index for round_item in rounds] == [1, 2]
-    assert {round_item.generation_group_id for round_item in rounds} == {task.result_generation_group_id}
+    assert sent == []
+    assert fake.calls == 2
+    assert [round_item.candidate_index for round_item in rounds] == [1]
+    effects = db_session.scalars(
+        select(ImageSessionProviderEffect)
+        .where(ImageSessionProviderEffect.generation_task_id == result.task.id)
+        .order_by(ImageSessionProviderEffect.candidate_start_index)
+    ).all()
+    assert [(effect.candidate_start_index, effect.effect_result) for effect in effects] == [
+        (1, "applied"),
+        (2, "unknown"),
+    ]
+
+
+def test_image_session_provider_effect_reconciliation_is_read_only_and_keeps_task_unknown(
+    configured_env,
+    db_session,
+) -> None:
+    class ReconcilingFakeChatService(FakeChatService):
+        provider_kind = "fake"
+
+        def __init__(self) -> None:
+            super().__init__([RuntimeError("connection reset by peer")])
+            self.reconcile_calls = 0
+
+        def generate(self, **kwargs) -> GeneratedChatImage:
+            self.calls += 1
+            callback = kwargs.get("progress_callback")
+            if callback is not None:
+                callback(
+                    {
+                        "provider_response_id": "resp-image-session-reconcile",
+                        "provider_response_status": "in_progress",
+                    }
+                )
+            raise RuntimeError("connection reset by peer")
+
+        def reconcile_generation_effect(
+            self,
+            *,
+            operation_key: str,
+            request_hash: str,
+            provider_response_id: str | None,
+        ) -> ProviderEffectQueryResult:
+            self.reconcile_calls += 1
+            assert operation_key
+            assert len(request_hash) == 64
+            assert provider_response_id == "resp-image-session-reconcile"
+            return ProviderEffectQueryResult(
+                effect_result="failed",
+                reconciliation_state="not_applied",
+                provider_status="rejected",
+                result_json={"provider_status": "rejected"},
+                detail="provider 查询确认请求未应用",
+            )
+
+    image_session = create_image_session(db_session, title="image provider reconcile")
+    result = create_image_session_generation_task(
+        db_session,
+        image_session_id=image_session.id,
+        prompt="确认 provider effect",
+        size="1024x1024",
+    )
+    fake = ReconcilingFakeChatService()
+    execute_image_session_generation_task(result.task.id, chat_service_factory=lambda: fake)
+
+    reconciliation = reconcile_image_session_provider_effect(
+        db_session,
+        image_session_id=image_session.id,
+        task_id=result.task.id,
+        candidate_start_index=1,
+        chat_service_factory=lambda: fake,
+    )
+
+    db_session.expire_all()
+    task = db_session.get(ImageSessionGenerationTask, result.task.id)
+    effect = db_session.scalar(
+        select(ImageSessionProviderEffect).where(
+            ImageSessionProviderEffect.generation_task_id == result.task.id,
+            ImageSessionProviderEffect.candidate_start_index == 1,
+        )
+    )
+    assert task is not None
+    assert task.status == "unknown"
+    assert effect is not None
+    assert reconciliation.effect_result == "failed"
+    assert reconciliation.reconciliation_state == "not_applied"
+    assert effect.effect_result == "failed"
+    assert fake.calls == 1
+    assert fake.reconcile_calls == 1
 
 
 def test_image_chat_service_normalizes_responses_text_only_output(

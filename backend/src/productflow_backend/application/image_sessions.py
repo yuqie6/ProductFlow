@@ -35,10 +35,20 @@ from productflow_backend.application.image_generation_failures import (
     classify_image_generation_failure,
 )
 from productflow_backend.application.image_session_dependencies import (
+    GeneratedChatImage,
     ImageChatTurn,
     ImageSessionChatServiceFactory,
     ImageSessionProviderFailure,
     default_image_session_chat_service_factory,
+)
+from productflow_backend.application.image_session_provider_effects import (
+    ensure_image_session_provider_effect_intent,
+    image_session_provider_effect_operation_key,
+    image_session_provider_effect_request_hash,
+    mark_image_session_provider_effect_failed,
+    mark_image_session_provider_effect_unknown,
+    record_image_session_provider_effect_progress,
+    record_image_session_provider_effect_result,
 )
 from productflow_backend.application.media_assets import (
     get_product_image_asset,
@@ -56,6 +66,8 @@ from productflow_backend.application.time import now_utc
 from productflow_backend.config import normalize_image_generation_size
 from productflow_backend.domain.durable_generation_tasks import (
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
+    IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL,
+    IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_PHASE,
     QUEUE_UNAVAILABLE_DETAIL,
 )
 from productflow_backend.domain.enums import (
@@ -114,6 +126,9 @@ IMAGE_SESSION_GENERATION_MAX_ATTEMPTS = 3
 IMAGE_SESSION_GENERATION_MAX_COUNT = 10
 IMAGE_SESSION_IMAGES_API_N_MAX_COUNT = 10
 IMAGE_SESSION_CAPACITY_RETRY_DELAY_MS = 2000
+IMAGE_SESSION_CONFIRMED_PROVIDER_FAILURE_CATEGORIES = frozenset(
+    {"rate_limit", "quota", "content_policy", "unsupported_parameters", "bad_request"}
+)
 GENERIC_IMAGE_GENERATION_FAILURE = "图片生成失败，请稍后重试"
 PARTIAL_IMAGE_GENERATION_FAILURE = "已生成 {completed}/{requested} 张候选，后续生成失败，请重新发起生成补齐。"
 PARTIAL_IMAGE_GENERATION_TIMEOUT = "已生成 {completed}/{requested} 张候选，但任务超时，剩余候选未完成。"
@@ -158,6 +173,7 @@ class ImageSessionGenerationExecutionError(Exception):
     timed_out: bool = False
     safe_reason: str | None = None
     failure_decision: ImageGenerationFailureDecision | None = None
+    provider_effect_uncertain: bool = False
 
 
 class ImageSessionGenerationCancelledError(Exception):
@@ -168,20 +184,118 @@ class ImageSessionGenerationStaleAttemptError(Exception):
     """Raised when a worker no longer owns the durable generation attempt."""
 
 
+def _image_session_provider_effect_request_json(
+    *,
+    prompt: str,
+    size: str,
+    history: list[ImageChatTurn],
+    base_asset_id: str | None,
+    selected_reference_asset_ids: list[str],
+    tool_options: dict[str, Any] | None,
+    provider_kind: str,
+    previous_response_id: str | None,
+    candidate_start_index: int,
+    candidate_count: int,
+) -> dict[str, Any]:
+    return {
+        "effect_kind": "image_session_generation",
+        "provider_kind": provider_kind,
+        "prompt": prompt,
+        "size": size,
+        "base_asset_id": base_asset_id,
+        "selected_reference_asset_ids": selected_reference_asset_ids,
+        "tool_options": tool_options,
+        "previous_response_id": previous_response_id,
+        "candidate_start_index": candidate_start_index,
+        "candidate_count": candidate_count,
+        "history": [
+            {
+                "role": turn.role,
+                "content": turn.content,
+                "has_image": turn.image_data_url is not None,
+            }
+            for turn in history[-8:]
+        ],
+    }
+
+
+def _record_image_session_provider_effect_result(
+    session: Session,
+    *,
+    task_id: str,
+    attempt_id: str | None,
+    candidate_start_index: int,
+    provider_results: list[GeneratedChatImage],
+    candidate_count: int,
+) -> None:
+    if attempt_id is None:
+        raise ImageSessionGenerationStaleAttemptError()
+    if not provider_results:
+        raise RuntimeError("图片 provider 返回了空的候选结果")
+    if len(provider_results) != candidate_count:
+        raise RuntimeError("图片 provider 返回的候选数量与请求不一致")
+    result = provider_results[0]
+    provider_output = result.provider_output_json if isinstance(result.provider_output_json, dict) else {}
+    provider_status = provider_output.get("status")
+    if not isinstance(provider_status, str) or not provider_status.strip():
+        provider_status = "completed"
+    result_json = {
+        "provider_name": result.provider_name,
+        "provider_model": result.model_name,
+        "provider_response_id": result.provider_response_id,
+        "provider_status": provider_status[:80],
+        "candidate_count": candidate_count,
+        "returned_result_count": len(provider_results),
+        "provider_output_keys": sorted(str(key) for key in provider_output)[:32],
+    }
+    if not record_image_session_provider_effect_result(
+        session,
+        task_id=task_id,
+        attempt_id=attempt_id,
+        candidate_start_index=candidate_start_index,
+        provider_response_id=result.provider_response_id,
+        provider_status=provider_status,
+        result_json=result_json,
+    ):
+        raise ImageSessionGenerationStaleAttemptError()
+    session.commit()
+    _update_image_generation_task_progress(
+        session,
+        task_id=task_id,
+        attempt_id=attempt_id,
+        phase="provider_result_received",
+        active_candidate_index=candidate_start_index,
+        provider_response_id=result.provider_response_id,
+        provider_response_status=provider_status,
+        progress_metadata={
+            "candidate_index": candidate_start_index,
+            "candidate_count": candidate_count,
+            "provider_effect_operation_key": image_session_provider_effect_operation_key(
+                task_id,
+                candidate_start_index=candidate_start_index,
+                candidate_count=candidate_count,
+            ),
+            "effect_result": "applied",
+        },
+    )
+
+
 def _image_session_query():
     return (
         select(ImageSession)
         .options(
             selectinload(ImageSession.assets).selectinload(ImageSessionAsset.media_object),
             selectinload(ImageSession.rounds).selectinload(ImageSessionRound.generated_asset),
-            selectinload(ImageSession.generation_tasks),
+            selectinload(ImageSession.generation_tasks).selectinload(ImageSessionGenerationTask.provider_effects),
         )
         .order_by(desc(ImageSession.updated_at))
     )
 
 
 def _image_session_status_query():
-    return select(ImageSession).options(selectinload(ImageSession.generation_tasks))
+    return select(ImageSession).options(
+        selectinload(ImageSession.generation_tasks).selectinload(ImageSessionGenerationTask.provider_effects)
+    )
 
 
 def _get_image_session_or_raise(session: Session, image_session_id: str) -> ImageSession:
@@ -658,10 +772,11 @@ def _execute_image_session_round_generation(
             )
     generation_group_id = generation_group_id or new_id()
     should_update_default_title = not image_session.rounds and image_session.title == DEFAULT_SESSION_TITLE
-    pending_provider_results = []
+    pending_provider_results: list[tuple[GeneratedChatImage, str]] = []
 
     for candidate_index in range(completed_candidates + 1, generation_count + 1):
         storage_writes = StorageWriteCompensation()
+        active_provider_effect_operation_key: str | None = None
         try:
             _raise_if_image_generation_task_cancelled(
                 session,
@@ -690,13 +805,47 @@ def _execute_image_session_round_generation(
                 generation_attempt_id,
             )
             if pending_provider_results:
-                result = pending_provider_results.pop(0)
+                result, active_provider_effect_operation_key = pending_provider_results.pop(0)
             else:
                 remaining_count = generation_count - candidate_index + 1
                 batch_count = _images_api_batch_count(
                     provider_kind=service.provider_kind,
                     remaining_count=remaining_count,
                 )
+                provider_previous_response_id = previous_response_id if batch_count == 1 else None
+                effect_request_json = _image_session_provider_effect_request_json(
+                    prompt=normalized_prompt,
+                    size=normalized_size,
+                    history=history,
+                    base_asset_id=normalized_base_asset_id,
+                    selected_reference_asset_ids=normalized_reference_ids,
+                    tool_options=normalized_tool_options,
+                    provider_kind=service.provider_kind,
+                    previous_response_id=provider_previous_response_id,
+                    candidate_start_index=candidate_index,
+                    candidate_count=batch_count,
+                )
+                if generation_task_id is not None:
+                    if generation_attempt_id is None:
+                        raise ImageSessionGenerationStaleAttemptError()
+                    active_provider_effect_operation_key = image_session_provider_effect_operation_key(
+                        generation_task_id,
+                        candidate_start_index=candidate_index,
+                        candidate_count=batch_count,
+                    )
+                    if not ensure_image_session_provider_effect_intent(
+                        session,
+                        task_id=generation_task_id,
+                        attempt_id=generation_attempt_id,
+                        candidate_start_index=candidate_index,
+                        candidate_count=batch_count,
+                        operation_key=active_provider_effect_operation_key,
+                        request_hash=image_session_provider_effect_request_hash(effect_request_json),
+                        provider_name=service.provider_kind,
+                        request_json=effect_request_json,
+                    ):
+                        raise ImageSessionGenerationStaleAttemptError()
+                    session.commit()
                 if batch_count > 1:
                     provider_results = service.generate_many(
                         prompt=normalized_prompt,
@@ -706,15 +855,29 @@ def _execute_image_session_round_generation(
                         candidate_count=batch_count,
                         tool_options=normalized_tool_options,
                     )
+                    if generation_task_id is not None:
+                        _record_image_session_provider_effect_result(
+                            session,
+                            task_id=generation_task_id,
+                            attempt_id=generation_attempt_id,
+                            candidate_start_index=candidate_index,
+                            provider_results=provider_results,
+                            candidate_count=batch_count,
+                        )
                     result = provider_results[0]
-                    pending_provider_results.extend(provider_results[1:])
+                    if active_provider_effect_operation_key is None:
+                        raise RuntimeError("image-session provider effect operation key missing")
+                    pending_provider_results.extend(
+                        (provider_result, active_provider_effect_operation_key)
+                        for provider_result in provider_results[1:]
+                    )
                 else:
                     result = service.generate(
                         prompt=normalized_prompt,
                         size=normalized_size,
                         history=history,
                         manual_reference_images=manual_references,
-                        previous_response_id=previous_response_id,
+                        previous_response_id=provider_previous_response_id,
                         tool_options=normalized_tool_options,
                         progress_callback=_provider_progress_callback(
                             session,
@@ -726,6 +889,15 @@ def _execute_image_session_round_generation(
                             completed_candidates=completed_candidates,
                         ),
                     )
+                    if generation_task_id is not None:
+                        _record_image_session_provider_effect_result(
+                            session,
+                            task_id=generation_task_id,
+                            attempt_id=generation_attempt_id,
+                            candidate_start_index=candidate_index,
+                            provider_results=[result],
+                            candidate_count=batch_count,
+                        )
             locked_generation_task = _lock_image_generation_attempt(
                 session,
                 task_id=generation_task_id,
@@ -847,6 +1019,32 @@ def _execute_image_session_round_generation(
                     generic_message=GENERIC_IMAGE_GENERATION_FAILURE,
                 )
                 safe_reason = failure_decision.reason
+            provider_effect_uncertain = False
+            if active_provider_effect_operation_key is not None:
+                if generation_attempt_id is None:
+                    raise ImageSessionGenerationStaleAttemptError() from exc
+                confirmed_no_effect = isinstance(exc, ImageSessionProviderFailure) or (
+                    failure_decision is not None
+                    and failure_decision.category in IMAGE_SESSION_CONFIRMED_PROVIDER_FAILURE_CATEGORIES
+                )
+                if confirmed_no_effect:
+                    mark_image_session_provider_effect_failed(
+                        session,
+                        task_id=generation_task_id,
+                        attempt_id=generation_attempt_id,
+                        candidate_start_index=candidate_index,
+                        detail=safe_reason,
+                    )
+                else:
+                    mark_image_session_provider_effect_unknown(
+                        session,
+                        task_id=generation_task_id,
+                        attempt_id=generation_attempt_id,
+                        candidate_start_index=candidate_index,
+                        detail=IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL,
+                    )
+                    provider_effect_uncertain = True
+                session.commit()
             raise ImageSessionGenerationExecutionError(
                 completed_candidates=completed_candidates,
                 requested_candidates=generation_count,
@@ -854,6 +1052,7 @@ def _execute_image_session_round_generation(
                 timed_out=isinstance(exc, TimeLimitExceeded),
                 safe_reason=safe_reason,
                 failure_decision=failure_decision,
+                provider_effect_uncertain=provider_effect_uncertain,
             ) from exc
     session.expire_all()
     return ImageSessionRoundGenerationResult(
@@ -1050,7 +1249,7 @@ def cancel_image_session_generation_task(
         raise NotFoundError("生成任务不存在")
     if task.status == JobStatus.CANCELLED:
         return get_image_session_detail(session, image_session_id)
-    if task.status in {JobStatus.SUCCEEDED, JobStatus.FAILED}:
+    if task.status in {JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.UNKNOWN}:
         raise BusinessValidationError("已结束的生成任务不能取消")
 
     _finish_image_generation_task(
@@ -1172,6 +1371,8 @@ def _finish_image_generation_task(
     task.progress_updated_at = now
     if status == JobStatus.SUCCEEDED:
         task.progress_phase = "succeeded"
+    elif status == JobStatus.UNKNOWN:
+        task.progress_phase = IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_PHASE
     elif status == JobStatus.CANCELLED:
         task.progress_phase = "cancelled"
     else:
@@ -1249,6 +1450,19 @@ def _provider_progress_callback(
         return None
 
     def callback(progress: dict[str, Any]) -> None:
+        provider_response_id = progress.get("provider_response_id")
+        provider_response_status = progress.get("provider_response_status")
+        if task_id is not None and attempt_id is not None and (
+            provider_response_id is not None or provider_response_status is not None
+        ):
+            record_image_session_provider_effect_progress(
+                session,
+                task_id=task_id,
+                attempt_id=attempt_id,
+                candidate_start_index=candidate_index,
+                provider_response_id=provider_response_id,
+                provider_status=provider_response_status,
+            )
         _update_image_generation_task_progress(
             session,
             task_id=task_id,
@@ -1256,8 +1470,8 @@ def _provider_progress_callback(
             phase="provider_polling",
             completed_candidates=completed_candidates,
             active_candidate_index=candidate_index,
-            provider_response_id=progress.get("provider_response_id"),
-            provider_response_status=progress.get("provider_response_status"),
+            provider_response_id=provider_response_id,
+            provider_response_status=provider_response_status,
             progress_metadata={
                 "candidate_index": candidate_index,
                 "candidate_count": generation_count,
@@ -1410,6 +1624,7 @@ def _handle_image_generation_task_failure(
     reason: str,
     result_generation_group_id: str | None = None,
     failure_decision: ImageGenerationFailureDecision | None = None,
+    provider_effect_uncertain: bool = False,
 ) -> None:
     task = _lock_image_generation_attempt(
         session,
@@ -1417,6 +1632,22 @@ def _handle_image_generation_task_failure(
         attempt_id=attempt_id,
     )
     if task is None:
+        return
+    if provider_effect_uncertain:
+        task.progress_metadata = {
+            **(task.progress_metadata if isinstance(task.progress_metadata, dict) else {}),
+            "provider_effect_uncertain": True,
+            "last_failure_reason": reason,
+        }
+        _finish_image_generation_task(
+            session,
+            task=task,
+            status=JobStatus.UNKNOWN,
+            failure_reason=IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL,
+            result_generation_group_id=result_generation_group_id,
+            is_retryable=False,
+            expected_attempt_id=attempt_id,
+        )
         return
     retryable = failure_decision.retryable if failure_decision is not None else True
     if not retryable:
@@ -1482,6 +1713,7 @@ def _handle_image_generation_task_failure_safely(
     reason: str,
     result_generation_group_id: str | None = None,
     failure_decision: ImageGenerationFailureDecision | None = None,
+    provider_effect_uncertain: bool = False,
 ) -> None:
     try:
         _handle_image_generation_task_failure(
@@ -1491,6 +1723,7 @@ def _handle_image_generation_task_failure_safely(
             reason=reason,
             result_generation_group_id=result_generation_group_id,
             failure_decision=failure_decision,
+            provider_effect_uncertain=provider_effect_uncertain,
         )
     except (ImageSessionGenerationCancelledError, ImageSessionGenerationStaleAttemptError):
         session.rollback()
@@ -1547,6 +1780,7 @@ def execute_image_session_generation_task(
                     reason=reason,
                     result_generation_group_id=exc.generation_group_id,
                     failure_decision=exc.failure_decision,
+                    provider_effect_uncertain=exc.provider_effect_uncertain,
                 )
             return
         except (ImageSessionGenerationCancelledError, ImageSessionGenerationStaleAttemptError):

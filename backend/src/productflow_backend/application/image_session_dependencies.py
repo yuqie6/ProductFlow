@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any, Literal, Protocol
 
 from productflow_backend.application.image_generation_failures import ImageGenerationFailureDecision
+from productflow_backend.infrastructure.provider_effects import ProviderEffectQueryResult
 
 IMAGE_SESSION_TEXT_OUTPUT_FAILURE_REASON = "图片供应商已完成请求，但返回的是文字回复，没有返回图片结果"
 
@@ -67,6 +68,14 @@ class ImageSessionChatService(Protocol):
         candidate_count: int,
         tool_options: dict | None = None,
     ) -> list[GeneratedChatImage]: ...
+
+    def reconcile_generation_effect(
+        self,
+        *,
+        operation_key: str,
+        request_hash: str,
+        provider_response_id: str | None,
+    ) -> ProviderEffectQueryResult: ...
 
 
 ImageSessionChatServiceFactory = Callable[[], ImageSessionChatService]

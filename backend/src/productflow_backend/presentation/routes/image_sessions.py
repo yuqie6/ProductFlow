@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Path, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
+from productflow_backend.application.image_session_provider_effects import reconcile_image_session_provider_effect
 from productflow_backend.application.image_sessions import (
     add_image_session_reference_images,
     attach_image_session_asset_to_product_canonical,
@@ -27,9 +28,11 @@ from productflow_backend.presentation.schemas.image_sessions import (
     GenerateImageSessionRoundRequest,
     ImageSessionDetailResponse,
     ImageSessionListResponse,
+    ImageSessionProviderEffectResponse,
     ImageSessionStatusResponse,
     UpdateImageSessionRequest,
     serialize_image_session_detail,
+    serialize_image_session_provider_effect_reconciliation,
     serialize_image_session_status,
     serialize_image_session_summary,
 )
@@ -219,6 +222,25 @@ def cancel_image_session_generation_task_endpoint(
         task_id=task_id,
     )
     return serialize_image_session_detail(image_session)
+
+
+@router.post(
+    "/image-sessions/{image_session_id}/generation-tasks/{task_id}/provider-effects/{candidate_start_index}/reconciliation",
+    response_model=ImageSessionProviderEffectResponse,
+)
+def reconcile_image_session_provider_effect_endpoint(
+    image_session_id: str,
+    task_id: str,
+    candidate_start_index: int = Path(..., ge=1),
+    session: Session = Depends(get_session),
+) -> ImageSessionProviderEffectResponse:
+    result = reconcile_image_session_provider_effect(
+        session,
+        image_session_id=image_session_id,
+        task_id=task_id,
+        candidate_start_index=candidate_start_index,
+    )
+    return serialize_image_session_provider_effect_reconciliation(result)
 
 
 @router.get("/image-session-assets/{asset_id}/download")

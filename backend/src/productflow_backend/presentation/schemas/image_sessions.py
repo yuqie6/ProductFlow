@@ -6,6 +6,9 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from productflow_backend.application.image_generation_core import extract_image_generation_provider_metadata
+from productflow_backend.application.image_session_provider_effects import (
+    ImageSessionProviderEffectReconciliationResult,
+)
 from productflow_backend.application.image_sessions import ImageSessionStatusSnapshot
 from productflow_backend.domain.durable_generation_tasks import IMAGE_SESSION_GENERATION_TASK_CONTRACT
 from productflow_backend.domain.enums import ImageSessionAssetKind, JobStatus
@@ -13,6 +16,7 @@ from productflow_backend.infrastructure.db.models import (
     ImageSession,
     ImageSessionAsset,
     ImageSessionGenerationTask,
+    ImageSessionProviderEffect,
     ImageSessionRound,
 )
 from productflow_backend.presentation.image_variants import build_image_urls
@@ -52,6 +56,24 @@ class ImageSessionRoundResponse(BaseModel):
     created_at: datetime
 
 
+class ImageSessionProviderEffectResponse(BaseModel):
+    id: str
+    generation_task_id: str
+    candidate_start_index: int
+    candidate_count: int
+    operation_key: str
+    effect_kind: str
+    request_hash: str
+    provider_name: str
+    effect_result: str
+    reconciliation_state: str
+    provider_response_id: str | None = None
+    provider_status: str | None = None
+    detail: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class ImageSessionGenerationTaskResponse(BaseModel):
     id: str
     session_id: str
@@ -72,6 +94,7 @@ class ImageSessionGenerationTaskResponse(BaseModel):
     result_generation_group_id: str | None = None
     tool_options: dict | None = None
     provider_notes: list[str] = Field(default_factory=list)
+    provider_effects: list[ImageSessionProviderEffectResponse] = Field(default_factory=list)
     attempts: int
     is_retryable: bool
     is_cancelable: bool
@@ -224,6 +247,50 @@ def serialize_image_session_round(round_item: ImageSessionRound) -> ImageSession
     )
 
 
+def serialize_image_session_provider_effect(
+    effect: ImageSessionProviderEffect,
+) -> ImageSessionProviderEffectResponse:
+    return ImageSessionProviderEffectResponse(
+        id=effect.id,
+        generation_task_id=effect.generation_task_id,
+        candidate_start_index=effect.candidate_start_index,
+        candidate_count=effect.candidate_count,
+        operation_key=effect.operation_key,
+        effect_kind=effect.effect_kind,
+        request_hash=effect.request_hash,
+        provider_name=effect.provider_name,
+        effect_result=effect.effect_result,
+        reconciliation_state=effect.reconciliation_state,
+        provider_response_id=effect.provider_response_id,
+        provider_status=effect.provider_status,
+        detail=effect.detail,
+        created_at=effect.created_at,
+        updated_at=effect.updated_at,
+    )
+
+
+def serialize_image_session_provider_effect_reconciliation(
+    result: ImageSessionProviderEffectReconciliationResult,
+) -> ImageSessionProviderEffectResponse:
+    return ImageSessionProviderEffectResponse(
+        id=result.id,
+        generation_task_id=result.generation_task_id,
+        candidate_start_index=result.candidate_start_index,
+        candidate_count=result.candidate_count,
+        operation_key=result.operation_key,
+        effect_kind=result.effect_kind,
+        request_hash=result.request_hash,
+        provider_name=result.provider_name,
+        effect_result=result.effect_result,
+        reconciliation_state=result.reconciliation_state,
+        provider_response_id=result.provider_response_id,
+        provider_status=result.provider_status,
+        detail=result.detail,
+        created_at=result.created_at,
+        updated_at=result.updated_at,
+    )
+
+
 def serialize_image_session_generation_task(
     task: ImageSessionGenerationTask,
     *,
@@ -251,6 +318,7 @@ def serialize_image_session_generation_task(
         result_generation_group_id=task.result_generation_group_id,
         tool_options=task.tool_options,
         provider_notes=provider_notes or [],
+        provider_effects=[serialize_image_session_provider_effect(effect) for effect in task.provider_effects],
         attempts=task.attempts,
         is_retryable=task.is_retryable,
         is_cancelable=IMAGE_SESSION_GENERATION_TASK_CONTRACT.is_active(task.status),
