@@ -33,7 +33,7 @@ Last reviewed against the current working tree on 2026-08-19.
 - `ProductImageAsset`：商品作用域图片身份与所有工作流引用。
 - PostgreSQL：业务状态、delivery intent、attempt token 和整理 Draft。
 - Redis/Dramatiq：at-least-once delivery，不是任务 authority。
-- main Pi adapter session/event store：交互式 Turn、transcript、tool event 和 cursor；`exp` 保留 durable runtime 研究实现。
+- main Pi adapter session 文件：交互式 Turn 和 transcript；ProductFlow PostgreSQL event store：tool event 和 cursor；`exp` 保留 durable runtime 研究实现。
 
 发布状态：
 

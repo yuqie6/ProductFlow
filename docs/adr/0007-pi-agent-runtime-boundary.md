@@ -58,7 +58,7 @@ Pi 当前官方提供 SDK、RPC、Skills、Extensions、会话管理、事件流
 
 当前 `docs/ARCHITECTURE.md` 描述的 Node.js + Pi Agent service 是 main 的 live truth。ProductFlow 的业务权威边界、WorkflowDraft 确认流程、WorkflowRun 执行器、素材身份和 Session/Task 产品语义保持不变；变化集中在 Agent loop、Skill loading、runtime session 和事件翻译层。旧 Go runtime 只在 `exp` 分支保留。
 
-长期后台 Task、进程崩溃后的模型 Turn 原地恢复、工具效果重放和跨实例调度不因为 Pi 有 session persistence 就自动成立。当前实现允许浏览器断开后继续当前进程内的 Turn；问题答案写入 ProductFlow 后会创建新的 continuation Turn，复用同一 Conversation 和 Pi session。Agent service 在 PostgreSQL execution lease 中记录 owner、attempt、phase 和 fencing token，并以 semantic checkpoint 记录模型、副作用、问题、外部任务和终态边界。启动时只重新入队尚未开始的 queued Turn，并将无法证明执行结果的 in-flight Turn 结束为 unknown。主线要把跨进程事件存储、业务副作用对账和后台调度单独列为验收项；在证明之前，Pi runtime 只承诺已经验证的交互式 Turn 和短任务能力。
+长期后台 Task、进程崩溃后的模型 Turn 原地恢复和工具效果重放不因为 Pi 有 session persistence 就自动成立。当前实现允许浏览器断开后继续当前进程内的 Turn；浏览器事件由 ProductFlow PostgreSQL `agent_turn_events` 按 cursor 提供，问题答案写入 ProductFlow 后会创建新的 continuation Turn，复用同一 Conversation 和 Pi session。Agent service 在 PostgreSQL execution lease 中记录 owner、attempt、phase 和 fencing token，并以 semantic checkpoint 记录模型、副作用、问题、外部任务和终态边界。启动时只重新入队尚未开始的 queued Turn；如果安全 queued Turn 的旧 Agent 实例已经丢失本地 state，ProductFlow recovery scanner 可以要求新实例使用原 harness Turn ID handoff，Agent service 必须返回同一 ID。无法证明执行结果的 in-flight Turn 结束为 unknown。业务副作用对账、后台调度、完整多实例竞争验收和进程崩溃后的原地模型恢复仍单独列为验收项；在证明之前，Pi runtime 只承诺已经验证的交互式 Turn 和短任务能力。
 
 ## 后果
 
