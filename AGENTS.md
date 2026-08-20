@@ -14,6 +14,36 @@ Search for an existing implementation before adding a helper, API, state store, 
 
 Documentation ownership is defined in `docs/README.md`. Stable docs describe current behavior and must name current code owners or tests where the claim is implementation-sensitive. Planned work belongs in `docs/ROADMAP.md`; deployment evidence belongs in `docs/rollout/` and `docs/operations/`.
 
+## Multi-Agent Delivery
+
+For broad implementation work, the primary agent is the orchestrator and integrator. The project-scoped Codex default is `gpt-5.6-sol` with `medium` reasoning. Implementation sub-agents use `gpt-5.6-luna` with `max` reasoning unless the user explicitly selects another model.
+
+The primary agent owns:
+
+- live-truth inspection, causal analysis, architecture and contract decisions;
+- decomposition into independently verifiable implementation slices;
+- assignment of exclusive file or module ownership while agents are running;
+- review of every sub-agent diff and reconciliation with concurrent user changes;
+- cross-slice integration, deletion of obsolete paths and final verification;
+- user-facing status, risk and completion claims.
+
+Implementation sub-agents receive one bounded causal slice at a time. Each task packet must state:
+
+- the concrete outcome and user-visible behavior;
+- current implementation and contract anchors to inspect;
+- files or modules the agent owns and boundaries it must not edit;
+- required wire, persistence and runtime invariants;
+- focused tests and completion evidence;
+- known concurrent work and prohibited cleanup, commit or destructive Git actions.
+
+Spawn implementation agents with the project-defined `implementer` role and bounded context via `fork_turns: none` or a small positive turn count. The role is bound by `.codex/agent-layers/luna-max.toml` to `gpt-5.6-luna` with `max` reasoning; the project `default` sub-agent role uses the same layer. Do not rely on per-call model overrides because a configured agent role owns the effective model and reasoning effort. Include all necessary repository context in the task packet when using `fork_turns: none`.
+
+Keep one writer per file or tightly coupled module at a time. Run independent slices concurrently only when their ownership and contracts do not overlap. With four total agent slots, use at most three implementation agents alongside the primary agent. Serialize work when two slices share a DTO, route, migration, page orchestrator or generated contract.
+
+Sub-agents do not commit, push, reset, revert unrelated changes or declare the overall task complete. They report changed files, behavior, tests, unresolved risks and assumptions. The primary agent reads the resulting diff, runs integration checks at the shared boundary and may return a focused correction task to the same agent.
+
+The primary agent may make narrow integration edits after reviewing sub-agent work. Substantial implementation discovered during integration is split into another Luna task when it has a clear ownership boundary. Ordinary small fixes and read-only investigations do not require delegation ceremony.
+
 ## Project Structure & Module Organization
 ProductFlow is a single-administrator, single-merchant workspace. The backend lives in `backend/src/productflow_backend/` and uses `presentation/` for FastAPI routes and schemas, `application/` for use cases, `domain/` for enums and database-free rules, and `infrastructure/` for database, storage, queues, providers, and service clients. Alembic migrations are in `backend/alembic/versions/`; backend tests are in `backend/tests/`. The main Agent service is the Node.js/Pi adapter in `agent-service/`; the legacy Go runtime is kept only on `exp`. The React/Vite app lives in `web/src/`, with pages in `web/src/pages/`, shared UI in `web/src/components/`, and API/type helpers in `web/src/lib/`. Read `backend/AGENTS.md` or `web/AGENTS.md` before editing that package.
 
