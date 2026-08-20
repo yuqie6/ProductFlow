@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ProductFlowError, type Scope } from "./contracts.js";
-import { PiRuntimeManager } from "./pi-runtime.js";
+import { PiRuntimeManager, toolStepDetailsForResult } from "./pi-runtime.js";
 import { TurnStore } from "./store.js";
 
 const scope: Scope = {
@@ -45,6 +45,13 @@ const config = {
 };
 
 describe("PiRuntimeManager turn state", () => {
+  it("does not guess whether an unclassified tool failure is retryable", () => {
+    expect(toolStepDetailsForResult("get_product_workflow_context_v1", {}, true)).toEqual({
+      phase: "tool_result",
+      output_summary: "工具调用失败，详情见错误信息。",
+    });
+  });
+
   it("starts each Turn with a fresh checkpoint sequence", async () => {
     const root = await mkdtemp(join(tmpdir(), "productflow-pi-runtime-"));
     try {
@@ -94,7 +101,7 @@ describe("PiRuntimeManager turn state", () => {
           draft_kind: "workflow",
           draft_schema: { type: "object" },
           workflow_draft_schema: { type: "object" },
-          tool_contract_version: 8,
+          tool_contract_version: 9,
         }),
         claimTurnExecution: async (_conversationID: string, args: { harness_turn_id: string }) => ({
           execution_id: "execution-cancel",
@@ -204,7 +211,7 @@ describe("PiRuntimeManager turn state", () => {
           draft_kind: "workflow",
           draft_schema: { type: "object" },
           workflow_draft_schema: { type: "object" },
-          tool_contract_version: 8,
+          tool_contract_version: 9,
         }),
         claimTurnExecution: async () => {
           throw new ProductFlowError(404, "not_found", "Agent Turn projection does not exist");
@@ -293,7 +300,7 @@ describe("PiRuntimeManager turn state", () => {
           draft_kind: "workflow",
           draft_schema: { type: "object" },
           workflow_draft_schema: { type: "object" },
-          tool_contract_version: 8,
+          tool_contract_version: 9,
         }),
         appendTurnEvent: async (_conversationID: string, _executionID: string, args: { turn_id: string }) => {
           published.push(args.turn_id);
@@ -362,7 +369,7 @@ describe("PiRuntimeManager turn state", () => {
           draft_kind: "workflow",
           draft_schema: { type: "object" },
           workflow_draft_schema: { type: "object" },
-          tool_contract_version: 8,
+          tool_contract_version: 9,
         }),
       } as unknown as ConstructorParameters<typeof PiRuntimeManager>[2];
       const manager = new PiRuntimeManager(

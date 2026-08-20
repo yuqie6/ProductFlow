@@ -4,11 +4,11 @@ import json
 from collections.abc import AsyncIterator
 from datetime import datetime
 from functools import lru_cache
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote, urlsplit
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_serializer, model_validator
 
 from productflow_backend.config import get_settings
 from productflow_backend.domain.enums import AgentToolStepKind, AgentToolStepStatus, AgentTurnStatus
@@ -38,6 +38,73 @@ class AgentServiceArtifact(BaseModel):
     step_id: str
 
 
+class AgentServiceToolStepValidationIssue(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(min_length=1, max_length=200)
+    message: str = Field(min_length=1, max_length=500)
+
+
+class AgentServiceToolStepDetails(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    phase: Literal["skill_load", "context_injection", "question", "tool_result"] | None = None
+    skill_name: str | None = Field(default=None, min_length=1, max_length=64)
+    resource_path: str | None = Field(default=None, min_length=1, max_length=256)
+    instruction_excerpt: str | None = Field(default=None, min_length=1, max_length=12_000)
+    instruction_truncated: bool | None = None
+    context_sections: list[str] | None = Field(default=None, max_length=8)
+    runtime_context_keys: list[str] | None = Field(default=None, max_length=32)
+    contract_fields: list[str] | None = Field(default=None, max_length=16)
+    page_route: str | None = Field(default=None, max_length=512)
+    page_type: str | None = Field(default=None, max_length=80)
+    selected_asset_count: int | None = Field(default=None, ge=0, le=100)
+    visible_asset_count: int | None = Field(default=None, ge=0, le=100)
+    context_bytes: int | None = Field(default=None, ge=0, le=64 * 1024)
+    input_summary: str | None = Field(default=None, min_length=1, max_length=240)
+    output_summary: str | None = Field(default=None, min_length=1, max_length=240)
+    error_code: str | None = Field(default=None, min_length=1, max_length=120)
+    error_message: str | None = Field(default=None, min_length=1, max_length=1000)
+    retryable: bool | None = None
+    validation_issues: list[AgentServiceToolStepValidationIssue] | None = Field(default=None, max_length=8)
+    question_id: str | None = Field(default=None, min_length=1, max_length=120)
+    question_header: str | None = Field(default=None, min_length=1, max_length=32)
+    question_text: str | None = Field(default=None, min_length=1, max_length=2000)
+    option_labels: list[str] | None = Field(default=None, max_length=5)
+
+    @model_serializer(mode="wrap")
+    def serialize_without_empty_fields(self, handler: Any) -> dict[str, Any]:
+        return {key: value for key, value in handler(self).items() if value is not None}
+
+    @model_validator(mode="after")
+    def validate_bounded_details(self) -> AgentServiceToolStepDetails:
+        for value in (
+            self.skill_name,
+            self.resource_path,
+            self.page_route,
+            self.page_type,
+            self.input_summary,
+            self.output_summary,
+            self.error_code,
+            self.error_message,
+            self.question_id,
+            self.question_header,
+        ):
+            if value is not None and ("\n" in value or "\r" in value):
+                raise ValueError("tool step detail strings must be single-line")
+        if self.instruction_excerpt is not None and not self.instruction_excerpt.strip():
+            raise ValueError("instruction_excerpt must not be blank")
+        for values in (self.context_sections, self.runtime_context_keys, self.contract_fields, self.option_labels):
+            if values is not None and any(not value.strip() or len(value) > 160 for value in values):
+                raise ValueError("tool step detail lists contain an invalid value")
+        if self.option_labels is not None and len(set(self.option_labels)) != len(self.option_labels):
+            raise ValueError("tool step option labels must be unique")
+        encoded = json.dumps(self.model_dump(mode="json", exclude_none=True), ensure_ascii=False, separators=(",", ":"))
+        if len(encoded.encode()) > 16 * 1024:
+            raise ValueError("tool step details exceed the bounded size")
+        return self
+
+
 class AgentServiceToolStep(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -45,6 +112,8 @@ class AgentServiceToolStep(BaseModel):
     kind: AgentToolStepKind
     summary: str = Field(min_length=1, max_length=160)
     status: AgentToolStepStatus
+    tool_name: str | None = Field(default=None, min_length=1, max_length=120)
+    details: AgentServiceToolStepDetails | None = None
 
     @field_validator("step_id")
     @classmethod
@@ -64,6 +133,13 @@ class AgentServiceToolStep(BaseModel):
             raise ValueError("summary must not be blank")
         if len(value.encode("utf-8")) > 160:
             raise ValueError("summary must not exceed 160 bytes")
+        return value
+
+    @field_validator("tool_name")
+    @classmethod
+    def validate_tool_name(cls, value: str | None) -> str | None:
+        if value is not None and ("\n" in value or "\r" in value or not value.strip()):
+            raise ValueError("tool_name must be a single non-empty line")
         return value
 
 
@@ -339,6 +415,8 @@ __all__ = [
     "AgentServiceQuestionOption",
     "AgentServiceRequestError",
     "AgentServiceToolStep",
+    "AgentServiceToolStepDetails",
+    "AgentServiceToolStepValidationIssue",
     "AgentServiceTurnState",
     "get_agent_service_client",
 ]

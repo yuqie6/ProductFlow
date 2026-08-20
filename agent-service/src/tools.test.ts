@@ -15,6 +15,7 @@ function runtime(
     scope,
     signal: new AbortController().signal,
     loadSkill: async (name, resourcePath) => `loaded:${name}:${resourcePath ?? "body"}`,
+    recordToolFailure: () => undefined,
     askUser: async () => ({ text: "answer" }),
     proposeArtifact: async () => undefined,
     markWorkflowRunRequested: () => undefined,
@@ -67,6 +68,83 @@ describe("ProductFlow Pi tools", () => {
     expect(names).toContain("create_product_workspace_v1");
     expect(names).not.toContain("get_product_workflow_context_v1");
     expect(names).not.toContain("propose_workflow_draft");
+  });
+
+  it("returns bounded Skill evidence while keeping the full instruction for the model", async () => {
+    const instruction = `# Workflow rules\n\n${"保持已核验事实。".repeat(4_000)}`;
+    const testRuntime = {
+      ...runtime(baseScope),
+      loadSkill: async () => instruction,
+    };
+    const tool = createProductFlowTools(testRuntime).find((candidate) => candidate.name === "load_productflow_skill");
+    if (!tool) throw new Error("Skill tool was not registered");
+
+    const result = await tool.execute("skill-evidence", { skill_name: "workflow-draft" }, undefined, undefined, {} as never);
+    const excerpt = (result.details as { instruction_excerpt?: string } | undefined)?.instruction_excerpt;
+    expect(typeof excerpt).toBe("string");
+    expect(Buffer.byteLength(excerpt ?? "", "utf8")).toBeLessThanOrEqual(12 << 10);
+    expect(result.details).toMatchObject({ skill_name: "workflow-draft", instruction_truncated: true });
+    expect(result.content[0]).toMatchObject({ type: "text" });
+    expect((result.content[0] as { text: string }).text).toContain(instruction.slice(0, 64));
+  });
+
+  it("bounds structured draft failure details before they cross the Agent contract", async () => {
+    const recordedFailures: unknown[] = [];
+    const client = {
+      validateWorkflowDraft: async () => {
+        throw new ProductFlowError(
+          400,
+          "workflow_draft_validation_failed",
+          "错误详情".repeat(800),
+          {
+            issues: [{ path: "draft\nfield", message: "校验问题".repeat(200) }],
+          },
+        );
+      },
+    } as unknown as ProductFlowClient;
+    const testRuntime = {
+      ...runtime(baseScope, client),
+      recordToolFailure: (_toolCallID: string, details: unknown) => recordedFailures.push(details),
+    };
+    const tool = createProductFlowTools(testRuntime).find((candidate) => candidate.name === "propose_workflow_draft");
+    if (!tool) throw new Error("Workflow draft tool was not registered");
+
+    await expect(tool.execute("draft-failure", {}, undefined, undefined, {} as never)).rejects.toMatchObject({
+      code: "workflow_draft_validation_failed",
+    });
+    const details = recordedFailures[0] as {
+      error_code: string;
+      error_message: string;
+      validation_issues: Array<{ path: string; message: string }>;
+    };
+    expect(details.error_code).toHaveLength("workflow_draft_validation_failed".length);
+    expect(details.error_message.length).toBeLessThanOrEqual(1000);
+    expect(details.validation_issues[0].path).not.toContain("\n");
+    expect(details.validation_issues[0].message.length).toBeLessThanOrEqual(500);
+    expect((recordedFailures[0] as { retryable?: boolean }).retryable).toBe(true);
+  });
+
+  it("does not label an unknown draft failure as retryable", async () => {
+    const recordedFailures: unknown[] = [];
+    const client = {
+      validateWorkflowDraft: async () => {
+        throw new Error("unexpected adapter failure");
+      },
+    } as unknown as ProductFlowClient;
+    const testRuntime = {
+      ...runtime(baseScope, client),
+      recordToolFailure: (_toolCallID: string, details: unknown) => recordedFailures.push(details),
+    };
+    const tool = createProductFlowTools(testRuntime).find((candidate) => candidate.name === "propose_workflow_draft");
+    if (!tool) throw new Error("Workflow draft tool was not registered");
+
+    await expect(tool.execute("draft-unknown-failure", {}, undefined, undefined, {} as never)).rejects.toThrow(
+      "unexpected adapter failure",
+    );
+    expect(recordedFailures[0]).toEqual({
+      phase: "tool_result",
+      error_message: "工具调用失败，详见当前 Turn 错误。",
+    });
   });
 
   it("reconciles a timed-out workspace create before declaring the effect unknown", async () => {

@@ -36,6 +36,7 @@ import {
   TurnQuestion,
   TurnState,
   ToolStepKind,
+  type ToolStepDetails,
   TurnStatus,
   TOOL_CONTRACT_VERSION,
   byteLength,
@@ -356,6 +357,8 @@ class RunRuntime implements ToolRuntime {
   private executionLeaseError?: Error;
   private effectUnknownError?: string;
   private readonly unknownToolStepIDs = new Set<string>();
+  private readonly activeToolStepDetails = new Map<string, ToolStepDetails>();
+  private readonly toolStepFailureDetails = new Map<string, ToolStepDetails>();
   private checkpointSequence = 0;
   private modelRequestSequence = 0;
   private currentModelRequestID?: string;
@@ -833,6 +836,10 @@ class RunRuntime implements ToolRuntime {
     void this.session?.abort();
   }
 
+  recordToolFailure(toolCallID: string, details: ToolStepDetails): void {
+    this.toolStepFailureDetails.set(toolCallID, details);
+  }
+
   async publishDurableEvent(event: TurnEvent): Promise<void> {
     const lease = this.executionLease;
     // A run may have a different queued Turn while this runtime owns the
@@ -911,43 +918,95 @@ class RunRuntime implements ToolRuntime {
     ]
       .filter(Boolean)
       .join("\n\n");
-    const dynamicContext = buildDynamicContext(runtimeContext, pageContext, images);
-    const resourceLoader = new DefaultResourceLoader({
-      cwd: workspace,
-      agentDir: join(workspace, ".pi-agent"),
-      settingsManager,
-      noExtensions: true,
-      noSkills: true,
-      extensionFactories: [
-        providerRequestExtension(this.providerRequestOptions, {
-          beforeRequest: () => this.checkpointModelRequest(),
-          currentRequestID: () => this.currentModelRequestID,
-        }),
-      ],
-      noPromptTemplates: true,
-      noThemes: true,
-      noContextFiles: true,
-      systemPrompt: staticPrompt,
-      systemPromptOverride: (base) => `${base ?? staticPrompt}\n\n${dynamicContext}`,
-    });
-    await resourceLoader.reload();
-    const sessionManager = SessionManager.continueRecent(workspace, this.manager.store.sessionDir(this.scope.run_id));
-    const tools = createProductFlowTools(this);
-    const result = await createAgentSession({
-      cwd: workspace,
-      agentDir: join(workspace, ".pi-agent"),
-      modelRuntime: runtime,
-      model,
-      thinkingLevel,
-      noTools: "all",
-      tools: tools.map((tool) => tool.name),
-      customTools: tools,
-      resourceLoader,
-      sessionManager,
-      settingsManager,
-    });
-    this.bindSessionEvents(result.session, turnID);
-    return { session: result.session, model };
+    const contextStepID = `context_${turnID}`;
+    let contextDetails = buildContextStepDetails(this.scope, runtimeContext, pageContext, images.length, this.manager.skills.hash, 0);
+    try {
+      const dynamicContext = buildDynamicContext(
+        runtimeContext,
+        pageContext,
+        images,
+        this.scope,
+        this.manager.skills.hash,
+      );
+      contextDetails = {
+        ...contextDetails,
+        context_bytes: byteLength(dynamicContext),
+      };
+      await this.manager.store.setToolStep(this.scope.run_id, turnID, {
+        step_id: contextStepID,
+        kind: "inject_context",
+        summary: "注入本轮运行时、页面和选中图片上下文",
+        status: "running",
+        tool_name: "productflow_context_injection",
+        details: contextDetails,
+      });
+      const resourceLoader = new DefaultResourceLoader({
+        cwd: workspace,
+        agentDir: join(workspace, ".pi-agent"),
+        settingsManager,
+        noExtensions: true,
+        noSkills: true,
+        extensionFactories: [
+          providerRequestExtension(this.providerRequestOptions, {
+            beforeRequest: () => this.checkpointModelRequest(),
+            currentRequestID: () => this.currentModelRequestID,
+          }),
+        ],
+        noPromptTemplates: true,
+        noThemes: true,
+        noContextFiles: true,
+        systemPrompt: staticPrompt,
+        systemPromptOverride: (base) => `${base ?? staticPrompt}\n\n${dynamicContext}`,
+      });
+      await resourceLoader.reload();
+      const sessionManager = SessionManager.continueRecent(workspace, this.manager.store.sessionDir(this.scope.run_id));
+      const tools = createProductFlowTools(this);
+      const result = await createAgentSession({
+        cwd: workspace,
+        agentDir: join(workspace, ".pi-agent"),
+        modelRuntime: runtime,
+        model,
+        thinkingLevel,
+        noTools: "all",
+        tools: tools.map((tool) => tool.name),
+        customTools: tools,
+        resourceLoader,
+        sessionManager,
+        settingsManager,
+      });
+      await this.manager.store.setToolStep(this.scope.run_id, turnID, {
+        step_id: contextStepID,
+        kind: "inject_context",
+        summary: "注入本轮运行时、页面和选中图片上下文",
+        status: "succeeded",
+        tool_name: "productflow_context_injection",
+        details: {
+          ...contextDetails,
+          output_summary: "已注入有界 Agent contract、Skill catalog、运行时、页面和选中图片上下文。",
+        },
+      });
+      this.bindSessionEvents(result.session, turnID);
+      return { session: result.session, model };
+    } catch (error) {
+      try {
+        await this.manager.store.setToolStep(this.scope.run_id, turnID, {
+          step_id: contextStepID,
+          kind: "inject_context",
+          summary: "注入本轮运行时、页面和选中图片上下文",
+          status: "failed",
+          tool_name: "productflow_context_injection",
+          details: {
+            ...contextDetails,
+            error_code: error instanceof ProductFlowError ? error.code : "context_injection_failed",
+            error_message: safeErrorMessage(error),
+            retryable: true,
+          },
+        });
+      } catch {
+        // Preserve the original session creation failure when the diagnostic step cannot persist.
+      }
+      throw error;
+    }
   }
 
   private bindSessionEvents(session: AgentSession, turnID: string): void {
@@ -978,26 +1037,30 @@ class RunRuntime implements ToolRuntime {
           void session.abort();
           return;
         }
-        if (event.toolName !== "ask_user" && event.toolName !== PRODUCTFLOW_SKILL_TOOL_NAME) {
-          this.enqueue(() =>
-            this.manager.store.setToolStep(this.scope.run_id, turnID, {
-              step_id: event.toolCallId,
-              kind: toolStepKind(event.toolName),
-              summary: toolStepSummary(event.toolName),
-              status: "running",
-            }),
-          );
-        }
+        const details = toolStepDetailsForStart(event.toolName, event.args);
+        this.activeToolStepDetails.set(event.toolCallId, details);
+        this.enqueue(() =>
+          this.manager.store.setToolStep(this.scope.run_id, turnID, {
+            step_id: event.toolCallId,
+            kind: toolStepKind(event.toolName),
+            summary: toolStepSummary(event.toolName),
+            status: "running",
+            tool_name: event.toolName,
+            ...(details ? { details } : {}),
+          }),
+        );
         return;
       }
       if (event.type === "tool_execution_end") {
         void this.updateExecutionPhase("model").catch(() => undefined);
       }
-      if (
-        event.type === "tool_execution_end" &&
-        event.toolName !== "ask_user" &&
-        event.toolName !== PRODUCTFLOW_SKILL_TOOL_NAME
-      ) {
+      if (event.type === "tool_execution_end") {
+        const startedDetails = this.activeToolStepDetails.get(event.toolCallId);
+        const failureDetails = this.toolStepFailureDetails.get(event.toolCallId);
+        const resultDetails = toolStepDetailsForResult(event.toolName, event.result, event.isError);
+        const details = mergeToolStepDetails(startedDetails, resultDetails, failureDetails);
+        this.activeToolStepDetails.delete(event.toolCallId);
+        this.toolStepFailureDetails.delete(event.toolCallId);
         this.enqueue(() =>
           this.manager.store.setToolStep(this.scope.run_id, turnID, {
             step_id: event.toolCallId,
@@ -1008,6 +1071,8 @@ class RunRuntime implements ToolRuntime {
               : event.isError
                 ? "failed"
                 : "succeeded",
+            tool_name: event.toolName,
+            ...(details ? { details } : {}),
           }),
         );
       }
@@ -1139,6 +1204,8 @@ class RunRuntime implements ToolRuntime {
     this.executionLeaseError = undefined;
     this.effectUnknownError = undefined;
     this.unknownToolStepIDs.clear();
+    this.activeToolStepDetails.clear();
+    this.toolStepFailureDetails.clear();
     if (this.executionHeartbeat) {
       clearInterval(this.executionHeartbeat);
       this.executionHeartbeat = undefined;
@@ -1207,9 +1274,18 @@ function buildDynamicContext(
   runtimeContext: RuntimeContext,
   pageContext: StartTurnInput["page_context"],
   images: ImageContent[],
+  scope: Scope,
+  skillCatalogHash: string,
 ): string {
   const snapshot = {
     schema_version: CONTEXT_SCHEMA_VERSION,
+    contract: {
+      scope_type: scope.scope_type,
+      product_id: scope.product_id,
+      workflow_draft_id: scope.workflow_draft_id,
+      current_draft_version: scope.current_draft_version,
+      skill_catalog_hash: skillCatalogHash,
+    },
     runtime_context: runtimeContext,
     page_context: pageContext,
     selected_asset_count: images.length,
@@ -1299,6 +1375,8 @@ function thinkingLevel(value: string | null | undefined): "off" | "minimal" | "l
 }
 
 function toolStepKind(name: string): ToolStepKind {
+  if (name === PRODUCTFLOW_SKILL_TOOL_NAME) return "load_skill";
+  if (name === "ask_user") return "ask_question";
   if (name === "propose_workflow_draft" || name === "propose_global_draft") return "propose_draft";
   if (name === "request_workflow_run_v1") return "request_workflow_run";
   if (name === "create_product_workspace_v1") return "create_product";
@@ -1310,20 +1388,196 @@ function toolStepKind(name: string): ToolStepKind {
 
 function toolStepSummary(name: string): string {
   switch (toolStepKind(name)) {
+    case "load_skill":
+      return "加载版本化 ProductFlow Skill 指令";
+    case "inject_context":
+      return "注入本轮 ProductFlow 上下文";
+    case "ask_question":
+      return "等待用户回答结构化问题";
     case "inspect_image":
-      return "Inspect selected image assets";
+      return "检查选中的商品图片";
     case "propose_draft":
-      return "Propose ProductFlow draft";
+      return "提交完整 ProductFlow 草案";
     case "inspect_context":
-      return "Inspect ProductFlow context";
+      return "读取 ProductFlow 当前上下文";
     case "read_history":
-      return "Read bounded history";
+      return "读取有界历史信息";
     case "organize_assets":
-      return "Organize ProductFlow assets";
+      return "整理 ProductFlow 素材";
     case "request_workflow_run":
-      return "Request workflow execution for human confirmation";
+      return "请求执行工作流并等待确认";
     case "create_product":
-      return "Create product onboarding workspace";
+      return "创建商品工作区";
   }
   throw new Error(`unhandled ProductFlow tool step kind for ${name}`);
+}
+
+function buildContextStepDetails(
+  scope: Scope,
+  runtimeContext: RuntimeContext,
+  pageContext: StartTurnInput["page_context"],
+  selectedAssetCount: number,
+  skillCatalogHash: string,
+  contextBytes: number,
+): ToolStepDetails {
+  return {
+    phase: "context_injection",
+    context_sections: ["productflow_contract", "skill_catalog", "runtime_context", "page_context", "selected_assets"],
+    runtime_context_keys: Object.keys(runtimeContext).sort().slice(0, 32),
+    contract_fields: [
+      "scope_type",
+      "product_id",
+      "workflow_draft_id",
+      "current_draft_version",
+      "skill_catalog_hash",
+    ],
+    ...(pageContext ? { page_route: pageContext.route, page_type: pageContext.page_type } : {}),
+    selected_asset_count: selectedAssetCount,
+    ...(pageContext ? { visible_asset_count: pageContext.visible_asset_ids.length } : {}),
+    context_bytes: contextBytes,
+    input_summary: `注入 ${scope.scope_type} contract、Skill catalog ${skillCatalogHash.slice(0, 12)} 和当前页面摘要。`,
+  };
+}
+
+function toolStepDetailsForStart(name: string, args: unknown): ToolStepDetails {
+  const argumentsObject = isRecord(args) ? args : {};
+  switch (toolStepKind(name)) {
+    case "load_skill":
+      return {
+        phase: "skill_load",
+        skill_name: safeDetailString(argumentsObject.skill_name, 64),
+        resource_path: safeDetailString(argumentsObject.resource_path, 256),
+        input_summary: "读取一个精确匹配的版本化 Skill 或静态参考。",
+      };
+    case "ask_question": {
+      const options = Array.isArray(argumentsObject.options)
+        ? argumentsObject.options.flatMap((option) => {
+            if (!isRecord(option)) return [];
+            const label = safeDetailString(option.label, 80);
+            return label ? [label] : [];
+          })
+        : [];
+      return {
+        phase: "question",
+        question_header: safeDetailString(argumentsObject.header, 32),
+        question_text: safeDetailString(argumentsObject.question, 2000, true),
+        ...(options.length ? { option_labels: options.slice(0, 5) } : {}),
+        input_summary: "向用户提出一个会影响结果的结构化选择。",
+      };
+    }
+    case "inspect_context":
+      return { phase: "tool_result", input_summary: "读取当前 ProductFlow 商品、事实、草案或运行上下文。" };
+    case "inspect_image":
+      return { phase: "tool_result", input_summary: "读取明确选中的已核验图片信息。" };
+    case "propose_draft":
+      return { phase: "tool_result", input_summary: "提交完整草案，由 ProductFlow Schema 和业务规则校验。" };
+    case "read_history":
+      return { phase: "tool_result", input_summary: "读取有界的历史摘要或归档信息。" };
+    case "organize_assets":
+      return { phase: "tool_result", input_summary: "准备或执行受限的素材整理操作。" };
+    case "request_workflow_run":
+      return { phase: "tool_result", input_summary: "准备工作流执行请求，等待用户确认。" };
+    case "create_product":
+      return { phase: "tool_result", input_summary: "创建商品 onboarding 工作区。" };
+    case "inject_context":
+      return { phase: "context_injection" };
+  }
+}
+
+export function toolStepDetailsForResult(name: string, result: unknown, isError: boolean): ToolStepDetails | undefined {
+  const resultObject = isRecord(result) ? result : {};
+  const resultDetails = isRecord(resultObject.details) ? resultObject.details : {};
+  const kind = toolStepKind(name);
+  if (isError) {
+    return {
+      phase: kind === "ask_question" ? "question" : kind === "load_skill" ? "skill_load" : "tool_result",
+      output_summary: "工具调用失败，详情见错误信息。",
+    };
+  }
+  switch (kind) {
+    case "load_skill": {
+      const instructionExcerpt = safeDetailString(resultDetails.instruction_excerpt, 12_000, true);
+      return {
+        phase: "skill_load",
+        ...(safeDetailString(resultDetails.skill_name, 64) ? { skill_name: safeDetailString(resultDetails.skill_name, 64) } : {}),
+        ...(safeDetailString(resultDetails.resource_path, 256)
+          ? { resource_path: safeDetailString(resultDetails.resource_path, 256) }
+          : {}),
+        ...(instructionExcerpt ? { instruction_excerpt: instructionExcerpt } : {}),
+        ...(typeof resultDetails.instruction_truncated === "boolean"
+          ? { instruction_truncated: resultDetails.instruction_truncated }
+          : {}),
+        output_summary: "已加载版本化 Skill 指令；完整内容已提供给模型。",
+      };
+    }
+    case "ask_question":
+      return {
+        phase: "question",
+        ...(safeDetailString(resultDetails.question_id, 120)
+          ? { question_id: safeDetailString(resultDetails.question_id, 120) }
+          : {}),
+        output_summary: "用户回答已保存，等待 Agent 恢复执行。",
+      };
+    case "inspect_context":
+      return {
+        phase: "tool_result",
+        ...(name === "get_product_workflow_context_v1"
+          ? {
+              context_sections: [
+                "product_facts",
+                "workflow_draft",
+                "intake",
+                "verified_reference_assets",
+                "recipe_seed",
+                "legacy_seed",
+                "draft_guidance",
+              ],
+            }
+          : {}),
+        output_summary: name === "get_product_workflow_context_v1"
+          ? "已读取当前商品事实、WorkflowDraft、参考资产和提交前校验指导。"
+          : "已读取有界 ProductFlow 上下文。",
+      };
+    case "inspect_image":
+      return { phase: "tool_result", output_summary: "已读取选中图片的有界检查结果。" };
+    case "propose_draft":
+      return { phase: "tool_result", output_summary: "后端已接受完整草案，当前等待用户确认。" };
+    case "read_history":
+      return { phase: "tool_result", output_summary: "已读取有界历史摘要。" };
+    case "organize_assets":
+      return { phase: "tool_result", output_summary: "素材操作已返回 ProductFlow 结果。" };
+    case "request_workflow_run":
+      return { phase: "tool_result", output_summary: "执行请求已准备，当前等待用户确认。" };
+    case "create_product":
+      return { phase: "tool_result", output_summary: "商品工作区创建结果已返回。" };
+    case "inject_context":
+      return { phase: "context_injection", output_summary: "上下文已注入模型会话。" };
+  }
+}
+
+function mergeToolStepDetails(
+  started: ToolStepDetails | undefined,
+  result: ToolStepDetails | undefined,
+  failure: ToolStepDetails | undefined,
+): ToolStepDetails | undefined {
+  if (!started && !result && !failure) return undefined;
+  const phase = started?.phase ?? result?.phase ?? failure?.phase;
+  return {
+    ...started,
+    ...result,
+    ...failure,
+    ...(phase ? { phase } : {}),
+  };
+}
+
+function safeDetailString(value: unknown, maximum: number, allowNewline = false): string | undefined {
+  if (
+    typeof value !== "string" ||
+    !value.trim() ||
+    value.length > maximum ||
+    (!allowNewline && /[\r\n]/u.test(value))
+  ) {
+    return undefined;
+  }
+  return value;
 }

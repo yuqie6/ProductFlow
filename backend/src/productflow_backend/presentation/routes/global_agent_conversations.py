@@ -270,21 +270,21 @@ def get_global_agent_turn_endpoint(
         conversation_id=conversation_id,
         projection_id=projection_id,
     )
-    if (
-        projection.status in _REFRESHABLE_AGENT_TURN_STATUSES
-        and projection.sync_error is None
-    ) or (
+    if projection.status in _REFRESHABLE_AGENT_TURN_STATUSES or (
         projection.status == AgentTurnStatus.AWAITING_CONFIRMATION
         and projection.workflow_draft_revision_id is None
         and projection.library_organization_draft_revision_id is None
     ):
-        projection = refresh_agent_turn(
-            session,
-            product_id=None,
-            conversation_id=conversation_id,
-            projection_id=projection_id,
-            gateway=_agent_gateway_or_raise(),
-        )
+        gateway = _agent_gateway_or_none()
+        if gateway is not None:
+            projection = refresh_agent_turn(
+                session,
+                product_id=None,
+                conversation_id=conversation_id,
+                projection_id=projection_id,
+                gateway=gateway,
+                tolerate_transient_unavailable=True,
+            )
     return serialize_agent_turn(projection)
 
 

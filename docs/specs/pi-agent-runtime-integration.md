@@ -275,7 +275,7 @@ Tool 返回值分成三部分：
 
 1. 给模型看的短文本：当前结果、下一步和冲突原因。
 2. 给 adapter/审计看的结构化 details：对象 ID、revision、Draft revision、状态和 bounded counts。
-3. 给 Web projection 的安全摘要：`kind`、`summary`、`status` 和可安全引用的对象 ID。
+3. 给 Web projection 的安全摘要：`kind`、`summary`、`status`、实际 `tool_name` 和白名单 `details`。details 只允许 Skill 名称、最多 12 KiB 的 Skill 正文摘要及截断标记、上下文区段与大小、问题选项、结果摘要、错误码、校验路径和可重试标记。
 
 涉及外部副作用的 Tool 还必须写 `tool_effect_intent` 和 `tool_effect_result` checkpoint。`tool_effect_result.result` 只能是 `applied`、`failed` 或 `unknown`；reconciliation 的来源状态可以通过额外的 `reconciliation_state` 字段记录，但不能替代这三个正式结果类别。
 
@@ -354,7 +354,7 @@ Pi 的 session file、compaction 和 resume API 不能直接证明以下语义�
 - 定义 Skill catalog、Context schema、Tool schema 和 runtime status 字段。
 - 增加 adapter contract tests，测试不依赖真实 provider。
 
-当前结果：HTTP/SSE、Question、Draft、tool-step、错误映射、Skill/Context/Tool 版本字段和基础 contract tests 已落地；仓库测试已覆盖 fake Responses provider 的普通文本 Turn、当前两类 ProductFlow 副作用工具调用及 HTTP 响应体丢失后的稳定幂等键对账、新 runtime 读取旧 Pi session 上下文、真实 Agent HTTP 进程终止后将模型 Turn 收敛为 `unknown`，以及未知副作用对账从 `unknown` 收敛到 `applied` 的持久记录。Question/unknown 的完整故障矩阵、全量副作用覆盖和真实依赖 gate 仍待补齐。
+当前结果：HTTP/SSE、Question、Draft、tool-step、结构化校验错误、Skill 加载/上下文注入/问题步骤投影、Skill/Context/Tool 版本字段和基础 contract tests 已落地；仓库测试已覆盖 fake Responses provider 的普通文本 Turn、当前两类 ProductFlow 副作用工具调用及 HTTP 响应体丢失后的稳定幂等键对账、新 runtime 读取旧 Pi session 上下文、真实 Agent HTTP 进程终止后将模型 Turn 收敛为 `unknown`，以及未知副作用对账从 `unknown` 收敛到 `applied` 的持久记录。Question/unknown 的完整故障矩阵、全量副作用覆盖和真实依赖 gate 仍待补齐。
 
 ### 阶段 1：Pi runtime 最小验证（main 已实现）
 

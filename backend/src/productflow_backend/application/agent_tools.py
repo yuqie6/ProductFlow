@@ -44,6 +44,7 @@ from productflow_backend.application.media_library.service import validate_media
 from productflow_backend.application.workflow_drafts.contracts import (
     WorkflowDraftPayloadV1,
     parse_workflow_draft_payload,
+    workflow_draft_agent_guidance,
     workflow_draft_tool_schema,
 )
 from productflow_backend.application.workflow_drafts.service import validate_workflow_draft_for_confirmation
@@ -54,7 +55,12 @@ from productflow_backend.domain.enums import (
     MediaVerificationStatus,
     WorkflowDraftStatus,
 )
-from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
+from productflow_backend.domain.errors import (
+    BusinessValidationError,
+    ConflictError,
+    NotFoundError,
+    StructuredBusinessValidationError,
+)
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
     AgentToolMutation,
@@ -69,7 +75,7 @@ from productflow_backend.infrastructure.db.models import (
 )
 from productflow_backend.infrastructure.storage import LocalStorage
 
-AGENT_TOOL_CONTRACT_VERSION = 8
+AGENT_TOOL_CONTRACT_VERSION = 9
 AGENT_ASSET_LIST_DEFAULT_LIMIT = 50
 AGENT_ASSET_LIST_MAX_LIMIT = 100
 AGENT_ASSET_MAX_BYTES = 20 * 1024 * 1024
@@ -83,28 +89,32 @@ MOVE_ASSETS_TOOL_NAME = "move_product_image_assets_v1"
 
 WORKFLOW_AGENT_SYSTEM_PROMPT = """你是 ProductFlow 的商品工作流设计 Agent。
 你的作用域固定为当前 conversation、商品和 WorkflowDraft。
+你的输出目标是一个完整、可审核、可回放的 WorkflowDraft proposal。
 
-工作原则：
-1. 先读取商品与草案上下文，核对用户已选图片类型、各自生成数量、商品事实、视觉体系和参考图。
-2. 信息不足时使用 ask_user 提出直接影响成图或文案的少量问题，例如价格、风格、文字语种和禁用内容；不要重复询问已有事实。
-3. 商品外观必须以用户提供的已核验参考图为依据。
-   图库列表只提供元数据；仅在确有需要时 inspect 明确选中的图片，单次最多 6 张。
-4. 可以创建或重命名一层图片文件夹、修改资产显示名、把图片移动到文件夹或未整理目录。
-   不得删除素材或文件夹、修改封面、原始文件名、图片类型、生成血缘、臆造 Logo 或逐节点写入画布。
-5. 用户确认需求后，提交完整的 propose_workflow_draft artifact。
-   每个图片类型由一个提示词计划表达；同类型数量用于候选抽取，不拆成多个提示词节点。
-   不同角度或不同信息任务应建为不同图片类型。
-10. 如果上下文包含 legacy_archive_seed，应把旧归档当作只读设计参考。
-    使用有界的归档 list/inspect 工具按 section 分页读取需要的信息；不得声称无损迁移，
-    不得修改、运行或重试旧归档，也不得一次读取全部历史运行或图片。
-6. 最终草案必须满足工具提供的 JSON Schema，并引用当前商品真实存在的资产 ID。
-   不要在文本中输出 base64、data URL、存储路径或内部 URL。
-7. 如果上下文包含 workflow_recipe_seed，recipe 只表示可复用结构和要求。
-   必须针对当前商品重新核对事实、选择参考图、生成提示词和视觉体系；不得把 recipe payload 直接作为 WorkflowDraft 提交。
-8. workflow_draft.intake 是用户初始提交的不可变需求。
-   可以建议调整图片类型或数量，但必须明确说明变化并等待用户确认，不能静默改写。
-9. Logo、认证、工厂或其他专有素材只能来自用户提供的真实资产。
-   缺失时应询问用户、降低对应设计要求或移除相关图片类型，不能臆造。
+执行顺序：
+1. 调用 load_productflow_skill 加载 productflow-core；任务涉及 WorkflowDraft 时继续加载 workflow-draft。
+2. 调用 get_product_workflow_context_v1，核对当前商品事实、最新 revision、intake、已核验参考资产、
+   recipe/legacy seed 和 draft_guidance。
+3. 只有缺少会改变成图或文案结果的事实时才使用 ask_user；问题要集中、提供有描述的选择，
+   并等待回答后重新读取当前 ProductFlow 事实。
+4. 商品外观必须以用户提供的已核验参考图为依据。图库列表只提供元数据；确有需要时 inspect 明确选中的图片，单次最多 6 张。
+5. 形成完整 WorkflowDraft 后，先按上下文中的 pre_submit_checks 检查跨字段规则，再调用 propose_workflow_draft。
+6. 校验失败时，读取结构化 issues 的 path 和 message，修复完整 payload 后再提交；不要重复发送相同 payload，
+   也不要把错误当作用户补充信息。
+
+不可违反的 WorkflowDraft 约束：
+- fit=contain 时 crop_anchor 必须为 null 或省略；fit=cover 时 background_color 必须为 null 或省略。
+- 视觉例外的 override.field 必须在 visual_system.payload.locked_fields 中；覆盖 spacing 时必须包含 spacing。
+- quantity 必须等于逐图 images 数量；提示词计划、图片类型和 image plan 的 key 必须一一对应。
+- workflow_draft.intake 是用户初始提交的不可变需求。调整图片类型或数量前必须明确询问并获得用户确认，不能静默改写。
+- recipe 只提供可复用结构，legacy_archive_seed 只读；不得把 recipe payload 直接作为 WorkflowDraft，
+  两者都不能原样作为当前商品的 WorkflowDraft 提交。
+- Logo、认证、工厂或其他专有素材只能来自用户真实资产，缺失时询问、降低要求或移除相关图片类型。
+- 不得删除素材或文件夹、修改封面、原始文件名、图片类型、生成血缘；不能臆造任何资产或商品事实，
+  不能逐节点写入画布，不能输出 base64、data URL、存储路径和内部 URL。
+
+成功条件：propose_workflow_draft 返回 accepted=true、pending_confirmation=true。
+此结果表示草案进入审核，不表示已经确认或已运行工作流。
 """
 
 GLOBAL_AGENT_SYSTEM_PROMPT = """你是 ProductFlow 的全局素材与工作流辅助 Agent。
@@ -289,16 +299,30 @@ def validate_agent_workflow_draft(
     try:
         artifact = parse_workflow_draft_payload(value)
     except ValidationError as exc:
-        issues = []
+        issues: list[dict[str, str]] = []
         for error in exc.errors(include_url=False, include_context=False, include_input=False)[:8]:
             path = ".".join(str(part) for part in error["loc"]) or "$"
-            issues.append(f"{path}: {error['msg']}")
-        raise BusinessValidationError(f"WorkflowDraft 无效: {'; '.join(issues)}") from exc
-    validate_workflow_draft_for_confirmation(
-        session,
-        product_id=conversation.product_id,
-        artifact=artifact,
-    )
+            issues.append({"path": path, "message": error["msg"]})
+        formatted_issues = "; ".join(f"{issue['path']}: {issue['message']}" for issue in issues)
+        raise StructuredBusinessValidationError(
+            f"WorkflowDraft 无效: {formatted_issues}",
+            code="workflow_draft_validation_failed",
+            issues=issues,
+        ) from exc
+    try:
+        validate_workflow_draft_for_confirmation(
+            session,
+            product_id=conversation.product_id,
+            artifact=artifact,
+        )
+    except StructuredBusinessValidationError:
+        raise
+    except BusinessValidationError as exc:
+        raise StructuredBusinessValidationError(
+            str(exc),
+            code="workflow_draft_validation_failed",
+            issues=[{"path": "$", "message": str(exc)}],
+        ) from exc
     return artifact
 
 
@@ -377,6 +401,7 @@ def get_agent_product_context(session: Session, conversation_id: str) -> dict[st
         },
         "workflow_recipe_seed": recipe_seed,
         "legacy_archive_seed": archive_seed,
+        "draft_guidance": workflow_draft_agent_guidance(),
     }
     encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
     if len(encoded) > AGENT_CONTEXT_MAX_BYTES:

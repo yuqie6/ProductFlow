@@ -178,6 +178,7 @@ def refresh_agent_turn(
     conversation_id: str,
     projection_id: str,
     gateway: AgentServiceClient,
+    tolerate_transient_unavailable: bool = False,
 ) -> AgentTurnProjection:
     projection = get_agent_turn_or_raise(
         session,
@@ -194,6 +195,20 @@ def refresh_agent_turn(
             task_id=projection.task_id,
         )
     except AgentServiceRequestError as exc:
+        if tolerate_transient_unavailable and _is_transient_agent_service_error(exc):
+            record_agent_turn_start_error(
+                session,
+                product_id=product_id,
+                conversation_id=conversation_id,
+                projection_id=projection.id,
+                safe_error=_safe_agent_sync_error(exc),
+            )
+            return get_agent_turn_or_raise(
+                session,
+                product_id=product_id,
+                conversation_id=conversation_id,
+                projection_id=projection.id,
+            )
         _raise_agent_service_business_error(exc)
     return synchronize_agent_turn_state(
         session,
@@ -498,7 +513,7 @@ def synchronize_agent_turn_state(
         error_text=_safe_agent_turn_error(state),
         question_json=state.question.model_dump(mode="json") if state.question is not None else None,
         tool_steps_json=(
-            [tool_step.model_dump(mode="json") for tool_step in state.tool_steps]
+            [tool_step.model_dump(mode="json", exclude_none=True) for tool_step in state.tool_steps]
             if state.tool_steps is not None
             else None
         ),

@@ -212,7 +212,7 @@ async function handleFakeProductFlowRequest(
       draft_kind: "global",
       draft_schema: { type: "object" },
       workflow_draft_schema: { type: "object" },
-      tool_contract_version: 8,
+      tool_contract_version: 9,
     });
     return;
   }

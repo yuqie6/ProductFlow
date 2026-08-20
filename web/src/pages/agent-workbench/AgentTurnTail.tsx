@@ -65,7 +65,8 @@ export function AgentTurnTail({
   onReviewDraft,
 }: AgentTurnTailProps) {
   const { t } = useI18n();
-  const error = turn.error_text ?? turn.sync_error;
+  const error = turn.error_text;
+  const syncWarning = turn.sync_error;
   const animate = active && (turn.status === "running" || turn.status === "cancel_requested");
 
   return (
@@ -105,6 +106,18 @@ export function AgentTurnTail({
         >
           <CircleX size={14} className="mt-0.5 shrink-0" />
           <span className="min-w-0 break-words">{error}</span>
+        </div>
+      ) : null}
+      {syncWarning ? (
+        <div
+          role="status"
+          className="mt-1.5 flex items-start gap-2 border-l-2 border-state-warning bg-state-warning/5 px-2.5 py-2 text-xs leading-5 text-state-warning"
+        >
+          <LoaderCircle size={14} className={`mt-0.5 shrink-0 ${active ? "animate-spin motion-reduce:animate-none" : ""}`} />
+          <span className="min-w-0 break-words">
+            <span className="font-medium">{t("agentWorkbench.connection.syncing")}</span>
+            <span className="ml-1.5">{syncWarning}</span>
+          </span>
         </div>
       ) : null}
     </div>

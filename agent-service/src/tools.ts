@@ -13,6 +13,7 @@ import {
   TurnAnswer,
   TurnArtifact,
   TurnQuestion,
+  ToolStepDetails,
   toolKind,
 } from "./contracts.js";
 import {
@@ -25,6 +26,7 @@ import { PRODUCTFLOW_SKILL_TOOL_NAME } from "./skills.js";
 const MAX_INSPECTED_ASSETS = 6;
 const MAX_TOTAL_IMAGE_BYTES = 20 << 20;
 const MAX_TOOL_TEXT_BYTES = 96 << 10;
+const MAX_SKILL_INSTRUCTION_EXCERPT_BYTES = 12 << 10;
 const MAX_LISTED_ASSETS = 100;
 const MAX_LISTED_ARCHIVES = 50;
 const MAX_INSPECTED_ARCHIVE_ITEMS = 10;
@@ -50,6 +52,7 @@ export interface ToolRuntime {
   readonly scope: Scope;
   readonly signal: AbortSignal;
   loadSkill(name: string, resourcePath?: string): Promise<string>;
+  recordToolFailure(toolCallID: string, details: ToolStepDetails): void;
   askUser(question: TurnQuestion): Promise<TurnAnswer>;
   proposeArtifact(artifact: TurnArtifact): Promise<void>;
   markWorkflowRunRequested(): void;
@@ -82,6 +85,7 @@ export function createProductFlowTools(runtime: ToolRuntime): ToolDefinition[] {
         const name = params.skill_name.trim();
         const resourcePath = params.resource_path?.trim() || undefined;
         const content = await runtime.loadSkill(name, resourcePath);
+        const instructionDetails = buildSkillInstructionDetails(content);
         return {
           content: [
             {
@@ -89,7 +93,11 @@ export function createProductFlowTools(runtime: ToolRuntime): ToolDefinition[] {
               text: `ProductFlow Skill: ${name}${resourcePath ? `\nResource: ${resourcePath}` : ""}\n\n${content}`,
             },
           ],
-          details: { skill_name: name, ...(resourcePath ? { resource_path: resourcePath } : {}) },
+          details: {
+            skill_name: name,
+            ...(resourcePath ? { resource_path: resourcePath } : {}),
+            ...instructionDetails,
+          },
         };
       },
     }),
@@ -715,8 +723,13 @@ function createDraftTool(
       : "Submit one complete schema-valid ProductFlow WorkflowDraft for review. The backend validates it and the user must confirm it.",
     parameters: schema as TSchema,
     execute: async (toolCallID: string, params: JsonObject): Promise<Result> => {
-      if (global) await runtime.client.validateGlobalDraft(runtime.scope.conversation_id, params, runtime.signal);
-      else await runtime.client.validateWorkflowDraft(runtime.scope.conversation_id, params, runtime.signal);
+      try {
+        if (global) await runtime.client.validateGlobalDraft(runtime.scope.conversation_id, params, runtime.signal);
+        else await runtime.client.validateWorkflowDraft(runtime.scope.conversation_id, params, runtime.signal);
+      } catch (error) {
+        runtime.recordToolFailure(toolCallID, toolFailureDetails(error));
+        throw error;
+      }
       await runtime.proposeArtifact({ name, value: params, step_id: toolCallID });
       return { ...textResult({ accepted: true, pending_confirmation: true }, { artifact_name: name }), terminate: true };
     },
@@ -739,6 +752,68 @@ function boundedJSON(value: unknown): string {
   }
   if (Buffer.byteLength(encoded, "utf8") <= MAX_TOOL_TEXT_BYTES) return encoded;
   return `${Buffer.from(encoded, "utf8").subarray(0, MAX_TOOL_TEXT_BYTES).toString("utf8")}...[truncated]`;
+}
+
+function buildSkillInstructionDetails(content: string): Pick<ToolStepDetails, "instruction_excerpt" | "instruction_truncated"> {
+  const fullBytes = Buffer.byteLength(content, "utf8");
+  if (fullBytes <= MAX_SKILL_INSTRUCTION_EXCERPT_BYTES) {
+    return { instruction_excerpt: content, instruction_truncated: false };
+  }
+
+  const suffix = "\n...[truncated]";
+  const availableBytes = MAX_SKILL_INSTRUCTION_EXCERPT_BYTES - Buffer.byteLength(suffix, "utf8");
+  let low = 0;
+  let high = content.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (Buffer.byteLength(content.slice(0, middle), "utf8") <= availableBytes) low = middle;
+    else high = middle - 1;
+  }
+  return {
+    instruction_excerpt: `${content.slice(0, low)}${suffix}`,
+    instruction_truncated: true,
+  };
+}
+
+function toolFailureDetails(error: unknown): ToolStepDetails {
+  if (!(error instanceof ProductFlowError)) {
+    return {
+      phase: "tool_result",
+      error_message: "工具调用失败，详见当前 Turn 错误。",
+    };
+  }
+  const issuesValue = error.details?.issues;
+  const validationIssues = Array.isArray(issuesValue)
+    ? issuesValue.flatMap((issue) => {
+        if (
+          !issue ||
+          typeof issue !== "object" ||
+          Array.isArray(issue) ||
+          typeof (issue as { path?: unknown }).path !== "string" ||
+          typeof (issue as { message?: unknown }).message !== "string"
+        ) {
+          return [];
+        }
+        return [
+          {
+            path: boundedDetailText((issue as { path: string }).path, 200, "$"),
+            message: boundedDetailText((issue as { message: string }).message, 500, "ProductFlow validation failed"),
+          },
+        ];
+      })
+    : undefined;
+  return {
+    phase: "tool_result",
+    error_code: boundedDetailText(error.code, 120, "productflow_error"),
+    error_message: boundedDetailText(error.message, 1000, "工具调用失败，详见当前 Turn 错误。"),
+    retryable: error.code === "workflow_draft_validation_failed" || error.status >= 500,
+    ...(validationIssues?.length ? { validation_issues: validationIssues.slice(0, 8) } : {}),
+  };
+}
+
+function boundedDetailText(value: string, maximum: number, fallback: string): string {
+  const normalized = value.replace(/[\r\n]+/gu, " ").trim();
+  return (normalized || fallback).slice(0, maximum);
 }
 
 function isReconcileState(value: string): value is "applied" | "not_applied" | "conflict" | "unknown" {

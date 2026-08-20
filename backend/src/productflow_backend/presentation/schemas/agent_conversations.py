@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_serializer, model_validator
 
 from productflow_backend.application.agent_conversations import (
     AGENT_MAX_INPUT_ASSETS,
@@ -32,7 +32,7 @@ from productflow_backend.domain.enums import (
     AgentWorkflowRunRequestStatus,
     WorkflowRunStatus,
 )
-from productflow_backend.infrastructure.agent_service import AgentServiceToolStep
+from productflow_backend.infrastructure.agent_service import AgentServiceToolStep, AgentServiceToolStepDetails
 from productflow_backend.infrastructure.db.models import AgentConversation, AgentTurnProjection
 from productflow_backend.presentation.schemas.workflow_drafts import WorkflowDraftResponse, WorkflowRunV2Response
 
@@ -478,6 +478,12 @@ class AgentToolStepResponse(BaseModel):
     kind: AgentToolStepKind
     summary: str
     status: AgentToolStepStatus
+    tool_name: str | None = None
+    details: AgentServiceToolStepDetails | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize_without_empty_fields(self, handler: Any) -> dict[str, Any]:
+        return {key: value for key, value in handler(self).items() if value is not None}
 
 
 class AgentTurnResponse(BaseModel):
@@ -635,7 +641,9 @@ def _serialize_agent_tool_steps(stored_value: Any) -> list[AgentToolStepResponse
             continue
         try:
             service_step = AgentServiceToolStep.model_validate(item)
-            serialized.append(AgentToolStepResponse.model_validate(service_step.model_dump()))
+            serialized.append(
+                AgentToolStepResponse.model_validate(service_step.model_dump(mode="json", exclude_none=True))
+            )
         except ValidationError:
             continue
         if len(serialized) == 100:

@@ -102,10 +102,22 @@ describe("Pi runtime fake provider E2E", () => {
       expect(events.map((event) => event.kind)).toEqual([
         "turn.queued",
         "turn.started",
+        "tool.step",
+        "tool.step",
         "text.delta",
         "turn.succeeded",
       ]);
-      expect(events.map((event) => event.sequence)).toEqual([1, 2, 3, 4]);
+      expect(events.map((event) => event.sequence)).toEqual([1, 2, 3, 4, 5, 6]);
+      expect(events[2]?.payload).toMatchObject({
+        kind: "inject_context",
+        tool_name: "productflow_context_injection",
+        status: "running",
+      });
+      expect(events[3]?.payload).toMatchObject({
+        kind: "inject_context",
+        tool_name: "productflow_context_injection",
+        status: "succeeded",
+      });
       expect((await readdir(store.sessionDir(scope.run_id))).length).toBeGreaterThan(0);
       expect(provider.requestBody).toMatchObject({
         model: "fake-model",
@@ -381,7 +393,7 @@ function createFakeProductFlow(
       draft_kind: "global",
       draft_schema: scope.draft_schema,
       workflow_draft_schema: scope.workflow_draft_schema,
-      tool_contract_version: 8,
+      tool_contract_version: 9,
     }),
     runtimeContext: async () => ({
       schema_version: 1,

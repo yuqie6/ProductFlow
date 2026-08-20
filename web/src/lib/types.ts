@@ -1027,10 +1027,6 @@ export interface AgentSessionListResponse {
   items: AgentSession[];
 }
 
-export interface CreateAgentSessionInput {
-  title: string;
-}
-
 export type AgentTaskStatus =
   | "queued"
   | "running"
@@ -1100,6 +1096,9 @@ export type AgentTurnStatus =
   | "unknown";
 
 export type AgentToolStepKind =
+  | "load_skill"
+  | "inject_context"
+  | "ask_question"
   | "inspect_image"
   | "propose_draft"
   | "inspect_context"
@@ -1110,11 +1109,46 @@ export type AgentToolStepKind =
 
 export type AgentToolStepStatus = "running" | "succeeded" | "failed" | "unknown";
 
+export type AgentToolStepDetailPhase = "skill_load" | "context_injection" | "question" | "tool_result";
+
+export interface AgentToolStepValidationIssue {
+  path: string;
+  message: string;
+}
+
+export interface AgentToolStepDetails {
+  phase?: AgentToolStepDetailPhase;
+  skill_name?: string;
+  resource_path?: string;
+  instruction_excerpt?: string;
+  instruction_truncated?: boolean;
+  context_sections?: string[];
+  runtime_context_keys?: string[];
+  contract_fields?: string[];
+  page_route?: string;
+  page_type?: string;
+  selected_asset_count?: number;
+  visible_asset_count?: number;
+  context_bytes?: number;
+  input_summary?: string;
+  output_summary?: string;
+  error_code?: string;
+  error_message?: string;
+  retryable?: boolean;
+  validation_issues?: AgentToolStepValidationIssue[];
+  question_id?: string;
+  question_header?: string;
+  question_text?: string;
+  option_labels?: string[];
+}
+
 export interface AgentToolStep {
   step_id: string;
   kind: AgentToolStepKind;
   summary: string;
   status: AgentToolStepStatus;
+  tool_name?: string;
+  details?: AgentToolStepDetails;
 }
 
 export interface AgentQuestionOption {

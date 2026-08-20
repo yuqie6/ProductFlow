@@ -1,6 +1,7 @@
 import type {
   AgentQuestion,
   AgentToolStep,
+  AgentToolStepDetails,
   AgentToolStepKind,
   AgentToolStepStatus,
   AgentTurn,
@@ -9,6 +10,9 @@ import type {
 } from "../../lib/types";
 
 const AGENT_TOOL_STEP_KINDS = new Set<AgentToolStepKind>([
+  "load_skill",
+  "inject_context",
+  "ask_question",
   "inspect_image",
   "propose_draft",
   "inspect_context",
@@ -314,9 +318,10 @@ function parseTextDeltaPayload(payload: Record<string, unknown>): {
 
 function parseAgentToolStep(payload: Record<string, unknown>): AgentToolStep {
   const keys = Object.keys(payload);
+  const allowedKeys = new Set(["step_id", "kind", "summary", "status", "tool_name", "details"]);
   if (
-    keys.length !== 4 ||
-    !keys.every((key) => ["step_id", "kind", "summary", "status"].includes(key)) ||
+    keys.length < 4 ||
+    !keys.every((key) => allowedKeys.has(key)) ||
     typeof payload.step_id !== "string" ||
     !payload.step_id.trim() ||
     UTF8_ENCODER.encode(payload.step_id).byteLength > 200 ||
@@ -331,12 +336,172 @@ function parseAgentToolStep(payload: Record<string, unknown>): AgentToolStep {
   ) {
     throw new AgentEventProtocolError("tool.step payload 无效");
   }
+  const toolName = readOptionalDetailString(payload.tool_name, 120, false, "tool_name");
+  const details = parseAgentToolStepDetails(payload.details);
   return {
     step_id: payload.step_id,
     kind: payload.kind as AgentToolStepKind,
     summary: payload.summary,
     status: payload.status as AgentToolStepStatus,
+    ...(toolName ? { tool_name: toolName } : {}),
+    ...(details ? { details } : {}),
   };
+}
+
+function parseAgentToolStepDetails(value: unknown): AgentToolStepDetails | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value) || UTF8_ENCODER.encode(JSON.stringify(value)).byteLength > 16 * 1024) {
+    throw new AgentEventProtocolError("tool.step details 无效");
+  }
+  const allowedKeys = new Set([
+    "phase",
+    "skill_name",
+    "resource_path",
+    "instruction_excerpt",
+    "instruction_truncated",
+    "context_sections",
+    "runtime_context_keys",
+    "contract_fields",
+    "page_route",
+    "page_type",
+    "selected_asset_count",
+    "visible_asset_count",
+    "context_bytes",
+    "input_summary",
+    "output_summary",
+    "error_code",
+    "error_message",
+    "retryable",
+    "validation_issues",
+    "question_id",
+    "question_header",
+    "question_text",
+    "option_labels",
+  ]);
+  if (!Object.keys(value).every((key) => allowedKeys.has(key))) {
+    throw new AgentEventProtocolError("tool.step details 无效");
+  }
+
+  const phase = readOptionalDetailString(value.phase, 32, false, "phase");
+  if (phase !== undefined && !new Set(["skill_load", "context_injection", "question", "tool_result"]).has(phase)) {
+    throw new AgentEventProtocolError("tool.step details phase 无效");
+  }
+  const details: AgentToolStepDetails = phase
+    ? { phase: phase as AgentToolStepDetails["phase"] }
+    : {};
+  const stringFields = [
+    ["skill_name", 64, false],
+    ["resource_path", 256, false],
+    ["instruction_excerpt", 12000, true],
+    ["page_route", 512, false],
+    ["page_type", 80, false],
+    ["input_summary", 240, false],
+    ["output_summary", 240, false],
+    ["error_code", 120, false],
+    ["error_message", 1000, false],
+    ["question_id", 120, false],
+    ["question_header", 32, false],
+    ["question_text", 2000, true],
+  ] as const;
+  for (const [key, maximum, allowNewline] of stringFields) {
+    const field = readOptionalDetailString(value[key], maximum, allowNewline, key);
+    if (field !== undefined) details[key] = field;
+  }
+
+  for (const [key, maximum] of [
+    ["context_sections", 8],
+    ["runtime_context_keys", 32],
+    ["contract_fields", 16],
+    ["option_labels", 5],
+  ] as const) {
+    const field = readOptionalDetailStringList(value[key], maximum, key);
+    if (field !== undefined) details[key] = field;
+  }
+  for (const [key, maximum] of [
+    ["selected_asset_count", 100],
+    ["visible_asset_count", 100],
+    ["context_bytes", 64 * 1024],
+  ] as const) {
+    const field = readOptionalDetailInteger(value[key], maximum, key);
+    if (field !== undefined) details[key] = field;
+  }
+  if (value.retryable !== undefined) {
+    if (typeof value.retryable !== "boolean") throw new AgentEventProtocolError("tool.step details retryable 无效");
+    details.retryable = value.retryable;
+  }
+  if (value.instruction_truncated !== undefined) {
+    if (typeof value.instruction_truncated !== "boolean") {
+      throw new AgentEventProtocolError("tool.step details instruction_truncated 无效");
+    }
+    details.instruction_truncated = value.instruction_truncated;
+  }
+  if (value.validation_issues !== undefined) {
+    if (!Array.isArray(value.validation_issues) || value.validation_issues.length > 8) {
+      throw new AgentEventProtocolError("tool.step validation_issues 无效");
+    }
+    details.validation_issues = value.validation_issues.map((issue) => {
+      if (
+        !isRecord(issue) ||
+        Object.keys(issue).some((key) => !["path", "message"].includes(key)) ||
+        Object.keys(issue).length !== 2 ||
+        typeof issue.path !== "string" ||
+        !issue.path.trim() ||
+        issue.path.length > 200 ||
+        /[\r\n]/u.test(issue.path) ||
+        typeof issue.message !== "string" ||
+        !issue.message.trim() ||
+        issue.message.length > 500 ||
+        /[\r\n]/u.test(issue.message)
+      ) {
+        throw new AgentEventProtocolError("tool.step validation_issues 无效");
+      }
+      return { path: issue.path, message: issue.message };
+    });
+  }
+  return Object.keys(details).length > 0 ? details : undefined;
+}
+
+function readOptionalDetailString(
+  value: unknown,
+  maximum: number,
+  allowNewline: boolean,
+  fieldName: string,
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (
+    typeof value !== "string" ||
+    !value.trim() ||
+    value.length > maximum ||
+    (!allowNewline && /[\r\n]/u.test(value))
+  ) {
+    throw new AgentEventProtocolError(`tool.step details ${fieldName} 无效`);
+  }
+  return value;
+}
+
+function readOptionalDetailStringList(value: unknown, maximum: number, fieldName: string): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > maximum) {
+    throw new AgentEventProtocolError(`tool.step details ${fieldName} 无效`);
+  }
+  const values = value.map((item) => {
+    if (typeof item !== "string" || !item.trim() || item.length > 160 || /[\r\n]/u.test(item)) {
+      throw new AgentEventProtocolError(`tool.step details ${fieldName} 无效`);
+    }
+    return item;
+  });
+  if (new Set(values).size !== values.length) {
+    throw new AgentEventProtocolError(`tool.step details ${fieldName} 不能重复`);
+  }
+  return values;
+}
+
+function readOptionalDetailInteger(value: unknown, maximum: number, fieldName: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value) || (value as number) < 0 || (value as number) > maximum) {
+    throw new AgentEventProtocolError(`tool.step details ${fieldName} 无效`);
+  }
+  return value as number;
 }
 
 function parseAgentQuestion(payload: Record<string, unknown>): AgentQuestion {

@@ -16,6 +16,7 @@ from productflow_backend.application.agent_conversations import (
     create_agent_conversation,
     list_agent_turn_page,
     project_agent_turn_state,
+    record_agent_turn_start_error,
     reserve_agent_turn,
 )
 from productflow_backend.application.agent_execution import (
@@ -174,17 +175,36 @@ def test_agent_service_tool_step_contract_is_strict_bounded_and_optional() -> No
             status=AgentToolStepStatus.SUCCEEDED,
         )
     ]
+    detailed = AgentServiceTurnState.model_validate(
+        _agent_service_state_payload(
+            tool_steps=[
+                {
+                    "step_id": "draft-1",
+                    "kind": "propose_draft",
+                    "summary": "提交草案",
+                    "status": "failed",
+                    "tool_name": "propose_workflow_draft",
+                    "details": {
+                        "phase": "tool_result",
+                        "error_code": "workflow_draft_validation_failed",
+                        "validation_issues": [
+                            {
+                                "path": "image_types.0.images.0.delivery_spec.crop_anchor",
+                                "message": "contain 不能指定 crop_anchor",
+                            }
+                        ],
+                        "retryable": True,
+                    },
+                }
+            ]
+        )
+    )
+    assert detailed.tool_steps[0].details is not None
+    assert detailed.tool_steps[0].details.error_code == "workflow_draft_validation_failed"
 
     invalid_steps = [
         {"step_id": "inspect-1", "kind": "generate_image", "summary": "生成图片", "status": "running"},
         {"step_id": "inspect-1", "kind": "inspect_image", "summary": "查看图片", "status": "canceled"},
-        {
-            "step_id": "inspect-1",
-            "kind": "inspect_image",
-            "summary": "查看图片",
-            "status": "running",
-            "tool_name": "read_file",
-        },
         {
             "step_id": "inspect-1",
             "kind": "inspect_image",
@@ -564,7 +584,7 @@ def test_agent_tool_step_snapshot_replaces_preserves_and_clears(db_session) -> N
             )
         ),
     )
-    assert projection.tool_steps_json == [step.model_dump(mode="json")]
+    assert projection.tool_steps_json == [step.model_dump(mode="json", exclude_none=True)]
 
     projection = synchronize_agent_turn_state(
         db_session,
@@ -578,7 +598,7 @@ def test_agent_tool_step_snapshot_replaces_preserves_and_clears(db_session) -> N
             )
         ),
     )
-    assert projection.tool_steps_json == [step.model_dump(mode="json")]
+    assert projection.tool_steps_json == [step.model_dump(mode="json", exclude_none=True)]
 
     projection = synchronize_agent_turn_state(
         db_session,
@@ -837,11 +857,13 @@ def test_agent_read_tools_are_bounded_and_rename_is_reconcilable(db_session) -> 
     assert "background_color" in delivery_schema["required"]
     assert "oneOf" not in workflow_schema["properties"]["nodes"]["items"]
     assert "anyOf" in workflow_schema["properties"]["nodes"]["items"]
-    assert contract["tool_contract_version"] == 8
+    assert contract["tool_contract_version"] == 9
 
     context = get_agent_product_context(db_session, conversation.id)
     assert context["product"]["name"] == product.name
     assert context["workflow_draft"]["version"] == 1
+    assert context["draft_guidance"]["schema_version"] == 1
+    assert any("crop_anchor" in rule["rule"] for rule in context["draft_guidance"]["cross_field_rules"])
     assert "storage_path" not in str(context)
 
     first_page = list_agent_product_assets(
@@ -1158,7 +1180,7 @@ def test_internal_agent_routes_require_service_token_and_never_need_browser_sess
     contract = client.get(contract_path, headers=headers)
     assert contract.status_code == 200, contract.text
     assert contract.json()["conversation_id"] == conversation.id
-    assert contract.json()["tool_contract_version"] == 8
+    assert contract.json()["tool_contract_version"] == 9
 
     validation_path = f"/api/internal/v1/agent-conversations/{conversation.id}/workflow-draft/validate"
     validated = client.post(validation_path, headers=headers, json={"value": payload})
@@ -1171,6 +1193,9 @@ def test_internal_agent_routes_require_service_token_and_never_need_browser_sess
     assert rejected.status_code == 400
     assert "visual_system.payload" in rejected.json()["detail"]
     assert "视觉颜色 role 不能重复" in rejected.json()["detail"]
+    assert rejected.json()["error"]["code"] == "workflow_draft_validation_failed"
+    assert rejected.json()["error"]["details"]["issues"]
+    assert rejected.json()["error"]["details"]["issues"][0]["path"] == "visual_system.payload"
 
     other_product, other_asset, _, _ = _create_product_and_draft(db_session, name="其他商品")
     assert other_product.id != product.id
@@ -1386,6 +1411,22 @@ class _MissingQueuedTurnGateway(_QueuedResumeAgentGateway):
         return self.state()
 
 
+class _TransientGetGateway(_FakeAgentGateway):
+    def __init__(self) -> None:
+        super().__init__()
+        self.get_calls = 0
+
+    def get_turn(self, **_kwargs) -> AgentServiceTurnState:
+        self.get_calls += 1
+        if self.get_calls == 1:
+            raise AgentServiceRequestError(
+                status_code=None,
+                code="unavailable",
+                safe_message="Agent 服务暂时不可用",
+            )
+        return self.state()
+
+
 class _ArtifactAgentGateway(_FakeAgentGateway):
     def __init__(self, payload: dict) -> None:
         super().__init__()
@@ -1543,6 +1584,67 @@ def test_public_agent_routes_keep_session_scope_idempotency_question_and_sse(
     canceled = client.post(f"{turn_path}/{projection_id}/cancel")
     assert canceled.status_code == 200, canceled.text
     assert canceled.json()["status"] == "canceled"
+
+
+def test_public_agent_turn_get_recovers_after_transient_sync_error(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.presentation.api import create_app
+    from productflow_backend.presentation.routes import agent_conversations as agent_routes
+
+    product, _, draft, _ = _create_product_and_draft(db_session, name="同步恢复商品")
+    conversation = create_agent_conversation(
+        db_session,
+        product_id=product.id,
+        workflow_draft_id=draft.id,
+    )
+    projection = reserve_agent_turn(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        input_text="短暂断连后继续读取状态",
+        input_asset_ids=[],
+        idempotency_key="transient-sync-recovery",
+    ).projection
+    projection = bind_harness_turn(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        projection_id=projection.id,
+        harness_turn_id="harness-transient-sync-recovery",
+        status=AgentTurnStatus.RUNNING,
+    )
+    record_agent_turn_start_error(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        projection_id=projection.id,
+        safe_error="Agent 服务暂时不可用",
+    )
+    gateway = _TransientGetGateway()
+    gateway.run_id = conversation.harness_run_id
+    gateway.turn_id = projection.harness_turn_id or ""
+    gateway.status = AgentTurnStatus.SUCCEEDED
+    monkeypatch.setattr(agent_routes, "_agent_gateway_or_none", lambda: gateway)
+
+    client = TestClient(create_app())
+    _login(client)
+    turn_path = (
+        f"/api/v2/products/{product.id}/agent-conversations/"
+        f"{conversation.id}/turns/{projection.id}"
+    )
+
+    first = client.get(turn_path)
+    assert first.status_code == 200, first.text
+    assert first.json()["status"] == "running"
+    assert first.json()["sync_error"] == "Agent 服务暂时不可用"
+
+    recovered = client.get(turn_path)
+    assert recovered.status_code == 200, recovered.text
+    assert recovered.json()["status"] == "succeeded"
+    assert recovered.json()["sync_error"] is None
+    assert gateway.get_calls == 2
 
 
 def test_public_agent_cancel_terminates_unbound_turn_when_agent_service_is_unavailable(
@@ -1710,7 +1812,7 @@ def test_get_active_agent_turn_refreshes_and_attaches_artifact(
     gateway = _ArtifactAgentGateway(payload)
     gateway.run_id = conversation.harness_run_id
     gateway.turn_id = projection.harness_turn_id or ""
-    monkeypatch.setattr(agent_routes, "_agent_gateway_or_raise", lambda: gateway)
+    monkeypatch.setattr(agent_routes, "_agent_gateway_or_none", lambda: gateway)
 
     client = TestClient(create_app())
     _login(client)

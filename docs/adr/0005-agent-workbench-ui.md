@@ -26,16 +26,18 @@ Agent 商品工作台（`pages/agent-workbench/`）目前是"能用的功能拼�
 
 #### 1.2 工具调用降噪：新增有界工具步骤投影（跨层）
 
-这是唯一跨层的一项。main 的 `agent-service/src/contracts.ts`、`store.ts` 和 `pi-runtime.ts` 产生 `tool.step` 事件与 `ToolStep` 状态；前端 `agentEventReducer.ts` 严格解析该事件并按 `step_id` 合并快照与 live 步骤。Agent 的中间动作（读资产、读取历史、提出 Draft、创建待确认请求）通过有界投影对用户可见。
+这是唯一跨层的一项。main 的 `agent-service/src/contracts.ts`、`store.ts` 和 `pi-runtime.ts` 产生 `tool.step` 事件与 `ToolStep` 状态；前端 `agentEventReducer.ts` 严格解析该事件并按 `step_id` 合并快照与 live 步骤。Agent 的中间动作（加载 Skill、注入上下文、提出问题、读资产、读取历史、提出 Draft、创建待确认请求）通过有界投影对用户可见。
 
-决策：在 Agent service 侧新增**有界工具步骤投影事件**，作为 web projection 的一部分，与 ADR 0001 的"ProductFlow 存 web projection，不重建 transcript"边界一致。当前投影只包含四个字段：
+决策：在 Agent service 侧维护**有界工具步骤投影事件**，作为 web projection 的一部分，与 ADR 0001 的"ProductFlow 存 web projection，不重建 transcript"边界一致。投影使用四个必填字段和两个可选字段：
 
 - `step_id`（幂等、可审计的步骤标识）
 - `kind`（ProductFlow 自有工具类别，见下）
 - `summary`（单行、有界长度的人类可读摘要）
 - `status`（`running` / `succeeded` / `failed` / `unknown`）
+- `tool_name`（实际 ProductFlow tool 名称，单行且有界）
+- `details`（白名单详情：Skill 名称、有限长度的 Skill 正文摘要及截断标记、上下文区段与大小、问题选项、结果摘要、错误码、校验路径和可重试标记）
 
-不允许把工具原始参数、完整输出、storage path、图片 bytes、私密 transport 内容、`error_first_line` 或结果引用放入投影。`error_first_line` 与结果引用（`product_image_asset_id` / `workflow_draft_revision_id`）尚无安全合同，当前不实现，也不提供可点击的工具详情。这与 CONTEXT.md 的"Agent lists bounded metadata and inspects only selected images"对齐。
+不允许把工具原始参数、完整输出、storage path、图片 bytes、私密 transport 内容或未定义的结果引用放入投影。校验错误只保存结构化的 path/message，避免把完整草案复制到浏览器。这与 CONTEXT.md 的"Agent lists bounded metadata and inspects only selected images"对齐。
 
 ProductFlow 自有工具类别（不包含文件系统、进程、搜索或网络 coding tools）：
 
@@ -48,8 +50,11 @@ ProductFlow 自有工具类别（不包含文件系统、进程、搜索或网�
 | `request_workflow_run` | 创建待用户确认的 WorkflowRun 请求 |
 | `create_product` | 创建用户明确要求的空商品工作区 |
 | `propose_draft` | 提出/修订 WorkflowDraft |
+| `load_skill` | 加载版本化 Skill 指令 |
+| `inject_context` | 注入本轮 Agent contract、Skill catalog 和页面摘要 |
+| `ask_question` | 提出结构化问题并等待回答 |
 
-当前没有真实 `generate_image` Agent tool，不得提前加入投影；`ask_question` 继续由现有 `question.required` 独立拥有，不重复投影为 tool step。
+当前没有真实 `generate_image` Agent tool，不加入投影。`ask_question` 不复制完整 Question owner；完整问题仍由 `question.required` 事件和 Question 状态提供，tool step 只展示动作、选项摘要和状态。
 
 工具步骤投影是**可选能力**：Turn 快照缺失 `tool_steps` 时保留现有快照并兼容旧服务，显式 `[]` 才清空。前端在投影事件缺失时优雅降级为纯 prose 渲染。
 
@@ -76,7 +81,7 @@ chip token（`/name`、`@subagent` 这类在文本流里按"单个实体"渲染�
 
 #### 1.5 详情面板：第二阅读面
 
-当前**不实现**工具步骤结果详情面板。对话流只显示紧凑的 `AgentToolStepList`（单行摘要 + 状态），因为 `tool.step` 尚未包含可安全暴露的结果引用或 `error_first_line`。待 1.2 的投影契约扩展出有界结果引用后，再复用 `ProductWorkbenchInspector` 的 tool 机制新增 `ToolStepDetails` 第二阅读面，而不是另建面板。
+`AgentToolStepList` 提供行内可展开的详情阅读面。默认保持紧凑；失败的结构化校验步骤自动展开，成功步骤保留 Skill、上下文、实际 tool 名称和结果摘要。详情继续遵守 web projection 边界，不从 Agent service 重建完整 transcript。Skill 正文摘要只用于解释“加载了什么指令”，完整正文仍只进入模型上下文；原始工具参数、业务草案和内部资源路径不进入 Web。
 
 #### 1.6 Turn 尾结构
 
@@ -93,7 +98,7 @@ chip token（`/name`、`@subagent` 这类在文本流里按"单个实体"渲染�
 ## 后果
 
 - 工具步骤投影是 wire 契约的新增，需要 Agent service 与 ProductFlow 双向同步，且前端要对缺失事件降级。
-- 当前 `tool.step` 只含 `step_id`/`kind`/`summary`/`status` 四字段；`error_first_line`、结果引用和可点击详情均 deferred，直到有安全合同。
+- `tool.step` 的新增详情字段需要 Agent service、ProductFlow 和 Web 同步升级；旧四字段步骤仍可读取，未知详情字段在后端和前端都被拒绝或过滤。
 - 布局改造有回归风险（画布拖拽/缩放/选择/edge 编辑/inspector/run history 必须保留，见 `web/AGENTS.md` 的 Canvas And Image Workflows）。
 - token 体系改造面大（现有组件散落硬编码），需分阶段，先建 token 再逐组件迁移，避免一次大爆炸。
 - 这些决策不改变 Agent 的权威边界（ADR 0001）、canonical 图片身份（ADR 0002）、schema-v2 工作流（ADR 0003）、V1 cutover（ADR 0004）。
@@ -112,6 +117,6 @@ chip token（`/name`、`@subagent` 这类在文本流里按"单个实体"渲染�
 2. **布局收敛**（纯前端）：`AgentWorkbenchShell` 的 padding/列宽由 grid track 收敛。
 3. **状态节点化 + turn 尾**（纯前端）：错误横幅收敛、turn 尾结构化。
 4. **输入框状态机**（纯前端）：Send/Stop 切换。
-5. **工具步骤投影**（跨层，最后）：Agent service 契约 + ProductFlow 消费 + 降级路径；详情面板第二阅读面在结果引用安全合同明确后另行落地。
+5. **工具步骤投影**（跨层，最后）：Agent service 契约 + ProductFlow 消费 + 降级路径；当前已包含可展开的安全详情和问题/上下文/Skill 状态。
 
 每阶段独立可验证、独立可回滚，不互相阻塞。

@@ -311,6 +311,67 @@ describe("Agent conversation components", () => {
     expect(markup).not.toContain("button");
   });
 
+  it("renders expandable skill, context, and validation details without exposing raw payloads", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AgentToolStepList, {
+        steps: [
+          {
+            step_id: "skill-1",
+            kind: "load_skill",
+            summary: "加载版本化 ProductFlow Skill 指令",
+            status: "succeeded",
+            tool_name: "load_productflow_skill",
+            details: {
+              phase: "skill_load",
+              skill_name: "workflow-draft",
+              instruction_excerpt: "# Workflow Draft\n\n保留已核验事实。",
+              instruction_truncated: false,
+              output_summary: "已加载版本化 Skill 指令；完整内容已提供给模型。",
+            },
+          },
+          {
+            step_id: "draft-1",
+            kind: "propose_draft",
+            summary: "提交完整 ProductFlow 草案",
+            status: "failed",
+            tool_name: "propose_workflow_draft",
+            details: {
+              phase: "tool_result",
+              error_code: "workflow_draft_validation_failed",
+              retryable: true,
+              validation_issues: [
+                { path: "image_types.0.images.0.delivery_spec.crop_anchor", message: "contain 不能指定 crop_anchor" },
+              ],
+            },
+          },
+          {
+            step_id: "context-1",
+            kind: "inspect_context",
+            summary: "读取 ProductFlow 当前上下文",
+            status: "succeeded",
+            tool_name: "get_product_workflow_context_v1",
+            details: {
+              phase: "tool_result",
+              context_sections: ["product_facts", "workflow_draft", "intake", "draft_guidance"],
+              output_summary: "已读取当前商品事实、WorkflowDraft、参考资产和提交前校验指导。",
+            },
+          },
+        ],
+      }),
+    );
+
+    expect(markup).toContain("load_productflow_skill");
+    expect(markup).toContain("workflow-draft");
+    expect(markup).toContain("data-agent-tool-step-instructions");
+    expect(markup).toContain("# Workflow Draft");
+    expect(markup).toContain("workflow_draft_validation_failed");
+    expect(markup).toContain("image_types.0.images.0.delivery_spec.crop_anchor");
+    expect(markup).toContain("draft_guidance");
+    expect(markup).toContain("data-agent-tool-step-details");
+    expect(markup).toContain("open=\"\"");
+    expect(markup).not.toContain("raw");
+  });
+
   it("renders historical snapshot steps and merges live statuses without duplicating actions", () => {
     const historical = turn({
       status: "succeeded",
@@ -577,6 +638,24 @@ describe("Agent conversation components", () => {
     expect(markup).toContain("草案同步失败");
     expect(markup).toContain("审阅工作流方案");
     expect(staleRevisionMarkup).not.toContain("审阅工作流方案");
+  });
+
+  it("renders a sync diagnostic as a warning while the Turn remains active", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AgentMessageList, {
+        turns: [turn({ status: "running", sync_error: "Agent 服务暂时不可用" })],
+        activeTurnId: "projection-1",
+        eventState: null,
+        initialTurnPending: false,
+        hasOlder: false,
+        loadingOlder: false,
+        onLoadOlder: async () => undefined,
+      }),
+    );
+
+    expect(markup).toContain("正在同步最终状态");
+    expect(markup).toContain("Agent 服务暂时不可用");
+    expect(markup).not.toContain('role="alert"');
   });
 
   it("does not show a processing placeholder after the Turn starts waiting for user action", () => {

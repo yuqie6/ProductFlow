@@ -170,6 +170,26 @@ describe("agentEventReducer", () => {
 
     expect(parseAgentTurnEvent(JSON.stringify(event(1, "tool.step", validPayload)), "tool.step", scope).payload)
       .toEqual(validPayload);
+    const detailedPayload = {
+      ...validPayload,
+      kind: "propose_draft",
+      tool_name: "propose_workflow_draft",
+      details: {
+        phase: "tool_result",
+        error_code: "workflow_draft_validation_failed",
+        retryable: true,
+        validation_issues: [{ path: "image_types.0.images.0.delivery_spec.crop_anchor", message: "contain 不能指定 crop_anchor" }],
+      },
+    };
+    let detailedState = createAgentTurnEventState("projection-1");
+    detailedState = agentEventReducer(detailedState, {
+      type: "event",
+      event: event(2, "tool.step", detailedPayload),
+    });
+    expect(detailedState.tool_steps["step-1"].step).toMatchObject({
+      tool_name: "propose_workflow_draft",
+      details: detailedPayload.details,
+    });
     expect(() =>
       parseAgentTurnEvent(
         JSON.stringify(event(1, "tool.step", { ...validPayload, raw: { secret: true } })),
@@ -177,6 +197,13 @@ describe("agentEventReducer", () => {
         scope,
       ),
     ).toThrow("tool.step payload");
+    expect(() =>
+      parseAgentTurnEvent(
+        JSON.stringify(event(1, "tool.step", { ...validPayload, details: { raw: "secret" } })),
+        "tool.step",
+        scope,
+      ),
+    ).toThrow("tool.step details");
     expect(() =>
       parseAgentTurnEvent(
         JSON.stringify(event(1, "tool.step", { ...validPayload, kind: "generate_image" })),

@@ -162,6 +162,9 @@ class AgentTurnStatus(StrEnum):
 class AgentToolStepKind(StrEnum):
     """Agent service 可安全投影到网页的语义工具步骤类别。"""
 
+    LOAD_SKILL = "load_skill"
+    INJECT_CONTEXT = "inject_context"
+    ASK_QUESTION = "ask_question"
     INSPECT_IMAGE = "inspect_image"
     PROPOSE_DRAFT = "propose_draft"
     INSPECT_CONTEXT = "inspect_context"

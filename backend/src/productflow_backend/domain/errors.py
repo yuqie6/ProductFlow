@@ -19,6 +19,19 @@ class BusinessValidationError(BusinessError):
     status_code: ClassVar[int] = 400
 
 
+class StructuredBusinessValidationError(BusinessValidationError):
+    """Business validation failure with bounded machine-readable issue details."""
+
+    def __init__(self, message: str, *, code: str, issues: list[dict[str, str]]) -> None:
+        super().__init__(message)
+        self.error_code = code
+        self.issues = [
+            {"path": issue["path"], "message": issue["message"]}
+            for issue in issues
+            if issue.get("path") and issue.get("message")
+        ][:8]
+
+
 class NotFoundError(BusinessError):
     """Requested domain/application resource does not exist."""
 

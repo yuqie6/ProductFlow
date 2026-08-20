@@ -4,7 +4,7 @@ export const API_VERSION = "v1alpha1" as const;
 export const EVENT_SCHEMA_VERSION = 1 as const;
 export const RUNTIME_NAME = "productflow-pi" as const;
 export const PI_SDK_VERSION = "0.83.0" as const;
-export const TOOL_CONTRACT_VERSION = 8 as const;
+export const TOOL_CONTRACT_VERSION = 9 as const;
 export const CONTEXT_SCHEMA_VERSION = 1 as const;
 export const MAX_DYNAMIC_CONTEXT_BYTES = 64 << 10;
 
@@ -68,6 +68,9 @@ export interface AgentEventReceipt {
 }
 
 export const TOOL_STEP_KINDS = [
+  "load_skill",
+  "inject_context",
+  "ask_question",
   "inspect_image",
   "propose_draft",
   "inspect_context",
@@ -180,11 +183,48 @@ export interface TurnArtifact {
   step_id: string;
 }
 
+export const TOOL_STEP_DETAIL_PHASES = ["skill_load", "context_injection", "question", "tool_result"] as const;
+export type ToolStepDetailPhase = (typeof TOOL_STEP_DETAIL_PHASES)[number];
+
+export interface ToolStepValidationIssue {
+  path: string;
+  message: string;
+}
+
+/** Safe, bounded metadata for a tool row. Never include raw tool arguments or draft payloads here. */
+export interface ToolStepDetails {
+  phase?: ToolStepDetailPhase;
+  skill_name?: string;
+  resource_path?: string;
+  instruction_excerpt?: string;
+  instruction_truncated?: boolean;
+  context_sections?: string[];
+  runtime_context_keys?: string[];
+  contract_fields?: string[];
+  page_route?: string;
+  page_type?: string;
+  selected_asset_count?: number;
+  visible_asset_count?: number;
+  context_bytes?: number;
+  input_summary?: string;
+  output_summary?: string;
+  error_code?: string;
+  error_message?: string;
+  retryable?: boolean;
+  validation_issues?: ToolStepValidationIssue[];
+  question_id?: string;
+  question_header?: string;
+  question_text?: string;
+  option_labels?: string[];
+}
+
 export interface ToolStep {
   step_id: string;
   kind: ToolStepKind;
   summary: string;
   status: ToolStepStatus;
+  tool_name?: string;
+  details?: ToolStepDetails;
 }
 
 export interface TurnState {
@@ -302,12 +342,14 @@ export function safeErrorMessage(error: unknown): string {
 export class ProductFlowError extends Error {
   readonly status: number;
   readonly code: string;
+  readonly details?: JsonObject;
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: string, message: string, details?: JsonObject) {
     super(message);
     this.name = "ProductFlowError";
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -316,6 +358,8 @@ export function isTerminalStatus(status: TurnStatus): boolean {
 }
 
 export function toolKind(name: string): ToolStepKind {
+  if (name === "load_productflow_skill") return "load_skill";
+  if (name === "ask_user") return "ask_question";
   if (name.includes("draft")) return "propose_draft";
   if (name.includes("request_workflow_run")) return "request_workflow_run";
   if (name.includes("workspace")) return "create_product";

@@ -355,15 +355,20 @@ export class ProductFlowClient {
         const raw = (await readBoundedBytes(response, Math.min(maxBytes, 8 << 10))).toString("utf8");
         let code = "upstream_error";
         let message = "ProductFlow request failed";
+        let details: JsonObject | undefined;
         try {
-          const parsed = JSON.parse(raw) as { detail?: string; error?: { code?: string; message?: string } };
+          const parsed = JSON.parse(raw) as {
+            detail?: unknown;
+            error?: { code?: unknown; message?: unknown; details?: unknown };
+          };
           if (typeof parsed.error?.code === "string" && parsed.error.code.trim()) code = parsed.error.code;
           if (typeof parsed.detail === "string" && parsed.detail.trim()) message = parsed.detail;
           else if (typeof parsed.error?.message === "string" && parsed.error.message.trim()) message = parsed.error.message;
+          details = isJsonObject(parsed.error?.details) ? parsed.error.details : undefined;
         } catch {
           // Keep a bounded generic error when the backend did not return JSON.
         }
-        throw new ProductFlowError(response.status, code, message.slice(0, 1000));
+        throw new ProductFlowError(response.status, code, message.slice(0, 1000), details);
       }
       return { response, body: await readBoundedBytes(response, maxBytes) };
     } catch (error) {
@@ -414,4 +419,8 @@ interface RequestOptions {
   body?: unknown;
   idempotencyKey?: string;
   signal?: AbortSignal;
+}
+
+function isJsonObject(value: unknown): value is JsonObject {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
