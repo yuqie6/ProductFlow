@@ -17,6 +17,7 @@ describe("ProductFlow Pi HTTP contract", () => {
         productFlowBaseURL: "http://127.0.0.1:29282",
         internalToken: token,
         requestTimeoutMS: 1000,
+        providerRequestTimeoutMS: 5_000,
         eventPollIntervalMS: 10,
         heartbeatIntervalMS: 100,
         maxBodyBytes: 1024 * 1024,

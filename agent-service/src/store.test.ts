@@ -74,17 +74,76 @@ describe("TurnStore", () => {
         tool_steps: [{ step_id: "step-1", kind: "inspect_context", summary: "Read context", status: "running" }],
       });
       const waiting = await store.createTurn(waitingScope, input);
-      await store.updateState(waitingScope.run_id, waiting.state.turn_id, { status: "requires_input" });
+      const question = {
+        id: "question-restart-1",
+        header: "Missing context",
+        question: "Which language should the image use?",
+        options: [{ label: "Chinese" }],
+      };
+      await store.updateState(waitingScope.run_id, waiting.state.turn_id, { status: "requires_input", question });
+      await store.appendEvent(waitingScope.run_id, waiting.state.turn_id, "turn.requires_input", {
+        status: "requires_input",
+        question,
+      });
 
       const result = await store.recoverAfterRestart();
 
       expect(result.queued).toEqual([{ scope: queuedScope, turnID: queued.state.turn_id }]);
-      expect(result.unknown).toBe(2);
+      expect(result.waitingInput).toBe(1);
+      expect(result.unknown).toBe(1);
       const recoveredRunning = await store.getState(runningScope.run_id, running.state.turn_id);
       expect(recoveredRunning.status).toBe("unknown");
       expect(recoveredRunning.tool_steps?.[0]?.status).toBe("unknown");
-      expect((await store.getState(waitingScope.run_id, waiting.state.turn_id)).status).toBe("unknown");
+      expect((await store.getState(waitingScope.run_id, waiting.state.turn_id)).status).toBe("requires_input");
       expect((await store.events(runningScope.run_id, running.state.turn_id, 0)).at(-1)?.kind).toBe("turn.unknown");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("defers a queued snapshot that already has a durable execution identity", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-deferred-recovery-"));
+    try {
+      const store = new TurnStore(root);
+      await store.init();
+      const turn = await store.createTurn({ ...scope, run_id: "deferred-run" }, input);
+      await store.updateState("deferred-run", turn.state.turn_id, {
+        execution_attempt: 1,
+        execution_fencing_token: 1,
+      });
+
+      const result = await store.recoverAfterRestart();
+
+      expect(result.queued).toEqual([]);
+      expect(result.deferred).toBe(1);
+      expect(result.unknown).toBe(0);
+      await expect(store.getState("deferred-run", turn.state.turn_id)).resolves.toMatchObject({
+        status: "queued",
+        execution_attempt: 1,
+        execution_fencing_token: 1,
+      });
+      expect((await store.events("deferred-run", turn.state.turn_id, 0)).map((event) => event.kind)).toEqual(["turn.queued"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("materializes a safe queued handoff with the ProductFlow harness Turn ID", async () => {
+    const root = await mkdtemp(join(tmpdir(), "productflow-pi-handoff-"));
+    try {
+      const store = new TurnStore(root);
+      await store.init();
+
+      const adopted = await store.createTurn(scope, input, "handoff-turn-1");
+      const replay = await store.createTurn(scope, input, "handoff-turn-1");
+
+      expect(adopted.created).toBe(true);
+      expect(adopted.state.turn_id).toBe("handoff-turn-1");
+      expect(replay).toMatchObject({ created: false, state: { turn_id: "handoff-turn-1", status: "queued" } });
+      await expect(store.createTurn(scope, input, "different-turn")).rejects.toMatchObject({
+        code: "turn_identity_conflict",
+        status: 409,
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }

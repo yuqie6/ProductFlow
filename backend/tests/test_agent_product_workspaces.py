@@ -21,6 +21,7 @@ from productflow_backend.application.agent_product_workspaces import (
     create_agent_product_workspace,
     finalize_agent_product_workspace_intake,
     get_agent_product_workspace,
+    reconcile_agent_product_draft_workspace_from_global_conversation,
 )
 from productflow_backend.application.agent_sessions import create_agent_session
 from productflow_backend.domain.enums import AgentConversationScope, AgentTaskStatus
@@ -229,6 +230,50 @@ def test_agent_product_draft_workspace_creates_only_durable_identity_and_replays
         )
 
 
+def test_agent_product_draft_workspace_reconciliation_is_read_only_and_classifies_outcomes(db_session) -> None:
+    session = create_agent_session(db_session, title="工作区对账")
+    global_conversation = next(
+        conversation
+        for conversation in session.conversations
+        if conversation.scope_type == AgentConversationScope.GLOBAL
+    )
+
+    missing = reconcile_agent_product_draft_workspace_from_global_conversation(
+        db_session,
+        global_conversation_id=global_conversation.id,
+        name="尚未创建",
+        idempotency_key="workspace-reconcile-missing",
+    )
+    assert missing.state == "not_applied"
+    assert missing.creation is None
+
+    created = create_agent_product_draft_workspace_from_global_conversation(
+        db_session,
+        global_conversation_id=global_conversation.id,
+        name="需要对账的商品",
+        idempotency_key="workspace-reconcile-applied",
+    )
+    reconciled = reconcile_agent_product_draft_workspace_from_global_conversation(
+        db_session,
+        global_conversation_id=global_conversation.id,
+        name="需要对账的商品",
+        idempotency_key="workspace-reconcile-applied",
+    )
+    assert reconciled.state == "applied"
+    assert reconciled.creation is not None
+    assert reconciled.creation.created is False
+    assert reconciled.creation.conversation.id == created.conversation.id
+
+    conflict = reconcile_agent_product_draft_workspace_from_global_conversation(
+        db_session,
+        global_conversation_id=global_conversation.id,
+        name="另一个商品",
+        idempotency_key="workspace-reconcile-applied",
+    )
+    assert conflict.state == "conflict"
+    assert conflict.creation is None
+
+
 def test_agent_product_workspace_can_join_existing_session_without_duplicate_global_conversation(db_session) -> None:
     agent_session = create_agent_session(db_session, title="春季商品素材")
 
@@ -359,6 +404,16 @@ def test_global_agent_product_workspace_launch_endpoint_is_scoped_and_idempotent
     assert replay.status_code == 201, replay.text
     assert replay.json()["created"] is False
     assert replay.json()["product_conversation_id"] == payload["product_conversation_id"]
+
+    reconciled = client.post(
+        path + "/reconcile",
+        headers=headers,
+        json={"name": "全局 API 商品"},
+    )
+    assert reconciled.status_code == 200, reconciled.text
+    assert reconciled.json()["state"] == "applied"
+    assert reconciled.json()["result"]["created"] is False
+    assert reconciled.json()["result"]["product_conversation_id"] == payload["product_conversation_id"]
 
 
 def test_agent_product_workspace_intake_finalization_is_atomic_idempotent_and_coverless(

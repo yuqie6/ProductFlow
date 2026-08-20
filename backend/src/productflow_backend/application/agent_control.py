@@ -82,8 +82,9 @@ def submit_agent_turn(
     idempotency_key: str,
     task_id: str | None = None,
     page_context: dict[str, Any] | None = None,
-    gateway: AgentServiceClient,
+    gateway: AgentServiceClient | None,
     enqueue_sync: Callable[[Session, str], None],
+    defer_if_unavailable: bool = False,
 ) -> AgentTurnSubmission:
     reservation = reserve_agent_turn(
         session,
@@ -97,47 +98,59 @@ def submit_agent_turn(
     )
     projection = reservation.projection
     if projection.harness_turn_id is None:
-        try:
-            state = gateway.start_turn(
-                conversation_id=conversation_id,
-                task_id=projection.task_id,
-                input_text=projection.input_text,
-                asset_ids=list(projection.input_asset_ids_json),
-                idempotency_key=projection.id,
-                page_context=_agent_page_context_payload(projection),
-            )
-            conversation = get_agent_conversation_or_raise(
-                session,
-                product_id=product_id,
-                conversation_id=conversation_id,
-            )
-            _validate_agent_state_scope(_expected_harness_run_id(conversation, projection), state)
-            projection = bind_harness_turn(
-                session,
-                product_id=product_id,
-                conversation_id=conversation_id,
-                projection_id=projection.id,
-                harness_turn_id=state.turn_id,
-                status=state.status,
-                commit=False,
-            )
-            projection = synchronize_agent_turn_state(
-                session,
-                product_id=product_id,
-                conversation_id=conversation_id,
-                projection_id=projection.id,
-                state=state,
-                commit=False,
-            )
-        except AgentServiceRequestError as exc:
+        if gateway is None:
+            if not defer_if_unavailable:
+                raise AgentServiceUnavailableError("Agent 服务暂时不可用")
             record_agent_turn_start_error(
                 session,
                 product_id=product_id,
                 conversation_id=conversation_id,
                 projection_id=projection.id,
-                safe_error=_safe_agent_sync_error(exc),
+                safe_error="Agent 服务暂时不可用",
             )
-            _raise_agent_service_business_error(exc)
+        else:
+            try:
+                state = gateway.start_turn(
+                    conversation_id=conversation_id,
+                    task_id=projection.task_id,
+                    input_text=projection.input_text,
+                    asset_ids=list(projection.input_asset_ids_json),
+                    idempotency_key=projection.idempotency_key,
+                    page_context=_agent_page_context_payload(projection),
+                )
+                conversation = get_agent_conversation_or_raise(
+                    session,
+                    product_id=product_id,
+                    conversation_id=conversation_id,
+                )
+                _validate_agent_state_scope(_expected_harness_run_id(conversation, projection), state)
+                projection = bind_harness_turn(
+                    session,
+                    product_id=product_id,
+                    conversation_id=conversation_id,
+                    projection_id=projection.id,
+                    harness_turn_id=state.turn_id,
+                    status=state.status,
+                    commit=False,
+                )
+                projection = synchronize_agent_turn_state(
+                    session,
+                    product_id=product_id,
+                    conversation_id=conversation_id,
+                    projection_id=projection.id,
+                    state=state,
+                    commit=False,
+                )
+            except AgentServiceRequestError as exc:
+                record_agent_turn_start_error(
+                    session,
+                    product_id=product_id,
+                    conversation_id=conversation_id,
+                    projection_id=projection.id,
+                    safe_error=_safe_agent_sync_error(exc),
+                )
+                if not defer_if_unavailable or not _is_transient_agent_service_error(exc):
+                    _raise_agent_service_business_error(exc)
 
     try:
         enqueue_sync(session, projection.id)
@@ -274,7 +287,7 @@ def answer_agent_question(
     projection_id: str,
     question_id: str,
     answer: dict[str, Any],
-    gateway: AgentServiceClient,
+    gateway: AgentServiceClient | None,
     enqueue_sync: Callable[[Session, str], None],
 ) -> AgentQuestionAnswerResult:
     projection = lock_agent_turn_or_raise(
@@ -321,7 +334,7 @@ def answer_agent_question(
         # Stop a live waiter when possible. If the Agent process is unavailable,
         # the persisted continuation remains queued and the old wait is left for
         # lease recovery to reconcile.
-        if projection.harness_turn_id is not None:
+        if projection.harness_turn_id is not None and gateway is not None:
             try:
                 state = gateway.cancel_turn(
                     conversation_id=conversation_id,
@@ -344,6 +357,13 @@ def answer_agent_question(
                     if exc.status_code is None or exc.status_code >= 500
                     else "原问题 Turn 已不可用，继续执行由 continuation Turn 接管"
                 )
+            except ConflictError:
+                # A restarted Agent may return a snapshot fenced by the expired
+                # execution. The durable question and continuation remain the
+                # ProductFlow authority; stale cancellation state is advisory.
+                projection.sync_error = "问题答案已持久化；原等待 Turn 状态已过期，continuation Turn 接管"
+        elif projection.harness_turn_id is not None:
+            projection.sync_error = "问题答案已持久化；Agent 服务不可用，continuation Turn 等待恢复入队"
 
     if continuation is None:
         raise ConflictError("Agent question continuation Turn 创建失败")
@@ -358,6 +378,7 @@ def answer_agent_question(
             task_id=continuation.task_id,
             gateway=gateway,
             enqueue_sync=enqueue_sync,
+            defer_if_unavailable=True,
         ).projection
     session.refresh(projection)
     session.refresh(continuation)
@@ -647,7 +668,7 @@ def retry_unbound_agent_turn_start(
             task_id=projection.task_id,
             input_text=projection.input_text,
             asset_ids=list(projection.input_asset_ids_json),
-            idempotency_key=projection.id,
+            idempotency_key=projection.idempotency_key,
             page_context=_agent_page_context_payload(projection),
         )
     except AgentServiceRequestError as exc:
@@ -669,6 +690,51 @@ def retry_unbound_agent_turn_start(
         status=state.status,
         commit=commit,
     )
+    return synchronize_agent_turn_state(
+        session,
+        product_id=conversation.product_id,
+        conversation_id=conversation.id,
+        projection_id=projection.id,
+        state=state,
+        commit=commit,
+    )
+
+
+def adopt_queued_agent_turn_start(
+    session: Session,
+    *,
+    projection: AgentTurnProjection,
+    gateway: AgentServiceClient,
+    commit: bool = True,
+) -> AgentTurnProjection:
+    """Materialize a safe pre-model Turn on another Agent service instance."""
+
+    conversation = projection.conversation
+    if projection.status != AgentTurnStatus.QUEUED or projection.harness_turn_id is None:
+        raise ConflictError("只有已绑定且仍处于 queued 的 Agent Turn 可以 handoff")
+    previous_turn_id = projection.harness_turn_id
+    try:
+        state = gateway.start_turn(
+            conversation_id=conversation.id,
+            task_id=projection.task_id,
+            input_text=projection.input_text,
+            asset_ids=list(projection.input_asset_ids_json),
+            idempotency_key=projection.idempotency_key,
+            page_context=_agent_page_context_payload(projection),
+            turn_id=previous_turn_id,
+        )
+    except AgentServiceRequestError as exc:
+        record_agent_turn_start_error(
+            session,
+            product_id=conversation.product_id,
+            conversation_id=conversation.id,
+            projection_id=projection.id,
+            safe_error=_safe_agent_sync_error(exc),
+        )
+        raise
+    _validate_agent_state_scope(_expected_harness_run_id(conversation, projection), state)
+    if state.turn_id != previous_turn_id:
+        raise ConflictError("Agent handoff 返回了不同的 harness Turn")
     return synchronize_agent_turn_state(
         session,
         product_id=conversation.product_id,
@@ -765,6 +831,10 @@ def _safe_agent_sync_error(exc: AgentServiceRequestError) -> str:
     return "Agent 服务暂时不可用"
 
 
+def _is_transient_agent_service_error(exc: AgentServiceRequestError) -> bool:
+    return exc.status_code is None or exc.status_code >= 500
+
+
 def _safe_agent_turn_error(state: AgentServiceTurnState) -> str | None:
     if not state.error:
         return None
@@ -798,6 +868,7 @@ def _raise_agent_service_business_error(exc: AgentServiceRequestError) -> None:
 __all__ = [
     "AgentQuestionAnswerResult",
     "AgentTurnSubmission",
+    "adopt_queued_agent_turn_start",
     "attach_agent_library_organization_draft_artifact",
     "answer_agent_question",
     "control_agent_turn",

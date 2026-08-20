@@ -56,22 +56,29 @@ from productflow_backend.application.workflow_drafts.service import (
 from productflow_backend.config import get_settings
 from productflow_backend.domain.enums import (
     AgentConversationStatus,
+    AgentExecutionPhase,
     AgentToolStepKind,
     AgentToolStepStatus,
     AgentTurnStatus,
     MediaVerificationStatus,
 )
-from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
+from productflow_backend.domain.errors import (
+    BusinessValidationError,
+    ConflictError,
+    NotFoundError,
+)
 from productflow_backend.infrastructure.agent_service import (
     AgentServiceArtifact,
     AgentServiceQuestion,
     AgentServiceQuestionOption,
+    AgentServiceRequestError,
     AgentServiceToolStep,
     AgentServiceTurnState,
 )
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
     AgentToolMutation,
+    AgentTurnEvent,
     AgentTurnExecution,
     AgentTurnProjection,
     ProviderBinding,
@@ -1323,6 +1330,29 @@ class _FakeAgentGateway:
         yield b'id: 8\nevent: text.delta\ndata: {"delta":"ok"}\n\n'
 
 
+class _UnavailableContinuationGateway(_FakeAgentGateway):
+    def cancel_turn(self, **_kwargs) -> AgentServiceTurnState:
+        raise AgentServiceRequestError(
+            status_code=None,
+            code="unavailable",
+            safe_message="Agent 服务暂时不可用",
+        )
+
+    def start_turn(self, **_kwargs) -> AgentServiceTurnState:
+        raise AgentServiceRequestError(
+            status_code=None,
+            code="unavailable",
+            safe_message="Agent 服务暂时不可用",
+        )
+
+
+class _StaleCancellationGateway(_UnavailableContinuationGateway):
+    def cancel_turn(self, **kwargs) -> AgentServiceTurnState:
+        self.turn_id = kwargs["turn_id"]
+        self.status = AgentTurnStatus.CANCELED
+        return self.state().model_copy(update={"execution_attempt": 1, "execution_fencing_token": 1})
+
+
 class _QueuedResumeAgentGateway(_FakeAgentGateway):
     def __init__(self) -> None:
         super().__init__()
@@ -1331,6 +1361,27 @@ class _QueuedResumeAgentGateway(_FakeAgentGateway):
 
     def resume_turn(self, **kwargs) -> AgentServiceTurnState:
         self.resume_calls.append(kwargs)
+        return self.state()
+
+
+class _MissingQueuedTurnGateway(_QueuedResumeAgentGateway):
+    def __init__(self) -> None:
+        super().__init__()
+        self.get_calls = 0
+
+    def start_turn(self, **kwargs) -> AgentServiceTurnState:
+        self.start_calls.append(kwargs)
+        self.turn_id = kwargs["turn_id"]
+        return self.state()
+
+    def get_turn(self, **_kwargs) -> AgentServiceTurnState:
+        self.get_calls += 1
+        if self.get_calls == 1:
+            raise AgentServiceRequestError(
+                status_code=404,
+                code="not_found",
+                safe_message="Agent Turn 不存在",
+            )
         return self.state()
 
 
@@ -1370,6 +1421,7 @@ def test_public_agent_routes_keep_session_scope_idempotency_question_and_sse(
     gateway = _FakeAgentGateway()
     enqueued: list[str] = []
     monkeypatch.setattr(agent_routes, "_agent_gateway_or_raise", lambda: gateway)
+    monkeypatch.setattr(agent_routes, "_agent_gateway_or_none", lambda: gateway)
     monkeypatch.setattr(
         agent_routes,
         "enqueue_agent_turn_sync",
@@ -1401,7 +1453,7 @@ def test_public_agent_routes_keep_session_scope_idempotency_question_and_sse(
     assert body["turn"]["status"] == "requires_input"
     assert body["turn"]["question"]["id"] == "question-1"
     projection_id = body["turn"]["id"]
-    assert gateway.start_calls[0]["idempotency_key"] == projection_id
+    assert gateway.start_calls[0]["idempotency_key"] == "public-turn-1"
     assert gateway.start_calls[0]["asset_ids"] == [asset.id]
     assert enqueued == [projection_id]
 
@@ -1461,14 +1513,31 @@ def test_public_agent_routes_keep_session_scope_idempotency_question_and_sse(
     )
     assert wrong_question.status_code == 409, wrong_question.text
 
+    db_session.add(
+        AgentTurnEvent(
+            turn_projection_id=projection_id,
+            execution_id=None,
+            run_id=conversation["harness_run_id"],
+            turn_id="harness-turn-1",
+            schema_version=1,
+            sequence=8,
+            kind="text.delta",
+            payload_json={"delta": "ok"},
+            created_at=datetime.now(UTC),
+        )
+    )
+    db_session.commit()
+
     events = client.get(
         f"{turn_path}/{projection_id}/events?after=3",
         headers={"Last-Event-ID": "7"},
     )
     assert events.status_code == 200, events.text
     assert events.headers["content-type"].startswith("text/event-stream")
-    assert events.text == 'id: 8\nevent: text.delta\ndata: {"delta":"ok"}\n\n'
-    assert gateway.event_cursors == [7]
+    assert 'id: 8\nevent: text.delta\ndata: {"schema_version":1,"run_id":"' in events.text
+    assert '"turn_id":"harness-turn-1","sequence":8' in events.text
+    assert '"kind":"text.delta","payload":{"delta":"ok"}' in events.text
+    assert gateway.event_cursors == []
 
     canceled = client.post(f"{turn_path}/{projection_id}/cancel")
     assert canceled.status_code == 200, canceled.text
@@ -1787,3 +1856,277 @@ def test_sync_worker_requeues_local_turn_after_expired_claim_recovery(db_session
         }
     ]
     assert delayed and delayed[0][0] == projection.id
+
+
+def test_sync_worker_handoffs_missing_queued_turn_to_another_agent_instance(db_session) -> None:
+    product, asset, draft, _ = _create_product_and_draft(db_session)
+    conversation = create_agent_conversation(
+        db_session,
+        product_id=product.id,
+        workflow_draft_id=draft.id,
+    )
+    projection = reserve_agent_turn(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        input_text="跨 Agent 实例接管尚未开始的 Turn",
+        input_asset_ids=[asset.id],
+        idempotency_key="expired-claim-handoff",
+    ).projection
+    projection = bind_harness_turn(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        projection_id=projection.id,
+        harness_turn_id="harness-expired-handoff",
+        status=AgentTurnStatus.QUEUED,
+    )
+    lease = claim_agent_turn_execution(
+        db_session,
+        conversation_id=conversation.id,
+        task_id=None,
+        idempotency_key=projection.idempotency_key,
+        harness_turn_id=projection.harness_turn_id or "",
+        owner_id="agent-instance-1",
+    )
+    execution = db_session.get(AgentTurnExecution, lease.execution_id)
+    assert execution is not None
+    execution.lease_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    db_session.commit()
+    recovery = recover_expired_agent_turn_executions(db_session)
+    assert recovery.requeued == 1
+    db_session.expire_all()
+    recovered_projection = db_session.get(AgentTurnProjection, projection.id)
+    recovered_execution = db_session.get(AgentTurnExecution, lease.execution_id)
+    assert recovered_projection is not None and recovered_projection.status == AgentTurnStatus.QUEUED
+    assert recovered_execution is not None
+    assert recovered_execution.phase == AgentExecutionPhase.CLAIMED
+    assert recovered_execution.owner_id is None
+    assert recovered_execution.lease_token is None
+    assert recovered_execution.lease_expires_at is None
+
+    gateway = _MissingQueuedTurnGateway()
+    gateway.run_id = conversation.harness_run_id
+    gateway.turn_id = "harness-expired-handoff"
+    delayed: list[tuple[str, int]] = []
+    execute_agent_turn_sync(
+        projection.id,
+        gateway=gateway,
+        enqueue_later=lambda _session, target_id, delay_ms: delayed.append((target_id, delay_ms)),
+    )
+
+    assert gateway.get_calls == 2
+    assert gateway.start_calls[0] == {
+        "conversation_id": conversation.id,
+        "task_id": None,
+        "input_text": "跨 Agent 实例接管尚未开始的 Turn",
+        "asset_ids": [asset.id],
+        "idempotency_key": "expired-claim-handoff",
+        "page_context": None,
+        "turn_id": "harness-expired-handoff",
+    }
+    assert gateway.resume_calls == [
+        {
+            "conversation_id": conversation.id,
+            "turn_id": "harness-expired-handoff",
+            "task_id": None,
+        }
+    ]
+    assert delayed and delayed[0][0] == projection.id
+
+
+def test_answer_persists_continuation_when_agent_service_is_unavailable(db_session) -> None:
+    product, asset, draft, _ = _create_product_and_draft(db_session, name="问题续接故障商品")
+    conversation = create_agent_conversation(
+        db_session,
+        product_id=product.id,
+        workflow_draft_id=draft.id,
+    )
+    reservation = reserve_agent_turn(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        input_text="需要补充图片语言",
+        input_asset_ids=[asset.id],
+        idempotency_key="question-unavailable-turn",
+    )
+    bound = bind_harness_turn(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        projection_id=reservation.projection.id,
+        harness_turn_id="question-unavailable-harness-turn",
+        status=AgentTurnStatus.REQUIRES_INPUT,
+    )
+    project_agent_turn_state(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        projection_id=bound.id,
+        harness_turn_id=bound.harness_turn_id or "",
+        status=AgentTurnStatus.REQUIRES_INPUT,
+        output_text="",
+        error_text=None,
+        question_json={
+            "id": "question-unavailable-1",
+            "header": "图片文字",
+            "question": "使用哪种语言？",
+            "options": [{"label": "中文"}],
+        },
+        finished_at=None,
+    )
+
+    result = agent_control.answer_agent_question(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        projection_id=bound.id,
+        question_id="question-unavailable-1",
+        answer={"option": 0},
+        gateway=_UnavailableContinuationGateway(),
+        enqueue_sync=lambda _session, _projection_id: None,
+    )
+    assert result.continuation_turn.status == AgentTurnStatus.QUEUED
+    assert result.continuation_turn.harness_turn_id is None
+
+    db_session.expire_all()
+    answered = db_session.get(AgentTurnProjection, bound.id)
+    assert answered is not None
+    assert answered.question_answer_json == {"option": 0}
+    assert answered.continuation_turn_id is not None
+    continuation = db_session.get(AgentTurnProjection, answered.continuation_turn_id)
+    assert continuation is not None
+    assert continuation.status == AgentTurnStatus.QUEUED
+    assert continuation.harness_turn_id is None
+    assert continuation.sync_error == "Agent 服务暂时不可用"
+
+
+def test_answer_continues_when_old_waiter_returns_stale_fencing_snapshot(db_session) -> None:
+    product, asset, draft, _ = _create_product_and_draft(db_session, name="问题旧 fencing 商品")
+    conversation = create_agent_conversation(
+        db_session,
+        product_id=product.id,
+        workflow_draft_id=draft.id,
+    )
+    reservation = reserve_agent_turn(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        input_text="需要回答旧 waiter 问题",
+        input_asset_ids=[asset.id],
+        idempotency_key="question-stale-fencing-turn",
+    )
+    bound = bind_harness_turn(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        projection_id=reservation.projection.id,
+        harness_turn_id="question-stale-fencing-harness-turn",
+        status=AgentTurnStatus.REQUIRES_INPUT,
+    )
+    question = {
+        "id": "question-stale-fencing-1",
+        "header": "图片文字",
+        "question": "使用哪种语言？",
+        "options": [{"label": "中文"}],
+    }
+    project_agent_turn_state(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        projection_id=bound.id,
+        harness_turn_id=bound.harness_turn_id or "",
+        status=AgentTurnStatus.REQUIRES_INPUT,
+        output_text="",
+        error_text=None,
+        question_json=question,
+        finished_at=None,
+    )
+    lease = claim_agent_turn_execution(
+        db_session,
+        conversation_id=conversation.id,
+        task_id=None,
+        idempotency_key=bound.idempotency_key,
+        harness_turn_id=bound.harness_turn_id or "",
+        owner_id="old-agent-instance",
+    )
+    execution = db_session.get(AgentTurnExecution, lease.execution_id)
+    assert execution is not None
+    execution.phase = AgentExecutionPhase.TERMINAL
+    execution.owner_id = None
+    execution.lease_token = None
+    execution.lease_expires_at = None
+    execution.fencing_token += 1
+    db_session.commit()
+
+    gateway = _StaleCancellationGateway()
+    gateway.run_id = conversation.harness_run_id
+    result = agent_control.answer_agent_question(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        projection_id=bound.id,
+        question_id="question-stale-fencing-1",
+        answer={"option": 0},
+        gateway=gateway,
+        enqueue_sync=lambda _session, _projection_id: None,
+    )
+
+    assert result.answered_turn.status == AgentTurnStatus.REQUIRES_INPUT
+    assert result.answered_turn.question_answer_json == {"option": 0}
+    assert result.answered_turn.sync_error == "问题答案已持久化；原等待 Turn 状态已过期，continuation Turn 接管"
+    assert result.continuation_turn.status == AgentTurnStatus.QUEUED
+    assert result.continuation_turn.harness_turn_id is None
+
+
+def test_public_question_answer_returns_queued_continuation_without_agent_gateway(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.presentation.api import create_app
+    from productflow_backend.presentation.routes import agent_conversations as agent_routes
+
+    product, asset, draft, _ = _create_product_and_draft(db_session, name="公共问题续接商品")
+    gateway = _FakeAgentGateway()
+    enqueued: list[str] = []
+    monkeypatch.setattr(agent_routes, "_agent_gateway_or_raise", lambda: gateway)
+    monkeypatch.setattr(agent_routes, "_agent_gateway_or_none", lambda: gateway)
+    monkeypatch.setattr(
+        agent_routes,
+        "enqueue_agent_turn_sync",
+        lambda _session, projection_id: enqueued.append(projection_id),
+    )
+    client = TestClient(create_app())
+    _login(client)
+
+    collection_path = f"/api/v2/products/{product.id}/agent-conversations"
+    conversation_response = client.post(collection_path, json={"workflow_draft_id": draft.id})
+    assert conversation_response.status_code == 201, conversation_response.text
+    conversation = conversation_response.json()
+    gateway.run_id = conversation["harness_run_id"]
+
+    turn_path = f"{collection_path}/{conversation['id']}/turns"
+    submitted = client.post(
+        turn_path,
+        json={
+            "input_text": "请补充图片语言",
+            "asset_ids": [asset.id],
+            "idempotency_key": "public-question-unavailable-turn",
+        },
+    )
+    assert submitted.status_code == 202, submitted.text
+    projection_id = submitted.json()["turn"]["id"]
+
+    monkeypatch.setattr(agent_routes, "_agent_gateway_or_none", lambda: None)
+    answered = client.post(
+        f"{turn_path}/{projection_id}/questions/question-1/answer",
+        json={"option": 0},
+    )
+
+    assert answered.status_code == 200, answered.text
+    body = answered.json()
+    assert body["answered_turn"]["question_answer"] == {"option": 0}
+    assert body["answered_turn"]["status"] == "requires_input"
+    assert body["continuation_turn"]["status"] == "queued"
+    assert body["continuation_turn"]["harness_turn_id"] is None
+    assert enqueued[-1] == body["continuation_turn"]["id"]

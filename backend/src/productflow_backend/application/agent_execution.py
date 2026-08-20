@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -15,6 +15,7 @@ from productflow_backend.domain.enums import AgentCheckpointKind, AgentExecution
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     AgentTurnCheckpoint,
+    AgentTurnEvent,
     AgentTurnExecution,
     AgentTurnProjection,
     new_id,
@@ -23,7 +24,36 @@ from productflow_backend.infrastructure.db.models import (
 DEFAULT_AGENT_EXECUTION_LEASE_SECONDS = 60
 MAX_AGENT_CHECKPOINT_PAYLOAD_BYTES = 64 * 1024
 MAX_AGENT_CHECKPOINT_SEQUENCE = 10_000
+MAX_AGENT_EVENT_PAYLOAD_BYTES = 128 * 1024
+MAX_AGENT_EVENT_SEQUENCE = 100_000
 RESTART_UNKNOWN_ERROR = "Agent execution lease expired before this Turn reached a provable terminal state"
+_AGENT_EFFECT_RESULTS = {"applied", "failed", "unknown"}
+
+_AGENT_EVENT_KINDS = {
+    "turn.queued",
+    "turn.started",
+    "text.delta",
+    "tool.step",
+    "question.required",
+    "question.answered",
+    "turn.resume_requested",
+    "turn.cancel_requested",
+    "turn.requires_input",
+    "artifact.proposed",
+    "turn.awaiting_confirmation",
+    "turn.succeeded",
+    "turn.failed",
+    "turn.canceled",
+    "turn.unknown",
+}
+
+_TERMINAL_AGENT_EVENT_KINDS = {
+    "turn.succeeded",
+    "turn.failed",
+    "turn.canceled",
+    "turn.unknown",
+    "turn.awaiting_confirmation",
+}
 
 _ACTIVE_TURN_STATUSES = {
     AgentTurnStatus.QUEUED,
@@ -49,6 +79,7 @@ class AgentExecutionLease:
 @dataclass(frozen=True, slots=True)
 class AgentExecutionRecoverySummary:
     requeued: int = 0
+    requires_input: int = 0
     unknown: int = 0
 
 
@@ -62,6 +93,164 @@ class AgentCheckpointReceipt:
     sequence: int
     kind: AgentCheckpointKind
     created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class AgentTurnEventReceipt:
+    id: str
+    projection_id: str
+    execution_id: str
+    sequence: int
+    schema_version: int
+    kind: str
+    created_at: datetime
+
+
+def append_agent_turn_event(
+    session: Session,
+    *,
+    conversation_id: str,
+    execution_id: str,
+    owner_id: str,
+    lease_token: str,
+    sequence: int,
+    schema_version: int,
+    run_id: str,
+    turn_id: str,
+    kind: str,
+    payload: dict[str, Any],
+    created_at: datetime,
+) -> AgentTurnEventReceipt:
+    normalized_run_id = run_id.strip()
+    normalized_turn_id = turn_id.strip()
+    normalized_kind = kind.strip()
+    if schema_version != 1:
+        raise BusinessValidationError("Agent event schema version 不受支持")
+    if not 1 <= sequence <= MAX_AGENT_EVENT_SEQUENCE:
+        raise BusinessValidationError("Agent event sequence 无效")
+    if not normalized_run_id or len(normalized_run_id) > 120:
+        raise BusinessValidationError("Agent event run ID 无效")
+    if not normalized_turn_id or len(normalized_turn_id) > 120:
+        raise BusinessValidationError("Agent event turn ID 无效")
+    if normalized_kind not in _AGENT_EVENT_KINDS:
+        raise BusinessValidationError("Agent event kind 不受支持")
+    try:
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode()
+    except (TypeError, ValueError) as exc:
+        raise BusinessValidationError("Agent event payload 不是有效 JSON") from exc
+    if len(encoded) > MAX_AGENT_EVENT_PAYLOAD_BYTES:
+        raise BusinessValidationError("Agent event payload 超过大小限制")
+
+    projection = session.scalar(
+        select(AgentTurnProjection)
+        .join(
+            AgentTurnExecution,
+            AgentTurnExecution.turn_projection_id == AgentTurnProjection.id,
+        )
+        .where(
+            AgentTurnProjection.conversation_id == conversation_id,
+            AgentTurnExecution.id == execution_id,
+        )
+        .with_for_update()
+    )
+    if projection is None:
+        raise NotFoundError("Agent Turn projection 不存在")
+    if projection.harness_turn_id != normalized_turn_id:
+        raise ConflictError("Agent event turn ID 与 projection 不匹配")
+    if projection.conversation.harness_run_id != normalized_run_id:
+        raise ConflictError("Agent event run ID 与 conversation 不匹配")
+
+    existing = session.scalar(
+        select(AgentTurnEvent)
+        .where(
+            AgentTurnEvent.turn_projection_id == projection.id,
+            AgentTurnEvent.sequence == sequence,
+        )
+        .with_for_update()
+    )
+    if existing is not None:
+        if (
+            existing.schema_version != schema_version
+            or existing.run_id != normalized_run_id
+            or existing.turn_id != normalized_turn_id
+            or existing.kind != normalized_kind
+            or existing.payload_json != payload
+        ):
+            raise ConflictError("Agent event sequence 已绑定不同内容")
+        session.commit()
+        return _event_receipt(existing)
+
+    execution = session.scalar(
+        select(AgentTurnExecution)
+        .where(
+            AgentTurnExecution.id == execution_id,
+            AgentTurnExecution.turn_projection_id == projection.id,
+        )
+        .with_for_update()
+    )
+    if execution is None:
+        raise NotFoundError("Agent execution 不存在")
+    if execution.harness_turn_id != normalized_turn_id:
+        raise ConflictError("Agent execution turn ID 与 event 不匹配")
+    _require_active_lease(execution, owner_id=owner_id, lease_token=lease_token)
+    last_sequence = session.scalar(
+        select(func.max(AgentTurnEvent.sequence)).where(AgentTurnEvent.turn_projection_id == projection.id)
+    ) or 0
+    if sequence != last_sequence + 1:
+        raise ConflictError("Agent event sequence 必须连续提交")
+
+    normalized_created_at = created_at if created_at.tzinfo is not None else created_at.replace(tzinfo=now_utc().tzinfo)
+    event = AgentTurnEvent(
+        turn_projection_id=projection.id,
+        execution_id=execution.id,
+        run_id=normalized_run_id,
+        turn_id=normalized_turn_id,
+        schema_version=schema_version,
+        sequence=sequence,
+        attempt=execution.attempt,
+        fencing_token=execution.fencing_token,
+        kind=normalized_kind,
+        payload_json=dict(payload),
+        created_at=normalized_created_at,
+    )
+    session.add(event)
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise ConflictError("Agent event 与其他 writer 冲突") from exc
+    session.refresh(event)
+    return _event_receipt(event)
+
+
+def list_agent_turn_events(
+    session: Session,
+    *,
+    projection_id: str,
+    after: int,
+    limit: int = 100,
+) -> list[AgentTurnEvent]:
+    if after < 0 or after > MAX_AGENT_EVENT_SEQUENCE:
+        raise BusinessValidationError("Agent event cursor 无效")
+    if not 1 <= limit <= 500:
+        raise BusinessValidationError("Agent event limit 无效")
+    return list(
+        session.scalars(
+            select(AgentTurnEvent)
+            .where(
+                AgentTurnEvent.turn_projection_id == projection_id,
+                AgentTurnEvent.sequence > after,
+            )
+            .order_by(AgentTurnEvent.sequence)
+            .limit(limit)
+        ).all()
+    )
 
 
 def claim_agent_turn_execution(
@@ -208,6 +397,10 @@ def append_agent_turn_checkpoint(
         raise BusinessValidationError("Agent checkpoint payload 不是有效 JSON") from exc
     if len(encoded) > MAX_AGENT_CHECKPOINT_PAYLOAD_BYTES:
         raise BusinessValidationError("Agent checkpoint payload 超过大小限制")
+    if kind == AgentCheckpointKind.TOOL_EFFECT_RESULT:
+        result = payload.get("result")
+        if not isinstance(result, str) or result not in _AGENT_EFFECT_RESULTS:
+            raise BusinessValidationError("Agent effect result 必须是 applied、failed 或 unknown")
 
     execution = session.scalar(
         select(AgentTurnExecution)
@@ -356,6 +549,7 @@ def recover_expired_agent_turn_executions(
         ).all()
     )
     requeued = 0
+    requires_input = 0
     unknown = 0
     for execution in executions:
         projection = execution.turn_projection
@@ -380,6 +574,38 @@ def recover_expired_agent_turn_executions(
             _clear_expired_lease(execution, resolved_now)
             requeued += 1
             continue
+        question = _recoverable_waiting_question(
+            session=session,
+            projection=projection,
+            execution=execution,
+            latest_checkpoint=latest_checkpoint,
+        )
+        if question is not None:
+            project_agent_turn_state(
+                session,
+                product_id=projection.conversation.product_id,
+                conversation_id=projection.conversation_id,
+                projection_id=projection.id,
+                harness_turn_id=projection.harness_turn_id or execution.harness_turn_id,
+                status=AgentTurnStatus.REQUIRES_INPUT,
+                output_text=projection.output_text,
+                error_text=None,
+                question_json=question,
+                tool_steps_json=projection.tool_steps_json,
+                finished_at=None,
+                commit=False,
+            )
+            projection.resume_required = False
+            _record_recovery_question_events(
+                session,
+                execution=execution,
+                projection=projection,
+                question=question,
+                created_at=resolved_now,
+            )
+            _clear_expired_lease(execution, resolved_now, terminal=True)
+            requires_input += 1
+            continue
         tool_steps = _unknown_running_tool_steps(projection.tool_steps_json)
         project_agent_turn_state(
             session,
@@ -402,11 +628,21 @@ def recover_expired_agent_turn_executions(
             latest_checkpoint=latest_checkpoint,
             created_at=resolved_now,
         )
+        _record_recovery_terminal_event(
+            session,
+            execution=execution,
+            projection=projection,
+            created_at=resolved_now,
+        )
         _clear_expired_lease(execution, resolved_now, terminal=True)
         unknown += 1
     if executions:
         session.commit()
-    return AgentExecutionRecoverySummary(requeued=requeued, unknown=unknown)
+    return AgentExecutionRecoverySummary(
+        requeued=requeued,
+        requires_input=requires_input,
+        unknown=unknown,
+    )
 
 
 def _require_active_lease(
@@ -439,6 +675,20 @@ def _checkpoint_receipt(checkpoint: AgentTurnCheckpoint) -> AgentCheckpointRecei
         sequence=checkpoint.sequence,
         kind=checkpoint.kind,
         created_at=checkpoint.created_at,
+    )
+
+
+def _event_receipt(event: AgentTurnEvent) -> AgentTurnEventReceipt:
+    if event.execution_id is None:
+        raise ConflictError("Agent event 缺少 execution 绑定")
+    return AgentTurnEventReceipt(
+        id=event.id,
+        projection_id=event.turn_projection_id,
+        execution_id=event.execution_id,
+        sequence=event.sequence,
+        schema_version=event.schema_version,
+        kind=event.kind,
+        created_at=event.created_at,
     )
 
 
@@ -483,6 +733,99 @@ def _unknown_running_tool_steps(value: list[dict[str, Any]]) -> list[dict[str, A
     return result
 
 
+def _recoverable_waiting_question(
+    *,
+    session: Session,
+    projection: AgentTurnProjection,
+    execution: AgentTurnExecution,
+    latest_checkpoint: AgentTurnCheckpoint | None,
+) -> dict[str, Any] | None:
+    if execution.phase != AgentExecutionPhase.WAITING_INPUT:
+        return None
+    if latest_checkpoint is None or latest_checkpoint.kind != AgentCheckpointKind.QUESTION_REQUIRED:
+        return None
+    if session.scalar(
+        select(AgentTurnEvent.id)
+        .where(
+            AgentTurnEvent.turn_projection_id == projection.id,
+            AgentTurnEvent.kind.in_(_TERMINAL_AGENT_EVENT_KINDS),
+        )
+        .limit(1)
+    ) is not None:
+        return None
+    payload_question = latest_checkpoint.payload_json.get("question")
+    if not isinstance(payload_question, dict):
+        return None
+    question_id = payload_question.get("id")
+    question_text = payload_question.get("question")
+    if (
+        not isinstance(question_id, str)
+        or not question_id.strip()
+        or not isinstance(question_text, str)
+        or not question_text.strip()
+    ):
+        return None
+    projection_question = projection.question_json
+    if projection_question is not None:
+        if not isinstance(projection_question, dict) or projection_question.get("id") != question_id:
+            return None
+        return dict(projection_question)
+    return dict(payload_question)
+
+
+def _record_recovery_question_events(
+    session: Session,
+    *,
+    execution: AgentTurnExecution,
+    projection: AgentTurnProjection,
+    question: dict[str, Any],
+    created_at: datetime,
+) -> None:
+    if projection.harness_turn_id is None:
+        return
+    existing_kinds = set(
+        session.scalars(
+            select(AgentTurnEvent.kind).where(
+                AgentTurnEvent.turn_projection_id == projection.id,
+                AgentTurnEvent.kind.in_({"turn.requires_input", "question.required"}),
+            )
+        ).all()
+    )
+    last_sequence = session.scalar(
+        select(func.max(AgentTurnEvent.sequence)).where(
+            AgentTurnEvent.turn_projection_id == projection.id,
+        )
+    ) or 0
+    events = (
+        (
+            "turn.requires_input",
+            {"status": AgentTurnStatus.REQUIRES_INPUT.value, "question": question},
+        ),
+        ("question.required", question),
+    )
+    for kind, payload in events:
+        if kind in existing_kinds:
+            continue
+        last_sequence += 1
+        if last_sequence > MAX_AGENT_EVENT_SEQUENCE:
+            return
+        session.add(
+            AgentTurnEvent(
+                turn_projection_id=projection.id,
+                execution_id=execution.id,
+                run_id=projection.conversation.harness_run_id,
+                turn_id=projection.harness_turn_id,
+                schema_version=1,
+                sequence=last_sequence,
+                attempt=execution.attempt,
+                fencing_token=execution.fencing_token,
+                kind=kind,
+                payload_json=payload,
+                created_at=created_at,
+            )
+        )
+
+
 def _record_recovery_terminal_checkpoint(
     session: Session,
     *,
@@ -515,14 +858,54 @@ def _record_recovery_terminal_checkpoint(
     execution.last_checkpoint_at = created_at
 
 
+def _record_recovery_terminal_event(
+    session: Session,
+    *,
+    execution: AgentTurnExecution,
+    projection: AgentTurnProjection,
+    created_at: datetime,
+) -> None:
+    last_sequence = session.scalar(
+        select(func.max(AgentTurnEvent.sequence)).where(
+            AgentTurnEvent.turn_projection_id == projection.id,
+        )
+    ) or 0
+    sequence = last_sequence + 1
+    if sequence > MAX_AGENT_EVENT_SEQUENCE or projection.harness_turn_id is None:
+        return
+    session.add(
+        AgentTurnEvent(
+            turn_projection_id=projection.id,
+            execution_id=execution.id,
+            run_id=projection.conversation.harness_run_id,
+            turn_id=projection.harness_turn_id,
+            schema_version=1,
+            sequence=sequence,
+            attempt=execution.attempt,
+            fencing_token=execution.fencing_token,
+            kind="turn.unknown",
+            payload_json={
+                "status": AgentTurnStatus.UNKNOWN.value,
+                "error": RESTART_UNKNOWN_ERROR,
+            },
+            created_at=created_at,
+        )
+    )
+
+
 __all__ = [
     "AgentCheckpointReceipt",
     "AgentExecutionLease",
     "AgentExecutionRecoverySummary",
+    "AgentTurnEventReceipt",
     "DEFAULT_AGENT_EXECUTION_LEASE_SECONDS",
+    "MAX_AGENT_EVENT_PAYLOAD_BYTES",
+    "MAX_AGENT_EVENT_SEQUENCE",
     "RESTART_UNKNOWN_ERROR",
+    "append_agent_turn_event",
     "claim_agent_turn_execution",
     "heartbeat_agent_turn_execution",
+    "list_agent_turn_events",
     "recover_expired_agent_turn_executions",
     "release_agent_turn_execution",
 ]

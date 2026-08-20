@@ -55,6 +55,41 @@ describe("ProductFlowClient", () => {
     }
   });
 
+  it("reconciles product workspace creation without issuing a create request", async () => {
+    const requests: Array<{ url: string; body: Record<string, unknown>; method: string }> = [];
+    const server = createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(Buffer.from(chunk));
+      requests.push({
+        url: request.url ?? "",
+        method: request.method ?? "",
+        body: JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>,
+      });
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ state: "applied", result: { product_id: "product-1" } }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("test server did not bind");
+
+    try {
+      const client = new ProductFlowClient(`http://127.0.0.1:${address.port}`, "0123456789abcdef0123456789abcdef", 1000);
+      await expect(client.reconcileProductWorkspace("conversation-1", "商品", "workspace-key")).resolves.toMatchObject({
+        state: "applied",
+      });
+      expect(requests).toEqual([
+        {
+          url: "/api/internal/v1/agent-conversations/conversation-1/product-workspaces/reconcile",
+          method: "POST",
+          body: { name: "商品" },
+        },
+      ]);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it("claims, heartbeats, and releases a durable Turn execution lease", async () => {
     const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
     const server = createServer(async (request, response) => {
@@ -77,6 +112,16 @@ describe("ProductFlowClient", () => {
                 kind: body.kind ?? "before_model_request",
                 created_at: "2026-08-20T00:00:00.000Z",
               }
+            : request.url?.endsWith("/events")
+              ? {
+                  id: "event-1",
+                  projection_id: "projection-1",
+                  execution_id: "execution-1",
+                  sequence: body.sequence ?? 1,
+                  schema_version: 1,
+                  kind: body.kind ?? "turn.started",
+                  created_at: "2026-08-20T00:00:00.000Z",
+                }
             : {
               execution_id: "execution-1",
               projection_id: "projection-1",
@@ -114,6 +159,17 @@ describe("ProductFlowClient", () => {
         kind: "tool_effect_intent",
         payload: { operation: "workflow_run_request" },
       });
+      await client.appendTurnEvent("conversation-1", lease.execution_id, {
+        owner_id: lease.owner_id,
+        lease_token: lease.lease_token,
+        sequence: 1,
+        schema_version: 1,
+        run_id: "run-1",
+        turn_id: "turn-1",
+        kind: "turn.started",
+        payload: { status: "running" },
+        created_at: "2026-08-20T00:00:00.000Z",
+      });
       await client.releaseTurnExecution("conversation-1", lease.execution_id, {
         owner_id: lease.owner_id,
         lease_token: lease.lease_token,
@@ -124,6 +180,7 @@ describe("ProductFlowClient", () => {
         "/api/internal/v1/agent-conversations/conversation-1/turn-executions/claim",
         "/api/internal/v1/agent-conversations/conversation-1/turn-executions/execution-1/heartbeat",
         "/api/internal/v1/agent-conversations/conversation-1/turn-executions/execution-1/checkpoints",
+        "/api/internal/v1/agent-conversations/conversation-1/turn-executions/execution-1/events",
         "/api/internal/v1/agent-conversations/conversation-1/turn-executions/execution-1/release",
       ]);
       expect(requests[1].body).toMatchObject({ owner_id: "agent-1", lease_token: "lease-1", phase: "tool" });

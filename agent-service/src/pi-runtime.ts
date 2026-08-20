@@ -62,6 +62,11 @@ interface ProviderRequestOptions {
   serviceTier: string | null;
 }
 
+interface ProviderRequestBoundary {
+  beforeRequest(): Promise<string>;
+  currentRequestID(): string | undefined;
+}
+
 export interface RuntimeLookup {
   conversationID?: string;
   taskID?: string;
@@ -70,6 +75,9 @@ export interface RuntimeLookup {
 export interface StartRequest {
   lookup: RuntimeLookup;
   input: StartTurnInput;
+  // ProductFlow may provide the previous harness Turn ID when handing a
+  // pre-model queued Turn to another Agent service instance.
+  turnID?: string;
 }
 
 export class PiRuntimeManager {
@@ -96,6 +104,8 @@ export class PiRuntimeManager {
     }
     return {
       queued_turns: recovered.queued.length,
+      deferred_turns: recovered.deferred,
+      waiting_input_turns: recovered.waitingInput,
       restored_terminal_turns: recovered.restoredTerminal,
       unknown_turns: recovered.unknown,
     };
@@ -109,9 +119,15 @@ export class PiRuntimeManager {
       throw new RuntimeError(400, "invalid_argument", "input_text is required and exceeds the limit");
     }
     const runtime = await this.runtimeFor(scope);
-    const result = await this.store.createTurn(scope, request.input);
+    const result = await this.store.createTurn(scope, request.input, request.turnID);
     if (result.created || result.state.status === "queued") this.enqueue(runtime, result.state.turn_id);
     return result.state;
+  }
+
+  async publishDurableEvent(scope: Scope, event: TurnEvent): Promise<void> {
+    const runtime = this.runs.get(scope.run_id);
+    if (!runtime) return;
+    await runtime.publishDurableEvent(event);
   }
 
   async get(request: RuntimeLookup, turnID: string): Promise<TurnState> {
@@ -123,11 +139,15 @@ export class PiRuntimeManager {
     const runtime = await this.runtimeForLookup(request);
     const state = await this.store.getState(runtime.scope.run_id, turnID);
     if (isTerminalStatus(state.status)) return state;
-    if (state.status === "queued" && !runtime.hasQuestionWaiter(turnID)) {
-      return this.store.terminal(runtime.scope.run_id, turnID, "canceled", { output: state.output });
+    if (state.status === "requires_input" && !runtime.hasQuestionWaiter(turnID)) {
+      return runtime.cancelWaitingInputTurn(turnID);
+    }
+    if (state.status === "queued" && !runtime.hasQuestionWaiter(turnID) && runtime.canCancelQueuedTurn()) {
+      return this.cancelQueuedTurn(runtime, turnID);
     }
     await this.store.updateState(runtime.scope.run_id, turnID, { status: "cancel_requested" });
     await this.store.appendEvent(runtime.scope.run_id, turnID, "turn.cancel_requested", { status: "cancel_requested" });
+    if (state.status === "queued") this.enqueue(runtime, turnID);
     runtime.cancel(turnID);
     return this.store.getState(runtime.scope.run_id, turnID);
   }
@@ -267,6 +287,21 @@ export class PiRuntimeManager {
     }
   }
 
+  private async cancelQueuedTurn(runtime: RunRuntime, turnID: string): Promise<TurnState> {
+    const pendingIndex = this.pending.findIndex((candidate) => candidate.runtime === runtime && candidate.turnID === turnID);
+    if (pendingIndex >= 0) this.pending.splice(pendingIndex, 1);
+    runtime.beginTurn(turnID);
+    this.running += 1;
+    try {
+      return await runtime.cancelQueuedTurn(turnID);
+    } finally {
+      runtime.endTurn(turnID);
+      this.running -= 1;
+      this.scheduled.delete(`${runtime.scope.run_id}:${turnID}`);
+      void this.drain();
+    }
+  }
+
   private async loadScope(lookup: RuntimeLookup): Promise<Scope> {
     const contract = lookup.taskID
       ? await this.productFlow.taskContract(lookup.taskID)
@@ -286,6 +321,8 @@ export interface TurnStateAndEvents {
 
 export interface RuntimeRecoverySummary {
   queued_turns: number;
+  deferred_turns: number;
+  waiting_input_turns: number;
   restored_terminal_turns: number;
   unknown_turns: number;
 }
@@ -310,6 +347,7 @@ class RunRuntime implements ToolRuntime {
   private eventChain = Promise.resolve();
   private persistenceError?: Error;
   private iterationError?: Error;
+  private modelError?: Error;
   private activeTurnID?: string;
   private executionLease?: AgentExecutionLease;
   private executionPhase: ExecutionPhase = "claimed";
@@ -319,6 +357,8 @@ class RunRuntime implements ToolRuntime {
   private effectUnknownError?: string;
   private readonly unknownToolStepIDs = new Set<string>();
   private checkpointSequence = 0;
+  private modelRequestSequence = 0;
+  private currentModelRequestID?: string;
   private providerRequestOptions: ProviderRequestOptions = {
     reasoningSummary: null,
     textVerbosity: null,
@@ -357,7 +397,7 @@ class RunRuntime implements ToolRuntime {
 
   async execute(turnID: string): Promise<void> {
     const initial = await this.manager.store.getState(this.scope.run_id, turnID);
-    if (initial.status !== "queued") return;
+    if (initial.status !== "queued" && initial.status !== "cancel_requested") return;
     this.resetTurnState();
     this.currentTurn = turnID;
     this.abortController = new AbortController();
@@ -366,11 +406,18 @@ class RunRuntime implements ToolRuntime {
       this.executionLease = await this.claimExecution(initial.input.idempotency_key, turnID);
       executionClaimed = true;
       this.attemptID = `${this.executionLease.attempt}:${randomUUID()}`;
-      await this.updateExecutionPhase("model");
-      await this.checkpoint("before_model_request", {
-        attempt: this.executionLease.attempt,
-        fencing_token: this.executionLease.fencing_token,
+      await this.manager.store.updateState(this.scope.run_id, turnID, {
+        execution_attempt: this.executionLease.attempt,
+        execution_fencing_token: this.executionLease.fencing_token,
       });
+      await this.syncDurableEvents(turnID);
+      const beforeModel = await this.manager.store.getState(this.scope.run_id, turnID);
+      if (beforeModel.status === "cancel_requested" || this.abortController.signal.aborted) {
+        await this.updateExecutionPhase("terminal");
+        await this.finishTurn(turnID, "canceled", { output: this.output });
+        return;
+      }
+      await this.updateExecutionPhase("model");
       this.startExecutionHeartbeat();
       await this.manager.store.updateState(this.scope.run_id, turnID, {
         status: "running",
@@ -395,6 +442,7 @@ class RunRuntime implements ToolRuntime {
       await this.eventChain;
       if (this.persistenceError) throw this.persistenceError;
       if (this.iterationError) throw this.iterationError;
+      if (this.modelError) throw this.modelError;
       const current = await this.manager.store.getState(this.scope.run_id, turnID);
       if (current.status === "cancel_requested" || this.abortController.signal.aborted) {
         await this.finishTurn(turnID, "canceled", { output: this.output });
@@ -414,8 +462,16 @@ class RunRuntime implements ToolRuntime {
         await this.finishTurn(turnID, "succeeded", { output: this.output });
       }
     } catch (error) {
+      if (!executionClaimed) {
+        if (error instanceof ProductFlowError && error.status >= 400 && error.status < 500) {
+          await this.manager.store.terminal(this.scope.run_id, turnID, "failed", {
+            output: this.output,
+            error: safeErrorMessage(error),
+          });
+        }
+        return;
+      }
       await this.eventChain;
-      if (!executionClaimed) return;
       const current = await this.manager.store.getState(this.scope.run_id, turnID).catch(() => initial);
       if (this.effectUnknownError) {
         await this.finishTurn(turnID, "unknown", {
@@ -432,6 +488,16 @@ class RunRuntime implements ToolRuntime {
           output: this.output,
           error: safeErrorMessage(this.iterationError),
         });
+      } else if (this.modelError) {
+        await this.finishTurn(turnID, "failed", {
+          output: this.output,
+          error: safeErrorMessage(this.modelError),
+        });
+      } else if (this.persistenceError) {
+        await this.finishTurn(turnID, "unknown", {
+          output: this.output,
+          error: safeErrorMessage(this.persistenceError),
+        });
       } else if (current.status === "cancel_requested" || this.abortController.signal.aborted) {
         await this.finishTurn(turnID, "canceled", { output: this.output });
       } else {
@@ -441,16 +507,45 @@ class RunRuntime implements ToolRuntime {
         });
       }
     } finally {
-      await this.stopExecutionHeartbeat();
-      this.questionWaiter?.reject(new RuntimeError(409, "turn_finished", "Agent Turn finished before the question was answered"));
-      this.questionWaiter = undefined;
-      this.pendingQuestionAnswer = undefined;
-      this.iterationError = undefined;
-      this.session?.dispose();
-      this.session = undefined;
-      this.abortController = undefined;
-      this.model = undefined;
-      this.currentTurn = undefined;
+      await this.cleanupAfterTurn();
+    }
+  }
+
+  async cancelQueuedTurn(turnID: string): Promise<TurnState> {
+    const initial = await this.manager.store.getState(this.scope.run_id, turnID);
+    if (initial.status !== "queued") {
+      if (isTerminalStatus(initial.status)) return initial;
+      throw new RuntimeError(409, "turn_not_queued", "the Agent Turn is no longer queued");
+    }
+    this.resetTurnState();
+    this.currentTurn = turnID;
+    this.abortController = new AbortController();
+    let executionClaimed = false;
+    try {
+      this.executionLease = await this.claimExecution(initial.input.idempotency_key, turnID);
+      executionClaimed = true;
+      this.attemptID = `${this.executionLease.attempt}:${randomUUID()}`;
+      await this.manager.store.updateState(this.scope.run_id, turnID, {
+        execution_attempt: this.executionLease.attempt,
+        execution_fencing_token: this.executionLease.fencing_token,
+      });
+      await this.syncDurableEvents(turnID);
+      await this.updateExecutionPhase("terminal");
+      await this.finishTurn(turnID, "canceled", { output: initial.output });
+      return this.manager.store.getState(this.scope.run_id, turnID);
+    } catch (error) {
+      if (!executionClaimed) throw error;
+      await this.eventChain;
+      const terminalError = this.effectUnknownError
+        ?? (this.executionLeaseError
+          ? "Agent execution lease was lost before this Turn reached a provable terminal state"
+          : this.persistenceError
+            ? safeErrorMessage(this.persistenceError)
+            : safeErrorMessage(error));
+      await this.finishTurn(turnID, "unknown", { output: initial.output, error: terminalError });
+      return this.manager.store.getState(this.scope.run_id, turnID);
+    } finally {
+      await this.cleanupAfterTurn();
     }
   }
 
@@ -492,6 +587,12 @@ class RunRuntime implements ToolRuntime {
     throw new Error("Agent execution claim exhausted retries");
   }
 
+  private async syncDurableEvents(turnID: string): Promise<void> {
+    const events = await this.manager.store.events(this.scope.run_id, turnID, 0);
+    for (const event of events) await this.publishDurableEvent(event);
+    if (this.persistenceError) throw this.persistenceError;
+  }
+
   async checkpoint(kind: CheckpointKind, payload: JsonObject): Promise<void> {
     const lease = this.executionLease;
     if (!lease || this.executionLeaseError || this.executionStopping) {
@@ -526,17 +627,41 @@ class RunRuntime implements ToolRuntime {
     details: { output?: string; error?: string; question?: TurnQuestion; artifact?: TurnArtifact },
   ): Promise<void> {
     await this.manager.store.terminal(this.scope.run_id, turnID, status, details);
+    let terminalStatus = status;
+    let terminalError = details.error;
+    if (this.persistenceError && status !== "unknown") {
+      terminalStatus = "unknown";
+      terminalError = safeErrorMessage(this.persistenceError);
+      await this.recordLocalUnknownTerminal(turnID, details.output ?? "", terminalError);
+    }
     this.executionPhase = "terminal";
     try {
       await this.checkpoint("terminal", {
-        status,
+        status: terminalStatus,
         ...(details.output ? { output: details.output } : {}),
-        ...(details.error ? { error: details.error } : {}),
+        ...(terminalError ? { error: terminalError } : {}),
         ...(details.artifact ? { artifact: details.artifact as unknown as JsonObject } : {}),
       });
-    } catch {
-      // The local terminal event remains authoritative for this attempt; stale fencing prevents overwrites.
+    } catch (error) {
+      if (terminalStatus !== "unknown") {
+        terminalStatus = "unknown";
+        terminalError = safeErrorMessage(error);
+        await this.recordLocalUnknownTerminal(turnID, details.output ?? "", terminalError);
+      }
     }
+  }
+
+  private async recordLocalUnknownTerminal(turnID: string, output: string, error: string): Promise<void> {
+    await this.manager.store.appendEvent(this.scope.run_id, turnID, "turn.unknown", {
+      status: "unknown",
+      output,
+      error,
+    });
+    await this.manager.store.updateState(this.scope.run_id, turnID, {
+      status: "unknown",
+      error,
+      finished_at: nowISO(),
+    });
   }
 
   private startExecutionHeartbeat(): void {
@@ -591,13 +716,29 @@ class RunRuntime implements ToolRuntime {
     }
   }
 
+  canCancelQueuedTurn(): boolean {
+    return this.activeTurnID === undefined;
+  }
+
   cancel(turnID: string): void {
+    if (this.currentTurn !== turnID) return;
     if (this.questionWaiter?.turnID === turnID) {
       this.questionWaiter.reject(new RuntimeError(499, "canceled", "Agent Turn was canceled"));
       this.questionWaiter = undefined;
     }
     this.abortController?.abort();
     void this.session?.abort();
+  }
+
+  async cancelWaitingInputTurn(turnID: string): Promise<TurnState> {
+    const state = await this.manager.store.getState(this.scope.run_id, turnID);
+    if (state.status !== "requires_input" || this.hasQuestionWaiter(turnID)) {
+      throw new RuntimeError(409, "question_not_cancellable", "the question is attached to a live Pi turn");
+    }
+    await this.manager.store.terminal(this.scope.run_id, turnID, "canceled", {
+      output: state.output,
+    });
+    return this.manager.store.getState(this.scope.run_id, turnID);
   }
 
   close(): void {
@@ -639,6 +780,7 @@ class RunRuntime implements ToolRuntime {
       question: question as never,
     });
     await this.manager.store.appendEvent(this.scope.run_id, state.turn_id, "question.required", question as never);
+    if (this.persistenceError) throw this.persistenceError;
     return answerPromise;
   }
 
@@ -687,6 +829,44 @@ class RunRuntime implements ToolRuntime {
   markEffectUnknown(toolCallID: string, reason = "ProductFlow side effect result is unknown"): void {
     this.effectUnknownError = reason;
     this.unknownToolStepIDs.add(toolCallID);
+    this.abortController?.abort();
+    void this.session?.abort();
+  }
+
+  async publishDurableEvent(event: TurnEvent): Promise<void> {
+    const lease = this.executionLease;
+    // A run may have a different queued Turn while this runtime owns the
+    // lease for the active Turn. That queued event is replayed after its own
+    // claim; publishing it with the active Turn's lease would fence the
+    // active execution on ProductFlow's side.
+    if (lease && lease.harness_turn_id !== event.turn_id) return;
+    if (!lease) {
+      if (event.kind === "turn.queued" || event.kind === "turn.resume_requested" || event.kind === "turn.cancel_requested") {
+        return;
+      }
+      this.persistenceError ??= new Error("Agent event was emitted without an execution lease");
+      return;
+    }
+    try {
+      await this.client.appendTurnEvent(
+        this.scope.conversation_id,
+        lease.execution_id,
+        {
+          owner_id: lease.owner_id,
+          lease_token: lease.lease_token,
+          sequence: event.sequence,
+          schema_version: event.schema_version,
+          run_id: event.run_id,
+          turn_id: event.turn_id,
+          kind: event.kind,
+          payload: event.payload,
+          created_at: event.created_at,
+        },
+        this.signal,
+      );
+    } catch (error) {
+      this.persistenceError ??= error instanceof Error ? error : new Error("Agent event persistence failed");
+    }
   }
 
   idempotencyKey(toolCallID: string): string {
@@ -708,7 +888,14 @@ class RunRuntime implements ToolRuntime {
         reserveTokens: Math.max(1_024, this.manager.config.modelContextWindow - this.manager.config.autoCompactTokenLimit),
         keepRecentTokens: Math.min(16_000, Math.floor(this.manager.config.autoCompactTokenLimit / 4)),
       },
-      retry: { enabled: false },
+      httpIdleTimeoutMs: this.manager.config.providerRequestTimeoutMS,
+      retry: {
+        enabled: false,
+        provider: {
+          timeoutMs: this.manager.config.providerRequestTimeoutMS,
+          maxRetries: 0,
+        },
+      },
       enableAnalytics: false,
       enableInstallTelemetry: false,
     });
@@ -731,7 +918,12 @@ class RunRuntime implements ToolRuntime {
       settingsManager,
       noExtensions: true,
       noSkills: true,
-      extensionFactories: [providerRequestExtension(this.providerRequestOptions)],
+      extensionFactories: [
+        providerRequestExtension(this.providerRequestOptions, {
+          beforeRequest: () => this.checkpointModelRequest(),
+          currentRequestID: () => this.currentModelRequestID,
+        }),
+      ],
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
@@ -771,6 +963,10 @@ class RunRuntime implements ToolRuntime {
           });
           await this.manager.store.updateState(this.scope.run_id, turnID, { output: this.output });
         });
+        return;
+      }
+      if (event.type === "message_end" && event.message.role === "assistant" && event.message.stopReason === "error") {
+        this.modelError = new Error(event.message.errorMessage || "Pi provider request failed");
         return;
       }
       if (event.type === "tool_execution_start") {
@@ -886,6 +1082,24 @@ class RunRuntime implements ToolRuntime {
     return { runtime, model, thinkingLevel: thinkingLevel(reasoningEffort) };
   }
 
+  private async checkpointModelRequest(): Promise<string> {
+    const lease = this.executionLease;
+    if (!lease) throw new RuntimeError(409, "execution_unavailable", "Agent execution lease is unavailable");
+    const sequence = this.modelRequestSequence + 1;
+    const requestID = `model:${sha256(
+      `${this.scope.run_id}:${this.currentTurnID()}:${lease.attempt}:${lease.fencing_token}:${sequence}`,
+    ).slice(0, 32)}`;
+    await this.checkpoint("before_model_request", {
+      attempt: lease.attempt,
+      fencing_token: lease.fencing_token,
+      model_request_id: requestID,
+      model_request_sequence: sequence,
+    });
+    this.modelRequestSequence = sequence;
+    this.currentModelRequestID = requestID;
+    return requestID;
+  }
+
   private providerReasoningEffort: string | null = null;
 
   private async loadInputImages(input: StartTurnInput): Promise<ImageContent[]> {
@@ -918,6 +1132,8 @@ class RunRuntime implements ToolRuntime {
     this.artifact = undefined;
     this.executionLease = undefined;
     this.checkpointSequence = 0;
+    this.modelRequestSequence = 0;
+    this.currentModelRequestID = undefined;
     this.executionPhase = "claimed";
     this.executionStopping = false;
     this.executionLeaseError = undefined;
@@ -932,7 +1148,21 @@ class RunRuntime implements ToolRuntime {
     this.toolCount = 0;
     this.persistenceError = undefined;
     this.iterationError = undefined;
+    this.modelError = undefined;
     this.eventChain = Promise.resolve();
+  }
+
+  private async cleanupAfterTurn(): Promise<void> {
+    await this.stopExecutionHeartbeat();
+    this.questionWaiter?.reject(new RuntimeError(409, "turn_finished", "Agent Turn finished before the question was answered"));
+    this.questionWaiter = undefined;
+    this.pendingQuestionAnswer = undefined;
+    this.iterationError = undefined;
+    this.session?.dispose();
+    this.session = undefined;
+    this.abortController = undefined;
+    this.model = undefined;
+    this.currentTurn = undefined;
   }
 }
 
@@ -1008,12 +1238,13 @@ function providerApi(providerKind: string): string {
   }
 }
 
-function providerRequestExtension(options: ProviderRequestOptions): InlineExtension {
+function providerRequestExtension(options: ProviderRequestOptions, boundary: ProviderRequestBoundary): InlineExtension {
   return {
     name: "productflow-provider-options",
     hidden: true,
     factory: (pi) => {
-      pi.on("before_provider_request", (event) => {
+      pi.on("before_provider_request", async (event) => {
+        await boundary.beforeRequest();
         if (!event.payload || typeof event.payload !== "object" || Array.isArray(event.payload)) return event.payload;
         const payload = { ...(event.payload as Record<string, unknown>) };
         const summary = options.reasoningSummary?.trim();
@@ -1035,6 +1266,10 @@ function providerRequestExtension(options: ProviderRequestOptions): InlineExtens
         const serviceTier = options.serviceTier?.trim();
         if (serviceTier) payload.service_tier = serviceTier;
         return payload;
+      });
+      pi.on("before_provider_headers", (event) => {
+        const requestID = boundary.currentRequestID();
+        if (requestID) event.headers["x-client-request-id"] = requestID;
       });
     },
   };

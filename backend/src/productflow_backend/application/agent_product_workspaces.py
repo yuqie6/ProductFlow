@@ -66,6 +66,13 @@ class AgentProductWorkspaceCreation:
     created: bool
 
 
+@dataclass(frozen=True, slots=True)
+class AgentProductWorkspaceReconcileResult:
+    state: str
+    creation: AgentProductWorkspaceCreation | None = None
+    detail: str | None = None
+
+
 PRODUCT_ONBOARDING_TASK_WAITING_REASON = "product_onboarding_intake"
 
 
@@ -159,6 +166,50 @@ def create_agent_product_draft_workspace_from_global_conversation(
         idempotency_key=idempotency_key,
         agent_session_id=global_conversation.session_id,
     )
+
+
+def reconcile_agent_product_draft_workspace_from_global_conversation(
+    session: Session,
+    *,
+    global_conversation_id: str,
+    name: str,
+    idempotency_key: str,
+) -> AgentProductWorkspaceReconcileResult:
+    """Read the durable workspace fact without issuing another create command."""
+    global_conversation = get_agent_conversation_or_raise(
+        session,
+        product_id=None,
+        conversation_id=global_conversation_id,
+    )
+    if global_conversation.session_id is None:
+        raise ConflictError("全局 Agent conversation 没有关联 Session")
+    normalized_name = normalize_product_name(name)
+    normalized_key = normalize_agent_product_idempotency_key(idempotency_key)
+    request_hash = agent_product_draft_workspace_request_hash(
+        normalized_product_name=normalized_name,
+        agent_session_id=global_conversation.session_id,
+    )
+    existing = _conversation_by_creation_key(session, normalized_key)
+    if existing is None:
+        return AgentProductWorkspaceReconcileResult(state="not_applied")
+    if existing.creation_request_hash != request_hash:
+        return AgentProductWorkspaceReconcileResult(
+            state="conflict",
+            detail="同一 Idempotency-Key 已对应不同的 Agent 商品创建请求",
+        )
+    try:
+        creation = _load_idempotent_workspace(
+            session,
+            conversation=existing,
+            request_hash=request_hash,
+            created=False,
+        )
+    except ConflictError as exc:
+        return AgentProductWorkspaceReconcileResult(
+            state="unknown",
+            detail=f"商品工作区记录存在，但聚合无法完整读取: {exc}",
+        )
+    return AgentProductWorkspaceReconcileResult(state="applied", creation=creation)
 
 
 def create_agent_product_workspace(
@@ -542,10 +593,12 @@ def _get_onboarding_task_for_update(
 
 __all__ = [
     "AgentProductWorkspaceCreation",
+    "AgentProductWorkspaceReconcileResult",
     "PRODUCT_ONBOARDING_TASK_WAITING_REASON",
     "create_agent_product_draft_workspace",
     "create_agent_product_draft_workspace_from_global_conversation",
     "create_agent_product_workspace",
     "finalize_agent_product_workspace_intake",
     "get_agent_product_workspace",
+    "reconcile_agent_product_draft_workspace_from_global_conversation",
 ]

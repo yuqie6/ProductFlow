@@ -57,6 +57,16 @@ export interface AgentCheckpointReceipt {
   created_at: string;
 }
 
+export interface AgentEventReceipt {
+  id: string;
+  projection_id: string;
+  execution_id: string;
+  sequence: number;
+  schema_version: 1;
+  kind: string;
+  created_at: string;
+}
+
 export const TOOL_STEP_KINDS = [
   "inspect_image",
   "propose_draft",

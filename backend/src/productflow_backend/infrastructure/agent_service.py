@@ -137,6 +137,7 @@ class AgentServiceClient:
         asset_ids: list[str],
         idempotency_key: str,
         page_context: dict[str, Any] | None = None,
+        turn_id: str | None = None,
     ) -> AgentServiceTurnState:
         return self._request_state(
             "POST",
@@ -146,6 +147,7 @@ class AgentServiceClient:
                 "asset_ids": asset_ids,
                 "idempotency_key": idempotency_key,
                 "page_context": page_context,
+                **({"turn_id": turn_id} if turn_id is not None else {}),
             },
         )
 

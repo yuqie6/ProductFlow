@@ -121,6 +121,28 @@ class AgentTurnCheckpointResponse(BaseModel):
     created_at: datetime
 
 
+class AgentTurnEventRequest(StrictAgentRequest):
+    owner_id: str = Field(min_length=1, max_length=120)
+    lease_token: str = Field(min_length=1, max_length=36)
+    sequence: int = Field(ge=1, le=100_000)
+    schema_version: Literal[1]
+    run_id: str = Field(min_length=1, max_length=120)
+    turn_id: str = Field(min_length=1, max_length=120)
+    kind: str = Field(min_length=1, max_length=120)
+    payload: dict[str, Any]
+    created_at: datetime
+
+
+class AgentTurnEventResponse(BaseModel):
+    id: str
+    projection_id: str
+    execution_id: str
+    sequence: int
+    schema_version: Literal[1]
+    kind: str
+    created_at: datetime
+
+
 class AgentPageContextSnapshotRequest(StrictAgentRequest):
     route: str = Field(min_length=1, max_length=512)
     page_type: str = Field(min_length=1, max_length=80)
@@ -227,6 +249,12 @@ class AgentProductWorkspaceLaunchResponse(BaseModel):
     task_id: str
     intake_finalized: bool
     navigation_path: str
+
+
+class AgentProductWorkspaceReconcileResponse(BaseModel):
+    state: Literal["applied", "not_applied", "conflict", "unknown"]
+    result: AgentProductWorkspaceLaunchResponse | None = None
+    detail: str | None = None
 
 
 class InspectAgentProductsRequest(StrictAgentRequest):
@@ -480,6 +508,25 @@ class AgentTurnResponse(BaseModel):
     updated_at: datetime
 
 
+class AgentTurnEffectReconciliationRequest(StrictAgentRequest):
+    tool_call_id: str = Field(min_length=1, max_length=120)
+
+
+class AgentTurnEffectReconciliationResponse(BaseModel):
+    schema_version: Literal[1] = 1
+    id: str
+    projection_id: str
+    tool_call_id: str
+    tool_name: Literal["request_workflow_run_v1", "create_product_workspace_v1"]
+    idempotency_key: str
+    effect_result: Literal["applied", "failed", "unknown"]
+    reconciliation_state: Literal["applied", "not_applied", "conflict", "unknown"]
+    result: dict[str, Any] | None = None
+    detail: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
 class AgentQuestionAnswerResponse(AgentTurnResponse):
     answered_turn: AgentTurnResponse
     continuation_turn: AgentTurnResponse
@@ -627,6 +674,24 @@ def serialize_agent_turn(projection: AgentTurnProjection) -> AgentTurnResponse:
         finished_at=projection.finished_at,
         created_at=projection.created_at,
         updated_at=projection.updated_at,
+    )
+
+
+def serialize_agent_turn_effect_reconciliation(
+    reconciliation: Any,
+) -> AgentTurnEffectReconciliationResponse:
+    return AgentTurnEffectReconciliationResponse(
+        id=reconciliation.id,
+        projection_id=reconciliation.projection_id,
+        tool_call_id=reconciliation.tool_call_id,
+        tool_name=reconciliation.tool_name,
+        idempotency_key=reconciliation.idempotency_key,
+        effect_result=reconciliation.effect_result,
+        reconciliation_state=reconciliation.reconciliation_state,
+        result=dict(reconciliation.result_json) if reconciliation.result_json is not None else None,
+        detail=reconciliation.detail,
+        created_at=reconciliation.created_at,
+        updated_at=reconciliation.updated_at,
     )
 
 

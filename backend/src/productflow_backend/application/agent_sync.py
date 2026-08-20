@@ -8,6 +8,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.agent_control import (
+    adopt_queued_agent_turn_start,
     retry_unbound_agent_turn_start,
     synchronize_agent_turn_state,
 )
@@ -81,15 +82,41 @@ def execute_agent_turn_sync(
                 commit=False,
             )
         else:
-            state = client.get_turn(
-                conversation_id=conversation.id,
-                turn_id=projection.harness_turn_id,
-                task_id=projection.task_id,
+            execution = session.scalar(
+                select(AgentTurnExecution).where(AgentTurnExecution.turn_projection_id == projection.id)
             )
-            if projection.status == AgentTurnStatus.QUEUED and state.status == AgentTurnStatus.QUEUED:
-                execution = session.scalar(
-                    select(AgentTurnExecution).where(AgentTurnExecution.turn_projection_id == projection.id)
+            try:
+                state = client.get_turn(
+                    conversation_id=conversation.id,
+                    turn_id=projection.harness_turn_id,
+                    task_id=projection.task_id,
                 )
+            except AgentServiceRequestError as exc:
+                if not (
+                    exc.status_code == 404
+                    and projection.status == AgentTurnStatus.QUEUED
+                    and execution is not None
+                    and execution.owner_id is None
+                    and execution.phase == AgentExecutionPhase.CLAIMED
+                ):
+                    raise
+                projection = adopt_queued_agent_turn_start(
+                    session,
+                    projection=projection,
+                    gateway=client,
+                    # The other Agent instance starts draining immediately
+                    # after start_turn returns. Commit its ProductFlow
+                    # projection before asking that instance for more state,
+                    # otherwise its first durable event can wait on this
+                    # transaction's projection lock.
+                    commit=True,
+                )
+                state = client.get_turn(
+                    conversation_id=conversation.id,
+                    turn_id=projection.harness_turn_id or "",
+                    task_id=projection.task_id,
+                )
+            if projection.status == AgentTurnStatus.QUEUED and state.status == AgentTurnStatus.QUEUED:
                 if (
                     execution is not None
                     and execution.owner_id is None

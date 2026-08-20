@@ -448,6 +448,8 @@ function createWorkflowRunRequestTool(runtime: ToolRuntime, global: boolean): To
         tool_name: "request_workflow_run_v1",
         tool_call_id: toolCallID,
         idempotency_key: idempotencyKey,
+        product_id: prepared.product_id,
+        task_id: prepared.task_id,
         workflow_id: prepared.workflow_id,
         workflow_revision: prepared.workflow_revision,
         source_run_id: prepared.source_run_id ?? null,
@@ -462,6 +464,12 @@ function createWorkflowRunRequestTool(runtime: ToolRuntime, global: boolean): To
           idempotency_key: idempotencyKey,
           workflow_id: prepared.workflow_id,
         });
+        await runtime.checkpoint("tool_effect_result", {
+          tool_name: "request_workflow_run_v1",
+          tool_call_id: toolCallID,
+          idempotency_key: idempotencyKey,
+          result: "applied",
+        });
         runtime.markWorkflowRunRequested();
         return { ...textResult(result, { pending_confirmation: true, request_idempotency_key: idempotencyKey }), terminate: true };
       } catch (error) {
@@ -471,10 +479,42 @@ function createWorkflowRunRequestTool(runtime: ToolRuntime, global: boolean): To
             ? await runtime.client.reconcileWorkflowRunRequest(runtime.scope.conversation_id, prepared, toolCallID, idempotencyKey, true, runtime.signal)
             : await runtime.client.reconcileWorkflowRunRequest(runtime.scope.conversation_id, prepared, toolCallID, idempotencyKey, false, runtime.signal);
         } catch (reconcileError) {
-          runtime.markEffectUnknown(toolCallID, "WorkflowRun request reconciliation failed");
+          await recordUnknownEffect(
+            runtime,
+            toolCallID,
+            {
+              tool_name: "request_workflow_run_v1",
+              tool_call_id: toolCallID,
+              idempotency_key: idempotencyKey,
+              result: "unknown",
+              reconciliation_state: "unavailable",
+            },
+            "WorkflowRun request reconciliation failed",
+          );
           throw reconcileError;
         }
         if (reconciled.state === "applied") {
+          if (reconciled.result === undefined) {
+            await recordUnknownEffect(
+              runtime,
+              toolCallID,
+              {
+                tool_name: "request_workflow_run_v1",
+                tool_call_id: toolCallID,
+                idempotency_key: idempotencyKey,
+                result: "unknown",
+                reconciliation_state: "invalid_applied_result",
+              },
+              "WorkflowRun request reconciliation returned an incomplete applied result",
+            );
+            throw new ProductFlowError(502, "reconciliation_invalid", "WorkflowRun request reconciliation returned an incomplete result");
+          }
+          await runtime.checkpoint("external_job_submitted", {
+            tool_name: "request_workflow_run_v1",
+            tool_call_id: toolCallID,
+            idempotency_key: idempotencyKey,
+            workflow_id: prepared.workflow_id,
+          });
           await runtime.checkpoint("tool_effect_result", {
             tool_name: "request_workflow_run_v1",
             tool_call_id: toolCallID,
@@ -485,7 +525,39 @@ function createWorkflowRunRequestTool(runtime: ToolRuntime, global: boolean): To
           return { ...textResult(reconciled.result, { pending_confirmation: true, reconciled: true }), terminate: true };
         }
         if (reconciled.state === "unknown") {
-          runtime.markEffectUnknown(toolCallID, "WorkflowRun request result is unknown");
+          await recordUnknownEffect(
+            runtime,
+            toolCallID,
+            {
+              tool_name: "request_workflow_run_v1",
+              tool_call_id: toolCallID,
+              idempotency_key: idempotencyKey,
+              result: "unknown",
+              reconciliation_state: "unknown",
+            },
+            "WorkflowRun request result is unknown",
+          );
+        } else if (!isReconcileState(reconciled.state)) {
+          await recordUnknownEffect(
+            runtime,
+            toolCallID,
+            {
+              tool_name: "request_workflow_run_v1",
+              tool_call_id: toolCallID,
+              idempotency_key: idempotencyKey,
+              result: "unknown",
+              reconciliation_state: "invalid",
+            },
+            "WorkflowRun request reconciliation returned an unsupported state",
+          );
+        } else {
+          await runtime.checkpoint("tool_effect_result", {
+            tool_name: "request_workflow_run_v1",
+            tool_call_id: toolCallID,
+            idempotency_key: idempotencyKey,
+            result: "failed",
+            reconciliation_state: reconciled.state,
+          });
         }
         throw error;
       }
@@ -511,42 +583,119 @@ function createGlobalWorkspaceTool(runtime: ToolRuntime): ToolDefinition {
         idempotency_key: idempotencyKey,
         product_name: params.name.trim(),
       });
+      let result: unknown;
       try {
-        const result = await runtime.client.createProductWorkspace(
+        result = await runtime.client.createProductWorkspace(
           runtime.scope.conversation_id,
           params.name.trim(),
           idempotencyKey,
           runtime.signal,
         );
-        await runtime.checkpoint("tool_effect_result", {
-          tool_name: "create_product_workspace_v1",
-          tool_call_id: toolCallID,
-          idempotency_key: idempotencyKey,
-          result: "applied",
-        });
-        return textResult(result, { product_workspace_created: true });
       } catch (error) {
-        if (!(error instanceof ProductFlowError) || error.status < 500) throw error;
-        let replay: unknown;
+        if (!(error instanceof ProductFlowError) || error.status < 500) {
+          await runtime.checkpoint("tool_effect_result", {
+            tool_name: "create_product_workspace_v1",
+            tool_call_id: toolCallID,
+            idempotency_key: idempotencyKey,
+            result: "failed",
+          });
+          throw error;
+        }
+        let reconciled: ReconcileResult;
         try {
-          replay = await runtime.client.createProductWorkspace(
+          reconciled = await runtime.client.reconcileProductWorkspace(
             runtime.scope.conversation_id,
             params.name.trim(),
             idempotencyKey,
             runtime.signal,
           );
-        } catch (replayError) {
-          runtime.markEffectUnknown(toolCallID, "Product workspace creation result is unknown");
-          throw replayError;
+        } catch (reconcileError) {
+          await recordUnknownEffect(
+            runtime,
+            toolCallID,
+            {
+              tool_name: "create_product_workspace_v1",
+              tool_call_id: toolCallID,
+              idempotency_key: idempotencyKey,
+              result: "unknown",
+              reconciliation_state: "unavailable",
+            },
+            "Product workspace creation result is unknown",
+          );
+          throw reconcileError;
+        }
+        if (reconciled.state === "unknown") {
+          await recordUnknownEffect(
+            runtime,
+            toolCallID,
+            {
+              tool_name: "create_product_workspace_v1",
+              tool_call_id: toolCallID,
+              idempotency_key: idempotencyKey,
+              result: "unknown",
+              reconciliation_state: "unknown",
+            },
+            "Product workspace creation result is unknown",
+          );
+          throw error;
+        } else if (!isReconcileState(reconciled.state)) {
+          await recordUnknownEffect(
+            runtime,
+            toolCallID,
+            {
+              tool_name: "create_product_workspace_v1",
+              tool_call_id: toolCallID,
+              idempotency_key: idempotencyKey,
+              result: "unknown",
+              reconciliation_state: "invalid",
+            },
+            "Product workspace reconciliation returned an unsupported state",
+          );
+          throw error;
+        }
+        if (reconciled.state !== "applied" || reconciled.result === undefined) {
+          if (reconciled.state === "applied") {
+            await recordUnknownEffect(
+              runtime,
+              toolCallID,
+              {
+                tool_name: "create_product_workspace_v1",
+                tool_call_id: toolCallID,
+                idempotency_key: idempotencyKey,
+                result: "unknown",
+                reconciliation_state: "invalid_applied_result",
+              },
+              "Product workspace reconciliation returned an incomplete applied result",
+            );
+            throw new ProductFlowError(502, "reconciliation_invalid", "Product workspace reconciliation returned an incomplete result");
+          }
+          if (isReconcileState(reconciled.state)) {
+            await runtime.checkpoint("tool_effect_result", {
+              tool_name: "create_product_workspace_v1",
+              tool_call_id: toolCallID,
+              idempotency_key: idempotencyKey,
+              result: "failed",
+              reconciliation_state: reconciled.state,
+            });
+          }
+          throw error;
         }
         await runtime.checkpoint("tool_effect_result", {
           tool_name: "create_product_workspace_v1",
           tool_call_id: toolCallID,
           idempotency_key: idempotencyKey,
-          result: "reconciled",
+          result: "applied",
+          reconciliation_state: "applied",
         });
-        return textResult(replay, { product_workspace_created: true, reconciled: true });
+        return textResult(reconciled.result, { product_workspace_created: true, reconciled: true });
       }
+      await runtime.checkpoint("tool_effect_result", {
+        tool_name: "create_product_workspace_v1",
+        tool_call_id: toolCallID,
+        idempotency_key: idempotencyKey,
+        result: "applied",
+      });
+      return textResult(result, { product_workspace_created: true });
     },
   });
 }
@@ -590,6 +739,25 @@ function boundedJSON(value: unknown): string {
   }
   if (Buffer.byteLength(encoded, "utf8") <= MAX_TOOL_TEXT_BYTES) return encoded;
   return `${Buffer.from(encoded, "utf8").subarray(0, MAX_TOOL_TEXT_BYTES).toString("utf8")}...[truncated]`;
+}
+
+function isReconcileState(value: string): value is "applied" | "not_applied" | "conflict" | "unknown" {
+  return value === "applied" || value === "not_applied" || value === "conflict" || value === "unknown";
+}
+
+async function recordUnknownEffect(
+  runtime: ToolRuntime,
+  toolCallID: string,
+  payload: JsonObject,
+  reason: string,
+): Promise<void> {
+  try {
+    await runtime.checkpoint("tool_effect_result", payload);
+  } catch {
+    // The unknown marker remains authoritative when checkpoint persistence is unavailable.
+  } finally {
+    runtime.markEffectUnknown(toolCallID, reason);
+  }
 }
 
 function uniqueIDs(values: string[], maximum: number): string[] {

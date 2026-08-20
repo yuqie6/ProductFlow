@@ -6,6 +6,7 @@ export interface Config {
   productFlowBaseURL: string;
   internalToken: string;
   requestTimeoutMS: number;
+  providerRequestTimeoutMS: number;
   eventPollIntervalMS: number;
   heartbeatIntervalMS: number;
   maxBodyBytes: number;
@@ -69,6 +70,7 @@ export function loadConfig(): Config {
     productFlowBaseURL,
     internalToken,
     requestTimeoutMS: durationMS("PRODUCTFLOW_REQUEST_TIMEOUT", 30_000),
+    providerRequestTimeoutMS: durationMS("AGENT_PROVIDER_REQUEST_TIMEOUT", 300_000),
     eventPollIntervalMS,
     heartbeatIntervalMS,
     maxBodyBytes: positiveInt("AGENT_MAX_BODY_BYTES", 96 << 20),

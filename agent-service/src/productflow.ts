@@ -1,5 +1,6 @@
 import {
   ProductFlowError,
+  type AgentEventReceipt,
   type AgentCheckpointReceipt,
   type AgentExecutionLease,
   type CheckpointKind,
@@ -84,6 +85,28 @@ export class ProductFlowClient {
   ): Promise<AgentCheckpointReceipt> {
     return this.json<AgentCheckpointReceipt>(
       this.conversationPath(conversationID) + `/turn-executions/${encodeURIComponent(executionID)}/checkpoints`,
+      { method: "POST", body: args, signal },
+    );
+  }
+
+  async appendTurnEvent(
+    conversationID: string,
+    executionID: string,
+    args: {
+      owner_id: string;
+      lease_token: string;
+      sequence: number;
+      schema_version: 1;
+      run_id: string;
+      turn_id: string;
+      kind: string;
+      payload: JsonObject;
+      created_at: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<AgentEventReceipt> {
+    return this.json<AgentEventReceipt>(
+      this.conversationPath(conversationID) + `/turn-executions/${encodeURIComponent(executionID)}/events`,
       { method: "POST", body: args, signal },
     );
   }
@@ -223,6 +246,20 @@ export class ProductFlowClient {
 
   async createProductWorkspace(conversationID: string, name: string, idempotencyKey: string, signal?: AbortSignal): Promise<unknown> {
     return this.json(this.conversationPath(conversationID) + "/product-workspaces", {
+      method: "POST",
+      body: { name },
+      idempotencyKey,
+      signal,
+    });
+  }
+
+  async reconcileProductWorkspace(
+    conversationID: string,
+    name: string,
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<ReconcileResult> {
+    return this.json<ReconcileResult>(this.conversationPath(conversationID) + "/product-workspaces/reconcile", {
       method: "POST",
       body: { name },
       idempotencyKey,

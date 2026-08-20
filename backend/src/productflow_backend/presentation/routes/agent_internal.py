@@ -7,12 +7,14 @@ from sqlalchemy.orm import Session
 
 from productflow_backend.application.agent_execution import (
     append_agent_turn_checkpoint,
+    append_agent_turn_event,
     claim_agent_turn_execution,
     heartbeat_agent_turn_execution,
     release_agent_turn_execution,
 )
 from productflow_backend.application.agent_product_workspaces import (
     create_agent_product_draft_workspace_from_global_conversation,
+    reconcile_agent_product_draft_workspace_from_global_conversation,
 )
 from productflow_backend.application.agent_tools import (
     AGENT_ASSET_LIST_DEFAULT_LIMIT,
@@ -103,9 +105,12 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     AgentLegacyArchiveListResponse,
     AgentProductWorkspaceLaunchRequest,
     AgentProductWorkspaceLaunchResponse,
+    AgentProductWorkspaceReconcileResponse,
     AgentRuntimeContextResponse,
     AgentTurnCheckpointRequest,
     AgentTurnCheckpointResponse,
+    AgentTurnEventRequest,
+    AgentTurnEventResponse,
     AgentTurnExecutionClaimRequest,
     AgentTurnExecutionHeartbeatRequest,
     AgentTurnExecutionLeaseResponse,
@@ -140,6 +145,38 @@ router = APIRouter(
     tags=["agent-internal"],
     dependencies=[Depends(require_agent_service)],
 )
+
+
+def _serialize_agent_product_workspace_launch(
+    *,
+    global_conversation_id: str,
+    creation,
+) -> AgentProductWorkspaceLaunchResponse:
+    session_id = creation.conversation.session_id
+    workflow_draft_id = creation.conversation.workflow_draft_id
+    task_id = creation.onboarding_task_id
+    if session_id is None or workflow_draft_id is None or task_id is None:
+        raise ConflictError("Agent 商品工作区缺少 Session 或 WorkflowDraft")
+    navigation_path = (
+        "/products/new?workspace="
+        + quote(creation.conversation.id, safe="")
+        + "&agent_session_id="
+        + quote(session_id, safe="")
+        + "&agent_task_id="
+        + quote(task_id, safe="")
+    )
+    return AgentProductWorkspaceLaunchResponse(
+        created=creation.created,
+        session_id=session_id,
+        global_conversation_id=global_conversation_id,
+        product_conversation_id=creation.conversation.id,
+        product_id=creation.product.id,
+        product_name=creation.product.name,
+        workflow_draft_id=workflow_draft_id,
+        task_id=task_id,
+        intake_finalized=creation.workflow_draft.intake_json is not None,
+        navigation_path=navigation_path,
+    )
 
 
 @router.get("/{conversation_id}/contract", response_model=AgentContractResponse)
@@ -349,6 +386,41 @@ def release_agent_turn_execution_endpoint(
         phase=payload.phase,
     )
     return AgentTurnExecutionReleaseResponse(released=released)
+
+
+@router.post(
+    "/{conversation_id}/turn-executions/{execution_id}/events",
+    response_model=AgentTurnEventResponse,
+)
+def append_agent_turn_event_endpoint(
+    conversation_id: str,
+    execution_id: str,
+    payload: AgentTurnEventRequest,
+    session: Session = Depends(get_session),
+) -> AgentTurnEventResponse:
+    event = append_agent_turn_event(
+        session,
+        conversation_id=conversation_id,
+        execution_id=execution_id,
+        owner_id=payload.owner_id,
+        lease_token=payload.lease_token,
+        sequence=payload.sequence,
+        schema_version=payload.schema_version,
+        run_id=payload.run_id,
+        turn_id=payload.turn_id,
+        kind=payload.kind,
+        payload=payload.payload,
+        created_at=payload.created_at,
+    )
+    return AgentTurnEventResponse(
+        id=event.id,
+        projection_id=event.projection_id,
+        execution_id=event.execution_id,
+        sequence=event.sequence,
+        schema_version=event.schema_version,
+        kind=event.kind,
+        created_at=event.created_at,
+    )
 
 
 @router.get("/{conversation_id}/workflow-runs", response_model=AgentWorkflowRunListResponse)
@@ -659,30 +731,39 @@ def create_agent_product_workspace_from_global_conversation_endpoint(
         name=payload.name,
         idempotency_key=idempotency_key,
     )
-    session_id = creation.conversation.session_id
-    workflow_draft_id = creation.conversation.workflow_draft_id
-    task_id = creation.onboarding_task_id
-    if session_id is None or workflow_draft_id is None or task_id is None:
-        raise ConflictError("Agent 商品工作区缺少 Session 或 WorkflowDraft")
-    navigation_path = (
-        "/products/new?workspace="
-        + quote(creation.conversation.id, safe="")
-        + "&agent_session_id="
-        + quote(session_id, safe="")
-        + "&agent_task_id="
-        + quote(task_id, safe="")
-    )
-    return AgentProductWorkspaceLaunchResponse(
-        created=creation.created,
-        session_id=session_id,
+    return _serialize_agent_product_workspace_launch(
         global_conversation_id=conversation_id,
-        product_conversation_id=creation.conversation.id,
-        product_id=creation.product.id,
-        product_name=creation.product.name,
-        workflow_draft_id=workflow_draft_id,
-        task_id=task_id,
-        intake_finalized=creation.workflow_draft.intake_json is not None,
-        navigation_path=navigation_path,
+        creation=creation,
+    )
+
+
+@router.post(
+    "/{conversation_id}/product-workspaces/reconcile",
+    response_model=AgentProductWorkspaceReconcileResponse,
+)
+def reconcile_agent_product_workspace_from_global_conversation_endpoint(
+    conversation_id: str,
+    payload: AgentProductWorkspaceLaunchRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
+    session: Session = Depends(get_session),
+) -> AgentProductWorkspaceReconcileResponse:
+    reconciled = reconcile_agent_product_draft_workspace_from_global_conversation(
+        session,
+        global_conversation_id=conversation_id,
+        name=payload.name,
+        idempotency_key=idempotency_key,
+    )
+    return AgentProductWorkspaceReconcileResponse(
+        state=reconciled.state,
+        result=(
+            _serialize_agent_product_workspace_launch(
+                global_conversation_id=conversation_id,
+                creation=reconciled.creation,
+            )
+            if reconciled.creation is not None
+            else None
+        ),
+        detail=reconciled.detail,
     )
 
 

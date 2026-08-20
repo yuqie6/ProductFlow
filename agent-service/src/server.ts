@@ -41,7 +41,7 @@ async function handleRequest(
   const lookup: RuntimeLookup = route.kind === "conversation" ? { conversationID: route.scopeID } : { taskID: route.scopeID };
   if (route.action === "start" && request.method === "POST") {
     const body = parseStartInput(await readJSON(request, config.maxBodyBytes));
-    const state = await manager.start({ lookup, input: body });
+    const state = await manager.start({ lookup, input: body.input, turnID: body.turnID });
     response.setHeader("Location", `${url.pathname}/${encodeURIComponent(state.turn_id)}`);
     writeJSON(response, 202, state);
     return;
@@ -145,13 +145,17 @@ async function streamEvents(
   }
 }
 
-function parseStartInput(value: unknown): StartTurnInput {
+function parseStartInput(value: unknown): { input: StartTurnInput; turnID?: string } {
   const body = object(value, "request body");
-  rejectUnknown(body, ["input_text", "asset_ids", "idempotency_key", "page_context"]);
+  rejectUnknown(body, ["input_text", "asset_ids", "idempotency_key", "page_context", "turn_id"]);
   const inputText = stringValue(body.input_text, "input_text").trim();
   const idempotencyKey = stringValue(body.idempotency_key, "idempotency_key").trim();
   if (!inputText || inputText.length > MAX_INPUT_TEXT_CHARS) throw new RuntimeError(400, "invalid_argument", "input_text is required and must be at most 20000 characters");
   if (!idempotencyKey || byteLength(idempotencyKey) > 200) throw new RuntimeError(400, "invalid_argument", "idempotency_key is required and must be at most 200 bytes");
+  const turnID = body.turn_id === undefined ? undefined : stringValue(body.turn_id, "turn_id").trim();
+  if (turnID !== undefined && (!turnID || byteLength(turnID) > 120)) {
+    throw new RuntimeError(400, "invalid_argument", "turn_id is invalid");
+  }
   const rawAssetIDs = body.asset_ids === undefined ? [] : arrayValue(body.asset_ids, "asset_ids");
   if (rawAssetIDs.length > MAX_INPUT_ASSETS) throw new RuntimeError(400, "invalid_argument", `asset_ids cannot contain more than ${MAX_INPUT_ASSETS} values`);
   const assetIDs = rawAssetIDs.map((value, index) => {
@@ -161,7 +165,10 @@ function parseStartInput(value: unknown): StartTurnInput {
   });
   if (new Set(assetIDs).size !== assetIDs.length) throw new RuntimeError(400, "invalid_argument", "asset_ids cannot contain duplicates");
   const pageContext = body.page_context === undefined || body.page_context === null ? null : parsePageContext(body.page_context);
-  return { input_text: inputText, asset_ids: assetIDs, idempotency_key: idempotencyKey, page_context: pageContext };
+  return {
+    input: { input_text: inputText, asset_ids: assetIDs, idempotency_key: idempotencyKey, page_context: pageContext },
+    ...(turnID === undefined ? {} : { turnID }),
+  };
 }
 
 function parsePageContext(value: unknown): PageContext {

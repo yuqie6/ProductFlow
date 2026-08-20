@@ -59,17 +59,26 @@ export interface TurnRecoveryCandidate {
 
 export interface TurnRecoverySummary {
   queued: TurnRecoveryCandidate[];
+  deferred: number;
+  waitingInput: number;
   restoredTerminal: number;
   unknown: number;
 }
+
+export type DurableEventPublisher = (scope: Scope, event: TurnEvent) => Promise<void>;
 
 const RESTART_UNKNOWN_ERROR = "Agent service restarted before this Turn reached a provable terminal state";
 
 export class TurnStore {
   private readonly locks = new Map<string, Promise<void>>();
   private readonly eventWaiters = new Map<string, Set<EventWaiter>>();
+  private eventPublisher?: DurableEventPublisher;
 
   constructor(readonly root: string) {}
+
+  setEventPublisher(publisher: DurableEventPublisher): void {
+    this.eventPublisher = publisher;
+  }
 
   async init(): Promise<void> {
     await mkdir(join(this.root, "runs"), { recursive: true, mode: 0o700 });
@@ -116,13 +125,15 @@ export class TurnStore {
 
   async recoverAfterRestart(): Promise<TurnRecoverySummary> {
     const queued: TurnRecoveryCandidate[] = [];
+    let deferred = 0;
+    let waitingInput = 0;
     let restoredTerminal = 0;
     let unknown = 0;
     let runEntries: import("node:fs").Dirent[] = [];
     try {
       runEntries = await readdir(join(this.root, "runs"), { withFileTypes: true });
     } catch (error: unknown) {
-      if (isENOENT(error)) return { queued, restoredTerminal, unknown };
+      if (isENOENT(error)) return { queued, deferred, waitingInput, restoredTerminal, unknown };
       throw error;
     }
     for (const entry of runEntries.filter((candidate) => candidate.isDirectory()).sort((left, right) => left.name.localeCompare(right.name))) {
@@ -133,25 +144,45 @@ export class TurnStore {
         const events = await this.events(record.scope.run_id, turnID, 0);
         const result = await this.recoverTurnAfterRestart(record.scope, state, events);
         if (result === "queued") queued.push({ scope: record.scope, turnID });
+        else if (result === "deferred") deferred += 1;
+        else if (result === "waiting_input") waitingInput += 1;
         else if (result === "restored_terminal") restoredTerminal += 1;
         else if (result === "unknown") unknown += 1;
       }
     }
-    return { queued, restoredTerminal, unknown };
+    return { queued, deferred, waitingInput, restoredTerminal, unknown };
   }
 
-  async createTurn(scope: Scope, input: StartTurnInput): Promise<{ state: TurnState; created: boolean }> {
+  async createTurn(
+    scope: Scope,
+    input: StartTurnInput,
+    requestedTurnID?: string,
+  ): Promise<{ state: TurnState; created: boolean }> {
     return this.serial(`run:${scope.run_id}`, async () => {
       const record = await this.ensureRunUnlocked(scope);
+      const adoptedTurnID = requestedTurnID === undefined ? undefined : normalizeTurnID(requestedTurnID);
       const existingID = record.idempotency[input.idempotency_key];
       if (existingID) {
+        if (adoptedTurnID !== undefined && existingID !== adoptedTurnID) {
+          throw new RuntimeError(409, "turn_identity_conflict", "idempotency_key is already bound to a different Agent Turn");
+        }
         const existing = await this.getState(scope.run_id, existingID);
         if (JSON.stringify(existing.input) !== JSON.stringify(input)) {
           throw new RuntimeError(409, "idempotency_conflict", "idempotency_key was already used with different input");
         }
         return { state: existing, created: false };
       }
-      const turnID = randomUUID();
+      const turnID = adoptedTurnID ?? randomUUID();
+      if (record.turn_ids.includes(turnID)) {
+        const existing = await this.getState(scope.run_id, turnID);
+        if (JSON.stringify(existing.input) !== JSON.stringify(input)) {
+          throw new RuntimeError(409, "turn_identity_conflict", "requested Agent Turn ID is already bound to different input");
+        }
+        record.idempotency[input.idempotency_key] = turnID;
+        record.last_turn_id = turnID;
+        await this.writeJSON(this.runPath(scope.run_id), record);
+        return { state: existing, created: false };
+      }
       const now = nowISO();
       const state: TurnState = {
         api_version: API_VERSION,
@@ -190,7 +221,7 @@ export class TurnStore {
     scope: Scope,
     state: TurnState,
     events: TurnEvent[],
-  ): Promise<"queued" | "terminal" | "restored_terminal" | "unknown"> {
+  ): Promise<"queued" | "deferred" | "waiting_input" | "terminal" | "restored_terminal" | "unknown"> {
     return this.serial(this.eventKey(scope.run_id, state.turn_id), async () => {
       const current = await this.getState(scope.run_id, state.turn_id);
       const terminalEvent = [...events].reverse().find((event) => terminalStatusFromEvent(event) !== null);
@@ -210,6 +241,22 @@ export class TurnStore {
         return "restored_terminal";
       }
       if (isTerminalStatus(current.status)) return "terminal";
+      if (
+        current.status === "queued" &&
+        (current.execution_attempt !== undefined || current.execution_fencing_token !== undefined)
+      ) {
+        // ProductFlow owns the execution phase after a claim. A local queued
+        // snapshot may be older than the durable phase, so only an untouched
+        // queued Turn is safe for Agent-local requeue.
+        return "deferred";
+      }
+      if (
+        current.status === "requires_input" &&
+        current.question &&
+        events.some((event) => event.kind === "turn.requires_input" || event.kind === "question.required")
+      ) {
+        return "waiting_input";
+      }
       if (current.status === "queued") {
         const hasQuestionContinuation = events.some(
           (event) => event.kind === "question.answered" || event.kind === "turn.requires_input",
@@ -412,6 +459,10 @@ export class TurnStore {
     events.sequence = event.sequence;
     events.items.push(event);
     await this.writeJSON(path, events);
+    if (this.eventPublisher) {
+      const record = await this.loadRun(runID);
+      await this.eventPublisher(record.scope, event);
+    }
     this.notifyEventWaiters(runID, turnID, event.sequence);
     return event;
   }
@@ -490,6 +541,14 @@ function stringPayload(value: JsonValue | undefined): string | undefined {
 
 function unknownRunningToolSteps(steps: ToolStep[] | undefined): ToolStep[] | undefined {
   return steps?.map((step) => (step.status === "running" ? { ...step, status: "unknown" } : step));
+}
+
+function normalizeTurnID(value: string): string {
+  const normalized = value.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/u.test(normalized)) {
+    throw new RuntimeError(400, "invalid_argument", "requested Agent Turn ID is invalid");
+  }
+  return normalized;
 }
 
 function isENOENT(error: unknown): boolean {

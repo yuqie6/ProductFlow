@@ -12,8 +12,15 @@ async function main(): Promise<void> {
   const skills = await loadSkillCatalog();
   const productFlow = new ProductFlowClient(config.productFlowBaseURL, config.internalToken, config.requestTimeoutMS);
   const manager = new PiRuntimeManager(config, store, productFlow, skills);
+  store.setEventPublisher((scope, event) => manager.publishDurableEvent(scope, event));
   const recovery = await manager.recoverAfterRestart();
-  if (recovery.queued_turns > 0 || recovery.restored_terminal_turns > 0 || recovery.unknown_turns > 0) {
+  if (
+    recovery.queued_turns > 0 ||
+    recovery.deferred_turns > 0 ||
+    recovery.waiting_input_turns > 0 ||
+    recovery.restored_terminal_turns > 0 ||
+    recovery.unknown_turns > 0
+  ) {
     process.stdout.write(`Recovered Agent runtime state: ${JSON.stringify(recovery)}\n`);
   }
   const server = createHTTPServer(manager, config);

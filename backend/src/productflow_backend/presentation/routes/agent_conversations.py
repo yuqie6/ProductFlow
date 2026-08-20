@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-
 from fastapi import APIRouter, Depends, Header, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -20,6 +18,9 @@ from productflow_backend.application.agent_conversations import (
     get_agent_turn_or_raise,
     list_agent_turn_page,
 )
+from productflow_backend.application.agent_effect_reconciliation import reconcile_agent_turn_effect
+from productflow_backend.application.agent_event_stream import stream_agent_turn_events
+from productflow_backend.application.agent_execution import MAX_AGENT_EVENT_SEQUENCE
 from productflow_backend.application.agent_workflow_run_requests import (
     cancel_agent_workflow_run_request as cancel_agent_workflow_run_request_use_case,
 )
@@ -31,7 +32,7 @@ from productflow_backend.application.agent_workflow_run_requests import (
 )
 from productflow_backend.application.async_delivery import stage_async_dispatch_for_actor
 from productflow_backend.domain.enums import AgentTurnStatus
-from productflow_backend.domain.errors import AgentServiceUnavailableError, BusinessValidationError, ConflictError
+from productflow_backend.domain.errors import AgentServiceUnavailableError, BusinessValidationError
 from productflow_backend.infrastructure.agent_service import (
     AgentServiceClient,
     AgentServiceRequestError,
@@ -42,6 +43,8 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     AgentConversationResponse,
     AgentQuestionAnswerRequest,
     AgentQuestionAnswerResponse,
+    AgentTurnEffectReconciliationRequest,
+    AgentTurnEffectReconciliationResponse,
     AgentTurnPageResponse,
     AgentTurnResponse,
     AgentWorkflowRunRequestResponse,
@@ -50,6 +53,7 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     SubmitAgentTurnResponse,
     serialize_agent_conversation,
     serialize_agent_turn,
+    serialize_agent_turn_effect_reconciliation,
     serialize_agent_workflow_run_request,
 )
 
@@ -311,7 +315,7 @@ def answer_agent_question_endpoint(
         projection_id=projection_id,
         question_id=question_id,
         answer=payload.to_gateway_payload(),
-        gateway=_agent_gateway_or_raise(),
+        gateway=_agent_gateway_or_none(),
         enqueue_sync=enqueue_agent_turn_sync,
     )
     answered_turn = serialize_agent_turn(result.answered_turn)
@@ -319,6 +323,28 @@ def answer_agent_question_endpoint(
         **answered_turn.model_dump(),
         answered_turn=answered_turn,
         continuation_turn=serialize_agent_turn(result.continuation_turn),
+    )
+
+
+@router.post(
+    "/{conversation_id}/turns/{projection_id}/effect-reconciliation",
+    response_model=AgentTurnEffectReconciliationResponse,
+)
+def reconcile_agent_turn_effect_endpoint(
+    product_id: str,
+    conversation_id: str,
+    projection_id: str,
+    payload: AgentTurnEffectReconciliationRequest,
+    session: Session = Depends(get_session),
+) -> AgentTurnEffectReconciliationResponse:
+    return serialize_agent_turn_effect_reconciliation(
+        reconcile_agent_turn_effect(
+            session,
+            product_id=product_id,
+            conversation_id=conversation_id,
+            projection_id=projection_id,
+            tool_call_id=payload.tool_call_id,
+        )
     )
 
 
@@ -337,35 +363,9 @@ async def stream_agent_turn_events_endpoint(
         conversation_id=conversation_id,
         projection_id=projection_id,
     )
-    if projection.harness_turn_id is None:
-        raise ConflictError("Agent turn projection 尚未绑定 harness Turn")
     cursor = max(after, _parse_event_cursor(last_event_id))
-    gateway = _agent_gateway_or_raise()
-    try:
-        gateway.get_turn(
-            conversation_id=conversation_id,
-            turn_id=projection.harness_turn_id,
-            task_id=projection.task_id,
-        )
-    except AgentServiceRequestError as exc:
-        if exc.status_code in {404, 409}:
-            raise ConflictError("Agent Turn 当前不可订阅") from exc
-        raise AgentServiceUnavailableError("Agent 服务暂时不可用") from exc
-
-    async def upstream_events() -> AsyncIterator[bytes]:
-        try:
-            async for chunk in gateway.stream_turn_events(
-                conversation_id=conversation_id,
-                turn_id=projection.harness_turn_id or "",
-                after=cursor,
-                task_id=projection.task_id,
-            ):
-                yield chunk
-        except AgentServiceRequestError:
-            return
-
     return StreamingResponse(
-        upstream_events(),
+        stream_agent_turn_events(projection_id=projection.id, after=cursor),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",
@@ -382,7 +382,7 @@ def _parse_event_cursor(value: str | None) -> int:
         cursor = int(value)
     except ValueError as exc:
         raise BusinessValidationError("Last-Event-ID 无效") from exc
-    if cursor < 0:
+    if cursor < 0 or cursor > MAX_AGENT_EVENT_SEQUENCE:
         raise BusinessValidationError("Last-Event-ID 无效")
     return cursor
 
@@ -392,3 +392,10 @@ def _agent_gateway_or_raise() -> AgentServiceClient:
         return get_agent_service_client()
     except AgentServiceRequestError as exc:
         raise AgentServiceUnavailableError("Agent 服务尚未配置或暂时不可用") from exc
+
+
+def _agent_gateway_or_none() -> AgentServiceClient | None:
+    try:
+        return get_agent_service_client()
+    except AgentServiceRequestError:
+        return None
