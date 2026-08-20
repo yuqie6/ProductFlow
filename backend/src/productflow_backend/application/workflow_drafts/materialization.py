@@ -24,6 +24,7 @@ from productflow_backend.application.workflow_drafts.service import (
 )
 from productflow_backend.domain.enums import WorkflowDraftStatus, WorkflowNodeType, WorkflowRevealEventKind
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
+from productflow_backend.domain.workflow_rules import canonical_workflow_edge_handles
 from productflow_backend.infrastructure.db.models import (
     ImagePromptArtifact,
     ImagePromptArtifactVersion,
@@ -557,13 +558,18 @@ def _materialize_edges(
 ) -> dict[str, WorkflowEdge]:
     edges_by_key: dict[str, WorkflowEdge] = {}
     for edge_plan in artifact.edges:
+        source_node = nodes_by_key[edge_plan.source_node_key]
+        target_node = nodes_by_key[edge_plan.target_node_key]
+        handles = canonical_workflow_edge_handles(source_node.node_type, target_node.node_type)
+        if handles is None:
+            raise BusinessValidationError("WorkflowDraft 包含不支持的 v2 连线类型")
         edge = WorkflowEdge(
             workflow_id=workflow.id,
             edge_key=edge_plan.key,
-            source_node_id=nodes_by_key[edge_plan.source_node_key].id,
-            target_node_id=nodes_by_key[edge_plan.target_node_key].id,
-            source_handle=edge_plan.source_handle,
-            target_handle=edge_plan.target_handle,
+            source_node_id=source_node.id,
+            target_node_id=target_node.id,
+            source_handle=handles[0],
+            target_handle=handles[1],
         )
         session.add(edge)
         edges_by_key[edge_plan.key] = edge

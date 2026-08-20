@@ -24,6 +24,31 @@ def test_workflow_draft_payload_accepts_one_prompt_per_type_and_one_node_per_ima
     assert payload.referenced_asset_ids() == {"00000000-0000-0000-0000-000000000001"}
 
 
+def test_workflow_draft_payload_keeps_historical_noncanonical_handles_readable() -> None:
+    payload = make_workflow_draft_payload()
+    reference_edge = next(edge for edge in payload["edges"] if edge["key"] == "reference-to-prompt")
+    reference_edge["source_handle"] = "reference"
+
+    parsed = WorkflowDraftPayloadV1.model_validate(payload)
+
+    parsed_reference_edge = next(edge for edge in parsed.edges if edge.key == "reference-to-prompt")
+    assert parsed_reference_edge.source_handle == "reference"
+
+
+def test_workflow_draft_payload_requires_prompt_evidence_to_match_canvas_reference_edges() -> None:
+    missing_edge = make_workflow_draft_payload()
+    missing_edge["edges"] = [edge for edge in missing_edge["edges"] if edge["key"] != "reference-to-prompt"]
+
+    with pytest.raises(ValidationError, match="evidence_asset_ids 必须与画布直接连接的参考图片一致"):
+        WorkflowDraftPayloadV1.model_validate(missing_edge)
+
+    missing_evidence = make_workflow_draft_payload()
+    missing_evidence["prompt_plans"][0]["payload"]["evidence_asset_ids"] = []
+
+    with pytest.raises(ValidationError, match="evidence_asset_ids 必须与画布直接连接的参考图片一致"):
+        WorkflowDraftPayloadV1.model_validate(missing_evidence)
+
+
 def test_workflow_draft_payload_accepts_legacy_product_fact_source() -> None:
     payload = make_workflow_draft_payload()
     payload["facts"][0]["source_type"] = "legacy_product"

@@ -70,7 +70,6 @@ from productflow_backend.infrastructure.db.models import (
     ProductImageAsset,
     ProductWorkflow,
     VisualException,
-    VisualSystemVersionReference,
     WorkflowEdge,
     WorkflowImageGenerationRecord,
     WorkflowImageGenerationReference,
@@ -498,7 +497,6 @@ def _prepare_prompt_generation(
         session,
         workflow=workflow,
         prompt_node=node,
-        current_version=current_version,
         storage=storage,
     )
     return PreparedPromptGeneration(
@@ -831,10 +829,8 @@ def _load_prompt_references(
     *,
     workflow: ProductWorkflow,
     prompt_node: WorkflowNode,
-    current_version: ImagePromptArtifactVersion,
     storage: LocalStorage,
 ) -> list[PromptReferenceImage]:
-    candidates: list[tuple[str, str, str]] = []
     incoming_edges = list(
         session.scalars(
             select(WorkflowEdge)
@@ -843,8 +839,8 @@ def _load_prompt_references(
         )
     )
     source_node_ids = [edge.source_node_id for edge in incoming_edges]
-    if source_node_ids:
-        reference_nodes = list(
+    reference_nodes = (
+        list(
             session.scalars(
                 select(WorkflowNode)
                 .where(
@@ -854,53 +850,20 @@ def _load_prompt_references(
                 .order_by(WorkflowNode.position_x, WorkflowNode.position_y, WorkflowNode.node_key, WorkflowNode.id)
             )
         )
-        for node in reference_nodes:
-            if node.bound_image_asset_id is not None:
-                candidates.append(
-                    (
-                        node.bound_image_asset_id,
-                        str(node.config_json.get("role") or "reference"),
-                        str(node.config_json.get("label") or node.title),
-                        True,
-                    )
-                )
-
-    visual_references = list(
-        session.scalars(
-            select(VisualSystemVersionReference)
-            .where(VisualSystemVersionReference.visual_system_version_id == workflow.visual_system_version_id)
-            .order_by(VisualSystemVersionReference.position)
-        )
+        if source_node_ids
+        else []
     )
-    visual_reference_asset_ids = {reference.asset_id for reference in visual_references}
-    prompt_references = list(
-        session.scalars(
-            select(ImagePromptArtifactVersionReference)
-            .where(ImagePromptArtifactVersionReference.prompt_artifact_version_id == current_version.id)
-            .order_by(ImagePromptArtifactVersionReference.position)
-        )
-    )
-    prompt_output = prompt_node.output_json if isinstance(prompt_node.output_json, dict) else {}
-    superseded_reference_asset_ids = {
-        value
-        for value in prompt_output.get("superseded_reference_asset_ids", [])
-        if isinstance(value, str) and value
-    }
-    candidates.extend(
+    candidates = [
         (
-            reference.asset_id,
-            reference.purpose,
-            "提示词证据",
-            reference.asset_id not in visual_reference_asset_ids,
+            node.bound_image_asset_id,
+            str(node.config_json.get("role") or "reference"),
+            str(node.config_json.get("label") or node.title),
         )
-        for reference in prompt_references
-        if reference.asset_id not in superseded_reference_asset_ids
-    )
-    candidates.extend(
-        (reference.asset_id, reference.role, reference.label, False) for reference in visual_references
-    )
+        for node in reference_nodes
+        if node.bound_image_asset_id is not None
+    ]
 
-    unique_candidates: list[tuple[str, str, str, bool]] = []
+    unique_candidates: list[tuple[str, str, str]] = []
     seen_asset_ids: set[str] = set()
     for candidate in candidates:
         if candidate[0] in seen_asset_ids:
@@ -911,10 +874,10 @@ def _load_prompt_references(
         raise ConflictError(f"提示词节点参考图片不能超过 {MAX_PROMPT_REFERENCE_IMAGES} 张")
 
     references: list[PromptReferenceImage] = []
-    for asset_id, role, label, require_product_ownership in unique_candidates:
+    for asset_id, role, label in unique_candidates:
         asset, image_bytes = _read_product_image_asset(
             session,
-            product_id=workflow.product_id if require_product_ownership else None,
+            product_id=workflow.product_id,
             asset_id=asset_id,
             storage=storage,
         )

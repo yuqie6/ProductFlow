@@ -453,11 +453,10 @@ def test_prompt_node_appends_a_new_artifact_version(db_session) -> None:
     assert ";base64," not in persisted_text
 
 
-def test_prompt_node_reads_reused_visual_system_references_across_products(db_session) -> None:
-    source_product, source_workflow = _create_materialized_workflow(db_session)
+def test_prompt_node_does_not_merge_reused_visual_system_references_outside_canvas(db_session) -> None:
+    _, source_workflow = _create_materialized_workflow(db_session)
     visual_version_id = source_workflow.visual_system_version_id
     assert visual_version_id is not None
-    source_reference_id = source_product.image_assets[0].id
 
     consumer_product = create_canonical_product(
         db_session,
@@ -514,7 +513,6 @@ def test_prompt_node_reads_reused_visual_system_references_across_products(db_se
     assert len(provider.requests) == 1
     assert [reference.asset_id for reference in provider.requests[0].reference_images] == [
         consumer_reference_id,
-        source_reference_id,
     ]
 
     db_session.expire_all()
@@ -537,8 +535,35 @@ def test_prompt_node_reads_reused_visual_system_references_across_products(db_se
     assert len(second_provider.requests) == 1
     assert [reference.asset_id for reference in second_provider.requests[0].reference_images] == [
         consumer_reference_id,
-        source_reference_id,
     ]
+
+
+def test_prompt_node_uses_no_reference_images_after_canvas_edge_is_removed(db_session) -> None:
+    _, workflow = _create_materialized_workflow(db_session)
+    prompt_node = next(node for node in workflow.nodes if node.node_type == WorkflowNodeType.PROMPT_GENERATION)
+    reference_node_ids = {
+        node.id for node in workflow.nodes if node.node_type == WorkflowNodeType.REFERENCE_IMAGE
+    }
+    reference_edge = next(
+        edge
+        for edge in workflow.edges
+        if edge.source_node_id in reference_node_ids and edge.target_node_id == prompt_node.id
+    )
+    db_session.delete(reference_edge)
+    db_session.commit()
+    _, node_run = _queue_single_node_run(db_session, workflow=workflow, node=prompt_node)
+    provider = RecordingPromptProvider()
+
+    execute_v2_workflow_node_run(
+        db_session,
+        node_run_id=node_run.id,
+        dependencies=WorkflowExecutionDependencies(
+            prompt_generation_provider_resolver=lambda: provider,
+        ),
+    )
+
+    assert len(provider.requests) == 1
+    assert provider.requests[0].reference_images == ()
 
 
 def test_prompt_node_rejects_provider_plan_drift_without_switching_current_version(db_session) -> None:

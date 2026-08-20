@@ -26,6 +26,23 @@ class WorkflowRuleEdge:
     target_node_id: str
 
 
+_CANONICAL_EDGE_HANDLES: dict[tuple[WorkflowNodeType, WorkflowNodeType], tuple[str, str]] = {
+    (WorkflowNodeType.PRODUCT_CONTEXT, WorkflowNodeType.PROMPT_GENERATION): ("facts", "facts"),
+    (WorkflowNodeType.PRODUCT_CONTEXT, WorkflowNodeType.IMAGE_GENERATION): ("facts", "facts"),
+    (WorkflowNodeType.REFERENCE_IMAGE, WorkflowNodeType.PROMPT_GENERATION): ("asset", "reference"),
+    (WorkflowNodeType.REFERENCE_IMAGE, WorkflowNodeType.IMAGE_GENERATION): ("asset", "reference"),
+    (WorkflowNodeType.PROMPT_GENERATION, WorkflowNodeType.IMAGE_GENERATION): ("prompt", "prompt"),
+    (WorkflowNodeType.IMAGE_GENERATION, WorkflowNodeType.IMAGE_GENERATION): ("image", "reference"),
+}
+
+
+def canonical_workflow_edge_handles(
+    source_type: WorkflowNodeType,
+    target_type: WorkflowNodeType,
+) -> tuple[str, str] | None:
+    return _CANONICAL_EDGE_HANDLES.get((source_type, target_type))
+
+
 def topological_node_ids(nodes: Iterable[WorkflowRuleNode], edges: Iterable[WorkflowRuleEdge]) -> list[str]:
     """Return graph node ids in executable order and reject broken/cyclic DAGs."""
 

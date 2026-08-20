@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -319,7 +320,72 @@ def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch:
             column["name"] for column in inspector.get_columns("agent_workflow_run_requests")
         }
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0069"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0070"
+    finally:
+        engine.dispose()
+
+
+def test_edge_handle_migration_repairs_existing_v2_reference_edges(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path, config = _configure_sqlite_alembic(tmp_path, monkeypatch, filename="edge-handles.db")
+    command.upgrade(config, "20260820_0069")
+    engine = sa.create_engine(f"sqlite:///{database_path}", future=True)
+    now = datetime.now(UTC)
+    with engine.begin() as connection:
+        connection.execute(
+            sa.text(
+                "INSERT INTO products (id, name, created_at, updated_at) "
+                "VALUES ('product-edge', '端口迁移商品', :now, :now)"
+            ),
+            {"now": now},
+        )
+        connection.execute(
+            sa.text(
+                "INSERT INTO product_workflows "
+                "(id, product_id, title, active, schema_version, revision, edit_version, created_at, updated_at) "
+                "VALUES ('workflow-edge', 'product-edge', '端口迁移工作流', 1, 2, 1, 0, :now, :now)"
+            ),
+            {"now": now},
+        )
+        for node_id, node_key, node_type in (
+            ("reference-edge", "reference-edge", "reference_image"),
+            ("prompt-edge", "prompt-edge", "prompt_generation"),
+        ):
+            connection.execute(
+                sa.text(
+                    "INSERT INTO workflow_nodes "
+                    "(id, workflow_id, schema_version, node_key, node_type, title, position_x, position_y, "
+                    "config_json, status, created_at, updated_at) "
+                    "VALUES (:id, 'workflow-edge', 2, :node_key, :node_type, :node_key, 0, 0, "
+                    "'{}', 'idle', :now, :now)"
+                ),
+                {"id": node_id, "node_key": node_key, "node_type": node_type, "now": now},
+            )
+        connection.execute(
+            sa.text(
+                "INSERT INTO workflow_edges "
+                "(id, workflow_id, edge_key, source_node_id, target_node_id, source_handle, target_handle, created_at) "
+                "VALUES ('edge-reference-prompt', 'workflow-edge', 'edge-reference-prompt', "
+                "'reference-edge', 'prompt-edge', 'reference', 'reference', :now)"
+            ),
+            {"now": now},
+        )
+    engine.dispose()
+
+    command.upgrade(config, "head")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}", future=True)
+    try:
+        with engine.connect() as connection:
+            handles = connection.execute(
+                sa.text(
+                    "SELECT source_handle, target_handle FROM workflow_edges "
+                    "WHERE id = 'edge-reference-prompt'"
+                )
+            ).one()
+            assert handles == ("asset", "reference")
     finally:
         engine.dispose()
 
@@ -473,7 +539,7 @@ def test_agent_tool_step_projection_migration_backfills_existing_turns(
                 sa.text("SELECT tool_steps_json FROM agent_turn_projections WHERE id = 'turn-tool-step'")
             )
             assert value == "[]"
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0069"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0070"
     finally:
         engine.dispose()
 
@@ -681,7 +747,7 @@ def test_media_library_upload_keys_migration_upgrade_and_downgrade(
     try:
         assert "media_library_upload_keys" in sa.inspect(engine).get_table_names()
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0069"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0070"
     finally:
         engine.dispose()
 
@@ -718,6 +784,6 @@ def test_media_library_upload_keys_migration_upgrade_and_downgrade(
         }
         assert "source_run_id" in source_run_columns
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0069"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0070"
     finally:
         engine.dispose()

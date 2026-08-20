@@ -11,6 +11,7 @@ from productflow_backend.domain.enums import (
     ProductFactStatus,
     WorkflowNodeType,
 )
+from productflow_backend.domain.workflow_rules import canonical_workflow_edge_handles
 
 WORKFLOW_DRAFT_SCHEMA_VERSION = 1
 WORKFLOW_SCHEMA_VERSION = 2
@@ -511,7 +512,9 @@ class WorkflowDraftPayloadV1(StrictArtifactModel):
             raise ValueError("missing_fact_keys 必须属于 required_fact_keys")
 
         reference_keys = _require_unique_keys(self.reference_bindings, label="参考资产计划")
+        reference_by_key = {item.key: item for item in self.reference_bindings}
         prompt_keys = _require_unique_keys(self.prompt_plans, label="提示词计划")
+        prompt_by_key = {item.key: item for item in self.prompt_plans}
         image_type_keys = _require_unique_keys(self.image_types, label="图片类型")
         folder_keys = _require_unique_keys(self.folders, label="文件夹")
         node_keys = _require_unique_keys(self.nodes, label="工作流节点")
@@ -606,14 +609,6 @@ class WorkflowDraftPayloadV1(StrictArtifactModel):
             raise ValueError("image_generation 节点不能重复绑定逐图计划")
 
         node_type_by_key = {node.key: node.node_type for node in self.nodes}
-        allowed_edge_types = {
-            (WorkflowNodeType.PRODUCT_CONTEXT, WorkflowNodeType.PROMPT_GENERATION),
-            (WorkflowNodeType.PRODUCT_CONTEXT, WorkflowNodeType.IMAGE_GENERATION),
-            (WorkflowNodeType.REFERENCE_IMAGE, WorkflowNodeType.PROMPT_GENERATION),
-            (WorkflowNodeType.REFERENCE_IMAGE, WorkflowNodeType.IMAGE_GENERATION),
-            (WorkflowNodeType.PROMPT_GENERATION, WorkflowNodeType.IMAGE_GENERATION),
-            (WorkflowNodeType.IMAGE_GENERATION, WorkflowNodeType.IMAGE_GENERATION),
-        }
         edges_by_pair: set[tuple[str, str]] = set()
         adjacency = {key: set() for key in node_keys}
         indegree = dict.fromkeys(node_keys, 0)
@@ -626,7 +621,7 @@ class WorkflowDraftPayloadV1(StrictArtifactModel):
                 node_type_by_key[edge.source_node_key],
                 node_type_by_key[edge.target_node_key],
             )
-            if edge_types not in allowed_edge_types:
+            if canonical_workflow_edge_handles(*edge_types) is None:
                 raise ValueError("工作流连线包含不支持的 v2 节点类型组合")
             pair = (edge.source_node_key, edge.target_node_key)
             if pair in edges_by_pair:
@@ -643,6 +638,14 @@ class WorkflowDraftPayloadV1(StrictArtifactModel):
         for prompt_node in prompt_nodes:
             if (product_context_key, prompt_node.key) not in edges_by_pair:
                 raise ValueError("每个 prompt_generation 节点必须连接 product_context 节点")
+            incoming_reference_asset_ids = {
+                reference_by_key[reference_node.reference_key].asset_id
+                for reference_node in reference_nodes
+                if (reference_node.key, prompt_node.key) in edges_by_pair
+            }
+            prompt_evidence_asset_ids = set(prompt_by_key[prompt_node.prompt_plan_key].payload.evidence_asset_ids)
+            if incoming_reference_asset_ids != prompt_evidence_asset_ids:
+                raise ValueError("提示词 evidence_asset_ids 必须与画布直接连接的参考图片一致")
         for image_plan_key, image_type_key in image_plan_type_by_key.items():
             required_pair = (
                 prompt_node_by_plan[prompt_plan_by_type[image_type_key]],

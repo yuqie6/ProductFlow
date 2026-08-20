@@ -27,7 +27,12 @@ from productflow_backend.application.workflow_drafts.contracts import (
 )
 from productflow_backend.domain.enums import WorkflowNodeStatus, WorkflowNodeType
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
-from productflow_backend.domain.workflow_rules import WorkflowRuleEdge, WorkflowRuleNode, topological_node_ids
+from productflow_backend.domain.workflow_rules import (
+    WorkflowRuleEdge,
+    WorkflowRuleNode,
+    canonical_workflow_edge_handles,
+    topological_node_ids,
+)
 from productflow_backend.infrastructure.db.models import (
     ImagePromptArtifact,
     ImagePromptArtifactVersion,
@@ -40,14 +45,6 @@ from productflow_backend.infrastructure.db.models import (
 )
 
 _DUPLICATE_OFFSET = 48
-_V2_EDGE_HANDLES: dict[tuple[WorkflowNodeType, WorkflowNodeType], tuple[str, str]] = {
-    (WorkflowNodeType.PRODUCT_CONTEXT, WorkflowNodeType.PROMPT_GENERATION): ("facts", "facts"),
-    (WorkflowNodeType.PRODUCT_CONTEXT, WorkflowNodeType.IMAGE_GENERATION): ("facts", "facts"),
-    (WorkflowNodeType.REFERENCE_IMAGE, WorkflowNodeType.PROMPT_GENERATION): ("asset", "reference"),
-    (WorkflowNodeType.REFERENCE_IMAGE, WorkflowNodeType.IMAGE_GENERATION): ("asset", "reference"),
-    (WorkflowNodeType.PROMPT_GENERATION, WorkflowNodeType.IMAGE_GENERATION): ("prompt", "prompt"),
-    (WorkflowNodeType.IMAGE_GENERATION, WorkflowNodeType.IMAGE_GENERATION): ("image", "reference"),
-}
 _RUNNABLE_NODE_TYPES = {WorkflowNodeType.PROMPT_GENERATION, WorkflowNodeType.IMAGE_GENERATION}
 
 
@@ -246,7 +243,7 @@ def create_v2_workflow_edge(
         target = _node_or_raise(nodes, target_node_id)
         if source.id == target.id:
             raise BusinessValidationError("工作流连线不能连接到自身")
-        handles = _V2_EDGE_HANDLES.get((source.node_type, target.node_type))
+        handles = canonical_workflow_edge_handles(source.node_type, target.node_type)
         if handles is None:
             raise BusinessValidationError("工作流连线包含不支持的 v2 节点类型组合")
         if any(edge.source_node_id == source.id and edge.target_node_id == target.id for edge in edges):
@@ -412,12 +409,15 @@ def _duplicate_image(
         if edge.target_node_id != node.id:
             continue
         source = nodes_by_id[edge.source_node_id]
+        handles = canonical_workflow_edge_handles(source.node_type, duplicate.node_type)
+        if handles is None:
+            raise BusinessValidationError("工作流连线包含不支持的 v2 节点类型组合")
         _add_v2_edge(
             session,
             workflow=workflow,
             source=source,
             target=duplicate,
-            handles=_V2_EDGE_HANDLES[(source.node_type, duplicate.node_type)],
+            handles=handles,
         )
 
 
@@ -539,12 +539,15 @@ def _duplicate_prompt_group(
             else duplicate_images_by_original_id.get(edge.source_node_id)
             or nodes_by_id[edge.source_node_id]
         )
+        handles = canonical_workflow_edge_handles(source.node_type, target.node_type)
+        if handles is None:
+            raise BusinessValidationError("工作流连线包含不支持的 v2 节点类型组合")
         _add_v2_edge(
             session,
             workflow=workflow,
             source=source,
             target=target,
-            handles=_V2_EDGE_HANDLES[(source.node_type, target.node_type)],
+            handles=handles,
         )
 
 
@@ -648,7 +651,7 @@ def _validate_v2_graph(
             raise BusinessValidationError("工作流连线引用了不存在的节点")
         if source.id == target.id:
             raise BusinessValidationError("工作流连线不能连接到自身")
-        if (source.node_type, target.node_type) not in _V2_EDGE_HANDLES:
+        if canonical_workflow_edge_handles(source.node_type, target.node_type) is None:
             raise BusinessValidationError("工作流连线包含不支持的 v2 节点类型组合")
         pair = (source.id, target.id)
         if pair in pairs:

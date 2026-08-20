@@ -19,7 +19,7 @@ from productflow_backend.application.workflow_drafts.service import (
     create_workflow_draft,
     get_workflow_draft_or_raise,
 )
-from productflow_backend.domain.enums import WorkflowDraftStatus, WorkflowRevealEventKind
+from productflow_backend.domain.enums import WorkflowDraftStatus, WorkflowNodeType, WorkflowRevealEventKind
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError
 from productflow_backend.infrastructure.db.models import (
     ImagePromptArtifact,
@@ -318,6 +318,50 @@ def test_agent_artifact_origin_retry_is_idempotent_and_rejects_different_content
             source_turn_id="turn-retry",
             source_artifact_step_id="artifact-retry",
         )
+
+
+def test_materialization_derives_canonical_handles_when_draft_omits_them(db_session) -> None:
+    product = _create_product_with_reference(db_session)
+    payload = make_workflow_draft_payload(reference_asset_id=product.image_assets[0].id)
+    for edge in payload["edges"]:
+        edge["source_handle"] = None
+        edge["target_handle"] = None
+    draft = _create_confirmed_draft(
+        db_session,
+        product_id=product.id,
+        reference_asset_id=product.image_assets[0].id,
+        payload=payload,
+    )
+
+    result = materialize_workflow_draft(
+        db_session,
+        product_id=product.id,
+        draft_id=draft.id,
+        expected_draft_version=1,
+        expected_workflow_revision=0,
+        idempotency_key="canonical-edge-handles",
+    )
+
+    node_types = {node.id: node.node_type for node in result.workflow.nodes}
+    handles_by_types = {
+        (node_types[edge.source_node_id], node_types[edge.target_node_id]): (
+            edge.source_handle,
+            edge.target_handle,
+        )
+        for edge in result.workflow.edges
+    }
+    assert handles_by_types[(WorkflowNodeType.PRODUCT_CONTEXT, WorkflowNodeType.PROMPT_GENERATION)] == (
+        "facts",
+        "facts",
+    )
+    assert handles_by_types[(WorkflowNodeType.REFERENCE_IMAGE, WorkflowNodeType.PROMPT_GENERATION)] == (
+        "asset",
+        "reference",
+    )
+    assert handles_by_types[(WorkflowNodeType.PROMPT_GENERATION, WorkflowNodeType.IMAGE_GENERATION)] == (
+        "prompt",
+        "prompt",
+    )
 
 
 def test_materialization_creates_complete_v2_workflow_and_is_idempotent(db_session) -> None:
