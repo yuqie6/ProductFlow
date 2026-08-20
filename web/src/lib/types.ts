@@ -1,6 +1,6 @@
 export type ProductListSort = "updated_desc" | "created_desc" | "name_asc";
-export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
-export type DeliveryRenditionStatus = Exclude<JobStatus, "cancelled">;
+export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "unknown";
+export type DeliveryRenditionStatus = Exclude<JobStatus, "cancelled" | "unknown">;
 export type ImageSessionAssetKind = "reference_upload" | "generated_image";
 export type MediaVerificationStatus = "verified" | "legacy_pending" | "missing";
 export type ProductImageOriginType =
@@ -40,8 +40,8 @@ export type WorkflowNodeTypeV2 =
   | "reference_image"
   | "prompt_generation"
   | "image_generation";
-export type WorkflowNodeStatus = "idle" | "queued" | "running" | "succeeded" | "failed" | "cancelled";
-export type WorkflowRunStatus = "running" | "succeeded" | "failed" | "cancelled";
+export type WorkflowNodeStatus = "idle" | "queued" | "running" | "succeeded" | "failed" | "cancelled" | "unknown";
+export type WorkflowRunStatus = "running" | "succeeded" | "failed" | "cancelled" | "unknown";
 
 export interface SessionState {
   authenticated: boolean;
@@ -1157,6 +1157,24 @@ export interface AgentTurn {
   updated_at: string;
 }
 
+export type AgentTurnEffectResult = "applied" | "failed" | "unknown";
+export type AgentTurnReconciliationState = "applied" | "not_applied" | "conflict" | "unknown";
+
+export interface AgentTurnEffectReconciliation {
+  schema_version: 1;
+  id: string;
+  projection_id: string;
+  tool_call_id: string;
+  tool_name: "request_workflow_run_v1" | "create_product_workspace_v1";
+  idempotency_key: string;
+  effect_result: AgentTurnEffectResult;
+  reconciliation_state: AgentTurnReconciliationState;
+  result: Record<string, unknown> | null;
+  detail: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export type AgentWorkflowRunRequestStatus =
   | "awaiting_confirmation"
   | "confirmed"
@@ -1385,6 +1403,8 @@ export interface WorkflowNodeRunV2 {
   node_id: string;
   node_type: WorkflowNodeTypeV2;
   status: WorkflowNodeStatus;
+  progress_phase: string | null;
+  progress_metadata: Record<string, JsonValue> | null;
   output_json: Record<string, JsonValue> | null;
   failure_reason: string | null;
   visual_system_version_id: string;

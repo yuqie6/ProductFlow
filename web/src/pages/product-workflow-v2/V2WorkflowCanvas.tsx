@@ -184,6 +184,7 @@ function nodeStatusLabel(status: WorkflowNodeStatus, t: ReturnType<typeof useI18
     succeeded: "detail.nodeStatus.succeeded",
     failed: "detail.nodeStatus.failed",
     cancelled: "detail.nodeStatus.cancelled",
+    unknown: "detail.nodeStatus.unknown",
   } as const;
   return t(keys[status]);
 }
@@ -1081,5 +1082,4 @@ function WorkflowRevealFitView({
 }
 
 export { assetThumbnailUrl, folderSyntheticNodeId };
-
 

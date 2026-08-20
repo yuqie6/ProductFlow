@@ -21,7 +21,7 @@ export interface FolderBounds {
 export interface FolderSummary {
   member_count: number;
   node_types: WorkflowNodeTypeV2[];
-  status: "idle" | "queued" | "running" | "succeeded" | "failed";
+  status: "idle" | "queued" | "running" | "succeeded" | "failed" | "unknown";
   preview_asset_ids: string[];
   inbound_edge_count: number;
   outbound_edge_count: number;
@@ -80,6 +80,7 @@ const STATUS_PRIORITY: Record<WorkflowNodeStatus, number> = {
   queued: 2,
   cancelled: 3,
   failed: 3,
+  unknown: 5,
   running: 4,
 };
 
@@ -401,4 +402,3 @@ export function visibleRealNodeIds(
     .filter((node) => openFolderId ? node.folder_id === openFolderId : true)
     .map((node) => node.id);
 }
-

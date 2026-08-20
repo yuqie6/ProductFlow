@@ -16,7 +16,7 @@ export interface ImageRoundGroup {
   rounds: ImageSessionRound[];
 }
 
-export type ImageHistoryPlaceholderStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+export type ImageHistoryPlaceholderStatus = "queued" | "running" | "completed" | "failed" | "unknown" | "cancelled";
 
 export interface ImageHistoryRoundCandidate {
   id: string;
@@ -200,6 +200,9 @@ function getPlaceholderCandidateStatus(
 ): ImageHistoryPlaceholderStatus {
   if (task.status === "failed") {
     return "failed";
+  }
+  if (task.status === "unknown") {
+    return "unknown";
   }
   if (task.status === "cancelled") {
     return "cancelled";

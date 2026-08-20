@@ -95,14 +95,17 @@ describe("Agent conversation API", () => {
     );
     await api.resumeAgentTurn("product-1", "conversation-1", "projection-1");
     await api.cancelAgentTurn("product-1", "conversation-1", "projection-1");
+    await api.reconcileAgentTurnEffect("product-1", "conversation-1", "projection-1", "tool-call-1");
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       "/api/v2/products/product-1/agent-conversations/conversation-1/turns",
       "/api/v2/products/product-1/agent-conversations/conversation-1/turns/projection-1/questions/question-1/answer",
       "/api/v2/products/product-1/agent-conversations/conversation-1/turns/projection-1/resume",
       "/api/v2/products/product-1/agent-conversations/conversation-1/turns/projection-1/cancel",
+      "/api/v2/products/product-1/agent-conversations/conversation-1/turns/projection-1/effect-reconciliation",
     ]);
     expect(fetchMock.mock.calls.map(([, init]) => init?.method)).toEqual([
+      "POST",
       "POST",
       "POST",
       "POST",
@@ -116,6 +119,7 @@ describe("Agent conversation API", () => {
       }),
     );
     expect(fetchMock.mock.calls[1][1]?.body).toBe(JSON.stringify({ option: 0 }));
+    expect(fetchMock.mock.calls[4][1]?.body).toBe(JSON.stringify({ tool_call_id: "tool-call-1" }));
   });
 
   it("encodes workflow run request identity and keeps confirmation controls on the product route", async () => {
@@ -168,6 +172,7 @@ describe("Agent conversation API", () => {
     await api.getGlobalWorkflowRunRequest("conversation/1", "task/1");
     await api.confirmGlobalWorkflowRunRequest("conversation/1", "request/1");
     await api.cancelGlobalWorkflowRunRequest("conversation/1", "request/1");
+    await api.reconcileGlobalAgentTurnEffect("conversation/1", "projection/1", "tool/call-1");
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
       "/api/v2/agent-conversations/conversation%2F1/turns?limit=10&after=cursor%2B%2F%3D&task_id=task%2F1",
@@ -175,6 +180,7 @@ describe("Agent conversation API", () => {
       "/api/v2/agent-conversations/conversation%2F1/workflow-run-request?task_id=task%2F1",
       "/api/v2/agent-conversations/conversation%2F1/workflow-run-request/request%2F1/confirm",
       "/api/v2/agent-conversations/conversation%2F1/workflow-run-request/request%2F1/cancel",
+      "/api/v2/agent-conversations/conversation%2F1/turns/projection%2F1/effect-reconciliation",
     ]);
     expect(fetchMock.mock.calls[1][1]?.body).toBe(
       JSON.stringify({
@@ -196,7 +202,9 @@ describe("Agent conversation API", () => {
       undefined,
       "POST",
       "POST",
+      "POST",
     ]);
+    expect(fetchMock.mock.calls[5][1]?.body).toBe(JSON.stringify({ tool_call_id: "tool/call-1" }));
   });
 
   it("reads and confirms a global media organization Draft with an idempotent request", async () => {

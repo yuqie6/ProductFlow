@@ -44,6 +44,7 @@ export function V2CanvasDashboard({
   const succeededCount = workflow.nodes.filter((n) => n.status === "succeeded").length;
   const activeCount = workflow.nodes.filter((n) => n.status === "running" || n.status === "queued").length;
   const failedCount = workflow.nodes.filter((n) => n.status === "failed").length;
+  const unknownCount = workflow.nodes.filter((n) => n.status === "unknown").length;
   const idleCount = workflow.nodes.filter((n) => n.status === "idle").length;
 
   return (
@@ -106,7 +107,7 @@ export function V2CanvasDashboard({
             })}
           </span>
         </div>
-        <div className="mt-2.5 grid grid-cols-4 gap-1.5 text-center text-[10px]">
+        <div className="mt-2.5 grid grid-cols-5 gap-1.5 text-center text-[10px]">
           <div className="rounded-lg bg-emerald-50 py-1.5 font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
             <div>{succeededCount}</div>
             <div className="text-[9px] opacity-80">{t("workflowV2.dashboard.succeeded")}</div>
@@ -118,6 +119,10 @@ export function V2CanvasDashboard({
           <div className="rounded-lg bg-red-50 py-1.5 font-semibold text-red-700 dark:bg-red-950/40 dark:text-red-300">
             <div>{failedCount}</div>
             <div className="text-[9px] opacity-80">{t("workflowV2.dashboard.failed")}</div>
+          </div>
+          <div className="rounded-lg bg-orange-50 py-1.5 font-semibold text-orange-700 dark:bg-orange-950/40 dark:text-orange-300">
+            <div>{unknownCount}</div>
+            <div className="text-[9px] opacity-80">{t("workflowV2.dashboard.unknown")}</div>
           </div>
           <div className="rounded-lg bg-slate-100 py-1.5 font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-400">
             <div>{idleCount}</div>

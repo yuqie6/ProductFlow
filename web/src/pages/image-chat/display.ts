@@ -42,6 +42,9 @@ export function generationTaskQueueText(task: ImageSessionGenerationTask, t: Ima
       queued: task.queue_queued_count,
     });
   }
+  if (task.status === "unknown") {
+    return t("chat.providerResultUnknown");
+  }
   return "";
 }
 
@@ -78,6 +81,9 @@ export function placeholderStatusLabel(candidate: ImageHistoryPlaceholderCandida
   if (candidate.status === "failed") {
     return t("chat.statusFailed");
   }
+  if (candidate.status === "unknown") {
+    return t("chat.statusUnknown");
+  }
   if (candidate.status === "cancelled") {
     return t("chat.statusCancelled");
   }
@@ -87,6 +93,9 @@ export function placeholderStatusLabel(candidate: ImageHistoryPlaceholderCandida
 export function placeholderStatusClass(candidate: ImageHistoryPlaceholderCandidate) {
   if (candidate.status === "failed") {
     return "border-red-200 bg-red-50 text-red-700 dark:border-red-400/40 dark:bg-red-500/15 dark:text-red-100";
+  }
+  if (candidate.status === "unknown") {
+    return "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-300/40 dark:bg-amber-500/15 dark:text-amber-100";
   }
   if (candidate.status === "queued") {
     return "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-300/40 dark:bg-amber-500/15 dark:text-amber-100";

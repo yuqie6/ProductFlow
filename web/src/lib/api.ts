@@ -9,6 +9,7 @@ import type {
   AgentQuestionAnswer,
   AgentQuestionAnswerResponse,
   AgentTurn,
+  AgentTurnEffectReconciliation,
   AgentTurnPage,
   AgentWorkflowRunRequest,
   AgentWorkbenchBootstrap,
@@ -513,6 +514,17 @@ export const api = {
       { method: "POST", body: JSON.stringify(answer) },
     );
   },
+  reconcileAgentTurnEffect(
+    productId: string,
+    conversationId: string,
+    projectionId: string,
+    toolCallId: string,
+  ): Promise<AgentTurnEffectReconciliation> {
+    return request(
+      `${agentConversationPath(productId, conversationId)}/turns/${encodeURIComponent(projectionId)}/effect-reconciliation`,
+      { method: "POST", body: JSON.stringify({ tool_call_id: toolCallId }) },
+    );
+  },
   getAgentTurnEventsUrl(
     productId: string,
     conversationId: string,
@@ -609,6 +621,16 @@ export const api = {
     return request(
       `${globalAgentConversationPath(conversationId)}/turns/${encodeURIComponent(projectionId)}/questions/${encodeURIComponent(questionId)}/answer`,
       { method: "POST", body: JSON.stringify(answer) },
+    );
+  },
+  reconcileGlobalAgentTurnEffect(
+    conversationId: string,
+    projectionId: string,
+    toolCallId: string,
+  ): Promise<AgentTurnEffectReconciliation> {
+    return request(
+      `${globalAgentConversationPath(conversationId)}/turns/${encodeURIComponent(projectionId)}/effect-reconciliation`,
+      { method: "POST", body: JSON.stringify({ tool_call_id: toolCallId }) },
     );
   },
   getGlobalLibraryOrganizationDraft(conversationId: string): Promise<LibraryOrganizationDraft> {

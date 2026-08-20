@@ -79,6 +79,7 @@ const STATUS_BADGE_CLASSES: Record<WorkflowNodeStatus, string> = {
   succeeded: "border-emerald-300 bg-emerald-100/80 text-emerald-900 dark:border-emerald-700/50 dark:bg-emerald-950/60 dark:text-emerald-200",
   failed: "border-red-300 bg-red-100/80 text-red-900 dark:border-red-700/50 dark:bg-red-950/60 dark:text-red-200",
   cancelled: "border-zinc-200 bg-zinc-100 text-zinc-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400",
+  unknown: "border-orange-300 bg-orange-100/80 text-orange-900 dark:border-orange-700/50 dark:bg-orange-950/60 dark:text-orange-200",
 };
 
 export function WorkflowNodePresentationCard({

@@ -35,6 +35,7 @@ export function GenerationCanvasPlaceholder({
 }: GenerationCanvasPlaceholderProps) {
   const active = candidate.status === "queued" || candidate.status === "running";
   const failed = candidate.status === "failed";
+  const unknown = candidate.status === "unknown";
   const cancelled = candidate.status === "cancelled";
   const retryable = isImageSessionGenerationTaskRetryable(candidate.task);
   const regeneratable = isImageSessionGenerationTaskRegeneratable(candidate.task);
@@ -49,6 +50,8 @@ export function GenerationCanvasPlaceholder({
           className={`relative flex h-72 w-72 items-center justify-center overflow-hidden rounded-[40px] border shadow-sm transition-[border-color,box-shadow,transform] transition-spring ${
             failed
               ? "border-red-200 bg-red-50 text-red-600 dark:border-red-400/35 dark:bg-red-500/10 dark:text-red-200"
+              : unknown
+                ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-400/35 dark:bg-amber-500/10 dark:text-amber-100"
               : active
                 ? "border-transparent bg-indigo-950/15 text-indigo-700 animate-running-glow shadow-[0_0_35px_rgba(99,102,241,0.22)]"
                 : "border-indigo-100 bg-indigo-50 text-indigo-700 dark:border-violet-400/35 dark:bg-violet-500/14 dark:text-violet-100"
@@ -123,6 +126,11 @@ export function GenerationCanvasPlaceholder({
               </button>
             ) : null}
           </>
+        ) : unknown ? (
+          <div className="mt-5 max-w-sm rounded-xl border border-amber-200 bg-white px-3 py-2 text-xs font-medium leading-5 text-amber-700 dark:border-amber-400/40 dark:bg-[#0b1220] dark:text-amber-100">
+            <div>{t("chat.providerResultUnknown")}</div>
+            {nonRetryableReason ? <div className="mt-1 text-amber-700/80 dark:text-amber-100/80">{nonRetryableReason}</div> : null}
+          </div>
         ) : null}
       </div>
     </div>

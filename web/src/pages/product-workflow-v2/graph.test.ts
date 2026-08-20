@@ -169,6 +169,16 @@ describe("schema-v2 workflow graph projection", () => {
     expect(deriveFolderSummary(workflow, "folder-1").status).toBe("idle");
   });
 
+  it("preserves an unknown provider effect in the folder summary", () => {
+    const workflow = makeWorkflow();
+    const runnable = workflow.nodes.filter((node) => node.folder_id === "folder-1");
+    runnable[0].status = "unknown";
+    runnable[1].status = "failed";
+    runnable[2].status = "succeeded";
+
+    expect(deriveFolderSummary(workflow, "folder-1").status).toBe("unknown");
+  });
+
   it("matches selectable real nodes to the global or local projection", () => {
     const workflow = makeWorkflow();
 

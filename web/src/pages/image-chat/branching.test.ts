@@ -578,12 +578,14 @@ describe("image chat branching helpers", () => {
     expect(isImageSessionGenerationTaskActive(task({ status: "running" }))).toBe(true);
     expect(isImageSessionGenerationTaskActive(task({ status: "succeeded" }))).toBe(false);
     expect(isImageSessionGenerationTaskActive(task({ status: "failed" }))).toBe(false);
+    expect(isImageSessionGenerationTaskActive(task({ status: "unknown" }))).toBe(false);
   });
 
   it("detects failed tasks that can be manually retried", () => {
     expect(isImageSessionGenerationTaskRetryable(task({ status: "failed", is_retryable: true }))).toBe(true);
     expect(isImageSessionGenerationTaskRetryable(task({ status: "failed", is_retryable: false }))).toBe(false);
     expect(isImageSessionGenerationTaskRetryable(task({ status: "queued", is_retryable: true }))).toBe(false);
+    expect(isImageSessionGenerationTaskRetryable(task({ status: "unknown", is_retryable: true }))).toBe(false);
   });
 
   it("builds a new generation payload from a cancelled task", () => {

@@ -53,7 +53,8 @@ export function AgentWorkflowRunRequestCard({
   }
 
   const awaitingConfirmation = request.status === "awaiting_confirmation";
-  const active = request.status === "confirmed";
+  const unknown = request.status === "confirmed" && request.workflow_run_status === "unknown";
+  const active = request.status === "confirmed" && !unknown;
   const succeeded = request.status === "succeeded";
   const failed = request.status === "failed";
   const cancelled = request.status === "cancelled";
@@ -68,11 +69,15 @@ export function AgentWorkflowRunRequestCard({
         ? t("agentWorkbench.workflowRunRequest.status.failed")
         : statusKey === "cancelled"
           ? t("agentWorkbench.workflowRunRequest.status.cancelled")
+          : statusKey === "unknown"
+            ? t("agentWorkbench.workflowRunRequest.status.unknown")
           : statusKey === "confirmed"
             ? t("agentWorkbench.workflowRunRequest.status.confirmed")
             : t("agentWorkbench.workflowRunRequest.status.awaitingConfirmation");
   const statusTone = awaitingConfirmation
     ? "border-amber-300/80 bg-amber-50/90 shadow-amber-500/5 dark:border-amber-400/30 dark:bg-amber-400/10"
+    : unknown
+      ? "border-orange-300/80 bg-orange-50/90 shadow-orange-500/5 dark:border-orange-400/30 dark:bg-orange-400/10"
     : failed
       ? "border-red-300/80 bg-red-50/90 shadow-red-500/5 dark:border-red-400/30 dark:bg-red-400/10"
       : cancelled
@@ -82,6 +87,8 @@ export function AgentWorkflowRunRequestCard({
           : "border-blue-300/80 bg-blue-50/90 shadow-cyan-500/5 dark:border-cyan-400/30 dark:bg-cyan-400/10";
   const statusIcon = awaitingConfirmation ? (
     <Clock3 size={14} className="text-amber-600 dark:text-amber-400" aria-hidden="true" />
+  ) : unknown ? (
+    <CircleAlert size={14} className="text-orange-600 dark:text-orange-400" aria-hidden="true" />
   ) : failed ? (
     <CircleAlert size={14} className="text-red-600 dark:text-red-400" aria-hidden="true" />
   ) : succeeded ? (
@@ -156,6 +163,11 @@ export function AgentWorkflowRunRequestCard({
                 {request.failure_reason ?? t("agentWorkbench.workflowRunRequest.endedDescription")}
               </p>
             ) : null}
+            {unknown ? (
+              <p className="mt-2 break-words text-xs leading-5 text-orange-800 dark:text-orange-200">
+                {request.failure_reason ?? t("agentWorkbench.workflowRunRequest.endedDescription")}
+              </p>
+            ) : null}
             {error ? <p role="alert" className="mt-2 break-words text-xs leading-5 text-red-700 dark:text-red-200">{error}</p> : null}
 
             <div className="mt-3 flex flex-wrap gap-2">
@@ -185,7 +197,7 @@ export function AgentWorkflowRunRequestCard({
                   </button>
                 </>
               ) : null}
-              {onOpenRuns && (active || succeeded || failed || cancelled) ? (
+              {onOpenRuns && (active || succeeded || failed || cancelled || unknown) ? (
                 <button
                   type="button"
                   onClick={onOpenRuns}
