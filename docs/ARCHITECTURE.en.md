@@ -2,18 +2,19 @@
 
 ## 1. System Boundary
 
-ProductFlow is a single-administrator, single-merchant workspace with six runtime units:
+ProductFlow is a single-administrator, single-merchant workspace with seven runtime units:
 
 1. React/Vite Web.
 2. FastAPI business API.
 3. Dramatiq worker.
-4. Node.js 22 + Pi SDK ProductFlow Agent service.
-5. PostgreSQL.
-6. Redis and media storage.
+4. PostgreSQL async dispatcher.
+5. Node.js 22 + Pi SDK ProductFlow Agent service.
+6. PostgreSQL.
+7. Redis and media storage.
 
-The browser reaches only Web and FastAPI. The Agent service calls FastAPI internal endpoints with a dedicated bearer token; FastAPI controls Agent Turns over the agent-service internal HTTP/SSE API. API and worker share PostgreSQL, Redis, and storage.
+The browser reaches only Web and FastAPI. The Agent service calls FastAPI internal endpoints with a dedicated bearer token; FastAPI controls Agent Turns over the agent-service internal HTTP/SSE API. API, worker, and the async dispatcher share PostgreSQL, Redis, and storage. `just dev` and Docker Compose both start the dispatcher.
 
-This document describes the current implementation only. Module ownership comes from the live source tree and behavior evidence comes from the referenced tests. Product contracts live in `PRD.en.md`, durable rationale in `adr/`, and incomplete deployment evidence in `rollout/`. The Pi runtime boundary and implementation rules live in `adr/0007-pi-agent-runtime-boundary.md` and `specs/pi-agent-runtime-integration.md`.
+This document describes the current implementation only. Module ownership comes from the live source tree and behavior evidence comes from the referenced tests. Product contracts live in `PRD.en.md`, durable rationale in `adr/`, and incomplete deployment evidence in `rollout/`. Read `adr/0007-pi-agent-runtime-boundary.md` and `specs/pi-agent-runtime-integration.md` when changing the Agent service. Schema-v3 target contracts are entered only from `ROADMAP.en.md`.
 
 ## 2. Backend Layers
 
@@ -31,15 +32,20 @@ Current code ownership:
 | Capability | Application/Domain owner | HTTP/External owner | Primary regression tests |
 |---|---|---|---|
 | Agent product creation | `agent/product_workspaces.py`, `product_intake.py` | `routes/agent_product_workspaces.py` | `test_agent_product_workspaces.py` |
+| Agent Session and Task | `agent/sessions.py`, `tasks.py` | `routes/agent_sessions.py`, `routes/agent_tasks.py` | `test_agent_sessions.py`, `test_agent_tasks.py` |
 | Agent Turn and sync | `agent/conversations.py`, `control.py`, `sync.py` | `routes/agent_conversations.py`, `infrastructure/agent_service.py` | `test_workflow_agent_service.py` |
+| Global media library | `media_library/` (`queries.py`, `service.py`, `organization.py`, `workflow.py`) | `routes/media_library.py` | `test_media_library.py`, `test_media_library_api.py` |
 | Global library organization Draft | `media_library/draft_contracts.py`, `media_library/drafts.py`, `agent/control.py` | `routes/global_agent_conversations.py`, `routes/agent_internal.py` | `test_media_library_drafts.py` |
-| Draft and materialization | `workflow_drafts/contracts.py`, `service.py`, `materialization.py` | `routes/workflow_drafts.py` | Draft contract/materialization tests |
+| Draft and materialization | `workflow_drafts/contracts.py`, `service.py`, `materialization.py` | `routes/workflow_drafts.py` | `test_workflow_draft_contracts.py`, `test_workflow_draft_materialization.py` |
 | V2 graph and execution | `domain/workflow_rules.py`, `product_workflow/` public entry, `v2_*.py`, `execution.py` | `routes/workflow_drafts.py`, `workers.py` | workflow domain/run/node/recovery tests |
-| Product image library | `product_images/` (`queries.py`, `mutations.py`, `archives.py`, `assets.py`), `media_objects.py` | `routes/products.py` | product gallery explorer/media tests |
+| Recipes | `workflow_recipes/` | `routes/workflow_recipes.py` | `test_workflow_recipes.py` |
+| Delivery renditions | `delivery_renditions/` | `routes/delivery_renditions.py` | `test_delivery_renditions.py` |
+| Product image library | `product_images/` (`queries.py`, `mutations.py`, `archives.py`, `assets.py`), `media_objects.py` | `routes/products.py` | `test_product_gallery_explorer.py`, `test_media_objects.py` |
 | Iterative image generation | `image_sessions/` (`service.py`, `generation.py`) | `routes/image_sessions.py`, image adapters | image-session/provider tests |
 | Settings and providers | `settings.py`, `runtime_settings.py` | `routes/settings.py`, `infrastructure/provider_config.py` | settings/provider/runtime tests |
+| Async dispatch | `async_delivery.py`, `durable_recovery.py` | `commands/run_async_dispatcher.py`, Compose `productflow-async-dispatcher` | `test_async_delivery.py`, `test_async_dispatcher_command.py` |
 | V1 archive cutover | `legacy_archives.py`, `legacy_retirement/` | `routes/legacy_archives.py`, `commands/` | archive/cutover/migration tests |
-| Errors and logging | `domain/errors.py` | `presentation/errors.py`, `infrastructure/logging.py`, middleware and workers | error/logging tests |
+| Errors and logging | `domain/errors.py` | `presentation/errors.py`, `infrastructure/logging.py`, middleware and workers | `test_error_handling.py`, `test_logging_behavior.py` |
 
 ## 3. Frontend Structure
 
@@ -59,10 +65,10 @@ Current code ownership:
 
 Page code lives in `web/src/pages/`. Shared visual components live in `web/src/components/`. HTTP, DTOs, i18n, and browser preferences live in `web/src/lib/`.
 
-The product workbench lives in `pages/workbench/` and is split on the v3 replacement boundary:
+The product workbench lives in `pages/workbench/` and is split by duty:
 
 - `workbench/agent/`: page orchestration, conversation, SSE events, questions, Draft confirmation, and materialization reveal.
-- `workbench/canvas/`: current V2 canvas, command bar, inspector, runs, recipes, and delivery renditions. v3 replaces this graph data source and keeps the agent/chrome interaction shell.
+- `workbench/canvas/`: current V2 canvas, command bar, inspector, runs, recipes, and delivery renditions.
 - `workbench/chrome/`: canvas chrome, node cards, sidebar, shortcuts, and image Explorer.
 
 Dependency direction is `agent -> canvas, chrome` and `canvas -> chrome`. `chrome` must not import agent or canvas.
@@ -77,6 +83,7 @@ Current frontend ownership:
 | Agent conversation, SSE, Draft confirmation | `pages/workbench/agent/` | reducer, event, conversation, confirmation, reveal tests |
 | V2 canvas and inspector | `pages/workbench/canvas/` | graph, canvas, command, draft, history, rendition tests |
 | Global media library and workflow sub-library | `MediaLibraryPage.tsx`, `workbench/canvas/WorkflowMediaLibraryPanel.tsx` | media library/application tests, web build |
+| Global Agent Dock | `components/GlobalAgentDock.tsx` | `GlobalAgentDockComponents.test.ts` |
 | Shared workbench and image library | `pages/workbench/chrome/` | shortcuts, interaction, image-explorer tests |
 | HTTP and wire DTOs | `lib/api.ts`, `lib/types.ts` | `lib/*Api.test.ts`, TypeScript build |
 | Read-only history | `LegacyHistoryPage.tsx`, `pages/legacy-history/` | legacy history/model/API tests |
@@ -85,7 +92,7 @@ Current frontend ownership:
 
 ```text
 image types + quantities + 1..6 uploads
-  -> Product + ProductImageAsset + WorkflowDraft + AgentConversation
+  -> Product + ProductImageAsset + WorkflowDraft + AgentSession + AgentConversation
   -> ProductFlow submits Agent Turn
   -> agent-service / Pi SDK ProductFlow adapter
   -> ProductFlow internal read, proposal, and pending-request tools
@@ -96,15 +103,15 @@ image types + quantities + 1..6 uploads
   -> product workbench
 ```
 
-ProductFlow is authoritative for business data. The Agent service uses the Pi SDK for the model loop, session messages, tool selection, events, and context compaction, and stores JSONL session files and JSON event files under its data root. PostgreSQL stores AgentSession, AgentConversation, AgentTask, AgentTurnProjection, question state, WorkflowDraft revisions, Agent Turn execution leases, semantic checkpoints, and the cross-instance event store. The standalone Session creation API does not require a user-supplied title; a temporary title is derived from the first global Turn input, while an explicit user rename remains authoritative. Agent service startup requeues turns that never started; when a safe queued Turn has lost its local state, the ProductFlow recovery scanner can ask a new Agent instance to materialize it with the original harness Turn ID and idempotency key, and the Agent must return that same ID. Execution claims record attempts, phases, and fencing tokens. An expired `waiting_input` execution with a complete question checkpoint is closed without replay and remains answerable through a ProductFlow continuation Turn; in-flight turns whose execution cannot be proven are closed as `unknown`. A queued Turn cancellation also claims a lease, synchronizes the queued event, records the canceled terminal event/checkpoint, and releases the lease when no other Turn is active in the run; when another Turn is active, the cancellation is serialized and closed before a model request so it cannot abort the wrong Turn. Pi session persistence can reload conversation context across runtime processes, but it is not treated as proof of durable model execution, crash-time side-effect reconciliation, or complete multi-instance scheduling. For the current `request_workflow_run_v1` and `create_product_workspace_v1` effects, ProductFlow exposes an idempotent reconciliation endpoint keyed by projection and tool call; it reads the existing business ledger, persists an applied/failed/unknown verdict, and never replays the mutation.
+ProductFlow owns products, Drafts, confirmation, WorkflowRun, and the Web projection. The Agent service runs the model loop with the Pi SDK and stores session/event files under its data root; those files are not business authority. PostgreSQL stores AgentSession, AgentTask, AgentConversation, Turn projections, PageContextSnapshot, question state, WorkflowDraft revisions, and the cross-instance browser event store `agent_turn_events`.
 
-The Agent service exposes a bounded tool-step projection through `tool.step` SSE events and Turn state `tool_steps`. The base fields are `step_id`, `kind`, `summary`, and `status`; optional fields carry the actual `tool_name` and allowlisted `details`. Current kinds include `load_skill`, `inject_context`, `ask_question`, `inspect_image`, `inspect_context`, `read_history`, `organize_assets`, `request_workflow_run`, `create_product`, and `propose_draft`; current statuses are `running`, `succeeded`, `failed`, and `unknown`. `question.required` remains the owner of the full Question content, while `ask_question` makes the asking action and its state visible. Skill loading provides the full instruction body to the model while exposing only a bounded excerpt of at most 12 KiB and an explicit truncation flag to the user; dynamic context injection, bounded tool summaries, structured validation issues, and retryability are visible through safe details. Raw arguments, complete drafts, storage paths, image bytes, credentials, and internal URLs are excluded. `AgentTurnProjection.tool_steps_json` stores this web projection: a missing `tool_steps` keeps the existing snapshot for compatibility with older services, while an explicit `[]` clears it.
+Product creation writes Product, assets, WorkflowDraft, the product Conversation, the onboarding AgentTask, and AgentSession in one business transaction. The onboarding Task starts as `WAITING_USER`, closes as `SUCCEEDED` after intake, and does not own workflow execution. The Global Conversation and product Conversation share a Session and do not merge transcripts. Standalone Session creation does not require a title; a temporary title comes from the first global Turn, and an explicit rename wins. Global Agent product-workspace creation reconciles with `creation_idempotency_key` and `creation_request_hash`.
 
-When reading product assets, the Agent first receives bounded metadata and then inspects selected images. Image tool results use a versioned multimodal contract; the full library and data URLs are not concatenated into text history.
+`GlobalAgentDock` owns Session/Task lists, search, jumps, and pending organization Drafts. It does not own the canvas or WorkflowRun. Global media organization only publishes a `LibraryOrganizationDraft`; ProductFlow re-reads facts and applies the Draft after user confirmation.
 
-Global media rename, move, tag, and archive operations are represented by a reviewable `propose_global_draft`; Pi does not expose low-level media mutation tools. ProductFlow re-reads facts and applies the Draft only after revision, idempotency, and reference checks plus user confirmation.
+Main promises interactive Turns, cancel, question answers, SSE reconnect, and cross-process Pi session context reload. It does not promise in-place model-request recovery, background durable Tasks, complete multi-instance scheduling, or full effect reconciliation. Lease, fencing, continuation Turns, the `tool_steps` allowlist, and effect reconciliation are defined by `application/agent/`, `agent-service/src/pi-runtime.ts`, and `test_workflow_agent_service.py`, `test_agent_product_workspaces.py`, and `test_media_library_drafts.py`.
 
-The implementation path is: `routes/agent_product_workspaces.py` receives workspace creation; `agent/product_workspaces.py` persists Product, assets, Draft, and Conversation in one business transaction and exposes read-only reconciliation by creation idempotency key and request hash; `agent/effect_reconciliation.py` persists explicit unknown-effect verdicts; `agent/control.py` calls `infrastructure/agent_service.py`; `agent-service/src/pi-runtime.ts` translates Pi sessions and versioned ProductFlow tools into the wire state/events; `agent/sync.py` projects the Turn; `workflow_drafts/service.py` validates the artifact; and `workflow_drafts/materialization.py` atomically writes the V2 graph and reveal events.
+Implementation path: `routes/agent_product_workspaces.py` → `agent/product_workspaces.py`; Turn control `agent/control.py` → `infrastructure/agent_service.py` → `agent-service/src/pi-runtime.ts`; projection `agent/sync.py`; product Drafts `workflow_drafts/service.py` and `materialization.py`; global media Drafts `media_library/drafts.py`.
 
 ## 5. WorkflowDraft
 
@@ -175,10 +182,11 @@ Runtime image-tool settings are filtered through the allowed-field contract befo
 ## 9. Asynchronous Work and Recovery
 
 - Dramatiq executes workflow nodes, image-session candidates, and delivery renditions.
+- The async dispatcher scans durable dispatch/recovery rows in PostgreSQL and delivers them to Redis. `just dev` and Compose both start this process.
 - Redis provides the broker and concurrency admission.
 - PostgreSQL stores queued/running/terminal states, attempts, and safe errors.
 - Worker startup recovers unfinished jobs that can be safely redelivered.
-- Agent service uses Pi sessions and a local file-backed event log for runtime recovery; events written with the current execution lease and fencing token are also appended to PostgreSQL `agent_turn_events`. FastAPI SSE reads that PostgreSQL event store by projection and cursor, so browser disconnect does not cancel the Agent. Product workspace creation uses a stable creation key and request hash for read-only reconciliation when the create response is ambiguous. WorkflowRun prompt and image provider nodes write a `WorkflowProviderEffect` before and after the provider boundary; its protected reconciliation endpoint only queries supported provider records and preserves the original unknown state. Startup recovery only requeues never-started queued Turns; when a safe queued Turn has lost local state, the ProductFlow recovery scanner can hand it off to a new Agent instance with the original harness Turn ID. PostgreSQL execution leases provide claim, heartbeat, and stale-writer fencing; durable background Tasks, automatic replay of in-flight Turns, complete multi-instance competition validation, and full effect reconciliation are outside the current main runtime promise.
+- Agent service uses Pi sessions and local event files for runtime recovery; events written with the current lease/fencing token are appended to PostgreSQL `agent_turn_events`, and FastAPI SSE replays them by cursor. Browser disconnect does not cancel the Agent. Startup recovery only requeues never-started queued Turns. Unprovable outcomes remain `unknown`. Background durable Tasks and full reconciliation live in `ROADMAP.en.md` and `rollout/pi-agent-durability.md`.
 - ProductFlow Turn sync trusts only state that satisfies the Agent service wire contract and preserves unprovable outcomes as unknown.
 
 ## 10. Configuration and Security
@@ -210,6 +218,7 @@ SQLAlchemy metadata describes current online models and bounded archive/cutover 
 Code/document synchronization rules:
 
 - Route changes update `App.tsx`, `lib/api.ts`, the PRD page table, and the user guide together.
+- User-operation changes update `USER_GUIDE.en.md` and `web/src/pages/HelpPage.tsx` together.
 - Enum/DTO changes check `domain/enums.py`, Pydantic schemas, `lib/types.ts`, label maps, and parser tests.
 - Transaction/queue/recovery changes trace the application entrypoint, durable row, broker call, worker claim, and recovery tests.
 - Historical-value changes use a persisted fixture through migration, API serialization, and frontend rendering; a newly constructed current DTO alone does not prove compatibility.

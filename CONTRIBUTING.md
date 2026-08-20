@@ -19,16 +19,19 @@
 cp .env.example .env
 cp .env.dev.example .env.dev
 cp web/.env.example web/.env
-docker compose up -d
+docker compose up -d productflow-postgres productflow-redis
 just backend-install
+just agent-service-install
 just web-install
 just backend-migrate
 just backend-run
 just backend-worker
+just backend-async-dispatcher
+just agent-service-run
 just web-dev
 ```
 
-默认 `mock` provider 不需要真实 API key。
+或使用 `just dev` 一次启动 PostgreSQL、Redis、迁移、API、worker、dispatcher、Pi Agent 和 Web。默认 `mock` provider 不需要真实 API key。
 
 ## 常用检查
 
@@ -65,7 +68,7 @@ just docs-check
 
 - Python 目标版本为 3.12，Ruff 行宽 120，lint 规则见 `backend/pyproject.toml`。
 - 后端保持 `presentation` / `application` / `domain` / `infrastructure` 分层。
-- Provider 具体 SDK 调用应留在 `infrastructure/text` 或 `infrastructure/image`，不要从路由直接调用。
+- Provider 具体 SDK 调用应留在 `infrastructure/prompt` 或 `infrastructure/image`，不要从路由直接调用。
 - 前端 API 请求集中在 `web/src/lib/api.ts`，DTO 类型集中在 `web/src/lib/types.ts`。
 - 数据库 schema 变更需要 Alembic migration，并尽量补回归测试。
 - 涉及上传、storage、secret、provider key 的改动要优先考虑安全边界。

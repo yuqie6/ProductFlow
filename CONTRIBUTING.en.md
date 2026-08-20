@@ -19,16 +19,19 @@ Thank you for considering contributing code, documentation, or issue reports to 
 cp .env.example .env
 cp .env.dev.example .env.dev
 cp web/.env.example web/.env
-docker compose up -d
+docker compose up -d productflow-postgres productflow-redis
 just backend-install
+just agent-service-install
 just web-install
 just backend-migrate
 just backend-run
 just backend-worker
+just backend-async-dispatcher
+just agent-service-run
 just web-dev
 ```
 
-The default `mock` provider does not require a real API key.
+Or run `just dev` to start PostgreSQL, Redis, migrations, the API, worker, dispatcher, Pi Agent, and Web together. The default `mock` provider does not require a real API key.
 
 ## Common Checks
 
@@ -65,7 +68,7 @@ Official docs, release notes, PR descriptions, and contribution guidance should 
 
 - Python targets version 3.12, Ruff line width is 120, and lint rules are defined in `backend/pyproject.toml`.
 - The backend keeps the `presentation` / `application` / `domain` / `infrastructure` layering.
-- Provider-specific SDK calls should stay in `infrastructure/text` or `infrastructure/image`; routes should not call providers directly.
+- Provider-specific SDK calls should stay in `infrastructure/prompt` or `infrastructure/image`; routes should not call providers directly.
 - Frontend API requests are centralized in `web/src/lib/api.ts`, and DTO types are centralized in `web/src/lib/types.ts`.
 - Database schema changes require an Alembic migration and should include regression coverage where practical.
 - Changes involving upload, storage, secrets, or provider keys should consider security boundaries first.

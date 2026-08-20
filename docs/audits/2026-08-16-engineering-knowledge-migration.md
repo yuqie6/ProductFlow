@@ -1,5 +1,7 @@
 # Engineering Knowledge Migration Audit
 
+本文是 2026-08-16 的一次性迁移记录，不是 rollout 规范。
+
 基线：`9d1f4fa`，2026-08-16。本文记录项目级工作流工具移除时，原 21 份工程 spec 的处置证据。它用于检查迁移完整性，不承担长期规范职责；长期规则以 `AGENTS.md`、`backend/AGENTS.md`、`web/AGENTS.md`、`CONTEXT.md`、ADR 和当前架构文档为准。
 
 ## 判定规则

@@ -132,7 +132,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Compose 包含 PostgreSQL、Redis、FastAPI、Dramatiq worker、Agent service 和 Web。后端容器启动时自动执行 `alembic upgrade head`。
+Compose 包含 PostgreSQL、Redis、FastAPI、Dramatiq worker、async dispatcher、Agent service 和 Web。后端容器启动时自动执行 `alembic upgrade head`。
 
 默认地址：
 

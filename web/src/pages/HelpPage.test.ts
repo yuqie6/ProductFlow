@@ -30,4 +30,12 @@ describe("HelpPage locale documents", () => {
   it("has Vietnamese translations for every built-in help document string", () => {
     expect(getMissingHelpDocTranslations("vi-VN")).toEqual([]);
   });
+
+  it("covers current product surfaces in every locale", () => {
+    const requiredSlugs = ["media-library", "global-agent", "history"];
+    for (const locale of ["zh-CN", "en-US", "ja-JP", "vi-VN"] as const) {
+      const slugs = getHelpDocsForLocale(locale).map((page) => page.slug);
+      expect(slugs).toEqual(expect.arrayContaining(requiredSlugs));
+    }
+  });
 });

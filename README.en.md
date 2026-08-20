@@ -132,7 +132,7 @@ Replace at least:
 docker compose up -d --build
 ```
 
-Compose starts PostgreSQL, Redis, FastAPI, the Dramatiq worker, the Agent service, and Web. The backend container runs `alembic upgrade head` before Uvicorn.
+Compose starts PostgreSQL, Redis, FastAPI, the Dramatiq worker, the async dispatcher, the Agent service, and Web. The backend container runs `alembic upgrade head` before Uvicorn.
 
 Default endpoints:
 

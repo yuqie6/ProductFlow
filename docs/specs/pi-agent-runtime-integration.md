@@ -2,8 +2,9 @@
 
 ## 1. 状态
 
-- 文档状态：Main adapter implemented; live rollout gates pending
+- 文档状态：Approved
 - 批准依据：`docs/adr/0007-pi-agent-runtime-boundary.md`
+- 当前交付：main adapter 已实现；真实 provider、浏览器和后台 durable gate 仍待补，见 `docs/rollout/pi-agent-durability.md`
 - 当前实现：Node.js 22 + `@earendil-works/pi-coding-agent` ProductFlow adapter，入口为 `agent-service/src/main.ts`
 - 实验实现：`exp` 分支保留 Go Agent service + `agent-harness` snapshot
 
@@ -77,29 +78,15 @@ Pi 官方说明默认运行时没有文件、进程、网络和 credential 的�
 
 ### 4.4 连接、长任务与重启恢复
 
-Agent 的执行所有权与浏览器连接分离：浏览器只观察 FastAPI 的 Web projection 和 SSE，FastAPI 负责业务状态、权限、ProductFlow event store 和 Agent service 的状态同步，Pi Agent service 持有当前进程内的模型 Turn。SSE 连接关闭只停止事件订阅的等待，不调用 Agent cancel；重新订阅时使用事件 sequence cursor 从 PostgreSQL `agent_turn_events` 继续读取。实现与回归测试分别位于 `agent-service/src/server.ts`、`agent-service/src/pi-runtime.ts`、`backend/src/productflow_backend/application/agent/event_stream.py`、`backend/tests/test_workflow_agent_service.py` 和 `web/src/pages/workbench/agent/useAgentTurnEvents.test.ts`。
+浏览器只观察 FastAPI 的 Web projection 和 SSE。SSE 关闭不调用 Agent cancel；重连使用 sequence cursor 从 PostgreSQL `agent_turn_events` 继续读取。
 
-长任务按执行类型分层：
+分层：
 
-- Pi 模型 Turn 可以在浏览器关闭后继续，直到 Agent service 进程完成、取消或失败。
-- WorkflowRun、图片生成和 delivery rendition 继续由 PostgreSQL/Redis/Dramatiq 的 durable worker 承担；Agent 只提交待确认请求或读取结果。
-- Pi session 文件和 JSON event 文件保存对话与 Turn 投影恢复所需的事实，不构成跨进程的业务执行队列，也不证明工具副作用已经完成。
+- Pi 模型 Turn 可以在浏览器关闭后继续，直到当前 Agent service 进程完成、取消或失败。
+- WorkflowRun、图片生成和 delivery rendition 由 PostgreSQL/Redis/Dramatiq 承担。
+- Pi session/event 文件只服务对话与 Turn 投影恢复，不构成业务执行队列，也不证明工具副作用已经完成。
 
-Agent service 启动时在 HTTP 监听前调用 `TurnStore.recoverAfterRestart()`：
-
-| 持久状态 | 启动处理 | 原因 |
-|---|---|---|
-| `queued`，且没有执行 attempt/fencing 记录和问题恢复痕迹 | 重新加入当前进程队列并重新 claim | 首次执行尚未开始，重复风险可控 |
-| 本地仍为 `queued`，但已有执行 attempt/fencing 记录 | 留在本地 queued，等待 ProductFlow execution recovery 判断 phase；不由 Agent service 自动重排队 | 本地 state 可能落后于 PostgreSQL claim、heartbeat 或 checkpoint，不能按未开始处理 |
-| `queued`，execution phase 已进入模型或工具 | 不自动重放，等待后端 lease recovery | state 可能落后于实际副作用，不能按 queued 处理 |
-| `running`、`cancel_requested` | 追加 `turn.unknown` 并结束为 `unknown` | 模型请求或工具副作用可能已经发生，不能盲目重放 |
-| `requires_input`，且本地已有 `turn.requires_input` 或 `question.required` 事件 | 保留 Question，不重新入队；ProductFlow 负责关闭过期 lease并通过新的 continuation Turn 接管 | 问题边界已经持久化，没有模型或副作用需要重放；不能依赖重启进程中的内存 waiter |
-| 已有终态事件但 state 文件未完成更新 | 从终态事件修复 state | 事件先于 state 写入，恢复可以保留已经提交的事实 |
-| 已有终态 state | 保持原状态 | 幂等恢复 |
-
-每个 Turn 真正开始模型调用前，Agent service 还会向 ProductFlow claim 一个 PostgreSQL execution lease。lease 记录 owner、attempt、fencing token 和执行 phase；运行期间 heartbeat，模型和工具阶段使用不同 phase。queued Turn 取消在没有同一 run 的活动 Turn 时也使用一次仅终态的 lease，先同步 queued event，再写 canceled 终态 event 和 checkpoint 后 release；同一 run 已有活动 Turn 时只排队取消，并在模型调用前收口。旧 worker 的 heartbeat、终态同步和副作用继续动作必须带当前 fencing token，过期 worker 不能覆盖新 attempt。`agent_turn_executions` 的恢复扫描由 `agent_sync.py` 调用：仍处于 `claimed` 且尚未进入模型的过期 lease 可以重新入队；有完整问题 checkpoint 的 `waiting_input` 只恢复为持久化 `requires_input`，不重放模型；已经进入 `model`、`tool` 或 `external_job`，以及问题事实不完整或已有终态事件的过期 lease 结束为 `unknown`。当安全 queued Turn 的原 Agent 实例已经丢失本地 state 时，ProductFlow 可以在同一恢复边界内要求新实例使用原 harness `turn_id` 和原幂等 key materialize；Agent service 必须返回同一 ID，随后仍由 ProductFlow execution lease 决定谁能开始模型调用。这个 handoff 只覆盖尚未进入模型的 queued Turn，不改变其他阶段的 unknown 和 continuation 规则。
-
-这套策略保证 Agent service 重启后不会让 Turn 永久停留在 `running`，也不会把未知副作用伪装成成功。问题等待在 PostgreSQL 有完整语义边界时可以继续保留，用户回答由 ProductFlow 写入原始 projection 并创建新的 continuation Turn；它不依赖原进程中的 Promise，也不重放原模型轮次。当前对 `request_workflow_run_v1` 和 `create_product_workspace_v1` 已提供按 `projection + tool_call_id` 幂等的 ProductFlow 对账入口：入口只读取 intent checkpoint、现有业务 ledger 和聚合查询，写入 `AgentTurnEffectReconciliation`，把结果分为 `applied`、`failed`、`unknown`，不会重新发出创建或请求命令。对账结果只裁决副作用，不把原 `unknown` Turn 改写成模型轮次成功，也不替代后续 continuation。当前恢复入口不自动重复模型或工具调用。当前 lease 解决 claim、心跳和 stale-writer fencing，不包含 Pi session 的跨进程原地模型请求重建。Pi session 文件的跨进程加载已有 fake provider 回归测试，用于恢复上下文，不代表模型请求所有权或副作用执行已经恢复。`agent_turn_checkpoints` 保存 `before_model_request`、副作用 intent/result、问题等待、外部任务提交和终态等有界语义事实；`agent_turn_events` 保存浏览器需要的有界事件，Agent 只能在当前 lease/fencing 下追加，FastAPI 按 projection/cursor 从 PostgreSQL 重放。副作用工具必须先写 intent checkpoint，再调用 ProductFlow application；商品工作区创建在响应不明确时通过稳定 creation key 和 request hash 只读对账。checkpoint 和 event 都使用 execution 的 attempt 和 fencing token，过期 writer 不能追加或改写旧 attempt。进程重启后的原地模型请求恢复、全量副作用对账、跨实例 Agent 调度和真实依赖故障矩阵仍属于后续 rollout gate，不由本版本的 `background_durable_tasks: false` 健康状态承诺。
+启动恢复只重放尚未开始、且没有 execution attempt/fencing 记录的 `queued` Turn。已进入模型或工具、问题事实不完整、或无法证明结果的 Turn 结束为 `unknown`。完整问题 checkpoint 的 `waiting_input` 通过 continuation Turn 回答，不重放原模型轮次。lease、fencing、handoff 和 effect reconciliation 的判定表以 `agent-service/src/pi-runtime.ts`、`application/agent/sync.py`、`test_workflow_agent_service.py` 为准。进程重启后的原地模型请求恢复、全量副作用对账和跨实例调度仍见 `docs/rollout/pi-agent-durability.md`。
 
 ## 5. Skills 设计
 
@@ -345,71 +332,11 @@ Pi 的 session file、compaction 和 resume API 不能直接证明以下语义�
 
 `exp` 分支继续验证现有 harness 的 durable runtime。实验结果通过共享 contract/eval 反馈给 main，不把实验 runtime 内部 API 直接带回 ProductFlow 业务层。
 
-## 10. 分阶段实施
+## 10. 已交付阶段与剩余 gate
 
-### 阶段 0：冻结合同和质量基线（main 已实现）
+阶段 0 至 4 与阶段 6 已在 main 落地：HTTP/SSE 合同、Pi SDK adapter、只读 Tool、Question/Draft、待确认 WorkflowRun request，以及 `exp` 实验线隔离。当前结果以 `agent-service/`、`application/agent/` 和对应测试为准，不在本文重复阶段日志。
 
-- 固定 FastAPI Agent service HTTP/SSE 合同、Question、Draft、tool-step 和错误映射。
-- 从 `exp` 的旧 harness 生成一组 golden conversation、Tool call、Draft validation、冲突和恢复样本。
-- 定义 Skill catalog、Context schema、Tool schema 和 runtime status 字段。
-- 增加 adapter contract tests，测试不依赖真实 provider。
-
-当前结果：HTTP/SSE、Question、Draft、tool-step、结构化校验错误、Skill 加载/上下文注入/问题步骤投影、Skill/Context/Tool 版本字段和基础 contract tests 已落地；仓库测试已覆盖 fake Responses provider 的普通文本 Turn、当前两类 ProductFlow 副作用工具调用及 HTTP 响应体丢失后的稳定幂等键对账、新 runtime 读取旧 Pi session 上下文、真实 Agent HTTP 进程终止后将模型 Turn 收敛为 `unknown`，以及未知副作用对账从 `unknown` 收敛到 `applied` 的持久记录。Question/unknown 的完整故障矩阵、全量副作用覆盖和真实依赖 gate 仍待补齐。
-
-### 阶段 1：Pi runtime 最小验证（main 已实现）
-
-- 建立 Node.js 22/TypeScript Pi adapter，使用 SDK 直接创建 session。
-- 加载一个最小 `productflow-core` Skill。
-- 注册一个只读 ProductFlow Tool，验证 scope、参数 schema、tool result 和事件翻译。
-- 注入一份动态 Context，验证 PageContext 不覆盖 Task goal。
-- 显式断言 Pi session 中没有默认 filesystem/process tools。
-
-当前结果：SDK session、文本/工具事件翻译、SSE、取消、上下文压缩配置和显式 `noTools: "all"` 已落地；fake provider 普通文本和 ProductFlow 工具调用回归已进入仓库测试，完整恢复/错误矩阵仍需补齐。
-
-### 阶段 2：只读 ProductFlow 能力（main 已实现）
-
-- 接入商品上下文、全局素材列表、明确资产 inspect、工作流摘要和运行状态读取。
-- 保留当前分页、数量上限和图片按需 inspect 规则。
-- 对 Global Conversation、商品 Conversation、独立 Task 做 scope isolation tests。
-- 用真实页面上下文验证路由切换不会改写 Task goal。
-
-当前结果：商品/全局读取、分页、选中图片 inspect、scope allowlist 和越界测试已落地；与 `exp` harness 的共享 golden 样本比较仍是验收工作。
-
-### 阶段 3：Question 和 Draft（main 已实现）
-
-- 接入 `product-intake`、`workflow-draft`、`media-library-organization` Skills。
-- 接入 Question、WorkflowDraft、LibraryOrganizationDraft 的 proposal tools。
-- 强制后端校验真实资产 ID、事实来源、Draft schema、expected revision 和 payload 上限。
-- 验证无效 artifact 的可修订路径、用户回答恢复和确认前无正式业务副作用。
-
-当前结果：Question 持久化、答案幂等、continuation Turn、后端 Draft validate、artifact 投影和确认前无正式 materialization 已接入现有 FastAPI/Web 合同；真实浏览器确认链仍需 gate。
-
-### 阶段 4：待确认执行请求（main 已实现）
-
-- 接入 `workflow-run-request` Skill 和 `request_workflow_run_v1`。
-- Agent 只能创建 pending request；确认后复用现有 `v2_runs.py` 和 worker。
-- 在 Web 中统一显示 Agent 请求和用户直接运行的 WorkflowRun 状态。
-- 验证 stale workflow revision、重复请求、取消和队列拒绝。
-
-当前结果：Pi 只创建 pending request，执行/对账继续使用 ProductFlow 现有 application/worker；stale revision、幂等和取消的完整 live 验收仍需 gate。
-
-### 阶段 5：后台 Task 和恢复
-
-- 依据故障模式选择 coordinator、journal、claim 和 effect reconciliation 实现。
-- 测试重启、网络断开、provider 超时、工具副作用已提交但响应丢失、重复恢复和多实例竞争。
-- 明确哪些状态可以 resume，哪些状态必须 unknown/人工处理。
-- 在没有通过 live recovery gate 前，不扩大后台 Task 的默认能力。
-
-出口条件：恢复语义有可重复测试和运行证据，且不会依赖模型“记得自己做过什么”。
-
-### 阶段 6：主线切换和实验线留存（main 已实现）
-
-- `main` 的 Agent service 镜像只包含 Pi adapter 和 ProductFlow runtime；不编译或启动 `third_party/agent-harness`。
-- `exp` 保留主线切换前的 harness，并记录与主线共享合同的适配状态。
-- 更新 `docs/ARCHITECTURE.md`、`ARCHITECTURE.en.md`、运行命令、Docker health/status、发布说明和回滚说明。
-- 发布前完成真实 provider、真实 PostgreSQL/Redis、真实浏览器和断线恢复所需的 gate。
-
-当前结果：main 的启动、Docker health、runtime status、PostgreSQL execution lease、semantic checkpoint、跨实例 event store、两类副作用的显式对账入口和 `exp` 分支边界已明确；真实 provider、真实浏览器和完整进程/网络崩溃矩阵、全量副作用对账仍需 gate，不启用隐式 runtime fallback。
+阶段 5（后台 Task 和恢复）以及真实 provider、PostgreSQL/Redis、浏览器、SSE 断线恢复和全量效果对账仍待补，见 `docs/rollout/pi-agent-durability.md` 与 `docs/ROADMAP.md`。通过 live recovery gate 前，不扩大后台 Task 的默认能力，也不把 Pi session persistence 当作 durable 证明。
 
 ## 11. 实施准则
 

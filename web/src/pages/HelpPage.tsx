@@ -7,7 +7,10 @@ import {
   FolderTree,
   GalleryHorizontalEnd,
   GitBranch,
+  History,
   Image,
+  Images,
+  PanelRight,
   Search,
   Settings,
   Sparkles,
@@ -53,12 +56,13 @@ interface SearchResult {
   preview: string;
 }
 
+/** Canonical source: docs/USER_GUIDE.md. Update the user guide in the same change. */
 const HELP_DOCS = {
   "zh-CN": [
     {
       slug: "overview",
       title: "ProductFlow 文档概览",
-      description: "当前版本围绕 Agent 商品创建、V2 工作流画布和统一商品图库组织完整链路。",
+      description: "当前版本围绕 Agent 商品创建、V2 工作流画布、商品图库、全局素材库和 Global Agent Dock 组织完整链路。",
       category: "快速开始",
       icon: BookOpen,
       sections: [
@@ -72,7 +76,7 @@ const HELP_DOCS = {
                 "从商品列表进入新建页，选择需要的图片类型和各自数量。",
                 "上传 1 至 6 张真实商品参考图，与 Agent 补充价格、风格、文案和文字语种等信息。",
                 "确认方案后进入工作台，画布会流式展示 Agent 创建的节点、连线和文件夹。",
-                "在画布中编辑提示词、生成规格和参考绑定，所有上传图与生成图统一进入商品图库。",
+                "在画布中编辑提示词、生成规格和参考绑定；上传图与生成图进入商品图库，跨商品长期素材进入 `/media-library`。",
               ],
             },
           ],
@@ -88,6 +92,8 @@ const HELP_DOCS = {
                 "工作流：由商品资料、参考图、提示词生成和图片生成节点组成。",
                 "视觉体系：保存全套图片共享的色彩、字体、摄影和品质规范。",
                 "商品图库：统一管理上传、工作流生成、生图会话写入和交付图片。",
+                "全局素材库：跨商品长期保存的图片，可关联到多个工作流，不复制媒体文件。",
+                "Agent Session / Task：长期交流容器和一个明确业务目标。",
                 "工作流配方：保存用户认可的完整工作流或局部片段，供后续复用。",
               ],
             },
@@ -129,6 +135,41 @@ const HELP_DOCS = {
                 "缺失信息：只补问会影响工作流或生成结果的问题。",
                 "最终确认：用户确认图片计划、视觉体系、提示词计划和参考绑定后才创建画布。",
               ],
+            },
+          ],
+        },
+      ],
+    },
+    {
+      slug: "global-agent",
+      title: "全局 Agent Dock",
+      description: "登录后的右侧 Dock 管理 Session 和 Task，不取代商品工作台。",
+      category: "快速开始",
+      icon: PanelRight,
+      sections: [
+        {
+          id: "dock-actions",
+          title: "可以做什么",
+          blocks: [
+            {
+              type: "list",
+              items: [
+                "列出、搜索、新建和归档 Agent Session。",
+                "查看 Task 摘要，取消任务，暂停或恢复可暂停的任务。",
+                "打开对应商品工作区。",
+                "确认全局素材整理 Draft。",
+              ],
+            },
+          ],
+        },
+        {
+          id: "dock-boundary",
+          title: "与工作台的边界",
+          blocks: [
+            {
+              type: "callout",
+              title: "Dock 不运行工作流",
+              text: "编辑节点、运行、取消和重试仍在商品工作台完成。Dock 不提交 WorkflowRun，也不把当前页面当成 Task 目标。",
             },
           ],
         },
@@ -241,9 +282,42 @@ const HELP_DOCS = {
       ],
     },
     {
+      slug: "media-library",
+      title: "全局素材库",
+      description: "`/media-library` 是跨商品长期保存的全局入口；`/gallery` 只做兼容重定向。",
+      category: "素材",
+      icon: Images,
+      sections: [
+        {
+          id: "browse",
+          title: "浏览与组织",
+          blocks: [
+            {
+              type: "list",
+              items: [
+                "搜索、筛选并分页浏览跨商品长期保存的素材。",
+                "创建文件夹和标签，批量移动、打标签、归档或恢复。",
+                "直接上传图片，或把连续生图候选保存进来。",
+              ],
+            },
+          ],
+        },
+        {
+          id: "associate",
+          title: "工作流关联",
+          blocks: [
+            {
+              type: "paragraph",
+              text: "全局素材可以关联到某个工作流子图库，同一媒体可被多个工作流使用，不复制文件。Agent 只能提出整理 Draft，确认前不会改名称、文件夹、标签或归档状态。",
+            },
+          ],
+        },
+      ],
+    },
+    {
       slug: "image-chat",
       title: "生图会话",
-      description: "独立试图、分支与候选选择，并把认可结果写入目标商品图库。",
+      description: "独立试图、分支与候选选择，再把认可结果保存到全局素材库或商品图库。",
       category: "素材",
       icon: Image,
       sections: [
@@ -262,12 +336,15 @@ const HELP_DOCS = {
           ],
         },
         {
-          id: "save-product",
-          title: "保存到商品",
+          id: "save-results",
+          title: "保存结果",
           blocks: [
             {
-              type: "paragraph",
-              text: "选择目标商品并保存后，当前候选会作为一张 canonical 图片进入该商品图库。之后可在图库中分类、命名或绑定到工作流参考图节点。",
+              type: "list",
+              items: [
+                "保存到全局素材库后，可在 `/media-library` 中组织、归档或关联到工作流。",
+                "选择目标商品并保存后，当前候选作为一张 canonical 图片进入该商品图库，之后可分类、命名或绑定到参考图节点。",
+              ],
             },
           ],
         },
@@ -306,17 +383,47 @@ const HELP_DOCS = {
         },
       ],
     },
+    {
+      slug: "history",
+      title: "历史归档",
+      description: "`/history` 只提供已退役 V1 记录的查看、导出和 Agent 重建入口。",
+      category: "归档",
+      icon: History,
+      sections: [
+        {
+          id: "read-only",
+          title: "只读查看",
+          blocks: [
+            {
+              type: "paragraph",
+              text: "可以筛选、下载和导出已退役 V1 workflow、用户模板和 Canvas Agent 记录。历史图片只有在 canonical 媒体核验完成后才能预览或下载。",
+            },
+          ],
+        },
+        {
+          id: "rebuild",
+          title: "用 Agent 重建",
+          blocks: [
+            {
+              type: "callout",
+              title: "不会恢复旧编辑器",
+              text: "重建会创建带历史 seed 的 WorkflowDraft，用户仍需确认。该操作不恢复旧画布、旧模板应用或旧执行器。",
+            },
+          ],
+        },
+      ],
+    },
   ],
   "en-US": [
     {
       slug: "overview",
       title: "ProductFlow Docs Overview",
-      description: "The current product flow is built around Agent-led product creation, the V2 workflow canvas, and one canonical product library.",
+      description: "The current product flow is built around Agent-led product creation, the V2 workflow canvas, the product library, the global media library, and the Global Agent Dock.",
       category: "Getting started",
       icon: BookOpen,
       sections: [
-        { id: "current-baseline", title: "Current workflow", blocks: [{ type: "steps", items: ["Open product creation and choose the required image types and quantity for each type.", "Upload one to six real product reference images and clarify price, style, copy, and image-text language with the Agent.", "Confirm the plan, then enter the workbench while folders, nodes, and edges are revealed progressively.", "Edit prompts, generation specifications, and reference bindings. Every upload and generated result belongs to the product library."] }] },
-        { id: "core-objects", title: "Core objects", blocks: [{ type: "list", items: ["Product: facts and real product imagery.", "Workflow: product context, reference image, prompt generation, and image generation nodes.", "Visual system: shared color, typography, photography, and quality rules.", "Product library: uploads, workflow output, image-chat attachments, and delivery images.", "Workflow recipe: a user-saved workflow or fragment for later reuse."] }] },
+        { id: "current-baseline", title: "Current workflow", blocks: [{ type: "steps", items: ["Open product creation and choose the required image types and quantity for each type.", "Upload one to six real product reference images and clarify price, style, copy, and image-text language with the Agent.", "Confirm the plan, then enter the workbench while folders, nodes, and edges are revealed progressively.", "Edit prompts, generation specifications, and reference bindings. Uploads and generated results belong to the product library; long-lived cross-product media lives in `/media-library`."] }] },
+        { id: "core-objects", title: "Core objects", blocks: [{ type: "list", items: ["Product: facts and real product imagery.", "Workflow: product context, reference image, prompt generation, and image generation nodes.", "Visual system: shared color, typography, photography, and quality rules.", "Product library: uploads, workflow output, image-chat attachments, and delivery images.", "Global media library: long-lived cross-product images that can be associated with multiple workflows without copying bytes.", "Agent Session / Task: a long-lived conversation container and one business goal.", "Workflow recipe: a user-saved workflow or fragment for later reuse."] }] },
       ],
     },
     {
@@ -328,6 +435,17 @@ const HELP_DOCS = {
       sections: [
         { id: "image-plan", title: "Image types and quantities", blocks: [{ type: "paragraph", text: "Each selected type defaults to two images and can be adjusted independently. Multiple hero images are often candidates to choose from, while multi-angle images should carry distinct viewpoints and content goals." }, { type: "callout", title: "References are required", text: "Uploads must demonstrate the actual product. The Agent does not invent a logo, certification, packaging, or factory material that the user did not provide." }] },
         { id: "clarification", title: "Clarification and confirmation", blocks: [{ type: "list", items: ["Product facts: name, category, price, specifications, and selling points.", "Generation intent: style, image-text language, copy density, ratio, quality, and reference fidelity.", "Missing information: questions are limited to details that affect the workflow or output.", "Final confirmation: the canvas is created only after the image plan, visual system, prompt plan, and references are approved."] }] },
+      ],
+    },
+    {
+      slug: "global-agent",
+      title: "Global Agent Dock",
+      description: "After login, the right-hand Dock manages Sessions and Tasks. It does not replace the product workbench.",
+      category: "Getting started",
+      icon: PanelRight,
+      sections: [
+        { id: "dock-actions", title: "What it can do", blocks: [{ type: "list", items: ["List, search, create, and archive Agent Sessions.", "Inspect Task summaries, cancel a Task, and pause or resume a pausable Task.", "Open the matching product workspace.", "Confirm a global library-organization Draft."] }] },
+        { id: "dock-boundary", title: "Boundary with the workbench", blocks: [{ type: "callout", title: "The Dock does not run workflows", text: "Edit, run, cancel, and retry stay on the product workbench. The Dock does not submit a WorkflowRun or treat the current page as the Task goal." }] },
       ],
     },
     {
@@ -364,14 +482,25 @@ const HELP_DOCS = {
       ],
     },
     {
+      slug: "media-library",
+      title: "Global media library",
+      description: "`/media-library` is the long-lived cross-product entry. `/gallery` is a compatibility redirect only.",
+      category: "Assets",
+      icon: Images,
+      sections: [
+        { id: "browse", title: "Browse and organize", blocks: [{ type: "list", items: ["Search, filter, and page through long-lived cross-product assets.", "Create folders and tags; batch-move, tag, archive, or restore.", "Upload images, or save an iterative-image candidate into the library."] }] },
+        { id: "associate", title: "Workflow association", blocks: [{ type: "paragraph", text: "A global asset can be associated with a workflow sub-library. The same media can be used by multiple workflows without copying files. The Agent may only propose an organization Draft; names, folders, tags, and archive state do not change before confirmation." }] },
+      ],
+    },
+    {
       slug: "image-chat",
       title: "Image chat",
-      description: "Explore branches and candidates independently, then attach an accepted result to a product library.",
+      description: "Explore branches and candidates independently, then save an accepted result to the global media library or a product library.",
       category: "Assets",
       icon: Image,
       sections: [
         { id: "generation", title: "Candidates and branches", blocks: [{ type: "list", items: ["Choose image size, candidate count, and advanced fields supported by the active provider.", "Branch from a completed image and attach up to six session references.", "Every candidate retains its session, prompt, size, model, and generation relationships."] }] },
-        { id: "save-product", title: "Save to a product", blocks: [{ type: "paragraph", text: "After selecting a target product, save the current candidate as one canonical image in that product library. It can then be classified, renamed, or bound to a workflow reference node." }] },
+        { id: "save-results", title: "Save results", blocks: [{ type: "list", items: ["Save to the global media library, then organize, archive, or associate the asset from `/media-library`.", "Save to a selected product as one canonical product-library image, then classify, rename, or bind it to a reference node."] }] },
       ],
     },
     {
@@ -385,17 +514,28 @@ const HELP_DOCS = {
         { id: "runtime", title: "Runtime configuration", blocks: [{ type: "paragraph", text: "Settings also manages allowed image-tool fields, maximum generation dimensions, upload limits, queues, security controls, and import or export of the current configuration format. Confirm changes through the page-level save feedback." }] },
       ],
     },
+    {
+      slug: "history",
+      title: "History archives",
+      description: "`/history` provides read-only V1 records, export, and Agent rebuild.",
+      category: "Archives",
+      icon: History,
+      sections: [
+        { id: "read-only", title: "Read-only browse", blocks: [{ type: "paragraph", text: "Filter, download, and export retired V1 workflows, user templates, and Canvas Agent records. Historical images can be previewed or downloaded only after canonical media verification." }] },
+        { id: "rebuild", title: "Rebuild with Agent", blocks: [{ type: "callout", title: "The old editor is not restored", text: "Rebuild creates a history-seeded WorkflowDraft that still requires confirmation. It does not restore the old canvas, template application, or executor." }] },
+      ],
+    },
   ],
   "ja-JP": [
     {
       slug: "overview",
       title: "ProductFlow ドキュメント概要",
-      description: "現在の ProductFlow は Agent による商品作成、V2 ワークフローキャンバス、統合商品ライブラリで構成されています。",
+      description: "現在の ProductFlow は Agent による商品作成、V2 ワークフローキャンバス、商品ライブラリ、グローバル素材ライブラリ、Global Agent Dock で構成されています。",
       category: "はじめに",
       icon: BookOpen,
       sections: [
-        { id: "current-baseline", title: "現在の作業フロー", blocks: [{ type: "steps", items: ["商品作成画面で必要な画像タイプとタイプごとの枚数を選択します。", "実商品の参考画像を 1 から 6 枚アップロードし、価格、スタイル、コピー、画像内テキストの言語を Agent と確認します。", "計画を確認するとワークベンチへ移動し、フォルダ、ノード、エッジが順次表示されます。", "プロンプト、生成仕様、参考画像の紐付けを編集します。アップロード画像と生成結果は商品ライブラリに保存されます。"] }] },
-        { id: "core-objects", title: "主要オブジェクト", blocks: [{ type: "list", items: ["商品：商品情報と実商品の画像。", "ワークフロー：商品情報、参考画像、プロンプト生成、画像生成ノード。", "ビジュアルシステム：色、書体、撮影、品質の共通ルール。", "商品ライブラリ：アップロード、ワークフロー生成、画像チャット、納品画像。", "ワークフローレシピ：ユーザーが保存したワークフローまたは部分フロー。"] }] },
+        { id: "current-baseline", title: "現在の作業フロー", blocks: [{ type: "steps", items: ["商品作成画面で必要な画像タイプとタイプごとの枚数を選択します。", "実商品の参考画像を 1 から 6 枚アップロードし、価格、スタイル、コピー、画像内テキストの言語を Agent と確認します。", "計画を確認するとワークベンチへ移動し、フォルダ、ノード、エッジが順次表示されます。", "プロンプト、生成仕様、参考画像の紐付けを編集します。アップロードと生成結果は商品ライブラリへ、長期の横断素材は `/media-library` へ保存されます。"] }] },
+        { id: "core-objects", title: "主要オブジェクト", blocks: [{ type: "list", items: ["商品：商品情報と実商品の画像。", "ワークフロー：商品情報、参考画像、プロンプト生成、画像生成ノード。", "ビジュアルシステム：色、書体、撮影、品質の共通ルール。", "商品ライブラリ：アップロード、ワークフロー生成、画像チャット、納品画像。", "グローバル素材ライブラリ：複数ワークフローで共有できる長期画像。メディア bytes は複製しません。", "Agent Session / Task：長期の対話容器と 1 つの業務目標。", "ワークフローレシピ：ユーザーが保存したワークフローまたは部分フロー。"] }] },
       ],
     },
     {
@@ -407,6 +547,17 @@ const HELP_DOCS = {
       sections: [
         { id: "image-plan", title: "画像タイプと枚数", blocks: [{ type: "paragraph", text: "選択した各タイプは初期値 2 枚で、個別に変更できます。複数のメイン画像は候補選択用の場合が多く、複数アングル画像には異なる視点と内容目標が必要です。" }, { type: "callout", title: "参考画像は必須です", text: "アップロード画像は実商品の外観と構造を示す必要があります。ユーザーが提供していないロゴ、認証、包装、工場素材を Agent が作り足すことはありません。" }] },
         { id: "clarification", title: "確認事項", blocks: [{ type: "list", items: ["商品情報：名称、カテゴリ、価格、仕様、訴求点。", "生成意図：スタイル、画像内テキスト言語、文字量、比率、品質、参考忠実度。", "不足情報：ワークフローや出力に影響する項目だけを質問します。", "最終確認：画像計画、ビジュアルシステム、プロンプト計画、参考画像を確認後にキャンバスを作成します。"] }] },
+      ],
+    },
+    {
+      slug: "global-agent",
+      title: "グローバル Agent Dock",
+      description: "ログイン後の右側 Dock で Session と Task を管理します。商品ワークベンチの代替ではありません。",
+      category: "はじめに",
+      icon: PanelRight,
+      sections: [
+        { id: "dock-actions", title: "できること", blocks: [{ type: "list", items: ["Agent Session の一覧、検索、作成、アーカイブ。", "Task 要約の確認、キャンセル、一時停止または再開。", "対応する商品ワークスペースを開く。", "グローバル素材整理 Draft を確認する。"] }] },
+        { id: "dock-boundary", title: "ワークベンチとの境界", blocks: [{ type: "callout", title: "Dock はワークフローを実行しません", text: "編集、実行、キャンセル、再試行は商品ワークベンチで行います。Dock は WorkflowRun を送信せず、現在のページを Task 目標にもしません。" }] },
       ],
     },
     {
@@ -443,14 +594,25 @@ const HELP_DOCS = {
       ],
     },
     {
+      slug: "media-library",
+      title: "グローバル素材ライブラリ",
+      description: "`/media-library` は商品を横断する長期保存入口です。`/gallery` は互換リダイレクトのみです。",
+      category: "素材",
+      icon: Images,
+      sections: [
+        { id: "browse", title: "閲覧と整理", blocks: [{ type: "list", items: ["検索、絞り込み、ページングで長期素材を閲覧します。", "フォルダとタグを作成し、一括移動、タグ付け、アーカイブ、復元ができます。", "画像を直接アップロードするか、連続生成の候補を保存します。"] }] },
+        { id: "associate", title: "ワークフロー関連", blocks: [{ type: "paragraph", text: "グローバル素材はワークフローのサブライブラリへ関連付けできます。同じメディアを複数ワークフローで使え、ファイルは複製しません。Agent は整理 Draft だけを提案し、確認前に名前、フォルダ、タグ、アーカイブ状態は変わりません。" }] },
+      ],
+    },
+    {
       slug: "image-chat",
       title: "画像チャット",
-      description: "分岐と候補を試し、採用結果を対象商品のライブラリへ保存します。",
+      description: "分岐と候補を試し、採用結果をグローバル素材ライブラリまたは商品ライブラリへ保存します。",
       category: "素材",
       icon: Image,
       sections: [
         { id: "generation", title: "候補と分岐", blocks: [{ type: "list", items: ["画像サイズ、候補数、利用中プロバイダが対応する詳細項目を選択します。", "完了画像から分岐し、セッション参考画像を最大 6 枚添付できます。", "各候補にはセッション、プロンプト、サイズ、モデル、生成関係が保存されます。"] }] },
-        { id: "save-product", title: "商品へ保存", blocks: [{ type: "paragraph", text: "対象商品を選択して保存すると、現在の候補が canonical 画像として商品ライブラリに入ります。その後、分類、名前変更、参考画像ノードへの紐付けができます。" }] },
+        { id: "save-results", title: "結果を保存", blocks: [{ type: "list", items: ["グローバル素材ライブラリへ保存すると、`/media-library` で整理、アーカイブ、関連付けができます。", "対象商品へ保存すると canonical 画像として商品ライブラリに入り、分類、名前変更、参考ノードへの紐付けができます。"] }] },
       ],
     },
     {
@@ -464,17 +626,28 @@ const HELP_DOCS = {
         { id: "runtime", title: "実行設定", blocks: [{ type: "paragraph", text: "画像ツールの許可項目、最大生成サイズ、アップロード制限、キュー、セキュリティ、現在形式の設定インポートとエクスポートも管理します。保存後はページの結果表示を確認してください。" }] },
       ],
     },
+    {
+      slug: "history",
+      title: "履歴アーカイブ",
+      description: "`/history` は退役した V1 記録の閲覧、エクスポート、Agent 再構築入口です。",
+      category: "アーカイブ",
+      icon: History,
+      sections: [
+        { id: "read-only", title: "読み取り専用", blocks: [{ type: "paragraph", text: "退役した V1 ワークフロー、ユーザーテンプレート、Canvas Agent 記録を絞り込み、ダウンロード、エクスポートできます。履歴画像は canonical メディア検証後にのみプレビューまたはダウンロードできます。" }] },
+        { id: "rebuild", title: "Agent で再構築", blocks: [{ type: "callout", title: "旧エディタは復元されません", text: "再構築は履歴 seed 付き WorkflowDraft を作り、ユーザー確認が必要です。旧キャンバス、旧テンプレート適用、旧実行器は戻りません。" }] },
+      ],
+    },
   ],
   "vi-VN": [
     {
       slug: "overview",
       title: "Tổng quan tài liệu ProductFlow",
-      description: "Luồng hiện tại gồm tạo sản phẩm bằng Agent, canvas quy trình V2 và một thư viện sản phẩm thống nhất.",
+      description: "Luồng hiện tại gồm tạo sản phẩm bằng Agent, canvas quy trình V2, thư viện sản phẩm, thư viện tài nguyên toàn cục và Global Agent Dock.",
       category: "Bắt đầu",
       icon: BookOpen,
       sections: [
-        { id: "current-baseline", title: "Cách làm việc hiện tại", blocks: [{ type: "steps", items: ["Mở trang tạo sản phẩm, chọn các loại ảnh cần thiết và số lượng cho từng loại.", "Tải lên từ một đến sáu ảnh tham chiếu của sản phẩm thật, rồi làm rõ giá, phong cách, nội dung và ngôn ngữ chữ trong ảnh với Agent.", "Xác nhận kế hoạch để vào workbench; thư mục, node và edge sẽ xuất hiện tuần tự.", "Chỉnh prompt, thông số tạo và liên kết ảnh tham chiếu. Mọi ảnh tải lên và kết quả tạo đều thuộc thư viện sản phẩm."] }] },
-        { id: "core-objects", title: "Đối tượng cốt lõi", blocks: [{ type: "list", items: ["Sản phẩm: dữ kiện và ảnh sản phẩm thật.", "Quy trình: node thông tin sản phẩm, ảnh tham chiếu, tạo prompt và tạo ảnh.", "Hệ thống hình ảnh: quy tắc chung về màu, chữ, nhiếp ảnh và chất lượng.", "Thư viện sản phẩm: ảnh tải lên, kết quả quy trình, ảnh từ phiên tạo và ảnh bàn giao.", "Công thức quy trình: quy trình hoặc đoạn quy trình do người dùng lưu để tái sử dụng."] }] },
+        { id: "current-baseline", title: "Cách làm việc hiện tại", blocks: [{ type: "steps", items: ["Mở trang tạo sản phẩm, chọn các loại ảnh cần thiết và số lượng cho từng loại.", "Tải lên từ một đến sáu ảnh tham chiếu của sản phẩm thật, rồi làm rõ giá, phong cách, nội dung và ngôn ngữ chữ trong ảnh với Agent.", "Xác nhận kế hoạch để vào workbench; thư mục, node và edge sẽ xuất hiện tuần tự.", "Chỉnh prompt, thông số tạo và liên kết ảnh tham chiếu. Ảnh tải lên và kết quả tạo thuộc thư viện sản phẩm; tài nguyên dài hạn xuyên sản phẩm nằm ở `/media-library`."] }] },
+        { id: "core-objects", title: "Đối tượng cốt lõi", blocks: [{ type: "list", items: ["Sản phẩm: dữ kiện và ảnh sản phẩm thật.", "Quy trình: node thông tin sản phẩm, ảnh tham chiếu, tạo prompt và tạo ảnh.", "Hệ thống hình ảnh: quy tắc chung về màu, chữ, nhiếp ảnh và chất lượng.", "Thư viện sản phẩm: ảnh tải lên, kết quả quy trình, ảnh từ phiên tạo và ảnh bàn giao.", "Thư viện tài nguyên toàn cục: ảnh dài hạn xuyên sản phẩm, có thể gắn vào nhiều quy trình mà không sao chép file.", "Agent Session / Task: nơi hội thoại dài hạn và một mục tiêu nghiệp vụ.", "Công thức quy trình: quy trình hoặc đoạn quy trình do người dùng lưu để tái sử dụng."] }] },
       ],
     },
     {
@@ -486,6 +659,17 @@ const HELP_DOCS = {
       sections: [
         { id: "image-plan", title: "Loại ảnh và số lượng", blocks: [{ type: "paragraph", text: "Mỗi loại đã chọn mặc định có hai ảnh và có thể chỉnh riêng. Nhiều ảnh chính thường là các ứng viên để chọn, còn ảnh đa góc cần có góc nhìn và mục tiêu nội dung khác nhau." }, { type: "callout", title: "Bắt buộc có ảnh tham chiếu", text: "Ảnh tải lên phải thể hiện sản phẩm thật. Agent không tự tạo logo, chứng nhận, bao bì hoặc tư liệu nhà máy mà người dùng chưa cung cấp." }] },
         { id: "clarification", title: "Làm rõ và xác nhận", blocks: [{ type: "list", items: ["Dữ kiện sản phẩm: tên, danh mục, giá, thông số và điểm bán hàng.", "Ý định tạo: phong cách, ngôn ngữ chữ trong ảnh, mật độ nội dung, tỷ lệ, chất lượng và độ trung thành tham chiếu.", "Thông tin thiếu: chỉ hỏi những chi tiết ảnh hưởng đến quy trình hoặc kết quả.", "Xác nhận cuối: chỉ tạo canvas sau khi kế hoạch ảnh, hệ thống hình ảnh, kế hoạch prompt và ảnh tham chiếu được duyệt."] }] },
+      ],
+    },
+    {
+      slug: "global-agent",
+      title: "Global Agent Dock",
+      description: "Sau khi đăng nhập, Dock bên phải quản lý Session và Task, không thay workbench sản phẩm.",
+      category: "Bắt đầu",
+      icon: PanelRight,
+      sections: [
+        { id: "dock-actions", title: "Có thể làm gì", blocks: [{ type: "list", items: ["Liệt kê, tìm, tạo và lưu trữ Agent Session.", "Xem tóm tắt Task, hủy Task, tạm dừng hoặc tiếp tục Task có thể tạm dừng.", "Mở workbench sản phẩm tương ứng.", "Xác nhận Draft sắp xếp thư viện tài nguyên toàn cục."] }] },
+        { id: "dock-boundary", title: "Ranh giới với workbench", blocks: [{ type: "callout", title: "Dock không chạy quy trình", text: "Chỉnh, chạy, hủy và thử lại vẫn ở workbench sản phẩm. Dock không gửi WorkflowRun và không lấy trang hiện tại làm mục tiêu Task." }] },
       ],
     },
     {
@@ -522,14 +706,25 @@ const HELP_DOCS = {
       ],
     },
     {
+      slug: "media-library",
+      title: "Thư viện tài nguyên toàn cục",
+      description: "`/media-library` là cửa vào lưu dài hạn xuyên sản phẩm. `/gallery` chỉ còn chuyển hướng tương thích.",
+      category: "Tư liệu",
+      icon: Images,
+      sections: [
+        { id: "browse", title: "Duyệt và tổ chức", blocks: [{ type: "list", items: ["Tìm, lọc và phân trang tài nguyên dài hạn xuyên sản phẩm.", "Tạo thư mục và thẻ; di chuyển, gắn thẻ, lưu trữ hoặc khôi phục hàng loạt.", "Tải ảnh lên trực tiếp, hoặc lưu ứng viên phiên tạo ảnh vào thư viện."] }] },
+        { id: "associate", title: "Liên kết quy trình", blocks: [{ type: "paragraph", text: "Tài nguyên toàn cục có thể gắn vào thư viện con của một quy trình. Cùng một media dùng cho nhiều quy trình mà không sao chép file. Agent chỉ đề xuất Draft sắp xếp; tên, thư mục, thẻ và trạng thái lưu trữ không đổi trước khi xác nhận." }] },
+      ],
+    },
+    {
       slug: "image-chat",
       title: "Phiên tạo ảnh",
-      description: "Thử các nhánh và ứng viên độc lập, rồi lưu kết quả được chọn vào thư viện sản phẩm.",
+      description: "Thử các nhánh và ứng viên độc lập, rồi lưu kết quả vào thư viện tài nguyên toàn cục hoặc thư viện sản phẩm.",
       category: "Tư liệu",
       icon: Image,
       sections: [
         { id: "generation", title: "Ứng viên và nhánh", blocks: [{ type: "list", items: ["Chọn kích thước, số ứng viên và trường nâng cao mà nhà cung cấp hiện tại hỗ trợ.", "Tạo nhánh từ ảnh hoàn tất và đính kèm tối đa sáu ảnh tham chiếu của phiên.", "Mỗi ứng viên giữ thông tin phiên, prompt, kích thước, mô hình và quan hệ tạo."] }] },
-        { id: "save-product", title: "Lưu vào sản phẩm", blocks: [{ type: "paragraph", text: "Sau khi chọn sản phẩm đích, lưu ứng viên hiện tại thành một ảnh canonical trong thư viện sản phẩm. Sau đó có thể phân loại, đổi tên hoặc liên kết ảnh vào node tham chiếu của quy trình." }] },
+        { id: "save-results", title: "Lưu kết quả", blocks: [{ type: "list", items: ["Lưu vào thư viện tài nguyên toàn cục, rồi tổ chức, lưu trữ hoặc liên kết từ `/media-library`.", "Lưu vào sản phẩm đích như một ảnh canonical trong thư viện sản phẩm, rồi phân loại, đổi tên hoặc gắn vào node tham chiếu."] }] },
       ],
     },
     {
@@ -541,6 +736,17 @@ const HELP_DOCS = {
       sections: [
         { id: "providers", title: "Mục đích nhà cung cấp", blocks: [{ type: "list", items: ["Prompt cung cấp mô hình cho node tạo prompt.", "Agent quy trình làm rõ yêu cầu, sắp xếp thư viện và tạo quy trình.", "Ảnh cung cấp khả năng tạo ảnh cho quy trình và phiên tạo ảnh."] }] },
         { id: "runtime", title: "Cấu hình chạy", blocks: [{ type: "paragraph", text: "Trang cài đặt cũng quản lý các trường công cụ ảnh được phép, kích thước tạo tối đa, giới hạn tải lên, hàng đợi, bảo mật và nhập hoặc xuất định dạng cấu hình hiện tại. Hãy xác nhận kết quả qua phản hồi lưu trên trang." }] },
+      ],
+    },
+    {
+      slug: "history",
+      title: "Lưu trữ lịch sử",
+      description: "`/history` chỉ xem, xuất và dựng lại bằng Agent các bản ghi V1 đã ngừng.",
+      category: "Lưu trữ",
+      icon: History,
+      sections: [
+        { id: "read-only", title: "Chỉ đọc", blocks: [{ type: "paragraph", text: "Có thể lọc, tải xuống và xuất workflow V1 đã ngừng, mẫu người dùng và bản ghi Canvas Agent. Ảnh lịch sử chỉ xem hoặc tải sau khi media canonical được xác minh." }] },
+        { id: "rebuild", title: "Dựng lại bằng Agent", blocks: [{ type: "callout", title: "Không khôi phục trình chỉnh sửa cũ", text: "Thao tác này tạo WorkflowDraft có seed lịch sử và vẫn cần xác nhận. Nó không khôi phục canvas cũ, áp dụng mẫu cũ hay bộ thực thi cũ." }] },
       ],
     },
   ],
@@ -761,6 +967,7 @@ export function HelpPage() {
               <div className="flex items-center gap-2 text-sm font-semibold text-slate-950 dark:text-white"><CircleHelp size={15} className="text-indigo-600 dark:text-violet-300" />{t("help.needAction")}</div>
               <div className="mt-3 grid gap-2">
                 <button type="button" onClick={() => navigate("/products")} className="rounded-md bg-slate-950 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800 dark:bg-violet-500 dark:hover:bg-violet-400">{t("help.openProducts")}</button>
+                <button type="button" onClick={() => navigate("/media-library")} className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:text-slate-950 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-300 dark:hover:bg-violet-500/10 dark:hover:text-white"><Images size={14} className="mr-1.5 inline" />{t("help.openMediaLibrary")}</button>
                 <button type="button" onClick={() => navigate("/image-chat")} className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:text-slate-950 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-300 dark:hover:bg-violet-500/10 dark:hover:text-white"><GalleryHorizontalEnd size={14} className="mr-1.5 inline" />{t("help.openImageChat")}</button>
               </div>
             </div>

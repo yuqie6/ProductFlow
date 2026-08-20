@@ -1,6 +1,6 @@
 # ProductFlow User Guide
 
-The in-product `/help` pages cover the same current system. This document is optimized for repository search and troubleshooting.
+This document is the canonical user-operations source. The in-product `/help` pages (`web/src/pages/HelpPage.tsx`) are a projection of the same operations and must change in the same commit. This document is optimized for repository search and troubleshooting.
 
 ## 1. First Use
 
@@ -176,10 +176,10 @@ A completed candidate can be:
 
 - Used as the next branch base.
 - Downloaded.
-- Collected in Gallery.
+- Saved to the global media library.
 - Saved to a selected product library.
 
-After save-to-product, it uses the same ProductImageAsset management as uploads and workflow results.
+After save-to-library, organize, archive, or associate it from `/media-library`. After save-to-product, it uses the same ProductImageAsset management as uploads and workflow results.
 
 ## 8. Settings
 
@@ -211,13 +211,37 @@ Settings also controls:
 
 Generation count belongs to the image plan or image-session candidate count and is not duplicated as an advanced image field.
 
-## 9. History Archives
+## 9. Global Agent Dock
+
+After login, the right-hand Global Agent Dock can:
+
+- List, search, create, and archive Agent Sessions.
+- Inspect Task summaries, cancel a Task, and pause or resume a pausable Task.
+- Open the matching product workspace.
+- Display and confirm a global library-organization Draft.
+
+The Dock does not edit the workflow, submit a WorkflowRun, or replace the workbench run controls. Edit, run, cancel, and retry remain on `/products/:productId`.
+
+## 10. Global Media Library
+
+Open `/media-library`.
+
+- Search, filter, and page through long-lived cross-product assets.
+- Create folders and tags; batch-move, tag, archive, or restore.
+- Upload images, or save an iterative-image candidate into the library.
+- Associate a global asset with a workflow sub-library without copying media bytes.
+
+`/gallery` redirects to `/media-library`. The old collected-image gallery is no longer a product entry.
+
+The Agent may propose a library-organization Draft. Names, folders, tags, and archive state do not change before confirmation.
+
+## 11. History Archives
 
 `/history` provides read-only browse, filter, download, and export for retired V1 workflows, user templates, and Canvas Agent records. Historical images can be previewed or downloaded only after canonical media verification; missing and pending media remain visible as metadata.
 
 “Rebuild with Agent” creates a WorkflowDraft and AgentConversation seeded from history for the original or selected target product. The user still reviews Agent questions and the structured Draft and confirms it explicitly. The action does not restore the old canvas, template application, or executor.
 
-## 10. Troubleshooting
+## 12. Troubleshooting
 
 ### Agent Creation Cannot Start
 
@@ -238,6 +262,10 @@ Check the Image binding, model, references, generation specification, and safe e
 ### Workflow Routing Is Hard to Read
 
 Use automatic layout, place one image type or local stage in a folder, and remove meaningless cross-folder edges. Folders do not require dependency changes.
+
+### A Newly Saved Image Is Missing From the Media Library
+
+Confirm the save finished, then check whether the current filters hide the source, folder, or archived items. `/gallery` is only a redirect and no longer shows a separate collection list.
 
 ### Settings Cannot Save
 

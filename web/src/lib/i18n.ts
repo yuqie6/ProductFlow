@@ -1693,6 +1693,7 @@ export const zhCN = {
   "help.onThisPage": "本页内容",
   "help.needAction": "需要继续操作？",
   "help.openProducts": "打开商品工作台",
+  "help.openMediaLibrary": "打开全局素材库",
   "help.openImageChat": "打开文/图生图",
 } as const;
 
@@ -3383,6 +3384,7 @@ export const enUS: Record<keyof typeof zhCN, string> = {
   "help.onThisPage": "On this page",
   "help.needAction": "Continue working?",
   "help.openProducts": "Open product workbench",
+  "help.openMediaLibrary": "Open media library",
   "help.openImageChat": "Open image chat",
 };
 
@@ -5073,6 +5075,7 @@ export const jaJP: Record<keyof typeof zhCN, string> = {
   "help.onThisPage": "このページ",
   "help.needAction": "作業を続けますか？",
   "help.openProducts": "商品ワークベンチを開く",
+  "help.openMediaLibrary": "グローバル素材ライブラリを開く",
   "help.openImageChat": "画像チャットを開く",
 };
 
@@ -6763,6 +6766,7 @@ export const viVN: Record<keyof typeof zhCN, string> = {
   "help.onThisPage": "Trong trang này",
   "help.needAction": "Cần tiếp tục thao tác?",
   "help.openProducts": "Mở workbench sản phẩm",
+  "help.openMediaLibrary": "Mở thư viện tài nguyên toàn cục",
   "help.openImageChat": "Mở tạo ảnh",
 } satisfies Record<keyof typeof zhCN, string>;
 

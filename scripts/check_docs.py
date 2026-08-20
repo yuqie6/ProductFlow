@@ -23,9 +23,12 @@ PRIMARY_DOCS = (
     ROOT / "docs/ROADMAP.en.md",
 )
 
+_SKIP_LINK_PARTS = ("/docs/archive/aegis/",)
+
 LINK_DOCS = tuple(
     sorted(
-        {
+        path
+        for path in {
             *PRIMARY_DOCS,
             ROOT / "CONTRIBUTING.md",
             ROOT / "CONTRIBUTING.en.md",
@@ -33,8 +36,10 @@ LINK_DOCS = tuple(
             ROOT / "SECURITY.en.md",
             *(ROOT / "docs").rglob("*.md"),
         }
+        if not any(part in path.as_posix() for part in _SKIP_LINK_PARTS)
     )
 )
+SPEC_STATUS_RE = re.compile(r"文档状态：\s*(Draft|Approved)\b")
 
 CODE_OWNERS = (
     "backend/src/productflow_backend/application/agent/product_workspaces.py",
@@ -50,7 +55,14 @@ CODE_OWNERS = (
     "backend/src/productflow_backend/application/product_images/archives.py",
     "backend/src/productflow_backend/application/product_images/assets.py",
     "backend/src/productflow_backend/application/media_objects.py",
+    "backend/src/productflow_backend/application/media_library/queries.py",
+    "backend/src/productflow_backend/application/media_library/service.py",
+    "backend/src/productflow_backend/application/media_library/drafts.py",
+    "backend/src/productflow_backend/application/agent/sessions.py",
+    "backend/src/productflow_backend/application/agent/tasks.py",
+    "backend/src/productflow_backend/commands/run_async_dispatcher.py",
     "backend/src/productflow_backend/application/legacy_retirement/media_library.py",
+    "backend/src/productflow_backend/presentation/routes/media_library.py",
     "backend/src/productflow_backend/domain/workflow_rules.py",
     "backend/src/productflow_backend/presentation/routes/workflow_drafts.py",
     "backend/src/productflow_backend/infrastructure/logging.py",
@@ -58,6 +70,9 @@ CODE_OWNERS = (
     "web/src/lib/api.ts",
     "web/src/lib/types.ts",
     "web/src/pages/AgentProductCreatePage.tsx",
+    "web/src/pages/MediaLibraryPage.tsx",
+    "web/src/pages/HelpPage.tsx",
+    "web/src/components/GlobalAgentDock.tsx",
     "web/src/pages/workbench/agent",
     "web/src/pages/workbench/canvas",
     "web/src/pages/workbench/chrome",
@@ -80,6 +95,8 @@ def main() -> int:
     _check_markdown_links(errors)
     _check_stale_ownership(errors)
     _check_workbench_boundaries(errors)
+    _check_spec_status(errors)
+    _check_live_aegis_path(errors)
     if errors:
         print("Documentation contract check failed:")
         for error in errors:
@@ -187,6 +204,27 @@ def _check_workbench_boundaries(errors: list[str]) -> None:
 
     report_forbidden(chrome, (agent, canvas))
     report_forbidden(canvas, (agent,))
+
+
+def _check_spec_status(errors: list[str]) -> None:
+    primary = {path.resolve() for path in PRIMARY_DOCS}
+    spec_dir = ROOT / "docs/specs"
+    if not spec_dir.exists():
+        return
+    for spec in sorted(spec_dir.glob("*.md")):
+        content = spec.read_text(encoding="utf-8")
+        match = SPEC_STATUS_RE.search(content)
+        if match is None:
+            errors.append(f"{spec.relative_to(ROOT)} is missing `文档状态：Draft` or `文档状态：Approved`")
+            continue
+        if match.group(1) == "Draft" and spec.resolve() in primary:
+            errors.append(f"Draft spec {spec.relative_to(ROOT)} must not be a primary current-state doc")
+
+
+def _check_live_aegis_path(errors: list[str]) -> None:
+    live = ROOT / "docs/aegis"
+    if live.exists():
+        errors.append("docs/aegis/ is not a live documentation path; keep method-pack records out of the default tree")
 
 
 if __name__ == "__main__":

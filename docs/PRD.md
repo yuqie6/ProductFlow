@@ -19,7 +19,7 @@ ProductFlow 是单商家商品视觉生产工作台。用户提供真实商品�
 1. 用户进入 `/products/new`，填写商品名称。
 2. 图片类型初始均不选中；用户选择需要的类型后，该类型数量初始化为 2，可在 1 至 6 之间独立调整，全部类型总数最多为 30。
 3. 用户上传 1 至 6 张参考图，并应包含至少一张能识别真实商品或权威商品渲染的图片。后端确定性校验数量、归属、字节和媒体格式；参考内容是否充分由 Agent 和用户审阅确认。
-4. 系统创建商品、WorkflowDraft 和 AgentConversation。
+4. 系统创建商品、WorkflowDraft、AgentSession 和 AgentConversation。
 5. Agent 检查已知信息并询问价格、风格、文字语种、文案要求、视觉体系等缺口。
 6. Agent 输出商品事实、视觉体系、图片计划、每张图的提示词、参考绑定和生成规格。
 7. 用户检查并确认草案。
@@ -51,23 +51,34 @@ ProductFlow 是单商家商品视觉生产工作台。用户提供真实商品�
 - 用户建立图片会话，选择基图和至多 6 张上下文参考图。
 - 每轮可以设置候选数量、尺寸和高级图片参数。
 - 任务支持排队、运行进度、取消、失败重试和候选分支。
-- 满意结果可下载、收藏到画廊或保存到某个商品的图片库。
+- 满意结果可下载、保存到全局素材库，或保存到某个商品的图片库。
 
 ### 3.5 全局素材库
 
-- `/media-library` 提供跨商品长期保存的全局素材入口，支持搜索、文件夹、标签、归档/恢复和批量组织。
+- `/media-library` 提供跨商品长期保存的全局素材入口，支持搜索、文件夹、标签、归档/恢复、上传和批量组织。
+- 连续生图候选可以保存到全局素材库；旧 `/gallery` 只保留书签兼容重定向。
 - 工作流子图库只保存全局素材的使用关联，同一媒体可以被多个工作流使用，不复制媒体字节。
+- Agent 只能发布可确认的素材整理 Draft；用户确认后才应用重命名、移动、标签和归档。
+
+### 3.6 全局 Agent Dock
+
+- 登录后的应用壳层提供 Global Agent Dock，用于 Session/Task 列表、搜索、新建、归档、打开工作区、取消任务和确认全局素材整理 Draft。
+- 商品工作流的编辑、运行、取消和重试继续由商品工作台负责；Dock 不取代画布或 WorkflowRun。
 
 ## 4. 核心对象
 
 - `Product`：商品身份和基础信息。
 - `MediaObject`：媒体字节、类型、尺寸、校验状态和 storage 路径。
 - `ProductImageAsset`：商品命名空间中的图片身份、来源、目录和派生关系。
+- `MediaLibraryAsset`：全局素材库中的逻辑图片身份、来源快照、组织和归档状态。
+- `WorkflowMediaLibraryAsset`：全局素材到某个工作流子图库的使用关联。
 - `WorkflowDraft` / `WorkflowDraftRevision`：Agent 产出的可确认工作流草案。
 - `ProductWorkflow`：当前 schema-v2 DAG。
 - `WorkflowNode` / `WorkflowEdge` / `WorkflowFolder`：画布结构。
 - `WorkflowRun` / `WorkflowNodeRun`：运行状态和结果。
 - `WorkflowRecipe` / `WorkflowRecipeVersion`：用户主动保存的完整配方或局部片段。
+- `AgentSession`：长期交流容器、标题、摘要和任务索引。
+- `AgentTask`：一个业务目标和一次任务专属 run。
 - `AgentConversation` / `AgentTurnProjection`：ProductFlow 侧的 Agent 会话和 Turn 投影。
 - `ImageSession`：独立连续生图会话。
 - `DeliveryRenditionJob`：按交付规格导出图片的异步任务。
@@ -83,7 +94,7 @@ ProductFlow 是单商家商品视觉生产工作台。用户提供真实商品�
 - `/gallery`：旧收藏画廊书签兼容重定向。
 - `/history`：V1 workflow、用户模板和 Canvas Agent 的只读归档、导出与 Agent 重建入口。
 - `/settings`：供应商和运行时设置。
-- `/help`：当前产品帮助。
+- `/help`：产品内帮助，投影 `USER_GUIDE.md` 的当前页面操作。
 
 ## 6. 产品合同
 
@@ -111,7 +122,7 @@ ProductFlow 是单商家商品视觉生产工作台。用户提供真实商品�
 
 - 用户可以从参考图和图片类型选择完成 Agent 澄清、确认和工作流物化。
 - 用户可以继续手工编辑节点、连线、文件夹、提示词、参考绑定和生成规格。
-- 工作流生成图、连续生图转入图和上传图在同一商品图片库中可管理。
+- 工作流生成图、连续生图转入图和上传图在同一商品图片库中可管理；跨商品长期素材进入 `/media-library`。
 - Provider 配置、Agent Turn、工作流运行和图片任务在失败或重启后有明确状态。
 - 当前代码和文档只描述一套在线工作流合同。
 - 已部署实例的 V1 切换必须完成 source/archive/canonical 对账和备份恢复证据，不能以重置数据代替迁移。

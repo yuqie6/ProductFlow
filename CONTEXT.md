@@ -71,7 +71,9 @@ This code state does not prove that a production cutover occurred. Production-so
 
 - `docs/README.md`: documentation ownership and minimum reading paths.
 - `docs/PRD.md`: current user-facing product contract.
+- `docs/USER_GUIDE.md`: canonical page operations; `web/src/pages/HelpPage.tsx` is the in-product projection and must change in the same commit.
 - `docs/ARCHITECTURE.md`: current implementation structure and data flow.
+- `docs/ROADMAP.md`: unimplemented or unverified directions, including the only default entry to schema-v3 target contracts.
 - `docs/adr/`: decisions whose rationale should survive implementation changes.
 - `docs/rollout/workflow-v2-cutover.md`: current migration checkpoint and remaining evidence.
 - `docs/operations/legacy-v1-cutover.md`: operator commands, stop conditions, and recovery procedure.

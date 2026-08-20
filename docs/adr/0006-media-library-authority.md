@@ -6,7 +6,7 @@ Accepted; amended 2026-08-17
 
 Decision owner：ProductFlow repository owner。2026-08-16 的基础媒体身份、归档和 Agent 整理决策继续有效；2026-08-17 用户确认全局图库是主图片 owner，并要求图片同步/关联到每个工作流子图库。
 
-目标行为尚在实施中。当前运行事实仍见 `docs/PRD.md`、`docs/specs/media-library-prd.md`、`docs/ARCHITECTURE.md` 和 `docs/rollout/media-library-transition.md`。
+在线入口和组织能力已交付。当前运行事实见 `docs/PRD.md` 与 `docs/ARCHITECTURE.md`。尚未完成的迁移证据见 `docs/rollout/media-library-transition.md`；剩余产品项见 `docs/specs/media-library-prd.md`。
 
 ## 2026-08-17 Amendment: 全局图库与工作流子图库
 

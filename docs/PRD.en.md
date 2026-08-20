@@ -19,7 +19,7 @@ The current release serves a personal project and live demo, but upgrades for de
 1. The user opens `/products/new` and enters a product name.
 2. Image types start unselected. Selecting a type initializes its quantity to two; each selected type can be adjusted from one to six and the total plan cannot exceed 30 images.
 3. The user uploads one to six references and should include at least one image that identifies the real product or an authoritative product rendering. The backend deterministically validates count, ownership, bytes, and media format; semantic adequacy remains an Agent/user review responsibility.
-4. The system creates a Product, WorkflowDraft, and AgentConversation.
+4. The system creates a Product, WorkflowDraft, AgentSession, and AgentConversation.
 5. The Agent checks known information and asks about missing price, style, text language, copy requirements, and visual-system decisions.
 6. The Agent produces product facts, a visual system, image plans, per-image prompts, reference bindings, and generation specifications.
 7. The user reviews and confirms the Draft.
@@ -51,23 +51,34 @@ The current release serves a personal project and live demo, but upgrades for de
 - A user creates an image session and selects a branch base plus up to six context references.
 - Each round has candidate count, size, and advanced image parameters.
 - Jobs expose queue state, progress, cancel, failure retry, and candidate branching.
-- A satisfactory result can be downloaded, collected in Gallery, or saved to a product library.
+- A satisfactory result can be downloaded, saved to the global media library, or saved to a product library.
 
 ### 3.5 Global Media Library
 
-- `/media-library` is the long-lived cross-product media entry with search, folders, tags, archive/restore, and batch organization.
+- `/media-library` is the long-lived cross-product media entry with search, folders, tags, archive/restore, upload, and batch organization.
+- Iterative-image candidates can be saved into the global media library. The old `/gallery` route is a bookmark redirect only.
 - Workflow sub-libraries store usage associations to global assets. One media object can be used by multiple workflows without copying its bytes.
+- The Agent may publish a confirmable library-organization Draft. Rename, move, tag, and archive apply only after user confirmation.
+
+### 3.6 Global Agent Dock
+
+- After login, the application shell exposes a Global Agent Dock for Session/Task lists, search, create, archive, workspace jumps, task cancellation, and global library-organization Draft confirmation.
+- Product-workflow editing, run, cancel, and retry stay on the product workbench. The Dock does not own the canvas or WorkflowRun.
 
 ## 4. Core Objects
 
 - `Product`: product identity and basic information.
 - `MediaObject`: media bytes, MIME type, dimensions, verification state, and storage path.
 - `ProductImageAsset`: product-scoped image identity, origin, directory, and derivation.
+- `MediaLibraryAsset`: global-library image identity, provenance snapshot, organization, and archive state.
+- `WorkflowMediaLibraryAsset`: a usage association from a global asset to one workflow sub-library.
 - `WorkflowDraft` / `WorkflowDraftRevision`: confirmable Agent workflow proposal.
 - `ProductWorkflow`: the current schema-v2 DAG.
 - `WorkflowNode` / `WorkflowEdge` / `WorkflowFolder`: canvas structure.
 - `WorkflowRun` / `WorkflowNodeRun`: execution state and results.
 - `WorkflowRecipe` / `WorkflowRecipeVersion`: user-saved full recipes and fragments.
+- `AgentSession`: long-lived conversation container, title, summary, and task index.
+- `AgentTask`: one business goal and one task-specific run.
 - `AgentConversation` / `AgentTurnProjection`: ProductFlow-side Agent conversation and Turn projection.
 - `ImageSession`: independent iterative image session.
 - `DeliveryRenditionJob`: asynchronous delivery-format rendering.
@@ -83,7 +94,7 @@ The current release serves a personal project and live demo, but upgrades for de
 - `/gallery`: compatibility redirect for the retired collected-image bookmark.
 - `/history`: read-only V1 workflow, user-template, and Canvas Agent archives with export and Agent rebuild.
 - `/settings`: provider and runtime settings.
-- `/help`: current in-product help.
+- `/help`: in-product help; a projection of `USER_GUIDE.en.md` page operations.
 
 ## 6. Product Contracts
 
@@ -111,7 +122,7 @@ The current release serves a personal project and live demo, but upgrades for de
 
 - A user can move from references and image-type selection through Agent clarification, confirmation, and workflow materialization.
 - A user can keep editing nodes, edges, folders, prompts, reference bindings, and generation specifications manually.
-- Uploads, workflow results, and image-session attachments are manageable in one product image library.
+- Uploads, workflow results, and image-session attachments are manageable in one product image library. Cross-product long-lived media lives in `/media-library`.
 - Provider configuration, Agent Turns, workflow runs, and image jobs have explicit failure and restart state.
 - Current code and documentation describe one online workflow contract.
 - Deployed V1 instances require source/archive/canonical reconciliation and verified backup restoration; resetting data is not an upgrade procedure.

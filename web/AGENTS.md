@@ -16,8 +16,10 @@ Current feature owners:
 - Agent creation: `AgentProductCreatePage.tsx` and `pages/product-create/`.
 - Product workbench: `pages/workbench/`. Keep `agent -> canvas, chrome` and `canvas -> chrome`; `chrome` must not import the other two.
 - Agent conversation/replay/Draft transition and workbench orchestration: `pages/workbench/agent/`.
-- V2 canvas, inspector, runs, recipes, and renditions: `pages/workbench/canvas/`. v3 replaces this graph data source.
+- V2 canvas, inspector, runs, recipes, and renditions: `pages/workbench/canvas/`.
 - Shared workbench controls and canonical image explorer: `pages/workbench/chrome/`.
+- Global media library: `MediaLibraryPage.tsx` and `workbench/canvas/WorkflowMediaLibraryPanel.tsx`.
+- Global Agent Dock: `components/GlobalAgentDock.tsx`.
 - Read-only legacy history: `LegacyHistoryPage.tsx` and `pages/legacy-history/`.
 
 ## API And Types

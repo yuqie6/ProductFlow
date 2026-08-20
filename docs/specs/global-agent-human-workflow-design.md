@@ -2,7 +2,8 @@
 
 ## 1. 文档职责
 
-- 文档状态：Current product boundary
+- 文档状态：Approved
+- 批准依据：当前对象边界已写入 `CONTEXT.md` 与 `docs/ARCHITECTURE.md`；Pi runtime 边界见 `docs/adr/0007-pi-agent-runtime-boundary.md`。剩余调度和 Fresh Observation 项见 `docs/ROADMAP.md`。
 - 本文负责 Global Agent、AgentSession、AgentTask、人工接管和 WorkflowRun 的产品语义。
 - 当前实现以代码、测试和真实运行证据为准；本文不替代 `CONTEXT.md`、`PRD.md` 或 `docs/ARCHITECTURE.md`。
 - Pi runtime、Skill、动态 Context、ProductFlow Tool、事件翻译和迁移验收由 `docs/adr/0007-pi-agent-runtime-boundary.md` 与 `docs/specs/pi-agent-runtime-integration.md` 负责。
@@ -87,17 +88,9 @@ Agent 可以监控和解释 WorkflowRun，不能复制工作流执行器，也�
 - 执行 Draft、素材组织或 WorkflowRun request 前，后端必须重新读取当前对象归属、权限、revision 和可用状态。
 - 发生 revision 冲突时，保留结构化 conflict，要求重新观察或重新生成 Draft；不能静默覆盖。
 
-详细 Context schema、Pi 注入位置和 runtime recovery 规则见 `docs/specs/pi-agent-runtime-integration.md`。
+详细 Context schema、Pi 注入位置和 runtime recovery 规则见 `docs/specs/pi-agent-runtime-integration.md`。权威边界见 `CONTEXT.md`。
 
-## 6. 权威边界
-
-- PostgreSQL 持有商品、事实、资产、Draft、Workflow、WorkflowRun 和业务任务状态。
-- Agent runtime 持有对话运行时所需的 transcript、模型上下文和 runtime session；它不拥有 ProductFlow 业务状态。
-- Agent 只能读取有界事实、提交 Draft 或创建待确认 request。
-- 用户确认通过 Web/FastAPI 触发，业务 application use case 负责校验、事务、幂等和副作用。
-- Web 保存 Agent 的有界 projection，不重建完整 transcript，也不把原始工具参数展示给用户。
-
-## 7. 当前实现和剩余方向
+## 6. 当前实现和剩余方向
 
 当前代码已经具备：
 
@@ -115,7 +108,7 @@ Agent 可以监控和解释 WorkflowRun，不能复制工作流执行器，也�
 
 这些事项的实现顺序和验收标准不写在本文，分别由路线图和 Pi runtime 规范负责。
 
-## 8. 验收条件
+## 7. 验收条件
 
 - 用户不创建 Agent Session，也能完成工作流编辑、运行、取消、重试和结果查看。
 - 同一 Session 的多个 Task 目标和上下文不会互相污染。
@@ -125,7 +118,7 @@ Agent 可以监控和解释 WorkflowRun，不能复制工作流执行器，也�
 - WorkflowRun 状态、节点状态、错误和取消结果在工作流页面与 Agent 工作台一致。
 - Agent 失败时，用户可以回到商品工作台、素材库或运行面板接管操作。
 
-## 9. 明确排除
+## 8. 明确排除
 
 - 不把 Agent 变成唯一操作入口。
 - 不把 `AgentSession`、`AgentTask`、`ImageSession` 和 `WorkflowRun` 合并。

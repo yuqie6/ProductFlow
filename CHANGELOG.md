@@ -1,6 +1,10 @@
 # Changelog
 
-All notable changes for ProductFlow are recorded here.
+All notable changes for ProductFlow are recorded here. Current product capabilities live in `docs/PRD.md`; this file records tagged releases.
+
+## Unreleased
+
+Work after `v0.1.0` is not a tagged public release. The current code and docs describe schema-v2 workflows, the Node.js/Pi Agent, `/media-library`, Global Agent Dock, and `/help`. `/gallery` is a compatibility redirect, not a collected-image product.
 
 ## 0.1.0 - 2026-05-02
 

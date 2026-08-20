@@ -1,6 +1,6 @@
 # ProductFlow Roadmap
 
-本文只记录尚未实现或尚未取得真实验证证据的方向。当前已交付能力见 `PRD.md`，当前代码结构见 `ARCHITECTURE.md`，V1 切换证据见 `rollout/workflow-v2-cutover.md`。
+本文只记录尚未实现或尚未取得真实验证证据的方向。当前已交付能力见 `PRD.md`，当前代码结构见 `ARCHITECTURE.md`，V1 切换证据见 `rollout/workflow-v2-cutover.md`。schema-v3 与自由画布目标合同只从本文 §2 进入，不要写进 `CONTEXT.md`、`PRD.md` 或 `ARCHITECTURE.md` 的当前实现段落。
 
 ## 近期优先级
 
@@ -22,12 +22,13 @@
 
 ### 2. Schema-v3 自由画布与 Agent 图协作
 
-- 目标合同见 `docs/adr/0008-free-canvas-agent-graph-authority.md`。当前治理 checkout 位于 `e6cf9e66` 的 schema-v2 基线，代码树中没有 schema-v3 graph、run、API、前端工作台或迁移实现。
-- 完成治理基线验证：确认 Product、WorkflowDraft、ProductWorkflow、WorkflowRun、Agent Session/Task/Conversation、MediaLibraryAsset 和 ProductImageAsset 的唯一在线 owner，并让 e6 全量测试、真实服务和浏览器主链路形成可重复证据。
-- 从 confirmed WorkflowDraft 到 v3 初始图建立单一应用服务，再实现 Node Catalog、typed edge、Graph Context Compiler、ChangeSet、graph revision、operation group、GraphProposal 和 revision snapshot run。
+- 目标合同见 `docs/adr/0008-free-canvas-agent-graph-authority.md`。第一刀实现设计见 `docs/specs/schema-v3-admission-slice.md`（Draft，批准前不进代码）。当前治理 checkout 位于 schema-v2 基线，代码树中没有 schema-v3 graph、run、API、前端工作台或迁移实现。
+- 完成治理基线验证：确认 Product、WorkflowDraft、ProductWorkflow、WorkflowRun、Agent Session/Task/Conversation、MediaLibraryAsset 和 ProductImageAsset 的唯一在线 owner，并让当前代码全量测试、真实服务和浏览器主链路形成可重复证据。
+- 人是工作台主控；Agent 是可选加速。构思表单（类型/数量/参考图）保留，并提供直接创建（预设模版 ChangeSet，提示词和风格靠跑节点生成）与 Agent 创建两条入口，落到同一份 v3 graph。
+- 从 confirmed WorkflowDraft 到 v3 初始图建立单一应用服务（仅 Agent 入口），再实现 Node Catalog、typed edge、Graph Context Compiler、ChangeSet、graph revision、operation group 和 revision snapshot run。GraphProposal 与 Recipe ChangeSet 不在第一刀。
 - 工作台使用成熟 v1/v2 画布 shell、节点呈现、Inspector、运行侧栏和素材选择体验，数据源统一为 v3 graph/revision；不引入旧 DTO、query、mutation、plan key 或隐藏 reference merge。
 - 完成 `MediaLibraryAsset -> ProductImageAsset -> WorkflowMediaLibraryAsset -> image_asset node -> reference edge` 的端到端适配，覆盖拖入空白处、绑定、换绑、未使用提示、一个素材节点连接多个下游和多个素材进入单一聚合端口。
-- Agent 提案、人工编辑和配方应用统一进入 Graph Command Service；Agent run request、页面运行控制和 worker 统一进入 v3 WorkflowRun。
+- 人工编辑在第一刀进入 Graph Command Service；配方仍经 Draft 再走初始图 adapter；Agent 对 live graph 的 GraphProposal 在第一刀之后。Agent run request、页面运行控制和 worker 统一进入 v3 WorkflowRun。
 - v3 主链路通过完整 gate 后，再删除在线 v2 route、schema、application、page、hook、API、type 和对应测试。每个删除切片都要确认 v1 archive、Gallery bridge 和历史画布读路径不受影响。
 - 当前迁移头为 `20260820_0070`。v3 实现重新开始时从当前 schema 设计新的迁移链，不复用已经从代码树删除的 `0071-0074` 作为当前实现或验收证据。
 - 最终 gate 包括真实 provider、PostgreSQL/Redis/worker、Agent ChangeSet、并发冲突、桌面与 390px 浏览器、console/network error、edge 变化后的上下文重编译、运行历史、取消、retry 和无 retired runtime fallback residue scan。
@@ -41,22 +42,23 @@
 
 ### 4. 全局图库与工作流子图库
 
-- `/media-library` 已提供全局素材列表、搜索、文件夹、标签、归档/恢复、批量组织和选择反馈。
-- `WorkflowMediaLibraryAsset` 已把全局素材关联到工作流子图库；同一图片可被多个工作流使用，关联不复制媒体 bytes。
-- v3 继续使用这套素材库身份和组织能力。工作流子图库关联、图片节点绑定和 `reference` edge 分别表达“可选择”“节点持有”“运行实际使用”；前端适配与浏览器验收仍未完成。
-- ImageChat 的保存动作已切换到 canonical `/api/media-library/from-session`，`/gallery` 已重定向到 `/media-library`；旧 `/api/gallery`、历史 DTO 和在线 runtime owner 已移除，current schema 的旧表部署级回填、引用审计、观察窗和物理清理资格仍待完成。旧 `legacy_canvas_agent_20260518_0032` 数据库已有 Gallery-only migration bridge：manifest、目标素材导入、source/hash 对账和独立 source retirement command 已实现；真实部署演练、备份恢复证据和 approval 仍待完成。Agent archive 不在这条 bridge 范围内。
-- Agent 图库整理已接入有界读取、可确认 Draft、revision 校验、幂等确认、原子应用和结果投影；全局素材关联到明确工作流也已通过同一 Draft 机制落地，使用工作流 revision 和当前关联状态校验，不复制媒体 bytes。剩余工作是旧 Gallery 对账/owner 退休，以及跨商品等更高范围的 Agent 写操作。
+当前在线入口、组织操作和整理 Draft 见 `PRD.md`。仍待完成：
+
+- current-schema 旧 `ImageGalleryEntry` 表的部署级回填、引用审计、观察窗和物理清理资格。
+- 旧 `legacy_canvas_agent_20260518_0032` Gallery-only bridge 的真实部署演练、备份恢复证据和 approval。Agent archive 不在这条 bridge 范围内。
+- 跨商品等更高范围的 Agent 写操作。
+- v3 工作流子图库关联、图片节点绑定和 `reference` edge 的前端适配与浏览器验收。
 
 ### 5. 全局 Agent 与人工工作流协作
 
-- 保留工作流画布的直接编辑、整图运行、单节点运行、取消、重试和运行记录入口；Agent 接入现有 `WorkflowRun`，不建立第二套执行器。
-- 已实现 `AgentSession` 元数据、商品对话关联、列表/创建/改名/归档 API，以及工作台内按 Session 选择商品工作区的基础切换；全局 Agent 可以在当前 Session 下创建商品 onboarding 工作区，并在同一事务中创建等待人工输入的 onboarding `AgentTask`。创建页继续负责参考图和图片需求，Intake 成功后收口该 Task。
-- 已实现独立 `AgentTask`、任务专属 run（兼容字段仍叫 harness run）、本轮 `AgentTurn` 关联和页面上下文快照；Session 切换不取消已落库业务目标，Task 目标不随路由变化。
-- Global Agent Dock 已提供 Session/Task 列表、搜索、新建、归档、打开工作区、取消任务、暂停/恢复、Task 摘要和全局素材整理 Draft 投影/确认；业务级统一调度器仍待实现。Agent service 已通过 `AGENT_MAX_CONCURRENT_TURNS` 为当前进程的模型调用设置上限；跨进程 durable admission 仍未在 main 承诺。
-- 按 Session 摘要、Task 目标、最近 Turn、当前页面上下文和执行前 Fresh Observation 分层组装上下文；Pi 负责当前 session 的消息和压缩，业务事实仍由 ProductFlow backend 重新观察。
-- 已交付商品工作区和全局 Agent 的 WorkflowRun 监控工具；全局 Agent 可以针对明确商品、明确工作流和 revision 创建待确认执行请求，确认后复用现有 WorkflowRun 链路。统一的执行前 Fresh Observation harness 抽象、更多有副作用操作和更完整的受影响对象跳转仍待实现。全局素材到明确工作流的关联 Draft 已交付。
+当前 Session、Task、Dock 和待确认 WorkflowRun 请求见 `PRD.md` 与 `ARCHITECTURE.md`。仍待完成：
 
-Global Agent、Session、Task 和人工工作流的产品落地策略见 `specs/global-agent-human-workflow-design.md`；Pi runtime 迁移策略见 `specs/pi-agent-runtime-integration.md`。
+- ProductFlow 业务级 Task 调度器。
+- 跨进程 durable admission；`AGENT_MAX_CONCURRENT_TURNS` 只限制当前 Agent 进程。
+- 统一的执行前 Fresh Observation harness 抽象。
+- 更多有副作用操作和更完整的受影响对象跳转。
+
+产品边界见 `specs/global-agent-human-workflow-design.md`；Pi runtime 规则见 `specs/pi-agent-runtime-integration.md`。
 
 ### 6. 配方
 
