@@ -17,6 +17,7 @@ from productflow_backend.infrastructure.provider_config import (
     ResolvedPromptProviderConfig,
     resolve_prompt_provider_config,
 )
+from productflow_backend.infrastructure.provider_effects import ProviderEffectQueryResult
 
 PROMPT_GENERATION_INSTRUCTIONS = (
     "You create a structured ecommerce image prompt plan. Use only the supplied confirmed facts and image evidence. "
@@ -62,6 +63,72 @@ class OpenAIPromptGenerationProvider(PromptGenerationProvider):
             payload=parsed,
             model=self.model,
             response_id=response_id if isinstance(response_id, str) else None,
+        )
+
+    def reconcile_prompt_effect(
+        self,
+        *,
+        operation_key: str,
+        request_hash: str,
+        provider_response_id: str | None,
+    ) -> ProviderEffectQueryResult:
+        del operation_key, request_hash
+        if not provider_response_id:
+            return ProviderEffectQueryResult.unsupported("提示词 provider 没有可查询的 response id")
+        retrieve = getattr(self.client.responses, "retrieve", None)
+        if not callable(retrieve):
+            return ProviderEffectQueryResult.unsupported("当前提示词 provider client 不支持查询 response")
+        try:
+            response = retrieve(provider_response_id)
+        except Exception as exc:  # noqa: BLE001
+            return ProviderEffectQueryResult(
+                effect_result="unknown",
+                reconciliation_state="unknown",
+                provider_response_id=provider_response_id,
+                detail=f"查询提示词 provider response 失败: {type(exc).__name__}",
+            )
+
+        status = str(getattr(response, "status", "") or "").lower() or None
+        response_id = str(getattr(response, "id", "") or "") or provider_response_id
+        result_json = {
+            "provider_response_id": response_id,
+            "provider_status": status,
+            "has_output": bool(getattr(response, "output", None)),
+            "has_output_parsed": getattr(response, "output_parsed", None) is not None,
+        }
+        if status in {"failed", "cancelled", "canceled", "incomplete", "expired"}:
+            return ProviderEffectQueryResult(
+                effect_result="failed",
+                reconciliation_state="not_applied",
+                provider_response_id=response_id,
+                provider_status=status,
+                result_json=result_json,
+                detail="供应商记录显示提示词请求未完成",
+            )
+        if status in {"queued", "in_progress"}:
+            return ProviderEffectQueryResult(
+                effect_result="unknown",
+                reconciliation_state="unknown",
+                provider_response_id=response_id,
+                provider_status=status,
+                result_json=result_json,
+                detail="提示词 provider 请求仍在处理中",
+            )
+        if getattr(response, "output_parsed", None) is not None or getattr(response, "output", None):
+            return ProviderEffectQueryResult(
+                effect_result="applied",
+                reconciliation_state="applied",
+                provider_response_id=response_id,
+                provider_status=status,
+                result_json=result_json,
+            )
+        return ProviderEffectQueryResult(
+            effect_result="unknown",
+            reconciliation_state="unknown",
+            provider_response_id=response_id,
+            provider_status=status,
+            result_json=result_json,
+            detail="供应商 response 没有足够的输出证据",
         )
 
 

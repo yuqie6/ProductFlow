@@ -22,6 +22,7 @@ from productflow_backend.infrastructure.image.responses_provider import (
     ResponsesReferenceImage,
 )
 from productflow_backend.infrastructure.provider_config import ResolvedImageProviderConfig
+from productflow_backend.infrastructure.provider_effects import ProviderEffectQueryResult
 
 
 def _responses_config(*, background: bool = False) -> ResolvedImageProviderConfig:
@@ -175,6 +176,49 @@ def test_openai_responses_client_polls_background_and_reports_progress(
     assert result.provider_response_id == "resp-background"
     assert [event["provider_response_status"] for event in progress] == ["queued", "completed"]
     assert progress[-1]["provider_response"]["output"][0]["result"].startswith("<base64 omitted")
+
+
+def test_openai_responses_client_reconcile_only_reads_terminal_provider_record(
+    configured_env,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    encoded_result = _make_demo_image_data_url().split(",", maxsplit=1)[1]
+    create_calls: list[dict] = []
+    retrieve_calls: list[str] = []
+
+    class DummyResponses:
+        def create(self, **kwargs):
+            create_calls.append(kwargs)
+            raise AssertionError("reconciliation must not submit another provider request")
+
+        def retrieve(self, response_id: str):
+            retrieve_calls.append(response_id)
+            return DummyResponsesResult(
+                response_id=response_id,
+                output=[DummyImageGenerationCall(call_id="ig-reconciled", result=encoded_result)],
+            )
+
+    class DummyOpenAI:
+        def __init__(self, **kwargs) -> None:
+            self.responses = DummyResponses()
+
+    monkeypatch.setattr("productflow_backend.infrastructure.image.responses_provider.OpenAI", DummyOpenAI)
+    result = OpenAIResponsesImageClient(_responses_config()).reconcile_response("resp-reconcile")
+
+    assert result == ProviderEffectQueryResult(
+        effect_result="applied",
+        reconciliation_state="applied",
+        provider_response_id="resp-reconcile",
+        provider_status="completed",
+        result_json={
+            "provider_response_id": "resp-reconcile",
+            "provider_status": "completed",
+            "has_image_generation_call": True,
+            "has_image_result": True,
+        },
+    )
+    assert retrieve_calls == ["resp-reconcile"]
+    assert create_calls == []
 
 
 def test_openai_responses_client_falls_back_from_optional_fields(

@@ -8,6 +8,7 @@ from productflow_backend.application.workflow_drafts.contracts import (
     ImagePromptPayloadV1,
     VisualSystemDraftPayload,
 )
+from productflow_backend.infrastructure.provider_effects import ProviderEffectQueryResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +46,19 @@ class PromptGenerationProvider(ABC):
     @abstractmethod
     def generate_prompt(self, request: PromptGenerationRequest) -> PromptGenerationResult:
         raise NotImplementedError
+
+    def reconcile_prompt_effect(
+        self,
+        *,
+        operation_key: str,
+        request_hash: str,
+        provider_response_id: str | None,
+    ) -> ProviderEffectQueryResult:
+        """Query provider state without submitting another prompt generation request."""
+
+        return ProviderEffectQueryResult.unsupported(
+            f"提示词 provider {self.provider_name} 没有提供可查询的生成记录接口"
+        )
 
 
 __all__ = [

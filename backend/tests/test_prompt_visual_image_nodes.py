@@ -20,6 +20,7 @@ from productflow_backend.application.product_workflow.execution import (
     execute_product_workflow_node_run,
     execute_product_workflow_run,
 )
+from productflow_backend.application.product_workflow.provider_effects import reconcile_workflow_provider_effect
 from productflow_backend.application.product_workflow.v2_execution import (
     execute_v2_workflow_node_run as execute_v2_workflow_node_only,
 )
@@ -71,6 +72,7 @@ from productflow_backend.infrastructure.db.models import (
     WorkflowImageGenerationReference,
     WorkflowNode,
     WorkflowNodeRun,
+    WorkflowProviderEffect,
     WorkflowRun,
 )
 from productflow_backend.infrastructure.image.base import (
@@ -105,6 +107,7 @@ from productflow_backend.infrastructure.provider_config import (
     ResolvedImageProviderConfig,
     ResolvedPromptProviderConfig,
 )
+from productflow_backend.infrastructure.provider_effects import ProviderEffectQueryResult
 
 
 class RecordingPromptProvider(PromptGenerationProvider):
@@ -410,6 +413,14 @@ def test_prompt_node_appends_a_new_artifact_version(db_session) -> None:
     assert persisted_node is not None and persisted_node.status == WorkflowNodeStatus.SUCCEEDED
     assert persisted_node.current_prompt_artifact_version_id != initial_version_id
     assert len(provider.requests) == 1
+    effect = db_session.scalar(
+        select(WorkflowProviderEffect).where(WorkflowProviderEffect.workflow_node_run_id == node_run.id)
+    )
+    assert effect is not None
+    assert effect.operation_key == f"workflow-node:{node_run.id}"
+    assert effect.request_hash == persisted_node_run.progress_metadata["request_hash"]
+    assert effect.effect_result == "applied"
+    assert effect.reconciliation_state == "applied"
     provider_request = provider.requests[0]
     assert provider_request.image_plan_keys == ("hero-1", "hero-2")
     assert [fact["key"] for fact in provider_request.facts] == ["product_name"]
@@ -1101,6 +1112,7 @@ def test_v2_full_workflow_cancel_and_durable_recovery_use_workflow_run(db_sessio
     stale_run, stale_node_run = _queue_single_node_run(db_session, workflow=workflow, node=prompt_node)
     stale_node_run.status = WorkflowNodeStatus.RUNNING
     stale_node_run.active_attempt_id = "stale-workflow-attempt"
+    stale_node_run.progress_phase = "claimed"
     stale_node_run.started_at = datetime.now(UTC) - timedelta(hours=2)
     prompt_node.status = WorkflowNodeStatus.RUNNING
     db_session.commit()
@@ -1140,6 +1152,7 @@ def test_workflow_recovery_resets_stale_sibling_without_touching_fresh_node(
     stale_node_run, fresh_node_run = node_runs[:2]
     stale_node_run.status = WorkflowNodeStatus.RUNNING
     stale_node_run.active_attempt_id = "stale-sibling-attempt"
+    stale_node_run.progress_phase = "claimed"
     stale_node_run.started_at = datetime.now(UTC) - timedelta(hours=2)
     fresh_node_run.status = WorkflowNodeStatus.RUNNING
     fresh_node_run.active_attempt_id = "fresh-sibling-attempt"
@@ -1167,6 +1180,125 @@ def test_workflow_recovery_resets_stale_sibling_without_touching_fresh_node(
     assert recovered_fresh is not None
     assert recovered_fresh.status == WorkflowNodeStatus.RUNNING
     assert recovered_fresh.active_attempt_id == "fresh-sibling-attempt"
+
+
+def test_workflow_recovery_marks_provider_effect_unknown_without_requeue(
+    db_session,
+    configured_env: Path,
+) -> None:
+    from productflow_backend.application.durable_recovery import recover_unfinished_workflow_runs
+    from productflow_backend.domain.durable_generation_tasks import (
+        WORKFLOW_PROVIDER_EFFECT_UNKNOWN_DETAIL,
+        WORKFLOW_PROVIDER_EFFECT_UNKNOWN_PHASE,
+    )
+
+    product, workflow = _create_materialized_workflow(db_session)
+    run, node_run = _queue_single_node_run(
+        db_session,
+        workflow=workflow,
+        node=next(node for node in workflow.nodes if node.node_type == WorkflowNodeType.PROMPT_GENERATION),
+    )
+    node_run.status = WorkflowNodeStatus.RUNNING
+    node_run.active_attempt_id = "provider-effect-attempt"
+    node_run.started_at = datetime.now(UTC) - timedelta(hours=2)
+    node_run.progress_phase = "provider_call"
+    node_run.progress_metadata = {
+        "effect_operation_key": f"workflow-node:{node_run.id}",
+        "request_hash": "request-hash",
+        "provider_name": "test-provider",
+    }
+    node_run.node.status = WorkflowNodeStatus.RUNNING
+    db_session.commit()
+
+    recovered_run_ids: list[str] = []
+    summary = recover_unfinished_workflow_runs(
+        enqueue=recovered_run_ids.append,
+        reset_stale_running=True,
+        stale_running_after=timedelta(minutes=30),
+    )
+
+    db_session.expire_all()
+    persisted_run = db_session.get(WorkflowRun, run.id)
+    persisted_node_run = db_session.get(WorkflowNodeRun, node_run.id)
+    assert summary.stale_running_runs == 0
+    assert summary.unknown_runs == 1
+    assert recovered_run_ids == []
+    assert persisted_run is not None
+    assert persisted_run.status == WorkflowRunStatus.UNKNOWN
+    assert persisted_run.is_retryable is False
+    assert persisted_node_run is not None
+    assert persisted_node_run.status == WorkflowNodeStatus.UNKNOWN
+    assert persisted_node_run.active_attempt_id is None
+    assert persisted_node_run.progress_phase == WORKFLOW_PROVIDER_EFFECT_UNKNOWN_PHASE
+    assert persisted_node_run.failure_reason == WORKFLOW_PROVIDER_EFFECT_UNKNOWN_DETAIL
+    assert persisted_node_run.progress_metadata is not None
+    assert persisted_node_run.progress_metadata["unknown_provider_effect"]["observed_phase"] == "provider_call"
+
+
+def test_v2_provider_transport_failure_marks_workflow_unknown_without_replay(db_session) -> None:
+    _, workflow = _create_materialized_workflow(db_session)
+    prompt_node = next(node for node in workflow.nodes if node.node_type == WorkflowNodeType.PROMPT_GENERATION)
+    run, node_run = _queue_single_node_run(db_session, workflow=workflow, node=prompt_node)
+    provider = RecordingPromptProvider()
+
+    def fail_after_provider_call(_: PromptGenerationRequest) -> PromptGenerationResult:
+        raise RuntimeError("provider connection closed after request")
+
+    provider.generate_prompt = fail_after_provider_call  # type: ignore[method-assign]
+    changed = execute_v2_workflow_node_only(
+        db_session,
+        node_run_id=node_run.id,
+        dependencies=WorkflowExecutionDependencies(prompt_generation_provider_resolver=lambda: provider),
+    )
+
+    assert changed is True
+    db_session.expire_all()
+    persisted_run = db_session.get(WorkflowRun, run.id)
+    persisted_node_run = db_session.get(WorkflowNodeRun, node_run.id)
+    persisted_node = db_session.get(WorkflowNode, prompt_node.id)
+    assert persisted_run is not None
+    assert persisted_run.status == WorkflowRunStatus.UNKNOWN
+    assert persisted_run.is_retryable is False
+    assert persisted_node_run is not None
+    assert persisted_node_run.status == WorkflowNodeStatus.UNKNOWN
+    assert persisted_node_run.progress_phase == "unknown_provider_effect"
+    assert persisted_node_run.progress_metadata["effect_result"] == "unknown"
+    effect = db_session.scalar(
+        select(WorkflowProviderEffect).where(WorkflowProviderEffect.workflow_node_run_id == node_run.id)
+    )
+    assert effect is not None
+    assert effect.effect_result == "unknown"
+    assert effect.reconciliation_state == "unknown"
+
+    class ReconciliationOnlyProvider(RecordingPromptProvider):
+        def reconcile_prompt_effect(self, *, operation_key, request_hash, provider_response_id):
+            return ProviderEffectQueryResult(
+                effect_result="applied",
+                reconciliation_state="applied",
+                provider_response_id="resp-reconciled",
+                provider_status="completed",
+                result_json={"source": "provider-query"},
+            )
+
+    reconciliation_provider = ReconciliationOnlyProvider()
+    reconciliation = reconcile_workflow_provider_effect(
+        db_session,
+        node_run_id=node_run.id,
+        dependencies=WorkflowExecutionDependencies(
+            prompt_generation_provider_resolver=lambda: reconciliation_provider,
+        ),
+    )
+    assert reconciliation.effect_result == "applied"
+    assert reconciliation.reconciliation_state == "applied"
+    assert reconciliation_provider.requests == []
+    db_session.expire_all()
+    persisted_run = db_session.get(WorkflowRun, run.id)
+    persisted_node_run = db_session.get(WorkflowNodeRun, node_run.id)
+    assert persisted_run is not None and persisted_run.status == WorkflowRunStatus.UNKNOWN
+    assert persisted_node_run is not None and persisted_node_run.status == WorkflowNodeStatus.UNKNOWN
+    assert persisted_node is not None
+    assert persisted_node.status == WorkflowNodeStatus.UNKNOWN
+    assert db_session.scalar(select(func.count()).select_from(AsyncDispatch)) == 0
 
 
 def test_v2_image_stale_attempt_cannot_write_media_or_child_rows(db_session, configured_env: Path) -> None:

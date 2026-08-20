@@ -38,6 +38,12 @@ from productflow_backend.application.product_workflow.run_state import (
 from productflow_backend.application.product_workflow.v2_execution import execute_v2_workflow_node_run
 from productflow_backend.application.product_workflow_dependencies import WorkflowExecutionDependencies
 from productflow_backend.config import get_settings
+from productflow_backend.domain.durable_generation_tasks import (
+    IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL,
+    IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_PHASE,
+    WORKFLOW_PROVIDER_EFFECT_UNKNOWN_DETAIL,
+    WORKFLOW_PROVIDER_EFFECT_UNKNOWN_PHASE,
+)
 from productflow_backend.domain.enums import JobStatus, WorkflowNodeStatus, WorkflowNodeType, WorkflowRunStatus
 from productflow_backend.infrastructure.db.models import (
     Base,
@@ -50,6 +56,7 @@ from productflow_backend.infrastructure.db.models import (
     WorkflowImageGenerationRecord,
     WorkflowNode,
     WorkflowNodeRun,
+    WorkflowProviderEffect,
     WorkflowRun,
 )
 from productflow_backend.infrastructure.db.session import get_engine, get_session_factory
@@ -391,6 +398,116 @@ def test_postgres_workflow_recovery_cas_preserves_new_attempt(live_attempt_fenci
         assert persisted_node_run.attempts == 2
     assert summary.stale_running_runs == 0
     assert summary.enqueued_runs == 0
+    assert enqueued == []
+
+
+def test_postgres_workflow_provider_effect_unknown_is_not_requeued(
+    live_attempt_fencing_database: Path,
+) -> None:
+    session_factory = get_session_factory()
+    with session_factory() as session:
+        _, workflow = _create_materialized_workflow(session)
+        prompt_node = next(
+            node for node in workflow.nodes if node.node_type == WorkflowNodeType.PROMPT_GENERATION
+        )
+        run, node_run = _queue_single_node_run(session, workflow=workflow, node=prompt_node)
+        node_run.status = WorkflowNodeStatus.RUNNING
+        node_run.attempts = 1
+        node_run.active_attempt_id = "unknown-workflow-attempt"
+        node_run.started_at = datetime.now(UTC) - timedelta(hours=2)
+        node_run.progress_phase = "provider_call"
+        node_run.progress_metadata = {
+            "effect_operation_key": f"workflow-node:{node_run.id}",
+            "request_hash": "a" * 64,
+            "provider_name": "live-test-provider",
+        }
+        prompt_node.status = WorkflowNodeStatus.RUNNING
+        session.add(
+            WorkflowProviderEffect(
+                workflow_node_run_id=node_run.id,
+                operation_key=f"workflow-node:{node_run.id}",
+                effect_kind="prompt_generation",
+                request_hash="a" * 64,
+                provider_name="live-test-provider",
+                attempt_id="unknown-workflow-attempt",
+            )
+        )
+        session.commit()
+        run_id = run.id
+        node_run_id = node_run.id
+
+    enqueued: list[str] = []
+    summary = recover_unfinished_workflow_runs(
+        enqueue=enqueued.append,
+        reset_stale_running=True,
+        stale_running_after=timedelta(minutes=30),
+    )
+
+    with session_factory() as session:
+        persisted_run = session.get(WorkflowRun, run_id)
+        persisted_node_run = session.get(WorkflowNodeRun, node_run_id)
+        assert persisted_run is not None
+        assert persisted_run.status == WorkflowRunStatus.UNKNOWN
+        assert persisted_run.is_retryable is False
+        assert persisted_node_run is not None
+        assert persisted_node_run.status == WorkflowNodeStatus.UNKNOWN
+        assert persisted_node_run.active_attempt_id is None
+        assert persisted_node_run.progress_phase == WORKFLOW_PROVIDER_EFFECT_UNKNOWN_PHASE
+        assert persisted_node_run.failure_reason == WORKFLOW_PROVIDER_EFFECT_UNKNOWN_DETAIL
+        effect = session.scalar(
+            sa.select(WorkflowProviderEffect).where(WorkflowProviderEffect.workflow_node_run_id == node_run_id)
+        )
+        assert effect is not None
+        assert effect.effect_result == "unknown"
+        assert effect.reconciliation_state == "unknown"
+    assert summary.unknown_runs == 1
+    assert summary.enqueued_runs == 0
+    assert enqueued == []
+
+
+def test_postgres_image_provider_effect_unknown_is_not_requeued(live_attempt_fencing_database: Path) -> None:
+    session_factory = get_session_factory()
+    old_time = datetime.now(UTC) - timedelta(hours=2)
+    with session_factory() as session:
+        image_session = create_image_session(session, title="Live unknown provider effect")
+        task = create_image_session_generation_task(
+            session,
+            image_session_id=image_session.id,
+            prompt="provider result may already exist",
+            size="1024x1024",
+        ).task
+        task.status = JobStatus.RUNNING
+        task.attempts = 1
+        task.active_attempt_id = "unknown-provider-attempt"
+        task.started_at = old_time
+        task.progress_updated_at = old_time
+        task.progress_phase = "provider_polling"
+        task.active_candidate_index = 1
+        task.provider_response_id = "provider-response-unknown"
+        task.provider_response_status = "in_progress"
+        session.commit()
+        task_id = task.id
+
+    enqueued: list[str] = []
+    summary = recover_unfinished_image_session_generation_tasks(
+        enqueue=enqueued.append,
+        reset_stale_running=True,
+        stale_running_after=timedelta(minutes=30),
+    )
+
+    with session_factory() as session:
+        persisted = session.get(ImageSessionGenerationTask, task_id)
+        assert persisted is not None
+        assert persisted.status == JobStatus.UNKNOWN
+        assert persisted.active_attempt_id is None
+        assert persisted.is_retryable is False
+        assert persisted.failure_reason == IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL
+        assert persisted.progress_phase == IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_PHASE
+        assert persisted.provider_response_id == "provider-response-unknown"
+        assert persisted.provider_response_status == "in_progress"
+    assert summary.stale_running_tasks == 0
+    assert summary.unknown_tasks == 1
+    assert summary.enqueued_tasks == 0
     assert enqueued == []
 
 

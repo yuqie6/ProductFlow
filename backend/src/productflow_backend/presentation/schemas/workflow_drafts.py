@@ -7,6 +7,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from productflow_backend.application.agent_product_intake import WorkflowIntakeV1, parse_workflow_intake
 from productflow_backend.application.product_workflow.folders import WorkflowNodePosition
+from productflow_backend.application.product_workflow.provider_effects import (
+    WorkflowProviderEffectReconciliationResult,
+)
 from productflow_backend.application.product_workflow.v2_canvas_mutations import WorkflowCanvasMutationResult
 from productflow_backend.application.product_workflow.v2_node_editing import V2WorkflowNodeDetail
 from productflow_backend.application.product_workflow.v2_reference_bindings import V2ReferenceBindingResult
@@ -357,6 +360,8 @@ class WorkflowNodeRunV2Response(BaseModel):
     node_id: str
     node_type: WorkflowRunnableNodeTypeV2Value
     status: WorkflowNodeStatus
+    progress_phase: str | None
+    progress_metadata: dict[str, object] | None
     output_json: dict[str, object] | None
     failure_reason: str | None
     visual_system_version_id: str
@@ -407,6 +412,23 @@ class WorkflowRunDetailV2Response(BaseModel):
 
 class SubmitWorkflowRunV2Response(WorkflowRunDetailV2Response):
     created: bool
+
+
+class WorkflowProviderEffectReconciliationResponse(BaseModel):
+    id: str
+    workflow_node_run_id: str
+    operation_key: str
+    effect_kind: str
+    request_hash: str
+    provider_name: str
+    effect_result: Literal["pending", "applied", "failed", "unknown"]
+    reconciliation_state: Literal["not_requested", "applied", "not_applied", "unknown", "unsupported"]
+    provider_response_id: str | None
+    provider_status: str | None
+    result_json: dict[str, object] | None
+    detail: str | None
+    created_at: datetime
+    updated_at: datetime
 
 
 class WorkflowRunListV2Response(BaseModel):
@@ -677,6 +699,8 @@ def serialize_workflow_node_run_v2(node_run: WorkflowNodeRun) -> WorkflowNodeRun
         node_id=node_run.node_id,
         node_type=node_run.node.node_type.value,
         status=node_run.status,
+        progress_phase=node_run.progress_phase,
+        progress_metadata=node_run.progress_metadata,
         output_json=node_run.output_json,
         failure_reason=node_run.failure_reason,
         visual_system_version_id=workflow.visual_system_version_id,
@@ -719,6 +743,27 @@ def serialize_workflow_run_v2(run: WorkflowRun) -> WorkflowRunV2Response:
     )
 
 
+def serialize_workflow_provider_effect_reconciliation(
+    result: WorkflowProviderEffectReconciliationResult,
+) -> WorkflowProviderEffectReconciliationResponse:
+    return WorkflowProviderEffectReconciliationResponse(
+        id=result.id,
+        workflow_node_run_id=result.workflow_node_run_id,
+        operation_key=result.operation_key,
+        effect_kind=result.effect_kind,
+        request_hash=result.request_hash,
+        provider_name=result.provider_name,
+        effect_result=result.effect_result,
+        reconciliation_state=result.reconciliation_state,
+        provider_response_id=result.provider_response_id,
+        provider_status=result.provider_status,
+        result_json=result.result_json,
+        detail=result.detail,
+        created_at=result.created_at,
+        updated_at=result.updated_at,
+    )
+
+
 __all__ = [
     "ActiveProductWorkflowV2Response",
     "AppendWorkflowDraftRevisionRequest",
@@ -746,6 +791,7 @@ __all__ = [
     "WorkflowRunDetailV2Response",
     "WorkflowRunListV2Response",
     "WorkflowRunV2Response",
+    "WorkflowProviderEffectReconciliationResponse",
     "WorkflowNodeDetailV2Response",
     "serialize_workflow_node_detail_v2",
     "serialize_active_v2_workflow",
@@ -755,5 +801,6 @@ __all__ = [
     "serialize_workflow_draft",
     "serialize_workflow_node_run_v2",
     "serialize_workflow_run_v2",
+    "serialize_workflow_provider_effect_reconciliation",
     "to_workflow_node_positions",
 ]

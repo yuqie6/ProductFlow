@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any, cast
@@ -15,8 +16,16 @@ from productflow_backend.application.async_delivery import (
     enqueue_async_dispatch_for_actor,
     requeue_async_dispatch,
 )
+from productflow_backend.application.product_workflow.provider_effects import (
+    mark_workflow_provider_effect_failed,
+    mark_workflow_provider_effect_unknown,
+)
 from productflow_backend.application.time import now_utc
-from productflow_backend.domain.durable_generation_tasks import WORKFLOW_RUN_GENERATION_TASK_CONTRACT
+from productflow_backend.domain.durable_generation_tasks import (
+    WORKFLOW_PROVIDER_EFFECT_UNKNOWN_DETAIL,
+    WORKFLOW_PROVIDER_EFFECT_UNKNOWN_PHASE,
+    WORKFLOW_RUN_GENERATION_TASK_CONTRACT,
+)
 from productflow_backend.domain.enums import WorkflowNodeStatus, WorkflowRunStatus
 from productflow_backend.infrastructure.db.models import (
     ProductWorkflow,
@@ -32,6 +41,7 @@ logger = logging.getLogger(__name__)
 WORKFLOW_WORKER_TIMEOUT_FAILURE = "工作流执行超时，请稍后重试"
 WORKFLOW_CANCELLED_REASON = "已取消"
 PRODUCT_WORKFLOW_CAPACITY_RETRY_DELAY_MS = 2000
+MAX_WORKFLOW_NODE_PROGRESS_METADATA_BYTES = 64 * 1024
 
 
 def workflow_run_failure_progress_metadata(
@@ -67,6 +77,18 @@ class WorkflowSafeExecutionError(RuntimeError):
         self.retryable = retryable
         self.retry_hint = retry_hint
         self.failure_category = failure_category
+
+
+class WorkflowProviderEffectUnknownError(WorkflowSafeExecutionError):
+    """Provider 调用边界已开始但结果无法确认。"""
+
+    def __init__(self, safe_message: str = WORKFLOW_PROVIDER_EFFECT_UNKNOWN_DETAIL) -> None:
+        super().__init__(
+            safe_message,
+            retryable=False,
+            retry_hint="reconcile",
+            failure_category="provider_effect_unknown",
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,6 +229,12 @@ def claim_workflow_node_run(
                 status=WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_running_statuses[0],
                 attempts=WorkflowNodeRun.attempts + 1,
                 active_attempt_id=resolved_attempt_id,
+                progress_phase="claimed",
+                progress_metadata={
+                    "effect_operation_key": f"workflow-node:{node_run_id}",
+                    "attempt_id": resolved_attempt_id,
+                    "effect_result": "pending",
+                },
                 failure_reason=None,
                 started_at=now,
                 finished_at=None,
@@ -223,6 +251,157 @@ def claim_workflow_node_run(
     )
     session.commit()
     return WorkflowNodeRunClaimResult(claimed=True, attempt_id=resolved_attempt_id)
+
+
+def checkpoint_workflow_node_run_effect(
+    session: Session,
+    *,
+    node_run_id: str,
+    attempt_id: str,
+    phase: str,
+    metadata: dict[str, Any],
+    commit: bool = True,
+) -> bool:
+    """把 provider effect 边界写入 node run；旧 attempt 不能覆盖新 attempt。"""
+
+    node_run = session.scalar(
+        select(WorkflowNodeRun)
+        .where(WorkflowNodeRun.id == node_run_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if node_run is None or node_run.status != WorkflowNodeStatus.RUNNING or node_run.active_attempt_id != attempt_id:
+        session.rollback()
+        return False
+    current_metadata = node_run.progress_metadata if isinstance(node_run.progress_metadata, dict) else {}
+    merged_metadata = {**current_metadata, **metadata}
+    try:
+        encoded_metadata = json.dumps(
+            merged_metadata,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("工作流节点 effect checkpoint payload 不是有效 JSON") from exc
+    if len(encoded_metadata) > MAX_WORKFLOW_NODE_PROGRESS_METADATA_BYTES:
+        raise ValueError("工作流节点 effect checkpoint payload 超过大小限制")
+    node_run.progress_phase = phase
+    node_run.progress_metadata = merged_metadata
+    if commit:
+        session.commit()
+    return True
+
+
+def _apply_workflow_run_unknown(
+    session: Session,
+    *,
+    persisted_run: WorkflowRun,
+    node_runs: list[WorkflowNodeRun],
+    nodes: list[WorkflowNode],
+    workflow: ProductWorkflow | None,
+    unknown_node_id: str,
+    reason: str,
+    metadata: dict[str, Any] | None,
+    commit: bool,
+) -> None:
+    now = now_utc()
+    nodes_by_id = {node.id: node for node in nodes}
+    unknown_metadata = metadata or {}
+    for node_run in node_runs:
+        if node_run.status not in {
+            WorkflowNodeStatus.QUEUED,
+            WorkflowNodeStatus.RUNNING,
+        }:
+            continue
+        node_reason = reason if node_run.node_id == unknown_node_id else "上游节点结果未知"
+        observed_phase = node_run.progress_phase
+        if node_run.node_id == unknown_node_id and node_run.active_attempt_id is not None:
+            mark_workflow_provider_effect_unknown(
+                session,
+                node_run_id=node_run.id,
+                attempt_id=node_run.active_attempt_id,
+                detail=node_reason,
+                result_json={
+                    "observed_phase": observed_phase,
+                    "unknown_node_run_id": unknown_node_id,
+                },
+            )
+        node_run.status = WorkflowNodeStatus.UNKNOWN
+        node_run.active_attempt_id = None
+        node_run.failure_reason = node_reason
+        node_run.finished_at = now
+        current_metadata = node_run.progress_metadata if isinstance(node_run.progress_metadata, dict) else {}
+        node_run.progress_phase = WORKFLOW_PROVIDER_EFFECT_UNKNOWN_PHASE
+        node_run.progress_metadata = {
+            **current_metadata,
+            "effect_result": "unknown",
+            "unknown_provider_effect": {
+                "node_run_id": node_run.id,
+                "observed_phase": observed_phase,
+                **unknown_metadata,
+            },
+        }
+        node = nodes_by_id.get(node_run.node_id)
+        if node is not None:
+            node.status = WorkflowNodeStatus.UNKNOWN
+            node.failure_reason = node_reason
+            node.last_run_at = now
+
+    persisted_run.status = WorkflowRunStatus.UNKNOWN
+    persisted_run.failure_reason = reason
+    persisted_run.is_retryable = False
+    current_run_metadata = persisted_run.progress_metadata if isinstance(persisted_run.progress_metadata, dict) else {}
+    persisted_run.progress_metadata = {
+        **current_run_metadata,
+        "effect_result": "unknown",
+        "unknown_node_run_id": unknown_node_id,
+        **unknown_metadata,
+    }
+    persisted_run.finished_at = now
+    if workflow is not None:
+        workflow.updated_at = now
+    logger.warning(
+        "工作流运行进入 unknown: run_id=%s node_run_id=%s reason=%s",
+        persisted_run.id,
+        unknown_node_id,
+        reason,
+    )
+    if commit:
+        session.commit()
+
+
+def mark_workflow_run_unknown(
+    session: Session,
+    *,
+    run_id: str,
+    unknown_node_id: str,
+    reason: str = WORKFLOW_PROVIDER_EFFECT_UNKNOWN_DETAIL,
+    metadata: dict[str, Any] | None = None,
+    commit: bool = True,
+) -> bool:
+    """把无法证明 provider 结果的工作流运行收口为终态 unknown。"""
+
+    persisted_run, node_runs, nodes, workflow = lock_workflow_run_aggregate(session, run_id=run_id)
+    if persisted_run is None:
+        session.rollback()
+        return False
+    if WORKFLOW_RUN_GENERATION_TASK_CONTRACT.is_terminal(persisted_run.status):
+        session.rollback()
+        return False
+    _apply_workflow_run_unknown(
+        session,
+        persisted_run=persisted_run,
+        node_runs=node_runs,
+        nodes=nodes,
+        workflow=workflow,
+        unknown_node_id=unknown_node_id,
+        reason=reason,
+        metadata=metadata,
+        commit=commit,
+    )
+    return True
 
 
 def requeue_workflow_run_after_capacity_wait(run_id: str) -> None:
@@ -300,6 +479,18 @@ def mark_workflow_node_run_failed(
         node.last_run_at = now
     node_run.status = WorkflowNodeStatus.FAILED
     node_run.active_attempt_id = None
+    node_run.progress_phase = "failed"
+    node_run.progress_metadata = {
+        **(node_run.progress_metadata if isinstance(node_run.progress_metadata, dict) else {}),
+        "effect_result": "failed",
+    }
+    if attempt_id is not None:
+        mark_workflow_provider_effect_failed(
+            session,
+            node_run_id=node_run.id,
+            attempt_id=attempt_id,
+            detail=reason,
+        )
     node_run.failure_reason = reason
     node_run.finished_at = now
     current_metadata = run.progress_metadata if isinstance(run.progress_metadata, dict) else {}

@@ -13,10 +13,18 @@ from sqlalchemy.orm import Session, selectinload
 from productflow_backend.application.async_delivery import delivery_key_for_actor, stage_async_dispatch
 from productflow_backend.application.delivery_renditions.service import create_delivery_rendition_job
 from productflow_backend.application.media_assets import inspect_image_bytes, stage_product_image_asset
+from productflow_backend.application.product_workflow.provider_effects import (
+    ensure_workflow_provider_effect_intent,
+    record_workflow_provider_effect_result,
+    workflow_provider_effect_operation_key,
+)
 from productflow_backend.application.product_workflow.run_state import (
+    WorkflowProviderEffectUnknownError,
     WorkflowSafeExecutionError,
+    checkpoint_workflow_node_run_effect,
     claim_workflow_node_run,
     mark_workflow_node_run_failed,
+    mark_workflow_run_unknown,
     requeue_workflow_node_run_after_capacity_wait,
     stage_workflow_run_dispatch,
     workflow_run_failure_context,
@@ -36,7 +44,13 @@ from productflow_backend.application.workflow_drafts.contracts import (
     ImagePromptPayloadV1,
     VisualSystemDraftPayload,
 )
-from productflow_backend.domain.durable_generation_tasks import DELIVERY_RENDITION_TASK_CONTRACT
+from productflow_backend.domain.durable_generation_tasks import (
+    DELIVERY_RENDITION_TASK_CONTRACT,
+    WORKFLOW_PROVIDER_EFFECT_CALL_PHASE,
+    WORKFLOW_PROVIDER_EFFECT_RESULT_PHASE,
+    WORKFLOW_PROVIDER_EFFECT_SAFE_REQUEUE_PHASES,
+    WORKFLOW_PROVIDER_EFFECT_UNKNOWN_DETAIL,
+)
 from productflow_backend.domain.enums import (
     JobStatus,
     MediaVerificationStatus,
@@ -124,6 +138,110 @@ class PreparedImageGeneration:
     request: WorkflowImageRequest
 
 
+def _workflow_effect_request_hash(prepared: PreparedPromptGeneration | PreparedImageGeneration) -> str:
+    if isinstance(prepared, PreparedPromptGeneration):
+        identity: dict[str, Any] = {
+            "kind": "prompt_generation",
+            "prompt_artifact_id": prepared.prompt_artifact_id,
+            "prompt_version_id": prepared.current_prompt_version_id,
+            "image_type_key": prepared.request.image_type_key,
+            "image_plan_keys": prepared.request.image_plan_keys,
+            "fact_keys": sorted(str(fact.get("key")) for fact in prepared.request.facts),
+            "reference_asset_ids": [reference.asset_id for reference in prepared.request.reference_images],
+        }
+    else:
+        identity = {
+            "kind": "image_generation",
+            "image_type_key": prepared.image_type_key,
+            "image_plan_key": prepared.image_plan_key,
+            "prompt_artifact_version_id": prepared.prompt_artifact_version_id,
+            "visual_system_version_id": prepared.visual_system_version_id,
+            "compiled_prompt_hash": prepared.compiled_prompt_hash,
+            "generation_spec": prepared.request.generation_spec.model_dump(mode="json"),
+            "reference_asset_ids": [reference.asset_id for reference in prepared.request.references],
+        }
+    return hashlib.sha256(json.dumps(identity, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _workflow_effect_metadata(
+    prepared: PreparedPromptGeneration | PreparedImageGeneration,
+    *,
+    provider_name: str,
+) -> dict[str, Any]:
+    return {
+        "effect_operation_key": workflow_provider_effect_operation_key(prepared.node_run_id),
+        "effect_kind": "prompt_generation"
+        if isinstance(prepared, PreparedPromptGeneration)
+        else "image_generation",
+        "request_hash": _workflow_effect_request_hash(prepared),
+        "provider_name": provider_name,
+        "attempt_id": prepared.attempt_id,
+        "effect_result": "pending",
+    }
+
+
+def _checkpoint_provider_effect(
+    session: Session,
+    *,
+    prepared: PreparedPromptGeneration | PreparedImageGeneration,
+    provider_name: str,
+    phase: str,
+    metadata: dict[str, Any] | None = None,
+) -> bool:
+    effect_metadata = _workflow_effect_metadata(prepared, provider_name=provider_name)
+    if metadata:
+        effect_metadata.update(metadata)
+    if phase == WORKFLOW_PROVIDER_EFFECT_CALL_PHASE:
+        if not ensure_workflow_provider_effect_intent(
+            session,
+            node_run_id=prepared.node_run_id,
+            attempt_id=prepared.attempt_id,
+            operation_key=effect_metadata["effect_operation_key"],
+            effect_kind=effect_metadata["effect_kind"],
+            request_hash=effect_metadata["request_hash"],
+            provider_name=provider_name,
+            request_json={
+                "effect_operation_key": effect_metadata["effect_operation_key"],
+                "effect_kind": effect_metadata["effect_kind"],
+                "request_hash": effect_metadata["request_hash"],
+                "provider_name": provider_name,
+            },
+        ):
+            return False
+    elif phase == WORKFLOW_PROVIDER_EFFECT_RESULT_PHASE:
+        if not record_workflow_provider_effect_result(
+            session,
+            node_run_id=prepared.node_run_id,
+            attempt_id=prepared.attempt_id,
+            provider_response_id=effect_metadata.get("provider_response_id"),
+            provider_status=effect_metadata.get("provider_status"),
+            result_json={
+                key: value
+                for key, value in effect_metadata.items()
+                if key in {"provider_response_id", "provider_status", "provider_model"}
+            },
+        ):
+            return False
+    return checkpoint_workflow_node_run_effect(
+        session,
+        node_run_id=prepared.node_run_id,
+        attempt_id=prepared.attempt_id,
+        phase=phase,
+        metadata=effect_metadata,
+    )
+
+
+def _provider_effect_started(session: Session, *, node_run_id: str, attempt_id: str) -> bool:
+    node_run = session.scalar(
+        select(WorkflowNodeRun)
+        .where(WorkflowNodeRun.id == node_run_id)
+        .execution_options(populate_existing=True)
+    )
+    if node_run is None or node_run.status != WorkflowNodeStatus.RUNNING or node_run.active_attempt_id != attempt_id:
+        return False
+    return node_run.progress_phase not in WORKFLOW_PROVIDER_EFFECT_SAFE_REQUEUE_PHASES
+
+
 def execute_v2_workflow_node_run(
     session: Session,
     *,
@@ -164,7 +282,26 @@ def execute_v2_workflow_node_run(
             )
             session.commit()
             prompt_provider = resolved_dependencies.prompt_generation_provider()
+            if not _checkpoint_provider_effect(
+                session,
+                prepared=prepared_prompt,
+                provider_name=prompt_provider.provider_name,
+                phase=WORKFLOW_PROVIDER_EFFECT_CALL_PHASE,
+            ):
+                return False
             prompt_result = _generate_prompt(prompt_provider, prepared_prompt.request)
+            if not _checkpoint_provider_effect(
+                session,
+                prepared=prepared_prompt,
+                provider_name=prompt_provider.provider_name,
+                phase=WORKFLOW_PROVIDER_EFFECT_RESULT_PHASE,
+                metadata={
+                    "effect_result": "provider_result_received",
+                    "provider_response_id": prompt_result.response_id,
+                    "provider_model": prompt_result.model,
+                },
+            ):
+                return False
             _validate_prompt_result(prepared_prompt, prompt_result)
             _persist_prompt_result(
                 session,
@@ -184,7 +321,27 @@ def execute_v2_workflow_node_run(
             )
             session.commit()
             image_provider = resolved_dependencies.image_provider()
+            if not _checkpoint_provider_effect(
+                session,
+                prepared=prepared_image,
+                provider_name=image_provider.provider_name,
+                phase=WORKFLOW_PROVIDER_EFFECT_CALL_PHASE,
+            ):
+                return False
             image_result = _generate_workflow_image(image_provider, prepared_image.request)
+            if not _checkpoint_provider_effect(
+                session,
+                prepared=prepared_image,
+                provider_name=image_provider.provider_name,
+                phase=WORKFLOW_PROVIDER_EFFECT_RESULT_PHASE,
+                metadata={
+                    "effect_result": "provider_result_received",
+                    "provider_response_id": image_result.provider_response_id,
+                    "provider_status": image_result.provider_status,
+                    "provider_model": image_result.model,
+                },
+            ):
+                return False
             generated_image = _validate_workflow_image_result(image_result)
             _persist_image_result(
                 session,
@@ -208,6 +365,29 @@ def execute_v2_workflow_node_run(
             raise
         session.rollback()
         storage_writes.cleanup()
+        provider_effect_unknown = isinstance(exc, WorkflowProviderEffectUnknownError)
+        if provider_effect_unknown or not isinstance(exc, WorkflowSafeExecutionError):
+            provider_effect_unknown = _provider_effect_started(
+                session,
+                node_run_id=node_run.id,
+                attempt_id=claim.attempt_id,
+            )
+        if provider_effect_unknown:
+            marked_unknown = mark_workflow_run_unknown(
+                session,
+                run_id=node_run.workflow_run_id,
+                unknown_node_id=node_run.node_id,
+                reason=(
+                    exc.safe_message
+                    if isinstance(exc, WorkflowProviderEffectUnknownError)
+                    else WORKFLOW_PROVIDER_EFFECT_UNKNOWN_DETAIL
+                ),
+                metadata={
+                    "attempt_id": claim.attempt_id,
+                    "exception_category": type(exc).__name__,
+                },
+            )
+            return marked_unknown
         failure = workflow_run_failure_context(exc)
         run_id = mark_workflow_node_run_failed(
             session,
@@ -791,12 +971,7 @@ def _generate_prompt(
     except WorkflowSafeExecutionError:
         raise
     except Exception as exc:
-        raise WorkflowSafeExecutionError(
-            "提示词生成失败，请稍后重试",
-            retryable=True,
-            retry_hint="retry_later",
-            failure_category="provider_failure",
-        ) from exc
+        raise WorkflowProviderEffectUnknownError() from exc
 
 
 def _validate_prompt_result(prepared: PreparedPromptGeneration, result: PromptGenerationResult) -> None:
@@ -911,6 +1086,13 @@ def _persist_prompt_result(
     node.last_run_at = now
     node_run.status = WorkflowNodeStatus.SUCCEEDED
     node_run.active_attempt_id = None
+    node_run.progress_phase = "applied"
+    node_run.progress_metadata = {
+        **(node_run.progress_metadata if isinstance(node_run.progress_metadata, dict) else {}),
+        "effect_result": "applied",
+        "provider_response_id": result.response_id,
+        "provider_model": result.model,
+    }
     node_run.output_json = output
     node_run.finished_at = now
     run.workflow.updated_at = now
@@ -927,12 +1109,7 @@ def _generate_workflow_image(
     except WorkflowSafeExecutionError:
         raise
     except Exception as exc:
-        raise WorkflowSafeExecutionError(
-            "图片生成失败，请稍后重试",
-            retryable=True,
-            retry_hint="retry_later",
-            failure_category="provider_failure",
-        ) from exc
+        raise WorkflowProviderEffectUnknownError() from exc
 
 
 def _validate_workflow_image_result(result: WorkflowImageResult) -> WorkflowGeneratedImage:
@@ -1110,6 +1287,14 @@ def _persist_image_result(
     node.last_run_at = now
     node_run.status = WorkflowNodeStatus.SUCCEEDED
     node_run.active_attempt_id = None
+    node_run.progress_phase = "applied"
+    node_run.progress_metadata = {
+        **(node_run.progress_metadata if isinstance(node_run.progress_metadata, dict) else {}),
+        "effect_result": "applied",
+        "provider_response_id": result.provider_response_id,
+        "provider_status": result.provider_status,
+        "provider_model": result.model,
+    }
     node_run.output_json = output
     node_run.finished_at = now
     workflow.updated_at = now

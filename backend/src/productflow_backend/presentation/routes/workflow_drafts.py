@@ -8,6 +8,9 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from productflow_backend.application.agent_conversations import mark_agent_conversation_completed_for_draft
+from productflow_backend.application.product_workflow.provider_effects import (
+    reconcile_workflow_provider_effect,
+)
 from productflow_backend.application.product_workflows import (
     bind_v2_reference_node_asset,
     cancel_v2_workflow_node_run,
@@ -77,6 +80,7 @@ from productflow_backend.presentation.schemas.workflow_drafts import (
     WorkflowNodeDetailV2Response,
     WorkflowNodeRunListV2Response,
     WorkflowNodeRunV2Response,
+    WorkflowProviderEffectReconciliationResponse,
     WorkflowRunDetailV2Response,
     WorkflowRunListV2Response,
     serialize_active_v2_workflow,
@@ -87,6 +91,7 @@ from productflow_backend.presentation.schemas.workflow_drafts import (
     serialize_workflow_draft,
     serialize_workflow_node_detail_v2,
     serialize_workflow_node_run_v2,
+    serialize_workflow_provider_effect_reconciliation,
     serialize_workflow_run_v2,
     to_workflow_node_positions,
 )
@@ -616,6 +621,19 @@ def cancel_v2_workflow_node_run_endpoint(
 ) -> WorkflowNodeRunV2Response:
     return serialize_workflow_node_run_v2(
         cancel_v2_workflow_node_run(session, node_run_id=node_run_id)
+    )
+
+
+@router.post(
+    "/workflow-node-runs/{node_run_id}/provider-effect-reconciliation",
+    response_model=WorkflowProviderEffectReconciliationResponse,
+)
+def reconcile_v2_workflow_provider_effect_endpoint(
+    node_run_id: str,
+    session: Session = Depends(get_session),
+) -> WorkflowProviderEffectReconciliationResponse:
+    return serialize_workflow_provider_effect_reconciliation(
+        reconcile_workflow_provider_effect(session, node_run_id=node_run_id)
     )
 
 

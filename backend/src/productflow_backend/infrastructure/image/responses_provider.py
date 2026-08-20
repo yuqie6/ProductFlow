@@ -30,6 +30,7 @@ from productflow_backend.infrastructure.provider_config import (
     ResolvedImageProviderConfig,
     resolve_image_provider_config,
 )
+from productflow_backend.infrastructure.provider_effects import ProviderEffectQueryResult
 
 IMAGE_TOOL_OPTIONAL_FIELD_KEYS = IMAGE_TOOL_FIELD_KEYS
 RESPONSES_BACKGROUND_POLL_INTERVAL_SECONDS = 2.0
@@ -304,6 +305,82 @@ class OpenAIResponsesImageClient:
             image_generation_call_id=call_id,
             provider_request_json=request_json,
             provider_output_json=output_json,
+        )
+
+    def reconcile_response(self, provider_response_id: str) -> ProviderEffectQueryResult:
+        """Read a Responses record without creating another image request."""
+
+        if not self.api_key:
+            return ProviderEffectQueryResult(
+                effect_result="unknown",
+                reconciliation_state="unknown",
+                provider_response_id=provider_response_id,
+                detail="图片 provider 档案缺少 API Key，无法查询原请求",
+            )
+        client_kwargs: dict[str, Any] = {"api_key": self.api_key}
+        if self.base_url:
+            client_kwargs["base_url"] = self.base_url
+        try:
+            client = OpenAI(**client_kwargs)
+            retrieve = getattr(client.responses, "retrieve", None)
+            if not callable(retrieve):
+                return ProviderEffectQueryResult.unsupported("当前 Responses client 不支持查询 response")
+            response = retrieve(provider_response_id)
+        except Exception as exc:  # noqa: BLE001
+            return ProviderEffectQueryResult(
+                effect_result="unknown",
+                reconciliation_state="unknown",
+                provider_response_id=provider_response_id,
+                detail=f"查询图片 provider response 失败: {type(exc).__name__}",
+            )
+
+        response_id = str(_get_value(response, "id", "") or "") or provider_response_id
+        status = str(_get_value(response, "status", "") or "").lower() or None
+        output_items = _get_value(response, "output", []) or []
+        image_call = next(
+            (item for item in output_items if _get_value(item, "type", "") == "image_generation_call"),
+            None,
+        )
+        has_image_result = bool(image_call is not None and _get_value(image_call, "result", None))
+        result_json = {
+            "provider_response_id": response_id,
+            "provider_status": status,
+            "has_image_generation_call": image_call is not None,
+            "has_image_result": has_image_result,
+        }
+        if status in RESPONSES_TERMINAL_FAILURE_STATUSES:
+            return ProviderEffectQueryResult(
+                effect_result="failed",
+                reconciliation_state="not_applied",
+                provider_response_id=response_id,
+                provider_status=status,
+                result_json=result_json,
+                detail="供应商记录显示图片请求未完成",
+            )
+        if status in RESPONSES_IN_PROGRESS_STATUSES:
+            return ProviderEffectQueryResult(
+                effect_result="unknown",
+                reconciliation_state="unknown",
+                provider_response_id=response_id,
+                provider_status=status,
+                result_json=result_json,
+                detail="图片 provider 请求仍在处理中",
+            )
+        if has_image_result:
+            return ProviderEffectQueryResult(
+                effect_result="applied",
+                reconciliation_state="applied",
+                provider_response_id=response_id,
+                provider_status=status,
+                result_json=result_json,
+            )
+        return ProviderEffectQueryResult(
+            effect_result="unknown",
+            reconciliation_state="unknown",
+            provider_response_id=response_id,
+            provider_status=status,
+            result_json=result_json,
+            detail="供应商 response 没有足够的图片结果证据",
         )
 
     def _create_response_with_fallback(
@@ -741,6 +818,18 @@ class OpenAIResponsesImageProvider(ImageProvider):
             provider_request_json=result.provider_request_json,
             provider_output_json=result.provider_output_json,
         )
+
+    def reconcile_workflow_image_effect(
+        self,
+        *,
+        operation_key: str,
+        request_hash: str,
+        provider_response_id: str | None,
+    ) -> ProviderEffectQueryResult:
+        del operation_key, request_hash
+        if not provider_response_id:
+            return ProviderEffectQueryResult.unsupported("图片 provider 没有可查询的 response id")
+        return self.client.reconcile_response(provider_response_id)
 
 def _responses_reference(reference: WorkflowImageReference) -> ResponsesReferenceImage:
     return ResponsesReferenceImage(

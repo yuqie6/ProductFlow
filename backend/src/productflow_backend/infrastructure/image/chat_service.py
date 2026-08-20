@@ -33,6 +33,7 @@ from productflow_backend.infrastructure.provider_config import (
     ResolvedImageProviderConfig,
     resolve_image_provider_config,
 )
+from productflow_backend.infrastructure.provider_effects import ProviderEffectQueryResult
 
 
 class ImageChatService:
@@ -120,6 +121,24 @@ class ImageChatService:
             )
             for _ in range(candidate_count)
         ]
+
+    def reconcile_generation_effect(
+        self,
+        *,
+        operation_key: str,
+        request_hash: str,
+        provider_response_id: str | None,
+    ) -> ProviderEffectQueryResult:
+        """Read a prior provider response without submitting another image request."""
+
+        del operation_key, request_hash
+        if self.provider_kind != "openai_responses":
+            return ProviderEffectQueryResult.unsupported(
+                f"图片会话 provider {self.provider_kind} 没有可查询的生成记录接口"
+            )
+        if not provider_response_id:
+            return ProviderEffectQueryResult.unsupported("图片会话 provider 没有可查询的 response id")
+        return OpenAIResponsesImageClient(self.provider_config).reconcile_response(provider_response_id)
 
     def _generate_mock(
         self,

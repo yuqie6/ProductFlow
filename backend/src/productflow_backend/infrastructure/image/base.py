@@ -9,6 +9,7 @@ from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel
 
 from productflow_backend.application.workflow_drafts.contracts import GenerationSpec
+from productflow_backend.infrastructure.provider_effects import ProviderEffectQueryResult
 
 
 class WorkflowImageReference(BaseModel):
@@ -50,6 +51,19 @@ class ImageProvider(ABC):
     @abstractmethod
     def generate_workflow_image(self, request: WorkflowImageRequest) -> WorkflowImageResult:
         raise NotImplementedError
+
+    def reconcile_workflow_image_effect(
+        self,
+        *,
+        operation_key: str,
+        request_hash: str,
+        provider_response_id: str | None,
+    ) -> ProviderEffectQueryResult:
+        """Query provider state without submitting another image generation request."""
+
+        return ProviderEffectQueryResult.unsupported(
+            f"图片 provider {self.provider_name} 没有提供可查询的生成记录接口"
+        )
 
 
 def parse_size(size: str) -> tuple[int, int]:
