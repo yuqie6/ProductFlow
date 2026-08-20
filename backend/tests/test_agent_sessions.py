@@ -7,9 +7,11 @@ from fastapi.testclient import TestClient
 from helpers import _login, _make_demo_image_bytes
 from sqlalchemy import select
 
+from productflow_backend.application.agent_conversations import reserve_agent_turn
 from productflow_backend.application.agent_product_intake import AgentProductSelectionV1
 from productflow_backend.application.agent_product_workspaces import create_agent_product_workspace
 from productflow_backend.application.agent_sessions import (
+    AGENT_SESSION_DEFAULT_TITLE,
     archive_agent_session,
     create_agent_session,
     list_agent_sessions,
@@ -134,6 +136,36 @@ def test_new_agent_session_has_one_global_conversation_and_contract(db_session) 
     assert task.workflow_draft_id is None
 
 
+def test_agent_session_name_is_derived_from_first_global_turn_without_overwriting_manual_name(db_session) -> None:
+    created = create_agent_session(db_session)
+    assert created.title == AGENT_SESSION_DEFAULT_TITLE
+
+    conversation = created.conversations[0]
+    reserve_agent_turn(
+        db_session,
+        product_id=None,
+        conversation_id=conversation.id,
+        input_text="请帮我整理春季新品主图和卖点图。需要保持商品事实不变。",
+        input_asset_ids=[],
+        idempotency_key="auto-session-title",
+    )
+    db_session.refresh(created)
+    assert created.title == "请帮我整理春季新品主图和卖点图"
+
+    named = create_agent_session(db_session)
+    rename_agent_session(db_session, session_id=named.id, title="人工指定名称")
+    reserve_agent_turn(
+        db_session,
+        product_id=None,
+        conversation_id=named.conversations[0].id,
+        input_text="这条消息不应覆盖人工指定的名称",
+        input_asset_ids=[],
+        idempotency_key="manual-session-title",
+    )
+    db_session.refresh(named)
+    assert named.title == "人工指定名称"
+
+
 def test_session_scoped_workbench_does_not_fall_back_to_another_session(db_session) -> None:
     first = _create_workspace(db_session, key="session-product-a")
     second = _create_workspace(db_session, key="session-product-b")
@@ -197,3 +229,14 @@ def test_agent_session_api_returns_bounded_session_projection_and_mutations(conf
         persisted = session.get(AgentSession, session_id)
         assert persisted is not None
         assert persisted.status.value == "archived"
+
+
+def test_agent_session_api_creates_without_a_title(configured_env) -> None:
+    client = TestClient(create_app())
+    _login(client)
+
+    response = client.post("/api/v2/agent-sessions")
+
+    assert response.status_code == 201, response.text
+    assert response.json()["title"] == AGENT_SESSION_DEFAULT_TITLE
+    assert response.json()["conversations"][0]["scope_type"] == AgentConversationScope.GLOBAL.value

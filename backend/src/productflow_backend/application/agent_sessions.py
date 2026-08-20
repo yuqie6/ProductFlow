@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 
 from sqlalchemy import case, func, select
@@ -12,6 +13,7 @@ from productflow_backend.infrastructure.db.models import AgentConversation, Agen
 
 AGENT_SESSION_TITLE_MAX_LENGTH = 160
 AGENT_SESSION_LIST_MAX_ITEMS = 100
+AGENT_SESSION_DEFAULT_TITLE = "新会话"
 
 
 def agent_session_query():
@@ -31,11 +33,34 @@ def normalize_agent_session_title(value: str) -> str:
     return normalized
 
 
-def new_agent_session(*, title: str) -> AgentSession:
+def new_agent_session(*, title: str | None = None) -> AgentSession:
+    if title is None:
+        return AgentSession(title=AGENT_SESSION_DEFAULT_TITLE)
     normalized = title.strip()
     if not normalized:
         raise BusinessValidationError("Agent Session 名称不能为空")
     return AgentSession(title=normalized[:AGENT_SESSION_TITLE_MAX_LENGTH])
+
+
+def derive_agent_session_title(input_text: str) -> str:
+    """从首条用户任务中提取稳定、短的临时 Session 标题。"""
+    normalized = " ".join(input_text.split())
+    if not normalized:
+        return AGENT_SESSION_DEFAULT_TITLE
+    first_sentence = re.split(r"[\r\n。！？!?；;]", normalized, maxsplit=1)[0]
+    candidate = re.sub(r"^#+\s*", "", first_sentence).strip(" ，,：:。！？!?；;")
+    return (candidate or normalized)[:AGENT_SESSION_TITLE_MAX_LENGTH]
+
+
+def auto_name_agent_session(agent_session: AgentSession, *, input_text: str) -> bool:
+    if agent_session.title != AGENT_SESSION_DEFAULT_TITLE:
+        return False
+    next_title = derive_agent_session_title(input_text)
+    if next_title == AGENT_SESSION_DEFAULT_TITLE:
+        return False
+    agent_session.title = next_title
+    agent_session.updated_at = now_utc()
+    return True
 
 
 def get_agent_session_or_raise(
@@ -76,7 +101,7 @@ def list_agent_sessions(
 def create_agent_session(
     session: Session,
     *,
-    title: str,
+    title: str | None = None,
 ) -> AgentSession:
     agent_session = new_agent_session(title=title)
     session.add(agent_session)
@@ -176,10 +201,13 @@ def archive_agent_session(
 
 __all__ = [
     "AGENT_SESSION_LIST_MAX_ITEMS",
+    "AGENT_SESSION_DEFAULT_TITLE",
     "AGENT_SESSION_TITLE_MAX_LENGTH",
     "archive_agent_session",
     "agent_session_query",
+    "auto_name_agent_session",
     "create_agent_session",
+    "derive_agent_session_title",
     "ensure_global_agent_conversation",
     "ensure_global_agent_conversations",
     "get_agent_session_or_raise",

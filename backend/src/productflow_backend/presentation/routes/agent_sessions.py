@@ -15,7 +15,6 @@ from productflow_backend.presentation.deps import get_session, require_admin
 from productflow_backend.presentation.schemas.agent_sessions import (
     AgentSessionListResponse,
     AgentSessionResponse,
-    CreateAgentSessionRequest,
     RenameAgentSessionRequest,
     serialize_agent_session,
 )
@@ -43,10 +42,9 @@ def list_agent_sessions_endpoint(
 
 @router.post("", response_model=AgentSessionResponse, status_code=status.HTTP_201_CREATED)
 def create_agent_session_endpoint(
-    payload: CreateAgentSessionRequest,
     session: Session = Depends(get_session),
 ) -> AgentSessionResponse:
-    return serialize_agent_session(create_agent_session(session, title=payload.title))
+    return serialize_agent_session(create_agent_session(session))
 
 
 @router.patch("/{session_id}", response_model=AgentSessionResponse)

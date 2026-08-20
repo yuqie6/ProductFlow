@@ -30,7 +30,7 @@ describe("Agent conversation API", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await api.createAgentSession({ title: "春季素材" });
+    await api.createAgentSession();
     await api.renameAgentSession("session/1", "春季素材 v2");
     await api.archiveAgentSession("session/1");
 
@@ -39,6 +39,7 @@ describe("Agent conversation API", () => {
       "/api/v2/agent-sessions/session%2F1",
       "/api/v2/agent-sessions/session%2F1/archive",
     ]);
+    expect(fetchMock.mock.calls[0]?.[1]?.body).toBeUndefined();
     expect(fetchMock.mock.calls.map(([, init]) => init?.method)).toEqual(["POST", "PATCH", "POST"]);
   });
 

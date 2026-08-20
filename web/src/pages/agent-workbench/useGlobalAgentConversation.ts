@@ -195,7 +195,10 @@ export function useGlobalAgentConversation({
         page_context: input.page_context ?? pageContext,
       }),
     onSuccess: (response) => cacheTurn(response.turn),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: turnsKey }),
+    onSettled: () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: turnsKey }),
+      queryClient.invalidateQueries({ queryKey: ["agent-sessions"] }),
+    ]),
   });
   const initialTaskKey = taskId && taskStatus === "queued" ? `${conversationId}:${taskId}` : null;
   useEffect(() => {

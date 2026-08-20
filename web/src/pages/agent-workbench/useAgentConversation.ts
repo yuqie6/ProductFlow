@@ -230,7 +230,10 @@ export function useAgentConversation({
   const initialTurnMutation = useMutation({
     mutationFn: () => api.submitAgentTurn(productId, conversation.id, initialInput),
     onSuccess: (response) => cacheTurn(response.turn),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: turnsKey }),
+    onSettled: () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: turnsKey }),
+      queryClient.invalidateQueries({ queryKey: ["agent-sessions"] }),
+    ]),
   });
 
   useEffect(() => {
@@ -256,7 +259,10 @@ export function useAgentConversation({
         page_context: input.page_context ?? pageContext,
       }),
     onSuccess: (response) => cacheTurn(response.turn),
-    onSettled: () => queryClient.invalidateQueries({ queryKey: turnsKey }),
+    onSettled: () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: turnsKey }),
+      queryClient.invalidateQueries({ queryKey: ["agent-sessions"] }),
+    ]),
   });
   const cancelTurnMutation = useMutation({
     mutationFn: (projectionId: string) =>

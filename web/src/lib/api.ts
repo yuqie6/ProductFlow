@@ -366,10 +366,9 @@ export const api = {
     const params = new URLSearchParams({ include_archived: String(includeArchived) });
     return request(`/api/v2/agent-sessions?${params}`);
   },
-  createAgentSession(input: { title: string }): Promise<AgentSession> {
+  createAgentSession(): Promise<AgentSession> {
     return request("/api/v2/agent-sessions", {
       method: "POST",
-      body: JSON.stringify(input),
     });
   },
   renameAgentSession(sessionId: string, title: string): Promise<AgentSession> {

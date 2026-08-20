@@ -11,7 +11,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from productflow_backend.application.agent_sessions import new_agent_session
+from productflow_backend.application.agent_sessions import auto_name_agent_session, new_agent_session
 from productflow_backend.application.agent_tasks import (
     create_page_context_snapshot,
     ensure_task_for_turn,
@@ -415,6 +415,9 @@ def reserve_agent_turn(
             raise ConflictError("同一 idempotency key 不能提交不同的 Agent Turn 请求")
         session.commit()
         return AgentTurnReservation(projection=existing, created=False)
+
+    if conversation.scope_type == GLOBAL_SCOPE and conversation.session is not None:
+        auto_name_agent_session(conversation.session, input_text=normalized_text)
 
     task = ensure_task_for_turn(
         session,

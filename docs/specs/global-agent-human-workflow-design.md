@@ -79,6 +79,7 @@ Agent 可以监控和解释 WorkflowRun，不能复制工作流执行器，也�
 ## 5. Session、Task 和页面上下文
 
 - Session 负责长期交流；它不绑定某个页面或商品。
+- 新建 Session 不要求用户先填写名称；创建时使用临时名称，首条全局 Turn 根据用户任务内容自动生成，人工重命名后不再被自动命名覆盖。
 - Task 负责一个清晰目标，同一 Task 内的 Turn 默认串行。
 - 不同 Task 可以并行，但并发额度和后台调度必须由 runtime/application 明确控制。
 - 页面上下文只描述用户当时正在看的对象，例如 route、page type、选中资产、筛选器和 workflow revision。

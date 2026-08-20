@@ -144,8 +144,6 @@ export function GlobalAgentDock() {
   const [tab, setTab] = useState<GlobalAgentDockTab>("chat");
   const [search, setSearch] = useState("");
   const [taskFormOpen, setTaskFormOpen] = useState(false);
-  const [sessionFormOpen, setSessionFormOpen] = useState(false);
-  const [sessionTitle, setSessionTitle] = useState("");
   const [taskSessionId, setTaskSessionId] = useState("");
   const [taskConversationId, setTaskConversationId] = useState("");
   const [taskTitle, setTaskTitle] = useState("");
@@ -551,10 +549,8 @@ export function GlobalAgentDock() {
   };
 
   const createSessionMutation = useMutation({
-    mutationFn: () => api.createAgentSession({ title: sessionTitle.trim() }),
+    mutationFn: () => api.createAgentSession(),
     onSuccess: (session) => {
-      setSessionTitle("");
-      setSessionFormOpen(false);
       setSelectedSessionId(session.id);
       setSelectedTaskId(null);
       setTab("chat");
@@ -658,7 +654,6 @@ export function GlobalAgentDock() {
     setTaskGoal("");
     createTaskMutation.reset();
     setTaskFormOpen(true);
-    setSessionFormOpen(false);
     setTab("tasks");
   };
   const submitTask = () => {
@@ -674,10 +669,13 @@ export function GlobalAgentDock() {
       goal,
     });
   };
-  const submitSession = () => {
-    if (!sessionTitle.trim() || createSessionMutation.isPending) {
+  const startSession = () => {
+    if (createSessionMutation.isPending) {
       return;
     }
+    setTaskFormOpen(false);
+    setTab("sessions");
+    createSessionMutation.reset();
     createSessionMutation.mutate();
   };
 
@@ -861,7 +859,6 @@ export function GlobalAgentDock() {
               label={t("globalAgent.chat")}
               onClick={() => {
                 setTaskFormOpen(false);
-                setSessionFormOpen(false);
                 setSelectedTaskId(null);
                 setTab("chat");
               }}
@@ -882,17 +879,17 @@ export function GlobalAgentDock() {
             />
             <button
               type="button"
-              onClick={tab === "tasks" ? startTaskForm : () => {
-                setSessionFormOpen(true);
-                setTaskFormOpen(false);
-                setTab("sessions");
-                createSessionMutation.reset();
-              }}
+              onClick={tab === "tasks" ? startTaskForm : startSession}
+              disabled={tab !== "tasks" && createSessionMutation.isPending}
               aria-label={tab === "tasks" ? t("globalAgent.newTask") : t("globalAgent.newSession")}
               title={tab === "tasks" ? t("globalAgent.newTask") : t("globalAgent.newSession")}
               className="ml-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-surface-raised hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
             >
-              <Plus size={16} aria-hidden="true" />
+              {tab !== "tasks" && createSessionMutation.isPending ? (
+                <Loader2 size={16} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
+              ) : (
+                <Plus size={16} aria-hidden="true" />
+              )}
             </button>
           </div>
 
@@ -917,15 +914,6 @@ export function GlobalAgentDock() {
                 title={taskTitle}
                 conversationId={taskConversationId}
                 workspaces={taskWorkspaces}
-              />
-            ) : tab === "sessions" && sessionFormOpen ? (
-              <SessionForm
-                busy={createSessionMutation.isPending}
-                error={createSessionMutation.error ? errorDetail(createSessionMutation.error, t("globalAgent.requestFailed")) : null}
-                onCancel={() => setSessionFormOpen(false)}
-                onChange={setSessionTitle}
-                onSubmit={submitSession}
-                value={sessionTitle}
               />
             ) : tab === "chat" ? (
               <>
@@ -1976,44 +1964,6 @@ function TaskForm({
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function SessionForm({
-  busy,
-  error,
-  onCancel,
-  onChange,
-  onSubmit,
-  value,
-}: {
-  busy: boolean;
-  error: string | null;
-  onCancel: () => void;
-  onChange: (value: string) => void;
-  onSubmit: () => void;
-  value: string;
-}) {
-  const { t } = useI18n();
-  return (
-    <div className="min-h-0 flex-1 overflow-y-auto p-3">
-      <div className="mb-3 flex items-center gap-2">
-        <MessagesSquare size={16} className="text-accent" aria-hidden="true" />
-        <h3 className="text-sm font-semibold text-text-primary">{t("globalAgent.newSession")}</h3>
-      </div>
-      <label className="block">
-        <span className="mb-1 block text-[11px] font-semibold text-text-secondary">{t("agentWorkbench.session.titleLabel")}</span>
-        <input autoFocus value={value} onChange={(event) => onChange(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") onSubmit(); }} placeholder={t("agentWorkbench.session.titlePlaceholder")} className="h-9 w-full rounded-md border border-border-l2 bg-surface-raised px-2.5 text-xs text-text-primary outline-none placeholder:text-text-muted focus:border-accent focus:ring-2 focus:ring-accent/15" />
-      </label>
-      {error ? <p role="alert" className="mt-2 text-xs leading-5 text-state-error">{error}</p> : null}
-      <div className="mt-4 flex justify-end gap-2 border-t border-border-l1 pt-3">
-        <button type="button" onClick={onCancel} disabled={busy} className="inline-flex h-9 items-center rounded-md px-3 text-xs font-semibold text-text-secondary hover:bg-surface-subtle focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50">{t("common.cancel")}</button>
-        <button type="button" onClick={onSubmit} disabled={!value.trim() || busy} className="inline-flex h-9 items-center gap-1.5 rounded-md bg-accent px-3 text-xs font-semibold text-accent-fg hover:bg-accent-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 disabled:cursor-not-allowed disabled:opacity-50">
-          {busy ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Plus size={14} aria-hidden="true" />}
-          {busy ? t("globalAgent.creating") : t("globalAgent.create")}
-        </button>
-      </div>
     </div>
   );
 }

@@ -24,7 +24,7 @@ interface AgentSessionSwitcherProps {
   productName: string;
 }
 
-type SessionEditor = { mode: "create" | "rename"; value: string } | null;
+type SessionEditor = { mode: "rename"; value: string } | null;
 
 export function selectAgentSessionConversation(
   agentSession: AgentSession,
@@ -96,18 +96,23 @@ export function AgentSessionSwitcher({ conversation, productName }: AgentSession
   }, [open]);
 
   const editorMutation = useMutation({
-    mutationFn: async (input: { mode: "create" | "rename"; title: string }) => {
-      if (input.mode === "create") {
-        return api.createAgentSession({ title: input.title });
-      }
+    mutationFn: async (input: { mode: "rename"; title: string }) => {
       if (!conversation.session_id) {
         throw new Error(t("agentWorkbench.session.missingCurrent"));
       }
       return api.renameAgentSession(conversation.session_id, input.title);
     },
-    onSuccess: (_result, input) => {
+    onSuccess: () => {
       setEditor(null);
-      setNotice(t(input.mode === "create" ? "agentWorkbench.session.created" : "agentWorkbench.session.renamed"));
+      setNotice(t("agentWorkbench.session.renamed"));
+      void queryClient.invalidateQueries({ queryKey: ["agent-sessions", true] });
+    },
+  });
+  const createSessionMutation = useMutation({
+    mutationFn: () => api.createAgentSession(),
+    onSuccess: () => {
+      setOpen(false);
+      setNotice(t("agentWorkbench.session.created"));
       void queryClient.invalidateQueries({ queryKey: ["agent-sessions", true] });
     },
   });
@@ -126,18 +131,28 @@ export function AgentSessionSwitcher({ conversation, productName }: AgentSession
     : sessionsQuery.error instanceof Error
       ? sessionsQuery.error.message
       : null;
-  const mutationError = editorMutation.error ?? archiveMutation.error;
+  const mutationError = editorMutation.error ?? createSessionMutation.error ?? archiveMutation.error;
   const mutationErrorText = mutationError instanceof ApiError
     ? mutationError.detail
     : mutationError instanceof Error
       ? mutationError.message
       : null;
 
-  const startEditor = (mode: "create" | "rename") => {
+  const createSession = () => {
+    if (createSessionMutation.isPending) {
+      return;
+    }
+    setNotice(null);
+    editorMutation.reset();
+    createSessionMutation.reset();
+    createSessionMutation.mutate();
+  };
+
+  const startEditor = () => {
     setNotice(null);
     editorMutation.reset();
     setOpen(true);
-    setEditor({ mode, value: mode === "rename" ? currentSession?.title ?? "" : "" });
+    setEditor({ mode: "rename", value: currentSession?.title ?? "" });
   };
 
   const submitEditor = () => {
@@ -145,7 +160,7 @@ export function AgentSessionSwitcher({ conversation, productName }: AgentSession
     if (!editor || !title || editorMutation.isPending) {
       return;
     }
-    editorMutation.mutate({ mode: editor.mode, title });
+    editorMutation.mutate({ mode: "rename", title });
   };
 
   const switchSession = (sessionId: string) => {
@@ -269,12 +284,13 @@ export function AgentSessionSwitcher({ conversation, productName }: AgentSession
           </button>
           <button
             type="button"
-            onClick={() => startEditor("create")}
+            onClick={createSession}
+            disabled={createSessionMutation.isPending}
             aria-label={t("agentWorkbench.session.new")}
             title={t("agentWorkbench.session.new")}
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-border-l2 bg-surface-raised text-text-secondary transition-colors hover:border-accent/50 hover:bg-accent-soft hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
           >
-            <Plus size={17} />
+            {createSessionMutation.isPending ? <Loader2 size={17} className="animate-spin motion-reduce:animate-none" /> : <Plus size={17} />}
           </button>
         </div>
 
@@ -304,7 +320,7 @@ export function AgentSessionSwitcher({ conversation, productName }: AgentSession
                   <>
                     <button
                       type="button"
-                      onClick={() => startEditor("rename")}
+                      onClick={startEditor}
                       aria-label={t("agentWorkbench.session.rename")}
                       title={t("agentWorkbench.session.rename")}
                       className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-surface-subtle hover:text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
@@ -324,12 +340,13 @@ export function AgentSessionSwitcher({ conversation, productName }: AgentSession
                 ) : null}
                 <button
                   type="button"
-                  onClick={() => startEditor("create")}
+                  onClick={createSession}
+                  disabled={createSessionMutation.isPending}
                   aria-label={t("agentWorkbench.session.new")}
                   title={t("agentWorkbench.session.new")}
                   className="flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-accent-soft hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
                 >
-                  <Plus size={15} />
+                  {createSessionMutation.isPending ? <Loader2 size={15} className="animate-spin motion-reduce:animate-none" /> : <Plus size={15} />}
                 </button>
                 <button
                   type="button"
