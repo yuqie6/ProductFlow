@@ -28,13 +28,14 @@ class ProductImageOriginType(StrEnum):
 
 
 class JobStatus(StrEnum):
-    """连续生图任务状态：排队 -> 运行中 -> 成功/失败/取消。"""
+    """连续生图任务状态：排队 -> 运行中 -> 成功/失败/未知/取消。"""
 
     QUEUED = "queued"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    UNKNOWN = "unknown"
 
 
 class AsyncDispatchStatus(StrEnum):
@@ -233,6 +234,7 @@ class WorkflowNodeStatus(StrEnum):
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    UNKNOWN = "unknown"
 
 
 class WorkflowRunStatus(StrEnum):
@@ -242,3 +244,4 @@ class WorkflowRunStatus(StrEnum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    UNKNOWN = "unknown"

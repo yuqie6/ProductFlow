@@ -159,6 +159,8 @@ def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch:
             "agent_tasks",
             "agent_page_context_snapshots",
             "agent_turn_executions",
+            "agent_turn_events",
+            "agent_turn_effect_reconciliations",
         } <= tables
         execution_columns = {column["name"] for column in inspector.get_columns("agent_turn_executions")}
         assert {
@@ -184,6 +186,70 @@ def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch:
         assert "agent_turn_checkpoints" in checkpoint_tables
         checkpoint_columns = {column["name"] for column in inspector.get_columns("agent_turn_checkpoints")}
         assert {"execution_id", "attempt", "fencing_token", "sequence", "kind", "payload_json"} <= checkpoint_columns
+        event_columns = {column["name"] for column in inspector.get_columns("agent_turn_events")}
+        assert {
+            "turn_projection_id",
+            "execution_id",
+            "run_id",
+            "turn_id",
+            "schema_version",
+            "sequence",
+            "attempt",
+            "fencing_token",
+            "kind",
+            "payload_json",
+        } <= event_columns
+        reconciliation_columns = {
+            column["name"] for column in inspector.get_columns("agent_turn_effect_reconciliations")
+        }
+        assert {
+            "turn_projection_id",
+            "tool_call_id",
+            "tool_name",
+            "idempotency_key",
+            "effect_result",
+            "reconciliation_state",
+            "result_json",
+            "detail",
+        } <= reconciliation_columns
+        workflow_effect_columns = {
+            column["name"] for column in inspector.get_columns("workflow_provider_effects")
+        }
+        assert {
+            "workflow_node_run_id",
+            "operation_key",
+            "effect_kind",
+            "request_hash",
+            "provider_name",
+            "attempt_id",
+            "effect_result",
+            "reconciliation_state",
+            "provider_response_id",
+            "provider_status",
+            "request_json",
+            "result_json",
+            "detail",
+        } <= workflow_effect_columns
+        image_provider_effect_columns = {
+            column["name"] for column in inspector.get_columns("image_session_provider_effects")
+        }
+        assert {
+            "generation_task_id",
+            "candidate_start_index",
+            "candidate_count",
+            "operation_key",
+            "effect_kind",
+            "request_hash",
+            "provider_name",
+            "attempt_id",
+            "effect_result",
+            "reconciliation_state",
+            "provider_response_id",
+            "provider_status",
+            "request_json",
+            "result_json",
+            "detail",
+        } <= image_provider_effect_columns
         assert {"copy_set_id", "poster_variant_id"} <= {
             column["name"] for column in inspector.get_columns("workflow_node_runs")
         }
@@ -196,6 +262,8 @@ def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch:
         }
         assert workflow_run_columns["attempts"]["nullable"] is False
         assert workflow_run_columns["active_attempt_id"]["nullable"] is True
+        assert workflow_run_columns["progress_phase"]["nullable"] is True
+        assert workflow_run_columns["progress_metadata"]["nullable"] is True
         image_task_columns = {
             column["name"]: column
             for column in inspector.get_columns("image_session_generation_tasks")
@@ -216,6 +284,16 @@ def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch:
             "ck_image_session_generation_tasks_active_attempt",
             "ck_image_session_generation_tasks_non_negative_attempts",
         } <= image_task_checks
+        image_provider_effect_checks = {
+            check["name"] for check in inspector.get_check_constraints("image_session_provider_effects")
+        }
+        assert {
+            "ck_image_session_provider_effects_candidate_start",
+            "ck_image_session_provider_effects_candidate_count",
+            "ck_image_session_provider_effects_effect_result",
+            "ck_image_session_provider_effects_reconciliation_state",
+            "ck_image_session_provider_effects_request_hash",
+        } <= image_provider_effect_checks
         tool_steps_column = next(
             column
             for column in inspector.get_columns("agent_turn_projections")
@@ -241,7 +319,7 @@ def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch:
             column["name"] for column in inspector.get_columns("agent_workflow_run_requests")
         }
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0064"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0069"
     finally:
         engine.dispose()
 
@@ -395,7 +473,7 @@ def test_agent_tool_step_projection_migration_backfills_existing_turns(
                 sa.text("SELECT tool_steps_json FROM agent_turn_projections WHERE id = 'turn-tool-step'")
             )
             assert value == "[]"
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0064"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0069"
     finally:
         engine.dispose()
 
@@ -603,7 +681,7 @@ def test_media_library_upload_keys_migration_upgrade_and_downgrade(
     try:
         assert "media_library_upload_keys" in sa.inspect(engine).get_table_names()
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0064"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0069"
     finally:
         engine.dispose()
 
@@ -640,6 +718,6 @@ def test_media_library_upload_keys_migration_upgrade_and_downgrade(
         }
         assert "source_run_id" in source_run_columns
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0064"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0069"
     finally:
         engine.dispose()

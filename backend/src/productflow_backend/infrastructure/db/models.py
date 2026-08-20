@@ -1408,6 +1408,16 @@ class AgentTurnProjection(Base, TimestampMixin):
         back_populates="turn_projection",
         order_by="AgentTurnCheckpoint.sequence",
     )
+    events: Mapped[list[AgentTurnEvent]] = relationship(
+        back_populates="turn_projection",
+        cascade="all, delete-orphan",
+        order_by="AgentTurnEvent.sequence",
+    )
+    effect_reconciliations: Mapped[list[AgentTurnEffectReconciliation]] = relationship(
+        back_populates="turn_projection",
+        cascade="all, delete-orphan",
+        order_by="AgentTurnEffectReconciliation.created_at",
+    )
 
 
 class AgentTurnExecution(Base, TimestampMixin):
@@ -1497,6 +1507,101 @@ class AgentTurnCheckpoint(Base):
 
     turn_projection: Mapped[AgentTurnProjection] = relationship(back_populates="checkpoints")
     execution: Mapped[AgentTurnExecution] = relationship(back_populates="checkpoints")
+
+
+class AgentTurnEvent(Base):
+    """跨实例 Agent Turn 事件日志；只保存前端需要的有界事件投影。"""
+
+    __tablename__ = "agent_turn_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "turn_projection_id",
+            "sequence",
+            name="uq_agent_turn_events_projection_sequence",
+        ),
+        CheckConstraint("schema_version = 1", name="ck_agent_turn_events_schema_version"),
+        CheckConstraint("sequence > 0", name="ck_agent_turn_events_positive_sequence"),
+        CheckConstraint("attempt IS NULL OR attempt > 0", name="ck_agent_turn_events_attempt"),
+        CheckConstraint("fencing_token IS NULL OR fencing_token > 0", name="ck_agent_turn_events_fencing"),
+        Index("ix_agent_turn_events_projection_sequence", "turn_projection_id", "sequence"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    turn_projection_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "agent_turn_projections.id",
+            ondelete="CASCADE",
+            name="fk_agent_turn_events_turn_projection_id",
+        ),
+    )
+    execution_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "agent_turn_executions.id",
+            ondelete="SET NULL",
+            name="fk_agent_turn_events_execution_id",
+        ),
+        nullable=True,
+    )
+    run_id: Mapped[str] = mapped_column(String(120))
+    turn_id: Mapped[str] = mapped_column(String(120))
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    sequence: Mapped[int] = mapped_column(Integer)
+    attempt: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    fencing_token: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    kind: Mapped[str] = mapped_column(String(120))
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    turn_projection: Mapped[AgentTurnProjection] = relationship(back_populates="events")
+    execution: Mapped[AgentTurnExecution | None] = relationship()
+
+
+class AgentTurnEffectReconciliation(Base, TimestampMixin):
+    """ProductFlow 对 Agent 副作用未知结果的持久对账裁决。"""
+
+    __tablename__ = "agent_turn_effect_reconciliations"
+    __table_args__ = (
+        UniqueConstraint(
+            "turn_projection_id",
+            "tool_call_id",
+            name="uq_agent_turn_effect_reconciliations_projection_tool",
+        ),
+        CheckConstraint(
+            "effect_result IN ('applied', 'failed', 'unknown')",
+            name="ck_agent_turn_effect_reconciliations_effect_result",
+        ),
+        CheckConstraint(
+            "reconciliation_state IN ('applied', 'not_applied', 'conflict', 'unknown')",
+            name="ck_agent_turn_effect_reconciliations_state",
+        ),
+        Index(
+            "ix_agent_turn_effect_reconciliations_projection_created",
+            "turn_projection_id",
+            "created_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    turn_projection_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "agent_turn_projections.id",
+            ondelete="CASCADE",
+            name="fk_agent_turn_effect_reconciliations_turn_projection_id",
+        ),
+    )
+    tool_call_id: Mapped[str] = mapped_column(String(120))
+    tool_name: Mapped[str] = mapped_column(String(120))
+    idempotency_key: Mapped[str] = mapped_column(String(200))
+    effect_result: Mapped[str] = mapped_column(String(20))
+    reconciliation_state: Mapped[str] = mapped_column(String(20))
+    result_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    turn_projection: Mapped[AgentTurnProjection] = relationship(back_populates="effect_reconciliations")
 
 
 class AgentToolMutation(Base, TimestampMixin):
@@ -2300,6 +2405,8 @@ class WorkflowNodeRun(Base):
     status: Mapped[WorkflowNodeStatus] = mapped_column(enum_value_column(WorkflowNodeStatus))
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     active_attempt_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    progress_phase: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    progress_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     output_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -2317,6 +2424,75 @@ class WorkflowNodeRun(Base):
         cascade="all, delete-orphan",
         uselist=False,
     )
+    provider_effect: Mapped[WorkflowProviderEffect | None] = relationship(
+        back_populates="workflow_node_run",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+
+class WorkflowProviderEffect(Base, TimestampMixin):
+    """Durable provider effect ledger for a workflow node run.
+
+    The ledger records the request boundary and a later provider verdict. It never
+    retries a provider mutation and it does not make the unknown workflow run
+    look successful after reconciliation.
+    """
+
+    __tablename__ = "workflow_provider_effects"
+    __table_args__ = (
+        UniqueConstraint(
+            "workflow_node_run_id",
+            name="uq_workflow_provider_effects_node_run_id",
+        ),
+        UniqueConstraint(
+            "operation_key",
+            name="uq_workflow_provider_effects_operation_key",
+        ),
+        CheckConstraint(
+            "effect_result IN ('pending', 'applied', 'failed', 'unknown')",
+            name="ck_workflow_provider_effects_effect_result",
+        ),
+        CheckConstraint(
+            "reconciliation_state IN ('not_requested', 'applied', 'not_applied', 'unknown', 'unsupported')",
+            name="ck_workflow_provider_effects_reconciliation_state",
+        ),
+        CheckConstraint(
+            "length(request_hash) = 64",
+            name="ck_workflow_provider_effects_request_hash",
+        ),
+        Index(
+            "ix_workflow_provider_effects_reconciliation",
+            "effect_result",
+            "reconciliation_state",
+            "updated_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    workflow_node_run_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "workflow_node_runs.id",
+            ondelete="CASCADE",
+            name="fk_workflow_provider_effects_node_run_id",
+        ),
+    )
+    operation_key: Mapped[str] = mapped_column(String(200))
+    effect_kind: Mapped[str] = mapped_column(String(80))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    provider_name: Mapped[str] = mapped_column(String(80))
+    attempt_id: Mapped[str] = mapped_column(String(36))
+    effect_result: Mapped[str] = mapped_column(String(20), default="pending")
+    reconciliation_state: Mapped[str] = mapped_column(String(20), default="not_requested")
+    provider_response_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    provider_status: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    request_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    result_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    workflow_node_run: Mapped[WorkflowNodeRun] = relationship(back_populates="provider_effect")
 
 
 class ImagePromptArtifact(Base, TimestampMixin):
@@ -2941,6 +3117,81 @@ class ImageSessionGenerationTask(Base):
 
     session: Mapped[ImageSession] = relationship(back_populates="generation_tasks")
     base_asset: Mapped[ImageSessionAsset | None] = relationship(foreign_keys=[base_asset_id])
+    provider_effects: Mapped[list[ImageSessionProviderEffect]] = relationship(
+        back_populates="generation_task",
+        cascade="all, delete-orphan",
+        order_by="ImageSessionProviderEffect.candidate_start_index",
+    )
+
+
+class ImageSessionProviderEffect(Base, TimestampMixin):
+    """One provider request made while materializing an image-session task."""
+
+    __tablename__ = "image_session_provider_effects"
+    __table_args__ = (
+        UniqueConstraint(
+            "generation_task_id",
+            "candidate_start_index",
+            name="uq_image_session_provider_effects_task_candidate",
+        ),
+        UniqueConstraint(
+            "operation_key",
+            name="uq_image_session_provider_effects_operation_key",
+        ),
+        CheckConstraint(
+            "candidate_start_index >= 1",
+            name="ck_image_session_provider_effects_candidate_start",
+        ),
+        CheckConstraint(
+            "candidate_count >= 1",
+            name="ck_image_session_provider_effects_candidate_count",
+        ),
+        CheckConstraint(
+            "effect_result IN ('pending', 'applied', 'failed', 'unknown')",
+            name="ck_image_session_provider_effects_effect_result",
+        ),
+        CheckConstraint(
+            "reconciliation_state IN ('not_requested', 'applied', 'not_applied', 'unknown', 'unsupported')",
+            name="ck_image_session_provider_effects_reconciliation_state",
+        ),
+        CheckConstraint(
+            "length(request_hash) = 64",
+            name="ck_image_session_provider_effects_request_hash",
+        ),
+        Index(
+            "ix_image_session_provider_effects_reconciliation",
+            "effect_result",
+            "reconciliation_state",
+            "updated_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    generation_task_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "image_session_generation_tasks.id",
+            ondelete="CASCADE",
+            name="fk_image_session_provider_effects_generation_task_id",
+        ),
+    )
+    candidate_start_index: Mapped[int] = mapped_column(Integer)
+    candidate_count: Mapped[int] = mapped_column(Integer)
+    operation_key: Mapped[str] = mapped_column(String(255))
+    effect_kind: Mapped[str] = mapped_column(String(80), default="image_session_generation")
+    request_hash: Mapped[str] = mapped_column(String(64))
+    provider_name: Mapped[str] = mapped_column(String(80))
+    attempt_id: Mapped[str] = mapped_column(String(36))
+    effect_result: Mapped[str] = mapped_column(String(20), default="pending")
+    reconciliation_state: Mapped[str] = mapped_column(String(20), default="not_requested")
+    provider_response_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    provider_status: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    request_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    result_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    generation_task: Mapped[ImageSessionGenerationTask] = relationship(back_populates="provider_effects")
 
 
 class MediaLibraryFolder(Base, TimestampMixin):
