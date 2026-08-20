@@ -42,9 +42,9 @@ from productflow_backend.application.delivery_renditions.service import (
     submit_delivery_rendition_job,
 )
 from productflow_backend.application.durable_recovery import recover_unfinished_delivery_rendition_jobs
-from productflow_backend.application.media_assets import clear_product_cover
+from productflow_backend.application.product_images.assets import clear_product_cover
+from productflow_backend.application.product_workflow.dependencies import WorkflowExecutionDependencies
 from productflow_backend.application.product_workflow.v2_execution import execute_v2_workflow_node_run
-from productflow_backend.application.product_workflow_dependencies import WorkflowExecutionDependencies
 from productflow_backend.config import get_settings
 from productflow_backend.domain.enums import JobStatus, WorkflowNodeStatus, WorkflowRunStatus
 from productflow_backend.infrastructure.db.models import (

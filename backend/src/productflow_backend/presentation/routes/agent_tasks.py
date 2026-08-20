@@ -3,9 +3,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.agent_control import control_agent_turn
-from productflow_backend.application.agent_conversations import get_agent_turn_or_raise
-from productflow_backend.application.agent_tasks import (
+from productflow_backend.application.agent.control import control_agent_turn
+from productflow_backend.application.agent.conversations import get_agent_turn_or_raise
+from productflow_backend.application.agent.tasks import (
     AGENT_TASK_LIST_DEFAULT_LIMIT,
     AGENT_TASK_LIST_MAX_LIMIT,
     cancel_agent_task,
@@ -16,7 +16,7 @@ from productflow_backend.application.agent_tasks import (
     rename_agent_task,
     resume_agent_task,
 )
-from productflow_backend.application.agent_workflow_run_requests import (
+from productflow_backend.application.agent.workflow_run_requests import (
     cancel_agent_workflow_run_request,
 )
 from productflow_backend.application.async_delivery import stage_async_dispatch_for_actor

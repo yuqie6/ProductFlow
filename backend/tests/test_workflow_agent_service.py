@@ -8,9 +8,9 @@ from helpers import _login, _make_demo_image_bytes
 from sqlalchemy import event, func, select
 from workflow_draft_helpers import make_workflow_draft_payload
 
-from productflow_backend.application import agent_control
-from productflow_backend.application.agent_control import synchronize_agent_turn_state
-from productflow_backend.application.agent_conversations import (
+from productflow_backend.application.agent import control as agent_control
+from productflow_backend.application.agent.control import synchronize_agent_turn_state
+from productflow_backend.application.agent.conversations import (
     attach_agent_workflow_draft_artifact,
     bind_harness_turn,
     create_agent_conversation,
@@ -19,17 +19,17 @@ from productflow_backend.application.agent_conversations import (
     record_agent_turn_start_error,
     reserve_agent_turn,
 )
-from productflow_backend.application.agent_execution import (
+from productflow_backend.application.agent.execution import (
     claim_agent_turn_execution,
     recover_expired_agent_turn_executions,
 )
-from productflow_backend.application.agent_product_intake import AgentProductSelectionV1
-from productflow_backend.application.agent_product_workspaces import create_agent_product_workspace
-from productflow_backend.application.agent_sync import (
+from productflow_backend.application.agent.product_intake import AgentProductSelectionV1
+from productflow_backend.application.agent.product_workspaces import create_agent_product_workspace
+from productflow_backend.application.agent.sync import (
     execute_agent_turn_sync,
     recover_unfinished_agent_turn_syncs,
 )
-from productflow_backend.application.agent_tools import (
+from productflow_backend.application.agent.tools import (
     apply_agent_asset_move,
     apply_agent_asset_rename,
     apply_agent_folder_create,
@@ -48,8 +48,8 @@ from productflow_backend.application.agent_tools import (
     reconcile_agent_folder_create,
     reconcile_agent_folder_rename,
 )
-from productflow_backend.application.gallery_mutations import rename_gallery_asset
-from productflow_backend.application.use_cases import create_canonical_product
+from productflow_backend.application.product_images.mutations import rename_gallery_asset
+from productflow_backend.application.products import create_canonical_product
 from productflow_backend.application.workflow_drafts.service import (
     append_workflow_draft_revision,
     create_workflow_draft,

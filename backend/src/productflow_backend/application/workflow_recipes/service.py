@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from productflow_backend.application.agent_sessions import new_agent_session
+from productflow_backend.application.agent.sessions import new_agent_session
 from productflow_backend.application.time import now_utc
 from productflow_backend.application.workflow_drafts.contracts import (
     VisualSystemDraftPayload,

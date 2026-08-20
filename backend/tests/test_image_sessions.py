@@ -65,10 +65,10 @@ def _execute_workflow_queue_inline_fixture(monkeypatch: pytest.MonkeyPatch) -> N
     """Keep API workflow tests deterministic while production delivery goes through Dramatiq."""
 
     _execute_workflow_queue_inline(monkeypatch)
-    from productflow_backend.application.image_sessions import execute_image_session_generation_task
+    from productflow_backend.application.image_sessions.service import execute_image_session_generation_task
 
     monkeypatch.setattr(
-        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
+        "productflow_backend.application.image_sessions.service.enqueue_image_session_generation_task",
         execute_image_session_generation_task,
     )
 
@@ -148,7 +148,7 @@ def test_image_session_generate_returns_queued_task_without_waiting_for_provider
 
     sent: list[str] = []
     monkeypatch.setattr(
-        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
+        "productflow_backend.application.image_sessions.service.enqueue_image_session_generation_task",
         lambda task_id: sent.append(task_id),
     )
     app = create_app()
@@ -209,7 +209,7 @@ def test_terminal_image_session_task_without_round_does_not_require_base(
 
     sent: list[str] = []
     monkeypatch.setattr(
-        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
+        "productflow_backend.application.image_sessions.service.enqueue_image_session_generation_task",
         lambda task_id: sent.append(task_id),
     )
     app = create_app()
@@ -274,7 +274,7 @@ def test_first_queued_image_session_task_without_base_still_executes_if_later_ta
     configured_env: Path,
     db_session,
 ) -> None:
-    from productflow_backend.application.image_sessions import (
+    from productflow_backend.application.image_sessions.service import (
         create_image_session,
         create_image_session_generation_task,
         execute_image_session_generation_task,
@@ -316,12 +316,12 @@ def test_image_session_status_returns_lightweight_task_snapshot(
     configured_env: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from productflow_backend.application.image_sessions import execute_image_session_generation_task
+    from productflow_backend.application.image_sessions.service import execute_image_session_generation_task
     from productflow_backend.presentation.api import create_app
 
     sent: list[str] = []
     monkeypatch.setattr(
-        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
+        "productflow_backend.application.image_sessions.service.enqueue_image_session_generation_task",
         lambda task_id: sent.append(task_id),
     )
     app = create_app()
@@ -512,7 +512,7 @@ def test_image_session_submission_rolls_back_task_when_dispatch_staging_fails(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from productflow_backend.application.image_sessions import (
+    from productflow_backend.application.image_sessions.service import (
         create_image_session,
         submit_image_session_generation_task,
     )
@@ -522,7 +522,7 @@ def test_image_session_submission_rolls_back_task_when_dispatch_staging_fails(
     def fail_stage(*args, **kwargs):
         raise RuntimeError("dispatch staging failed")
 
-    monkeypatch.setattr("productflow_backend.application.image_sessions.stage_async_dispatch", fail_stage)
+    monkeypatch.setattr("productflow_backend.application.image_sessions.service.stage_async_dispatch", fail_stage)
 
     with pytest.raises(RuntimeError, match="dispatch staging failed"):
         submit_image_session_generation_task(
@@ -547,7 +547,7 @@ def test_image_session_generate_enqueue_failure_keeps_task_retryable(
     from productflow_backend.presentation.api import create_app
 
     monkeypatch.setattr(
-        "productflow_backend.application.image_sessions.stage_async_dispatch",
+        "productflow_backend.application.image_sessions.service.stage_async_dispatch",
         stage_async_dispatch,
     )
     app = create_app()
@@ -601,7 +601,7 @@ def test_image_session_manual_retry_resets_failed_task_and_enqueues(
 
     sent: list[str] = []
     monkeypatch.setattr(
-        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
+        "productflow_backend.application.image_sessions.service.enqueue_image_session_generation_task",
         lambda task_id: sent.append(task_id),
     )
     app = create_app()
@@ -653,16 +653,16 @@ def test_image_session_manual_cancel_marks_active_task_cancelled_and_worker_noop
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from productflow_backend.application.image_sessions import execute_image_session_generation_task
+    from productflow_backend.application.image_sessions.service import execute_image_session_generation_task
     from productflow_backend.domain.enums import JobStatus
     from productflow_backend.presentation.api import create_app
 
     monkeypatch.setattr(
-        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
+        "productflow_backend.application.image_sessions.service.enqueue_image_session_generation_task",
         lambda task_id: None,
     )
     monkeypatch.setattr(
-        "productflow_backend.application.image_sessions._execute_image_session_round_generation",
+        "productflow_backend.application.image_sessions.service._execute_image_session_round_generation",
         lambda *args, **kwargs: pytest.fail("cancelled image session task must no-op"),
     )
     app = create_app()
@@ -703,8 +703,8 @@ def test_image_session_generation_cancel_after_file_save_does_not_persist_round_
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from productflow_backend.application import image_sessions as image_session_app
-    from productflow_backend.application.image_sessions import (
+    from productflow_backend.application.image_sessions import service as image_session_app
+    from productflow_backend.application.image_sessions.service import (
         IMAGE_SESSION_CANCELLED_REASON,
         ImageSessionGenerationCancelledError,
         _execute_image_session_round_generation,
@@ -808,7 +808,7 @@ def test_image_session_generation_cancelled_task_is_not_overwritten_by_late_fail
     configured_env: Path,
     db_session,
 ) -> None:
-    from productflow_backend.application.image_sessions import (
+    from productflow_backend.application.image_sessions.service import (
         IMAGE_SESSION_CANCELLED_REASON,
         _handle_image_generation_task_failure_safely,
         create_image_session,
@@ -857,7 +857,7 @@ def test_image_session_manual_cancel_rejects_terminal_task(
     from productflow_backend.presentation.api import create_app
 
     monkeypatch.setattr(
-        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
+        "productflow_backend.application.image_sessions.service.enqueue_image_session_generation_task",
         lambda task_id: None,
     )
     app = create_app()
@@ -895,7 +895,7 @@ def test_image_session_manual_retry_rejects_non_failed_task(
     from productflow_backend.presentation.api import create_app
 
     monkeypatch.setattr(
-        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
+        "productflow_backend.application.image_sessions.service.enqueue_image_session_generation_task",
         lambda task_id: None,
     )
     app = create_app()
@@ -927,7 +927,7 @@ def test_image_session_manual_retry_rejects_non_retryable_failed_task(
     from productflow_backend.presentation.api import create_app
 
     monkeypatch.setattr(
-        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
+        "productflow_backend.application.image_sessions.service.enqueue_image_session_generation_task",
         lambda task_id: None,
     )
     app = create_app()
@@ -971,11 +971,11 @@ def test_image_session_manual_retry_enqueue_failure_keeps_task_retryable(
     from productflow_backend.presentation.api import create_app
 
     monkeypatch.setattr(
-        "productflow_backend.application.image_sessions.stage_async_dispatch",
+        "productflow_backend.application.image_sessions.service.stage_async_dispatch",
         stage_async_dispatch,
     )
     monkeypatch.setattr(
-        "productflow_backend.application.image_sessions.requeue_async_dispatch",
+        "productflow_backend.application.image_sessions.service.requeue_async_dispatch",
         requeue_async_dispatch,
     )
     app = create_app()
@@ -1085,7 +1085,7 @@ def test_image_session_worker_auto_retry_exposes_last_failure_metadata(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from productflow_backend.application.image_sessions import (
+    from productflow_backend.application.image_sessions.service import (
         create_image_session,
         create_image_session_generation_task,
         execute_image_session_generation_task,
@@ -1103,7 +1103,7 @@ def test_image_session_worker_auto_retry_exposes_last_failure_metadata(
         fail_generate,
     )
     monkeypatch.setattr(
-        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
+        "productflow_backend.application.image_sessions.service.enqueue_image_session_generation_task",
         lambda task_id: sent.append(task_id),
     )
 
@@ -1139,7 +1139,7 @@ def test_image_session_worker_non_retryable_policy_failure_stops_without_auto_re
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from productflow_backend.application.image_sessions import (
+    from productflow_backend.application.image_sessions.service import (
         create_image_session,
         create_image_session_generation_task,
     )
@@ -1163,11 +1163,11 @@ def test_image_session_worker_non_retryable_policy_failure_stops_without_auto_re
         size="1024x1024",
     )
     monkeypatch.setattr(
-        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
+        "productflow_backend.application.image_sessions.service.enqueue_image_session_generation_task",
         lambda task_id: sent.append(task_id),
     )
 
-    from productflow_backend.application.image_sessions import execute_image_session_generation_task
+    from productflow_backend.application.image_sessions.service import execute_image_session_generation_task
 
     execute_image_session_generation_task(result.task.id)
 
@@ -1193,7 +1193,7 @@ def test_image_session_worker_non_retryable_parameter_failure_stops_without_auto
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from productflow_backend.application.image_sessions import (
+    from productflow_backend.application.image_sessions.service import (
         create_image_session,
         create_image_session_generation_task,
         execute_image_session_generation_task,
@@ -1210,7 +1210,7 @@ def test_image_session_worker_non_retryable_parameter_failure_stops_without_auto
         fail_generate,
     )
     monkeypatch.setattr(
-        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
+        "productflow_backend.application.image_sessions.service.enqueue_image_session_generation_task",
         lambda task_id: sent.append(task_id),
     )
 
@@ -1312,11 +1312,11 @@ def test_image_session_worker_surfaces_completed_text_without_image_reason(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from productflow_backend.application.image_session_dependencies import (
+    from productflow_backend.application.image_sessions.dependencies import (
         IMAGE_SESSION_TEXT_OUTPUT_FAILURE_REASON,
         ImageSessionProviderFailure,
     )
-    from productflow_backend.application.image_sessions import (
+    from productflow_backend.application.image_sessions.service import (
         create_image_session,
         create_image_session_generation_task,
         execute_image_session_generation_task,
@@ -1341,7 +1341,7 @@ def test_image_session_worker_surfaces_completed_text_without_image_reason(
 
     sent: list[str] = []
     monkeypatch.setattr(
-        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
+        "productflow_backend.application.image_sessions.service.enqueue_image_session_generation_task",
         lambda task_id: sent.append(task_id),
     )
     for _ in range(3):
@@ -1364,7 +1364,7 @@ def test_image_session_worker_partial_provider_failure_stops_without_duplicate_g
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from productflow_backend.application.image_sessions import (
+    from productflow_backend.application.image_sessions.service import (
         create_image_session,
         create_image_session_generation_task,
         execute_image_session_generation_task,
@@ -1439,14 +1439,14 @@ def test_image_session_worker_marks_task_failed_when_time_limit_raises_outside_c
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from productflow_backend.application.image_sessions import (
+    from productflow_backend.application.image_sessions.service import (
         create_image_session,
         create_image_session_generation_task,
         execute_image_session_generation_task,
     )
 
     monkeypatch.setattr(
-        "productflow_backend.application.image_sessions._execute_image_session_round_generation",
+        "productflow_backend.application.image_sessions.service._execute_image_session_round_generation",
         lambda *args, **kwargs: (_ for _ in ()).throw(TimeLimitExceeded()),
     )
 
@@ -1478,7 +1478,7 @@ def test_image_session_worker_failure_settles_task_when_parent_session_deleted(
 ) -> None:
     from sqlalchemy import delete
 
-    from productflow_backend.application.image_sessions import (
+    from productflow_backend.application.image_sessions.service import (
         create_image_session,
         create_image_session_generation_task,
         execute_image_session_generation_task,
@@ -1516,7 +1516,7 @@ def test_image_session_stale_attempt_cannot_fail_reclaimed_task(
     configured_env: Path,
     db_session,
 ) -> None:
-    from productflow_backend.application.image_sessions import (
+    from productflow_backend.application.image_sessions.service import (
         _handle_image_generation_task_failure_safely,
         _mark_image_generation_task_running,
         create_image_session,
@@ -1563,7 +1563,7 @@ def test_image_session_stale_attempt_cannot_persist_provider_result(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from productflow_backend.application.image_sessions import (
+    from productflow_backend.application.image_sessions.service import (
         _mark_image_generation_task_running,
         create_image_session,
         create_image_session_generation_task,
@@ -1635,7 +1635,7 @@ def test_image_session_worker_persists_provider_progress_heartbeat(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from productflow_backend.application.image_sessions import (
+    from productflow_backend.application.image_sessions.service import (
         create_image_session,
         create_image_session_generation_task,
         execute_image_session_generation_task,
@@ -1704,7 +1704,7 @@ def test_image_session_worker_duplicate_message_noops_terminal_task(
     configured_env: Path,
     db_session,
 ) -> None:
-    from productflow_backend.application.image_sessions import (
+    from productflow_backend.application.image_sessions.service import (
         create_image_session,
         create_image_session_generation_task,
         execute_image_session_generation_task,
@@ -1734,7 +1734,7 @@ def test_image_session_worker_duplicate_message_noops_running_task(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from productflow_backend.application.image_sessions import (
+    from productflow_backend.application.image_sessions.service import (
         create_image_session,
         create_image_session_generation_task,
         execute_image_session_generation_task,
@@ -1774,7 +1774,7 @@ def test_image_session_worker_defers_queued_task_when_global_running_capacity_fu
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from productflow_backend.application.image_sessions import (
+    from productflow_backend.application.image_sessions.service import (
         create_image_session,
         execute_image_session_generation_task,
     )
@@ -1898,7 +1898,7 @@ def test_image_session_openai_images_uses_selected_base_and_references_only(
     db_session,
     monkeypatch,
 ) -> None:
-    from productflow_backend.application.image_sessions import (
+    from productflow_backend.application.image_sessions.service import (
         add_image_session_reference_images,
         create_image_session,
         generate_image_session_round,
@@ -1988,7 +1988,7 @@ def test_image_session_google_gemini_uses_selected_base_and_references_only(
     db_session,
     monkeypatch,
 ) -> None:
-    from productflow_backend.application.image_sessions import (
+    from productflow_backend.application.image_sessions.service import (
         add_image_session_reference_images,
         create_image_session,
         generate_image_session_round,

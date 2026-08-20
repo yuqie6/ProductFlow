@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from productflow_backend.application.agent_conversations import (
+from productflow_backend.application.agent.conversations import (
     GLOBAL_SCOPE,
     get_agent_conversation_or_raise,
 )

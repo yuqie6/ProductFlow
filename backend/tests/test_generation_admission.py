@@ -9,9 +9,12 @@ from helpers import _login, _make_demo_image_bytes
 from sqlalchemy import select
 from workflow_draft_helpers import make_workflow_draft_payload
 
-from productflow_backend.application.image_sessions import create_image_session, create_image_session_generation_task
+from productflow_backend.application.image_sessions.service import (
+    create_image_session,
+    create_image_session_generation_task,
+)
 from productflow_backend.application.product_workflow.v2_runs import submit_v2_workflow_run
-from productflow_backend.application.use_cases import create_canonical_product
+from productflow_backend.application.products import create_canonical_product
 from productflow_backend.application.workflow_drafts.materialization import materialize_workflow_draft
 from productflow_backend.application.workflow_drafts.service import (
     confirm_workflow_draft_revision,
@@ -134,7 +137,7 @@ def test_generation_cap_accepts_and_queues_image_session_generation_task_creatio
 
     sent_task_ids: list[str] = []
     monkeypatch.setattr(
-        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
+        "productflow_backend.application.image_sessions.service.enqueue_image_session_generation_task",
         lambda task_id: sent_task_ids.append(task_id),
     )
 

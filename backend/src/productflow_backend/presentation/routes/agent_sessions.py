@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.agent_sessions import (
+from productflow_backend.application.agent.sessions import (
     AGENT_SESSION_LIST_MAX_ITEMS,
     archive_agent_session,
     create_agent_session,

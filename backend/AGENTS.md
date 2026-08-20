@@ -15,12 +15,12 @@ Use `docs/ARCHITECTURE.md` for the current code map and `CONTEXT.md` for domain 
 
 Current ownership:
 
-- Agent workspace and Turn projection: `agent_product_workspaces.py`, `agent_conversations.py`, `agent_control.py`, `agent_sync.py`, `agent_tools.py`.
+- Agent workspace and Turn projection: `agent/product_workspaces.py`, `conversations.py`, `control.py`, `sync.py`, `tools.py`.
 - Draft validation and materialization: `workflow_drafts/contracts.py`, `service.py`, `materialization.py`.
-- Current workflow commands and execution: `product_workflow/v2_*.py`, `execution.py`, `run_state.py`, plus `domain/workflow_rules.py`.
-- Product images: `gallery.py`, `gallery_assets.py`, `gallery_mutations.py`, `gallery_archives.py`, `media_assets.py`.
+- Current workflow commands and execution: `product_workflow/` public entry, `v2_*.py`, `execution.py`, `run_state.py`, plus `domain/workflow_rules.py`.
+- Product images: `product_images/` (`queries.py`, `mutations.py`, `archives.py`, `assets.py`). `MediaObject` primitives live in `media_objects.py`.
 - Provider/runtime configuration: `settings.py`, `runtime_settings.py`, `infrastructure/provider_config.py`, and provider adapters under `infrastructure/prompt/` and `infrastructure/image/`.
-- Durable submission/recovery: `queue_submission.py`, `durable_recovery.py`, `agent_sync.py`, and `workers.py`.
+- Durable submission/recovery: `queue_submission.py`, `durable_recovery.py`, `agent/sync.py`, and `workers.py`.
 
 ## Database And Transactions
 

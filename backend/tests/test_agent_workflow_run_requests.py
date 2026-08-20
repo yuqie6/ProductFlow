@@ -7,12 +7,12 @@ from helpers import _make_demo_image_bytes
 from sqlalchemy import func, select
 from workflow_draft_helpers import make_workflow_draft_payload
 
-from productflow_backend.application.agent_control import synchronize_agent_turn_state
-from productflow_backend.application.agent_conversations import bind_harness_turn, reserve_agent_turn
-from productflow_backend.application.agent_product_intake import AgentProductSelectionV1
-from productflow_backend.application.agent_product_workspaces import create_agent_product_workspace
-from productflow_backend.application.agent_tasks import create_agent_task, get_agent_task_or_raise
-from productflow_backend.application.agent_workflow_run_requests import (
+from productflow_backend.application.agent.control import synchronize_agent_turn_state
+from productflow_backend.application.agent.conversations import bind_harness_turn, reserve_agent_turn
+from productflow_backend.application.agent.product_intake import AgentProductSelectionV1
+from productflow_backend.application.agent.product_workspaces import create_agent_product_workspace
+from productflow_backend.application.agent.tasks import create_agent_task, get_agent_task_or_raise
+from productflow_backend.application.agent.workflow_run_requests import (
     cancel_agent_workflow_run_request,
     confirm_agent_workflow_run_request,
     create_agent_global_workflow_run_request,
@@ -21,7 +21,7 @@ from productflow_backend.application.agent_workflow_run_requests import (
     prepare_agent_global_workflow_run_request,
     prepare_agent_workflow_run_request,
 )
-from productflow_backend.application.agent_workflow_runs import inspect_agent_global_workflow_runs
+from productflow_backend.application.agent.workflow_runs import inspect_agent_global_workflow_runs
 from productflow_backend.application.product_workflow.run_state import WORKFLOW_CANCELLED_REASON
 from productflow_backend.application.product_workflow.v2_runs import (
     retry_v2_workflow_run,

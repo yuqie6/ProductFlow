@@ -8,21 +8,21 @@ import pytest
 from fastapi.testclient import TestClient
 from helpers import _login, _make_demo_image_bytes
 
-from productflow_backend.application.gallery_assets import (
-    GALLERY_UNCLASSIFIED_TYPE_KEY,
-    GalleryAssetSort,
-    GalleryDirectoryKind,
-    get_gallery_asset_detail,
-    get_gallery_bootstrap,
-    list_gallery_assets,
-)
-from productflow_backend.application.gallery_mutations import (
+from productflow_backend.application.product_images.mutations import (
     GalleryAssetMove,
     create_gallery_folder,
     delete_gallery_folder,
     move_gallery_assets,
     rename_gallery_asset,
     rename_gallery_folder,
+)
+from productflow_backend.application.product_images.queries import (
+    GALLERY_UNCLASSIFIED_TYPE_KEY,
+    GalleryAssetSort,
+    GalleryDirectoryKind,
+    get_gallery_asset_detail,
+    get_gallery_bootstrap,
+    list_gallery_assets,
 )
 from productflow_backend.domain.enums import MediaVerificationStatus, ProductImageOriginType
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
@@ -489,7 +489,7 @@ def test_gallery_browser_api_organizes_and_downloads_archive(
     configured_env,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from productflow_backend.application import gallery_archives
+    from productflow_backend.application.product_images import archives as gallery_archives
     from productflow_backend.presentation.api import create_app
     from productflow_backend.presentation.routes import products as product_routes
 

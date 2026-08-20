@@ -8,10 +8,10 @@ from helpers import _login, _make_demo_image_bytes
 from sqlalchemy import select
 from test_media_library_organization import _asset
 
-from productflow_backend.application.agent_control import synchronize_agent_turn_state
-from productflow_backend.application.agent_conversations import bind_harness_turn, reserve_agent_turn
-from productflow_backend.application.agent_sessions import create_agent_session
-from productflow_backend.application.agent_tasks import create_agent_task
+from productflow_backend.application.agent.control import synchronize_agent_turn_state
+from productflow_backend.application.agent.conversations import bind_harness_turn, reserve_agent_turn
+from productflow_backend.application.agent.sessions import create_agent_session
+from productflow_backend.application.agent.tasks import create_agent_task
 from productflow_backend.application.media_library.drafts import (
     append_library_organization_draft_revision,
     confirm_library_organization_draft_revision,
@@ -19,7 +19,7 @@ from productflow_backend.application.media_library.drafts import (
 )
 from productflow_backend.application.media_library.organization import move_media_library_assets
 from productflow_backend.application.media_library.service import save_media_library_asset_from_product
-from productflow_backend.application.use_cases import create_canonical_product
+from productflow_backend.application.products import create_canonical_product
 from productflow_backend.domain.enums import AgentConversationStatus, AgentTurnStatus, LibraryOrganizationDraftStatus
 from productflow_backend.domain.errors import ConflictError
 from productflow_backend.infrastructure.agent_service import AgentServiceArtifact, AgentServiceTurnState

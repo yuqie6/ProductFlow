@@ -17,7 +17,7 @@ from sqlalchemy.engine import URL, make_url
 
 from alembic import command
 from productflow_backend.application.legacy_retirement.media_library import LEGACY_GALLERY_ENTRIES
-from productflow_backend.application.media_library.backfill import (
+from productflow_backend.application.media_library.cutover.backfill import (
     capture_gallery_snapshot,
     run_gallery_backfill,
     verify_gallery_backfill,

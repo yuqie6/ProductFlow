@@ -9,13 +9,13 @@ from helpers import _login, _make_demo_image_bytes
 from pydantic import ValidationError
 from sqlalchemy import event, func, select
 
-from productflow_backend.application.agent_conversations import reserve_agent_turn
-from productflow_backend.application.agent_product_intake import (
+from productflow_backend.application.agent.conversations import reserve_agent_turn
+from productflow_backend.application.agent.product_intake import (
     AGENT_PRODUCT_IMAGE_TYPE_CATALOG,
     AgentProductSelectionV1,
     WorkflowIntakeV1,
 )
-from productflow_backend.application.agent_product_workspaces import (
+from productflow_backend.application.agent.product_workspaces import (
     create_agent_product_draft_workspace,
     create_agent_product_draft_workspace_from_global_conversation,
     create_agent_product_workspace,
@@ -23,7 +23,7 @@ from productflow_backend.application.agent_product_workspaces import (
     get_agent_product_workspace,
     reconcile_agent_product_draft_workspace_from_global_conversation,
 )
-from productflow_backend.application.agent_sessions import create_agent_session
+from productflow_backend.application.agent.sessions import create_agent_session
 from productflow_backend.domain.enums import AgentConversationScope, AgentTaskStatus
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError
 from productflow_backend.infrastructure.db.models import (

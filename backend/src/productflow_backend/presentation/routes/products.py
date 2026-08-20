@@ -5,11 +5,25 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
-from productflow_backend.application.gallery_archives import (
+from productflow_backend.application.product_images.archives import (
     build_gallery_archive,
     cleanup_gallery_archive,
 )
-from productflow_backend.application.gallery_assets import (
+from productflow_backend.application.product_images.assets import (
+    clear_product_cover,
+    delete_product_image_asset,
+    get_product_image_asset,
+    set_product_cover,
+)
+from productflow_backend.application.product_images.mutations import (
+    GalleryAssetMove,
+    create_gallery_folder,
+    delete_gallery_folder,
+    move_gallery_assets,
+    rename_gallery_asset,
+    rename_gallery_folder,
+)
+from productflow_backend.application.product_images.queries import (
     GALLERY_DEFAULT_LIMIT,
     GALLERY_MAX_LIMIT,
     GalleryAssetSort,
@@ -18,21 +32,7 @@ from productflow_backend.application.gallery_assets import (
     get_gallery_bootstrap,
     list_gallery_assets,
 )
-from productflow_backend.application.gallery_mutations import (
-    GalleryAssetMove,
-    create_gallery_folder,
-    delete_gallery_folder,
-    move_gallery_assets,
-    rename_gallery_asset,
-    rename_gallery_folder,
-)
-from productflow_backend.application.media_assets import (
-    clear_product_cover,
-    delete_product_image_asset,
-    get_product_image_asset,
-    set_product_cover,
-)
-from productflow_backend.application.use_cases import (
+from productflow_backend.application.products import (
     DEFAULT_PRODUCT_LIST_SORT,
     ProductListSort,
     add_canonical_product_images,

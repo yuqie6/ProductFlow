@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
 
 from productflow_backend.application.legacy_retirement.media_library import LEGACY_GALLERY_ENTRIES
-from productflow_backend.application.media_library.backfill import (
+from productflow_backend.application.media_library.cutover.backfill import (
     GalleryBackfillBlocker,
     capture_gallery_snapshot,
     run_gallery_backfill,

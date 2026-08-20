@@ -22,7 +22,7 @@ from productflow_backend.application.media_library.workflow import (
     remove_workflow_media_library_asset,
     sync_workflow_media_library_assets,
 )
-from productflow_backend.application.use_cases import create_canonical_product
+from productflow_backend.application.products import create_canonical_product
 from productflow_backend.domain.enums import ImageSessionAssetKind, MediaVerificationStatus
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (

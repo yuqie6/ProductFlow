@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from productflow_backend.application.agent_product_intake import (
+from productflow_backend.application.agent.product_intake import (
     AGENT_PRODUCT_ALLOWED_IMAGE_MIME_TYPES,
     AGENT_PRODUCT_DEFAULT_IMAGE_QUANTITY,
     AGENT_PRODUCT_IMAGE_TYPE_CATALOG,

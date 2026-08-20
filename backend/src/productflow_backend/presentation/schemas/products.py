@@ -6,7 +6,7 @@ from decimal import Decimal
 from pydantic import BaseModel, ConfigDict, Field
 
 from productflow_backend.application.delivery_renditions.contracts import DeliveryRenditionStatus
-from productflow_backend.application.gallery_assets import (
+from productflow_backend.application.product_images.queries import (
     GalleryAssetRecord,
     GalleryBootstrap,
 )

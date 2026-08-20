@@ -16,7 +16,7 @@ from productflow_backend.application.legacy_retirement.freeze import (
     set_legacy_v1_write_freeze_state,
 )
 from productflow_backend.application.product_workflow.v2_runs import submit_v2_workflow_run
-from productflow_backend.application.use_cases import create_canonical_product
+from productflow_backend.application.products import create_canonical_product
 from productflow_backend.application.workflow_drafts.materialization import materialize_workflow_draft
 from productflow_backend.application.workflow_drafts.service import (
     confirm_workflow_draft_revision,

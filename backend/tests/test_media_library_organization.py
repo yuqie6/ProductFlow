@@ -19,7 +19,7 @@ from productflow_backend.application.media_library.queries import (
     list_media_library_assets,
 )
 from productflow_backend.application.media_library.service import save_media_library_asset_from_product
-from productflow_backend.application.use_cases import create_canonical_product
+from productflow_backend.application.products import create_canonical_product
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError
 from productflow_backend.infrastructure.db.models import MediaLibraryAsset, MediaLibraryAssetTag
 

@@ -9,13 +9,13 @@ from helpers import _login, _make_demo_image_bytes
 from sqlalchemy import select
 from workflow_draft_helpers import make_workflow_draft_payload
 
-from productflow_backend.application.agent_conversations import (
+from productflow_backend.application.agent.conversations import (
     attach_agent_workflow_draft_artifact,
     bind_harness_turn,
     project_agent_turn_state,
     reserve_agent_turn,
 )
-from productflow_backend.application.agent_tools import get_agent_contract, get_agent_product_context
+from productflow_backend.application.agent.tools import get_agent_contract, get_agent_product_context
 from productflow_backend.application.product_workflow.folders import WorkflowNodePosition, update_workflow_node_layout
 from productflow_backend.application.product_workflow.v2_graph_commands import (
     create_v2_reference_node,
@@ -25,7 +25,7 @@ from productflow_backend.application.product_workflow.v2_node_editing import (
     update_v2_image_node,
     update_v2_prompt_node,
 )
-from productflow_backend.application.use_cases import create_canonical_product, delete_product
+from productflow_backend.application.products import create_canonical_product, delete_product
 from productflow_backend.application.workflow_drafts.contracts import GenerationSpec, ImagePromptPayloadV1
 from productflow_backend.application.workflow_drafts.materialization import materialize_workflow_draft
 from productflow_backend.application.workflow_drafts.service import (

@@ -8,9 +8,9 @@ from helpers import _login
 from sqlalchemy import select
 from test_agent_sessions import _create_workspace
 
-from productflow_backend.application import agent_control
-from productflow_backend.application.agent_conversations import project_agent_turn_state, reserve_agent_turn
-from productflow_backend.application.agent_execution import (
+from productflow_backend.application.agent import control as agent_control
+from productflow_backend.application.agent.conversations import project_agent_turn_state, reserve_agent_turn
+from productflow_backend.application.agent.execution import (
     append_agent_turn_checkpoint,
     append_agent_turn_event,
     claim_agent_turn_execution,
@@ -18,14 +18,14 @@ from productflow_backend.application.agent_execution import (
     recover_expired_agent_turn_executions,
     release_agent_turn_execution,
 )
-from productflow_backend.application.agent_sync import recover_unfinished_agent_turn_syncs
-from productflow_backend.application.agent_tasks import (
+from productflow_backend.application.agent.sync import recover_unfinished_agent_turn_syncs
+from productflow_backend.application.agent.tasks import (
     create_agent_task,
     list_agent_tasks,
     pause_agent_task,
     resume_agent_task,
 )
-from productflow_backend.application.agent_tools import (
+from productflow_backend.application.agent.tools import (
     inspect_agent_global_products,
     list_agent_global_products,
 )
@@ -916,7 +916,7 @@ def test_canceling_an_unbound_task_turn_updates_conversation_status(db_session) 
         idempotency_key="cancel-unbound-turn",
     )
 
-    from productflow_backend.application.agent_tasks import cancel_agent_task
+    from productflow_backend.application.agent.tasks import cancel_agent_task
 
     cancel_agent_task(db_session, task_id=task.id)
 

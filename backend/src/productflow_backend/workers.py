@@ -9,7 +9,7 @@ from threading import Event, Thread
 import dramatiq
 from sqlalchemy import update
 
-from productflow_backend.application.agent_sync import execute_agent_turn_sync
+from productflow_backend.application.agent.sync import execute_agent_turn_sync
 from productflow_backend.application.async_delivery import (
     DEFAULT_DISPATCH_CONSUMER_LEASE_SECONDS,
     DEFAULT_DISPATCH_MAX_ATTEMPTS,
@@ -19,8 +19,8 @@ from productflow_backend.application.async_delivery import (
     stage_async_dispatch_for_actor,
 )
 from productflow_backend.application.delivery_renditions import execute_delivery_rendition_job
-from productflow_backend.application.image_sessions import execute_image_session_generation_task
-from productflow_backend.application.product_workflows import (
+from productflow_backend.application.image_sessions.service import execute_image_session_generation_task
+from productflow_backend.application.product_workflow import (
     execute_product_workflow_node_run,
     execute_product_workflow_run,
 )

@@ -14,8 +14,12 @@ from sqlalchemy import func, select
 from workflow_draft_helpers import make_workflow_draft_payload
 
 from productflow_backend.application.async_delivery import run_async_dispatcher_once
-from productflow_backend.application.media_assets import clear_product_cover, delete_product_image_asset
+from productflow_backend.application.product_images.assets import (
+    clear_product_cover,
+    delete_product_image_asset,
+)
 from productflow_backend.application.product_workflow import execution as workflow_execution
+from productflow_backend.application.product_workflow.dependencies import WorkflowExecutionDependencies
 from productflow_backend.application.product_workflow.execution import (
     execute_product_workflow_node_run,
     execute_product_workflow_run,
@@ -35,8 +39,7 @@ from productflow_backend.application.product_workflow.v2_runs import (
     submit_v2_workflow_node_run,
     submit_v2_workflow_run,
 )
-from productflow_backend.application.product_workflow_dependencies import WorkflowExecutionDependencies
-from productflow_backend.application.use_cases import (
+from productflow_backend.application.products import (
     add_canonical_product_images,
     create_canonical_product,
     delete_product,

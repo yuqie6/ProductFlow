@@ -24,9 +24,9 @@ from dramatiq.worker import Worker
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.engine import URL, make_url
 
-from productflow_backend.application.agent_conversations import reserve_agent_turn
-from productflow_backend.application.agent_sessions import create_agent_session
-from productflow_backend.application.agent_sync import recover_unfinished_agent_turn_syncs
+from productflow_backend.application.agent.conversations import reserve_agent_turn
+from productflow_backend.application.agent.sessions import create_agent_session
+from productflow_backend.application.agent.sync import recover_unfinished_agent_turn_syncs
 from productflow_backend.application.async_delivery import (
     claim_async_dispatch_for_consumption,
     mark_async_dispatch_consumed,

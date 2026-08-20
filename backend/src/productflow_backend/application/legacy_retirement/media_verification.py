@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.media_assets import inspect_image_bytes
+from productflow_backend.application.media_objects import inspect_image_bytes
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.enums import MediaVerificationStatus
 from productflow_backend.domain.errors import BusinessValidationError

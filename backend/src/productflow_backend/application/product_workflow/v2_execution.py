@@ -12,7 +12,12 @@ from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.async_delivery import delivery_key_for_actor, stage_async_dispatch
 from productflow_backend.application.delivery_renditions.service import create_delivery_rendition_job
-from productflow_backend.application.media_assets import inspect_image_bytes, stage_product_image_asset
+from productflow_backend.application.media_objects import inspect_image_bytes
+from productflow_backend.application.product_images.assets import stage_product_image_asset
+from productflow_backend.application.product_workflow.dependencies import (
+    WorkflowExecutionDependencies,
+    default_workflow_execution_dependencies,
+)
 from productflow_backend.application.product_workflow.provider_effects import (
     ensure_workflow_provider_effect_intent,
     record_workflow_provider_effect_result,
@@ -31,10 +36,6 @@ from productflow_backend.application.product_workflow.run_state import (
 )
 from productflow_backend.application.product_workflow.v2_staleness import (
     ensure_image_prompt_references_current,
-)
-from productflow_backend.application.product_workflow_dependencies import (
-    WorkflowExecutionDependencies,
-    default_workflow_execution_dependencies,
 )
 from productflow_backend.application.storage_compensation import StorageWriteCompensation
 from productflow_backend.application.time import now_utc

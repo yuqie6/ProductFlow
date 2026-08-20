@@ -8,15 +8,15 @@ from dramatiq.middleware.time_limit import TimeLimitExceeded
 from PIL import Image
 from sqlalchemy import select
 
-from productflow_backend.application.image_session_dependencies import (
+from productflow_backend.application.image_sessions.dependencies import (
     IMAGE_SESSION_TEXT_OUTPUT_FAILURE_REASON,
     GeneratedChatImage,
     ImageSessionProviderFailure,
 )
-from productflow_backend.application.image_session_provider_effects import (
+from productflow_backend.application.image_sessions.provider_effects import (
     reconcile_image_session_provider_effect,
 )
-from productflow_backend.application.image_sessions import (
+from productflow_backend.application.image_sessions.service import (
     create_image_session,
     create_image_session_generation_task,
     execute_image_session_generation_task,
@@ -137,7 +137,7 @@ def test_image_session_typed_provider_failure_reaches_terminal_safe_reason(
 ) -> None:
     sent: list[str] = []
     monkeypatch.setattr(
-        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
+        "productflow_backend.application.image_sessions.service.enqueue_image_session_generation_task",
         lambda task_id: sent.append(task_id),
     )
     image_session = create_image_session(db_session, title="typed provider failure")
@@ -177,7 +177,7 @@ def test_image_session_fake_rate_limit_keeps_existing_classifier_and_retry_metad
 ) -> None:
     sent: list[str] = []
     monkeypatch.setattr(
-        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
+        "productflow_backend.application.image_sessions.service.enqueue_image_session_generation_task",
         lambda task_id: sent.append(task_id),
     )
     image_session = create_image_session(db_session, title="fake rate limit")
@@ -219,7 +219,7 @@ def test_image_session_fake_partial_failure_stops_with_unknown_provider_effect(
 ) -> None:
     sent: list[str] = []
     monkeypatch.setattr(
-        "productflow_backend.application.image_sessions.enqueue_image_session_generation_task",
+        "productflow_backend.application.image_sessions.service.enqueue_image_session_generation_task",
         lambda task_id: sent.append(task_id),
     )
     image_session = create_image_session(db_session, title="fake partial retry")

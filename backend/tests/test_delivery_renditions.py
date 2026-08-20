@@ -25,12 +25,15 @@ from productflow_backend.application.delivery_renditions.service import (
     submit_delivery_rendition_job,
 )
 from productflow_backend.application.durable_recovery import recover_unfinished_delivery_rendition_jobs
-from productflow_backend.application.gallery_assets import get_gallery_asset_detail
-from productflow_backend.application.media_assets import clear_product_cover, delete_product_image_asset
+from productflow_backend.application.product_images.assets import (
+    clear_product_cover,
+    delete_product_image_asset,
+)
+from productflow_backend.application.product_images.queries import get_gallery_asset_detail
 from productflow_backend.application.product_workflow import execution as workflow_execution
+from productflow_backend.application.product_workflow.dependencies import WorkflowExecutionDependencies
 from productflow_backend.application.product_workflow.v2_execution import execute_v2_workflow_node_run
-from productflow_backend.application.product_workflow_dependencies import WorkflowExecutionDependencies
-from productflow_backend.application.use_cases import create_canonical_product, delete_product
+from productflow_backend.application.products import create_canonical_product, delete_product
 from productflow_backend.application.workflow_drafts.materialization import materialize_workflow_draft
 from productflow_backend.application.workflow_drafts.service import (
     confirm_workflow_draft_revision,

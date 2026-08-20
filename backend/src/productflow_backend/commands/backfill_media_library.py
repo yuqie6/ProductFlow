@@ -9,14 +9,14 @@ from pathlib import Path
 
 import sqlalchemy as sa
 
-from productflow_backend.application.media_library.backfill import (
+from productflow_backend.application.media_library.cutover.backfill import (
     capture_gallery_snapshot,
     collect_gallery_backfill_blockers,
     gallery_reconciliation_hash,
     run_gallery_backfill,
     verify_gallery_backfill,
 )
-from productflow_backend.application.media_library.migration_audit import MediaLibraryMigrationAudit
+from productflow_backend.application.media_library.cutover.migration_audit import MediaLibraryMigrationAudit
 from productflow_backend.infrastructure.db.session import get_session_factory
 from productflow_backend.infrastructure.storage import LocalStorage
 

@@ -7,19 +7,19 @@ from fastapi.testclient import TestClient
 from helpers import _login, _make_demo_image_bytes
 from sqlalchemy import select
 
-from productflow_backend.application.agent_conversations import reserve_agent_turn
-from productflow_backend.application.agent_product_intake import AgentProductSelectionV1
-from productflow_backend.application.agent_product_workspaces import create_agent_product_workspace
-from productflow_backend.application.agent_sessions import (
+from productflow_backend.application.agent.conversations import reserve_agent_turn
+from productflow_backend.application.agent.product_intake import AgentProductSelectionV1
+from productflow_backend.application.agent.product_workspaces import create_agent_product_workspace
+from productflow_backend.application.agent.sessions import (
     AGENT_SESSION_DEFAULT_TITLE,
     archive_agent_session,
     create_agent_session,
     list_agent_sessions,
     rename_agent_session,
 )
-from productflow_backend.application.agent_tasks import create_agent_task
-from productflow_backend.application.agent_tools import get_agent_contract
-from productflow_backend.application.agent_workbenches import get_agent_workbench_bootstrap
+from productflow_backend.application.agent.tasks import create_agent_task
+from productflow_backend.application.agent.tools import get_agent_contract
+from productflow_backend.application.agent.workbenches import get_agent_workbench_bootstrap
 from productflow_backend.domain.enums import AgentConversationScope
 from productflow_backend.domain.errors import ConflictError
 from productflow_backend.infrastructure.db.models import AgentConversation, AgentSession

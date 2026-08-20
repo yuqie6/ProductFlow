@@ -77,7 +77,7 @@ Pi 官方说明默认运行时没有文件、进程、网络和 credential 的�
 
 ### 4.4 连接、长任务与重启恢复
 
-Agent 的执行所有权与浏览器连接分离：浏览器只观察 FastAPI 的 Web projection 和 SSE，FastAPI 负责业务状态、权限、ProductFlow event store 和 Agent service 的状态同步，Pi Agent service 持有当前进程内的模型 Turn。SSE 连接关闭只停止事件订阅的等待，不调用 Agent cancel；重新订阅时使用事件 sequence cursor 从 PostgreSQL `agent_turn_events` 继续读取。实现与回归测试分别位于 `agent-service/src/server.ts`、`agent-service/src/pi-runtime.ts`、`backend/src/productflow_backend/application/agent_event_stream.py`、`backend/tests/test_workflow_agent_service.py` 和 `web/src/pages/agent-workbench/useAgentTurnEvents.test.ts`。
+Agent 的执行所有权与浏览器连接分离：浏览器只观察 FastAPI 的 Web projection 和 SSE，FastAPI 负责业务状态、权限、ProductFlow event store 和 Agent service 的状态同步，Pi Agent service 持有当前进程内的模型 Turn。SSE 连接关闭只停止事件订阅的等待，不调用 Agent cancel；重新订阅时使用事件 sequence cursor 从 PostgreSQL `agent_turn_events` 继续读取。实现与回归测试分别位于 `agent-service/src/server.ts`、`agent-service/src/pi-runtime.ts`、`backend/src/productflow_backend/application/agent/event_stream.py`、`backend/tests/test_workflow_agent_service.py` 和 `web/src/pages/workbench/agent/useAgentTurnEvents.test.ts`。
 
 长任务按执行类型分层：
 

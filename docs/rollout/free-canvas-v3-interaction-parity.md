@@ -8,8 +8,8 @@
 
 - `origin/main` 的 `web/src/pages/product-detail/WorkflowCanvas.tsx`、`ProductDetailPage.tsx`、
   `InspectorPanel.tsx`、`RunsPanel.tsx`、`ImagesPanel.tsx` 和 `TemplateGroupsPanel.tsx`。
-- 当前工作树的 `web/src/pages/product-detail/WorkflowCanvasChrome.tsx`、`shortcuts.ts`、
-  `workflowCanvasInteraction.ts` 和 `web/src/pages/product-workflow-v2/` 中已验证的交互组件。
+- 当前工作树的 `web/src/pages/workbench/chrome/WorkflowCanvasChrome.tsx`、`shortcuts.ts`、
+  `workflowCanvasInteraction.ts` 和 `web/src/pages/workbench/canvas/` 中已验证的交互组件。
 - 目标 v3 的结构写入统一通过 `POST /api/v3/products/{product_id}/workflows/{workflow_id}/changesets`。
   画布本地状态只负责未提交的选择、视口、拖动预览和剪贴板。
 

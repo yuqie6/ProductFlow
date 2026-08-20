@@ -5,11 +5,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from productflow_backend.application.image_generation_core import extract_image_generation_provider_metadata
-from productflow_backend.application.image_session_provider_effects import (
+from productflow_backend.application.image_sessions.generation import extract_image_generation_provider_metadata
+from productflow_backend.application.image_sessions.provider_effects import (
     ImageSessionProviderEffectReconciliationResult,
 )
-from productflow_backend.application.image_sessions import ImageSessionStatusSnapshot
+from productflow_backend.application.image_sessions.service import ImageSessionStatusSnapshot
 from productflow_backend.domain.durable_generation_tasks import IMAGE_SESSION_GENERATION_TASK_CONTRACT
 from productflow_backend.domain.enums import ImageSessionAssetKind, JobStatus
 from productflow_backend.infrastructure.db.models import (

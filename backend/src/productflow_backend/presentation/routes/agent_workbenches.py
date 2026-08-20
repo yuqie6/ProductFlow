@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.agent_workbenches import get_agent_workbench_bootstrap
+from productflow_backend.application.agent.workbenches import get_agent_workbench_bootstrap
 from productflow_backend.presentation.deps import get_session, require_admin
 from productflow_backend.presentation.schemas.agent_workbenches import (
     AgentWorkbenchBootstrapResponse,

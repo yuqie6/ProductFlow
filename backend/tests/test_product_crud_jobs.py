@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from helpers import _login, _make_demo_image_bytes
 
-from productflow_backend.application.use_cases import list_products
+from productflow_backend.application.products import list_products
 from productflow_backend.infrastructure.db.models import Product, ProductWorkflow
 
 

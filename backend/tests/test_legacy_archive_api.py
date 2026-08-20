@@ -14,7 +14,7 @@ from productflow_backend.application.legacy_archives import (
     legacy_archive_export_bytes,
     list_legacy_archives,
 )
-from productflow_backend.application.use_cases import create_canonical_product
+from productflow_backend.application.products import create_canonical_product
 from productflow_backend.application.workflow_drafts.service import append_workflow_draft_revision
 from productflow_backend.config import get_settings
 from productflow_backend.domain.errors import BusinessValidationError, NotFoundError

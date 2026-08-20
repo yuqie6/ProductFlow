@@ -8,12 +8,12 @@ import pytest
 import sqlalchemy as sa
 
 from productflow_backend.application.legacy_retirement.media_library import LEGACY_GALLERY_ENTRIES
-from productflow_backend.application.media_library.backfill import (
+from productflow_backend.application.media_library.cutover.backfill import (
     capture_gallery_snapshot,
     gallery_reconciliation_hash,
     run_gallery_backfill,
 )
-from productflow_backend.application.media_library.retirement import (
+from productflow_backend.application.media_library.cutover.retirement import (
     LEGACY_GALLERY_RETIRE_CONFIRMATION,
     MEDIA_LIBRARY_CUTOVER_PHASE_CLEANED,
     MEDIA_LIBRARY_CUTOVER_PHASE_PENDING,

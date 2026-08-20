@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.product_workflow_dependencies import (
+from productflow_backend.application.product_workflow.dependencies import (
     WorkflowExecutionDependencies,
     default_workflow_execution_dependencies,
 )

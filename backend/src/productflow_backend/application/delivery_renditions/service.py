@@ -21,7 +21,8 @@ from productflow_backend.application.delivery_renditions.contracts import (
     normalize_delivery_spec,
 )
 from productflow_backend.application.delivery_renditions.renderer import render_delivery_rendition
-from productflow_backend.application.media_assets import inspect_image_bytes, stage_product_image_asset
+from productflow_backend.application.media_objects import inspect_image_bytes
+from productflow_backend.application.product_images.assets import stage_product_image_asset
 from productflow_backend.application.queue_submission import enqueue_or_mark_failed, raise_queue_unavailable
 from productflow_backend.application.storage_compensation import StorageWriteCompensation
 from productflow_backend.application.time import now_utc

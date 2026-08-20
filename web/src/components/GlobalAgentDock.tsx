@@ -56,7 +56,7 @@ import {
   type GlobalAgentDockMode,
   type ResizeDirection,
 } from "./globalAgentDockState";
-import { GlobalAgentConversationPanel } from "../pages/agent-workbench/GlobalAgentConversationPanel";
+import { GlobalAgentConversationPanel } from "../pages/workbench/agent/GlobalAgentConversationPanel";
 
 type GlobalAgentDockTab = "chat" | "tasks" | "sessions";
 

@@ -30,12 +30,13 @@ Current code ownership:
 
 | Capability | Application/Domain owner | HTTP/External owner | Primary regression tests |
 |---|---|---|---|
-| Agent product creation | `agent_product_workspaces.py`, `agent_product_intake.py` | `routes/agent_product_workspaces.py` | `test_agent_product_workspaces.py` |
-| Agent Turn and sync | `agent_conversations.py`, `agent_control.py`, `agent_sync.py` | `routes/agent_conversations.py`, `infrastructure/agent_service.py` | `test_workflow_agent_service.py` |
+| Agent product creation | `agent/product_workspaces.py`, `product_intake.py` | `routes/agent_product_workspaces.py` | `test_agent_product_workspaces.py` |
+| Agent Turn and sync | `agent/conversations.py`, `control.py`, `sync.py` | `routes/agent_conversations.py`, `infrastructure/agent_service.py` | `test_workflow_agent_service.py` |
+| Global library organization Draft | `media_library/draft_contracts.py`, `media_library/drafts.py`, `agent/control.py` | `routes/global_agent_conversations.py`, `routes/agent_internal.py` | `test_media_library_drafts.py` |
 | Draft and materialization | `workflow_drafts/contracts.py`, `service.py`, `materialization.py` | `routes/workflow_drafts.py` | Draft contract/materialization tests |
-| V2 graph and execution | `domain/workflow_rules.py`, `product_workflow/v2_*.py`, `execution.py` | `routes/workflow_drafts.py`, `workers.py` | workflow domain/run/node/recovery tests |
-| Product image library | `gallery_assets.py`, `gallery_mutations.py`, `gallery_archives.py`, `media_assets.py` | `routes/products.py` | product gallery explorer/media tests |
-| Iterative image generation | `image_sessions.py`, `image_generation_core.py` | `routes/image_sessions.py`, image adapters | image-session/provider tests |
+| V2 graph and execution | `domain/workflow_rules.py`, `product_workflow/` public entry, `v2_*.py`, `execution.py` | `routes/workflow_drafts.py`, `workers.py` | workflow domain/run/node/recovery tests |
+| Product image library | `product_images/` (`queries.py`, `mutations.py`, `archives.py`, `assets.py`), `media_objects.py` | `routes/products.py` | product gallery explorer/media tests |
+| Iterative image generation | `image_sessions/` (`service.py`, `generation.py`) | `routes/image_sessions.py`, image adapters | image-session/provider tests |
 | Settings and providers | `settings.py`, `runtime_settings.py` | `routes/settings.py`, `infrastructure/provider_config.py` | settings/provider/runtime tests |
 | V1 archive cutover | `legacy_archives.py`, `legacy_retirement/` | `routes/legacy_archives.py`, `commands/` | archive/cutover/migration tests |
 | Errors and logging | `domain/errors.py` | `presentation/errors.py`, `infrastructure/logging.py`, middleware and workers | error/logging tests |
@@ -58,11 +59,13 @@ Current code ownership:
 
 Page code lives in `web/src/pages/`. Shared visual components live in `web/src/components/`. HTTP, DTOs, i18n, and browser preferences live in `web/src/lib/`.
 
-The product workbench composes three existing component groups:
+The product workbench lives in `pages/workbench/` and is split on the v3 replacement boundary:
 
-- `agent-workbench/`: conversation, SSE events, questions, Draft confirmation, and materialization reveal.
-- `product-workflow-v2/`: V2 canvas, command bar, inspector, runs, recipes, and delivery renditions.
-- `product-detail/`: reused canvas chrome, node cards, sidebar, shortcuts, and image Explorer.
+- `workbench/agent/`: page orchestration, conversation, SSE events, questions, Draft confirmation, and materialization reveal.
+- `workbench/canvas/`: current V2 canvas, command bar, inspector, runs, recipes, and delivery renditions. v3 replaces this graph data source and keeps the agent/chrome interaction shell.
+- `workbench/chrome/`: canvas chrome, node cards, sidebar, shortcuts, and image Explorer.
+
+Dependency direction is `agent -> canvas, chrome` and `canvas -> chrome`. `chrome` must not import agent or canvas.
 
 TanStack Query owns server state. React state owns local forms, selection, and canvas interaction. `api.ts` is the browser HTTP boundary.
 
@@ -71,9 +74,10 @@ Current frontend ownership:
 | Capability | Owner | Primary tests |
 |---|---|---|
 | Agent creation form | `AgentProductCreatePage.tsx`, `pages/product-create/` | selection/form/workspace API tests |
-| Agent conversation, SSE, Draft confirmation | `pages/agent-workbench/` | reducer, event, conversation, confirmation, reveal tests |
-| V2 canvas and inspector | `pages/product-workflow-v2/` | graph, canvas, command, draft, history, rendition tests |
-| Shared workbench and image library | `pages/product-detail/` | shortcuts, interaction, image-explorer tests |
+| Agent conversation, SSE, Draft confirmation | `pages/workbench/agent/` | reducer, event, conversation, confirmation, reveal tests |
+| V2 canvas and inspector | `pages/workbench/canvas/` | graph, canvas, command, draft, history, rendition tests |
+| Global media library and workflow sub-library | `MediaLibraryPage.tsx`, `workbench/canvas/WorkflowMediaLibraryPanel.tsx` | media library/application tests, web build |
+| Shared workbench and image library | `pages/workbench/chrome/` | shortcuts, interaction, image-explorer tests |
 | HTTP and wire DTOs | `lib/api.ts`, `lib/types.ts` | `lib/*Api.test.ts`, TypeScript build |
 | Read-only history | `LegacyHistoryPage.tsx`, `pages/legacy-history/` | legacy history/model/API tests |
 
@@ -100,7 +104,7 @@ When reading product assets, the Agent first receives bounded metadata and then 
 
 Global media rename, move, tag, and archive operations are represented by a reviewable `propose_global_draft`; Pi does not expose low-level media mutation tools. ProductFlow re-reads facts and applies the Draft only after revision, idempotency, and reference checks plus user confirmation.
 
-The implementation path is: `routes/agent_product_workspaces.py` receives workspace creation; `agent_product_workspaces.py` persists Product, assets, Draft, and Conversation in one business transaction and exposes read-only reconciliation by creation idempotency key and request hash; `agent_effect_reconciliation.py` persists explicit unknown-effect verdicts; `agent_control.py` calls `infrastructure/agent_service.py`; `agent-service/src/pi-runtime.ts` translates Pi sessions and versioned ProductFlow tools into the wire state/events; `agent_sync.py` projects the Turn; `workflow_drafts/service.py` validates the artifact; and `workflow_drafts/materialization.py` atomically writes the V2 graph and reveal events.
+The implementation path is: `routes/agent_product_workspaces.py` receives workspace creation; `agent/product_workspaces.py` persists Product, assets, Draft, and Conversation in one business transaction and exposes read-only reconciliation by creation idempotency key and request hash; `agent/effect_reconciliation.py` persists explicit unknown-effect verdicts; `agent/control.py` calls `infrastructure/agent_service.py`; `agent-service/src/pi-runtime.ts` translates Pi sessions and versioned ProductFlow tools into the wire state/events; `agent/sync.py` projects the Turn; `workflow_drafts/service.py` validates the artifact; and `workflow_drafts/materialization.py` atomically writes the V2 graph and reveal events.
 
 ## 5. WorkflowDraft
 
@@ -134,7 +138,7 @@ Workflow execution is created and validated through ProductFlow business endpoin
 
 WorkflowRecipe stores user-created full workflows and fragments. Recipe payloads store reusable structure and configuration, without product identity, generated results, or media bytes.
 
-`domain/workflow_rules.py` owns graph rules. Structure commands, node editing, reference binding, and execution live under `application/product_workflow/v2_*.py`. Workers enter through `workers.py` and call `application/product_workflow/execution.py`; they do not maintain a second executor.
+`domain/workflow_rules.py` owns graph rules. Structure commands, node editing, reference binding, and execution live under `application/product_workflow/v2_*.py`. HTTP routes and workers enter through the `application/product_workflow` public entry; execution uses `execution.py`. They do not maintain a second executor.
 
 ## 7. Image Model
 
@@ -154,7 +158,7 @@ DeliveryRenditionJob reads a ProductImageAsset and asynchronously emits a crop, 
 
 GenerationSpec records model-generation intent. Provider-effective values and decoded actual output live in run/generation records. DeliverySpec is a separate deterministic contract and cannot invoke the image model.
 
-Global media-library reads, folder/tag/archive organization, source saves, and workflow associations are owned by `application/media_library/`, `routes/media_library.py`, `MediaLibraryPage.tsx`, and `WorkflowMediaLibraryPanel.tsx`, using bounded cursor pages and preview/thumbnail URLs. `/gallery` preserves a bookmark redirect; the old `/api/gallery` route, DTOs, and online runtime owner have been removed. `application/legacy_retirement/media_library.py` and `commands/backfill_media_library.py` provide bounded migration reads for the retained current-schema table; `legacy_retirement/gallery_bridge.py` and the four `legacy_gallery_bridge` commands own the old Canvas revision's Gallery-only manifest, target import, reconciliation, and source retirement. The product workbench's `product-detail/image-explorer/` continues to own product-scoped manual selection and binding.
+Global media-library reads, folder/tag/archive organization, source saves, and workflow associations are owned by `application/media_library/`, `routes/media_library.py`, `MediaLibraryPage.tsx`, and `WorkflowMediaLibraryPanel.tsx`, using bounded cursor pages and preview/thumbnail URLs. `/gallery` preserves a bookmark redirect; the old `/api/gallery` route, DTOs, and online runtime owner have been removed. `application/legacy_retirement/media_library.py` and `commands/backfill_media_library.py` provide bounded migration reads for the retained current-schema table; `legacy_retirement/gallery_bridge.py` and the four `legacy_gallery_bridge` commands own the old Canvas revision's Gallery-only manifest, target import, reconciliation, and source retirement. The product workbench's `workbench/chrome/image-explorer/` continues to own product-scoped manual selection and binding.
 
 ## 8. Provider Architecture
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.agent_tools import get_agent_task_contract
+from productflow_backend.application.agent.tools import get_agent_task_contract
 from productflow_backend.presentation.deps import get_session, require_agent_service
 from productflow_backend.presentation.schemas.agent_conversations import AgentContractResponse
 

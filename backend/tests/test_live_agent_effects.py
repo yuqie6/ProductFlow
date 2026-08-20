@@ -20,7 +20,7 @@ from sqlalchemy.engine import URL, make_url
 from test_agent_workflow_run_requests import _create_requestable_workspace
 
 from alembic import command
-from productflow_backend.application.agent_sessions import create_agent_session
+from productflow_backend.application.agent.sessions import create_agent_session
 from productflow_backend.config import get_settings
 from productflow_backend.domain.enums import AgentConversationScope
 from productflow_backend.infrastructure.db.models import (

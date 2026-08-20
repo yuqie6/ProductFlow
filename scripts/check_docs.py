@@ -37,16 +37,19 @@ LINK_DOCS = tuple(
 )
 
 CODE_OWNERS = (
-    "backend/src/productflow_backend/application/agent_product_workspaces.py",
-    "backend/src/productflow_backend/application/agent_conversations.py",
-    "backend/src/productflow_backend/application/agent_control.py",
-    "backend/src/productflow_backend/application/agent_sync.py",
+    "backend/src/productflow_backend/application/agent/product_workspaces.py",
+    "backend/src/productflow_backend/application/agent/conversations.py",
+    "backend/src/productflow_backend/application/agent/control.py",
+    "backend/src/productflow_backend/application/agent/sync.py",
     "backend/src/productflow_backend/application/workflow_drafts/contracts.py",
     "backend/src/productflow_backend/application/workflow_drafts/materialization.py",
+    "backend/src/productflow_backend/application/product_workflow/__init__.py",
     "backend/src/productflow_backend/application/product_workflow/execution.py",
-    "backend/src/productflow_backend/application/gallery_assets.py",
-    "backend/src/productflow_backend/application/gallery_mutations.py",
-    "backend/src/productflow_backend/application/gallery_archives.py",
+    "backend/src/productflow_backend/application/product_images/queries.py",
+    "backend/src/productflow_backend/application/product_images/mutations.py",
+    "backend/src/productflow_backend/application/product_images/archives.py",
+    "backend/src/productflow_backend/application/product_images/assets.py",
+    "backend/src/productflow_backend/application/media_objects.py",
     "backend/src/productflow_backend/application/legacy_retirement/media_library.py",
     "backend/src/productflow_backend/domain/workflow_rules.py",
     "backend/src/productflow_backend/presentation/routes/workflow_drafts.py",
@@ -55,9 +58,10 @@ CODE_OWNERS = (
     "web/src/lib/api.ts",
     "web/src/lib/types.ts",
     "web/src/pages/AgentProductCreatePage.tsx",
-    "web/src/pages/agent-workbench",
-    "web/src/pages/product-workflow-v2",
-    "web/src/pages/product-detail/image-explorer",
+    "web/src/pages/workbench/agent",
+    "web/src/pages/workbench/canvas",
+    "web/src/pages/workbench/chrome",
+    "web/src/pages/workbench/chrome/image-explorer",
 )
 
 CANONICAL_ROUTE_EXCLUSIONS = {
@@ -66,12 +70,16 @@ CANONICAL_ROUTE_EXCLUSIONS = {
 }
 
 
+RELATIVE_IMPORT_RE = re.compile(r"""(?:from\s+|import\s*\(\s*)['"](\.[^'"]+)['"]""")
+
+
 def main() -> int:
     errors: list[str] = []
     _check_required_paths(errors)
     _check_routes(errors)
     _check_markdown_links(errors)
     _check_stale_ownership(errors)
+    _check_workbench_boundaries(errors)
     if errors:
         print("Documentation contract check failed:")
         for error in errors:
@@ -134,9 +142,51 @@ def _check_stale_ownership(errors: list[str]) -> None:
     stable_docs = tuple(path for path in PRIMARY_DOCS if path.name != "ROADMAP.md")
     for doc in stable_docs:
         content = doc.read_text(encoding="utf-8")
-        for stale_name in ("gallery_queries.py", "product_gallery.py"):
+        for stale_name in (
+            "gallery_queries.py",
+            "product_gallery.py",
+            "application/product_workflows.py",
+            "application/gallery_assets.py",
+            "application/gallery_mutations.py",
+            "application/gallery_archives.py",
+            "application/use_cases.py",
+            "application/media_assets.py",
+            "application/product_workflow_dependencies.py",
+            "application/agent_conversations.py",
+            "application/agent_control.py",
+            "application/agent_sync.py",
+            "application/agent_product_workspaces.py",
+            "pages/agent-workbench",
+            "pages/product-workflow-v2",
+            "pages/product-detail",
+        ):
             if stale_name in content:
                 errors.append(f"{doc.relative_to(ROOT)} references retired owner {stale_name}")
+
+
+def _check_workbench_boundaries(errors: list[str]) -> None:
+    workbench = ROOT / "web/src/pages/workbench"
+    agent = (workbench / "agent").resolve()
+    canvas = (workbench / "canvas").resolve()
+    chrome = (workbench / "chrome").resolve()
+
+    def report_forbidden(source_root: Path, banned: tuple[Path, ...]) -> None:
+        for path in source_root.rglob("*"):
+            if path.suffix not in {".ts", ".tsx"}:
+                continue
+            for spec in RELATIVE_IMPORT_RE.findall(path.read_text(encoding="utf-8")):
+                target = (path.parent / spec).resolve()
+                for banned_root in banned:
+                    try:
+                        target.relative_to(banned_root)
+                    except ValueError:
+                        continue
+                    errors.append(
+                        f"{path.relative_to(ROOT)} imports {spec} across workbench boundary {banned_root.relative_to(ROOT)}"
+                    )
+
+    report_forbidden(chrome, (agent, canvas))
+    report_forbidden(canvas, (agent,))
 
 
 if __name__ == "__main__":

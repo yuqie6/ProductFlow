@@ -30,13 +30,13 @@ ProductFlow 是单管理员、单商家工作区，由六个运行单元组成�
 
 | 能力 | Application/Domain owner | HTTP/External owner | 主要回归测试 |
 |---|---|---|---|
-| Agent 商品创建 | `agent_product_workspaces.py`, `agent_product_intake.py` | `routes/agent_product_workspaces.py` | `test_agent_product_workspaces.py` |
-| Agent Turn 与同步 | `agent_conversations.py`, `agent_control.py`, `agent_sync.py` | `routes/agent_conversations.py`, `infrastructure/agent_service.py` | `test_workflow_agent_service.py` |
-| 全局素材整理 Draft | `media_library/draft_contracts.py`, `media_library/drafts.py`, `agent_control.py` | `routes/global_agent_conversations.py`, `routes/agent_internal.py` | `test_media_library_drafts.py` |
+| Agent 商品创建 | `agent/product_workspaces.py`, `product_intake.py` | `routes/agent_product_workspaces.py` | `test_agent_product_workspaces.py` |
+| Agent Turn 与同步 | `agent/conversations.py`, `control.py`, `sync.py` | `routes/agent_conversations.py`, `infrastructure/agent_service.py` | `test_workflow_agent_service.py` |
+| 全局素材整理 Draft | `media_library/draft_contracts.py`, `media_library/drafts.py`, `agent/control.py` | `routes/global_agent_conversations.py`, `routes/agent_internal.py` | `test_media_library_drafts.py` |
 | Draft 与物化 | `workflow_drafts/contracts.py`, `service.py`, `materialization.py` | `routes/workflow_drafts.py` | `test_workflow_draft_contracts.py`, `test_workflow_draft_materialization.py` |
-| V2 图与运行 | `domain/workflow_rules.py`, `product_workflow/v2_*.py`, `execution.py` | `routes/workflow_drafts.py`, `workers.py` | workflow domain/run/node/recovery tests |
-| 商品图片库 | `gallery_assets.py`, `gallery_mutations.py`, `gallery_archives.py`, `media_assets.py` | `routes/products.py` | `test_product_gallery_explorer.py`, `test_media_objects.py` |
-| 连续生图 | `image_sessions.py`, `image_generation_core.py` | `routes/image_sessions.py`, image adapters | image-session/provider tests |
+| V2 图与运行 | `domain/workflow_rules.py`, `product_workflow/` 公开入口, `v2_*.py`, `execution.py` | `routes/workflow_drafts.py`, `workers.py` | workflow domain/run/node/recovery tests |
+| 商品图片库 | `product_images/` (`queries.py`, `mutations.py`, `archives.py`, `assets.py`), `media_objects.py` | `routes/products.py` | `test_product_gallery_explorer.py`, `test_media_objects.py` |
+| 连续生图 | `image_sessions/` (`service.py`, `generation.py`) | `routes/image_sessions.py`, image adapters | image-session/provider tests |
 | 设置与 provider | `settings.py`, `runtime_settings.py` | `routes/settings.py`, `infrastructure/provider_config.py` | settings/provider/runtime tests |
 | V1 归档切换 | `legacy_archives.py`, `legacy_retirement/` | `routes/legacy_archives.py`, `commands/` | legacy archive/cutover/migration tests |
 | 错误与日志 | `domain/errors.py` | `presentation/errors.py`, `infrastructure/logging.py`, request middleware and workers | `test_error_handling.py`, `test_logging_behavior.py` |
@@ -59,11 +59,13 @@ ProductFlow 是单管理员、单商家工作区，由六个运行单元组成�
 
 页面级代码位于 `web/src/pages/`。共享视觉组件位于 `web/src/components/`，HTTP client、DTO、i18n 和浏览器偏好位于 `web/src/lib/`。
 
-商品工作台由三组现有组件组合：
+商品工作台位于 `pages/workbench/`，按 v3 可替换边界分成三组：
 
-- `agent-workbench/`：对话、SSE 事件、问题确认、Draft 确认和 materialization reveal。
-- `product-workflow-v2/`：V2 画布、命令栏、节点详情、运行、配方和交付图。
-- `product-detail/`：已复用的画布 chrome、节点卡片、侧栏、快捷键和图片 Explorer。
+- `workbench/agent/`：页面编排、对话、SSE 事件、问题确认、Draft 确认和 materialization reveal。
+- `workbench/canvas/`：当前 V2 画布、命令栏、节点详情、运行、配方和交付图。v3 替换这里的图数据源，不改 agent/chrome 的交互壳。
+- `workbench/chrome/`：画布 chrome、节点卡片、侧栏、快捷键和图片 Explorer。
+
+依赖方向固定为 `agent -> canvas, chrome`，`canvas -> chrome`。`chrome` 不得引用 agent 或 canvas。
 
 TanStack Query 管理服务端状态；局部表单、选择和画布交互使用 React state。`api.ts` 是浏览器 HTTP 的统一入口。
 
@@ -72,10 +74,10 @@ TanStack Query 管理服务端状态；局部表单、选择和画布交互使�
 | 能力 | Owner | 主要测试 |
 |---|---|---|
 | Agent 创建表单 | `AgentProductCreatePage.tsx`, `pages/product-create/` | selection/form/workspace API tests |
-| Agent 对话、SSE、Draft 确认 | `pages/agent-workbench/` | reducer, event, conversation, confirmation and reveal tests |
-| V2 画布与详情 | `pages/product-workflow-v2/` | graph, canvas, command, draft, history and rendition tests |
-| 全局素材库与工作流子图库 | `MediaLibraryPage.tsx`, `product-workflow-v2/WorkflowMediaLibraryPanel.tsx` | media library/application tests, web build |
-| 共享工作台与图片库 | `pages/product-detail/` | shortcuts, interaction and image-explorer tests |
+| Agent 对话、SSE、Draft 确认 | `pages/workbench/agent/` | reducer, event, conversation, confirmation and reveal tests |
+| V2 画布与详情 | `pages/workbench/canvas/` | graph, canvas, command, draft, history and rendition tests |
+| 全局素材库与工作流子图库 | `MediaLibraryPage.tsx`, `workbench/canvas/WorkflowMediaLibraryPanel.tsx` | media library/application tests, web build |
+| 共享工作台与图片库 | `pages/workbench/chrome/` | shortcuts, interaction and image-explorer tests |
 | HTTP 和 wire DTO | `lib/api.ts`, `lib/types.ts` | `lib/*Api.test.ts`, TypeScript build |
 | 历史只读页 | `LegacyHistoryPage.tsx`, `pages/legacy-history/` | legacy history/model/API tests |
 
@@ -105,7 +107,7 @@ Agent 读取商品资产时先获取有界元数据列表，再选择需要检�
 
 全局图库 Agent 的重命名、移动、标签和归档/恢复通过 `LibraryOrganizationDraft` 完成：发布只写 Draft revision，用户确认后由 ProductFlow 重新观察事实、校验 revision 和引用保护，再在一个事务中应用；确认请求使用幂等键和 request hash。
 
-实现链路：`routes/agent_product_workspaces.py` 创建 workspace，`agent_product_workspaces.py` 在一个业务事务中保存 Product、资产、WorkflowDraft、Session 与 Conversation；`agent_control.py` 调用 `infrastructure/agent_service.py`；`agent-service/src/pi-runtime.ts` 通过 Pi session 和版本化 ProductFlow Tools 生成 wire state/events；`agent_sync.py` 投影 Turn；商品 artifact 由 `workflow_drafts/service.py` 接收并校验，`workflow_drafts/materialization.py` 原子写入 V2 图和 reveal events；全局素材 artifact 由 `media_library/drafts.py` 接收、确认并物化。
+实现链路：`routes/agent_product_workspaces.py` 创建 workspace，`agent/product_workspaces.py` 在一个业务事务中保存 Product、资产、WorkflowDraft、Session 与 Conversation；`agent/control.py` 调用 `infrastructure/agent_service.py`；`agent-service/src/pi-runtime.ts` 通过 Pi session 和版本化 ProductFlow Tools 生成 wire state/events；`agent/sync.py` 投影 Turn；商品 artifact 由 `workflow_drafts/service.py` 接收并校验，`workflow_drafts/materialization.py` 原子写入 V2 图和 reveal events；全局素材 artifact 由 `media_library/drafts.py` 接收、确认并物化。
 
 ## 5. WorkflowDraft
 
@@ -139,7 +141,7 @@ WorkflowRun 和 WorkflowNodeRun 保存运行状态。worker 根据已成功的�
 
 WorkflowRecipe 保存用户主动创建的完整工作流或局部片段。recipe payload 只保存可复用结构和配置，不保存商品身份、生成结果或媒体字节。
 
-图规则由 `domain/workflow_rules.py` 负责；结构命令、节点编辑、reference binding 和运行分别位于 `application/product_workflow/v2_*.py`。worker 只从 `workers.py` 进入 `application/product_workflow/execution.py`，不维护第二套执行逻辑。
+图规则由 `domain/workflow_rules.py` 负责；结构命令、节点编辑、reference binding 和运行分别位于 `application/product_workflow/v2_*.py`。HTTP 与 worker 从 `application/product_workflow` 公开入口进入，执行走 `execution.py`，不维护第二套执行逻辑。
 
 ## 7. 图片模型
 
@@ -159,7 +161,7 @@ DeliveryRenditionJob 从 ProductImageAsset 读取原始媒体，按裁切、缩�
 
 GenerationSpec 保存模型生成意图；provider effective values 和解码后的 actual output 保存在运行/生成记录中。DeliverySpec 是独立确定性合同，不能触发图片模型调用。
 
-全局素材库读取、文件夹/标签/归档、来源保存和工作流关联由 `application/media_library/`、`routes/media_library.py`、`MediaLibraryPage.tsx` 和 `WorkflowMediaLibraryPanel.tsx` 负责，列表使用有界 cursor page 和 preview/thumbnail URL。`/gallery` 只保留旧书签兼容重定向；旧 `/api/gallery` route、DTO 和在线 runtime owner 已移除。`application/legacy_retirement/media_library.py` 与 `commands/backfill_media_library.py` 为 current schema 的旧物理表提供有界迁移读取；`legacy_retirement/gallery_bridge.py` 与四个 `legacy_gallery_bridge` command 负责旧 Canvas revision 的 Gallery-only manifest、目标导入、对账和 source retirement。商品工作台中的 `product-detail/image-explorer/` 继续负责商品作用域的人工选图和绑定。
+全局素材库读取、文件夹/标签/归档、来源保存和工作流关联由 `application/media_library/`、`routes/media_library.py`、`MediaLibraryPage.tsx` 和 `WorkflowMediaLibraryPanel.tsx` 负责，列表使用有界 cursor page 和 preview/thumbnail URL。`/gallery` 只保留旧书签兼容重定向；旧 `/api/gallery` route、DTO 和在线 runtime owner 已移除。`application/legacy_retirement/media_library.py` 与 `commands/backfill_media_library.py` 为 current schema 的旧物理表提供有界迁移读取；`legacy_retirement/gallery_bridge.py` 与四个 `legacy_gallery_bridge` command 负责旧 Canvas revision 的 Gallery-only manifest、目标导入、对账和 source retirement。商品工作台中的 `workbench/chrome/image-explorer/` 继续负责商品作用域的人工选图和绑定。
 
 ## 8. Provider 架构
 

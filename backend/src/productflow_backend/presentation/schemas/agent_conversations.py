@@ -5,14 +5,14 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_serializer, model_validator
 
-from productflow_backend.application.agent_conversations import (
+from productflow_backend.application.agent.conversations import (
     AGENT_MAX_INPUT_ASSETS,
     AGENT_MAX_INPUT_TEXT_CHARS,
 )
-from productflow_backend.application.agent_tools import (
+from productflow_backend.application.agent.tools import (
     AGENT_GLOBAL_PRODUCT_INSPECT_MAX,
 )
-from productflow_backend.application.agent_workflow_runs import (
+from productflow_backend.application.agent.workflow_runs import (
     AGENT_GLOBAL_WORKFLOW_INSPECT_MAX,
     AGENT_GLOBAL_WORKFLOW_RUN_LIST_MAX,
 )

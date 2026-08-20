@@ -14,9 +14,10 @@ Use `docs/ARCHITECTURE.md` for the current code map and inspect the route, API m
 Current feature owners:
 
 - Agent creation: `AgentProductCreatePage.tsx` and `pages/product-create/`.
-- Agent conversation/replay/Draft transition: `pages/agent-workbench/`.
-- V2 canvas, inspector, runs, recipes, and renditions: `pages/product-workflow-v2/`.
-- Shared workbench controls and canonical image explorer: `pages/product-detail/`.
+- Product workbench: `pages/workbench/`. Keep `agent -> canvas, chrome` and `canvas -> chrome`; `chrome` must not import the other two.
+- Agent conversation/replay/Draft transition and workbench orchestration: `pages/workbench/agent/`.
+- V2 canvas, inspector, runs, recipes, and renditions: `pages/workbench/canvas/`. v3 replaces this graph data source.
+- Shared workbench controls and canonical image explorer: `pages/workbench/chrome/`.
 - Read-only legacy history: `LegacyHistoryPage.tsx` and `pages/legacy-history/`.
 
 ## API And Types

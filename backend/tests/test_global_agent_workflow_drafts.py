@@ -8,28 +8,28 @@ from helpers import _login, _make_demo_image_bytes
 from sqlalchemy import func, select
 from workflow_draft_helpers import make_workflow_draft_payload
 
-from productflow_backend.application.agent_control import synchronize_agent_turn_state
-from productflow_backend.application.agent_conversations import (
+from productflow_backend.application.agent.control import synchronize_agent_turn_state
+from productflow_backend.application.agent.conversations import (
     bind_harness_turn,
     record_agent_turn_start_error,
     reserve_agent_turn,
 )
-from productflow_backend.application.agent_product_intake import AgentProductSelectionV1
-from productflow_backend.application.agent_product_workspaces import create_agent_product_workspace
-from productflow_backend.application.agent_tasks import create_agent_task
-from productflow_backend.application.agent_tools import (
-    get_agent_global_workflow_context,
-    get_agent_global_workflow_target,
-)
-from productflow_backend.application.global_agent_draft_contracts import (
+from productflow_backend.application.agent.global_draft_contracts import (
     GLOBAL_AGENT_DRAFT_ARTIFACT_NAME,
     GlobalAgentDraftPayloadV1,
     global_agent_draft_schema,
 )
-from productflow_backend.application.global_agent_drafts import (
+from productflow_backend.application.agent.global_drafts import (
     confirm_global_workflow_draft_review,
     get_global_workflow_draft_review,
     validate_global_agent_draft,
+)
+from productflow_backend.application.agent.product_intake import AgentProductSelectionV1
+from productflow_backend.application.agent.product_workspaces import create_agent_product_workspace
+from productflow_backend.application.agent.tasks import create_agent_task
+from productflow_backend.application.agent.tools import (
+    get_agent_global_workflow_context,
+    get_agent_global_workflow_target,
 )
 from productflow_backend.application.workflow_drafts.service import append_workflow_draft_revision
 from productflow_backend.domain.enums import AgentConversationStatus, AgentTaskStatus, AgentTurnStatus

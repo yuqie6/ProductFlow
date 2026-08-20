@@ -11,8 +11,11 @@ from helpers import _make_demo_image_bytes
 from sqlalchemy.exc import IntegrityError
 
 from alembic import command
-from productflow_backend.application.media_assets import clear_product_cover, delete_product_image_asset
-from productflow_backend.application.use_cases import create_canonical_product
+from productflow_backend.application.product_images.assets import (
+    clear_product_cover,
+    delete_product_image_asset,
+)
+from productflow_backend.application.products import create_canonical_product
 from productflow_backend.config import get_settings
 from productflow_backend.domain.errors import ConflictError
 from productflow_backend.infrastructure.db.models import (

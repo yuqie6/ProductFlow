@@ -5,7 +5,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from productflow_backend.application.agent_product_intake import WorkflowIntakeV1, parse_workflow_intake
+from productflow_backend.application.agent.product_intake import WorkflowIntakeV1, parse_workflow_intake
 from productflow_backend.application.product_workflow.folders import WorkflowNodePosition
 from productflow_backend.application.product_workflow.provider_effects import (
     WorkflowProviderEffectReconciliationResult,

@@ -8,13 +8,13 @@ from pathlib import Path
 import pytest
 from helpers import _make_demo_image_bytes
 
-from productflow_backend.application.image_sessions import (
+from productflow_backend.application.image_sessions.service import (
     add_image_session_reference_images,
     create_image_session,
     delete_image_session,
     delete_image_session_reference_image,
 )
-from productflow_backend.application.use_cases import (
+from productflow_backend.application.products import (
     add_canonical_product_images,
     create_canonical_product,
     delete_product,

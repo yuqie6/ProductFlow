@@ -23,7 +23,10 @@ from productflow_backend.application.legacy_retirement.gallery_bridge_contracts 
     gallery_bridge_manifest_sha256,
     gallery_bridge_report_sha256,
 )
-from productflow_backend.application.media_assets import VerifiedImageMetadata, inspect_image_bytes
+from productflow_backend.application.media_objects import (
+    VerifiedImageMetadata,
+    inspect_image_bytes,
+)
 from productflow_backend.application.storage_compensation import compensate_storage_writes
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.enums import MediaVerificationStatus

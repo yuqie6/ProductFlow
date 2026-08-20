@@ -7,7 +7,10 @@ from sqlalchemy import select
 
 from productflow_backend.application.async_delivery import delivery_key_for_actor, stage_async_dispatch
 from productflow_backend.application.durable_recovery import recover_unfinished_image_session_generation_tasks
-from productflow_backend.application.image_sessions import create_image_session, create_image_session_generation_task
+from productflow_backend.application.image_sessions.service import (
+    create_image_session,
+    create_image_session_generation_task,
+)
 from productflow_backend.domain.durable_generation_tasks import (
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
     IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL,

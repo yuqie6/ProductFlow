@@ -6,7 +6,7 @@ from helpers import _login, _make_demo_image_bytes
 from sqlalchemy import func, select
 from workflow_draft_helpers import make_workflow_draft_payload
 
-from productflow_backend.application.gallery_assets import list_gallery_assets
+from productflow_backend.application.product_images.queries import list_gallery_assets
 from productflow_backend.application.product_workflow.v2_graph_commands import (
     create_v2_reference_node,
     create_v2_workflow_edge,
@@ -14,7 +14,7 @@ from productflow_backend.application.product_workflow.v2_graph_commands import (
     delete_v2_workflow_node,
     duplicate_v2_workflow_node,
 )
-from productflow_backend.application.use_cases import create_canonical_product
+from productflow_backend.application.products import create_canonical_product
 from productflow_backend.application.workflow_drafts.contracts import ImagePromptPayloadV1
 from productflow_backend.application.workflow_drafts.materialization import materialize_workflow_draft
 from productflow_backend.application.workflow_drafts.service import (

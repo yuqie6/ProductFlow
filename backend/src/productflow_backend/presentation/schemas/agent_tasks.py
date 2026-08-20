@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from productflow_backend.application.agent_tasks import (
+from productflow_backend.application.agent.tasks import (
     AGENT_TASK_GOAL_MAX_LENGTH,
     AGENT_TASK_LIST_MAX_LIMIT,
     AGENT_TASK_TITLE_MAX_LENGTH,

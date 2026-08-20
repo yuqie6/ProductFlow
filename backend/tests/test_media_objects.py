@@ -9,20 +9,22 @@ from helpers import _enable_deletion, _login, _make_demo_image_bytes
 from PIL import Image
 from sqlalchemy.exc import IntegrityError
 
-from productflow_backend.application.image_sessions import (
+from productflow_backend.application.image_sessions.service import (
     attach_image_session_asset_to_product_canonical,
     create_image_session,
     delete_image_session,
 )
-from productflow_backend.application.media_assets import (
+from productflow_backend.application.media_objects import (
+    inspect_image_bytes,
+)
+from productflow_backend.application.product_images.assets import (
     clear_product_cover,
     create_generated_product_image_asset,
     delete_product_image_asset,
-    inspect_image_bytes,
     set_product_cover,
     set_product_cover_if_empty,
 )
-from productflow_backend.application.use_cases import create_canonical_product, delete_product
+from productflow_backend.application.products import create_canonical_product, delete_product
 from productflow_backend.domain.enums import (
     ImageSessionAssetKind,
     MediaVerificationStatus,

@@ -4,30 +4,30 @@ from fastapi import APIRouter, Depends, Header, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.agent_control import (
+from productflow_backend.application.agent.control import (
     answer_agent_question,
     control_agent_turn,
     refresh_agent_turn,
     submit_agent_turn,
 )
-from productflow_backend.application.agent_conversations import (
+from productflow_backend.application.agent.conversations import (
     AGENT_TURN_DEFAULT_PAGE_SIZE,
     AGENT_TURN_MAX_PAGE_SIZE,
     get_agent_turn_or_raise,
     list_agent_turn_page,
 )
-from productflow_backend.application.agent_effect_reconciliation import reconcile_agent_turn_effect
-from productflow_backend.application.agent_event_stream import stream_agent_turn_events
-from productflow_backend.application.agent_workflow_run_requests import (
+from productflow_backend.application.agent.effect_reconciliation import reconcile_agent_turn_effect
+from productflow_backend.application.agent.event_stream import stream_agent_turn_events
+from productflow_backend.application.agent.global_drafts import (
+    confirm_global_workflow_draft_review,
+    get_global_workflow_draft_review,
+)
+from productflow_backend.application.agent.workflow_run_requests import (
     cancel_agent_workflow_run_request,
     confirm_agent_workflow_run_request,
     get_agent_workflow_run_request,
 )
 from productflow_backend.application.async_delivery import stage_async_dispatch_for_actor
-from productflow_backend.application.global_agent_drafts import (
-    confirm_global_workflow_draft_review,
-    get_global_workflow_draft_review,
-)
 from productflow_backend.application.media_library.drafts import (
     confirm_library_organization_draft_revision,
     get_library_organization_draft_or_raise,

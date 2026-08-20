@@ -8,10 +8,10 @@ from helpers import _login, _make_demo_image_bytes
 from sqlalchemy import event, func, select
 from workflow_draft_helpers import make_workflow_draft_payload
 
-from productflow_backend.application.agent_conversations import create_agent_conversation
-from productflow_backend.application.agent_product_intake import AgentProductSelectionV1
-from productflow_backend.application.agent_product_workspaces import create_agent_product_workspace
-from productflow_backend.application.agent_workbenches import (
+from productflow_backend.application.agent.conversations import create_agent_conversation
+from productflow_backend.application.agent.product_intake import AgentProductSelectionV1
+from productflow_backend.application.agent.product_workspaces import create_agent_product_workspace
+from productflow_backend.application.agent.workbenches import (
     AgentV2WorkbenchBootstrap,
     get_agent_workbench_bootstrap,
 )

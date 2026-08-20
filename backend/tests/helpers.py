@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 if TYPE_CHECKING:
-    from productflow_backend.application.product_workflow_dependencies import WorkflowExecutionDependencies
+    from productflow_backend.application.product_workflow.dependencies import WorkflowExecutionDependencies
 
 
 def _make_demo_image_bytes() -> bytes:
@@ -62,7 +62,7 @@ def _execute_workflow_queue_inline(
     *,
     dependencies: WorkflowExecutionDependencies | None = None,
 ) -> None:
-    from productflow_backend.application.product_workflows import (
+    from productflow_backend.application.product_workflow import (
         execute_product_workflow_node_run,
         execute_product_workflow_run,
     )

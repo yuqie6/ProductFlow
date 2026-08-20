@@ -9,7 +9,6 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.media_assets import stage_verified_media_object
 from productflow_backend.application.media_library.contracts import (
     MediaLibrarySourceType,
     canonical_provenance_hash,
@@ -23,6 +22,7 @@ from productflow_backend.application.media_library.queries import (
     get_media_library_asset,
     list_media_library_assets,
 )
+from productflow_backend.application.media_objects import stage_verified_media_object
 from productflow_backend.application.storage_compensation import compensate_storage_writes
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.enums import (

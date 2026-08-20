@@ -6,7 +6,7 @@ Accepted
 
 ## 背景
 
-Agent 商品工作台（`pages/agent-workbench/`）目前是"能用的功能拼接"，缺少统一的设计意图。对照 DeepSeek Harness 的 Web UI，问题可以落到七个具体维度：布局、工具调用降噪、状态节点化、输入框、详情面板、turn 尾结构、设计 token 体系。其中六个可以在 frontend 内解决，但"工具调用降噪"受到一个架构约束：当前 wire 契约只投影 Agent 的最终 prose、Question 和 WorkflowDraft artifact，中间工具步骤没有暴露。
+Agent 商品工作台（`pages/workbench/agent/`）目前是"能用的功能拼接"，缺少统一的设计意图。对照 DeepSeek Harness 的 Web UI，问题可以落到七个具体维度：布局、工具调用降噪、状态节点化、输入框、详情面板、turn 尾结构、设计 token 体系。其中六个可以在 frontend 内解决，但"工具调用降噪"受到一个架构约束：当前 wire 契约只投影 Agent 的最终 prose、Question 和 WorkflowDraft artifact，中间工具步骤没有暴露。
 
 本 ADR 记录 UI 设计系统的决策和工具步骤投影的契约边界，为分阶段落地提供稳定依据。
 

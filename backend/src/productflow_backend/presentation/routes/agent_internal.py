@@ -5,18 +5,18 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, Header, Query, Response
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.agent_execution import (
+from productflow_backend.application.agent.execution import (
     append_agent_turn_checkpoint,
     append_agent_turn_event,
     claim_agent_turn_execution,
     heartbeat_agent_turn_execution,
     release_agent_turn_execution,
 )
-from productflow_backend.application.agent_product_workspaces import (
+from productflow_backend.application.agent.product_workspaces import (
     create_agent_product_draft_workspace_from_global_conversation,
     reconcile_agent_product_draft_workspace_from_global_conversation,
 )
-from productflow_backend.application.agent_tools import (
+from productflow_backend.application.agent.tools import (
     AGENT_ASSET_LIST_DEFAULT_LIMIT,
     AGENT_ASSET_LIST_MAX_LIMIT,
     AGENT_GLOBAL_PRODUCT_LIST_MAX_LIMIT,
@@ -48,30 +48,28 @@ from productflow_backend.application.agent_tools import (
     validate_agent_library_organization_draft,
     validate_agent_workflow_draft,
 )
-from productflow_backend.application.agent_workflow_run_requests import (
+from productflow_backend.application.agent.workflow_run_requests import (
     create_agent_global_workflow_run_request as create_agent_global_workflow_run_request_use_case,
 )
-from productflow_backend.application.agent_workflow_run_requests import (
+from productflow_backend.application.agent.workflow_run_requests import (
     create_agent_workflow_run_request as create_agent_workflow_run_request_use_case,
 )
-from productflow_backend.application.agent_workflow_run_requests import (
+from productflow_backend.application.agent.workflow_run_requests import (
     prepare_agent_global_workflow_run_request as prepare_agent_global_workflow_run_request_use_case,
 )
-from productflow_backend.application.agent_workflow_run_requests import (
+from productflow_backend.application.agent.workflow_run_requests import (
     prepare_agent_workflow_run_request as prepare_agent_workflow_run_request_use_case,
 )
-from productflow_backend.application.agent_workflow_run_requests import (
+from productflow_backend.application.agent.workflow_run_requests import (
     reconcile_agent_global_workflow_run_request as reconcile_agent_global_workflow_run_request_use_case,
 )
-from productflow_backend.application.agent_workflow_run_requests import (
+from productflow_backend.application.agent.workflow_run_requests import (
     reconcile_agent_workflow_run_request as reconcile_agent_workflow_run_request_use_case,
 )
-from productflow_backend.application.agent_workflow_runs import (
+from productflow_backend.application.agent.workflow_runs import (
     inspect_agent_global_workflow_runs,
     list_agent_workflow_runs,
 )
-from productflow_backend.application.gallery_assets import GalleryAssetSort, GalleryDirectoryKind
-from productflow_backend.application.gallery_mutations import GalleryAssetMove
 from productflow_backend.application.legacy_archive_rebuilds import (
     AGENT_LEGACY_ARCHIVE_LIST_DEFAULT_LIMIT,
     AGENT_LEGACY_ARCHIVE_LIST_MAX_LIMIT,
@@ -79,6 +77,8 @@ from productflow_backend.application.legacy_archive_rebuilds import (
     list_agent_legacy_archives,
 )
 from productflow_backend.application.legacy_archives import LegacyArchiveKind
+from productflow_backend.application.product_images.mutations import GalleryAssetMove
+from productflow_backend.application.product_images.queries import GalleryAssetSort, GalleryDirectoryKind
 from productflow_backend.domain.errors import ConflictError
 from productflow_backend.presentation.deps import get_session, require_agent_service
 from productflow_backend.presentation.schemas.agent_conversations import (

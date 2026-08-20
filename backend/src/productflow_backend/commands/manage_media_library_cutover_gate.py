@@ -5,7 +5,7 @@ import json
 from collections.abc import Sequence
 from datetime import datetime
 
-from productflow_backend.application.media_library.retirement import (
+from productflow_backend.application.media_library.cutover.retirement import (
     approve_media_library_cutover_gate,
     assert_media_library_cutover_cleanup_ready,
     read_media_library_cutover_gate,

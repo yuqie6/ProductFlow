@@ -3,8 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.agent_product_intake import parse_agent_product_selection
-from productflow_backend.application.agent_product_workspaces import (
+from productflow_backend.application.agent.product_intake import parse_agent_product_selection
+from productflow_backend.application.agent.product_workspaces import (
     AgentProductWorkspaceCreation,
     create_agent_product_draft_workspace,
     create_agent_product_workspace,

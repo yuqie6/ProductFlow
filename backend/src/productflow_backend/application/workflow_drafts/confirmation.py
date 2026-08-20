@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.agent_conversations import mark_agent_conversation_completed_for_draft
+from productflow_backend.application.agent.conversations import mark_agent_conversation_completed_for_draft
 from productflow_backend.application.workflow_drafts.service import (
     confirm_workflow_draft_revision,
     get_workflow_draft_or_raise,

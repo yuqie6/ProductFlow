@@ -6,8 +6,11 @@ import pytest
 from fastapi.testclient import TestClient
 from helpers import _login, _make_demo_image_bytes
 
-from productflow_backend.application.image_sessions import create_image_session, submit_image_session_generation_task
-from productflow_backend.application.use_cases import create_canonical_product
+from productflow_backend.application.image_sessions.service import (
+    create_image_session,
+    submit_image_session_generation_task,
+)
+from productflow_backend.application.products import create_canonical_product
 from productflow_backend.domain.errors import (
     BusinessError,
     BusinessValidationError,

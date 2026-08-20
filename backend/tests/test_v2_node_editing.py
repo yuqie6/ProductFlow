@@ -13,7 +13,7 @@ from productflow_backend.application.product_workflow.v2_node_editing import (
     update_v2_prompt_node,
     update_v2_reference_node,
 )
-from productflow_backend.application.use_cases import create_canonical_product
+from productflow_backend.application.products import create_canonical_product
 from productflow_backend.application.workflow_drafts.contracts import (
     DeliverySpec,
     GenerationSpec,

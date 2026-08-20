@@ -4,13 +4,13 @@ from fastapi.testclient import TestClient
 from helpers import _login
 from sqlalchemy import select
 
-from productflow_backend.application import agent_effect_reconciliation
-from productflow_backend.application.agent_conversations import reserve_agent_turn
-from productflow_backend.application.agent_product_workspaces import (
+from productflow_backend.application.agent import effect_reconciliation as agent_effect_reconciliation
+from productflow_backend.application.agent.conversations import reserve_agent_turn
+from productflow_backend.application.agent.product_workspaces import (
     AgentProductWorkspaceReconcileResult,
     create_agent_product_draft_workspace_from_global_conversation,
 )
-from productflow_backend.application.agent_sessions import create_agent_session
+from productflow_backend.application.agent.sessions import create_agent_session
 from productflow_backend.domain.enums import AgentCheckpointKind, AgentExecutionPhase, AgentTurnStatus
 from productflow_backend.infrastructure.db.models import (
     AgentTurnCheckpoint,

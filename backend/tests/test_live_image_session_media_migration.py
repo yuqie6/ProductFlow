@@ -13,7 +13,7 @@ from sqlalchemy.engine import URL, make_url
 from sqlalchemy.orm import Session
 
 from alembic import command
-from productflow_backend.application.image_sessions import delete_image_session
+from productflow_backend.application.image_sessions.service import delete_image_session
 from productflow_backend.config import get_settings
 from productflow_backend.infrastructure.storage import LocalStorage
 

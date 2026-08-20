@@ -8,7 +8,7 @@ from typing import Any
 
 from PIL import Image, ImageDraw
 
-from productflow_backend.application.image_session_dependencies import (
+from productflow_backend.application.image_sessions.dependencies import (
     IMAGE_SESSION_TEXT_OUTPUT_FAILURE_REASON,
     GeneratedChatImage,
     ImageChatTurn,

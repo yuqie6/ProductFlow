@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from productflow_backend.application.agent_product_intake import parse_workflow_intake
+from productflow_backend.application.agent.product_intake import parse_workflow_intake
 from productflow_backend.application.time import now_utc
 from productflow_backend.application.workflow_drafts.contracts import (
     WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS,

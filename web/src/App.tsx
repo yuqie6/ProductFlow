@@ -26,7 +26,7 @@ const AgentProductCreatePage = lazy(() =>
   import("./pages/AgentProductCreatePage").then((module) => ({ default: module.AgentProductCreatePage })),
 );
 const ProductWorkbenchPage = lazy(() =>
-  import("./pages/ProductWorkbenchPage").then((module) => ({ default: module.ProductWorkbenchPage })),
+  import("./pages/workbench/ProductWorkbenchPage").then((module) => ({ default: module.ProductWorkbenchPage })),
 );
 const loadProductListPage = () =>
   import("./pages/ProductListPage").then((module) => ({ default: module.ProductListPage }));

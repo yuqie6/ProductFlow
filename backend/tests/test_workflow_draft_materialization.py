@@ -7,7 +7,7 @@ from helpers import _make_demo_image_bytes
 from sqlalchemy import func, select
 from workflow_draft_helpers import make_workflow_draft_payload
 
-from productflow_backend.application.use_cases import create_canonical_product, delete_product
+from productflow_backend.application.products import create_canonical_product, delete_product
 from productflow_backend.application.workflow_drafts.materialization import (
     get_active_v2_workflow_snapshot,
     list_workflow_reveal_events,

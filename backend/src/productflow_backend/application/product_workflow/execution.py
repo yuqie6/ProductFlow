@@ -7,6 +7,7 @@ from dramatiq.middleware.time_limit import TimeLimitExceeded
 from sqlalchemy.orm import Session
 
 from productflow_backend.application.async_delivery import delivery_key_for_actor, requeue_async_dispatch
+from productflow_backend.application.product_workflow.dependencies import WorkflowExecutionDependencies
 from productflow_backend.application.product_workflow.run_state import (
     lock_workflow_run_aggregate,
     mark_workflow_node_run_failed,
@@ -16,7 +17,6 @@ from productflow_backend.application.product_workflow.run_state import (
     workflow_run_failure_progress_metadata,
 )
 from productflow_backend.application.product_workflow.v2_execution import execute_v2_workflow_node_run
-from productflow_backend.application.product_workflow_dependencies import WorkflowExecutionDependencies
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.durable_generation_tasks import (
     QUEUE_UNAVAILABLE_DETAIL,

@@ -14,7 +14,7 @@ from productflow_backend.application.product_workflow.folders import (
     translate_workflow_folder,
     update_workflow_node_layout,
 )
-from productflow_backend.application.use_cases import create_canonical_product
+from productflow_backend.application.products import create_canonical_product
 from productflow_backend.application.workflow_drafts.materialization import materialize_workflow_draft
 from productflow_backend.application.workflow_drafts.service import (
     confirm_workflow_draft_revision,

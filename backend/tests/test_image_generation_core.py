@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from helpers import _make_demo_image_bytes_with_size
 
-from productflow_backend.application.image_generation_core import (
+from productflow_backend.application.image_sessions.generation import (
     extract_image_generation_provider_metadata,
     normalize_image_generation_tool_options,
     provider_output_with_actual_image_size,

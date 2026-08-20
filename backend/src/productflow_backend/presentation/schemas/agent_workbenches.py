@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-from productflow_backend.application.agent_workbenches import AgentWorkbenchBootstrap
+from productflow_backend.application.agent.workbenches import AgentWorkbenchBootstrap
 from productflow_backend.presentation.schemas.agent_conversations import (
     AgentConversationResponse,
     serialize_agent_conversation,

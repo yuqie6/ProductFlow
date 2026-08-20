@@ -24,19 +24,19 @@ from productflow_backend.application.durable_recovery import (
     recover_unfinished_image_session_generation_tasks,
     recover_unfinished_workflow_runs,
 )
-from productflow_backend.application.image_sessions import (
+from productflow_backend.application.image_sessions.service import (
     ImageSessionGenerationStaleAttemptError,
     _execute_image_session_round_generation,
     _mark_image_generation_task_running,
     create_image_session,
     create_image_session_generation_task,
 )
+from productflow_backend.application.product_workflow.dependencies import WorkflowExecutionDependencies
 from productflow_backend.application.product_workflow.run_state import (
     claim_workflow_node_run,
     mark_workflow_node_run_failed,
 )
 from productflow_backend.application.product_workflow.v2_execution import execute_v2_workflow_node_run
-from productflow_backend.application.product_workflow_dependencies import WorkflowExecutionDependencies
 from productflow_backend.config import get_settings
 from productflow_backend.domain.durable_generation_tasks import (
     IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL,

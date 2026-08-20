@@ -5,7 +5,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import asdict
 
-from productflow_backend.application.media_library.retirement import (
+from productflow_backend.application.media_library.cutover.retirement import (
     LEGACY_GALLERY_RETIRE_CONFIRMATION,
     inspect_legacy_gallery_retirement,
     retire_legacy_gallery,

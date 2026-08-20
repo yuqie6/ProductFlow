@@ -9,7 +9,7 @@ from threading import Event
 from time import monotonic
 from typing import Any
 
-from productflow_backend.application.agent_sync import recover_unfinished_agent_turn_syncs
+from productflow_backend.application.agent.sync import recover_unfinished_agent_turn_syncs
 from productflow_backend.application.async_delivery import (
     run_async_dispatcher_once,
     stage_async_dispatch_for_actor,

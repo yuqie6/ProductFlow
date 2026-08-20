@@ -4,8 +4,8 @@ from fastapi import APIRouter, Depends, File, Path, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.image_session_provider_effects import reconcile_image_session_provider_effect
-from productflow_backend.application.image_sessions import (
+from productflow_backend.application.image_sessions.provider_effects import reconcile_image_session_provider_effect
+from productflow_backend.application.image_sessions.service import (
     add_image_session_reference_images,
     attach_image_session_asset_to_product_canonical,
     cancel_image_session_generation_task,
