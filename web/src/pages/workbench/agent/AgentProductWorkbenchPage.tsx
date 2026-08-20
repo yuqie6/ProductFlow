@@ -100,7 +100,9 @@ export function AgentProductWorkbenchPage({
   const [materialization, setMaterialization] = useState<WorkflowMaterializationResult | null>(null);
   const [dismissedRevisionId, setDismissedRevisionId] = useState<string | null>(null);
   const [conflictDetected, setConflictDetected] = useState(false);
-  const [sidebarTool, setSidebarTool] = useState<AgentSidebarToolId>("details");
+  const [sidebarTool, setSidebarTool] = useState<AgentSidebarToolId>(
+    bootstrap.active_workflow ? "details" : "agent",
+  );
   const [libraryMode, setLibraryMode] = useState<LibraryMode>("product");
   const [topChromeCollapsed, setTopChromeCollapsed] = useState(false);
   const [canvasContext, setCanvasContext] = useState<ProductWorkflowV2CanvasContext>(EMPTY_CANVAS_CONTEXT);
@@ -145,6 +147,7 @@ export function AgentProductWorkbenchPage({
     activeWorkflowQuery.data?.workflow ?? bootstrap.active_workflow,
     materialization?.workflow ?? null,
   );
+  const activeSidebarTool = resolveAgentWorkbenchSidebarTool(sidebarTool, Boolean(workflow));
   const pageContext = useMemo<AgentPageContextSnapshotInput>(() => ({
     route: `${location.pathname}${location.search}`,
     page_type: "product_workbench",
@@ -153,7 +156,7 @@ export function AgentProductWorkbenchPage({
     selected_asset_ids: [],
     visible_asset_ids: [],
     filters: {
-      sidebar: sidebarTool,
+      sidebar: activeSidebarTool,
       library_mode: libraryMode,
       ...(canvasContext.openFolderId ? { open_folder_id: canvasContext.openFolderId } : {}),
       ...(canvasContext.selectedNodeIds.length
@@ -163,12 +166,12 @@ export function AgentProductWorkbenchPage({
     workflow_revision: workflow?.revision ?? null,
     library_revision: null,
     captured_at: new Date().toISOString(),
-  }), [bootstrap.product.id, canvasContext.openFolderId, canvasContext.selectedNodeIds, libraryMode, location.pathname, location.search, sidebarTool, workflow?.id, workflow?.revision]);
+  }), [activeSidebarTool, bootstrap.product.id, canvasContext.openFolderId, canvasContext.selectedNodeIds, libraryMode, location.pathname, location.search, workflow?.id, workflow?.revision]);
   useRegisterAgentPageContext(pageContext);
   const recipesQuery = useQuery({
     queryKey: ["workflow-recipes", false],
     queryFn: () => api.listWorkflowRecipes(false),
-    enabled: Boolean(workflow && sidebarTool === "recipes"),
+    enabled: Boolean(workflow && activeSidebarTool === "recipes"),
   });
   const reviewableRevision = selectReviewableWorkflowRevision(bootstrap.workflow_draft, workflow);
   const confirmationOpen = Boolean(
@@ -561,7 +564,7 @@ export function AgentProductWorkbenchPage({
       ) : null}
       <AgentWorkbenchShell
         workflowAvailable={Boolean(workflow)}
-        activeSidebarTool={sidebarTool}
+        activeSidebarTool={activeSidebarTool}
         onSidebarToolChange={(toolId) => requestSidebarTool(toolId as AgentSidebarToolId)}
         sidebarTools={sidebarTools}
         canvasContent={workflow ? (
@@ -730,6 +733,13 @@ export function selectReviewableWorkflowRevision(
     return revision;
   }
   return null;
+}
+
+export function resolveAgentWorkbenchSidebarTool(
+  requested: AgentSidebarToolId,
+  workflowAvailable: boolean,
+): AgentSidebarToolId {
+  return workflowAvailable ? requested : "agent";
 }
 
 export function selectAgentWorkbenchWorkflow(

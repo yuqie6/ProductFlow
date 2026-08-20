@@ -176,6 +176,22 @@ describe("AgentWorkbenchShell", () => {
     expect(collapsedGridChild).toContain("aria-hidden=\"true\" inert=\"\"");
   });
 
+  it("shows the Agent panel when agent-only layout is given a missing sidebar tool", () => {
+    const markup = renderToStaticMarkup(createElement(AgentWorkbenchShell, {
+      workflowAvailable: false,
+      canvasContent: createElement("div", { "data-canvas-probe": true }),
+      agentContent: createElement("div", { "data-agent-probe": true }),
+      activeSidebarTool: "details",
+      sidebarTools: [],
+    }));
+    const agentPanelStart = markup.indexOf('data-product-workbench-tool-panel="agent"');
+    const agentPanelMarkup = markup.slice(agentPanelStart, agentPanelStart + 500);
+
+    expect(markup).toContain('data-workbench-layout="agent-only"');
+    expect(agentPanelMarkup).toContain("visible opacity-100");
+    expect(agentPanelMarkup).not.toContain("invisible pointer-events-none opacity-0");
+  });
+
   it("keeps the Agent mounted while lazily switching the active sidebar tool", () => {
     const agent = renderShell(true, false, "agent");
     const library = renderShell(true, false, "library");

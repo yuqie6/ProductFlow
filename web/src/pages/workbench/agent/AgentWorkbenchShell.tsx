@@ -87,7 +87,10 @@ export function AgentWorkbenchShell({
   const previousWorkflowAvailableRef = useRef(workflowAvailable);
   const previousSidebarToolRef = useRef(activeSidebarTool);
   const confirmationOpen = Boolean(confirmationContent);
-  const selectedTool = sidebarTools.find((tool) => tool.id === activeSidebarTool) ?? null;
+  const resolvedActiveToolId = sidebarTools.some((tool) => tool.id === activeSidebarTool) || activeSidebarTool === "agent"
+    ? activeSidebarTool
+    : "agent";
+  const selectedTool = sidebarTools.find((tool) => tool.id === resolvedActiveToolId) ?? null;
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
@@ -112,15 +115,15 @@ export function AgentWorkbenchShell({
   }, [inspector.setCollapsed, workflowAvailable]);
 
   useEffect(() => {
-    if (previousSidebarToolRef.current === activeSidebarTool) {
+    if (previousSidebarToolRef.current === resolvedActiveToolId) {
       return;
     }
-    previousSidebarToolRef.current = activeSidebarTool;
+    previousSidebarToolRef.current = resolvedActiveToolId;
     if (workflowAvailable) {
       inspector.setCollapsed(false);
       setMobileView("agent");
     }
-  }, [activeSidebarTool, inspector.setCollapsed, workflowAvailable]);
+  }, [inspector.setCollapsed, resolvedActiveToolId, workflowAvailable]);
 
   const selectSidebarTool = async (toolId: string) => {
     const accepted = await onSidebarToolChange?.(toolId);
@@ -136,7 +139,7 @@ export function AgentWorkbenchShell({
     compact,
     mobileView,
     confirmationOpen,
-    activeSidebarTool,
+    activeSidebarTool: resolvedActiveToolId,
     sidebarCollapsed,
   });
   const canvasVisibleClass = workflowAvailable
@@ -179,8 +182,8 @@ export function AgentWorkbenchShell({
           />
           <MobileViewTab
             active={mobileView === "agent"}
-            icon={activeSidebarTool === "agent" ? <Bot size={16} /> : selectedTool?.icon}
-            label={activeSidebarTool === "agent" ? t("agentWorkbench.agent") : selectedTool?.label ?? ""}
+            icon={resolvedActiveToolId === "agent" ? <Bot size={16} /> : selectedTool?.icon}
+            label={resolvedActiveToolId === "agent" ? t("agentWorkbench.agent") : selectedTool?.label ?? ""}
             onClick={() => setMobileView("agent")}
           />
         </div>
@@ -208,7 +211,7 @@ export function AgentWorkbenchShell({
         <ProductWorkbenchInspector
           workflowAvailable={workflowAvailable}
           tools={inspectorTools}
-          activeToolId={activeSidebarTool}
+          activeToolId={resolvedActiveToolId}
           onToolChange={selectSidebarTool}
           collapsed={sidebarCollapsed}
           onCollapsedChange={inspector.setCollapsed}

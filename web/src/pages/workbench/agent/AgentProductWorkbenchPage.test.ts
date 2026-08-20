@@ -8,6 +8,7 @@ import type {
 } from "../../../lib/types";
 import {
   preferActiveWorkflowSnapshot,
+  resolveAgentWorkbenchSidebarTool,
   selectAgentWorkbenchWorkflow,
   selectReviewableWorkflowRevision,
 } from "./AgentProductWorkbenchPage";
@@ -78,6 +79,15 @@ describe("Agent workbench workflow selection", () => {
     };
 
     expect(preferActiveWorkflowSnapshot(current, stale)).toBe(current);
+  });
+});
+
+describe("Agent workbench sidebar tool", () => {
+  it("keeps Agent visible until a workflow exists", () => {
+    expect(resolveAgentWorkbenchSidebarTool("details", false)).toBe("agent");
+    expect(resolveAgentWorkbenchSidebarTool("library", false)).toBe("agent");
+    expect(resolveAgentWorkbenchSidebarTool("agent", false)).toBe("agent");
+    expect(resolveAgentWorkbenchSidebarTool("details", true)).toBe("details");
   });
 });
 
