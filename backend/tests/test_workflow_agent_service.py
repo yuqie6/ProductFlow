@@ -61,6 +61,7 @@ from productflow_backend.domain.enums import (
     AgentToolStepStatus,
     AgentTurnStatus,
     MediaVerificationStatus,
+    WorkflowDraftStatus,
 )
 from productflow_backend.domain.errors import (
     BusinessValidationError,
@@ -1787,6 +1788,19 @@ def test_sync_worker_recovers_unbound_turn_and_idempotently_attaches_artifact(db
     refreshed_conversation = db_session.get(AgentConversation, conversation.id)
     assert refreshed_conversation is not None
     assert refreshed_conversation.status == AgentConversationStatus.COMPLETED
+    refreshed_projection = db_session.get(AgentTurnProjection, projection.id)
+    assert refreshed_projection is not None
+    assert refreshed_projection.status == AgentTurnStatus.SUCCEEDED
+    stale_projection = synchronize_agent_turn_state(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        projection_id=projection.id,
+        state=gateway.state(),
+    )
+    assert stale_projection.status == AgentTurnStatus.SUCCEEDED
+    assert stale_projection.conversation.status == AgentConversationStatus.COMPLETED
+
     followup = reserve_agent_turn(
         db_session,
         product_id=product.id,
@@ -1798,6 +1812,58 @@ def test_sync_worker_recovers_unbound_turn_and_idempotently_attaches_artifact(db
     assert followup.created is True
     assert followup.projection.conversation.status == AgentConversationStatus.COLLECTING
     assert followup.projection.conversation.harness_run_id == conversation.harness_run_id
+
+
+def test_workflow_draft_confirmation_rolls_back_if_agent_completion_fails(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.application.workflow_drafts import confirmation as confirmation_module
+    from productflow_backend.presentation.api import create_app
+
+    product, _, draft, payload = _create_product_and_draft(db_session)
+    append_workflow_draft_revision(
+        db_session,
+        product_id=product.id,
+        draft_id=draft.id,
+        expected_draft_version=1,
+        payload=payload,
+        ready_for_confirmation=True,
+        source_turn_id="confirm-rollback-turn",
+        source_artifact_step_id="confirm-rollback-artifact",
+    )
+    conversation = create_agent_conversation(
+        db_session,
+        product_id=product.id,
+        workflow_draft_id=draft.id,
+    )
+
+    def fail_agent_completion(*_args, **_kwargs):
+        raise RuntimeError("模拟会话收口失败")
+
+    monkeypatch.setattr(
+        confirmation_module,
+        "mark_agent_conversation_completed_for_draft",
+        fail_agent_completion,
+    )
+
+    client = TestClient(create_app())
+    _login(client)
+    with pytest.raises(RuntimeError, match="模拟会话收口失败"):
+        client.post(
+            f"/api/v2/products/{product.id}/workflow-drafts/{draft.id}/confirm",
+            json={"expected_draft_version": 2},
+        )
+
+    db_session.expire_all()
+    persisted_draft = db_session.get(WorkflowDraft, draft.id)
+    assert persisted_draft is not None
+    assert persisted_draft.status == WorkflowDraftStatus.AWAITING_CONFIRMATION
+    assert persisted_draft.current_revision is not None
+    assert persisted_draft.current_revision.confirmed_at is None
+    persisted_conversation = db_session.get(AgentConversation, conversation.id)
+    assert persisted_conversation is not None
+    assert persisted_conversation.status == AgentConversationStatus.COLLECTING
 
 
 def test_sync_worker_requeues_local_turn_after_expired_claim_recovery(db_session) -> None:

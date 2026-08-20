@@ -7,7 +7,6 @@ from fastapi import APIRouter, Depends, Header, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from productflow_backend.application.agent_conversations import mark_agent_conversation_completed_for_draft
 from productflow_backend.application.product_workflow.provider_effects import (
     reconcile_workflow_provider_effect,
 )
@@ -38,6 +37,7 @@ from productflow_backend.application.product_workflows import (
     update_v2_reference_node,
     update_workflow_node_layout,
 )
+from productflow_backend.application.workflow_drafts.confirmation import confirm_product_workflow_draft
 from productflow_backend.application.workflow_drafts.materialization import (
     get_active_v2_workflow_snapshot,
     list_workflow_reveal_events,
@@ -45,7 +45,6 @@ from productflow_backend.application.workflow_drafts.materialization import (
 )
 from productflow_backend.application.workflow_drafts.service import (
     append_workflow_draft_revision,
-    confirm_workflow_draft_revision,
     create_workflow_draft,
     get_workflow_draft_or_raise,
 )
@@ -706,16 +705,11 @@ def confirm_workflow_draft_endpoint(
     payload: ConfirmWorkflowDraftRequest,
     session: Session = Depends(get_session),
 ) -> WorkflowDraftResponse:
-    draft = confirm_workflow_draft_revision(
+    draft = confirm_product_workflow_draft(
         session,
         product_id=product_id,
         draft_id=draft_id,
         expected_draft_version=payload.expected_draft_version,
-    )
-    mark_agent_conversation_completed_for_draft(
-        session,
-        product_id=product_id,
-        workflow_draft_id=draft_id,
     )
     return serialize_workflow_draft(draft)
 

@@ -126,26 +126,27 @@ def test_global_workflow_artifact_attaches_to_target_draft_without_materializing
         status=AgentTurnStatus.RUNNING,
     )
 
+    state = AgentServiceTurnState(
+        api_version="v1alpha1",
+        run_id=task.harness_run_id,
+        turn_id="global-workflow-harness-turn",
+        status=AgentTurnStatus.SUCCEEDED,
+        output="工作流草案已准备",
+        artifact=AgentServiceArtifact(
+            name=GLOBAL_AGENT_DRAFT_ARTIFACT_NAME,
+            value=_global_workflow_artifact(workspace, expected_version=0),
+            step_id="global-workflow-step",
+        ),
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+        finished_at=datetime.now(UTC),
+    )
     synced = synchronize_agent_turn_state(
         db_session,
         product_id=None,
         conversation_id=conversation.id,
         projection_id=projection.id,
-        state=AgentServiceTurnState(
-            api_version="v1alpha1",
-            run_id=task.harness_run_id,
-            turn_id="global-workflow-harness-turn",
-            status=AgentTurnStatus.SUCCEEDED,
-            output="工作流草案已准备",
-            artifact=AgentServiceArtifact(
-                name=GLOBAL_AGENT_DRAFT_ARTIFACT_NAME,
-                value=_global_workflow_artifact(workspace, expected_version=0),
-                step_id="global-workflow-step",
-            ),
-            created_at=datetime.now(UTC),
-            updated_at=datetime.now(UTC),
-            finished_at=datetime.now(UTC),
-        ),
+        state=state,
     )
 
     assert synced.status == AgentTurnStatus.AWAITING_CONFIRMATION
@@ -184,6 +185,18 @@ def test_global_workflow_artifact_attaches_to_target_draft_without_materializing
     db_session.refresh(workspace.conversation)
     assert workspace.conversation.status.value == "completed"
 
+    stale_projection = synchronize_agent_turn_state(
+        db_session,
+        product_id=None,
+        conversation_id=conversation.id,
+        projection_id=projection.id,
+        state=state,
+    )
+    assert stale_projection.status == AgentTurnStatus.SUCCEEDED
+    db_session.refresh(task)
+    assert task.status == AgentTaskStatus.SUCCEEDED
+    db_session.refresh(conversation)
+    assert conversation.status == AgentConversationStatus.COMPLETED
 
 def test_global_workflow_artifact_rejects_stale_target_version(db_session) -> None:
     workspace = _workspace(db_session, key="global-stale")

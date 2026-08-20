@@ -625,7 +625,12 @@ def project_agent_turn_state(
         projection_id=projection_id,
     )
     _validate_harness_turn_binding(projection, harness_turn_id)
-    projection.status = status
+    stale_confirmed_workflow_turn = (
+        status == AgentTurnStatus.AWAITING_CONFIRMATION
+        and is_confirmed_workflow_draft_turn(projection)
+    )
+    projected_status = AgentTurnStatus.SUCCEEDED if stale_confirmed_workflow_turn else status
+    projection.status = projected_status
     projection.output_text = _bounded_optional_text(output_text, limit=100_000)
     projection.error_text = _bounded_optional_text(error_text, limit=4_000)
     projection.question_json = dict(question_json) if question_json is not None else None
@@ -634,11 +639,20 @@ def project_agent_turn_state(
     projection.sync_error = None
     projection.finished_at = finished_at
     projection.updated_at = now_utc()
-    _apply_conversation_status(projection.conversation, status)
+    preserve_newer_conversation_status = (
+        stale_confirmed_workflow_turn
+        and projection.conversation.status
+        not in {
+            AgentConversationStatus.AWAITING_CONFIRMATION,
+            AgentConversationStatus.COMPLETED,
+        }
+    )
+    if not preserve_newer_conversation_status:
+        _apply_conversation_status(projection.conversation, projected_status)
     update_agent_task_from_turn(
         session,
         projection=projection,
-        status=status,
+        status=projected_status,
         error_text=projection.error_text,
         finished_at=finished_at,
     )
@@ -756,10 +770,13 @@ def mark_agent_conversation_completed_for_draft(
     *,
     product_id: str,
     workflow_draft_id: str,
+    commit: bool = True,
 ) -> AgentConversation | None:
     conversation = session.scalar(
         select(AgentConversation)
-        .options(selectinload(AgentConversation.workflow_draft))
+        .options(
+            selectinload(AgentConversation.workflow_draft).selectinload(WorkflowDraft.current_revision),
+        )
         .where(
             AgentConversation.product_id == product_id,
             AgentConversation.workflow_draft_id == workflow_draft_id,
@@ -774,9 +791,30 @@ def mark_agent_conversation_completed_for_draft(
         WorkflowDraftStatus.READY,
     }:
         raise ConflictError("WorkflowDraft 尚未确认")
+    projection = session.scalar(
+        select(AgentTurnProjection)
+        .where(
+            AgentTurnProjection.conversation_id == conversation.id,
+            AgentTurnProjection.workflow_draft_revision_id == conversation.workflow_draft.current_revision_id,
+        )
+        .with_for_update()
+    )
+    if projection is not None and projection.status == AgentTurnStatus.AWAITING_CONFIRMATION:
+        finished_at = now_utc()
+        projection.status = AgentTurnStatus.SUCCEEDED
+        projection.finished_at = finished_at
+        projection.updated_at = finished_at
+        update_agent_task_from_turn(
+            session,
+            projection=projection,
+            status=AgentTurnStatus.SUCCEEDED,
+            error_text=None,
+            finished_at=finished_at,
+        )
     conversation.status = AgentConversationStatus.COMPLETED
     conversation.updated_at = now_utc()
-    session.commit()
+    if commit:
+        session.commit()
     return conversation
 
 
@@ -922,6 +960,20 @@ def _apply_conversation_status(
     else:
         conversation.status = AgentConversationStatus.COLLECTING
     conversation.updated_at = now_utc()
+
+
+def is_confirmed_workflow_draft_turn(projection: AgentTurnProjection) -> bool:
+    revision = projection.workflow_draft_revision
+    draft = revision.draft if revision is not None else None
+    return (
+        draft is not None
+        and draft.status
+        in {
+            WorkflowDraftStatus.CONFIRMED,
+            WorkflowDraftStatus.MATERIALIZING,
+            WorkflowDraftStatus.READY,
+        }
+    )
 
 
 def _bounded_optional_text(value: str | None, *, limit: int) -> str | None:

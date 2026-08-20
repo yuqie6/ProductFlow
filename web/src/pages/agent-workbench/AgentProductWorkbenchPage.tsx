@@ -250,6 +250,7 @@ export function AgentProductWorkbenchPage({
   const materializationMutation = useWorkflowMaterialization({
     productId: bootstrap.product.id,
     draftId: bootstrap.workflow_draft.id,
+    conversationId: bootstrap.conversation.id,
     onDraftConfirmed: updateBootstrapDraft,
     onConflict: async () => {
       await Promise.all([onRefetchBootstrap(), refetchWorkflow()]);

@@ -196,6 +196,7 @@ def confirm_workflow_draft_revision(
     product_id: str,
     draft_id: str,
     expected_draft_version: int,
+    commit: bool = True,
 ) -> WorkflowDraft:
     try:
         product = _get_product_or_raise(session, product_id, for_update=True)
@@ -208,7 +209,8 @@ def confirm_workflow_draft_revision(
                 raise ConflictError("已确认 WorkflowDraft 缺少商品事实版本")
             if revision.visual_system_version is None:
                 raise ConflictError("已确认 WorkflowDraft 缺少视觉体系版本")
-            session.commit()
+            if commit:
+                session.commit()
             return get_workflow_draft_or_raise(session, product_id=product_id, draft_id=draft_id)
         if draft.status != WorkflowDraftStatus.AWAITING_CONFIRMATION:
             raise ConflictError("WorkflowDraft 尚未进入待确认状态")
@@ -256,11 +258,14 @@ def confirm_workflow_draft_revision(
         draft.status = WorkflowDraftStatus.CONFIRMED
         draft.updated_at = now_utc()
         product.current_fact_set_version_id = fact_set.id
-        session.commit()
+        if commit:
+            session.commit()
     except Exception:
-        session.rollback()
+        if commit:
+            session.rollback()
         raise
-    session.expire_all()
+    if commit:
+        session.expire_all()
     return get_workflow_draft_or_raise(session, product_id=product_id, draft_id=draft_id)
 
 

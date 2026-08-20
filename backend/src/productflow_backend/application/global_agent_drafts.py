@@ -299,41 +299,47 @@ def confirm_global_workflow_draft_review(
         conversation_id=conversation_id,
         revision_id=revision_id,
     )
-    draft = confirm_workflow_draft_revision(
-        session,
-        product_id=review.product_id,
-        draft_id=review.workflow_draft_id,
-        expected_draft_version=expected_draft_version,
-    )
-    mark_agent_conversation_completed_for_draft(
-        session,
-        product_id=review.product_id,
-        workflow_draft_id=draft.id,
-    )
-    projection = session.scalar(
-        select(AgentTurnProjection)
-        .where(AgentTurnProjection.workflow_draft_revision_id == revision_id)
-        .with_for_update()
-    )
-    if projection is not None:
-        finished_at = now_utc()
-        projection.status = AgentTurnStatus.SUCCEEDED
-        projection.finished_at = finished_at
-        projection.updated_at = finished_at
-        update_agent_task_from_turn(
+    try:
+        draft = confirm_workflow_draft_revision(
             session,
-            projection=projection,
-            status=AgentTurnStatus.SUCCEEDED,
-            error_text=None,
-            finished_at=finished_at,
+            product_id=review.product_id,
+            draft_id=review.workflow_draft_id,
+            expected_draft_version=expected_draft_version,
+            commit=False,
         )
-    global_conversation = session.scalar(
-        select(AgentConversation).where(AgentConversation.id == conversation_id).with_for_update()
-    )
-    if global_conversation is not None:
-        global_conversation.status = AgentConversationStatus.COMPLETED
-        global_conversation.updated_at = now_utc()
-    session.commit()
+        mark_agent_conversation_completed_for_draft(
+            session,
+            product_id=review.product_id,
+            workflow_draft_id=draft.id,
+            commit=False,
+        )
+        projection = session.scalar(
+            select(AgentTurnProjection)
+            .where(AgentTurnProjection.workflow_draft_revision_id == revision_id)
+            .with_for_update()
+        )
+        if projection is not None:
+            finished_at = now_utc()
+            projection.status = AgentTurnStatus.SUCCEEDED
+            projection.finished_at = finished_at
+            projection.updated_at = finished_at
+            update_agent_task_from_turn(
+                session,
+                projection=projection,
+                status=AgentTurnStatus.SUCCEEDED,
+                error_text=None,
+                finished_at=finished_at,
+            )
+        global_conversation = session.scalar(
+            select(AgentConversation).where(AgentConversation.id == conversation_id).with_for_update()
+        )
+        if global_conversation is not None:
+            global_conversation.status = AgentConversationStatus.COMPLETED
+            global_conversation.updated_at = now_utc()
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     session.expire_all()
     return get_global_workflow_draft_review(
         session,

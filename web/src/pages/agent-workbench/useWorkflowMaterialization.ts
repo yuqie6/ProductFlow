@@ -34,6 +34,7 @@ interface ConfirmAndMaterializeWorkflowInput extends StartWorkflowMaterializatio
 interface UseWorkflowMaterializationInput {
   productId: string;
   draftId: string;
+  conversationId: string;
   onDraftConfirmed?: (draft: WorkflowDraft) => void;
   onConflict?: () => void | Promise<void>;
   onMaterialized?: (result: WorkflowMaterializationResult) => void;
@@ -97,6 +98,7 @@ export async function confirmAndMaterializeWorkflow(
 export function useWorkflowMaterialization({
   productId,
   draftId,
+  conversationId,
   onDraftConfirmed,
   onConflict,
   onMaterialized,
@@ -125,6 +127,8 @@ export function useWorkflowMaterialization({
       );
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["agent-workbench", productId] }),
+        queryClient.invalidateQueries({ queryKey: ["agent-turns", productId, conversationId] }),
+        queryClient.invalidateQueries({ queryKey: ["agent-turn", productId, conversationId] }),
         queryClient.invalidateQueries({ queryKey: ["workflow-draft", productId, draftId] }),
         queryClient.invalidateQueries({ queryKey: ["product", productId] }),
         queryClient.invalidateQueries({ queryKey: ["products"] }),

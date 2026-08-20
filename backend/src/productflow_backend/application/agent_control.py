@@ -15,6 +15,7 @@ from productflow_backend.application.agent_conversations import (
     cancel_unbound_agent_turn,
     get_agent_conversation_or_raise,
     get_agent_turn_or_raise,
+    is_confirmed_workflow_draft_turn,
     lock_agent_turn_or_raise,
     project_agent_turn_state,
     record_agent_turn_start_error,
@@ -482,6 +483,10 @@ def synchronize_agent_turn_state(
         effective_status = AgentTurnStatus.AWAITING_CONFIRMATION
     elif pending_workflow_run_request is not None and state.status == AgentTurnStatus.SUCCEEDED:
         effective_status = AgentTurnStatus.AWAITING_CONFIRMATION
+    stale_confirmed_workflow_turn = (
+        effective_status == AgentTurnStatus.AWAITING_CONFIRMATION
+        and is_confirmed_workflow_draft_turn(projection)
+    )
     projection = project_agent_turn_state(
         session,
         product_id=product_id,
@@ -500,6 +505,8 @@ def synchronize_agent_turn_state(
         finished_at=state.finished_at,
         commit=commit,
     )
+    if stale_confirmed_workflow_turn:
+        effective_status = projection.status
     if effective_status == AgentTurnStatus.AWAITING_CONFIRMATION:
         if state.artifact is None and pending_workflow_run_request is None:
             raise ConflictError("Agent Turn 待确认状态缺少 required artifact")
@@ -553,7 +560,7 @@ def synchronize_agent_turn_state(
                 request_id=pending_workflow_run_request.id,
                 commit=commit,
             )
-    elif state.artifact is not None:
+    elif state.artifact is not None and not stale_confirmed_workflow_turn:
         raise ConflictError("Agent Turn 在非待确认状态返回了 artifact")
     return projection
 
