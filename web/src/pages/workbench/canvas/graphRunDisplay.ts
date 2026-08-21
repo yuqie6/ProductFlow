@@ -1,5 +1,51 @@
 import type { TranslationKey } from "../../../lib/i18n";
-import type { GraphNodeRun, GraphProjection, GraphRunScope } from "../../../lib/types";
+import type {
+  GraphNodeRun,
+  GraphProjection,
+  GraphRun,
+  GraphRunScope,
+  WorkflowNodeStatus,
+} from "../../../lib/types";
+
+export interface GraphNodeRunPresentation {
+  status: WorkflowNodeStatus;
+  failureReason: string | null;
+  lastRunAt: string | null;
+  retryable: boolean;
+  runId: string | null;
+}
+
+const LIVE_RUN_STATUSES = new Set(["queued", "running"]);
+
+export function graphNodeRunPresentations(
+  runs: readonly GraphRun[],
+): Record<string, GraphNodeRunPresentation> {
+  const presentations: Record<string, GraphNodeRunPresentation> = {};
+  for (const run of runs) {
+    for (const nodeRun of run.node_runs) {
+      if (!nodeRun.node_id || presentations[nodeRun.node_id]) continue;
+      presentations[nodeRun.node_id] = presentationFromNodeRun(run, nodeRun);
+    }
+  }
+  const live = runs.find((run) => LIVE_RUN_STATUSES.has(run.status));
+  if (!live) return presentations;
+  for (const nodeRun of live.node_runs) {
+    if (!nodeRun.node_id) continue;
+    presentations[nodeRun.node_id] = presentationFromNodeRun(live, nodeRun);
+  }
+  return presentations;
+}
+
+function presentationFromNodeRun(run: GraphRun, nodeRun: GraphNodeRun): GraphNodeRunPresentation {
+  const failed = nodeRun.status === "failed";
+  return {
+    status: nodeRun.status,
+    failureReason: nodeRun.failure_reason ?? (failed ? run.failure_reason : null),
+    lastRunAt: nodeRun.finished_at ?? nodeRun.started_at,
+    retryable: failed && run.is_retryable,
+    runId: run.id,
+  };
+}
 
 export function graphRunScopeLabelKey(scope: GraphRunScope): TranslationKey {
   if (scope === "node") return "graph.runs.scope.node";
@@ -36,11 +82,11 @@ export function graphContextEntries(value: Record<string, unknown> | null): Arra
   value: string;
 }> {
   if (!value) return [];
-  return Object.entries(value).map(([key, item]) => ({
-    key,
-    labelKey: CONTEXT_LABEL_KEYS[key as keyof typeof CONTEXT_LABEL_KEYS] ?? null,
-    value: formatContextValue(item),
-  }));
+  return Object.entries(value).flatMap(([key, item]) => {
+    const labelKey = CONTEXT_LABEL_KEYS[key as keyof typeof CONTEXT_LABEL_KEYS] ?? null;
+    if (!labelKey) return [];
+    return [{ key, labelKey, value: formatContextValue(item) }];
+  });
 }
 
 function formatContextValue(value: unknown): string {

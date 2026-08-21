@@ -7,6 +7,8 @@ import {
   buildGraphAutoLayoutPositions,
   buildRenameGroupOperations,
   computeGraphGroupBounds,
+  createdGraphNodeIds,
+  graphViewportCenterPosition,
   selectedGraphEdges,
 } from "./graphLayout";
 
@@ -34,7 +36,9 @@ const graph: GraphProjection = {
   schema_version: 3,
   revision: 1,
   source_draft_revision_id: null,
-  last_operation_group_id: null,
+    last_operation_group_id: null,
+    can_undo: false,
+    can_redo: false,
   nodes: [
     node({ id: "source", node_type: "product_source", position_x: 400, position_y: 10 }),
     node({ id: "prompt", node_type: "prompt_generation", position_x: 10, position_y: 10 }),
@@ -87,5 +91,31 @@ describe("graph layout commands", () => {
   it("keeps only edges whose both ends are selected", () => {
     expect(selectedGraphEdges(graph, ["prompt", "image"]).map((edge) => edge.id)).toEqual(["e2"]);
     expect(selectedGraphEdges(graph, ["source"])).toEqual([]);
+  });
+
+  it("places a new node at the snapped viewport center, not a fixed 120,120 stack", () => {
+    const position = graphViewportCenterPosition({
+      x: 100,
+      y: 40,
+      zoom: 1,
+      surface_width: 1440,
+      surface_height: 900,
+    });
+    expect(position.position_x).not.toBe(120);
+    expect(position.position_y).not.toBe(120);
+    expect(position.position_x % 24).toBe(0);
+    expect(position.position_y % 24).toBe(0);
+  });
+
+  it("selects clones by diffing node ids after a duplicate ChangeSet", () => {
+    const after = {
+      ...graph,
+      nodes: [
+        ...graph.nodes,
+        node({ id: "prompt-copy", node_type: "prompt_generation" }),
+        node({ id: "image-copy", node_type: "image_generation" }),
+      ],
+    };
+    expect(createdGraphNodeIds(graph, after)).toEqual(["prompt-copy", "image-copy"]);
   });
 });

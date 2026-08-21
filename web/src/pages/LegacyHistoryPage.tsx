@@ -1052,8 +1052,8 @@ function RebuildTargetDialog({
             onClick={onClose}
             disabled={busy}
             className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-950 disabled:opacity-50 dark:hover:bg-slate-800 dark:hover:text-white"
-            aria-label={t("workflowV2.dialog.close")}
-            title={t("workflowV2.dialog.close")}
+            aria-label={t("workbench.dialog.close")}
+            title={t("workbench.dialog.close")}
           >
             <X size={16} />
           </button>

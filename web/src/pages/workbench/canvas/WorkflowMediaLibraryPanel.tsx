@@ -55,7 +55,7 @@ export function WorkflowMediaLibraryPanel({
   const referenceMutation = useMutation({
     mutationFn: (asset: WorkflowMediaLibraryAsset) => {
       if (!referenceTarget?.bindAsset || !asset.product_image_asset_id) {
-        throw new Error(t("workflowV2.reference.unavailable"));
+        throw new Error(t("workbench.reference.unavailable"));
       }
       return referenceTarget.bindAsset({ id: asset.product_image_asset_id });
     },
@@ -96,24 +96,24 @@ export function WorkflowMediaLibraryPanel({
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 px-3 py-2 dark:border-slate-800">
         <div className="min-w-0 flex-1">
-          <div className="text-xs font-semibold text-slate-800 dark:text-slate-100">{t("workflowV2.mediaLibrary.title")}</div>
-          <div className="mt-0.5 text-[10px] text-slate-400">{t("workflowV2.mediaLibrary.count", { count: linked.length })}</div>
+          <div className="text-xs font-semibold text-slate-800 dark:text-slate-100">{t("workbench.mediaLibrary.title")}</div>
+          <div className="mt-0.5 text-[10px] text-slate-400">{t("workbench.mediaLibrary.count", { count: linked.length })}</div>
         </div>
-        <button type="button" onClick={() => setPickerOpen(true)} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-indigo-600 px-2.5 text-[11px] font-semibold text-white hover:bg-indigo-500 dark:bg-violet-500 dark:hover:bg-violet-400" title={t("workflowV2.mediaLibrary.add")}>
-          <FolderPlus size={13} />{t("workflowV2.mediaLibrary.add")}
+        <button type="button" onClick={() => setPickerOpen(true)} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-indigo-600 px-2.5 text-[11px] font-semibold text-white hover:bg-indigo-500 dark:bg-violet-500 dark:hover:bg-violet-400" title={t("workbench.mediaLibrary.add")}>
+          <FolderPlus size={13} />{t("workbench.mediaLibrary.add")}
         </button>
       </div>
 
       {error ? <div role="alert" className="m-3 rounded-md border border-red-200 bg-red-50 px-2.5 py-2 text-xs text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200">{error instanceof ApiError ? error.detail : error.message}</div> : null}
-      {linkedQuery.isLoading ? <PanelState icon={<Loader2 size={17} className="animate-spin" />} text={t("workflowV2.mediaLibrary.loading")} /> : linked.length === 0 ? <PanelState icon={<Images size={20} />} text={t("workflowV2.mediaLibrary.empty")} action={t("workflowV2.mediaLibrary.add")} onAction={() => setPickerOpen(true)} /> : <div className="min-h-0 flex-1 overflow-y-auto p-3"><div className="grid grid-cols-2 gap-2">{linked.map((item) => <LinkedAssetCard key={item.asset.id} item={item} busy={busy} canReference={Boolean(referenceTarget?.bindAsset && item.product_image_asset_id)} onPreview={() => preview(item.asset)} onRemove={() => removeMutation.mutate(item.asset.id)} onUseAsReference={() => referenceMutation.mutate(item)} />)}</div></div>}
+      {linkedQuery.isLoading ? <PanelState icon={<Loader2 size={17} className="animate-spin" />} text={t("workbench.mediaLibrary.loading")} /> : linked.length === 0 ? <PanelState icon={<Images size={20} />} text={t("workbench.mediaLibrary.empty")} action={t("workbench.mediaLibrary.add")} onAction={() => setPickerOpen(true)} /> : <div className="min-h-0 flex-1 overflow-y-auto p-3"><div className="grid grid-cols-2 gap-2">{linked.map((item) => <LinkedAssetCard key={item.asset.id} item={item} busy={busy} canReference={Boolean(referenceTarget?.bindAsset && item.product_image_asset_id)} onPreview={() => preview(item.asset)} onRemove={() => removeMutation.mutate(item.asset.id)} onUseAsReference={() => referenceMutation.mutate(item)} />)}</div></div>}
 
       {pickerOpen ? (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/55 p-3 sm:p-5" onMouseDown={(event) => event.target === event.currentTarget && !syncMutation.isPending && setPickerOpen(false)}>
           <div role="dialog" aria-modal="true" className="flex h-[min(720px,calc(100svh-1.5rem))] w-full max-w-3xl min-h-0 flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-[#0d131e]">
             <header className="flex shrink-0 items-center gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
               <div className="min-w-0 flex-1">
-                <h2 className="text-sm font-semibold text-slate-950 dark:text-white">{t("workflowV2.mediaLibrary.pickerTitle")}</h2>
-                <p className="mt-0.5 text-[11px] text-slate-400">{t("workflowV2.mediaLibrary.pickerSelected", { count: selectedIds.size })}</p>
+                <h2 className="text-sm font-semibold text-slate-950 dark:text-white">{t("workbench.mediaLibrary.pickerTitle")}</h2>
+                <p className="mt-0.5 text-[11px] text-slate-400">{t("workbench.mediaLibrary.pickerSelected", { count: selectedIds.size })}</p>
               </div>
               <button type="button" onClick={() => setPickerOpen(false)} disabled={syncMutation.isPending} className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label={t("detail.library.close")}>
                 <X size={16} />
@@ -130,7 +130,7 @@ export function WorkflowMediaLibraryPanel({
               {pickerQuery.isLoading ? (
                 <PanelState icon={<Loader2 size={17} className="animate-spin" />} text={t("mediaLibrary.loading")} />
               ) : (pickerQuery.data?.items ?? []).filter((asset) => !linkedById.has(asset.id)).length === 0 ? (
-                <PanelState text={t("workflowV2.mediaLibrary.pickerEmpty")} />
+                <PanelState text={t("workbench.mediaLibrary.pickerEmpty")} />
               ) : (
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
                   {(pickerQuery.data?.items ?? [])
@@ -148,13 +148,13 @@ export function WorkflowMediaLibraryPanel({
               )}
             </div>
             <footer className="flex shrink-0 items-center gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-950/35">
-              <span className="mr-auto text-xs text-slate-500 dark:text-slate-400">{t("workflowV2.mediaLibrary.pickerHint")}</span>
+              <span className="mr-auto text-xs text-slate-500 dark:text-slate-400">{t("workbench.mediaLibrary.pickerHint")}</span>
               <button type="button" onClick={() => setPickerOpen(false)} disabled={syncMutation.isPending} className="h-9 rounded-md border border-slate-200 px-3 text-xs font-semibold text-slate-600 dark:border-slate-700 dark:text-slate-300">
                 {t("common.cancel")}
               </button>
               <button type="button" onClick={() => syncMutation.mutate([...selectedIds])} disabled={syncMutation.isPending || selectedIds.size === 0} className="inline-flex h-9 items-center gap-1.5 rounded-md bg-indigo-600 px-3 text-xs font-semibold text-white disabled:opacity-50 dark:bg-violet-500">
                 {syncMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : <Link2 size={13} />}
-                {t("workflowV2.mediaLibrary.confirmAdd")}
+                {t("workbench.mediaLibrary.confirmAdd")}
               </button>
             </footer>
           </div>
@@ -190,12 +190,12 @@ function LinkedAssetCard({ item, busy, canReference, onPreview, onRemove, onUseA
           {item.asset.folder_name ?? t("mediaLibrary.unorganized")}
         </div>
         <div className="mt-2 flex items-center justify-end gap-1">
-          <button type="button" onClick={onRemove} disabled={busy} className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40 dark:hover:bg-red-500/10 dark:hover:text-red-300" aria-label={t("workflowV2.mediaLibrary.remove")} title={t("workflowV2.mediaLibrary.remove")}>
+          <button type="button" onClick={onRemove} disabled={busy} className="inline-flex h-7 w-7 items-center justify-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-40 dark:hover:bg-red-500/10 dark:hover:text-red-300" aria-label={t("workbench.mediaLibrary.remove")} title={t("workbench.mediaLibrary.remove")}>
             <Unlink size={13} />
           </button>
           {canReference ? (
             <button type="button" onClick={onUseAsReference} disabled={busy} className="inline-flex h-7 items-center gap-1 rounded-md border border-indigo-100 px-2 text-[10px] font-semibold text-indigo-700 hover:bg-indigo-50 disabled:opacity-40 dark:border-violet-400/25 dark:text-violet-200 dark:hover:bg-violet-500/10">
-              <Link2 size={11} />{t("workflowV2.mediaLibrary.use")}
+              <Link2 size={11} />{t("workbench.mediaLibrary.use")}
             </button>
           ) : null}
         </div>

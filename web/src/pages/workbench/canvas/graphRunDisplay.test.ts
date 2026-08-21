@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import type { GraphNodeRun, GraphProjection } from "../../../lib/types";
+import type { GraphNodeRun, GraphProjection, GraphRun } from "../../../lib/types";
 import {
   graphContextEntries,
+  graphNodeRunPresentations,
   graphNodeRunPreviewAssetId,
   graphRunScopeLabelKey,
 } from "./graphRunDisplay";
@@ -14,7 +15,9 @@ const graph: GraphProjection = {
   schema_version: 3,
   revision: 2,
   source_draft_revision_id: null,
-  last_operation_group_id: null,
+    last_operation_group_id: null,
+    can_undo: false,
+    can_redo: false,
   nodes: [{
     id: "image",
     node_type: "image_generation",
@@ -66,9 +69,33 @@ describe("graph run display", () => {
     expect(graphContextEntries({
       fact_count: 3,
       reference_asset_ids: ["a", "b"],
+      mystery_digest: "abc",
     })).toEqual([
       { key: "fact_count", labelKey: "graph.runs.context.factCount", value: "3" },
       { key: "reference_asset_ids", labelKey: "graph.runs.context.referenceAssets", value: "a · b" },
     ]);
+  });
+
+  it("projects the latest node failure onto the card presentation", () => {
+    const failed: GraphRun = {
+      id: "run-1",
+      graph_id: "g1",
+      status: "failed",
+      scope: "node",
+      requested_node_id: "image",
+      graph_revision: 2,
+      failure_reason: "上游失败",
+      is_retryable: true,
+      node_runs: [nodeRun({ status: "failed", failure_reason: "模型超时", finished_at: "2026-08-21T00:00:02Z" })],
+      started_at: "2026-08-21T00:00:00Z",
+      finished_at: "2026-08-21T00:00:02Z",
+    };
+    expect(graphNodeRunPresentations([failed]).image).toEqual({
+      status: "failed",
+      failureReason: "模型超时",
+      lastRunAt: "2026-08-21T00:00:02Z",
+      retryable: true,
+      runId: "run-1",
+    });
   });
 });

@@ -74,9 +74,16 @@ export function AgentProductWorkbenchPage({
   const [recipeApplication, setRecipeApplication] = useState<WorkflowRecipeApplicationResult | null>(null);
   const [recipeError, setRecipeError] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<DownloadableImage | null>(null);
+  const [canvasBusy, setCanvasBusy] = useState(false);
+  const [chromeCollapsed, setChromeCollapsed] = useState(false);
   const recipeApplyKeysRef = useRef(new Map<string, string>());
   const sidebarToolRef = useRef<AgentSidebarToolId>(sidebarTool);
+  const flushInspectorRef = useRef<() => Promise<void>>(async () => undefined);
   sidebarToolRef.current = sidebarTool;
+  const registerInspectorFlush = useCallback((flush: () => Promise<void>) => {
+    flushInspectorRef.current = flush;
+  }, []);
+  const beforeRun = useCallback(() => flushInspectorRef.current(), []);
 
   const catalogQuery = useQuery({
     queryKey: ["graph-node-catalog"],
@@ -196,7 +203,7 @@ export function AgentProductWorkbenchPage({
       setArchiveRecipe(null);
     },
     onError: (error) => {
-      setRecipeError(errorDetail(error, t("workflowV2.error.recipe")));
+      setRecipeError(errorDetail(error, t("workbench.error.recipe")));
     },
   });
 
@@ -207,13 +214,29 @@ export function AgentProductWorkbenchPage({
   }, []);
   const inspectNode = useCallback((nodeId: string) => {
     if (!liveGraph || !inspectableGraphNodeId(liveGraph, nodeId)) return;
-    setSelectedNodeIds([nodeId]);
-    void requestSidebarTool("details");
+    void (async () => {
+      try {
+        await flushInspectorRef.current();
+      } catch {
+        return;
+      }
+      setSelectedNodeIds([nodeId]);
+      void requestSidebarTool("details");
+    })();
   }, [liveGraph, requestSidebarTool]);
   const selectCanvasNodes = useCallback((nodeIds: string[]) => {
-    setSelectedNodeIds(nodeIds);
-    if (nodeIds.length === 1) inspectNode(nodeIds[0]);
-  }, [inspectNode]);
+    void (async () => {
+      try {
+        await flushInspectorRef.current();
+      } catch {
+        return;
+      }
+      setSelectedNodeIds(nodeIds);
+      if (nodeIds.length === 1 && liveGraph && inspectableGraphNodeId(liveGraph, nodeIds[0])) {
+        void requestSidebarTool("details");
+      }
+    })();
+  }, [liveGraph, requestSidebarTool]);
 
   const confirmRevision = (revision: WorkflowDraftRevision) => {
     if (materializationMutation.isPending) return;
@@ -235,7 +258,7 @@ export function AgentProductWorkbenchPage({
       content: (
         <GraphAddNodePanel
           catalog={catalog}
-          busy={false}
+          busy={canvasBusy}
           onCreate={actions.createNode}
           canDuplicate={selectedNodeIds.length > 0}
           canGroup={selectedNodeIds.length > 1}
@@ -258,7 +281,8 @@ export function AgentProductWorkbenchPage({
           graph={liveGraph}
           node={selected}
           product={bootstrap.product}
-          busy={false}
+          busy={canvasBusy}
+          onRegisterFlush={registerInspectorFlush}
           onCommit={async (input) => {
             if (!selected) return;
             return actions.commitNode({ nodeId: selected.id, ...input });
@@ -288,7 +312,7 @@ export function AgentProductWorkbenchPage({
     },
     {
       id: "library",
-      label: t("workflowV2.sidebar.library"),
+      label: t("workbench.sidebar.library"),
       icon: <Images size={17} />,
       contentClassName: "flex min-h-0 flex-1 flex-col overflow-hidden",
       content: (
@@ -315,7 +339,7 @@ export function AgentProductWorkbenchPage({
     ...graphTools,
     {
       id: "recipes",
-      label: t("workflowV2.sidebar.recipes"),
+      label: t("workbench.sidebar.recipes"),
       icon: <Boxes size={17} />,
       contentClassName: "flex min-h-0 flex-1 flex-col overflow-hidden",
       content: (
@@ -323,7 +347,7 @@ export function AgentProductWorkbenchPage({
           {recipeError ? (
             <SidebarError
               message={recipeError}
-              closeLabel={t("workflowV2.dialog.close")}
+              closeLabel={t("workbench.dialog.close")}
               onClose={() => setRecipeError(null)}
             />
           ) : null}
@@ -332,7 +356,7 @@ export function AgentProductWorkbenchPage({
               recipes={recipesQuery.data ?? []}
               loading={recipesQuery.isLoading}
               error={recipesQuery.isError
-                ? errorDetail(recipesQuery.error, t("workflowV2.error.recipes"))
+                ? errorDetail(recipesQuery.error, t("workbench.error.recipes"))
                 : null}
               operationRecipeId={recipeMutation.isPending && recipeMutation.variables?.kind === "apply"
                 ? recipeMutation.variables.recipe.id
@@ -357,10 +381,12 @@ export function AgentProductWorkbenchPage({
 
   return (
     <div className="flex h-dvh min-h-[560px] flex-col overflow-hidden bg-white text-zinc-950 dark:bg-[#060a12] dark:text-slate-100">
-      <TopNav
-        breadcrumbs={`${bootstrap.product.name} / ${t("agentWorkbench.breadcrumb")}`}
-        onHome={() => navigate("/products")}
-      />
+      {chromeCollapsed ? null : (
+        <TopNav
+          breadcrumbs={`${bootstrap.product.name} / ${t("agentWorkbench.breadcrumb")}`}
+          onHome={() => navigate("/products")}
+        />
+      )}
       <AgentWorkbenchShell
         workflowAvailable={workflowAvailable}
         activeSidebarTool={activeSidebarTool}
@@ -375,6 +401,10 @@ export function AgentProductWorkbenchPage({
             onSelect={selectCanvasNodes}
             onGraphChange={(next) => queryClient.setQueryData(["workflow-graph", bootstrap.product.id], next)}
             onRegisterActions={setActions}
+            onBusyChange={setCanvasBusy}
+            onBeforeRun={beforeRun}
+            chromeCollapsed={chromeCollapsed}
+            onToggleChrome={() => setChromeCollapsed((current) => !current)}
             onBindNode={(nodeId) => {
               setBindNodeId(nodeId);
               void requestSidebarTool("library");
@@ -434,11 +464,11 @@ export function AgentProductWorkbenchPage({
 
       <ConfirmDialog
         open={archiveRecipe !== null}
-        title={t("workflowV2.recipe.archive")}
-        description={t("workflowV2.recipe.archiveConfirm", {
+        title={t("workbench.recipe.archive")}
+        description={t("workbench.recipe.archiveConfirm", {
           title: archiveRecipe?.current_version.title ?? "",
         })}
-        confirmLabel={t("workflowV2.recipe.archive")}
+        confirmLabel={t("workbench.recipe.archive")}
         cancelLabel={t("common.cancel")}
         busy={recipeMutation.isPending}
         destructive
@@ -457,7 +487,7 @@ export function AgentProductWorkbenchPage({
           imageAlt={previewImage.alt}
           title={previewImage.alt}
           subtitle={previewImage.filename}
-          body={t("workflowV2.preview.body")}
+          body={t("workbench.preview.body")}
           providerNotesTitle={t("gallery.providerNotes")}
           downloadUrl={previewImage.downloadUrl}
           downloadLabel={t("gallery.download")}

@@ -47,29 +47,48 @@ export interface WorkflowNodePresentationCardProps {
   onSelect: (event: ReactMouseEvent<HTMLElement>) => void;
 }
 
-const NODE_CHROME = {
-  iconBox: "border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-800/80 dark:text-slate-300",
-  badge: "border-slate-200/80 bg-slate-100 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300",
-};
-
 const KIND_THEMES: Record<WorkflowNodePresentationKind, {
   icon: typeof FileText;
   iconBox: string;
   badge: string;
 }> = {
-  product_source: { icon: FileText, ...NODE_CHROME },
-  image_asset: { icon: ImagePlus, ...NODE_CHROME },
-  creative_brief: { icon: Type, ...NODE_CHROME },
-  visual_system: { icon: Palette, ...NODE_CHROME },
-  prompt_generation: { icon: Braces, ...NODE_CHROME },
-  image_generation: { icon: ImageIcon, ...NODE_CHROME },
+  product_source: {
+    icon: FileText,
+    iconBox: "border-purple-200/80 bg-purple-50 text-purple-700 dark:border-purple-500/30 dark:bg-purple-950/60 dark:text-purple-300",
+    badge: "border-purple-200/60 bg-purple-100/70 text-purple-700 dark:border-purple-800/50 dark:bg-purple-950/60 dark:text-purple-300",
+  },
+  image_asset: {
+    icon: ImagePlus,
+    iconBox: "border-indigo-200/80 bg-indigo-50 text-indigo-700 dark:border-indigo-500/30 dark:bg-indigo-950/60 dark:text-indigo-300",
+    badge: "border-indigo-200/60 bg-indigo-100/70 text-indigo-700 dark:border-indigo-800/50 dark:bg-indigo-950/60 dark:text-indigo-300",
+  },
+  creative_brief: {
+    icon: Type,
+    iconBox: "border-rose-200/80 bg-rose-50 text-rose-700 dark:border-rose-500/30 dark:bg-rose-950/60 dark:text-rose-300",
+    badge: "border-rose-200/60 bg-rose-100/70 text-rose-700 dark:border-rose-800/50 dark:bg-rose-950/60 dark:text-rose-300",
+  },
+  visual_system: {
+    icon: Palette,
+    iconBox: "border-violet-200/80 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-950/60 dark:text-violet-300",
+    badge: "border-violet-200/60 bg-violet-100/70 text-violet-700 dark:border-violet-800/50 dark:bg-violet-950/60 dark:text-violet-300",
+  },
+  prompt_generation: {
+    icon: Braces,
+    iconBox: "border-amber-200/80 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-950/60 dark:text-amber-300",
+    badge: "border-amber-200/60 bg-amber-100/70 text-amber-700 dark:border-amber-800/50 dark:bg-amber-950/60 dark:text-amber-300",
+  },
+  image_generation: {
+    icon: ImageIcon,
+    iconBox: "border-cyan-200/80 bg-cyan-50 text-cyan-700 dark:border-cyan-500/30 dark:bg-cyan-950/60 dark:text-cyan-300",
+    badge: "border-cyan-200/60 bg-cyan-100/70 text-cyan-700 dark:border-cyan-800/50 dark:bg-cyan-950/60 dark:text-cyan-300",
+  },
 };
 
 const STATUS_BADGE_CLASSES: Record<WorkflowNodeStatus, string> = {
   idle: "border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400",
-  queued: "border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300",
-  running: "border-slate-300 bg-slate-100 text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100",
-  succeeded: "border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200",
+  queued: "animate-pulse border-amber-300 bg-amber-100/80 text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/60 dark:text-amber-200",
+  running: "border-blue-300 bg-blue-100/90 text-blue-900 dark:border-cyan-700/60 dark:bg-cyan-950/80 dark:text-cyan-200",
+  succeeded: "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800/50 dark:bg-emerald-950/40 dark:text-emerald-200",
   failed: "border-red-200 bg-red-50 text-red-700 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-200",
   cancelled: "border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400",
   unknown: "border-slate-200 bg-slate-50 text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400",
@@ -106,10 +125,15 @@ export function WorkflowNodePresentationCard({
   const Icon = theme.icon;
 
   const selectedClassName = primarySelected
-    ? "border-slate-400 ring-1 ring-slate-400/30 shadow-md dark:border-slate-500 dark:ring-slate-500/30"
+    ? "border-accent ring-2 ring-accent/40 shadow-md"
     : secondarySelected || previewSelected
-      ? "border-slate-300 ring-1 ring-slate-300/40 shadow-sm dark:border-slate-600"
-      : "border-slate-200 dark:border-slate-700";
+      ? "border-accent/50 ring-1 ring-accent/25 shadow-sm"
+      : "border-border-l1";
+  const motionClassName = status === "running"
+    ? "animate-running-glow motion-reduce:animate-none"
+    : status === "queued"
+      ? "animate-queued-glow motion-reduce:animate-none"
+      : "";
 
   const selected = primarySelected || secondarySelected || previewSelected;
 
@@ -117,19 +141,20 @@ export function WorkflowNodePresentationCard({
     <div
       ref={nodeRef}
       data-workflow-node-id={id}
+      data-node-kind={kind}
       onClick={onSelect}
-      className={`nopan relative w-[248px] cursor-grab touch-none select-none rounded-2xl border bg-white p-3 text-left shadow-sm transition-colors duration-150 active:cursor-grabbing dark:bg-[#0d1424] ${
+      className={`nopan relative w-[248px] cursor-grab touch-none select-none rounded-2xl border bg-surface-raised p-3 text-left shadow-sm transition-[border-color,transform,box-shadow] duration-150 active:cursor-grabbing ${
         revealActive ? "animate-spring-node-in" : ""
       } ${
-        dragging ? "cursor-grabbing" : "hover:border-slate-300 dark:hover:border-slate-600"
-      } ${selectedClassName}`}
+        dragging ? "cursor-grabbing" : "hover:-translate-y-0.5 hover:border-border-l3 hover:shadow-md motion-reduce:hover:translate-y-0"
+      } ${selectedClassName} ${motionClassName}`}
     >
       {selected ? (
         <div
-          className={`pointer-events-none absolute right-2.5 top-2.5 z-20 flex h-5 w-5 items-center justify-center rounded-full border bg-white shadow-sm dark:bg-[#111b2d] ${
+          className={`pointer-events-none absolute right-2.5 top-2.5 z-20 flex h-5 w-5 items-center justify-center rounded-full border bg-surface-raised shadow-sm ${
             primarySelected
-              ? "border-slate-300 text-slate-700 dark:border-slate-500 dark:text-slate-200"
-              : "border-slate-200 text-slate-500 dark:border-slate-600 dark:text-slate-300"
+              ? "border-accent text-accent"
+              : "border-accent/40 text-accent"
           }`}
           aria-hidden="true"
         >
@@ -169,9 +194,10 @@ export function WorkflowNodePresentationCard({
             {imageWaiting ? <WaitingBadge label={waitingLabel ?? statusLabel} /> : null}
           </div>
         ) : imageWaiting ? (
-          <div className="relative mb-2 flex h-28 flex-col items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
-            <Loader2 size={22} className="animate-spin text-slate-500 opacity-90" />
-            <div className="mt-2 rounded-md bg-white/80 px-2.5 py-0.5 text-xs font-semibold tracking-wide shadow-sm backdrop-blur dark:bg-slate-900/80">
+          <div className="relative mb-2 flex h-28 flex-col items-center justify-center overflow-hidden rounded-xl border border-cyan-300/50 bg-cyan-50/70 text-cyan-800 shadow-inner dark:border-cyan-500/25 dark:bg-cyan-950/30 dark:text-cyan-200">
+            <WaitingParticles />
+            <Loader2 size={22} className="relative z-10 animate-spin text-cyan-600 opacity-90 motion-reduce:animate-none dark:text-cyan-300" />
+            <div className="relative z-10 mt-2 rounded-md bg-white/80 px-2.5 py-0.5 text-xs font-semibold tracking-wide shadow-sm backdrop-blur dark:bg-slate-900/80">
               {waitingLabel ?? statusLabel}
             </div>
           </div>
@@ -242,9 +268,22 @@ export function workflowNodeKindTheme(kind: WorkflowNodePresentationKind) {
 
 function WaitingBadge({ label }: { label: string }) {
   return (
-    <div className="absolute inset-x-2 bottom-2 flex items-center justify-center rounded-lg bg-white/90 px-2 py-1 text-[11px] font-medium text-slate-700 shadow-sm ring-1 ring-slate-200 backdrop-blur dark:bg-slate-950/90 dark:text-slate-200 dark:ring-slate-700">
-      <Loader2 size={11} className="mr-1 animate-spin" />
+    <div className="absolute inset-x-2 bottom-2 z-10 flex items-center justify-center rounded-lg bg-white/90 px-2 py-1 text-[11px] font-medium text-cyan-800 shadow-sm ring-1 ring-cyan-200 backdrop-blur dark:bg-slate-950/90 dark:text-cyan-200 dark:ring-cyan-500/30">
+      <Loader2 size={11} className="mr-1 animate-spin motion-reduce:animate-none" />
       {label}
+    </div>
+  );
+}
+
+function WaitingParticles() {
+  return (
+    <div className="pointer-events-none absolute inset-0 motion-reduce:hidden" aria-hidden="true">
+      <div className="absolute bottom-0 left-[35%] h-3 w-3 rounded-full bg-cyan-400/60 blur-[2px] animate-particle-1" />
+      <div className="absolute bottom-0 left-[50%] h-2.5 w-2.5 rounded-full bg-blue-400/50 blur-[1px] animate-particle-2" />
+      <div className="absolute bottom-0 left-[22%] h-2 w-2 rounded-full bg-indigo-400/40 blur-[1px] animate-particle-3" />
+      <div className="absolute bottom-0 left-[62%] h-3.5 w-3.5 rounded-full bg-cyan-300/50 blur-[2px] animate-particle-4" />
+      <div className="absolute bottom-0 left-[38%] h-3.5 w-3.5 rounded-full bg-indigo-300/50 blur-[2px] animate-particle-5" />
+      <div className="absolute bottom-0 left-[48%] h-3 w-3 rounded-full bg-blue-300/60 blur-[2px] animate-particle-6" />
     </div>
   );
 }

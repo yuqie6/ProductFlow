@@ -1,22 +1,25 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
+  Images,
   Link2,
   Loader2,
   Plus,
   Play,
+  RotateCcw,
   Save,
   Search,
   Trash2,
   Undo2,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode, createContext } from "react";
 
 import { CompactInput, CompactNumberInput, CompactSelect } from "../../../components/CompactFormFields";
 import { ImageAspectRatioPicker } from "../../../components/ImageAspectRatioPicker";
 import { ImageGenerationSettingsTabs, type ImageGenerationSettingsTab } from "../../../components/ImageGenerationSettingsTabs";
 import { api, ApiError } from "../../../lib/api";
+import { formatDateTime } from "../../../lib/format";
 import type { DownloadableImage } from "../../../lib/image-downloads";
 import { sanitizeFilenamePart } from "../../../lib/image-downloads";
 import type { TranslationKey } from "../../../lib/i18n";
@@ -42,6 +45,7 @@ import { statusClass } from "../chrome/utils";
 import { workflowNodeKindTheme } from "../chrome/WorkflowNodeCard";
 import { DeliveryRenditionPanel } from "./DeliveryRenditionPanel";
 import { graphNodeTitleKey } from "./graphLayout";
+import { graphNodeRunPresentations } from "./graphRunDisplay";
 import {
   defaultDeliverySpec,
   graphBriefConfig,
@@ -77,6 +81,9 @@ import {
 import { useNodeDraftAutosave, type NodeDraftAutosave } from "./useNodeDraftAutosave";
 
 const ACTIVE_RUN_STATUSES = new Set(["queued", "running"]);
+type InspectorFlush = () => Promise<unknown>;
+type RegisterInspectorFlush = (id: string, flush: InspectorFlush) => () => void;
+const InspectorFlushContext = createContext<RegisterInspectorFlush>(() => () => undefined);
 const SELECT_OPTION_LABEL_KEYS = {
   none: "agentWorkbench.nodeEditor.option.none",
   allowed: "agentWorkbench.nodeEditor.option.allowed",
@@ -108,6 +115,9 @@ export function GraphNodeInspector({
   onBind,
   onJump,
   onPreviewImage,
+  onRegisterFlush,
+  onOpenAdd,
+  onOpenLibrary,
 }: {
   graph: GraphProjection;
   node: GraphNode | null;
@@ -121,6 +131,9 @@ export function GraphNodeInspector({
   onBind?: () => void;
   onJump?: (nodeId: string) => void;
   onPreviewImage?: (image: DownloadableImage) => void;
+  onRegisterFlush?: (flush: () => Promise<void>) => void;
+  onOpenAdd?: () => void;
+  onOpenLibrary?: () => void;
 }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
@@ -132,19 +145,23 @@ export function GraphNodeInspector({
   const runsQuery = useQuery({
     queryKey: runsQueryKey,
     queryFn: () => api.listGraphRuns(graph.product_id, graph.id),
-    enabled: Boolean(node && (node.node_type === "prompt_generation" || node.node_type === "image_generation")),
+    enabled: Boolean(node),
     refetchInterval: (query) => query.state.data?.items.some((run) => run.status === "running") ? 1200 : false,
   });
+  const presentations = useMemo(
+    () => graphNodeRunPresentations(runsQuery.data?.items ?? []),
+    [runsQuery.data],
+  );
+  const presentation = node ? presentations[node.id] : undefined;
   const activeRun = node
     ? runsQuery.data?.items.find((run) => run.status === "running" && run.node_runs.some((item) => (
       item.node_id === node.id && ACTIVE_RUN_STATUSES.has(item.status)
     ))) ?? null
     : null;
-  const nodeStatus: WorkflowNodeStatus = activeRun
-    ? (activeRun.node_runs.find((item) => item.node_id === node?.id)?.status ?? "running")
-    : "idle";
+  const nodeStatus: WorkflowNodeStatus = presentation?.status ?? "idle";
   const runMutation = useMutation({
-    mutationFn: (input: { scope: "node" | "to_node"; node_id: string }) => api.submitGraphRun(graph.product_id, graph.id, input),
+    mutationFn: (input: { scope: "graph" | "node" | "to_node"; node_id?: string }) =>
+      api.submitGraphRun(graph.product_id, graph.id, input),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: runsQueryKey });
       void queryClient.invalidateQueries({ queryKey: ["workflow-graph", graph.product_id] });
@@ -153,6 +170,13 @@ export function GraphNodeInspector({
   const cancelMutation = useMutation({
     mutationFn: (runId: string) => api.cancelGraphRun(graph.product_id, graph.id, runId),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: runsQueryKey }),
+  });
+  const retryMutation = useMutation({
+    mutationFn: (runId: string) => api.retryGraphRun(graph.product_id, graph.id, runId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: runsQueryKey });
+      void queryClient.invalidateQueries({ queryKey: ["workflow-graph", graph.product_id] });
+    },
   });
 
   useEffect(() => {
@@ -168,8 +192,36 @@ export function GraphNodeInspector({
     return { edit_version: next?.revision ?? graph.revision };
   }, [graph.revision, onCommit]);
 
+  const flushesRef = useRef(new Map<string, InspectorFlush>());
+  const registerFlush = useCallback<RegisterInspectorFlush>((id, flush) => {
+    flushesRef.current.set(id, flush);
+    return () => {
+      flushesRef.current.delete(id);
+    };
+  }, []);
+  const flushInspector = useCallback(async () => {
+    for (const flush of [...flushesRef.current.values()]) {
+      await flush();
+    }
+  }, []);
+  useEffect(() => {
+    onRegisterFlush?.(flushInspector);
+  }, [flushInspector, onRegisterFlush]);
+
   if (!node) {
-    return <GraphInspectorDashboard graph={graph} />;
+    return (
+      <GraphInspectorDashboard
+        graph={graph}
+        busy={busy || runMutation.isPending}
+        onRunGraph={() => {
+          void flushInspector()
+            .then(() => runMutation.mutate({ scope: "graph" }))
+            .catch(() => undefined);
+        }}
+        onOpenAdd={onOpenAdd}
+        onOpenLibrary={onOpenLibrary}
+      />
+    );
   }
 
   const theme = workflowNodeKindTheme(node.node_type);
@@ -178,7 +230,7 @@ export function GraphNodeInspector({
   const missingPrompt = node.node_type === "image_generation"
     && !node.incoming.some((edge) => edge.role === "prompt");
   const canRun = node.node_type === "prompt_generation" || node.node_type === "image_generation";
-  const mutationError = runMutation.error ?? cancelMutation.error;
+  const mutationError = runMutation.error ?? cancelMutation.error ?? retryMutation.error;
   const incoming = node.incoming.map((edge) => ({
     edge,
     related: graph.nodes.find((item) => item.id === edge.node_id) ?? null,
@@ -189,6 +241,7 @@ export function GraphNodeInspector({
   }));
 
   return (
+    <InspectorFlushContext.Provider value={registerFlush}>
     <div className="space-y-3 pb-4" data-graph-node-inspector>
       <section className="config-bubble rounded-2xl p-4 shadow-sm">
         <div className="flex items-start gap-3">
@@ -232,6 +285,17 @@ export function GraphNodeInspector({
             {t("graph.inspector.missingPrompt")}
           </div>
         ) : null}
+        {presentation?.failureReason && !activeRun ? (
+          <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs leading-5 text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200">
+            <div className="font-semibold">{t("graph.inspector.lastFailed")}</div>
+            <p className="mt-1">{presentation.failureReason}</p>
+            {presentation.lastRunAt ? (
+              <p className="mt-1 text-[10px] text-red-600/80 dark:text-red-300/80">
+                {t("graph.inspector.lastRun", { time: formatDateTime(presentation.lastRunAt, t.locale) })}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         {activeRun ? (
           <div className="mt-3 flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
             <Loader2 size={14} className="mt-0.5 shrink-0 animate-spin" />
@@ -239,13 +303,17 @@ export function GraphNodeInspector({
           </div>
         ) : null}
 
-        {canRun || activeRun ? (
+        {canRun || activeRun || presentation?.retryable ? (
           <div className="mt-4 space-y-2">
             {canRun ? (
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
-                  onClick={() => runMutation.mutate({ scope: "node", node_id: node.id })}
+                  onClick={() => {
+                    void flushInspector()
+                      .then(() => runMutation.mutate({ scope: "node", node_id: node.id }))
+                      .catch(() => undefined);
+                  }}
                   disabled={Boolean(activeRun) || runMutation.isPending || busy || missingPrompt}
                   className="inline-flex h-10 items-center justify-center rounded-xl bg-slate-900 px-3 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
                 >
@@ -254,7 +322,11 @@ export function GraphNodeInspector({
                 </button>
                 <button
                   type="button"
-                  onClick={() => runMutation.mutate({ scope: "to_node", node_id: node.id })}
+                  onClick={() => {
+                    void flushInspector()
+                      .then(() => runMutation.mutate({ scope: "to_node", node_id: node.id }))
+                      .catch(() => undefined);
+                  }}
                   disabled={Boolean(activeRun) || runMutation.isPending || busy || missingPrompt}
                   className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
                 >
@@ -274,6 +346,17 @@ export function GraphNodeInspector({
                 {t("detail.cancel")}
               </button>
             ) : null}
+            {presentation?.retryable && presentation.runId && !activeRun ? (
+              <button
+                type="button"
+                onClick={() => retryMutation.mutate(presentation.runId as string)}
+                disabled={retryMutation.isPending || busy}
+                className="inline-flex h-10 w-full items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                {retryMutation.isPending ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <RotateCcw size={14} className="mr-1.5" />}
+                {t("graph.inspector.retryRun")}
+              </button>
+            ) : null}
           </div>
         ) : null}
       </section>
@@ -281,7 +364,7 @@ export function GraphNodeInspector({
       {saveState.error || mutationError ? (
         <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs leading-5 text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200">
           <AlertCircle size={13} className="mr-1.5 inline" />
-          {saveState.error ?? t("workflowV2.error.structure")}
+          {saveState.error ?? t("workbench.error.structure")}
         </div>
       ) : null}
 
@@ -359,35 +442,60 @@ export function GraphNodeInspector({
       <EdgeList heading={t("graph.inspector.inputs")} empty={t("graph.inspector.inputsEmpty")} items={incoming} onJump={onJump} />
       <EdgeList heading={t("graph.inspector.outputs")} empty={t("graph.inspector.outputsEmpty")} items={outgoing} onJump={onJump} />
     </div>
+    </InspectorFlushContext.Provider>
   );
 }
 
-function GraphInspectorDashboard({ graph }: { graph: GraphProjection }) {
+function GraphInspectorDashboard({
+  graph,
+  busy,
+  onRunGraph,
+  onOpenAdd,
+  onOpenLibrary,
+}: {
+  graph: GraphProjection;
+  busy: boolean;
+  onRunGraph: () => void;
+  onOpenAdd?: () => void;
+  onOpenLibrary?: () => void;
+}) {
   const { t } = useI18n();
-  const counts = useMemo(() => ({
-    product_source: graph.nodes.filter((node) => node.node_type === "product_source").length,
-    image_asset: graph.nodes.filter((node) => node.node_type === "image_asset").length,
-    creative_brief: graph.nodes.filter((node) => node.node_type === "creative_brief").length,
-    visual_system: graph.nodes.filter((node) => node.node_type === "visual_system").length,
-    prompt_generation: graph.nodes.filter((node) => node.node_type === "prompt_generation").length,
-    image_generation: graph.nodes.filter((node) => node.node_type === "image_generation").length,
-  }), [graph.nodes]);
   return (
     <div className="space-y-3 p-3.5 pb-6" data-graph-node-inspector>
       <section className="config-bubble rounded-2xl p-4 shadow-sm">
         <h3 className="text-sm font-semibold text-zinc-950 dark:text-white">{graph.title}</h3>
-        <p className="mt-1 text-[11px] text-zinc-500 dark:text-slate-400">
-          {t("graph.inspector.graphRevision", { revision: graph.revision })}
-        </p>
-        <p className="mt-3 text-xs leading-5 text-zinc-600 dark:text-slate-300">{t("graph.inspector.selectHint")}</p>
-        <dl className="mt-4 grid grid-cols-2 gap-2 text-xs">
-          {(Object.keys(counts) as GraphNodeType[]).map((type) => (
-            <div key={type} className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-slate-700 dark:bg-[#0b1220]">
-              <dt className="text-[10px] text-zinc-500 dark:text-slate-400">{t(graphNodeTitleKey(type))}</dt>
-              <dd className="mt-0.5 text-sm font-semibold text-zinc-900 dark:text-slate-100">{counts[type]}</dd>
-            </div>
-          ))}
-        </dl>
+        <p className="mt-2 text-xs leading-5 text-zinc-600 dark:text-slate-300">{t("graph.inspector.selectHint")}</p>
+        <div className="mt-4 grid gap-2">
+          {onOpenAdd ? (
+            <button
+              type="button"
+              onClick={onOpenAdd}
+              className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+            >
+              <Plus size={14} aria-hidden="true" />
+              {t("graph.inspector.openAdd")}
+            </button>
+          ) : null}
+          {onOpenLibrary ? (
+            <button
+              type="button"
+              onClick={onOpenLibrary}
+              className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+            >
+              <Images size={14} aria-hidden="true" />
+              {t("graph.inspector.openLibrary")}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={onRunGraph}
+            disabled={busy}
+            className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-3 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
+          >
+            {busy ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Play size={14} aria-hidden="true" />}
+            {t("graph.inspector.runGraph")}
+          </button>
+        </div>
       </section>
     </div>
   );
@@ -469,7 +577,7 @@ function ProductSourceEditor({
       });
       onSaveStateChange("saved", null);
     } catch (error) {
-      onSaveStateChange("failed", errorMessage(error, t("workflowV2.error.structure")));
+      onSaveStateChange("failed", errorMessage(error, t("workbench.error.structure")));
     }
   }, [node, onSave, onSaveStateChange, sourceDraft.fact_set_version_id, sourceProductId, t]);
 
@@ -854,12 +962,10 @@ function PromptEditor({
     }),
     onStateChange: onSaveStateChange,
   });
-  const imageType = typeof node.config.image_type_key === "string" ? node.config.image_type_key : "";
   return (
     <AutosaveForm editor={editor} busy={busy}>
       <SectionTitle title={t("graph.inspector.promptSection")} />
       <TextInput label={t("graph.inspector.titleField")} value={editor.draft.title} maxLength={255} onChange={(title) => editor.update({ ...editor.draft, title })} />
-      {imageType ? <ReadOnlyRow label={t("graph.inspector.imageType")} value={imageType} mono /> : null}
       <TextArea label={t("workflowConfirmation.designGoal")} value={editor.draft.design_goal} onChange={(design_goal) => editor.update({ ...editor.draft, design_goal })} minRows={3} />
       <LineListField label={t("workflowConfirmation.sharedRules")} value={editor.draft.shared_rules} onChange={(shared_rules) => editor.update({ ...editor.draft, shared_rules })} />
       <LineListField label={t("workflowConfirmation.creativeBoundary")} value={editor.draft.creative_boundary} onChange={(creative_boundary) => editor.update({ ...editor.draft, creative_boundary })} />
@@ -955,12 +1061,10 @@ function ImageGenerationEditor({
   const patchDelivery = (patch: Partial<WorkflowDeliverySpec>) => {
     if (delivery) editor.update({ ...editor.draft, delivery: { ...delivery, ...patch } });
   };
-  const imageType = typeof node.config.image_type_key === "string" ? node.config.image_type_key : "";
   return (
     <AutosaveForm editor={editor} busy={busy}>
       {image && onPreviewImage ? <NodeImagePreview image={image} onPreview={onPreviewImage} /> : null}
       <TextInput label={t("graph.inspector.titleField")} value={editor.draft.title} maxLength={255} onChange={(title) => editor.update({ ...editor.draft, title })} />
-      {imageType ? <ReadOnlyRow label={t("graph.inspector.imageType")} value={imageType} mono /> : null}
       <TextArea
         label={t("workflowConfirmation.variation")}
         value={editor.draft.variation}
@@ -1090,6 +1194,9 @@ function AutosaveForm<T>({
   editor: NodeDraftAutosave<T>;
 }) {
   const { t } = useI18n();
+  const flushId = useId();
+  const registerFlush = useContext(InspectorFlushContext);
+  useEffect(() => registerFlush(flushId, () => editor.flush(true)), [editor.flush, flushId, registerFlush]);
   return (
     <form
       className="config-bubble space-y-4 rounded-2xl p-4 shadow-sm"

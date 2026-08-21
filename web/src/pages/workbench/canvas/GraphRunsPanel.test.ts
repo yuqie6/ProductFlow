@@ -13,7 +13,9 @@ const graph: GraphProjection = {
   schema_version: 3,
   revision: 2,
   source_draft_revision_id: null,
-  last_operation_group_id: null,
+    last_operation_group_id: null,
+    can_undo: false,
+    can_redo: false,
   nodes: [{
     id: "image",
     node_type: "image_generation",

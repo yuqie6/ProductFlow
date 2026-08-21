@@ -1,6 +1,8 @@
+import type { TranslationKey } from "../../../lib/i18n";
 import type {
   GraphCatalogInputContract,
   GraphCatalogNode,
+  GraphEdgeRole,
   GraphNode,
   GraphNodeCatalog,
   GraphNodeType,
@@ -131,4 +133,16 @@ export function isProcessingNode(
   catalog: GraphNodeCatalog | null | undefined,
 ): boolean {
   return graphCatalogNode(catalog, node.node_type)?.kind === "processing";
+}
+
+const EDGE_ROLE_LABEL_KEYS: Record<GraphEdgeRole, TranslationKey> = {
+  facts: "graph.inspector.role.facts",
+  reference: "graph.inspector.role.reference",
+  brief: "graph.inspector.role.brief",
+  visual_guidance: "graph.inspector.role.visual_guidance",
+  prompt: "graph.inspector.role.prompt",
+};
+
+export function graphEdgeRoleLabelKey(role: string): TranslationKey | null {
+  return EDGE_ROLE_LABEL_KEYS[role as GraphEdgeRole] ?? null;
 }

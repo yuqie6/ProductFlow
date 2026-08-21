@@ -205,12 +205,16 @@ const HELP_DOCS = {
           blocks: [
             {
               type: "paragraph",
-              text: "节点使用清晰的输入与输出连接点。节点较多时可用画布文件夹收拢一组局部流程；文件夹只改善布局和阅读，不改变 DAG 执行语义。",
+              text: "节点使用输入与输出连接点。拖线时合法目标变绿、不合法目标变红。节点较多时可用分组收拢局部流程；分组只改善布局，不改变执行顺序。",
             },
             {
-              type: "callout",
-              title: "复用由用户决定",
-              text: "完整流程或选中片段可以保存为工作流配方，后续复用只来自用户主动保存的内容。",
+              type: "list",
+              items: [
+                "添加节点会落在当前视口中心并被选中。",
+                "复制粘贴后选中新节点；删除节点前会确认。",
+                "卡片按类型着色，失败写在卡片上；工具条可运行、运行到此、复制、聚焦、删除。",
+                "最大化会收起顶部导航。",
+              ],
             },
           ],
         },
@@ -458,7 +462,7 @@ const HELP_DOCS = {
       icon: GitBranch,
       sections: [
         { id: "nodes", title: "Node responsibilities", blocks: [{ type: "list", items: ["Product facts hold confirmed product facts.", "An image asset node binds exactly one product-library image.", "Creative brief holds workflow-level goals and constraints.", "Visual system holds a visual-system version reference.", "Prompt generation combines facts, brief, and visual rules into a prompt.", "Image generation stores ratio, quality, text policy, background intent, reference fidelity, and execution state."] }] },
-        { id: "organization", title: "Connections and local organization", blocks: [{ type: "paragraph", text: "Nodes expose clear input and output connection points. Canvas folders can group a local flow when the graph becomes large; they improve layout without changing DAG execution semantics." }, { type: "callout", title: "Reuse is user-owned", text: "Save a full workflow or selected fragment as a workflow recipe. Later reuse comes only from content the user explicitly saved." }] },
+        { id: "organization", title: "Connections and local organization", blocks: [{ type: "paragraph", text: "Nodes have input and output ports. Legal drop targets turn green; illegal ones turn red. Groups can tidy a local flow without changing execution order." }, { type: "list", items: ["New nodes land near the current viewport center and stay selected.", "Paste selects the clones; deleting nodes asks for confirmation.", "Cards keep type color and show failures; the toolbar can run, run up to here, duplicate, focus, and delete.", "Maximize hides the top navigation."] }] },
       ],
     },
     {
@@ -570,7 +574,7 @@ const HELP_DOCS = {
       icon: GitBranch,
       sections: [
         { id: "nodes", title: "ノードの役割", blocks: [{ type: "list", items: ["商品情報ノードは確認済みの商品事実を提供します。", "参考画像ノードは商品ライブラリの具体的な 1 画像を保持します。", "プロンプト生成ノードは商品情報、ビジュアルルール、画像目標を組み合わせます。", "画像生成ノードは比率、品質、文字方針、背景、参考忠実度、実行状態を保持します。"] }] },
-        { id: "organization", title: "接続と局所整理", blocks: [{ type: "paragraph", text: "ノードには明確な入出力接続点があります。グラフが大きい場合はキャンバスフォルダで部分フローをまとめられます。フォルダは配置を整理し、DAG の実行意味は変更しません。" }, { type: "callout", title: "再利用はユーザーが管理", text: "ワークフロー全体または選択部分をワークフローレシピとして保存できます。後から再利用できるのは、ユーザーが明示的に保存した内容だけです。" }] },
+        { id: "organization", title: "接続と局所整理", blocks: [{ type: "paragraph", text: "ノードには入力と出力の接続点があります。接続できる対象は緑、できない対象は赤になります。グループは配置を整理するだけで、実行順は変えません。" }, { type: "list", items: ["新しいノードは現在の表示中央付近に置かれ、選択されたままです。", "貼り付け後は複製が選択されます。ノード削除前に確認します。", "カードは種類色を保ち、失敗を表示します。ツールバーで実行、ここまで実行、複製、フォーカス、削除ができます。", "最大化すると上部ナビをしまいます。"] }] },
       ],
     },
     {
@@ -682,7 +686,7 @@ const HELP_DOCS = {
       icon: GitBranch,
       sections: [
         { id: "nodes", title: "Vai trò của node", blocks: [{ type: "list", items: ["Node thông tin sản phẩm cung cấp dữ kiện đã xác nhận.", "Mỗi node ảnh tham chiếu giữ đúng một ảnh trong thư viện sản phẩm.", "Node tạo prompt kết hợp dữ kiện, quy tắc hình ảnh và mục tiêu của ảnh.", "Node tạo ảnh lưu tỷ lệ, chất lượng, chính sách chữ, nền, độ trung thành tham chiếu và trạng thái chạy."] }] },
-        { id: "organization", title: "Kết nối và tổ chức cục bộ", blocks: [{ type: "paragraph", text: "Node có điểm vào và ra rõ ràng. Khi đồ thị lớn, có thể gom một luồng cục bộ bằng thư mục canvas; thư mục chỉ cải thiện bố cục và không đổi ngữ nghĩa thực thi DAG." }, { type: "callout", title: "Người dùng sở hữu việc tái sử dụng", text: "Có thể lưu toàn bộ quy trình hoặc phần đã chọn thành công thức quy trình. Chỉ nội dung người dùng chủ động lưu mới được tái sử dụng sau này." }] },
+        { id: "organization", title: "Kết nối và tổ chức cục bộ", blocks: [{ type: "paragraph", text: "Node có điểm vào và ra. Mục tiêu hợp lệ chuyển xanh, không hợp lệ chuyển đỏ. Nhóm chỉ gọn bố cục, không đổi thứ tự chạy." }, { type: "list", items: ["Node mới rơi gần tâm viewport hiện tại và được chọn.", "Dán sẽ chọn bản sao; xóa node có xác nhận.", "Thẻ giữ màu loại và hiện lỗi; thanh công cụ có chạy, chạy đến đây, nhân bản, lấy nét và xóa.", "Phóng to sẽ thu thanh điều hướng trên."] }] },
       ],
     },
     {

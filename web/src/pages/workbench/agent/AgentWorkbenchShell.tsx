@@ -217,7 +217,7 @@ export function AgentWorkbenchShell({
           onCollapsedChange={inspector.setCollapsed}
           width={inspectorWidth}
           onResizeStart={inspector.startResize}
-          ariaLabel={t("workflowV2.sidebar.ariaLabel")}
+          ariaLabel={t("workbench.sidebar.ariaLabel")}
           resizeLabel={t("detail.resizeSidebar")}
           collapseLabel={t("detail.collapseSidebar")}
           expandLabel={t("detail.expandSidebar")}

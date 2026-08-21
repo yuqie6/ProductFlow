@@ -30,7 +30,9 @@ const graph: GraphProjection = {
   schema_version: 3,
   revision: 4,
   source_draft_revision_id: null,
-  last_operation_group_id: null,
+    last_operation_group_id: null,
+    can_undo: false,
+    can_redo: false,
   nodes: [
     node({ id: "source", node_type: "product_source", title: "商品资料", config_status: "ready" }),
     node({

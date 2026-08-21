@@ -69,7 +69,7 @@ export function WorkflowTextDialog({
       >
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 dark:border-slate-800">
           <h2 id={titleId} className="text-base font-semibold text-slate-950 dark:text-slate-100">{title}</h2>
-          <button type="button" onClick={onClose} disabled={busy} className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label={t("workflowV2.dialog.close")} title={t("workflowV2.dialog.close")}>
+          <button type="button" onClick={onClose} disabled={busy} className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label={t("workbench.dialog.close")} title={t("workbench.dialog.close")}>
             <X size={16} />
           </button>
         </div>
@@ -89,7 +89,7 @@ export function WorkflowTextDialog({
           <button type="button" onClick={onClose} disabled={busy} className="h-9 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:!bg-slate-900 dark:text-slate-200">{t("common.cancel")}</button>
           <button type="submit" disabled={!normalized || busy} className="inline-flex h-9 min-w-20 items-center justify-center rounded-md bg-slate-950 px-3 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50 dark:bg-violet-500 dark:hover:bg-violet-400">
             {busy ? <Loader2 size={14} className="mr-2 animate-spin" /> : null}
-            {t("workflowV2.dialog.confirm")}
+            {t("workbench.dialog.confirm")}
           </button>
         </div>
       </form>
@@ -123,9 +123,9 @@ export function WorkflowReferenceNodeDialog({
 
   useEffect(() => {
     if (open) {
-      setTitle(t("workflowV2.reference.defaultTitle"));
-      setRole(t("workflowV2.reference.defaultRole"));
-      setLabel(t("workflowV2.reference.defaultLabel"));
+      setTitle(t("workbench.reference.defaultTitle"));
+      setRole(t("workbench.reference.defaultRole"));
+      setLabel(t("workbench.reference.defaultLabel"));
     }
   }, [open, t]);
 
@@ -157,22 +157,22 @@ export function WorkflowReferenceNodeDialog({
         }}
       >
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 dark:border-slate-800">
-          <h2 id={headingId} className="text-base font-semibold text-slate-950 dark:text-slate-100">{t("workflowV2.reference.create")}</h2>
-          <button type="button" onClick={onClose} disabled={busy} className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label={t("workflowV2.dialog.close")} title={t("workflowV2.dialog.close")}>
+          <h2 id={headingId} className="text-base font-semibold text-slate-950 dark:text-slate-100">{t("workbench.reference.create")}</h2>
+          <button type="button" onClick={onClose} disabled={busy} className="inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label={t("workbench.dialog.close")} title={t("workbench.dialog.close")}>
             <X size={16} />
           </button>
         </div>
         <div className="space-y-4 px-5 py-5">
-          <ReferenceField id={titleId} label={t("workflowV2.reference.titleField")} value={title} maxLength={255} autoFocus onChange={setTitle} />
-          <ReferenceField id={roleId} label={t("workflowV2.reference.roleField")} value={role} maxLength={120} onChange={setRole} />
-          <ReferenceField id={labelId} label={t("workflowV2.reference.labelField")} value={label} maxLength={255} onChange={setLabel} />
+          <ReferenceField id={titleId} label={t("workbench.reference.titleField")} value={title} maxLength={255} autoFocus onChange={setTitle} />
+          <ReferenceField id={roleId} label={t("workbench.reference.roleField")} value={role} maxLength={120} onChange={setRole} />
+          <ReferenceField id={labelId} label={t("workbench.reference.labelField")} value={label} maxLength={255} onChange={setLabel} />
           {error ? <p role="alert" className="text-xs text-red-600 dark:text-red-300">{error}</p> : null}
         </div>
         <div className="flex justify-end gap-2 border-t border-slate-100 bg-slate-50 px-5 py-3 dark:border-slate-800 dark:!bg-slate-950/50">
           <button type="button" onClick={onClose} disabled={busy} className="h-9 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:!bg-slate-900 dark:text-slate-200">{t("common.cancel")}</button>
           <button type="submit" disabled={!valid || busy} className="inline-flex h-9 min-w-20 items-center justify-center rounded-md bg-slate-950 px-3 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50 dark:bg-violet-500 dark:hover:bg-violet-400">
             {busy ? <Loader2 size={14} className="mr-2 animate-spin" /> : null}
-            {t("workflowV2.dialog.confirm")}
+            {t("workbench.dialog.confirm")}
           </button>
         </div>
       </form>
@@ -276,17 +276,17 @@ export function WorkflowRecipeDialog({
             <h2 id={headingId} className="text-base font-semibold text-slate-950 dark:text-slate-100">{heading}</h2>
             <p className="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">{sourceLabel}</p>
           </div>
-          <button type="button" onClick={onClose} disabled={busy} className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label={t("workflowV2.dialog.close")} title={t("workflowV2.dialog.close")}>
+          <button type="button" onClick={onClose} disabled={busy} className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800" aria-label={t("workbench.dialog.close")} title={t("workbench.dialog.close")}>
             <X size={16} />
           </button>
         </div>
         <div className="space-y-4 px-5 py-5">
           <div>
-            <label htmlFor={titleId} className="text-xs font-semibold text-slate-600 dark:text-slate-300">{t("workflowV2.recipe.titleField")}</label>
+            <label htmlFor={titleId} className="text-xs font-semibold text-slate-600 dark:text-slate-300">{t("workbench.recipe.titleField")}</label>
             <input id={titleId} value={title} onChange={(event) => setTitle(event.target.value)} maxLength={255} autoFocus className="mt-2 h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15 dark:border-slate-700 dark:!bg-slate-950" />
           </div>
           <div>
-            <label htmlFor={descriptionId} className="text-xs font-semibold text-slate-600 dark:text-slate-300">{t("workflowV2.recipe.descriptionField")}</label>
+            <label htmlFor={descriptionId} className="text-xs font-semibold text-slate-600 dark:text-slate-300">{t("workbench.recipe.descriptionField")}</label>
             <textarea id={descriptionId} value={description} onChange={(event) => setDescription(event.target.value)} maxLength={4000} rows={4} className="mt-2 w-full resize-none rounded-md border border-slate-200 bg-white px-3 py-2 text-sm leading-5 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15 dark:border-slate-700 dark:!bg-slate-950" />
           </div>
           {error ? <p role="alert" className="text-xs text-red-600 dark:text-red-300">{error}</p> : null}
@@ -295,7 +295,7 @@ export function WorkflowRecipeDialog({
           <button type="button" onClick={onClose} disabled={busy} className="h-9 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:!bg-slate-900 dark:text-slate-200">{t("common.cancel")}</button>
           <button type="submit" disabled={!normalizedTitle || busy} className="inline-flex h-9 min-w-24 items-center justify-center rounded-md bg-slate-950 px-3 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50 dark:bg-violet-500 dark:hover:bg-violet-400">
             {busy ? <Loader2 size={14} className="mr-2 animate-spin" /> : null}
-            {t("workflowV2.recipe.save")}
+            {t("workbench.recipe.save")}
           </button>
         </div>
       </form>

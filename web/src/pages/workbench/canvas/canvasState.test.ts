@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   isWorkflowCanvasViewportCompatible,
+  parseStoredWorkflowCanvasViewport,
   workflowCanvasFitMinZoom,
+  workflowCanvasViewportStorageKey,
 } from "./canvasState";
 
 describe("workflow canvas viewport", () => {
@@ -36,5 +38,19 @@ describe("workflow canvas viewport", () => {
     expect(workflowCanvasFitMinZoom(390)).toBe(0.24);
     expect(workflowCanvasFitMinZoom(600)).toBe(0.32);
     expect(workflowCanvasFitMinZoom(889)).toBe(0.55);
+  });
+
+  it("parses a stored viewport payload and rejects invalid JSON", () => {
+    const viewport = {
+      x: 12,
+      y: 24,
+      zoom: 0.8,
+      surface_width: 1440,
+      surface_height: 900,
+    };
+    expect(workflowCanvasViewportStorageKey("graph-1")).toContain("graph-1");
+    expect(parseStoredWorkflowCanvasViewport(JSON.stringify(viewport))).toEqual(viewport);
+    expect(parseStoredWorkflowCanvasViewport("{not-json")).toBeNull();
+    expect(parseStoredWorkflowCanvasViewport(JSON.stringify({ x: 1 }))).toBeNull();
   });
 });

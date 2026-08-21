@@ -557,7 +557,7 @@ export function MediaLibraryPage() {
                 onClick={() => setUploadSummaryErrors(null)}
                 className="h-8 rounded-lg bg-indigo-600 px-4 text-xs font-semibold text-white hover:bg-indigo-500 dark:bg-violet-500 dark:hover:bg-violet-400"
               >
-                {t("workflowV2.dialog.confirm")}
+                {t("workbench.dialog.confirm")}
               </button>
             </div>
           </div>

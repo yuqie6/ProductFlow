@@ -1,13 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Play, Undo2 } from "lucide-react";
+import { Play, Redo2, Undo2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { ConfirmDialog } from "../../../components/ConfirmDialog";
 import { api, ApiError } from "../../../lib/api";
 import { useI18n } from "../../../lib/preferences";
-import type { GraphChangeSet, GraphNodeCatalog, GraphNodeType, GraphProjection, WorkflowNodeStatus } from "../../../lib/types";
+import type { GraphChangeSet, GraphNodeCatalog, GraphNodeType, GraphProjection } from "../../../lib/types";
+import { ProductWorkbenchCanvasChromeToggle } from "../chrome/ProductWorkbenchCanvasChromeToggle";
 import { getWorkflowKeyboardShortcut, type WorkflowKeyboardShortcut } from "../chrome/shortcuts";
 import type { CanvasInteractionMode } from "../chrome/workflowCanvasInteraction";
-import type { WorkflowCanvasViewport } from "./canvasState";
+import {
+  readStoredWorkflowCanvasViewport,
+  writeStoredWorkflowCanvasViewport,
+  type WorkflowCanvasViewport,
+} from "./canvasState";
 import {
   buildCreateAndConnectOperations,
   buildReuseConnectOperations,
@@ -20,10 +26,13 @@ import {
   buildDuplicateGraphOperations,
   buildGraphAutoLayoutPositions,
   buildRenameGroupOperations,
+  createdGraphNodeIds,
   defaultGraphNodeConfig,
   graphChangeSetClientRef,
   graphNodeTitleKey,
+  graphViewportCenterPosition,
 } from "./graphLayout";
+import { graphNodeRunPresentations } from "./graphRunDisplay";
 
 export interface GraphCanvasActions {
   createNode: (nodeType: GraphNodeType) => void;
@@ -40,8 +49,9 @@ export interface GraphCanvasActions {
 
 export function graphHistoryShortcutAction(
   shortcut: WorkflowKeyboardShortcut,
-): "undo" | null {
-  return shortcut === "undo" ? "undo" : null;
+): "undo" | "redo" | null {
+  if (shortcut === "undo" || shortcut === "redo") return shortcut;
+  return null;
 }
 
 function compactWorkbench(): boolean {
@@ -59,6 +69,10 @@ export function GraphCanvasPanel({
   onGraphChange,
   onRegisterActions,
   onBindNode,
+  onBusyChange,
+  onBeforeRun,
+  chromeCollapsed = false,
+  onToggleChrome,
 }: {
   productId: string;
   graph: GraphProjection;
@@ -68,6 +82,10 @@ export function GraphCanvasPanel({
   onGraphChange: (next: GraphProjection) => void;
   onRegisterActions?: (actions: GraphCanvasActions) => void;
   onBindNode?: (nodeId: string) => void;
+  onBusyChange?: (busy: boolean) => void;
+  onBeforeRun?: () => Promise<void>;
+  chromeCollapsed?: boolean;
+  onToggleChrome?: () => void;
 }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
@@ -75,13 +93,24 @@ export function GraphCanvasPanel({
   const catalogRef = useRef(catalog);
   const selectedRef = useRef(selectedNodeIds);
   const clipboardRef = useRef<string[]>([]);
-  const [viewport, setViewport] = useState<WorkflowCanvasViewport | null>(null);
+  const [viewport, setViewport] = useState<WorkflowCanvasViewport | null>(
+    () => readStoredWorkflowCanvasViewport(graph.id),
+  );
+  const viewportRef = useRef(viewport);
   const [compact, setCompact] = useState(compactWorkbench);
   const [mobileMode, setMobileMode] = useState<CanvasInteractionMode>("edit");
   const [reusePrompt, setReusePrompt] = useState<Extract<GraphAssetDropPlan, { kind: "choose_reuse" }> | null>(null);
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<string[] | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const noticeTimerRef = useRef<number | null>(null);
   graphRef.current = graph;
   catalogRef.current = catalog;
   selectedRef.current = selectedNodeIds;
+  viewportRef.current = viewport;
+
+  useEffect(() => {
+    setViewport(readStoredWorkflowCanvasViewport(graph.id));
+  }, [graph.id]);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
@@ -90,6 +119,16 @@ export function GraphCanvasPanel({
     update();
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
+  }, []);
+
+  const showNotice = useCallback((message: string) => {
+    setNotice(message);
+    if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = window.setTimeout(() => setNotice(null), 2200);
+  }, []);
+
+  useEffect(() => () => {
+    if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
   }, []);
 
   const applyMutation = useMutation({
@@ -120,6 +159,20 @@ export function GraphCanvasPanel({
     },
   });
 
+  const redoMutation = useMutation({
+    mutationFn: () => api.redoWorkflowChangeSet(productId, graph.id),
+    onSuccess: (next) => {
+      onGraphChange(next);
+      queryClient.setQueryData(["workflow-graph", productId], next);
+    },
+    onError: async (error) => {
+      if (error instanceof ApiError && error.status === 409) {
+        const next = await api.getWorkflowGraph(productId, graph.id);
+        onGraphChange(next);
+      }
+    },
+  });
+
   const runMutation = useMutation({
     mutationFn: (input: { scope: "graph" | "node" | "to_node"; node_id?: string }) =>
       api.submitGraphRun(productId, graph.id, input),
@@ -135,29 +188,38 @@ export function GraphCanvasPanel({
     refetchInterval: (query) => query.state.data?.items.some((run) => run.status === "running") ? 1200 : false,
   });
 
+  const nodePresentations = useMemo(
+    () => graphNodeRunPresentations(runsQuery.data?.items ?? []),
+    [runsQuery.data],
+  );
   const nodeStatuses = useMemo(() => {
-    const statuses: Record<string, WorkflowNodeStatus> = {};
-    for (const run of runsQuery.data?.items ?? []) {
-      for (const nodeRun of run.node_runs) {
-        if (!nodeRun.node_id) continue;
-        if (!statuses[nodeRun.node_id] || run.status === "running") {
-          statuses[nodeRun.node_id] = nodeRun.status;
-        }
-      }
+    const statuses: Record<string, (typeof nodePresentations)[string]["status"]> = {};
+    for (const [nodeId, presentation] of Object.entries(nodePresentations)) {
+      statuses[nodeId] = presentation.status;
     }
     return statuses;
-  }, [runsQuery.data]);
+  }, [nodePresentations]);
   const runningNodeId = runsQuery.data?.items.find((run) => run.status === "running")?.node_runs
     .find((nodeRun) => nodeRun.status === "running")?.node_id ?? null;
 
-  const apply = useCallback((summary: string, operations: GraphChangeSet["operations"]) => {
-    if (!operations.length || applyMutation.isPending) return;
-    applyMutation.mutate({
+  const applyAsync = useCallback(async (summary: string, operations: GraphChangeSet["operations"]) => {
+    if (!operations.length || applyMutation.isPending) return null;
+    return applyMutation.mutateAsync({
       base_graph_revision: graphRef.current.revision,
       summary,
       operations,
     });
   }, [applyMutation]);
+
+  const apply = useCallback((summary: string, operations: GraphChangeSet["operations"]) => {
+    void applyAsync(summary, operations);
+  }, [applyAsync]);
+
+  const selectCreatedNodes = useCallback((before: GraphProjection, after: GraphProjection) => {
+    const created = createdGraphNodeIds(before, after);
+    if (created.length) onSelect(created);
+    return created;
+  }, [onSelect]);
 
   const handleAssetDrop = useCallback((input: Parameters<typeof resolveGraphAssetDrop>[1]) => {
     const plan = resolveGraphAssetDrop(graphRef.current, input, catalogRef.current);
@@ -170,21 +232,36 @@ export function GraphCanvasPanel({
   }, [apply]);
 
   const createNode = useCallback((nodeType: GraphNodeType) => {
-    apply("创建节点", [{
+    const before = graphRef.current;
+    const position = graphViewportCenterPosition(viewportRef.current);
+    void applyAsync("创建节点", [{
       op: "create_node",
       client_ref: graphChangeSetClientRef("node"),
       node_type: nodeType,
       title: t(graphNodeTitleKey(nodeType)),
-      position_x: 120 + graphRef.current.nodes.length * 24,
-      position_y: 120,
+      position_x: position.position_x,
+      position_y: position.position_y,
       config: defaultGraphNodeConfig(nodeType),
-    }]);
-  }, [apply, t]);
+    }]).then((next) => {
+      if (next) selectCreatedNodes(before, next);
+    });
+  }, [applyAsync, selectCreatedNodes, t]);
 
-  const duplicateSelected = useCallback((nodeIds = selectedRef.current) => {
+  const duplicateSelected = useCallback((nodeIds = selectedRef.current, noticeKey?: "pasted" | "duplicated") => {
     const { operations } = buildDuplicateGraphOperations(graphRef.current, nodeIds);
-    apply("复制节点", operations);
-  }, [apply]);
+    if (!operations.length) return;
+    const before = graphRef.current;
+    void applyAsync("复制节点", operations).then((next) => {
+      if (!next) return;
+      const created = selectCreatedNodes(before, next);
+      if (!created.length) return;
+      if (noticeKey === "pasted") {
+        showNotice(t("detail.notice.pastedNodes", { count: created.length }));
+      } else if (noticeKey === "duplicated") {
+        showNotice(t("detail.notice.duplicatedNodes", { count: created.length }));
+      }
+    });
+  }, [applyAsync, selectCreatedNodes, showNotice, t]);
 
   const groupSelected = useCallback(() => {
     const nodeIds = selectedRef.current;
@@ -216,6 +293,18 @@ export function GraphCanvasPanel({
     apply("解散分组", [{ op: "dissolve_group", group_ref: groupId }]);
   }, [apply]);
 
+  const requestDeleteNodes = useCallback((nodeIds: string[]) => {
+    if (!nodeIds.length) return;
+    setPendingDeleteIds(nodeIds);
+  }, []);
+
+  const confirmDeleteNodes = useCallback(() => {
+    if (!pendingDeleteIds?.length) return;
+    apply("删除节点", buildDeleteNodeOperations(pendingDeleteIds));
+    setPendingDeleteIds(null);
+    onSelect([]);
+  }, [apply, onSelect, pendingDeleteIds]);
+
   const commitNode = useCallback(async (input: {
     nodeId: string;
     title?: string;
@@ -244,6 +333,20 @@ export function GraphCanvasPanel({
     });
   }, [applyMutation]);
 
+  const submitRun = useCallback(async (input: { scope: "graph" | "node" | "to_node"; node_id?: string }) => {
+    try {
+      await onBeforeRun?.();
+    } catch {
+      return;
+    }
+    runMutation.mutate(input);
+  }, [onBeforeRun, runMutation]);
+
+  const handleViewportChange = useCallback((next: WorkflowCanvasViewport) => {
+    setViewport(next);
+    writeStoredWorkflowCanvasViewport(graph.id, next);
+  }, [graph.id]);
+
   const actionsRef = useRef<GraphCanvasActions>({
     createNode,
     duplicateSelected,
@@ -271,73 +374,117 @@ export function GraphCanvasPanel({
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
       const shortcut = getWorkflowKeyboardShortcut(event);
-      if (!shortcut || applyMutation.isPending || undoMutation.isPending) return;
+      if (!shortcut || applyMutation.isPending || undoMutation.isPending || redoMutation.isPending) return;
       const selected = selectedRef.current;
       if (shortcut === "copy") {
         if (!selected.length) return;
         event.preventDefault();
         clipboardRef.current = selected;
+        showNotice(t("detail.notice.copiedNodes", { count: selected.length }));
         return;
       }
       if (shortcut === "paste") {
         if (!clipboardRef.current.length) return;
         event.preventDefault();
-        duplicateSelected(clipboardRef.current);
+        duplicateSelected(clipboardRef.current, "pasted");
         return;
       }
       if (shortcut === "duplicate") {
         if (!selected.length) return;
         event.preventDefault();
-        duplicateSelected(selected);
+        duplicateSelected(selected, "duplicated");
         return;
       }
       if (shortcut === "delete") {
         if (!selected.length) return;
         event.preventDefault();
-        apply("删除选区", buildDeleteNodeOperations(selected));
+        requestDeleteNodes(selected);
         return;
       }
       if (graphHistoryShortcutAction(shortcut) === "undo") {
-        if (!graphRef.current.last_operation_group_id) return;
+        if (!graphRef.current.can_undo) return;
         event.preventDefault();
         undoMutation.mutate();
+        return;
+      }
+      if (graphHistoryShortcutAction(shortcut) === "redo") {
+        if (!graphRef.current.can_redo) return;
+        event.preventDefault();
+        redoMutation.mutate();
       }
     };
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [apply, applyMutation.isPending, duplicateSelected, undoMutation]);
+  }, [applyMutation.isPending, duplicateSelected, redoMutation, requestDeleteNodes, showNotice, t, undoMutation]);
 
-  const error = applyMutation.error ?? runMutation.error ?? undoMutation.error;
-  const busy = applyMutation.isPending || runMutation.isPending || undoMutation.isPending;
+  const error = applyMutation.error ?? runMutation.error ?? undoMutation.error ?? redoMutation.error;
+  const busy = applyMutation.isPending || runMutation.isPending || undoMutation.isPending || redoMutation.isPending;
+
+  useEffect(() => {
+    onBusyChange?.(busy);
+  }, [busy, onBusyChange]);
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
+
+  const pendingDeleteTitle = pendingDeleteIds?.length === 1
+    ? graph.nodes.find((node) => node.id === pendingDeleteIds[0])?.title ?? ""
+    : "";
 
   return (
     <div
       data-graph-canvas-panel
       className="relative flex h-full min-h-0 flex-col overflow-hidden bg-zinc-50 text-zinc-950 dark:bg-[#080c12] dark:text-slate-100"
     >
-      <div className="absolute right-4 top-4 z-10 flex gap-2">
+      <div
+        className={`absolute z-20 flex items-center gap-1 rounded-xl border border-border-l1 bg-surface-raised/95 p-1 shadow-sm backdrop-blur ${compact ? "right-3 top-[4.75rem]" : "right-4 top-4"
+          }`}
+      >
         <button
           type="button"
-          disabled={busy || !graph.last_operation_group_id}
+          disabled={busy || !graph.can_undo}
           onClick={() => undoMutation.mutate()}
-          className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700"
+          className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-text-secondary hover:bg-surface-subtle hover:text-text-primary disabled:opacity-45 lg:h-9 lg:w-9"
+          aria-label={t("graph.canvas.undo")}
+          title={t("graph.canvas.undo")}
         >
-          <Undo2 size={12} />
-          {t("graph.canvas.undo")}
+          <Undo2 size={16} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          disabled={busy || !graph.can_redo}
+          onClick={() => redoMutation.mutate()}
+          className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-text-secondary hover:bg-surface-subtle hover:text-text-primary disabled:opacity-45 lg:h-9 lg:w-9"
+          aria-label={t("graph.canvas.redo")}
+          title={t("graph.canvas.redo")}
+        >
+          <Redo2 size={16} aria-hidden="true" />
         </button>
         <button
           type="button"
           disabled={busy}
-          onClick={() => runMutation.mutate({ scope: "graph" })}
-          className="inline-flex items-center gap-1 rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white dark:bg-slate-100 dark:text-slate-900"
+          onClick={() => void submitRun({ scope: "graph" })}
+          className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-accent text-accent-fg hover:bg-accent-strong disabled:opacity-45 lg:h-9 lg:w-9"
+          aria-label={t("graph.canvas.run")}
+          title={t("graph.canvas.run")}
         >
-          <Play size={12} />
-          {t("graph.canvas.run")}
+          <Play size={16} aria-hidden="true" />
         </button>
+        {onToggleChrome ? (
+          <ProductWorkbenchCanvasChromeToggle
+            embedded
+            collapsed={chromeCollapsed}
+            maximizeLabel={t("detail.maximizeCanvas")}
+            restoreLabel={t("detail.restoreCanvas")}
+            onToggle={onToggleChrome}
+          />
+        ) : null}
       </div>
       {error ? (
         <div role="alert" className="absolute left-4 top-4 z-10 max-w-sm rounded bg-red-50 px-3 py-2 text-xs text-red-700">
-          {error instanceof ApiError ? error.detail : t("workflowV2.error.structure")}
+          {error instanceof ApiError ? error.detail : t("workbench.error.structure")}
+        </div>
+      ) : notice ? (
+        <div role="status" className="absolute left-4 top-4 z-10 max-w-sm rounded-lg border border-slate-200 bg-white/95 px-3 py-2 text-xs font-medium text-slate-700 shadow-sm dark:border-slate-700 dark:bg-[#111a2b] dark:text-slate-200">
+          {notice}
         </div>
       ) : null}
       <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -347,9 +494,10 @@ export function GraphCanvasPanel({
           selectedNodeIds={selectedNodeIds}
           busy={busy}
           nodeStatuses={nodeStatuses}
+          nodePresentations={nodePresentations}
           runningNodeId={runningNodeId}
           viewport={viewport}
-          onViewportChange={setViewport}
+          onViewportChange={handleViewportChange}
           compact={compact}
           mobileInteractionMode={mobileMode}
           onMobileInteractionModeChange={setMobileMode}
@@ -372,11 +520,12 @@ export function GraphCanvasPanel({
               nodes: members.map((node) => [node.id, node.position_x + deltaX, node.position_y + deltaY]),
             }]);
           }}
-          onDeleteNode={(nodeId) => apply("删除节点", [{ op: "delete_node", node_ref: nodeId }])}
+          onDeleteNode={(nodeId) => requestDeleteNodes([nodeId])}
           onDeleteEdge={(edgeId) => apply("断开连线", [{ op: "disconnect_edge", edge_ref: edgeId }])}
-          onRunNode={(nodeId) => runMutation.mutate({ scope: "node", node_id: nodeId })}
+          onRunNode={(nodeId) => void submitRun({ scope: "node", node_id: nodeId })}
+          onRunToNode={(nodeId) => void submitRun({ scope: "to_node", node_id: nodeId })}
           onBindNode={(nodeId) => onBindNode?.(nodeId)}
-          onDuplicateNode={duplicateSelected}
+          onDuplicateNode={(nodeIds) => duplicateSelected(nodeIds, "duplicated")}
           onAssetDrop={handleAssetDrop}
           onRenameGroup={renameGroup}
           onDissolveGroup={dissolveGroup}
@@ -438,6 +587,20 @@ export function GraphCanvasPanel({
           </div>
         </div>
       ) : null}
+      <ConfirmDialog
+        open={Boolean(pendingDeleteIds?.length)}
+        title={pendingDeleteIds?.length === 1
+          ? t("detail.confirm.deleteNodeTitle")
+          : t("detail.confirm.deleteSelectedNodesTitle")}
+        description={pendingDeleteIds?.length === 1
+          ? t("detail.confirm.deleteNode", { title: pendingDeleteTitle })
+          : t("detail.confirm.deleteSelectedNodes", { count: pendingDeleteIds?.length ?? 0 })}
+        confirmLabel={t("graph.canvas.delete")}
+        cancelLabel={t("common.cancel")}
+        busy={busy}
+        onConfirm={confirmDeleteNodes}
+        onClose={() => setPendingDeleteIds(null)}
+      />
     </div>
   );
 }

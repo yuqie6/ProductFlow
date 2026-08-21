@@ -58,6 +58,8 @@ function graphWith(node: GraphNode): GraphProjection {
     revision: 1,
     source_draft_revision_id: null,
     last_operation_group_id: null,
+    can_undo: false,
+    can_redo: false,
     nodes: [node],
     edges: [],
     groups: [],
@@ -73,9 +75,13 @@ function renderNodeCard(node: GraphNode, connectable = true): string {
       kind: "node",
       node,
       status: "idle",
+      failureReason: null,
+      lastRunAt: null,
+      retryable: false,
       runBusy: false,
       structureBusy: false,
       onRun: () => undefined,
+      onRunToNode: () => undefined,
       onBind: () => undefined,
       onDuplicate: () => undefined,
       onDelete: () => undefined,
@@ -118,6 +124,24 @@ describe("graph workflow node ports", () => {
     expect(handles.every((handle) => !handle.includes('aria-hidden="true"'))).toBe(true);
   });
 
+  it("gives processing and source nodes distinct type colors and can show failure on the card", () => {
+    const image = renderNodeCard(graphNode({
+      id: "image",
+      node_type: "image_generation",
+      title: "主图 1",
+    }));
+    const source = renderNodeCard(graphNode({
+      id: "source",
+      node_type: "product_source",
+      title: "商品资料",
+    }));
+    expect(image).toContain("data-node-kind=\"image_generation\"");
+    expect(source).toContain("data-node-kind=\"product_source\"");
+    expect(image).toContain("cyan-");
+    expect(source).toContain("purple-");
+    expect(image).not.toBe(source);
+  });
+
   it("omits the input handle on source nodes that cannot accept edges", () => {
     const handles = handleMarkup(renderNodeCard(graphNode({
       id: "source",
@@ -128,5 +152,49 @@ describe("graph workflow node ports", () => {
     expect(handles).toHaveLength(1);
     expect(handles[0]).toContain('data-handleid="output"');
     expect(handles[0]).not.toContain('data-handleid="input"');
+  });
+
+  it("writes failure on the card instead of only in the run sidebar", () => {
+    const graph = graphWith(graphNode({
+      id: "image",
+      node_type: "image_generation",
+      title: "主图 1",
+    }));
+    const props: ComponentProps<typeof GraphNodeCard> = {
+      id: "image",
+      type: "graph-node",
+      data: {
+        kind: "node",
+        node: graph.nodes[0],
+        status: "failed",
+        failureReason: "模型超时",
+        lastRunAt: "2026-08-21T00:00:00Z",
+        retryable: true,
+        runBusy: false,
+        structureBusy: false,
+        onRun: () => undefined,
+        onRunToNode: () => undefined,
+        onBind: () => undefined,
+        onDuplicate: () => undefined,
+        onDelete: () => undefined,
+        onSelectNode: () => undefined,
+        graph,
+        catalog,
+      },
+      dragging: false,
+      zIndex: 0,
+      selectable: true,
+      deletable: false,
+      selected: false,
+      draggable: true,
+      isConnectable: true,
+      positionAbsoluteX: 0,
+      positionAbsoluteY: 0,
+    };
+    const markup = renderToStaticMarkup(
+      createElement(ReactFlowProvider, null, createElement(GraphNodeCard, props)),
+    );
+    expect(markup).toContain("模型超时");
+    expect(markup).toContain("可重试");
   });
 });

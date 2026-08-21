@@ -120,7 +120,7 @@ export function GraphAddNodePanel({
               <Boxes size={15} />
             </span>
             <div className="min-w-0 flex-1">
-              <div className="text-xs font-bold text-slate-900 dark:text-slate-100">{t("workflowV2.sidebar.recipes")}</div>
+              <div className="text-xs font-bold text-slate-900 dark:text-slate-100">{t("workbench.sidebar.recipes")}</div>
               <div className="text-[10px] text-slate-500 dark:text-slate-400">{t("graph.palette.recipesHint")}</div>
             </div>
           </div>

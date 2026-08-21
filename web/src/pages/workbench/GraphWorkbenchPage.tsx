@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bot, CircleDot, Eye, Images, Plus, RotateCw } from "lucide-react";
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { GalleryImagePreviewDialog } from "../../components/GalleryImagePreviewDialog";
@@ -42,6 +42,13 @@ export function GraphWorkbenchPage({
   const [tool, setTool] = useState("agent");
   const [bindNodeId, setBindNodeId] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<DownloadableImage | null>(null);
+  const [canvasBusy, setCanvasBusy] = useState(false);
+  const [chromeCollapsed, setChromeCollapsed] = useState(false);
+  const flushInspectorRef = useRef<() => Promise<void>>(async () => undefined);
+  const registerInspectorFlush = useCallback((flush: () => Promise<void>) => {
+    flushInspectorRef.current = flush;
+  }, []);
+  const beforeRun = useCallback(() => flushInspectorRef.current(), []);
 
   const graphQuery = useQuery({
     queryKey: ["workflow-graph", product.id],
@@ -65,20 +72,38 @@ export function GraphWorkbenchPage({
   }, []);
   const inspectNode = useCallback((nodeId: string) => {
     if (!inspectableGraphNodeId(liveGraph, nodeId)) return;
-    setSelectedNodeIds([nodeId]);
-    setTool("details");
+    void (async () => {
+      try {
+        await flushInspectorRef.current();
+      } catch {
+        return;
+      }
+      setSelectedNodeIds([nodeId]);
+      setTool("details");
+    })();
   }, [liveGraph]);
   const selectCanvasNodes = useCallback((nodeIds: string[]) => {
-    setSelectedNodeIds(nodeIds);
-    if (nodeIds.length === 1) inspectNode(nodeIds[0]);
-  }, [inspectNode]);
+    void (async () => {
+      try {
+        await flushInspectorRef.current();
+      } catch {
+        return;
+      }
+      setSelectedNodeIds(nodeIds);
+      if (nodeIds.length === 1 && inspectableGraphNodeId(liveGraph, nodeIds[0])) {
+        setTool("details");
+      }
+    })();
+  }, [liveGraph]);
 
   return (
     <div className="flex h-dvh min-h-[560px] flex-col overflow-hidden bg-white text-zinc-950 dark:bg-[#060a12] dark:text-slate-100">
-      <TopNav
-        breadcrumbs={`${product.name} / ${t("agentWorkbench.breadcrumb")} · r${liveGraph.revision}`}
-        onHome={() => navigate("/products")}
-      />
+      {chromeCollapsed ? null : (
+        <TopNav
+          breadcrumbs={`${product.name} / ${t("agentWorkbench.breadcrumb")}`}
+          onHome={() => navigate("/products")}
+        />
+      )}
       <AgentWorkbenchShell
         workflowAvailable
         canvasContent={(
@@ -90,6 +115,10 @@ export function GraphWorkbenchPage({
             onSelect={selectCanvasNodes}
             onGraphChange={(next) => queryClient.setQueryData(["workflow-graph", product.id], next)}
             onRegisterActions={registerActions}
+            onBusyChange={setCanvasBusy}
+            onBeforeRun={beforeRun}
+            chromeCollapsed={chromeCollapsed}
+            onToggleChrome={() => setChromeCollapsed((current) => !current)}
             onBindNode={(nodeId) => {
               setBindNodeId(nodeId);
               setTool("library");
@@ -105,7 +134,7 @@ export function GraphWorkbenchPage({
               content: (
                 <GraphAddNodePanel
                   catalog={catalog}
-                  busy={false}
+                  busy={canvasBusy}
                   onCreate={actions.createNode}
                   canDuplicate={selectedNodeIds.length > 0}
                   canGroup={selectedNodeIds.length > 1}
@@ -125,7 +154,8 @@ export function GraphWorkbenchPage({
                   graph={liveGraph}
                   node={selected}
                   product={product}
-                  busy={false}
+                  busy={canvasBusy}
+                  onRegisterFlush={registerInspectorFlush}
                   onCommit={async (input) => {
                     if (!selected) return;
                     return actions.commitNode({ nodeId: selected.id, ...input });
@@ -155,7 +185,7 @@ export function GraphWorkbenchPage({
             },
             {
               id: "library",
-              label: t("workflowV2.sidebar.library"),
+              label: t("workbench.sidebar.library"),
               icon: <Images size={17} />,
               contentClassName: "flex min-h-0 flex-1 flex-col overflow-hidden",
               content: (
@@ -190,7 +220,7 @@ export function GraphWorkbenchPage({
           imageAlt={previewImage.alt}
           title={previewImage.alt}
           subtitle={previewImage.filename}
-          body={t("workflowV2.preview.body")}
+          body={t("workbench.preview.body")}
           providerNotesTitle={t("gallery.providerNotes")}
           downloadUrl={previewImage.downloadUrl}
           downloadLabel={t("gallery.download")}

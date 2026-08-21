@@ -57,6 +57,8 @@ function graph(nodes: GraphNode[], edges: GraphProjection["edges"] = []): GraphP
     revision: 1,
     source_draft_revision_id: null,
     last_operation_group_id: null,
+    can_undo: false,
+    can_redo: false,
     nodes,
     edges,
     groups: [],

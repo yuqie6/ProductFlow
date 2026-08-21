@@ -625,9 +625,9 @@ function nodeTypeMetrics(
   t: ReturnType<typeof useI18n>["t"],
 ) {
   return [
-    { key: "product_context", label: t("workflowV2.node.productContext"), count: counts.product_context },
-    { key: "reference_image", label: t("workflowV2.node.referenceImage"), count: counts.reference_image },
-    { key: "prompt_generation", label: t("workflowV2.node.promptGeneration"), count: counts.prompt_generation },
-    { key: "image_generation", label: t("workflowV2.node.imageGeneration"), count: counts.image_generation },
+    { key: "product_context", label: t("workbench.node.productContext"), count: counts.product_context },
+    { key: "reference_image", label: t("workbench.node.referenceImage"), count: counts.reference_image },
+    { key: "prompt_generation", label: t("workbench.node.promptGeneration"), count: counts.prompt_generation },
+    { key: "image_generation", label: t("workbench.node.imageGeneration"), count: counts.image_generation },
   ];
 }

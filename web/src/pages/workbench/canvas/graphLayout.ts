@@ -1,5 +1,6 @@
 import type { TranslationKey } from "../../../lib/i18n";
 import type { GraphChangeSet, GraphEdge, GraphGroup, GraphNode, GraphProjection } from "../../../lib/types";
+import type { WorkflowCanvasViewport } from "./canvasState";
 
 export const GRAPH_NODE_WIDTH = 248;
 export const GRAPH_NODE_HEIGHT = 236;
@@ -24,6 +25,28 @@ export interface GraphGroupBounds {
 
 export function snapGraphCoordinate(value: number): number {
   return Math.round(value / GRAPH_SNAP) * GRAPH_SNAP;
+}
+
+export function graphViewportCenterPosition(
+  viewport: WorkflowCanvasViewport | null,
+): { position_x: number; position_y: number } {
+  if (!viewport || !(viewport.zoom > 0) || !(viewport.surface_width > 0) || !(viewport.surface_height > 0)) {
+    return {
+      position_x: snapGraphCoordinate(120),
+      position_y: snapGraphCoordinate(120),
+    };
+  }
+  const centerX = (viewport.surface_width / 2 - viewport.x) / viewport.zoom;
+  const centerY = (viewport.surface_height / 2 - viewport.y) / viewport.zoom;
+  return {
+    position_x: snapGraphCoordinate(centerX - GRAPH_NODE_WIDTH / 2),
+    position_y: snapGraphCoordinate(centerY - GRAPH_NODE_HEIGHT / 2),
+  };
+}
+
+export function createdGraphNodeIds(before: GraphProjection, after: GraphProjection): string[] {
+  const known = new Set(before.nodes.map((node) => node.id));
+  return after.nodes.filter((node) => !known.has(node.id)).map((node) => node.id);
 }
 
 export function graphChangeSetClientRef(prefix: string): string {

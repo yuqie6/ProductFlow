@@ -9,6 +9,7 @@ import {
   getBezierPath,
   useConnection,
   useNodesState,
+  useReactFlow,
   useUpdateNodeInternals,
   useViewport,
 } from "@xyflow/react";
@@ -26,7 +27,7 @@ import type {
   ReactFlowInstance,
   Viewport,
 } from "@xyflow/react";
-import { CopyPlus, Folder, Link2, Loader2, Pencil, Play, Trash2, Ungroup } from "lucide-react";
+import { ChevronsRight, CopyPlus, Folder, Focus, Hand, Link2, Loader2, MousePointer2, Pencil, Play, Trash2, Ungroup } from "lucide-react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, MouseEvent as ReactMouseEvent } from "react";
 
@@ -60,12 +61,14 @@ import {
   type WorkflowCanvasViewport,
 } from "./canvasState";
 import {
+  graphEdgeRoleLabelKey,
   graphNodeHasInput,
   graphNodePresentationKind,
   graphPortVisualState,
   isGraphConnectionValid,
   isProcessingNode,
 } from "./graphCatalog";
+import type { GraphNodeRunPresentation } from "./graphRunDisplay";
 import {
   GRAPH_NODE_WIDTH,
   GRAPH_SNAP,
@@ -85,9 +88,13 @@ interface GraphNodeData extends Record<string, unknown> {
   kind: "node";
   node: GraphNode;
   status: WorkflowNodeStatus;
+  failureReason: string | null;
+  lastRunAt: string | null;
+  retryable: boolean;
   runBusy: boolean;
   structureBusy: boolean;
   onRun: (node: GraphNode) => void;
+  onRunToNode: (node: GraphNode) => void;
   onBind: (node: GraphNode) => void;
   onDuplicate: (node: GraphNode) => void;
   onDelete: (node: GraphNode) => void;
@@ -111,6 +118,7 @@ type GraphCanvasNode =
 
 type GraphCanvasEdge = Edge<{
   role: string;
+  roleLabel: string | null;
   structureBusy: boolean;
   deleteLabel: string;
   onDelete: (edgeId: string) => void;
@@ -159,6 +167,7 @@ export const GraphNodeCard = memo(function GraphNodeCard({
   isConnectable,
 }: NodeProps<Node<GraphNodeData>>) {
   const { t } = useI18n();
+  const reactFlow = useReactFlow();
   const { node } = data;
   const { zoom } = useViewport();
   const portVisualScale = Math.min(4.25, Math.max(1, 1 / zoom));
@@ -214,13 +223,22 @@ export const GraphNodeCard = memo(function GraphNodeCard({
           </WorkflowCanvasNodeToolbarButton>
         ) : null}
         {isProcessingNode(node, data.catalog) ? (
-          <WorkflowCanvasNodeToolbarButton
-            label={t("graph.canvas.runNode")}
-            disabled={data.runBusy || running || data.structureBusy}
-            onClick={() => data.onRun(node)}
-          >
-            {data.runBusy || running ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Play size={16} aria-hidden="true" />}
-          </WorkflowCanvasNodeToolbarButton>
+          <>
+            <WorkflowCanvasNodeToolbarButton
+              label={t("graph.canvas.runNode")}
+              disabled={data.runBusy || running || data.structureBusy}
+              onClick={() => data.onRun(node)}
+            >
+              {data.runBusy || running ? <Loader2 size={16} className="animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <Play size={16} aria-hidden="true" />}
+            </WorkflowCanvasNodeToolbarButton>
+            <WorkflowCanvasNodeToolbarButton
+              label={t("graph.runs.scope.toNode")}
+              disabled={data.runBusy || running || data.structureBusy}
+              onClick={() => data.onRunToNode(node)}
+            >
+              <ChevronsRight size={16} aria-hidden="true" />
+            </WorkflowCanvasNodeToolbarButton>
+          </>
         ) : null}
         <WorkflowCanvasNodeToolbarButton
           label={t("detail.duplicate")}
@@ -228,6 +246,14 @@ export const GraphNodeCard = memo(function GraphNodeCard({
           onClick={() => data.onDuplicate(node)}
         >
           <CopyPlus size={16} aria-hidden="true" />
+        </WorkflowCanvasNodeToolbarButton>
+        <WorkflowCanvasNodeToolbarButton
+          label={t("detail.fitSelection")}
+          onClick={() => {
+            void reactFlow.fitView({ padding: 0.22, duration: 180, maxZoom: 1.05, nodes: [{ id }] });
+          }}
+        >
+          <Focus size={16} aria-hidden="true" />
         </WorkflowCanvasNodeToolbarButton>
         <WorkflowCanvasNodeToolbarButton
           label={t("graph.canvas.delete")}
@@ -264,11 +290,18 @@ export const GraphNodeCard = memo(function GraphNodeCard({
         title={node.title}
         label={nodeTypeLabel(node.node_type, t)}
         status={data.status}
-        statusLabel={node.unused ? t("graph.inspector.unused") : nodeStatusLabel(data.status, t)}
+        statusLabel={data.status !== "idle"
+          ? nodeStatusLabel(data.status, t)
+          : node.unused
+            ? t("graph.inspector.unused")
+            : nodeStatusLabel(data.status, t)}
         image={nodeImage(node)}
         imageWaiting={node.node_type === "image_generation" && running}
         waitingLabel={nodeStatusLabel(data.status, t)}
         activityText={running ? nodeStatusLabel(data.status, t) : null}
+        failureReason={data.failureReason}
+        lastRunAt={data.lastRunAt}
+        retryable={data.retryable}
         primarySelected={selected}
         dragging={dragging}
         onSelect={(event) => {
@@ -304,11 +337,10 @@ const GraphGroupCard = memo(function GraphGroupCard({
   return (
     <div
       style={{ width: bounds.width, height: bounds.height }}
-      className={`group relative rounded-2xl border-2 border-dashed transition-all pointer-events-none ${
-        selected
+      className={`group relative rounded-2xl border-2 border-dashed transition-all pointer-events-none ${selected
           ? "border-slate-400 bg-slate-50/40 dark:border-slate-500 dark:bg-slate-800/20"
           : "border-slate-300/80 bg-slate-50/30 dark:border-slate-700/80 dark:bg-[#0c1322]/25"
-      }`}
+        }`}
       data-graph-group-id={group.id}
     >
       <div className="pointer-events-auto flex items-center gap-2 border-b border-dashed border-slate-200/80 bg-white/70 px-3.5 py-2 backdrop-blur-sm dark:border-slate-800/80 dark:bg-[#0f172a]/60 rounded-t-2xl">
@@ -339,7 +371,7 @@ const GraphGroupCard = memo(function GraphGroupCard({
           <span className="min-w-0 flex-1 truncate text-xs font-bold text-slate-800 dark:text-slate-200">{group.title}</span>
         )}
         <span className="rounded-full bg-slate-200/70 px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-          {t("workflowV2.folder.memberCount", { count: group.member_ids.length })}
+          {t("workbench.folder.memberCount", { count: group.member_ids.length })}
         </span>
         <button
           type="button"
@@ -401,7 +433,7 @@ const GraphCanvasEdgeCard = memo(function GraphCanvasEdgeCard({
           stroke: selected ? "#334155" : hovered ? "#64748b" : "#94a3b8",
           strokeWidth: selected ? 2.2 : 1.8,
         }}
-        label={data?.role}
+        label={(hovered || selected) ? data?.roleLabel ?? undefined : undefined}
         labelStyle={{ fontSize: 10, fill: "#64748b" }}
       />
       <path
@@ -418,9 +450,8 @@ const GraphCanvasEdgeCard = memo(function GraphCanvasEdgeCard({
         x={labelX}
         y={labelY}
         isVisible
-        className={`nodrag nowheel nopan transition-all duration-200 ${
-          hovered || selected ? "pointer-events-auto scale-100 opacity-100" : "pointer-events-none scale-75 opacity-0"
-        }`}
+        className={`nodrag nowheel nopan transition-all duration-200 ${hovered || selected ? "pointer-events-auto scale-100 opacity-100" : "pointer-events-none scale-75 opacity-0"
+          }`}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
       >
@@ -432,8 +463,8 @@ const GraphCanvasEdgeCard = memo(function GraphCanvasEdgeCard({
             if (!data?.structureBusy) data?.onDelete(id);
           }}
           disabled={data?.structureBusy}
-          title={data?.deleteLabel}
-          aria-label={data?.deleteLabel}
+          title={[data?.roleLabel, data?.deleteLabel].filter(Boolean).join(" · ")}
+          aria-label={[data?.roleLabel, data?.deleteLabel].filter(Boolean).join(" · ")}
         >
           <Trash2 size={13} strokeWidth={2.2} />
         </button>
@@ -455,6 +486,7 @@ export function GraphWorkflowCanvas({
   selectedNodeIds,
   busy,
   nodeStatuses,
+  nodePresentations = {},
   runningNodeId,
   viewport,
   onViewportChange,
@@ -468,6 +500,7 @@ export function GraphWorkflowCanvas({
   onDeleteNode,
   onDeleteEdge,
   onRunNode,
+  onRunToNode,
   onBindNode,
   onDuplicateNode,
   onAutoLayout,
@@ -480,6 +513,7 @@ export function GraphWorkflowCanvas({
   selectedNodeIds: string[];
   busy: boolean;
   nodeStatuses: Record<string, WorkflowNodeStatus>;
+  nodePresentations?: Record<string, GraphNodeRunPresentation>;
   runningNodeId: string | null;
   viewport: WorkflowCanvasViewport | null;
   onViewportChange: (viewport: WorkflowCanvasViewport) => void;
@@ -493,6 +527,7 @@ export function GraphWorkflowCanvas({
   onDeleteNode: (nodeId: string) => void;
   onDeleteEdge: (edgeId: string) => void;
   onRunNode: (nodeId: string) => void;
+  onRunToNode?: (nodeId: string) => void;
   onBindNode: (nodeId: string) => void;
   onDuplicateNode: (nodeIds: string[]) => void;
   onAutoLayout: () => void;
@@ -582,10 +617,14 @@ export function GraphWorkflowCanvas({
       data: {
         kind: "node" as const,
         node,
-        status: nodeStatuses[node.id] ?? "idle",
+        status: nodePresentations[node.id]?.status ?? nodeStatuses[node.id] ?? "idle",
+        failureReason: nodePresentations[node.id]?.failureReason ?? null,
+        lastRunAt: nodePresentations[node.id]?.lastRunAt ?? null,
+        retryable: nodePresentations[node.id]?.retryable ?? false,
         runBusy: runningNodeId === node.id,
         structureBusy: busy,
         onRun: (item: GraphNode) => onRunNode(item.id),
+        onRunToNode: (item: GraphNode) => onRunToNode?.(item.id),
         onBind: (item: GraphNode) => onBindNode(item.id),
         onDuplicate: (item: GraphNode) => onDuplicateNode([item.id]),
         onDelete: (item: GraphNode) => onDeleteNode(item.id),
@@ -595,7 +634,7 @@ export function GraphWorkflowCanvas({
       },
     }));
     return [...groups, ...nodes];
-  }, [busy, catalog, graph, nodeStatuses, onBindNode, onDeleteNode, onDissolveGroup, onDuplicateNode, onRenameGroup, onRunNode, runningNodeId, selectNodeFromPointer, selectedNodeIds]);
+  }, [busy, catalog, graph, nodePresentations, nodeStatuses, onBindNode, onDeleteNode, onDissolveGroup, onDuplicateNode, onRenameGroup, onRunNode, onRunToNode, runningNodeId, selectNodeFromPointer, selectedNodeIds]);
   const graphEdges = useMemo<GraphCanvasEdge[]>(
     () => graph.edges.map((edge) => ({
       id: edge.id,
@@ -606,6 +645,10 @@ export function GraphWorkflowCanvas({
       type: "graph-edge" as const,
       data: {
         role: edge.role,
+        roleLabel: (() => {
+          const key = graphEdgeRoleLabelKey(edge.role);
+          return key ? t(key) : null;
+        })(),
         structureBusy: busy,
         deleteLabel: t("detail.deleteEdge"),
         onDelete: onDeleteEdge,
@@ -729,9 +772,9 @@ export function GraphWorkflowCanvas({
           <WorkflowCanvasMobileModeTabs
             value={mobileInteractionMode}
             items={[
-              { key: "browse", label: t("detail.mobileCanvasBrowse"), description: t("detail.mobileCanvasBrowseHint"), icon: null },
-              { key: "edit", label: t("detail.mobileCanvasEdit"), description: t("detail.mobileCanvasEditHint"), icon: null },
-              { key: "select", label: t("detail.mobileCanvasSelect"), description: t("detail.mobileCanvasSelectHint"), icon: null },
+              { key: "browse", label: t("detail.mobileCanvasBrowse"), description: t("detail.mobileCanvasBrowseHint"), icon: <Hand size={14} aria-hidden="true" /> },
+              { key: "edit", label: t("detail.mobileCanvasEdit"), description: t("detail.mobileCanvasEditHint"), icon: <Pencil size={14} aria-hidden="true" /> },
+              { key: "select", label: t("detail.mobileCanvasSelect"), description: t("detail.mobileCanvasSelectHint"), icon: <MousePointer2 size={14} aria-hidden="true" /> },
             ]}
             onChange={onMobileInteractionModeChange}
           />
@@ -741,6 +784,7 @@ export function GraphWorkflowCanvas({
         key={`${graph.id}:${restoredViewport ? "restore" : "fit"}`}
         onInit={(instance) => {
           flowRef.current = instance;
+          window.setTimeout(() => persistViewport(instance.getViewport()), restoredViewport ? 0 : 220);
         }}
         nodes={nodes}
         edges={graphEdges}
@@ -818,7 +862,7 @@ export function GraphWorkflowCanvas({
           position="bottom-right"
           aria-label={t("detail.canvasMiniMap")}
           className="workflow-canvas-minimap nopan nodrag nowheel hidden lg:block"
-          nodeColor={(node) => node.data?.kind === "group" ? "#94a3b8" : "#cbd5e1"}
+          nodeColor={(node) => node.data?.kind === "group" ? "#94a3b8" : "#a5b4fc"}
           nodeBorderRadius={8}
           nodeStrokeWidth={3}
           pannable

@@ -73,13 +73,13 @@ export function DeliveryRenditionPanel({
   });
 
   if (!sourceAssetId) {
-    return <PanelState icon={<FileImage size={20} />} text={t("workflowV2.rendition.runImageNode")} />;
+    return <PanelState icon={<FileImage size={20} />} text={t("workbench.rendition.runImageNode")} />;
   }
   if (deliverySpecInvalid) {
-    return <PanelState text={t("workflowV2.rendition.invalidSpec")} />;
+    return <PanelState text={t("workbench.rendition.invalidSpec")} />;
   }
   if (!deliverySpec) {
-    return <PanelState icon={<FileImage size={20} />} text={t("workflowV2.rendition.noSpec")} />;
+    return <PanelState icon={<FileImage size={20} />} text={t("workbench.rendition.noSpec")} />;
   }
 
   const jobs = jobsQuery.data?.items ?? [];
@@ -92,17 +92,17 @@ export function DeliveryRenditionPanel({
       <div className="flex min-w-0 items-start gap-2 border-b border-slate-200 pb-3 dark:border-slate-800">
         <div className="min-w-0 flex-1">
           <div className="text-xs font-semibold text-slate-950 dark:text-slate-100">
-            {t("workflowV2.rendition.currentSpec")}
+            {t("workbench.rendition.currentSpec")}
           </div>
           <div className="mt-1 text-sm font-semibold text-slate-800 dark:text-slate-100">
             {deliverySpecLabel(deliverySpec)}
           </div>
           <div className="mt-1.5 flex flex-wrap gap-1.5 text-[10px] text-slate-500 dark:text-slate-400">
             <span className="rounded bg-slate-200 px-1.5 py-1 dark:bg-slate-800">
-              {t("workflowV2.rendition.fit")}: {t(`workflowV2.rendition.fit.${deliverySpec.fit}`)}
+              {t("workbench.rendition.fit")}: {t(`workbench.rendition.fit.${deliverySpec.fit}`)}
             </span>
             <span className="rounded bg-slate-200 px-1.5 py-1 dark:bg-slate-800">
-              {t("workflowV2.rendition.maxBytes")}: {formatMaxBytes(deliverySpec.max_byte_size, t("workflowV2.rendition.noLimit"))}
+              {t("workbench.rendition.maxBytes")}: {formatMaxBytes(deliverySpec.max_byte_size, t("workbench.rendition.noLimit"))}
             </span>
           </div>
         </div>
@@ -111,10 +111,10 @@ export function DeliveryRenditionPanel({
           onClick={() => sourceMutation.mutate()}
           disabled={sourceMutation.isPending}
           className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 text-[11px] font-semibold text-slate-600 hover:border-slate-400 hover:text-slate-950 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:text-white"
-          title={t("workflowV2.rendition.viewSource")}
+          title={t("workbench.rendition.viewSource")}
         >
           {sourceMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : <ArrowUpLeft size={13} />}
-          {t("workflowV2.rendition.viewSource")}
+          {t("workbench.rendition.viewSource")}
         </button>
       </div>
 
@@ -132,21 +132,21 @@ export function DeliveryRenditionPanel({
           className="mt-3 inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-slate-950 px-3 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 dark:bg-emerald-600 dark:hover:bg-emerald-500"
         >
           {createMutation.isPending ? <Loader2 size={14} className="animate-spin" /> : <WandSparkles size={14} />}
-          {t("workflowV2.rendition.create")}
+          {t("workbench.rendition.create")}
         </button>
       ) : null}
 
       <div className="mt-4 flex items-center justify-between gap-2">
         <h3 className="text-xs font-semibold text-slate-800 dark:text-slate-200">
-          {t("workflowV2.rendition.jobs")}
+          {t("workbench.rendition.jobs")}
         </h3>
         {jobsQuery.isFetching ? <Loader2 size={13} className="animate-spin text-slate-400" /> : null}
       </div>
 
       {jobsQuery.isLoading ? (
-        <PanelState compact icon={<Loader2 size={17} className="animate-spin" />} text={t("workflowV2.rendition.loading")} />
+        <PanelState compact icon={<Loader2 size={17} className="animate-spin" />} text={t("workbench.rendition.loading")} />
       ) : jobs.length === 0 ? (
-        <PanelState compact text={t("workflowV2.rendition.empty")} />
+        <PanelState compact text={t("workbench.rendition.empty")} />
       ) : (
         <div className="mt-2 space-y-2">
           {jobs.map((job) => (
@@ -187,7 +187,7 @@ function RenditionJobRow({
           type="button"
           onClick={onPreview}
           className="relative block aspect-[16/9] w-full overflow-hidden bg-slate-100 dark:bg-slate-900"
-          aria-label={t("workflowV2.rendition.preview")}
+          aria-label={t("workbench.rendition.preview")}
         >
           <img
             src={api.toApiUrl(job.result_asset.thumbnail_url)}
@@ -207,16 +207,16 @@ function RenditionJobRow({
           </span>
           {current ? (
             <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-              {t("workflowV2.rendition.current")}
+              {t("workbench.rendition.current")}
             </span>
           ) : null}
         </div>
         <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-slate-500 dark:text-slate-400">
           <span className={statusTextClass(job.status)}>
             {active ? <Loader2 size={10} className="mr-1 inline animate-spin" /> : null}
-            {t(`workflowV2.rendition.status.${job.status}`)}
+            {t(`workbench.rendition.status.${job.status}`)}
           </span>
-          <span>{t("workflowV2.rendition.attempts", { count: job.attempts })}</span>
+          <span>{t("workbench.rendition.attempts", { count: job.attempts })}</span>
           <span>{formatDateTime(job.updated_at, t.locale)}</span>
         </div>
         {job.failure_reason ? (
@@ -229,17 +229,17 @@ function RenditionJobRow({
             {job.result_asset ? (
               <>
                 <button type="button" onClick={onPreview} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-200 px-2 text-[11px] font-semibold text-slate-600 hover:text-slate-950 dark:border-slate-700 dark:text-slate-300 dark:hover:text-white">
-                  <Eye size={12} /> {t("workflowV2.rendition.preview")}
+                  <Eye size={12} /> {t("workbench.rendition.preview")}
                 </button>
                 <a href={api.toApiUrl(job.result_asset.download_url)} download={job.result_asset.original_filename} target="_blank" rel="noreferrer" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-slate-200 px-2 text-[11px] font-semibold text-slate-600 hover:text-slate-950 dark:border-slate-700 dark:text-slate-300 dark:hover:text-white">
-                  <Download size={12} /> {t("workflowV2.rendition.download")}
+                  <Download size={12} /> {t("workbench.rendition.download")}
                 </a>
               </>
             ) : null}
             {job.status === "failed" && job.is_retryable ? (
               <button type="button" onClick={onRetry} disabled={retrying} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-amber-500 px-2 text-[11px] font-semibold text-slate-950 hover:bg-amber-400 disabled:opacity-50">
                 {retrying ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                {t("workflowV2.rendition.retry")}
+                {t("workbench.rendition.retry")}
               </button>
             ) : null}
           </div>
