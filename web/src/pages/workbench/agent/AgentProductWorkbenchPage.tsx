@@ -305,6 +305,7 @@ export function AgentProductWorkbenchPage({
           productId={bootstrap.product.id}
           graph={liveGraph}
           selectedNodeId={selected?.id ?? null}
+          structureBusy={canvasBusy}
           onJump={inspectNode}
           onPreviewImage={setPreviewImage}
         />
@@ -320,6 +321,7 @@ export function AgentProductWorkbenchPage({
           product={bootstrap.product}
           graph={liveGraph}
           bindNode={bindNode}
+          bindLocked={canvasBusy}
           onPreviewImage={setPreviewImage}
           onBindAsset={async (assetId) => {
             if (!bindNode) return;
@@ -362,6 +364,7 @@ export function AgentProductWorkbenchPage({
                 ? recipeMutation.variables.recipe.id
                 : null}
               application={recipeApplication}
+              structureBusy={canvasBusy}
               canAppend={() => false}
               onRetry={() => void recipesQuery.refetch()}
               onApply={(recipe) => {

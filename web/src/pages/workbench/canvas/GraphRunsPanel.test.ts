@@ -55,6 +55,7 @@ const run: GraphRun = {
       incoming_edge_ids: ["edge-1"],
       prompt_artifact_id: "art-1",
       reference_asset_ids: ["asset-a"],
+      mystery_digest: "deadbeef",
     },
     output: { product_image_asset_id: "out-1" },
     failure_reason: null,
@@ -85,5 +86,8 @@ describe("GraphRunsPanel", () => {
     expect(markup).toContain("提示词结果");
     expect(markup).toContain("参考图");
     expect(markup).not.toContain("incoming_edge_ids");
+    expect(markup).not.toContain("mystery_digest");
+    expect(markup).not.toContain("deadbeef");
+    expect(markup).not.toContain("版本 2");
   });
 });
