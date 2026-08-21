@@ -2,7 +2,7 @@
 
 ## Product
 
-ProductFlow is a single-administrator, single-merchant visual production workspace. A user uploads real product references, selects intended image types and quantities, and works with an Agent to produce a reviewable `WorkflowDraft`. Only an explicit user confirmation may materialize that draft into the online schema-v2 workflow.
+ProductFlow is a single-administrator, single-merchant visual production workspace. A user uploads real product references, selects intended image types and quantities, and works with an Agent to produce a reviewable `WorkflowDraft`. Only an explicit user confirmation may persist that draft as the online schema-v3 graph.
 
 The current repository targets a personal live demo and self-hosted deployments. Multi-tenancy, billing, team roles, publication integrations, and long-term SaaS compatibility are outside the current contract. Existing deployed data is still migrated through explicit, auditable operations; upgrade procedures must not depend on resetting the database or storage.
 
@@ -14,8 +14,8 @@ The current repository targets a personal live demo and self-hosted deployments.
 4. The user uploads 1 to 6 verified references and is expected to include at least one image that identifies the real product or an authoritative product rendering. The backend deterministically validates count, ownership, bytes, and media format; semantic adequacy remains an Agent/user review responsibility.
 5. ProductFlow persists the draft Product, uploaded `ProductImageAsset` records, one `WorkflowDraft`, one product-scoped `AgentConversation`, and its associated `AgentSession` before the first Agent Turn. `AgentSession` is the longer-lived conversation container; the current Turn runtime still uses the product-scoped conversation projection.
 6. The Agent asks for missing facts and proposes a versioned, structured Draft. It may suggest plan changes but cannot silently change confirmed user choices or facts.
-7. The user confirms an explicit Draft revision. A single application transaction materializes the complete workflow and reveal events.
-8. Reveal events control presentation only. Disconnecting or cancelling animation cannot leave a partial business graph.
+7. The user confirms an explicit Draft revision. Agent confirmation persists that revision as a schema-v3 graph; the product-create form can also create the same graph directly without a Draft.
+8. Draft confirmation and direct create persist a complete schema-v3 graph in one transaction. The workbench reads that graph after persist; it does not assemble the graph incrementally in the browser.
 9. The same Agent conversation continues in the product workbench beside the editable workflow.
 
 ## Authorities
@@ -30,15 +30,15 @@ The current repository targets a personal live demo and self-hosted deployments.
 
 ## Workflow Invariants
 
-- The only online workflow schema is version 2.
-- Node types are `product_context`, `reference_image`, `prompt_generation`, and `image_generation`.
-- A reference node binds exactly one product image asset.
+- The only online workflow schema is version 3, stored on `workflow_graphs`.
+- Node types are `product_source`, `image_asset`, `creative_brief`, `visual_system`, `prompt_generation`, and `image_generation`.
+- An `image_asset` node binds exactly one product image asset. Binding is not the same as a downstream `reference` edge.
 - One planned output image is represented by one runnable image node. A rerun updates its current asset while previous results remain in the library and run history.
 - Product facts, visual systems, prompts, recipes, and execution inputs preserve immutable versions used by prior runs.
 - `GenerationSpec` describes model-generation intent. Provider-effective values and measured output remain separately observable.
 - `DeliverySpec` describes deterministic rendition work. Changing delivery dimensions or format does not invoke the image model or replace the generated source.
 - Canvas folders are one-level visual groups. They have no execution status, ports, nesting, run, cancel, or retry behavior.
-- Recipes are created only by an explicit user save. Applying one to another product produces a reviewable Draft before materialization.
+- Recipes are created only by an explicit user save. Applying one to another product produces a reviewable Draft; user confirmation persists that Draft as the online graph. Saving a recipe from a live schema-v3 graph is not implemented.
 
 ## Product Image Invariants
 
@@ -56,8 +56,8 @@ The current repository targets a personal live demo and self-hosted deployments.
 - 全局图库是跨会话、可归档、可跨工作流复用的长期图片集合。`/media-library` 是当前全局入口；旧 `/gallery` 只负责兼容重定向，在线 `/api/gallery` 已退休。当前 schema 的旧 `ImageGalleryEntry` 物理表仍由迁移 reader 有界读取，直到部署级回填、引用审计、观察窗和独立素材库清理闸门完成；旧 `legacy_canvas_agent_20260518_0032` source 通过 Gallery-only manifest bridge 迁移到新图库，Agent archive 不属于该 bridge。清理只允许删除旧 Gallery 行和表，不得删除全局素材、共享媒体或工作流引用。
 - 配方库保存可复用的工作流结构和配置，不等同于收藏画廊，也不保存商品图片或生成结果。
 - 工作流生成后仍然是用户可以直接编辑和执行的生产工具。Agent 可以辅助配置、检查、批量安排和解释执行结果，但不能取代工作流画布、运行按钮、节点重试和人工选择。
-- `WorkflowRun` 是独立的业务执行记录。用户从工作流页面点击执行可以直接创建它，不需要先创建 Agent Session 或 Agent Task；Agent 代为请求执行时也必须复用同一套工作流业务约束。
-- Agent Session、Agent Task、WorkflowRun 和图片生成会话分别表达长期交流、业务目标、工作流执行和连续生图，不能通过重命名一个现有对象来合并这些职责。
+- `WorkflowGraphRun` 是独立的业务执行记录。用户从工作流页面点击执行可以直接创建它，不需要先创建 Agent Session 或 Agent Task；Agent 代为请求执行时也必须复用同一套工作流业务约束。
+- Agent Session、Agent Task、WorkflowGraphRun 和图片生成会话分别表达长期交流、业务目标、工作流执行和连续生图，不能通过重命名一个现有对象来合并这些职责。
 - Agent Session 和 Agent Task 保存有界 operational summary 供 Dock、列表和恢复索引使用；main 的 Pi session/event files 保存交互式 transcript、tool events 和 compaction 所需 runtime state。后台 durable Task、tool effect reconciliation 和多实例 claim 仍属于 `exp` 实验方向。Task 可以在首轮 Turn 或等待回答/确认时暂停，运行中的模型 Turn 和 WorkflowRun 继续通过现有取消链处理。
 - 收藏画廊条目的旧生命周期跟随连续生图会话资产；删除来源会话的目标行为是移除旧收藏。SQLite 默认关闭外键时不能仅依赖数据库级联，应用删除路径必须显式处理这类旧条目。
 

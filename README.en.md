@@ -22,11 +22,11 @@ The public instance is a personal live demo with one administrator and one merch
 - Users choose hero, selling-point, scene, detail, SKU, dimension, and other image types. Each type defaults to two images and has an independent quantity control.
 - Every product starts with one to six real product reference images in PNG, JPEG, or WebP.
 - The Agent can ask for price, generation style, image text language, copy requirements, and visual-system decisions.
-- After the user confirms the WorkflowDraft, the UI streams materialization progress and reveals the product workbench while continuing the same Agent conversation in the sidebar.
+- After the user confirms the WorkflowDraft, the system persists a schema-v3 graph and opens the product workbench while continuing the same Agent conversation in the sidebar.
 
-### V2 Workflow Canvas
+### Workflow Canvas
 
-- The only current node types are `product_context`, `reference_image`, `prompt_generation`, and `image_generation`.
+- The current node types are `product_source`, `image_asset`, `creative_brief`, `visual_system`, `prompt_generation`, and `image_generation`.
 - The canvas supports adding nodes, drawing edges, moving, deleting, multi-selecting, zooming, panning, automatic layout, and keyboard shortcuts.
 - Folders organize local workflow sections and reduce visual complexity in larger DAGs.
 - The inspector edits prompts, reference bindings, visual-system overrides, aspect ratio, resolution, quality, text policy, and delivery specifications.

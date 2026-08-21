@@ -4,7 +4,7 @@
 
 ProductFlow 是单商家商品视觉生产工作台。用户提供真实商品参考图和交付目标，工作流 Agent 通过对话整理商品信息、视觉体系和单图提示词，生成可编辑、可执行、可复用的图片生产工作流。
 
-当前版本服务个人项目和 live demo，但已部署实例的数据升级不能依赖重置。迁移窗口需要保留最小不可变历史快照、canonical 资产映射和 Agent 重建入口；在线运行时仍只维护一套 V2 schema、API 和执行模型。SaaS 的租户、计费与长期兼容策略不属于当前版本。
+当前版本服务个人项目和 live demo，但已部署实例的数据升级不能依赖重置。迁移窗口需要保留最小不可变历史快照、canonical 资产映射和 Agent 重建入口；在线运行时只维护一套 schema-v3 图、API 和执行模型。SaaS 的租户、计费与长期兼容策略不属于当前版本。
 
 ## 2. 目标用户
 
@@ -23,7 +23,7 @@ ProductFlow 是单商家商品视觉生产工作台。用户提供真实商品�
 5. Agent 检查已知信息并询问价格、风格、文字语种、文案要求、视觉体系等缺口。
 6. Agent 输出商品事实、视觉体系、图片计划、每张图的提示词、参考绑定和生成规格。
 7. 用户检查并确认草案。
-8. 系统物化 schema-v2 工作流，通过流式事件逐步显示文件夹、节点和连线。
+8. 系统把确认后的草案写入 schema-v3 工作流图，然后进入商品工作台。
 9. 创建页平滑进入商品工作台，右侧继续原 Agent 对话。
 
 ### 3.2 编辑和运行工作流
@@ -73,9 +73,9 @@ ProductFlow 是单商家商品视觉生产工作台。用户提供真实商品�
 - `MediaLibraryAsset`：全局素材库中的逻辑图片身份、来源快照、组织和归档状态。
 - `WorkflowMediaLibraryAsset`：全局素材到某个工作流子图库的使用关联。
 - `WorkflowDraft` / `WorkflowDraftRevision`：Agent 产出的可确认工作流草案。
-- `ProductWorkflow`：当前 schema-v2 DAG。
-- `WorkflowNode` / `WorkflowEdge` / `WorkflowFolder`：画布结构。
-- `WorkflowRun` / `WorkflowNodeRun`：运行状态和结果。
+- `WorkflowGraph`：当前 schema-v3 DAG。
+- `WorkflowGraphNode` / `WorkflowGraphEdge` / `WorkflowGraphGroup`：画布结构。
+- `WorkflowGraphRun` / `WorkflowGraphNodeRun` / `WorkflowGraphArtifact`：运行状态和产物。
 - `WorkflowRecipe` / `WorkflowRecipeVersion`：用户主动保存的完整配方或局部片段。
 - `AgentSession`：长期交流容器、标题、摘要和任务索引。
 - `AgentTask`：一个业务目标和一次任务专属 run。
@@ -88,7 +88,7 @@ ProductFlow 是单商家商品视觉生产工作台。用户提供真实商品�
 
 - `/products`：商品列表和自动封面。
 - `/products/new`：全屏 Agent 创建流程。
-- `/products/:productId`：Agent、V2 画布、节点详情、运行记录、配方和图片库。
+- `/products/:productId`：Agent、工作流画布、节点详情、运行记录、配方和图片库。
 - `/image-chat`：连续文/图生图。
 - `/media-library`：全局素材库。
 - `/gallery`：旧收藏画廊书签兼容重定向。
@@ -120,7 +120,7 @@ ProductFlow 是单商家商品视觉生产工作台。用户提供真实商品�
 
 ## 8. 成功标准
 
-- 用户可以从参考图和图片类型选择完成 Agent 澄清、确认和工作流物化。
+- 用户可以从参考图和图片类型选择完成 Agent 澄清、确认，并把草案写入工作流图。
 - 用户可以继续手工编辑节点、连线、文件夹、提示词、参考绑定和生成规格。
 - 工作流生成图、连续生图转入图和上传图在同一商品图片库中可管理；跨商品长期素材进入 `/media-library`。
 - Provider 配置、Agent Turn、工作流运行和图片任务在失败或重启后有明确状态。

@@ -50,12 +50,12 @@
 
 ### 只从 ROADMAP 进入
 
-schema-v3、自由画布和 Agent 图协作不是当前实现。不要把下列文档写进 CONTEXT、PRD 或 ARCHITECTURE 的当前事实段落：
+在线工作流已经是 schema-v3 `workflow_graphs`。Agent 对 live graph 的 GraphProposal、配方从 v3 图提取保存、以及 Recipe ChangeSet 仍未交付。不要把下列未完成项写进 CONTEXT、PRD 或 ARCHITECTURE 的当前事实段落：
 
-- `ROADMAP.md` §2
-- `adr/0008-free-canvas-agent-graph-authority.md`（Accepted，implementation pending）
-- `specs/schema-v3-admission-slice.md`（Draft，批准前不进代码）
-- `rollout/free-canvas-v3-interaction-parity.md`
+- `ROADMAP.md` §2 未完成项
+- `adr/0008-free-canvas-agent-graph-authority.md` 中尚未落地的 GraphProposal / Recipe ChangeSet
+- `specs/schema-v3-admission-slice.md` 中尚未落地的后续切片
+- `rollout/free-canvas-v3-interaction-parity.md` 中尚未完成的交互项
 
 Python 业务后端迁到 Go 也不是当前实现，且主线仍是 schema-v3。不要把下列文档写进 CONTEXT、PRD 或 ARCHITECTURE 的当前事实段落，也不得在 schema-v3 治理基线完成前开工：
 

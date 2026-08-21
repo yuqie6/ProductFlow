@@ -2,14 +2,12 @@
 
 ## 1. 状态
 
-- 文档状态：Draft
-- 批准依据：待批准。目标合同已接受：`docs/adr/0008-free-canvas-agent-graph-authority.md`
+- 文档状态：Approved for implementation
+- 批准依据：仓库 owner 确认设计稳单并开始落地。目标合同：`docs/adr/0008-free-canvas-agent-graph-authority.md`
 - 交互继承：`docs/rollout/free-canvas-v3-interaction-parity.md`
-- 当前运行事实：`CONTEXT.md`、`docs/ARCHITECTURE.md`、代码。本文不是当前实现。
-- 阅读入口：只从 `docs/ROADMAP.md` §2 进入，不进入默认阅读。
-- 代码基线：`codex/development` 的 schema-v2 工作台与 `application/` owner 收口之后。迁移头：`20260820_0070`
-
-本文只覆盖 v3 重新进入在线代码的第一刀。批准前不写 v3 graph、run、API、前端数据源或新迁移。
+- 当前运行事实：`CONTEXT.md`、`docs/ARCHITECTURE.md`、在线 schema-v3 `workflow_graphs`。本文是已落地准入切片的设计记录；GraphProposal、配方从 live graph 提取保存仍未交付。
+- 阅读入口：未完成项只从 `docs/ROADMAP.md` §2 进入，不进入默认阅读。
+- 代码基线：`codex/development`。迁移头：`20260821_0080`。v3 graph、ChangeSet、compiler、run、直接创建、Draft 确认 persist 和工作台画布数据源已落地。工作流子图库关联挂在 `workflow_graphs` 上。在线 V2 图合同已从应用层删除。
 
 人是工作台的主控。画布上每一种持久操作都必须能由用户单独完成，并且自洽、可撤销、体验完整。Agent 是加速手段，不是进画布或写出提示词/风格的闸门。
 
@@ -22,14 +20,14 @@
   ├─ 直接创建
   │     -> 按类型/数量/参考图套预设模版
   │     -> 一个初始 Graph ChangeSet
-  │     -> schema-v3 ProductWorkflow（提示词和风格可以不完整）
+  │     -> schema-v3 `workflow_graphs`
   │     -> 工作台；跑 prompt_generation / 相关节点才生成提示词和风格
   │
   └─ Agent 创建（现有对话路径，可选）
         -> WorkflowDraft revision
         -> 用户确认
         -> 同一套 Graph Command（Draft→初始图 adapter）
-        -> 同一份 schema-v3 ProductWorkflow
+        -> 同一份 schema-v3 `workflow_graphs`
 ```
 
 两条入口之后：
@@ -187,7 +185,7 @@ V2 允许对同一商品再确认 Draft，停用旧图并写 `revision+1` 的新
 - 同一键同一 hash：返回已有 workflow
 - 同一键不同 hash：conflict
 - 商品已有 active schema-v3 workflow：conflict（本切片不允许静默再物化一份平行图）
-- 开发库允许在切片上线前清空 V2 图数据；adapter 不读取、不转换 V2 `ProductWorkflow` 行
+- schema-v2 从未进入生产，没有 V2 工作流要迁、要对账、要双读。adapter 不读取、不转换 V2 `ProductWorkflow` 行。开发库可以直接丢掉 V2 图数据。需要迁移和兼容的只有 `main` 上的 V1 archive、Gallery bridge 和历史只读路径。
 
 Reveal events 继续只控制呈现。断开动画不能留下半张图：ChangeSet 事务提交前浏览器只看到 Draft；提交后读 v3 projection。
 
@@ -197,7 +195,7 @@ Reveal events 继续只控制呈现。断开动画不能留下半张图：Change
 
 唯一写图入口。Web 画布、adapter、以后的 Agent/Recipe 都走它。
 
-Owner：`application/product_workflow/` 下新模块（建议 `catalog.py`、`changesets.py`、`graph_commands.py`、`graph_queries.py`）。不要另起顶层 graph 包。
+Owner：`application/product_workflow/`（`graph_contracts.py`、`graph_apply.py`、`graph_commands.py`、`graph_queries.py`、`graph_template.py`、`draft_graph_adapter.py`、`graph_direct_create.py`）。不要另起顶层 graph 包。
 
 ChangeSet 操作本切片必须能表达当前 V2 画布已有的持久编辑，否则物化后的 folder/复制/删除会悬空：
 
@@ -230,17 +228,31 @@ Agent 运行请求继续走「待确认请求 → 同一 run use case」，形�
 
 ### 5.3 HTTP
 
-与 ADR 0008 §12 对齐：v3 进入 `codex/development` 时，模型和 API 以 schema-v3 为唯一在线图合同，删除 Draft→V2 物化和 V2 图命令。开发期间用 **独立分支 + 独立数据库**，不要在同一 FastAPI 进程用 flag 同时挂 V2 和 v3 物化。
+schema-v2 没有生产数据，不需要为它做兼容层、双执行器或 flag 选边。v3 在 `codex/development` 落地时，模型和 API 直接以 schema-v3 为唯一在线图合同；V2 图命令和 Draft→V2 物化随切片完成删除，不必迁 V2 行。
 
-`web/src/lib/api.ts` 在该分支改为 v3 图/运行方法。商品、Agent 对话、素材库、legacy archive 路由保留。
+要保住的只有 `main` 的 V1：`legacy_retirement/`、`legacy_archives*`、Gallery bridge、`/history`。商品、Agent 对话、素材库路由保留。
 
-目标路径（名称可在实现时微调，语义固定）：
+`web/src/lib/api.ts` 的图/运行方法改为 v3。画布写入合同是 `POST /api/v3/products/{product_id}/workflows/{workflow_id}/changesets`。当前已提供：
 
-- `GET` 当前 graph projection（含 revision、节点配置状态、未使用标记、incoming/outgoing 摘要）
-- `POST .../changesets`
-- `GET/POST/cancel/retry` WorkflowRun，带 revision snapshot
+- `GET /api/v3/node-catalog`：Node Catalog 投影（输出类型、接受输入、基数、运行必需性）；前端连线预校验只读这份文档
+- `POST /api/v3/products`：构思表单直接创建（商品 + 参考图 + 预设模版图）
+- `POST /api/v3/products/{product_id}/workflow-drafts/{draft_id}/graphs`：确认后的 Draft 写成同一份 v3 graph
+- `GET /api/v3/products/{product_id}/workflows/current`：当前 graph projection（revision、配置状态、未使用标记、incoming/outgoing 摘要）
+- `GET /api/v3/products/{product_id}/workflows/{workflow_id}`
+- `POST /api/v3/products/{product_id}/workflows/{workflow_id}/changesets`
+- `POST /api/v3/products/{product_id}/workflows/{workflow_id}/undo`：对最近一次 operation group 提交 inverse ChangeSet
 
-交互继承表要求的 `POST /api/v3/products/{product_id}/workflows/{workflow_id}/changesets` 是画布写入合同。
+运行 API：
+
+- `POST /api/v3/products/{product_id}/workflows/{workflow_id}/runs`
+- `GET /api/v3/products/{product_id}/workflows/{workflow_id}/runs`
+- `GET /api/v3/products/{product_id}/workflows/{workflow_id}/runs/{run_id}`
+- `POST .../runs/{run_id}/cancel`
+- `POST .../runs/{run_id}/retry`
+
+运行固定 snapshot；compiler 只读 incoming edges。未使用的 `image_asset` 不进入运行输入。旧 revision 的成功产物不覆盖新 revision 的 current Artifact。
+
+在线 V2 图写入已关闭：`POST .../materialize`、V2 节点/边/folder mutation、V2 run、从 V2 图保存配方均返回 410。Draft 确认、配方 apply→Draft、Agent 对话和 V2 GET 仍可达，待 gate 后删除。Agent 执行请求只认 active `workflow_graphs`；没有 v3 图时返回「没有可执行的工作流」。
 
 ## 6. 素材三个动作
 
@@ -269,6 +281,30 @@ Inspector 必须区分：未绑定、已绑定未使用、已连接及消费者�
 
 chrome 仍不得引用 agent/canvas。
 
+### 7.1 V1 画布是交互主参考
+
+文档入口：
+
+- 本文件 §1「交互继承」指向 `docs/rollout/free-canvas-v3-interaction-parity.md`
+- ADR 0008 保留素材库/子图库搜索、拖入、预览、选择体验，以及 Inspector / 运行侧栏的手感
+- ROADMAP §2：工作台使用成熟 v1/v2 画布 shell，只换数据源
+
+V1 在 `origin/main`，生产仍在用。v3 画布要继承的是那里的直接操作能力，不是 V2 的 DTO、plan key 或 mutation API。对照文件：
+
+| `origin/main` 文件 | 继承什么 |
+|---|---|
+| `web/src/pages/ProductDetailPage.tsx` | 页面编排、移动端浏览/编辑/选择模式、复制粘贴、自动布局入口 |
+| `web/src/pages/product-detail/WorkflowCanvas.tsx` | 选择/框选、成组拖动、连线反馈、节点/边上下文工具条、MiniMap |
+| `web/src/pages/product-detail/WorkflowNodeCard.tsx` | 节点卡片呈现 |
+| `web/src/pages/product-detail/InspectorPanel.tsx` | 检查器信息架构 |
+| `web/src/pages/product-detail/RunsPanel.tsx` | 运行历史、取消、重试 |
+| `web/src/pages/product-detail/ImagesPanel.tsx` 与预览/下载组件 | 节点输出预览、下载、定位生成节点 |
+| `web/src/pages/product-detail/TemplateGroupsPanel.tsx` | 配方作为产品概念的入口（第一刀写入仍走 Draft→adapter） |
+| `shortcuts.ts` / `selection.ts` / `workflowHistory.ts` | 快捷键、选区、撤销交互（v3 撤销权威改为 operation group） |
+| `reactFlowAdapters.ts` | 纯呈现适配；不继承 V1 节点类型 |
+
+当前工作树 `workbench/chrome/` 与已验证的 canvas 交互组件同样继承。禁止为了复用 UI 把 V1/V2 API、Draft materialization、plan key 或隐藏 reference merge 带进 v3 数据源。
+
 ## 8. Agent 第一刀
 
 Agent 创建是第二条入口，不是唯一入口。
@@ -285,9 +321,9 @@ CONTEXT 里商品数量上限（类型 1–6 张、合计 30）约束的是创�
 
 ## 9. 迁移
 
-从 `20260820_0070` 开新 revision，不复用 `0071-0074`。新链建立 v3 图、edge typed 字段、graph revision、operation group、run snapshot 所需表或替换约束。
+从 `20260820_0070` 开新 revision `20260821_0075`，不复用 `0071-0074`。0075 建立独立表 `workflow_graphs` / `workflow_graph_nodes` / `workflow_graph_edges` / `workflow_graph_groups` / `workflow_operation_groups`，`schema_version = 3`。typed edge、graph revision 和 operation group 写在这些表里。run snapshot 仍待后续 revision。
 
-`ck_product_workflows_schema_version = 2` 必须随 v3 唯一权威一起改掉，不能先放宽成 `IN (2, 3)` 再靠应用层选边。
+`product_workflows` 继续是 schema-v2 工作台用的表，约束仍是 `schema_version = 2`。不把同一张表放宽成 `IN (2, 3)`。直接创建只写 `workflow_graphs`。工作台切到 v3 并完成 gate 后，再删 `product_workflows` 在线图合同。
 
 本地库若应用过已删除的 0071，只能备份恢复或换新库。
 
@@ -308,7 +344,25 @@ CONTEXT 里商品数量上限（类型 1–6 张、合计 30）约束的是创�
 - 桌面与 390px 浏览器；console/network 无 error
 - 无 V2 fallback residue
 
-通过后再删：在线 V2 route/schema/`v2_*.py`/canvas V2 hook/`api.ts` V2 图方法/对应测试。保留 `legacy_retirement/`、`legacy_archives*`、Gallery bridge、`/history`。
+schema-v2 从未上生产，**没有 V2 数据要迁、没有 V2 API 兼容窗**。主链路在 v3 上自洽之后，在线 V2 图合同可以整段删除。这不等于把工作台里已经好用的设计和组件一起扔掉。
+
+**删（V2 图合同，开发基线直接换）：**
+
+- `schema_version = 2` 作为在线图权威，以及 `product_context` / `reference_image` 在线节点类型
+- plan key、Prompt Artifact `images[]` 拓扑、隐藏 lineage、V2 handle 矩阵作为运行输入
+- `workflow_drafts/materialization.py` 写 V2 图、`product_workflow/v2_*.py`、V2 run executor
+- `canvas/graph.ts` 等 V2 DTO、以 `edit_version` 为权威的 V2 mutation API、`v2WorkflowHistory.ts` 作为撤销权威
+- 为 V2 准备的双读、flag 选边、V2→v3 行转换
+
+**留（设计与组件，换数据源不换手感）：**
+
+- `/products/new` 构思表单：名称、图片类型、数量、参考图
+- `workbench/chrome/`：画布壳、节点卡片、快捷键、Inspector 壳、图片 Explorer、选择/框选/缩放
+- `workbench/agent/`：对话、SSE、Question、Draft 确认（Agent 入口仍用）
+- 素材三层身份：`MediaObject`、`MediaLibraryAsset`、`ProductImageAsset`、`WorkflowMediaLibraryAsset`
+- `GenerationSpec` / 实测输出 / `DeliverySpec` 分离；一层 folder；用户主动保存的配方产品概念
+- Agent Session / Task / Conversation；Pi 不管业务库事务
+- **`main` 的 V1**：`legacy_archives*`、`legacy_retirement/`、Gallery bridge、只读 `/history`。这是唯一要做迁移和兼容的生产历史。
 
 ## 11. 验收对照
 
@@ -322,6 +376,6 @@ ADR 0008 §14.1–14.3 中，本切片必须覆盖：空画布可建六类节点
 
 1. ADR 0008 §11 终态是 WorkflowIntent 直接出 ChangeSet；第一刀仍用完整 WorkflowDraft 拓扑 + adapter。Draft 在第一刀仍然拥有一份确认前拓扑。
 2. ADR 0008 §10 的 Agent live-graph tool 与 §14.3 提案预览不在第一刀。交互继承表把它们标待实现，顺序在第 5 步，晚于运行接通。
-3. ADR 0008 §12 要求进入主线时直接替换、不双执行器。交互表和旧 ROADMAP 容易读成「仓库里长期挂两套 API」。以独立分支+独立库开发、合并时单权威为准。
+3. schema-v2 从未上生产。进入 v3 时直接替换开发基线的在线图，不为 V2 做迁移或双读。`main` 的 V1 archive / Gallery bridge / 历史读路径必须留下。
 4. 交互继承表「待实现」指 ChangeSet 版交互，不是当前 V2 画布没有框选。第一刀验收必须在新代码上重跑该表中除 GraphProposal/Recipe/v1 重建以外的行。
 5. ADR 0003 的 DeliverySpec 不进 DAG、GenerationSpec 与实测分离，第一刀继续成立；不要为 v3 再加交付节点。

@@ -15,10 +15,11 @@
 
 ## 当前基线（2026-08-21）
 
-- 当前治理 checkout 已回到 `e6cf9e66` 的 schema-v2 基线，当前代码树没有 v3 graph、ChangeSet、run、API、前端工作台或迁移实现。
-- 此前本地 v3 实现产生的 focused test、PostgreSQL/Redis/worker 和浏览器记录随实现一起退出当前基线，不能作为新的 v3 验收证据。
-- 下表只保留成熟交互来源、目标合同和验收行为。所有 v3 能力统一恢复为待实现、待验收状态。
-- schema-v2 在治理期间承担当前在线合同，不增加新能力。v3 graph、typed edge、revision、run 和素材身份合同保持唯一目标态。
+- 工作台画布、构思直接创建和 Draft 确认物化已读/写 schema-v3 graph projection、ChangeSet 与 run。`workbench/chrome/` 的节点卡、端口、工具条、框选/多选、MiniMap、自动布局和快捷键已接到 v3 画布。
+- Agent 工作台在已有 v3 graph 时保留对话侧栏，不再整页替换成无对话的 stub。无图时显示 onboarding，不再打开 V2 canvas。
+- 工作流子图库挂在 `workflow_graphs` 上。绑定走 `update_node_config`，不自动连 `reference` 边。配方保存仍返回 410；应用配方继续生成待确认 Draft。片段配方对 schema-v3 明确冲突。
+- GraphProposal、Recipe 直接 ChangeSet、撤销权威（operation group inverse）仍待实现。
+- 浏览器 390px 与真实 provider 的完整交互表验收仍待补。
 
 ## 保留原则
 
@@ -32,28 +33,28 @@
 
 | 能力 | 成熟实现证据 | v3 归属 | 验收行为 | 状态 |
 | --- | --- | --- | --- | --- |
-| 单选、追加多选、框选 | 远端 `WorkflowCanvas.tsx`；本地 `workflowCanvasInteraction.ts` | React Flow 选择状态 | Shift/Ctrl/Command 可追加选择；空白拖动可框选 | 待实现；待验收 |
-| 节点拖动与成组拖动 | 远端 `WorkflowCanvas.tsx` | `move_nodes` 单个 ChangeSet | 多选节点拖动后只产生一个 operation group | 待实现；待验收 |
-| 连接目标反馈 | 本地 `WorkflowCanvasChrome.tsx` | Catalog 端口合同与 ChangeSet 校验 | 拖线时可连接目标为绿色，不合法目标为红色；失败原因可见 | 待接入 |
-| 聚合输入端口 | ADR 0008 节点目录 | 单个 `input` handle，多条 typed edge | 多个参考素材连接同一输入，不生成无法解释的端口排 | 待实现；待验收 |
-| 节点上下文工具条 | 远端 `WorkflowCanvas.tsx`；本地 `WorkflowCanvasChrome.tsx` | 节点/选区命令 | 运行、复制、聚焦、保存为配方、删除靠近选区出现 | 待实现；待验收 |
-| 边上下文工具条 | 远端 `WorkflowCanvas.tsx` | `disconnect_edge` | 选中边可直接删除，并能看到边的语义名称 | 待实现；待验收 |
-| 复制、粘贴、成组复制 | 远端 `ProductDetailPage.tsx`；本地 `shortcuts.ts` | 一个 create/connect ChangeSet | 保留选区内部边，生成新节点 ID，粘贴后选中新节点 | 待实现；待验收 |
-| 删除选区 | 远端与本地快捷键实现 | 一个 delete/disconnect ChangeSet | 多节点及关联边原子删除；输入编辑时快捷键不误触 | 待实现；待验收 |
-| 撤销、重做 | 远端 `workflowHistory.ts`；本地 `v2WorkflowHistory.ts` | operation group 与逆 ChangeSet | Ctrl/Command+Z 和 redo 可恢复完整结构命令 | 待实现；待验收 |
-| 自动布局 | 远端画布；本地 v2 `graph.ts` | `move_nodes` ChangeSet | 按 DAG 层级布局，结果可撤销，不改节点关系 | 待实现；待验收 |
-| 吸附、缩放、适应画布、聚焦选区 | 本地 `WorkflowCanvasChrome.tsx` | 纯客户端视口状态 | 吸附可切换；缩放记忆；可聚焦选区或全图 | 待实现；待验收 |
-| MiniMap | 远端成熟画布 | 纯客户端视口状态 | 大图可定位和拖动，不遮挡检查器 | 待实现；待验收 |
-| 添加全部节点类型 | ADR 0008 Node Catalog | `create_node` | 添加面板展示六类节点及用途，创建位置接近当前视口 | 待实现；待验收 |
-| 节点配置与素材绑定 | 本地 v2 Inspector；ADR 0008 | `update_node_config` | 未保存、保存中、失败、已保存状态明确；素材绑定不自动连边 | 待实现；待验收 |
-| 输入与消费者追踪 | ADR 0008 图查询合同 | 图查询结果 | 可查看每条输入的来源、role 和消费者；可跳转到关联节点 | 待实现；待验收 |
-| 图片预览与下载 | 远端 `ImagesPanel.tsx`；本地图片浏览组件 | Artifact 与 ProductImageAsset | 节点输出可预览、下载并定位到生成节点 | 待接入 v3 Artifact |
-| 节点运行、目标运行、全图运行 | 远端运行交互；ADR 0008 run contract | v3 run API | 运行范围可见；执行只读取上游边；运行状态投影到节点 | 待实现；待验收 |
-| 运行历史、取消、重试 | 远端 `RunsPanel.tsx`；本地 v2 run panels | WorkflowRun/WorkflowNodeRun | 可查看 revision snapshot、context trace、失败原因、取消和 retry 来源 | 待实现；待验收 |
-| 分组与进入分组 | 当前本地 v2 folder 交互 | v3 group ChangeSet | 选区可分组、移动、重命名、解散；分组不成为可执行节点 | 待实现；待验收 |
-| 保存配方与应用配方 | 远端模板面板；本地 Recipe 面板 | Recipe ChangeSet | 全图、分组或选区可保存；应用前预览将创建的图变更 | 待实现 |
+| 单选、追加多选、框选 | 远端 `WorkflowCanvas.tsx`；本地 `workflowCanvasInteraction.ts` | React Flow 选择状态 | Shift/Ctrl/Command 可追加选择；空白拖动可框选 | 已接线；待浏览器验收 |
+| 节点拖动与成组拖动 | 远端 `WorkflowCanvas.tsx` | `move_nodes` 单个 ChangeSet | 多选节点拖动后只产生一个 operation group | 已接线；待浏览器验收 |
+| 连接目标反馈 | 本地 `WorkflowCanvasChrome.tsx` | Catalog 端口合同与 ChangeSet 校验 | 拖线时可连接目标为绿色，不合法目标为红色；失败原因可见 | 已接线；待浏览器验收 |
+| 聚合输入端口 | ADR 0008 节点目录 | 单个 `input` handle，多条 typed edge | 多个参考素材连接同一输入，不生成无法解释的端口排 | 已接线；待浏览器验收 |
+| 节点上下文工具条 | 远端 `WorkflowCanvas.tsx`；本地 `WorkflowCanvasChrome.tsx` | 节点/选区命令 | 运行、复制、聚焦、保存为配方、删除靠近选区出现 | 已接线（配方保存除外）；待浏览器验收 |
+| 边上下文工具条 | 远端 `WorkflowCanvas.tsx` | `disconnect_edge` | 选中边可直接删除，并能看到边的语义名称 | 已接线；待浏览器验收 |
+| 复制、粘贴、成组复制 | 远端 `ProductDetailPage.tsx`；本地 `shortcuts.ts` | 一个 create/connect ChangeSet | 保留选区内部边，生成新节点 ID，粘贴后选中新节点 | 已接线；待浏览器验收 |
+| 删除选区 | 远端与本地快捷键实现 | 一个 delete/disconnect ChangeSet | 多节点及关联边原子删除；输入编辑时快捷键不误触 | 已接线；待浏览器验收 |
+| 撤销、重做 | 远端 `workflowHistory.ts`；本地 operation group inverse | operation group 与逆 ChangeSet | Ctrl/Command+Z 提交 inverse ChangeSet；Redo 尚未单独实现 | 撤销已接线；Redo 待补；待浏览器验收 |
+| 自动布局 | 远端画布；本地 v2 `graph.ts` | `move_nodes` ChangeSet | 按 DAG 层级布局，结果可撤销，不改节点关系 | 已接线（撤销除外）；待浏览器验收 |
+| 吸附、缩放、适应画布、聚焦选区 | 本地 `WorkflowCanvasChrome.tsx` | 纯客户端视口状态 | 吸附可切换；缩放记忆；可聚焦选区或全图 | 已接线；待浏览器验收 |
+| MiniMap | 远端成熟画布 | 纯客户端视口状态 | 大图可定位和拖动，不遮挡检查器 | 已接线；待浏览器验收 |
+| 添加全部节点类型 | ADR 0008 Node Catalog | `create_node` | 添加面板展示六类节点及用途，创建位置接近当前视口 | 已接线；待浏览器验收 |
+| 节点配置与素材绑定 | 本地 v2 Inspector；ADR 0008 | `update_node_config` | 未保存、保存中、失败、已保存状态明确；素材绑定不自动连边 | 已接线（绑定不连边）；待浏览器验收 |
+| 输入与消费者追踪 | ADR 0008 图查询合同 | 图查询结果 | 可查看每条输入的来源、role 和消费者；可跳转到关联节点 | 已接线；待浏览器验收 |
+| 图片预览与下载 | 远端 `ImagesPanel.tsx`；本地图片浏览组件 | Artifact 与 ProductImageAsset | 节点输出可预览、下载并定位到生成节点 | 已接线 preview_asset_id；待浏览器验收 |
+| 节点运行、目标运行、全图运行 | 远端运行交互；ADR 0008 run contract | v3 run API | 运行范围可见；执行只读取上游边；运行状态投影到节点 | 已接线节点/全图；待浏览器验收 |
+| 运行历史、取消、重试 | 远端 `RunsPanel.tsx`；本地 v2 run panels | WorkflowRun/WorkflowNodeRun | 可查看 revision snapshot、context trace、失败原因、取消和 retry 来源 | 已接线取消/重试；context trace 待补 |
+| 分组与进入分组 | 当前本地 v2 folder 交互 | v3 group ChangeSet | 选区可分组、移动、重命名、解散；分组不成为可执行节点 | 已接线分组/移动/解散；重命名与进入分组待补 |
+| 保存配方与应用配方 | 远端模板面板；本地 Recipe 面板 | Recipe ChangeSet | 全图、分组或选区可保存；应用前预览将创建的图变更 | 应用仍走 Draft；保存待实现 |
 | Agent 图提案预览 | ADR 0008 提案合同 | GraphProposal -> ChangeSet | 提案以 ghost 节点/边预览；确认后一次应用并聚焦变更 | 待实现；待验收 |
-| 移动端浏览、编辑、选择模式 | 远端 `ProductDetailPage.tsx`；本地 Chrome | 客户端交互模式 | 手势不会同时平移和移动节点；检查器用底部抽屉 | 待接入 |
+| 移动端浏览、编辑、选择模式 | 远端 `ProductDetailPage.tsx`；本地 Chrome | 客户端交互模式 | 手势不会同时平移和移动节点；检查器用底部抽屉 | 已接线模式切换；待浏览器验收 |
 
 ## 明确不继承
 

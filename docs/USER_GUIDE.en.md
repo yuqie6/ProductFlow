@@ -60,15 +60,17 @@ The confirmation view summarizes:
 - Aspect ratio, resolution, quality, text policy, and delivery specifications.
 - Planned folders, nodes, and edges.
 
-Confirmation starts materialization. The canvas reveals folders, nodes, and edges from streamed events, then enters the product workbench with the same Agent conversation in the sidebar.
+Confirmation writes the draft into the workflow graph, then opens the product workbench with the same Agent conversation in the sidebar.
 
 ## 3. Product Workbench
 
-### 3.1 Four Node Types
+### 3.1 Node Types
 
-- Product context: confirmed product facts and visual system.
-- Reference image: one explicit image from the product library.
-- Prompt generation: an editable prompt built from facts, visual rules, and image goal.
+- Product facts: confirmed product facts.
+- Image asset: one explicit image from the product library.
+- Creative brief: workflow-level goals and constraints.
+- Visual system: a visual-system version reference.
+- Prompt generation: an editable prompt built from facts, brief, and visual rules.
 - Image generation: aspect ratio, resolution, quality, background, text policy, reference fidelity, and execution state.
 
 ### 3.2 Canvas Operations
@@ -79,7 +81,7 @@ Confirmation starts materialization. The canvas reveals folders, nodes, and edge
 - Ctrl/Cmd/Shift-click or marquee-select multiple nodes.
 - Check downstream dependencies before deleting selected nodes or edges.
 - Use automatic layout to improve routing.
-- Put a local flow in a canvas folder. A folder changes visual organization only, not DAG execution order.
+- Put a local flow in a canvas group. A group changes visual organization only, not DAG execution order.
 
 Node cards show compact scanning summaries. Edit complete content in the inspector so cards remain readable.
 
@@ -249,7 +251,7 @@ Select at least one image type and upload one to six valid product images. Then 
 
 ### The Agent Replied but No Workflow Appeared
 
-Check whether the Turn requires input or awaits confirmation. Answer the question and confirm the latest WorkflowDraft revision before materialization.
+Check whether the Turn requires input or awaits confirmation. Answer the question and confirm the latest WorkflowDraft revision so the workbench can persist the graph.
 
 ### A Reference Node Is Empty
 

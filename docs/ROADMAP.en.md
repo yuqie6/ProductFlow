@@ -1,6 +1,6 @@
 # ProductFlow Roadmap
 
-This document records only directions that remain unimplemented or lack real validation evidence. Current capabilities live in `PRD.en.md`, current code structure in `ARCHITECTURE.en.md`, and V1 cutover evidence in `rollout/workflow-v2-cutover.md`. Schema-v3 and free-canvas target contracts are entered only from §2; do not write them into the current-implementation sections of `CONTEXT.md`, `PRD.en.md`, or `ARCHITECTURE.en.md`.
+This document records only directions that remain unimplemented or lack real validation evidence. Current capabilities live in `PRD.en.md`, current code structure in `ARCHITECTURE.en.md`, and V1 cutover evidence in `rollout/workflow-v2-cutover.md`. The online schema-v3 graph is already documented there; GraphProposal, recipe extract from a live graph, and Recipe ChangeSet are entered only from §2.
 
 ## Near-Term Priorities
 
@@ -18,20 +18,16 @@ This document records only directions that remain unimplemented or lack real val
 - Build end-to-end regression cases with real products and real providers.
 - Evaluate question count, fact accuracy, visual-system consistency, and per-image prompt quality.
 - Improve confirmation density, conflict handling, and edit feedback.
-- Validate Turn reconnect, restart, question answering, and materialization recovery.
+- Validate Turn reconnect, restart, question answering, and Draft-confirm graph persist recovery.
 
-### 2. Schema-v3 Free Canvas and Agent Graph Collaboration
+### 2. Remaining schema-v3 work
 
-- The target contract lives in `docs/adr/0008-free-canvas-agent-graph-authority.md`. The first implementation slice is specified in `docs/specs/schema-v3-admission-slice.md` (Draft; no code until approved). The current governance checkout is the schema-v2 baseline and contains no schema-v3 graph, run, API, workbench, or migration implementation.
-- Validate the governance baseline by assigning one online owner to Product, WorkflowDraft, ProductWorkflow, WorkflowRun, Agent Session/Task/Conversation, MediaLibraryAsset, and ProductImageAsset, then produce repeatable full-test, live-service, and browser evidence on the current code.
-- The person at the workbench is the primary operator; the Agent is optional help. Keep the intake form (image types, quantities, references) and offer two entries onto the same v3 graph: direct create (preset template ChangeSet; prompts and style come from running nodes) and Agent create.
-- Build one application service from a confirmed WorkflowDraft to the initial v3 graph (Agent entry only), followed by the Node Catalog, typed edges, Graph Context Compiler, ChangeSets, graph revisions, operation groups, and revision-snapshot runs. GraphProposal and Recipe ChangeSets are out of the first slice.
-- Reuse the mature v1/v2 canvas shell, node presentation, inspector, run sidebar, and asset-selection experience while replacing their data contracts with v3 graph/revision contracts. Do not reintroduce old DTOs, queries, mutations, plan keys, or hidden reference merging.
-- Complete the `MediaLibraryAsset -> ProductImageAsset -> WorkflowMediaLibraryAsset -> image_asset node -> reference edge` flow, including drop, bind, rebind, unused state, multiple consumers, and aggregate reference inputs.
-- Route user canvas edits through one Graph Command Service in the first slice. Recipes still create a WorkflowDraft and then the initial-graph adapter. Agent live-graph GraphProposals come after the first slice. Route Agent run requests, page controls, and workers through one v3 WorkflowRun contract.
-- Retire v2 routes, schemas, application services, pages, hooks, API clients, types, and tests only after the v3 user journey passes its complete gate. Each deletion slice must preserve V1 archives, the Gallery bridge, and historical canvas readers.
-- The current migration head is `20260820_0070`. A restarted v3 implementation must create a new migration chain from the current schema; the discarded `0071-0074` migrations do not count as current implementation or acceptance evidence.
-- The final gate covers a real provider, PostgreSQL/Redis/worker, Agent ChangeSets, concurrency conflicts, desktop and 390px browsers, console/network errors, context recompilation after edge changes, run history, cancellation, retry, and retired-runtime residue scans.
+The online workflow authority is already `workflow_graphs`. Current implementation is in `ARCHITECTURE.en.md`. Still unimplemented:
+
+- Agent GraphProposal / ChangeSet against a live graph. Target contract: `docs/adr/0008-free-canvas-agent-graph-authority.md`.
+- Extracting and saving a recipe from a live v3 graph, and applying a Recipe ChangeSet directly onto another graph. Applying a saved recipe still produces a reviewable Draft.
+- Remaining interaction items in `docs/rollout/free-canvas-v3-interaction-parity.md`.
+- The full gate with a real provider, PostgreSQL/Redis/worker, desktop and 390px browsers, console/network errors, cancel/retry, and a retired-runtime residue scan.
 
 ### 3. Image Production Quality
 

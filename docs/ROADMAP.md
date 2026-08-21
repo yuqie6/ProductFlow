@@ -1,6 +1,6 @@
 # ProductFlow Roadmap
 
-本文只记录尚未实现或尚未取得真实验证证据的方向。当前已交付能力见 `PRD.md`，当前代码结构见 `ARCHITECTURE.md`，V1 切换证据见 `rollout/workflow-v2-cutover.md`。schema-v3 与自由画布目标合同只从本文 §2 进入，不要写进 `CONTEXT.md`、`PRD.md` 或 `ARCHITECTURE.md` 的当前实现段落。
+本文只记录尚未实现或尚未取得真实验证证据的方向。当前已交付能力见 `PRD.md`，当前代码结构见 `ARCHITECTURE.md`，V1 切换证据见 `rollout/workflow-v2-cutover.md`。在线 schema-v3 图已经写进那些当前实现文档；GraphProposal、配方从 live graph 提取保存和 Recipe ChangeSet 只从本文 §2 进入。
 
 ## 近期优先级
 
@@ -18,20 +18,16 @@
 - 用真实商品和真实 provider 建立端到端回归样本。
 - 评估 Agent 的追问数量、事实准确度、视觉体系一致性和单图提示词质量。
 - 优化确认面板的信息密度、冲突处理和修改反馈。
-- 验证 Turn 断线、重启、问题回答和 materialization 恢复。
+- 验证 Turn 断线、重启、问题回答和 Draft 确认后 graph persist 恢复。
 
-### 2. Schema-v3 自由画布与 Agent 图协作
+### 2. Schema-v3 未完成项
 
-- 目标合同见 `docs/adr/0008-free-canvas-agent-graph-authority.md`。第一刀实现设计见 `docs/specs/schema-v3-admission-slice.md`（Draft，批准前不进代码）。当前治理 checkout 位于 schema-v2 基线，代码树中没有 schema-v3 graph、run、API、前端工作台或迁移实现。
-- 完成治理基线验证：确认 Product、WorkflowDraft、ProductWorkflow、WorkflowRun、Agent Session/Task/Conversation、MediaLibraryAsset 和 ProductImageAsset 的唯一在线 owner，并让当前代码全量测试、真实服务和浏览器主链路形成可重复证据。
-- 人是工作台主控；Agent 是可选加速。构思表单（类型/数量/参考图）保留，并提供直接创建（预设模版 ChangeSet，提示词和风格靠跑节点生成）与 Agent 创建两条入口，落到同一份 v3 graph。
-- 从 confirmed WorkflowDraft 到 v3 初始图建立单一应用服务（仅 Agent 入口），再实现 Node Catalog、typed edge、Graph Context Compiler、ChangeSet、graph revision、operation group 和 revision snapshot run。GraphProposal 与 Recipe ChangeSet 不在第一刀。
-- 工作台使用成熟 v1/v2 画布 shell、节点呈现、Inspector、运行侧栏和素材选择体验，数据源统一为 v3 graph/revision；不引入旧 DTO、query、mutation、plan key 或隐藏 reference merge。
-- 完成 `MediaLibraryAsset -> ProductImageAsset -> WorkflowMediaLibraryAsset -> image_asset node -> reference edge` 的端到端适配，覆盖拖入空白处、绑定、换绑、未使用提示、一个素材节点连接多个下游和多个素材进入单一聚合端口。
-- 人工编辑在第一刀进入 Graph Command Service；配方仍经 Draft 再走初始图 adapter；Agent 对 live graph 的 GraphProposal 在第一刀之后。Agent run request、页面运行控制和 worker 统一进入 v3 WorkflowRun。
-- v3 主链路通过完整 gate 后，再删除在线 v2 route、schema、application、page、hook、API、type 和对应测试。每个删除切片都要确认 v1 archive、Gallery bridge 和历史画布读路径不受影响。
-- 当前迁移头为 `20260820_0070`。v3 实现重新开始时从当前 schema 设计新的迁移链，不复用已经从代码树删除的 `0071-0074` 作为当前实现或验收证据。
-- 最终 gate 包括真实 provider、PostgreSQL/Redis/worker、Agent ChangeSet、并发冲突、桌面与 390px 浏览器、console/network error、edge 变化后的上下文重编译、运行历史、取消、retry 和无 retired runtime fallback residue scan。
+在线工作流权威已经是 `workflow_graphs`。当前实现见 `ARCHITECTURE.md`。仍未交付：
+
+- Agent 对 live graph 的 GraphProposal / ChangeSet。目标合同见 `docs/adr/0008-free-canvas-agent-graph-authority.md`。
+- 从 live v3 graph 提取并保存配方，以及 Recipe ChangeSet 直接应用到另一张图。应用已保存配方仍只产生待确认 Draft。
+- `docs/rollout/free-canvas-v3-interaction-parity.md` 中尚未完成的交互项。
+- 真实 provider、PostgreSQL/Redis/worker、桌面与 390px 浏览器、console/network error、取消/retry 和无 retired runtime fallback 的完整 gate。
 
 ### 3. 图片生产质量
 

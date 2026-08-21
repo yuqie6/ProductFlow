@@ -22,11 +22,11 @@ ProductFlow 是面向单商家创作者的开源商品视觉工作台。用户�
 - 用户选择首屏海报、卖点、场景、细节、SKU、尺寸等图片类型；每种类型默认生成 2 张，可独立调整数量。
 - 每个商品需要上传 1 至 6 张真实商品参考图，支持 PNG、JPEG 和 WebP。
 - Agent 可追问商品价格、生图风格、图片文字语种、文案要求和视觉体系等缺失信息。
-- 用户确认 WorkflowDraft 后，页面流式展示物化过程，并平滑进入商品工作台；右侧继续同一段 Agent 对话。
+- 用户确认 WorkflowDraft 后，系统写入 schema-v3 工作流图并进入商品工作台；右侧继续同一段 Agent 对话。
 
-### V2 工作流画布
+### 工作流画布
 
-- 当前节点类型只有 `product_context`、`reference_image`、`prompt_generation`、`image_generation`。
+- 当前节点类型是 `product_source`、`image_asset`、`creative_brief`、`visual_system`、`prompt_generation`、`image_generation`。
 - 画布保留节点拖动、自由添加、连线、删除、多选、缩放、平移、自动布局和快捷键。
 - 文件夹用于收纳局部流程，降低大型 DAG 的排线和浏览压力。
 - 节点详情可编辑提示词、参考图绑定、视觉体系覆盖、生图比例、分辨率、质量、文字策略和交付规格。

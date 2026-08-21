@@ -4,7 +4,7 @@
 
 ProductFlow is a product-visual production workspace for a single merchant. The user supplies real product references and delivery goals. A workflow Agent clarifies product facts, visual-system rules, and per-image prompts, then creates an editable, executable, reusable image-production workflow.
 
-The current release serves a personal project and live demo, but upgrades for deployed instances cannot rely on resetting data. The migration window preserves bounded immutable history snapshots, canonical asset mappings, and Agent rebuild entry points; the online release still maintains one V2 schema, API, and execution model. SaaS tenancy, billing, and long-term compatibility policy are outside this release.
+The current release serves a personal project and live demo, but upgrades for deployed instances cannot rely on resetting data. The migration window preserves bounded immutable history snapshots, canonical asset mappings, and Agent rebuild entry points; the online release maintains one schema-v3 graph, API, and execution model. SaaS tenancy, billing, and long-term compatibility policy are outside this release.
 
 ## 2. Target Users
 
@@ -23,7 +23,7 @@ The current release serves a personal project and live demo, but upgrades for de
 5. The Agent checks known information and asks about missing price, style, text language, copy requirements, and visual-system decisions.
 6. The Agent produces product facts, a visual system, image plans, per-image prompts, reference bindings, and generation specifications.
 7. The user reviews and confirms the Draft.
-8. The system materializes a schema-v2 workflow and streams folder, node, and edge reveal events.
+8. The system persists the confirmed Draft as a schema-v3 workflow graph and opens the product workbench.
 9. The creation screen transitions into the product workbench while the same Agent conversation continues in the sidebar.
 
 ### 3.2 Edit and Run a Workflow
@@ -73,9 +73,9 @@ The current release serves a personal project and live demo, but upgrades for de
 - `MediaLibraryAsset`: global-library image identity, provenance snapshot, organization, and archive state.
 - `WorkflowMediaLibraryAsset`: a usage association from a global asset to one workflow sub-library.
 - `WorkflowDraft` / `WorkflowDraftRevision`: confirmable Agent workflow proposal.
-- `ProductWorkflow`: the current schema-v2 DAG.
-- `WorkflowNode` / `WorkflowEdge` / `WorkflowFolder`: canvas structure.
-- `WorkflowRun` / `WorkflowNodeRun`: execution state and results.
+- `WorkflowGraph`: the current schema-v3 DAG.
+- `WorkflowGraphNode` / `WorkflowGraphEdge` / `WorkflowGraphGroup`: canvas structure.
+- `WorkflowGraphRun` / `WorkflowGraphNodeRun` / `WorkflowGraphArtifact`: execution state and artifacts.
 - `WorkflowRecipe` / `WorkflowRecipeVersion`: user-saved full recipes and fragments.
 - `AgentSession`: long-lived conversation container, title, summary, and task index.
 - `AgentTask`: one business goal and one task-specific run.
@@ -88,7 +88,7 @@ The current release serves a personal project and live demo, but upgrades for de
 
 - `/products`: product list and automatic covers.
 - `/products/new`: full-screen Agent creation flow.
-- `/products/:productId`: Agent, V2 canvas, inspector, runs, recipes, and image library.
+- `/products/:productId`: Agent, workflow canvas, inspector, runs, recipes, and image library.
 - `/image-chat`: iterative text/image generation.
 - `/media-library`: global media library.
 - `/gallery`: compatibility redirect for the retired collected-image bookmark.
@@ -120,7 +120,7 @@ The current release serves a personal project and live demo, but upgrades for de
 
 ## 8. Success Criteria
 
-- A user can move from references and image-type selection through Agent clarification, confirmation, and workflow materialization.
+- A user can move from references and image-type selection through Agent clarification, confirmation, and graph persist.
 - A user can keep editing nodes, edges, folders, prompts, reference bindings, and generation specifications manually.
 - Uploads, workflow results, and image-session attachments are manageable in one product image library. Cross-product long-lived media lives in `/media-library`.
 - Provider configuration, Agent Turns, workflow runs, and image jobs have explicit failure and restart state.

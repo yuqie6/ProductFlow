@@ -14,14 +14,14 @@ ProductFlow is a single-administrator, single-merchant workspace with seven runt
 
 The browser reaches only Web and FastAPI. The Agent service calls FastAPI internal endpoints with a dedicated bearer token; FastAPI controls Agent Turns over the agent-service internal HTTP/SSE API. API, worker, and the async dispatcher share PostgreSQL, Redis, and storage. `just dev` and Docker Compose both start the dispatcher.
 
-This document describes the current implementation only. Module ownership comes from the live source tree and behavior evidence comes from the referenced tests. Product contracts live in `PRD.en.md`, durable rationale in `adr/`, and incomplete deployment evidence in `rollout/`. Read `adr/0007-pi-agent-runtime-boundary.md` and `specs/pi-agent-runtime-integration.md` when changing the Agent service. Schema-v3 target contracts are entered only from `ROADMAP.en.md`.
+This document describes the current implementation only. Module ownership comes from the live source tree and behavior evidence comes from the referenced tests. Product contracts live in `PRD.en.md`, durable rationale in `adr/`, and incomplete deployment evidence in `rollout/`. Read `adr/0007-pi-agent-runtime-boundary.md` and `specs/pi-agent-runtime-integration.md` when changing the Agent service. Remaining GraphProposal and Recipe ChangeSet work is entered only from `ROADMAP.en.md`.
 
 ## 2. Backend Layers
 
 `backend/src/productflow_backend/` keeps four boundaries:
 
 - `presentation/`: FastAPI routes, request/response schemas, authentication, upload reads, and HTTP error mapping.
-- `application/`: product, Agent conversation, WorkflowDraft, V2 workflow, image library, image session, settings, and asynchronous use cases.
+- `application/`: product, Agent conversation, WorkflowDraft, schema-v3 graph, image library, image session, settings, and asynchronous use cases.
 - `domain/`: enums, business errors, and database-free DAG rules.
 - `infrastructure/`: SQLAlchemy, provider clients, Redis/Dramatiq, storage, logging, and the Agent service client.
 
@@ -36,8 +36,8 @@ Current code ownership:
 | Agent Turn and sync | `agent/conversations.py`, `control.py`, `sync.py` | `routes/agent_conversations.py`, `infrastructure/agent_service.py` | `test_workflow_agent_service.py` |
 | Global media library | `media_library/` (`queries.py`, `service.py`, `organization.py`, `workflow.py`) | `routes/media_library.py` | `test_media_library.py`, `test_media_library_api.py` |
 | Global library organization Draft | `media_library/draft_contracts.py`, `media_library/drafts.py`, `agent/control.py` | `routes/global_agent_conversations.py`, `routes/agent_internal.py` | `test_media_library_drafts.py` |
-| Draft and materialization | `workflow_drafts/contracts.py`, `service.py`, `materialization.py` | `routes/workflow_drafts.py` | `test_workflow_draft_contracts.py`, `test_workflow_draft_materialization.py` |
-| V2 graph and execution | `domain/workflow_rules.py`, `product_workflow/` public entry, `v2_*.py`, `execution.py` | `routes/workflow_drafts.py`, `workers.py` | workflow domain/run/node/recovery tests |
+| Draft and graph persist | `workflow_drafts/contracts.py`, `service.py`, `product_workflow/graph_draft_persist.py` | `routes/workflow_drafts.py`, `routes/workflow_graphs.py` | `test_workflow_draft_contracts.py`, `test_graph_draft_persist.py` |
+| schema-v3 graph and execution | `domain/graph_catalog.py`, `domain/graph_rules.py`, `product_workflow/graph_*.py` | `routes/workflow_graphs.py`, `workers.py` | graph compiler/run tests |
 | Recipes | `workflow_recipes/` | `routes/workflow_recipes.py` | `test_workflow_recipes.py` |
 | Delivery renditions | `delivery_renditions/` | `routes/delivery_renditions.py` | `test_delivery_renditions.py` |
 | Product image library | `product_images/` (`queries.py`, `mutations.py`, `archives.py`, `assets.py`), `media_objects.py` | `routes/products.py` | `test_product_gallery_explorer.py`, `test_media_objects.py` |
@@ -67,8 +67,8 @@ Page code lives in `web/src/pages/`. Shared visual components live in `web/src/c
 
 The product workbench lives in `pages/workbench/` and is split by duty:
 
-- `workbench/agent/`: page orchestration, conversation, SSE events, questions, Draft confirmation, and materialization reveal.
-- `workbench/canvas/`: current V2 canvas, command bar, inspector, runs, recipes, and delivery renditions.
+- `workbench/agent/`: page orchestration, conversation, SSE events, questions, Draft confirmation, and graph persist.
+- `workbench/canvas/`: current Graph canvas, inspector, runs, recipes, and delivery renditions.
 - `workbench/chrome/`: canvas chrome, node cards, sidebar, shortcuts, and image Explorer.
 
 Dependency direction is `agent -> canvas, chrome` and `canvas -> chrome`. `chrome` must not import agent or canvas.
@@ -81,7 +81,7 @@ Current frontend ownership:
 |---|---|---|
 | Agent creation form | `AgentProductCreatePage.tsx`, `pages/product-create/` | selection/form/workspace API tests |
 | Agent conversation, SSE, Draft confirmation | `pages/workbench/agent/` | reducer, event, conversation, confirmation, reveal tests |
-| V2 canvas and inspector | `pages/workbench/canvas/` | graph, canvas, command, draft, history, rendition tests |
+| Graph canvas and inspector | `pages/workbench/canvas/` | graph catalog/layout/canvas, inspector, runs, and rendition tests |
 | Global media library and workflow sub-library | `MediaLibraryPage.tsx`, `workbench/canvas/WorkflowMediaLibraryPanel.tsx` | media library/application tests, web build |
 | Global Agent Dock | `components/GlobalAgentDock.tsx` | `GlobalAgentDockComponents.test.ts` |
 | Shared workbench and image library | `pages/workbench/chrome/` | shortcuts, interaction, image-explorer tests |
@@ -98,20 +98,19 @@ image types + quantities + 1..6 uploads
   -> ProductFlow internal read, proposal, and pending-request tools
   -> versioned WorkflowDraft artifact
   -> user confirmation
-  -> schema-v2 workflow materialization
-  -> reveal event stream
+  -> schema-v3 graph persist
   -> product workbench
 ```
 
-ProductFlow owns products, Drafts, confirmation, WorkflowRun, and the Web projection. The Agent service runs the model loop with the Pi SDK and stores session/event files under its data root; those files are not business authority. PostgreSQL stores AgentSession, AgentTask, AgentConversation, Turn projections, PageContextSnapshot, question state, WorkflowDraft revisions, and the cross-instance browser event store `agent_turn_events`.
+ProductFlow owns products, Drafts, confirmation, WorkflowGraphRun, and the Web projection. The Agent service runs the model loop with the Pi SDK and stores session/event files under its data root; those files are not business authority. PostgreSQL stores AgentSession, AgentTask, AgentConversation, Turn projections, PageContextSnapshot, question state, WorkflowDraft revisions, and the cross-instance browser event store `agent_turn_events`.
 
 Product creation writes Product, assets, WorkflowDraft, the product Conversation, the onboarding AgentTask, and AgentSession in one business transaction. The onboarding Task starts as `WAITING_USER`, closes as `SUCCEEDED` after intake, and does not own workflow execution. The Global Conversation and product Conversation share a Session and do not merge transcripts. Standalone Session creation does not require a title; a temporary title comes from the first global Turn, and an explicit rename wins. Global Agent product-workspace creation reconciles with `creation_idempotency_key` and `creation_request_hash`.
 
-`GlobalAgentDock` owns Session/Task lists, search, jumps, and pending organization Drafts. It does not own the canvas or WorkflowRun. Global media organization only publishes a `LibraryOrganizationDraft`; ProductFlow re-reads facts and applies the Draft after user confirmation.
+`GlobalAgentDock` owns Session/Task lists, search, jumps, and pending organization Drafts. It does not own the canvas or WorkflowGraphRun. Global media organization only publishes a `LibraryOrganizationDraft`; ProductFlow re-reads facts and applies the Draft after user confirmation.
 
 Main promises interactive Turns, cancel, question answers, SSE reconnect, and cross-process Pi session context reload. It does not promise in-place model-request recovery, background durable Tasks, complete multi-instance scheduling, or full effect reconciliation. Lease, fencing, continuation Turns, the `tool_steps` allowlist, and effect reconciliation are defined by `application/agent/`, `agent-service/src/pi-runtime.ts`, and `test_workflow_agent_service.py`, `test_agent_product_workspaces.py`, and `test_media_library_drafts.py`.
 
-Implementation path: `routes/agent_product_workspaces.py` → `agent/product_workspaces.py`; Turn control `agent/control.py` → `infrastructure/agent_service.py` → `agent-service/src/pi-runtime.ts`; projection `agent/sync.py`; product Drafts `workflow_drafts/service.py` and `materialization.py`; global media Drafts `media_library/drafts.py`.
+Implementation path: `routes/agent_product_workspaces.py` → `agent/product_workspaces.py`; Turn control `agent/control.py` → `infrastructure/agent_service.py` → `agent-service/src/pi-runtime.ts`; projection `agent/sync.py`; product Drafts `workflow_drafts/service.py` and `product_workflow/graph_draft_persist.py`; global media Drafts `media_library/drafts.py`.
 
 ## 5. WorkflowDraft
 
@@ -126,26 +125,26 @@ WorkflowDraft is the persistent boundary between Agent output and user confirmat
 
 Draft states cover collecting, awaiting_confirmation, confirmed, materializing, ready, and the failed/cancelled terminals. Every Agent artifact appends a revision. Confirmation targets an explicit revision to prevent concurrent overwrite.
 
-## 6. V2 Workflow
+## 6. Online schema-v3 Graph
 
-The online ProductWorkflow schema is fixed at 2. Node types are:
+The online workflow lives on `workflow_graphs` with schema version 3. Node types are:
 
-- `product_context`: product facts and visual-system entry.
-- `reference_image`: one ProductImageAsset binding.
-- `prompt_generation`: generate, edit, and version one-image prompts.
-- `image_generation`: generate images from upstream context and GenerationSpec.
+- `product_source`: product-facts entry.
+- `image_asset`: one-to-one ProductImageAsset binding.
+- `creative_brief`: creative intent.
+- `visual_system`: visual-system reference.
+- `prompt_generation`: generate and edit prompt artifacts.
+- `image_generation`: generate images from compiled context and GenerationSpec.
 
-WorkflowFolder is a local visual group and does not alter DAG execution. WorkflowEdge represents dependency. Domain topological sorting rejects cross-workflow references and cycles.
+Canvas groups are one-level visual folders and do not change DAG execution. Edges use Node Catalog data types and roles.
 
-Folders are one level deep and own no run state, ports, nesting, cancel, or retry semantics. Aggregate state is derived from member nodes.
+`WorkflowGraphRun` and `WorkflowGraphNodeRun` store execution state. Execution reads the run snapshot, not the live graph. Image results write ProductImageAsset and `WorkflowGraphArtifact` rows.
 
-WorkflowRun and WorkflowNodeRun store execution state. The worker schedules ready nodes after their upstream dependencies succeed. Prompt artifacts are versioned. Image results become ProductImageAsset records and bind back to target nodes.
+Workflow runs are created and validated through ProductFlow business endpoints. The workbench can submit the whole graph or one node without an Agent Conversation first. Agent run requests go through `agent_workflow_run_requests.py`; user confirmation uses the same `graph_runs.py` / `graph_execution.py` constraints.
 
-Workflow execution is created and validated through ProductFlow business endpoints. The workflow page can submit the whole DAG or one node directly, without creating an Agent Conversation first; future Agent-triggered runs must reuse the same application use cases, permission, revision, and queue constraints.
+WorkflowRecipe stores user-created full workflows or fragments. Recipe payloads store reusable structure and configuration, without product identity, generated results, or media bytes. Saving a recipe from a live v3 graph is not implemented; applying a saved recipe creates a reviewable Draft.
 
-WorkflowRecipe stores user-created full workflows and fragments. Recipe payloads store reusable structure and configuration, without product identity, generated results, or media bytes.
-
-`domain/workflow_rules.py` owns graph rules. Structure commands, node editing, reference binding, and execution live under `application/product_workflow/v2_*.py`. HTTP routes and workers enter through the `application/product_workflow` public entry; execution uses `execution.py`. They do not maintain a second executor.
+Graph rules live in `domain/graph_catalog.py` and `domain/graph_rules.py`. Structure commands use `graph_commands.py` / `graph_apply.py`. Runs use `graph_runs.py` / `graph_execution.py`. HTTP entry is `presentation/routes/workflow_graphs.py`.
 
 ## 7. Image Model
 

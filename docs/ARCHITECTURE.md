@@ -14,14 +14,14 @@ ProductFlow 是单管理员、单商家工作区，由七个运行单元组成�
 
 浏览器只访问 Web 和 FastAPI。Agent service 使用独立 bearer token 调用 FastAPI internal API；FastAPI 通过 agent-service internal HTTP/SSE 控制 Turn。API、worker 和 async dispatcher 共享 PostgreSQL、Redis 和 storage。`just dev` 与 Docker Compose 都会启动 dispatcher。
 
-本文只描述当前实现。模块所有权来自当前源码树，行为证据来自对应测试；产品合同见 `PRD.md`，长期理由见 `adr/`，未完成部署证据见 `rollout/`。改 Agent service 时再读 `adr/0007-pi-agent-runtime-boundary.md` 与 `specs/pi-agent-runtime-integration.md`。schema-v3 目标合同只从 `ROADMAP.md` 进入。
+本文只描述当前实现。模块所有权来自当前源码树，行为证据来自对应测试；产品合同见 `PRD.md`，长期理由见 `adr/`，未完成部署证据见 `rollout/`。改 Agent service 时再读 `adr/0007-pi-agent-runtime-boundary.md` 与 `specs/pi-agent-runtime-integration.md`。GraphProposal 和 Recipe ChangeSet 只从 `ROADMAP.md` 进入。
 
 ## 2. 后端分层
 
 `backend/src/productflow_backend/` 保持四层边界：
 
 - `presentation/`：FastAPI 路由、请求/响应 schema、认证、上传读取和 HTTP 错误映射。
-- `application/`：商品、Agent 会话、WorkflowDraft、V2 工作流、图片库、图片会话、配置和异步任务用例。
+- `application/`：商品、Agent 会话、WorkflowDraft、schema-v3 图、图片库、图片会话、配置和异步任务用例。
 - `domain/`：枚举、业务异常和不依赖数据库的 DAG 规则。
 - `infrastructure/`：SQLAlchemy、provider client、Redis/Dramatiq、storage、日志和 Agent service client。
 
@@ -36,8 +36,8 @@ ProductFlow 是单管理员、单商家工作区，由七个运行单元组成�
 | Agent Turn 与同步 | `agent/conversations.py`, `control.py`, `sync.py` | `routes/agent_conversations.py`, `infrastructure/agent_service.py` | `test_workflow_agent_service.py` |
 | 全局素材库 | `media_library/` (`queries.py`, `service.py`, `organization.py`, `workflow.py`) | `routes/media_library.py` | `test_media_library.py`, `test_media_library_api.py` |
 | 全局素材整理 Draft | `media_library/draft_contracts.py`, `media_library/drafts.py`, `agent/control.py` | `routes/global_agent_conversations.py`, `routes/agent_internal.py` | `test_media_library_drafts.py` |
-| Draft 与物化 | `workflow_drafts/contracts.py`, `service.py`, `materialization.py` | `routes/workflow_drafts.py` | `test_workflow_draft_contracts.py`, `test_workflow_draft_materialization.py` |
-| V2 图与运行 | `domain/workflow_rules.py`, `product_workflow/` 公开入口, `v2_*.py`, `execution.py` | `routes/workflow_drafts.py`, `workers.py` | workflow domain/run/node/recovery tests |
+| Draft 与 graph persist | `workflow_drafts/contracts.py`, `service.py`, `product_workflow/graph_draft_persist.py` | `routes/workflow_drafts.py`, `routes/workflow_graphs.py` | `test_workflow_draft_contracts.py`, `test_graph_draft_persist.py` |
+| schema-v3 图与执行 | `domain/graph_catalog.py`, `domain/graph_rules.py`, `product_workflow/graph_*.py` | `routes/workflow_graphs.py`, `workers.py` | graph compiler/run 测试 |
 | 配方 | `workflow_recipes/` | `routes/workflow_recipes.py` | `test_workflow_recipes.py` |
 | 交付图 | `delivery_renditions/` | `routes/delivery_renditions.py` | `test_delivery_renditions.py` |
 | 商品图片库 | `product_images/` (`queries.py`, `mutations.py`, `archives.py`, `assets.py`), `media_objects.py` | `routes/products.py` | `test_product_gallery_explorer.py`, `test_media_objects.py` |
@@ -67,8 +67,8 @@ ProductFlow 是单管理员、单商家工作区，由七个运行单元组成�
 
 商品工作台位于 `pages/workbench/`，按职责分成三组：
 
-- `workbench/agent/`：页面编排、对话、SSE 事件、问题确认、Draft 确认和 materialization reveal。
-- `workbench/canvas/`：当前 V2 画布、命令栏、节点详情、运行、配方和交付图。
+- `workbench/agent/`：页面编排、对话、SSE 事件、问题确认、Draft 确认和 graph persist。
+- `workbench/canvas/`：当前 Graph 画布、节点详情、运行、配方和交付图。
 - `workbench/chrome/`：画布 chrome、节点卡片、侧栏、快捷键和图片 Explorer。
 
 依赖方向固定为 `agent -> canvas, chrome`，`canvas -> chrome`。`chrome` 不得引用 agent 或 canvas。
@@ -81,7 +81,7 @@ TanStack Query 管理服务端状态；局部表单、选择和画布交互使�
 |---|---|---|
 | Agent 创建表单 | `AgentProductCreatePage.tsx`, `pages/product-create/` | selection/form/workspace API tests |
 | Agent 对话、SSE、Draft 确认 | `pages/workbench/agent/` | reducer, event, conversation, confirmation and reveal tests |
-| V2 画布与详情 | `pages/workbench/canvas/` | graph, canvas, command, draft, history and rendition tests |
+| Graph 画布与详情 | `pages/workbench/canvas/` | graph catalog/layout/canvas, inspector, runs and rendition tests |
 | 全局素材库与工作流子图库 | `MediaLibraryPage.tsx`, `workbench/canvas/WorkflowMediaLibraryPanel.tsx` | media library/application tests, web build |
 | Global Agent Dock | `components/GlobalAgentDock.tsx` | `GlobalAgentDockComponents.test.ts` |
 | 共享工作台与图片库 | `pages/workbench/chrome/` | shortcuts, interaction and image-explorer tests |
@@ -98,20 +98,19 @@ image types + quantities + 1..6 uploads
   -> ProductFlow internal read, proposal, and pending-request tools
   -> versioned WorkflowDraft artifact
   -> user confirmation
-  -> schema-v2 workflow materialization
-  -> reveal event stream
+  -> schema-v3 graph persist
   -> product workbench
 ```
 
-ProductFlow 拥有商品、Draft、确认、WorkflowRun 和 Web projection。Agent service 使用 Pi SDK 运行模型 loop，并在自己的数据根保存 session/event 文件；这些文件不是业务权威。PostgreSQL 保存 AgentSession、AgentTask、AgentConversation、Turn projection、PageContextSnapshot、问题状态、WorkflowDraft revision，以及跨实例浏览器事件源 `agent_turn_events`。
+ProductFlow 拥有商品、Draft、确认、WorkflowGraphRun 和 Web projection。Agent service 使用 Pi SDK 运行模型 loop，并在自己的数据根保存 session/event 文件；这些文件不是业务权威。PostgreSQL 保存 AgentSession、AgentTask、AgentConversation、Turn projection、PageContextSnapshot、问题状态、WorkflowDraft revision，以及跨实例浏览器事件源 `agent_turn_events`。
 
 商品创建在一个业务事务中写入 Product、资产、WorkflowDraft、商品 Conversation、onboarding AgentTask 和 AgentSession。onboarding Task 初始为 `WAITING_USER`，Intake 成功后收口为 `SUCCEEDED`，不取得工作流执行权。Global Conversation 与商品 Conversation 共用 Session，不合并 transcript。独立新建 Session 不要求名称；临时名称来自首条全局 Turn，人工重命名优先。全局 Agent 创建商品工作区使用 `creation_idempotency_key` 和 `creation_request_hash` 做只读对账。
 
-`GlobalAgentDock` 负责 Session/Task 列表、搜索、跳转和待确认整理 Draft，不拥有画布或 WorkflowRun。全局素材整理只发布 `LibraryOrganizationDraft`；用户确认后由 ProductFlow 重新观察事实并应用。
+`GlobalAgentDock` 负责 Session/Task 列表、搜索、跳转和待确认整理 Draft，不拥有画布或 WorkflowGraphRun。全局素材整理只发布 `LibraryOrganizationDraft`；用户确认后由 ProductFlow 重新观察事实并应用。
 
 主线承诺交互式 Turn、取消、问题回答、SSE 重连，以及 Pi session 上下文的跨进程加载。不承诺模型请求原地恢复、后台 durable Task、完整多实例调度或全量副作用对账。lease、fencing、continuation Turn、`tool_steps` 白名单和 effect reconciliation 以 `application/agent/`、`agent-service/src/pi-runtime.ts` 与 `test_workflow_agent_service.py`、`test_agent_product_workspaces.py`、`test_media_library_drafts.py` 为准。
 
-实现入口：`routes/agent_product_workspaces.py` → `agent/product_workspaces.py`；Turn 控制 `agent/control.py` → `infrastructure/agent_service.py` → `agent-service/src/pi-runtime.ts`；投影 `agent/sync.py`；商品 Draft `workflow_drafts/service.py` 与 `materialization.py`；全局素材 Draft `media_library/drafts.py`。
+实现入口：`routes/agent_product_workspaces.py` → `agent/product_workspaces.py`；Turn 控制 `agent/control.py` → `infrastructure/agent_service.py` → `agent-service/src/pi-runtime.ts`；投影 `agent/sync.py`；商品 Draft `workflow_drafts/service.py` 与 `product_workflow/graph_draft_persist.py`；全局素材 Draft `media_library/drafts.py`。
 
 ## 5. WorkflowDraft
 
@@ -126,26 +125,26 @@ WorkflowDraft 是 Agent 和用户确认之间的持久化边界。revision paylo
 
 Draft 状态依次覆盖 collecting、awaiting_confirmation、confirmed、materializing、ready，以及 failed/cancelled 终态。每次 Agent artifact 都追加 revision；确认针对明确 revision，避免并发覆盖。
 
-## 6. V2 工作流
+## 6. 在线 schema-v3 图
 
-ProductWorkflow 的在线 schema 固定为 2。节点类型为：
+在线工作流保存在 `workflow_graphs`，schema 固定为 3。节点类型为：
 
-- `product_context`：商品事实和视觉体系入口。
-- `reference_image`：一对一绑定 ProductImageAsset。
-- `prompt_generation`：生成、编辑和版本化单图提示词。
-- `image_generation`：根据上游内容和 GenerationSpec 生成图片。
+- `product_source`：商品事实入口。
+- `image_asset`：一对一绑定 ProductImageAsset。
+- `creative_brief`：创意说明。
+- `visual_system`：视觉体系。
+- `prompt_generation`：生成、编辑提示词产物。
+- `image_generation`：根据编译上下文和 GenerationSpec 生成图片。
 
-WorkflowFolder 是局部视觉分组；它不改变 DAG 执行语义。WorkflowEdge 表示上游依赖。领域层拓扑排序拒绝跨工作流引用和循环。
+画布分组是一层视觉分组，不改变 DAG 执行语义。边由 Node Catalog 决定 data_type 与 role。
 
-文件夹只支持一层，不拥有运行状态、端口、嵌套、取消或重试语义。聚合状态由成员节点推导。
+`WorkflowGraphRun` 和 `WorkflowGraphNodeRun` 保存运行状态。执行读 run snapshot，不再读 live graph。图片结果写入 ProductImageAsset 和 `WorkflowGraphArtifact`。
 
-WorkflowRun 和 WorkflowNodeRun 保存运行状态。worker 根据已成功的上游节点调度 ready 节点。提示词产物使用版本记录；图片结果写入 ProductImageAsset，并绑定回目标节点。
-
-工作流运行由 ProductFlow 业务接口直接创建和校验。工作流页面可以直接提交整个 DAG 或单个节点，用户不需要先创建 Agent Conversation。Agent 通过 `agent_workflow_run_requests.py` 创建带明确商品、工作流和 revision 的待确认请求；用户确认后复用 `v2_runs.py` 的 application use case、权限、版本和队列约束，仍由同一 WorkflowRun 和 worker 链路执行。
+工作流运行由 ProductFlow 业务接口直接创建和校验。工作流页面可以直接提交整图或单个节点，用户不需要先创建 Agent Conversation。Agent 通过 `agent_workflow_run_requests.py` 创建待确认请求；用户确认后走同一套 `graph_runs.py` / `graph_execution.py` 约束。
 
 WorkflowRecipe 保存用户主动创建的完整工作流或局部片段。recipe payload 只保存可复用结构和配置，不保存商品身份、生成结果或媒体字节。
 
-图规则由 `domain/workflow_rules.py` 负责；结构命令、节点编辑、reference binding 和运行分别位于 `application/product_workflow/v2_*.py`。HTTP 与 worker 从 `application/product_workflow` 公开入口进入，执行走 `execution.py`，不维护第二套执行逻辑。
+图规则由 `domain/graph_catalog.py` 与 `domain/graph_rules.py` 负责。结构命令走 `graph_commands.py` / `graph_apply.py`，运行走 `graph_runs.py` / `graph_execution.py`。HTTP 入口是 `presentation/routes/workflow_graphs.py`。
 
 ## 7. 图片模型
 
