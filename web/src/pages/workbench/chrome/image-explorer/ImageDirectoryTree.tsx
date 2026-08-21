@@ -160,7 +160,7 @@ export function ImageDirectoryTree({
               type="button"
               onClick={() => onRenameFolder(folder)}
               disabled={busy}
-              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-400 opacity-100 transition-opacity hover:bg-slate-100 hover:text-slate-900 focus:opacity-100 disabled:opacity-40 lg:opacity-0 lg:group-hover:opacity-100 dark:hover:bg-slate-800 dark:hover:text-white"
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-400 opacity-100 transition-opacity hover:bg-slate-100 hover:text-slate-900 focus:opacity-100 disabled:opacity-40 dark:hover:bg-slate-800 dark:hover:text-white"
               title={t("detail.library.renameFolder")}
               aria-label={t("detail.library.renameFolder")}
             >
@@ -170,7 +170,7 @@ export function ImageDirectoryTree({
               type="button"
               onClick={() => onDeleteFolder(folder)}
               disabled={busy}
-              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-400 opacity-100 transition-opacity hover:bg-red-50 hover:text-red-600 focus:opacity-100 disabled:opacity-40 lg:opacity-0 lg:group-hover:opacity-100 dark:hover:bg-red-500/10 dark:hover:text-red-300"
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-slate-400 opacity-100 transition-opacity hover:bg-red-50 hover:text-red-600 focus:opacity-100 disabled:opacity-40 dark:hover:bg-red-500/10 dark:hover:text-red-300"
               title={t("detail.library.deleteFolder")}
               aria-label={t("detail.library.deleteFolder")}
             >

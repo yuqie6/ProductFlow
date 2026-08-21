@@ -20,6 +20,7 @@ interface RecipeLibraryPanelProps {
   error: string | null;
   operationRecipeId: string | null;
   application: WorkflowRecipeApplicationResult | null;
+  structureBusy?: boolean;
   canAppend: (recipe: WorkflowRecipeSummary) => boolean;
   onRetry: () => void;
   onApply: (recipe: WorkflowRecipeSummary) => void;
@@ -33,6 +34,7 @@ export function RecipeLibraryPanel({
   error,
   operationRecipeId,
   application,
+  structureBusy = false,
   canAppend,
   onRetry,
   onApply,
@@ -59,7 +61,6 @@ export function RecipeLibraryPanel({
               <div className="mt-1 text-[11px] leading-4 text-emerald-700 dark:text-emerald-200">
                 {t("workbench.recipe.appliedDetail", { version: application.draft.current_version })}
               </div>
-              <div className="mt-1 truncate font-mono text-[10px] text-emerald-700/75 dark:text-emerald-300/75" title={application.draft.id}>{application.draft.id}</div>
             </div>
           </div>
         </section>
@@ -70,7 +71,7 @@ export function RecipeLibraryPanel({
       ) : recipes.map((recipe) => {
         const version = recipe.current_version;
         const payload = version.payload;
-        const busy = operationRecipeId === recipe.id;
+        const busy = structureBusy || operationRecipeId === recipe.id;
         const appendable = canAppend(recipe);
         return (
           <article key={recipe.id} className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-700 dark:!bg-[#11151d]">

@@ -12,6 +12,7 @@ export function GraphLibraryPanel({
   product,
   graph,
   bindNode,
+  bindLocked = false,
   onPreviewImage,
   onBindAsset,
   onBound,
@@ -19,13 +20,14 @@ export function GraphLibraryPanel({
   product: CanonicalProductDetail;
   graph: GraphProjection;
   bindNode: GraphNode | null;
+  bindLocked?: boolean;
   onPreviewImage: (image: DownloadableImage) => void;
   onBindAsset: (assetId: string) => Promise<unknown>;
   onBound: () => void;
 }) {
   const { t } = useI18n();
   const [tab, setTab] = useState<LibraryTab>("product");
-  const referenceTarget = bindNode ? {
+  const referenceTarget = bindNode && !bindLocked ? {
     bindAsset: async (asset: { id: string }) => onBindAsset(asset.id),
     onBound,
   } : undefined;

@@ -78,7 +78,7 @@ const CONTEXT_LABEL_KEYS = {
 
 export function graphContextEntries(value: Record<string, unknown> | null): Array<{
   key: string;
-  labelKey: TranslationKey | null;
+  labelKey: TranslationKey;
   value: string;
 }> {
   if (!value) return [];
