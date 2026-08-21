@@ -47,12 +47,14 @@
 - 全局素材未完成迁移证据：`rollout/media-library-transition.md`；产品剩余项见 `specs/media-library-prd.md`。
 - 全局 Agent 产品边界：`specs/global-agent-human-workflow-design.md`。
 - V1 切换：`rollout/workflow-v2-cutover.md` 与 `operations/legacy-v1-cutover.md`。
+- schema-v3 工作台修葺：`specs/v3-canvas-restoration.md`、`rollout/free-canvas-v3-interaction-parity.md`、`adr/0008-free-canvas-agent-graph-authority.md`。
 
 ### 只从 ROADMAP 进入
 
-在线工作流已经是 schema-v3 `workflow_graphs`。Agent 对 live graph 的 GraphProposal、配方从 v3 图提取保存、以及 Recipe ChangeSet 仍未交付。不要把下列未完成项写进 CONTEXT、PRD 或 ARCHITECTURE 的当前事实段落：
+在线工作流已经是 schema-v3 `workflow_graphs`。Agent 对 live graph 的 GraphProposal、配方从 v3 图提取保存、以及 Recipe ChangeSet 仍未交付。工作台修葺未完成项只从 `ROADMAP.md` §2 进入，实施北极星是 `specs/v3-canvas-restoration.md`。不要把下列未完成项写进 CONTEXT、PRD 或 ARCHITECTURE 的当前事实段落：
 
 - `ROADMAP.md` §2 未完成项
+- `specs/v3-canvas-restoration.md` 中尚未落地的切片 A–G
 - `adr/0008-free-canvas-agent-graph-authority.md` 中尚未落地的 GraphProposal / Recipe ChangeSet
 - `specs/schema-v3-admission-slice.md` 中尚未落地的后续切片
 - `rollout/free-canvas-v3-interaction-parity.md` 中尚未完成的交互项

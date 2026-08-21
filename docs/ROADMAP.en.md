@@ -22,11 +22,15 @@ This document records only directions that remain unimplemented or lack real val
 
 ### 2. Remaining schema-v3 work
 
-The online workflow authority is already `workflow_graphs`. Current implementation is in `ARCHITECTURE.en.md`. Still unimplemented:
+The online workflow authority is already `workflow_graphs`. Current implementation is in `ARCHITECTURE.en.md`. The north star, quality ceiling, non-goals, and slice order for canvas restoration are in `docs/specs/v3-canvas-restoration.md`. Still unimplemented:
 
-- Agent GraphProposal / ChangeSet against a live graph. Target contract: `docs/adr/0008-free-canvas-agent-graph-authority.md`.
+- Object-command and presentation identity (typed node-card colors and failure on the card, post-paste selection, delete confirm, create at viewport, maximize, busy lock, flush before run).
+- Server-side Redo (inverse ChangeSet; Redo must not call Undo again).
+- Inspector rendered from Node Catalog `config_fields`; the current typed forms are a temporary adapter.
+- Enter-group: one-level visual organization with separate in-group and full-graph viewports.
 - Extracting and saving a recipe from a live v3 graph, and applying a Recipe ChangeSet directly onto another graph. Applying a saved recipe still produces a reviewable Draft.
-- Remaining interaction items in `docs/rollout/free-canvas-v3-interaction-parity.md`.
+- Agent GraphProposal / ChangeSet against a live graph. Target contract: `docs/adr/0008-free-canvas-agent-graph-authority.md`.
+- Remaining interaction items in `docs/rollout/free-canvas-v3-interaction-parity.md`. That table is a checklist; the quality ceiling is restoration spec §4.
 - The full gate with a real provider, PostgreSQL/Redis/worker, desktop and 390px browsers, console/network errors, cancel/retry, and a retired-runtime residue scan.
 
 ### 3. Image Production Quality

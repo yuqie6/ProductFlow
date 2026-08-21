@@ -22,11 +22,15 @@
 
 ### 2. Schema-v3 未完成项
 
-在线工作流权威已经是 `workflow_graphs`。当前实现见 `ARCHITECTURE.md`。仍未交付：
+在线工作流权威已经是 `workflow_graphs`。当前实现见 `ARCHITECTURE.md`。画布修葺的北极星、质量上限、非目标和切片顺序见 `docs/specs/v3-canvas-restoration.md`。仍未交付：
 
-- Agent 对 live graph 的 GraphProposal / ChangeSet。目标合同见 `docs/adr/0008-free-canvas-agent-graph-authority.md`。
+- 对象命令与呈现身份（节点卡类型色/失败反馈、粘贴后选中、删除确认、视口处建点、最大化、busy 锁定、运行前 flush）。
+- 服务端 Redo（inverse ChangeSet；不得把 Redo 映射成再调 Undo）。
+- Inspector 按 Node Catalog `config_fields` 渲染；当前类型化表单是过渡适配。
+- 进入分组：一层视觉组织、组内/全图分记视口。
 - 从 live v3 graph 提取并保存配方，以及 Recipe ChangeSet 直接应用到另一张图。应用已保存配方仍只产生待确认 Draft。
-- `docs/rollout/free-canvas-v3-interaction-parity.md` 中尚未完成的交互项。
+- Agent 对 live graph 的 GraphProposal / ChangeSet。目标合同见 `docs/adr/0008-free-canvas-agent-graph-authority.md`。
+- `docs/rollout/free-canvas-v3-interaction-parity.md` 中尚未完成的交互项；该表是检查清单，质量上限以修葺北极星 §4 为准。
 - 真实 provider、PostgreSQL/Redis/worker、桌面与 390px 浏览器、console/network error、取消/retry 和无 retired runtime fallback 的完整 gate。
 
 ### 3. 图片生产质量
