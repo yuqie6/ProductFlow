@@ -80,6 +80,20 @@
 - 更多图片 provider adapter 和可观测性。
 - 工作流运行成本、时延和失败率统计。
 
+## schema-v3 之后的工程运行时
+
+以下条目在 schema-v3 治理基线完成前不得开工。它们不改变当前 FastAPI / Dramatiq / Alembic 运行单元，也不进入 `CONTEXT.md`、`PRD.md`、`ARCHITECTURE.md` 的当前事实段落。v3 仍是主线。
+
+### Python 业务后端迁到 Go
+
+- 产品合同：`docs/specs/go-backend-rewrite-prd.md`（Draft）
+- 实现设计与切片：`docs/specs/go-backend-rewrite-design.md`（Draft）
+- 只替换业务 API、worker 和 async dispatcher。Web 与 Node.js/Pi Agent service 保持现有合同。
+- PostgreSQL 仍是商品、Draft、graph、Run、素材和 Agent 投影的权威。Redis/asynq 只负责可恢复投递。
+- 默认栈：Gin、GORM、Viper、zap、go-redis、asynq。内部按功能竖切；GORM 不得 AutoMigrate，也不得替换 `FOR UPDATE` / advisory lock / `async_dispatches`。
+- 开工前提：schema-v3 在线 graph 稳定、v2 leftover 删除、HTTP/SSE/session/queue 合同包已导出。
+- `exp` 上的 Go Agent service 不是本项目的起点。
+
 ## SaaS 阶段
 
 进入 SaaS 前需要单独设计：

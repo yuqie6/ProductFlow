@@ -80,6 +80,20 @@ The product boundary lives in `specs/global-agent-human-workflow-design.md`; Pi 
 - More image-provider adapters and observability.
 - Workflow cost, latency, and failure-rate reporting.
 
+## Engineering runtime after schema-v3
+
+Do not start the items below before the schema-v3 governance baseline is done. They do not change the current FastAPI / Dramatiq / Alembic runtime, and they must not be written into the current-fact sections of `CONTEXT.md`, `PRD.en.md`, or `ARCHITECTURE.en.md`. Schema-v3 remains the main line.
+
+### Move the business backend from Python to Go
+
+- Product contract: `docs/specs/go-backend-rewrite-prd.md` (Draft)
+- Implementation design and slices: `docs/specs/go-backend-rewrite-design.md` (Draft)
+- Replace only the business API, worker, and async dispatcher. Keep the current Web and Node.js/Pi Agent service contracts.
+- PostgreSQL remains authoritative for products, Drafts, graphs, runs, media, and Agent projections. Redis/asynq is recoverable delivery only.
+- Default stack: Gin, GORM, Viper, zap, go-redis, and asynq. Internals are vertical capability modules. GORM must not AutoMigrate and must not replace `FOR UPDATE`, advisory locks, or `async_dispatches`.
+- Start only after the online v3 graph is stable, v2 leftovers are deleted, and the HTTP/SSE/session/queue contract pack is exported.
+- The Go Agent service on `exp` is not the starting point for this project.
+
 ## SaaS Stage
 
 SaaS requires separate design for:

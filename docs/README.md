@@ -57,6 +57,12 @@ schema-v3、自由画布和 Agent 图协作不是当前实现。不要把下列�
 - `specs/schema-v3-admission-slice.md`（Draft，批准前不进代码）
 - `rollout/free-canvas-v3-interaction-parity.md`
 
+Python 业务后端迁到 Go 也不是当前实现，且主线仍是 schema-v3。不要把下列文档写进 CONTEXT、PRD 或 ARCHITECTURE 的当前事实段落，也不得在 schema-v3 治理基线完成前开工：
+
+- `ROADMAP.md`「schema-v3 之后的工程运行时」
+- `specs/go-backend-rewrite-prd.md`（Draft）
+- `specs/go-backend-rewrite-design.md`（Draft）
+
 已批准但未交付的其他变更同样先出现在 `ROADMAP.md` 和对应 spec，不得提前写成当前事实。
 
 代码、测试、迁移和真实运行行为始终是当前实现证据。稳定文档中的实现敏感声明应指向当前代码所有者或测试；路径变化时同步更新文档。
