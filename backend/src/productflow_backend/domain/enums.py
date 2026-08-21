@@ -70,7 +70,7 @@ class AgentCheckpointKind(StrEnum):
 
 
 class WorkflowNodeType(StrEnum):
-    """schema-v2 商品工作流节点类型。"""
+    """WorkflowDraft 与配方 payload 使用的节点类型。"""
 
     PRODUCT_CONTEXT = "product_context"
     REFERENCE_IMAGE = "reference_image"
@@ -123,6 +123,14 @@ class GraphActorType(StrEnum):
     USER = "user"
     AGENT = "agent"
     RECIPE = "recipe"
+
+
+class GraphHistoryKind(StrEnum):
+    """operation group 在撤销栈上的角色。Redo 不得映射成再调一次 undo。"""
+
+    EDIT = "edit"
+    UNDO = "undo"
+    REDO = "redo"
 
 
 class GraphRunScope(StrEnum):

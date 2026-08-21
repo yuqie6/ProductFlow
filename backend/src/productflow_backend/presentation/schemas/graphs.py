@@ -25,7 +25,7 @@ from productflow_backend.domain.enums import (
     WorkflowNodeStatus,
     WorkflowRunStatus,
 )
-from productflow_backend.domain.graph_catalog import GraphCatalogDocument
+from productflow_backend.domain.graph_catalog import GraphCatalogDocument, GraphConfigValueKind
 from productflow_backend.infrastructure.db.models import (
     Product,
     ProductImageAsset,
@@ -99,6 +99,8 @@ class GraphProjectionResponse(BaseModel):
     revision: int
     source_draft_revision_id: str | None = None
     last_operation_group_id: str | None = None
+    can_undo: bool = False
+    can_redo: bool = False
     nodes: list[GraphNodeResponse]
     edges: list[GraphEdgeResponse]
     groups: list[GraphGroupResponse]
@@ -132,6 +134,14 @@ class GraphCatalogInputContractResponse(BaseModel):
     required_to_run: bool
 
 
+class GraphCatalogConfigFieldResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key: str
+    value_kind: GraphConfigValueKind
+    required: bool
+
+
 class GraphCatalogNodeResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -139,6 +149,7 @@ class GraphCatalogNodeResponse(BaseModel):
     output_data_type: GraphEdgeDataType
     kind: Literal["source", "processing"]
     accepts: list[GraphCatalogInputContractResponse]
+    config_fields: list[GraphCatalogConfigFieldResponse]
 
 
 class GraphCatalogResponse(BaseModel):
@@ -180,6 +191,14 @@ def serialize_graph_catalog(document: GraphCatalogDocument) -> GraphCatalogRespo
                     )
                     for item in node.accepts
                 ],
+                config_fields=[
+                    GraphCatalogConfigFieldResponse(
+                        key=item.key,
+                        value_kind=item.value_kind,
+                        required=item.required,
+                    )
+                    for item in node.config_fields
+                ],
             )
             for node in document.nodes
         ],
@@ -195,6 +214,8 @@ def serialize_graph_projection(projection: GraphProjection) -> GraphProjectionRe
         revision=projection.revision,
         source_draft_revision_id=projection.source_draft_revision_id,
         last_operation_group_id=projection.last_operation_group_id,
+        can_undo=projection.can_undo,
+        can_redo=projection.can_redo,
         nodes=[_serialize_node(node) for node in projection.nodes],
         edges=[_serialize_edge(edge) for edge in projection.edges],
         groups=[_serialize_group(group) for group in projection.groups],

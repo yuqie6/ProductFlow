@@ -9,6 +9,7 @@ from productflow_backend.application.product_workflow.graph_commands import (
     apply_graph_change_set,
     get_active_workflow_graph,
     load_applied_graph,
+    redo_last_graph_change_set,
     stage_new_workflow_graph,
     undo_last_graph_change_set,
 )
@@ -24,7 +25,7 @@ from productflow_backend.application.product_workflow.graph_template import (
     build_direct_create_template,
 )
 from productflow_backend.application.products import create_canonical_product_with_assets
-from productflow_backend.domain.enums import GraphConfigStatus, GraphNodeType
+from productflow_backend.domain.enums import GraphConfigStatus, GraphHistoryKind, GraphNodeType
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError
 from productflow_backend.infrastructure.db.models import WorkflowDraft, WorkflowGraph, WorkflowOperationGroup
 
@@ -151,6 +152,95 @@ def test_undo_last_graph_change_set_restores_previous_title(db_session) -> None:
     applied = load_applied_graph(db_session, undone.graph)
     assert applied.node(brief.id).title == brief.title
     assert undone.graph.revision == 3
+    assert GraphHistoryKind(undone.operation_group.history_kind) == GraphHistoryKind.UNDO
+    undone_projection = project_workflow_graph(db_session, undone.graph)
+    assert undone_projection.can_undo is False
+    assert undone_projection.can_redo is True
+
+
+def test_redo_last_graph_change_set_restores_undone_edit(db_session) -> None:
+    creation = _create_product_with_assets(db_session, name="重做商品")
+    change_set = build_direct_create_template(
+        image_types=[DirectCreateImageType(key="hero", quantity=1, order=0)],
+        reference_asset_ids=[creation.created_assets[0].id],
+    )
+    created = stage_new_workflow_graph(db_session, product_id=creation.product.id, change_set=change_set)
+    db_session.commit()
+    brief = next(node for node in created.applied.nodes if node.node_type == GraphNodeType.CREATIVE_BRIEF)
+    apply_graph_change_set(
+        db_session,
+        product_id=creation.product.id,
+        graph_id=created.graph.id,
+        change_set=WorkflowChangeSet(
+            base_graph_revision=1,
+            summary="改名",
+            operations=[RenameNodeOp(node_ref=brief.id, title="新创作要求")],
+        ),
+    )
+    undo_last_graph_change_set(
+        db_session,
+        product_id=creation.product.id,
+        graph_id=created.graph.id,
+    )
+    with pytest.raises(ConflictError, match="没有可撤销"):
+        undo_last_graph_change_set(
+            db_session,
+            product_id=creation.product.id,
+            graph_id=created.graph.id,
+        )
+    redone = redo_last_graph_change_set(
+        db_session,
+        product_id=creation.product.id,
+        graph_id=created.graph.id,
+    )
+    applied = load_applied_graph(db_session, redone.graph)
+    assert applied.node(brief.id).title == "新创作要求"
+    assert GraphHistoryKind(redone.operation_group.history_kind) == GraphHistoryKind.REDO
+    redone_projection = project_workflow_graph(db_session, redone.graph)
+    assert redone_projection.can_undo is True
+    assert redone_projection.can_redo is False
+
+
+def test_new_edit_after_undo_clears_redo(db_session) -> None:
+    creation = _create_product_with_assets(db_session, name="清空重做商品")
+    change_set = build_direct_create_template(
+        image_types=[DirectCreateImageType(key="hero", quantity=1, order=0)],
+        reference_asset_ids=[creation.created_assets[0].id],
+    )
+    created = stage_new_workflow_graph(db_session, product_id=creation.product.id, change_set=change_set)
+    db_session.commit()
+    brief = next(node for node in created.applied.nodes if node.node_type == GraphNodeType.CREATIVE_BRIEF)
+    apply_graph_change_set(
+        db_session,
+        product_id=creation.product.id,
+        graph_id=created.graph.id,
+        change_set=WorkflowChangeSet(
+            base_graph_revision=1,
+            summary="改名",
+            operations=[RenameNodeOp(node_ref=brief.id, title="新创作要求")],
+        ),
+    )
+    undo_last_graph_change_set(
+        db_session,
+        product_id=creation.product.id,
+        graph_id=created.graph.id,
+    )
+    apply_graph_change_set(
+        db_session,
+        product_id=creation.product.id,
+        graph_id=created.graph.id,
+        change_set=WorkflowChangeSet(
+            base_graph_revision=3,
+            summary="另改名",
+            operations=[RenameNodeOp(node_ref=brief.id, title="另一标题")],
+        ),
+    )
+    with pytest.raises(ConflictError, match="没有可重做"):
+        redo_last_graph_change_set(
+            db_session,
+            product_id=creation.product.id,
+            graph_id=created.graph.id,
+        )
 
 
 def test_bound_asset_must_belong_to_product(db_session) -> None:

@@ -18,7 +18,13 @@ from productflow_backend.application.product_workflow.graph_apply import (
 from productflow_backend.application.product_workflow.graph_contracts import GraphOperation, WorkflowChangeSet
 from productflow_backend.application.product_workflow.product_sources import validate_product_source_configs
 from productflow_backend.application.time import now_utc
-from productflow_backend.domain.enums import GraphActorType, GraphEdgeDataType, GraphEdgeRole, GraphNodeType
+from productflow_backend.domain.enums import (
+    GraphActorType,
+    GraphEdgeDataType,
+    GraphEdgeRole,
+    GraphHistoryKind,
+    GraphNodeType,
+)
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     GRAPH_SCHEMA_VERSION,
@@ -127,14 +133,15 @@ def stage_new_workflow_graph(
     session.add(graph)
     session.flush()
     _replace_graph_contents(session, graph, applied)
-    operation_group = _record_operation_group(
-        session,
-        graph=graph,
-        change_set=change_set,
-        inverse_operations=invert_applied_graph(EMPTY_GRAPH, applied),
-        base_revision=0,
-        result_revision=applied.revision,
-    )
+        operation_group = _record_operation_group(
+            session,
+            graph=graph,
+            change_set=change_set,
+            inverse_operations=invert_applied_graph(EMPTY_GRAPH, applied),
+            base_revision=0,
+            result_revision=applied.revision,
+            history_kind=GraphHistoryKind.EDIT,
+        )
     graph.updated_at = now_utc()
     session.flush()
     return GraphCommandResult(graph=graph, applied=applied, operation_group=operation_group)
@@ -147,6 +154,7 @@ def apply_graph_change_set(
     graph_id: str,
     change_set: WorkflowChangeSet,
     commit: bool = True,
+    history_kind: GraphHistoryKind = GraphHistoryKind.EDIT,
 ) -> GraphCommandResult:
     try:
         graph = session.scalar(
@@ -175,6 +183,7 @@ def apply_graph_change_set(
             inverse_operations=invert_applied_graph(before, after),
             base_revision=before.revision,
             result_revision=after.revision,
+            history_kind=history_kind,
         )
         session.flush()
         if commit:
@@ -190,6 +199,15 @@ def apply_graph_change_set(
         raise
 
 
+def last_operation_group(session: Session, graph: WorkflowGraph) -> WorkflowOperationGroup | None:
+    return session.scalar(
+        select(WorkflowOperationGroup).where(
+            WorkflowOperationGroup.graph_id == graph.id,
+            WorkflowOperationGroup.result_revision == graph.revision,
+        )
+    )
+
+
 def undo_last_graph_change_set(
     session: Session,
     *,
@@ -198,18 +216,13 @@ def undo_last_graph_change_set(
     commit: bool = True,
 ) -> GraphCommandResult:
     graph = get_workflow_graph(session, product_id=product_id, graph_id=graph_id)
-    last = session.scalar(
-        select(WorkflowOperationGroup).where(
-            WorkflowOperationGroup.graph_id == graph.id,
-            WorkflowOperationGroup.result_revision == graph.revision,
-        )
-    )
-    if last is None:
+    last = last_operation_group(session, graph)
+    if last is None or GraphHistoryKind(last.history_kind) == GraphHistoryKind.UNDO:
         raise ConflictError("没有可撤销的图操作")
     inverse = TypeAdapter(list[GraphOperation]).validate_python(last.inverse_operations_json)
     if not inverse:
         raise ConflictError("该操作没有可撤销的 inverse")
-    summary = f"撤销：{last.summary}"
+    summary = f"撤销：{_source_history_summary(last.summary)}"
     return apply_graph_change_set(
         session,
         product_id=product_id,
@@ -221,7 +234,45 @@ def undo_last_graph_change_set(
             operations=inverse,
         ),
         commit=commit,
+        history_kind=GraphHistoryKind.UNDO,
     )
+
+
+def redo_last_graph_change_set(
+    session: Session,
+    *,
+    product_id: str,
+    graph_id: str,
+    commit: bool = True,
+) -> GraphCommandResult:
+    graph = get_workflow_graph(session, product_id=product_id, graph_id=graph_id)
+    last = last_operation_group(session, graph)
+    if last is None or GraphHistoryKind(last.history_kind) != GraphHistoryKind.UNDO:
+        raise ConflictError("没有可重做的图操作")
+    inverse = TypeAdapter(list[GraphOperation]).validate_python(last.inverse_operations_json)
+    if not inverse:
+        raise ConflictError("该操作没有可重做的 inverse")
+    summary = f"重做：{_source_history_summary(last.summary)}"
+    return apply_graph_change_set(
+        session,
+        product_id=product_id,
+        graph_id=graph_id,
+        change_set=WorkflowChangeSet(
+            base_graph_revision=graph.revision,
+            summary=summary[:500],
+            actor_type=GraphActorType.USER,
+            operations=inverse,
+        ),
+        commit=commit,
+        history_kind=GraphHistoryKind.REDO,
+    )
+
+
+def _source_history_summary(summary: str) -> str:
+    for prefix in ("撤销：", "重做："):
+        if summary.startswith(prefix):
+            return summary[len(prefix) :]
+    return summary
 
 
 def assign_persistent_ids(before: AppliedGraph, after: AppliedGraph) -> AppliedGraph:
@@ -389,10 +440,12 @@ def _record_operation_group(
     inverse_operations: list,
     base_revision: int,
     result_revision: int,
+    history_kind: GraphHistoryKind,
 ) -> WorkflowOperationGroup:
     operation_group = WorkflowOperationGroup(
         graph_id=graph.id,
         actor_type=change_set.actor_type,
+        history_kind=history_kind,
         summary=change_set.summary,
         base_revision=base_revision,
         result_revision=result_revision,

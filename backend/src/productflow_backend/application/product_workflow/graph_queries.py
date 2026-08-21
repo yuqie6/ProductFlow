@@ -9,6 +9,7 @@ from productflow_backend.application.product_workflow.graph_apply import Applied
 from productflow_backend.application.product_workflow.graph_commands import (
     get_active_workflow_graph,
     get_workflow_graph,
+    last_operation_group,
     load_applied_graph,
 )
 from productflow_backend.application.product_workflow.graph_compiler import (
@@ -17,7 +18,7 @@ from productflow_backend.application.product_workflow.graph_compiler import (
     compile_prompt_runtime,
 )
 from productflow_backend.application.product_workflow.product_sources import ProductSourceSnapshot
-from productflow_backend.domain.enums import GraphConfigStatus, GraphEdgeDataType, GraphEdgeRole, GraphNodeType
+from productflow_backend.domain.enums import GraphConfigStatus, GraphEdgeDataType, GraphEdgeRole, GraphHistoryKind, GraphNodeType
 from productflow_backend.domain.errors import BusinessValidationError, NotFoundError
 from productflow_backend.domain.graph_catalog import PROCESSING_NODE_TYPES
 from productflow_backend.infrastructure.db.models import (
@@ -81,6 +82,8 @@ class GraphProjection:
     revision: int
     source_draft_revision_id: str | None
     last_operation_group_id: str | None
+    can_undo: bool
+    can_redo: bool
     nodes: tuple[GraphNodeView, ...]
     edges: tuple[GraphEdgeView, ...]
     groups: tuple[GraphGroupView, ...]
@@ -100,20 +103,15 @@ def get_active_graph_projection(session: Session, *, product_id: str) -> GraphPr
 
 def project_workflow_graph(session: Session, graph: WorkflowGraph) -> GraphProjection:
     applied = load_applied_graph(session, graph)
-    last_operation_group_id = session.scalar(
-        select(WorkflowOperationGroup.id)
-        .where(
-            WorkflowOperationGroup.graph_id == graph.id,
-            WorkflowOperationGroup.result_revision == graph.revision,
-        )
-        .limit(1)
-    )
+    last = last_operation_group(session, graph)
     from productflow_backend.application.product_workflow.graph_runs import load_graph_sources
 
     return build_graph_projection(
         graph,
         applied,
-        last_operation_group_id=last_operation_group_id,
+        last_operation_group_id=last.id if last is not None else None,
+        can_undo=_can_undo(last),
+        can_redo=_can_redo(last),
         preview_asset_ids=_preview_asset_ids(session, graph.id),
         artifact_input_digests=_artifact_input_digests(session, graph.id),
         sources=load_graph_sources(session, graph, applied),
@@ -125,6 +123,8 @@ def build_graph_projection(
     applied: AppliedGraph,
     *,
     last_operation_group_id: str | None,
+    can_undo: bool = False,
+    can_redo: bool = False,
     preview_asset_ids: dict[str, str] | None = None,
     artifact_input_digests: dict[str, str] | None = None,
     sources: dict[str, GraphSourceRecord] | None = None,
@@ -142,6 +142,8 @@ def build_graph_projection(
         revision=applied.revision,
         source_draft_revision_id=graph.source_draft_revision_id,
         last_operation_group_id=last_operation_group_id,
+        can_undo=can_undo,
+        can_redo=can_redo,
         nodes=tuple(
             _project_node(
                 applied,
@@ -249,6 +251,14 @@ def _preview_asset_ids(session: Session, graph_id: str) -> dict[str, str]:
 
 def _is_unused(node: AppliedGraphNode, outgoing_ids: set[str]) -> bool:
     return node.node_type == GraphNodeType.IMAGE_ASSET and node.id not in outgoing_ids
+
+
+def _can_undo(last: WorkflowOperationGroup | None) -> bool:
+    return last is not None and GraphHistoryKind(last.history_kind) != GraphHistoryKind.UNDO
+
+
+def _can_redo(last: WorkflowOperationGroup | None) -> bool:
+    return last is not None and GraphHistoryKind(last.history_kind) == GraphHistoryKind.UNDO
 
 
 def _artifact_input_digests(session: Session, graph_id: str) -> dict[str, str]:

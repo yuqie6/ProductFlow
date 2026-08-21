@@ -1105,6 +1105,12 @@ export const api = {
       { method: "POST" },
     );
   },
+  redoWorkflowChangeSet(productId: string, workflowId: string): Promise<GraphProjection> {
+    return request(
+      `/api/v3/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/redo`,
+      { method: "POST" },
+    );
+  },
   persistConfirmedDraftGraph(
     productId: string,
     draftId: string,

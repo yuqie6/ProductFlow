@@ -520,17 +520,17 @@ export interface WorkflowVisualSystemPayloadV1 {
 
 export type WorkflowDraftVisualSystem =
   | {
-      mode: "draft";
-      version_id?: null;
-      payload: WorkflowVisualSystemPayloadV1;
-      source_markdown?: string | null;
-    }
+    mode: "draft";
+    version_id?: null;
+    payload: WorkflowVisualSystemPayloadV1;
+    source_markdown?: string | null;
+  }
   | {
-      mode: "confirmed_version";
-      version_id: string;
-      payload?: null;
-      source_markdown?: string | null;
-    };
+    mode: "confirmed_version";
+    version_id: string;
+    payload?: null;
+    source_markdown?: string | null;
+  };
 
 export type WorkflowVisualFieldOverride =
   | { field: "style"; value: string[] }
@@ -546,8 +546,8 @@ export type WorkflowVisualFieldOverride =
 export interface WorkflowVisualExceptionPlan {
   key: string;
   scope:
-    | { type: "workflow"; key?: null }
-    | { type: "image_type" | "image_plan"; key: string };
+  | { type: "workflow"; key?: null }
+  | { type: "image_type" | "image_plan"; key: string };
   overrides: WorkflowVisualFieldOverride[];
   reason: string;
 }
@@ -1175,17 +1175,17 @@ export type LibraryOrganizationOperation = {
   before: LibraryOrganizationAssetBefore;
   reason: string;
   target:
-    | { display_name: string }
-    | { folder_id: string | null }
-    | { tag_names: string[] }
-    | { is_archived: true }
-    | { is_archived: false }
-    | {
-        workflow_id: string;
-        workflow_title: string;
-        expected_workflow_revision: number;
-        expected_linked: boolean;
-      };
+  | { display_name: string }
+  | { folder_id: string | null }
+  | { tag_names: string[] }
+  | { is_archived: true }
+  | { is_archived: false }
+  | {
+    workflow_id: string;
+    workflow_title: string;
+    expected_workflow_revision: number;
+    expected_linked: boolean;
+  };
 };
 
 export interface LibraryOrganizationDraftPayload {
@@ -1610,11 +1610,18 @@ export interface GraphCatalogInputContract {
   required_to_run: boolean;
 }
 
+export interface GraphCatalogConfigField {
+  key: string;
+  value_kind: "string" | "string_or_null" | "string_list" | "object" | "object_or_null";
+  required: boolean;
+}
+
 export interface GraphCatalogNode {
   node_type: GraphNodeType;
   output_data_type: GraphEdgeDataType;
   kind: GraphNodeKind;
   accepts: GraphCatalogInputContract[];
+  config_fields?: GraphCatalogConfigField[];
 }
 
 export interface GraphNodeCatalog {
@@ -1671,6 +1678,8 @@ export interface GraphProjection {
   revision: number;
   source_draft_revision_id: string | null;
   last_operation_group_id: string | null;
+  can_undo: boolean;
+  can_redo: boolean;
   nodes: GraphNode[];
   edges: GraphEdge[];
   groups: GraphGroup[];

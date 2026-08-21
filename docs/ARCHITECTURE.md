@@ -144,7 +144,7 @@ Draft 状态依次覆盖 collecting、awaiting_confirmation、confirmed、materi
 
 WorkflowRecipe 保存用户主动创建的完整工作流或局部片段。recipe payload 只保存可复用结构和配置，不保存商品身份、生成结果或媒体字节。
 
-图规则由 `domain/graph_catalog.py` 与 `domain/graph_rules.py` 负责。结构命令走 `graph_commands.py` / `graph_apply.py`，运行走 `graph_runs.py` / `graph_execution.py`。HTTP 入口是 `presentation/routes/workflow_graphs.py`。
+图规则由 `domain/graph_catalog.py` 与 `domain/graph_rules.py` 负责。目录同时给出端口合同和可编辑配置字段；ChangeSet 写入会拒绝未登记的 `config` 键。结构命令走 `graph_commands.py` / `graph_apply.py`，运行走 `graph_runs.py` / `graph_execution.py`。HTTP 入口是 `presentation/routes/workflow_graphs.py`。
 
 ## 7. 图片模型
 

@@ -36,6 +36,7 @@ from productflow_backend.domain.enums import (
     AsyncDispatchStatus,
     GraphActorType,
     GraphArtifactType,
+    GraphHistoryKind,
     GraphEdgeDataType,
     GraphEdgeRole,
     GraphNodeType,
@@ -1995,6 +1996,7 @@ _GRAPH_NODE_TYPES = ", ".join(f"'{member.value}'" for member in GraphNodeType)
 _GRAPH_EDGE_DATA_TYPES = ", ".join(f"'{member.value}'" for member in GraphEdgeDataType)
 _GRAPH_EDGE_ROLES = ", ".join(f"'{member.value}'" for member in GraphEdgeRole)
 _GRAPH_ACTOR_TYPES = ", ".join(f"'{member.value}'" for member in GraphActorType)
+_GRAPH_HISTORY_KINDS = ", ".join(f"'{member.value}'" for member in GraphHistoryKind)
 _GRAPH_RUN_SCOPES = ", ".join(f"'{member.value}'" for member in GraphRunScope)
 _GRAPH_ARTIFACT_TYPES = ", ".join(f"'{member.value}'" for member in GraphArtifactType)
 _GRAPH_RUN_STATUSES = ", ".join(f"'{member.value}'" for member in WorkflowRunStatus)
@@ -2218,6 +2220,10 @@ class WorkflowOperationGroup(Base):
             name="ck_workflow_operation_groups_revision_step",
         ),
         CheckConstraint(f"actor_type IN ({_GRAPH_ACTOR_TYPES})", name="ck_workflow_operation_groups_actor_type"),
+        CheckConstraint(
+            f"history_kind IN ({_GRAPH_HISTORY_KINDS})",
+            name="ck_workflow_operation_groups_history_kind",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -2226,6 +2232,7 @@ class WorkflowOperationGroup(Base):
         ForeignKey("workflow_graphs.id", ondelete="CASCADE", name="fk_workflow_operation_groups_graph_id"),
     )
     actor_type: Mapped[GraphActorType] = mapped_column(String(40), default=GraphActorType.USER)
+    history_kind: Mapped[GraphHistoryKind] = mapped_column(String(16), default=GraphHistoryKind.EDIT)
     summary: Mapped[str] = mapped_column(String(500))
     base_revision: Mapped[int] = mapped_column(Integer)
     result_revision: Mapped[int] = mapped_column(Integer)

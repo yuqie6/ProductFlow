@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from productflow_backend.application.agent.product_intake import AGENT_PRODUCT_IMAGE_TYPE_KEYS
 from productflow_backend.application.product_workflow.graph_commands import (
     apply_graph_change_set,
+    redo_last_graph_change_set,
     undo_last_graph_change_set,
 )
 from productflow_backend.application.product_workflow.graph_contracts import WorkflowChangeSet
@@ -165,6 +166,21 @@ def undo_workflow_change_set_endpoint(
     session: Session = Depends(get_session),
 ) -> GraphProjectionResponse:
     result = undo_last_graph_change_set(session, product_id=product_id, graph_id=workflow_id)
+    return serialize_graph_projection(
+        get_graph_projection(session, product_id=product_id, graph_id=result.graph.id)
+    )
+
+
+@router.post(
+    "/products/{product_id}/workflows/{workflow_id}/redo",
+    response_model=GraphProjectionResponse,
+)
+def redo_workflow_change_set_endpoint(
+    product_id: str,
+    workflow_id: str,
+    session: Session = Depends(get_session),
+) -> GraphProjectionResponse:
+    result = redo_last_graph_change_set(session, product_id=product_id, graph_id=workflow_id)
     return serialize_graph_projection(
         get_graph_projection(session, product_id=product_id, graph_id=result.graph.id)
     )

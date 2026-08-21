@@ -31,6 +31,7 @@ The current repository targets a personal live demo and self-hosted deployments.
 ## Workflow Invariants
 
 - The only online workflow schema is version 3, stored on `workflow_graphs`.
+- Node Catalog owns connection rules and editable config keys. ChangeSet `config` cannot introduce unregistered keys or retired plan keys.
 - Node types are `product_source`, `image_asset`, `creative_brief`, `visual_system`, `prompt_generation`, and `image_generation`.
 - An `image_asset` node binds exactly one product image asset. Binding is not the same as a downstream `reference` edge.
 - One planned output image is represented by one runnable image node. A rerun updates its current asset while previous results remain in the library and run history.

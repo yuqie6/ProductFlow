@@ -1,4 +1,4 @@
-"""schema-v3 Node Catalog：输出类型、可接受输入、基数和运行必需性。"""
+"""schema-v3 Node Catalog：输出类型、可接受输入、基数、运行必需性和可编辑配置字段。"""
 
 from __future__ import annotations
 
@@ -9,8 +9,18 @@ from productflow_backend.domain.enums import GraphEdgeDataType, GraphEdgeRole, G
 from productflow_backend.domain.errors import BusinessValidationError
 
 GraphNodeKind = Literal["source", "processing"]
+GraphConfigValueKind = Literal["string", "string_or_null", "string_list", "object", "object_or_null"]
 
-GRAPH_CATALOG_VERSION = 1
+GRAPH_CATALOG_VERSION = 2
+
+FORBIDDEN_GRAPH_CONFIG_KEYS = frozenset(
+    {
+        "prompt_plan_key",
+        "image_plan_key",
+        "prompt_plan_keys",
+        "image_plan_keys",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,6 +29,13 @@ class GraphInputContract:
     role: GraphEdgeRole
     max_count: int | None
     required_to_run: bool
+
+
+@dataclass(frozen=True, slots=True)
+class GraphConfigFieldDocument:
+    key: str
+    value_kind: GraphConfigValueKind
+    required: bool = False
 
 
 _OUTPUT_TYPE: dict[GraphNodeType, GraphEdgeDataType] = {
@@ -54,6 +71,41 @@ _ACCEPTANCE: dict[tuple[GraphEdgeDataType, GraphNodeType], GraphInputContract] =
     ),
 }
 
+_CONFIG_FIELDS: dict[GraphNodeType, tuple[GraphConfigFieldDocument, ...]] = {
+    GraphNodeType.PRODUCT_SOURCE: (
+        GraphConfigFieldDocument("source_product_id", "string_or_null"),
+        GraphConfigFieldDocument("fact_set_version_id", "string_or_null"),
+    ),
+    GraphNodeType.IMAGE_ASSET: (
+        GraphConfigFieldDocument("role", "string_or_null"),
+        GraphConfigFieldDocument("label", "string_or_null"),
+    ),
+    GraphNodeType.CREATIVE_BRIEF: (
+        GraphConfigFieldDocument("goal", "string"),
+        GraphConfigFieldDocument("title", "string"),
+        GraphConfigFieldDocument("design_goals", "string_list"),
+        GraphConfigFieldDocument("required_copy", "string_list"),
+        GraphConfigFieldDocument("prohibitions", "string_list"),
+    ),
+    GraphNodeType.VISUAL_SYSTEM: (
+        GraphConfigFieldDocument("visual_system_version_id", "string_or_null"),
+        GraphConfigFieldDocument("visual_overlay", "object_or_null"),
+        GraphConfigFieldDocument("visual_overrides", "object"),
+    ),
+    GraphNodeType.PROMPT_GENERATION: (
+        GraphConfigFieldDocument("image_type_key", "string"),
+        GraphConfigFieldDocument("prompt", "object"),
+    ),
+    GraphNodeType.IMAGE_GENERATION: (
+        GraphConfigFieldDocument("image_type_key", "string"),
+        GraphConfigFieldDocument("generation_spec", "object"),
+        GraphConfigFieldDocument("delivery_spec", "object_or_null"),
+        GraphConfigFieldDocument("variation_instruction", "string_or_null"),
+        GraphConfigFieldDocument("visual_overlay", "object_or_null"),
+        GraphConfigFieldDocument("visual_overrides", "object"),
+    ),
+}
+
 PROCESSING_NODE_TYPES = frozenset({GraphNodeType.PROMPT_GENERATION, GraphNodeType.IMAGE_GENERATION})
 SOURCE_NODE_TYPES = frozenset(
     {
@@ -71,6 +123,7 @@ class GraphCatalogNodeDocument:
     output_data_type: GraphEdgeDataType
     kind: GraphNodeKind
     accepts: tuple[GraphInputContract, ...]
+    config_fields: tuple[GraphConfigFieldDocument, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +136,24 @@ def graph_node_kind(node_type: GraphNodeType) -> GraphNodeKind:
     return "processing" if node_type in PROCESSING_NODE_TYPES else "source"
 
 
+def node_config_fields(node_type: GraphNodeType) -> tuple[GraphConfigFieldDocument, ...]:
+    return _CONFIG_FIELDS[node_type]
+
+
+def allowed_config_keys(node_type: GraphNodeType) -> frozenset[str]:
+    return frozenset(field.key for field in node_config_fields(node_type))
+
+
+def validate_node_config(node_type: GraphNodeType, config: dict[str, object] | None) -> None:
+    payload = config or {}
+    illegal = FORBIDDEN_GRAPH_CONFIG_KEYS.intersection(payload)
+    if illegal:
+        raise BusinessValidationError(f"节点配置不能包含拓扑字段: {', '.join(sorted(illegal))}")
+    unknown = sorted(key for key in payload if key not in allowed_config_keys(node_type))
+    if unknown:
+        raise BusinessValidationError(f"节点配置包含未登记字段: {', '.join(unknown)}")
+
+
 def graph_catalog_document() -> GraphCatalogDocument:
     return GraphCatalogDocument(
         version=GRAPH_CATALOG_VERSION,
@@ -92,6 +163,7 @@ def graph_catalog_document() -> GraphCatalogDocument:
                 output_data_type=graph_node_output_type(node_type),
                 kind=graph_node_kind(node_type),
                 accepts=accepted_inputs(node_type),
+                config_fields=node_config_fields(node_type),
             )
             for node_type in GraphNodeType
         ),

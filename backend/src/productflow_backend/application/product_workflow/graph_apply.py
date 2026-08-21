@@ -21,7 +21,7 @@ from productflow_backend.application.product_workflow.graph_contracts import (
 from productflow_backend.application.workflow_drafts.contracts import WORKFLOW_DRAFT_MAX_TOTAL_IMAGES
 from productflow_backend.domain.enums import GraphConfigStatus, GraphEdgeDataType, GraphEdgeRole, GraphNodeType
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError
-from productflow_backend.domain.graph_catalog import graph_node_output_type
+from productflow_backend.domain.graph_catalog import graph_node_output_type, validate_node_config
 from productflow_backend.domain.graph_rules import (
     GraphRuleEdge,
     GraphRuleNode,
@@ -124,6 +124,7 @@ def apply_workflow_change_set(graph: AppliedGraph, change_set: WorkflowChangeSet
         if isinstance(operation, CreateNodeOp):
             if operation.client_ref in aliases:
                 raise BusinessValidationError("ChangeSet client_ref 与已有对象冲突")
+            validate_node_config(operation.node_type, operation.config)
             group_id = resolve(operation.group_ref) if operation.group_ref else None
             nodes[operation.client_ref] = AppliedGraphNode(
                 id=operation.client_ref,
@@ -198,6 +199,7 @@ def apply_workflow_change_set(graph: AppliedGraph, change_set: WorkflowChangeSet
         if isinstance(operation, UpdateNodeConfigOp):
             node_id = resolve(operation.node_ref)
             node = nodes[node_id]
+            validate_node_config(node.node_type, operation.config)
             bound = (
                 operation.bound_asset_id
                 if "bound_asset_id" in operation.model_fields_set

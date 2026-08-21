@@ -5,18 +5,12 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from productflow_backend.domain.enums import GraphActorType, GraphNodeType
+from productflow_backend.domain.graph_catalog import FORBIDDEN_GRAPH_CONFIG_KEYS
 
 GraphRef = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
 GraphTitle = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
 
-FORBIDDEN_GRAPH_TOPOLOGY_KEYS = frozenset(
-    {
-        "prompt_plan_key",
-        "image_plan_key",
-        "prompt_plan_keys",
-        "image_plan_keys",
-    }
-)
+FORBIDDEN_GRAPH_TOPOLOGY_KEYS = FORBIDDEN_GRAPH_CONFIG_KEYS
 
 
 class StrictGraphModel(BaseModel):

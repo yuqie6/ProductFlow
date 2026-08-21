@@ -14,9 +14,11 @@ from productflow_backend.domain.enums import GraphConfigStatus, GraphEdgeRole, G
 from productflow_backend.domain.errors import BusinessValidationError
 from productflow_backend.domain.graph_catalog import (
     GRAPH_CATALOG_VERSION,
+    allowed_config_keys,
     graph_catalog_document,
     graph_input_contract,
     graph_node_output_type,
+    validate_node_config,
 )
 from productflow_backend.domain.graph_rules import (
     GraphRuleEdge,
@@ -54,6 +56,16 @@ def test_catalog_document_covers_every_node_type_and_acceptance() -> None:
     assert required.max_count == 1
     assert required.required_to_run is True
     assert all(item.data_type != graph_node_output_type(GraphNodeType.PRODUCT_SOURCE) for item in image.accepts)
+    assert {field.key for field in image.config_fields} == {
+        "image_type_key",
+        "generation_spec",
+        "delivery_spec",
+        "variation_instruction",
+        "visual_overlay",
+        "visual_overrides",
+    }
+    assert {field.key for field in prompt.config_fields} == {"image_type_key", "prompt"}
+    assert allowed_config_keys(GraphNodeType.PRODUCT_SOURCE) == {"source_product_id", "fact_set_version_id"}
 
 
 def test_node_catalog_http_projects_domain_document(configured_env) -> None:
@@ -71,6 +83,36 @@ def test_node_catalog_http_projects_domain_document(configured_env) -> None:
     assert prompt_input["required_to_run"] is True
     assert prompt_input["data_type"] == "prompt"
     assert not any(item["data_type"] == "product_facts" for item in image["accepts"])
+    assert {field["key"] for field in image["config_fields"]} == {
+        "image_type_key",
+        "generation_spec",
+        "delivery_spec",
+        "variation_instruction",
+        "visual_overlay",
+        "visual_overrides",
+    }
+
+
+def test_catalog_rejects_unregistered_and_topology_config_keys() -> None:
+    validate_node_config(GraphNodeType.IMAGE_GENERATION, {"generation_spec": {"aspect_ratio": "1:1"}})
+    with pytest.raises(BusinessValidationError, match="拓扑字段"):
+        validate_node_config(GraphNodeType.IMAGE_GENERATION, {"prompt_plan_key": "hero-1"})
+    with pytest.raises(BusinessValidationError, match="未登记字段"):
+        apply_workflow_change_set(
+            EMPTY_GRAPH,
+            WorkflowChangeSet(
+                base_graph_revision=0,
+                summary="未知配置字段",
+                operations=[
+                    CreateNodeOp(
+                        client_ref="image",
+                        node_type=GraphNodeType.IMAGE_GENERATION,
+                        title="图",
+                        config={"unknown_field": True},
+                    )
+                ],
+            ),
+        )
 
 
 def test_incomplete_image_generation_without_prompt_is_legal_graph() -> None:
