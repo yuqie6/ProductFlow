@@ -12,10 +12,13 @@ from productflow_backend.application.agent.conversations import create_agent_con
 from productflow_backend.application.agent.product_intake import AgentProductSelectionV1
 from productflow_backend.application.agent.product_workspaces import create_agent_product_workspace
 from productflow_backend.application.agent.workbenches import (
-    AgentV2WorkbenchBootstrap,
+    AgentWorkbenchBootstrap,
+    ensure_agent_workbench_bootstrap,
     get_agent_workbench_bootstrap,
 )
-from productflow_backend.application.workflow_drafts.materialization import materialize_workflow_draft
+from productflow_backend.application.product_workflow.graph_direct_create import create_product_with_direct_graph
+from productflow_backend.application.product_workflow.graph_draft_persist import persist_confirmed_draft_graph
+from productflow_backend.application.product_workflow.graph_template import DirectCreateImageType
 from productflow_backend.application.workflow_drafts.service import (
     append_workflow_draft_revision,
     confirm_workflow_draft_revision,
@@ -24,10 +27,9 @@ from productflow_backend.application.workflow_drafts.service import (
 from productflow_backend.domain.errors import ConflictError
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
-    ProductWorkflow,
     WorkflowDraft,
-    WorkflowEdge,
-    WorkflowNode,
+    WorkflowGraphEdge,
+    WorkflowGraphNode,
 )
 
 
@@ -71,16 +73,15 @@ def test_agent_workbench_bootstrap_uses_persisted_conversation_and_is_read_only(
         event.remove(db_session, "before_flush", record_flush)
         event.remove(db_session, "before_commit", record_commit)
 
-    assert isinstance(bootstrap, AgentV2WorkbenchBootstrap)
+    assert isinstance(bootstrap, AgentWorkbenchBootstrap)
     assert bootstrap.conversation.id == workspace.conversation.id
     assert bootstrap.workflow_draft.id == workspace.workflow_draft.id
-    assert bootstrap.active_workflow.workflow is None
-    assert bootstrap.active_workflow.latest_revision == 0
+    assert bootstrap.graph is None
+    assert bootstrap.latest_workflow_revision == 0
     assert flushes == 0
     assert commits == 0
-    assert db_session.scalar(select(func.count()).select_from(ProductWorkflow)) == 0
-    assert db_session.scalar(select(func.count()).select_from(WorkflowNode)) == 0
-    assert db_session.scalar(select(func.count()).select_from(WorkflowEdge)) == 0
+    assert db_session.scalar(select(func.count()).select_from(WorkflowGraphNode)) == 0
+    assert db_session.scalar(select(func.count()).select_from(WorkflowGraphEdge)) == 0
 
 
 def test_agent_workbench_bootstrap_selects_latest_conversation_by_created_at_and_id(db_session) -> None:
@@ -103,7 +104,7 @@ def test_agent_workbench_bootstrap_selects_latest_conversation_by_created_at_and
     db_session.commit()
 
     bootstrap = get_agent_workbench_bootstrap(db_session, product_id=workspace.product.id)
-    assert isinstance(bootstrap, AgentV2WorkbenchBootstrap)
+    assert isinstance(bootstrap, AgentWorkbenchBootstrap)
     expected = max((workspace.conversation, second_conversation), key=lambda item: item.id)
     assert bootstrap.conversation.id == expected.id
     assert bootstrap.workflow_draft.id == expected.workflow_draft_id
@@ -118,7 +119,38 @@ def test_agent_workbench_bootstrap_rejects_product_without_agent_workspace(db_se
         get_agent_workbench_bootstrap(db_session, product_id=workspace.product.id)
 
 
-def test_agent_workbench_bootstrap_returns_complete_active_v2_snapshot(db_session) -> None:
+def test_ensure_agent_workbench_attaches_conversation_to_direct_created_graph(db_session) -> None:
+    created = create_product_with_direct_graph(
+        db_session,
+        name="直接创建工作台商品",
+        category=None,
+        price=None,
+        source_note=None,
+        image_uploads=[(_make_demo_image_bytes(), "reference.png", "image/png")],
+        image_types=[DirectCreateImageType(key="hero", quantity=1, order=0)],
+    )
+    with pytest.raises(ConflictError, match="还没有 Agent 工作区"):
+        get_agent_workbench_bootstrap(db_session, product_id=created.product.id)
+
+    first = ensure_agent_workbench_bootstrap(
+        db_session,
+        product_id=created.product.id,
+        idempotency_key="ensure-direct-graph",
+    )
+    second = ensure_agent_workbench_bootstrap(
+        db_session,
+        product_id=created.product.id,
+        idempotency_key="ensure-direct-graph",
+    )
+    loaded = get_agent_workbench_bootstrap(db_session, product_id=created.product.id)
+
+    assert first.conversation.id == second.conversation.id == loaded.conversation.id
+    assert first.graph is not None
+    assert first.graph.id == created.graph.id
+    assert loaded.workflow_draft.product_id == created.product.id
+
+
+def test_agent_workbench_bootstrap_exposes_persisted_graph(db_session) -> None:
     workspace = _create_agent_workspace(db_session, key="agent-active-v2")
     asset_id = workspace.created_assets[0].id
     draft = append_workflow_draft_revision(
@@ -137,21 +169,19 @@ def test_agent_workbench_bootstrap_returns_complete_active_v2_snapshot(db_sessio
         draft_id=draft.id,
         expected_draft_version=1,
     )
-    materialized = materialize_workflow_draft(
+    persisted = persist_confirmed_draft_graph(
         db_session,
         product_id=workspace.product.id,
         draft_id=draft.id,
         expected_draft_version=1,
-        expected_workflow_revision=0,
-        idempotency_key="workbench-materialize",
     )
 
     bootstrap = get_agent_workbench_bootstrap(db_session, product_id=workspace.product.id)
-    assert isinstance(bootstrap, AgentV2WorkbenchBootstrap)
-    assert bootstrap.active_workflow.workflow is not None
-    assert bootstrap.active_workflow.workflow.id == materialized.workflow.id
-    assert bootstrap.active_workflow.latest_revision == 1
-    assert len(bootstrap.active_workflow.workflow.nodes) == len(materialized.workflow.nodes)
+    assert isinstance(bootstrap, AgentWorkbenchBootstrap)
+    assert bootstrap.graph is not None
+    assert bootstrap.graph.id == persisted.graph.id
+    assert bootstrap.graph.revision == persisted.graph.revision
+    assert bootstrap.latest_workflow_revision == persisted.graph.revision
 
 
 def test_agent_workbench_bootstrap_api_has_no_database_write_side_effects(configured_env) -> None:
@@ -167,7 +197,7 @@ def test_agent_workbench_bootstrap_api_has_no_database_write_side_effects(config
         product_ids = (agent_workspace.product.id, missing_workspace.product.id)
         counts_before = {
             model.__tablename__: session.scalar(select(func.count()).select_from(model))
-            for model in (ProductWorkflow, WorkflowDraft, AgentConversation, WorkflowNode, WorkflowEdge)
+            for model in (WorkflowDraft, AgentConversation, WorkflowGraphNode, WorkflowGraphEdge)
         }
 
     client = TestClient(create_app())
@@ -188,9 +218,10 @@ def test_agent_workbench_bootstrap_api_has_no_database_write_side_effects(config
         event.remove(engine, "before_cursor_execute", record_dml)
 
     assert agent_response.status_code == 200, agent_response.text
-    assert agent_response.json()["mode"] == "agent_v2"
+    assert agent_response.json()["mode"] == "agent"
     assert agent_response.json()["workflow_draft"]["intake"]["schema_version"] == 1
-    assert agent_response.json()["active_workflow"] is None
+    assert agent_response.json()["graph"] is None
+    assert "active_workflow" not in agent_response.json()
     assert missing_response.status_code == 409
     assert missing_response.json()["detail"] == "商品还没有 Agent 工作区"
     assert dml_statements == []
@@ -198,6 +229,46 @@ def test_agent_workbench_bootstrap_api_has_no_database_write_side_effects(config
     with factory() as session:
         counts_after = {
             model.__tablename__: session.scalar(select(func.count()).select_from(model))
-            for model in (ProductWorkflow, WorkflowDraft, AgentConversation, WorkflowNode, WorkflowEdge)
+            for model in (WorkflowDraft, AgentConversation, WorkflowGraphNode, WorkflowGraphEdge)
         }
     assert counts_after == counts_before
+
+
+def test_ensure_agent_workbench_api_creates_workspace_for_direct_created_product(configured_env) -> None:
+    from productflow_backend.infrastructure.db.session import get_session_factory
+    from productflow_backend.presentation.api import create_app
+
+    factory = get_session_factory()
+    with factory() as session:
+        created = create_product_with_direct_graph(
+            session,
+            name="API 直接创建工作台商品",
+            category=None,
+            price=None,
+            source_note=None,
+            image_uploads=[(_make_demo_image_bytes(), "reference.png", "image/png")],
+            image_types=[DirectCreateImageType(key="hero", quantity=1, order=0)],
+        )
+        product_id = created.product.id
+
+    client = TestClient(create_app())
+    _login(client)
+    missing = client.get(f"/api/v2/products/{product_id}/agent-workbench")
+    assert missing.status_code == 409, missing.text
+    created_workspace = client.post(
+        f"/api/v2/products/{product_id}/agent-workbench",
+        headers={"Idempotency-Key": f"agent-workbench:{product_id}"},
+    )
+    assert created_workspace.status_code == 200, created_workspace.text
+    payload = created_workspace.json()
+    assert payload["mode"] == "agent"
+    assert payload["graph"]["id"]
+    replay = client.post(
+        f"/api/v2/products/{product_id}/agent-workbench",
+        headers={"Idempotency-Key": f"agent-workbench:{product_id}"},
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["conversation"]["id"] == payload["conversation"]["id"]
+    loaded = client.get(f"/api/v2/products/{product_id}/agent-workbench")
+    assert loaded.status_code == 200, loaded.text
+    assert loaded.json()["conversation"]["id"] == payload["conversation"]["id"]

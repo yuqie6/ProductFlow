@@ -42,6 +42,8 @@ def build_direct_create_template(
     image_types: list[DirectCreateImageType],
     reference_asset_ids: list[str],
     product_title: str = "商品资料",
+    source_product_id: str | None = None,
+    fact_set_version_id: str | None = None,
 ) -> WorkflowChangeSet:
     if not image_types:
         raise BusinessValidationError("至少选择一种图片类型")
@@ -71,6 +73,10 @@ def build_direct_create_template(
             title=product_title,
             position_x=80,
             position_y=220,
+            config={
+                "source_product_id": source_product_id,
+                "fact_set_version_id": fact_set_version_id,
+            },
         ),
         CreateNodeOp(
             client_ref="visual-system",

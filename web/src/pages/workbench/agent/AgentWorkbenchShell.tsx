@@ -203,7 +203,7 @@ export function AgentWorkbenchShell({
           data-agent-workbench-canvas-slot
           aria-hidden={regions.canvasInert || undefined}
           inert={regions.canvasInert}
-          className={`absolute inset-0 min-h-0 min-w-0 overflow-hidden transition-[opacity,visibility] duration-300 ease-out motion-reduce:transition-none lg:relative lg:inset-auto ${canvasVisibleClass}`}
+          className={`absolute inset-0 min-h-0 min-w-0 overflow-hidden transition-[opacity,visibility] duration-300 ease-out motion-reduce:transition-none lg:relative lg:inset-auto lg:h-full lg:min-h-0 ${canvasVisibleClass}`}
         >
           {canvasContent}
         </section>

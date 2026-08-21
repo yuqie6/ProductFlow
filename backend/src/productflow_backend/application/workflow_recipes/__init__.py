@@ -1,1 +1,1 @@
-"""WorkflowRecipe 严格合同、提取和版本化用例。"""
+"""WorkflowRecipe 严格合同、应用和版本化用例。"""

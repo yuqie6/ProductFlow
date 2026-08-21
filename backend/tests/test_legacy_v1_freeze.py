@@ -15,14 +15,15 @@ from productflow_backend.application.legacy_retirement.freeze import (
     get_legacy_v1_write_freeze_state,
     set_legacy_v1_write_freeze_state,
 )
-from productflow_backend.application.product_workflow.v2_runs import submit_v2_workflow_run
+from productflow_backend.application.product_workflow.graph_draft_persist import persist_confirmed_draft_graph
+from productflow_backend.application.product_workflow.graph_runs import submit_graph_run
 from productflow_backend.application.products import create_canonical_product
-from productflow_backend.application.workflow_drafts.materialization import materialize_workflow_draft
 from productflow_backend.application.workflow_drafts.service import (
     confirm_workflow_draft_revision,
     create_workflow_draft,
 )
 from productflow_backend.commands.manage_legacy_v1_freeze import main as freeze_command_main
+from productflow_backend.domain.enums import GraphRunScope
 from productflow_backend.domain.errors import ConflictError
 from productflow_backend.infrastructure.db.models import AppSetting
 
@@ -55,11 +56,11 @@ def test_legacy_v1_freeze_state_fails_closed_when_malformed(db_session) -> None:
     ensure_legacy_v1_write_allowed(db_session)
 
 
-def test_v2_draft_materialization_and_run_remain_available_during_legacy_freeze(db_session) -> None:
+def test_draft_graph_persist_and_run_remain_available_during_legacy_freeze(db_session) -> None:
     set_legacy_v1_write_freeze_state(db_session, frozen=True)
     product = create_canonical_product(
         db_session,
-        name="冻结期间 V2 商品",
+        name="冻结期间工作流商品",
         category="工具",
         price="199",
         source_note=None,
@@ -77,25 +78,24 @@ def test_v2_draft_materialization_and_run_remain_available_during_legacy_freeze(
         draft_id=draft.id,
         expected_draft_version=1,
     )
-    materialized = materialize_workflow_draft(
+    persisted = persist_confirmed_draft_graph(
         db_session,
         product_id=product.id,
         draft_id=draft.id,
         expected_draft_version=1,
-        expected_workflow_revision=0,
-        idempotency_key="v2-during-legacy-freeze",
     )
     queue = Mock()
 
-    submission = submit_v2_workflow_run(
+    submission = submit_graph_run(
         db_session,
         product_id=product.id,
-        workflow_id=materialized.workflow.id,
+        graph_id=persisted.graph.id,
+        scope=GraphRunScope.GRAPH,
         enqueue=queue,
     )
 
     assert submission.created is True
-    assert materialized.workflow.schema_version == 2
+    assert persisted.graph.schema_version == 3
     queue.assert_called_once_with(submission.run.id)
 
 

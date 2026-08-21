@@ -83,10 +83,10 @@ def test_product_workflow_route_uses_global_business_error_handler(configured_en
     client = TestClient(app)
     _login(client)
 
-    response = client.get("/api/v2/products/missing-product/workflow")
+    response = client.get("/api/v3/products/missing-product/workflows/current")
 
     assert response.status_code == 404
-    assert response.json() == {"detail": "商品不存在"}
+    assert response.json() == {"detail": "商品工作流不存在"}
 
 
 def test_product_route_uses_global_business_error_handler(configured_env) -> None:  # noqa: ARG001

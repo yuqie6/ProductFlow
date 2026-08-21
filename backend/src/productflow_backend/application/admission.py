@@ -9,12 +9,16 @@ from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.domain.durable_generation_tasks import (
+    GRAPH_RUN_GENERATION_TASK_CONTRACT,
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
-    WORKFLOW_RUN_GENERATION_TASK_CONTRACT,
     WorkflowRunDeliveryState,
     classify_workflow_run_delivery,
 )
-from productflow_backend.infrastructure.db.models import ImageSessionGenerationTask, WorkflowNodeRun, WorkflowRun
+from productflow_backend.infrastructure.db.models import (
+    ImageSessionGenerationTask,
+    WorkflowGraphNodeRun,
+    WorkflowGraphRun,
+)
 
 GENERATION_CAPACITY_LOCK_KEY = 42630001
 
@@ -34,32 +38,32 @@ class GenerationTaskQueueMetadata:
     queue_position: int | None
 
 
-def _workflow_run_delivery_state(run: WorkflowRun) -> WorkflowRunDeliveryState:
+def _graph_run_delivery_state(run: WorkflowGraphRun) -> WorkflowRunDeliveryState:
     return classify_workflow_run_delivery(run.status, [node_run.status for node_run in run.node_runs])
 
 
 def _active_async_task_count(session: Session) -> int:
-    active_workflow_runs = session.scalar(
+    active_graph_runs = session.scalar(
         select(func.count())
-        .select_from(WorkflowRun)
-        .where(WorkflowRun.status.in_(WORKFLOW_RUN_GENERATION_TASK_CONTRACT.active_statuses))
+        .select_from(WorkflowGraphRun)
+        .where(WorkflowGraphRun.status.in_(GRAPH_RUN_GENERATION_TASK_CONTRACT.active_statuses))
     )
     active_image_session_tasks = session.scalar(
         select(func.count())
         .select_from(ImageSessionGenerationTask)
         .where(ImageSessionGenerationTask.status.in_(IMAGE_SESSION_GENERATION_TASK_CONTRACT.active_statuses))
     )
-    return int(active_workflow_runs or 0) + int(active_image_session_tasks or 0)
+    return int(active_graph_runs or 0) + int(active_image_session_tasks or 0)
 
 
 def _running_async_task_count(session: Session) -> int:
-    running_workflow_node_runs = session.scalar(
+    running_graph_node_runs = session.scalar(
         select(func.count())
-        .select_from(WorkflowNodeRun)
-        .join(WorkflowRun, WorkflowRun.id == WorkflowNodeRun.workflow_run_id)
+        .select_from(WorkflowGraphNodeRun)
+        .join(WorkflowGraphRun, WorkflowGraphRun.id == WorkflowGraphNodeRun.graph_run_id)
         .where(
-            WorkflowRun.status.in_(WORKFLOW_RUN_GENERATION_TASK_CONTRACT.active_statuses),
-            WorkflowNodeRun.status.in_(WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_running_statuses),
+            WorkflowGraphRun.status.in_(GRAPH_RUN_GENERATION_TASK_CONTRACT.active_statuses),
+            WorkflowGraphNodeRun.status.in_(GRAPH_RUN_GENERATION_TASK_CONTRACT.execution_running_statuses),
         )
     )
     running_image_session_tasks = session.scalar(
@@ -67,7 +71,7 @@ def _running_async_task_count(session: Session) -> int:
         .select_from(ImageSessionGenerationTask)
         .where(ImageSessionGenerationTask.status.in_(IMAGE_SESSION_GENERATION_TASK_CONTRACT.running_statuses))
     )
-    return int(running_workflow_node_runs or 0) + int(running_image_session_tasks or 0)
+    return int(running_graph_node_runs or 0) + int(running_image_session_tasks or 0)
 
 
 def _status_count(session: Session, model: type, statuses: tuple[StrEnum, ...]) -> int:
@@ -75,16 +79,16 @@ def _status_count(session: Session, model: type, statuses: tuple[StrEnum, ...]) 
     return int(count or 0)
 
 
-def _workflow_run_queue_status_counts(session: Session) -> tuple[int, int]:
+def _graph_run_queue_status_counts(session: Session) -> tuple[int, int]:
     runs = session.scalars(
-        select(WorkflowRun)
-        .options(selectinload(WorkflowRun.node_runs))
-        .where(WorkflowRun.status.in_(WORKFLOW_RUN_GENERATION_TASK_CONTRACT.active_statuses))
+        select(WorkflowGraphRun)
+        .options(selectinload(WorkflowGraphRun.node_runs))
+        .where(WorkflowGraphRun.status.in_(GRAPH_RUN_GENERATION_TASK_CONTRACT.active_statuses))
     ).all()
     running_count = 0
     queued_count = 0
     for run in runs:
-        delivery_state = _workflow_run_delivery_state(run)
+        delivery_state = _graph_run_delivery_state(run)
         if delivery_state == WorkflowRunDeliveryState.RUNNING:
             running_count += 1
         elif delivery_state == WorkflowRunDeliveryState.QUEUED:
@@ -95,13 +99,13 @@ def _workflow_run_queue_status_counts(session: Session) -> tuple[int, int]:
 def get_generation_queue_overview(session: Session) -> GenerationQueueOverview:
     """Return the global durable generation queue snapshot."""
 
-    workflow_running_count, workflow_queued_count = _workflow_run_queue_status_counts(session)
-    running_count = workflow_running_count + _status_count(
+    graph_running_count, graph_queued_count = _graph_run_queue_status_counts(session)
+    running_count = graph_running_count + _status_count(
         session,
         ImageSessionGenerationTask,
         IMAGE_SESSION_GENERATION_TASK_CONTRACT.running_statuses,
     )
-    queued_count = workflow_queued_count + _status_count(
+    queued_count = graph_queued_count + _status_count(
         session,
         ImageSessionGenerationTask,
         IMAGE_SESSION_GENERATION_TASK_CONTRACT.queued_statuses,
@@ -116,25 +120,23 @@ def get_generation_queue_overview(session: Session) -> GenerationQueueOverview:
 
 def get_queued_generation_positions(session: Session) -> dict[str, int]:
     queued_items: list[tuple[datetime, str, str]] = []
-    workflow_run_queued_at: dict[str, datetime] = {}
+    graph_run_queued_at: dict[str, datetime] = {}
     for run in session.scalars(
-        select(WorkflowRun)
-        .options(selectinload(WorkflowRun.node_runs))
-        .where(WorkflowRun.status.in_(WORKFLOW_RUN_GENERATION_TASK_CONTRACT.active_statuses))
+        select(WorkflowGraphRun)
+        .options(selectinload(WorkflowGraphRun.node_runs))
+        .where(WorkflowGraphRun.status.in_(GRAPH_RUN_GENERATION_TASK_CONTRACT.active_statuses))
     ):
-        if _workflow_run_delivery_state(run) != WorkflowRunDeliveryState.QUEUED:
+        if _graph_run_delivery_state(run) != WorkflowRunDeliveryState.QUEUED:
             continue
-        workflow_run_queued_at[run.id] = min(
+        graph_run_queued_at[run.id] = min(
             (
                 node_run.started_at
                 for node_run in run.node_runs
-                if WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_queued(node_run.status)
+                if GRAPH_RUN_GENERATION_TASK_CONTRACT.execution_is_queued(node_run.status)
             ),
             default=run.started_at,
         )
-    queued_items.extend(
-        (started_at, "product_workflow", run_id) for run_id, started_at in workflow_run_queued_at.items()
-    )
+    queued_items.extend((started_at, "workflow_graph", run_id) for run_id, started_at in graph_run_queued_at.items())
     queued_items.extend(
         (task.created_at, "image_session", task.id)
         for task in session.scalars(
@@ -149,7 +151,7 @@ def get_queued_generation_positions(session: Session) -> dict[str, int]:
 
 def get_workflow_run_queue_metadata(
     session: Session,
-    run: WorkflowRun,
+    run: WorkflowGraphRun,
     *,
     overview: GenerationQueueOverview | None = None,
     queued_positions: dict[str, int] | None = None,
@@ -157,7 +159,7 @@ def get_workflow_run_queue_metadata(
     overview = overview or get_generation_queue_overview(session)
     queued_ahead_count: int | None = None
     queue_position: int | None = None
-    if _workflow_run_delivery_state(run) == WorkflowRunDeliveryState.QUEUED:
+    if _graph_run_delivery_state(run) == WorkflowRunDeliveryState.QUEUED:
         positions = queued_positions or get_queued_generation_positions(session)
         queue_position = positions.get(run.id)
         if queue_position is not None:

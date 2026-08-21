@@ -47,7 +47,7 @@ from productflow_backend.infrastructure.db.models import (
     MediaLibraryAssetTag,
     MediaLibraryFolder,
     MediaLibraryTag,
-    ProductWorkflow,
+    WorkflowGraph,
     WorkflowMediaLibraryAsset,
 )
 
@@ -335,7 +335,7 @@ def _observe_operations(
 ) -> tuple[
     dict[str, MediaLibraryAsset],
     dict[str, MediaLibraryFolder],
-    dict[str, ProductWorkflow],
+    dict[str, WorkflowGraph],
 ]:
     asset_ids = sorted({operation.asset_id for operation in artifact.operations})
     assets = list(
@@ -387,9 +387,9 @@ def _observe_operations(
     )
     workflows = list(
         session.scalars(
-            select(ProductWorkflow)
-            .where(ProductWorkflow.id.in_(workflow_ids))
-            .order_by(ProductWorkflow.id)
+            select(WorkflowGraph)
+            .where(WorkflowGraph.id.in_(workflow_ids))
+            .order_by(WorkflowGraph.id)
             .with_for_update()
         ).all()
         if workflow_ids
@@ -501,7 +501,7 @@ def _apply_operations(
     artifact: LibraryOrganizationDraftPayloadV1,
     assets: dict[str, MediaLibraryAsset],
     folders: dict[str, MediaLibraryFolder],
-    workflows: dict[str, ProductWorkflow],
+    workflows: dict[str, WorkflowGraph],
     tags: dict[str, MediaLibraryTag],
     draft_id: str,
     revision_version: int,

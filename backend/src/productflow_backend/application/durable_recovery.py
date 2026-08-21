@@ -11,13 +11,10 @@ from sqlalchemy.orm import Session, selectinload
 from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.domain.durable_generation_tasks import (
     DELIVERY_RENDITION_TASK_CONTRACT,
+    GRAPH_RUN_GENERATION_TASK_CONTRACT,
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
     IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL,
     IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_PHASE,
-    WORKFLOW_PROVIDER_EFFECT_SAFE_REQUEUE_PHASES,
-    WORKFLOW_PROVIDER_EFFECT_UNKNOWN_DETAIL,
-    WORKFLOW_PROVIDER_EFFECT_UNKNOWN_PHASE,
-    WORKFLOW_RUN_GENERATION_TASK_CONTRACT,
     WorkflowRunDeliveryState,
     classify_workflow_run_delivery,
 )
@@ -26,7 +23,7 @@ from productflow_backend.infrastructure.db.models import (
     DeliveryRenditionJob,
     ImageSessionGenerationTask,
     ImageSessionProviderEffect,
-    WorkflowRun,
+    WorkflowGraphRun,
     utcnow,
 )
 from productflow_backend.infrastructure.db.session import get_session_factory
@@ -80,31 +77,23 @@ def recover_unfinished_workflow_runs(
     reset_stale_running: bool = False,
     stale_running_after: timedelta = DEFAULT_STALE_RUNNING_AFTER,
 ) -> WorkflowRunRecoverySummary:
-    """恢复重启期间滞留的商品工作流运行。
+    """恢复重启期间滞留的 schema-v3 graph 运行。
 
-    `workflow_runs` 是 authoritative state，Redis/Dramatiq 只是 delivery attempt。当前工作流 run 沿用
-    `running` 作为 active 状态：如果没有节点正在执行，说明消息可能丢失或还未消费，启动时可以补发；如果有节点正在
-    `running`，只有 worker 启动并且节点运行超过 stale cutoff 时才把这些节点重置为 `queued` 再补发。
+    `workflow_graph_runs` 是 authoritative state，Redis/Dramatiq 只是 delivery attempt。
     """
-
-    from productflow_backend.application.product_workflow.run_state import (
-        _apply_workflow_run_unknown,
-        lock_workflow_run_aggregate,
-    )
 
     cutoff = utcnow() - stale_running_after
     session = get_session_factory()()
     runs_to_enqueue: list[str] = []
     queued_runs = 0
     stale_running_runs = 0
-    unknown_runs = 0
 
     try:
         runs = list(
             session.scalars(
-                select(WorkflowRun)
-                .options(selectinload(WorkflowRun.node_runs))
-                .where(WorkflowRun.status.in_(WORKFLOW_RUN_GENERATION_TASK_CONTRACT.active_statuses))
+                select(WorkflowGraphRun)
+                .options(selectinload(WorkflowGraphRun.node_runs))
+                .where(WorkflowGraphRun.status.in_(GRAPH_RUN_GENERATION_TASK_CONTRACT.active_statuses))
             ).all()
         )
         for run in runs:
@@ -118,13 +107,18 @@ def recover_unfinished_workflow_runs(
                     queued_runs += 1
                     runs_to_enqueue.append(run_id)
                     continue
-                locked_run, locked_node_runs, _, _ = lock_workflow_run_aggregate(session, run_id=run_id)
+                locked_run = session.scalar(
+                    select(WorkflowGraphRun)
+                    .options(selectinload(WorkflowGraphRun.node_runs))
+                    .where(WorkflowGraphRun.id == run_id)
+                    .with_for_update()
+                )
                 if locked_run is None:
                     session.rollback()
                     continue
                 locked_delivery_state = classify_workflow_run_delivery(
                     locked_run.status,
-                    [node_run.status for node_run in locked_node_runs],
+                    [node_run.status for node_run in locked_run.node_runs],
                 )
                 if locked_delivery_state != WorkflowRunDeliveryState.QUEUED:
                     session.rollback()
@@ -139,7 +133,7 @@ def recover_unfinished_workflow_runs(
             running_node_runs = [
                 node_run
                 for node_run in run.node_runs
-                if WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_running(node_run.status)
+                if GRAPH_RUN_GENERATION_TASK_CONTRACT.execution_is_running(node_run.status)
             ]
             stale_node_runs = [
                 node_run
@@ -148,76 +142,29 @@ def recover_unfinished_workflow_runs(
             ]
             if not reset_stale_running or not stale_node_runs:
                 continue
-            locked_run, locked_node_runs, locked_nodes, locked_workflow = lock_workflow_run_aggregate(
-                session,
-                run_id=run_id,
+            locked_run = session.scalar(
+                select(WorkflowGraphRun)
+                .options(selectinload(WorkflowGraphRun.node_runs))
+                .where(WorkflowGraphRun.id == run_id)
+                .with_for_update()
             )
-            if locked_run is None:
+            if locked_run is None or GRAPH_RUN_GENERATION_TASK_CONTRACT.is_terminal(locked_run.status):
                 session.rollback()
                 continue
-            if WORKFLOW_RUN_GENERATION_TASK_CONTRACT.is_terminal(locked_run.status):
-                session.rollback()
-                continue
-            locked_running_node_runs = [
-                node_run
-                for node_run in locked_node_runs
-                if WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_running(node_run.status)
-            ]
             locked_stale_node_runs = [
                 node_run
-                for node_run in locked_running_node_runs
-                if node_run.started_at is not None and _as_aware_utc(node_run.started_at) <= cutoff
+                for node_run in locked_run.node_runs
+                if GRAPH_RUN_GENERATION_TASK_CONTRACT.execution_is_running(node_run.status)
+                and node_run.started_at is not None
+                and _as_aware_utc(node_run.started_at) <= cutoff
             ]
             if not locked_stale_node_runs:
                 session.rollback()
                 continue
-            nodes_by_id = {node.id: node for node in locked_nodes}
-            unknown_node_runs = [
-                node_run
-                for node_run in locked_stale_node_runs
-                if node_run.progress_phase not in WORKFLOW_PROVIDER_EFFECT_SAFE_REQUEUE_PHASES
-            ]
-            if unknown_node_runs:
-                unknown_node_run = sorted(unknown_node_runs, key=lambda item: (item.node_id, item.id))[0]
-                observed_phase = unknown_node_run.progress_phase
-                current_metadata = (
-                    unknown_node_run.progress_metadata if isinstance(unknown_node_run.progress_metadata, dict) else {}
-                )
-                _apply_workflow_run_unknown(
-                    session,
-                    persisted_run=locked_run,
-                    node_runs=locked_node_runs,
-                    nodes=locked_nodes,
-                    workflow=locked_workflow,
-                    unknown_node_id=unknown_node_run.node_id,
-                    reason=WORKFLOW_PROVIDER_EFFECT_UNKNOWN_DETAIL,
-                    metadata={
-                        "attempt_id": unknown_node_run.active_attempt_id,
-                        "observed_phase": observed_phase,
-                        "effect_operation_key": current_metadata.get("effect_operation_key"),
-                        "progress_phase": WORKFLOW_PROVIDER_EFFECT_UNKNOWN_PHASE,
-                    },
-                    commit=True,
-                )
-                unknown_runs += 1
-                continue
-            reset_succeeded = True
-            for stale_node_run in sorted(locked_stale_node_runs, key=lambda item: (item.node_id, item.id)):
-                if stale_node_run.active_attempt_id is None:
-                    reset_succeeded = False
-                    break
+            for stale_node_run in sorted(locked_stale_node_runs, key=lambda item: (item.node_id or "", item.id)):
                 stale_node_run.status = WorkflowNodeStatus.QUEUED
-                stale_node_run.active_attempt_id = None
                 stale_node_run.failure_reason = None
                 stale_node_run.finished_at = None
-                stale_node_run.progress_phase = "requeued_after_idle"
-                node = nodes_by_id.get(stale_node_run.node_id)
-                if node is not None and WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_running(node.status):
-                    node.status = WorkflowNodeStatus.QUEUED
-                    node.failure_reason = None
-            if not reset_succeeded:
-                session.rollback()
-                continue
             locked_run.failure_reason = None
             if stage_dispatch is not None:
                 stage_dispatch(session, run_id)
@@ -242,19 +189,18 @@ def recover_unfinished_workflow_runs(
             except Exception:
                 logger.exception("恢复滞留工作流运行入队失败: workflow_run_id=%s", run_id)
 
-    if runs_to_enqueue or unknown_runs:
+    if runs_to_enqueue:
         logger.info(
-            "已恢复滞留工作流运行: queued=%s stale_running=%s unknown=%s enqueued=%s",
+            "已恢复滞留工作流运行: queued=%s stale_running=%s enqueued=%s",
             queued_runs,
             stale_running_runs,
-            unknown_runs,
             enqueued_runs,
         )
     return WorkflowRunRecoverySummary(
         queued_runs=queued_runs,
         stale_running_runs=stale_running_runs,
         enqueued_runs=enqueued_runs,
-        unknown_runs=unknown_runs,
+        unknown_runs=0,
     )
 
 

@@ -16,6 +16,7 @@ from productflow_backend.application.product_workflow.graph_compiler import (
     compile_image_runtime,
     compile_prompt_runtime,
 )
+from productflow_backend.application.product_workflow.product_sources import ProductSourceSnapshot
 from productflow_backend.domain.enums import GraphConfigStatus, GraphEdgeDataType, GraphEdgeRole, GraphNodeType
 from productflow_backend.domain.errors import BusinessValidationError, NotFoundError
 from productflow_backend.domain.graph_catalog import PROCESSING_NODE_TYPES
@@ -54,6 +55,7 @@ class GraphNodeView:
     position_x: int
     position_y: int
     config: dict[str, object]
+    product_source: ProductSourceSnapshot | None
     bound_asset_id: str | None
     group_id: str | None
     preview_asset_id: str | None
@@ -207,6 +209,9 @@ def _project_node(
         position_x=node.position_x,
         position_y=node.position_y,
         config=dict(node.config),
+        product_source=(sources or {}).get(node.id).product_source
+        if node.node_type == GraphNodeType.PRODUCT_SOURCE and (sources or {}).get(node.id) is not None
+        else None,
         bound_asset_id=node.bound_asset_id,
         group_id=node.group_id,
         preview_asset_id=preview_asset_id,

@@ -28,17 +28,20 @@ from productflow_backend.application.product_workflow.graph_runs import (
 from productflow_backend.application.product_workflow.graph_template import DirectCreateImageType
 from productflow_backend.domain.enums import GraphActorType, GraphRunScope
 from productflow_backend.domain.errors import BusinessValidationError
+from productflow_backend.domain.graph_catalog import graph_catalog_document
 from productflow_backend.presentation.deps import get_session, require_admin
 from productflow_backend.presentation.schemas.graphs import (
     DirectCreateImageTypeRequest,
     DirectCreateProductResponse,
     DraftGraphPersistResponse,
+    GraphCatalogResponse,
     GraphProjectionResponse,
     GraphRunListResponse,
     GraphRunRequest,
     GraphRunResponse,
     PersistDraftGraphRequest,
     serialize_direct_create,
+    serialize_graph_catalog,
     serialize_graph_projection,
     serialize_graph_run,
 )
@@ -48,6 +51,11 @@ from productflow_backend.presentation.upload_validation import (
 )
 
 router = APIRouter(prefix="/api/v3", tags=["workflow-graphs"], dependencies=[Depends(require_admin)])
+
+
+@router.get("/node-catalog", response_model=GraphCatalogResponse)
+def get_node_catalog_endpoint() -> GraphCatalogResponse:
+    return serialize_graph_catalog(graph_catalog_document())
 
 
 @router.post("/products", response_model=DirectCreateProductResponse, status_code=status.HTTP_201_CREATED)

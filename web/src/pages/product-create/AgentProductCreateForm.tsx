@@ -57,6 +57,8 @@ interface AgentProductCreateFormProps {
   onRemoveReferenceFile: (index: number) => void;
   onRetryOptions: () => void;
   onSubmit: () => void;
+  onDirectCreate?: () => void;
+  isDirectCreating?: boolean;
 }
 
 const IMAGE_TYPE_ICONS: Partial<Record<AgentProductImageTypeKey, LucideIcon>> = {
@@ -116,6 +118,8 @@ export function AgentProductCreateForm({
   onRemoveReferenceFile,
   onRetryOptions,
   onSubmit,
+  onDirectCreate,
+  isDirectCreating = false,
 }: AgentProductCreateFormProps) {
   const { locale, t } = useI18n();
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
@@ -434,18 +438,31 @@ export function AgentProductCreateForm({
               <strong className="font-semibold tabular-nums text-text-primary">{referenceFiles.length}</strong>
             </span>
           </div>
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="btn-primary-spring inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl px-6 text-sm font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
-          >
-            {isSubmitting ? (
-              <Loader2 size={16} className="animate-spin" />
-            ) : (
-              <Sparkles size={16} aria-hidden="true" />
-            )}
-            {isSubmitting ? t("agentCreate.submitting") : primaryActionLabel ?? t("agentCreate.submit")}
-          </button>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            {onDirectCreate ? (
+              <button
+                type="button"
+                disabled={isSubmitting || isDirectCreating}
+                onClick={onDirectCreate}
+                className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl border border-indigo-200 px-6 text-sm font-semibold text-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+              >
+                {isDirectCreating ? <Loader2 size={16} className="animate-spin" /> : null}
+                {t("agentCreate.submitDirect")}
+              </button>
+            ) : null}
+            <button
+              type="submit"
+              disabled={isSubmitting || isDirectCreating}
+              className="btn-primary-spring inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl px-6 text-sm font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2"
+            >
+              {isSubmitting ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <Sparkles size={16} aria-hidden="true" />
+              )}
+              {isSubmitting ? t("agentCreate.submitting") : primaryActionLabel ?? t("agentCreate.submit")}
+            </button>
+          </div>
         </div>
       </div>
 

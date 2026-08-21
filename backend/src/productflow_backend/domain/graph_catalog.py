@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from productflow_backend.domain.enums import GraphEdgeDataType, GraphEdgeRole, GraphNodeType
 from productflow_backend.domain.errors import BusinessValidationError
+
+GraphNodeKind = Literal["source", "processing"]
 
 GRAPH_CATALOG_VERSION = 1
 
@@ -60,6 +63,39 @@ SOURCE_NODE_TYPES = frozenset(
         GraphNodeType.VISUAL_SYSTEM,
     }
 )
+
+
+@dataclass(frozen=True, slots=True)
+class GraphCatalogNodeDocument:
+    node_type: GraphNodeType
+    output_data_type: GraphEdgeDataType
+    kind: GraphNodeKind
+    accepts: tuple[GraphInputContract, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class GraphCatalogDocument:
+    version: int
+    nodes: tuple[GraphCatalogNodeDocument, ...]
+
+
+def graph_node_kind(node_type: GraphNodeType) -> GraphNodeKind:
+    return "processing" if node_type in PROCESSING_NODE_TYPES else "source"
+
+
+def graph_catalog_document() -> GraphCatalogDocument:
+    return GraphCatalogDocument(
+        version=GRAPH_CATALOG_VERSION,
+        nodes=tuple(
+            GraphCatalogNodeDocument(
+                node_type=node_type,
+                output_data_type=graph_node_output_type(node_type),
+                kind=graph_node_kind(node_type),
+                accepts=accepted_inputs(node_type),
+            )
+            for node_type in GraphNodeType
+        ),
+    )
 
 
 def graph_node_output_type(node_type: GraphNodeType) -> GraphEdgeDataType:

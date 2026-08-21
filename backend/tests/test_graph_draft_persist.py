@@ -5,7 +5,7 @@ from helpers import _login, _make_demo_image_bytes
 from sqlalchemy import func, select
 from workflow_draft_helpers import make_workflow_draft_payload
 
-from productflow_backend.infrastructure.db.models import ProductWorkflow, WorkflowDraft, WorkflowGraph
+from productflow_backend.infrastructure.db.models import WorkflowDraft, WorkflowGraph
 from productflow_backend.infrastructure.db.session import get_session_factory
 from productflow_backend.presentation.api import create_app
 
@@ -58,7 +58,6 @@ def test_confirmed_draft_persists_v3_graph_and_conflicts_when_graph_exists(confi
     factory = get_session_factory()
     session = factory()
     try:
-        assert session.scalar(select(func.count()).select_from(ProductWorkflow)) == 0
         assert session.scalar(select(func.count()).select_from(WorkflowGraph)) == 1
         assert session.scalar(select(WorkflowDraft.status).where(WorkflowDraft.id == draft_id)) == "ready"
     finally:

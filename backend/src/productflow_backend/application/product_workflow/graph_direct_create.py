@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
+from productflow_backend.application.product_facts import product_metadata_facts, stage_product_fact_set
 from productflow_backend.application.product_images.assets import get_product_image_assets_by_ids
 from productflow_backend.application.product_workflow.graph_commands import stage_new_workflow_graph
 from productflow_backend.application.product_workflow.graph_queries import GraphProjection, project_workflow_graph
@@ -51,10 +52,17 @@ def create_product_with_direct_graph(
             storage_writes=storage_writes,
         )
         creation.product.cover_image_asset_id = creation.created_assets[0].id
+        fact_set = stage_product_fact_set(
+            session,
+            product=creation.product,
+            facts=product_metadata_facts(creation.product),
+        )
         change_set = build_direct_create_template(
             image_types=image_types,
             reference_asset_ids=[asset.id for asset in creation.created_assets],
             product_title=creation.product.name,
+            source_product_id=creation.product.id,
+            fact_set_version_id=fact_set.id,
         )
         command = stage_new_workflow_graph(
             session,

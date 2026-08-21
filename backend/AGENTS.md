@@ -11,14 +11,14 @@ Use `docs/ARCHITECTURE.md` for the current code map and `CONTEXT.md` for domain 
 - `domain/` contains enums, business errors, and database-free rules.
 - `infrastructure/` adapts SQLAlchemy, storage, Redis/Dramatiq, providers, and the Agent service.
 - `workers.py` is a composition root: it creates dependencies and invokes application execution without duplicating business rules.
-- Online code understands schema-v2 only. Legacy source shapes are restricted to `application/legacy_retirement/`, immutable archive reads, and Alembic history.
+- Online code understands schema-v3 graphs only. Legacy source shapes are restricted to `application/legacy_retirement/`, immutable archive reads, and Alembic history.
 
 Current ownership:
 
 - Agent workspace and Turn projection: `agent/product_workspaces.py`, `conversations.py`, `control.py`, `sync.py`, `tools.py`.
 - Agent Session and Task: `agent/sessions.py`, `tasks.py`.
-- Draft validation and materialization: `workflow_drafts/contracts.py`, `service.py`, `materialization.py`.
-- Current online graph and run: `product_workflow/graph_*.py`, `domain/graph_catalog.py`, `domain/graph_rules.py`, `presentation/routes/workflow_graphs.py`. v3 compiler is `graph_compiler.py`; submit/execute are `graph_runs.py` / `graph_execution.py`. schema-v2 `v2_*.py` / `execution.py` remain for leftover tests until the gate deletion slice.
+- Draft validation and graph persist: `workflow_drafts/contracts.py`, `service.py`, `product_workflow/graph_draft_persist.py`.
+- Current online graph and run: `product_workflow/graph_*.py`, `domain/graph_catalog.py`, `domain/graph_rules.py`, `presentation/routes/workflow_graphs.py`. v3 compiler is `graph_compiler.py`; submit/execute are `graph_runs.py` / `graph_execution.py`. Agent workbench bootstrap (`application/agent/workbenches.py`) returns a Graph projection.
 - Product images: `product_images/` (`queries.py`, `mutations.py`, `archives.py`, `assets.py`). `MediaObject` primitives live in `media_objects.py`.
 - Global media library: `media_library/` (`queries.py`, `service.py`, `organization.py`, `workflow.py`, `drafts.py`).
 - Provider/runtime configuration: `settings.py`, `runtime_settings.py`, `infrastructure/provider_config.py`, and provider adapters under `infrastructure/prompt/` and `infrastructure/image/`.
@@ -39,7 +39,7 @@ Current ownership:
 
 - `MediaObject` owns immutable media metadata; `ProductImageAsset` owns product-scoped identity. Workflow bindings never store a path as identity.
 - WorkflowDraft revisions, fact sets, visual systems, prompt artifacts, recipes, and generation records preserve prior-run lineage instead of mutating historical payloads.
-- Agent mutations and materialization use explicit idempotency keys plus request hashes. Reusing a key with different input is a conflict.
+- Agent mutations, Draft confirmation, and graph persist use explicit idempotency keys plus request hashes. Reusing a key with different input is a conflict.
 - Preserve `unknown` when an Agent Turn or side effect cannot be proven.
 - GenerationSpec, provider-effective parameters, measured output, and DeliverySpec remain distinct contracts.
 
@@ -63,8 +63,8 @@ Current ownership:
 
 ## Workflow, Agent, And Images
 
-- Use `domain/workflow_rules.py` instead of local DAG algorithms. Current workflow and node schema is 2; current node types come from `domain/enums.py`.
-- Draft confirmation targets an explicit revision. Materialization validates the complete artifact and commits graph plus reveal events atomically.
+- Use `domain/graph_catalog.py` and `domain/graph_rules.py` for schema-v3 graph connection and compile rules. Draft payload node types remain in `domain/enums.py`.
+- Draft confirmation targets an explicit revision. Graph persist validates the complete artifact and commits the schema-v3 graph atomically.
 - The main Agent runtime and session/event transcript live in the Node.js Pi adapter; ProductFlow owns business objects and the Web projection. Main does not promise background durable execution, effect reconciliation, or multi-instance claims. Turn/tool idempotency requires both key and request hash; ambiguous mutations reconcile and remain `unknown` when unprovable.
 - Agent asset reads are bounded metadata followed by explicit image inspection. Never send a full library, data URLs, or media bytes in text history.
 - `MediaObject` owns immutable byte metadata; `ProductImageAsset` owns product-scoped identity. Folder deletion changes organization only. Reference rebinding uses one explicit asset id and preserves historical lineage.

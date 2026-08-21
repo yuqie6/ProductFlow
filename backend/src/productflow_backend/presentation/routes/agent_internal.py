@@ -138,7 +138,7 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     PrepareAgentWorkflowRunRequest,
     serialize_agent_workflow_run_request,
 )
-from productflow_backend.presentation.schemas.workflow_drafts import serialize_workflow_run_v2
+from productflow_backend.presentation.schemas.graphs import serialize_graph_run
 
 router = APIRouter(
     prefix="/api/internal/v1/agent-conversations",
@@ -430,10 +430,11 @@ def list_agent_workflow_runs_endpoint(
     session: Session = Depends(get_session),
 ) -> AgentWorkflowRunListResponse:
     page = list_agent_workflow_runs(session, conversation_id=conversation_id, limit=limit)
+    items = [serialize_graph_run(run) for run in page.graph_runs]
     return AgentWorkflowRunListResponse(
         workflow_id=page.workflow_id,
         workflow_revision=page.workflow_revision,
-        items=[serialize_workflow_run_v2(run) for run in page.runs],
+        items=items,
     )
 
 

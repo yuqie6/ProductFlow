@@ -327,7 +327,7 @@ textarea {
   border-color: rgb(51 65 85 / 0.8);
   background: rgb(21 31 51 / 0.92);
   box-shadow: 0 10px 24px rgb(0 0 0 / 0.2);
-  --xy-controls-button-background-color-hover: rgb(139 92 246 / 0.15);
+  --xy-controls-button-background-color-hover: rgb(51 65 85 / 0.55);
   --xy-controls-button-color: rgb(203 213 225);
   --xy-controls-button-color-hover: rgb(255 255 255);
   --xy-controls-button-border-color: rgb(51 65 85 / 0.82);

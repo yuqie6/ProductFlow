@@ -12,7 +12,6 @@ import type {
   GalleryAsset,
   GalleryDirectorySelection,
   GalleryFolder,
-  WorkflowReferenceBindingResult,
 } from "../../../../lib/types";
 import { ImageAssetGrid, ImageAssetList } from "./ImageAssetGrid";
 import { ImageDirectoryTree } from "./ImageDirectoryTree";
@@ -22,11 +21,8 @@ import { toggleImageExplorerTargetAsset } from "./selectionTarget";
 import { useProductImageExplorer } from "./useProductImageExplorer";
 
 export interface ImageExplorerReferenceTarget {
-  workflowId: string;
-  nodeId: string;
-  expectedWorkflowRevision: number;
-  expectedBoundAssetId: string | null;
-  onBound?: (result: WorkflowReferenceBindingResult) => void;
+  bindAsset: (asset: Pick<GalleryAsset, "id">) => Promise<unknown>;
+  onBound?: () => void;
 }
 
 export interface ImageExplorerSelectionTarget {
@@ -91,20 +87,11 @@ export function ProductImageExplorer({
       if (!referenceTarget) {
         throw new Error("reference target is required");
       }
-      return api.bindWorkflowReferenceAsset(
-        productId,
-        referenceTarget.workflowId,
-        referenceTarget.nodeId,
-        {
-          asset_id: asset.id,
-          expected_workflow_revision: referenceTarget.expectedWorkflowRevision,
-          expected_bound_asset_id: referenceTarget.expectedBoundAssetId,
-        },
-      );
+      return referenceTarget.bindAsset(asset);
     },
-    onSuccess: async (result) => {
-      referenceTarget?.onBound?.(result);
-      await queryClient.invalidateQueries({ queryKey: ["active-product-workflow-v2", productId] });
+    onSuccess: async () => {
+      referenceTarget?.onBound?.();
+      await queryClient.invalidateQueries({ queryKey: ["workflow-graph", productId] });
     },
   });
   const sourceMutation = useMutation({

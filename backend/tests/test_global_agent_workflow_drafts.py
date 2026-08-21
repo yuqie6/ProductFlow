@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 import pytest
 from fastapi.testclient import TestClient
 from helpers import _login, _make_demo_image_bytes
-from sqlalchemy import func, select
+from sqlalchemy import select
 from workflow_draft_helpers import make_workflow_draft_payload
 
 from productflow_backend.application.agent.control import synchronize_agent_turn_state
@@ -39,7 +39,7 @@ from productflow_backend.infrastructure.agent_service import (
     AgentServiceRequestError,
     AgentServiceTurnState,
 )
-from productflow_backend.infrastructure.db.models import AgentConversation, ProductWorkflow
+from productflow_backend.infrastructure.db.models import AgentConversation
 
 
 def _workspace(db_session, *, key: str):
@@ -183,7 +183,6 @@ def test_global_workflow_artifact_attaches_to_target_draft_without_materializing
     assert synced.status == AgentTurnStatus.AWAITING_CONFIRMATION
     assert synced.workflow_draft_revision_id is not None
     assert synced.library_organization_draft_revision_id is None
-    assert db_session.scalar(select(func.count()).select_from(ProductWorkflow)) == 0
     assert workspace.workflow_draft.current_revision is not None
     assert workspace.workflow_draft.current_revision.version == 1
     db_session.refresh(task)
@@ -210,7 +209,6 @@ def test_global_workflow_artifact_attaches_to_target_draft_without_materializing
     assert confirmed.draft.status.value == "confirmed"
     assert confirmed.draft.current_revision is not None
     assert confirmed.draft.current_revision.confirmed_at is not None
-    assert db_session.scalar(select(func.count()).select_from(ProductWorkflow)) == 0
     db_session.refresh(task)
     assert task.status == AgentTaskStatus.SUCCEEDED
     db_session.refresh(workspace.conversation)

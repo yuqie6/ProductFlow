@@ -8,21 +8,20 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, null, or_, select
 from sqlalchemy.orm import Session, aliased, selectinload
 
 from productflow_backend.application.delivery_renditions.contracts import DeliveryRenditionStatus
 from productflow_backend.application.time import now_utc
-from productflow_backend.domain.enums import ProductImageOriginType
+from productflow_backend.domain.enums import GraphArtifactType, ProductImageOriginType
 from productflow_backend.domain.errors import BusinessValidationError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     DeliveryRenditionJob,
-    ImagePromptArtifact,
-    ImagePromptArtifactVersion,
     Product,
     ProductAssetFolder,
     ProductImageAsset,
-    WorkflowImageGenerationRecord,
+    WorkflowGraphArtifact,
+    WorkflowGraphNode,
 )
 
 GALLERY_CURSOR_VERSION = 1
@@ -61,8 +60,8 @@ class GalleryGenerationSummary:
     workflow_id: str
     node_id: str
     node_run_id: str
-    prompt_artifact_version_id: str
-    visual_system_version_id: str
+    prompt_artifact_version_id: str | None
+    visual_system_version_id: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +84,63 @@ class GalleryAssetRecord:
 class GalleryAssetPage:
     items: list[GalleryAssetRecord]
     next_cursor: str | None
+
+
+def _gallery_asset_statement():
+    direct_generation = aliased(WorkflowGraphArtifact)
+    source_generation = aliased(WorkflowGraphArtifact)
+    rendition_source = aliased(ProductImageAsset)
+    direct_node = aliased(WorkflowGraphNode)
+    source_node = aliased(WorkflowGraphNode)
+    image_type_title = func.coalesce(direct_node.title, source_node.title)
+    effective_workflow_id = func.coalesce(direct_generation.graph_id, source_generation.graph_id)
+    effective_node_id = func.coalesce(direct_generation.node_id, source_generation.node_id)
+    effective_node_run_id = func.coalesce(direct_generation.node_run_id, source_generation.node_run_id)
+    effective_visual_version_id = func.coalesce(
+        direct_generation.payload_json["visual_system_version_id"].as_string(),
+        source_generation.payload_json["visual_system_version_id"].as_string(),
+    )
+    sort_name = func.lower(ProductImageAsset.display_name).label("gallery_sort_name")
+    return (
+        select(
+            ProductImageAsset,
+            sort_name,
+            image_type_title.label("image_type_title"),
+            effective_workflow_id,
+            effective_node_id,
+            effective_node_run_id,
+            null().label("prompt_artifact_version_id"),
+            effective_visual_version_id,
+            DeliveryRenditionJob.id,
+            DeliveryRenditionJob.source_asset_id,
+            DeliveryRenditionJob.spec_json,
+            DeliveryRenditionJob.status,
+        )
+        .options(
+            selectinload(ProductImageAsset.media_object),
+            selectinload(ProductImageAsset.user_folder),
+        )
+        .outerjoin(
+            direct_generation,
+            (direct_generation.product_image_asset_id == ProductImageAsset.id)
+            & (direct_generation.artifact_type == GraphArtifactType.IMAGE),
+        )
+        .outerjoin(direct_node, direct_node.id == direct_generation.node_id)
+        .outerjoin(
+            DeliveryRenditionJob,
+            DeliveryRenditionJob.result_asset_id == ProductImageAsset.id,
+        )
+        .outerjoin(
+            rendition_source,
+            rendition_source.id == DeliveryRenditionJob.source_asset_id,
+        )
+        .outerjoin(
+            source_generation,
+            (source_generation.product_image_asset_id == rendition_source.id)
+            & (source_generation.artifact_type == GraphArtifactType.IMAGE),
+        )
+        .outerjoin(source_node, source_node.id == source_generation.node_id)
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,74 +235,8 @@ def list_gallery_assets(
             raise BusinessValidationError("图库分页 cursor 与当前目录不匹配")
         as_of = None
 
-    direct_generation = aliased(WorkflowImageGenerationRecord)
-    rendition_source = aliased(ProductImageAsset)
-    source_generation = aliased(WorkflowImageGenerationRecord)
-    prompt_version = aliased(ImagePromptArtifactVersion)
-    prompt_artifact = aliased(ImagePromptArtifact)
-    effective_workflow_id = func.coalesce(
-        direct_generation.workflow_id,
-        source_generation.workflow_id,
-    )
-    effective_node_id = func.coalesce(direct_generation.node_id, source_generation.node_id)
-    effective_node_run_id = func.coalesce(
-        direct_generation.workflow_node_run_id,
-        source_generation.workflow_node_run_id,
-    )
-    effective_prompt_version_id = func.coalesce(
-        direct_generation.prompt_artifact_version_id,
-        source_generation.prompt_artifact_version_id,
-    )
-    effective_visual_version_id = func.coalesce(
-        direct_generation.visual_system_version_id,
-        source_generation.visual_system_version_id,
-    )
     sort_name = func.lower(ProductImageAsset.display_name).label("gallery_sort_name")
-    statement = (
-        select(
-            ProductImageAsset,
-            sort_name,
-            prompt_artifact.title.label("image_type_title"),
-            effective_workflow_id,
-            effective_node_id,
-            effective_node_run_id,
-            effective_prompt_version_id,
-            effective_visual_version_id,
-            DeliveryRenditionJob.id,
-            DeliveryRenditionJob.source_asset_id,
-            DeliveryRenditionJob.spec_json,
-            DeliveryRenditionJob.status,
-        )
-        .options(
-            selectinload(ProductImageAsset.media_object),
-            selectinload(ProductImageAsset.user_folder),
-        )
-        .outerjoin(
-            direct_generation,
-            direct_generation.result_asset_id == ProductImageAsset.id,
-        )
-        .outerjoin(
-            DeliveryRenditionJob,
-            DeliveryRenditionJob.result_asset_id == ProductImageAsset.id,
-        )
-        .outerjoin(
-            rendition_source,
-            rendition_source.id == DeliveryRenditionJob.source_asset_id,
-        )
-        .outerjoin(
-            source_generation,
-            source_generation.result_asset_id == rendition_source.id,
-        )
-        .outerjoin(
-            prompt_version,
-            prompt_version.id == effective_prompt_version_id,
-        )
-        .outerjoin(
-            prompt_artifact,
-            prompt_artifact.id == prompt_version.artifact_id,
-        )
-        .where(ProductImageAsset.product_id == product_id)
-    )
+    statement = _gallery_asset_statement().where(ProductImageAsset.product_id == product_id)
     statement = _apply_directory_filter(
         statement,
         directory_kind=directory_kind,
@@ -296,73 +286,9 @@ def get_gallery_asset_detail(
     asset_id: str,
 ) -> GalleryAssetRecord:
     _require_product(session, product_id)
-    direct_generation = aliased(WorkflowImageGenerationRecord)
-    rendition_source = aliased(ProductImageAsset)
-    source_generation = aliased(WorkflowImageGenerationRecord)
-    prompt_version = aliased(ImagePromptArtifactVersion)
-    prompt_artifact = aliased(ImagePromptArtifact)
-    effective_workflow_id = func.coalesce(
-        direct_generation.workflow_id,
-        source_generation.workflow_id,
-    )
-    effective_node_id = func.coalesce(direct_generation.node_id, source_generation.node_id)
-    effective_node_run_id = func.coalesce(
-        direct_generation.workflow_node_run_id,
-        source_generation.workflow_node_run_id,
-    )
-    effective_prompt_version_id = func.coalesce(
-        direct_generation.prompt_artifact_version_id,
-        source_generation.prompt_artifact_version_id,
-    )
-    effective_visual_version_id = func.coalesce(
-        direct_generation.visual_system_version_id,
-        source_generation.visual_system_version_id,
-    )
-    sort_name = func.lower(ProductImageAsset.display_name).label("gallery_sort_name")
-    statement = (
-        select(
-            ProductImageAsset,
-            sort_name,
-            prompt_artifact.title.label("image_type_title"),
-            effective_workflow_id,
-            effective_node_id,
-            effective_node_run_id,
-            effective_prompt_version_id,
-            effective_visual_version_id,
-            DeliveryRenditionJob.id,
-            DeliveryRenditionJob.source_asset_id,
-            DeliveryRenditionJob.spec_json,
-            DeliveryRenditionJob.status,
-        )
-        .options(
-            selectinload(ProductImageAsset.media_object),
-            selectinload(ProductImageAsset.user_folder),
-        )
-        .outerjoin(
-            direct_generation,
-            direct_generation.result_asset_id == ProductImageAsset.id,
-        )
-        .outerjoin(
-            DeliveryRenditionJob,
-            DeliveryRenditionJob.result_asset_id == ProductImageAsset.id,
-        )
-        .outerjoin(
-            rendition_source,
-            rendition_source.id == DeliveryRenditionJob.source_asset_id,
-        )
-        .outerjoin(
-            source_generation,
-            source_generation.result_asset_id == rendition_source.id,
-        )
-        .outerjoin(
-            prompt_version,
-            prompt_version.id == effective_prompt_version_id,
-        )
-        .outerjoin(
-            prompt_artifact,
-            prompt_artifact.id == prompt_version.artifact_id,
-        )
-        .where(ProductImageAsset.product_id == product_id, ProductImageAsset.id == asset_id)
+    statement = _gallery_asset_statement().where(
+        ProductImageAsset.product_id == product_id,
+        ProductImageAsset.id == asset_id,
     )
     row = session.execute(statement).one_or_none()
     if row is None:
@@ -419,20 +345,7 @@ def get_gallery_bootstrap(
         session.execute(
             select(
                 ProductImageAsset.image_type_key,
-                func.min(ImagePromptArtifact.title),
                 func.count(ProductImageAsset.id),
-            )
-            .outerjoin(
-                WorkflowImageGenerationRecord,
-                WorkflowImageGenerationRecord.result_asset_id == ProductImageAsset.id,
-            )
-            .outerjoin(
-                ImagePromptArtifactVersion,
-                ImagePromptArtifactVersion.id == WorkflowImageGenerationRecord.prompt_artifact_version_id,
-            )
-            .outerjoin(
-                ImagePromptArtifact,
-                ImagePromptArtifact.id == ImagePromptArtifactVersion.artifact_id,
             )
             .where(base_filter)
             .group_by(ProductImageAsset.image_type_key)
@@ -443,10 +356,10 @@ def get_gallery_bootstrap(
         GalleryImageTypeCount(
             directory_key=image_type_key or GALLERY_UNCLASSIFIED_TYPE_KEY,
             image_type_key=image_type_key,
-            title=title or image_type_key or "未分类",
+            title=image_type_key or "未分类",
             count=count,
         )
-        for image_type_key, title, count in image_type_rows
+        for image_type_key, count in image_type_rows
     ]
 
     folder_rows = list(
@@ -592,8 +505,8 @@ def _record_from_row(row) -> GalleryAssetRecord:
     if row[3] is not None:
         generation = GalleryGenerationSummary(
             workflow_id=row[3],
-            node_id=row[4],
-            node_run_id=row[5],
+            node_id=row[4] or "",
+            node_run_id=row[5] or "",
             prompt_artifact_version_id=row[6],
             visual_system_version_id=row[7],
         )

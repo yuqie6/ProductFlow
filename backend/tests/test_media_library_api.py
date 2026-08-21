@@ -5,7 +5,7 @@ from helpers import _login
 from test_media_library import _create_product_asset
 
 from productflow_backend.application.media_library.service import save_media_library_asset_from_product
-from productflow_backend.infrastructure.db.models import ProductWorkflow
+from productflow_backend.infrastructure.db.models import WorkflowGraph
 from productflow_backend.presentation.api import create_app
 
 
@@ -15,7 +15,7 @@ def test_workflow_media_library_api_keeps_association_explicit_and_non_destructi
         db_session,
         product_image_asset_id=source_asset.id,
     ).asset
-    workflow = ProductWorkflow(product_id=product.id, title="素材 API 工作流")
+    workflow = WorkflowGraph(product_id=product.id, title="素材 API 工作流")
     db_session.add(workflow)
     db_session.commit()
 

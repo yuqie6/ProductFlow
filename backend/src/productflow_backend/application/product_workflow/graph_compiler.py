@@ -15,6 +15,11 @@ from productflow_backend.application.product_workflow.graph_visual import (
     apply_visual_overlay,
     visual_overlay_from_config,
 )
+from productflow_backend.application.product_workflow.product_sources import (
+    ProductSourceSnapshot,
+    product_source_snapshot_from_dict,
+    product_source_snapshot_to_dict,
+)
 from productflow_backend.application.workflow_drafts.contracts import GenerationSpec
 from productflow_backend.domain.enums import (
     GraphArtifactType,
@@ -43,6 +48,7 @@ V3_PROMPT_STRIPPED_KEYS = frozenset(
 @dataclass(frozen=True, slots=True)
 class GraphSourceRecord:
     facts: tuple[dict[str, Any], ...] = ()
+    product_source: ProductSourceSnapshot | None = None
     brief: dict[str, Any] | None = None
     visual_payload: dict[str, Any] | None = None
     visual_system_version_id: str | None = None
@@ -356,6 +362,7 @@ def sources_from_snapshot(payload: dict[str, Any]) -> dict[str, GraphSourceRecor
         artifact_type = record.get("current_artifact_type")
         sources[node_id] = GraphSourceRecord(
             facts=tuple(record.get("facts") or ()),
+            product_source=product_source_snapshot_from_dict(record.get("product_source")),
             brief=record.get("brief"),
             visual_payload=record.get("visual_payload"),
             visual_system_version_id=record.get("visual_system_version_id"),
@@ -429,11 +436,12 @@ def _compile_visual(
 ) -> tuple[dict[str, Any] | None, str | None]:
     if source.node_type != GraphNodeType.VISUAL_SYSTEM:
         raise BusinessValidationError("visual_guidance 边的源必须是视觉规范节点")
-    version_id = record.visual_system_version_id or source.config.get("visual_system_version_id")
-    if not isinstance(version_id, str) or not version_id.strip() or record.visual_payload is None:
-        return None, None
-    payload = dict(record.visual_payload)
+    raw_version = record.visual_system_version_id or source.config.get("visual_system_version_id")
+    version_id = raw_version.strip() if isinstance(raw_version, str) and raw_version.strip() else None
     overlay = visual_overlay_from_config(source.config)
+    if record.visual_payload is None:
+        return (dict(overlay), version_id) if overlay else (None, None)
+    payload = dict(record.visual_payload)
     if overlay:
         payload = apply_visual_overlay(payload, overlay)
     return payload, version_id
@@ -525,6 +533,7 @@ def _input_digest(payload: dict[str, Any]) -> str:
 def _source_snapshot(record: GraphSourceRecord) -> dict[str, Any]:
     return {
         "facts": list(record.facts),
+        "product_source": product_source_snapshot_to_dict(record.product_source),
         "brief": record.brief,
         "visual_payload": record.visual_payload,
         "visual_system_version_id": record.visual_system_version_id,

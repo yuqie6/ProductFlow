@@ -38,7 +38,6 @@ def workflow_draft_query():
         selectinload(WorkflowDraft.revisions).selectinload(WorkflowDraftRevision.fact_set_version),
         selectinload(WorkflowDraft.revisions).selectinload(WorkflowDraftRevision.visual_system_version),
         selectinload(WorkflowDraft.current_revision),
-        selectinload(WorkflowDraft.final_workflow),
         selectinload(WorkflowDraft.recipe_seed).selectinload(WorkflowDraftRecipeSeed.recipe_version),
         selectinload(WorkflowDraft.legacy_archive_seed).selectinload(WorkflowDraftLegacyArchiveSeed.workflow_archive),
         selectinload(WorkflowDraft.legacy_archive_seed).selectinload(
@@ -172,7 +171,6 @@ def append_workflow_draft_revision(
         session.add(revision)
         session.flush()
         draft.current_revision_id = revision.id
-        draft.final_workflow_id = None
         draft.status = (
             WorkflowDraftStatus.AWAITING_CONFIRMATION
             if ready_for_confirmation
@@ -276,6 +274,13 @@ def parse_workflow_draft_payload_or_raise(
         return parse_workflow_draft_payload(payload)
     except ValidationError as exc:
         raise BusinessValidationError("WorkflowDraft payload 不符合 schema version 1") from exc
+
+
+def parse_and_verify_draft_revision(revision: WorkflowDraftRevision) -> WorkflowDraftPayloadV1:
+    artifact = parse_workflow_draft_payload_or_raise(revision.payload_json)
+    if workflow_draft_payload_hash(artifact) != revision.payload_hash:
+        raise ConflictError("WorkflowDraft revision payload hash 不一致")
+    return artifact
 
 
 def validate_workflow_draft_reference_assets(

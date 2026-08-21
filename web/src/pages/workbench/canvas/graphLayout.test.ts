@@ -1,0 +1,91 @@
+import { describe, expect, it } from "vitest";
+
+import type { GraphNode, GraphProjection } from "../../../lib/types";
+import {
+  buildDeleteNodeOperations,
+  buildDuplicateGraphOperations,
+  buildGraphAutoLayoutPositions,
+  buildRenameGroupOperations,
+  computeGraphGroupBounds,
+  selectedGraphEdges,
+} from "./graphLayout";
+
+function node(partial: Partial<GraphNode> & Pick<GraphNode, "id" | "node_type">): GraphNode {
+  return {
+    title: partial.id,
+    position_x: 0,
+    position_y: 0,
+    config: {},
+    bound_asset_id: null,
+    group_id: null,
+    preview_asset_id: null,
+    config_status: "incomplete",
+    unused: false,
+    incoming: [],
+    outgoing: [],
+    ...partial,
+  };
+}
+
+const graph: GraphProjection = {
+  id: "g1",
+  product_id: "p1",
+  title: "t",
+  schema_version: 3,
+  revision: 1,
+  source_draft_revision_id: null,
+  last_operation_group_id: null,
+  nodes: [
+    node({ id: "source", node_type: "product_source", position_x: 400, position_y: 10 }),
+    node({ id: "prompt", node_type: "prompt_generation", position_x: 10, position_y: 10 }),
+    node({ id: "image", node_type: "image_generation", position_x: 10, position_y: 300 }),
+  ],
+  edges: [
+    { id: "e1", source_node_id: "source", target_node_id: "prompt", data_type: "product_facts", role: "facts", order: 0 },
+    { id: "e2", source_node_id: "prompt", target_node_id: "image", data_type: "prompt", role: "prompt", order: 0 },
+  ],
+  groups: [{ id: "group-1", title: "一组", member_ids: ["prompt", "image"] }],
+};
+
+describe("graph layout commands", () => {
+  it("layers nodes by incoming DAG depth", () => {
+    const positions = buildGraphAutoLayoutPositions(graph);
+    const byId = Object.fromEntries(positions.map((item) => [item.node_id, item]));
+    expect(byId.source.position_x).toBeLessThan(byId.prompt.position_x);
+    expect(byId.prompt.position_x).toBeLessThan(byId.image.position_x);
+  });
+
+  it("duplicates selected nodes and only their internal edges", () => {
+    const { operations } = buildDuplicateGraphOperations(graph, ["prompt", "image"], 24);
+    const creates = operations.filter((item) => item.op === "create_node");
+    const connects = operations.filter((item) => item.op === "connect_nodes");
+    expect(creates).toHaveLength(2);
+    expect(connects).toHaveLength(1);
+    expect(creates.every((item) => item.position_x === 10 + 24 || item.position_x === 10 + 24)).toBe(true);
+  });
+
+  it("deletes a selection as one list of delete_node ops", () => {
+    expect(buildDeleteNodeOperations(["prompt", "image"])).toEqual([
+      { op: "delete_node", node_ref: "prompt" },
+      { op: "delete_node", node_ref: "image" },
+    ]);
+  });
+
+  it("computes group bounds around members", () => {
+    const bounds = computeGraphGroupBounds(graph, graph.groups[0]);
+    expect(bounds).not.toBeNull();
+    expect(bounds!.width).toBeGreaterThan(248);
+    expect(bounds!.height).toBeGreaterThan(236);
+  });
+
+  it("renames a group through a single ChangeSet op", () => {
+    expect(buildRenameGroupOperations("group-1", "主图组")).toEqual([
+      { op: "rename_group", group_ref: "group-1", title: "主图组" },
+    ]);
+  });
+
+  it("keeps only edges whose both ends are selected", () => {
+    expect(selectedGraphEdges(graph, ["prompt", "image"]).map((edge) => edge.id)).toEqual(["e2"]);
+    expect(selectedGraphEdges(graph, ["source"])).toEqual([]);
+  });
+});

@@ -13,12 +13,9 @@ import type {
   AgentTurnPage,
   AgentWorkflowRunRequest,
   AgentWorkbenchBootstrap,
-  ActiveProductWorkflowV2,
   AppendWorkflowDraftRevisionInput,
   ConfigResponse,
   ConfigUpdateRequest,
-  CreateReferenceWorkflowNodeV2Input,
-  CreateWorkflowEdgeV2Input,
   GalleryAsset,
   GalleryAssetPage,
   GalleryAssetSort,
@@ -57,7 +54,16 @@ import type {
   ProviderProfile,
   ProviderProfileCreateRequest,
   ProviderProfileUpdateRequest,
-  MaterializeWorkflowDraftInput,
+  DirectCreateProductResponse,
+  DraftGraphPersistResponse,
+  GraphChangeSet,
+  GraphNodeCatalog,
+  GraphProjection,
+  GraphRun,
+  GraphRunListResponse,
+  GraphRunScope,
+  CanonicalProductDetail,
+  ProductFactsResponse,
   ProductListResponse,
   ProductImageAsset,
   ProductImageAssetListResponse,
@@ -69,22 +75,11 @@ import type {
   SessionState,
   SubmitAgentTurnInput,
   SubmitAgentTurnResponse,
-  SubmitWorkflowNodeRunV2Result,
-  SubmitWorkflowRunV2Result,
+  UpdateProductFactsInput,
   WorkflowDraft,
   WorkflowDeliverySpec,
-  WorkflowCanvasMutationResult,
-  WorkflowMaterializationResult,
-  WorkflowReferenceBindingResult,
-  WorkflowNodeRunV2,
-  WorkflowNodeRunListV2Response,
-  WorkflowRunDetailV2Response,
-  WorkflowRunListV2Response,
-  WorkflowNodeDetailV2,
-  UpdateWorkflowNodeV2Input,
   WorkflowRecipe,
   WorkflowRecipeApplicationResult,
-  WorkflowRecipeSourceInput,
   WorkflowRecipeSummary,
 } from "./types";
 
@@ -147,51 +142,6 @@ async function responseApiError(response: Response): Promise<ApiError> {
   return new ApiError(response.status, detail);
 }
 
-async function streamText(
-  path: string,
-  input: {
-    signal?: AbortSignal;
-    headers?: Record<string, string>;
-    onChunk: (chunk: string) => void;
-  },
-): Promise<void> {
-  const response = await fetch(toApiUrl(path), {
-    credentials: "include",
-    headers: { Accept: "text/event-stream", ...input.headers },
-    signal: input.signal,
-  });
-  if (!response.ok) {
-    throw await responseApiError(response);
-  }
-  if (!response.body) {
-    const body = await response.text();
-    if (body) input.onChunk(body);
-    return;
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      const chunk = decoder.decode(value, { stream: true });
-      if (chunk) input.onChunk(chunk);
-    }
-    const remainder = decoder.decode();
-    if (remainder) input.onChunk(remainder);
-  } catch (error) {
-    try {
-      await reader.cancel(error);
-    } catch {
-      // Preserve the original stream or parser failure.
-    }
-    throw error;
-  } finally {
-    reader.releaseLock();
-  }
-}
-
 export const api = {
   toApiUrl,
   getSessionState(): Promise<SessionState> {
@@ -224,6 +174,18 @@ export const api = {
       params.set("sort", input.sort);
     }
     return request(`/api/v2/products?${params.toString()}`);
+  },
+  getProduct(productId: string): Promise<CanonicalProductDetail> {
+    return request(`/api/v2/products/${encodeURIComponent(productId)}`);
+  },
+  getProductFacts(productId: string): Promise<ProductFactsResponse> {
+    return request(`/api/v3/products/${encodeURIComponent(productId)}/facts`);
+  },
+  updateProductFacts(productId: string, input: UpdateProductFactsInput): Promise<ProductFactsResponse> {
+    return request(`/api/v3/products/${encodeURIComponent(productId)}/facts`, {
+      method: "PUT",
+      body: JSON.stringify(input),
+    });
   },
   deleteProduct(productId: string): Promise<void> {
     return request(`/api/v2/products/${productId}`, { method: "DELETE" });
@@ -361,6 +323,20 @@ export const api = {
     }
     const query = params.size ? `?${params}` : "";
     return request(`/api/v2/products/${encodeURIComponent(productId)}/agent-workbench${query}`);
+  },
+  ensureAgentWorkbench(
+    productId: string,
+    agentSessionId?: string | null,
+  ): Promise<AgentWorkbenchBootstrap> {
+    const params = new URLSearchParams();
+    if (agentSessionId) {
+      params.set("agent_session_id", agentSessionId);
+    }
+    const query = params.size ? `?${params}` : "";
+    return request(`/api/v2/products/${encodeURIComponent(productId)}/agent-workbench${query}`, {
+      method: "POST",
+      headers: { "Idempotency-Key": `agent-workbench:${productId}` },
+    });
   },
   listAgentSessions(includeArchived = false): Promise<AgentSessionListResponse> {
     const params = new URLSearchParams({ include_archived: String(includeArchived) });
@@ -1083,155 +1059,95 @@ export const api = {
       { method: "DELETE" },
     );
   },
-  getActiveProductWorkflowV2(productId: string): Promise<ActiveProductWorkflowV2> {
-    return request(`/api/v2/products/${productId}/workflow`);
+  createProductDirect(input: {
+    name: string;
+    images: File[];
+    imageTypes: Array<{ key: string; quantity: number }>;
+    category?: string;
+    price?: string;
+    sourceNote?: string;
+  }): Promise<DirectCreateProductResponse> {
+    const body = new FormData();
+    body.append("name", input.name);
+    body.append("image_types", JSON.stringify(input.imageTypes));
+    if (input.category) body.append("category", input.category);
+    if (input.price) body.append("price", input.price);
+    if (input.sourceNote) body.append("source_note", input.sourceNote);
+    for (const image of input.images) {
+      body.append("images", image);
+    }
+    return request("/api/v3/products", { method: "POST", body });
   },
-  createWorkflowReferenceNodeV2(
-    productId: string,
-    workflowId: string,
-    input: CreateReferenceWorkflowNodeV2Input,
-  ): Promise<WorkflowCanvasMutationResult> {
-    return request(`/api/v2/products/${productId}/workflows/${workflowId}/reference-nodes`, {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
+  getGraphNodeCatalog(): Promise<GraphNodeCatalog> {
+    return request("/api/v3/node-catalog");
   },
-  duplicateWorkflowNodeV2(
-    productId: string,
-    workflowId: string,
-    nodeId: string,
-    expectedEditVersion: number,
-  ): Promise<WorkflowCanvasMutationResult> {
+  getCurrentWorkflowGraph(productId: string): Promise<GraphProjection> {
+    return request(`/api/v3/products/${encodeURIComponent(productId)}/workflows/current`);
+  },
+  getWorkflowGraph(productId: string, workflowId: string): Promise<GraphProjection> {
     return request(
-      `/api/v2/products/${productId}/workflows/${workflowId}/nodes/${encodeURIComponent(nodeId)}/duplicate`,
+      `/api/v3/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}`,
+    );
+  },
+  applyWorkflowChangeSet(
+    productId: string,
+    workflowId: string,
+    changeSet: GraphChangeSet,
+  ): Promise<GraphProjection> {
+    return request(
+      `/api/v3/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/changesets`,
+      { method: "POST", body: JSON.stringify(changeSet) },
+    );
+  },
+  undoWorkflowChangeSet(productId: string, workflowId: string): Promise<GraphProjection> {
+    return request(
+      `/api/v3/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/undo`,
+      { method: "POST" },
+    );
+  },
+  persistConfirmedDraftGraph(
+    productId: string,
+    draftId: string,
+    expectedDraftVersion: number,
+  ): Promise<DraftGraphPersistResponse> {
+    return request(
+      `/api/v3/products/${encodeURIComponent(productId)}/workflow-drafts/${encodeURIComponent(draftId)}/graphs`,
       {
         method: "POST",
-        body: JSON.stringify({ expected_edit_version: expectedEditVersion }),
+        body: JSON.stringify({ expected_draft_version: expectedDraftVersion }),
       },
     );
   },
-  deleteWorkflowNodeV2(
+  submitGraphRun(
     productId: string,
     workflowId: string,
-    nodeId: string,
-    expectedEditVersion: number,
-  ): Promise<WorkflowCanvasMutationResult> {
-    const params = new URLSearchParams({ expected_edit_version: String(expectedEditVersion) });
+    input: { scope: GraphRunScope; node_id?: string | null },
+  ): Promise<GraphRun> {
     return request(
-      `/api/v2/products/${productId}/workflows/${workflowId}/nodes/${encodeURIComponent(nodeId)}?${params}`,
-      { method: "DELETE" },
+      `/api/v3/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/runs`,
+      { method: "POST", body: JSON.stringify(input) },
     );
   },
-  createWorkflowEdgeV2(
-    productId: string,
-    workflowId: string,
-    input: CreateWorkflowEdgeV2Input,
-  ): Promise<WorkflowCanvasMutationResult> {
-    return request(`/api/v2/products/${productId}/workflows/${workflowId}/edges`, {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-  },
-  deleteWorkflowEdgeV2(
-    productId: string,
-    workflowId: string,
-    edgeId: string,
-    expectedEditVersion: number,
-  ): Promise<WorkflowCanvasMutationResult> {
-    const params = new URLSearchParams({ expected_edit_version: String(expectedEditVersion) });
+  listGraphRuns(productId: string, workflowId: string): Promise<GraphRunListResponse> {
     return request(
-      `/api/v2/products/${productId}/workflows/${workflowId}/edges/${encodeURIComponent(edgeId)}?${params}`,
-      { method: "DELETE" },
+      `/api/v3/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/runs`,
     );
   },
-  createWorkflowFolder(
-    productId: string,
-    workflowId: string,
-    input: { title: string; node_ids: string[]; expected_edit_version: number },
-  ): Promise<WorkflowCanvasMutationResult> {
-    return request(`/api/v2/products/${productId}/workflows/${workflowId}/folders`, {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-  },
-  renameWorkflowFolder(
-    productId: string,
-    workflowId: string,
-    folderId: string,
-    input: { title: string; expected_edit_version: number },
-  ): Promise<WorkflowCanvasMutationResult> {
-    return request(`/api/v2/products/${productId}/workflows/${workflowId}/folders/${folderId}`, {
-      method: "PATCH",
-      body: JSON.stringify(input),
-    });
-  },
-  setWorkflowFolderMembers(
-    productId: string,
-    workflowId: string,
-    folderId: string,
-    input: { node_ids: string[]; expected_edit_version: number },
-  ): Promise<WorkflowCanvasMutationResult> {
-    return request(`/api/v2/products/${productId}/workflows/${workflowId}/folders/${folderId}/members`, {
-      method: "PUT",
-      body: JSON.stringify(input),
-    });
-  },
-  dissolveWorkflowFolder(
-    productId: string,
-    workflowId: string,
-    folderId: string,
-    expectedEditVersion: number,
-  ): Promise<WorkflowCanvasMutationResult> {
-    const params = new URLSearchParams({ expected_edit_version: String(expectedEditVersion) });
-    return request(`/api/v2/products/${productId}/workflows/${workflowId}/folders/${folderId}?${params}`, {
-      method: "DELETE",
-    });
-  },
-  translateWorkflowFolder(
-    productId: string,
-    workflowId: string,
-    folderId: string,
-    input: { delta_x: number; delta_y: number; expected_edit_version: number },
-  ): Promise<WorkflowCanvasMutationResult> {
-    return request(`/api/v2/products/${productId}/workflows/${workflowId}/folders/${folderId}/translate`, {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-  },
-  updateWorkflowNodeLayoutV2(
-    productId: string,
-    workflowId: string,
-    input: {
-      positions: Array<{ node_id: string; position_x: number; position_y: number }>;
-      expected_edit_version: number;
-    },
-  ): Promise<WorkflowCanvasMutationResult> {
-    return request(`/api/v2/products/${productId}/workflows/${workflowId}/layout`, {
-      method: "PATCH",
-      body: JSON.stringify(input),
-    });
-  },
-  getWorkflowNodeDetailV2(
-    productId: string,
-    workflowId: string,
-    nodeId: string,
-  ): Promise<WorkflowNodeDetailV2> {
+  getGraphRun(productId: string, workflowId: string, runId: string): Promise<GraphRun> {
     return request(
-      `/api/v2/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(nodeId)}`,
+      `/api/v3/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/runs/${encodeURIComponent(runId)}`,
     );
   },
-  updateWorkflowNodeV2(
-    productId: string,
-    workflowId: string,
-    nodeId: string,
-    input: UpdateWorkflowNodeV2Input,
-  ): Promise<WorkflowCanvasMutationResult> {
+  cancelGraphRun(productId: string, workflowId: string, runId: string): Promise<GraphRun> {
     return request(
-      `/api/v2/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(nodeId)}`,
-      {
-        method: "PATCH",
-        body: JSON.stringify(input),
-      },
+      `/api/v3/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/runs/${encodeURIComponent(runId)}/cancel`,
+      { method: "POST" },
+    );
+  },
+  retryGraphRun(productId: string, workflowId: string, runId: string): Promise<GraphRun> {
+    return request(
+      `/api/v3/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/runs/${encodeURIComponent(runId)}/retry`,
+      { method: "POST" },
     );
   },
   listWorkflowRecipes(includeArchived = false): Promise<WorkflowRecipeSummary[]> {
@@ -1240,27 +1156,6 @@ export const api = {
   },
   getWorkflowRecipe(recipeId: string): Promise<WorkflowRecipe> {
     return request(`/api/v2/workflow-recipes/${recipeId}`);
-  },
-  createWorkflowRecipe(
-    productId: string,
-    workflowId: string,
-    input: WorkflowRecipeSourceInput,
-  ): Promise<WorkflowRecipe> {
-    return request(`/api/v2/products/${productId}/workflows/${workflowId}/recipes`, {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-  },
-  appendWorkflowRecipeVersion(
-    productId: string,
-    workflowId: string,
-    recipeId: string,
-    input: WorkflowRecipeSourceInput & { expected_recipe_version: number },
-  ): Promise<WorkflowRecipe> {
-    return request(`/api/v2/products/${productId}/workflows/${workflowId}/recipes/${recipeId}/versions`, {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
   },
   archiveWorkflowRecipe(recipeId: string, expectedRecipeVersion: number): Promise<{ changed: boolean; recipe: WorkflowRecipe }> {
     const params = new URLSearchParams({ expected_recipe_version: String(expectedRecipeVersion) });
@@ -1273,21 +1168,6 @@ export const api = {
   ): Promise<WorkflowRecipeApplicationResult> {
     return request(`/api/v2/products/${productId}/workflow-recipes/${recipeId}/apply`, {
       method: "POST",
-      body: JSON.stringify(input),
-    });
-  },
-  bindWorkflowReferenceAsset(
-    productId: string,
-    workflowId: string,
-    nodeId: string,
-    input: {
-      asset_id: string;
-      expected_workflow_revision: number;
-      expected_bound_asset_id: string | null;
-    },
-  ): Promise<WorkflowReferenceBindingResult> {
-    return request(`/api/v2/products/${productId}/workflows/${workflowId}/reference-nodes/${nodeId}`, {
-      method: "PATCH",
       body: JSON.stringify(input),
     });
   },
@@ -1316,78 +1196,6 @@ export const api = {
       body: JSON.stringify({ expected_draft_version: expectedDraftVersion }),
     });
   },
-  materializeWorkflowDraft(
-    productId: string,
-    draftId: string,
-    input: MaterializeWorkflowDraftInput,
-  ): Promise<WorkflowMaterializationResult> {
-    return request(`/api/v2/products/${productId}/workflow-drafts/${draftId}/materialize`, {
-      method: "POST",
-      body: JSON.stringify(input),
-    });
-  },
-  runWorkflowNodeV2(nodeId: string): Promise<SubmitWorkflowNodeRunV2Result> {
-    return request(`/api/v2/workflow-nodes/${encodeURIComponent(nodeId)}/run`, {
-      method: "POST",
-    });
-  },
-  getWorkflowNodeRunV2(nodeRunId: string): Promise<WorkflowNodeRunV2> {
-    return request(`/api/v2/workflow-node-runs/${encodeURIComponent(nodeRunId)}`);
-  },
-  listWorkflowNodeRunsV2(nodeId: string, limit = 20): Promise<WorkflowNodeRunListV2Response> {
-    const params = new URLSearchParams({ limit: String(limit) });
-    return request(`/api/v2/workflow-nodes/${encodeURIComponent(nodeId)}/runs?${params}`);
-  },
-  cancelWorkflowNodeRunV2(nodeRunId: string): Promise<WorkflowNodeRunV2> {
-    return request(`/api/v2/workflow-node-runs/${encodeURIComponent(nodeRunId)}/cancel`, {
-      method: "POST",
-    });
-  },
-  runWorkflowV2(productId: string, workflowId: string): Promise<SubmitWorkflowRunV2Result> {
-    return request(
-      `/api/v2/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/runs`,
-      { method: "POST" },
-    );
-  },
-  getWorkflowRunV2(
-    productId: string,
-    workflowId: string,
-    runId: string,
-  ): Promise<WorkflowRunDetailV2Response> {
-    return request(
-      `/api/v2/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/runs/${encodeURIComponent(runId)}`,
-    );
-  },
-  listWorkflowRunsV2(
-    productId: string,
-    workflowId: string,
-    limit = 20,
-  ): Promise<WorkflowRunListV2Response> {
-    const params = new URLSearchParams({ limit: String(limit) });
-    return request(
-      `/api/v2/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/runs?${params}`,
-    );
-  },
-  cancelWorkflowRunV2(
-    productId: string,
-    workflowId: string,
-    runId: string,
-  ): Promise<WorkflowRunDetailV2Response> {
-    return request(
-      `/api/v2/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/runs/${encodeURIComponent(runId)}/cancel`,
-      { method: "POST" },
-    );
-  },
-  retryWorkflowRunV2(
-    productId: string,
-    workflowId: string,
-    runId: string,
-  ): Promise<SubmitWorkflowRunV2Result> {
-    return request(
-      `/api/v2/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/runs/${encodeURIComponent(runId)}/retry`,
-      { method: "POST" },
-    );
-  },
   createDeliveryRendition(
     sourceAssetId: string,
     deliverySpec: WorkflowDeliverySpec,
@@ -1406,25 +1214,6 @@ export const api = {
   retryDeliveryRenditionJob(jobId: string): Promise<DeliveryRenditionJob> {
     return request(`/api/v2/delivery-rendition-jobs/${encodeURIComponent(jobId)}/retry`, {
       method: "POST",
-    });
-  },
-  workflowRevealEventsUrl(materializationId: string, after?: number): string {
-    const path = `/api/v2/workflow-materializations/${encodeURIComponent(materializationId)}/reveal-events`;
-    return toApiUrl(after && after > 0 ? `${path}?after=${after}` : path);
-  },
-  streamWorkflowRevealEvents(
-    materializationId: string,
-    input: {
-      after?: number;
-      signal?: AbortSignal;
-      onChunk: (chunk: string) => void;
-    },
-  ): Promise<void> {
-    const after = input.after ?? 0;
-    return streamText(api.workflowRevealEventsUrl(materializationId, after), {
-      signal: input.signal,
-      headers: after > 0 ? { "Last-Event-ID": String(after) } : undefined,
-      onChunk: input.onChunk,
     });
   },
 };

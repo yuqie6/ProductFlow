@@ -19,17 +19,17 @@ import type { CanvasInteractionMode } from "./workflowCanvasInteraction";
 export type WorkflowCanvasPortVisualState = "idle" | "origin" | "valid-target" | "invalid-target";
 
 const SOURCE_PORT_CLASS_NAME =
-  "nodrag nopan !absolute !z-20 !h-5 !w-5 !rounded-full !border-2 !border-indigo-500 !bg-white !opacity-100 !shadow-sm transition-shadow hover:!bg-indigo-50 hover:!ring-4 hover:!ring-indigo-100 dark:!border-violet-300 dark:!bg-[#111b2d] dark:!shadow-black/30 dark:hover:!bg-violet-500/20 dark:hover:!ring-violet-400/25";
+  "nodrag nopan !absolute !z-20 !h-5 !w-5 !rounded-full !border-2 !border-slate-700 !bg-white !opacity-100 !shadow-[0_0_0_2px_#fff,0_1px_2px_rgba(15,23,42,0.18)] hover:!bg-slate-50 dark:!border-slate-200 dark:!bg-[#111b2d] dark:!shadow-[0_0_0_2px_#0d1424,0_1px_2px_rgba(0,0,0,0.45)] dark:hover:!bg-slate-800";
 const TARGET_PORT_CLASS_NAME =
-  "nodrag nopan !absolute !z-20 !h-[18px] !w-[18px] !rounded-full !border !border-slate-300 !bg-white !opacity-100 !shadow-sm transition-shadow hover:!border-indigo-400 hover:!ring-4 hover:!ring-indigo-100 dark:!border-slate-400/90 dark:!bg-[#111b2d] dark:!shadow-black/30 dark:hover:!border-violet-300 dark:hover:!ring-violet-400/20";
+  "nodrag nopan !absolute !z-20 !h-5 !w-5 !rounded-full !border-2 !border-slate-500 !bg-slate-50 !opacity-100 !shadow-[0_0_0_2px_#fff,0_1px_2px_rgba(15,23,42,0.18)] hover:!border-slate-700 hover:!bg-white dark:!border-slate-300 dark:!bg-[#111b2d] dark:!shadow-[0_0_0_2px_#0d1424,0_1px_2px_rgba(0,0,0,0.45)] dark:hover:!border-white";
 const PORT_STATE_CLASS_NAMES: Record<WorkflowCanvasPortVisualState, string> = {
   idle: "",
   origin:
-    "!border-indigo-600 !bg-indigo-100 !ring-4 !ring-indigo-100 dark:!border-violet-200 dark:!bg-violet-500/30 dark:!ring-violet-400/25",
+    "!border-slate-900 !bg-slate-800 !shadow-[0_0_0_3px_#e2e8f0] dark:!border-white dark:!bg-slate-200 dark:!shadow-[0_0_0_3px_#1e293b]",
   "valid-target":
-    "!border-emerald-500 !bg-emerald-50 !ring-4 !ring-emerald-100 dark:!border-emerald-300 dark:!bg-emerald-500/20 dark:!ring-emerald-400/25",
+    "!border-emerald-700 !bg-emerald-50 !shadow-[0_0_0_3px_#d1fae5] dark:!border-emerald-300 dark:!bg-emerald-950/70 dark:!shadow-[0_0_0_3px_#14532d]",
   "invalid-target":
-    "!border-dashed !border-red-500 !bg-red-50 !opacity-75 !ring-4 !ring-red-100 dark:!border-red-300 dark:!bg-red-500/20 dark:!ring-red-400/25",
+    "!border-dashed !border-red-600 !bg-red-50 !shadow-[0_0_0_3px_#fee2e2] dark:!border-red-400 dark:!bg-red-950/50 dark:!shadow-[0_0_0_3px_#7f1d1d]",
 };
 
 export function WorkflowCanvasNodePort({
@@ -133,7 +133,7 @@ export function WorkflowCanvasNodeToolbarButton({
       className={`nodrag nopan nowheel inline-flex h-11 w-11 items-center justify-center rounded-lg border text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-45 lg:h-9 lg:w-9 ${
         destructive
           ? "border-red-200 bg-red-50 text-red-600 hover:border-red-300 hover:bg-red-100 hover:text-red-700 dark:border-red-400/45 dark:bg-red-500/10 dark:text-red-200 dark:hover:border-red-400/70 dark:hover:bg-red-500/18"
-          : "border-transparent bg-white text-slate-700 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700 dark:bg-[#111a2b] dark:text-slate-100 dark:hover:border-violet-400/55 dark:hover:bg-violet-500/14 dark:hover:text-violet-100"
+          : "border-transparent bg-white text-slate-700 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-900 dark:bg-[#111a2b] dark:text-slate-100 dark:hover:border-slate-600 dark:hover:bg-slate-800"
       }`}
       aria-label={label}
       title={label}
@@ -227,9 +227,9 @@ export function WorkflowCanvasControls({
         onClick={onToggleSnapToGrid}
         aria-label={labels.snapToGrid}
         title={labels.snapToGrid}
-        className={snapToGrid ? "!bg-indigo-50 dark:!bg-violet-500/20" : ""}
+        className={snapToGrid ? "!bg-slate-100 dark:!bg-slate-800" : ""}
       >
-        <Grid aria-hidden="true" size={13} className={snapToGrid ? "text-indigo-600 dark:text-violet-400" : ""} />
+        <Grid aria-hidden="true" size={13} className={snapToGrid ? "text-slate-800 dark:text-slate-100" : ""} />
       </ControlButton>
       <ControlButton
         onClick={onAutoLayout}
@@ -293,9 +293,9 @@ export function WorkflowCanvasMobileModeTabs({
           key={item.key}
           type="button"
           onClick={() => onChange(item.key)}
-          className={`inline-flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-lg px-2 text-xs font-semibold transition-colors active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:focus-visible:ring-violet-400 ${
+          className={`inline-flex min-h-11 min-w-0 items-center justify-center gap-2 rounded-lg px-2 text-xs font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 ${
             value === item.key
-              ? "bg-white text-indigo-700 shadow-sm dark:bg-violet-500/18 dark:text-violet-100 dark:ring-1 dark:ring-violet-300/35"
+              ? "bg-white text-slate-900 shadow-sm dark:bg-slate-800 dark:text-slate-100"
               : "text-slate-500 hover:bg-white/70 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
           }`}
           aria-pressed={value === item.key}

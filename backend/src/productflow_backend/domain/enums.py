@@ -79,7 +79,7 @@ class WorkflowNodeType(StrEnum):
 
 
 class GraphNodeType(StrEnum):
-    """schema-v3 画布节点类型。持久化在 workflow_graphs，不写入 schema-v2 ProductWorkflow。"""
+    """schema-v3 画布节点类型。持久化在 workflow_graphs。"""
 
     PRODUCT_SOURCE = "product_source"
     IMAGE_ASSET = "image_asset"

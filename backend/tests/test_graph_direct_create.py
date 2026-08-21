@@ -12,7 +12,7 @@ from productflow_backend.application.product_workflow.graph_direct_create import
 from productflow_backend.application.product_workflow.graph_execution import execute_graph_run
 from productflow_backend.application.product_workflow.graph_template import DirectCreateImageType
 from productflow_backend.domain.enums import GraphNodeType
-from productflow_backend.infrastructure.db.models import ProductWorkflow, WorkflowDraft, WorkflowGraph
+from productflow_backend.infrastructure.db.models import WorkflowDraft, WorkflowGraph
 from productflow_backend.infrastructure.db.session import get_session_factory
 from productflow_backend.presentation.api import create_app
 
@@ -36,13 +36,23 @@ def test_direct_create_writes_v3_graph_without_draft_or_v2_workflow(db_session) 
     types = {node.node_type for node in result.projection.nodes}
     assert GraphNodeType.PRODUCT_SOURCE in types
     assert GraphNodeType.IMAGE_ASSET in types
+    product_source = next(
+        node for node in result.projection.nodes if node.node_type == GraphNodeType.PRODUCT_SOURCE
+    )
+    assert product_source.config["source_product_id"] == result.product.id
+    assert product_source.product_source is not None
+    assert product_source.product_source.fact_set_version_id == result.product.current_fact_set_version_id
+    assert {fact["key"] for fact in product_source.product_source.facts} == {
+        "product_name",
+        "category",
+        "price",
+    }
     image_nodes = [node for node in result.projection.nodes if node.node_type == GraphNodeType.IMAGE_GENERATION]
     assert len(image_nodes) == 3
     unused = [node for node in result.projection.nodes if node.unused]
     assert len(unused) == 1
     assert unused[0].node_type == GraphNodeType.IMAGE_ASSET
     assert db_session.scalar(select(func.count()).select_from(WorkflowDraft)) == 0
-    assert db_session.scalar(select(func.count()).select_from(ProductWorkflow)) == 0
     assert db_session.scalar(select(func.count()).select_from(WorkflowGraph)) == 1
 
 
@@ -66,6 +76,9 @@ def test_direct_create_and_changeset_api_round_trip(configured_env, monkeypatch)
     assert payload["graph"]["schema_version"] == 3
     assert payload["graph"]["revision"] == 1
     assert payload["graph"]["last_operation_group_id"]
+    source = next(node for node in payload["graph"]["nodes"] if node["node_type"] == "product_source")
+    assert source["source_product"]["id"] == product_id
+    assert source["product_fact_set"]["facts"][0]["key"] == "product_name"
     assert any(node["node_type"] == "image_asset" and node["unused"] for node in payload["graph"]["nodes"])
     current = client.get(f"/api/v3/products/{product_id}/workflows/current")
     assert current.status_code == 200, current.text
@@ -119,6 +132,5 @@ def test_direct_create_and_changeset_api_round_trip(configured_env, monkeypatch)
     session = factory()
     try:
         assert session.scalar(select(func.count()).select_from(WorkflowDraft)) == 0
-        assert session.scalar(select(func.count()).select_from(ProductWorkflow)) == 0
     finally:
         session.close()

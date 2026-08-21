@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from helpers import _login, _make_demo_image_bytes
 
 from productflow_backend.application.products import list_products
-from productflow_backend.infrastructure.db.models import Product, ProductWorkflow
+from productflow_backend.infrastructure.db.models import Product, WorkflowGraph
 
 
 def test_v2_product_create_persists_context_without_prebuilding_workflow(
@@ -36,7 +36,7 @@ def test_v2_product_create_persists_context_without_prebuilding_workflow(
     assert len(payload["created_assets"]) == 1
     product_id = payload["product"]["id"]
     db_session.expire_all()
-    assert db_session.query(ProductWorkflow).filter_by(product_id=product_id).count() == 0
+    assert db_session.query(WorkflowGraph).filter_by(product_id=product_id).count() == 0
 
 
 def test_product_name_search_is_literal_case_insensitive_and_paginated(db_session) -> None:

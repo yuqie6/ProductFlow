@@ -47,9 +47,7 @@ from productflow_backend.domain.enums import (
     ProductImageOriginType,
     WorkflowDraftStatus,
     WorkflowNodeStatus,
-    WorkflowNodeType,
     WorkflowRecipeKind,
-    WorkflowRevealEventKind,
     WorkflowRunStatus,
 )
 
@@ -219,10 +217,6 @@ class Product(Base, TimestampMixin):
     current_fact_set_version: Mapped[ProductFactSetVersion | None] = relationship(
         foreign_keys=[current_fact_set_version_id],
         post_update=True,
-    )
-    workflows: Mapped[list[ProductWorkflow]] = relationship(
-        back_populates="product",
-        cascade="all, delete-orphan",
     )
     graphs: Mapped[list[WorkflowGraph]] = relationship(
         back_populates="product",
@@ -828,16 +822,6 @@ class WorkflowDraft(Base, TimestampMixin):
     )
     intake_schema_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     intake_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    final_workflow_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey(
-            "product_workflows.id",
-            ondelete="SET NULL",
-            use_alter=True,
-            name="fk_workflow_drafts_final_workflow_id",
-        ),
-        nullable=True,
-    )
 
     product: Mapped[Product] = relationship(back_populates="workflow_drafts", foreign_keys=[product_id])
     revisions: Mapped[list[WorkflowDraftRevision]] = relationship(
@@ -848,10 +832,6 @@ class WorkflowDraft(Base, TimestampMixin):
     )
     current_revision: Mapped[WorkflowDraftRevision | None] = relationship(
         foreign_keys=[current_revision_id],
-        post_update=True,
-    )
-    final_workflow: Mapped[ProductWorkflow | None] = relationship(
-        foreign_keys=[final_workflow_id],
         post_update=True,
     )
     agent_conversation: Mapped[AgentConversation | None] = relationship(
@@ -1104,11 +1084,6 @@ class AgentTask(Base, TimestampMixin):
     product_id: Mapped[str | None] = mapped_column(
         String(36),
         ForeignKey("products.id", ondelete="SET NULL", name="fk_agent_tasks_product_id"),
-        nullable=True,
-    )
-    workflow_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey("product_workflows.id", ondelete="SET NULL", name="fk_agent_tasks_workflow_id"),
         nullable=True,
     )
     workflow_draft_id: Mapped[str | None] = mapped_column(
@@ -1664,7 +1639,7 @@ class AgentToolMutation(Base, TimestampMixin):
 
 
 class AgentWorkflowRunRequest(Base, TimestampMixin):
-    """Agent 请求人工确认后执行一次工作流的记录。v3 商品走 graph_id，遗留 v2 商品走 workflow_id。"""
+    """Agent 请求人工确认后执行一次 schema-v3 graph 运行的记录。"""
 
     __tablename__ = "agent_workflow_run_requests"
     __table_args__ = (
@@ -1678,9 +1653,8 @@ class AgentWorkflowRunRequest(Base, TimestampMixin):
             name="ck_agent_workflow_run_requests_positive_revision",
         ),
         CheckConstraint(
-            "(workflow_id IS NULL AND graph_id IS NOT NULL) OR "
-            "(workflow_id IS NOT NULL AND graph_id IS NULL)",
-            name="ck_agent_workflow_run_requests_v2_or_v3",
+            "graph_id IS NOT NULL",
+            name="ck_agent_workflow_run_requests_graph_required",
         ),
         CheckConstraint(
             "length(request_hash) = 64",
@@ -1698,8 +1672,6 @@ class AgentWorkflowRunRequest(Base, TimestampMixin):
             "id",
         ),
         Index("ix_agent_workflow_run_requests_task_status_updated", "task_id", "status", "updated_at", "id"),
-        Index("ix_agent_workflow_run_requests_workflow_run_id", "workflow_run_id"),
-        Index("ix_agent_workflow_run_requests_source_run_id", "source_run_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -1720,20 +1692,9 @@ class AgentWorkflowRunRequest(Base, TimestampMixin):
         String(36),
         ForeignKey("products.id", ondelete="CASCADE", name="fk_agent_workflow_run_requests_product_id"),
     )
-    workflow_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey("product_workflows.id", ondelete="CASCADE", name="fk_agent_workflow_run_requests_workflow_id"),
-        nullable=True,
-    )
-    graph_id: Mapped[str | None] = mapped_column(
+    graph_id: Mapped[str] = mapped_column(
         String(36),
         ForeignKey("workflow_graphs.id", ondelete="CASCADE", name="fk_agent_workflow_run_requests_graph_id"),
-        nullable=True,
-    )
-    source_run_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey("workflow_runs.id", ondelete="RESTRICT", name="fk_agent_workflow_run_requests_source_run_id"),
-        nullable=True,
     )
     source_graph_run_id: Mapped[str | None] = mapped_column(
         String(36),
@@ -1751,11 +1712,6 @@ class AgentWorkflowRunRequest(Base, TimestampMixin):
     status: Mapped[AgentWorkflowRunRequestStatus] = mapped_column(
         enum_value_column(AgentWorkflowRunRequestStatus),
         default=AgentWorkflowRunRequestStatus.AWAITING_CONFIRMATION,
-    )
-    workflow_run_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey("workflow_runs.id", ondelete="SET NULL", name="fk_agent_workflow_run_requests_workflow_run_id"),
-        nullable=True,
     )
     graph_run_id: Mapped[str | None] = mapped_column(
         String(36),
@@ -1776,10 +1732,7 @@ class AgentWorkflowRunRequest(Base, TimestampMixin):
         foreign_keys=[task_id],
     )
     product: Mapped[Product] = relationship(foreign_keys=[product_id])
-    workflow: Mapped[ProductWorkflow | None] = relationship(foreign_keys=[workflow_id])
-    graph: Mapped[WorkflowGraph | None] = relationship(foreign_keys=[graph_id])
-    source_run: Mapped[WorkflowRun | None] = relationship(foreign_keys=[source_run_id])
-    workflow_run: Mapped[WorkflowRun | None] = relationship(foreign_keys=[workflow_run_id])
+    graph: Mapped[WorkflowGraph] = relationship(foreign_keys=[graph_id])
     graph_run: Mapped[WorkflowGraphRun | None] = relationship(foreign_keys=[graph_run_id])
     source_graph_run: Mapped[WorkflowGraphRun | None] = relationship(foreign_keys=[source_graph_run_id])
     turn_projection: Mapped[AgentTurnProjection | None] = relationship(
@@ -1884,11 +1837,6 @@ class WorkflowDraftRecipeSeed(Base):
         ),
         CheckConstraint("schema_version = 1", name="ck_workflow_draft_recipe_seeds_schema_version"),
         CheckConstraint("length(request_hash) = 64", name="ck_workflow_draft_recipe_seeds_request_hash"),
-        CheckConstraint(
-            "(base_workflow_id IS NULL AND base_workflow_revision IS NULL) OR "
-            "(base_workflow_id IS NOT NULL AND base_workflow_revision > 0)",
-            name="ck_workflow_draft_recipe_seeds_base_workflow",
-        ),
         Index(
             "ix_workflow_draft_recipe_seeds_product_created",
             "product_id",
@@ -1922,16 +1870,6 @@ class WorkflowDraftRecipeSeed(Base):
             name="fk_workflow_draft_recipe_seeds_product_id",
         ),
     )
-    base_workflow_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey(
-            "product_workflows.id",
-            ondelete="RESTRICT",
-            name="fk_workflow_draft_recipe_seeds_base_workflow_id",
-        ),
-        nullable=True,
-    )
-    base_workflow_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
     schema_version: Mapped[int] = mapped_column(Integer, default=1)
     idempotency_key: Mapped[str] = mapped_column(String(120))
     request_hash: Mapped[str] = mapped_column(String(64))
@@ -1948,10 +1886,6 @@ class WorkflowDraftRecipeSeed(Base):
     product: Mapped[Product] = relationship(
         back_populates="workflow_draft_recipe_seeds",
         foreign_keys=[product_id],
-    )
-    base_workflow: Mapped[ProductWorkflow | None] = relationship(
-        back_populates="recipe_seeds",
-        foreign_keys=[base_workflow_id],
     )
 
 
@@ -2056,309 +1990,6 @@ class WorkflowDraftLegacyArchiveSeed(Base):
     user_template_archive: Mapped[LegacyUserTemplateArchive | None] = relationship(
         foreign_keys=[user_template_archive_id]
     )
-
-
-class ProductWorkflow(Base, TimestampMixin):
-    """商品创意工作流：一个商品可以保留多个历史 DAG，当前使用 active=True 的工作流。"""
-
-    __tablename__ = "product_workflows"
-    __table_args__ = (
-        Index(
-            "uq_product_workflows_one_active_per_product",
-            "product_id",
-            unique=True,
-            postgresql_where=text("active = true"),
-            sqlite_where=text("active = 1"),
-        ),
-        Index(
-            "uq_product_workflows_product_revision",
-            "product_id",
-            "revision",
-            unique=True,
-        ),
-        CheckConstraint("schema_version = 2", name="ck_product_workflows_schema_version"),
-        CheckConstraint("revision > 0", name="ck_product_workflows_positive_revision"),
-        CheckConstraint("edit_version >= 0", name="ck_product_workflows_non_negative_edit_version"),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    product_id: Mapped[str] = mapped_column(String(36), ForeignKey("products.id", ondelete="CASCADE"))
-    title: Mapped[str] = mapped_column(String(255), default="商品创意工作流")
-    active: Mapped[bool] = mapped_column(Boolean, default=True)
-    schema_version: Mapped[int] = mapped_column(Integer, default=2)
-    revision: Mapped[int] = mapped_column(Integer, default=1)
-    edit_version: Mapped[int] = mapped_column(Integer, default=0)
-    source_draft_revision_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey(
-            "workflow_draft_revisions.id",
-            ondelete="SET NULL",
-            name="fk_product_workflows_source_draft_revision_id",
-        ),
-        nullable=True,
-    )
-    visual_system_version_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey(
-            "visual_system_versions.id",
-            ondelete="RESTRICT",
-            name="fk_product_workflows_visual_system_version_id",
-        ),
-        nullable=True,
-    )
-
-    product: Mapped[Product] = relationship(back_populates="workflows")
-    nodes: Mapped[list[WorkflowNode]] = relationship(
-        back_populates="workflow",
-        cascade="all, delete-orphan",
-    )
-    edges: Mapped[list[WorkflowEdge]] = relationship(
-        back_populates="workflow",
-        cascade="all, delete-orphan",
-        foreign_keys="WorkflowEdge.workflow_id",
-    )
-    runs: Mapped[list[WorkflowRun]] = relationship(
-        back_populates="workflow",
-        cascade="all, delete-orphan",
-    )
-    folders: Mapped[list[WorkflowFolder]] = relationship(
-        back_populates="workflow",
-        cascade="all, delete-orphan",
-        order_by="WorkflowFolder.sort_order",
-    )
-    source_draft_revision: Mapped[WorkflowDraftRevision | None] = relationship(foreign_keys=[source_draft_revision_id])
-    visual_system_version: Mapped[VisualSystemVersion | None] = relationship(foreign_keys=[visual_system_version_id])
-    prompt_artifacts: Mapped[list[ImagePromptArtifact]] = relationship(
-        back_populates="workflow",
-        cascade="all, delete-orphan",
-    )
-    visual_exceptions: Mapped[list[VisualException]] = relationship(
-        back_populates="workflow",
-        cascade="all, delete-orphan",
-    )
-    image_generation_records: Mapped[list[WorkflowImageGenerationRecord]] = relationship(
-        back_populates="workflow",
-        cascade="all, delete-orphan",
-    )
-    materialization: Mapped[WorkflowMaterialization | None] = relationship(
-        back_populates="workflow",
-        cascade="all, delete-orphan",
-        uselist=False,
-    )
-    recipe_seeds: Mapped[list[WorkflowDraftRecipeSeed]] = relationship(
-        back_populates="base_workflow",
-        foreign_keys="WorkflowDraftRecipeSeed.base_workflow_id",
-    )
-    media_library_links: Mapped[list[WorkflowMediaLibraryAsset]] = relationship(
-        back_populates="workflow",
-        cascade="all, delete-orphan",
-        order_by="WorkflowMediaLibraryAsset.created_at.desc(), WorkflowMediaLibraryAsset.media_library_asset_id.desc()",
-    )
-
-
-class WorkflowFolder(Base, TimestampMixin):
-    """schema-v2 画布的一层文件夹。"""
-
-    __tablename__ = "workflow_folders"
-    __table_args__ = (
-        UniqueConstraint("workflow_id", "folder_key", name="uq_workflow_folders_workflow_key"),
-        CheckConstraint("sort_order >= 0", name="ck_workflow_folders_non_negative_order"),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    workflow_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey("product_workflows.id", ondelete="CASCADE", name="fk_workflow_folders_workflow_id"),
-    )
-    folder_key: Mapped[str] = mapped_column(String(80))
-    title: Mapped[str] = mapped_column(String(255))
-    sort_order: Mapped[int] = mapped_column(Integer)
-
-    workflow: Mapped[ProductWorkflow] = relationship(back_populates="folders")
-    nodes: Mapped[list[WorkflowNode]] = relationship(back_populates="folder")
-
-
-class WorkflowNode(Base, TimestampMixin):
-    """工作流节点配置与最近一次输出。"""
-
-    __tablename__ = "workflow_nodes"
-    __table_args__ = (
-        UniqueConstraint("workflow_id", "node_key", name="uq_workflow_nodes_workflow_key"),
-        CheckConstraint("schema_version = 2", name="ck_workflow_nodes_schema_version"),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    workflow_id: Mapped[str] = mapped_column(String(36), ForeignKey("product_workflows.id", ondelete="CASCADE"))
-    schema_version: Mapped[int] = mapped_column(Integer, default=2)
-    node_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    node_type: Mapped[WorkflowNodeType] = mapped_column(enum_value_column(WorkflowNodeType))
-    title: Mapped[str] = mapped_column(String(255))
-    position_x: Mapped[int] = mapped_column(default=0)
-    position_y: Mapped[int] = mapped_column(default=0)
-    config_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    status: Mapped[WorkflowNodeStatus] = mapped_column(
-        enum_value_column(WorkflowNodeStatus),
-        default=WorkflowNodeStatus.IDLE,
-    )
-    output_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    folder_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey("workflow_folders.id", ondelete="SET NULL", name="fk_workflow_nodes_folder_id"),
-        nullable=True,
-    )
-    bound_image_asset_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey(
-            "product_image_assets.id",
-            ondelete="RESTRICT",
-            name="fk_workflow_nodes_bound_image_asset_id",
-        ),
-        nullable=True,
-    )
-    current_prompt_artifact_version_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey(
-            "image_prompt_artifact_versions.id",
-            ondelete="SET NULL",
-            use_alter=True,
-            name="fk_workflow_nodes_current_prompt_artifact_version_id",
-        ),
-        nullable=True,
-    )
-
-    workflow: Mapped[ProductWorkflow] = relationship(back_populates="nodes")
-    folder: Mapped[WorkflowFolder | None] = relationship(back_populates="nodes")
-    bound_image_asset: Mapped[ProductImageAsset | None] = relationship(foreign_keys=[bound_image_asset_id])
-    current_prompt_artifact_version: Mapped[ImagePromptArtifactVersion | None] = relationship(
-        foreign_keys=[current_prompt_artifact_version_id]
-    )
-    outgoing_edges: Mapped[list[WorkflowEdge]] = relationship(
-        back_populates="source_node",
-        cascade="all, delete-orphan",
-        foreign_keys="WorkflowEdge.source_node_id",
-    )
-    incoming_edges: Mapped[list[WorkflowEdge]] = relationship(
-        back_populates="target_node",
-        cascade="all, delete-orphan",
-        foreign_keys="WorkflowEdge.target_node_id",
-    )
-    node_runs: Mapped[list[WorkflowNodeRun]] = relationship(back_populates="node")
-    image_generation_records: Mapped[list[WorkflowImageGenerationRecord]] = relationship(back_populates="node")
-
-
-class WorkflowEdge(Base):
-    """工作流有向边，表达节点间数据依赖。"""
-
-    __tablename__ = "workflow_edges"
-    __table_args__ = (UniqueConstraint("workflow_id", "edge_key", name="uq_workflow_edges_workflow_key"),)
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    workflow_id: Mapped[str] = mapped_column(String(36), ForeignKey("product_workflows.id", ondelete="CASCADE"))
-    edge_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    source_node_id: Mapped[str] = mapped_column(String(36), ForeignKey("workflow_nodes.id", ondelete="CASCADE"))
-    target_node_id: Mapped[str] = mapped_column(String(36), ForeignKey("workflow_nodes.id", ondelete="CASCADE"))
-    source_handle: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    target_handle: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-    workflow: Mapped[ProductWorkflow] = relationship(back_populates="edges", foreign_keys=[workflow_id])
-    source_node: Mapped[WorkflowNode] = relationship(back_populates="outgoing_edges", foreign_keys=[source_node_id])
-    target_node: Mapped[WorkflowNode] = relationship(back_populates="incoming_edges", foreign_keys=[target_node_id])
-
-
-class WorkflowMaterialization(Base):
-    """confirmed Draft revision 到完整 v2 workflow 的幂等映射。"""
-
-    __tablename__ = "workflow_materializations"
-    __table_args__ = (
-        UniqueConstraint(
-            "product_id",
-            "idempotency_key",
-            name="uq_workflow_materializations_product_idempotency",
-        ),
-        UniqueConstraint("draft_revision_id", name="uq_workflow_materializations_draft_revision_id"),
-        UniqueConstraint("workflow_id", name="uq_workflow_materializations_workflow_id"),
-        CheckConstraint("length(request_hash) = 64", name="ck_workflow_materializations_request_hash"),
-        CheckConstraint(
-            "expected_draft_version > 0 AND expected_workflow_revision >= 0",
-            name="ck_workflow_materializations_expected_versions",
-        ),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    product_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey("products.id", ondelete="CASCADE", name="fk_workflow_materializations_product_id"),
-    )
-    draft_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey("workflow_drafts.id", ondelete="CASCADE", name="fk_workflow_materializations_draft_id"),
-    )
-    draft_revision_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey(
-            "workflow_draft_revisions.id",
-            ondelete="CASCADE",
-            name="fk_workflow_materializations_draft_revision_id",
-        ),
-    )
-    workflow_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey("product_workflows.id", ondelete="CASCADE", name="fk_workflow_materializations_workflow_id"),
-    )
-    idempotency_key: Mapped[str] = mapped_column(String(120))
-    request_hash: Mapped[str] = mapped_column(String(64))
-    expected_draft_version: Mapped[int] = mapped_column(Integer)
-    expected_workflow_revision: Mapped[int] = mapped_column(Integer)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-    workflow: Mapped[ProductWorkflow] = relationship(back_populates="materialization")
-    reveal_events: Mapped[list[WorkflowRevealEvent]] = relationship(
-        back_populates="materialization",
-        cascade="all, delete-orphan",
-        order_by="WorkflowRevealEvent.sequence",
-    )
-    idempotency_keys: Mapped[list[WorkflowMaterializationKey]] = relationship(
-        back_populates="materialization",
-        cascade="all, delete-orphan",
-    )
-
-
-class WorkflowMaterializationKey(Base):
-    """每个成功物化请求使用过的 product-scoped idempotency key。"""
-
-    __tablename__ = "workflow_materialization_keys"
-    __table_args__ = (
-        UniqueConstraint(
-            "product_id",
-            "idempotency_key",
-            name="uq_workflow_materialization_keys_product_key",
-        ),
-        CheckConstraint("length(request_hash) = 64", name="ck_workflow_materialization_keys_request_hash"),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    product_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey("products.id", ondelete="CASCADE", name="fk_workflow_materialization_keys_product_id"),
-    )
-    materialization_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey(
-            "workflow_materializations.id",
-            ondelete="CASCADE",
-            name="fk_workflow_materialization_keys_materialization_id",
-        ),
-    )
-    idempotency_key: Mapped[str] = mapped_column(String(120))
-    request_hash: Mapped[str] = mapped_column(String(64))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-    materialization: Mapped[WorkflowMaterialization] = relationship(back_populates="idempotency_keys")
-
-
 GRAPH_SCHEMA_VERSION = 3
 _GRAPH_NODE_TYPES = ", ".join(f"'{member.value}'" for member in GraphNodeType)
 _GRAPH_EDGE_DATA_TYPES = ", ".join(f"'{member.value}'" for member in GraphEdgeDataType)
@@ -2371,7 +2002,7 @@ _GRAPH_NODE_RUN_STATUSES = ", ".join(f"'{member.value}'" for member in WorkflowN
 
 
 class WorkflowGraph(Base, TimestampMixin):
-    """schema-v3 canonical graph。与 schema-v2 ProductWorkflow 分表，不共用 schema_version。"""
+    """schema-v3 canonical graph。"""
 
     __tablename__ = "workflow_graphs"
     __table_args__ = (
@@ -2436,6 +2067,11 @@ class WorkflowGraph(Base, TimestampMixin):
     )
     source_draft_revision: Mapped[WorkflowDraftRevision | None] = relationship(
         foreign_keys=[source_draft_revision_id]
+    )
+    media_library_links: Mapped[list[WorkflowMediaLibraryAsset]] = relationship(
+        back_populates="graph",
+        cascade="all, delete-orphan",
+        order_by="WorkflowMediaLibraryAsset.created_at.desc(), WorkflowMediaLibraryAsset.media_library_asset_id.desc()",
     )
 
 
@@ -2742,507 +2378,8 @@ class WorkflowGraphArtifact(Base):
         foreign_keys=[node_run_id],
     )
     product_image_asset: Mapped[ProductImageAsset | None] = relationship(foreign_keys=[product_image_asset_id])
-
-
-class WorkflowRevealEvent(Base):
-    """物化完成后供画布只读重放的有序揭示事件。"""
-
-    __tablename__ = "workflow_reveal_events"
-    __table_args__ = (
-        UniqueConstraint(
-            "materialization_id",
-            "sequence",
-            name="uq_workflow_reveal_events_materialization_sequence",
-        ),
-        CheckConstraint("sequence > 0", name="ck_workflow_reveal_events_positive_sequence"),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    materialization_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey(
-            "workflow_materializations.id",
-            ondelete="CASCADE",
-            name="fk_workflow_reveal_events_materialization_id",
-        ),
-    )
-    sequence: Mapped[int] = mapped_column(Integer)
-    kind: Mapped[WorkflowRevealEventKind] = mapped_column(enum_value_column(WorkflowRevealEventKind))
-    entity_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
-    entity_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-    materialization: Mapped[WorkflowMaterialization] = relationship(back_populates="reveal_events")
-
-
-class WorkflowRun(Base):
-    """一次工作流执行记录。"""
-
-    __tablename__ = "workflow_runs"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    workflow_id: Mapped[str] = mapped_column(String(36), ForeignKey("product_workflows.id", ondelete="CASCADE"))
-    status: Mapped[WorkflowRunStatus] = mapped_column(
-        enum_value_column(WorkflowRunStatus),
-        default=WorkflowRunStatus.RUNNING,
-    )
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    is_retryable: Mapped[bool] = mapped_column(Boolean, default=True)
-    progress_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-
-    workflow: Mapped[ProductWorkflow] = relationship(back_populates="runs")
-    node_runs: Mapped[list[WorkflowNodeRun]] = relationship(
-        back_populates="workflow_run",
-        cascade="all, delete-orphan",
-    )
-
-
-class WorkflowNodeRun(Base):
-    """一次运行内单个节点的输出与关联产物。"""
-
-    __tablename__ = "workflow_node_runs"
-
-    __table_args__ = (
-        Index("ix_workflow_node_runs_run_node", "workflow_run_id", "node_id"),
-        Index(
-            "uq_workflow_node_runs_one_active_per_node",
-            "node_id",
-            unique=True,
-            postgresql_where=text("status IN ('queued', 'running')"),
-            sqlite_where=text("status IN ('queued', 'running')"),
-        ),
-        CheckConstraint(
-            "attempts >= 0",
-            name="ck_workflow_node_runs_non_negative_attempts",
-        ),
-        CheckConstraint(
-            "(status = 'running' AND active_attempt_id IS NOT NULL) OR "
-            "(status != 'running' AND active_attempt_id IS NULL)",
-            name="ck_workflow_node_runs_active_attempt",
-        ),
-        Index("ix_workflow_node_runs_recovery", "status", "started_at", "id"),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    workflow_run_id: Mapped[str] = mapped_column(String(36), ForeignKey("workflow_runs.id", ondelete="CASCADE"))
-    node_id: Mapped[str] = mapped_column(String(36), ForeignKey("workflow_nodes.id", ondelete="CASCADE"))
-    status: Mapped[WorkflowNodeStatus] = mapped_column(enum_value_column(WorkflowNodeStatus))
-    attempts: Mapped[int] = mapped_column(Integer, default=0)
-    active_attempt_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
-    progress_phase: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    progress_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    output_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-
-    workflow_run: Mapped[WorkflowRun] = relationship(back_populates="node_runs")
-    node: Mapped[WorkflowNode] = relationship(back_populates="node_runs")
-    prompt_artifact_version: Mapped[ImagePromptArtifactVersion | None] = relationship(
-        back_populates="source_node_run",
-        foreign_keys="ImagePromptArtifactVersion.source_node_run_id",
-        uselist=False,
-    )
-    image_generation_record: Mapped[WorkflowImageGenerationRecord | None] = relationship(
-        back_populates="node_run",
-        cascade="all, delete-orphan",
-        uselist=False,
-    )
-    provider_effect: Mapped[WorkflowProviderEffect | None] = relationship(
-        back_populates="workflow_node_run",
-        cascade="all, delete-orphan",
-        uselist=False,
-    )
-
-
-class WorkflowProviderEffect(Base, TimestampMixin):
-    """Durable provider effect ledger for a workflow node run.
-
-    The ledger records the request boundary and a later provider verdict. It never
-    retries a provider mutation and it does not make the unknown workflow run
-    look successful after reconciliation.
-    """
-
-    __tablename__ = "workflow_provider_effects"
-    __table_args__ = (
-        UniqueConstraint(
-            "workflow_node_run_id",
-            name="uq_workflow_provider_effects_node_run_id",
-        ),
-        UniqueConstraint(
-            "operation_key",
-            name="uq_workflow_provider_effects_operation_key",
-        ),
-        CheckConstraint(
-            "effect_result IN ('pending', 'applied', 'failed', 'unknown')",
-            name="ck_workflow_provider_effects_effect_result",
-        ),
-        CheckConstraint(
-            "reconciliation_state IN ('not_requested', 'applied', 'not_applied', 'unknown', 'unsupported')",
-            name="ck_workflow_provider_effects_reconciliation_state",
-        ),
-        CheckConstraint(
-            "length(request_hash) = 64",
-            name="ck_workflow_provider_effects_request_hash",
-        ),
-        Index(
-            "ix_workflow_provider_effects_reconciliation",
-            "effect_result",
-            "reconciliation_state",
-            "updated_at",
-            "id",
-        ),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    workflow_node_run_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey(
-            "workflow_node_runs.id",
-            ondelete="CASCADE",
-            name="fk_workflow_provider_effects_node_run_id",
-        ),
-    )
-    operation_key: Mapped[str] = mapped_column(String(200))
-    effect_kind: Mapped[str] = mapped_column(String(80))
-    request_hash: Mapped[str] = mapped_column(String(64))
-    provider_name: Mapped[str] = mapped_column(String(80))
-    attempt_id: Mapped[str] = mapped_column(String(36))
-    effect_result: Mapped[str] = mapped_column(String(20), default="pending")
-    reconciliation_state: Mapped[str] = mapped_column(String(20), default="not_requested")
-    provider_response_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    provider_status: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    request_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    result_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    workflow_node_run: Mapped[WorkflowNodeRun] = relationship(back_populates="provider_effect")
-
-
-class ImagePromptArtifact(Base, TimestampMixin):
-    """workflow 内一个图片类型的提示词稳定身份。"""
-
-    __tablename__ = "image_prompt_artifacts"
-    __table_args__ = (
-        UniqueConstraint("workflow_id", "image_type_key", name="uq_image_prompt_artifacts_workflow_type"),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    workflow_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey("product_workflows.id", ondelete="CASCADE", name="fk_image_prompt_artifacts_workflow_id"),
-    )
-    image_type_key: Mapped[str] = mapped_column(String(80))
-    title: Mapped[str] = mapped_column(String(255))
-
-    workflow: Mapped[ProductWorkflow] = relationship(back_populates="prompt_artifacts")
-    versions: Mapped[list[ImagePromptArtifactVersion]] = relationship(
-        back_populates="artifact",
-        cascade="all, delete-orphan",
-        order_by="ImagePromptArtifactVersion.version",
-    )
-
-
-class ImagePromptArtifactVersion(Base):
-    """提示词制品的不可变版本。"""
-
-    __tablename__ = "image_prompt_artifact_versions"
-    __table_args__ = (
-        UniqueConstraint("artifact_id", "version", name="uq_image_prompt_artifact_versions_artifact_version"),
-        UniqueConstraint(
-            "source_node_run_id",
-            name="uq_image_prompt_artifact_versions_source_node_run_id",
-        ),
-        CheckConstraint("version > 0", name="ck_image_prompt_artifact_versions_positive_version"),
-        CheckConstraint("schema_version = 1", name="ck_image_prompt_artifact_versions_schema_version"),
-        CheckConstraint("length(payload_hash) = 64", name="ck_image_prompt_artifact_versions_payload_hash"),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    artifact_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey(
-            "image_prompt_artifacts.id",
-            ondelete="CASCADE",
-            name="fk_image_prompt_artifact_versions_artifact_id",
-        ),
-    )
-    version: Mapped[int] = mapped_column(Integer)
-    schema_version: Mapped[int] = mapped_column(Integer, default=1)
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON)
-    payload_hash: Mapped[str] = mapped_column(String(64))
-    source_draft_revision_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey(
-            "workflow_draft_revisions.id",
-            ondelete="SET NULL",
-            name="fk_image_prompt_artifact_versions_source_draft_revision_id",
-        ),
-        nullable=True,
-    )
-    source_node_run_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey(
-            "workflow_node_runs.id",
-            ondelete="SET NULL",
-            use_alter=True,
-            name="fk_image_prompt_artifact_versions_source_node_run_id",
-        ),
-        nullable=True,
-    )
-    provider_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    provider_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    provider_response_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-    artifact: Mapped[ImagePromptArtifact] = relationship(back_populates="versions")
-    source_node_run: Mapped[WorkflowNodeRun | None] = relationship(
-        back_populates="prompt_artifact_version",
-        foreign_keys=[source_node_run_id],
-    )
-    references: Mapped[list[ImagePromptArtifactVersionReference]] = relationship(
-        back_populates="prompt_artifact_version",
-        cascade="all, delete-orphan",
-        order_by="ImagePromptArtifactVersionReference.position",
-    )
-
-
-class ImagePromptArtifactVersionReference(Base):
-    """提示词版本实际绑定的图片证据。"""
-
-    __tablename__ = "image_prompt_artifact_version_references"
-    __table_args__ = (
-        UniqueConstraint(
-            "prompt_artifact_version_id",
-            "position",
-            name="uq_image_prompt_artifact_version_references_position",
-        ),
-        UniqueConstraint(
-            "prompt_artifact_version_id",
-            "asset_id",
-            "purpose",
-            name="uq_image_prompt_artifact_version_references_asset_purpose",
-        ),
-        CheckConstraint(
-            "position >= 0",
-            name="ck_prompt_artifact_version_references_non_negative_position",
-        ),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    prompt_artifact_version_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey(
-            "image_prompt_artifact_versions.id",
-            ondelete="CASCADE",
-            name="fk_image_prompt_artifact_version_references_version_id",
-        ),
-    )
-    asset_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey(
-            "product_image_assets.id",
-            ondelete="RESTRICT",
-            name="fk_image_prompt_artifact_version_references_asset_id",
-        ),
-    )
-    purpose: Mapped[str] = mapped_column(String(120))
-    position: Mapped[int] = mapped_column(Integer)
-
-    prompt_artifact_version: Mapped[ImagePromptArtifactVersion] = relationship(back_populates="references")
-    asset: Mapped[ProductImageAsset] = relationship()
-
-
-class VisualException(Base):
-    """确认后绑定到 workflow 的结构化视觉例外。"""
-
-    __tablename__ = "visual_exceptions"
-    __table_args__ = (
-        UniqueConstraint("workflow_id", "exception_key", name="uq_visual_exceptions_workflow_key"),
-        CheckConstraint(
-            "(scope_type = 'workflow' AND scope_key IS NULL) OR "
-            "(scope_type IN ('image_type', 'image_plan') AND scope_key IS NOT NULL)",
-            name="ck_visual_exceptions_scope",
-        ),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    workflow_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey("product_workflows.id", ondelete="CASCADE", name="fk_visual_exceptions_workflow_id"),
-    )
-    source_draft_revision_id: Mapped[str | None] = mapped_column(
-        String(36),
-        ForeignKey(
-            "workflow_draft_revisions.id",
-            ondelete="SET NULL",
-            name="fk_visual_exceptions_source_draft_revision_id",
-        ),
-        nullable=True,
-    )
-    exception_key: Mapped[str] = mapped_column(String(80))
-    scope_type: Mapped[str] = mapped_column(String(40))
-    scope_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
-    overrides_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
-    reason: Mapped[str] = mapped_column(Text)
-    confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-    workflow: Mapped[ProductWorkflow] = relationship(back_populates="visual_exceptions")
-
-
-class WorkflowImageGenerationRecord(Base):
-    """一次成功 v2 image node run 的不可变生成证据。"""
-
-    __tablename__ = "workflow_image_generation_records"
-    __table_args__ = (
-        UniqueConstraint(
-            "workflow_node_run_id",
-            name="uq_workflow_image_generation_records_node_run_id",
-        ),
-        UniqueConstraint(
-            "result_asset_id",
-            name="uq_workflow_image_generation_records_result_asset_id",
-        ),
-        CheckConstraint(
-            "length(compiled_prompt_hash) = 64",
-            name="ck_workflow_image_generation_records_prompt_hash",
-        ),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    workflow_node_run_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey(
-            "workflow_node_runs.id",
-            ondelete="CASCADE",
-            name="fk_workflow_image_generation_records_node_run_id",
-        ),
-    )
-    product_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey("products.id", ondelete="CASCADE", name="fk_workflow_image_generation_records_product_id"),
-    )
-    workflow_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey(
-            "product_workflows.id",
-            ondelete="CASCADE",
-            name="fk_workflow_image_generation_records_workflow_id",
-        ),
-    )
-    node_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey(
-            "workflow_nodes.id",
-            ondelete="CASCADE",
-            name="fk_workflow_image_generation_records_node_id",
-        ),
-    )
-    result_asset_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey(
-            "product_image_assets.id",
-            ondelete="RESTRICT",
-            name="fk_workflow_image_generation_records_result_asset_id",
-        ),
-    )
-    visual_system_version_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey(
-            "visual_system_versions.id",
-            ondelete="RESTRICT",
-            name="fk_workflow_image_generation_records_visual_system_version_id",
-        ),
-    )
-    prompt_artifact_version_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey(
-            "image_prompt_artifact_versions.id",
-            ondelete="RESTRICT",
-            name="fk_workflow_image_generation_records_prompt_artifact_version_id",
-        ),
-    )
-    requested_spec_json: Mapped[dict[str, Any]] = mapped_column(JSON)
-    effective_parameters_json: Mapped[dict[str, Any]] = mapped_column(JSON)
-    actual_media_json: Mapped[dict[str, Any]] = mapped_column(JSON)
-    compiled_prompt: Mapped[str] = mapped_column(Text)
-    compiled_prompt_hash: Mapped[str] = mapped_column(String(64))
-    provider_name: Mapped[str] = mapped_column(String(80))
-    provider_model: Mapped[str] = mapped_column(String(255))
-    provider_response_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    provider_status: Mapped[str] = mapped_column(String(80))
-    provider_request_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    provider_output_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-    node_run: Mapped[WorkflowNodeRun] = relationship(back_populates="image_generation_record")
-    workflow: Mapped[ProductWorkflow] = relationship(back_populates="image_generation_records")
-    node: Mapped[WorkflowNode] = relationship(back_populates="image_generation_records")
-    result_asset: Mapped[ProductImageAsset] = relationship(foreign_keys=[result_asset_id])
-    visual_system_version: Mapped[VisualSystemVersion] = relationship(foreign_keys=[visual_system_version_id])
-    prompt_artifact_version: Mapped[ImagePromptArtifactVersion] = relationship(
-        foreign_keys=[prompt_artifact_version_id]
-    )
-    references: Mapped[list[WorkflowImageGenerationReference]] = relationship(
-        back_populates="generation_record",
-        cascade="all, delete-orphan",
-        order_by="WorkflowImageGenerationReference.position",
-    )
-
-
-class WorkflowImageGenerationReference(Base):
-    """单次图片生成实际读取的参考资产。"""
-
-    __tablename__ = "workflow_image_generation_references"
-    __table_args__ = (
-        UniqueConstraint(
-            "generation_record_id",
-            "position",
-            name="uq_workflow_image_generation_references_position",
-        ),
-        UniqueConstraint(
-            "generation_record_id",
-            "asset_id",
-            "role",
-            name="uq_workflow_image_generation_references_asset_role",
-        ),
-        CheckConstraint(
-            "position >= 0",
-            name="ck_workflow_image_generation_references_non_negative_position",
-        ),
-    )
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
-    generation_record_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey(
-            "workflow_image_generation_records.id",
-            ondelete="CASCADE",
-            name="fk_workflow_image_generation_references_record_id",
-        ),
-    )
-    asset_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey(
-            "product_image_assets.id",
-            ondelete="RESTRICT",
-            name="fk_workflow_image_generation_references_asset_id",
-        ),
-    )
-    role: Mapped[str] = mapped_column(String(120))
-    label: Mapped[str] = mapped_column(String(255))
-    position: Mapped[int] = mapped_column(Integer)
-
-    generation_record: Mapped[WorkflowImageGenerationRecord] = relationship(back_populates="references")
-    asset: Mapped[ProductImageAsset] = relationship()
-
-
 class DeliveryRenditionJob(Base, TimestampMixin):
-    """从成功的 v2 生成原图确定性派生交付图片的 durable 任务。"""
+    """从成功的工作流生成原图确定性派生交付图片的 durable 任务。"""
 
     __tablename__ = "delivery_rendition_jobs"
     __table_args__ = (
@@ -3799,7 +2936,7 @@ class WorkflowMediaLibraryAsset(Base):
 
     workflow_id: Mapped[str] = mapped_column(
         String(36),
-        ForeignKey("product_workflows.id", ondelete="CASCADE", name="fk_workflow_media_library_assets_workflow_id"),
+        ForeignKey("workflow_graphs.id", ondelete="CASCADE", name="fk_workflow_media_library_assets_workflow_id"),
         primary_key=True,
     )
     media_library_asset_id: Mapped[str] = mapped_column(
@@ -3813,5 +2950,5 @@ class WorkflowMediaLibraryAsset(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-    workflow: Mapped[ProductWorkflow] = relationship(back_populates="media_library_links")
+    graph: Mapped[WorkflowGraph] = relationship(back_populates="media_library_links")
     media_library_asset: Mapped[MediaLibraryAsset] = relationship(back_populates="workflow_links")

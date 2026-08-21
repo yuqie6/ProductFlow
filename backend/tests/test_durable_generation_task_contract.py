@@ -8,7 +8,6 @@ from productflow_backend.domain.durable_generation_tasks import (
     GRAPH_RUN_GENERATION_TASK_CONTRACT,
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
     QUEUE_UNAVAILABLE_DETAIL,
-    WORKFLOW_RUN_GENERATION_TASK_CONTRACT,
     WorkflowRunDeliveryState,
     assert_actor_uses_durable_generation_contract,
     classify_workflow_run_delivery,
@@ -18,14 +17,14 @@ from productflow_backend.domain.errors import QueueUnavailableError
 
 
 def test_durable_generation_task_contract_keeps_workflow_and_image_models_separate() -> None:
-    assert WORKFLOW_RUN_GENERATION_TASK_CONTRACT.durable_model_name == "WorkflowRun"
+    assert GRAPH_RUN_GENERATION_TASK_CONTRACT.durable_model_name == "WorkflowGraphRun"
     assert IMAGE_SESSION_GENERATION_TASK_CONTRACT.durable_model_name == "ImageSessionGenerationTask"
 
-    assert WORKFLOW_RUN_GENERATION_TASK_CONTRACT.is_active(WorkflowRunStatus.RUNNING)
-    assert WORKFLOW_RUN_GENERATION_TASK_CONTRACT.is_terminal(WorkflowRunStatus.SUCCEEDED)
-    assert WORKFLOW_RUN_GENERATION_TASK_CONTRACT.is_terminal(WorkflowRunStatus.CANCELLED)
-    assert WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_queued(WorkflowNodeStatus.QUEUED)
-    assert WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_running(WorkflowNodeStatus.RUNNING)
+    assert GRAPH_RUN_GENERATION_TASK_CONTRACT.is_active(WorkflowRunStatus.RUNNING)
+    assert GRAPH_RUN_GENERATION_TASK_CONTRACT.is_terminal(WorkflowRunStatus.SUCCEEDED)
+    assert GRAPH_RUN_GENERATION_TASK_CONTRACT.is_terminal(WorkflowRunStatus.CANCELLED)
+    assert GRAPH_RUN_GENERATION_TASK_CONTRACT.execution_is_queued(WorkflowNodeStatus.QUEUED)
+    assert GRAPH_RUN_GENERATION_TASK_CONTRACT.execution_is_running(WorkflowNodeStatus.RUNNING)
 
     assert IMAGE_SESSION_GENERATION_TASK_CONTRACT.is_active(JobStatus.QUEUED)
     assert IMAGE_SESSION_GENERATION_TASK_CONTRACT.is_active(JobStatus.RUNNING)
@@ -74,18 +73,7 @@ def test_durable_generation_task_contract_matches_worker_actor_retry_policy(conf
     from productflow_backend.workers import (
         run_delivery_rendition_job,
         run_image_session_generation_task,
-        run_product_workflow_node_run,
-        run_product_workflow_run,
         run_workflow_graph_run,
-    )
-
-    assert_actor_uses_durable_generation_contract(
-        WORKFLOW_RUN_GENERATION_TASK_CONTRACT,
-        run_product_workflow_run,
-    )
-    assert_actor_uses_durable_generation_contract(
-        WORKFLOW_RUN_GENERATION_TASK_CONTRACT,
-        run_product_workflow_node_run,
     )
     assert_actor_uses_durable_generation_contract(
         IMAGE_SESSION_GENERATION_TASK_CONTRACT,

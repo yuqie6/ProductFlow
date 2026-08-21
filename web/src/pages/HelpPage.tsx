@@ -62,7 +62,7 @@ const HELP_DOCS = {
     {
       slug: "overview",
       title: "ProductFlow 文档概览",
-      description: "当前版本围绕 Agent 商品创建、V2 工作流画布、商品图库、全局素材库和 Global Agent Dock 组织完整链路。",
+      description: "当前版本围绕 Agent 商品创建、工作流画布、商品图库、全局素材库和 Global Agent Dock 组织完整链路。",
       category: "快速开始",
       icon: BookOpen,
       sections: [
@@ -177,7 +177,7 @@ const HELP_DOCS = {
     },
     {
       slug: "workflow-canvas",
-      title: "V2 工作流画布",
+      title: "工作流画布",
       description: "画布保留自由添加、连接、拖动、局部组织和节点详情编辑能力。",
       category: "工作流",
       icon: GitBranch,
@@ -189,10 +189,12 @@ const HELP_DOCS = {
             {
               type: "list",
               items: [
-                "商品资料节点：提供已确认的商品事实。",
-                "参考图节点：一个节点承载一张具体图片，可从商品图库绑定。",
-                "提示词生成节点：根据商品事实、视觉体系和图片目标生成单类或单张图片提示词。",
-                "图片生成节点：保存比例、品质、文字策略、背景意图和参考保真度，并执行生图。",
+                "商品资料：保存确认过的商品事实。",
+                "图片素材：绑定商品图片库中的一张明确图片。",
+                "创作要求：保存工作流级目标和限制。",
+                "视觉规范：保存视觉体系引用。",
+                "提示词生成：把商品事实、创作要求和视觉规范整理成可编辑提示词。",
+                "图片生成：保存比例、分辨率、质量、背景、文字策略、参考保真度和执行状态。",
               ],
             },
           ],
@@ -418,7 +420,7 @@ const HELP_DOCS = {
     {
       slug: "overview",
       title: "ProductFlow Docs Overview",
-      description: "The current product flow is built around Agent-led product creation, the V2 workflow canvas, the product library, the global media library, and the Global Agent Dock.",
+      description: "The current product flow is built around Agent-led product creation, the workflow canvas, the product library, the global media library, and the Global Agent Dock.",
       category: "Getting started",
       icon: BookOpen,
       sections: [
@@ -450,12 +452,12 @@ const HELP_DOCS = {
     },
     {
       slug: "workflow-canvas",
-      title: "V2 workflow canvas",
+      title: "Workflow canvas",
       description: "The canvas supports free node creation, connections, movement, local grouping, and detailed node editing.",
       category: "Workflow",
       icon: GitBranch,
       sections: [
-        { id: "nodes", title: "Node responsibilities", blocks: [{ type: "list", items: ["Product context supplies confirmed product facts.", "A reference image node holds exactly one product-library image.", "Prompt generation combines facts, visual rules, and the image goal into a prompt.", "Image generation stores ratio, quality, text policy, background intent, reference fidelity, and execution state."] }] },
+        { id: "nodes", title: "Node responsibilities", blocks: [{ type: "list", items: ["Product facts hold confirmed product facts.", "An image asset node binds exactly one product-library image.", "Creative brief holds workflow-level goals and constraints.", "Visual system holds a visual-system version reference.", "Prompt generation combines facts, brief, and visual rules into a prompt.", "Image generation stores ratio, quality, text policy, background intent, reference fidelity, and execution state."] }] },
         { id: "organization", title: "Connections and local organization", blocks: [{ type: "paragraph", text: "Nodes expose clear input and output connection points. Canvas folders can group a local flow when the graph becomes large; they improve layout without changing DAG execution semantics." }, { type: "callout", title: "Reuse is user-owned", text: "Save a full workflow or selected fragment as a workflow recipe. Later reuse comes only from content the user explicitly saved." }] },
       ],
     },
@@ -530,7 +532,7 @@ const HELP_DOCS = {
     {
       slug: "overview",
       title: "ProductFlow ドキュメント概要",
-      description: "現在の ProductFlow は Agent による商品作成、V2 ワークフローキャンバス、商品ライブラリ、グローバル素材ライブラリ、Global Agent Dock で構成されています。",
+      description: "現在の ProductFlow は Agent による商品作成、ワークフローキャンバス、商品ライブラリ、グローバル素材ライブラリ、Global Agent Dock で構成されています。",
       category: "はじめに",
       icon: BookOpen,
       sections: [
@@ -562,7 +564,7 @@ const HELP_DOCS = {
     },
     {
       slug: "workflow-canvas",
-      title: "V2 ワークフローキャンバス",
+      title: "ワークフローキャンバス",
       description: "ノード追加、接続、移動、局所整理、ノード詳細編集を行えます。",
       category: "ワークフロー",
       icon: GitBranch,
@@ -642,7 +644,7 @@ const HELP_DOCS = {
     {
       slug: "overview",
       title: "Tổng quan tài liệu ProductFlow",
-      description: "Luồng hiện tại gồm tạo sản phẩm bằng Agent, canvas quy trình V2, thư viện sản phẩm, thư viện tài nguyên toàn cục và Global Agent Dock.",
+      description: "Luồng hiện tại gồm tạo sản phẩm bằng Agent, canvas quy trình, thư viện sản phẩm, thư viện tài nguyên toàn cục và Global Agent Dock.",
       category: "Bắt đầu",
       icon: BookOpen,
       sections: [
@@ -674,7 +676,7 @@ const HELP_DOCS = {
     },
     {
       slug: "workflow-canvas",
-      title: "Canvas quy trình V2",
+      title: "Canvas quy trình",
       description: "Canvas hỗ trợ thêm node, nối dây, di chuyển, tổ chức cục bộ và chỉnh chi tiết node.",
       category: "Quy trình",
       icon: GitBranch,

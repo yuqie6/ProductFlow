@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
@@ -18,8 +17,10 @@ from productflow_backend.application.product_workflow.graph_compiler import (
     select_run_node_ids,
     snapshot_graph,
 )
+from productflow_backend.application.product_workflow.graph_visual import visual_overlay_from_config
+from productflow_backend.application.product_workflow.product_sources import resolve_product_source
 from productflow_backend.application.time import now_utc
-from productflow_backend.domain.durable_generation_tasks import WORKFLOW_RUN_GENERATION_TASK_CONTRACT
+from productflow_backend.domain.durable_generation_tasks import GRAPH_RUN_GENERATION_TASK_CONTRACT
 from productflow_backend.domain.enums import (
     GraphArtifactType,
     GraphNodeType,
@@ -30,7 +31,6 @@ from productflow_backend.domain.enums import (
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     Product,
-    ProductFactSetVersion,
     ProductImageAsset,
     VisualSystemVersion,
     WorkflowGraph,
@@ -54,10 +54,6 @@ def load_graph_sources(session: Session, graph: WorkflowGraph, applied: AppliedG
     product = session.get(Product, graph.product_id)
     if product is None:
         raise NotFoundError("商品不存在")
-    fact_set = None
-    if product.current_fact_set_version_id:
-        fact_set = session.get(ProductFactSetVersion, product.current_fact_set_version_id)
-    facts = _facts_from_set(fact_set)
     nodes = {node.id: node for node in session.scalars(
         select(WorkflowGraphNode).where(WorkflowGraphNode.graph_id == graph.id)
     )}
@@ -74,7 +70,12 @@ def load_graph_sources(session: Session, graph: WorkflowGraph, applied: AppliedG
         artifact = artifacts.get(row.current_artifact_id) if row and row.current_artifact_id else None
         record = GraphSourceRecord()
         if node.node_type == GraphNodeType.PRODUCT_SOURCE:
-            record = GraphSourceRecord(facts=facts)
+            source = resolve_product_source(
+                session,
+                graph_product_id=graph.product_id,
+                config=node.config,
+            )
+            record = GraphSourceRecord(facts=source.facts, product_source=source)
         elif node.node_type == GraphNodeType.CREATIVE_BRIEF:
             record = GraphSourceRecord(brief=dict(node.config))
         elif node.node_type == GraphNodeType.VISUAL_SYSTEM:
@@ -84,6 +85,8 @@ def load_graph_sources(session: Session, graph: WorkflowGraph, applied: AppliedG
                 version = session.get(VisualSystemVersion, version_id)
                 if version is not None:
                     payload = dict(version.payload_json)
+            if payload is None:
+                payload = visual_overlay_from_config(node.config)
             record = GraphSourceRecord(
                 visual_payload=payload,
                 visual_system_version_id=version_id if isinstance(version_id, str) else None,
@@ -98,6 +101,7 @@ def load_graph_sources(session: Session, graph: WorkflowGraph, applied: AppliedG
         if artifact is not None:
             record = GraphSourceRecord(
                 facts=record.facts,
+                product_source=record.product_source,
                 brief=record.brief,
                 visual_payload=record.visual_payload,
                 visual_system_version_id=record.visual_system_version_id,
@@ -254,7 +258,7 @@ def cancel_graph_run(
     run = get_graph_run(session, product_id=product_id, graph_id=graph_id, run_id=run_id)
     if run.status == WorkflowRunStatus.CANCELLED:
         return run
-    if WORKFLOW_RUN_GENERATION_TASK_CONTRACT.is_terminal(run.status):
+    if GRAPH_RUN_GENERATION_TASK_CONTRACT.is_terminal(run.status):
         raise ConflictError("已结束的工作流运行不能取消")
     now = now_utc()
     run.status = WorkflowRunStatus.CANCELLED
@@ -295,15 +299,6 @@ def retry_graph_run(
     )
 
 
-def _facts_from_set(fact_set: ProductFactSetVersion | None) -> tuple[dict[str, Any], ...]:
-    if fact_set is None:
-        return ()
-    facts = fact_set.payload_json.get("facts")
-    if not isinstance(facts, list):
-        return ()
-    return tuple(dict(fact) for fact in facts if isinstance(fact, dict))
-
-
 def _asset_metadata(session: Session, *, product_id: str, asset_id: str | None) -> ProductImageAsset | None:
     if not asset_id:
         return None
@@ -312,6 +307,4 @@ def _asset_metadata(session: Session, *, product_id: str, asset_id: str | None) 
         .options(selectinload(ProductImageAsset.media_object))
         .where(ProductImageAsset.id == asset_id, ProductImageAsset.product_id == product_id)
     )
-
-
 

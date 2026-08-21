@@ -38,8 +38,9 @@ from productflow_backend.application.runtime_settings import get_runtime_setting
 from productflow_backend.config import get_settings
 from productflow_backend.domain.enums import (
     AsyncDispatchStatus,
+    GraphNodeType,
+    GraphRunScope,
     WorkflowNodeStatus,
-    WorkflowNodeType,
     WorkflowRunStatus,
 )
 from productflow_backend.infrastructure.db.models import (
@@ -47,13 +48,13 @@ from productflow_backend.infrastructure.db.models import (
     AsyncDispatch,
     Base,
     Product,
-    ProductWorkflow,
-    WorkflowNode,
-    WorkflowNodeRun,
-    WorkflowRun,
+    WorkflowGraph,
+    WorkflowGraphNode,
+    WorkflowGraphNodeRun,
+    WorkflowGraphRun,
 )
 from productflow_backend.infrastructure.db.session import get_engine, get_session_factory
-from productflow_backend.infrastructure.queue import enqueue_async_dispatch, enqueue_workflow_run, get_broker
+from productflow_backend.infrastructure.queue import enqueue_async_dispatch, enqueue_graph_run, get_broker
 
 LIVE_RECOVERY_SWITCH = "PRODUCTFLOW_RUN_LIVE_RECOVERY"
 LIVE_REDIS_RESTART_SWITCH = "PRODUCTFLOW_RUN_LIVE_AGENT_REDIS_RESTART"
@@ -203,7 +204,7 @@ def live_recovery_dependencies(
                 broker.client.flushdb()
 
                 workers = importlib.import_module(WORKERS_MODULE)
-                assert workers.run_product_workflow_run.broker is broker
+                assert workers.run_workflow_graph_run.broker is broker
                 yield broker, workers
             finally:
                 try:
@@ -224,35 +225,55 @@ def test_recover_queued_workflow_run_through_postgres_and_redis(
 
     with session_factory() as session:
         product = Product(name="Live recovery gate product")
-        workflow = ProductWorkflow(product=product, title="Live recovery gate workflow")
-        node = WorkflowNode(
-            workflow=workflow,
-            node_type=WorkflowNodeType.PROMPT_GENERATION,
-            title="Queued prompt node",
-            status=WorkflowNodeStatus.QUEUED,
-        )
-        workflow_run = WorkflowRun(workflow=workflow, status=WorkflowRunStatus.RUNNING)
-        node_run = WorkflowNodeRun(
-            workflow_run=workflow_run,
-            node=node,
-            status=WorkflowNodeStatus.QUEUED,
+        graph = WorkflowGraph(
+            product=product,
+            title="Live recovery gate workflow",
+            revision=1,
+            schema_version=3,
+            active=True,
         )
         session.add(product)
+        session.flush()
+        node = WorkflowGraphNode(
+            graph_id=graph.id,
+            node_type=GraphNodeType.PROMPT_GENERATION,
+            title="Queued prompt node",
+        )
+        session.add(node)
+        session.flush()
+        graph_run = WorkflowGraphRun(
+            graph_id=graph.id,
+            status=WorkflowRunStatus.RUNNING,
+            run_scope=GraphRunScope.GRAPH,
+            graph_revision=1,
+            snapshot_json={"revision": 1, "nodes": [], "edges": [], "groups": []},
+        )
+        session.add(graph_run)
+        session.flush()
+        node_run = WorkflowGraphNodeRun(
+            graph_run_id=graph_run.id,
+            node_id=node.id,
+            status=WorkflowNodeStatus.QUEUED,
+            sort_order=0,
+        )
+        session.add(node_run)
         session.commit()
-        run_id = workflow_run.id
+        run_id = graph_run.id
         node_run_id = node_run.id
 
-    summary = recover_unfinished_workflow_runs(enqueue=enqueue_workflow_run)
+    summary = recover_unfinished_workflow_runs(enqueue=enqueue_graph_run)
 
     assert summary.queued_runs == 1
     assert summary.stale_running_runs == 0
     assert summary.enqueued_runs == 1
 
     with session_factory() as session:
-        persisted_run = session.get(WorkflowRun, run_id)
-        persisted_node_run = session.get(WorkflowNodeRun, node_run_id)
+        persisted_run = session.get(WorkflowGraphRun, run_id)
+        persisted_node_run = session.get(WorkflowGraphNodeRun, node_run_id)
         active_run_ids = set(
-            session.scalars(select(WorkflowRun.id).where(WorkflowRun.status == WorkflowRunStatus.RUNNING)).all()
+            session.scalars(
+                select(WorkflowGraphRun.id).where(WorkflowGraphRun.status == WorkflowRunStatus.RUNNING)
+            ).all()
         )
         assert persisted_run is not None
         assert persisted_run.status == WorkflowRunStatus.RUNNING
@@ -260,15 +281,15 @@ def test_recover_queued_workflow_run_through_postgres_and_redis(
         assert persisted_node_run.status == WorkflowNodeStatus.QUEUED
         assert active_run_ids == {run_id}
 
-    consumer = broker.consume(workers.run_product_workflow_run.queue_name, prefetch=1, timeout=5_000)
+    consumer = broker.consume(workers.run_workflow_graph_run.queue_name, prefetch=1, timeout=5_000)
     try:
         message = next(consumer)
         assert message is not None
-        assert message.actor_name == "run_product_workflow_run"
+        assert message.actor_name == "run_workflow_graph_run"
         assert message.args == (run_id,)
         assert message.kwargs == {}
         consumer.ack(message)
-        broker.join(workers.run_product_workflow_run.queue_name, timeout=5_000)
+        broker.join(workers.run_workflow_graph_run.queue_name, timeout=5_000)
     finally:
         consumer.close()
 

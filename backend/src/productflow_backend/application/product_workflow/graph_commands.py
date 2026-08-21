@@ -16,6 +16,7 @@ from productflow_backend.application.product_workflow.graph_apply import (
     invert_applied_graph,
 )
 from productflow_backend.application.product_workflow.graph_contracts import GraphOperation, WorkflowChangeSet
+from productflow_backend.application.product_workflow.product_sources import validate_product_source_configs
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.enums import GraphActorType, GraphEdgeDataType, GraphEdgeRole, GraphNodeType
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
@@ -114,6 +115,7 @@ def stage_new_workflow_graph(
     applied = apply_workflow_change_set(EMPTY_GRAPH, change_set)
     applied = assign_persistent_ids(EMPTY_GRAPH, applied)
     _validate_bound_assets(session, product_id=product_id, graph=applied)
+    validate_product_source_configs(session, graph_product_id=product_id, graph=applied)
     graph = WorkflowGraph(
         product_id=product_id,
         title=title,
@@ -162,6 +164,7 @@ def apply_graph_change_set(
         proposed = apply_workflow_change_set(before, change_set)
         after = assign_persistent_ids(before, proposed)
         _validate_bound_assets(session, product_id=product_id, graph=after)
+        validate_product_source_configs(session, graph_product_id=product_id, graph=after)
         graph.revision = after.revision
         graph.updated_at = now_utc()
         _replace_graph_contents(session, graph, after)

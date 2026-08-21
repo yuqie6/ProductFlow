@@ -28,7 +28,12 @@ from productflow_backend.application.storage_compensation import StorageWriteCom
 from productflow_backend.application.time import now_utc
 from productflow_backend.application.workflow_drafts.contracts import DeliverySpec
 from productflow_backend.domain.durable_generation_tasks import DELIVERY_RENDITION_TASK_CONTRACT
-from productflow_backend.domain.enums import JobStatus, MediaVerificationStatus, ProductImageOriginType
+from productflow_backend.domain.enums import (
+    GraphArtifactType,
+    JobStatus,
+    MediaVerificationStatus,
+    ProductImageOriginType,
+)
 from productflow_backend.domain.errors import (
     BusinessError,
     BusinessValidationError,
@@ -39,7 +44,7 @@ from productflow_backend.infrastructure.db.models import (
     DeliveryRenditionJob,
     Product,
     ProductImageAsset,
-    WorkflowImageGenerationRecord,
+    WorkflowGraphArtifact,
     new_id,
 )
 from productflow_backend.infrastructure.db.session import get_session_factory
@@ -472,13 +477,16 @@ def _validate_source_asset(session: Session, source_asset: ProductImageAsset) ->
         raise BusinessValidationError("交付派生不能以已有派生图作为原图")
     if source_asset.media_object.verification_status != MediaVerificationStatus.VERIFIED:
         raise BusinessValidationError("交付派生原图媒体尚未通过核验")
-    generation_record_id = session.scalar(
-        select(WorkflowImageGenerationRecord.id)
-        .where(WorkflowImageGenerationRecord.result_asset_id == source_asset.id)
+    generation_artifact_id = session.scalar(
+        select(WorkflowGraphArtifact.id)
+        .where(
+            WorkflowGraphArtifact.product_image_asset_id == source_asset.id,
+            WorkflowGraphArtifact.artifact_type == GraphArtifactType.IMAGE,
+        )
         .limit(1)
     )
-    if generation_record_id is None:
-        raise BusinessValidationError("交付派生只接受成功的 schema-v2 工作流生成原图")
+    if generation_artifact_id is None:
+        raise BusinessValidationError("交付派生只接受成功的工作流生成原图")
 
 
 def _job_query():

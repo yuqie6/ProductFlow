@@ -24,6 +24,25 @@ describe("shared workflow canvas chrome", () => {
     expect(markup).toContain("选择");
   });
 
+  it("keeps idle input ports visually distinct from the node card", () => {
+    const markup = renderToStaticMarkup(
+      createElement(
+        ReactFlowProvider,
+        null,
+        createElement(WorkflowCanvasNodePort, {
+          id: "input",
+          type: "target",
+          top: "50%",
+          label: "输入",
+          connectable: true,
+        }),
+      ),
+    );
+
+    expect(markup).toContain("!border-slate-500");
+    expect(markup).toContain("!shadow-[0_0_0_2px_#fff");
+  });
+
   it("disables both connection directions when a presentation port is read-only", () => {
     const markup = renderToStaticMarkup(
       createElement(

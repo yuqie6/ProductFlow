@@ -10,11 +10,9 @@ from productflow_backend.config import get_settings
 from productflow_backend.domain.durable_generation_tasks import (
     DELIVERY_RENDITION_TASK_CONTRACT,
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
-    WORKFLOW_RUN_GENERATION_TASK_CONTRACT,
 )
 
 DEFAULT_DRAMATIQ_QUEUE_NAME = "default"
-WORKFLOW_NODE_RUN_ACTOR_NAME = "run_product_workflow_node_run"
 GRAPH_RUN_ACTOR_NAME = "run_workflow_graph_run"
 AGENT_TURN_SYNC_ACTOR_NAME = "run_agent_turn_sync"
 
@@ -45,22 +43,6 @@ def _enqueue_actor_args(actor_name: str, args: tuple[str, ...], *, delay_ms: int
         broker.enqueue(message)
     else:
         broker.enqueue(message, delay=delay_ms)
-
-
-def enqueue_workflow_run(run_id: str) -> None:
-    _enqueue_actor(WORKFLOW_RUN_GENERATION_TASK_CONTRACT.actor_name, run_id)
-
-
-def enqueue_workflow_run_later(run_id: str, *, delay_ms: int) -> None:
-    _enqueue_actor(WORKFLOW_RUN_GENERATION_TASK_CONTRACT.actor_name, run_id, delay_ms=delay_ms)
-
-
-def enqueue_workflow_node_run(node_run_id: str) -> None:
-    _enqueue_actor(WORKFLOW_NODE_RUN_ACTOR_NAME, node_run_id)
-
-
-def enqueue_workflow_node_run_later(node_run_id: str, *, delay_ms: int) -> None:
-    _enqueue_actor(WORKFLOW_NODE_RUN_ACTOR_NAME, node_run_id, delay_ms=delay_ms)
 
 
 def enqueue_graph_run(run_id: str) -> None:

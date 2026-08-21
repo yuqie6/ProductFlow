@@ -340,6 +340,42 @@ export function AgentProductCreatePage() {
     setError("");
   };
 
+  const directCreateMutation = useMutation({
+    mutationFn: async () => {
+      const trimmedName = name.trim();
+      return api.createProductDirect({
+        name: trimmedName,
+        images: [...referenceFiles],
+        imageTypes: selections.map((item) => ({ key: item.key, quantity: item.quantity })),
+      });
+    },
+    onSuccess: (result) => {
+      queryClient.setQueryData(["workflow-graph", result.product.id], result.graph);
+      queryClient.setQueryData(["product", result.product.id], result.product);
+      void queryClient.invalidateQueries({ queryKey: ["products"] });
+      navigate(`/products/${result.product.id}`);
+    },
+    onError: (mutationError) => {
+      setError(errorDetail(mutationError, t("agentCreate.error.failed")));
+    },
+  });
+
+  const handleDirectCreate = () => {
+    if (workspace || submitMutation.isPending || directCreateMutation.isPending) return;
+    const issue = validateAgentProductWorkspaceInput({
+      name,
+      selections,
+      referenceImageCount: referenceFiles.length,
+      limits: options?.limits ?? null,
+    });
+    if (issue) {
+      setError(validationMessage(t, issue));
+      return;
+    }
+    setError("");
+    directCreateMutation.mutate();
+  };
+
   const handleSubmit = () => {
     if (reconciliationRequired) {
       if (!reconciliationMutation.isPending) reconciliationMutation.mutate();
@@ -420,7 +456,7 @@ export function AgentProductCreatePage() {
       : "");
   const restoring = Boolean(workspaceId && !workspace && workspaceQuery.isLoading);
   const restoreError = workspaceId && !workspace ? workspaceQuery.error : null;
-  const isSubmitting = submitMutation.isPending || reconciliationMutation.isPending;
+  const isSubmitting = submitMutation.isPending || reconciliationMutation.isPending || directCreateMutation.isPending;
   const restoredUnfinalizedWorkspace = Boolean(
     workspaceId && workspace && !workspace.intake_finalized && !localWorkspace,
   );
@@ -541,6 +577,8 @@ export function AgentProductCreatePage() {
               onRemoveReferenceFile={handleRemoveReferenceFile}
               onRetryOptions={() => void optionsQuery.refetch()}
               onSubmit={handleSubmit}
+              onDirectCreate={workspace ? undefined : handleDirectCreate}
+              isDirectCreating={directCreateMutation.isPending}
             />
           </div>
         ) : null}

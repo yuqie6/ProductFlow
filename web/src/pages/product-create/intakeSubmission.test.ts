@@ -36,7 +36,6 @@ function workspace(conversationId: string, intakeFinalized = false): AgentProduc
       current_version: 0,
       revisions: [],
       intake: null,
-      final_workflow_id: null,
       recipe_seed: null,
       legacy_archive_seed: null,
       limits: {

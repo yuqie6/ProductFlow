@@ -50,6 +50,48 @@ def _install_current_archive_profile(db_session, *, revision: str = "20260815_00
             ")"
         )
     )
+    db_session.execute(
+        sa.text(
+            "CREATE TABLE IF NOT EXISTS product_workflows ("
+            "id VARCHAR(36) PRIMARY KEY, product_id VARCHAR(36) NOT NULL, title VARCHAR(255), "
+            "active BOOLEAN NOT NULL, schema_version INTEGER NOT NULL, revision INTEGER NOT NULL, "
+            "edit_version INTEGER NOT NULL"
+            ")"
+        )
+    )
+    db_session.execute(
+        sa.text(
+            "CREATE TABLE IF NOT EXISTS workflow_nodes ("
+            "id VARCHAR(36) PRIMARY KEY, workflow_id VARCHAR(36) NOT NULL, "
+            "schema_version INTEGER, node_key VARCHAR(80), node_type VARCHAR(40) NOT NULL, "
+            "status VARCHAR(40) NOT NULL, folder_id VARCHAR(36), bound_image_asset_id VARCHAR(36)"
+            ")"
+        )
+    )
+    db_session.execute(
+        sa.text(
+            "CREATE TABLE IF NOT EXISTS workflow_edges ("
+            "id VARCHAR(36) PRIMARY KEY, workflow_id VARCHAR(36) NOT NULL, "
+            "source_node_id VARCHAR(36) NOT NULL, target_node_id VARCHAR(36) NOT NULL, "
+            "edge_key VARCHAR(80)"
+            ")"
+        )
+    )
+    db_session.execute(
+        sa.text(
+            "CREATE TABLE IF NOT EXISTS workflow_runs ("
+            "id VARCHAR(36) PRIMARY KEY, workflow_id VARCHAR(36) NOT NULL, status VARCHAR(40) NOT NULL"
+            ")"
+        )
+    )
+    db_session.execute(
+        sa.text(
+            "CREATE TABLE IF NOT EXISTS workflow_node_runs ("
+            "id VARCHAR(36) PRIMARY KEY, workflow_run_id VARCHAR(36) NOT NULL, "
+            "node_id VARCHAR(36) NOT NULL, status VARCHAR(40) NOT NULL"
+            ")"
+        )
+    )
     db_session.commit()
 
 

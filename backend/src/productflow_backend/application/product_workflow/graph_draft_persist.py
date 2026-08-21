@@ -14,8 +14,10 @@ from productflow_backend.application.product_workflow.graph_commands import (
 )
 from productflow_backend.application.product_workflow.graph_queries import GraphProjection, project_workflow_graph
 from productflow_backend.application.time import now_utc
-from productflow_backend.application.workflow_drafts.materialization import _parse_and_verify_revision
-from productflow_backend.application.workflow_drafts.service import validate_workflow_draft_reference_assets
+from productflow_backend.application.workflow_drafts.service import (
+    parse_and_verify_draft_revision,
+    validate_workflow_draft_reference_assets,
+)
 from productflow_backend.domain.enums import WorkflowDraftStatus
 from productflow_backend.domain.errors import ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
@@ -77,12 +79,14 @@ def persist_confirmed_draft_graph(
     if active is not None:
         raise ConflictError("商品已有 active schema-v3 工作流")
 
-    artifact = _parse_and_verify_revision(requested_revision)
+    artifact = parse_and_verify_draft_revision(requested_revision)
     validate_workflow_draft_reference_assets(session, product_id=product_id, artifact=artifact)
     change_set = build_draft_initial_graph_change_set(
         artifact,
         draft_revision_id=requested_revision.id,
         visual_system_version_id=requested_revision.visual_system_version_id,
+        source_product_id=product_id,
+        fact_set_version_id=requested_revision.fact_set_version.id if requested_revision.fact_set_version else None,
     )
     try:
         command = stage_new_workflow_graph(

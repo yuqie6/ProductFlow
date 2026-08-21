@@ -25,7 +25,7 @@ from productflow_backend.domain.errors import ConflictError
 from productflow_backend.infrastructure.agent_service import AgentServiceArtifact, AgentServiceTurnState
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
-    ProductWorkflow,
+    WorkflowGraph,
     WorkflowMediaLibraryAsset,
 )
 from productflow_backend.presentation.api import create_app
@@ -76,7 +76,7 @@ def _asset_with_workflows(db_session, workflow_titles: list[str]):
         product_image_asset_id=product.image_assets[0].id,
     ).asset
     workflows = [
-        ProductWorkflow(
+        WorkflowGraph(
             product_id=product.id,
             title=title,
             active=index == 0,

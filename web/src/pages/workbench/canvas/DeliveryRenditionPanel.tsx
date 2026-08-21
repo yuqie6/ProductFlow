@@ -17,7 +17,6 @@ import type {
   DeliveryRenditionJob,
   ProductImageAsset,
   WorkflowDeliverySpec,
-  WorkflowNodeV2,
 } from "../../../lib/types";
 import {
   deliverySpecKey,
@@ -27,19 +26,19 @@ import {
 
 interface DeliveryRenditionPanelProps {
   productId: string;
-  node: WorkflowNodeV2 | null;
+  sourceAssetId?: string | null;
+  deliverySpec?: unknown;
   onPreviewImage: (image: DownloadableImage) => void;
 }
 
 export function DeliveryRenditionPanel({
   productId,
-  node,
+  sourceAssetId = null,
+  deliverySpec: rawDeliverySpec,
   onPreviewImage,
 }: DeliveryRenditionPanelProps) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
-  const sourceAssetId = node?.bound_image_asset_id ?? null;
-  const rawDeliverySpec = node?.config_json.delivery_spec;
   const deliverySpec = parseWorkflowDeliverySpec(rawDeliverySpec);
   const deliverySpecInvalid = rawDeliverySpec !== undefined && rawDeliverySpec !== null && !deliverySpec;
   const queryKey = ["delivery-renditions", sourceAssetId] as const;
@@ -55,7 +54,7 @@ export function DeliveryRenditionPanel({
       queryClient.invalidateQueries({ queryKey }),
       queryClient.invalidateQueries({ queryKey: ["product-image-library", productId] }),
       queryClient.invalidateQueries({ queryKey: ["product-image-library-assets", productId] }),
-      queryClient.invalidateQueries({ queryKey: ["active-product-workflow-v2", productId] }),
+      queryClient.invalidateQueries({ queryKey: ["workflow-graph", productId] }),
     ]);
   };
   const createMutation = useMutation({
@@ -73,9 +72,6 @@ export function DeliveryRenditionPanel({
     onSuccess: (asset) => onPreviewImage(toDownloadableImage(asset)),
   });
 
-  if (!node) {
-    return <PanelState icon={<FileImage size={20} />} text={t("workflowV2.rendition.selectImageNode")} />;
-  }
   if (!sourceAssetId) {
     return <PanelState icon={<FileImage size={20} />} text={t("workflowV2.rendition.runImageNode")} />;
   }

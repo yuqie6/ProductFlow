@@ -6,6 +6,7 @@ import { api, ApiError } from "../../../lib/api";
 import type { DownloadableImage } from "../../../lib/image-downloads";
 import { useI18n } from "../../../lib/preferences";
 import type { MediaLibraryAsset, WorkflowMediaLibraryAsset } from "../../../lib/types";
+import { IMAGE_EXPLORER_DRAG_MIME, encodeAssetDragPayload } from "../chrome/image-explorer/explorerState";
 import type { ImageExplorerReferenceTarget } from "../chrome/image-explorer/ProductImageExplorer";
 
 interface WorkflowMediaLibraryPanelProps {
@@ -44,7 +45,7 @@ export function WorkflowMediaLibraryPanel({
       setSelectedIds(new Set());
       setPickerOpen(false);
       await queryClient.invalidateQueries({ queryKey: ["workflow-media-library", productId, workflowId] });
-      await queryClient.invalidateQueries({ queryKey: ["active-product-workflow-v2", productId] });
+      await queryClient.invalidateQueries({ queryKey: ["workflow-graph", productId] });
     },
   });
   const removeMutation = useMutation({
@@ -53,18 +54,14 @@ export function WorkflowMediaLibraryPanel({
   });
   const referenceMutation = useMutation({
     mutationFn: (asset: WorkflowMediaLibraryAsset) => {
-      if (!referenceTarget || !asset.product_image_asset_id) {
+      if (!referenceTarget?.bindAsset || !asset.product_image_asset_id) {
         throw new Error(t("workflowV2.reference.unavailable"));
       }
-      return api.bindWorkflowReferenceAsset(productId, workflowId, referenceTarget.nodeId, {
-        asset_id: asset.product_image_asset_id,
-        expected_workflow_revision: referenceTarget.expectedWorkflowRevision,
-        expected_bound_asset_id: referenceTarget.expectedBoundAssetId,
-      });
+      return referenceTarget.bindAsset({ id: asset.product_image_asset_id });
     },
-    onSuccess: async (result) => {
-      referenceTarget?.onBound?.(result);
-      await queryClient.invalidateQueries({ queryKey: ["active-product-workflow-v2", productId] });
+    onSuccess: async () => {
+      referenceTarget?.onBound?.();
+      await queryClient.invalidateQueries({ queryKey: ["workflow-graph", productId] });
     },
   });
   const error = [linkedQuery.error, pickerQuery.error, syncMutation.error, removeMutation.error, referenceMutation.error]
@@ -108,7 +105,7 @@ export function WorkflowMediaLibraryPanel({
       </div>
 
       {error ? <div role="alert" className="m-3 rounded-md border border-red-200 bg-red-50 px-2.5 py-2 text-xs text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200">{error instanceof ApiError ? error.detail : error.message}</div> : null}
-      {linkedQuery.isLoading ? <PanelState icon={<Loader2 size={17} className="animate-spin" />} text={t("workflowV2.mediaLibrary.loading")} /> : linked.length === 0 ? <PanelState icon={<Images size={20} />} text={t("workflowV2.mediaLibrary.empty")} action={t("workflowV2.mediaLibrary.add")} onAction={() => setPickerOpen(true)} /> : <div className="min-h-0 flex-1 overflow-y-auto p-3"><div className="grid grid-cols-2 gap-2">{linked.map((item) => <LinkedAssetCard key={item.asset.id} item={item} busy={busy} canReference={Boolean(referenceTarget?.nodeId && item.product_image_asset_id)} onPreview={() => preview(item.asset)} onRemove={() => removeMutation.mutate(item.asset.id)} onUseAsReference={() => referenceMutation.mutate(item)} />)}</div></div>}
+      {linkedQuery.isLoading ? <PanelState icon={<Loader2 size={17} className="animate-spin" />} text={t("workflowV2.mediaLibrary.loading")} /> : linked.length === 0 ? <PanelState icon={<Images size={20} />} text={t("workflowV2.mediaLibrary.empty")} action={t("workflowV2.mediaLibrary.add")} onAction={() => setPickerOpen(true)} /> : <div className="min-h-0 flex-1 overflow-y-auto p-3"><div className="grid grid-cols-2 gap-2">{linked.map((item) => <LinkedAssetCard key={item.asset.id} item={item} busy={busy} canReference={Boolean(referenceTarget?.bindAsset && item.product_image_asset_id)} onPreview={() => preview(item.asset)} onRemove={() => removeMutation.mutate(item.asset.id)} onUseAsReference={() => referenceMutation.mutate(item)} />)}</div></div>}
 
       {pickerOpen ? (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/55 p-3 sm:p-5" onMouseDown={(event) => event.target === event.currentTarget && !syncMutation.isPending && setPickerOpen(false)}>
@@ -170,8 +167,17 @@ export function WorkflowMediaLibraryPanel({
 function LinkedAssetCard({ item, busy, canReference, onPreview, onRemove, onUseAsReference }: { item: WorkflowMediaLibraryAsset; busy: boolean; canReference: boolean; onPreview: () => void; onRemove: () => void; onUseAsReference: () => void }) {
   const { t } = useI18n();
   const readable = item.asset.verification_status === "verified";
+  const productAssetId = item.product_image_asset_id;
   return (
-    <article className="group min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950/35">
+    <article
+      className="group min-w-0 overflow-hidden rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950/35"
+      draggable={Boolean(readable && productAssetId)}
+      onDragStart={(event) => {
+        if (!productAssetId) return;
+        event.dataTransfer.setData(IMAGE_EXPLORER_DRAG_MIME, encodeAssetDragPayload([productAssetId]));
+        event.dataTransfer.effectAllowed = "copyMove";
+      }}
+    >
       <button type="button" onClick={onPreview} disabled={!readable} className="relative block aspect-square w-full overflow-hidden bg-slate-100 disabled:cursor-not-allowed dark:bg-slate-900">
         <img src={api.toApiUrl(item.asset.thumbnail_url)} alt={item.asset.display_name} className={`h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02] ${readable ? "" : "opacity-50 grayscale"}`} />
         {!readable ? <span className="absolute inset-x-1 bottom-1 rounded bg-slate-950/70 px-1 py-1 text-[9px] text-white">{t("detail.library.mediaPending")}</span> : null}

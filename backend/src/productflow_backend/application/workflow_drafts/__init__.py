@@ -1,1 +1,1 @@
-"""WorkflowDraft artifact、查询与物化应用边界。"""
+"""WorkflowDraft artifact、查询与确认应用边界。"""

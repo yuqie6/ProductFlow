@@ -12,6 +12,7 @@ from productflow_backend.application.product_workflow.graph_contracts import (
 from productflow_backend.application.product_workflow.graph_visual import visual_overlay_from_config
 from productflow_backend.application.workflow_drafts.contracts import (
     ImageGenerationNodePlan,
+    ProductContextNodePlan,
     PromptGenerationNodePlan,
     ReferenceImageNodePlan,
     WorkflowDraftPayloadV1,
@@ -33,6 +34,8 @@ def build_draft_initial_graph_change_set(
     *,
     draft_revision_id: str,
     visual_system_version_id: str | None = None,
+    source_product_id: str | None = None,
+    fact_set_version_id: str | None = None,
 ) -> WorkflowChangeSet:
     operations: list[GraphOperation] = []
     references = {item.key: item for item in payload.reference_bindings}
@@ -67,7 +70,16 @@ def build_draft_initial_graph_change_set(
     folder_keys = {folder.key for folder in payload.folders}
     for node in payload.nodes:
         v3_type = _V2_TO_V3_NODE_TYPE[node.node_type]
-        config, bound_asset_id = _node_config(node, payload, references, prompts, images, image_types)
+        config, bound_asset_id = _node_config(
+            node,
+            payload,
+            references,
+            prompts,
+            images,
+            image_types,
+            source_product_id=source_product_id,
+            fact_set_version_id=fact_set_version_id,
+        )
         operations.append(
             CreateNodeOp(
                 client_ref=node.key,
@@ -189,7 +201,22 @@ def _creative_brief_config(payload: WorkflowDraftPayloadV1) -> dict[str, object]
     }
 
 
-def _node_config(node, payload, references, prompts, images, image_types) -> tuple[dict[str, object], str | None]:
+def _node_config(
+    node,
+    payload,
+    references,
+    prompts,
+    images,
+    image_types,
+    *,
+    source_product_id: str | None,
+    fact_set_version_id: str | None,
+) -> tuple[dict[str, object], str | None]:
+    if isinstance(node, ProductContextNodePlan):
+        return {
+            "source_product_id": source_product_id,
+            "fact_set_version_id": fact_set_version_id,
+        }, None
     if isinstance(node, ReferenceImageNodePlan):
         binding = references[node.reference_key]
         return {"label": binding.label, "role": binding.role}, binding.asset_id

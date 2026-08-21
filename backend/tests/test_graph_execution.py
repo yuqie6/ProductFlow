@@ -17,13 +17,17 @@ from productflow_backend.application.product_workflow.graph_queries import proje
 from productflow_backend.application.product_workflow.graph_runs import submit_graph_run
 from productflow_backend.application.product_workflow.graph_template import DirectCreateImageType
 from productflow_backend.domain.enums import (
+    AsyncDispatchStatus,
     GraphConfigStatus,
     GraphNodeType,
     GraphRunScope,
+    JobStatus,
     WorkflowNodeStatus,
     WorkflowRunStatus,
 )
 from productflow_backend.infrastructure.db.models import (
+    AsyncDispatch,
+    DeliveryRenditionJob,
     WorkflowGraphArtifact,
     WorkflowGraphNode,
     WorkflowGraphNodeRun,
@@ -347,3 +351,72 @@ def test_prompt_run_uses_stored_prompt_and_brief_fields(db_session) -> None:
     stale = project_workflow_graph(db_session, created.graph)
     stale_prompt = next(node for node in stale.nodes if node.id == prompt_node.id)
     assert stale_prompt.config_status == GraphConfigStatus.STALE
+
+
+def test_image_success_queues_delivery_rendition_from_live_node_spec(db_session) -> None:
+    image_bytes = _make_demo_image_bytes()
+    created = create_product_with_direct_graph(
+        db_session,
+        name="交付排队商品",
+        category=None,
+        price=None,
+        source_note=None,
+        image_uploads=[(image_bytes, "ref.png", "image/png")],
+        image_types=[DirectCreateImageType(key="hero", quantity=1, order=0)],
+    )
+    image_node = next(
+        node for node in created.projection.nodes if node.node_type == GraphNodeType.IMAGE_GENERATION
+    )
+    apply_graph_change_set(
+        db_session,
+        product_id=created.product.id,
+        graph_id=created.graph.id,
+        change_set=WorkflowChangeSet(
+            base_graph_revision=created.graph.revision,
+            summary="写入交付规格",
+            operations=[
+                UpdateNodeConfigOp(
+                    node_ref=image_node.id,
+                    config={
+                        "image_type_key": "hero",
+                        "generation_spec": dict(image_node.config["generation_spec"]),
+                        "delivery_spec": {
+                            "width": 48,
+                            "height": 48,
+                            "format": "png",
+                            "fit": "contain",
+                        },
+                    },
+                )
+            ],
+        ),
+    )
+    dependencies = WorkflowExecutionDependencies(
+        prompt_generation_provider_resolver=lambda: RecordingPromptProvider(),
+        image_provider_resolver=lambda: RecordingImageProvider(image_bytes),
+    )
+    submission = submit_graph_run(
+        db_session,
+        product_id=created.product.id,
+        graph_id=created.graph.id,
+        scope=GraphRunScope.TO_NODE,
+        target_node_id=image_node.id,
+        enqueue=lambda run_id: execute_graph_run(run_id, dependencies=dependencies),
+    )
+    assert submission.run.status == WorkflowRunStatus.SUCCEEDED
+    artifact = db_session.scalar(
+        select(WorkflowGraphArtifact).where(WorkflowGraphArtifact.artifact_type == "image")
+    )
+    assert artifact is not None
+    job = db_session.scalar(
+        select(DeliveryRenditionJob).where(
+            DeliveryRenditionJob.source_asset_id == artifact.product_image_asset_id
+        )
+    )
+    assert job is not None
+    assert job.status == JobStatus.QUEUED
+    assert job.spec_json["width"] == 48
+    dispatch = db_session.scalar(select(AsyncDispatch).where(AsyncDispatch.aggregate_id == job.id))
+    assert dispatch is not None
+    assert dispatch.status == AsyncDispatchStatus.PENDING
+    assert dispatch.actor_name == "run_delivery_rendition_job"

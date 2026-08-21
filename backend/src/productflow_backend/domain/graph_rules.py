@@ -93,13 +93,34 @@ def typed_edge_from_nodes(
 
 def node_config_status(node: GraphRuleNode, incoming: Iterable[GraphRuleEdge]) -> GraphConfigStatus:
     incoming_list = list(incoming)
+    if node.node_type == GraphNodeType.PRODUCT_SOURCE:
+        # New nodes must make the binding decision explicit.  A missing key is
+        # retained for legacy reads and resolved by the graph runtime owner.
+        config = node.config or {}
+        if "source_product_id" in config:
+            source_id = config.get("source_product_id")
+            if not isinstance(source_id, str) or not source_id.strip():
+                return GraphConfigStatus.INCOMPLETE
+            fact_set_id = config.get("fact_set_version_id")
+            if fact_set_id is not None and (not isinstance(fact_set_id, str) or not fact_set_id.strip()):
+                return GraphConfigStatus.INCOMPLETE
     if node.node_type == GraphNodeType.IMAGE_ASSET and not node.bound_asset_id:
         return GraphConfigStatus.INCOMPLETE
-    if node.node_type == GraphNodeType.VISUAL_SYSTEM:
-        version_id = (node.config or {}).get("visual_system_version_id")
-        if not isinstance(version_id, str) or not version_id.strip():
-            return GraphConfigStatus.INCOMPLETE
+    if node.node_type == GraphNodeType.VISUAL_SYSTEM and not _has_visual_system_config(node.config):
+        return GraphConfigStatus.INCOMPLETE
     for contract in run_required_inputs(node.node_type):
         if not any(edge.data_type == contract.data_type and edge.role == contract.role for edge in incoming_list):
             return GraphConfigStatus.INCOMPLETE
     return GraphConfigStatus.READY
+
+
+def _has_visual_system_config(config: dict[str, object] | None) -> bool:
+    payload = config or {}
+    version_id = payload.get("visual_system_version_id")
+    if isinstance(version_id, str) and version_id.strip():
+        return True
+    overlay = payload.get("visual_overlay")
+    if isinstance(overlay, dict) and overlay:
+        return True
+    overrides = payload.get("visual_overrides")
+    return isinstance(overrides, list) and bool(overrides)

@@ -20,21 +20,22 @@ from productflow_backend.application.storage_compensation import (
     compensate_storage_writes,
 )
 from productflow_backend.application.time import now_utc
-from productflow_backend.domain.durable_generation_tasks import WORKFLOW_RUN_GENERATION_TASK_CONTRACT
+from productflow_backend.domain.durable_generation_tasks import GRAPH_RUN_GENERATION_TASK_CONTRACT
 from productflow_backend.domain.enums import ProductImageOriginType
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     Product,
     ProductImageAsset,
-    ProductWorkflow,
     VisualSystem,
     VisualSystemVersion,
     VisualSystemVersionReference,
     WorkflowDraft,
     WorkflowDraftRevision,
-    WorkflowImageGenerationRecord,
+    WorkflowGraph,
+    WorkflowGraphArtifact,
+    WorkflowGraphNode,
+    WorkflowGraphRun,
     WorkflowRecipeVersion,
-    WorkflowRun,
 )
 from productflow_backend.infrastructure.storage import LocalStorage
 
@@ -340,11 +341,11 @@ def delete_product(
 ) -> None:
     product = _get_product_or_raise(session, product_id)
     active_workflow_run = session.scalar(
-        select(WorkflowRun)
-        .join(ProductWorkflow, WorkflowRun.workflow_id == ProductWorkflow.id)
+        select(WorkflowGraphRun)
+        .join(WorkflowGraph, WorkflowGraphRun.graph_id == WorkflowGraph.id)
         .where(
-            ProductWorkflow.product_id == product_id,
-            WorkflowRun.status.in_(WORKFLOW_RUN_GENERATION_TASK_CONTRACT.active_statuses),
+            WorkflowGraph.product_id == product_id,
+            WorkflowGraphRun.status.in_(GRAPH_RUN_GENERATION_TASK_CONTRACT.active_statuses),
         )
     )
     if active_workflow_run is not None:
@@ -409,10 +410,11 @@ def _prepare_visual_system_cleanup_for_product(
         has_external_consumer = any(
             (
                 session.scalar(
-                    select(ProductWorkflow.id)
+                    select(WorkflowGraphNode.id)
+                    .join(WorkflowGraph, WorkflowGraph.id == WorkflowGraphNode.graph_id)
                     .where(
-                        ProductWorkflow.visual_system_version_id == version.id,
-                        ProductWorkflow.product_id != product_id,
+                        WorkflowGraphNode.config_json["visual_system_version_id"].as_string() == version.id,
+                        WorkflowGraph.product_id != product_id,
                     )
                     .limit(1)
                 ),
@@ -426,10 +428,11 @@ def _prepare_visual_system_cleanup_for_product(
                     .limit(1)
                 ),
                 session.scalar(
-                    select(WorkflowImageGenerationRecord.id)
+                    select(WorkflowGraphArtifact.id)
+                    .join(WorkflowGraph, WorkflowGraph.id == WorkflowGraphArtifact.graph_id)
                     .where(
-                        WorkflowImageGenerationRecord.visual_system_version_id == version.id,
-                        WorkflowImageGenerationRecord.product_id != product_id,
+                        WorkflowGraphArtifact.payload_json["visual_system_version_id"].as_string() == version.id,
+                        WorkflowGraph.product_id != product_id,
                     )
                     .limit(1)
                 ),

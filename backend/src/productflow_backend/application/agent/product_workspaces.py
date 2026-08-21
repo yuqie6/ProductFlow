@@ -17,6 +17,7 @@ from productflow_backend.application.agent.product_intake import (
     agent_product_draft_workspace_request_hash,
     agent_product_intake_request_hash,
     agent_product_workspace_request_hash,
+    agent_workbench_attach_request_hash,
     normalize_agent_product_idempotency_key,
     parse_workflow_intake,
 )
@@ -27,6 +28,7 @@ from productflow_backend.application.agent.tasks import (
     refresh_agent_session_summary,
 )
 from productflow_backend.application.product_images.assets import get_product_image_assets_by_ids
+from productflow_backend.application.product_workflow.graph_commands import get_active_workflow_graph
 from productflow_backend.application.products import (
     normalize_product_name,
     stage_canonical_product,
@@ -285,6 +287,80 @@ def create_agent_product_workspace(
     persisted = _conversation_by_creation_key(session, normalized_key)
     if persisted is None:
         raise ConflictError("Agent 商品创建结果无法重新读取")
+    return _load_idempotent_workspace(
+        session,
+        conversation=persisted,
+        request_hash=request_hash,
+        created=True,
+    )
+
+
+def attach_agent_workspace_to_product(
+    session: Session,
+    *,
+    product_id: str,
+    idempotency_key: str,
+    agent_session_id: str | None = None,
+) -> AgentProductWorkspaceCreation:
+    """Create a product-scoped Agent conversation for an existing v3 graph product."""
+    product = session.scalar(select(Product).where(Product.id == product_id).with_for_update())
+    if product is None:
+        raise NotFoundError("商品不存在")
+    existing_for_product = session.scalar(
+        agent_conversation_query()
+        .where(AgentConversation.product_id == product_id)
+        .order_by(AgentConversation.created_at.desc(), AgentConversation.id.desc())
+        .limit(1)
+    )
+    if existing_for_product is not None:
+        return _load_workspace(session, conversation_id=existing_for_product.id, created=False)
+    if get_active_workflow_graph(session, product_id=product_id) is None:
+        raise ConflictError("当前商品还没有可执行的工作流")
+
+    normalized_key = normalize_agent_product_idempotency_key(idempotency_key)
+    normalized_session_id = _normalize_agent_session_id(agent_session_id)
+    request_hash = agent_workbench_attach_request_hash(
+        product_id=product_id,
+        agent_session_id=normalized_session_id,
+    )
+    existing = _conversation_by_creation_key(session, normalized_key)
+    if existing is not None:
+        return _load_idempotent_workspace(
+            session,
+            conversation=existing,
+            request_hash=request_hash,
+            created=False,
+        )
+
+    try:
+        _stage_workspace_records(
+            session,
+            product=product,
+            creation_idempotency_key=normalized_key,
+            creation_request_hash=request_hash,
+            intake=None,
+            agent_session_id=normalized_session_id,
+            create_onboarding_task=False,
+        )
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        existing = _conversation_by_creation_key(session, normalized_key)
+        if existing is None:
+            raise
+        return _load_idempotent_workspace(
+            session,
+            conversation=existing,
+            request_hash=request_hash,
+            created=False,
+        )
+    except Exception:
+        session.rollback()
+        raise
+
+    persisted = _conversation_by_creation_key(session, normalized_key)
+    if persisted is None:
+        raise ConflictError("Agent 工作区创建结果无法重新读取")
     return _load_idempotent_workspace(
         session,
         conversation=persisted,
@@ -595,6 +671,7 @@ __all__ = [
     "AgentProductWorkspaceCreation",
     "AgentProductWorkspaceReconcileResult",
     "PRODUCT_ONBOARDING_TASK_WAITING_REASON",
+    "attach_agent_workspace_to_product",
     "create_agent_product_draft_workspace",
     "create_agent_product_draft_workspace_from_global_conversation",
     "create_agent_product_workspace",

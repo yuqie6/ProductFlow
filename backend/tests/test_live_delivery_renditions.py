@@ -19,14 +19,9 @@ import pytest
 import sqlalchemy as sa
 from alembic.config import Config
 from dramatiq.brokers.redis import RedisBroker
+from helpers import _make_demo_image_bytes
 from sqlalchemy.engine import URL, make_url
-from test_delivery_renditions import _create_generated_source
-from test_prompt_visual_image_nodes import (
-    RecordingImageProvider,
-    _create_materialized_workflow,
-    _png_bytes,
-    _queue_single_node_run,
-)
+from test_delivery_renditions import RecordingImageProvider, RecordingPromptProvider, _create_generated_source
 
 from alembic import command
 from productflow_backend.application.async_delivery import (
@@ -42,20 +37,27 @@ from productflow_backend.application.delivery_renditions.service import (
     submit_delivery_rendition_job,
 )
 from productflow_backend.application.durable_recovery import recover_unfinished_delivery_rendition_jobs
-from productflow_backend.application.product_images.assets import clear_product_cover
 from productflow_backend.application.product_workflow.dependencies import WorkflowExecutionDependencies
-from productflow_backend.application.product_workflow.v2_execution import execute_v2_workflow_node_run
+from productflow_backend.application.product_workflow.graph_direct_create import create_product_with_direct_graph
+from productflow_backend.application.product_workflow.graph_execution import execute_graph_run
+from productflow_backend.application.product_workflow.graph_runs import submit_graph_run
+from productflow_backend.application.product_workflow.graph_template import DirectCreateImageType
 from productflow_backend.config import get_settings
-from productflow_backend.domain.enums import JobStatus, WorkflowNodeStatus, WorkflowRunStatus
+from productflow_backend.domain.enums import (
+    GraphArtifactType,
+    GraphNodeType,
+    GraphRunScope,
+    JobStatus,
+    WorkflowNodeStatus,
+    WorkflowRunStatus,
+)
 from productflow_backend.infrastructure.db.models import (
     AsyncDispatch,
     DeliveryRenditionJob,
-    Product,
     ProductImageAsset,
-    WorkflowImageGenerationRecord,
-    WorkflowNode,
-    WorkflowNodeRun,
-    WorkflowRun,
+    WorkflowGraphArtifact,
+    WorkflowGraphNodeRun,
+    WorkflowGraphRun,
 )
 from productflow_backend.infrastructure.db.session import get_engine, get_session_factory
 from productflow_backend.infrastructure.queue import enqueue_async_dispatch, get_broker
@@ -294,9 +296,16 @@ def test_delivery_renditions_migrate_enqueue_and_render_real_files(
             assert media.byte_size == storage.resolve(media.storage_path).stat().st_size
             assert media.sha256 is not None and len(media.sha256) == 64
 
-        assert session.get(WorkflowRun, workflow_run_id).status == WorkflowRunStatus.SUCCEEDED
-        assert session.get(WorkflowNodeRun, node_run_id).status == WorkflowNodeStatus.SUCCEEDED
-        assert session.query(WorkflowImageGenerationRecord).count() == 1
+        assert session.get(WorkflowGraphRun, workflow_run_id).status == WorkflowRunStatus.SUCCEEDED
+        assert session.get(WorkflowGraphNodeRun, node_run_id).status == WorkflowNodeStatus.SUCCEEDED
+        assert (
+            session.scalar(
+                sa.select(sa.func.count())
+                .select_from(WorkflowGraphArtifact)
+                .where(WorkflowGraphArtifact.artifact_type == GraphArtifactType.IMAGE)
+            )
+            == 1
+        )
 
 
 def test_delivery_rendition_worker_termination_replays_one_result(
@@ -557,23 +566,35 @@ def test_delivery_rendition_claim_recovery_retry_and_attempt_fencing_on_postgres
         assert retried.attempts == 2
 
 
-def test_concurrent_v2_image_completions_fill_empty_cover_once_on_postgres(
+def test_concurrent_graph_image_completions_write_artifacts_on_postgres(
     live_delivery_dependencies: tuple[RedisBroker, ModuleType],
 ) -> None:
     _, _ = live_delivery_dependencies
     session_factory = get_session_factory()
     with session_factory() as session:
-        product, workflow = _create_materialized_workflow(session, include_scene_before_hero=True)
-        clear_product_cover(session, product_id=product.id)
-        image_nodes = sorted(
-            (node for node in workflow.nodes if node.node_type.value == "image_generation"),
-            key=lambda node: node.config_json["cover_priority"],
-        )
-        assert len(image_nodes) == 2
-        node_run_ids = [
-            _queue_single_node_run(session, workflow=workflow, node=node)[1].id for node in image_nodes
-        ]
-        product_id = product.id
+        run_ids: list[str] = []
+        for index in range(2):
+            created = create_product_with_direct_graph(
+                session,
+                name=f"并发图运行商品 {index + 1}",
+                category="测试",
+                price="99.00",
+                source_note="并发图运行测试",
+                image_uploads=[(_make_demo_image_bytes(), "reference.png", "image/png")],
+                image_types=[DirectCreateImageType(key="hero", quantity=1, order=0)],
+            )
+            image_node = next(
+                node for node in created.projection.nodes if node.node_type == GraphNodeType.IMAGE_GENERATION
+            )
+            submission = submit_graph_run(
+                session,
+                product_id=created.product.id,
+                graph_id=created.graph.id,
+                scope=GraphRunScope.TO_NODE,
+                target_node_id=image_node.id,
+                enqueue=lambda _run_id: None,
+            )
+            run_ids.append(submission.run.id)
 
     provider_barrier = Barrier(2)
 
@@ -582,35 +603,39 @@ def test_concurrent_v2_image_completions_fill_empty_cover_once_on_postgres(
             provider_barrier.wait(timeout=10)
             return super().generate_workflow_image(request)
 
-    def execute_node(item: tuple[str, tuple[int, int, int]]) -> None:
-        node_run_id, color = item
-        with session_factory() as session:
-            execute_v2_workflow_node_run(
-                session,
-                node_run_id=node_run_id,
-                dependencies=WorkflowExecutionDependencies(
-                    image_provider_resolver=lambda: ConcurrentImageProvider(
-                        image_bytes=_png_bytes(color=color, size=(80, 64))
-                    )
+    def execute_run(run_id: str) -> None:
+        execute_graph_run(
+            run_id,
+            dependencies=WorkflowExecutionDependencies(
+                prompt_generation_provider_resolver=lambda: RecordingPromptProvider(),
+                image_provider_resolver=lambda: ConcurrentImageProvider(
+                    image_bytes=_make_demo_image_bytes(),
                 ),
-            )
+            ),
+        )
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        list(executor.map(execute_node, zip(node_run_ids, ((220, 80, 20), (40, 100, 190)), strict=True)))
+        list(executor.map(execute_run, run_ids))
 
     with session_factory() as session:
-        records = list(
+        runs = [session.get(WorkflowGraphRun, run_id) for run_id in run_ids]
+        assert all(run is not None and run.status == WorkflowRunStatus.SUCCEEDED for run in runs)
+        node_runs = list(
             session.scalars(
-                sa.select(WorkflowImageGenerationRecord).where(
-                    WorkflowImageGenerationRecord.workflow_node_run_id.in_(node_run_ids)
+                sa.select(WorkflowGraphNodeRun).where(
+                    WorkflowGraphNodeRun.graph_run_id.in_(run_ids),
                 )
             )
         )
-        product = session.get(Product, product_id)
-        assert product is not None
-        assert len(records) == 2
-        assert product.cover_image_asset_id in {record.result_asset_id for record in records}
-        assert all(
-            session.get(WorkflowNode, record.node_id).bound_image_asset_id == record.result_asset_id
-            for record in records
+        artifacts = list(
+            session.scalars(
+                sa.select(WorkflowGraphArtifact).where(
+                    WorkflowGraphArtifact.node_run_id.in_([node_run.id for node_run in node_runs]),
+                    WorkflowGraphArtifact.artifact_type == GraphArtifactType.IMAGE,
+                )
+            )
         )
+        assert len(node_runs) == 2
+        assert all(node_run.status == WorkflowNodeStatus.SUCCEEDED for node_run in node_runs)
+        assert len(artifacts) == 2
+        assert all(artifact.product_image_asset_id is not None for artifact in artifacts)

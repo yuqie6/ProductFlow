@@ -68,9 +68,9 @@ from productflow_backend.infrastructure.db.models import (
     Product,
     ProductAssetFolder,
     ProductImageAsset,
-    ProductWorkflow,
     WorkflowDraft,
     WorkflowDraftRecipeSeed,
+    WorkflowGraph,
     new_id,
 )
 from productflow_backend.infrastructure.storage import LocalStorage
@@ -496,55 +496,6 @@ def _load_recipe_seed_context(
         return None
     recipe_version = seed.recipe_version
     recipe_payload = parse_recipe_payload_or_raise(recipe_version)
-    base_workflow = None
-    if seed.base_workflow_id is not None:
-        workflow = session.scalar(
-            select(ProductWorkflow)
-            .options(
-                selectinload(ProductWorkflow.folders),
-                selectinload(ProductWorkflow.nodes),
-                selectinload(ProductWorkflow.edges),
-            )
-            .where(ProductWorkflow.id == seed.base_workflow_id)
-        )
-        if workflow is None or workflow.product_id != seed.product_id or workflow.schema_version != 2:
-            raise ConflictError("recipe seed base workflow 不可用")
-        base_workflow = {
-            "id": workflow.id,
-            "revision": workflow.revision,
-            "edit_version": workflow.edit_version,
-            "folders": [
-                {
-                    "id": folder.id,
-                    "key": folder.folder_key,
-                    "title": folder.title,
-                    "order": folder.sort_order,
-                }
-                for folder in workflow.folders
-            ],
-            "nodes": [
-                {
-                    "id": node.id,
-                    "key": node.node_key,
-                    "node_type": node.node_type.value,
-                    "position_x": node.position_x,
-                    "position_y": node.position_y,
-                    "folder_id": node.folder_id,
-                }
-                for node in workflow.nodes
-            ],
-            "edges": [
-                {
-                    "id": edge.id,
-                    "key": edge.edge_key,
-                    "source_node_id": edge.source_node_id,
-                    "target_node_id": edge.target_node_id,
-                    "source_handle": edge.source_handle,
-                    "target_handle": edge.target_handle,
-                }
-                for edge in workflow.edges
-            ],
-        }
     return {
         "schema_version": seed.schema_version,
         "recipe_id": recipe_version.recipe_id,
@@ -555,7 +506,6 @@ def _load_recipe_seed_context(
         "description": recipe_version.description,
         "preferred_visual_system_version_id": recipe_version.preferred_visual_system_version_id,
         "payload": recipe_payload.model_dump(mode="json"),
-        "base_workflow": base_workflow,
     }
 
 
@@ -754,24 +704,23 @@ def _agent_global_product_summaries(
     if not products:
         return []
     product_ids = [product.id for product in products]
-    workflows = list(
+    graphs = list(
         session.scalars(
-            select(ProductWorkflow)
-            .options(selectinload(ProductWorkflow.nodes))
+            select(WorkflowGraph)
+            .options(selectinload(WorkflowGraph.nodes))
             .where(
-                ProductWorkflow.product_id.in_(product_ids),
-                ProductWorkflow.active.is_(True),
-                ProductWorkflow.schema_version == 2,
+                WorkflowGraph.product_id.in_(product_ids),
+                WorkflowGraph.active.is_(True),
             )
         ).unique().all()
     )
-    workflows_by_product = {workflow.product_id: workflow for workflow in workflows}
-    return [_agent_global_product_summary(product, workflows_by_product.get(product.id)) for product in products]
+    graphs_by_product = {graph.product_id: graph for graph in graphs}
+    return [_agent_global_product_summary(product, graphs_by_product.get(product.id)) for product in products]
 
 
 def _agent_global_product_summary(
     product: Product,
-    workflow: ProductWorkflow | None,
+    graph: WorkflowGraph | None,
 ) -> dict[str, Any]:
     return {
         "id": product.id,
@@ -780,13 +729,12 @@ def _agent_global_product_summary(
         "updated_at": product.updated_at.isoformat(),
         "active_workflow": (
             {
-                "id": workflow.id,
-                "title": workflow.title,
-                "revision": workflow.revision,
-                "edit_version": workflow.edit_version,
-                "node_count": len(workflow.nodes),
+                "id": graph.id,
+                "title": graph.title,
+                "revision": graph.revision,
+                "node_count": len(graph.nodes),
             }
-            if workflow is not None
+            if graph is not None
             else None
         ),
     }

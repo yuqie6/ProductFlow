@@ -44,6 +44,12 @@ class ConflictError(BusinessError):
     status_code: ClassVar[int] = 409
 
 
+class GoneError(BusinessError):
+    """Requested contract is retired and no longer reachable online."""
+
+    status_code: ClassVar[int] = 410
+
+
 class ResourceBusyError(BusinessError):
     """Global provider/worker resource capacity is currently exhausted."""
 

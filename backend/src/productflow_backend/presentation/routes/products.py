@@ -5,6 +5,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
+from productflow_backend.application.product_facts import get_product_facts, update_product_facts
 from productflow_backend.application.product_images.archives import (
     build_gallery_archive,
     cleanup_gallery_archive,
@@ -56,14 +57,17 @@ from productflow_backend.presentation.schemas.products import (
     GalleryBootstrapResponse,
     GalleryFolderMutationResponse,
     MoveGalleryAssetsRequest,
+    ProductFactsResponse,
     ProductImageAssetListResponse,
     ProductListResponse,
     RenameGalleryAssetRequest,
     RenameGalleryFolderRequest,
     SetProductCoverRequest,
+    UpdateProductFactsRequest,
     serialize_canonical_product_detail,
     serialize_gallery_asset,
     serialize_gallery_bootstrap,
+    serialize_product_facts,
     serialize_product_image_asset,
     serialize_product_summary,
 )
@@ -109,6 +113,37 @@ def get_canonical_product_endpoint(
     session: Session = Depends(get_session),
 ) -> CanonicalProductDetailResponse:
     return serialize_canonical_product_detail(get_product_detail(session, product_id))
+
+
+@router.get("/v3/products/{product_id}/facts", response_model=ProductFactsResponse)
+def get_product_facts_endpoint(
+    product_id: str,
+    session: Session = Depends(get_session),
+) -> ProductFactsResponse:
+    return serialize_product_facts(get_product_facts(session, product_id=product_id))
+
+
+@router.put("/v3/products/{product_id}/facts", response_model=ProductFactsResponse)
+def update_product_facts_endpoint(
+    product_id: str,
+    payload: UpdateProductFactsRequest,
+    session: Session = Depends(get_session),
+) -> ProductFactsResponse:
+    fields = set(payload.model_fields_set)
+    product = update_product_facts(
+        session,
+        product_id=product_id,
+        expected_fact_set_version_id=payload.expected_fact_set_version_id,
+        expected_fact_version=payload.expected_fact_version,
+        expected_version_provided=bool({"expected_fact_set_version_id", "expected_fact_version"} & fields),
+        name=payload.name,
+        category=payload.category,
+        price=payload.price,
+        source_note=payload.source_note,
+        facts=[item.model_dump(mode="json") for item in payload.facts] if payload.facts is not None else None,
+        fields_set=fields,
+    )
+    return serialize_product_facts(product)
 
 
 @router.get("/v2/products/{product_id}/image-library", response_model=GalleryBootstrapResponse)

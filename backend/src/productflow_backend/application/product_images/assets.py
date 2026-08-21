@@ -17,14 +17,12 @@ from productflow_backend.domain.enums import MediaVerificationStatus, ProductIma
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
     DeliveryRenditionJob,
-    ImagePromptArtifactVersionReference,
     LegacyWorkflowArchiveAsset,
     Product,
     ProductImageAsset,
     VisualSystemVersionReference,
-    WorkflowImageGenerationRecord,
-    WorkflowImageGenerationReference,
-    WorkflowNode,
+    WorkflowGraphArtifact,
+    WorkflowGraphNode,
 )
 from productflow_backend.infrastructure.storage import LocalStorage
 
@@ -255,7 +253,9 @@ def ensure_product_image_asset_not_referenced(
         raise ConflictError("商品图片仍被设为封面，不能删除")
     if session.scalar(select(ProductImageAsset.id).where(ProductImageAsset.parent_asset_id == asset_id).limit(1)):
         raise ConflictError("商品图片仍有派生图片，不能删除")
-    if session.scalar(select(WorkflowNode.id).where(WorkflowNode.bound_image_asset_id == asset_id).limit(1)):
+    if session.scalar(
+        select(WorkflowGraphNode.id).where(WorkflowGraphNode.bound_image_asset_id == asset_id).limit(1)
+    ):
         raise ConflictError("商品图片仍被工作流节点绑定，不能删除")
     if session.scalar(
         select(LegacyWorkflowArchiveAsset.id)
@@ -270,23 +270,11 @@ def ensure_product_image_asset_not_referenced(
     ):
         raise ConflictError("商品图片仍被视觉体系版本引用，不能删除")
     if session.scalar(
-        select(ImagePromptArtifactVersionReference.id)
-        .where(ImagePromptArtifactVersionReference.asset_id == asset_id)
-        .limit(1)
-    ):
-        raise ConflictError("商品图片仍被提示词版本作为证据引用，不能删除")
-    if session.scalar(
-        select(WorkflowImageGenerationRecord.id)
-        .where(WorkflowImageGenerationRecord.result_asset_id == asset_id)
+        select(WorkflowGraphArtifact.id)
+        .where(WorkflowGraphArtifact.product_image_asset_id == asset_id)
         .limit(1)
     ):
         raise ConflictError("商品图片仍被工作流生成历史作为结果引用，不能删除")
-    if session.scalar(
-        select(WorkflowImageGenerationReference.id)
-        .where(WorkflowImageGenerationReference.asset_id == asset_id)
-        .limit(1)
-    ):
-        raise ConflictError("商品图片仍被工作流生成历史作为参考图引用，不能删除")
     if session.scalar(
         select(DeliveryRenditionJob.id)
         .where(

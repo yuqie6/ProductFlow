@@ -57,7 +57,7 @@ def serialize_agent_task(task: AgentTask) -> AgentTaskResponse:
         session_id=task.session_id,
         conversation_id=task.conversation_id,
         product_id=task.product_id,
-        workflow_id=task.workflow_id,
+        workflow_id=next((request.graph_id for request in task.workflow_run_requests), None),
         workflow_draft_id=task.workflow_draft_id,
         title=task.title,
         goal=task.goal,

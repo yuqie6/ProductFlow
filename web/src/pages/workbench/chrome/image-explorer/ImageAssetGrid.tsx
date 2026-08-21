@@ -212,5 +212,5 @@ function SelectionButton({
 function startAssetDrag(event: DragEvent<HTMLElement>, asset: GalleryAsset, selectedIds: Set<string>) {
   const ids = selectedIds.has(asset.id) ? [...selectedIds] : [asset.id];
   event.dataTransfer.setData(IMAGE_EXPLORER_DRAG_MIME, encodeAssetDragPayload(ids));
-  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.effectAllowed = "copyMove";
 }

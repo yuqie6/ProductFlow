@@ -18,21 +18,13 @@ from productflow_backend.application.product_workflow.graph_commands import (
 )
 from productflow_backend.application.product_workflow.graph_compiler import select_run_node_ids
 from productflow_backend.application.product_workflow.graph_runs import (
+    GRAPH_CANCELLED_REASON,
     cancel_graph_run,
     get_graph_run,
     retry_graph_run,
     submit_graph_run,
 )
-from productflow_backend.application.product_workflow.run_state import WORKFLOW_CANCELLED_REASON
-from productflow_backend.application.product_workflow.v2_runs import (
-    cancel_v2_workflow_run,
-    retry_v2_workflow_run,
-    submit_v2_workflow_run,
-    validate_retry_workflow_run,
-    validate_v2_workflow_run,
-)
 from productflow_backend.application.time import now_utc
-from productflow_backend.application.workflow_drafts.materialization import get_active_v2_workflow_snapshot
 from productflow_backend.domain.enums import (
     AgentConversationScope,
     AgentConversationStatus,
@@ -267,10 +259,8 @@ def _create_agent_workflow_run_request(
     existing = session.scalar(
         select(AgentWorkflowRunRequest)
         .options(
-            selectinload(AgentWorkflowRunRequest.workflow),
             selectinload(AgentWorkflowRunRequest.graph),
             selectinload(AgentWorkflowRunRequest.product),
-            selectinload(AgentWorkflowRunRequest.workflow_run),
             selectinload(AgentWorkflowRunRequest.graph_run),
             selectinload(AgentWorkflowRunRequest.task),
         )
@@ -290,14 +280,14 @@ def _create_agent_workflow_run_request(
         raise ConflictError("工作流执行请求的 product_id 与当前目标不一致")
     if preparation.workflow_id != normalized_workflow_id:
         raise ConflictError("工作流执行请求的 workflow_id 与当前 active 工作流不一致")
+    if preparation.graph_id is None:
+        raise ConflictError("当前商品没有可执行的 schema-v3 工作流")
     request = AgentWorkflowRunRequest(
         id=new_id(),
         conversation_id=conversation.id,
         task_id=task_id,
         product_id=preparation.product_id,
-        workflow_id=None if preparation.graph_id else preparation.workflow_id,
         graph_id=preparation.graph_id,
-        source_run_id=None if preparation.graph_id else preparation.source_run_id,
         source_graph_run_id=preparation.source_graph_run_id,
         expected_workflow_revision=preparation.workflow_revision,
         idempotency_key=normalized_key,
@@ -307,8 +297,6 @@ def _create_agent_workflow_run_request(
     )
     session.add(request)
     task = _task_for_request(session, task_id)
-    if task is not None and preparation.graph_id is None:
-        task.workflow_id = preparation.workflow_id
     _mark_request_waiting(conversation, task)
     try:
         session.commit()
@@ -446,10 +434,8 @@ def get_agent_workflow_run_request(
     statement = (
         select(AgentWorkflowRunRequest)
         .options(
-            selectinload(AgentWorkflowRunRequest.workflow),
             selectinload(AgentWorkflowRunRequest.graph),
             selectinload(AgentWorkflowRunRequest.product),
-            selectinload(AgentWorkflowRunRequest.workflow_run),
             selectinload(AgentWorkflowRunRequest.graph_run),
             selectinload(AgentWorkflowRunRequest.task),
         )
@@ -555,7 +541,7 @@ def confirm_agent_workflow_run_request(
     _sync_request_from_workflow_run(session, request)
     if request.status == AgentWorkflowRunRequestStatus.CANCELLED:
         raise ConflictError("已取消的工作流执行请求不能确认")
-    if request.workflow_run_id is not None or request.graph_run_id is not None:
+    if request.graph_run_id is not None:
         session.commit()
         return _load_request(session, request.id)
     if request.status != AgentWorkflowRunRequestStatus.AWAITING_CONFIRMATION:
@@ -598,50 +584,7 @@ def confirm_agent_workflow_run_request(
             enqueue_graph_run(run_id)
         return _load_request(session, request.id)
 
-    workflow, _ = validate_v2_workflow_run(
-        session,
-        product_id=request.product_id,
-        workflow_id=request.workflow_id or "",
-        lock=True,
-    )
-    if workflow.revision != request.expected_workflow_revision:
-        raise ConflictError("工作流已经发生变化，请重新让 Agent 检查后再确认")
-    if request.source_run_id is not None:
-        submission = retry_v2_workflow_run(
-            session,
-            product_id=request.product_id,
-            workflow_id=request.workflow_id or "",
-            run_id=request.source_run_id,
-            commit=False,
-            run_metadata={
-                "requested_by": "agent",
-                "agent_workflow_run_request_id": request.id,
-                "agent_task_id": request.task_id,
-            },
-        )
-    else:
-        submission = submit_v2_workflow_run(
-            session,
-            product_id=request.product_id,
-            workflow_id=request.workflow_id or "",
-            commit=False,
-            run_metadata={
-                "requested_by": "agent",
-                "agent_workflow_run_request_id": request.id,
-                "agent_task_id": request.task_id,
-            },
-        )
-    request.workflow_run_id = submission.run.id
-    request.status = AgentWorkflowRunRequestStatus.CONFIRMED
-    request.confirmed_at = now_utc()
-    request.failure_reason = None
-    request.updated_at = now_utc()
-    _mark_turn_succeeded(request.turn_projection)
-    _mark_task_running(request.task)
-    request.conversation.status = AgentConversationStatus.COMPLETED
-    request.conversation.updated_at = now_utc()
-    session.commit()
-    return _load_request(session, request.id)
+    raise ConflictError("当前商品没有可执行的 schema-v3 工作流")
 
 
 def cancel_agent_workflow_run_request(
@@ -661,9 +604,9 @@ def cancel_agent_workflow_run_request(
     if request.status == AgentWorkflowRunRequestStatus.CANCELLED:
         session.commit()
         return _load_request(session, request.id)
-    if request.workflow_run_id is None and request.graph_run_id is None:
+    if request.graph_run_id is None:
         request.status = AgentWorkflowRunRequestStatus.CANCELLED
-        request.failure_reason = WORKFLOW_CANCELLED_REASON
+        request.failure_reason = GRAPH_CANCELLED_REASON
         request.finished_at = now_utc()
         request.updated_at = now_utc()
         _mark_turn_cancelled(request.turn_projection)
@@ -696,29 +639,7 @@ def cancel_agent_workflow_run_request(
         _sync_request_from_workflow_run(session, request)
         session.commit()
         return _load_request(session, request.id)
-    if request.workflow_run is None:
-        raise ConflictError("工作流执行请求关联的运行记录不存在")
-    if request.workflow_run.status == WorkflowRunStatus.CANCELLED:
-        _sync_request_from_workflow_run(session, request)
-        session.commit()
-        return _load_request(session, request.id)
-    if request.workflow_run.status != WorkflowRunStatus.RUNNING:
-        raise ConflictError("已结束的工作流运行不能取消")
-    cancel_v2_workflow_run(
-        session,
-        product_id=request.product_id,
-        workflow_id=request.workflow_id or "",
-        run_id=request.workflow_run_id,
-    )
-    request = _load_request_for_update(
-        session,
-        product_id=product_id,
-        conversation_id=conversation_id,
-        request_id=request_id,
-    )
-    _sync_request_from_workflow_run(session, request)
-    session.commit()
-    return _load_request(session, request.id)
+    raise ConflictError("当前商品没有可执行的 schema-v3 工作流")
 
 
 def _get_product_conversation(
@@ -779,34 +700,7 @@ def _prepare_current_workflow(
             expected_workflow_revision=expected_workflow_revision,
             source_run_id=source_run_id,
         )
-    snapshot = get_active_v2_workflow_snapshot(session, product_id=product_id)
-    if snapshot.workflow is None:
-        raise ConflictError("当前商品还没有可执行的工作流")
-    if snapshot.workflow.revision != expected_workflow_revision:
-        raise ConflictError("工作流 revision 已变化，请重新读取当前工作流")
-    if source_run_id is not None:
-        workflow, ordered_node_ids = validate_retry_workflow_run(
-            session,
-            product_id=product_id,
-            workflow_id=snapshot.workflow.id,
-            run_id=source_run_id,
-        )
-    else:
-        workflow, ordered_node_ids = validate_v2_workflow_run(
-            session,
-            product_id=product_id,
-            workflow_id=snapshot.workflow.id,
-            lock=False,
-        )
-    return _ResolvedRunnable(
-        public_id=workflow.id,
-        title=workflow.title,
-        revision=workflow.revision,
-        runnable_node_count=len(ordered_node_ids),
-        graph_id=None,
-        source_run_id=source_run_id,
-        source_graph_run_id=None,
-    )
+    raise ConflictError("当前商品还没有可执行的工作流")
 
 
 def _prepare_explicit_workflow(
@@ -830,31 +724,7 @@ def _prepare_explicit_workflow(
             expected_workflow_revision=expected_workflow_revision,
             source_run_id=source_run_id,
         )
-    if source_run_id is not None:
-        workflow, ordered_node_ids = validate_retry_workflow_run(
-            session,
-            product_id=product_id,
-            workflow_id=workflow_id,
-            run_id=source_run_id,
-        )
-    else:
-        workflow, ordered_node_ids = validate_v2_workflow_run(
-            session,
-            product_id=product_id,
-            workflow_id=workflow_id,
-            lock=False,
-        )
-        if workflow.revision != expected_workflow_revision:
-            raise ConflictError("工作流 revision 已变化，请重新读取当前工作流")
-    return _ResolvedRunnable(
-        public_id=workflow.id,
-        title=workflow.title,
-        revision=workflow.revision,
-        runnable_node_count=len(ordered_node_ids),
-        graph_id=None,
-        source_run_id=source_run_id,
-        source_graph_run_id=None,
-    )
+    raise NotFoundError("工作流不存在")
 
 
 def _resolve_graph_runnable(
@@ -946,7 +816,7 @@ def _mark_task_cancelled(task: AgentTask | None) -> None:
 
 
 def _sync_request_from_workflow_run(session: Session, request: AgentWorkflowRunRequest) -> bool:
-    run = request.graph_run if request.graph_id is not None else request.workflow_run
+    run = request.graph_run
     if run is None:
         return False
     now = now_utc()
@@ -973,7 +843,7 @@ def _sync_request_from_workflow_run(session: Session, request: AgentWorkflowRunR
     elif run.status == WorkflowRunStatus.CANCELLED:
         if request.status != AgentWorkflowRunRequestStatus.CANCELLED:
             request.status = AgentWorkflowRunRequestStatus.CANCELLED
-            request.failure_reason = run.failure_reason or WORKFLOW_CANCELLED_REASON
+            request.failure_reason = run.failure_reason or GRAPH_CANCELLED_REASON
             request.finished_at = run.finished_at or now
             changed = True
         _mark_task_finished(request.task, AgentTaskStatus.CANCELED, request.failure_reason, run.finished_at or now)
@@ -1020,10 +890,8 @@ def _load_request(session: Session, request_id: str) -> AgentWorkflowRunRequest:
         select(AgentWorkflowRunRequest)
         .options(
             selectinload(AgentWorkflowRunRequest.conversation),
-            selectinload(AgentWorkflowRunRequest.workflow),
             selectinload(AgentWorkflowRunRequest.graph),
             selectinload(AgentWorkflowRunRequest.product),
-            selectinload(AgentWorkflowRunRequest.workflow_run),
             selectinload(AgentWorkflowRunRequest.graph_run),
             selectinload(AgentWorkflowRunRequest.task),
             selectinload(AgentWorkflowRunRequest.turn_projection),
@@ -1062,10 +930,8 @@ def _load_request_for_update(
         select(AgentWorkflowRunRequest)
         .options(
             selectinload(AgentWorkflowRunRequest.conversation),
-            selectinload(AgentWorkflowRunRequest.workflow),
             selectinload(AgentWorkflowRunRequest.graph),
             selectinload(AgentWorkflowRunRequest.product),
-            selectinload(AgentWorkflowRunRequest.workflow_run),
             selectinload(AgentWorkflowRunRequest.graph_run),
             selectinload(AgentWorkflowRunRequest.task),
             selectinload(AgentWorkflowRunRequest.turn_projection),

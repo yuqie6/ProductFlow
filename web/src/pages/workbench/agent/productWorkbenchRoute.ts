@@ -1,22 +1,66 @@
-import type { AgentWorkbenchBootstrap } from "../../../lib/types";
+import { ApiError } from "../../../lib/api";
+import type { AgentWorkbenchBootstrap, GraphProjection } from "../../../lib/types";
 
-type AgentV2WorkbenchBootstrap = AgentWorkbenchBootstrap;
-
-export type ProductWorkbenchRouteInput = Pick<AgentV2WorkbenchBootstrap, "active_workflow"> & {
-  workflow_draft: Pick<
-    AgentV2WorkbenchBootstrap["workflow_draft"],
-    "intake" | "current_revision" | "recipe_seed" | "legacy_archive_seed"
-  >;
+export type ProductWorkbenchRouteInput = {
+  workflow_draft: {
+    intake: AgentWorkbenchBootstrap["workflow_draft"]["intake"];
+    current_revision: { id: string } | null;
+    recipe_seed: AgentWorkbenchBootstrap["workflow_draft"]["recipe_seed"];
+    legacy_archive_seed: AgentWorkbenchBootstrap["workflow_draft"]["legacy_archive_seed"];
+  };
 };
 
-export type ProductWorkbenchRouteTarget = "agent_v2" | "agent_intake";
+export type ProductWorkbenchRouteTarget = "agent" | "agent_intake";
+
+export type ProductWorkbenchSurface<TAgent extends ProductWorkbenchRouteInput = AgentWorkbenchBootstrap> =
+  | { kind: "loading" }
+  | { kind: "error"; error: unknown }
+  | { kind: "intake"; bootstrap: TAgent }
+  | { kind: "agent"; bootstrap: TAgent }
+  | { kind: "graph"; graph: GraphProjection };
+
+export function isWorkflowGraphMissing(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 404;
+}
+
+export function isAgentWorkbenchMissing(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 409;
+}
+
+export function resolveProductWorkbenchSurface<TAgent extends ProductWorkbenchRouteInput>(input: {
+  graph?: GraphProjection;
+  graphPending: boolean;
+  graphError: unknown;
+  agent?: TAgent;
+  agentPending: boolean;
+  agentError: unknown;
+}): ProductWorkbenchSurface<TAgent> {
+  if (input.graphPending || input.agentPending) {
+    return { kind: "loading" };
+  }
+  if (input.graphError && !isWorkflowGraphMissing(input.graphError)) {
+    return { kind: "error", error: input.graphError };
+  }
+  if (input.agentError && !isAgentWorkbenchMissing(input.agentError)) {
+    return { kind: "error", error: input.agentError };
+  }
+  if (input.agent) {
+    if (productWorkbenchRouteTarget(input.agent) === "agent_intake" && !input.graph) {
+      return { kind: "intake", bootstrap: input.agent };
+    }
+    return { kind: "agent", bootstrap: input.agent };
+  }
+  if (input.graph) {
+    return { kind: "graph", graph: input.graph };
+  }
+  return { kind: "error", error: input.agentError ?? input.graphError ?? new Error("workbench unavailable") };
+}
 
 export function productWorkbenchRouteTarget(
   bootstrap: ProductWorkbenchRouteInput,
 ): ProductWorkbenchRouteTarget {
   const draft = bootstrap.workflow_draft;
   if (
-    bootstrap.active_workflow === null &&
     draft.intake === null &&
     draft.current_revision === null &&
     draft.recipe_seed === null &&
@@ -24,7 +68,7 @@ export function productWorkbenchRouteTarget(
   ) {
     return "agent_intake";
   }
-  return "agent_v2";
+  return "agent";
 }
 
 export function agentProductIntakeResumePath(

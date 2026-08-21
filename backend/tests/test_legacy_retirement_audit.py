@@ -362,7 +362,7 @@ def _current_engine(tmp_path: Path, *, archive_schema: bool = True) -> tuple[sa.
     engine = sa.create_engine(f"sqlite:///{database_path}", future=True)
     Base.metadata.create_all(engine)
     with engine.begin() as connection:
-        connection.exec_driver_sql("DROP TABLE product_workflows")
+        connection.exec_driver_sql("DROP TABLE IF EXISTS product_workflows")
         connection.exec_driver_sql(
             "CREATE TABLE product_workflows ("
             "id VARCHAR(36) PRIMARY KEY, product_id VARCHAR(36) NOT NULL, title VARCHAR(255), "
@@ -388,6 +388,31 @@ def _current_engine(tmp_path: Path, *, archive_schema: bool = True) -> tuple[sa.
             "template_json JSON NOT NULL, archived_at DATETIME"
             ")"
         )
+        connection.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS workflow_nodes ("
+            "id VARCHAR(36) PRIMARY KEY, workflow_id VARCHAR(36) NOT NULL, "
+            "schema_version INTEGER, node_key VARCHAR(80), node_type VARCHAR(40), "
+            "folder_id VARCHAR(36), bound_image_asset_id VARCHAR(36), status VARCHAR(40)"
+            ")"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS workflow_edges ("
+            "id VARCHAR(36) PRIMARY KEY, workflow_id VARCHAR(36) NOT NULL, "
+            "source_node_id VARCHAR(36) NOT NULL, target_node_id VARCHAR(36) NOT NULL, "
+            "edge_key VARCHAR(80)"
+            ")"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS workflow_runs ("
+            "id VARCHAR(36) PRIMARY KEY, workflow_id VARCHAR(36) NOT NULL, status VARCHAR(40) NOT NULL"
+            ")"
+        )
+        connection.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS workflow_node_runs ("
+            "id VARCHAR(36) PRIMARY KEY, workflow_run_id VARCHAR(36) NOT NULL, "
+            "node_id VARCHAR(36) NOT NULL, status VARCHAR(40) NOT NULL"
+            ")"
+        )
     now = datetime(2026, 8, 15, 4, 0, tzinfo=UTC)
 
     with engine.begin() as connection:
@@ -402,18 +427,12 @@ def _current_engine(tmp_path: Path, *, archive_schema: bool = True) -> tuple[sa.
             {"id": "product-current", "name": "现行商品", "created_at": now, "updated_at": now},
         )
         connection.execute(
-            Base.metadata.tables["product_workflows"].insert(),
-            {
-                "id": "workflow-current",
-                "product_id": "product-current",
-                "title": "待归档 v1",
-                "active": True,
-                "schema_version": 1,
-                "revision": 1,
-                "edit_version": 0,
-                "created_at": now,
-                "updated_at": now,
-            },
+            sa.text(
+                "INSERT INTO product_workflows "
+                "(id, product_id, title, active, schema_version, revision, edit_version, created_at, updated_at) "
+                "VALUES ('workflow-current', 'product-current', '待归档 v1', 1, 1, 1, 0, :now, :now)"
+            ),
+            {"now": now},
         )
         connection.execute(
             Base.metadata.tables["media_objects"].insert(),

@@ -196,7 +196,6 @@ function draft(): WorkflowDraft {
       ],
       reference_asset_ids: ["asset-a", "asset-b"],
     },
-    final_workflow_id: null,
     recipe_seed: null,
     legacy_archive_seed: null,
     limits: {

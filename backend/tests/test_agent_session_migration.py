@@ -54,7 +54,7 @@ def test_agent_session_migration_backfills_existing_conversations_and_downgrades
                 },
             )
 
-    command.upgrade(config, "head")
+    command.upgrade(config, "20260821_0079")
     with engine.connect() as connection:
         rows = connection.execute(
             sa.text(

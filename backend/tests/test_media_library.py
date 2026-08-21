@@ -32,7 +32,7 @@ from productflow_backend.infrastructure.db.models import (
     MediaObject,
     Product,
     ProductImageAsset,
-    ProductWorkflow,
+    WorkflowGraph,
     WorkflowMediaLibraryAsset,
 )
 from productflow_backend.presentation.schemas.media_library import serialize_media_library_asset
@@ -296,7 +296,7 @@ def test_workflow_media_library_sync_reuses_product_lineage_and_remove_is_non_de
         db_session,
         product_image_asset_id=source_asset.id,
     ).asset
-    workflow = ProductWorkflow(product_id=product.id, title="素材工作流")
+    workflow = WorkflowGraph(product_id=product.id, title="素材工作流")
     db_session.add(workflow)
     db_session.commit()
 
@@ -328,7 +328,7 @@ def test_workflow_media_library_sync_rejects_archived_same_product_source(db_ses
         db_session,
         product_image_asset_id=source_asset.id,
     ).asset
-    workflow = ProductWorkflow(product_id=product.id, title="归档来源工作流")
+    workflow = WorkflowGraph(product_id=product.id, title="归档来源工作流")
     db_session.add(workflow)
     db_session.commit()
     archive_media_library_asset(db_session, asset_id=library_asset.id)
@@ -348,7 +348,7 @@ def test_archive_rejects_workflow_media_library_reference(db_session) -> None:
         db_session,
         product_image_asset_id=source_asset.id,
     ).asset
-    workflow = ProductWorkflow(product_id=product.id, title="归档保护工作流")
+    workflow = WorkflowGraph(product_id=product.id, title="归档保护工作流")
     db_session.add(workflow)
     db_session.commit()
     sync_workflow_media_library_assets(

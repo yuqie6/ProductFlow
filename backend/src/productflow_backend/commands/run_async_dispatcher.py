@@ -21,8 +21,8 @@ from productflow_backend.application.durable_recovery import (
 )
 from productflow_backend.domain.durable_generation_tasks import (
     DELIVERY_RENDITION_TASK_CONTRACT,
+    GRAPH_RUN_GENERATION_TASK_CONTRACT,
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
-    WORKFLOW_RUN_GENERATION_TASK_CONTRACT,
 )
 from productflow_backend.infrastructure.queue import enqueue_async_dispatch
 
@@ -50,7 +50,7 @@ def _recover_business_state() -> dict[str, int]:
     workflow = recover_unfinished_workflow_runs(
         stage_dispatch=lambda session, run_id: stage_async_dispatch_for_actor(
             session,
-            WORKFLOW_RUN_GENERATION_TASK_CONTRACT.actor_name,
+            GRAPH_RUN_GENERATION_TASK_CONTRACT.actor_name,
             run_id,
         ),
         reset_stale_running=True,

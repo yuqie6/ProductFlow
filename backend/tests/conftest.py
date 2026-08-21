@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from productflow_backend.config import get_settings
@@ -34,7 +34,12 @@ def configured_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     Base.metadata.create_all(engine)
     yield storage_root
 
-    Base.metadata.drop_all(engine)
+    with engine.begin() as connection:
+        if engine.dialect.name == "sqlite":
+            connection.execute(text("PRAGMA foreign_keys=OFF"))
+        Base.metadata.drop_all(bind=connection)
+        if engine.dialect.name == "sqlite":
+            connection.execute(text("PRAGMA foreign_keys=ON"))
     engine.dispose()
     get_settings.cache_clear()
     get_engine.cache_clear()
@@ -84,8 +89,4 @@ def _execute_image_session_queue_inline(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(
         "productflow_backend.application.image_sessions.service.requeue_async_dispatch",
         _test_stage_image_session_dispatch,
-    )
-    monkeypatch.setattr(
-        "productflow_backend.application.product_workflow.v2_execution.enqueue_delivery_rendition_job",
-        lambda _job_id: None,
     )

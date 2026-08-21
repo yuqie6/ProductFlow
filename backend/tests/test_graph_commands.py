@@ -4,6 +4,7 @@ import pytest
 from helpers import _make_demo_image_bytes
 from sqlalchemy import func, select
 
+from productflow_backend.application.product_facts import stage_product_fact_set
 from productflow_backend.application.product_workflow.graph_commands import (
     apply_graph_change_set,
     get_active_workflow_graph,
@@ -11,8 +12,13 @@ from productflow_backend.application.product_workflow.graph_commands import (
     stage_new_workflow_graph,
     undo_last_graph_change_set,
 )
-from productflow_backend.application.product_workflow.graph_contracts import RenameNodeOp, WorkflowChangeSet
+from productflow_backend.application.product_workflow.graph_contracts import (
+    CreateNodeOp,
+    RenameNodeOp,
+    WorkflowChangeSet,
+)
 from productflow_backend.application.product_workflow.graph_queries import project_workflow_graph
+from productflow_backend.application.product_workflow.graph_runs import load_graph_sources
 from productflow_backend.application.product_workflow.graph_template import (
     DirectCreateImageType,
     build_direct_create_template,
@@ -156,3 +162,85 @@ def test_bound_asset_must_belong_to_product(db_session) -> None:
     )
     with pytest.raises(BusinessValidationError, match="不属于该商品"):
         stage_new_workflow_graph(db_session, product_id=owner.product.id, change_set=change_set)
+
+
+def test_multiple_product_sources_resolve_their_own_products_and_fact_versions(db_session) -> None:
+    owner = _create_product_with_assets(db_session, name="主商品")
+    other = _create_product_with_assets(db_session, name="搭配商品")
+    owner_facts = stage_product_fact_set(
+        db_session,
+        product=owner.product,
+        facts=[{"key": "material", "value": "steel"}],
+    )
+    other_facts = stage_product_fact_set(
+        db_session,
+        product=other.product,
+        facts=[{"key": "material", "value": "wood"}],
+    )
+    db_session.commit()
+
+    created = stage_new_workflow_graph(
+        db_session,
+        product_id=owner.product.id,
+        change_set=build_direct_create_template(
+            image_types=[DirectCreateImageType(key="hero", quantity=1, order=0)],
+            reference_asset_ids=[owner.created_assets[0].id],
+            source_product_id=owner.product.id,
+            fact_set_version_id=owner_facts.id,
+        ),
+    )
+    db_session.commit()
+    added = apply_graph_change_set(
+        db_session,
+        product_id=owner.product.id,
+        graph_id=created.graph.id,
+        change_set=WorkflowChangeSet(
+            base_graph_revision=created.graph.revision,
+            summary="增加搭配商品资料",
+            operations=[
+                CreateNodeOp(
+                    client_ref="secondary-product",
+                    node_type=GraphNodeType.PRODUCT_SOURCE,
+                    title="搭配商品",
+                    config={
+                        "source_product_id": other.product.id,
+                        "fact_set_version_id": other_facts.id,
+                    },
+                )
+            ],
+        ),
+    )
+    sources = load_graph_sources(db_session, added.graph, added.applied)
+    product_sources = [
+        (node, sources[node.id])
+        for node in added.applied.nodes
+        if node.node_type == GraphNodeType.PRODUCT_SOURCE
+    ]
+    assert len(product_sources) == 2
+    assert {
+        (record.product_source.source_product.name, record.facts[0]["value"])
+        for _, record in product_sources
+        if record.product_source is not None and record.product_source.source_product is not None
+    } == {("主商品", "steel"), ("搭配商品", "wood")}
+
+    with pytest.raises(BusinessValidationError, match="不属于绑定商品"):
+        apply_graph_change_set(
+            db_session,
+            product_id=owner.product.id,
+            graph_id=added.graph.id,
+            change_set=WorkflowChangeSet(
+                base_graph_revision=added.graph.revision,
+                summary="错误绑定事实版本",
+                operations=[
+                    CreateNodeOp(
+                        client_ref="invalid-product",
+                        node_type=GraphNodeType.PRODUCT_SOURCE,
+                        title="错误资料",
+                        config={
+                            "source_product_id": owner.product.id,
+                            "fact_set_version_id": other_facts.id,
+                        },
+                    )
+                ],
+            ),
+        )

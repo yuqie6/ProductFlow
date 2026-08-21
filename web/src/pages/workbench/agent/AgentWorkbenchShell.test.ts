@@ -108,7 +108,7 @@ describe("AgentWorkbenchShell", () => {
   it("keeps the canvas absolute below lg and makes it a normal grid child on desktop", () => {
     const markup = renderShell(true);
 
-    expect(markup).toMatch(/data-agent-workbench-canvas-slot[^>]*class="[^"]*absolute inset-0[^"]*lg:relative lg:inset-auto/);
+    expect(markup).toMatch(/data-agent-workbench-canvas-slot[^>]*class="[^"]*absolute inset-0[^"]*lg:relative lg:inset-auto lg:h-full lg:min-h-0/);
   });
 
   it("keeps both regions mounted beneath confirmation and makes them inert", () => {

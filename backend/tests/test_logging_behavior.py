@@ -366,20 +366,12 @@ def test_request_id_middleware_preserves_http_exception_body_header_and_context_
 def test_worker_actors_set_and_clear_log_context(monkeypatch: pytest.MonkeyPatch, configured_env: Path) -> None:
     from productflow_backend.infrastructure.image.chat_service import ImageChatService
     from productflow_backend.infrastructure.logging import current_log_context
-    from productflow_backend.workers import (
-        run_image_session_generation_task,
-        run_product_workflow_node_run,
-        run_product_workflow_run,
-    )
+    from productflow_backend.workers import run_image_session_generation_task, run_workflow_graph_run
 
     observed: list[dict[str, str]] = []
 
-    def capture_workflow_context(workflow_run_id: str) -> None:
-        assert workflow_run_id == "workflow-run-1"
-        observed.append(current_log_context())
-
-    def capture_workflow_node_context(workflow_node_run_id: str) -> None:
-        assert workflow_node_run_id == "workflow-node-run-1"
+    def capture_graph_run_context(graph_run_id: str) -> None:
+        assert graph_run_id == "graph-run-1"
         observed.append(current_log_context())
 
     def capture_image_task_context(task_id: str, **kwargs) -> None:
@@ -387,15 +379,11 @@ def test_worker_actors_set_and_clear_log_context(monkeypatch: pytest.MonkeyPatch
         assert kwargs["chat_service_factory"] is ImageChatService
         observed.append(current_log_context())
 
-    monkeypatch.setattr("productflow_backend.workers.execute_product_workflow_run", capture_workflow_context)
-    monkeypatch.setattr("productflow_backend.workers.execute_product_workflow_node_run", capture_workflow_node_context)
+    monkeypatch.setattr("productflow_backend.workers.execute_graph_run", capture_graph_run_context)
     monkeypatch.setattr("productflow_backend.workers.execute_image_session_generation_task", capture_image_task_context)
 
-    run_product_workflow_run.fn("workflow-run-1")
+    run_workflow_graph_run.fn("graph-run-1")
     assert current_log_context()["workflow_run_id"] == "-"
-
-    run_product_workflow_node_run.fn("workflow-node-run-1")
-    assert current_log_context()["workflow_node_run_id"] == "-"
 
     run_image_session_generation_task.fn("image-task-1")
     assert current_log_context()["image_session_generation_task_id"] == "-"
@@ -403,14 +391,8 @@ def test_worker_actors_set_and_clear_log_context(monkeypatch: pytest.MonkeyPatch
     assert observed == [
         {
             "request_id": "-",
-            "workflow_run_id": "workflow-run-1",
+            "workflow_run_id": "graph-run-1",
             "workflow_node_run_id": "-",
-            "image_session_generation_task_id": "-",
-        },
-        {
-            "request_id": "-",
-            "workflow_run_id": "-",
-            "workflow_node_run_id": "workflow-node-run-1",
             "image_session_generation_task_id": "-",
         },
         {
@@ -428,22 +410,12 @@ def test_worker_actors_clear_log_context_when_execution_raises(
 ) -> None:
     from productflow_backend.infrastructure.image.chat_service import ImageChatService
     from productflow_backend.infrastructure.logging import current_log_context
-    from productflow_backend.workers import (
-        run_image_session_generation_task,
-        run_product_workflow_node_run,
-        run_product_workflow_run,
-    )
+    from productflow_backend.workers import run_image_session_generation_task, run_workflow_graph_run
 
-    def raise_workflow_error(workflow_run_id: str) -> None:
-        assert workflow_run_id == "workflow-run-error"
-        assert current_log_context()["workflow_run_id"] == "workflow-run-error"
-        raise RuntimeError("workflow failed")
-
-    def raise_workflow_node_error(workflow_node_run_id: str) -> None:
-        assert workflow_node_run_id == "workflow-node-run-error"
-        assert current_log_context()["workflow_node_run_id"] == "workflow-node-run-error"
-        assert current_log_context()["workflow_run_id"] == "-"
-        raise RuntimeError("workflow node failed")
+    def raise_graph_run_error(graph_run_id: str) -> None:
+        assert graph_run_id == "graph-run-error"
+        assert current_log_context()["workflow_run_id"] == "graph-run-error"
+        raise RuntimeError("graph run failed")
 
     def raise_image_task_error(task_id: str, **kwargs) -> None:
         assert task_id == "image-task-error"
@@ -451,17 +423,12 @@ def test_worker_actors_clear_log_context_when_execution_raises(
         assert current_log_context()["image_session_generation_task_id"] == "image-task-error"
         raise RuntimeError("image task failed")
 
-    monkeypatch.setattr("productflow_backend.workers.execute_product_workflow_run", raise_workflow_error)
-    monkeypatch.setattr("productflow_backend.workers.execute_product_workflow_node_run", raise_workflow_node_error)
+    monkeypatch.setattr("productflow_backend.workers.execute_graph_run", raise_graph_run_error)
     monkeypatch.setattr("productflow_backend.workers.execute_image_session_generation_task", raise_image_task_error)
 
-    with pytest.raises(RuntimeError, match="workflow failed"):
-        run_product_workflow_run.fn("workflow-run-error")
+    with pytest.raises(RuntimeError, match="graph run failed"):
+        run_workflow_graph_run.fn("graph-run-error")
     assert current_log_context()["workflow_run_id"] == "-"
-
-    with pytest.raises(RuntimeError, match="workflow node failed"):
-        run_product_workflow_node_run.fn("workflow-node-run-error")
-    assert current_log_context()["workflow_node_run_id"] == "-"
 
     with pytest.raises(RuntimeError, match="image task failed"):
         run_image_session_generation_task.fn("image-task-error")

@@ -34,7 +34,8 @@ from productflow_backend.domain.enums import (
 )
 from productflow_backend.infrastructure.agent_service import AgentServiceToolStep, AgentServiceToolStepDetails
 from productflow_backend.infrastructure.db.models import AgentConversation, AgentTurnProjection
-from productflow_backend.presentation.schemas.workflow_drafts import WorkflowDraftResponse, WorkflowRunV2Response
+from productflow_backend.presentation.schemas.graphs import GraphRunResponse
+from productflow_backend.presentation.schemas.workflow_drafts import WorkflowDraftResponse
 
 
 class StrictAgentRequest(BaseModel):
@@ -546,7 +547,7 @@ class AgentTurnPageResponse(BaseModel):
 class AgentWorkflowRunListResponse(BaseModel):
     workflow_id: str | None
     workflow_revision: int
-    items: list[WorkflowRunV2Response]
+    items: list[GraphRunResponse]
 
 
 class PrepareAgentWorkflowRunRequest(StrictAgentRequest):
@@ -706,18 +707,11 @@ def serialize_agent_turn_effect_reconciliation(
 def serialize_agent_workflow_run_request(
     request: Any,
 ) -> AgentWorkflowRunRequestResponse:
-    if request.graph_id is not None:
-        workflow_id = request.graph_id
-        workflow_title = request.graph.title if request.graph is not None else ""
-        source_run_id = request.source_graph_run_id
-        workflow_run_id = request.graph_run_id
-        workflow_run_status = request.graph_run.status if request.graph_run is not None else None
-    else:
-        workflow_id = request.workflow_id
-        workflow_title = request.workflow.title if request.workflow is not None else ""
-        source_run_id = request.source_run_id
-        workflow_run_id = request.workflow_run_id
-        workflow_run_status = request.workflow_run.status if request.workflow_run is not None else None
+    workflow_id = request.graph_id
+    workflow_title = request.graph.title if request.graph is not None else ""
+    source_run_id = request.source_graph_run_id
+    workflow_run_id = request.graph_run_id
+    workflow_run_status = request.graph_run.status if request.graph_run is not None else None
     return AgentWorkflowRunRequestResponse(
         id=request.id,
         conversation_id=request.conversation_id,

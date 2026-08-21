@@ -3,11 +3,9 @@ import { useRef } from "react";
 
 import { api, ApiError } from "../../../lib/api";
 import type {
-  ActiveProductWorkflowV2,
-  MaterializeWorkflowDraftInput,
+  GraphProjection,
   WorkflowDraft,
   WorkflowDraftRevision,
-  WorkflowMaterializationResult,
 } from "../../../lib/types";
 
 interface StartWorkflowMaterializationInput {
@@ -17,12 +15,12 @@ interface StartWorkflowMaterializationInput {
 
 interface WorkflowMaterializationMutationResult {
   confirmedDraft: WorkflowDraft;
-  materialization: WorkflowMaterializationResult;
+  graph: GraphProjection;
 }
 
 interface WorkflowMaterializationGateway {
   confirmWorkflowDraft: typeof api.confirmWorkflowDraft;
-  materializeWorkflowDraft: typeof api.materializeWorkflowDraft;
+  persistConfirmedDraftGraph: typeof api.persistConfirmedDraftGraph;
 }
 
 interface ConfirmAndMaterializeWorkflowInput extends StartWorkflowMaterializationInput {
@@ -37,7 +35,7 @@ interface UseWorkflowMaterializationInput {
   conversationId: string;
   onDraftConfirmed?: (draft: WorkflowDraft) => void;
   onConflict?: () => void | Promise<void>;
-  onMaterialized?: (result: WorkflowMaterializationResult) => void;
+  onMaterialized?: (graph: GraphProjection) => void;
 }
 
 export class WorkflowMaterializationProtocolError extends Error {
@@ -49,18 +47,6 @@ export class WorkflowMaterializationProtocolError extends Error {
 
 export function workflowMaterializationIdempotencyKey(draftId: string, version: number): string {
   return `agent-workspace:${draftId}:v${version}`;
-}
-
-export function workflowMaterializationInput(
-  draftId: string,
-  draftVersion: number,
-  expectedWorkflowRevision: number,
-): MaterializeWorkflowDraftInput {
-  return {
-    expected_draft_version: draftVersion,
-    expected_workflow_revision: expectedWorkflowRevision,
-    idempotency_key: workflowMaterializationIdempotencyKey(draftId, draftVersion),
-  };
 }
 
 export async function confirmAndMaterializeWorkflow(
@@ -87,12 +73,9 @@ export async function confirmAndMaterializeWorkflow(
     throw new WorkflowMaterializationProtocolError("WorkflowDraft 确认响应与正在审阅的 revision 不一致");
   }
   onDraftConfirmed?.(confirmedDraft);
-  const materialization = await gateway.materializeWorkflowDraft(
-    productId,
-    draftId,
-    workflowMaterializationInput(draftId, revision.version, expectedWorkflowRevision),
-  );
-  return { confirmedDraft, materialization };
+  void expectedWorkflowRevision;
+  const persisted = await gateway.persistConfirmedDraftGraph(productId, draftId, revision.version);
+  return { confirmedDraft, graph: persisted.graph };
 }
 
 export function useWorkflowMaterialization({
@@ -119,12 +102,9 @@ export function useWorkflowMaterialization({
       expectedWorkflowRevision,
       onDraftConfirmed: callbacksRef.current.onDraftConfirmed,
     }),
-    onSuccess: async ({ materialization }) => {
-      callbacksRef.current.onMaterialized?.(materialization);
-      queryClient.setQueryData<ActiveProductWorkflowV2>(
-        ["active-product-workflow-v2", productId],
-        { latest_revision: materialization.workflow.revision, workflow: materialization.workflow },
-      );
+    onSuccess: async ({ graph }) => {
+      callbacksRef.current.onMaterialized?.(graph);
+      queryClient.setQueryData(["workflow-graph", productId], graph);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["agent-workbench", productId] }),
         queryClient.invalidateQueries({ queryKey: ["agent-turns", productId, conversationId] }),
@@ -132,6 +112,7 @@ export function useWorkflowMaterialization({
         queryClient.invalidateQueries({ queryKey: ["workflow-draft", productId, draftId] }),
         queryClient.invalidateQueries({ queryKey: ["product", productId] }),
         queryClient.invalidateQueries({ queryKey: ["products"] }),
+        queryClient.invalidateQueries({ queryKey: ["workflow-graph", productId] }),
       ]);
     },
     onError: async (error) => {

@@ -77,25 +77,6 @@ class DurableGenerationTaskContract:
         return self.has_status(status, self.execution_running_statuses)
 
 
-WORKFLOW_RUN_GENERATION_TASK_CONTRACT = DurableGenerationTaskContract(
-    name="product_workflow_run",
-    durable_model_name="WorkflowRun",
-    actor_name="run_product_workflow_run",
-    active_statuses=(WorkflowRunStatus.RUNNING,),
-    queued_statuses=(),
-    running_statuses=(WorkflowRunStatus.RUNNING,),
-    terminal_statuses=(
-        WorkflowRunStatus.SUCCEEDED,
-        WorkflowRunStatus.FAILED,
-        WorkflowRunStatus.CANCELLED,
-        WorkflowRunStatus.UNKNOWN,
-    ),
-    execution_queued_statuses=(WorkflowNodeStatus.QUEUED,),
-    execution_running_statuses=(WorkflowNodeStatus.RUNNING,),
-    status_snapshot_source="ProductWorkflowStatusSnapshot",
-    recovery_entrypoint="recover_unfinished_workflow_runs",
-)
-
 IMAGE_SESSION_GENERATION_TASK_CONTRACT = DurableGenerationTaskContract(
     name="image_session_generation_task",
     durable_model_name="ImageSessionGenerationTask",
@@ -148,16 +129,16 @@ def classify_workflow_run_delivery(
     run_status: WorkflowRunStatus | str,
     node_run_statuses: Sequence[WorkflowNodeStatus | str],
 ) -> WorkflowRunDeliveryState:
-    if not WORKFLOW_RUN_GENERATION_TASK_CONTRACT.is_active(run_status):
+    if not GRAPH_RUN_GENERATION_TASK_CONTRACT.is_active(run_status):
         return WorkflowRunDeliveryState.NONE
 
     statuses = tuple(node_run_statuses)
-    if any(WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_running(status) for status in statuses):
+    if any(GRAPH_RUN_GENERATION_TASK_CONTRACT.execution_is_running(status) for status in statuses):
         return WorkflowRunDeliveryState.RUNNING
-    if any(WORKFLOW_RUN_GENERATION_TASK_CONTRACT.execution_is_queued(status) for status in statuses):
+    if any(GRAPH_RUN_GENERATION_TASK_CONTRACT.execution_is_queued(status) for status in statuses):
         return WorkflowRunDeliveryState.QUEUED
     if statuses and all(
-        WORKFLOW_RUN_GENERATION_TASK_CONTRACT.has_status(
+        GRAPH_RUN_GENERATION_TASK_CONTRACT.has_status(
             status,
             (WorkflowNodeStatus.SUCCEEDED, WorkflowNodeStatus.FAILED),
         )

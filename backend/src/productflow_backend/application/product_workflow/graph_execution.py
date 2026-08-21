@@ -8,6 +8,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from productflow_backend.application.async_delivery import delivery_key_for_actor, stage_async_dispatch
+from productflow_backend.application.delivery_renditions.service import create_delivery_rendition_job
 from productflow_backend.application.product_images.assets import stage_product_image_asset
 from productflow_backend.application.product_workflow.dependencies import (
     WorkflowExecutionDependencies,
@@ -31,9 +33,11 @@ from productflow_backend.application.workflow_drafts.contracts import (
     ImagePromptPayloadV1,
     VisualSystemDraftPayload,
 )
+from productflow_backend.domain.durable_generation_tasks import DELIVERY_RENDITION_TASK_CONTRACT
 from productflow_backend.domain.enums import (
     GraphArtifactType,
     GraphNodeType,
+    JobStatus,
     ProductImageOriginType,
     WorkflowNodeStatus,
     WorkflowRunStatus,
@@ -55,6 +59,8 @@ from productflow_backend.infrastructure.storage import LocalStorage
 
 logger = logging.getLogger(__name__)
 SUPPORTED_REFERENCE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp"}
+# ImagePromptPayloadV1 still requires images[].image_plan_key; stored v3 artifacts strip it.
+V3_PROMPT_PROVIDER_PLAN_KEY = "output"
 
 
 def execute_graph_run(
@@ -185,6 +191,7 @@ def _execute_node_run(
         if product is None:
             raise NotFoundError("商品不存在")
         storage_writes = StorageWriteCompensation()
+        image_type_key = applied_node.config.get("image_type_key")
         asset = stage_product_image_asset(
             session,
             product=product,
@@ -195,6 +202,7 @@ def _execute_node_run(
             origin_type=ProductImageOriginType.WORKFLOW_GENERATION,
             storage=storage,
             storage_writes=storage_writes,
+            image_type_key=image_type_key if isinstance(image_type_key, str) else None,
         )
         session.flush()
         payload = {
@@ -220,6 +228,11 @@ def _execute_node_run(
             product_image_asset_id=asset.id,
         )
         artifacts = artifacts.with_image(node_run.node_id, artifact_id=artifact.id, asset_id=asset.id)
+        _queue_delivery_rendition_after_image_success(
+            session,
+            node_id=node_run.node_id,
+            source_asset_id=asset.id,
+        )
         storage_writes.release()
     else:
         raise BusinessValidationError("不能运行该节点类型")
@@ -228,6 +241,43 @@ def _execute_node_run(
     node_run.output_json = {"artifact_id": artifact.id}
     session.commit()
     return artifacts
+
+
+def _queue_delivery_rendition_after_image_success(
+    session: Session,
+    *,
+    node_id: str,
+    source_asset_id: str,
+) -> None:
+    live_node = session.get(WorkflowGraphNode, node_id)
+    if live_node is None:
+        return
+    session.refresh(live_node)
+    spec = live_node.config_json.get("delivery_spec") if isinstance(live_node.config_json, dict) else None
+    if not spec:
+        return
+    try:
+        creation = create_delivery_rendition_job(
+            session,
+            source_asset_id=source_asset_id,
+            delivery_spec=spec,
+        )
+        if creation.created and creation.job.status == JobStatus.QUEUED:
+            stage_async_dispatch(
+                session,
+                delivery_key=delivery_key_for_actor(
+                    DELIVERY_RENDITION_TASK_CONTRACT.actor_name,
+                    creation.job.id,
+                ),
+                actor_name=DELIVERY_RENDITION_TASK_CONTRACT.actor_name,
+                aggregate_id=creation.job.id,
+            )
+    except Exception:
+        logger.exception(
+            "image success kept; delivery rendition queue failed: asset_id=%s node_id=%s",
+            source_asset_id,
+            node_id,
+        )
 
 
 def _persist_artifact(
@@ -264,6 +314,7 @@ def _persist_artifact(
         node = session.get(WorkflowGraphNode, node_run.node_id)
         if node is not None:
             node.current_artifact_id = artifact.id
+            session.flush()
     return artifact
 
 
@@ -282,7 +333,7 @@ def _to_prompt_request(
     )
     return PromptGenerationRequest(
         image_type_key=runtime.image_type_key or "unspecified",
-        image_plan_keys=("output",),
+        image_plan_keys=(V3_PROMPT_PROVIDER_PLAN_KEY,),
         facts=runtime.product_facts,
         visual_system=visual,
         visual_exceptions=(),
@@ -446,7 +497,7 @@ def _prompt_from_runtime(runtime: PromptRuntimeInput, *, title: str) -> ImagePro
             "atmosphere": stored.get("atmosphere") or {"keywords": ["清晰"], "lighting": "均匀照明"},
             "images": [
                 {
-                    "image_plan_key": "output",
+                    "image_plan_key": V3_PROMPT_PROVIDER_PLAN_KEY,
                     "instruction": design_goal if isinstance(design_goal, str) else f"生成{title}",
                 }
             ],

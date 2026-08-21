@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 
 from productflow_backend.application.product_workflow.graph_apply import EMPTY_GRAPH, apply_workflow_change_set
-from productflow_backend.application.product_workflow.graph_contracts import UpdateNodeConfigOp, WorkflowChangeSet
 from productflow_backend.application.product_workflow.graph_compiler import (
     GraphRuntimeArtifacts,
     GraphSourceRecord,
@@ -12,6 +11,7 @@ from productflow_backend.application.product_workflow.graph_compiler import (
     select_run_node_ids,
     strip_v3_prompt_payload,
 )
+from productflow_backend.application.product_workflow.graph_contracts import UpdateNodeConfigOp, WorkflowChangeSet
 from productflow_backend.application.product_workflow.graph_template import (
     DirectCreateImageType,
     build_direct_create_template,
@@ -81,6 +81,38 @@ def test_image_compiler_requires_prompt_artifact_and_prompt_edge() -> None:
     assert "images" not in runtime.prompt_payload or True
     assert runtime.reference_images == ()
     assert runtime.generation_spec["aspect_ratio"] == "1:1"
+
+
+def test_inline_visual_overlay_compiles_without_version() -> None:
+    graph = _template_graph()
+    visual = next(node for node in graph.nodes if node.node_type == GraphNodeType.VISUAL_SYSTEM)
+    graph = apply_workflow_change_set(
+        graph,
+        WorkflowChangeSet(
+            base_graph_revision=graph.revision,
+            summary="inline visual",
+            actor_type=GraphActorType.USER,
+            operations=[
+                UpdateNodeConfigOp(
+                    node_ref=visual.id,
+                    config={
+                        "visual_overlay": {
+                            "style": ["干净白底"],
+                            "colors": [{"role": "background", "value": "#FFFFFF"}],
+                        },
+                    },
+                )
+            ],
+        ),
+    )
+    prompt = next(node for node in graph.nodes if node.node_type == GraphNodeType.PROMPT_GENERATION)
+    sources = _sources_for(graph, visual=False)
+    sources[visual.id] = GraphSourceRecord(
+        visual_payload={"style": ["干净白底"], "colors": [{"role": "background", "value": "#FFFFFF"}]},
+    )
+    runtime = compile_prompt_runtime(graph, prompt.id, sources)
+    assert runtime.visual_system_version_id is None
+    assert runtime.visual_system["style"] == ["干净白底"]
 
 
 def test_incomplete_visual_edge_does_not_inject_visual_payload() -> None:

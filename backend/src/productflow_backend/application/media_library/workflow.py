@@ -15,7 +15,7 @@ from productflow_backend.infrastructure.db.models import (
     MediaLibraryAsset,
     MediaLibraryAssetTag,
     ProductImageAsset,
-    ProductWorkflow,
+    WorkflowGraph,
     WorkflowMediaLibraryAsset,
 )
 
@@ -30,13 +30,13 @@ class WorkflowMediaLibraryAssetRecord:
 
 
 def _workflow_query(*, product_id: str, workflow_id: str):
-    return select(ProductWorkflow).where(
-        ProductWorkflow.id == workflow_id,
-        ProductWorkflow.product_id == product_id,
+    return select(WorkflowGraph).where(
+        WorkflowGraph.id == workflow_id,
+        WorkflowGraph.product_id == product_id,
     )
 
 
-def _require_workflow(session: Session, *, product_id: str, workflow_id: str) -> ProductWorkflow:
+def _require_workflow(session: Session, *, product_id: str, workflow_id: str) -> WorkflowGraph:
     workflow = session.scalar(_workflow_query(product_id=product_id, workflow_id=workflow_id))
     if workflow is None:
         raise NotFoundError("工作流不存在")

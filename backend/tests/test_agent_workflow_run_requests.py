@@ -21,16 +21,12 @@ from productflow_backend.application.agent.workflow_run_requests import (
     prepare_agent_global_workflow_run_request,
     prepare_agent_workflow_run_request,
 )
-from productflow_backend.application.agent.workflow_runs import inspect_agent_global_workflow_runs
-from productflow_backend.application.product_workflow.run_state import WORKFLOW_CANCELLED_REASON
-from productflow_backend.application.product_workflow.v2_runs import (
-    retry_v2_workflow_run,
-    retryable_node_run_ids,
-    submit_v2_workflow_run,
-    validate_retry_workflow_run,
+from productflow_backend.application.agent.workflow_runs import (
+    inspect_agent_global_workflow_runs,
+    list_agent_workflow_runs,
 )
 from productflow_backend.application.product_workflow.graph_draft_persist import persist_confirmed_draft_graph
-from productflow_backend.application.workflow_drafts.materialization import materialize_workflow_draft
+from productflow_backend.application.product_workflow.graph_runs import submit_graph_run
 from productflow_backend.application.workflow_drafts.service import (
     append_workflow_draft_revision,
     confirm_workflow_draft_revision,
@@ -42,6 +38,7 @@ from productflow_backend.domain.enums import (
     AgentToolStepStatus,
     AgentTurnStatus,
     AgentWorkflowRunRequestStatus,
+    GraphRunScope,
     WorkflowNodeStatus,
     WorkflowRunStatus,
 )
@@ -51,62 +48,27 @@ from productflow_backend.infrastructure.db.models import (
     AgentConversation,
     AgentWorkflowRunRequest,
     WorkflowGraphRun,
-    WorkflowRun,
 )
 
 
-def _create_requestable_workspace(
-    db_session,
-    *,
-    name: str = "执行请求测试商品",
-    idempotency_key: str = "workflow-run-request-workspace",
-):
-    selection = AgentProductSelectionV1.model_validate(
-        {
-            "schema_version": 1,
-            "image_types": [{"key": "hero", "quantity": 2, "order": 0}],
-        }
+def _silence_graph_run_enqueue(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "productflow_backend.application.agent.workflow_run_requests.enqueue_graph_run",
+        lambda run_id: None,
     )
-    workspace = create_agent_product_workspace(
-        db_session,
-        name=name,
-        selection=selection,
-        image_uploads=[(_make_demo_image_bytes(), "reference.png", "image/png")],
-        idempotency_key=idempotency_key,
+    monkeypatch.setattr(
+        "productflow_backend.application.product_workflow.graph_runs.enqueue_graph_run",
+        lambda run_id: None,
     )
-    append_workflow_draft_revision(
-        db_session,
-        product_id=workspace.product.id,
-        draft_id=workspace.workflow_draft.id,
-        expected_draft_version=0,
-        payload=make_workflow_draft_payload(reference_asset_id=workspace.created_assets[0].id),
-        ready_for_confirmation=True,
-        source_turn_id="request-test-turn",
-        source_artifact_step_id="request-test-artifact",
-    )
-    confirm_workflow_draft_revision(
-        db_session,
-        product_id=workspace.product.id,
-        draft_id=workspace.workflow_draft.id,
-        expected_draft_version=1,
-    )
-    materialized = materialize_workflow_draft(
-        db_session,
-        product_id=workspace.product.id,
-        draft_id=workspace.workflow_draft.id,
-        expected_draft_version=1,
-        expected_workflow_revision=0,
-        idempotency_key="request-test-materialization",
-    )
-    return workspace, materialized.workflow
 
 
-def test_global_agent_can_inspect_recent_runs_for_selected_workflows(db_session) -> None:
-    first, first_workflow = _create_requestable_workspace(db_session)
-    _, second_workflow = _create_requestable_workspace(
+def test_global_agent_can_inspect_recent_runs_for_selected_workflows(db_session, monkeypatch) -> None:
+    _silence_graph_run_enqueue(monkeypatch)
+    first, first_graph = _create_v3_requestable_workspace(db_session)
+    _, second_graph = _create_v3_requestable_workspace(
         db_session,
         name="执行请求测试商品 2",
-        idempotency_key="workflow-run-request-workspace-2",
+        idempotency_key="v3-workflow-run-request-workspace-2",
     )
     global_conversation = db_session.scalar(
         select(AgentConversation).where(
@@ -116,19 +78,20 @@ def test_global_agent_can_inspect_recent_runs_for_selected_workflows(db_session)
     )
     assert global_conversation is not None
 
-    submitted = submit_v2_workflow_run(
+    submitted = submit_graph_run(
         db_session,
         product_id=first.product.id,
-        workflow_id=first_workflow.id,
+        graph_id=first_graph.id,
+        scope=GraphRunScope.GRAPH,
     )
     inspected = inspect_agent_global_workflow_runs(
         db_session,
         conversation_id=global_conversation.id,
-        workflow_ids=[second_workflow.id, first_workflow.id],
+        workflow_ids=[second_graph.id, first_graph.id],
         limit=1,
     )
 
-    assert [item["workflow_id"] for item in inspected] == [second_workflow.id, first_workflow.id]
+    assert [item["workflow_id"] for item in inspected] == [second_graph.id, first_graph.id]
     assert inspected[0]["product_name"] == "执行请求测试商品 2"
     assert inspected[0]["runs"] == []
     assert inspected[1]["runs"][0]["id"] == submitted.run.id
@@ -136,8 +99,9 @@ def test_global_agent_can_inspect_recent_runs_for_selected_workflows(db_session)
     assert inspected[1]["runs"][0]["node_status_counts"]
 
 
-def test_agent_workflow_run_request_waits_for_confirmation_and_reuses_run_chain(db_session) -> None:
-    workspace, workflow = _create_requestable_workspace(db_session)
+def test_agent_workflow_run_request_waits_for_confirmation_and_reuses_run_chain(db_session, monkeypatch) -> None:
+    _silence_graph_run_enqueue(monkeypatch)
+    workspace, workflow = _create_v3_requestable_workspace(db_session)
     task = create_agent_task(
         db_session,
         session_id=workspace.conversation.session_id,
@@ -165,11 +129,10 @@ def test_agent_workflow_run_request_waits_for_confirmation_and_reuses_run_chain(
         task_id=task.id,
     )
     assert request.status == AgentWorkflowRunRequestStatus.AWAITING_CONFIRMATION
-    assert request.workflow_run_id is None
+    assert request.graph_run_id is None
     persisted_task = db_session.get(type(task), task.id)
     assert persisted_task.status == AgentTaskStatus.AWAITING_CONFIRMATION
-    assert persisted_task.workflow_id == workflow.id
-    assert db_session.scalar(select(func.count()).select_from(WorkflowRun)) == 0
+    assert db_session.scalar(select(func.count()).select_from(WorkflowGraphRun)) == 0
 
     replay = create_agent_workflow_run_request(
         db_session,
@@ -190,21 +153,14 @@ def test_agent_workflow_run_request_waits_for_confirmation_and_reuses_run_chain(
         request_id=request.id,
     )
     assert confirmed.status == AgentWorkflowRunRequestStatus.CONFIRMED
-    assert confirmed.workflow_run_id is not None
-    assert db_session.get(WorkflowRun, confirmed.workflow_run_id) is not None
-    assert confirmed.workflow_run is not None
-    assert confirmed.workflow_run.status == WorkflowRunStatus.RUNNING
-    assert db_session.get(type(task), task.id).workflow_id == workflow.id
-    assert confirmed.workflow_run.progress_metadata == {
-        "run_scope": "workflow",
-        "requested_by": "agent",
-        "agent_workflow_run_request_id": request.id,
-        "agent_task_id": task.id,
-    }
-    assert db_session.scalar(select(func.count()).select_from(WorkflowRun)) == 1
+    assert confirmed.graph_run_id is not None
+    assert db_session.get(WorkflowGraphRun, confirmed.graph_run_id) is not None
+    assert confirmed.graph_run is not None
+    assert confirmed.graph_run.status == WorkflowRunStatus.RUNNING
+    assert db_session.scalar(select(func.count()).select_from(WorkflowGraphRun)) == 1
     assert db_session.get(type(task), task.id).status == AgentTaskStatus.RUNNING
 
-    run = db_session.get(WorkflowRun, confirmed.workflow_run_id)
+    run = db_session.get(WorkflowGraphRun, confirmed.graph_run_id)
     assert run is not None
     run.status = WorkflowRunStatus.SUCCEEDED
     run.finished_at = datetime.now(UTC)
@@ -224,12 +180,16 @@ def test_agent_workflow_run_request_waits_for_confirmation_and_reuses_run_chain(
         conversation_id=workspace.conversation.id,
         request_id=request.id,
     )
-    assert confirmed_replay.workflow_run_id == confirmed.workflow_run_id
-    assert db_session.scalar(select(func.count()).select_from(WorkflowRun)) == 1
+    assert confirmed_replay.graph_run_id == confirmed.graph_run_id
+    assert db_session.scalar(select(func.count()).select_from(WorkflowGraphRun)) == 1
 
 
-def test_global_agent_workflow_run_request_targets_explicit_product_and_reuses_run_chain(db_session) -> None:
-    workspace, workflow = _create_requestable_workspace(db_session)
+def test_global_agent_workflow_run_request_targets_explicit_product_and_reuses_run_chain(
+    db_session,
+    monkeypatch,
+) -> None:
+    _silence_graph_run_enqueue(monkeypatch)
+    workspace, workflow = _create_v3_requestable_workspace(db_session)
     global_conversation = db_session.scalar(
         select(AgentConversation).where(
             AgentConversation.session_id == workspace.conversation.session_id,
@@ -276,10 +236,10 @@ def test_global_agent_workflow_run_request_targets_explicit_product_and_reuses_r
         request_id=request.id,
     )
     assert confirmed.status == AgentWorkflowRunRequestStatus.CONFIRMED
-    assert confirmed.workflow_run_id is not None
-    assert confirmed.workflow_run is not None
-    assert confirmed.workflow_run.workflow_id == workflow.id
-    assert confirmed.workflow_run.status == WorkflowRunStatus.RUNNING
+    assert confirmed.graph_run_id is not None
+    assert confirmed.graph_run is not None
+    assert confirmed.graph_run.graph_id == workflow.id
+    assert confirmed.graph_run.status == WorkflowRunStatus.RUNNING
     assert get_agent_workflow_run_request(
         db_session,
         product_id=None,
@@ -290,7 +250,7 @@ def test_global_agent_workflow_run_request_targets_explicit_product_and_reuses_r
 
 
 def test_global_agent_turn_projects_workflow_run_request_for_dock_confirmation(db_session) -> None:
-    workspace, workflow = _create_requestable_workspace(db_session)
+    workspace, workflow = _create_v3_requestable_workspace(db_session)
     global_conversation = db_session.scalar(
         select(AgentConversation).where(
             AgentConversation.session_id == workspace.conversation.session_id,
@@ -363,7 +323,7 @@ def test_global_agent_turn_projects_workflow_run_request_for_dock_confirmation(d
 
 
 def test_agent_workflow_run_request_rejects_stale_revision_and_can_cancel_before_confirmation(db_session) -> None:
-    workspace, workflow = _create_requestable_workspace(db_session)
+    workspace, workflow = _create_v3_requestable_workspace(db_session)
     request = create_agent_workflow_run_request(
         db_session,
         conversation_id=workspace.conversation.id,
@@ -382,7 +342,7 @@ def test_agent_workflow_run_request_rejects_stale_revision_and_can_cancel_before
             conversation_id=workspace.conversation.id,
             request_id=request.id,
         )
-    assert db_session.scalar(select(func.count()).select_from(WorkflowRun)) == 0
+    assert db_session.scalar(select(func.count()).select_from(WorkflowGraphRun)) == 0
 
     cancelled = cancel_agent_workflow_run_request(
         db_session,
@@ -391,7 +351,7 @@ def test_agent_workflow_run_request_rejects_stale_revision_and_can_cancel_before
         request_id=request.id,
     )
     assert cancelled.status == AgentWorkflowRunRequestStatus.CANCELLED
-    assert cancelled.workflow_run_id is None
+    assert cancelled.graph_run_id is None
     assert get_agent_workflow_run_request(
         db_session,
         product_id=workspace.product.id,
@@ -399,8 +359,9 @@ def test_agent_workflow_run_request_rejects_stale_revision_and_can_cancel_before
     ).status == AgentWorkflowRunRequestStatus.CANCELLED
 
 
-def test_agent_turn_projects_workflow_run_request_as_human_confirmation(db_session) -> None:
-    workspace, workflow = _create_requestable_workspace(db_session)
+def test_agent_turn_projects_workflow_run_request_as_human_confirmation(db_session, monkeypatch) -> None:
+    _silence_graph_run_enqueue(monkeypatch)
+    workspace, workflow = _create_v3_requestable_workspace(db_session)
     task = create_agent_task(
         db_session,
         session_id=workspace.conversation.session_id,
@@ -473,18 +434,20 @@ def test_agent_turn_projects_workflow_run_request_as_human_confirmation(db_sessi
     assert db_session.get(type(task), task.id).status == AgentTaskStatus.RUNNING
 
 
-def test_agent_can_request_workflow_run_retry(db_session) -> None:
-    workspace, workflow = _create_requestable_workspace(db_session)
-    submission = submit_v2_workflow_run(
+def test_agent_can_request_workflow_run_retry(db_session, monkeypatch) -> None:
+    _silence_graph_run_enqueue(monkeypatch)
+    workspace, workflow = _create_v3_requestable_workspace(db_session)
+    submission = submit_graph_run(
         db_session,
         product_id=workspace.product.id,
-        workflow_id=workflow.id,
+        graph_id=workflow.id,
+        scope=GraphRunScope.GRAPH,
     )
     run = submission.run
     run.status = WorkflowRunStatus.FAILED
     run.is_retryable = True
     for node_run in run.node_runs:
-        node_run.status = WorkflowRunStatus.FAILED
+        node_run.status = WorkflowNodeStatus.FAILED
         node_run.failure_reason = "generation_failed"
     db_session.commit()
 
@@ -494,7 +457,7 @@ def test_agent_can_request_workflow_run_retry(db_session) -> None:
         expected_workflow_revision=workflow.revision,
         source_run_id=run.id,
     )
-    assert prepared.source_run_id == run.id
+    assert prepared.source_graph_run_id == run.id
     assert prepared.workflow_id == workflow.id
 
     request = create_agent_workflow_run_request(
@@ -506,7 +469,7 @@ def test_agent_can_request_workflow_run_retry(db_session) -> None:
         idempotency_key="request-retry-1",
         source_run_id=run.id,
     )
-    assert request.source_run_id == run.id
+    assert request.source_graph_run_id == run.id
     assert request.status == AgentWorkflowRunRequestStatus.AWAITING_CONFIRMATION
 
     confirmed = confirm_agent_workflow_run_request(
@@ -516,26 +479,28 @@ def test_agent_can_request_workflow_run_retry(db_session) -> None:
         request_id=request.id,
     )
     assert confirmed.status == AgentWorkflowRunRequestStatus.CONFIRMED
-    assert confirmed.workflow_run_id is not None
-    assert confirmed.workflow_run_id != run.id
-    new_run = db_session.get(WorkflowRun, confirmed.workflow_run_id)
+    assert confirmed.graph_run_id is not None
+    assert confirmed.graph_run_id != run.id
+    new_run = db_session.get(WorkflowGraphRun, confirmed.graph_run_id)
     assert new_run is not None
-    assert new_run.progress_metadata.get("source_run_id") == run.id
-    assert new_run.progress_metadata.get("manual_retry") is True
+    assert new_run.id != run.id
+    assert confirmed.source_graph_run_id == run.id
 
 
-def test_global_agent_can_request_workflow_run_retry(db_session) -> None:
-    workspace, workflow = _create_requestable_workspace(db_session)
-    submission = submit_v2_workflow_run(
+def test_global_agent_can_request_workflow_run_retry(db_session, monkeypatch) -> None:
+    _silence_graph_run_enqueue(monkeypatch)
+    workspace, workflow = _create_v3_requestable_workspace(db_session)
+    submission = submit_graph_run(
         db_session,
         product_id=workspace.product.id,
-        workflow_id=workflow.id,
+        graph_id=workflow.id,
+        scope=GraphRunScope.GRAPH,
     )
     run = submission.run
     run.status = WorkflowRunStatus.FAILED
     run.is_retryable = True
     for node_run in run.node_runs:
-        node_run.status = WorkflowRunStatus.FAILED
+        node_run.status = WorkflowNodeStatus.FAILED
         node_run.failure_reason = "generation_failed"
     db_session.commit()
 
@@ -555,7 +520,7 @@ def test_global_agent_can_request_workflow_run_retry(db_session) -> None:
         expected_workflow_revision=workflow.revision,
         source_run_id=run.id,
     )
-    assert prepared.source_run_id == run.id
+    assert prepared.source_graph_run_id == run.id
 
     request = create_agent_global_workflow_run_request(
         db_session,
@@ -567,7 +532,7 @@ def test_global_agent_can_request_workflow_run_retry(db_session) -> None:
         idempotency_key="request-global-retry-1",
         source_run_id=run.id,
     )
-    assert request.source_run_id == run.id
+    assert request.source_graph_run_id == run.id
 
     confirmed = confirm_agent_workflow_run_request(
         db_session,
@@ -576,73 +541,11 @@ def test_global_agent_can_request_workflow_run_retry(db_session) -> None:
         request_id=request.id,
     )
     assert confirmed.status == AgentWorkflowRunRequestStatus.CONFIRMED
-    assert confirmed.workflow_run_id is not None
-    new_run = db_session.get(WorkflowRun, confirmed.workflow_run_id)
+    assert confirmed.graph_run_id is not None
+    new_run = db_session.get(WorkflowGraphRun, confirmed.graph_run_id)
     assert new_run is not None
-    assert new_run.progress_metadata.get("source_run_id") == run.id
-
-
-
-def test_retryable_node_rule_excludes_cancelled_reason_failures(db_session) -> None:
-    """Single-owner rule: only non-cancelled failed nodes are marked for retry."""
-    workspace, workflow = _create_requestable_workspace(db_session)
-    submission = submit_v2_workflow_run(
-        db_session,
-        product_id=workspace.product.id,
-        workflow_id=workflow.id,
-    )
-    run = submission.run
-    run.status = WorkflowRunStatus.FAILED
-    run.is_retryable = True
-    node_runs = list(run.node_runs)
-    assert node_runs
-    for node_run in node_runs:
-        node_run.status = WorkflowNodeStatus.FAILED
-        node_run.failure_reason = "generation_failed"
-    node_runs[0].failure_reason = WORKFLOW_CANCELLED_REASON
-    db_session.commit()
-
-    assert retryable_node_run_ids(run) == {node_run.node_id for node_run in node_runs[1:]}
-
-
-def test_retry_node_rule_agrees_between_validate_and_execute(db_session) -> None:
-    """The retry set announced by validation always equals the set that re-runs."""
-    workspace, workflow = _create_requestable_workspace(db_session)
-    submission = submit_v2_workflow_run(
-        db_session,
-        product_id=workspace.product.id,
-        workflow_id=workflow.id,
-    )
-    run = submission.run
-    run.status = WorkflowRunStatus.FAILED
-    run.is_retryable = True
-    node_runs = list(run.node_runs)
-    assert node_runs
-    for node_run in node_runs:
-        node_run.status = WorkflowNodeStatus.FAILED
-        node_run.failure_reason = "generation_failed"
-    db_session.commit()
-
-    workflow_v, ordered = validate_retry_workflow_run(
-        db_session,
-        product_id=workspace.product.id,
-        workflow_id=workflow.id,
-        run_id=run.id,
-    )
-    assert workflow_v.id == workflow.id
-    expected = {node_run.node_id for node_run in node_runs}
-    assert set(ordered) == expected
-
-    retried = retry_v2_workflow_run(
-        db_session,
-        product_id=workspace.product.id,
-        workflow_id=workflow.id,
-        run_id=run.id,
-    )
-    new_run = retried.run
-    assert {node_run.node_id for node_run in new_run.node_runs} == expected
-    assert new_run.progress_metadata.get("source_run_id") == run.id
-    assert new_run.progress_metadata.get("manual_retry") is True
+    assert new_run.id != run.id
+    assert confirmed.source_graph_run_id == run.id
 
 
 def _create_v3_requestable_workspace(
@@ -713,7 +616,6 @@ def test_agent_workflow_run_request_confirms_v3_graph(db_session, monkeypatch) -
         idempotency_key="v3-run-request-key",
     )
     assert request.graph_id == graph.id
-    assert request.workflow_id is None
     assert request.status == AgentWorkflowRunRequestStatus.AWAITING_CONFIRMATION
 
     confirmed = confirm_agent_workflow_run_request(
@@ -728,3 +630,26 @@ def test_agent_workflow_run_request_confirms_v3_graph(db_session, monkeypatch) -
     assert graph_run is not None
     assert graph_run.status == WorkflowRunStatus.RUNNING
     assert graph_run.graph_id == graph.id
+
+
+def test_list_agent_workflow_runs_returns_v3_graph_runs(db_session) -> None:
+    workspace, graph = _create_v3_requestable_workspace(
+        db_session,
+        name="v3 运行列表商品",
+        idempotency_key="v3-workflow-run-list-workspace",
+    )
+    submission = submit_graph_run(
+        db_session,
+        product_id=workspace.product.id,
+        graph_id=graph.id,
+        scope=GraphRunScope.GRAPH,
+        enqueue=lambda _run_id: None,
+    )
+    page = list_agent_workflow_runs(db_session, conversation_id=workspace.conversation.id, limit=5)
+    assert page.workflow_id == graph.id
+    assert page.workflow_revision == graph.revision
+    assert [run.id for run in page.graph_runs] == [submission.run.id]
+    assert page.graph_runs[0].status == WorkflowRunStatus.RUNNING
+
+
+_create_requestable_workspace = _create_v3_requestable_workspace

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from decimal import Decimal
+from typing import Any, Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from productflow_backend.application.product_workflow.graph_queries import (
@@ -9,15 +12,20 @@ from productflow_backend.application.product_workflow.graph_queries import (
     GraphNodeView,
     GraphProjection,
 )
+from productflow_backend.application.product_workflow.product_sources import ProductSourceSnapshot
+from productflow_backend.application.workflow_drafts.contracts import ProductFactDraft
 from productflow_backend.domain.enums import (
     GraphConfigStatus,
     GraphEdgeDataType,
     GraphEdgeRole,
     GraphNodeType,
     GraphRunScope,
+    ProductFactSourceType,
+    ProductFactStatus,
     WorkflowNodeStatus,
     WorkflowRunStatus,
 )
+from productflow_backend.domain.graph_catalog import GraphCatalogDocument
 from productflow_backend.infrastructure.db.models import (
     Product,
     ProductImageAsset,
@@ -51,6 +59,8 @@ class GraphNodeResponse(BaseModel):
     position_x: int
     position_y: int
     config: dict
+    source_product: GraphSourceProductResponse | None = None
+    product_fact_set: GraphFactSetResponse | None = None
     bound_asset_id: str | None = None
     group_id: str | None = None
     preview_asset_id: str | None = None
@@ -94,6 +104,50 @@ class GraphProjectionResponse(BaseModel):
     groups: list[GraphGroupResponse]
 
 
+class GraphSourceProductResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    name: str
+    category: str | None = None
+    price: Decimal | None = None
+    source_note: str | None = None
+
+
+class GraphFactSetResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    product_id: str
+    version: int
+    facts: list[ProductFactDraft]
+
+
+class GraphCatalogInputContractResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    data_type: GraphEdgeDataType
+    role: GraphEdgeRole
+    max_count: int | None = None
+    required_to_run: bool
+
+
+class GraphCatalogNodeResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    node_type: GraphNodeType
+    output_data_type: GraphEdgeDataType
+    kind: Literal["source", "processing"]
+    accepts: list[GraphCatalogInputContractResponse]
+
+
+class GraphCatalogResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: int
+    nodes: list[GraphCatalogNodeResponse]
+
+
 class DirectCreateProductResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -107,6 +161,29 @@ class DirectCreateImageTypeRequest(BaseModel):
 
     key: str = Field(min_length=1, max_length=80)
     quantity: int = Field(ge=1, le=6)
+
+
+def serialize_graph_catalog(document: GraphCatalogDocument) -> GraphCatalogResponse:
+    return GraphCatalogResponse(
+        version=document.version,
+        nodes=[
+            GraphCatalogNodeResponse(
+                node_type=node.node_type,
+                output_data_type=node.output_data_type,
+                kind=node.kind,
+                accepts=[
+                    GraphCatalogInputContractResponse(
+                        data_type=item.data_type,
+                        role=item.role,
+                        max_count=item.max_count,
+                        required_to_run=item.required_to_run,
+                    )
+                    for item in node.accepts
+                ],
+            )
+            for node in document.nodes
+        ],
+    )
 
 
 def serialize_graph_projection(projection: GraphProjection) -> GraphProjectionResponse:
@@ -138,6 +215,7 @@ def serialize_direct_create(
 
 
 def _serialize_node(node: GraphNodeView) -> GraphNodeResponse:
+    source_product, product_fact_set = _serialize_product_source(node.product_source)
     return GraphNodeResponse(
         id=node.id,
         node_type=node.node_type,
@@ -145,6 +223,8 @@ def _serialize_node(node: GraphNodeView) -> GraphNodeResponse:
         position_x=node.position_x,
         position_y=node.position_y,
         config=dict(node.config),
+        source_product=source_product,
+        product_fact_set=product_fact_set,
         bound_asset_id=node.bound_asset_id,
         group_id=node.group_id,
         preview_asset_id=node.preview_asset_id,
@@ -153,6 +233,51 @@ def _serialize_node(node: GraphNodeView) -> GraphNodeResponse:
         incoming=[_serialize_edge_summary(item) for item in node.incoming],
         outgoing=[_serialize_edge_summary(item) for item in node.outgoing],
     )
+
+
+def _serialize_product_source(
+    snapshot: ProductSourceSnapshot | None,
+) -> tuple[GraphSourceProductResponse | None, GraphFactSetResponse | None]:
+    if snapshot is None:
+        return None, None
+    product = snapshot.source_product
+    fact_set = snapshot.fact_set_version
+    return (
+        (
+            GraphSourceProductResponse(
+                id=product.id,
+                name=product.name,
+                category=product.category,
+                price=product.price,
+                source_note=product.source_note,
+            )
+            if product is not None
+            else None
+        ),
+        (
+            GraphFactSetResponse(
+                id=fact_set.id,
+                product_id=fact_set.product_id,
+                version=fact_set.version,
+                facts=[_serialize_fact(item) for item in fact_set.facts],
+            )
+            if fact_set is not None
+            else None
+        ),
+    )
+
+
+def _serialize_fact(payload: dict[str, Any]) -> ProductFactDraft:
+    normalized = {
+        "key": payload.get("key") or "unknown",
+        "value": payload.get("value"),
+        "source_type": payload.get("source_type") or ProductFactSourceType.LEGACY_PRODUCT.value,
+        "status": payload.get("status") or ProductFactStatus.CONFIRMED.value,
+        "requires_confirmation": bool(payload.get("requires_confirmation", False)),
+        "evidence_asset_ids": list(payload.get("evidence_asset_ids") or []),
+        "conflicts": list(payload.get("conflicts") or []),
+    }
+    return ProductFactDraft.model_validate(normalized)
 
 
 def _serialize_edge(edge: GraphEdgeView) -> GraphEdgeResponse:
@@ -204,7 +329,7 @@ class GraphNodeRunResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
-    node_id: str
+    node_id: str | None
     status: WorkflowNodeStatus
     sort_order: int
     compiled_context: dict | None = None

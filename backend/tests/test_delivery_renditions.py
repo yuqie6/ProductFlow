@@ -9,7 +9,6 @@ from fastapi.testclient import TestClient
 from helpers import _login, _make_demo_image_bytes
 from PIL import Image
 from sqlalchemy import func, select
-from workflow_draft_helpers import make_workflow_draft_payload
 
 from productflow_backend.application.async_delivery import run_async_dispatcher_once
 from productflow_backend.application.delivery_renditions.renderer import render_delivery_rendition
@@ -30,20 +29,21 @@ from productflow_backend.application.product_images.assets import (
     delete_product_image_asset,
 )
 from productflow_backend.application.product_images.queries import get_gallery_asset_detail
-from productflow_backend.application.product_workflow import execution as workflow_execution
 from productflow_backend.application.product_workflow.dependencies import WorkflowExecutionDependencies
-from productflow_backend.application.product_workflow.v2_execution import execute_v2_workflow_node_run
-from productflow_backend.application.products import create_canonical_product, delete_product
-from productflow_backend.application.workflow_drafts.materialization import materialize_workflow_draft
-from productflow_backend.application.workflow_drafts.service import (
-    confirm_workflow_draft_revision,
-    create_workflow_draft,
-)
+from productflow_backend.application.product_workflow.graph_commands import apply_graph_change_set
+from productflow_backend.application.product_workflow.graph_contracts import UpdateNodeConfigOp, WorkflowChangeSet
+from productflow_backend.application.product_workflow.graph_direct_create import create_product_with_direct_graph
+from productflow_backend.application.product_workflow.graph_execution import execute_graph_run
+from productflow_backend.application.product_workflow.graph_runs import submit_graph_run
+from productflow_backend.application.product_workflow.graph_template import DirectCreateImageType
+from productflow_backend.application.products import delete_product
 from productflow_backend.domain.enums import (
     AsyncDispatchStatus,
+    GraphArtifactType,
+    GraphNodeType,
+    GraphRunScope,
     JobStatus,
     WorkflowNodeStatus,
-    WorkflowNodeType,
     WorkflowRunStatus,
 )
 from productflow_backend.domain.errors import (
@@ -56,9 +56,10 @@ from productflow_backend.infrastructure.db.models import (
     DeliveryRenditionJob,
     Product,
     ProductImageAsset,
-    WorkflowImageGenerationRecord,
-    WorkflowNodeRun,
-    WorkflowRun,
+    WorkflowGraphArtifact,
+    WorkflowGraphNode,
+    WorkflowGraphNodeRun,
+    WorkflowGraphRun,
 )
 from productflow_backend.infrastructure.image.base import (
     ImageProvider,
@@ -66,12 +67,32 @@ from productflow_backend.infrastructure.image.base import (
     WorkflowImageRequest,
     WorkflowImageResult,
 )
+from productflow_backend.infrastructure.prompt.base import (
+    PromptGenerationProvider,
+    PromptGenerationRequest,
+    PromptGenerationResult,
+)
 from productflow_backend.infrastructure.storage import LocalStorage
 from productflow_backend.presentation.schemas.delivery_renditions import DeliveryRenditionJobResponse
 
 
-class StaticWorkflowImageProvider(ImageProvider):
-    provider_name = "static-workflow-image"
+class RecordingPromptProvider(PromptGenerationProvider):
+    provider_name = "recording-delivery-prompt"
+
+    def __init__(self) -> None:
+        self.requests: list[PromptGenerationRequest] = []
+
+    def generate_prompt(self, request: PromptGenerationRequest) -> PromptGenerationResult:
+        self.requests.append(request)
+        return PromptGenerationResult(
+            payload=request.current_prompt,
+            model="recording-prompt",
+            response_id="delivery-prompt",
+        )
+
+
+class RecordingImageProvider(ImageProvider):
+    provider_name = "recording-delivery-image"
 
     def __init__(self, image_bytes: bytes, *, on_generate: Callable[[], None] | None = None) -> None:
         self.image_bytes = image_bytes
@@ -115,95 +136,97 @@ def _create_generated_source(
     *,
     auto_delivery: bool = False,
     delivery_spec_during_generation: dict[str, object] | None = None,
-    provider_capture: list[StaticWorkflowImageProvider] | None = None,
-) -> tuple[ProductImageAsset, WorkflowRun, WorkflowNodeRun]:
-    product = create_canonical_product(
+    provider_capture: list[RecordingImageProvider] | None = None,
+) -> tuple[ProductImageAsset, WorkflowGraphRun, WorkflowGraphNodeRun]:
+    created = create_product_with_direct_graph(
         db_session,
         name="交付派生测试商品",
         category="测试",
         price="99.00",
         source_note="交付派生测试",
+        image_types=[DirectCreateImageType(key="hero", quantity=1, order=0)],
         image_uploads=[(_make_demo_image_bytes(), "reference.png", "image/png")],
     )
-    payload = make_workflow_draft_payload(reference_asset_id=product.image_assets[0].id)
-    selected_plan_key = "hero-1" if auto_delivery else "hero-2"
-    if auto_delivery:
-        payload["image_types"][0]["images"][0]["delivery_spec"] = {
+
+    image_node = next(
+        node for node in created.projection.nodes if node.node_type == GraphNodeType.IMAGE_GENERATION
+    )
+    initial_delivery_spec = (
+        {
             "width": 48,
             "height": 48,
             "format": "png",
             "fit": "contain",
         }
-    else:
-        payload["image_types"][0]["images"][1]["delivery_spec"] = None
-    draft = create_workflow_draft(
-        db_session,
-        product_id=product.id,
-        payload=payload,
-        ready_for_confirmation=True,
+        if auto_delivery or delivery_spec_during_generation is not None
+        else None
     )
-    confirm_workflow_draft_revision(
-        db_session,
-        product_id=product.id,
-        draft_id=draft.id,
-        expected_draft_version=1,
-    )
-    materialized = materialize_workflow_draft(
-        db_session,
-        product_id=product.id,
-        draft_id=draft.id,
-        expected_draft_version=1,
-        expected_workflow_revision=0,
-        idempotency_key="delivery-source",
-    )
-    image_node = next(
-        node
-        for node in materialized.workflow.nodes
-        if node.node_type == WorkflowNodeType.IMAGE_GENERATION
-        and node.config_json["image_plan_key"] == selected_plan_key
-    )
-    run = WorkflowRun(workflow_id=materialized.workflow.id, status=WorkflowRunStatus.RUNNING)
-    db_session.add(run)
-    db_session.flush()
-    image_node.status = WorkflowNodeStatus.QUEUED
-    node_run = WorkflowNodeRun(
-        workflow_run_id=run.id,
-        node_id=image_node.id,
-        status=WorkflowNodeStatus.QUEUED,
-    )
-    db_session.add(node_run)
-    db_session.commit()
+    if initial_delivery_spec is not None:
+        apply_graph_change_set(
+            db_session,
+            product_id=created.product.id,
+            graph_id=created.graph.id,
+            change_set=WorkflowChangeSet(
+                base_graph_revision=created.graph.revision,
+                summary="设置交付规格",
+                operations=[
+                    UpdateNodeConfigOp(
+                        node_ref=image_node.id,
+                        config={
+                            **image_node.config,
+                            "delivery_spec": initial_delivery_spec,
+                        },
+                    )
+                ],
+            ),
+        )
+
     def update_delivery_spec() -> None:
         if delivery_spec_during_generation is None:
             return
-        db_session.refresh(image_node)
-        image_node.config_json = {
-            **image_node.config_json,
+        live_node = db_session.get(WorkflowGraphNode, image_node.id)
+        assert live_node is not None
+        db_session.refresh(live_node)
+        live_node.config_json = {
+            **live_node.config_json,
             "delivery_spec": delivery_spec_during_generation,
         }
         db_session.commit()
 
-    provider = StaticWorkflowImageProvider(_image_bytes(), on_generate=update_delivery_spec)
+    provider = RecordingImageProvider(_image_bytes(), on_generate=update_delivery_spec)
     if provider_capture is not None:
         provider_capture.append(provider)
-    execute_v2_workflow_node_run(
-        db_session,
-        node_run_id=node_run.id,
-        dependencies=WorkflowExecutionDependencies(image_provider_resolver=lambda: provider),
+    prompt_provider = RecordingPromptProvider()
+    dependencies = WorkflowExecutionDependencies(
+        prompt_generation_provider_resolver=lambda: prompt_provider,
+        image_provider_resolver=lambda: provider,
     )
-    workflow_execution._execute_product_workflow_run(
+    submission = submit_graph_run(
         db_session,
-        run_id=run.id,
-        enqueue_node_run=lambda _: pytest.fail("single-node run must be terminal after node execution"),
+        product_id=created.product.id,
+        graph_id=created.graph.id,
+        scope=GraphRunScope.TO_NODE,
+        target_node_id=image_node.id,
+        enqueue=lambda run_id: execute_graph_run(run_id, dependencies=dependencies),
     )
     db_session.expire_all()
-    record = db_session.scalar(
-        select(WorkflowImageGenerationRecord).where(
-            WorkflowImageGenerationRecord.workflow_node_run_id == node_run.id
+    run = db_session.get(WorkflowGraphRun, submission.run.id)
+    assert run is not None
+    node_run = db_session.scalar(
+        select(WorkflowGraphNodeRun).where(
+            WorkflowGraphNodeRun.graph_run_id == run.id,
+            WorkflowGraphNodeRun.node_id == image_node.id,
         )
     )
-    assert record is not None
-    source = db_session.get(ProductImageAsset, record.result_asset_id)
+    assert node_run is not None
+    artifact = db_session.scalar(
+        select(WorkflowGraphArtifact).where(
+            WorkflowGraphArtifact.node_run_id == node_run.id,
+            WorkflowGraphArtifact.artifact_type == GraphArtifactType.IMAGE,
+        )
+    )
+    assert artifact is not None
+    source = db_session.get(ProductImageAsset, artifact.product_image_asset_id)
     assert source is not None
     return source, run, node_run
 
@@ -331,11 +354,11 @@ def test_job_creation_is_idempotent_and_rejects_non_generation_sources(db_sessio
     assert db_session.scalar(select(func.count()).select_from(DeliveryRenditionJob)) == 1
 
     upload = source.product.image_assets[0]
-    with pytest.raises(BusinessValidationError, match="schema-v2"):
+    with pytest.raises(BusinessValidationError, match="交付派生只接受成功的工作流生成原图"):
         create_delivery_rendition_job(db_session, source_asset_id=upload.id, delivery_spec=spec)
 
 
-def test_v2_image_success_atomically_creates_queued_rendition_job(db_session) -> None:
+def test_graph_image_success_atomically_creates_queued_rendition_job(db_session) -> None:
     source, run, node_run = _create_generated_source(db_session, auto_delivery=True)
 
     job = db_session.scalar(
@@ -352,20 +375,34 @@ def test_v2_image_success_atomically_creates_queued_rendition_job(db_session) ->
         "background_color": None,
         "crop_anchor": None,
     }
-    assert db_session.get(WorkflowRun, run.id).status == WorkflowRunStatus.SUCCEEDED
-    persisted_node_run = db_session.get(WorkflowNodeRun, node_run.id)
+    assert db_session.get(WorkflowGraphRun, run.id).status == WorkflowRunStatus.SUCCEEDED
+    persisted_node_run = db_session.get(WorkflowGraphNodeRun, node_run.id)
     assert persisted_node_run.status == WorkflowNodeStatus.SUCCEEDED
+    assert persisted_node_run.output_json is not None
     assert "rendition" not in persisted_node_run.output_json
 
 
-def test_v2_image_without_delivery_spec_creates_only_original_asset(db_session) -> None:
+def test_graph_image_without_delivery_spec_creates_only_original_asset(db_session) -> None:
     source, run, node_run = _create_generated_source(db_session)
 
     assert db_session.scalar(select(func.count()).select_from(DeliveryRenditionJob)) == 0
-    assert db_session.scalar(select(func.count()).select_from(WorkflowImageGenerationRecord)) == 1
+    assert (
+        db_session.scalar(
+            select(func.count())
+            .select_from(WorkflowGraphArtifact)
+            .where(WorkflowGraphArtifact.artifact_type == GraphArtifactType.IMAGE)
+        )
+        == 1
+    )
     assert db_session.scalar(select(func.count()).select_from(ProductImageAsset)) == 2
-    assert db_session.get(WorkflowRun, run.id).status == WorkflowRunStatus.SUCCEEDED
-    assert db_session.get(WorkflowNodeRun, node_run.id).output_json["result_asset_id"] == source.id
+    assert db_session.get(WorkflowGraphRun, run.id).status == WorkflowRunStatus.SUCCEEDED
+    persisted_node_run = db_session.get(WorkflowGraphNodeRun, node_run.id)
+    assert persisted_node_run is not None
+    assert persisted_node_run.output_json is not None
+    artifact = db_session.get(WorkflowGraphArtifact, persisted_node_run.output_json["artifact_id"])
+    assert artifact is not None
+    assert artifact.artifact_type == GraphArtifactType.IMAGE
+    assert artifact.product_image_asset_id == source.id
 
 
 def test_delivery_spec_change_during_provider_call_does_not_invalidate_generated_image(db_session) -> None:
@@ -387,12 +424,19 @@ def test_delivery_spec_change_during_provider_call_does_not_invalidate_generated
     )
     assert job is not None
     assert job.spec_json == {**next_spec, "max_byte_size": None, "background_color": None}
-    assert db_session.scalar(select(func.count()).select_from(WorkflowImageGenerationRecord)) == 1
-    assert db_session.get(WorkflowRun, run.id).status == WorkflowRunStatus.SUCCEEDED
-    assert db_session.get(WorkflowNodeRun, node_run.id).status == WorkflowNodeStatus.SUCCEEDED
+    assert (
+        db_session.scalar(
+            select(func.count())
+            .select_from(WorkflowGraphArtifact)
+            .where(WorkflowGraphArtifact.artifact_type == GraphArtifactType.IMAGE)
+        )
+        == 1
+    )
+    assert db_session.get(WorkflowGraphRun, run.id).status == WorkflowRunStatus.SUCCEEDED
+    assert db_session.get(WorkflowGraphNodeRun, node_run.id).status == WorkflowNodeStatus.SUCCEEDED
 
 
-def test_v2_rendition_dispatch_stage_does_not_reverse_image_success(
+def test_graph_rendition_dispatch_stage_does_not_reverse_image_success(
     db_session,
 ) -> None:
     source, run, node_run = _create_generated_source(db_session, auto_delivery=True)
@@ -409,15 +453,31 @@ def test_v2_rendition_dispatch_stage_does_not_reverse_image_success(
     )
     assert dispatch is not None
     assert dispatch.status == AsyncDispatchStatus.PENDING
-    assert db_session.get(WorkflowRun, run.id).status == WorkflowRunStatus.SUCCEEDED
-    assert db_session.get(WorkflowNodeRun, node_run.id).status == WorkflowNodeStatus.SUCCEEDED
+
+    def fail_enqueue(dispatch_id: str, aggregate_id: str) -> None:
+        raise ConnectionError("redis down")
+
+    run_async_dispatcher_once(
+        enqueue=fail_enqueue,
+        max_attempts=1,
+    )
+
+    db_session.expire_all()
+    dispatch = db_session.get(AsyncDispatch, dispatch.id)
+    assert dispatch is not None
+    assert dispatch.status == AsyncDispatchStatus.SENT
+    assert dispatch.last_error == "redis down"
+    job = get_delivery_rendition_job(db_session, job.id)
+    assert job.status == JobStatus.QUEUED
+    assert db_session.get(WorkflowGraphRun, run.id).status == WorkflowRunStatus.SUCCEEDED
+    assert db_session.get(WorkflowGraphNodeRun, node_run.id).status == WorkflowNodeStatus.SUCCEEDED
 
 
 def test_job_execution_persists_child_asset_without_mutating_workflow_success(
     configured_env,
     db_session,
 ) -> None:
-    providers: list[StaticWorkflowImageProvider] = []
+    providers: list[RecordingImageProvider] = []
     source, run, node_run = _create_generated_source(db_session, provider_capture=providers)
     assert len(providers) == 1
     assert len(providers[0].requests) == 1
@@ -447,8 +507,8 @@ def test_job_execution_persists_child_asset_without_mutating_workflow_success(
     assert completed.result_asset.image_type_key == source.image_type_key
     assert completed.result_asset.media_object.mime_type == "image/jpeg"
     assert (completed.result_asset.media_object.width, completed.result_asset.media_object.height) == (48, 48)
-    assert db_session.get(WorkflowRun, run.id).status == WorkflowRunStatus.SUCCEEDED
-    assert db_session.get(WorkflowNodeRun, node_run.id).status == WorkflowNodeStatus.SUCCEEDED
+    assert db_session.get(WorkflowGraphRun, run.id).status == WorkflowRunStatus.SUCCEEDED
+    assert db_session.get(WorkflowGraphNodeRun, node_run.id).status == WorkflowNodeStatus.SUCCEEDED
     assert db_session.get(Product, source.product_id).cover_image_asset_id is None
 
     gallery_record = get_gallery_asset_detail(
@@ -487,7 +547,7 @@ def test_rendition_contract_failure_does_not_mutate_generation_success(
     configured_env,
     db_session,
 ) -> None:
-    providers: list[StaticWorkflowImageProvider] = []
+    providers: list[RecordingImageProvider] = []
     source, run, node_run = _create_generated_source(db_session, provider_capture=providers)
     job = submit_delivery_rendition_job(
         db_session,
@@ -510,9 +570,16 @@ def test_rendition_contract_failure_does_not_mutate_generation_success(
     assert failed.is_retryable is False
     assert failed.result_asset_id is None
     assert len(providers[0].requests) == 1
-    assert db_session.scalar(select(func.count()).select_from(WorkflowImageGenerationRecord)) == 1
-    assert db_session.get(WorkflowRun, run.id).status == WorkflowRunStatus.SUCCEEDED
-    assert db_session.get(WorkflowNodeRun, node_run.id).status == WorkflowNodeStatus.SUCCEEDED
+    assert (
+        db_session.scalar(
+            select(func.count())
+            .select_from(WorkflowGraphArtifact)
+            .where(WorkflowGraphArtifact.artifact_type == GraphArtifactType.IMAGE)
+        )
+        == 1
+    )
+    assert db_session.get(WorkflowGraphRun, run.id).status == WorkflowRunStatus.SUCCEEDED
+    assert db_session.get(WorkflowGraphNodeRun, node_run.id).status == WorkflowNodeStatus.SUCCEEDED
 
 
 def test_rendition_storage_failure_is_retryable_and_keeps_generation_success(
@@ -540,9 +607,16 @@ def test_rendition_storage_failure_is_retryable_and_keeps_generation_success(
     assert failed.is_retryable is True
     assert failed.result_asset_id is None
     assert db_session.scalar(select(func.count()).select_from(ProductImageAsset)) == asset_count
-    assert db_session.scalar(select(func.count()).select_from(WorkflowImageGenerationRecord)) == 1
-    assert db_session.get(WorkflowRun, run.id).status == WorkflowRunStatus.SUCCEEDED
-    assert db_session.get(WorkflowNodeRun, node_run.id).status == WorkflowNodeStatus.SUCCEEDED
+    assert (
+        db_session.scalar(
+            select(func.count())
+            .select_from(WorkflowGraphArtifact)
+            .where(WorkflowGraphArtifact.artifact_type == GraphArtifactType.IMAGE)
+        )
+        == 1
+    )
+    assert db_session.get(WorkflowGraphRun, run.id).status == WorkflowRunStatus.SUCCEEDED
+    assert db_session.get(WorkflowGraphNodeRun, node_run.id).status == WorkflowNodeStatus.SUCCEEDED
 
 
 def test_rendition_filename_preserves_extension_at_database_limit(db_session) -> None:
@@ -599,12 +673,19 @@ def test_queue_failure_is_retryable_and_does_not_change_source_run(db_session) -
     assert failed is not None
     assert failed.status == JobStatus.FAILED
     assert failed.is_retryable is True
-    assert db_session.get(WorkflowRun, run.id).status == WorkflowRunStatus.SUCCEEDED
-    assert db_session.get(WorkflowNodeRun, node_run.id).status == WorkflowNodeStatus.SUCCEEDED
+    assert db_session.get(WorkflowGraphRun, run.id).status == WorkflowRunStatus.SUCCEEDED
+    assert db_session.get(WorkflowGraphNodeRun, node_run.id).status == WorkflowNodeStatus.SUCCEEDED
 
     retried = retry_delivery_rendition_job(db_session, job_id=failed.id, enqueue=lambda _: None)
     assert retried.status == JobStatus.QUEUED
-    assert db_session.scalar(select(func.count()).select_from(WorkflowImageGenerationRecord)) == 1
+    assert (
+        db_session.scalar(
+            select(func.count())
+            .select_from(WorkflowGraphArtifact)
+            .where(WorkflowGraphArtifact.artifact_type == GraphArtifactType.IMAGE)
+        )
+        == 1
+    )
 
 
 def test_duplicate_submit_queue_failure_does_not_downgrade_existing_queued_job(db_session) -> None:

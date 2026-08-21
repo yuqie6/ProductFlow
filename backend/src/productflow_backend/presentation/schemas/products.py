@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from productflow_backend.application.delivery_renditions.contracts import DeliveryRenditionStatus
 from productflow_backend.application.product_images.queries import (
@@ -13,6 +13,8 @@ from productflow_backend.application.product_images.queries import (
 from productflow_backend.application.workflow_drafts.contracts import DeliverySpec
 from productflow_backend.domain.enums import (
     MediaVerificationStatus,
+    ProductFactSourceType,
+    ProductFactStatus,
     ProductImageOriginType,
 )
 from productflow_backend.infrastructure.db.models import (
@@ -75,8 +77,8 @@ class GalleryGenerationSummaryResponse(BaseModel):
     workflow_id: str
     node_id: str
     node_run_id: str
-    prompt_artifact_version_id: str
-    visual_system_version_id: str
+    prompt_artifact_version_id: str | None = None
+    visual_system_version_id: str | None = None
 
 
 class GalleryRenditionSummaryResponse(BaseModel):
@@ -199,6 +201,69 @@ class CanonicalProductCreateResponse(BaseModel):
     created_assets: list[ProductImageAssetResponse]
 
 
+class ProductFactResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key: str
+    value: JsonValue
+    source_type: ProductFactSourceType
+    status: ProductFactStatus
+    requires_confirmation: bool = False
+    evidence_asset_ids: list[str] = Field(default_factory=list)
+    conflicts: list[dict[str, JsonValue]] = Field(default_factory=list)
+
+
+class ProductFactSetResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    product_id: str
+    version: int
+    facts: list[ProductFactResponse]
+    created_at: datetime
+
+
+class ProductFactsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product: CanonicalProductDetailResponse
+    current_fact_set_version_id: str | None = None
+    current_fact_version: int | None = None
+    fact_set: ProductFactSetResponse | None = None
+    facts: list[ProductFactResponse]
+
+
+class ProductFactInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key: str = Field(min_length=1, max_length=120)
+    value: JsonValue
+    source_type: ProductFactSourceType = ProductFactSourceType.USER
+    status: ProductFactStatus = ProductFactStatus.CONFIRMED
+    requires_confirmation: bool = False
+    evidence_asset_ids: list[str] = Field(default_factory=list)
+    conflicts: list[dict[str, JsonValue]] = Field(default_factory=list)
+
+
+class UpdateProductFactsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_fact_set_version_id: str | None = Field(default=None, min_length=1, max_length=36)
+    expected_fact_version: int | None = Field(default=None, ge=1)
+    name: str | None = Field(default=None, max_length=255)
+    category: str | None = Field(default=None, max_length=120)
+    price: str | None = Field(default=None, max_length=40)
+    source_note: str | None = Field(default=None, max_length=4000)
+    facts: list[ProductFactInput] | None = None
+
+    @model_validator(mode="after")
+    def require_expected_version_shape(self) -> UpdateProductFactsRequest:
+        if self.expected_fact_set_version_id is not None and self.expected_fact_version is not None:
+            if not self.expected_fact_set_version_id.strip():
+                raise ValueError("expected_fact_set_version_id 不能为空")
+        return self
+
+
 class SetProductCoverRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -308,6 +373,48 @@ def serialize_canonical_product_detail(product: Product) -> CanonicalProductDeta
         created_at=product.created_at,
         updated_at=product.updated_at,
     )
+
+
+def serialize_product_facts(product: Product) -> ProductFactsResponse:
+    current = product.current_fact_set_version
+    facts = _fact_payloads(current)
+    fact_set = (
+        ProductFactSetResponse(
+            id=current.id,
+            product_id=current.product_id,
+            version=current.version,
+            facts=[serialize_product_fact(item) for item in facts],
+            created_at=current.created_at,
+        )
+        if current is not None
+        else None
+    )
+    return ProductFactsResponse(
+        product=serialize_canonical_product_detail(product),
+        current_fact_set_version_id=current.id if current is not None else None,
+        current_fact_version=current.version if current is not None else None,
+        fact_set=fact_set,
+        facts=[serialize_product_fact(item) for item in facts],
+    )
+
+
+def serialize_product_fact(payload: dict) -> ProductFactResponse:
+    return ProductFactResponse(
+        key=str(payload.get("key") or "unknown"),
+        value=payload.get("value"),
+        source_type=payload.get("source_type") or ProductFactSourceType.LEGACY_PRODUCT,
+        status=payload.get("status") or ProductFactStatus.CONFIRMED,
+        requires_confirmation=bool(payload.get("requires_confirmation", False)),
+        evidence_asset_ids=list(payload.get("evidence_asset_ids") or []),
+        conflicts=list(payload.get("conflicts") or []),
+    )
+
+
+def _fact_payloads(fact_set) -> list[dict]:
+    if fact_set is None:
+        return []
+    facts = fact_set.payload_json.get("facts")
+    return [dict(item) for item in facts if isinstance(item, dict)] if isinstance(facts, list) else []
 
 
 def serialize_product_summary(product: Product) -> ProductSummaryResponse:

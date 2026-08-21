@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, RotateCw } from "lucide-react";
 import { lazy } from "react";
 import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
@@ -7,8 +7,10 @@ import { api, ApiError } from "../../lib/api";
 import { useI18n } from "../../lib/preferences";
 import {
   agentProductIntakeResumePath,
-  productWorkbenchRouteTarget,
+  isAgentWorkbenchMissing,
+  resolveProductWorkbenchSurface,
 } from "./agent/productWorkbenchRoute";
+import { GraphAgentPanel, GraphWorkbenchPage } from "./GraphWorkbenchPage";
 
 const AgentProductWorkbenchPage = lazy(() =>
   import("./agent/AgentProductWorkbenchPage").then((module) => ({
@@ -19,9 +21,19 @@ const AgentProductWorkbenchPage = lazy(() =>
 export function ProductWorkbenchPage() {
   const { productId = "" } = useParams();
   const [searchParams] = useSearchParams();
+  const queryClient = useQueryClient();
   const agentSessionId = searchParams.get("agent_session_id");
   const agentTaskId = searchParams.get("agent_task_id");
-  const query = useQuery({
+  const graphQuery = useQuery({
+    queryKey: ["workflow-graph", productId],
+    queryFn: () => api.getCurrentWorkflowGraph(productId),
+    enabled: Boolean(productId),
+    retry: (failureCount, error) => {
+      if (error instanceof ApiError && error.status === 404) return false;
+      return failureCount < 2;
+    },
+  });
+  const agentQuery = useQuery({
     queryKey: ["agent-workbench", productId, agentSessionId, agentTaskId],
     queryFn: () => api.getAgentWorkbench(productId, agentSessionId, agentTaskId),
     enabled: Boolean(productId),
@@ -30,30 +42,102 @@ export function ProductWorkbenchPage() {
       return failureCount < 2;
     },
   });
+  const missingAgent = !agentQuery.isPending && isAgentWorkbenchMissing(agentQuery.error);
+  const shouldEnsureAgent = Boolean(productId) && missingAgent && Boolean(graphQuery.data) && !agentTaskId;
+  const ensureQuery = useQuery({
+    queryKey: ["agent-workbench", productId, agentSessionId, "ensure"],
+    queryFn: async () => {
+      const bootstrap = await api.ensureAgentWorkbench(productId, agentSessionId);
+      queryClient.setQueryData(
+        ["agent-workbench", productId, agentSessionId, agentTaskId],
+        bootstrap,
+      );
+      return bootstrap;
+    },
+    enabled: shouldEnsureAgent,
+    retry: false,
+  });
+  const surface = resolveProductWorkbenchSurface({
+    graph: graphQuery.data,
+    graphPending: graphQuery.isPending,
+    graphError: graphQuery.error,
+    agent: agentQuery.data ?? ensureQuery.data,
+    agentPending: agentQuery.isPending || (shouldEnsureAgent && ensureQuery.isPending),
+    agentError: ensureQuery.error ?? agentQuery.error,
+  });
+  const productQuery = useQuery({
+    queryKey: ["product", productId],
+    queryFn: () => api.getProduct(productId),
+    enabled: Boolean(productId) && surface.kind === "graph",
+  });
 
-  if (query.isLoading || !query.data) {
-    return <WorkbenchRouteState productId={productId} error={query.error} onRetry={() => void query.refetch()} />;
+  if (surface.kind === "loading" || (surface.kind === "graph" && (productQuery.isLoading || !productQuery.data))) {
+    return (
+      <WorkbenchRouteState
+        productId={productId}
+        error={surface.kind === "graph" ? productQuery.error : null}
+        onRetry={() => {
+          void graphQuery.refetch();
+          void agentQuery.refetch();
+          if (surface.kind === "graph") void productQuery.refetch();
+        }}
+      />
+    );
   }
-
-  const target = productWorkbenchRouteTarget(query.data);
-  if (target === "agent_intake") {
+  if (surface.kind === "error") {
+    return (
+      <WorkbenchRouteState
+        productId={productId}
+        error={surface.error}
+        onRetry={() => {
+          void graphQuery.refetch();
+          void agentQuery.refetch();
+          void ensureQuery.refetch();
+        }}
+      />
+    );
+  }
+  if (surface.kind === "intake") {
     return (
       <Navigate
         to={agentProductIntakeResumePath(
-          query.data.conversation.id,
-          query.data.conversation.session_id,
+          surface.bootstrap.conversation.id,
+          surface.bootstrap.conversation.session_id,
           agentTaskId,
         )}
         replace
       />
     );
   }
+  if (surface.kind === "graph") {
+    if (!productQuery.data) {
+      return (
+        <WorkbenchRouteState
+          productId={productId}
+          error={productQuery.error}
+          onRetry={() => void productQuery.refetch()}
+        />
+      );
+    }
+    return (
+      <GraphWorkbenchPage
+        product={productQuery.data}
+        initialGraph={surface.graph}
+        agentContent={(
+          <GraphAgentPanel
+            error={ensureQuery.error}
+            onRetry={() => void ensureQuery.refetch()}
+          />
+        )}
+      />
+    );
+  }
   return (
     <AgentProductWorkbenchPage
-      key={query.data.product.id}
-      bootstrap={query.data}
+      key={surface.bootstrap.product.id}
+      bootstrap={surface.bootstrap}
       agentTaskId={agentTaskId}
-      onRefetchBootstrap={() => query.refetch()}
+      onRefetchBootstrap={() => agentQuery.refetch()}
     />
   );
 }

@@ -22,14 +22,14 @@ def test_stage_async_dispatch_is_idempotent_by_delivery_key(db_session) -> None:
     first = stage_async_dispatch(
         db_session,
         delivery_key="workflow_run:run-1",
-        actor_name="run_product_workflow_run",
+        actor_name="run_workflow_graph_run",
         aggregate_id="run-1",
         payload={"scope": "workflow"},
     )
     second = stage_async_dispatch(
         db_session,
         delivery_key="workflow_run:run-1",
-        actor_name="run_product_workflow_run",
+        actor_name="run_workflow_graph_run",
         aggregate_id="run-1",
     )
     db_session.commit()
@@ -460,7 +460,7 @@ def test_expired_lease_is_reconciled_to_pending(db_session) -> None:
     dispatch = stage_async_dispatch(
         db_session,
         delivery_key="workflow:run-lease",
-        actor_name="run_product_workflow_run",
+        actor_name="run_workflow_graph_run",
         aggregate_id="run-lease",
     )
     dispatch.lease_token = "stale-token"

@@ -15,11 +15,17 @@ describe("Agent conversation API", () => {
 
     await api.listAgentSessions(true);
     await api.getAgentWorkbench("product/1", "session/1");
+    await api.ensureAgentWorkbench("product/1", "session/1");
 
-    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-      "/api/v2/agent-sessions?include_archived=true",
-      "/api/v2/products/product%2F1/agent-workbench?agent_session_id=session%2F1",
+    expect(fetchMock.mock.calls.map(([url, init]) => [url, init?.method ?? "GET"])).toEqual([
+      ["/api/v2/agent-sessions?include_archived=true", "GET"],
+      ["/api/v2/products/product%2F1/agent-workbench?agent_session_id=session%2F1", "GET"],
+      ["/api/v2/products/product%2F1/agent-workbench?agent_session_id=session%2F1", "POST"],
     ]);
+    expect((fetchMock.mock.calls[2]?.[1] as RequestInit).headers).toEqual({
+      "Content-Type": "application/json",
+      "Idempotency-Key": "agent-workbench:product/1",
+    });
   });
 
   it("encodes Agent Session mutation ids and preserves request methods", async () => {

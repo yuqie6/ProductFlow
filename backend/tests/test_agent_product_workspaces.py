@@ -33,11 +33,10 @@ from productflow_backend.infrastructure.db.models import (
     MediaObject,
     Product,
     ProductImageAsset,
-    ProductWorkflow,
     WorkflowDraft,
     WorkflowDraftRevision,
-    WorkflowEdge,
-    WorkflowNode,
+    WorkflowGraphEdge,
+    WorkflowGraphNode,
 )
 from productflow_backend.infrastructure.storage import LocalStorage
 
@@ -173,9 +172,8 @@ def test_create_agent_product_workspace_is_atomic_coverless_and_has_no_dag(
     assert db_session.scalar(select(func.count()).select_from(ProductImageAsset)) == 2
     assert db_session.scalar(select(func.count()).select_from(MediaObject)) == 2
     assert db_session.scalar(select(func.count()).select_from(WorkflowDraftRevision)) == 0
-    assert db_session.scalar(select(func.count()).select_from(ProductWorkflow)) == 0
-    assert db_session.scalar(select(func.count()).select_from(WorkflowNode)) == 0
-    assert db_session.scalar(select(func.count()).select_from(WorkflowEdge)) == 0
+    assert db_session.scalar(select(func.count()).select_from(WorkflowGraphNode)) == 0
+    assert db_session.scalar(select(func.count()).select_from(WorkflowGraphEdge)) == 0
     assert len(_media_files(configured_env)) == 6  # two originals plus preview and thumbnail variants
 
 
@@ -219,7 +217,6 @@ def test_agent_product_draft_workspace_creates_only_durable_identity_and_replays
     assert db_session.scalar(select(func.count()).select_from(Product)) == 1
     assert db_session.scalar(select(func.count()).select_from(ProductImageAsset)) == 0
     assert db_session.scalar(select(func.count()).select_from(MediaObject)) == 0
-    assert db_session.scalar(select(func.count()).select_from(ProductWorkflow)) == 0
     assert db_session.scalar(select(func.count()).select_from(WorkflowDraftRevision)) == 0
 
     with pytest.raises(ConflictError, match="相同 Idempotency-Key"):
@@ -453,9 +450,8 @@ def test_agent_product_workspace_intake_finalization_is_atomic_idempotent_and_co
     agent_session = db_session.get(AgentSession, finalized.conversation.session_id)
     assert agent_session is not None
     assert "未完成 0 个" in (agent_session.summary or "")
-    assert db_session.scalar(select(func.count()).select_from(ProductWorkflow)) == 0
-    assert db_session.scalar(select(func.count()).select_from(WorkflowNode)) == 0
-    assert db_session.scalar(select(func.count()).select_from(WorkflowEdge)) == 0
+    assert db_session.scalar(select(func.count()).select_from(WorkflowGraphNode)) == 0
+    assert db_session.scalar(select(func.count()).select_from(WorkflowGraphEdge)) == 0
 
     first_files = sorted(path.relative_to(configured_env) for path in _media_files(configured_env))
     replay = finalize_agent_product_workspace_intake(
@@ -759,7 +755,6 @@ def test_agent_product_workspace_api_exposes_options_and_bounded_create(configur
     session = get_session_factory()()
     try:
         assert session.scalar(select(func.count()).select_from(Product)) == 1
-        assert session.scalar(select(func.count()).select_from(ProductWorkflow)) == 0
     finally:
         session.close()
 
@@ -887,7 +882,6 @@ def test_agent_product_workspace_api_supports_draft_resume_and_intake_finalizati
     try:
         assert session.scalar(select(func.count()).select_from(Product)) == 1
         assert session.scalar(select(func.count()).select_from(ProductImageAsset)) == 2
-        assert session.scalar(select(func.count()).select_from(ProductWorkflow)) == 0
     finally:
         session.close()
 

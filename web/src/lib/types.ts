@@ -310,6 +310,45 @@ export interface CanonicalProductDetail {
   updated_at: string;
 }
 
+/** The product projection attached to a schema-v3 product source node. */
+export interface GraphSourceProduct {
+  id: string;
+  name: string;
+  category: string | null;
+  price: string | null;
+  source_note: string | null;
+}
+
+export interface GraphProductFact {
+  key: string;
+  value: JsonValue;
+  source_type?: ProductFactSourceType;
+  status?: ProductFactStatus;
+  requires_confirmation?: boolean;
+  evidence_asset_ids?: string[];
+  conflicts?: Array<Record<string, JsonValue>>;
+}
+
+export interface GraphProductFactSet {
+  id: string;
+  version: number;
+  facts: GraphProductFact[];
+}
+
+export interface ProductFactsResponse {
+  product: CanonicalProductDetail;
+  fact_set: GraphProductFactSet | null;
+}
+
+export interface UpdateProductFactsInput {
+  expected_fact_version: number | null;
+  name: string;
+  category: string | null;
+  price: string | null;
+  source_note: string | null;
+  facts: GraphProductFact[];
+}
+
 export interface AgentProductImageTypeOption {
   key: AgentProductImageTypeKey;
   title: string;
@@ -709,7 +748,6 @@ export interface WorkflowDraft {
   current_version: number;
   revisions: WorkflowDraftRevision[];
   intake: WorkflowIntakeV1 | null;
-  final_workflow_id: string | null;
   recipe_seed: WorkflowDraftRecipeSeed | null;
   legacy_archive_seed: WorkflowDraftLegacyArchiveSeed | null;
   limits: WorkflowDraftLimits;
@@ -725,8 +763,6 @@ export interface WorkflowDraftRecipeSeed {
   recipe_version: number;
   recipe_title: string;
   product_id: string;
-  base_workflow_id: string | null;
-  base_workflow_revision: number | null;
   schema_version: 1;
   created_at: string;
 }
@@ -766,133 +802,6 @@ export interface CreateWorkflowDraftInput {
 
 export interface AppendWorkflowDraftRevisionInput extends CreateWorkflowDraftInput {
   expected_draft_version: number;
-}
-
-export interface WorkflowFolderV2 {
-  id: string;
-  workflow_id: string;
-  key: string;
-  title: string;
-  order: number;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface WorkflowNodeV2 {
-  id: string;
-  workflow_id: string;
-  schema_version: 2;
-  key: string;
-  node_type: WorkflowNodeTypeV2;
-  title: string;
-  position_x: number;
-  position_y: number;
-  folder_id: string | null;
-  bound_image_asset_id: string | null;
-  current_prompt_artifact_version_id: string | null;
-  config_json: Record<string, unknown>;
-  status: WorkflowNodeStatus;
-  output_json: Record<string, unknown> | null;
-  failure_reason: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface CreateReferenceWorkflowNodeV2Input {
-  expected_edit_version: number;
-  title: string;
-  role: string;
-  label: string;
-  position_x: number;
-  position_y: number;
-  folder_id?: string | null;
-}
-
-export interface CreateWorkflowEdgeV2Input {
-  expected_edit_version: number;
-  source_node_id: string;
-  target_node_id: string;
-}
-
-export interface WorkflowPromptArtifactVersionV2 {
-  artifact_id: string;
-  artifact_title: string;
-  image_type_key: string;
-  version_id: string;
-  version: number;
-  schema_version: 1;
-  payload: WorkflowImagePromptPayloadV1;
-  created_at: string;
-}
-
-export interface WorkflowNodeDetailV2 {
-  workflow_id: string;
-  workflow_revision: number;
-  workflow_edit_version: number;
-  source_draft_revision_id: string;
-  visual_system_version_id: string;
-  node: WorkflowNodeV2;
-  prompt_artifact: WorkflowPromptArtifactVersionV2 | null;
-}
-
-export type UpdateWorkflowNodeV2Input =
-  | {
-      node_type: "reference_image";
-      expected_edit_version: number;
-      title: string;
-      role: string;
-      label: string;
-    }
-  | {
-      node_type: "prompt_generation";
-      expected_edit_version: number;
-      expected_prompt_artifact_version_id: string;
-      title: string;
-      prompt_payload: WorkflowImagePromptPayloadV1;
-    }
-  | {
-      node_type: "image_generation";
-      expected_edit_version: number;
-      title: string;
-      variation_instruction: string | null;
-      generation_spec: WorkflowGenerationSpec;
-      delivery_spec: WorkflowDeliverySpec | null;
-    };
-
-export interface WorkflowEdgeV2 {
-  id: string;
-  workflow_id: string;
-  key: string;
-  source_node_id: string;
-  target_node_id: string;
-  source_handle: string | null;
-  target_handle: string | null;
-  created_at: string;
-}
-
-export interface ProductWorkflowV2 {
-  id: string;
-  product_id: string;
-  title: string;
-  active: boolean;
-  schema_version: 2;
-  revision: number;
-  edit_version: number;
-  source_draft_revision_id: string;
-  visual_system_version_id: string;
-  materialization_id: string;
-  folders: WorkflowFolderV2[];
-  nodes: WorkflowNodeV2[];
-  edges: WorkflowEdgeV2[];
-  created_at: string;
-  updated_at: string;
-}
-
-export interface WorkflowCanvasMutationResult {
-  changed: boolean;
-  edit_version: number;
-  dissolved_folder_ids: string[];
-  workflow: ProductWorkflowV2;
 }
 
 export type WorkflowRecipeKind = "workflow_recipe" | "recipe_fragment";
@@ -1370,11 +1279,11 @@ export interface AgentProductWorkspaceSnapshot extends AgentProductWorkspaceCrea
 }
 
 export interface AgentWorkbenchBootstrap {
-  mode: "agent_v2";
+  mode: "agent";
   product: CanonicalProductDetail;
   conversation: AgentConversation;
   workflow_draft: WorkflowDraft;
-  active_workflow: ProductWorkflowV2 | null;
+  graph: GraphProjection | null;
   latest_workflow_revision: number;
 }
 
@@ -1395,116 +1304,6 @@ export interface WorkflowRecipeSourceInput {
   title: string;
   description?: string | null;
   preferred_visual_system_version_id?: string | null;
-}
-
-export interface ActiveProductWorkflowV2 {
-  latest_revision: number;
-  workflow: ProductWorkflowV2 | null;
-}
-
-export interface WorkflowReferenceBindingResult {
-  changed: boolean;
-  previous_asset_id: string | null;
-  affected_node_ids: string[];
-  reference_node: WorkflowNodeV2;
-}
-
-export interface WorkflowMaterializationResult {
-  id: string;
-  created: boolean;
-  workflow: ProductWorkflowV2;
-  reveal_events_url: string;
-}
-
-export interface MaterializeWorkflowDraftInput {
-  expected_draft_version: number;
-  expected_workflow_revision: number;
-  idempotency_key: string;
-}
-
-export interface WorkflowActualMedia {
-  mime_type: "image/png" | "image/jpeg" | "image/webp";
-  width: number;
-  height: number;
-  byte_size: number;
-  sha256: string;
-}
-
-export interface WorkflowNodeRunV2 {
-  id: string;
-  schema_version: 2;
-  workflow_run_id: string;
-  node_id: string;
-  node_type: WorkflowNodeTypeV2;
-  status: WorkflowNodeStatus;
-  progress_phase: string | null;
-  progress_metadata: Record<string, JsonValue> | null;
-  output_json: Record<string, JsonValue> | null;
-  failure_reason: string | null;
-  visual_system_version_id: string;
-  prompt_artifact_version_id: string | null;
-  generation_record_id: string | null;
-  result_asset_id: string | null;
-  requested_spec: WorkflowGenerationSpec | null;
-  effective_parameters: Record<string, JsonValue> | null;
-  actual_media: WorkflowActualMedia | null;
-  compiled_prompt: string | null;
-  compiled_prompt_hash: string | null;
-  reference_asset_ids: string[];
-  provider_name: string | null;
-  provider_model: string | null;
-  provider_response_id: string | null;
-  provider_status: string | null;
-  started_at: string;
-  finished_at: string | null;
-}
-
-export interface SubmitWorkflowNodeRunV2Result {
-  created: boolean;
-  node_run: WorkflowNodeRunV2;
-}
-
-export interface WorkflowNodeRunListV2Response {
-  items: WorkflowNodeRunV2[];
-}
-
-export interface WorkflowRunV2 {
-  id: string;
-  schema_version: 2;
-  workflow_id: string;
-  status: WorkflowRunStatus;
-  failure_reason: string | null;
-  is_retryable: boolean;
-  is_cancelable: boolean;
-  progress_metadata: Record<string, JsonValue> | null;
-  started_at: string;
-  finished_at: string | null;
-  node_runs: WorkflowNodeRunV2[];
-}
-
-export interface WorkflowRunDetailV2Response {
-  workflow_run: WorkflowRunV2;
-  workflow: ProductWorkflowV2;
-}
-
-export interface SubmitWorkflowRunV2Result extends WorkflowRunDetailV2Response {
-  created: boolean;
-}
-
-export interface WorkflowRunListV2Response {
-  items: WorkflowRunV2[];
-  workflow: ProductWorkflowV2;
-}
-
-export interface WorkflowRevealEvent {
-  schema_version: 1;
-  materialization_id: string;
-  sequence: number;
-  kind: "folder" | "node" | "edge" | "completed";
-  entity_type: string | null;
-  entity_id: string | null;
-  payload: Record<string, JsonValue>;
-  created_at: string;
 }
 
 export interface ImageSessionAsset {
@@ -1789,4 +1588,137 @@ export interface SettingsImportCommitResponse {
   preview: SettingsImportPreviewResponse;
   config: ConfigResponse;
   provider_config: ProviderConfigResponse;
+}
+
+export type GraphNodeType =
+  | "product_source"
+  | "image_asset"
+  | "creative_brief"
+  | "visual_system"
+  | "prompt_generation"
+  | "image_generation";
+export type GraphEdgeDataType = "product_facts" | "image_asset" | "creative_brief" | "visual_system" | "prompt";
+export type GraphEdgeRole = "facts" | "reference" | "brief" | "visual_guidance" | "prompt";
+export type GraphConfigStatus = "incomplete" | "ready" | "stale";
+export type GraphRunScope = "node" | "to_node" | "graph";
+export type GraphNodeKind = "source" | "processing";
+
+export interface GraphCatalogInputContract {
+  data_type: GraphEdgeDataType;
+  role: GraphEdgeRole;
+  max_count: number | null;
+  required_to_run: boolean;
+}
+
+export interface GraphCatalogNode {
+  node_type: GraphNodeType;
+  output_data_type: GraphEdgeDataType;
+  kind: GraphNodeKind;
+  accepts: GraphCatalogInputContract[];
+}
+
+export interface GraphNodeCatalog {
+  version: number;
+  nodes: GraphCatalogNode[];
+}
+
+export interface GraphEdgeSummary {
+  id: string;
+  node_id: string;
+  data_type: GraphEdgeDataType;
+  role: GraphEdgeRole;
+  order: number;
+}
+
+export interface GraphNode {
+  id: string;
+  node_type: GraphNodeType;
+  title: string;
+  position_x: number;
+  position_y: number;
+  config: Record<string, unknown>;
+  bound_asset_id: string | null;
+  group_id: string | null;
+  preview_asset_id: string | null;
+  config_status: GraphConfigStatus;
+  unused: boolean;
+  source_product?: GraphSourceProduct | null;
+  product_fact_set?: GraphProductFactSet | null;
+  incoming: GraphEdgeSummary[];
+  outgoing: GraphEdgeSummary[];
+}
+
+export interface GraphEdge {
+  id: string;
+  source_node_id: string;
+  target_node_id: string;
+  data_type: GraphEdgeDataType;
+  role: GraphEdgeRole;
+  order: number;
+}
+
+export interface GraphGroup {
+  id: string;
+  title: string;
+  member_ids: string[];
+}
+
+export interface GraphProjection {
+  id: string;
+  product_id: string;
+  title: string;
+  schema_version: number;
+  revision: number;
+  source_draft_revision_id: string | null;
+  last_operation_group_id: string | null;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  groups: GraphGroup[];
+}
+
+export interface DirectCreateProductResponse {
+  product: CanonicalProductDetail;
+  created_assets: ProductImageAsset[];
+  graph: GraphProjection;
+}
+
+export interface GraphChangeSet {
+  base_graph_revision: number;
+  summary: string;
+  operations: Array<Record<string, unknown>>;
+}
+
+export interface DraftGraphPersistResponse {
+  created: boolean;
+  graph: GraphProjection;
+}
+
+export interface GraphNodeRun {
+  id: string;
+  node_id: string | null;
+  status: WorkflowNodeStatus;
+  sort_order: number;
+  compiled_context: Record<string, unknown> | null;
+  output: Record<string, unknown> | null;
+  failure_reason: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface GraphRun {
+  id: string;
+  graph_id: string;
+  status: WorkflowRunStatus;
+  scope: GraphRunScope;
+  requested_node_id: string | null;
+  graph_revision: number;
+  failure_reason: string | null;
+  is_retryable: boolean;
+  node_runs: GraphNodeRun[];
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface GraphRunListResponse {
+  items: GraphRun[];
 }

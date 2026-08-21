@@ -24,10 +24,10 @@ from productflow_backend.infrastructure.db.models import (
     LegacyUserTemplateArchive,
     LegacyWorkflowArchive,
     LegacyWorkflowArchiveAsset,
-    ProductWorkflow,
     WorkflowDraft,
     WorkflowDraftLegacyArchiveSeed,
     WorkflowDraftRevision,
+    WorkflowGraph,
 )
 from productflow_backend.infrastructure.db.session import get_engine, get_session_factory
 from productflow_backend.presentation.api import create_app
@@ -206,8 +206,8 @@ def test_archive_http_surface_is_read_only_and_reuses_canonical_asset_download(c
     product, _, workflow, _, _ = _seed_archives(db_session)
     product_id = product.id
     workflow_archive_id = workflow.id
-    before_workflow_count = db_session.scalar(select(func.count()).select_from(ProductWorkflow))
-    assert before_workflow_count == 0
+    before_graph_count = db_session.scalar(select(func.count()).select_from(WorkflowGraph))
+    assert before_graph_count == 0
 
     client = TestClient(create_app())
     _login(client)
@@ -257,7 +257,7 @@ def test_archive_http_surface_is_read_only_and_reuses_canonical_asset_download(c
     assert not {"INSERT", "UPDATE", "DELETE"} & set(statements)
     verification_session = get_session_factory()()
     try:
-        assert verification_session.scalar(select(func.count()).select_from(ProductWorkflow)) == 0
+        assert verification_session.scalar(select(func.count()).select_from(WorkflowGraph)) == 0
     finally:
         verification_session.close()
 
@@ -311,7 +311,6 @@ def test_archive_agent_rebuild_creates_an_empty_idempotent_draft_without_touchin
     assert body["conversation"]["status"] == "collecting"
 
     db_session.expire_all()
-    assert db_session.scalar(select(func.count()).select_from(ProductWorkflow)) == 0
     assert db_session.scalar(select(func.count()).select_from(WorkflowDraftRevision)) == 0
     assert db_session.scalar(select(func.count()).select_from(WorkflowDraft)) == 1
     assert db_session.scalar(select(func.count()).select_from(AgentConversation)) == 1
@@ -323,10 +322,10 @@ def test_archive_agent_rebuild_creates_an_empty_idempotent_draft_without_touchin
 
     workbench = client.get(f"/api/v2/products/{product.id}/agent-workbench")
     assert workbench.status_code == 200, workbench.text
-    assert workbench.json()["mode"] == "agent_v2"
+    assert workbench.json()["mode"] == "agent"
     assert workbench.json()["conversation"]["id"] == body["conversation"]["id"]
     assert workbench.json()["workflow_draft"]["id"] == body["draft"]["id"]
-    assert workbench.json()["active_workflow"] is None
+    assert workbench.json()["graph"] is None
 
     repeated = client.post(
         f"/api/v2/legacy-archives/workflow/{workflow.id}/agent-rebuilds",
@@ -388,7 +387,6 @@ def test_archive_seeded_version_zero_draft_accepts_first_agent_revision(
     assert draft.status.value == "awaiting_confirmation"
     assert draft.current_revision is not None
     assert draft.current_revision.version == 1
-    assert db_session.scalar(select(func.count()).select_from(ProductWorkflow)) == 0
     persisted_archive = db_session.get(LegacyWorkflowArchive, workflow.id)
     assert persisted_archive is not None
     assert persisted_archive.payload_json == archived_payload

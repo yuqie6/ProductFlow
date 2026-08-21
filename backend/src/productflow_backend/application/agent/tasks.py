@@ -143,7 +143,7 @@ def get_agent_task_or_raise(session: Session, task_id: str) -> AgentTask:
             selectinload(AgentTask.session),
             selectinload(AgentTask.conversation),
             selectinload(AgentTask.workflow_run_requests).selectinload(
-                AgentWorkflowRunRequest.workflow_run,
+                AgentWorkflowRunRequest.graph_run,
             ),
         )
         .where(AgentTask.id == task_id)
@@ -177,7 +177,7 @@ def list_agent_tasks(
         selectinload(AgentTask.session),
         selectinload(AgentTask.conversation),
         selectinload(AgentTask.workflow_run_requests).selectinload(
-            AgentWorkflowRunRequest.workflow_run,
+            AgentWorkflowRunRequest.graph_run,
         ),
     )
     if session_id is not None:
@@ -524,10 +524,8 @@ def _synchronize_task_workflow_run(task: AgentTask) -> bool:
     request = task.workflow_run_requests[0] if task.workflow_run_requests else None
     if request is None:
         return False
-    metadata_changed = task.workflow_id != request.workflow_id
-    if metadata_changed:
-        task.workflow_id = request.workflow_id
-    run = request.workflow_run
+    run = request.graph_run
+    metadata_changed = False
     if run is None:
         return metadata_changed
 

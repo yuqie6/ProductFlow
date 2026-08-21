@@ -29,7 +29,7 @@ import type {
   WorkflowGenerationSpec,
 } from "../../../lib/types";
 import { AGENT_IMAGE_TYPE_TRANSLATIONS } from "../../product-create/imageTypeSelection";
-import { formatFactValue, humanizeFactKey } from "../canvas/nodeEditorDrafts";
+import { formatFactValue, humanizeFactKey } from "../canvas/factFormat";
 import {
   deriveWorkflowDraftReview,
   isAgentProductImageTypeKey,

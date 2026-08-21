@@ -202,6 +202,21 @@ def agent_product_draft_workspace_request_hash(
     return hashlib.sha256(encoded).hexdigest()
 
 
+def agent_workbench_attach_request_hash(
+    *,
+    product_id: str,
+    agent_session_id: str | None = None,
+) -> str:
+    payload: dict[str, object] = {
+        "request_kind": "ensure_agent_workbench_v1",
+        "product_id": product_id,
+    }
+    if agent_session_id is not None:
+        payload["agent_session_id"] = agent_session_id
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def agent_product_intake_request_hash(
     *,
     selection: AgentProductSelectionV1,
@@ -238,6 +253,7 @@ __all__ = [
     "agent_product_draft_workspace_request_hash",
     "agent_product_intake_request_hash",
     "agent_product_workspace_request_hash",
+    "agent_workbench_attach_request_hash",
     "normalize_agent_product_idempotency_key",
     "parse_agent_product_selection",
     "parse_workflow_intake",
