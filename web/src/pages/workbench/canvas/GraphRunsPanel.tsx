@@ -31,12 +31,14 @@ export function GraphRunsPanel({
   productId,
   graph,
   selectedNodeId = null,
+  structureBusy = false,
   onJump,
   onPreviewImage,
 }: {
   productId: string;
   graph: GraphProjection;
   selectedNodeId?: string | null;
+  structureBusy?: boolean;
   onJump?: (nodeId: string) => void;
   onPreviewImage?: (image: DownloadableImage) => void;
 }) {
@@ -90,8 +92,8 @@ export function GraphRunsPanel({
           run={run}
           graph={graph}
           selectedNodeId={selectedNodeId}
-          cancelBusy={cancelMutation.isPending && cancelMutation.variables === run.id}
-          retryBusy={retryMutation.isPending && retryMutation.variables === run.id}
+          cancelBusy={structureBusy || (cancelMutation.isPending && cancelMutation.variables === run.id)}
+          retryBusy={structureBusy || (retryMutation.isPending && retryMutation.variables === run.id)}
           onCancel={() => cancelMutation.mutate(run.id)}
           onRetry={() => retryMutation.mutate(run.id)}
           onJump={onJump}
@@ -148,7 +150,6 @@ function GraphRunRecord({
             </div>
             <div className="mt-1 space-y-0.5 text-[10px] text-zinc-500 dark:text-slate-400">
               {requested ? <div>{requested.title}</div> : null}
-              <div>{t("graph.runs.revision", { revision: run.graph_revision })}</div>
               <div>{t("agentWorkbench.runHistory.nodeCount", { count: run.node_runs.length })}</div>
               <div>{t("agentWorkbench.runHistory.started", { time: formatDateTime(run.started_at, t.locale) })}</div>
               {run.finished_at ? (
@@ -181,7 +182,7 @@ function GraphRunRecord({
             key={nodeRun.id}
             nodeRun={nodeRun}
             title={graph.nodes.find((node) => node.id === nodeRun.node_id)?.title
-              ?? (nodeRun.node_id ? nodeRun.node_id.slice(0, 8) : t("graph.runs.deletedNode"))}
+              ?? t("graph.runs.deletedNode")}
             selected={Boolean(nodeRun.node_id && nodeRun.node_id === selectedNodeId)}
             previewAssetId={graphNodeRunPreviewAssetId(nodeRun, graph)}
             onJump={onJump && nodeRun.node_id ? () => onJump(nodeRun.node_id as string) : undefined}
@@ -257,7 +258,7 @@ function NodeRunRecord({
           <dl className="mt-2 space-y-1">
             {evidence.map((item) => (
               <div key={item.key} className="grid grid-cols-[minmax(88px,0.4fr)_minmax(0,1fr)] gap-2 text-[10px] leading-4">
-                <dt className="break-words text-zinc-400 dark:text-slate-500">{item.labelKey ? t(item.labelKey) : item.key}</dt>
+                <dt className="break-words text-zinc-400 dark:text-slate-500">{t(item.labelKey)}</dt>
                 <dd className="break-words text-zinc-600 dark:text-slate-300">{item.value}</dd>
               </div>
             ))}
