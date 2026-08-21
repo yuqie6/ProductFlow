@@ -1,0 +1,22 @@
+---
+description: Canvas 用户可见文案必须用简体中文
+alwaysApply: true
+---
+
+# Canvas 语言
+
+编写或修改 `.canvas.tsx` 时，所有用户可见文案必须用简体中文：标题、Callout、Stat 标签、表头、按钮、筛选、图例、caption、折叠标题、发现项正文。
+
+代码标识符、文件路径、类型名、命令、schema 名可以保留原文（例如 `FastAPI`、`WorkflowDraft`、`execution.py`）。
+
+不要用英文 UI 骨架再夹一段中文正文。Canvas 文件在仓库外的 `canvases/` 目录，本规则始终生效，不要依赖 glob。
+
+```tsx
+// ❌ BAD
+<H1>Architecture checkup</H1>
+<Table headers={["ID", "Area", "Finding"]} />
+
+// ✅ GOOD
+<H1>架构体检</H1>
+<Table headers={["编号", "区域", "发现"]} />
+```

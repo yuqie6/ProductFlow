@@ -42,7 +42,12 @@ aegis/
 .codex/tmp/
 .codex/**/*.local.*
 .codex/**/*.py[cod]
-.cursor/
+# Cursor local state. Track project rules and skills.
+.cursor/*
+!.cursor/rules/
+!.cursor/rules/**
+!.cursor/skills/
+!.cursor/skills/**
 
 # Antigravity CLI local state
 .antigravitycli/

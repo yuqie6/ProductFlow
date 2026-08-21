@@ -1,0 +1,22 @@
+---
+description: schema-v3 工作台修葺北极星，防止把图合同修回 V1/V2 或把接线当成完成
+globs: web/src/pages/workbench/**/*,backend/src/productflow_backend/application/product_workflow/graph_*.py,backend/src/productflow_backend/domain/graph_*.py,backend/src/productflow_backend/presentation/routes/workflow_graphs.py,backend/src/productflow_backend/application/workflow_recipes/**,docs/specs/v3-canvas-restoration.md,docs/rollout/free-canvas-v3-interaction-parity.md
+alwaysApply: false
+---
+
+# V3 工作台修葺
+
+改画布、检查器、图命令或配方时先读 `docs/specs/v3-canvas-restoration.md`。交互表是清单，质量上限是该规格 §4 的整条链路。
+
+```tsx
+// ❌ 新卡片、新壳、V2 mutation、plan key、浏览器 undo 权威
+// ❌ 把 Redo 映射成再调一次 undo
+// ❌ 加深 GraphNodeInspector 私有字段模型（目的地是 Catalog config_fields）
+// ❌ 配方保存继续走 V2 payload 或保持 410 却宣称完成
+
+// ✅ 复用 workbench/chrome 槽位并喂数据（类型色、失败、glow）
+// ✅ 持久操作走 ChangeSet；选择/视口/预览留在客户端
+// ✅ 粘贴后选中新节点；建点跟视口；删除确认；运行前 flush；busy 锁侧栏
+```
+
+禁止恢复：不可删除血缘边、多输入 handle 排、顶部流程统计条、用选区/坐标推断边。分组仍是一层视觉组织。浏览器 390px 未验不得宣称切片完成。

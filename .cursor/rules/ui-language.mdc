@@ -1,0 +1,30 @@
+---
+description: 用户可见界面：画面先于文字、图标替代正文、后端词必须转译。改 web UI、i18n、空态、错误文案时必读。
+globs: web/src/**/*.tsx,web/src/**/*.ts,web/src/**/*.css,web/src/lib/i18n.ts
+alwaysApply: false
+---
+
+# UI 语言
+
+用户看见的是结果和操作，不是系统怎么实现。少字、图标、画面；后端名字不出镜。
+
+1. **画面先于文字。** 类型、状态、关系、结果用色、形、预览、位置表达。字只补画面说不清的。
+2. **图标是主控件。** 工具条默认 icon；可见名放到 `aria-label` / `title`。完整句子只留给空态、确认、不可恢复错误。
+3. **文案金库极简。** 新字进 `web/src/lib/i18n.ts` 四语。能 icon + 可达名称就不进正文。重复说明删到一处。
+4. **内部名转译。** `ChangeSet`、`revision`、`editVersion`、`materialize`、`payloadHash`、`ProductImageAsset`、`schema-v3`、digest 只留在代码。用户面说结果。
+5. **少的是屏幕上的字，不是名字。** 每个可点控件仍要可见焦点和可达名称。状态不只靠颜色。
+
+```tsx
+// ❌ 内部词 + 解释句
+<p>这张素材还没有可用的商品图片身份。关联只保存使用关系，不复制媒体文件。</p>
+<span>修订 {revision} · 画布编辑 {editVersion}</span>
+<button>重新加载</button>
+
+// ✅ 画面 / 图标 / 结果语言
+<p>{t("workbench.reference.unavailable")}</p> {/* 这张图还没接到商品 */}
+<button type="button" aria-label={t("workbench.retry")} title={t("workbench.retry")}>
+  <RefreshCw size={16} aria-hidden="true" />
+</button>
+```
+
+做新界面或改观感时读 `.cursor/skills/productflow-frontend/SKILL.md`。
