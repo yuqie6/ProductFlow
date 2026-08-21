@@ -22,7 +22,7 @@ def _default_prompt_generation_provider() -> PromptGenerationProvider:
 
 @dataclass(frozen=True, slots=True)
 class WorkflowExecutionDependencies:
-    """Explicit provider dependencies for schema-v2 workflow execution."""
+    """Explicit provider dependencies for graph execution."""
 
     image_provider_resolver: ImageProviderResolver = _default_image_provider
     prompt_generation_provider_resolver: PromptGenerationProviderResolver = _default_prompt_generation_provider

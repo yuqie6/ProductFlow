@@ -14,7 +14,6 @@ from productflow_backend.domain.enums import (
 from productflow_backend.domain.workflow_rules import canonical_workflow_edge_handles
 
 WORKFLOW_DRAFT_SCHEMA_VERSION = 1
-WORKFLOW_SCHEMA_VERSION = 2
 WORKFLOW_DRAFT_MIN_IMAGE_TYPES = 1
 WORKFLOW_DRAFT_MIN_IMAGES_PER_TYPE = 1
 WORKFLOW_DRAFT_MAX_IMAGES_PER_TYPE = 6

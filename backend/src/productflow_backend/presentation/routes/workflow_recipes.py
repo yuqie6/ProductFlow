@@ -11,7 +11,6 @@ from productflow_backend.application.workflow_recipes.service import (
     get_workflow_recipe_or_raise,
     list_workflow_recipes,
 )
-from productflow_backend.domain.errors import GoneError
 from productflow_backend.presentation.deps import get_session, require_admin
 from productflow_backend.presentation.schemas.workflow_recipes import (
     AppendWorkflowRecipeVersionRequest,
@@ -28,8 +27,6 @@ from productflow_backend.presentation.schemas.workflow_recipes import (
 )
 
 router = APIRouter(prefix="/api/v2", tags=["workflow-recipes"], dependencies=[Depends(require_admin)])
-
-V2_GRAPH_WRITE_CLOSED = "schema-v2 图写入已关闭，请使用 /api/v3 工作流"
 
 
 @router.get("/workflow-recipes", response_model=list[WorkflowRecipeSummaryResponse])
@@ -62,7 +59,6 @@ def create_workflow_recipe_endpoint(
     payload: CreateWorkflowRecipeRequest,
     session: Session = Depends(get_session),
 ) -> WorkflowRecipeResponse:
-    raise GoneError(V2_GRAPH_WRITE_CLOSED)
     return serialize_workflow_recipe(
         create_workflow_recipe(
             session,
@@ -91,7 +87,6 @@ def append_workflow_recipe_version_endpoint(
     payload: AppendWorkflowRecipeVersionRequest,
     session: Session = Depends(get_session),
 ) -> WorkflowRecipeResponse:
-    raise GoneError(V2_GRAPH_WRITE_CLOSED)
     return serialize_workflow_recipe(
         append_workflow_recipe_version(
             session,

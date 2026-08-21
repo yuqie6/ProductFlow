@@ -1471,7 +1471,7 @@ def test_image_session_worker_marks_task_failed_when_time_limit_raises_outside_c
     assert task.is_retryable is True
 
 
-def test_image_session_worker_failure_settles_task_when_parent_session_deleted(
+def test_image_session_worker_noops_when_parent_session_deleted(
     configured_env: Path,
     db_session,
     monkeypatch: pytest.MonkeyPatch,
@@ -1496,20 +1496,17 @@ def test_image_session_worker_failure_settles_task_when_parent_session_deleted(
         prompt="provider 失败时父会话可能已经不在",
         size="1024x1024",
     )
+    task_id = result.task.id
 
     db_session.execute(delete(ImageSession).where(ImageSession.id == image_session.id))
     db_session.commit()
+    db_session.expire_all()
+    assert db_session.get(ImageSessionGenerationTask, task_id) is None
 
-    execute_image_session_generation_task(result.task.id)
+    execute_image_session_generation_task(task_id)
 
     db_session.expire_all()
-    task = db_session.get(ImageSessionGenerationTask, result.task.id)
-    assert task is not None
-    assert task.status == "failed"
-    assert task.failure_reason == "图片生成失败，请稍后重试"
-    assert task.finished_at is not None
-    assert task.attempts == 3
-    assert task.is_retryable is True
+    assert db_session.get(ImageSessionGenerationTask, task_id) is None
 
 
 def test_image_session_stale_attempt_cannot_fail_reclaimed_task(

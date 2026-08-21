@@ -446,5 +446,5 @@ def test_recipe_api_starts_empty_and_save_returns_gone(configured_env) -> None:
         },
     )
     assert save_response.status_code == 410, save_response.text
-    assert "schema-v2 图写入已关闭" in save_response.json()["detail"]
+    assert "schema-v3 配方保存尚未实现" in save_response.json()["detail"]
     assert client.get("/api/v2/workflow-recipes").json() == []

@@ -51,16 +51,16 @@
 - 继续收 `application/` 根上的 durable/settings 平铺文件
 - 恢复已删除的 `0071-0074`
 
-## 3. 当前 V2 物化（对照基线）
+## 3. 对照基线：已删除的 V2 物化
 
-确认与物化今天是两条命令：
+准入切片落地后，确认与 persist 是两条命令：
 
-- `workflow_drafts/confirmation.py`：确认 Draft revision，并收口商品 Agent conversation
-- `workflow_drafts/materialization.py`：按幂等键写入 `schema_version=2` 的 `ProductWorkflow`、Prompt Artifact、Visual Exception、folder、node、edge、reveal events
+- `workflow_drafts/service.py`：确认 Draft revision，并收口商品 Agent conversation
+- `product_workflow/graph_draft_persist.py`：按确认后的 Draft 写出 schema-v3 `workflow_graphs`
 
-Draft 拓扑字段在 `workflow_drafts/contracts.py` 的 `WorkflowDraftPayloadV1`。物化把 plan key 写进节点 `config_json`，并把 Draft edge 转成 `canonical_workflow_edge_handles` 的 V2 handle。
+Draft 拓扑字段仍在 `workflow_drafts/contracts.py` 的 `WorkflowDraftPayloadV1`。adapter 把 Draft 节点写成 v3 `CreateNodeOp`，plan key 只留在 Draft/配方 payload 内部，不进入 live `config_json`。
 
-Agent 路径里，adapter 替换的是 **物化写出的图合同**，不是构思表单，也不是 Draft 作为「对话产物」的地位。直接创建路径 **不经过 Draft**，模版 ChangeSet 就是出生证明。
+已删除的 V2 物化曾经按幂等键写入 `schema_version=2` 的 `ProductWorkflow`。Agent 路径里，adapter 替换的是 **物化写出的图合同**，不是构思表单，也不是 Draft 作为「对话产物」的地位。直接创建路径 **不经过 Draft**，模版 ChangeSet 就是出生证明。
 
 ## 3.1 直接创建：预设模版
 
@@ -323,7 +323,7 @@ CONTEXT 里商品数量上限（类型 1–6 张、合计 30）约束的是创�
 
 从 `20260820_0070` 开新 revision `20260821_0075`，不复用 `0071-0074`。0075 建立独立表 `workflow_graphs` / `workflow_graph_nodes` / `workflow_graph_edges` / `workflow_graph_groups` / `workflow_operation_groups`，`schema_version = 3`。typed edge、graph revision 和 operation group 写在这些表里。run snapshot 仍待后续 revision。
 
-`product_workflows` 继续是 schema-v2 工作台用的表，约束仍是 `schema_version = 2`。不把同一张表放宽成 `IN (2, 3)`。直接创建只写 `workflow_graphs`。工作台切到 v3 并完成 gate 后，再删 `product_workflows` 在线图合同。
+`product_workflows` 曾是 schema-v2 工作台用的表。工作台已切到 `workflow_graphs`；`20260821_0080` 删除在线 DAG 表。V1 生产历史留在 `legacy_workflow_archives`。
 
 本地库若应用过已删除的 0071，只能备份恢复或换新库。
 

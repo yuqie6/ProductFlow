@@ -362,7 +362,7 @@ class OpenAIImagesImageProvider(ImageProvider):
                 n=1,
             )
         if len(results) != 1:
-            raise RuntimeError("schema-v2 单图生成要求 Images API 恰好返回一张图片")
+            raise RuntimeError("单图生成要求 Images API 恰好返回一张图片")
         result = results[0]
         output_metadata = result.provider_output_json.get("_productflow")
         output_metadata = output_metadata if isinstance(output_metadata, dict) else {}

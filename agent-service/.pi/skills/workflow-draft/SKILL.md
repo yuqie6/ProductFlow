@@ -1,11 +1,11 @@
 ---
 name: workflow-draft
-description: Create or revise a schema-v2 ProductFlow WorkflowDraft for review.
+description: Create or revise a ProductFlow WorkflowDraft for review.
 ---
 
 # Workflow Draft
 
-Use for requests to design or adjust a schema-v2 ProductFlow WorkflowDraft.
+Use for requests to design or adjust a ProductFlow WorkflowDraft.
 
 ## Required sequence
 
