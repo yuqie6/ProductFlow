@@ -18,7 +18,7 @@ Current ownership:
 - Agent workspace and Turn projection: `agent/product_workspaces.py`, `conversations.py`, `control.py`, `sync.py`, `tools.py`.
 - Agent Session and Task: `agent/sessions.py`, `tasks.py`.
 - Draft validation and materialization: `workflow_drafts/contracts.py`, `service.py`, `materialization.py`.
-- Current workflow commands and execution: `product_workflow/` public entry, `v2_*.py`, `execution.py`, `run_state.py`, plus `domain/workflow_rules.py`.
+- Current online graph and run: `product_workflow/graph_*.py`, `domain/graph_catalog.py`, `domain/graph_rules.py`, `presentation/routes/workflow_graphs.py`. v3 compiler is `graph_compiler.py`; submit/execute are `graph_runs.py` / `graph_execution.py`. schema-v2 `v2_*.py` / `execution.py` remain for leftover tests until the gate deletion slice.
 - Product images: `product_images/` (`queries.py`, `mutations.py`, `archives.py`, `assets.py`). `MediaObject` primitives live in `media_objects.py`.
 - Global media library: `media_library/` (`queries.py`, `service.py`, `organization.py`, `workflow.py`, `drafts.py`).
 - Provider/runtime configuration: `settings.py`, `runtime_settings.py`, `infrastructure/provider_config.py`, and provider adapters under `infrastructure/prompt/` and `infrastructure/image/`.

@@ -25,6 +25,8 @@ from productflow_backend.application.product_workflow.v2_node_editing import (
     update_v2_image_node,
     update_v2_prompt_node,
 )
+from productflow_backend.application.product_workflow.graph_direct_create import create_product_with_direct_graph
+from productflow_backend.application.product_workflow.graph_template import DirectCreateImageType
 from productflow_backend.application.products import create_canonical_product, delete_product
 from productflow_backend.application.workflow_drafts.contracts import GenerationSpec, ImagePromptPayloadV1
 from productflow_backend.application.workflow_drafts.materialization import materialize_workflow_draft
@@ -599,6 +601,39 @@ def test_fragment_apply_records_target_base_workflow_and_idempotency_drift(db_se
             recipe_id=fragment.id,
             expected_recipe_version=2,
             idempotency_key="fragment-apply-1",
+        )
+
+
+def test_fragment_apply_conflicts_on_v3_product(db_session) -> None:
+    product, workflow, _ = _materialize_recipe_source(db_session)
+    folder = workflow.folders[0]
+    fragment = create_workflow_recipe(
+        db_session,
+        product_id=product.id,
+        workflow_id=workflow.id,
+        source_type="folder",
+        folder_id=folder.id,
+        node_ids=[],
+        expected_edit_version=0,
+        title="v3 目标片段",
+        description=None,
+    )
+    v3 = create_product_with_direct_graph(
+        db_session,
+        name="v3 片段目标",
+        category=None,
+        price=None,
+        source_note=None,
+        image_uploads=[(_make_demo_image_bytes(), "v3.png", "image/png")],
+        image_types=[DirectCreateImageType(key="hero", quantity=1, order=0)],
+    )
+    with pytest.raises(ConflictError, match="schema-v3"):
+        apply_workflow_recipe(
+            db_session,
+            product_id=v3.product.id,
+            recipe_id=fragment.id,
+            expected_recipe_version=1,
+            idempotency_key="fragment-v3-conflict",
         )
 
 

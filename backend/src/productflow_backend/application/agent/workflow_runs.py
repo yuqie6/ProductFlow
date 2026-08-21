@@ -6,11 +6,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.agent.conversations import get_agent_conversation_by_id_or_raise
+from productflow_backend.application.product_workflow.graph_commands import get_active_workflow_graph
+from productflow_backend.application.product_workflow.graph_runs import list_graph_runs
 from productflow_backend.application.product_workflow.v2_runs import list_v2_workflow_runs
 from productflow_backend.application.workflow_drafts.materialization import get_active_v2_workflow_snapshot
 from productflow_backend.domain.enums import AgentConversationScope
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
-from productflow_backend.infrastructure.db.models import ProductWorkflow, WorkflowRun
+from productflow_backend.infrastructure.db.models import ProductWorkflow, WorkflowGraph, WorkflowGraphRun, WorkflowRun
 
 AGENT_GLOBAL_WORKFLOW_INSPECT_MAX = 20
 AGENT_GLOBAL_WORKFLOW_RUN_LIST_MAX = 10
@@ -30,6 +32,13 @@ def list_agent_workflow_runs(
     limit: int = 20,
 ) -> AgentWorkflowRunPage:
     conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
+    graph = get_active_workflow_graph(session, product_id=conversation.product_id)
+    if graph is not None:
+        return AgentWorkflowRunPage(
+            workflow_id=graph.id,
+            workflow_revision=graph.revision,
+            runs=(),
+        )
     snapshot = get_active_v2_workflow_snapshot(session, product_id=conversation.product_id)
     if snapshot.workflow is None:
         return AgentWorkflowRunPage(
@@ -65,21 +74,50 @@ def inspect_agent_global_workflow_runs(
         raise BusinessValidationError(
             f"workflow run limit 必须在 1 到 {AGENT_GLOBAL_WORKFLOW_RUN_LIST_MAX} 之间"
         )
+    graphs = list(
+        session.scalars(
+            select(WorkflowGraph)
+            .options(selectinload(WorkflowGraph.product))
+            .where(WorkflowGraph.id.in_(normalized_ids))
+        ).all()
+    )
+    graphs_by_id = {graph.id: graph for graph in graphs}
+    remaining_ids = [item for item in normalized_ids if item not in graphs_by_id]
     workflows = list(
         session.scalars(
             select(ProductWorkflow)
             .options(selectinload(ProductWorkflow.product))
             .where(
-                ProductWorkflow.id.in_(normalized_ids),
+                ProductWorkflow.id.in_(remaining_ids),
                 ProductWorkflow.schema_version == 2,
             )
         ).all()
-    )
-    if len(workflows) != len(normalized_ids):
+    ) if remaining_ids else []
+    if len(graphs) + len(workflows) != len(normalized_ids):
         raise NotFoundError("部分工作流不存在")
     workflows_by_id = {workflow.id: workflow for workflow in workflows}
     result: list[dict[str, object]] = []
     for workflow_id in normalized_ids:
+        graph = graphs_by_id.get(workflow_id)
+        if graph is not None:
+            runs = list_graph_runs(
+                session,
+                product_id=graph.product_id,
+                graph_id=graph.id,
+                limit=limit,
+            )
+            result.append(
+                {
+                    "product_id": graph.product_id,
+                    "product_name": graph.product.name,
+                    "workflow_id": graph.id,
+                    "workflow_title": graph.title,
+                    "workflow_revision": graph.revision,
+                    "active": graph.active,
+                    "runs": [_agent_global_graph_run_summary(run) for run in runs],
+                }
+            )
+            continue
         workflow = workflows_by_id[workflow_id]
         runs = list(
             session.scalars(
@@ -102,6 +140,21 @@ def inspect_agent_global_workflow_runs(
             }
         )
     return result
+
+
+def _agent_global_graph_run_summary(run: WorkflowGraphRun) -> dict[str, object]:
+    node_status_counts: dict[str, int] = {}
+    for node_run in run.node_runs:
+        status = node_run.status.value if hasattr(node_run.status, "value") else str(node_run.status)
+        node_status_counts[status] = node_status_counts.get(status, 0) + 1
+    return {
+        "id": run.id,
+        "status": run.status,
+        "failure_reason": run.failure_reason,
+        "started_at": run.started_at,
+        "finished_at": run.finished_at,
+        "node_status_counts": node_status_counts,
+    }
 
 
 def _agent_global_workflow_run_summary(run: WorkflowRun) -> dict[str, object]:

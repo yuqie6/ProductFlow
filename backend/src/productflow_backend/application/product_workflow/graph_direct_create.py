@@ -1,0 +1,78 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from sqlalchemy.orm import Session
+
+from productflow_backend.application.product_images.assets import get_product_image_assets_by_ids
+from productflow_backend.application.product_workflow.graph_commands import stage_new_workflow_graph
+from productflow_backend.application.product_workflow.graph_queries import GraphProjection, project_workflow_graph
+from productflow_backend.application.product_workflow.graph_template import (
+    DirectCreateImageType,
+    build_direct_create_template,
+)
+from productflow_backend.application.products import get_product_detail, stage_canonical_product_with_assets
+from productflow_backend.application.storage_compensation import compensate_storage_writes
+from productflow_backend.infrastructure.db.models import Product, ProductImageAsset, WorkflowGraph
+from productflow_backend.infrastructure.storage import LocalStorage
+
+
+@dataclass(frozen=True, slots=True)
+class DirectCreateResult:
+    product: Product
+    created_assets: list[ProductImageAsset]
+    graph: WorkflowGraph
+    projection: GraphProjection
+
+
+def create_product_with_direct_graph(
+    session: Session,
+    *,
+    name: str,
+    category: str | None,
+    price: str | None,
+    source_note: str | None,
+    image_uploads: list[tuple[bytes, str, str]],
+    image_types: list[DirectCreateImageType],
+    storage: LocalStorage | None = None,
+) -> DirectCreateResult:
+    """Create a product, its reference assets, and the preset v3 graph in one transaction."""
+
+    storage = storage or LocalStorage()
+    with compensate_storage_writes(session) as storage_writes:
+        creation = stage_canonical_product_with_assets(
+            session,
+            name=name,
+            category=category,
+            price=price,
+            source_note=source_note,
+            image_uploads=image_uploads,
+            storage=storage,
+            storage_writes=storage_writes,
+        )
+        creation.product.cover_image_asset_id = creation.created_assets[0].id
+        change_set = build_direct_create_template(
+            image_types=image_types,
+            reference_asset_ids=[asset.id for asset in creation.created_assets],
+            product_title=creation.product.name,
+        )
+        command = stage_new_workflow_graph(
+            session,
+            product_id=creation.product.id,
+            change_set=change_set,
+            title=creation.product.name,
+        )
+        product_id = creation.product.id
+        asset_ids = [asset.id for asset in creation.created_assets]
+        graph_id = command.graph.id
+        session.commit()
+    session.expire_all()
+    product = get_product_detail(session, product_id)
+    graph = session.get(WorkflowGraph, graph_id)
+    assert graph is not None
+    return DirectCreateResult(
+        product=product,
+        created_assets=get_product_image_assets_by_ids(session, product_id=product_id, asset_ids=asset_ids),
+        graph=graph,
+        projection=project_workflow_graph(session, graph),
+    )

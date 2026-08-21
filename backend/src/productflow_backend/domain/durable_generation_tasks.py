@@ -110,6 +110,25 @@ IMAGE_SESSION_GENERATION_TASK_CONTRACT = DurableGenerationTaskContract(
     recovery_entrypoint="recover_unfinished_image_session_generation_tasks",
 )
 
+GRAPH_RUN_GENERATION_TASK_CONTRACT = DurableGenerationTaskContract(
+    name="workflow_graph_run",
+    durable_model_name="WorkflowGraphRun",
+    actor_name="run_workflow_graph_run",
+    active_statuses=(WorkflowRunStatus.RUNNING,),
+    queued_statuses=(),
+    running_statuses=(WorkflowRunStatus.RUNNING,),
+    terminal_statuses=(
+        WorkflowRunStatus.SUCCEEDED,
+        WorkflowRunStatus.FAILED,
+        WorkflowRunStatus.CANCELLED,
+        WorkflowRunStatus.UNKNOWN,
+    ),
+    execution_queued_statuses=(WorkflowNodeStatus.QUEUED,),
+    execution_running_statuses=(WorkflowNodeStatus.RUNNING,),
+    status_snapshot_source="WorkflowGraphRun",
+    recovery_entrypoint="execute_graph_run",
+)
+
 DELIVERY_RENDITION_TASK_CONTRACT = DurableGenerationTaskContract(
     name="delivery_rendition_job",
     durable_model_name="DeliveryRenditionJob",

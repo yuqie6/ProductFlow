@@ -39,6 +39,7 @@ from productflow_backend.presentation.routes.media_library import router as medi
 from productflow_backend.presentation.routes.products import router as products_router
 from productflow_backend.presentation.routes.settings import router as settings_router
 from productflow_backend.presentation.routes.workflow_drafts import router as workflow_drafts_router
+from productflow_backend.presentation.routes.workflow_graphs import router as workflow_graphs_router
 from productflow_backend.presentation.routes.workflow_recipes import router as workflow_recipes_router
 from productflow_backend.presentation.session import ClockStableSessionMiddleware
 
@@ -92,6 +93,7 @@ def create_app() -> FastAPI:
     app.include_router(products_router)
     app.include_router(delivery_renditions_router)
     app.include_router(workflow_drafts_router)
+    app.include_router(workflow_graphs_router)
     app.include_router(workflow_recipes_router)
     app.include_router(image_sessions_router)
     app.include_router(legacy_archives_router)

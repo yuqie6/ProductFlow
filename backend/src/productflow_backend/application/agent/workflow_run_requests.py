@@ -12,6 +12,17 @@ from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.agent.conversations import get_agent_conversation_by_id_or_raise
 from productflow_backend.application.agent.tasks import get_agent_task_or_raise
+from productflow_backend.application.product_workflow.graph_commands import (
+    get_active_workflow_graph,
+    load_applied_graph,
+)
+from productflow_backend.application.product_workflow.graph_compiler import select_run_node_ids
+from productflow_backend.application.product_workflow.graph_runs import (
+    cancel_graph_run,
+    get_graph_run,
+    retry_graph_run,
+    submit_graph_run,
+)
 from productflow_backend.application.product_workflow.run_state import WORKFLOW_CANCELLED_REASON
 from productflow_backend.application.product_workflow.v2_runs import (
     cancel_v2_workflow_run,
@@ -28,6 +39,7 @@ from productflow_backend.domain.enums import (
     AgentTaskStatus,
     AgentTurnStatus,
     AgentWorkflowRunRequestStatus,
+    GraphRunScope,
     WorkflowRunStatus,
 )
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
@@ -36,9 +48,10 @@ from productflow_backend.infrastructure.db.models import (
     AgentTask,
     AgentTurnProjection,
     AgentWorkflowRunRequest,
-    ProductWorkflow,
+    WorkflowGraph,
     new_id,
 )
+from productflow_backend.infrastructure.queue import enqueue_graph_run
 
 AGENT_WORKFLOW_RUN_REQUEST_MAX_KEY_BYTES = 200
 AGENT_WORKFLOW_RUN_REQUEST_MAX_STEP_ID_LENGTH = 120
@@ -53,6 +66,8 @@ class AgentWorkflowRunRequestPreparation:
     runnable_node_count: int
     task_id: str | None
     source_run_id: str | None = None
+    graph_id: str | None = None
+    source_graph_run_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +75,17 @@ class AgentWorkflowRunRequestReconcileResult:
     state: str
     request: AgentWorkflowRunRequest | None = None
     detail: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _ResolvedRunnable:
+    public_id: str
+    title: str
+    revision: int
+    runnable_node_count: int
+    graph_id: str | None
+    source_run_id: str | None
+    source_graph_run_id: str | None
 
 
 def prepare_agent_workflow_run_request(
@@ -71,7 +97,7 @@ def prepare_agent_workflow_run_request(
     source_run_id: str | None = None,
 ) -> AgentWorkflowRunRequestPreparation:
     conversation = _get_product_conversation(session, conversation_id)
-    workflow, ordered_node_ids = _prepare_current_workflow(
+    resolved = _prepare_current_workflow(
         session,
         product_id=conversation.product_id or "",
         expected_workflow_revision=expected_workflow_revision,
@@ -84,12 +110,14 @@ def prepare_agent_workflow_run_request(
     )
     return AgentWorkflowRunRequestPreparation(
         product_id=conversation.product_id or "",
-        workflow_id=workflow.id,
-        workflow_title=workflow.title,
-        workflow_revision=workflow.revision,
-        runnable_node_count=len(ordered_node_ids),
+        workflow_id=resolved.public_id,
+        workflow_title=resolved.title,
+        workflow_revision=resolved.revision,
+        runnable_node_count=resolved.runnable_node_count,
         task_id=task_id,
-        source_run_id=source_run_id,
+        source_run_id=resolved.source_run_id,
+        graph_id=resolved.graph_id,
+        source_graph_run_id=resolved.source_graph_run_id,
     )
 
 
@@ -111,7 +139,7 @@ def prepare_agent_global_workflow_run_request(
         conversation=conversation,
         task_id=task_id,
     )
-    workflow, ordered_node_ids = _prepare_explicit_workflow(
+    resolved = _prepare_explicit_workflow(
         session,
         product_id=normalized_product_id,
         workflow_id=normalized_workflow_id,
@@ -120,12 +148,14 @@ def prepare_agent_global_workflow_run_request(
     )
     return AgentWorkflowRunRequestPreparation(
         product_id=normalized_product_id,
-        workflow_id=workflow.id,
-        workflow_title=workflow.title,
-        workflow_revision=workflow.revision,
-        runnable_node_count=len(ordered_node_ids),
+        workflow_id=resolved.public_id,
+        workflow_title=resolved.title,
+        workflow_revision=resolved.revision,
+        runnable_node_count=resolved.runnable_node_count,
         task_id=task_id,
-        source_run_id=source_run_id,
+        source_run_id=resolved.source_run_id,
+        graph_id=resolved.graph_id,
+        source_graph_run_id=resolved.source_graph_run_id,
     )
 
 
@@ -238,8 +268,10 @@ def _create_agent_workflow_run_request(
         select(AgentWorkflowRunRequest)
         .options(
             selectinload(AgentWorkflowRunRequest.workflow),
+            selectinload(AgentWorkflowRunRequest.graph),
             selectinload(AgentWorkflowRunRequest.product),
             selectinload(AgentWorkflowRunRequest.workflow_run),
+            selectinload(AgentWorkflowRunRequest.graph_run),
             selectinload(AgentWorkflowRunRequest.task),
         )
         .where(
@@ -263,8 +295,10 @@ def _create_agent_workflow_run_request(
         conversation_id=conversation.id,
         task_id=task_id,
         product_id=preparation.product_id,
-        workflow_id=preparation.workflow_id,
-        source_run_id=preparation.source_run_id,
+        workflow_id=None if preparation.graph_id else preparation.workflow_id,
+        graph_id=preparation.graph_id,
+        source_run_id=None if preparation.graph_id else preparation.source_run_id,
+        source_graph_run_id=preparation.source_graph_run_id,
         expected_workflow_revision=preparation.workflow_revision,
         idempotency_key=normalized_key,
         request_hash=request_hash,
@@ -273,7 +307,7 @@ def _create_agent_workflow_run_request(
     )
     session.add(request)
     task = _task_for_request(session, task_id)
-    if task is not None:
+    if task is not None and preparation.graph_id is None:
         task.workflow_id = preparation.workflow_id
     _mark_request_waiting(conversation, task)
     try:
@@ -413,8 +447,10 @@ def get_agent_workflow_run_request(
         select(AgentWorkflowRunRequest)
         .options(
             selectinload(AgentWorkflowRunRequest.workflow),
+            selectinload(AgentWorkflowRunRequest.graph),
             selectinload(AgentWorkflowRunRequest.product),
             selectinload(AgentWorkflowRunRequest.workflow_run),
+            selectinload(AgentWorkflowRunRequest.graph_run),
             selectinload(AgentWorkflowRunRequest.task),
         )
         .where(AgentWorkflowRunRequest.conversation_id == conversation_id)
@@ -519,16 +555,53 @@ def confirm_agent_workflow_run_request(
     _sync_request_from_workflow_run(session, request)
     if request.status == AgentWorkflowRunRequestStatus.CANCELLED:
         raise ConflictError("已取消的工作流执行请求不能确认")
-    if request.workflow_run_id is not None:
+    if request.workflow_run_id is not None or request.graph_run_id is not None:
         session.commit()
         return _load_request(session, request.id)
     if request.status != AgentWorkflowRunRequestStatus.AWAITING_CONFIRMATION:
         raise ConflictError("当前工作流执行请求不在待确认状态")
 
+    if request.graph_id is not None:
+        graph = session.get(WorkflowGraph, request.graph_id)
+        if graph is None or graph.product_id != request.product_id:
+            raise ConflictError("工作流已经发生变化，请重新让 Agent 检查后再确认")
+        if graph.revision != request.expected_workflow_revision:
+            raise ConflictError("工作流已经发生变化，请重新让 Agent 检查后再确认")
+        if request.source_graph_run_id is not None:
+            submission = retry_graph_run(
+                session,
+                product_id=request.product_id,
+                graph_id=request.graph_id,
+                run_id=request.source_graph_run_id,
+                commit=False,
+            )
+        else:
+            submission = submit_graph_run(
+                session,
+                product_id=request.product_id,
+                graph_id=request.graph_id,
+                scope=GraphRunScope.GRAPH,
+                commit=False,
+            )
+        request.graph_run_id = submission.run.id
+        request.status = AgentWorkflowRunRequestStatus.CONFIRMED
+        request.confirmed_at = now_utc()
+        request.failure_reason = None
+        request.updated_at = now_utc()
+        _mark_turn_succeeded(request.turn_projection)
+        _mark_task_running(request.task)
+        request.conversation.status = AgentConversationStatus.COMPLETED
+        request.conversation.updated_at = now_utc()
+        run_id = submission.run.id
+        session.commit()
+        if submission.created:
+            enqueue_graph_run(run_id)
+        return _load_request(session, request.id)
+
     workflow, _ = validate_v2_workflow_run(
         session,
         product_id=request.product_id,
-        workflow_id=request.workflow_id,
+        workflow_id=request.workflow_id or "",
         lock=True,
     )
     if workflow.revision != request.expected_workflow_revision:
@@ -537,7 +610,7 @@ def confirm_agent_workflow_run_request(
         submission = retry_v2_workflow_run(
             session,
             product_id=request.product_id,
-            workflow_id=request.workflow_id,
+            workflow_id=request.workflow_id or "",
             run_id=request.source_run_id,
             commit=False,
             run_metadata={
@@ -550,7 +623,7 @@ def confirm_agent_workflow_run_request(
         submission = submit_v2_workflow_run(
             session,
             product_id=request.product_id,
-            workflow_id=request.workflow_id,
+            workflow_id=request.workflow_id or "",
             commit=False,
             run_metadata={
                 "requested_by": "agent",
@@ -588,7 +661,7 @@ def cancel_agent_workflow_run_request(
     if request.status == AgentWorkflowRunRequestStatus.CANCELLED:
         session.commit()
         return _load_request(session, request.id)
-    if request.workflow_run_id is None:
+    if request.workflow_run_id is None and request.graph_run_id is None:
         request.status = AgentWorkflowRunRequestStatus.CANCELLED
         request.failure_reason = WORKFLOW_CANCELLED_REASON
         request.finished_at = now_utc()
@@ -597,6 +670,30 @@ def cancel_agent_workflow_run_request(
         _mark_task_cancelled(request.task)
         request.conversation.status = AgentConversationStatus.CANCELED
         request.conversation.updated_at = now_utc()
+        session.commit()
+        return _load_request(session, request.id)
+    if request.graph_id is not None:
+        if request.graph_run is None:
+            raise ConflictError("工作流执行请求关联的运行记录不存在")
+        if request.graph_run.status == WorkflowRunStatus.CANCELLED:
+            _sync_request_from_workflow_run(session, request)
+            session.commit()
+            return _load_request(session, request.id)
+        if request.graph_run.status != WorkflowRunStatus.RUNNING:
+            raise ConflictError("已结束的工作流运行不能取消")
+        cancel_graph_run(
+            session,
+            product_id=request.product_id,
+            graph_id=request.graph_id,
+            run_id=request.graph_run_id or request.graph_run.id,
+        )
+        request = _load_request_for_update(
+            session,
+            product_id=product_id,
+            conversation_id=conversation_id,
+            request_id=request_id,
+        )
+        _sync_request_from_workflow_run(session, request)
         session.commit()
         return _load_request(session, request.id)
     if request.workflow_run is None:
@@ -610,7 +707,7 @@ def cancel_agent_workflow_run_request(
     cancel_v2_workflow_run(
         session,
         product_id=request.product_id,
-        workflow_id=request.workflow_id,
+        workflow_id=request.workflow_id or "",
         run_id=request.workflow_run_id,
     )
     request = _load_request_for_update(
@@ -670,26 +767,45 @@ def _prepare_current_workflow(
     product_id: str,
     expected_workflow_revision: int,
     source_run_id: str | None = None,
-) -> tuple[ProductWorkflow, tuple[str, ...]]:
+) -> _ResolvedRunnable:
     if expected_workflow_revision <= 0:
         raise BusinessValidationError("expected_workflow_revision 必须大于 0")
+    graph = get_active_workflow_graph(session, product_id=product_id)
+    if graph is not None:
+        return _resolve_graph_runnable(
+            session,
+            product_id=product_id,
+            graph=graph,
+            expected_workflow_revision=expected_workflow_revision,
+            source_run_id=source_run_id,
+        )
     snapshot = get_active_v2_workflow_snapshot(session, product_id=product_id)
     if snapshot.workflow is None:
-        raise ConflictError("当前商品还没有可执行的 active schema-v2 工作流")
+        raise ConflictError("当前商品还没有可执行的工作流")
     if snapshot.workflow.revision != expected_workflow_revision:
         raise ConflictError("工作流 revision 已变化，请重新读取当前工作流")
     if source_run_id is not None:
-        return validate_retry_workflow_run(
+        workflow, ordered_node_ids = validate_retry_workflow_run(
             session,
             product_id=product_id,
             workflow_id=snapshot.workflow.id,
             run_id=source_run_id,
         )
-    return validate_v2_workflow_run(
-        session,
-        product_id=product_id,
-        workflow_id=snapshot.workflow.id,
-        lock=False,
+    else:
+        workflow, ordered_node_ids = validate_v2_workflow_run(
+            session,
+            product_id=product_id,
+            workflow_id=snapshot.workflow.id,
+            lock=False,
+        )
+    return _ResolvedRunnable(
+        public_id=workflow.id,
+        title=workflow.title,
+        revision=workflow.revision,
+        runnable_node_count=len(ordered_node_ids),
+        graph_id=None,
+        source_run_id=source_run_id,
+        source_graph_run_id=None,
     )
 
 
@@ -700,25 +816,76 @@ def _prepare_explicit_workflow(
     workflow_id: str,
     expected_workflow_revision: int,
     source_run_id: str | None = None,
-) -> tuple[ProductWorkflow, tuple[str, ...]]:
+) -> _ResolvedRunnable:
     if expected_workflow_revision <= 0:
         raise BusinessValidationError("expected_workflow_revision 必须大于 0")
+    graph = session.scalar(
+        select(WorkflowGraph).where(WorkflowGraph.id == workflow_id, WorkflowGraph.product_id == product_id)
+    )
+    if graph is not None:
+        return _resolve_graph_runnable(
+            session,
+            product_id=product_id,
+            graph=graph,
+            expected_workflow_revision=expected_workflow_revision,
+            source_run_id=source_run_id,
+        )
     if source_run_id is not None:
-        return validate_retry_workflow_run(
+        workflow, ordered_node_ids = validate_retry_workflow_run(
             session,
             product_id=product_id,
             workflow_id=workflow_id,
             run_id=source_run_id,
         )
-    workflow, ordered_node_ids = validate_v2_workflow_run(
-        session,
-        product_id=product_id,
-        workflow_id=workflow_id,
-        lock=False,
+    else:
+        workflow, ordered_node_ids = validate_v2_workflow_run(
+            session,
+            product_id=product_id,
+            workflow_id=workflow_id,
+            lock=False,
+        )
+        if workflow.revision != expected_workflow_revision:
+            raise ConflictError("工作流 revision 已变化，请重新读取当前工作流")
+    return _ResolvedRunnable(
+        public_id=workflow.id,
+        title=workflow.title,
+        revision=workflow.revision,
+        runnable_node_count=len(ordered_node_ids),
+        graph_id=None,
+        source_run_id=source_run_id,
+        source_graph_run_id=None,
     )
-    if workflow.revision != expected_workflow_revision:
+
+
+def _resolve_graph_runnable(
+    session: Session,
+    *,
+    product_id: str,
+    graph: WorkflowGraph,
+    expected_workflow_revision: int,
+    source_run_id: str | None,
+) -> _ResolvedRunnable:
+    if graph.revision != expected_workflow_revision:
         raise ConflictError("工作流 revision 已变化，请重新读取当前工作流")
-    return workflow, ordered_node_ids
+    applied = load_applied_graph(session, graph)
+    node_ids = select_run_node_ids(applied, scope=GraphRunScope.GRAPH, target_node_id=None)
+    if not node_ids:
+        raise ConflictError("当前工作流没有可运行的节点")
+    source_graph_run_id = None
+    if source_run_id is not None:
+        source = get_graph_run(session, product_id=product_id, graph_id=graph.id, run_id=source_run_id)
+        if source.status != WorkflowRunStatus.FAILED or not source.is_retryable:
+            raise BusinessValidationError("只有失败且可重试的工作流运行可以再次请求执行")
+        source_graph_run_id = source.id
+    return _ResolvedRunnable(
+        public_id=graph.id,
+        title=graph.title,
+        revision=graph.revision,
+        runnable_node_count=len(node_ids),
+        graph_id=graph.id,
+        source_run_id=None,
+        source_graph_run_id=source_graph_run_id,
+    )
 
 
 def _validate_task_scope(
@@ -779,7 +946,7 @@ def _mark_task_cancelled(task: AgentTask | None) -> None:
 
 
 def _sync_request_from_workflow_run(session: Session, request: AgentWorkflowRunRequest) -> bool:
-    run = request.workflow_run
+    run = request.graph_run if request.graph_id is not None else request.workflow_run
     if run is None:
         return False
     now = now_utc()
@@ -854,8 +1021,10 @@ def _load_request(session: Session, request_id: str) -> AgentWorkflowRunRequest:
         .options(
             selectinload(AgentWorkflowRunRequest.conversation),
             selectinload(AgentWorkflowRunRequest.workflow),
+            selectinload(AgentWorkflowRunRequest.graph),
             selectinload(AgentWorkflowRunRequest.product),
             selectinload(AgentWorkflowRunRequest.workflow_run),
+            selectinload(AgentWorkflowRunRequest.graph_run),
             selectinload(AgentWorkflowRunRequest.task),
             selectinload(AgentWorkflowRunRequest.turn_projection),
         )
@@ -894,8 +1063,10 @@ def _load_request_for_update(
         .options(
             selectinload(AgentWorkflowRunRequest.conversation),
             selectinload(AgentWorkflowRunRequest.workflow),
+            selectinload(AgentWorkflowRunRequest.graph),
             selectinload(AgentWorkflowRunRequest.product),
             selectinload(AgentWorkflowRunRequest.workflow_run),
+            selectinload(AgentWorkflowRunRequest.graph_run),
             selectinload(AgentWorkflowRunRequest.task),
             selectinload(AgentWorkflowRunRequest.turn_projection),
         )

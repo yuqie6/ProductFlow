@@ -24,10 +24,12 @@ from productflow_backend.application.product_workflow import (
     execute_product_workflow_node_run,
     execute_product_workflow_run,
 )
+from productflow_backend.application.product_workflow.graph_execution import execute_graph_run
 from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.durable_generation_tasks import (
     DELIVERY_RENDITION_TASK_CONTRACT,
+    GRAPH_RUN_GENERATION_TASK_CONTRACT,
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
     WORKFLOW_RUN_GENERATION_TASK_CONTRACT,
     assert_actor_uses_durable_generation_contract,
@@ -47,6 +49,7 @@ from productflow_backend.infrastructure.logging import (
     set_workflow_run_id,
 )
 from productflow_backend.infrastructure.queue import (
+    GRAPH_RUN_ACTOR_NAME,
     WORKFLOW_NODE_RUN_ACTOR_NAME,
     get_broker,
 )
@@ -73,6 +76,8 @@ def _execute_async_dispatch_target(actor_name: str, aggregate_id: str) -> None:
         execute_product_workflow_run(aggregate_id)
     elif actor_name == WORKFLOW_NODE_RUN_ACTOR_NAME:
         execute_product_workflow_node_run(aggregate_id)
+    elif actor_name == GRAPH_RUN_ACTOR_NAME:
+        execute_graph_run(aggregate_id)
     elif actor_name == IMAGE_SESSION_GENERATION_TASK_CONTRACT.actor_name:
         execute_image_session_generation_task(aggregate_id, chat_service_factory=ImageChatService)
     elif actor_name == "run_agent_turn_sync":
@@ -203,6 +208,11 @@ def run_product_workflow_run(workflow_run_id: str) -> None:
 
 
 @dramatiq.actor(max_retries=0, time_limit=PRODUCT_WORKFLOW_WORKER_FAILSAFE_TIME_LIMIT_MS)
+def run_workflow_graph_run(graph_run_id: str) -> None:
+    execute_graph_run(graph_run_id)
+
+
+@dramatiq.actor(max_retries=0, time_limit=PRODUCT_WORKFLOW_WORKER_FAILSAFE_TIME_LIMIT_MS)
 def run_product_workflow_node_run(workflow_node_run_id: str) -> None:
     """商品工作流节点 worker：执行单个 WorkflowNodeRun，完成后唤醒 scheduler。"""
     token = set_workflow_node_run_id(workflow_node_run_id)
@@ -246,6 +256,7 @@ def run_async_dispatch(dispatch_id: str, aggregate_id: str) -> None:
 
 
 assert_actor_uses_durable_generation_contract(WORKFLOW_RUN_GENERATION_TASK_CONTRACT, run_product_workflow_run)
+assert_actor_uses_durable_generation_contract(GRAPH_RUN_GENERATION_TASK_CONTRACT, run_workflow_graph_run)
 assert_actor_uses_durable_generation_contract(
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
     run_image_session_generation_task,

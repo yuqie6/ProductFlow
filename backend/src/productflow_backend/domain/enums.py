@@ -70,12 +70,74 @@ class AgentCheckpointKind(StrEnum):
 
 
 class WorkflowNodeType(StrEnum):
-    """商品工作流节点类型。"""
+    """schema-v2 商品工作流节点类型。"""
 
     PRODUCT_CONTEXT = "product_context"
     REFERENCE_IMAGE = "reference_image"
     PROMPT_GENERATION = "prompt_generation"
     IMAGE_GENERATION = "image_generation"
+
+
+class GraphNodeType(StrEnum):
+    """schema-v3 画布节点类型。持久化在 workflow_graphs，不写入 schema-v2 ProductWorkflow。"""
+
+    PRODUCT_SOURCE = "product_source"
+    IMAGE_ASSET = "image_asset"
+    CREATIVE_BRIEF = "creative_brief"
+    VISUAL_SYSTEM = "visual_system"
+    PROMPT_GENERATION = "prompt_generation"
+    IMAGE_GENERATION = "image_generation"
+
+
+class GraphEdgeDataType(StrEnum):
+    """schema-v3 typed edge 的数据类型。"""
+
+    PRODUCT_FACTS = "product_facts"
+    IMAGE_ASSET = "image_asset"
+    CREATIVE_BRIEF = "creative_brief"
+    VISUAL_SYSTEM = "visual_system"
+    PROMPT = "prompt"
+
+
+class GraphEdgeRole(StrEnum):
+    """schema-v3 typed edge 的输入角色。"""
+
+    FACTS = "facts"
+    REFERENCE = "reference"
+    BRIEF = "brief"
+    VISUAL_GUIDANCE = "visual_guidance"
+    PROMPT = "prompt"
+
+
+class GraphConfigStatus(StrEnum):
+    """由当前 graph revision 推导的节点配置状态，不是执行状态。"""
+
+    INCOMPLETE = "incomplete"
+    READY = "ready"
+    STALE = "stale"
+
+
+class GraphActorType(StrEnum):
+    """ChangeSet / operation group 的发起方。"""
+
+    USER = "user"
+    AGENT = "agent"
+    RECIPE = "recipe"
+
+
+class GraphRunScope(StrEnum):
+    """v3 运行范围。"""
+
+    NODE = "node"
+    TO_NODE = "to_node"
+    GRAPH = "graph"
+
+
+class GraphArtifactType(StrEnum):
+    """v3 运行产物类型。"""
+
+    PROMPT = "prompt"
+    IMAGE = "image"
 
 
 class WorkflowDraftStatus(StrEnum):

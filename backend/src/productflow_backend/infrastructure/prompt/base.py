@@ -26,7 +26,7 @@ class PromptGenerationRequest:
     image_type_key: str
     image_plan_keys: tuple[str, ...]
     facts: tuple[dict[str, Any], ...]
-    visual_system: VisualSystemDraftPayload
+    visual_system: VisualSystemDraftPayload | None
     visual_exceptions: tuple[dict[str, Any], ...]
     current_prompt: ImagePromptPayloadV1
     text_languages: tuple[str, ...]

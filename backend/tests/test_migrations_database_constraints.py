@@ -34,6 +34,7 @@ from productflow_backend.infrastructure.db.models import (
     ProductImageAsset,
     ProductWorkflow,
     WorkflowDraft,
+    WorkflowGraph,
     WorkflowNode,
     WorkflowNodeRun,
     WorkflowRecipe,
@@ -127,6 +128,8 @@ def test_current_model_metadata_exposes_only_current_runtime_and_archive_contrac
     assert WorkflowNodeRun.__table__.c.attempts.nullable is False
     assert ProductWorkflow.__table__.c.schema_version.default.arg == 2
     assert WorkflowNode.__table__.c.schema_version.default.arg == 2
+    assert "workflow_graphs" in Base.metadata.tables
+    assert WorkflowGraph.__table__.c.schema_version.default.arg == 3
 
 
 def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -316,11 +319,41 @@ def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch:
         assert {"question_answer_json", "continuation_turn_id"} <= {
             column["name"] for column in inspector.get_columns("agent_turn_projections")
         }
-        assert {"source_run_id"} <= {
+        assert {"source_run_id", "graph_id", "graph_run_id", "source_graph_run_id"} <= {
             column["name"] for column in inspector.get_columns("agent_workflow_run_requests")
         }
+        request_checks = {
+            check["name"] for check in inspector.get_check_constraints("agent_workflow_run_requests")
+        }
+        assert "ck_agent_workflow_run_requests_v2_or_v3" in request_checks
+        assert {
+            "workflow_graphs",
+            "workflow_graph_nodes",
+            "workflow_graph_edges",
+            "workflow_graph_groups",
+            "workflow_operation_groups",
+            "workflow_graph_runs",
+            "workflow_graph_node_runs",
+            "workflow_graph_artifacts",
+        } <= tables
+        graph_checks = {check["name"] for check in inspector.get_check_constraints("workflow_graphs")}
+        assert "ck_workflow_graphs_schema_version" in graph_checks
+        graph_columns = {column["name"] for column in inspector.get_columns("workflow_graph_edges")}
+        assert {"data_type", "role", "sort_order"} <= graph_columns
+        artifact_fks = {fk["name"]: fk for fk in inspector.get_foreign_keys("workflow_graph_artifacts")}
+        assert artifact_fks["fk_workflow_graph_artifacts_node_id"]["options"]["ondelete"] == "SET NULL"
+        node_run_fks = {fk["name"]: fk for fk in inspector.get_foreign_keys("workflow_graph_node_runs")}
+        assert node_run_fks["fk_workflow_graph_node_runs_node_id"]["options"]["ondelete"] == "SET NULL"
+        artifact_node_id = next(
+            column for column in inspector.get_columns("workflow_graph_artifacts") if column["name"] == "node_id"
+        )
+        node_run_node_id = next(
+            column for column in inspector.get_columns("workflow_graph_node_runs") if column["name"] == "node_id"
+        )
+        assert artifact_node_id["nullable"] is True
+        assert node_run_node_id["nullable"] is True
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0070"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260821_0078"
     finally:
         engine.dispose()
 
@@ -539,7 +572,7 @@ def test_agent_tool_step_projection_migration_backfills_existing_turns(
                 sa.text("SELECT tool_steps_json FROM agent_turn_projections WHERE id = 'turn-tool-step'")
             )
             assert value == "[]"
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0070"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260821_0078"
     finally:
         engine.dispose()
 
@@ -747,7 +780,7 @@ def test_media_library_upload_keys_migration_upgrade_and_downgrade(
     try:
         assert "media_library_upload_keys" in sa.inspect(engine).get_table_names()
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0070"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260821_0078"
     finally:
         engine.dispose()
 
@@ -784,6 +817,6 @@ def test_media_library_upload_keys_migration_upgrade_and_downgrade(
         }
         assert "source_run_id" in source_run_columns
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260820_0070"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260821_0078"
     finally:
         engine.dispose()

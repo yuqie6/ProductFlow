@@ -148,7 +148,7 @@ def _request_content(request: PromptGenerationRequest) -> list[dict[str, Any]]:
         "image_type_key": request.image_type_key,
         "image_plan_keys": list(request.image_plan_keys),
         "confirmed_facts": list(request.facts),
-        "visual_system": request.visual_system.model_dump(mode="json"),
+        "visual_system": request.visual_system.model_dump(mode="json") if request.visual_system is not None else None,
         "visual_exceptions": list(request.visual_exceptions),
         "current_prompt": request.current_prompt.model_dump(mode="json"),
         "text_languages": list(request.text_languages),

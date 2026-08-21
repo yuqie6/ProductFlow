@@ -5,6 +5,7 @@ import pytest
 from productflow_backend.application.queue_submission import enqueue_or_mark_failed
 from productflow_backend.domain.durable_generation_tasks import (
     DELIVERY_RENDITION_TASK_CONTRACT,
+    GRAPH_RUN_GENERATION_TASK_CONTRACT,
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
     QUEUE_UNAVAILABLE_DETAIL,
     WORKFLOW_RUN_GENERATION_TASK_CONTRACT,
@@ -75,6 +76,7 @@ def test_durable_generation_task_contract_matches_worker_actor_retry_policy(conf
         run_image_session_generation_task,
         run_product_workflow_node_run,
         run_product_workflow_run,
+        run_workflow_graph_run,
     )
 
     assert_actor_uses_durable_generation_contract(
@@ -92,6 +94,10 @@ def test_durable_generation_task_contract_matches_worker_actor_retry_policy(conf
     assert_actor_uses_durable_generation_contract(
         DELIVERY_RENDITION_TASK_CONTRACT,
         run_delivery_rendition_job,
+    )
+    assert_actor_uses_durable_generation_contract(
+        GRAPH_RUN_GENERATION_TASK_CONTRACT,
+        run_workflow_graph_run,
     )
 
 

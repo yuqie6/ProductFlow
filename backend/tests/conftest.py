@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 
 from productflow_backend.config import get_settings
 from productflow_backend.infrastructure.db.models import Base
-from productflow_backend.infrastructure.db.session import get_engine, get_session_factory
+from productflow_backend.infrastructure.db.session import enable_sqlite_foreign_keys, get_engine, get_session_factory
 
 
 @pytest.fixture()
@@ -28,7 +28,9 @@ def configured_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     get_engine.cache_clear()
     get_session_factory.cache_clear()
 
-    engine = create_engine(f"sqlite:///{database_path}", future=True, connect_args={"check_same_thread": False})
+    engine = enable_sqlite_foreign_keys(
+        create_engine(f"sqlite:///{database_path}", future=True, connect_args={"check_same_thread": False})
+    )
     Base.metadata.create_all(engine)
     yield storage_root
 

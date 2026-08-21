@@ -706,21 +706,31 @@ def serialize_agent_turn_effect_reconciliation(
 def serialize_agent_workflow_run_request(
     request: Any,
 ) -> AgentWorkflowRunRequestResponse:
-    workflow = request.workflow
-    workflow_run = request.workflow_run
+    if request.graph_id is not None:
+        workflow_id = request.graph_id
+        workflow_title = request.graph.title if request.graph is not None else ""
+        source_run_id = request.source_graph_run_id
+        workflow_run_id = request.graph_run_id
+        workflow_run_status = request.graph_run.status if request.graph_run is not None else None
+    else:
+        workflow_id = request.workflow_id
+        workflow_title = request.workflow.title if request.workflow is not None else ""
+        source_run_id = request.source_run_id
+        workflow_run_id = request.workflow_run_id
+        workflow_run_status = request.workflow_run.status if request.workflow_run is not None else None
     return AgentWorkflowRunRequestResponse(
         id=request.id,
         conversation_id=request.conversation_id,
         task_id=request.task_id,
         product_id=request.product_id,
         product_name=request.product.name,
-        workflow_id=request.workflow_id,
-        workflow_title=workflow.title,
+        workflow_id=workflow_id,
+        workflow_title=workflow_title,
         expected_workflow_revision=request.expected_workflow_revision,
         status=request.status,
-        source_run_id=request.source_run_id,
-        workflow_run_id=request.workflow_run_id,
-        workflow_run_status=workflow_run.status if workflow_run is not None else None,
+        source_run_id=source_run_id,
+        workflow_run_id=workflow_run_id,
+        workflow_run_status=workflow_run_status,
         source_step_id=request.source_step_id,
         failure_reason=request.failure_reason,
         confirmed_at=request.confirmed_at,

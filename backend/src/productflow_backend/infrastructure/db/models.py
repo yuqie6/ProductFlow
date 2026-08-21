@@ -34,6 +34,12 @@ from productflow_backend.domain.enums import (
     AgentTurnStatus,
     AgentWorkflowRunRequestStatus,
     AsyncDispatchStatus,
+    GraphActorType,
+    GraphArtifactType,
+    GraphEdgeDataType,
+    GraphEdgeRole,
+    GraphNodeType,
+    GraphRunScope,
     ImageSessionAssetKind,
     JobStatus,
     LibraryOrganizationDraftStatus,
@@ -215,6 +221,10 @@ class Product(Base, TimestampMixin):
         post_update=True,
     )
     workflows: Mapped[list[ProductWorkflow]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+    )
+    graphs: Mapped[list[WorkflowGraph]] = relationship(
         back_populates="product",
         cascade="all, delete-orphan",
     )
@@ -1654,7 +1664,7 @@ class AgentToolMutation(Base, TimestampMixin):
 
 
 class AgentWorkflowRunRequest(Base, TimestampMixin):
-    """Agent 请求人工确认后执行一次现有 schema-v2 工作流的记录。"""
+    """Agent 请求人工确认后执行一次工作流的记录。v3 商品走 graph_id，遗留 v2 商品走 workflow_id。"""
 
     __tablename__ = "agent_workflow_run_requests"
     __table_args__ = (
@@ -1666,6 +1676,11 @@ class AgentWorkflowRunRequest(Base, TimestampMixin):
         CheckConstraint(
             "expected_workflow_revision > 0",
             name="ck_agent_workflow_run_requests_positive_revision",
+        ),
+        CheckConstraint(
+            "(workflow_id IS NULL AND graph_id IS NOT NULL) OR "
+            "(workflow_id IS NOT NULL AND graph_id IS NULL)",
+            name="ck_agent_workflow_run_requests_v2_or_v3",
         ),
         CheckConstraint(
             "length(request_hash) = 64",
@@ -1705,13 +1720,28 @@ class AgentWorkflowRunRequest(Base, TimestampMixin):
         String(36),
         ForeignKey("products.id", ondelete="CASCADE", name="fk_agent_workflow_run_requests_product_id"),
     )
-    workflow_id: Mapped[str] = mapped_column(
+    workflow_id: Mapped[str | None] = mapped_column(
         String(36),
         ForeignKey("product_workflows.id", ondelete="CASCADE", name="fk_agent_workflow_run_requests_workflow_id"),
+        nullable=True,
+    )
+    graph_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("workflow_graphs.id", ondelete="CASCADE", name="fk_agent_workflow_run_requests_graph_id"),
+        nullable=True,
     )
     source_run_id: Mapped[str | None] = mapped_column(
         String(36),
         ForeignKey("workflow_runs.id", ondelete="RESTRICT", name="fk_agent_workflow_run_requests_source_run_id"),
+        nullable=True,
+    )
+    source_graph_run_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "workflow_graph_runs.id",
+            ondelete="RESTRICT",
+            name="fk_agent_workflow_run_requests_source_graph_run_id",
+        ),
         nullable=True,
     )
     expected_workflow_revision: Mapped[int] = mapped_column(Integer)
@@ -1727,6 +1757,15 @@ class AgentWorkflowRunRequest(Base, TimestampMixin):
         ForeignKey("workflow_runs.id", ondelete="SET NULL", name="fk_agent_workflow_run_requests_workflow_run_id"),
         nullable=True,
     )
+    graph_run_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "workflow_graph_runs.id",
+            ondelete="SET NULL",
+            name="fk_agent_workflow_run_requests_graph_run_id",
+        ),
+        nullable=True,
+    )
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -1737,9 +1776,12 @@ class AgentWorkflowRunRequest(Base, TimestampMixin):
         foreign_keys=[task_id],
     )
     product: Mapped[Product] = relationship(foreign_keys=[product_id])
-    workflow: Mapped[ProductWorkflow] = relationship(foreign_keys=[workflow_id])
+    workflow: Mapped[ProductWorkflow | None] = relationship(foreign_keys=[workflow_id])
+    graph: Mapped[WorkflowGraph | None] = relationship(foreign_keys=[graph_id])
     source_run: Mapped[WorkflowRun | None] = relationship(foreign_keys=[source_run_id])
     workflow_run: Mapped[WorkflowRun | None] = relationship(foreign_keys=[workflow_run_id])
+    graph_run: Mapped[WorkflowGraphRun | None] = relationship(foreign_keys=[graph_run_id])
+    source_graph_run: Mapped[WorkflowGraphRun | None] = relationship(foreign_keys=[source_graph_run_id])
     turn_projection: Mapped[AgentTurnProjection | None] = relationship(
         back_populates="workflow_run_request",
         foreign_keys="AgentTurnProjection.workflow_run_request_id",
@@ -2315,6 +2357,391 @@ class WorkflowMaterializationKey(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     materialization: Mapped[WorkflowMaterialization] = relationship(back_populates="idempotency_keys")
+
+
+GRAPH_SCHEMA_VERSION = 3
+_GRAPH_NODE_TYPES = ", ".join(f"'{member.value}'" for member in GraphNodeType)
+_GRAPH_EDGE_DATA_TYPES = ", ".join(f"'{member.value}'" for member in GraphEdgeDataType)
+_GRAPH_EDGE_ROLES = ", ".join(f"'{member.value}'" for member in GraphEdgeRole)
+_GRAPH_ACTOR_TYPES = ", ".join(f"'{member.value}'" for member in GraphActorType)
+_GRAPH_RUN_SCOPES = ", ".join(f"'{member.value}'" for member in GraphRunScope)
+_GRAPH_ARTIFACT_TYPES = ", ".join(f"'{member.value}'" for member in GraphArtifactType)
+_GRAPH_RUN_STATUSES = ", ".join(f"'{member.value}'" for member in WorkflowRunStatus)
+_GRAPH_NODE_RUN_STATUSES = ", ".join(f"'{member.value}'" for member in WorkflowNodeStatus)
+
+
+class WorkflowGraph(Base, TimestampMixin):
+    """schema-v3 canonical graph。与 schema-v2 ProductWorkflow 分表，不共用 schema_version。"""
+
+    __tablename__ = "workflow_graphs"
+    __table_args__ = (
+        Index(
+            "uq_workflow_graphs_one_active_per_product",
+            "product_id",
+            unique=True,
+            postgresql_where=text("active = true"),
+            sqlite_where=text("active = 1"),
+        ),
+        CheckConstraint("schema_version = 3", name="ck_workflow_graphs_schema_version"),
+        CheckConstraint("revision > 0", name="ck_workflow_graphs_positive_revision"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    product_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("products.id", ondelete="CASCADE", name="fk_workflow_graphs_product_id"),
+    )
+    title: Mapped[str] = mapped_column(String(255), default="商品创意工作流")
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    schema_version: Mapped[int] = mapped_column(Integer, default=GRAPH_SCHEMA_VERSION)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    source_draft_revision_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "workflow_draft_revisions.id",
+            ondelete="SET NULL",
+            name="fk_workflow_graphs_source_draft_revision_id",
+        ),
+        nullable=True,
+    )
+
+    product: Mapped[Product] = relationship(back_populates="graphs")
+    nodes: Mapped[list[WorkflowGraphNode]] = relationship(
+        back_populates="graph",
+        cascade="all, delete-orphan",
+    )
+    edges: Mapped[list[WorkflowGraphEdge]] = relationship(
+        back_populates="graph",
+        cascade="all, delete-orphan",
+        foreign_keys="WorkflowGraphEdge.graph_id",
+    )
+    groups: Mapped[list[WorkflowGraphGroup]] = relationship(
+        back_populates="graph",
+        cascade="all, delete-orphan",
+    )
+    operation_groups: Mapped[list[WorkflowOperationGroup]] = relationship(
+        back_populates="graph",
+        cascade="all, delete-orphan",
+        order_by="WorkflowOperationGroup.created_at.desc(), WorkflowOperationGroup.id.desc()",
+    )
+    runs: Mapped[list[WorkflowGraphRun]] = relationship(
+        back_populates="graph",
+        cascade="all, delete-orphan",
+        order_by="WorkflowGraphRun.started_at.desc(), WorkflowGraphRun.id.desc()",
+    )
+    artifacts: Mapped[list[WorkflowGraphArtifact]] = relationship(
+        back_populates="graph",
+        cascade="all, delete-orphan",
+        foreign_keys="WorkflowGraphArtifact.graph_id",
+    )
+    source_draft_revision: Mapped[WorkflowDraftRevision | None] = relationship(
+        foreign_keys=[source_draft_revision_id]
+    )
+
+
+class WorkflowGraphGroup(Base, TimestampMixin):
+    """schema-v3 画布分组，不是 DAG 节点。"""
+
+    __tablename__ = "workflow_graph_groups"
+    __table_args__ = (CheckConstraint("sort_order >= 0", name="ck_workflow_graph_groups_non_negative_order"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    graph_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("workflow_graphs.id", ondelete="CASCADE", name="fk_workflow_graph_groups_graph_id"),
+    )
+    title: Mapped[str] = mapped_column(String(255))
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+    graph: Mapped[WorkflowGraph] = relationship(back_populates="groups")
+    nodes: Mapped[list[WorkflowGraphNode]] = relationship(back_populates="group")
+
+
+class WorkflowGraphNode(Base, TimestampMixin):
+    """schema-v3 图节点。配置状态由当前 revision 推导，不另存权威列。"""
+
+    __tablename__ = "workflow_graph_nodes"
+    __table_args__ = (
+        CheckConstraint(f"node_type IN ({_GRAPH_NODE_TYPES})", name="ck_workflow_graph_nodes_type"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    graph_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("workflow_graphs.id", ondelete="CASCADE", name="fk_workflow_graph_nodes_graph_id"),
+    )
+    node_type: Mapped[GraphNodeType] = mapped_column(String(40))
+    title: Mapped[str] = mapped_column(String(255))
+    position_x: Mapped[int] = mapped_column(Integer, default=0)
+    position_y: Mapped[int] = mapped_column(Integer, default=0)
+    config_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    bound_image_asset_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "product_image_assets.id",
+            ondelete="RESTRICT",
+            name="fk_workflow_graph_nodes_bound_image_asset_id",
+        ),
+        nullable=True,
+    )
+    group_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "workflow_graph_groups.id",
+            ondelete="SET NULL",
+            name="fk_workflow_graph_nodes_group_id",
+        ),
+        nullable=True,
+    )
+    current_artifact_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "workflow_graph_artifacts.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_workflow_graph_nodes_current_artifact_id",
+        ),
+        nullable=True,
+    )
+
+    graph: Mapped[WorkflowGraph] = relationship(back_populates="nodes")
+    group: Mapped[WorkflowGraphGroup | None] = relationship(back_populates="nodes")
+    bound_image_asset: Mapped[ProductImageAsset | None] = relationship(foreign_keys=[bound_image_asset_id])
+    outgoing_edges: Mapped[list[WorkflowGraphEdge]] = relationship(
+        back_populates="source_node",
+        cascade="all, delete-orphan",
+        foreign_keys="WorkflowGraphEdge.source_node_id",
+    )
+    incoming_edges: Mapped[list[WorkflowGraphEdge]] = relationship(
+        back_populates="target_node",
+        cascade="all, delete-orphan",
+        foreign_keys="WorkflowGraphEdge.target_node_id",
+    )
+    current_artifact: Mapped[WorkflowGraphArtifact | None] = relationship(
+        foreign_keys=[current_artifact_id],
+        post_update=True,
+    )
+    node_runs: Mapped[list[WorkflowGraphNodeRun]] = relationship(back_populates="node")
+
+
+class WorkflowGraphEdge(Base):
+    """schema-v3 typed edge。data_type 与 role 由 Node Catalog 决定，不接受客户端任意字符串。"""
+
+    __tablename__ = "workflow_graph_edges"
+    __table_args__ = (
+        UniqueConstraint(
+            "graph_id",
+            "source_node_id",
+            "target_node_id",
+            "role",
+            name="uq_workflow_graph_edges_pair_role",
+        ),
+        CheckConstraint(f"data_type IN ({_GRAPH_EDGE_DATA_TYPES})", name="ck_workflow_graph_edges_data_type"),
+        CheckConstraint(f"role IN ({_GRAPH_EDGE_ROLES})", name="ck_workflow_graph_edges_role"),
+        CheckConstraint("sort_order >= 0", name="ck_workflow_graph_edges_non_negative_order"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    graph_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("workflow_graphs.id", ondelete="CASCADE", name="fk_workflow_graph_edges_graph_id"),
+    )
+    source_node_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("workflow_graph_nodes.id", ondelete="CASCADE", name="fk_workflow_graph_edges_source_node_id"),
+    )
+    target_node_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("workflow_graph_nodes.id", ondelete="CASCADE", name="fk_workflow_graph_edges_target_node_id"),
+    )
+    data_type: Mapped[GraphEdgeDataType] = mapped_column(String(40))
+    role: Mapped[GraphEdgeRole] = mapped_column(String(40))
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    graph: Mapped[WorkflowGraph] = relationship(back_populates="edges", foreign_keys=[graph_id])
+    source_node: Mapped[WorkflowGraphNode] = relationship(
+        back_populates="outgoing_edges",
+        foreign_keys=[source_node_id],
+    )
+    target_node: Mapped[WorkflowGraphNode] = relationship(
+        back_populates="incoming_edges",
+        foreign_keys=[target_node_id],
+    )
+
+
+class WorkflowOperationGroup(Base):
+    """一次成功 Graph Command 的 operation group 与 inverse，作为撤销权威。"""
+
+    __tablename__ = "workflow_operation_groups"
+    __table_args__ = (
+        UniqueConstraint("graph_id", "result_revision", name="uq_workflow_operation_groups_graph_revision"),
+        CheckConstraint("base_revision >= 0", name="ck_workflow_operation_groups_non_negative_base"),
+        CheckConstraint(
+            "result_revision = base_revision + 1",
+            name="ck_workflow_operation_groups_revision_step",
+        ),
+        CheckConstraint(f"actor_type IN ({_GRAPH_ACTOR_TYPES})", name="ck_workflow_operation_groups_actor_type"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    graph_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("workflow_graphs.id", ondelete="CASCADE", name="fk_workflow_operation_groups_graph_id"),
+    )
+    actor_type: Mapped[GraphActorType] = mapped_column(String(40), default=GraphActorType.USER)
+    summary: Mapped[str] = mapped_column(String(500))
+    base_revision: Mapped[int] = mapped_column(Integer)
+    result_revision: Mapped[int] = mapped_column(Integer)
+    operations_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    inverse_operations_json: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    graph: Mapped[WorkflowGraph] = relationship(back_populates="operation_groups")
+
+
+class WorkflowGraphRun(Base):
+    """schema-v3 一次图运行。snapshot 固定 graph revision，执行不再读 live graph。"""
+
+    __tablename__ = "workflow_graph_runs"
+    __table_args__ = (
+        Index(
+            "uq_workflow_graph_runs_one_active_per_graph",
+            "graph_id",
+            unique=True,
+            postgresql_where=text("status = 'running'"),
+            sqlite_where=text("status = 'running'"),
+        ),
+        CheckConstraint("graph_revision > 0", name="ck_workflow_graph_runs_positive_revision"),
+        CheckConstraint(f"run_scope IN ({_GRAPH_RUN_SCOPES})", name="ck_workflow_graph_runs_scope"),
+        CheckConstraint(f"status IN ({_GRAPH_RUN_STATUSES})", name="ck_workflow_graph_runs_status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    graph_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("workflow_graphs.id", ondelete="CASCADE", name="fk_workflow_graph_runs_graph_id"),
+    )
+    status: Mapped[WorkflowRunStatus] = mapped_column(String(40), default=WorkflowRunStatus.RUNNING)
+    run_scope: Mapped[GraphRunScope] = mapped_column(String(40))
+    requested_node_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    graph_revision: Mapped[int] = mapped_column(Integer)
+    snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_retryable: Mapped[bool] = mapped_column(Boolean, default=True)
+    progress_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    graph: Mapped[WorkflowGraph] = relationship(back_populates="runs")
+    node_runs: Mapped[list[WorkflowGraphNodeRun]] = relationship(
+        back_populates="graph_run",
+        cascade="all, delete-orphan",
+    )
+
+
+class WorkflowGraphNodeRun(Base):
+    """schema-v3 一次运行内单个处理节点的执行记录。"""
+
+    __tablename__ = "workflow_graph_node_runs"
+    __table_args__ = (
+        Index("ix_workflow_graph_node_runs_run_node", "graph_run_id", "node_id"),
+        Index(
+            "uq_workflow_graph_node_runs_one_active_per_node",
+            "node_id",
+            unique=True,
+            postgresql_where=text("status IN ('queued', 'running')"),
+            sqlite_where=text("status IN ('queued', 'running')"),
+        ),
+        CheckConstraint("sort_order >= 0", name="ck_workflow_graph_node_runs_non_negative_order"),
+        CheckConstraint(f"status IN ({_GRAPH_NODE_RUN_STATUSES})", name="ck_workflow_graph_node_runs_status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    graph_run_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("workflow_graph_runs.id", ondelete="CASCADE", name="fk_workflow_graph_node_runs_run_id"),
+    )
+    node_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("workflow_graph_nodes.id", ondelete="SET NULL", name="fk_workflow_graph_node_runs_node_id"),
+        nullable=True,
+    )
+    status: Mapped[WorkflowNodeStatus] = mapped_column(String(40))
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    compiled_context_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    output_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    graph_run: Mapped[WorkflowGraphRun] = relationship(back_populates="node_runs")
+    node: Mapped[WorkflowGraphNode | None] = relationship(back_populates="node_runs")
+    artifact: Mapped[WorkflowGraphArtifact | None] = relationship(
+        back_populates="node_run",
+        uselist=False,
+        foreign_keys="WorkflowGraphArtifact.node_run_id",
+    )
+
+
+class WorkflowGraphArtifact(Base):
+    """schema-v3 不可变运行产物。current 引用在节点上，revision 不匹配时不得覆盖。"""
+
+    __tablename__ = "workflow_graph_artifacts"
+    __table_args__ = (
+        UniqueConstraint("node_run_id", name="uq_workflow_graph_artifacts_node_run_id"),
+        CheckConstraint("graph_revision > 0", name="ck_workflow_graph_artifacts_positive_revision"),
+        CheckConstraint(f"artifact_type IN ({_GRAPH_ARTIFACT_TYPES})", name="ck_workflow_graph_artifacts_type"),
+        CheckConstraint("schema_version = 3", name="ck_workflow_graph_artifacts_schema_version"),
+        CheckConstraint("length(payload_hash) = 64", name="ck_workflow_graph_artifacts_payload_hash"),
+        CheckConstraint("length(input_digest) = 64", name="ck_workflow_graph_artifacts_input_digest"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    graph_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("workflow_graphs.id", ondelete="CASCADE", name="fk_workflow_graph_artifacts_graph_id"),
+    )
+    node_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("workflow_graph_nodes.id", ondelete="SET NULL", name="fk_workflow_graph_artifacts_node_id"),
+        nullable=True,
+    )
+    node_run_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "workflow_graph_node_runs.id",
+            ondelete="SET NULL",
+            name="fk_workflow_graph_artifacts_node_run_id",
+        ),
+        nullable=True,
+    )
+    artifact_type: Mapped[GraphArtifactType] = mapped_column(String(40))
+    schema_version: Mapped[int] = mapped_column(Integer, default=3)
+    graph_revision: Mapped[int] = mapped_column(Integer)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON)
+    payload_hash: Mapped[str] = mapped_column(String(64))
+    input_digest: Mapped[str] = mapped_column(String(64))
+    product_image_asset_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "product_image_assets.id",
+            ondelete="RESTRICT",
+            name="fk_workflow_graph_artifacts_product_image_asset_id",
+        ),
+        nullable=True,
+    )
+    provider_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    provider_model: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    graph: Mapped[WorkflowGraph] = relationship(back_populates="artifacts", foreign_keys=[graph_id])
+    node: Mapped[WorkflowGraphNode | None] = relationship(foreign_keys=[node_id])
+    node_run: Mapped[WorkflowGraphNodeRun | None] = relationship(
+        back_populates="artifact",
+        foreign_keys=[node_run_id],
+    )
+    product_image_asset: Mapped[ProductImageAsset | None] = relationship(foreign_keys=[product_image_asset_id])
 
 
 class WorkflowRevealEvent(Base):

@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.agent.sessions import new_agent_session
+from productflow_backend.application.product_workflow.graph_commands import get_active_workflow_graph
 from productflow_backend.application.time import now_utc
 from productflow_backend.application.workflow_drafts.contracts import (
     VisualSystemDraftPayload,
@@ -309,6 +310,8 @@ def apply_workflow_recipe(
 
         base_workflow = None
         if recipe.kind == WorkflowRecipeKind.RECIPE_FRAGMENT:
+            if get_active_workflow_graph(session, product_id=product_id) is not None:
+                raise ConflictError("片段配方尚未支持合并进 schema-v3 工作流")
             base_workflow = session.scalar(
                 select(ProductWorkflow)
                 .where(
@@ -318,6 +321,8 @@ def apply_workflow_recipe(
                 )
                 .with_for_update()
             )
+            if base_workflow is None:
+                raise ConflictError("片段配方需要当前商品已有可合并的工作流")
 
         draft = WorkflowDraft(product_id=product_id, status=WorkflowDraftStatus.COLLECTING)
         session.add(draft)
