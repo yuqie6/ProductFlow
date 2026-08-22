@@ -254,6 +254,7 @@ def submit_global_agent_turn_endpoint(
         page_context=payload.page_context.model_dump(mode="json") if payload.page_context is not None else None,
         gateway=_agent_gateway_or_raise(),
         enqueue_sync=enqueue_global_agent_turn_sync,
+        defer_if_unavailable=True,
     )
     return SubmitAgentTurnResponse(created=submission.created, turn=serialize_agent_turn(submission.projection))
 
