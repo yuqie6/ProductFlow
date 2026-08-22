@@ -64,12 +64,13 @@ Use the root `justfile` whenever possible:
 - `just web-install` — install frontend dependencies with pnpm.
 - `just web-dev` — run Vite with the API proxy configured.
 - `just web-build` — type-check and build the frontend.
+- `just web-e2e-live-graph` — opt-in browser gate: skip-Agent create, run the full graph, real prompt/image providers.
 
 ## Coding Style & Naming Conventions
 Python targets 3.12 and uses Ruff with 120-character lines plus `E`, `F`, `I`, `UP`, and `B` lint rules. Keep imports sorted, prefer typed functions, and name modules/functions in `snake_case`. React components and pages use `PascalCase` filenames, such as `ProductListPage.tsx`; hooks, helpers, and API functions use `camelCase`. Keep provider-specific code behind infrastructure factories instead of leaking it into routes.
 
 ## Testing Guidelines
-Backend tests use pytest and are discovered from `backend/tests/` as `test_*.py`. Add workflow-level coverage when changing product, Draft, workflow, settings, provider, archive, or image-session behavior. Run `just backend-test` before backend commits, `just agent-service-test` for Node.js/Pi changes, and the frontend test/lint/build gate described in `web/AGENTS.md` for frontend changes. Schema changes require an Alembic revision and focused migration regression coverage.
+Backend tests use pytest and are discovered from `backend/tests/` as `test_*.py`. Add workflow-level coverage when changing product, Draft, workflow, settings, provider, archive, or image-session behavior. Run `just backend-test` before backend commits, `just agent-service-test` for Node.js/Pi changes, and the frontend test/lint/build gate described in `web/AGENTS.md` for frontend changes. Schema changes require an Alembic revision and focused migration regression coverage. Skip-Agent full-graph browser coverage against real providers is `just web-e2e-live-graph`; it is not part of the default frontend gate.
 
 ## Commit & Pull Request Guidelines
 Recent history mixes Conventional Commit prefixes (`feat:`, `chore:`) with concise Chinese summaries. Use one focused commit per topic, for example `feat: 增加设置页模型配置`. Pull requests should describe the user-visible change, list verification commands, call out migrations/config changes, and include screenshots for UI updates.

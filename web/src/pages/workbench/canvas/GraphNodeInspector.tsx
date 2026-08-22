@@ -49,7 +49,7 @@ import {
 import { DeliveryRenditionPanel } from "./DeliveryRenditionPanel";
 import { graphNodeConfigFields } from "./graphCatalog";
 import { graphNodeTitleKey } from "./graphLayout";
-import { graphNodeRunPresentations } from "./graphRunDisplay";
+import { graphNodeRunPresentations, graphRunsAreLive } from "./graphRunDisplay";
 import {
   graphProductSourceConfig,
   graphProductSourceDraft,
@@ -133,7 +133,7 @@ export function GraphNodeInspector({
     queryKey: runsQueryKey,
     queryFn: () => api.listGraphRuns(graph.product_id, graph.id),
     enabled: Boolean(node),
-    refetchInterval: (query) => query.state.data?.items.some((run) => run.status === "running") ? 1200 : false,
+    refetchInterval: (query) => graphRunsAreLive(query.state.data?.items) ? 1200 : false,
   });
   const presentations = useMemo(
     () => graphNodeRunPresentations(runsQuery.data?.items ?? []),

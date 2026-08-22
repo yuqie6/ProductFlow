@@ -234,6 +234,14 @@ just backend-test-live-delivery-renditions
 just backend-test-live-agent-product-intake
 ```
 
+The browser-level real-image gate is not part of `just backend-test` or `pnpm --dir web test:run`. It needs `just dev` running and real prompt/image providers on the settings page (not mock):
+
+```bash
+just web-e2e-live-graph
+```
+
+The command logs in, skip-Agent creates one detail image on `/products/new`, runs the whole graph, and waits until a real generated image is in the product library. The first run installs Playwright Chromium locally.
+
 Live Pi provider/dependency validation requires an explicitly configured ProductFlow, provider, and browser environment; it is not represented as an ordinary unit-test command.
 
 ## Release Script

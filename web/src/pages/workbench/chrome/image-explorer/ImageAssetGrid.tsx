@@ -48,6 +48,7 @@ export function ImageAssetList(props: ImageAssetCollectionProps) {
           <div
             key={asset.id}
             data-gallery-asset-id={asset.id}
+            data-gallery-origin-type={asset.origin_type}
             draggable
             onDragStart={(event) => startAssetDrag(event, asset, props.selectedIds)}
             className={`flex min-h-[58px] min-w-0 items-center gap-2 px-2 py-1.5 ${selected ? "bg-indigo-50/70 dark:bg-violet-500/10" : "bg-white dark:bg-slate-950/35"}`}
@@ -116,6 +117,7 @@ function ImageAssetCard({
   return (
     <article
       data-gallery-asset-id={asset.id}
+      data-gallery-origin-type={asset.origin_type}
       draggable
       onDragStart={(event) => startAssetDrag(event, asset, selectedIds)}
       className={`group min-w-0 overflow-visible rounded-md border bg-white shadow-sm ${

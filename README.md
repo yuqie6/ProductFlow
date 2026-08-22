@@ -234,6 +234,14 @@ just backend-test-live-delivery-renditions
 just backend-test-live-agent-product-intake
 ```
 
+浏览器级真实出图 gate 不进入 `just backend-test` 或 `pnpm --dir web test:run`。它要求 `just dev` 已在跑、设置页的 prompt/image 用途已绑真实供应商（不能是 mock），然后：
+
+```bash
+just web-e2e-live-graph
+```
+
+该命令会登录、在 `/products/new` 直接创建一张细节图、点运行整张图，等到真实图片写入商品图库。首次需要本机 Playwright Chromium。
+
 Pi 的真实 provider/依赖验收需要显式配置真实 ProductFlow、provider 和浏览器环境；当前没有把它伪装成普通单元测试命令。
 
 ## 发布脚本

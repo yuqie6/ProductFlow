@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 interface SidebarTabButtonProps {
+  toolId: string;
   active: boolean;
   label: string;
   title: string;
@@ -9,6 +10,7 @@ interface SidebarTabButtonProps {
 }
 
 export function SidebarTabButton({
+  toolId,
   active,
   label,
   title,
@@ -18,6 +20,7 @@ export function SidebarTabButton({
   return (
     <button
       type="button"
+      data-sidebar-tool={toolId}
       aria-pressed={active}
       title={title}
       onClick={onClick}

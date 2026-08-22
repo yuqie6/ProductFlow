@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "test": "vitest",
     "test:run": "vitest run",
+    "test:e2e:live-graph": "playwright test --config playwright.config.ts",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -24,6 +25,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.55.0",
     "@tailwindcss/vite": "^4.1.13",
     "@types/react": "^19.1.17",
     "@types/react-dom": "^19.1.9",

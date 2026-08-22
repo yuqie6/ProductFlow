@@ -128,6 +128,9 @@ web-preview-prod:
 web-build:
     pnpm --dir web build
 
+web-e2e-live-graph:
+    bash scripts/with_dev_env.sh bash -lc 'pnpm --dir web exec playwright install chromium && PRODUCTFLOW_RUN_LIVE_BROWSER_GRAPH=1 pnpm --dir web exec playwright test --config playwright.config.ts'
+
 release:
     bash scripts/release.sh
 

@@ -41,7 +41,7 @@ import {
   graphViewportCenterPosition,
   selectionInsideGroup,
 } from "./graphLayout";
-import { graphNodeRunPresentations } from "./graphRunDisplay";
+import { graphNodeRunPresentations, graphRunsAreLive } from "./graphRunDisplay";
 
 export interface GraphCanvasActions {
   createNode: (nodeType: GraphNodeType) => void;
@@ -278,7 +278,7 @@ export function GraphCanvasPanel({
   const runsQuery = useQuery({
     queryKey: ["graph-runs", productId, graph.id],
     queryFn: () => api.listGraphRuns(productId, graph.id),
-    refetchInterval: (query) => query.state.data?.items.some((run) => run.status === "running") ? 1200 : false,
+    refetchInterval: (query) => graphRunsAreLive(query.state.data?.items) ? 1200 : false,
   });
 
   const nodePresentations = useMemo(
@@ -721,6 +721,7 @@ export function GraphCanvasPanel({
         </button>
         <button
           type="button"
+          data-graph-run-all
           disabled={busy}
           onClick={() => void submitRun({ scope: "graph" })}
           className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-accent text-accent-fg hover:bg-accent-strong disabled:opacity-45 lg:h-9 lg:w-9"

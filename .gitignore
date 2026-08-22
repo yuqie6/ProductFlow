@@ -26,6 +26,9 @@ backend/storage/
 backend/backend/storage/
 web/node_modules/
 web/dist/
+web/playwright-report/
+web/test-results/
+web/blob-report/
 .env.dev
 backend/storage-dev/
 backend/backend/storage-dev/

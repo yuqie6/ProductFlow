@@ -15,7 +15,7 @@ This document records only directions that remain unimplemented or lack real val
 
 ### 1. Agent Creation Quality
 
-- Build end-to-end regression cases with real products and real providers.
+- The skip-Agent browser live gate exists: `just web-e2e-live-graph` (direct-create one detail image, run the graph, real prompt/image providers). Agent conversation create and quality samples are still missing.
 - Evaluate question count, fact accuracy, visual-system consistency, and per-image prompt quality.
 - Improve confirmation density, conflict handling, and edit feedback.
 - Validate Turn reconnect, restart, question answering, and Draft-confirm graph persist recovery.

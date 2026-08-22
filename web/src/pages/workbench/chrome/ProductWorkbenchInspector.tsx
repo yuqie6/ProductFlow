@@ -150,6 +150,7 @@ export function ProductWorkbenchInspector({
     <div key={tool.id} className="contents">
       {tool.separatorBefore}
       <SidebarTabButton
+        toolId={tool.id}
         active={collapsedRail ? showActiveWhenCollapsed && activeToolId === tool.id : activeToolId === tool.id}
         icon={tool.icon}
         label={tool.railLabel ?? tool.label}

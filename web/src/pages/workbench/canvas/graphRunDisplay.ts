@@ -15,7 +15,11 @@ export interface GraphNodeRunPresentation {
   runId: string | null;
 }
 
-const LIVE_RUN_STATUSES = new Set(["queued", "running"]);
+export const LIVE_RUN_STATUSES = new Set(["queued", "running"]);
+
+export function graphRunsAreLive(runs: readonly GraphRun[] | undefined): boolean {
+  return Boolean(runs?.some((run) => LIVE_RUN_STATUSES.has(run.status)));
+}
 
 export function graphNodeRunPresentations(
   runs: readonly GraphRun[],

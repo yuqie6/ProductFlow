@@ -23,9 +23,9 @@ import {
   graphContextEntries,
   graphNodeRunPreviewAssetId,
   graphRunScopeLabelKey,
+  graphRunsAreLive,
+  LIVE_RUN_STATUSES,
 } from "./graphRunDisplay";
-
-const ACTIVE_STATUSES = new Set(["queued", "running"]);
 
 export function GraphRunsPanel({
   productId,
@@ -50,7 +50,7 @@ export function GraphRunsPanel({
   const runsQuery = useQuery({
     queryKey,
     queryFn: () => api.listGraphRuns(productId, graph.id),
-    refetchInterval: (query) => query.state.data?.items.some((run) => run.status === "running") ? 1200 : false,
+    refetchInterval: (query) => graphRunsAreLive(query.state.data?.items) ? 1200 : false,
   });
   const cancelMutation = useMutation({
     mutationFn: (runId: string) => api.cancelGraphRun(productId, graph.id, runId),
@@ -138,12 +138,16 @@ function GraphRunRecord({
   onPreviewImage?: (image: DownloadableImage) => void;
 }) {
   const { t } = useI18n();
-  const active = ACTIVE_STATUSES.has(run.status);
+  const active = LIVE_RUN_STATUSES.has(run.status);
   const requested = run.requested_node_id
     ? graph.nodes.find((node) => node.id === run.requested_node_id)
     : null;
   return (
-    <article className="config-bubble overflow-hidden rounded-lg shadow-sm" data-graph-run-id={run.id}>
+    <article
+      className="config-bubble overflow-hidden rounded-lg shadow-sm"
+      data-graph-run-id={run.id}
+      data-graph-run-status={run.status}
+    >
       <div className="p-3.5">
         <div className="flex min-w-0 items-start gap-2.5">
           <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border ${statusClass(run.status as WorkflowNodeStatus)}`}>
@@ -220,7 +224,7 @@ function NodeRunRecord({
   onPreviewImage?: (image: DownloadableImage) => void;
 }) {
   const { t } = useI18n();
-  const active = ACTIVE_STATUSES.has(nodeRun.status);
+  const active = LIVE_RUN_STATUSES.has(nodeRun.status);
   const evidence = graphContextEntries(nodeRun.compiled_context);
   return (
     <div className={selected ? "bg-slate-50 dark:bg-slate-800/50" : ""}>

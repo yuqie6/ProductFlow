@@ -210,7 +210,7 @@ SQLAlchemy metadata describes current online models and bounded archive/cutover 
 ## 12. Quality Gates
 
 - Backend: Ruff, full pytest, SQLite migration, and opt-in PostgreSQL/Redis live tests.
-- Frontend: Vitest, ESLint, TypeScript, and Vite production build.
+- Frontend: Vitest, ESLint, TypeScript, and Vite production build. The skip-Agent full-graph browser gate against real prompt/image providers is opt-in: `just web-e2e-live-graph`.
 - Agent service: `pnpm --dir agent-service test`, `pnpm --dir agent-service build`, and explicit live provider/dependency gates.
 - Cross-layer changes add real browser, database, or provider validation according to risk.
 

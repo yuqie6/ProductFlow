@@ -73,6 +73,12 @@ pnpm --dir web lint
 pnpm --dir web build
 ```
 
+Skip-Agent, real-provider full-graph browser coverage is opt-in and is not part of the commands above. It needs a running `just dev` stack and real prompt/image bindings:
+
+```bash
+just web-e2e-live-graph
+```
+
 For visible workflow changes, also verify desktop, narrow desktop, and mobile in a real browser, including light/dark mode, supported locales, console/network errors, overlap, clipping, and reduced motion.
 
 Match tests to the changed owner: API encoding/body, parser/reducer, hook/query invalidation, component interaction, canvas adapters, inspector autosave, image selection, or route transition. For canvas and layout changes, verify actual `innerWidth`, `clientWidth`, element bounds, and nonblank canvas pixels.

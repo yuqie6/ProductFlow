@@ -15,7 +15,7 @@
 
 ### 1. Agent 创建质量
 
-- 用真实商品和真实 provider 建立端到端回归样本。
+- 跳过 Agent 的浏览器 live gate 已存在：`just web-e2e-live-graph`（直接创建 1 张细节图、运行整张图、真实 prompt/image provider 出图）。Agent 对话创建路径和质量评估样本仍未建立。
 - 评估 Agent 的追问数量、事实准确度、视觉体系一致性和单图提示词质量。
 - 优化确认面板的信息密度、冲突处理和修改反馈。
 - 验证 Turn 断线、重启、问题回答和 Draft 确认后 graph persist 恢复。

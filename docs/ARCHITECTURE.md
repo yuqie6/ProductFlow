@@ -210,7 +210,7 @@ SQLAlchemy metadata 只描述当前在线模型与有边界的 archive/cutover �
 ## 12. 质量门
 
 - Backend：Ruff、完整 pytest、SQLite migration 和 opt-in PostgreSQL/Redis live tests。
-- Frontend：Vitest、ESLint、TypeScript 和 Vite production build。
+- Frontend：Vitest、ESLint、TypeScript 和 Vite production build。跳过 Agent、真实 prompt/image provider 跑完整图的浏览器 gate 是 opt-in：`just web-e2e-live-graph`。
 - Agent service：`pnpm --dir agent-service test`、`pnpm --dir agent-service build`，以及真实 provider/依赖的显式 live gate。
 - 跨层变更补真实浏览器、真实数据库或真实 provider 验证，验证强度由变更风险决定。
 

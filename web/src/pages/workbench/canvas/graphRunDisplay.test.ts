@@ -6,6 +6,7 @@ import {
   graphNodeRunPresentations,
   graphNodeRunPreviewAssetId,
   graphRunScopeLabelKey,
+  graphRunsAreLive,
 } from "./graphRunDisplay";
 
 const graph: GraphProjection = {
@@ -97,5 +98,25 @@ describe("graph run display", () => {
       retryable: true,
       runId: "run-1",
     });
+  });
+
+  it("polls queued and running graph runs, not terminal ones", () => {
+    const queued: GraphRun = {
+      id: "run-q",
+      graph_id: "g1",
+      status: "queued",
+      scope: "graph",
+      requested_node_id: null,
+      graph_revision: 2,
+      failure_reason: null,
+      is_retryable: false,
+      node_runs: [nodeRun({ status: "queued" })],
+      started_at: "2026-08-21T00:00:00Z",
+      finished_at: null,
+    };
+    expect(graphRunsAreLive([queued])).toBe(true);
+    expect(graphRunsAreLive([{ ...queued, status: "running" }])).toBe(true);
+    expect(graphRunsAreLive([{ ...queued, status: "succeeded", finished_at: "2026-08-21T00:01:00Z" }])).toBe(false);
+    expect(graphRunsAreLive([])).toBe(false);
   });
 });

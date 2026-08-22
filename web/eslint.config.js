@@ -6,7 +6,7 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ["dist", "node_modules", "*.tsbuildinfo"],
+    ignores: ["dist", "node_modules", "*.tsbuildinfo", "playwright-report", "test-results"],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -32,7 +32,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["*.config.{js,ts}", "eslint.config.js"],
+    files: ["*.config.{js,ts}", "eslint.config.js", "e2e/**/*.ts", "playwright.config.ts"],
     languageOptions: {
       globals: {
         ...globals.node,
