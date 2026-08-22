@@ -10,7 +10,7 @@ import {
   RotateCcw,
   Workflow,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { useCallback, type ReactNode } from "react";
 
 import { ApiError, api } from "../../../lib/api";
 import { formatDateTime } from "../../../lib/format";
@@ -32,6 +32,7 @@ export function GraphRunsPanel({
   graph,
   selectedNodeId = null,
   structureBusy = false,
+  onBeforeRun,
   onJump,
   onPreviewImage,
 }: {
@@ -39,6 +40,7 @@ export function GraphRunsPanel({
   graph: GraphProjection;
   selectedNodeId?: string | null;
   structureBusy?: boolean;
+  onBeforeRun?: () => Promise<void>;
   onJump?: (nodeId: string) => void;
   onPreviewImage?: (image: DownloadableImage) => void;
 }) {
@@ -58,6 +60,14 @@ export function GraphRunsPanel({
     mutationFn: (runId: string) => api.retryGraphRun(productId, graph.id, runId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey }),
   });
+  const retryRun = useCallback(async (runId: string) => {
+    try {
+      await onBeforeRun?.();
+    } catch {
+      return;
+    }
+    retryMutation.mutate(runId);
+  }, [onBeforeRun, retryMutation]);
 
   if (runsQuery.isLoading) {
     return <PanelState icon={<Loader2 size={20} className="animate-spin" />} text={t("app.loading")} />;
@@ -95,7 +105,7 @@ export function GraphRunsPanel({
           cancelBusy={structureBusy || (cancelMutation.isPending && cancelMutation.variables === run.id)}
           retryBusy={structureBusy || (retryMutation.isPending && retryMutation.variables === run.id)}
           onCancel={() => cancelMutation.mutate(run.id)}
-          onRetry={() => retryMutation.mutate(run.id)}
+          onRetry={() => void retryRun(run.id)}
           onJump={onJump}
           onPreviewImage={onPreviewImage}
         />
@@ -287,11 +297,10 @@ function IconButton({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border disabled:opacity-40 ${
-        danger
+      className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border disabled:opacity-40 ${danger
           ? "border-red-200 text-red-600 hover:bg-red-50 dark:border-red-400/35 dark:text-red-200 dark:hover:bg-red-500/10"
           : "border-zinc-200 text-zinc-600 hover:border-slate-300 hover:text-slate-900 dark:border-slate-700 dark:text-slate-300 dark:hover:border-slate-500 dark:hover:text-white"
-      }`}
+        }`}
       aria-label={label}
       title={label}
     >

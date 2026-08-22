@@ -1,6 +1,6 @@
 # ProductFlow Roadmap
 
-This document records only directions that remain unimplemented or lack real validation evidence. Current capabilities live in `PRD.en.md`, current code structure in `ARCHITECTURE.en.md`, and V1 cutover evidence in `rollout/workflow-v2-cutover.md`. The online schema-v3 graph is already documented there; GraphProposal, recipe extract from a live graph, and Recipe ChangeSet are entered only from §2.
+This document records only directions that remain unimplemented or lack real validation evidence. Current capabilities live in `PRD.en.md`, current code structure in `ARCHITECTURE.en.md`, and V1 cutover evidence in `rollout/workflow-v2-cutover.md`. The online schema-v3 graph is already documented there; GraphProposal and applying a Recipe ChangeSet onto a live graph are entered only from §2.
 
 ## Near-Term Priorities
 
@@ -22,15 +22,16 @@ This document records only directions that remain unimplemented or lack real val
 
 ### 2. Remaining schema-v3 work
 
-The online workflow authority is already `workflow_graphs`. Current implementation is in `ARCHITECTURE.en.md`. The north star, quality ceiling, non-goals, and slice order for canvas restoration are in `docs/specs/v3-canvas-restoration.md`. Still unimplemented:
+The online workflow authority is already `workflow_graphs`. Current implementation is in `ARCHITECTURE.en.md`. Canvas restoration north star: `docs/specs/v3-canvas-restoration.md`. Sidebar restoration north star: `docs/specs/v3-sidebar-restoration.md`. Still unimplemented:
 
-- Object-command and presentation identity (typed node-card colors and failure on the card, post-paste selection, delete confirm, create at viewport, maximize, busy lock, flush before run).
-- Server-side Redo (inverse ChangeSet; Redo must not call Undo again).
-- Inspector rendered from Node Catalog `config_fields`; the current typed forms are a temporary adapter.
-- Enter-group: one-level visual organization with separate in-group and full-graph viewports.
-- Extracting and saving a recipe from a live v3 graph, and applying a Recipe ChangeSet directly onto another graph. Applying a saved recipe still produces a reviewable Draft.
+- Object-command and presentation identity is wired into existing chrome (type colors, card failure, post-paste selection, delete confirm, create at viewport, maximize, busy/flush). Desktop/390px browser evidence still belongs to slice G.
+- Server-side Redo (`POST .../redo`, inverse ChangeSet; Redo must not call Undo again). Code is wired; browser evidence still belongs to slice G.
+- Inspector now renders from Node Catalog `config_fields`; saves still use `update_node_config`. Browser evidence still belongs to slice G. Inspector failure/empty next-actions/result language is sidebar slice S1.
+- Enter-group is wired: double-click or the enter control, breadcrumb return, separate in-group and full-graph viewports. Groups remain non-DAG nodes. Browser evidence still belongs to slice G.
+- Extracting and saving a recipe from a live v3 graph is wired (full graph / group / selection; no V2 payload). Applying a saved recipe on another product still produces a reviewable Draft, with a preview of nodes and edges. Fragment recipes conflict explicitly. Applying a Recipe ChangeSet directly onto another live graph is still undelivered. Browser evidence still belongs to slice G.
 - Agent GraphProposal / ChangeSet against a live graph. Target contract: `docs/adr/0008-free-canvas-agent-graph-authority.md`.
-- Remaining interaction items in `docs/rollout/free-canvas-v3-interaction-parity.md`. That table is a checklist; the quality ceiling is restoration spec §4.
+- 390px bottom drawer for the inspector; the narrow layout currently covers the canvas.
+- Remaining interaction items in `docs/rollout/free-canvas-v3-interaction-parity.md`. That table is a checklist; the quality ceiling is the canvas/sidebar restoration specs.
 - The full gate with a real provider, PostgreSQL/Redis/worker, desktop and 390px browsers, console/network errors, cancel/retry, and a retired-runtime residue scan.
 
 ### 3. Image Production Quality
@@ -62,7 +63,8 @@ The product boundary lives in `specs/global-agent-human-workflow-design.md`; Pi 
 
 ### 6. Recipes
 
-- Improve recipe previews, version notes, and pre-application difference review.
+- Apply a Recipe ChangeSet directly onto another live graph (a full recipe currently still lands on a reviewable Draft).
+- Merge fragment recipes into an existing workflow.
 - Keep recipes explicitly user-saved.
 
 ### 7. Development Experience

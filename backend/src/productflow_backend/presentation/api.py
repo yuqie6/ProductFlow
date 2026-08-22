@@ -41,6 +41,7 @@ from productflow_backend.presentation.routes.settings import router as settings_
 from productflow_backend.presentation.routes.workflow_drafts import router as workflow_drafts_router
 from productflow_backend.presentation.routes.workflow_graphs import router as workflow_graphs_router
 from productflow_backend.presentation.routes.workflow_recipes import router as workflow_recipes_router
+from productflow_backend.presentation.routes.workflow_recipes import v3_router as workflow_recipes_v3_router
 from productflow_backend.presentation.session import ClockStableSessionMiddleware
 
 REQUEST_ID_HEADER = b"x-request-id"
@@ -95,6 +96,7 @@ def create_app() -> FastAPI:
     app.include_router(workflow_drafts_router)
     app.include_router(workflow_graphs_router)
     app.include_router(workflow_recipes_router)
+    app.include_router(workflow_recipes_v3_router)
     app.include_router(image_sessions_router)
     app.include_router(legacy_archives_router)
     app.include_router(settings_router)

@@ -76,7 +76,7 @@
 
 画布结构与运行的写路径只许 `/api/v3`。允许暂时留在 v2 的：商品图库、交付 rendition、Agent 对话/工作台引导、全局素材库。不允许长期留在 v2 的：配方保存、配方应用到 live graph、图撤销/重做。
 
-必须补齐：`POST .../redo`（或等价、可测试的 redo 合同）、从 live graph 提取配方的 v3 写路径。`GET /api/v3/node-catalog` 必须继续是连线预校验的唯一矩阵；前端不得再复制一份兼容表。
+必须补齐：`POST .../redo`（对最近一次 **undo** operation group 提交 inverse ChangeSet，`history_kind=redo`）、从 live graph 提取配方的 v3 写路径。`GET /api/v3/node-catalog` 必须继续是连线预校验的唯一矩阵；前端不得再复制一份兼容表。
 
 ## 5. 明确不做（看起来像修葺、实际是走偏）
 
@@ -98,7 +98,7 @@
 | 顺序 | 切片 | 用户可见结果 | 停止条件 |
 |---|---|---|---|
 | A | 对象命令与呈现身份 | 卡能扫、工具条够用、粘贴选中克隆、删除有确认、建点跟视口、最大化可用、busy 锁定侧栏、运行前 flush | 桌面+390px；卡片失败/类型色有截图或 DOM 证据；无新 v2 写入 |
-| B | 历史权威 | Redo 快捷键与按钮；新编辑清空 redo | 后端测试覆盖 undo→redo→再编辑；禁止 redo=undo |
+| B | 历史权威 | Redo 快捷键与按钮；新编辑清空 redo | 后端测试覆盖 undo→redo→再编辑；禁止 redo=undo；浏览器证据归切片 G |
 | C | Catalog 检查器 | 详情表单按 `config_fields` 渲染；保存仍 `update_node_config` | 前端不再为新字段加一份私有 schema；Agent tool 读同一目录 |
 | D | 进入分组 | 双击进入、面包屑返回、组内/全图视口分记 | 分组仍非 DAG 节点；跨组边在全图可见 |
 | E | 配方 ChangeSet | 从 live graph 保存全图/分组/选区；应用有预览 | 410 消失；无 V2 recipe payload；片段对 v3 要么合并要么明确冲突 |
@@ -119,7 +119,7 @@
 ## 8. 文档同步
 
 - 行为落地后更新 `docs/USER_GUIDE.md` 与 `web/src/pages/HelpPage.tsx` 同一提交。
-- `PRD.md` 已写「完整工作流、文件夹或多选节点保存为配方」。切片 E 完成前，那是目标合同，不是当前事实；不要在 ARCHITECTURE 里写成已交付。
+- `PRD.md` 已写「完整工作流、文件夹或多选节点保存为配方」。保存已从 live v3 graph 提取；应用到 live graph 的 ChangeSet 仍未交付，ARCHITECTURE 只写当前 Draft+预览事实。
 - 交互表状态列落后于代码时改交互表，不要为了表格绿灯降低 §4。
 
 ## 9. 代码锚点
@@ -129,4 +129,4 @@
 - 检查器/运行：`GraphNodeInspector.tsx`、`GraphRunsPanel.tsx`
 - 图命令：`backend/.../product_workflow/graph_commands.py`、`graph_contracts.py`
 - 目录：`backend/.../domain/graph_catalog.py`
-- 配方：`backend/.../workflow_recipes/service.py`（当前保存 410）
+- 配方：`backend/.../workflow_recipes/service.py`、`extract.py`

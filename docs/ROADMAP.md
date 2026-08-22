@@ -1,6 +1,6 @@
 # ProductFlow Roadmap
 
-本文只记录尚未实现或尚未取得真实验证证据的方向。当前已交付能力见 `PRD.md`，当前代码结构见 `ARCHITECTURE.md`，V1 切换证据见 `rollout/workflow-v2-cutover.md`。在线 schema-v3 图已经写进那些当前实现文档；GraphProposal、配方从 live graph 提取保存和 Recipe ChangeSet 只从本文 §2 进入。
+本文只记录尚未实现或尚未取得真实验证证据的方向。当前已交付能力见 `PRD.md`，当前代码结构见 `ARCHITECTURE.md`，V1 切换证据见 `rollout/workflow-v2-cutover.md`。在线 schema-v3 图已经写进那些当前实现文档；GraphProposal、配方应用到 live graph 的 ChangeSet 只从本文 §2 进入。
 
 ## 近期优先级
 
@@ -22,15 +22,16 @@
 
 ### 2. Schema-v3 未完成项
 
-在线工作流权威已经是 `workflow_graphs`。当前实现见 `ARCHITECTURE.md`。画布修葺的北极星、质量上限、非目标和切片顺序见 `docs/specs/v3-canvas-restoration.md`。仍未交付：
+在线工作流权威已经是 `workflow_graphs`。当前实现见 `ARCHITECTURE.md`。画布修葺的北极星见 `docs/specs/v3-canvas-restoration.md`。侧栏修葺的北极星见 `docs/specs/v3-sidebar-restoration.md`。仍未交付：
 
-- 对象命令与呈现身份（节点卡类型色/失败反馈、粘贴后选中、删除确认、视口处建点、最大化、busy 锁定、运行前 flush）。
-- 服务端 Redo（inverse ChangeSet；不得把 Redo 映射成再调 Undo）。
-- Inspector 按 Node Catalog `config_fields` 渲染；当前类型化表单是过渡适配。
-- 进入分组：一层视觉组织、组内/全图分记视口。
-- 从 live v3 graph 提取并保存配方，以及 Recipe ChangeSet 直接应用到另一张图。应用已保存配方仍只产生待确认 Draft。
+- 对象命令与呈现身份已接到现有 chrome（类型色、卡片失败、粘贴后选中、删除确认、视口处建点、最大化、busy/flush）。浏览器 1440/1024/390 证据仍待切片 G。
+- 服务端 Redo（`POST .../redo`，inverse ChangeSet；不得把 Redo 映射成再调 Undo）。代码已接线；浏览器证据仍待切片 G。
+- Inspector 已按 Node Catalog `config_fields` 渲染；保存仍走 `update_node_config`。浏览器证据仍待切片 G。详情失败/空选下一步/结果语言是侧栏切片 S1。
+- 进入分组已接线：双击或按钮进入、面包屑返回、组内/全图分记视口。分组仍非 DAG 节点。浏览器证据仍待切片 G。
+- 从 live v3 graph 提取并保存配方已接线（全图/分组/选区；无 V2 payload）。应用到另一商品仍产生待确认 Draft，应用前预览节点/边。片段配方明确冲突。Recipe ChangeSet 直接写到另一张 live graph 仍未交付。浏览器证据仍待切片 G。
 - Agent 对 live graph 的 GraphProposal / ChangeSet。目标合同见 `docs/adr/0008-free-canvas-agent-graph-authority.md`。
-- `docs/rollout/free-canvas-v3-interaction-parity.md` 中尚未完成的交互项；该表是检查清单，质量上限以修葺北极星 §4 为准。
+- 侧栏 390px 底抽屉；当前窄屏打开详情会整页盖住画布。
+- `docs/rollout/free-canvas-v3-interaction-parity.md` 中尚未完成的交互项；该表是检查清单，质量上限以画布/侧栏修葺北极星为准。
 - 真实 provider、PostgreSQL/Redis/worker、桌面与 390px 浏览器、console/network error、取消/retry 和无 retired runtime fallback 的完整 gate。
 
 ### 3. 图片生产质量
@@ -62,7 +63,8 @@
 
 ### 6. 配方
 
-- 优化配方预览、版本说明和应用前差异确认。
+- Recipe ChangeSet 直接写到另一张 live graph（当前完整配方仍落到待确认 Draft）。
+- 片段配方合并进已有工作流。
 - 保持配方完全由用户主动保存。
 
 ### 7. 开发体验

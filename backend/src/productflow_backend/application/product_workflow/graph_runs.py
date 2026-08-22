@@ -17,7 +17,10 @@ from productflow_backend.application.product_workflow.graph_compiler import (
     select_run_node_ids,
     snapshot_graph,
 )
-from productflow_backend.application.product_workflow.graph_visual import visual_overlay_from_config
+from productflow_backend.application.product_workflow.graph_visual import (
+    merge_visual_override_items,
+    visual_overlay_from_config,
+)
 from productflow_backend.application.product_workflow.product_sources import resolve_product_source
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.durable_generation_tasks import GRAPH_RUN_GENERATION_TASK_CONTRACT
@@ -86,7 +89,11 @@ def load_graph_sources(session: Session, graph: WorkflowGraph, applied: AppliedG
                 if version is not None:
                     payload = dict(version.payload_json)
             if payload is None:
-                payload = visual_overlay_from_config(node.config)
+                overrides = node.config.get("visual_overrides")
+                if isinstance(overrides, list):
+                    payload = merge_visual_override_items(overrides) or None
+                if payload is None:
+                    payload = visual_overlay_from_config(node.config)
             record = GraphSourceRecord(
                 visual_payload=payload,
                 visual_system_version_id=version_id if isinstance(version_id, str) else None,

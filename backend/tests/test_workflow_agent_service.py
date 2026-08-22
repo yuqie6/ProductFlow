@@ -69,6 +69,7 @@ from productflow_backend.domain.errors import (
     ConflictError,
     NotFoundError,
 )
+from productflow_backend.domain.graph_catalog import GRAPH_CATALOG_VERSION
 from productflow_backend.infrastructure.agent_service import (
     AgentServiceArtifact,
     AgentServiceQuestion,
@@ -627,6 +628,8 @@ def test_agent_first_version_zero_context_and_first_artifact_are_replayable(db_s
     assert contract["current_draft_version"] == 0
     assert "不能静默改写" in contract["system_prompt"]
     assert "不能臆造" in contract["system_prompt"]
+    assert "node_catalog" in contract["system_prompt"]
+    assert "config_fields" in contract["system_prompt"]
     context = get_agent_product_context(db_session, conversation.id)
     assert context["workflow_draft"] == {
         "id": draft.id,
@@ -642,6 +645,10 @@ def test_agent_first_version_zero_context_and_first_artifact_are_replayable(db_s
             "reference_asset_ids": [asset.id],
         },
     }
+    assert context["node_catalog"]["version"] == GRAPH_CATALOG_VERSION
+    image = next(node for node in context["node_catalog"]["nodes"] if node["node_type"] == "image_generation")
+    generation = next(field for field in image["config_fields"] if field["key"] == "generation_spec")
+    assert any(child["key"] == "aspect_ratio" for child in generation["fields"])
 
     projection = reserve_agent_turn(
         db_session,
@@ -857,7 +864,7 @@ def test_agent_read_tools_are_bounded_and_rename_is_reconcilable(db_session) -> 
     assert "background_color" in delivery_schema["required"]
     assert "oneOf" not in workflow_schema["properties"]["nodes"]["items"]
     assert "anyOf" in workflow_schema["properties"]["nodes"]["items"]
-    assert contract["tool_contract_version"] == 9
+    assert contract["tool_contract_version"] == 10
 
     context = get_agent_product_context(db_session, conversation.id)
     assert context["product"]["name"] == product.name
@@ -1180,7 +1187,7 @@ def test_internal_agent_routes_require_service_token_and_never_need_browser_sess
     contract = client.get(contract_path, headers=headers)
     assert contract.status_code == 200, contract.text
     assert contract.json()["conversation_id"] == conversation.id
-    assert contract.json()["tool_contract_version"] == 9
+    assert contract.json()["tool_contract_version"] == 10
 
     validation_path = f"/api/internal/v1/agent-conversations/{conversation.id}/workflow-draft/validate"
     validated = client.post(validation_path, headers=headers, json={"value": payload})

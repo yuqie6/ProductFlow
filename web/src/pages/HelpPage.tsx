@@ -74,8 +74,9 @@ const HELP_DOCS = {
               type: "steps",
               items: [
                 "从商品列表进入新建页，选择需要的图片类型和各自数量。",
-                "上传 1 至 6 张真实商品参考图，与 Agent 补充价格、风格、文案和文字语种等信息。",
-                "确认方案后进入工作台，画布会流式展示 Agent 创建的节点、连线和文件夹。",
+                "上传 1 至 6 张真实商品参考图。可与 Agent 补充价格、风格、文案和文字语种，也可跳过 Agent 直接创建画布。",
+                "直接创建会立刻进入工作台并带上可运行的图；Agent 路径需确认方案后，画布才会展示节点、连线和文件夹。",
+                "运行整张图时，先运行视觉规范、创作要求和提示词节点写出内容，再运行生图。运行内容节点不会直接出图。",
                 "在画布中编辑提示词、生成规格和参考绑定；上传图与生成图进入商品图库，跨商品长期素材进入 `/media-library`。",
               ],
             },
@@ -138,6 +139,16 @@ const HELP_DOCS = {
             },
           ],
         },
+        {
+          id: "direct-create",
+          title: "直接创建画布",
+          blocks: [
+            {
+              type: "paragraph",
+              text: "新建页也可以跳过 Agent，直接生成可运行的工作流图。上传参考图并选择图片类型后，系统会立刻创建商品资料、参考图、视觉规范、创作要求、提示词和生图节点，并把参考图接到这些节点。进入工作台后先运行视觉规范、创作要求和提示词，让模型把内容写进检查器；确认后再运行生图节点或整张图。",
+            },
+          ],
+        },
       ],
     },
     {
@@ -191,10 +202,10 @@ const HELP_DOCS = {
               items: [
                 "商品资料：保存确认过的商品事实。",
                 "图片素材：绑定商品图片库中的一张明确图片。",
-                "创作要求：保存工作流级目标和限制。",
-                "视觉规范：保存视觉体系引用。",
-                "提示词生成：把商品事实、创作要求和视觉规范整理成可编辑提示词。",
-                "图片生成：保存比例、分辨率、质量、背景、文字策略、参考保真度和执行状态。",
+                "创作要求：运行时根据商品资料和参考图生成目标、文案和限制，结果写进检查器后可再编辑。",
+                "视觉规范：运行时根据商品资料和参考图生成风格、背景和限制，结果写进检查器后可再编辑。",
+                "提示词生成：运行时根据商品资料、参考图、视觉规范和创作要求生成提示词，结果写进检查器后可再编辑。运行该节点不会生图。",
+                "图片生成：保存比例、分辨率、质量、背景、文字策略、参考保真度和执行状态。文字策略会约束提示词生成和出图，默认为禁止图片内文字。运行该节点只出图；空的内容节点需要先单独运行，或对生图节点使用运行到此。直接创建会把上传图接到视觉规范、创作要求、提示词和生图节点。",
               ],
             },
           ],
@@ -205,15 +216,18 @@ const HELP_DOCS = {
           blocks: [
             {
               type: "paragraph",
-              text: "节点使用输入与输出连接点。拖线时合法目标变绿、不合法目标变红。节点较多时可用分组收拢局部流程；分组只改善布局，不改变执行顺序。",
+              text: "节点使用输入与输出连接点。拖线时合法目标变绿、不合法目标变红。节点较多时可用分组收拢局部流程；双击分组进入后只看组内节点，面包屑返回全图。分组只改善布局，不改变执行顺序。",
             },
             {
               type: "list",
               items: [
                 "添加节点会落在当前视口中心并被选中。",
                 "复制粘贴后选中新节点；删除节点前会确认。",
-                "卡片按类型着色，失败写在卡片上；工具条可运行、运行到此、复制、聚焦、删除。",
+                "Ctrl/Cmd+Z 撤销最近一次图编辑，Shift 组合键重做。",
+                "卡片按类型着色，失败写在卡片和详情上；工具条可运行、运行到此、复制、聚焦、存为配方、删除。",
                 "最大化会收起顶部导航。",
+                "分组可进入；组内和全图各自记住视口。",
+                "可把全图、当前分组或选中节点存成预设。应用到另一商品前会预览将创建的节点和连线；局部预设还不能合并进已有工作流。",
               ],
             },
           ],
@@ -370,7 +384,7 @@ const HELP_DOCS = {
             {
               type: "list",
               items: [
-                "提示词：为提示词生成节点提供模型。",
+                "提示词：为视觉规范、创作要求和提示词节点提供模型。",
                 "工作流 Agent：负责澄清需求、整理图库和创建工作流。",
                 "图片：负责工作流与生图会话的图片生成。",
               ],
@@ -428,7 +442,7 @@ const HELP_DOCS = {
       category: "Getting started",
       icon: BookOpen,
       sections: [
-        { id: "current-baseline", title: "Current workflow", blocks: [{ type: "steps", items: ["Open product creation and choose the required image types and quantity for each type.", "Upload one to six real product reference images and clarify price, style, copy, and image-text language with the Agent.", "Confirm the plan, then enter the workbench while folders, nodes, and edges are revealed progressively.", "Edit prompts, generation specifications, and reference bindings. Uploads and generated results belong to the product library; long-lived cross-product media lives in `/media-library`."] }] },
+        { id: "current-baseline", title: "Current workflow", blocks: [{ type: "steps", items: ["Open product creation and choose the required image types and quantity for each type.", "Upload one to six real product reference images. You can clarify price, style, copy, and image-text language with the Agent, or skip the Agent and create the canvas directly.", "Direct create opens a runnable graph immediately. The Agent path reveals folders, nodes, and edges after you confirm the plan.", "Run visual system, creative brief, and prompt nodes to write content, then run image nodes. Running a content node does not render images.", "Edit prompts, generation specifications, and reference bindings. Uploads and generated results belong to the product library; long-lived cross-product media lives in `/media-library`."] }] },
         { id: "core-objects", title: "Core objects", blocks: [{ type: "list", items: ["Product: facts and real product imagery.", "Workflow: product context, reference image, prompt generation, and image generation nodes.", "Visual system: shared color, typography, photography, and quality rules.", "Product library: uploads, workflow output, image-chat attachments, and delivery images.", "Global media library: long-lived cross-product images that can be associated with multiple workflows without copying bytes.", "Agent Session / Task: a long-lived conversation container and one business goal.", "Workflow recipe: a user-saved workflow or fragment for later reuse."] }] },
       ],
     },
@@ -441,6 +455,7 @@ const HELP_DOCS = {
       sections: [
         { id: "image-plan", title: "Image types and quantities", blocks: [{ type: "paragraph", text: "Each selected type defaults to two images and can be adjusted independently. Multiple hero images are often candidates to choose from, while multi-angle images should carry distinct viewpoints and content goals." }, { type: "callout", title: "References are required", text: "Uploads must demonstrate the actual product. The Agent does not invent a logo, certification, packaging, or factory material that the user did not provide." }] },
         { id: "clarification", title: "Clarification and confirmation", blocks: [{ type: "list", items: ["Product facts: name, category, price, specifications, and selling points.", "Generation intent: style, image-text language, copy density, ratio, quality, and reference fidelity.", "Missing information: questions are limited to details that affect the workflow or output.", "Final confirmation: the canvas is created only after the image plan, visual system, prompt plan, and references are approved."] }] },
+        { id: "direct-create", title: "Create the canvas directly", blocks: [{ type: "paragraph", text: "Product creation can skip the Agent and write a runnable workflow immediately. After you upload references and choose image types, the graph includes product facts, references, visual system, creative brief, prompt nodes, and image nodes, with photos wired to those nodes. Run visual, brief, and prompt nodes first so the model writes into the inspector; then run image nodes or the whole graph." }] },
       ],
     },
     {
@@ -461,8 +476,8 @@ const HELP_DOCS = {
       category: "Workflow",
       icon: GitBranch,
       sections: [
-        { id: "nodes", title: "Node responsibilities", blocks: [{ type: "list", items: ["Product facts hold confirmed product facts.", "An image asset node binds exactly one product-library image.", "Creative brief holds workflow-level goals and constraints.", "Visual system holds a visual-system version reference.", "Prompt generation combines facts, brief, and visual rules into a prompt.", "Image generation stores ratio, quality, text policy, background intent, reference fidelity, and execution state."] }] },
-        { id: "organization", title: "Connections and local organization", blocks: [{ type: "paragraph", text: "Nodes have input and output ports. Legal drop targets turn green; illegal ones turn red. Groups can tidy a local flow without changing execution order." }, { type: "list", items: ["New nodes land near the current viewport center and stay selected.", "Paste selects the clones; deleting nodes asks for confirmation.", "Cards keep type color and show failures; the toolbar can run, run up to here, duplicate, focus, and delete.", "Maximize hides the top navigation."] }] },
+        { id: "nodes", title: "Node responsibilities", blocks: [{ type: "list", items: ["Product facts hold confirmed product facts.", "An image asset node binds exactly one product-library image.", "Creative brief runs against product facts and photos and writes goals, copy, and constraints into the inspector.", "Visual system runs against product facts and photos and writes style and background into the inspector.", "Prompt generation writes a prompt into the inspector from product facts, photos, visual system, and brief. Running this node does not render images.", "Image generation stores ratio, quality, text policy, background intent, reference fidelity, and execution state. Running this node only renders. Empty content nodes need their own runs, or use run-to-node on the image node. Direct create wires uploads to visual, brief, prompt, and image nodes."] }] },
+        { id: "organization", title: "Connections and local organization", blocks: [{ type: "paragraph", text: "Nodes have input and output ports. Legal drop targets turn green; illegal ones turn red. Groups can tidy a local flow without changing execution order. Double-click a group to see only its members; the breadcrumb returns to the full graph." }, { type: "list", items: ["New nodes land near the current viewport center and stay selected.", "Paste selects the clones; deleting nodes asks for confirmation.", "Undo the last edit; Redo restores it if nothing new was saved.", "Cards keep type color and show failures on the card and in Details; the toolbar can run, run up to here, duplicate, focus, save as recipe, and delete.", "Maximize hides the top navigation.", "Groups can be entered; in-group and full-graph viewports are remembered separately.", "Save the full graph, current group, or selected nodes as a preset. Applying it on another product previews the nodes and edges that will be created; partial presets cannot merge into an existing workflow yet."] }] },
       ],
     },
     {
@@ -516,7 +531,7 @@ const HELP_DOCS = {
       category: "Configuration",
       icon: Settings,
       sections: [
-        { id: "providers", title: "Provider purposes", blocks: [{ type: "list", items: ["Prompt supplies the model used by prompt generation nodes.", "Workflow Agent clarifies requirements, organizes the library, and creates workflows.", "Image powers workflow and image-chat generation."] }] },
+        { id: "providers", title: "Provider purposes", blocks: [{ type: "list", items: ["Prompt supplies the model used by visual system, creative brief, and prompt generation nodes.", "Workflow Agent clarifies requirements, organizes the library, and creates workflows.", "Image powers workflow and image-chat generation."] }] },
         { id: "runtime", title: "Runtime configuration", blocks: [{ type: "paragraph", text: "Settings also manages allowed image-tool fields, maximum generation dimensions, upload limits, queues, security controls, and import or export of the current configuration format. Confirm changes through the page-level save feedback." }] },
       ],
     },
@@ -540,7 +555,7 @@ const HELP_DOCS = {
       category: "はじめに",
       icon: BookOpen,
       sections: [
-        { id: "current-baseline", title: "現在の作業フロー", blocks: [{ type: "steps", items: ["商品作成画面で必要な画像タイプとタイプごとの枚数を選択します。", "実商品の参考画像を 1 から 6 枚アップロードし、価格、スタイル、コピー、画像内テキストの言語を Agent と確認します。", "計画を確認するとワークベンチへ移動し、フォルダ、ノード、エッジが順次表示されます。", "プロンプト、生成仕様、参考画像の紐付けを編集します。アップロードと生成結果は商品ライブラリへ、長期の横断素材は `/media-library` へ保存されます。"] }] },
+        { id: "current-baseline", title: "現在の作業フロー", blocks: [{ type: "steps", items: ["商品作成画面で必要な画像タイプとタイプごとの枚数を選択します。", "実商品の参考画像を 1 から 6 枚アップロードします。価格、スタイル、コピー、画像内テキストの言語は Agent と確認しても、Agent を省略してキャンバスを直接作成しても構いません。", "直接作成は実行可能な図をすぐ開きます。Agent 経路は計画確認後にフォルダ、ノード、エッジが表示されます。", "図全体を実行する前に、ビジュアルシステム、創作要件、プロンプトノードを実行して内容を書きます。内容ノードの実行では画像を出しません。", "プロンプト、生成仕様、参考画像の紐付けを編集します。アップロードと生成結果は商品ライブラリへ、長期の横断素材は `/media-library` へ保存されます。"] }] },
         { id: "core-objects", title: "主要オブジェクト", blocks: [{ type: "list", items: ["商品：商品情報と実商品の画像。", "ワークフロー：商品情報、参考画像、プロンプト生成、画像生成ノード。", "ビジュアルシステム：色、書体、撮影、品質の共通ルール。", "商品ライブラリ：アップロード、ワークフロー生成、画像チャット、納品画像。", "グローバル素材ライブラリ：複数ワークフローで共有できる長期画像。メディア bytes は複製しません。", "Agent Session / Task：長期の対話容器と 1 つの業務目標。", "ワークフローレシピ：ユーザーが保存したワークフローまたは部分フロー。"] }] },
       ],
     },
@@ -553,6 +568,7 @@ const HELP_DOCS = {
       sections: [
         { id: "image-plan", title: "画像タイプと枚数", blocks: [{ type: "paragraph", text: "選択した各タイプは初期値 2 枚で、個別に変更できます。複数のメイン画像は候補選択用の場合が多く、複数アングル画像には異なる視点と内容目標が必要です。" }, { type: "callout", title: "参考画像は必須です", text: "アップロード画像は実商品の外観と構造を示す必要があります。ユーザーが提供していないロゴ、認証、包装、工場素材を Agent が作り足すことはありません。" }] },
         { id: "clarification", title: "確認事項", blocks: [{ type: "list", items: ["商品情報：名称、カテゴリ、価格、仕様、訴求点。", "生成意図：スタイル、画像内テキスト言語、文字量、比率、品質、参考忠実度。", "不足情報：ワークフローや出力に影響する項目だけを質問します。", "最終確認：画像計画、ビジュアルシステム、プロンプト計画、参考画像を確認後にキャンバスを作成します。"] }] },
+        { id: "direct-create", title: "キャンバスを直接作成", blocks: [{ type: "paragraph", text: "商品作成では Agent を省略し、実行可能なワークフローをすぐ作れます。参考画像をアップロードして画像タイプを選ぶと、商品情報、参考画像、ビジュアルシステム、創作要件、プロンプト、画像生成ノードが作成され、参考画像はこれらのノードに接続されます。先にビジュアル、創作要件、プロンプトを実行して検査器へ書き、確認後に画像ノードまたは図全体を実行します。" }] },
       ],
     },
     {
@@ -573,8 +589,8 @@ const HELP_DOCS = {
       category: "ワークフロー",
       icon: GitBranch,
       sections: [
-        { id: "nodes", title: "ノードの役割", blocks: [{ type: "list", items: ["商品情報ノードは確認済みの商品事実を提供します。", "参考画像ノードは商品ライブラリの具体的な 1 画像を保持します。", "プロンプト生成ノードは商品情報、ビジュアルルール、画像目標を組み合わせます。", "画像生成ノードは比率、品質、文字方針、背景、参考忠実度、実行状態を保持します。"] }] },
-        { id: "organization", title: "接続と局所整理", blocks: [{ type: "paragraph", text: "ノードには入力と出力の接続点があります。接続できる対象は緑、できない対象は赤になります。グループは配置を整理するだけで、実行順は変えません。" }, { type: "list", items: ["新しいノードは現在の表示中央付近に置かれ、選択されたままです。", "貼り付け後は複製が選択されます。ノード削除前に確認します。", "カードは種類色を保ち、失敗を表示します。ツールバーで実行、ここまで実行、複製、フォーカス、削除ができます。", "最大化すると上部ナビをしまいます。"] }] },
+        { id: "nodes", title: "ノードの役割", blocks: [{ type: "list", items: ["商品情報ノードは確認済みの商品事実を提供します。", "参考画像ノードは商品ライブラリの具体的な 1 画像を保持します。", "創作要件ノードは実行時に商品情報と参考画像から目標と制限を書き、検査器で再編集できます。", "ビジュアルシステムノードは実行時にスタイルと背景を書き、検査器で再編集できます。", "プロンプト生成ノードは実行時にプロンプトを検査器へ書きます。この実行では画像を出しません。", "画像生成ノードは比率、品質、文字方針、背景、参考忠実度、実行状態を保持します。このノードの実行は出図のみです。空の内容ノードは先に単独実行するか、画像ノードでここまで実行を使います。直接作成ではアップロード画像をビジュアル、創作要件、プロンプト、画像ノードに接続します。"] }] },
+        { id: "organization", title: "接続と局所整理", blocks: [{ type: "paragraph", text: "ノードには入力と出力の接続点があります。接続できる対象は緑、できない対象は赤になります。グループは配置を整理するだけで、実行順は変えません。ダブルクリックでグループ内だけを表示し、パンくずで全図に戻ります。" }, { type: "list", items: ["新しいノードは現在の表示中央付近に置かれ、選択されたままです。", "貼り付け後は複製が選択されます。ノード削除前に確認します。", "直前の編集を元に戻せます。その後に新しい編集がなければやり直せます。", "カードは種類色を保ち、失敗をカードと詳細に表示します。ツールバーで実行、ここまで実行、複製、フォーカス、レシピ保存、削除ができます。", "最大化すると上部ナビをしまいます。", "グループに入れます。グループ内と全図の表示位置は別々に覚えます。", "全図、現在のグループ、または選択ノードをプリセット保存できます。別の商品へ適用する前に作成されるノードと接続を確認できます。部分プリセットは既存ワークフローへまだ結合できません。"] }] },
       ],
     },
     {
@@ -628,7 +644,7 @@ const HELP_DOCS = {
       category: "設定",
       icon: Settings,
       sections: [
-        { id: "providers", title: "プロバイダ用途", blocks: [{ type: "list", items: ["プロンプト：プロンプト生成ノードのモデル。", "ワークフロー Agent：要件確認、ライブラリ整理、ワークフロー作成。", "画像：ワークフローと画像チャットの画像生成。"] }] },
+        { id: "providers", title: "プロバイダ用途", blocks: [{ type: "list", items: ["プロンプト：ビジュアルシステム、創作要件、プロンプト生成ノードのモデル。", "ワークフロー Agent：要件確認、ライブラリ整理、ワークフロー作成。", "画像：ワークフローと画像チャットの画像生成。"] }] },
         { id: "runtime", title: "実行設定", blocks: [{ type: "paragraph", text: "画像ツールの許可項目、最大生成サイズ、アップロード制限、キュー、セキュリティ、現在形式の設定インポートとエクスポートも管理します。保存後はページの結果表示を確認してください。" }] },
       ],
     },
@@ -652,7 +668,7 @@ const HELP_DOCS = {
       category: "Bắt đầu",
       icon: BookOpen,
       sections: [
-        { id: "current-baseline", title: "Cách làm việc hiện tại", blocks: [{ type: "steps", items: ["Mở trang tạo sản phẩm, chọn các loại ảnh cần thiết và số lượng cho từng loại.", "Tải lên từ một đến sáu ảnh tham chiếu của sản phẩm thật, rồi làm rõ giá, phong cách, nội dung và ngôn ngữ chữ trong ảnh với Agent.", "Xác nhận kế hoạch để vào workbench; thư mục, node và edge sẽ xuất hiện tuần tự.", "Chỉnh prompt, thông số tạo và liên kết ảnh tham chiếu. Ảnh tải lên và kết quả tạo thuộc thư viện sản phẩm; tài nguyên dài hạn xuyên sản phẩm nằm ở `/media-library`."] }] },
+        { id: "current-baseline", title: "Cách làm việc hiện tại", blocks: [{ type: "steps", items: ["Mở trang tạo sản phẩm, chọn các loại ảnh cần thiết và số lượng cho từng loại.", "Tải lên từ một đến sáu ảnh tham chiếu của sản phẩm thật. Có thể làm rõ giá, phong cách, nội dung và ngôn ngữ chữ trong ảnh với Agent, hoặc bỏ qua Agent để tạo canvas ngay.", "Tạo trực tiếp sẽ mở đồ thị chạy được ngay. Đường Agent chỉ hiện thư mục, node và edge sau khi xác nhận kế hoạch.", "Chạy node hệ thống hình ảnh, brief sáng tạo và prompt để ghi nội dung, rồi mới chạy node ảnh. Chạy node nội dung không xuất hình.", "Chỉnh prompt, thông số tạo và liên kết ảnh tham chiếu. Ảnh tải lên và kết quả tạo thuộc thư viện sản phẩm; tài nguyên dài hạn xuyên sản phẩm nằm ở `/media-library`."] }] },
         { id: "core-objects", title: "Đối tượng cốt lõi", blocks: [{ type: "list", items: ["Sản phẩm: dữ kiện và ảnh sản phẩm thật.", "Quy trình: node thông tin sản phẩm, ảnh tham chiếu, tạo prompt và tạo ảnh.", "Hệ thống hình ảnh: quy tắc chung về màu, chữ, nhiếp ảnh và chất lượng.", "Thư viện sản phẩm: ảnh tải lên, kết quả quy trình, ảnh từ phiên tạo và ảnh bàn giao.", "Thư viện tài nguyên toàn cục: ảnh dài hạn xuyên sản phẩm, có thể gắn vào nhiều quy trình mà không sao chép file.", "Agent Session / Task: nơi hội thoại dài hạn và một mục tiêu nghiệp vụ.", "Công thức quy trình: quy trình hoặc đoạn quy trình do người dùng lưu để tái sử dụng."] }] },
       ],
     },
@@ -665,6 +681,7 @@ const HELP_DOCS = {
       sections: [
         { id: "image-plan", title: "Loại ảnh và số lượng", blocks: [{ type: "paragraph", text: "Mỗi loại đã chọn mặc định có hai ảnh và có thể chỉnh riêng. Nhiều ảnh chính thường là các ứng viên để chọn, còn ảnh đa góc cần có góc nhìn và mục tiêu nội dung khác nhau." }, { type: "callout", title: "Bắt buộc có ảnh tham chiếu", text: "Ảnh tải lên phải thể hiện sản phẩm thật. Agent không tự tạo logo, chứng nhận, bao bì hoặc tư liệu nhà máy mà người dùng chưa cung cấp." }] },
         { id: "clarification", title: "Làm rõ và xác nhận", blocks: [{ type: "list", items: ["Dữ kiện sản phẩm: tên, danh mục, giá, thông số và điểm bán hàng.", "Ý định tạo: phong cách, ngôn ngữ chữ trong ảnh, mật độ nội dung, tỷ lệ, chất lượng và độ trung thành tham chiếu.", "Thông tin thiếu: chỉ hỏi những chi tiết ảnh hưởng đến quy trình hoặc kết quả.", "Xác nhận cuối: chỉ tạo canvas sau khi kế hoạch ảnh, hệ thống hình ảnh, kế hoạch prompt và ảnh tham chiếu được duyệt."] }] },
+        { id: "direct-create", title: "Tạo canvas trực tiếp", blocks: [{ type: "paragraph", text: "Trang tạo sản phẩm có thể bỏ qua Agent và ghi ngay một quy trình chạy được. Sau khi tải ảnh tham chiếu và chọn loại ảnh, đồ thị gồm thông tin sản phẩm, ảnh tham chiếu, hệ thống hình ảnh, brief sáng tạo, node prompt và node ảnh, với ảnh nối vào các node đó. Chạy hệ thống hình ảnh, brief và prompt trước để ghi vào inspector; rồi chạy node ảnh hoặc toàn đồ." }] },
       ],
     },
     {
@@ -685,8 +702,8 @@ const HELP_DOCS = {
       category: "Quy trình",
       icon: GitBranch,
       sections: [
-        { id: "nodes", title: "Vai trò của node", blocks: [{ type: "list", items: ["Node thông tin sản phẩm cung cấp dữ kiện đã xác nhận.", "Mỗi node ảnh tham chiếu giữ đúng một ảnh trong thư viện sản phẩm.", "Node tạo prompt kết hợp dữ kiện, quy tắc hình ảnh và mục tiêu của ảnh.", "Node tạo ảnh lưu tỷ lệ, chất lượng, chính sách chữ, nền, độ trung thành tham chiếu và trạng thái chạy."] }] },
-        { id: "organization", title: "Kết nối và tổ chức cục bộ", blocks: [{ type: "paragraph", text: "Node có điểm vào và ra. Mục tiêu hợp lệ chuyển xanh, không hợp lệ chuyển đỏ. Nhóm chỉ gọn bố cục, không đổi thứ tự chạy." }, { type: "list", items: ["Node mới rơi gần tâm viewport hiện tại và được chọn.", "Dán sẽ chọn bản sao; xóa node có xác nhận.", "Thẻ giữ màu loại và hiện lỗi; thanh công cụ có chạy, chạy đến đây, nhân bản, lấy nét và xóa.", "Phóng to sẽ thu thanh điều hướng trên."] }] },
+        { id: "nodes", title: "Vai trò của node", blocks: [{ type: "list", items: ["Node thông tin sản phẩm cung cấp dữ kiện đã xác nhận.", "Mỗi node ảnh tham chiếu giữ đúng một ảnh trong thư viện sản phẩm.", "Node brief sáng tạo khi chạy ghi mục tiêu và giới hạn vào inspector.", "Node hệ thống hình ảnh khi chạy ghi phong cách và nền vào inspector.", "Node tạo prompt khi chạy ghi prompt vào inspector và không xuất hình.", "Node tạo ảnh lưu tỷ lệ, chất lượng, chính sách chữ, nền, độ trung thành tham chiếu và trạng thái chạy. Chạy node này chỉ xuất hình. Node nội dung trống cần chạy riêng, hoặc dùng chạy đến đây trên node ảnh. Tạo trực tiếp nối ảnh tải lên vào hệ thống hình ảnh, brief, prompt và node ảnh."] }] },
+        { id: "organization", title: "Kết nối và tổ chức cục bộ", blocks: [{ type: "paragraph", text: "Node có điểm vào và ra. Mục tiêu hợp lệ chuyển xanh, không hợp lệ chuyển đỏ. Nhóm chỉ gọn bố cục, không đổi thứ tự chạy. Nhấp đúp nhóm để chỉ xem node trong nhóm; đường dẫn quay lại toàn đồ." }, { type: "list", items: ["Node mới rơi gần tâm viewport hiện tại và được chọn.", "Dán sẽ chọn bản sao; xóa node có xác nhận.", "Hoàn tác lần chỉnh sửa gần nhất; làm lại được nếu chưa có chỉnh sửa mới.", "Thẻ giữ màu loại và hiện lỗi trên thẻ và trong Chi tiết; thanh công cụ có chạy, chạy đến đây, nhân bản, lấy nét, lưu công thức và xóa.", "Phóng to sẽ thu thanh điều hướng trên.", "Có thể vào nhóm; viewport trong nhóm và toàn đồ được nhớ riêng.", "Có thể lưu toàn đồ, nhóm hiện tại hoặc node đã chọn thành mẫu. Áp dụng sang sản phẩm khác sẽ xem trước node và đường nối sẽ tạo; mẫu đoạn chưa gộp được vào quy trình hiện có."] }] },
       ],
     },
     {
@@ -740,7 +757,7 @@ const HELP_DOCS = {
       category: "Cấu hình",
       icon: Settings,
       sections: [
-        { id: "providers", title: "Mục đích nhà cung cấp", blocks: [{ type: "list", items: ["Prompt cung cấp mô hình cho node tạo prompt.", "Agent quy trình làm rõ yêu cầu, sắp xếp thư viện và tạo quy trình.", "Ảnh cung cấp khả năng tạo ảnh cho quy trình và phiên tạo ảnh."] }] },
+        { id: "providers", title: "Mục đích nhà cung cấp", blocks: [{ type: "list", items: ["Prompt cung cấp mô hình cho hệ thống hình ảnh, brief sáng tạo và node tạo prompt.", "Agent quy trình làm rõ yêu cầu, sắp xếp thư viện và tạo quy trình.", "Ảnh cung cấp khả năng tạo ảnh cho quy trình và phiên tạo ảnh."] }] },
         { id: "runtime", title: "Cấu hình chạy", blocks: [{ type: "paragraph", text: "Trang cài đặt cũng quản lý các trường công cụ ảnh được phép, kích thước tạo tối đa, giới hạn tải lên, hàng đợi, bảo mật và nhập hoặc xuất định dạng cấu hình hiện tại. Hãy xác nhận kết quả qua phản hồi lưu trên trang." }] },
       ],
     },

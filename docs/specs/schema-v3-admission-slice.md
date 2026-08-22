@@ -5,9 +5,9 @@
 - 文档状态：Approved for implementation
 - 批准依据：仓库 owner 确认设计稳单并开始落地。目标合同：`docs/adr/0008-free-canvas-agent-graph-authority.md`
 - 交互继承：`docs/rollout/free-canvas-v3-interaction-parity.md`
-- 当前运行事实：`CONTEXT.md`、`docs/ARCHITECTURE.md`、在线 schema-v3 `workflow_graphs`。本文是已落地准入切片的设计记录；GraphProposal、配方从 live graph 提取保存仍未交付。
+- 当前运行事实：`CONTEXT.md`、`docs/ARCHITECTURE.md`、在线 schema-v3 `workflow_graphs`。本文是已落地准入切片的设计记录；配方从 live graph 提取保存已接线。GraphProposal、配方应用到 live graph 的 ChangeSet 仍未交付。
 - 阅读入口：未完成项只从 `docs/ROADMAP.md` §2 进入，不进入默认阅读。
-- 代码基线：`codex/development`。迁移头：`20260821_0080`。v3 graph、ChangeSet、compiler、run、直接创建、Draft 确认 persist 和工作台画布数据源已落地。工作流子图库关联挂在 `workflow_graphs` 上。在线 V2 图合同已从应用层删除。
+- 代码基线：`codex/development`。迁移头：`20260822_0083`。v3 graph、ChangeSet、compiler、run、直接创建、Draft 确认 persist 和工作台画布数据源已落地。工作流子图库关联挂在 `workflow_graphs` 上。在线 V2 图合同已从应用层删除。
 
 人是工作台的主控。画布上每一种持久操作都必须能由用户单独完成，并且自洽、可撤销、体验完整。Agent 是加速手段，不是进画布或写出提示词/风格的闸门。
 
@@ -82,7 +82,7 @@ Draft 拓扑字段仍在 `workflow_drafts/contracts.py` 的 `WorkflowDraftPayloa
 - 每个 `prompt_generation` → 该类型下的每个 `image_generation`（`prompt`）
 - `creative_brief` → 每个 `prompt_generation`（`brief`）
 - `visual_system` → 每个 `prompt_generation` 和 `image_generation`（`visual_guidance`）
-- 上传得到的 `image_asset`：**默认不连出边**，画布标未使用。参考图是用户声明的素材，连到哪些节点由用户在画布上拉，或由 Agent 之后提案。模版不把每张参考图暗接到每个提示词。
+- 上传得到的 `image_asset`：模版把每张参考图连到视觉规范、创作要求、每个 `prompt_generation` 和每个 `image_generation`（`reference`）。用户仍可删边；删后画布标未使用，没有参考边的生图节点也不能运行。
 
 进入工作台时图就是正式图。提示词正文、视觉规范内容和商品事实都可以缺。用户在 Inspector 填，或 **运行** `prompt_generation`（以及后续若有的风格生成）来写出 Artifact，再运行 `image_generation`。不要求先跟 Agent 聊完才能跑。
 
@@ -143,8 +143,9 @@ V2 把 Visual System 当作整图运行时隐式输入。ADR 0008 禁止 compile
 
 `reference_bindings` 生成 `image_asset` 节点后：
 
-- Draft 里有出边：生成对应 `reference` edge
-- Draft 里没有出边：节点合法，标记未使用
+- Draft 里已有出边：按节点类型映射成对应 `reference` edge，不重复写同一对节点
+- 每个 `image_generation`：若 Draft 没写该参考图的出边，adapter 仍补一条 `reference` 边（与直接创建模版一致，否则生图节点缺必要输入）。用户确认后可立刻删
+- 指向 `prompt_generation` / `creative_brief` / `visual_system` 的参考边只按 Draft 原样映射，不自动补全
 
 换绑不在 adapter 里发生。folder 仍是组织对象，按 Draft `folders[]` / `folder_key` 写入，不进入 DAG。
 
@@ -171,11 +172,11 @@ V2 允许对同一商品再确认 Draft，停用旧图并写 `revision+1` 的新
 
 ### 4.8 配方
 
-`workflow_recipes/service.py` 的 `apply_workflow_recipe` 今天只创建 `WorkflowDraft`（fragment 还会记下 `schema_version=2` 的 base workflow）。第一刀 **不** 把配方直接变成 ChangeSet。
+`workflow_recipes/service.py` 的 `apply_workflow_recipe` 今天只创建 `WorkflowDraft`。完整配方仍走 Draft；片段 apply 对已有工作流返回明确冲突。第一刀 **不** 把配方直接变成 ChangeSet。
 
 - 全图配方：仍生成 Draft → 用户确认 → 本 adapter。
-- 片段配方：base 改为当前 active v3 graph revision，生成的 Draft 确认后走 Graph Command 合并；若第一刀来不及做片段合并，片段 apply 必须对 v3 商品返回明确未实现冲突，禁止再写 `schema_version=2` 的 base_workflow_id。
-- 保存配方：可第二刀。第一刀画布「保存为配方」若仍读 V2 提取器，过 gate 前要改成从 v3 graph 提取，或暂时禁用，不能在 v3 图上写出 V2 recipe payload。
+- 片段配方：对 v3 商品返回明确未实现冲突，禁止再写 `schema_version=2` 的 `base_workflow_id`。
+- 保存配方：从 live v3 graph 提取全图/分组/选区，`schema_version=3`。禁止写出 V2 recipe payload。
 
 ### 4.4 幂等与冲突
 
@@ -234,13 +235,14 @@ schema-v2 没有生产数据，不需要为它做兼容层、双执行器或 fla
 
 `web/src/lib/api.ts` 的图/运行方法改为 v3。画布写入合同是 `POST /api/v3/products/{product_id}/workflows/{workflow_id}/changesets`。当前已提供：
 
-- `GET /api/v3/node-catalog`：Node Catalog 投影（输出类型、接受输入、基数、运行必需性）；前端连线预校验只读这份文档
+- `GET /api/v3/node-catalog`：Node Catalog 投影（输出类型、接受输入、基数、运行必需性、`config_fields`）；前端连线预校验和详情表单只读这份文档
 - `POST /api/v3/products`：构思表单直接创建（商品 + 参考图 + 预设模版图）
 - `POST /api/v3/products/{product_id}/workflow-drafts/{draft_id}/graphs`：确认后的 Draft 写成同一份 v3 graph
 - `GET /api/v3/products/{product_id}/workflows/current`：当前 graph projection（revision、配置状态、未使用标记、incoming/outgoing 摘要）
 - `GET /api/v3/products/{product_id}/workflows/{workflow_id}`
 - `POST /api/v3/products/{product_id}/workflows/{workflow_id}/changesets`
-- `POST /api/v3/products/{product_id}/workflows/{workflow_id}/undo`：对最近一次 operation group 提交 inverse ChangeSet
+- `POST /api/v3/products/{product_id}/workflows/{workflow_id}/undo`：对最近一次可撤销 operation group 提交 inverse ChangeSet
+- `POST /api/v3/products/{product_id}/workflows/{workflow_id}/redo`：对最近一次 undo group 提交 inverse ChangeSet；新编辑后不可 redo
 
 运行 API：
 
@@ -331,7 +333,7 @@ CONTEXT 里商品数量上限（类型 1–6 张、合计 30）约束的是创�
 
 本切片 gate（全部在 **新代码** 上重做，不用旧 v3 scaffold）：
 
-- 构思表单直接创建 → 预设模版图，无 Agent、无 Draft；上传参考图为未使用 `image_asset`
+- 构思表单直接创建 → 预设模版图，无 Agent、无 Draft；上传参考图连到每个 `image_generation`
 - 不跑 Agent 即可运行 `prompt_generation` 写出提示词，再运行 `image_generation`
 - Agent 创建 → Draft 确认 → 初始图幂等、冲突、失败回滚；已有 active v3 时再次物化冲突可见
 - 画布 create/connect/disconnect/delete/move、复制粘贴、folder 重命名/成员/解散各产生 ChangeSet 与 revision

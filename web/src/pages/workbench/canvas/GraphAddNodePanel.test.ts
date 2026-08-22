@@ -46,6 +46,23 @@ describe("GraphAddNodePanel", () => {
     expect(withSelection).toContain("取消编组");
   });
 
+  it("shows save-recipe commands when they apply", () => {
+    const markup = renderToStaticMarkup(createElement(GraphAddNodePanel, {
+      busy: false,
+      onCreate: () => undefined,
+      canSaveFull: true,
+      canSaveGroup: true,
+      canSaveSelection: true,
+      onSaveFull: () => undefined,
+      onSaveGroup: () => undefined,
+      onSaveSelection: () => undefined,
+    }));
+    expect(markup).toContain("保存完整工作流预设");
+    expect(markup).toContain("保存当前分组为预设");
+    expect(markup).toContain("进入分组，或选中同一组的节点。");
+    expect(markup).toContain("保存选中节点为预设");
+  });
+
   it("exposes recipes as an optional entrance, not a node type", () => {
     const markup = renderToStaticMarkup(createElement(GraphAddNodePanel, {
       busy: false,

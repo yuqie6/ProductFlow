@@ -2,19 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import type { GraphNode } from "../../../lib/types";
 import {
-  graphBriefConfig,
-  graphBriefDraft,
-  graphImageGenerationConfig,
-  graphImageGenerationDraft,
-  graphPromptConfig,
-  graphPromptDraft,
   graphProductSourceConfig,
   graphProductSourceDraft,
   productFactsDraft,
   productFactsPayload,
   validateProductFactsDraft,
-  graphVisualConfig,
-  graphVisualDraft,
 } from "./graphNodeEditorDrafts";
 
 function node(partial: Partial<GraphNode> & Pick<GraphNode, "id" | "node_type">): GraphNode {
@@ -35,85 +27,6 @@ function node(partial: Partial<GraphNode> & Pick<GraphNode, "id" | "node_type">)
 }
 
 describe("graph node inspector drafts", () => {
-  it("reads creative brief lists and writes them back without dropping other keys", () => {
-    const source = node({
-      id: "brief",
-      node_type: "creative_brief",
-      title: "创作要求",
-      config: { extra: "keep", design_goals: ["主图"], required_copy: ["标题"], prohibitions: ["变形"] },
-    });
-    const draft = graphBriefDraft(source);
-    expect(draft.design_goals).toEqual(["主图"]);
-    expect(graphBriefConfig(source, { ...draft, goal: "主图优先" }).extra).toBe("keep");
-    expect(graphBriefConfig(source, { ...draft, goal: "主图优先" }).goal).toBe("主图优先");
-  });
-
-  it("fills image generation defaults instead of failing on empty spec", () => {
-    const source = node({ id: "image", node_type: "image_generation", title: "主图 1" });
-    const draft = graphImageGenerationDraft(source);
-    expect(draft.generation.aspect_ratio).toBe("1:1");
-    expect(graphImageGenerationConfig(source, draft).generation_spec).toMatchObject({
-      resolution_tier: "high",
-      text_policy: "none",
-    });
-  });
-
-  it("stores prompt editor fields under config.prompt and keeps image_type_key", () => {
-    const source = node({
-      id: "prompt",
-      node_type: "prompt_generation",
-      title: "主图提示词",
-      config: { image_type_key: "hero" },
-    });
-    const draft = graphPromptDraft(source);
-    const config = graphPromptConfig(source, { ...draft, design_goal: "展示瓶身", headline: "夏日" });
-    expect(config.image_type_key).toBe("hero");
-    expect(config.prompt).toMatchObject({
-      design_goal: "展示瓶身",
-      text: { headline: "夏日", subtitle: null, body: null },
-    });
-  });
-
-  it("strips topology keys from prompt config writes", () => {
-    const source = node({
-      id: "prompt",
-      node_type: "prompt_generation",
-      title: "主图提示词",
-      config: {
-        image_type_key: "hero",
-        fact_keys: ["product_name"],
-        prompt: {
-          design_goal: "旧目标",
-          images: [{ image_plan_key: "hero-1" }],
-          evidence_asset_ids: ["asset-1"],
-        },
-      },
-    });
-    const config = graphPromptConfig(source, graphPromptDraft(source));
-    expect(config.fact_keys).toBeUndefined();
-    expect(config.prompt).toEqual(expect.not.objectContaining({
-      images: expect.anything(),
-      evidence_asset_ids: expect.anything(),
-    }));
-    expect((config.prompt as { images?: unknown }).images).toBeUndefined();
-  });
-
-  it("writes visual overlay fields without inventing a version id", () => {
-    const source = node({ id: "visual", node_type: "visual_system", title: "视觉规范" });
-    const config = graphVisualConfig(source, {
-      ...graphVisualDraft(source),
-      style: ["干净白底"],
-      background: "#FFFFFF",
-      prohibitions: ["变形"],
-    });
-    expect(config.visual_system_version_id).toBeNull();
-    expect(config.visual_overlay).toEqual({
-      style: ["干净白底"],
-      prohibitions: ["变形"],
-      colors: [{ role: "background", value: "#FFFFFF", label: "背景" }],
-    });
-  });
-
   it("keeps an unbound product source explicit and preserves a bound fact-set id", () => {
     const unbound = node({ id: "source", node_type: "product_source" });
     expect(graphProductSourceDraft(unbound)).toMatchObject({
@@ -126,9 +39,18 @@ describe("graph node inspector drafts", () => {
       config: { source_product_id: "product-2", fact_set_version_id: "facts-2" },
     });
     const draft = graphProductSourceDraft(bound);
-    expect(graphProductSourceConfig(bound, { ...draft, source_product_id: "product-3", fact_set_version_id: null })).toMatchObject({
+    expect(graphProductSourceConfig(bound, { ...draft, source_product_id: "product-3", fact_set_version_id: null })).toEqual({
       source_product_id: "product-3",
       fact_set_version_id: null,
+    });
+    const withExtra = node({
+      id: "source",
+      node_type: "product_source",
+      config: { source_product_id: "product-2", fact_set_version_id: "facts-2", leftover: true },
+    });
+    expect(graphProductSourceConfig(withExtra, graphProductSourceDraft(withExtra))).toEqual({
+      source_product_id: "product-2",
+      fact_set_version_id: "facts-2",
     });
   });
 

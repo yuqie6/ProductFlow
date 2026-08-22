@@ -14,8 +14,18 @@ const catalog: GraphNodeCatalog = {
   nodes: [
     { node_type: "product_source", output_data_type: "product_facts", kind: "source", accepts: [] },
     { node_type: "image_asset", output_data_type: "image_asset", kind: "source", accepts: [] },
-    { node_type: "creative_brief", output_data_type: "creative_brief", kind: "source", accepts: [] },
-    { node_type: "visual_system", output_data_type: "visual_system", kind: "source", accepts: [] },
+    {
+      node_type: "creative_brief", output_data_type: "creative_brief", kind: "processing", accepts: [
+        { data_type: "product_facts", role: "facts", max_count: 1, required_to_run: false },
+        { data_type: "image_asset", role: "reference", max_count: null, required_to_run: false },
+      ]
+    },
+    {
+      node_type: "visual_system", output_data_type: "visual_system", kind: "processing", accepts: [
+        { data_type: "product_facts", role: "facts", max_count: 1, required_to_run: false },
+        { data_type: "image_asset", role: "reference", max_count: null, required_to_run: false },
+      ]
+    },
     {
       node_type: "prompt_generation",
       output_data_type: "prompt",
@@ -32,7 +42,7 @@ const catalog: GraphNodeCatalog = {
       output_data_type: "image_asset",
       kind: "processing",
       accepts: [
-        { data_type: "image_asset", role: "reference", max_count: null, required_to_run: false },
+        { data_type: "image_asset", role: "reference", max_count: null, required_to_run: true },
         { data_type: "visual_system", role: "visual_guidance", max_count: 1, required_to_run: false },
         { data_type: "prompt", role: "prompt", max_count: 1, required_to_run: true },
       ],
@@ -47,9 +57,9 @@ const graph: GraphProjection = {
   schema_version: 3,
   revision: 1,
   source_draft_revision_id: null,
-    last_operation_group_id: null,
-    can_undo: false,
-    can_redo: false,
+  last_operation_group_id: null,
+  can_undo: false,
+  can_redo: false,
   nodes: [
     {
       id: "source",
@@ -181,6 +191,8 @@ describe("isGraphConnectionValid", () => {
 describe("graphNodeHasInput", () => {
   it("uses catalog accepts, not a local type list", () => {
     expect(graphNodeHasInput("prompt_generation", catalog)).toBe(true);
+    expect(graphNodeHasInput("visual_system", catalog)).toBe(true);
+    expect(graphNodeHasInput("creative_brief", catalog)).toBe(true);
     expect(graphNodeHasInput("product_source", catalog)).toBe(false);
     expect(graphNodeHasInput("prompt_generation", null)).toBe(false);
     expect(graphNodeHasInput("image_generation", undefined)).toBe(false);

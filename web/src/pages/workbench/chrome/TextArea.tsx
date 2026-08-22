@@ -8,6 +8,8 @@ interface TextAreaProps {
   maxRows?: number;
   placeholder?: string;
   onBlur?: () => void;
+  maxLength?: number;
+  disabled?: boolean;
 }
 
 const TEXTAREA_LINE_HEIGHT_PX = 19;
@@ -21,6 +23,8 @@ export function TextArea({
   maxRows,
   placeholder,
   onBlur,
+  maxLength,
+  disabled = false,
 }: TextAreaProps) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const minHeight = minRows * TEXTAREA_LINE_HEIGHT_PX + TEXTAREA_VERTICAL_PADDING_PX;
@@ -49,9 +53,11 @@ export function TextArea({
         onChange={(event) => onChange(event.target.value)}
         onBlur={onBlur}
         placeholder={placeholder}
+        maxLength={maxLength}
+        disabled={disabled}
         rows={minRows}
         style={{ minHeight }}
-        className="w-full resize-none px-3 py-2 text-xs leading-relaxed outline-none textarea-premium"
+        className="w-full resize-none px-3 py-2 text-xs leading-relaxed outline-none textarea-premium disabled:cursor-not-allowed disabled:opacity-60"
       />
     </label>
   );

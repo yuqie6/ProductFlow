@@ -27,6 +27,7 @@ from productflow_backend.presentation.schemas.workflow_recipes import (
 )
 
 router = APIRouter(prefix="/api/v2", tags=["workflow-recipes"], dependencies=[Depends(require_admin)])
+v3_router = APIRouter(prefix="/api/v3", tags=["workflow-recipes"], dependencies=[Depends(require_admin)])
 
 
 @router.get("/workflow-recipes", response_model=list[WorkflowRecipeSummaryResponse])
@@ -48,7 +49,61 @@ def get_workflow_recipe_endpoint(
     return serialize_workflow_recipe(get_workflow_recipe_or_raise(session, recipe_id=recipe_id))
 
 
+def _create_recipe(
+    *,
+    product_id: str,
+    workflow_id: str,
+    payload: CreateWorkflowRecipeRequest,
+    session: Session,
+) -> WorkflowRecipeResponse:
+    return serialize_workflow_recipe(
+        create_workflow_recipe(
+            session,
+            product_id=product_id,
+            workflow_id=workflow_id,
+            source_type=payload.source_type,
+            group_id=payload.group_id,
+            node_ids=payload.node_ids,
+            expected_graph_revision=payload.expected_graph_revision,
+            title=payload.title,
+            description=payload.description,
+            preferred_visual_system_version_id=payload.preferred_visual_system_version_id,
+        )
+    )
+
+
+def _append_recipe(
+    *,
+    product_id: str,
+    workflow_id: str,
+    recipe_id: str,
+    payload: AppendWorkflowRecipeVersionRequest,
+    session: Session,
+) -> WorkflowRecipeResponse:
+    return serialize_workflow_recipe(
+        append_workflow_recipe_version(
+            session,
+            recipe_id=recipe_id,
+            expected_recipe_version=payload.expected_recipe_version,
+            product_id=product_id,
+            workflow_id=workflow_id,
+            source_type=payload.source_type,
+            group_id=payload.group_id,
+            node_ids=payload.node_ids,
+            expected_graph_revision=payload.expected_graph_revision,
+            title=payload.title,
+            description=payload.description,
+            preferred_visual_system_version_id=payload.preferred_visual_system_version_id,
+        )
+    )
+
+
 @router.post(
+    "/products/{product_id}/workflows/{workflow_id}/recipes",
+    response_model=WorkflowRecipeResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+@v3_router.post(
     "/products/{product_id}/workflows/{workflow_id}/recipes",
     response_model=WorkflowRecipeResponse,
     status_code=status.HTTP_201_CREATED,
@@ -59,23 +114,20 @@ def create_workflow_recipe_endpoint(
     payload: CreateWorkflowRecipeRequest,
     session: Session = Depends(get_session),
 ) -> WorkflowRecipeResponse:
-    return serialize_workflow_recipe(
-        create_workflow_recipe(
-            session,
-            product_id=product_id,
-            workflow_id=workflow_id,
-            source_type=payload.source_type,
-            folder_id=payload.folder_id,
-            node_ids=payload.node_ids,
-            expected_edit_version=payload.expected_edit_version,
-            title=payload.title,
-            description=payload.description,
-            preferred_visual_system_version_id=payload.preferred_visual_system_version_id,
-        )
+    return _create_recipe(
+        product_id=product_id,
+        workflow_id=workflow_id,
+        payload=payload,
+        session=session,
     )
 
 
 @router.post(
+    "/products/{product_id}/workflows/{workflow_id}/recipes/{recipe_id}/versions",
+    response_model=WorkflowRecipeResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+@v3_router.post(
     "/products/{product_id}/workflows/{workflow_id}/recipes/{recipe_id}/versions",
     response_model=WorkflowRecipeResponse,
     status_code=status.HTTP_201_CREATED,
@@ -87,21 +139,12 @@ def append_workflow_recipe_version_endpoint(
     payload: AppendWorkflowRecipeVersionRequest,
     session: Session = Depends(get_session),
 ) -> WorkflowRecipeResponse:
-    return serialize_workflow_recipe(
-        append_workflow_recipe_version(
-            session,
-            recipe_id=recipe_id,
-            expected_recipe_version=payload.expected_recipe_version,
-            product_id=product_id,
-            workflow_id=workflow_id,
-            source_type=payload.source_type,
-            folder_id=payload.folder_id,
-            node_ids=payload.node_ids,
-            expected_edit_version=payload.expected_edit_version,
-            title=payload.title,
-            description=payload.description,
-            preferred_visual_system_version_id=payload.preferred_visual_system_version_id,
-        )
+    return _append_recipe(
+        product_id=product_id,
+        workflow_id=workflow_id,
+        recipe_id=recipe_id,
+        payload=payload,
+        session=session,
     )
 
 
@@ -142,4 +185,4 @@ def archive_workflow_recipe_endpoint(
     )
 
 
-__all__ = ["router"]
+__all__ = ["router", "v3_router"]

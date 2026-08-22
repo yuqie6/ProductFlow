@@ -27,6 +27,7 @@ from productflow_backend.application.agent.tasks import (
     new_agent_task,
     refresh_agent_session_summary,
 )
+from productflow_backend.application.product_facts import product_metadata_facts, stage_product_fact_set
 from productflow_backend.application.product_images.assets import get_product_image_assets_by_ids
 from productflow_backend.application.product_workflow.graph_commands import get_active_workflow_graph
 from productflow_backend.application.products import (
@@ -111,6 +112,7 @@ def create_agent_product_draft_workspace(
             price=None,
             source_note=None,
         )
+        _stage_product_identity_facts(session, product)
         _stage_workspace_records(
             session,
             product=product,
@@ -257,6 +259,7 @@ def create_agent_product_workspace(
                 storage=storage,
                 storage_writes=storage_writes,
             )
+            _stage_product_identity_facts(session, canonical.product)
             intake = WorkflowIntakeV1(
                 schema_version=WORKFLOW_INTAKE_SCHEMA_VERSION,
                 image_types=selection.image_types,
@@ -571,6 +574,15 @@ def _stage_workspace_records(
         session.add(task)
     refresh_agent_session_summary(session, agent_session.id)
     return draft, conversation
+
+
+def _stage_product_identity_facts(session: Session, product: Product) -> None:
+    if product.current_fact_set_version_id:
+        return
+    facts = product_metadata_facts(product)
+    if not facts:
+        return
+    stage_product_fact_set(session, product=product, facts=facts)
 
 
 def _normalize_agent_session_id(value: str | None) -> str | None:

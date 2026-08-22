@@ -805,77 +805,42 @@ export interface AppendWorkflowDraftRevisionInput extends CreateWorkflowDraftInp
 }
 
 export type WorkflowRecipeKind = "workflow_recipe" | "recipe_fragment";
-export type WorkflowRecipeSourceType = "workflow" | "folder" | "selection";
+export type WorkflowRecipeSourceType = "workflow" | "group" | "selection";
 
-export interface WorkflowRecipePayloadV1 {
-  schema_version: 1;
-  folders: Array<{ key: string; title: string; order: number }>;
+export interface WorkflowRecipePayloadV3 {
+  schema_version: 3;
   nodes: Array<{
     key: string;
-    node_type: WorkflowNodeTypeV2;
+    node_type: GraphNodeType;
+    title: string;
     position_x: number;
     position_y: number;
-    folder_key: string | null;
-    reference_requirement_key?: string;
-    image_type_key?: string;
-    image_plan_key?: string;
+    group_key: string | null;
+    config: Record<string, unknown>;
   }>;
   edges: Array<{
     key: string;
     source_node_key: string;
     target_node_key: string;
-    source_handle: string | null;
-    target_handle: string | null;
+    data_type: GraphEdgeDataType;
+    role: GraphEdgeRole;
+    order: number;
   }>;
-  boundary_requirements: Array<{
-    key: string;
-    direction: "inbound" | "outbound";
-    local_node_key: string;
-    external_node_type: WorkflowNodeTypeV2;
-    role: string;
-  }>;
-  reference_requirements: Array<{ key: string; role: string; label: string; required: boolean }>;
-  image_types: Array<{
+  groups: Array<{
     key: string;
     title: string;
-    order: number;
-    default_quantity: number;
-    images: Array<{
-      key: string;
-      order: number;
-      generation_spec: WorkflowGenerationSpec;
-      delivery_spec: WorkflowDeliverySpec | null;
-    }>;
+    member_keys: string[];
   }>;
-  prompt_shapes: Array<{
-    image_type_key: string;
-    product_present: boolean;
-    picture_in_picture: "none" | "allowed" | "required";
-    product_share_percent: number;
-    text_slots: Array<"headline" | "subtitle" | "body">;
-    fact_keys: string[];
-    visual_variant_key: string | null;
-    per_image_slots: Array<{
-      image_plan_key: string;
-      viewpoint: boolean;
-      composition_adjustments: boolean;
-      lighting: boolean;
-    }>;
-  }>;
-  visual_requirements: {
-    required_locked_fields: string[];
-    required_variant_keys: string[];
-  };
 }
 
 export interface WorkflowRecipeVersion {
   id: string;
   recipe_id: string;
   version: number;
-  schema_version: 1;
+  schema_version: 3;
   title: string;
   description: string | null;
-  payload: WorkflowRecipePayloadV1;
+  payload: WorkflowRecipePayloadV3;
   payload_hash: string;
   preferred_visual_system_version_id: string | null;
   created_at: string;
@@ -1298,9 +1263,9 @@ export interface WorkflowRecipeApplicationResult {
 
 export interface WorkflowRecipeSourceInput {
   source_type: WorkflowRecipeSourceType;
-  folder_id?: string | null;
+  group_id?: string | null;
   node_ids?: string[];
-  expected_edit_version: number;
+  expected_graph_revision: number;
   title: string;
   description?: string | null;
   preferred_visual_system_version_id?: string | null;
@@ -1610,10 +1575,51 @@ export interface GraphCatalogInputContract {
   required_to_run: boolean;
 }
 
+export type GraphConfigValueKind =
+  | "string"
+  | "string_or_null"
+  | "string_list"
+  | "boolean"
+  | "number"
+  | "number_or_null"
+  | "object"
+  | "object_list"
+  | "object_or_null";
+export type GraphConfigControl =
+  | "text"
+  | "textarea"
+  | "string_list"
+  | "select"
+  | "checkbox"
+  | "number"
+  | "aspect_ratio"
+  | "optional_object"
+  | "visual_background"
+  | "hidden"
+  | "group";
+
+export interface GraphCatalogVisibleWhen {
+  field: string;
+  op: "in";
+  values: string[];
+}
+
 export interface GraphCatalogConfigField {
   key: string;
-  value_kind: "string" | "string_or_null" | "string_list" | "object" | "object_or_null";
+  value_kind: GraphConfigValueKind;
   required: boolean;
+  control: GraphConfigControl;
+  label_key?: string | null;
+  hint_key?: string | null;
+  toggle_label_key?: string | null;
+  choices?: string[];
+  min_value?: number | null;
+  max_value?: number | null;
+  max_length?: number | null;
+  default?: unknown;
+  panel?: string | null;
+  visible_when?: GraphCatalogVisibleWhen | null;
+  fields?: GraphCatalogConfigField[];
 }
 
 export interface GraphCatalogNode {
@@ -1649,6 +1655,9 @@ export interface GraphNode {
   preview_asset_id: string | null;
   config_status: GraphConfigStatus;
   unused: boolean;
+  current_artifact_id?: string | null;
+  current_artifact_type?: "creative_brief" | "visual_system" | "prompt" | "image" | null;
+  current_artifact_payload?: Record<string, unknown> | null;
   source_product?: GraphSourceProduct | null;
   product_fact_set?: GraphProductFactSet | null;
   incoming: GraphEdgeSummary[];

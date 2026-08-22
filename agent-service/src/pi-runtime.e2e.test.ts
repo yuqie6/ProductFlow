@@ -4,7 +4,7 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { Scope, TurnState } from "./contracts.js";
+import { TOOL_CONTRACT_VERSION, type Scope, type TurnState } from "./contracts.js";
 import { PiRuntimeManager } from "./pi-runtime.js";
 import type { SkillCatalog } from "./skills.js";
 import { TurnStore } from "./store.js";
@@ -393,7 +393,7 @@ function createFakeProductFlow(
       draft_kind: "global",
       draft_schema: scope.draft_schema,
       workflow_draft_schema: scope.workflow_draft_schema,
-      tool_contract_version: 9,
+      tool_contract_version: TOOL_CONTRACT_VERSION,
     }),
     runtimeContext: async () => ({
       schema_version: 1,

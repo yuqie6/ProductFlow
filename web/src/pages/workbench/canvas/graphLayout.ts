@@ -108,6 +108,35 @@ export function buildGraphAutoLayoutPositions(graph: GraphProjection): GraphNode
   });
 }
 
+export function graphCanvasView(
+  graph: GraphProjection,
+  groupId: string | null | undefined,
+): GraphProjection {
+  if (!groupId) return graph;
+  if (!graph.groups.some((group) => group.id === groupId)) return graph;
+  const nodes = graph.nodes.filter((node) => node.group_id === groupId);
+  const memberIds = new Set(nodes.map((node) => node.id));
+  return {
+    ...graph,
+    nodes,
+    edges: graph.edges.filter(
+      (edge) => memberIds.has(edge.source_node_id) && memberIds.has(edge.target_node_id),
+    ),
+    groups: [],
+  };
+}
+
+export function selectionInsideGroup(
+  graph: GraphProjection,
+  groupId: string,
+  selectedNodeIds: readonly string[],
+): string[] {
+  const members = new Set(
+    graph.nodes.filter((node) => node.group_id === groupId).map((node) => node.id),
+  );
+  return selectedNodeIds.filter((nodeId) => members.has(nodeId));
+}
+
 export function computeGraphGroupBounds(graph: GraphProjection, group: GraphGroup): GraphGroupBounds | null {
   const members = graph.nodes.filter((node) => group.member_ids.includes(node.id));
   if (!members.length) return null;
@@ -147,6 +176,7 @@ export function buildDuplicateGraphOperations(
     position_y: node.position_y + offset,
     config: node.config,
     bound_asset_id: node.bound_asset_id,
+    ...(node.group_id ? { group_ref: node.group_id } : {}),
   }));
   for (const edge of selectedGraphEdges(graph, nodeIds)) {
     operations.push({

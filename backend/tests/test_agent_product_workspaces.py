@@ -144,6 +144,13 @@ def test_create_agent_product_workspace_is_atomic_coverless_and_has_no_dag(
     assert creation.created is True
     assert creation.product.name == "工业刀具收纳套装"
     assert creation.product.cover_image_asset_id is None
+    assert creation.product.current_fact_set_version_id is not None
+    fact_set = creation.product.current_fact_set_version
+    assert fact_set is not None
+    assert any(
+        item.get("key") == "product_name" and item.get("value") == "工业刀具收纳套装"
+        for item in fact_set.payload_json.get("facts") or []
+    )
     assert [asset.original_filename for asset in creation.created_assets] == ["front.png", "detail.png"]
     assert creation.workflow_draft.current_revision_id is None
     assert creation.workflow_draft.revisions == []
@@ -187,6 +194,7 @@ def test_agent_product_draft_workspace_creates_only_durable_identity_and_replays
     assert first.created is True
     assert first.product.name == "两阶段 Agent 商品"
     assert first.product.cover_image_asset_id is None
+    assert first.product.current_fact_set_version_id is not None
     assert first.created_assets == []
     assert first.workflow_draft.current_revision_id is None
     assert first.workflow_draft.revisions == []

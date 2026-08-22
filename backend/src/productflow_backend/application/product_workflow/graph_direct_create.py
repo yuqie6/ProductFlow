@@ -36,6 +36,7 @@ def create_product_with_direct_graph(
     image_uploads: list[tuple[bytes, str, str]],
     image_types: list[DirectCreateImageType],
     storage: LocalStorage | None = None,
+    generation_spec: dict | None = None,
 ) -> DirectCreateResult:
     """Create a product, its reference assets, and the preset v3 graph in one transaction."""
 
@@ -63,6 +64,8 @@ def create_product_with_direct_graph(
             product_title=creation.product.name,
             source_product_id=creation.product.id,
             fact_set_version_id=fact_set.id,
+            source_note=source_note,
+            generation_spec=generation_spec,
         )
         command = stage_new_workflow_graph(
             session,

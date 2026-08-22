@@ -318,6 +318,10 @@ def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch:
         assert "history_kind" in history_columns
         history_checks = {check["name"] for check in inspector.get_check_constraints("workflow_operation_groups")}
         assert "ck_workflow_operation_groups_history_kind" in history_checks
+        recipe_checks = {
+            check["name"] for check in inspector.get_check_constraints("workflow_recipe_versions")
+        }
+        assert "ck_workflow_recipe_versions_schema_version" in recipe_checks
         artifact_fks = {fk["name"]: fk for fk in inspector.get_foreign_keys("workflow_graph_artifacts")}
         assert artifact_fks["fk_workflow_graph_artifacts_node_id"]["options"]["ondelete"] == "SET NULL"
         node_run_fks = {fk["name"]: fk for fk in inspector.get_foreign_keys("workflow_graph_node_runs")}
@@ -331,7 +335,53 @@ def test_alembic_upgrade_head_supports_fresh_sqlite(tmp_path: Path, monkeypatch:
         assert artifact_node_id["nullable"] is True
         assert node_run_node_id["nullable"] is True
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260822_0081"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260822_0083"
+    finally:
+        engine.dispose()
+
+
+def test_recipe_schema_v3_migration_drops_unreadable_v1_payloads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path, config = _configure_sqlite_alembic(tmp_path, monkeypatch, filename="recipe-v1-purge.db")
+    command.upgrade(config, "20260822_0081")
+    engine = sa.create_engine(f"sqlite:///{database_path}", future=True)
+    now = datetime.now(UTC)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                sa.text(
+                    "INSERT INTO workflow_recipes "
+                    "(id, kind, created_at, updated_at) "
+                    "VALUES ('recipe-v1', 'workflow_recipe', :now, :now)"
+                ),
+                {"now": now},
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO workflow_recipe_versions "
+                    "(id, recipe_id, version, schema_version, title, payload_json, payload_hash, created_at) "
+                    "VALUES ('recipe-v1-version', 'recipe-v1', 1, 1, '旧配方', :payload, :payload_hash, :now)"
+                ),
+                {"payload": "{}", "payload_hash": "a" * 64, "now": now},
+            )
+            connection.execute(
+                sa.text(
+                    "UPDATE workflow_recipes SET current_version_id = 'recipe-v1-version' WHERE id = 'recipe-v1'"
+                )
+            )
+    finally:
+        engine.dispose()
+
+    command.upgrade(config, "head")
+
+    engine = sa.create_engine(f"sqlite:///{database_path}", future=True)
+    try:
+        with engine.connect() as connection:
+            assert connection.scalar(sa.text("SELECT count(*) FROM workflow_recipe_versions")) == 0
+            assert connection.scalar(sa.text("SELECT count(*) FROM workflow_recipes")) == 0
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260822_0083"
     finally:
         engine.dispose()
 
@@ -591,7 +641,7 @@ def test_agent_tool_step_projection_migration_backfills_existing_turns(
                 sa.text("SELECT tool_steps_json FROM agent_turn_projections WHERE id = 'turn-tool-step'")
             )
             assert value == "[]"
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260822_0081"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260822_0083"
     finally:
         engine.dispose()
 
@@ -826,6 +876,6 @@ def test_media_library_upload_keys_migration_upgrade_and_downgrade(
         assert "source_run_id" not in source_run_columns
         assert "graph_id" in source_run_columns
         with engine.connect() as connection:
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260822_0081"
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260822_0083"
     finally:
         engine.dispose()

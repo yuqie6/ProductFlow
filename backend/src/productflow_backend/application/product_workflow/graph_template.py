@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
-from productflow_backend.application.agent.product_intake import AGENT_PRODUCT_IMAGE_TYPE_CATALOG
+from pydantic import ValidationError
+
+from productflow_backend.application.agent.product_intake import (
+    AGENT_PRODUCT_IMAGE_TYPE_CATALOG,
+    agent_product_image_type_option,
+)
 from productflow_backend.application.product_workflow.graph_contracts import (
     ConnectNodesOp,
     CreateNodeOp,
@@ -13,6 +19,7 @@ from productflow_backend.application.workflow_drafts.contracts import (
     WORKFLOW_DRAFT_MAX_REFERENCE_ASSETS,
     WORKFLOW_DRAFT_MAX_TOTAL_IMAGES,
     WORKFLOW_DRAFT_MIN_IMAGES_PER_TYPE,
+    GenerationSpec,
 )
 from productflow_backend.domain.enums import GraphActorType, GraphNodeType
 from productflow_backend.domain.errors import BusinessValidationError
@@ -37,6 +44,23 @@ class DirectCreateImageType:
     title: str | None = None
 
 
+def resolve_template_generation_spec(overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = dict(DEFAULT_TEMPLATE_GENERATION_SPEC)
+    if overrides:
+        payload.update(overrides)
+    try:
+        return GenerationSpec.model_validate(payload).model_dump(mode="json")
+    except ValidationError as exc:
+        raise BusinessValidationError("出图设定无效") from exc
+
+
+def creative_brief_config_from_source_note(source_note: str | None) -> dict[str, Any]:
+    text = source_note.strip() if isinstance(source_note, str) else ""
+    if not text:
+        return {}
+    return {"goal": text[:4000]}
+
+
 def build_direct_create_template(
     *,
     image_types: list[DirectCreateImageType],
@@ -44,6 +68,8 @@ def build_direct_create_template(
     product_title: str = "商品资料",
     source_product_id: str | None = None,
     fact_set_version_id: str | None = None,
+    source_note: str | None = None,
+    generation_spec: dict[str, Any] | None = None,
 ) -> WorkflowChangeSet:
     if not image_types:
         raise BusinessValidationError("至少选择一种图片类型")
@@ -65,6 +91,7 @@ def build_direct_create_template(
         total_images += item.quantity
     if total_images > WORKFLOW_DRAFT_MAX_TOTAL_IMAGES:
         raise BusinessValidationError(f"图片生成总数不能超过 {WORKFLOW_DRAFT_MAX_TOTAL_IMAGES}")
+    image_generation_spec = resolve_template_generation_spec(generation_spec)
 
     operations: list[CreateNodeOp | ConnectNodesOp] = [
         CreateNodeOp(
@@ -92,7 +119,7 @@ def build_direct_create_template(
             title="创作要求",
             position_x=80,
             position_y=400,
-            config={},
+            config=creative_brief_config_from_source_note(source_note),
         ),
     ]
     for index, asset_id in enumerate(reference_asset_ids):
@@ -112,9 +139,11 @@ def build_direct_create_template(
     ordered_types = sorted(image_types, key=lambda item: (item.order, item.key))
     for type_index, image_type in enumerate(ordered_types):
         type_title = image_type.title or _IMAGE_TYPE_TITLES.get(image_type.key, image_type.key)
+        type_option = agent_product_image_type_option(image_type.key)
         prompt_ref = f"prompt-{image_type.key}"
         prompt_refs.append(prompt_ref)
         processing_refs.append(prompt_ref)
+        prompt_goal = f"{type_title}：{type_option.description}" if type_option else type_title
         operations.append(
             CreateNodeOp(
                 client_ref=prompt_ref,
@@ -122,9 +151,21 @@ def build_direct_create_template(
                 title=f"{type_title}提示词",
                 position_x=420,
                 position_y=40 + type_index * 200,
-                config={"image_type_key": image_type.key},
+                config={
+                    "image_type_key": image_type.key,
+                    "prompt": {"design_goal": prompt_goal},
+                },
             )
         )
+        for asset_index in range(len(reference_asset_ids)):
+            operations.append(
+                ConnectNodesOp(
+                    client_ref=f"edge-ref-{asset_index + 1}-{prompt_ref}",
+                    source_ref=f"image-asset-{asset_index + 1}",
+                    target_ref=prompt_ref,
+                    order=asset_index,
+                )
+            )
         for image_index in range(image_type.quantity):
             image_ref = f"image-{image_type.key}-{image_index + 1}"
             processing_refs.append(image_ref)
@@ -137,7 +178,7 @@ def build_direct_create_template(
                     position_y=40 + type_index * 200 + image_index * 90,
                     config={
                         "image_type_key": image_type.key,
-                        "generation_spec": dict(DEFAULT_TEMPLATE_GENERATION_SPEC),
+                        "generation_spec": dict(image_generation_spec),
                     },
                 )
             )
@@ -149,6 +190,15 @@ def build_direct_create_template(
                     order=image_index,
                 )
             )
+            for asset_index in range(len(reference_asset_ids)):
+                operations.append(
+                    ConnectNodesOp(
+                        client_ref=f"edge-ref-{asset_index + 1}-{image_ref}",
+                        source_ref=f"image-asset-{asset_index + 1}",
+                        target_ref=image_ref,
+                        order=asset_index,
+                    )
+                )
 
     for order, prompt_ref in enumerate(prompt_refs):
         operations.append(
@@ -165,6 +215,39 @@ def build_direct_create_template(
                 source_ref="creative-brief",
                 target_ref=prompt_ref,
                 order=order,
+            )
+        )
+    operations.append(
+        ConnectNodesOp(
+            client_ref="edge-facts-visual-system",
+            source_ref="product-source",
+            target_ref="visual-system",
+            order=0,
+        )
+    )
+    operations.append(
+        ConnectNodesOp(
+            client_ref="edge-facts-creative-brief",
+            source_ref="product-source",
+            target_ref="creative-brief",
+            order=0,
+        )
+    )
+    for asset_index in range(len(reference_asset_ids)):
+        operations.append(
+            ConnectNodesOp(
+                client_ref=f"edge-ref-{asset_index + 1}-visual-system",
+                source_ref=f"image-asset-{asset_index + 1}",
+                target_ref="visual-system",
+                order=asset_index,
+            )
+        )
+        operations.append(
+            ConnectNodesOp(
+                client_ref=f"edge-ref-{asset_index + 1}-creative-brief",
+                source_ref=f"image-asset-{asset_index + 1}",
+                target_ref="creative-brief",
+                order=asset_index,
             )
         )
     for order, node_ref in enumerate(processing_refs):

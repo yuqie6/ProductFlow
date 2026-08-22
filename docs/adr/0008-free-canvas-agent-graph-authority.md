@@ -55,8 +55,8 @@ ProductFlow 的工作流编辑器将演进为真正的自由画布。节点表�
 |---|---|---|---|---|
 | 商品资料 | `product_source` | 提供商品事实快照 | 无 | `product_facts` |
 | 图片素材 | `image_asset` | 持有一张已有图片 | 无 | `image_asset` |
-| 创作要求 | `creative_brief` | 提供目标、文案和限制 | 无 | `creative_brief` |
-| 视觉规范 | `visual_system` | 提供风格和品牌约束 | 无 | `visual_system` |
+| 创作要求 | `creative_brief` | 运行时生成目标、文案和限制 | 商品事实、参考图 | `creative_brief` |
+| 视觉规范 | `visual_system` | 运行时生成风格和背景约束 | 商品事实、参考图 | `visual_system` |
 | 提示词生成 | `prompt_generation` | 根据上游输入产生提示词 | 聚合输入 | `prompt` |
 | 图片生成 | `image_generation` | 根据提示词和参考图产生图片 | 聚合输入 | `image_asset` |
 
@@ -68,8 +68,8 @@ ProductFlow 的工作流编辑器将演进为真正的自由画布。节点表�
 
 - `product_source` 保存商品或事实版本引用。
 - `image_asset` 保存一个 canonical 图片资产引用及用户可编辑的用途标签。
-- `creative_brief` 保存创作目标、必需文案和禁止项。
-- `visual_system` 保存明确固定的 Visual System version 引用。
+- `creative_brief` 保存运行写出的创作目标、必需文案和禁止项。
+- `visual_system` 保存运行写出的风格/背景 overlay，或明确固定的 Visual System version 引用。
 - `prompt_generation` 保存提示词生成配置和当前 Prompt Artifact 引用。
 - `image_generation` 保存画幅、质量、变化指令、交付规格和当前图片 Artifact 引用。
 
@@ -129,13 +129,13 @@ interface WorkflowEdgeV3 {
 
 ### 3.1 首版连接矩阵
 
-| 上游输出 | 提示词生成 | 图片生成 |
-|---|---:|---:|
-| `product_facts` | 多条，可选 | 不支持 |
-| `image_asset` | 多条参考图 | 多条参考图 |
-| `creative_brief` | 多条，可选 | 不支持 |
-| `visual_system` | 最多一条 | 最多一条 |
-| `prompt` | 不支持 | 最多一条，运行必需 |
+| 上游输出 | 创作要求 | 视觉规范 | 提示词生成 | 图片生成 |
+|---|---:|---:|---:|---:|
+| `product_facts` | 最多一条，可选 | 最多一条，可选 | 多条，可选 | 不支持 |
+| `image_asset` | 多条参考图 | 多条参考图 | 多条参考图 | 多条参考图 |
+| `creative_brief` | 不支持 | 不支持 | 多条，可选 | 不支持 |
+| `visual_system` | 不支持 | 不支持 | 最多一条 | 最多一条 |
+| `prompt` | 不支持 | 不支持 | 不支持 | 最多一条，运行必需 |
 
 图片生成节点的 `image_asset` 输出可以进入提示词生成或另一个图片生成节点，角色均为 `reference`。一张图片素材可以扇出到多个消费者，每条使用关系都是独立 edge。
 

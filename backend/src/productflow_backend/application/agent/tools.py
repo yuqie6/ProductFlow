@@ -61,6 +61,7 @@ from productflow_backend.domain.errors import (
     NotFoundError,
     StructuredBusinessValidationError,
 )
+from productflow_backend.domain.graph_catalog import graph_catalog_json
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
     AgentToolMutation,
@@ -75,7 +76,7 @@ from productflow_backend.infrastructure.db.models import (
 )
 from productflow_backend.infrastructure.storage import LocalStorage
 
-AGENT_TOOL_CONTRACT_VERSION = 9
+AGENT_TOOL_CONTRACT_VERSION = 10
 AGENT_ASSET_LIST_DEFAULT_LIMIT = 50
 AGENT_ASSET_LIST_MAX_LIMIT = 100
 AGENT_ASSET_MAX_BYTES = 20 * 1024 * 1024
@@ -94,7 +95,8 @@ WORKFLOW_AGENT_SYSTEM_PROMPT = """你是 ProductFlow 的商品工作流设计 Ag
 执行顺序：
 1. 调用 load_productflow_skill 加载 productflow-core；任务涉及 WorkflowDraft 时继续加载 workflow-draft。
 2. 调用 get_product_workflow_context_v1，核对当前商品事实、最新 revision、intake、已核验参考资产、
-   recipe/legacy seed 和 draft_guidance。
+   recipe/legacy seed、draft_guidance 和 node_catalog。node_catalog 是上下文内容，包含当前 schema-v3 节点及其
+   config_fields；Inspector 和节点配置写入的唯一来源是该 Catalog。
 3. 只有缺少会改变成图或文案结果的事实时才使用 ask_user；问题要集中、提供有描述的选择，
    并等待回答后重新读取当前 ProductFlow 事实。
 4. 商品外观必须以用户提供的已核验参考图为依据。图库列表只提供元数据；确有需要时 inspect 明确选中的图片，单次最多 6 张。
@@ -131,7 +133,8 @@ GLOBAL_AGENT_SYSTEM_PROMPT = """你是 ProductFlow 的全局素材与工作流�
 5. 涉及整理、归档、同步到工作流、修改商品或执行工作流的副作用，必须先形成可审阅的 Draft，等待用户确认；不能直接改库。
    纯查询或解释请求不要调用整理 Draft 工具；只有用户明确要求改变素材时才提交整理 Draft。
 6. 如果用户要求设计或修改某个商品的工作流，先用 inspect_global_workflow_context_v1 读取明确的 product_id，核对返回的
-   product_id、workflow_draft_id 和当前版本，再调用 propose_global_draft，draft_kind 必须为 workflow，
+   product_id、workflow_draft_id、当前版本和 node_catalog。node_catalog 的 config_fields 是 Inspector 与节点配置写入的
+   唯一来源。再调用 propose_global_draft，draft_kind 必须为 workflow，
    完整填写 product_id、workflow_draft_id、expected_draft_version 和 workflow_payload。
    不要把全局会话当成当前商品会话，不能省略目标作用域。
 7. propose_global_draft 只生成待审核 Draft，不会确认、物化或执行工作流；
@@ -402,6 +405,7 @@ def get_agent_product_context(session: Session, conversation_id: str) -> dict[st
         "workflow_recipe_seed": recipe_seed,
         "legacy_archive_seed": archive_seed,
         "draft_guidance": workflow_draft_agent_guidance(),
+        "node_catalog": graph_catalog_json(),
     }
     encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
     if len(encoded) > AGENT_CONTEXT_MAX_BYTES:

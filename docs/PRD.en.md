@@ -30,9 +30,10 @@ The current release serves a personal project and live demo, but upgrades for de
 
 - Users add, move, delete, and connect nodes.
 - Folders organize local workflow sections.
-- Prompt nodes hold the prompt strategy for one image type or related image set.
+- Prompt nodes hold the prompt strategy for one image type or related image set; running the node writes a generated prompt into the inspector.
+- Visual system and creative brief nodes generate their content when run and do not trigger image generation.
 - Reference nodes bind one image from the product library.
-- Image-generation nodes hold aspect ratio, resolution, quality, reference fidelity, background, and text policy.
+- Image-generation nodes hold aspect ratio, resolution, quality, reference fidelity, background, and text policy; running them renders images and does not fill empty upstream content nodes.
 - Users run a whole DAG or one node, inspect runs, cancel, and retry.
 - A whole workflow, folder, or selected node group can be saved as a user recipe.
 - Canvas folders are one-level visual organization only; they do not support nesting, independent run, cancel, or retry behavior.

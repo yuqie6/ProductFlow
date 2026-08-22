@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Play, Redo2, Undo2 } from "lucide-react";
+import { ChevronRight, Play, Redo2, Undo2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ConfirmDialog } from "../../../components/ConfirmDialog";
@@ -10,6 +10,7 @@ import { ProductWorkbenchCanvasChromeToggle } from "../chrome/ProductWorkbenchCa
 import { getWorkflowKeyboardShortcut, type WorkflowKeyboardShortcut } from "../chrome/shortcuts";
 import type { CanvasInteractionMode } from "../chrome/workflowCanvasInteraction";
 import {
+  isWorkflowCanvasViewportScopeActive,
   readStoredWorkflowCanvasViewport,
   writeStoredWorkflowCanvasViewport,
   type WorkflowCanvasViewport,
@@ -22,15 +23,23 @@ import {
 } from "./graphAssetDrop";
 import { GraphWorkflowCanvas } from "./GraphWorkflowCanvas";
 import {
+  resolveRecipeSaveRequest,
+  type RecipeSaveKind,
+  type RecipeSaveRequest,
+} from "./recipeSave";
+import { WorkflowRecipeDialog } from "./WorkflowDialogs";
+import {
   buildDeleteNodeOperations,
   buildDuplicateGraphOperations,
   buildGraphAutoLayoutPositions,
   buildRenameGroupOperations,
   createdGraphNodeIds,
   defaultGraphNodeConfig,
+  graphCanvasView,
   graphChangeSetClientRef,
   graphNodeTitleKey,
   graphViewportCenterPosition,
+  selectionInsideGroup,
 } from "./graphLayout";
 import { graphNodeRunPresentations } from "./graphRunDisplay";
 
@@ -39,6 +48,13 @@ export interface GraphCanvasActions {
   duplicateSelected: () => void;
   groupSelected: () => void;
   dissolveSelected: () => void;
+  saveRecipe: (kind: RecipeSaveKind) => void;
+  appendRecipe: (recipe: {
+    id: string;
+    version: number;
+    title: string;
+    description: string | null;
+  }) => void;
   commitNode: (input: {
     nodeId: string;
     title?: string;
@@ -78,7 +94,7 @@ export function GraphCanvasPanel({
   graph: GraphProjection;
   catalog: GraphNodeCatalog | null;
   selectedNodeIds: string[];
-  onSelect: (nodeIds: string[]) => void;
+  onSelect: (nodeIds: string[]) => void | Promise<void>;
   onGraphChange: (next: GraphProjection) => void;
   onRegisterActions?: (actions: GraphCanvasActions) => void;
   onBindNode?: (nodeId: string) => void;
@@ -93,24 +109,57 @@ export function GraphCanvasPanel({
   const catalogRef = useRef(catalog);
   const selectedRef = useRef(selectedNodeIds);
   const clipboardRef = useRef<string[]>([]);
+  const [enteredGroupId, setEnteredGroupId] = useState<string | null>(null);
+  const enteredGroupIdRef = useRef<string | null>(null);
   const [viewport, setViewport] = useState<WorkflowCanvasViewport | null>(
     () => readStoredWorkflowCanvasViewport(graph.id),
   );
   const viewportRef = useRef(viewport);
+  const [canvasSyncVersion, setCanvasSyncVersion] = useState(0);
+  const applyInFlightRef = useRef(false);
+  const historyInFlightRef = useRef(false);
+  const mutationPreparationRef = useRef(false);
   const [compact, setCompact] = useState(compactWorkbench);
   const [mobileMode, setMobileMode] = useState<CanvasInteractionMode>("edit");
   const [reusePrompt, setReusePrompt] = useState<Extract<GraphAssetDropPlan, { kind: "choose_reuse" }> | null>(null);
   const [pendingDeleteIds, setPendingDeleteIds] = useState<string[] | null>(null);
+  const [recipeDialog, setRecipeDialog] = useState<{
+    request: RecipeSaveRequest;
+    heading: string;
+    sourceLabel: string;
+    initialTitle: string;
+    initialDescription: string | null;
+    appendRecipeId?: string;
+    expectedRecipeVersion?: number;
+  } | null>(null);
+  const [recipeError, setRecipeError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
   graphRef.current = graph;
   catalogRef.current = catalog;
   selectedRef.current = selectedNodeIds;
   viewportRef.current = viewport;
+  enteredGroupIdRef.current = enteredGroupId;
 
   useEffect(() => {
+    setEnteredGroupId(null);
     setViewport(readStoredWorkflowCanvasViewport(graph.id));
   }, [graph.id]);
+
+  useEffect(() => {
+    if (!enteredGroupId) return;
+    if (graph.groups.some((group) => group.id === enteredGroupId)) return;
+    setEnteredGroupId(null);
+    setViewport(readStoredWorkflowCanvasViewport(graph.id));
+  }, [enteredGroupId, graph.groups, graph.id]);
+
+  useEffect(() => {
+    if (!enteredGroupId) return;
+    const inside = selectionInsideGroup(graph, enteredGroupId, selectedNodeIds);
+    if (inside.length === selectedNodeIds.length) return;
+    setEnteredGroupId(null);
+    setViewport(readStoredWorkflowCanvasViewport(graph.id));
+  }, [enteredGroupId, graph, selectedNodeIds]);
 
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
@@ -134,12 +183,15 @@ export function GraphCanvasPanel({
   const applyMutation = useMutation({
     mutationFn: (changeSet: GraphChangeSet) => api.applyWorkflowChangeSet(productId, graph.id, changeSet),
     onSuccess: (next) => {
+      graphRef.current = next;
       onGraphChange(next);
       queryClient.setQueryData(["workflow-graph", productId], next);
     },
     onError: async (error) => {
+      setCanvasSyncVersion((current) => current + 1);
       if (error instanceof ApiError && error.status === 409) {
         const next = await api.getWorkflowGraph(productId, graph.id);
+        graphRef.current = next;
         onGraphChange(next);
       }
     },
@@ -148,12 +200,15 @@ export function GraphCanvasPanel({
   const undoMutation = useMutation({
     mutationFn: () => api.undoWorkflowChangeSet(productId, graph.id),
     onSuccess: (next) => {
+      graphRef.current = next;
       onGraphChange(next);
       queryClient.setQueryData(["workflow-graph", productId], next);
     },
     onError: async (error) => {
+      setCanvasSyncVersion((current) => current + 1);
       if (error instanceof ApiError && error.status === 409) {
         const next = await api.getWorkflowGraph(productId, graph.id);
+        graphRef.current = next;
         onGraphChange(next);
       }
     },
@@ -162,12 +217,15 @@ export function GraphCanvasPanel({
   const redoMutation = useMutation({
     mutationFn: () => api.redoWorkflowChangeSet(productId, graph.id),
     onSuccess: (next) => {
+      graphRef.current = next;
       onGraphChange(next);
       queryClient.setQueryData(["workflow-graph", productId], next);
     },
     onError: async (error) => {
+      setCanvasSyncVersion((current) => current + 1);
       if (error instanceof ApiError && error.status === 409) {
         const next = await api.getWorkflowGraph(productId, graph.id);
+        graphRef.current = next;
         onGraphChange(next);
       }
     },
@@ -179,6 +237,41 @@ export function GraphCanvasPanel({
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["graph-runs", productId, graph.id] });
       void queryClient.invalidateQueries({ queryKey: ["workflow-graph", productId] });
+    },
+  });
+
+  const recipeMutation = useMutation({
+    mutationFn: (input: {
+      request: RecipeSaveRequest;
+      title: string;
+      description: string | null;
+      appendRecipeId?: string;
+      expectedRecipeVersion?: number;
+    }) => {
+      const body = {
+        source_type: input.request.source_type,
+        group_id: input.request.group_id,
+        node_ids: input.request.node_ids,
+        expected_graph_revision: input.request.expected_graph_revision,
+        title: input.title,
+        description: input.description,
+      };
+      if (input.appendRecipeId && input.expectedRecipeVersion != null) {
+        return api.appendWorkflowRecipeVersion(productId, graph.id, input.appendRecipeId, {
+          ...body,
+          expected_recipe_version: input.expectedRecipeVersion,
+        });
+      }
+      return api.createWorkflowRecipe(productId, graph.id, body);
+    },
+    onSuccess: () => {
+      setRecipeDialog(null);
+      setRecipeError(null);
+      void queryClient.invalidateQueries({ queryKey: ["workflow-recipes"] });
+      showNotice(t("workbench.recipe.saved"));
+    },
+    onError: (error) => {
+      setRecipeError(error instanceof ApiError ? error.detail : t("workbench.error.recipe"));
     },
   });
 
@@ -203,17 +296,78 @@ export function GraphCanvasPanel({
     .find((nodeRun) => nodeRun.status === "running")?.node_id ?? null;
 
   const applyAsync = useCallback(async (summary: string, operations: GraphChangeSet["operations"]) => {
-    if (!operations.length || applyMutation.isPending) return null;
-    return applyMutation.mutateAsync({
-      base_graph_revision: graphRef.current.revision,
-      summary,
-      operations,
-    });
-  }, [applyMutation]);
+    if (!operations.length) return null;
+    if (
+      applyInFlightRef.current
+      || historyInFlightRef.current
+      || mutationPreparationRef.current
+      || applyMutation.isPending
+    ) {
+      setCanvasSyncVersion((current) => current + 1);
+      return null;
+    }
+    mutationPreparationRef.current = true;
+    try {
+      try {
+        await onBeforeRun?.();
+      } catch {
+        setCanvasSyncVersion((current) => current + 1);
+        return null;
+      }
+      if (applyMutation.isPending || historyInFlightRef.current) {
+        setCanvasSyncVersion((current) => current + 1);
+        return null;
+      }
+      applyInFlightRef.current = true;
+      return await applyMutation.mutateAsync({
+        base_graph_revision: graphRef.current.revision,
+        summary,
+        operations,
+      });
+    } catch {
+      setCanvasSyncVersion((current) => current + 1);
+      return null;
+    } finally {
+      applyInFlightRef.current = false;
+      mutationPreparationRef.current = false;
+    }
+  }, [applyMutation, onBeforeRun]);
 
   const apply = useCallback((summary: string, operations: GraphChangeSet["operations"]) => {
     void applyAsync(summary, operations);
   }, [applyAsync]);
+
+  const runHistoryMutation = useCallback(async (action: "undo" | "redo") => {
+    if (
+      applyInFlightRef.current
+      || historyInFlightRef.current
+      || mutationPreparationRef.current
+      || undoMutation.isPending
+      || redoMutation.isPending
+    ) {
+      return;
+    }
+    mutationPreparationRef.current = true;
+    try {
+      try {
+        await onBeforeRun?.();
+      } catch {
+        return;
+      }
+      if (applyInFlightRef.current || applyMutation.isPending) return;
+      historyInFlightRef.current = true;
+      if (action === "undo") {
+        await undoMutation.mutateAsync();
+      } else {
+        await redoMutation.mutateAsync();
+      }
+    } catch {
+      return;
+    } finally {
+      historyInFlightRef.current = false;
+      mutationPreparationRef.current = false;
+    }
+  }, [applyMutation, onBeforeRun, redoMutation, undoMutation]);
 
   const selectCreatedNodes = useCallback((before: GraphProjection, after: GraphProjection) => {
     const created = createdGraphNodeIds(before, after);
@@ -234,6 +388,7 @@ export function GraphCanvasPanel({
   const createNode = useCallback((nodeType: GraphNodeType) => {
     const before = graphRef.current;
     const position = graphViewportCenterPosition(viewportRef.current);
+    const groupRef = enteredGroupIdRef.current;
     void applyAsync("创建节点", [{
       op: "create_node",
       client_ref: graphChangeSetClientRef("node"),
@@ -242,6 +397,7 @@ export function GraphCanvasPanel({
       position_x: position.position_x,
       position_y: position.position_y,
       config: defaultGraphNodeConfig(nodeType),
+      ...(groupRef ? { group_ref: groupRef } : {}),
     }]).then((next) => {
       if (next) selectCreatedNodes(before, next);
     });
@@ -293,6 +449,42 @@ export function GraphCanvasPanel({
     apply("解散分组", [{ op: "dissolve_group", group_ref: groupId }]);
   }, [apply]);
 
+  const enterGroup = useCallback((groupId: string) => {
+    void (async () => {
+      if (!graphRef.current.groups.some((group) => group.id === groupId)) return;
+      try {
+        await onBeforeRun?.();
+      } catch {
+        return;
+      }
+      const liveGraph = graphRef.current;
+      const inside = selectionInsideGroup(liveGraph, groupId, selectedRef.current);
+      if (inside.length !== selectedRef.current.length) {
+        try {
+          await onSelect(inside);
+        } catch {
+          return;
+        }
+      }
+      if (!graphRef.current.groups.some((group) => group.id === groupId)) return;
+      setEnteredGroupId(groupId);
+      setViewport(readStoredWorkflowCanvasViewport(graphRef.current.id, groupId));
+    })();
+  }, [onBeforeRun, onSelect]);
+
+  const exitGroup = useCallback(() => {
+    void (async () => {
+      if (!enteredGroupIdRef.current) return;
+      try {
+        await onBeforeRun?.();
+      } catch {
+        return;
+      }
+      setEnteredGroupId(null);
+      setViewport(readStoredWorkflowCanvasViewport(graphRef.current.id));
+    })();
+  }, [onBeforeRun]);
+
   const requestDeleteNodes = useCallback((nodeIds: string[]) => {
     if (!nodeIds.length) return;
     setPendingDeleteIds(nodeIds);
@@ -326,11 +518,19 @@ export function GraphCanvasPanel({
       });
     }
     if (!operations.length) return graphRef.current;
-    return applyMutation.mutateAsync({
-      base_graph_revision: graphRef.current.revision,
-      summary: "更新节点",
-      operations,
-    });
+    if (applyInFlightRef.current || historyInFlightRef.current || applyMutation.isPending) {
+      throw new Error("图正在保存，请稍后重试");
+    }
+    applyInFlightRef.current = true;
+    try {
+      return await applyMutation.mutateAsync({
+        base_graph_revision: graphRef.current.revision,
+        summary: "更新节点",
+        operations,
+      });
+    } finally {
+      applyInFlightRef.current = false;
+    }
   }, [applyMutation]);
 
   const submitRun = useCallback(async (input: { scope: "graph" | "node" | "to_node"; node_id?: string }) => {
@@ -342,16 +542,70 @@ export function GraphCanvasPanel({
     runMutation.mutate(input);
   }, [onBeforeRun, runMutation]);
 
-  const handleViewportChange = useCallback((next: WorkflowCanvasViewport) => {
+  const handleViewportChange = useCallback((next: WorkflowCanvasViewport, groupId: string | null) => {
+    if (!isWorkflowCanvasViewportScopeActive(enteredGroupIdRef.current, groupId)) return;
     setViewport(next);
-    writeStoredWorkflowCanvasViewport(graph.id, next);
+    writeStoredWorkflowCanvasViewport(graph.id, next, groupId);
   }, [graph.id]);
+
+  const openRecipeSave = useCallback((
+    kind: RecipeSaveKind,
+    explicitNodeIds?: string[],
+    append?: { id: string; version: number; title: string; description: string | null },
+  ) => {
+    void (async () => {
+      try {
+        await onBeforeRun?.();
+      } catch {
+        return;
+      }
+      const live = graphRef.current;
+      const request = resolveRecipeSaveRequest(
+        live,
+        selectedRef.current,
+        enteredGroupIdRef.current,
+        kind,
+        explicitNodeIds,
+      );
+      if (!request) {
+        showNotice(t("workbench.recipe.saveUnavailable"));
+        return;
+      }
+      const groupTitle = request.group_id
+        ? live.groups.find((group) => group.id === request.group_id)?.title ?? ""
+        : "";
+      const heading = append
+        ? t("workbench.recipe.append")
+        : kind === "workflow"
+          ? t("workbench.recipe.saveFull")
+          : kind === "group"
+            ? t("workbench.recipe.saveGroup")
+            : t("workbench.recipe.saveSelection");
+      const sourceLabel = kind === "workflow"
+        ? t("workbench.recipe.sourceFull")
+        : kind === "group"
+          ? t("workbench.recipe.sourceGroup", { title: groupTitle })
+          : t("workbench.recipe.sourceSelection", { count: request.node_ids?.length ?? 0 });
+      setRecipeError(null);
+      setRecipeDialog({
+        request,
+        heading,
+        sourceLabel,
+        initialTitle: append?.title ?? live.title,
+        initialDescription: append?.description ?? null,
+        appendRecipeId: append?.id,
+        expectedRecipeVersion: append?.version,
+      });
+    })();
+  }, [onBeforeRun, showNotice, t]);
 
   const actionsRef = useRef<GraphCanvasActions>({
     createNode,
     duplicateSelected,
     groupSelected,
     dissolveSelected,
+    saveRecipe: (kind) => openRecipeSave(kind),
+    appendRecipe: (recipe) => openRecipeSave("workflow", undefined, recipe),
     commitNode,
   });
   actionsRef.current = {
@@ -359,6 +613,8 @@ export function GraphCanvasPanel({
     duplicateSelected,
     groupSelected,
     dissolveSelected,
+    saveRecipe: (kind) => openRecipeSave(kind),
+    appendRecipe: (recipe) => openRecipeSave("workflow", undefined, recipe),
     commitNode,
   };
   useEffect(() => {
@@ -367,6 +623,8 @@ export function GraphCanvasPanel({
       duplicateSelected: () => actionsRef.current.duplicateSelected(),
       groupSelected: () => actionsRef.current.groupSelected(),
       dissolveSelected: () => actionsRef.current.dissolveSelected(),
+      saveRecipe: (kind) => actionsRef.current.saveRecipe(kind),
+      appendRecipe: (recipe) => actionsRef.current.appendRecipe(recipe),
       commitNode: (input) => actionsRef.current.commitNode(input),
     });
   }, [onRegisterActions]);
@@ -404,18 +662,18 @@ export function GraphCanvasPanel({
       if (graphHistoryShortcutAction(shortcut) === "undo") {
         if (!graphRef.current.can_undo) return;
         event.preventDefault();
-        undoMutation.mutate();
+        void runHistoryMutation("undo");
         return;
       }
       if (graphHistoryShortcutAction(shortcut) === "redo") {
         if (!graphRef.current.can_redo) return;
         event.preventDefault();
-        redoMutation.mutate();
+        void runHistoryMutation("redo");
       }
     };
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [applyMutation.isPending, duplicateSelected, redoMutation, requestDeleteNodes, showNotice, t, undoMutation]);
+  }, [applyMutation.isPending, duplicateSelected, requestDeleteNodes, runHistoryMutation, showNotice, t]);
 
   const error = applyMutation.error ?? runMutation.error ?? undoMutation.error ?? redoMutation.error;
   const busy = applyMutation.isPending || runMutation.isPending || undoMutation.isPending || redoMutation.isPending;
@@ -428,6 +686,9 @@ export function GraphCanvasPanel({
   const pendingDeleteTitle = pendingDeleteIds?.length === 1
     ? graph.nodes.find((node) => node.id === pendingDeleteIds[0])?.title ?? ""
     : "";
+  const enteredGroup = enteredGroupId
+    ? graph.groups.find((group) => group.id === enteredGroupId) ?? null
+    : null;
 
   return (
     <div
@@ -441,7 +702,7 @@ export function GraphCanvasPanel({
         <button
           type="button"
           disabled={busy || !graph.can_undo}
-          onClick={() => undoMutation.mutate()}
+          onClick={() => void runHistoryMutation("undo")}
           className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-text-secondary hover:bg-surface-subtle hover:text-text-primary disabled:opacity-45 lg:h-9 lg:w-9"
           aria-label={t("graph.canvas.undo")}
           title={t("graph.canvas.undo")}
@@ -451,7 +712,7 @@ export function GraphCanvasPanel({
         <button
           type="button"
           disabled={busy || !graph.can_redo}
-          onClick={() => redoMutation.mutate()}
+          onClick={() => void runHistoryMutation("redo")}
           className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-text-secondary hover:bg-surface-subtle hover:text-text-primary disabled:opacity-45 lg:h-9 lg:w-9"
           aria-label={t("graph.canvas.redo")}
           title={t("graph.canvas.redo")}
@@ -478,13 +739,39 @@ export function GraphCanvasPanel({
           />
         ) : null}
       </div>
-      {error ? (
-        <div role="alert" className="absolute left-4 top-4 z-10 max-w-sm rounded bg-red-50 px-3 py-2 text-xs text-red-700">
-          {error instanceof ApiError ? error.detail : t("workbench.error.structure")}
-        </div>
-      ) : notice ? (
-        <div role="status" className="absolute left-4 top-4 z-10 max-w-sm rounded-lg border border-slate-200 bg-white/95 px-3 py-2 text-xs font-medium text-slate-700 shadow-sm dark:border-slate-700 dark:bg-[#111a2b] dark:text-slate-200">
-          {notice}
+      {enteredGroup || error || notice ? (
+        <div
+          className={`absolute z-20 flex flex-col gap-2 ${compact ? "left-3 right-[16.5rem] top-[4.75rem]" : "left-4 top-4 max-w-sm"
+            }`}
+        >
+          {enteredGroup ? (
+            <nav
+              data-graph-group-breadcrumb
+              aria-label={t("workbench.breadcrumb")}
+              className="flex min-w-0 items-center gap-1 rounded-xl border border-border-l1 bg-surface-raised/95 px-2 py-1 text-xs shadow-sm backdrop-blur"
+            >
+              <button
+                type="button"
+                onClick={exitGroup}
+                className="min-h-9 shrink-0 rounded-lg px-2 font-semibold text-text-secondary hover:bg-surface-subtle hover:text-text-primary lg:min-h-7"
+                aria-label={t("workbench.canvas.back")}
+                title={t("workbench.canvas.back")}
+              >
+                {t("workbench.breadcrumb")}
+              </button>
+              <ChevronRight size={12} className="shrink-0 text-text-muted" aria-hidden="true" />
+              <span className="min-w-0 truncate px-1 font-semibold text-text-primary">{enteredGroup.title}</span>
+            </nav>
+          ) : null}
+          {error ? (
+            <div role="alert" className="rounded bg-red-50 px-3 py-2 text-xs text-red-700">
+              {error instanceof ApiError ? error.detail : t("workbench.error.structure")}
+            </div>
+          ) : notice ? (
+            <div role="status" className="rounded-lg border border-slate-200 bg-white/95 px-3 py-2 text-xs font-medium text-slate-700 shadow-sm dark:border-slate-700 dark:bg-[#111a2b] dark:text-slate-200">
+              {notice}
+            </div>
+          ) : null}
         </div>
       ) : null}
       <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -496,9 +783,11 @@ export function GraphCanvasPanel({
           nodeStatuses={nodeStatuses}
           nodePresentations={nodePresentations}
           runningNodeId={runningNodeId}
+          canvasSyncVersion={canvasSyncVersion}
           viewport={viewport}
           onViewportChange={handleViewportChange}
           compact={compact}
+          enteredGroupId={enteredGroupId}
           mobileInteractionMode={mobileMode}
           onMobileInteractionModeChange={setMobileMode}
           onSelect={onSelect}
@@ -526,11 +815,13 @@ export function GraphCanvasPanel({
           onRunToNode={(nodeId) => void submitRun({ scope: "to_node", node_id: nodeId })}
           onBindNode={(nodeId) => onBindNode?.(nodeId)}
           onDuplicateNode={(nodeIds) => duplicateSelected(nodeIds, "duplicated")}
+          onSaveRecipeNode={(nodeId) => openRecipeSave("selection", [nodeId])}
           onAssetDrop={handleAssetDrop}
           onRenameGroup={renameGroup}
           onDissolveGroup={dissolveGroup}
+          onEnterGroup={enterGroup}
           onAutoLayout={() => {
-            const positions = buildGraphAutoLayoutPositions(graph);
+            const positions = buildGraphAutoLayoutPositions(graphCanvasView(graph, enteredGroupId));
             if (!positions.length) return;
             apply("自动布局", [{
               op: "move_nodes",
@@ -568,6 +859,7 @@ export function GraphCanvasPanel({
                       reusePrompt.targetNodeId,
                       reusePrompt.position,
                       () => t("graph.node.imageAsset"),
+                      enteredGroupId,
                     ),
                   );
                   setReusePrompt(null);
@@ -600,6 +892,30 @@ export function GraphCanvasPanel({
         busy={busy}
         onConfirm={confirmDeleteNodes}
         onClose={() => setPendingDeleteIds(null)}
+      />
+      <WorkflowRecipeDialog
+        open={Boolean(recipeDialog)}
+        heading={recipeDialog?.heading ?? ""}
+        sourceLabel={recipeDialog?.sourceLabel ?? ""}
+        initialTitle={recipeDialog?.initialTitle}
+        initialDescription={recipeDialog?.initialDescription}
+        busy={recipeMutation.isPending}
+        error={recipeError}
+        onClose={() => {
+          if (recipeMutation.isPending) return;
+          setRecipeDialog(null);
+          setRecipeError(null);
+        }}
+        onSubmit={(title, description) => {
+          if (!recipeDialog) return;
+          recipeMutation.mutate({
+            request: recipeDialog.request,
+            title,
+            description,
+            appendRecipeId: recipeDialog.appendRecipeId,
+            expectedRecipeVersion: recipeDialog.expectedRecipeVersion,
+          });
+        }}
       />
     </div>
   );

@@ -22,6 +22,8 @@ const EMPTY_ACTIONS: GraphCanvasActions = {
   duplicateSelected: () => undefined,
   groupSelected: () => undefined,
   dissolveSelected: () => undefined,
+  saveRecipe: () => undefined,
+  appendRecipe: () => undefined,
   commitNode: async () => undefined,
 };
 
@@ -49,6 +51,15 @@ export function GraphWorkbenchPage({
     flushInspectorRef.current = flush;
   }, []);
   const beforeRun = useCallback(() => flushInspectorRef.current(), []);
+  const requestSidebarTool = useCallback(async (nextTool: string): Promise<boolean> => {
+    try {
+      await flushInspectorRef.current();
+    } catch {
+      return false;
+    }
+    setTool(nextTool);
+    return true;
+  }, []);
 
   const graphQuery = useQuery({
     queryKey: ["workflow-graph", product.id],
@@ -62,6 +73,13 @@ export function GraphWorkbenchPage({
   });
   const liveGraph = graphQuery.data ?? initialGraph;
   const catalog = catalogQuery.data ?? null;
+  const catalogError = catalogQuery.error
+    ? catalogQuery.error instanceof ApiError
+      ? catalogQuery.error.detail
+      : catalogQuery.error instanceof Error
+        ? catalogQuery.error.message
+        : t("graph.inspector.catalogLoadFailed")
+    : null;
   const selected = liveGraph.nodes.find((node) => node.id === selectedNodeIds[0]) ?? null;
   const bindNode = bindNodeId
     ? liveGraph.nodes.find((node) => node.id === bindNodeId && node.node_type === "image_asset") ?? null
@@ -82,18 +100,16 @@ export function GraphWorkbenchPage({
       setTool("details");
     })();
   }, [liveGraph]);
-  const selectCanvasNodes = useCallback((nodeIds: string[]) => {
-    void (async () => {
-      try {
-        await flushInspectorRef.current();
-      } catch {
-        return;
-      }
-      setSelectedNodeIds(nodeIds);
-      if (nodeIds.length === 1 && inspectableGraphNodeId(liveGraph, nodeIds[0])) {
-        setTool("details");
-      }
-    })();
+  const selectCanvasNodes = useCallback(async (nodeIds: string[]) => {
+    try {
+      await flushInspectorRef.current();
+    } catch {
+      return;
+    }
+    setSelectedNodeIds(nodeIds);
+    if (nodeIds.length === 1 && inspectableGraphNodeId(liveGraph, nodeIds[0])) {
+      setTool("details");
+    }
   }, [liveGraph]);
 
   return (
@@ -121,97 +137,108 @@ export function GraphWorkbenchPage({
             onToggleChrome={() => setChromeCollapsed((current) => !current)}
             onBindNode={(nodeId) => {
               setBindNodeId(nodeId);
-              setTool("library");
+              void requestSidebarTool("library");
             }}
           />
         )}
         agentContent={agentContent ?? <GraphAgentPanel />}
         sidebarTools={[
-            {
-              id: "add",
-              label: t("graph.palette.title"),
-              icon: <Plus size={17} />,
-              content: (
-                <GraphAddNodePanel
-                  catalog={catalog}
-                  busy={canvasBusy}
-                  onCreate={actions.createNode}
-                  canDuplicate={selectedNodeIds.length > 0}
-                  canGroup={selectedNodeIds.length > 1}
-                  canDissolve={liveGraph.nodes.some((node) => selectedNodeIds.includes(node.id) && Boolean(node.group_id))}
-                  onDuplicate={actions.duplicateSelected}
-                  onGroup={actions.groupSelected}
-                  onDissolve={actions.dissolveSelected}
-                />
-              ),
-            },
-            {
-              id: "details",
-              label: t("graph.inspector.title"),
-              icon: <Eye size={17} />,
-              content: (
-                <GraphNodeInspector
-                  graph={liveGraph}
-                  node={selected}
-                  product={product}
-                  busy={canvasBusy}
-                  onRegisterFlush={registerInspectorFlush}
-                  onCommit={async (input) => {
-                    if (!selected) return;
-                    return actions.commitNode({ nodeId: selected.id, ...input });
-                  }}
-                  onBind={selected?.node_type === "image_asset" ? () => {
-                    setBindNodeId(selected.id);
-                    setTool("library");
-                  } : undefined}
-                  onJump={inspectNode}
-                  onPreviewImage={setPreviewImage}
-                />
-              ),
-            },
-            {
-              id: "runs",
-              label: t("graph.runs.title"),
-              icon: <CircleDot size={17} />,
-              content: (
-                <GraphRunsPanel
-                  productId={product.id}
-                  graph={liveGraph}
-                  selectedNodeId={selected?.id ?? null}
-                  onJump={inspectNode}
-                  onPreviewImage={setPreviewImage}
-                />
-              ),
-            },
-            {
-              id: "library",
-              label: t("workbench.sidebar.library"),
-              icon: <Images size={17} />,
-              contentClassName: "flex min-h-0 flex-1 flex-col overflow-hidden",
-              content: (
-                <GraphLibraryPanel
-                  product={product}
-                  graph={liveGraph}
-                  bindNode={bindNode}
-                  onPreviewImage={setPreviewImage}
-                  onBindAsset={async (assetId) => {
-                    if (!bindNode) return;
-                    return actions.commitNode({
-                      nodeId: bindNode.id,
-                      config: bindNode.config,
-                      boundAssetId: assetId,
-                    });
-                  }}
-                  onBound={() => setBindNodeId(null)}
-                />
-              ),
-            },
+          {
+            id: "add",
+            label: t("graph.palette.title"),
+            icon: <Plus size={17} />,
+            content: (
+              <GraphAddNodePanel
+                catalog={catalog}
+                busy={canvasBusy}
+                onCreate={actions.createNode}
+                canDuplicate={selectedNodeIds.length > 0}
+                canGroup={selectedNodeIds.length > 1}
+                canDissolve={liveGraph.nodes.some((node) => selectedNodeIds.includes(node.id) && Boolean(node.group_id))}
+                onDuplicate={actions.duplicateSelected}
+                onGroup={actions.groupSelected}
+                onDissolve={actions.dissolveSelected}
+                canSaveFull={liveGraph.nodes.length > 0}
+                canSaveGroup={liveGraph.groups.length > 0}
+                canSaveSelection={selectedNodeIds.length > 0}
+                onSaveFull={() => actions.saveRecipe("workflow")}
+                onSaveGroup={() => actions.saveRecipe("group")}
+                onSaveSelection={() => actions.saveRecipe("selection")}
+              />
+            ),
+          },
+          {
+            id: "details",
+            label: t("graph.inspector.title"),
+            icon: <Eye size={17} />,
+            content: (
+              <GraphNodeInspector
+                graph={liveGraph}
+                node={selected}
+                product={product}
+                catalog={catalog}
+                catalogError={catalogError}
+                onRetryCatalog={() => void catalogQuery.refetch()}
+                busy={canvasBusy}
+                onRegisterFlush={registerInspectorFlush}
+                onCommit={async (input) => {
+                  if (!selected) return;
+                  return actions.commitNode({ nodeId: selected.id, ...input });
+                }}
+                onBind={selected?.node_type === "image_asset" ? () => {
+                  setBindNodeId(selected.id);
+                  void requestSidebarTool("library");
+                } : undefined}
+                onJump={inspectNode}
+                onPreviewImage={setPreviewImage}
+                onOpenAdd={() => void requestSidebarTool("add")}
+                onOpenLibrary={() => void requestSidebarTool("library")}
+              />
+            ),
+          },
+          {
+            id: "runs",
+            label: t("graph.runs.title"),
+            icon: <CircleDot size={17} />,
+            content: (
+              <GraphRunsPanel
+                productId={product.id}
+                graph={liveGraph}
+                selectedNodeId={selected?.id ?? null}
+                structureBusy={canvasBusy}
+                onBeforeRun={beforeRun}
+                onJump={inspectNode}
+                onPreviewImage={setPreviewImage}
+              />
+            ),
+          },
+          {
+            id: "library",
+            label: t("workbench.sidebar.library"),
+            icon: <Images size={17} />,
+            contentClassName: "flex min-h-0 flex-1 flex-col overflow-hidden",
+            content: (
+              <GraphLibraryPanel
+                product={product}
+                graph={liveGraph}
+                bindNode={bindNode}
+                bindLocked={canvasBusy}
+                onPreviewImage={setPreviewImage}
+                onBindAsset={async (assetId) => {
+                  if (!bindNode) return;
+                  return actions.commitNode({
+                    nodeId: bindNode.id,
+                    config: bindNode.config,
+                    boundAssetId: assetId,
+                  });
+                }}
+                onBound={() => setBindNodeId(null)}
+              />
+            ),
+          },
         ]}
         activeSidebarTool={tool}
-        onSidebarToolChange={(next) => {
-          setTool(next);
-          return true;
-        }}
+        onSidebarToolChange={requestSidebarTool}
       />
       {previewImage ? (
         <GalleryImagePreviewDialog

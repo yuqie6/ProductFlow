@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from productflow_backend.application.workflow_recipes.contracts import RecipePayloadV1
+from productflow_backend.application.workflow_recipes.contracts import RECIPE_SCHEMA_VERSION, RecipePayload
 from productflow_backend.application.workflow_recipes.service import (
     WorkflowRecipeApplicationResult,
     WorkflowRecipeArchiveResult,
@@ -28,18 +28,18 @@ class StrictRecipeRequest(BaseModel):
 
 
 class RecipeSourceRequest(StrictRecipeRequest):
-    source_type: Literal["workflow", "folder", "selection"]
-    folder_id: str | None = Field(default=None, min_length=1, max_length=36)
+    source_type: Literal["workflow", "group", "selection"]
+    group_id: str | None = Field(default=None, min_length=1, max_length=36)
     node_ids: list[str] = Field(default_factory=list)
-    expected_edit_version: int = Field(ge=0)
+    expected_graph_revision: int = Field(ge=0)
 
     @model_validator(mode="after")
     def validate_source_fields(self) -> RecipeSourceRequest:
-        if self.source_type == "workflow" and (self.folder_id is not None or self.node_ids):
-            raise ValueError("完整工作流来源不能指定 folder_id 或 node_ids")
-        if self.source_type == "folder" and (self.folder_id is None or self.node_ids):
-            raise ValueError("文件夹来源必须且只能指定 folder_id")
-        if self.source_type == "selection" and (self.folder_id is not None or not self.node_ids):
+        if self.source_type == "workflow" and (self.group_id is not None or self.node_ids):
+            raise ValueError("完整工作流来源不能指定 group_id 或 node_ids")
+        if self.source_type == "group" and (self.group_id is None or self.node_ids):
+            raise ValueError("分组来源必须且只能指定 group_id")
+        if self.source_type == "selection" and (self.group_id is not None or not self.node_ids):
             raise ValueError("多选来源必须且只能指定非空 node_ids")
         if len(self.node_ids) != len(set(self.node_ids)):
             raise ValueError("node_ids 不能重复")
@@ -65,10 +65,10 @@ class WorkflowRecipeVersionResponse(BaseModel):
     id: str
     recipe_id: str
     version: int
-    schema_version: Literal[1]
+    schema_version: Literal[3]
     title: str
     description: str | None
-    payload: RecipePayloadV1
+    payload: RecipePayload
     payload_hash: str
     preferred_visual_system_version_id: str | None
     created_at: datetime
@@ -169,6 +169,7 @@ __all__ = [
     "AppendWorkflowRecipeVersionRequest",
     "ApplyWorkflowRecipeRequest",
     "CreateWorkflowRecipeRequest",
+    "RECIPE_SCHEMA_VERSION",
     "WorkflowRecipeArchiveResponse",
     "WorkflowRecipeApplicationResponse",
     "WorkflowRecipeResponse",

@@ -80,6 +80,7 @@ import type {
   WorkflowDeliverySpec,
   WorkflowRecipe,
   WorkflowRecipeApplicationResult,
+  WorkflowRecipeSourceInput,
   WorkflowRecipeSummary,
 } from "./types";
 
@@ -1162,6 +1163,27 @@ export const api = {
   },
   getWorkflowRecipe(recipeId: string): Promise<WorkflowRecipe> {
     return request(`/api/v2/workflow-recipes/${recipeId}`);
+  },
+  createWorkflowRecipe(
+    productId: string,
+    workflowId: string,
+    input: WorkflowRecipeSourceInput,
+  ): Promise<WorkflowRecipe> {
+    return request(
+      `/api/v3/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/recipes`,
+      { method: "POST", body: JSON.stringify(input) },
+    );
+  },
+  appendWorkflowRecipeVersion(
+    productId: string,
+    workflowId: string,
+    recipeId: string,
+    input: WorkflowRecipeSourceInput & { expected_recipe_version: number },
+  ): Promise<WorkflowRecipe> {
+    return request(
+      `/api/v3/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/recipes/${encodeURIComponent(recipeId)}/versions`,
+      { method: "POST", body: JSON.stringify(input) },
+    );
   },
   archiveWorkflowRecipe(recipeId: string, expectedRecipeVersion: number): Promise<{ changed: boolean; recipe: WorkflowRecipe }> {
     const params = new URLSearchParams({ expected_recipe_version: String(expectedRecipeVersion) });

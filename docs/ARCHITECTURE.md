@@ -131,18 +131,18 @@ Draft 状态依次覆盖 collecting、awaiting_confirmation、confirmed、materi
 
 - `product_source`：商品事实入口。
 - `image_asset`：一对一绑定 ProductImageAsset。
-- `creative_brief`：创意说明。
-- `visual_system`：视觉体系。
-- `prompt_generation`：生成、编辑提示词产物。
-- `image_generation`：根据编译上下文和 GenerationSpec 生成图片。
+- `creative_brief`：运行时根据商品资料和参考图生成创作要求，结果写入节点并可以再编辑。
+- `visual_system`：运行时根据商品资料和参考图生成风格与背景约束，结果写入节点并可以再编辑。
+- `prompt_generation`：运行时根据上游上下文生成提示词，结果写入节点并可以再编辑。
+- `image_generation`：根据已生成的提示词和 GenerationSpec 生成图片。运行该节点不会回头去填空的视觉规范或创作要求；需要时先运行那些节点，或使用“运行到此节点”。
 
-画布分组是一层视觉分组，不改变 DAG 执行语义。边由 Node Catalog 决定 data_type 与 role。
+画布分组是一层视觉分组，可进入局部视图并分记视口，不改变 DAG 执行语义。跨组边在全图可见。分组没有端口、运行、取消或重试。边由 Node Catalog 决定 data_type 与 role。节点详情表单按同一份 `config_fields` 渲染，保存走 `update_node_config`。
 
 `WorkflowGraphRun` 和 `WorkflowGraphNodeRun` 保存运行状态。执行读 run snapshot，不再读 live graph。图片结果写入 ProductImageAsset 和 `WorkflowGraphArtifact`。
 
 工作流运行由 ProductFlow 业务接口直接创建和校验。工作流页面可以直接提交整图或单个节点，用户不需要先创建 Agent Conversation。Agent 通过 `agent_workflow_run_requests.py` 创建待确认请求；用户确认后走同一套 `graph_runs.py` / `graph_execution.py` 约束。
 
-WorkflowRecipe 保存用户主动创建的完整工作流或局部片段。recipe payload 只保存可复用结构和配置，不保存商品身份、生成结果或媒体字节。
+WorkflowRecipe 保存用户主动创建的完整工作流或局部片段。保存从 live schema-v3 graph 提取，payload 是节点/边/分组片段，不含商品身份、绑定素材、生成结果或媒体字节。完整配方应用到另一商品仍生成待确认 Draft；应用前工作台预览将创建的节点和连线。片段配方对已有工作流返回明确冲突，不会静默写入。HTTP 保存入口是 `POST /api/v3/products/{product_id}/workflows/{workflow_id}/recipes`。
 
 图规则由 `domain/graph_catalog.py` 与 `domain/graph_rules.py` 负责。目录同时给出端口合同和可编辑配置字段；ChangeSet 写入会拒绝未登记的 `config` 键。结构命令走 `graph_commands.py` / `graph_apply.py`，运行走 `graph_runs.py` / `graph_execution.py`。HTTP 入口是 `presentation/routes/workflow_graphs.py`。
 
@@ -170,7 +170,7 @@ GenerationSpec 保存模型生成意图；provider effective values 和解码后
 
 `ProviderProfile` 保存 endpoint、secret、能力、默认模型和 provider 级配置。`ProviderBinding` 把一个 profile 绑定到用途：
 
-- `prompt`：提示词节点。
+- `prompt`：视觉规范、创作要求和提示词节点。
 - `agent`：workflow Agent。
 - `image`：工作流和图片会话生图。
 

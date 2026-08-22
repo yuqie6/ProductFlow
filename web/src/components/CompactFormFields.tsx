@@ -42,12 +42,12 @@ export function CompactInput({
 
 interface CompactNumberInputProps {
   label: string;
-  value: number | null;
+  value: number | string | null;
   min?: number;
   max?: number;
   optional?: boolean;
   disabled?: boolean;
-  onChange: (value: number | null) => void;
+  onChange: (value: number | string | null) => void;
 }
 
 export function CompactNumberInput({
@@ -60,6 +60,9 @@ export function CompactNumberInput({
   onChange,
 }: CompactNumberInputProps) {
   const [draft, setDraft] = useState(value === null ? "" : String(value));
+  const invalidDraft = draft === ""
+    ? value !== null && !optional
+    : !isValidNumberDraft(draft, min, max, optional);
 
   useEffect(() => {
     setDraft(value === null ? "" : String(value));
@@ -74,6 +77,7 @@ export function CompactNumberInput({
         min={min}
         max={max}
         disabled={disabled}
+        aria-invalid={invalidDraft}
         onChange={(event) => {
           const next = event.target.value;
           setDraft(next);
@@ -81,15 +85,24 @@ export function CompactNumberInput({
             onChange(null);
             return;
           }
-          const parsed = Number(next);
-          if (Number.isInteger(parsed) && (min === undefined || parsed >= min) && (max === undefined || parsed <= max)) {
-            onChange(parsed);
-          }
+          onChange(isValidNumberDraft(next, min, max, optional) ? Number(next) : next);
         }}
-        className={INPUT_CLASS_NAME}
+        className={`${INPUT_CLASS_NAME} ${
+          invalidDraft
+            ? "border-red-400 focus:border-red-500 focus:ring-red-100 dark:border-red-400/70 dark:focus:border-red-400 dark:focus:ring-red-400/20"
+            : ""
+        }`}
       />
     </label>
   );
+}
+
+function isValidNumberDraft(draft: string, min?: number, max?: number, optional = false): boolean {
+  if (!draft) return optional;
+  const parsed = Number(draft);
+  return Number.isFinite(parsed)
+    && (min === undefined || parsed >= min)
+    && (max === undefined || parsed <= max);
 }
 
 interface CompactSelectProps {

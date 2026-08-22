@@ -15,6 +15,7 @@ from productflow_backend.application.product_workflow.graph_queries import (
 from productflow_backend.application.product_workflow.product_sources import ProductSourceSnapshot
 from productflow_backend.application.workflow_drafts.contracts import ProductFactDraft
 from productflow_backend.domain.enums import (
+    GraphArtifactType,
     GraphConfigStatus,
     GraphEdgeDataType,
     GraphEdgeRole,
@@ -25,7 +26,12 @@ from productflow_backend.domain.enums import (
     WorkflowNodeStatus,
     WorkflowRunStatus,
 )
-from productflow_backend.domain.graph_catalog import GraphCatalogDocument, GraphConfigValueKind
+from productflow_backend.domain.graph_catalog import (
+    GraphCatalogDocument,
+    GraphConfigControl,
+    GraphConfigValueKind,
+    graph_catalog_json,
+)
 from productflow_backend.infrastructure.db.models import (
     Product,
     ProductImageAsset,
@@ -66,6 +72,9 @@ class GraphNodeResponse(BaseModel):
     preview_asset_id: str | None = None
     config_status: GraphConfigStatus
     unused: bool
+    current_artifact_id: str | None = None
+    current_artifact_type: GraphArtifactType | None = None
+    current_artifact_payload: dict | None = None
     incoming: list[GraphEdgeSummaryResponse]
     outgoing: list[GraphEdgeSummaryResponse]
 
@@ -134,12 +143,32 @@ class GraphCatalogInputContractResponse(BaseModel):
     required_to_run: bool
 
 
+class GraphCatalogVisibleWhenResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    field: str
+    op: Literal["in"]
+    values: list[str]
+
+
 class GraphCatalogConfigFieldResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     key: str
     value_kind: GraphConfigValueKind
-    required: bool
+    control: GraphConfigControl
+    required: bool = False
+    label_key: str | None = None
+    hint_key: str | None = None
+    toggle_label_key: str | None = None
+    choices: list[str] = Field(default_factory=list)
+    min_value: int | None = None
+    max_value: int | None = None
+    max_length: int | None = None
+    default: Any = None
+    panel: str | None = None
+    visible_when: GraphCatalogVisibleWhenResponse | None = None
+    fields: list[GraphCatalogConfigFieldResponse] = Field(default_factory=list)
 
 
 class GraphCatalogNodeResponse(BaseModel):
@@ -175,34 +204,7 @@ class DirectCreateImageTypeRequest(BaseModel):
 
 
 def serialize_graph_catalog(document: GraphCatalogDocument) -> GraphCatalogResponse:
-    return GraphCatalogResponse(
-        version=document.version,
-        nodes=[
-            GraphCatalogNodeResponse(
-                node_type=node.node_type,
-                output_data_type=node.output_data_type,
-                kind=node.kind,
-                accepts=[
-                    GraphCatalogInputContractResponse(
-                        data_type=item.data_type,
-                        role=item.role,
-                        max_count=item.max_count,
-                        required_to_run=item.required_to_run,
-                    )
-                    for item in node.accepts
-                ],
-                config_fields=[
-                    GraphCatalogConfigFieldResponse(
-                        key=item.key,
-                        value_kind=item.value_kind,
-                        required=item.required,
-                    )
-                    for item in node.config_fields
-                ],
-            )
-            for node in document.nodes
-        ],
-    )
+    return GraphCatalogResponse.model_validate(graph_catalog_json(document))
 
 
 def serialize_graph_projection(projection: GraphProjection) -> GraphProjectionResponse:
@@ -251,6 +253,11 @@ def _serialize_node(node: GraphNodeView) -> GraphNodeResponse:
         preview_asset_id=node.preview_asset_id,
         config_status=node.config_status,
         unused=node.unused,
+        current_artifact_id=node.current_artifact_id,
+        current_artifact_type=node.current_artifact_type,
+        current_artifact_payload=dict(node.current_artifact_payload)
+        if node.current_artifact_payload is not None
+        else None,
         incoming=[_serialize_edge_summary(item) for item in node.incoming],
         outgoing=[_serialize_edge_summary(item) for item in node.outgoing],
     )

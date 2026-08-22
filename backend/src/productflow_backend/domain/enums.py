@@ -144,6 +144,8 @@ class GraphRunScope(StrEnum):
 class GraphArtifactType(StrEnum):
     """v3 运行产物类型。"""
 
+    CREATIVE_BRIEF = "creative_brief"
+    VISUAL_SYSTEM = "visual_system"
     PROMPT = "prompt"
     IMAGE = "image"
 

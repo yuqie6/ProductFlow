@@ -36,7 +36,11 @@ def test_draft_adapter_maps_fixture_without_plan_keys() -> None:
         for edge in graph.edges
         if edge.source_node_id == "product-reference-node" and edge.role == GraphEdgeRole.REFERENCE
     ]
-    assert len(reference_edges) == 1
+    assert {edge.target_node_id for edge in reference_edges} == {
+        "hero-prompt-node",
+        "hero-image-1-node",
+        "hero-image-2-node",
+    }
     assert graph.config_status("hero-image-1-node") == GraphConfigStatus.READY
 
 
@@ -59,6 +63,34 @@ def test_draft_adapter_drops_facts_edges_into_image_nodes() -> None:
     assert not any(
         edge.source_node_id == "product-context" and edge.target_node_id == "hero-image-1-node" for edge in graph.edges
     )
+
+
+def test_draft_adapter_keeps_explicit_reference_edges_without_duplicates() -> None:
+    payload = make_workflow_draft_payload()
+    payload["edges"].append(
+        {
+            "key": "reference-to-image-1",
+            "source_node_key": "product-reference-node",
+            "target_node_key": "hero-image-1-node",
+            "source_handle": "asset",
+            "target_handle": "reference",
+        }
+    )
+    graph = apply_workflow_change_set(
+        EMPTY_GRAPH,
+        build_draft_initial_graph_change_set(
+            WorkflowDraftPayloadV1.model_validate(payload),
+            draft_revision_id="rev-1",
+        ),
+    )
+    image_reference_edges = [
+        edge
+        for edge in graph.edges
+        if edge.source_node_id == "product-reference-node"
+        and edge.target_node_id == "hero-image-1-node"
+        and edge.role == GraphEdgeRole.REFERENCE
+    ]
+    assert len(image_reference_edges) == 1
 
 
 def test_draft_adapter_maps_visual_exceptions_to_overlay() -> None:
@@ -100,3 +132,35 @@ def test_draft_adapter_maps_visual_exceptions_to_overlay() -> None:
     assert image.config["visual_overlay"]["colors"][0]["value"] == "#FFFFFF"
     brief = graph.node("creative-brief")
     assert brief.config["goal"] == brief.config["design_goals"][0]
+
+
+def test_draft_adapter_keeps_non_catalog_exceptions_out_of_visual_overlay() -> None:
+    payload = make_workflow_draft_payload()
+    payload["visual_exceptions"] = [
+        {
+            "key": "workflow-type",
+            "scope": {"type": "workflow"},
+            "overrides": [
+                {
+                    "field": "typography",
+                    "value": {
+                        "title_font": "思源黑体 Bold",
+                        "body_font": "思源黑体 Regular",
+                        "scale": {"headline": 3, "subtitle": 1.8, "body": 1},
+                    },
+                },
+                {"field": "style", "value": ["干净白底"]},
+            ],
+            "reason": "全图字体和风格",
+        }
+    ]
+    graph = apply_workflow_change_set(
+        EMPTY_GRAPH,
+        build_draft_initial_graph_change_set(
+            WorkflowDraftPayloadV1.model_validate(payload),
+            draft_revision_id="rev-1",
+        ),
+    )
+    visual = graph.node("visual-system")
+    assert visual.config["visual_overlay"] == {"style": ["干净白底"]}
+    assert visual.config["visual_overrides"][0]["overrides"][0]["field"] == "typography"

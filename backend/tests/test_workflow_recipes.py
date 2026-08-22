@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 import pytest
@@ -15,6 +16,8 @@ from productflow_backend.application.agent.conversations import (
     reserve_agent_turn,
 )
 from productflow_backend.application.agent.tools import get_agent_contract, get_agent_product_context
+from productflow_backend.application.product_workflow.graph_commands import apply_graph_change_set, load_applied_graph
+from productflow_backend.application.product_workflow.graph_contracts import CreateGroupOp, WorkflowChangeSet
 from productflow_backend.application.product_workflow.graph_direct_create import create_product_with_direct_graph
 from productflow_backend.application.product_workflow.graph_draft_persist import persist_confirmed_draft_graph
 from productflow_backend.application.product_workflow.graph_template import DirectCreateImageType
@@ -23,7 +26,8 @@ from productflow_backend.application.workflow_drafts.service import (
     append_workflow_draft_revision,
     confirm_workflow_draft_revision,
 )
-from productflow_backend.application.workflow_recipes.contracts import RecipePayloadV1, recipe_payload_hash
+from productflow_backend.application.workflow_recipes.contracts import RecipePayload, recipe_payload_hash
+from productflow_backend.application.workflow_recipes.extract import extract_recipe_payload
 from productflow_backend.application.workflow_recipes.service import (
     append_workflow_recipe_version,
     apply_workflow_recipe,
@@ -31,8 +35,8 @@ from productflow_backend.application.workflow_recipes.service import (
     create_workflow_recipe,
     list_workflow_recipes,
 )
-from productflow_backend.domain.enums import AgentTurnStatus, WorkflowRecipeKind
-from productflow_backend.domain.errors import ConflictError, GoneError
+from productflow_backend.domain.enums import AgentTurnStatus, GraphActorType, GraphNodeType, WorkflowRecipeKind
+from productflow_backend.domain.errors import ConflictError
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
     Base,
@@ -43,32 +47,44 @@ from productflow_backend.infrastructure.db.models import (
 )
 
 
-def _recipe_payload() -> RecipePayloadV1:
-    return RecipePayloadV1.model_validate(
+def _recipe_payload() -> RecipePayload:
+    return RecipePayload.model_validate(
         {
-            "schema_version": 1,
-            "folders": [],
+            "schema_version": 3,
             "nodes": [
                 {
                     "key": "product",
-                    "node_type": "product_context",
+                    "node_type": "product_source",
+                    "title": "商品资料",
                     "position_x": 0,
                     "position_y": 0,
+                    "config": {"source_product_id": None, "fact_set_version_id": None},
                 },
                 {
                     "key": "prompt",
                     "node_type": "prompt_generation",
+                    "title": "主图提示词",
                     "position_x": 200,
                     "position_y": 0,
-                    "image_type_key": "hero",
+                    "config": {"image_type_key": "hero"},
                 },
                 {
                     "key": "image",
                     "node_type": "image_generation",
+                    "title": "主图 1",
                     "position_x": 400,
                     "position_y": 0,
-                    "image_type_key": "hero",
-                    "image_plan_key": "primary",
+                    "config": {
+                        "image_type_key": "hero",
+                        "generation_spec": {
+                            "aspect_ratio": "1:1",
+                            "resolution_tier": "high",
+                            "quality_intent": "high",
+                            "reference_fidelity": "high",
+                            "background_intent": "auto",
+                            "text_policy": "none",
+                        },
+                    },
                 },
             ],
             "edges": [
@@ -76,47 +92,12 @@ def _recipe_payload() -> RecipePayloadV1:
                     "key": "e1",
                     "source_node_key": "product",
                     "target_node_key": "prompt",
-                }
-            ],
-            "image_types": [
-                {
-                    "key": "hero",
-                    "title": "主图",
+                    "data_type": "product_facts",
+                    "role": "facts",
                     "order": 0,
-                    "default_quantity": 1,
-                    "images": [
-                        {
-                            "key": "primary",
-                            "order": 0,
-                            "generation_spec": {
-                                "aspect_ratio": "1:1",
-                                "resolution_tier": "high",
-                                "quality_intent": "high",
-                                "reference_fidelity": "high",
-                                "background_intent": "auto",
-                                "text_policy": "none",
-                            },
-                        }
-                    ],
                 }
             ],
-            "prompt_shapes": [
-                {
-                    "image_type_key": "hero",
-                    "product_present": True,
-                    "picture_in_picture": "none",
-                    "product_share_percent": 70.0,
-                    "per_image_slots": [
-                        {
-                            "image_plan_key": "primary",
-                            "viewpoint": True,
-                            "composition_adjustments": False,
-                            "lighting": False,
-                        }
-                    ],
-                }
-            ],
-            "visual_requirements": {"required_locked_fields": ["style"]},
+            "groups": [],
         }
     )
 
@@ -134,7 +115,7 @@ def _seed_recipe(
     version = WorkflowRecipeVersion(
         recipe_id=recipe.id,
         version=1,
-        schema_version=1,
+        schema_version=3,
         title=title,
         payload_json=payload.model_dump(mode="json"),
         payload_hash=recipe_payload_hash(payload),
@@ -160,34 +141,140 @@ def _create_product(db_session, *, name: str):
     )
 
 
-def test_recipe_save_is_gone_for_schema_v3(db_session) -> None:
-    recipe = _seed_recipe(db_session)
+def _direct_graph(db_session, *, name: str):
+    return create_product_with_direct_graph(
+        db_session,
+        name=name,
+        category="工业收纳",
+        price="199.00",
+        source_note=None,
+        image_uploads=[(_make_demo_image_bytes(), "ref.png", "image/png")],
+        image_types=[DirectCreateImageType(key="hero", quantity=1, order=0)],
+    )
 
-    with pytest.raises(GoneError, match="schema-v3 配方保存尚未实现"):
+
+def test_extract_full_graph_strips_identity_and_v2_fields(db_session) -> None:
+    created = _direct_graph(db_session, name="提取配方商品")
+    payload = extract_recipe_payload(load_applied_graph(db_session, created.graph), source_type="workflow")
+    dumped = payload.model_dump(mode="json")
+    assert dumped["schema_version"] == 3
+    assert "folders" not in dumped
+    assert "image_types" not in dumped
+    assert "prompt_shapes" not in dumped
+    assert "visual_requirements" not in dumped
+    assert "boundary_requirements" not in dumped
+    node_types = {node.node_type for node in payload.nodes}
+    assert GraphNodeType.PRODUCT_SOURCE in node_types
+    assert GraphNodeType.IMAGE_ASSET in node_types
+    assert "product_context" not in {node.node_type.value for node in payload.nodes}
+    assert "reference_image" not in {node.node_type.value for node in payload.nodes}
+    for node in payload.nodes:
+        assert "image_plan_key" not in node.config
+        assert "bound_asset_id" not in node.config
+        if node.node_type == GraphNodeType.PRODUCT_SOURCE:
+            assert node.config.get("source_product_id") is None
+            assert node.config.get("fact_set_version_id") is None
+        if node.node_type == GraphNodeType.VISUAL_SYSTEM:
+            assert node.config.get("visual_system_version_id") in (None,)
+    assert all(edge.data_type for edge in payload.edges)
+    assert all(not hasattr(edge, "source_handle") for edge in payload.edges)
+
+
+def test_extract_selection_keeps_internal_edges_only(db_session) -> None:
+    created = _direct_graph(db_session, name="选区配方商品")
+    applied = load_applied_graph(db_session, created.graph)
+    prompt = next(node for node in applied.nodes if node.node_type == GraphNodeType.PROMPT_GENERATION)
+    image = next(node for node in applied.nodes if node.node_type == GraphNodeType.IMAGE_GENERATION)
+    payload = extract_recipe_payload(
+        applied,
+        source_type="selection",
+        node_ids=[prompt.id, image.id],
+    )
+    assert {node.key for node in payload.nodes} == {prompt.id, image.id}
+    assert payload.edges
+    assert all(
+        {edge.source_node_key, edge.target_node_key} <= {prompt.id, image.id} for edge in payload.edges
+    )
+
+
+def test_extract_group_includes_members_and_internal_edges(db_session) -> None:
+    created = _direct_graph(db_session, name="分组配方商品")
+    applied = load_applied_graph(db_session, created.graph)
+    prompt = next(node for node in applied.nodes if node.node_type == GraphNodeType.PROMPT_GENERATION)
+    image = next(node for node in applied.nodes if node.node_type == GraphNodeType.IMAGE_GENERATION)
+    grouped = apply_graph_change_set(
+        db_session,
+        product_id=created.product.id,
+        graph_id=created.graph.id,
+        change_set=WorkflowChangeSet(
+            base_graph_revision=created.graph.revision,
+            actor_type=GraphActorType.USER,
+            summary="分组提示词和生图",
+            operations=[
+                CreateGroupOp(client_ref="hero-group", title="主图组", member_refs=(prompt.id, image.id)),
+            ],
+        ),
+    )
+    payload = extract_recipe_payload(grouped.applied, source_type="group", group_id=grouped.applied.groups[0].id)
+    assert {node.key for node in payload.nodes} == {prompt.id, image.id}
+    assert len(payload.groups) == 1
+    assert payload.groups[0].title == "主图组"
+    assert set(payload.groups[0].member_keys) == {prompt.id, image.id}
+
+
+def test_create_and_append_recipe_from_live_graph(db_session) -> None:
+    created = _direct_graph(db_session, name="保存配方商品")
+    recipe = create_workflow_recipe(
+        db_session,
+        product_id=created.product.id,
+        workflow_id=created.graph.id,
+        source_type="workflow",
+        group_id=None,
+        node_ids=[],
+        expected_graph_revision=created.graph.revision,
+        title="结构配方",
+        description="从当前图画保存",
+    )
+    assert recipe.kind == WorkflowRecipeKind.WORKFLOW_RECIPE
+    assert recipe.current_version is not None
+    assert recipe.current_version.schema_version == 3
+    payload = recipe.current_version.payload_json
+    assert payload["schema_version"] == 3
+    assert "image_types" not in payload
+    assert "product_context" not in {node["node_type"] for node in payload["nodes"]}
+    source = next(node for node in payload["nodes"] if node["node_type"] == "product_source")
+    assert source["config"]["source_product_id"] is None
+
+    appended = append_workflow_recipe_version(
+        db_session,
+        recipe_id=recipe.id,
+        expected_recipe_version=1,
+        product_id=created.product.id,
+        workflow_id=created.graph.id,
+        source_type="workflow",
+        group_id=None,
+        node_ids=[],
+        expected_graph_revision=created.graph.revision,
+        title="结构配方 v2",
+        description=None,
+    )
+    assert appended.current_version is not None
+    assert appended.current_version.version == 2
+    assert appended.current_version.title == "结构配方 v2"
+
+
+def test_stale_graph_revision_conflicts_on_save(db_session) -> None:
+    created = _direct_graph(db_session, name="过期配方商品")
+    with pytest.raises(ConflictError, match="工作流已变化"):
         create_workflow_recipe(
             db_session,
-            product_id="product-id",
-            workflow_id="workflow-id",
+            product_id=created.product.id,
+            workflow_id=created.graph.id,
             source_type="workflow",
-            folder_id=None,
+            group_id=None,
             node_ids=[],
-            expected_edit_version=0,
-            title="保存配方",
-            description=None,
-        )
-
-    with pytest.raises(GoneError, match="schema-v3 配方保存尚未实现"):
-        append_workflow_recipe_version(
-            db_session,
-            recipe_id=recipe.id,
-            expected_recipe_version=1,
-            product_id="product-id",
-            workflow_id="workflow-id",
-            source_type="workflow",
-            folder_id=None,
-            node_ids=[],
-            expected_edit_version=0,
-            title="追加版本",
+            expected_graph_revision=0,
+            title="过期保存",
             description=None,
         )
 
@@ -420,7 +507,7 @@ def test_version_zero_agent_artifact_sync_creates_first_revision_idempotently(db
     assert len(refreshed.revisions) == 1
 
 
-def test_recipe_api_starts_empty_and_save_returns_gone(configured_env) -> None:
+def test_recipe_api_saves_v3_fragment_from_live_graph(configured_env) -> None:
     from productflow_backend.presentation.api import create_app
 
     client = TestClient(create_app())
@@ -429,22 +516,40 @@ def test_recipe_api_starts_empty_and_save_returns_gone(configured_env) -> None:
     assert listed.status_code == 200
     assert listed.json() == []
 
-    product_response = client.post(
-        "/api/v2/products",
-        data={"name": "配方 API 商品"},
+    created = client.post(
+        "/api/v3/products",
+        data={
+            "name": "配方 API 商品",
+            "image_types": json.dumps([{"key": "hero", "quantity": 1}]),
+        },
         files=[("images", ("product.png", _make_demo_image_bytes(), "image/png"))],
     )
-    assert product_response.status_code == 201, product_response.text
-    product_id = product_response.json()["product"]["id"]
+    assert created.status_code == 201, created.text
+    product_id = created.json()["product"]["id"]
+    graph = created.json()["graph"]
     save_response = client.post(
-        f"/api/v2/products/{product_id}/workflows/{product_id}/recipes",
+        f"/api/v3/products/{product_id}/workflows/{graph['id']}/recipes",
         json={
             "source_type": "workflow",
-            "expected_edit_version": 0,
+            "expected_graph_revision": graph["revision"],
             "title": "API 配方",
             "description": "用户主动保存",
         },
     )
-    assert save_response.status_code == 410, save_response.text
-    assert "schema-v3 配方保存尚未实现" in save_response.json()["detail"]
-    assert client.get("/api/v2/workflow-recipes").json() == []
+    assert save_response.status_code == 201, save_response.text
+    body = save_response.json()
+    assert body["kind"] == "workflow_recipe"
+    payload = body["current_version"]["payload"]
+    assert payload["schema_version"] == 3
+    assert "image_types" not in payload
+    assert "folders" not in payload
+    assert {node["node_type"] for node in payload["nodes"]} >= {
+        "product_source",
+        "prompt_generation",
+        "image_generation",
+    }
+    assert all("source_handle" not in edge for edge in payload["edges"])
+    listed_after = client.get("/api/v2/workflow-recipes")
+    assert listed_after.status_code == 200
+    assert len(listed_after.json()) == 1
+    assert listed_after.json()[0]["current_version"]["payload"]["schema_version"] == 3

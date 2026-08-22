@@ -5,6 +5,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { TOOL_CONTRACT_VERSION } from "./contracts.js";
 
 const conversationID = "11111111-1111-4111-8111-111111111111";
 const runID = "44444444-4444-4444-8444-444444444444";
@@ -212,7 +213,7 @@ async function handleFakeProductFlowRequest(
       draft_kind: "global",
       draft_schema: { type: "object" },
       workflow_draft_schema: { type: "object" },
-      tool_contract_version: 9,
+      tool_contract_version: TOOL_CONTRACT_VERSION,
     });
     return;
   }

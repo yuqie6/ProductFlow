@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from productflow_backend.domain.graph_catalog import catalog_visual_overlay
+
 
 def merge_visual_override_items(items: list[Any]) -> dict[str, Any]:
     overlay: dict[str, Any] = {}
@@ -24,11 +26,10 @@ def visual_overlay_from_config(config: dict[str, Any] | None) -> dict[str, Any] 
     payload = config or {}
     overlay = payload.get("visual_overlay")
     if isinstance(overlay, dict) and overlay:
-        return dict(overlay)
+        return catalog_visual_overlay(overlay)
     overrides = payload.get("visual_overrides")
     if isinstance(overrides, list):
-        merged = merge_visual_override_items(overrides)
-        return merged or None
+        return catalog_visual_overlay(merge_visual_override_items(overrides))
     return None
 
 

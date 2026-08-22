@@ -17,10 +17,10 @@ from productflow_backend.application.product_workflow.graph_visual import (
 )
 from productflow_backend.application.product_workflow.product_sources import (
     ProductSourceSnapshot,
+    merge_runtime_facts,
     product_source_snapshot_from_dict,
     product_source_snapshot_to_dict,
 )
-from productflow_backend.application.workflow_drafts.contracts import GenerationSpec
 from productflow_backend.domain.enums import (
     GraphArtifactType,
     GraphEdgeRole,
@@ -28,8 +28,17 @@ from productflow_backend.domain.enums import (
     GraphRunScope,
 )
 from productflow_backend.domain.errors import BusinessValidationError
-from productflow_backend.domain.graph_catalog import PROCESSING_NODE_TYPES, run_required_inputs
-from productflow_backend.domain.graph_rules import GraphRuleEdge, GraphRuleNode, node_config_status
+from productflow_backend.domain.graph_catalog import (
+    PROCESSING_NODE_TYPES,
+    catalog_visual_overlay,
+    normalize_node_config,
+)
+from productflow_backend.domain.graph_rules import (
+    GraphRuleEdge,
+    GraphRuleNode,
+    missing_required_inputs,
+    node_config_error,
+)
 
 GRAPH_SNAPSHOT_SCHEMA_VERSION = 1
 V3_PROMPT_STRIPPED_KEYS = frozenset(
@@ -43,6 +52,7 @@ V3_PROMPT_STRIPPED_KEYS = frozenset(
         "image_plan_keys",
     }
 )
+V3_PROMPT_EMPTY_KEYS = frozenset({"schema_version", "visual_variant_key"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +83,19 @@ class CompiledReference:
 
 
 @dataclass(frozen=True, slots=True)
+class ContextRuntimeInput:
+    node_id: str
+    node_type: GraphNodeType
+    product_facts: tuple[dict[str, Any], ...]
+    reference_images: tuple[CompiledReference, ...]
+    current_config: dict[str, Any]
+    incoming_edge_ids: tuple[str, ...]
+    input_digest: str
+    text_policy: str = "none"
+    text_language: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class PromptRuntimeInput:
     node_id: str
     image_type_key: str | None
@@ -84,6 +107,9 @@ class PromptRuntimeInput:
     visual_system_version_id: str | None
     incoming_edge_ids: tuple[str, ...]
     input_digest: str
+    visual_overlay: dict[str, Any] | None = None
+    text_policy: str = "none"
+    text_language: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +158,99 @@ def incoming_edges(graph: AppliedGraph, node_id: str) -> tuple[AppliedGraphEdge,
     )
 
 
+def _downstream_text_intent(graph: AppliedGraph, prompt_node_id: str) -> tuple[str, str | None]:
+    intents: list[tuple[str, str | None]] = []
+    for edge in graph.edges:
+        if edge.source_node_id != prompt_node_id or edge.role != GraphEdgeRole.PROMPT:
+            continue
+        target = graph.node(edge.target_node_id)
+        if target.node_type != GraphNodeType.IMAGE_GENERATION:
+            continue
+        spec = target.config.get("generation_spec")
+        if not isinstance(spec, dict):
+            intents.append(("none", None))
+            continue
+        policy = spec.get("text_policy")
+        if policy not in {"none", "allow", "required"}:
+            policy = "none"
+        language = spec.get("text_language")
+        if not isinstance(language, str) or not language.strip() or policy == "none":
+            language = None
+        else:
+            language = language.strip()
+        intents.append((policy, language))
+    if not intents:
+        return "none", None
+    policies = {item[0] for item in intents}
+    if "required" in policies:
+        language = next((lang for policy, lang in intents if policy == "required" and lang), None)
+        return "required", language
+    if policies == {"none"}:
+        return "none", None
+    language = next((lang for policy, lang in intents if policy != "none" and lang), None)
+    return "allow", language
+
+
+def _graph_text_intent(graph: AppliedGraph) -> tuple[str, str | None]:
+    intents: list[tuple[str, str | None]] = []
+    for node in graph.nodes:
+        if node.node_type != GraphNodeType.IMAGE_GENERATION:
+            continue
+        spec = node.config.get("generation_spec")
+        if not isinstance(spec, dict):
+            intents.append(("none", None))
+            continue
+        policy = spec.get("text_policy")
+        if policy not in {"none", "allow", "required"}:
+            policy = "none"
+        language = spec.get("text_language")
+        if not isinstance(language, str) or not language.strip() or policy == "none":
+            language = None
+        else:
+            language = language.strip()
+        intents.append((policy, language))
+    if not intents:
+        return "none", None
+    policies = {item[0] for item in intents}
+    if "required" in policies:
+        language = next((lang for policy, lang in intents if policy == "required" and lang), None)
+        return "required", language
+    if policies == {"none"}:
+        return "none", None
+    language = next((lang for policy, lang in intents if policy != "none" and lang), None)
+    return "allow", language
+
+
+def _graph_source_facts(graph: AppliedGraph, sources: dict[str, GraphSourceRecord]) -> list[dict[str, Any]]:
+    facts: list[dict[str, Any]] = []
+    for node in graph.nodes:
+        if node.node_type != GraphNodeType.PRODUCT_SOURCE:
+            continue
+        record = sources.get(node.id, GraphSourceRecord())
+        facts.extend(merge_runtime_facts(record.facts, record.product_source))
+    return facts
+
+
+def _graph_source_references(graph: AppliedGraph, sources: dict[str, GraphSourceRecord]) -> list[CompiledReference]:
+    references: list[CompiledReference] = []
+    for order, node in enumerate(node for node in graph.nodes if node.node_type == GraphNodeType.IMAGE_ASSET):
+        record = sources.get(node.id, GraphSourceRecord())
+        asset_id = record.bound_asset_id or node.bound_asset_id
+        if not isinstance(asset_id, str) or not asset_id:
+            continue
+        references.append(
+            CompiledReference(
+                edge_id="",
+                source_node_id=node.id,
+                asset_id=asset_id,
+                label=record.bound_asset_label or node.title,
+                mime_type=record.bound_asset_mime_type,
+                order=order,
+            )
+        )
+    return references
+
+
 def strip_v3_prompt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in payload.items() if key not in V3_PROMPT_STRIPPED_KEYS}
 
@@ -152,21 +271,23 @@ def compile_prompt_runtime(
     references: list[CompiledReference] = []
     visual_payload = None
     visual_version_id = None
+    visual_overlay = None
     for edge in edges:
         source = graph.node(edge.source_node_id)
         record = sources.get(source.id, GraphSourceRecord())
         if edge.role == GraphEdgeRole.FACTS:
-            facts.extend(record.facts)
+            facts.extend(merge_runtime_facts(record.facts, record.product_source))
         elif edge.role == GraphEdgeRole.BRIEF:
             if record.brief:
                 briefs.append(dict(record.brief))
         elif edge.role == GraphEdgeRole.REFERENCE:
             references.append(_compile_reference(graph, edge, sources, artifacts))
         elif edge.role == GraphEdgeRole.VISUAL_GUIDANCE:
-            visual_payload, visual_version_id = _compile_visual(source, record)
+            visual_payload, visual_version_id, visual_overlay = _compile_visual(source, record)
     image_type_key = node.config.get("image_type_key")
     prompt_raw = node.config.get("prompt")
     prompt_config = dict(prompt_raw) if isinstance(prompt_raw, dict) else {}
+    text_policy, text_language = _downstream_text_intent(graph, node_id)
     incoming_ids = tuple(edge.id for edge in edges)
     digest = _input_digest(
         {
@@ -175,7 +296,11 @@ def compile_prompt_runtime(
             "facts": facts,
             "briefs": briefs,
             "references": [reference.asset_id for reference in references],
+            "visual_system": visual_payload,
             "visual_system_version_id": visual_version_id,
+            "visual_overlay": visual_overlay,
+            "text_policy": text_policy,
+            "text_language": text_language,
             "incoming_edge_ids": incoming_ids,
         }
     )
@@ -188,8 +313,67 @@ def compile_prompt_runtime(
         reference_images=tuple(references),
         visual_system=visual_payload,
         visual_system_version_id=visual_version_id,
+        visual_overlay=visual_overlay,
         incoming_edge_ids=incoming_ids,
         input_digest=digest,
+        text_policy=text_policy,
+        text_language=text_language,
+    )
+
+
+def compile_context_runtime(
+    graph: AppliedGraph,
+    node_id: str,
+    sources: dict[str, GraphSourceRecord],
+    artifacts: GraphRuntimeArtifacts | None = None,
+) -> ContextRuntimeInput:
+    node = graph.node(node_id)
+    if node.node_type not in {GraphNodeType.CREATIVE_BRIEF, GraphNodeType.VISUAL_SYSTEM}:
+        raise BusinessValidationError("只有视觉规范或创作要求节点可以编译为 ContextRuntimeInput")
+    _reject_incomplete_required_edges(graph, node)
+    edges = incoming_edges(graph, node_id)
+    facts: list[dict[str, Any]] = []
+    references: list[CompiledReference] = []
+    for edge in edges:
+        record = sources.get(edge.source_node_id, GraphSourceRecord())
+        if edge.role == GraphEdgeRole.FACTS:
+            facts.extend(merge_runtime_facts(record.facts, record.product_source))
+        elif edge.role == GraphEdgeRole.REFERENCE:
+            references.append(_compile_reference(graph, edge, sources, artifacts))
+    if not facts:
+        facts.extend(_graph_source_facts(graph, sources))
+    if not references:
+        references.extend(_graph_source_references(graph, sources))
+    text_policy, text_language = _graph_text_intent(graph)
+    incoming_ids = tuple(edge.id for edge in edges)
+    current_config = dict(node.config)
+    if node.node_type == GraphNodeType.VISUAL_SYSTEM:
+        overlay_raw = current_config.get("visual_overlay")
+        overlay = catalog_visual_overlay(overlay_raw if isinstance(overlay_raw, dict) else None)
+        if overlay:
+            current_config = {**current_config, "visual_overlay": overlay}
+    digest = _input_digest(
+        {
+            "node_id": node_id,
+            "node_type": node.node_type.value,
+            "config": current_config,
+            "facts": facts,
+            "references": [reference.asset_id for reference in references],
+            "text_policy": text_policy,
+            "text_language": text_language,
+            "incoming_edge_ids": incoming_ids,
+        }
+    )
+    return ContextRuntimeInput(
+        node_id=node_id,
+        node_type=node.node_type,
+        product_facts=tuple(facts),
+        reference_images=tuple(references),
+        current_config=current_config,
+        incoming_edge_ids=incoming_ids,
+        input_digest=digest,
+        text_policy=text_policy,
+        text_language=text_language,
     )
 
 
@@ -217,19 +401,19 @@ def compile_image_runtime(
             references.append(_compile_reference(graph, edge, sources, artifacts))
         elif edge.role == GraphEdgeRole.VISUAL_GUIDANCE:
             source = graph.node(edge.source_node_id)
-            visual_payload, visual_version_id = _compile_visual(source, sources.get(source.id, GraphSourceRecord()))
-    generation_spec = node.config.get("generation_spec")
-    try:
-        spec_payload = GenerationSpec.model_validate(generation_spec).model_dump(mode="json")
-    except Exception as exc:
-        raise BusinessValidationError("图片生成节点缺少有效 GenerationSpec") from exc
-    variation = node.config.get("variation_instruction")
-    overlay = visual_overlay_from_config(node.config)
+            visual_payload, visual_version_id, _ = _compile_visual(
+                source,
+                sources.get(source.id, GraphSourceRecord()),
+            )
+    normalized_config = normalize_node_config(node.node_type, node.config)
+    spec_payload = normalized_config["generation_spec"]
+    variation = normalized_config.get("variation_instruction")
+    overlay = visual_overlay_from_config(normalized_config)
     incoming_ids = tuple(edge.id for edge in edges)
     digest = _input_digest(
         {
             "node_id": node_id,
-            "config": node.config,
+            "config": normalized_config,
             "prompt_artifact_id": prompt_artifact_id,
             "references": [reference.asset_id for reference in references],
             "visual_system_version_id": visual_version_id,
@@ -260,6 +444,7 @@ def select_run_node_ids(
     artifacts: GraphRuntimeArtifacts | None = None,
 ) -> tuple[str, ...]:
     processing_ids = [node.id for node in graph.nodes if node.node_type in PROCESSING_NODE_TYPES]
+    del artifacts
     if scope == GraphRunScope.GRAPH:
         selected = [node_id for node_id in processing_ids if _has_required_edges(graph, node_id)]
     else:
@@ -267,20 +452,17 @@ def select_run_node_ids(
             raise BusinessValidationError("节点运行范围必须指定目标节点")
         target = graph.node(target_node_id)
         if target.node_type not in PROCESSING_NODE_TYPES:
-            raise BusinessValidationError("只能运行提示词生成或图片生成节点")
-        if not _has_required_edges(graph, target_node_id):
-            raise BusinessValidationError("目标节点缺少运行所需的输入边")
+            raise BusinessValidationError("只能运行视觉规范、创作要求、提示词生成或图片生成节点")
+        try:
+            _reject_incomplete_required_edges(graph, target)
+        except BusinessValidationError as exc:
+            raise BusinessValidationError(f"目标节点不可运行: {exc}") from exc
         ancestors = _processing_ancestors(graph, target_node_id)
         if scope == GraphRunScope.TO_NODE:
             selected = [node_id for node_id in ancestors if _has_required_edges(graph, node_id)]
             selected.append(target_node_id)
         else:
-            selected = [
-                node_id
-                for node_id in ancestors
-                if _has_required_edges(graph, node_id) and not _has_output(node_id, artifacts)
-            ]
-            selected.append(target_node_id)
+            selected = [target_node_id]
     ordered = _topo_order(graph, selected)
     if not ordered:
         raise BusinessValidationError("没有可运行的处理节点")
@@ -433,18 +615,18 @@ def _compile_reference(
 def _compile_visual(
     source: AppliedGraphNode,
     record: GraphSourceRecord,
-) -> tuple[dict[str, Any] | None, str | None]:
+) -> tuple[dict[str, Any] | None, str | None, dict[str, Any] | None]:
     if source.node_type != GraphNodeType.VISUAL_SYSTEM:
         raise BusinessValidationError("visual_guidance 边的源必须是视觉规范节点")
     raw_version = record.visual_system_version_id or source.config.get("visual_system_version_id")
     version_id = raw_version.strip() if isinstance(raw_version, str) and raw_version.strip() else None
     overlay = visual_overlay_from_config(source.config)
     if record.visual_payload is None:
-        return (dict(overlay), version_id) if overlay else (None, None)
+        return (dict(overlay), version_id, dict(overlay)) if overlay else (None, None, None)
     payload = dict(record.visual_payload)
     if overlay:
         payload = apply_visual_overlay(payload, overlay)
-    return payload, version_id
+    return payload, version_id, dict(overlay) if overlay else None
 
 
 def _prompt_artifact(
@@ -453,23 +635,37 @@ def _prompt_artifact(
     artifacts: GraphRuntimeArtifacts | None,
 ) -> tuple[dict[str, Any], str]:
     if artifacts is not None and node_id in artifacts.payloads and node_id in artifacts.artifact_ids:
-        return dict(artifacts.payloads[node_id]), artifacts.artifact_ids[node_id]
+        payload = strip_v3_prompt_payload(dict(artifacts.payloads[node_id]))
+        if _has_prompt_payload(payload):
+            return dict(artifacts.payloads[node_id]), artifacts.artifact_ids[node_id]
+        raise BusinessValidationError("上游提示词尚未生成")
     record = sources.get(node_id, GraphSourceRecord())
     if record.current_artifact_payload is None or record.current_artifact_id is None:
+        raise BusinessValidationError("上游提示词尚未生成")
+    if not _has_prompt_payload(strip_v3_prompt_payload(dict(record.current_artifact_payload))):
         raise BusinessValidationError("上游提示词尚未生成")
     return dict(record.current_artifact_payload), record.current_artifact_id
 
 
-def _reject_incomplete_required_edges(graph: AppliedGraph, node: AppliedGraphNode) -> None:
-    status = node_config_status(
-        GraphRuleNode(node.id, node.node_type, node.config, node.bound_asset_id),
-        (
-            GraphRuleEdge(edge.id, edge.source_node_id, edge.target_node_id, edge.data_type, edge.role, edge.order)
-            for edge in incoming_edges(graph, node.id)
-        ),
+def _has_prompt_payload(payload: dict[str, Any]) -> bool:
+    return any(
+        key not in V3_PROMPT_EMPTY_KEYS and value not in (None, "", [], {})
+        for key, value in payload.items()
     )
-    required = run_required_inputs(node.node_type)
-    if required and status.value == "incomplete":
+
+
+def _reject_incomplete_required_edges(graph: AppliedGraph, node: AppliedGraphNode) -> None:
+    rule_node = GraphRuleNode(node.id, node.node_type, node.config, node.bound_asset_id)
+    config_error = node_config_error(rule_node)
+    if config_error is not None:
+        if config_error.startswith(("图片生成节点", "generation_spec", "delivery_spec")):
+            raise BusinessValidationError(config_error)
+        raise BusinessValidationError(f"节点配置无效: {config_error}")
+    incoming = tuple(
+        GraphRuleEdge(edge.id, edge.source_node_id, edge.target_node_id, edge.data_type, edge.role, edge.order)
+        for edge in incoming_edges(graph, node.id)
+    )
+    if missing_required_inputs(rule_node, incoming):
         raise BusinessValidationError("节点缺少运行所需的输入边")
 
 

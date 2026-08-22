@@ -88,6 +88,122 @@ describe("ProductFlow Pi tools", () => {
     expect((result.content[0] as { text: string }).text).toContain(instruction.slice(0, 64));
   });
 
+  it("keeps oversized product context JSON-safe and preserves the complete Node Catalog", async () => {
+    const nodeCatalog = {
+      version: 3,
+      nodes: [
+        {
+          node_type: "image_generation",
+          config_fields: [
+            {
+              key: "generation_spec",
+              fields: [{ key: "aspect_ratio" }],
+            },
+          ],
+        },
+      ],
+    };
+    const context = {
+      schema_version: 1,
+      product: {
+        id: baseScope.product_id,
+        name: "大上下文商品",
+        category: "工业收纳",
+        price: null,
+        source_note: "x".repeat(100_000),
+      },
+      confirmed_fact_set: null,
+      workflow_draft: {
+        id: baseScope.workflow_draft_id,
+        status: "collecting",
+        version: 1,
+        payload: null,
+        intake: null,
+      },
+      workflow_recipe_seed: null,
+      legacy_archive_seed: null,
+      draft_guidance: { schema_version: 1, cross_field_rules: [] },
+      node_catalog: nodeCatalog,
+    };
+    const client = {
+      productContext: async () => context,
+    } as unknown as ProductFlowClient;
+    const tool = createProductFlowTools(runtime(baseScope, client)).find(
+      (candidate) => candidate.name === "get_product_workflow_context_v1",
+    );
+    if (!tool) throw new Error("product context tool was not registered");
+
+    const result = await tool.execute("large-context", {}, undefined, undefined, {} as never);
+    const text = (result.content[0] as { text: string }).text;
+
+    expect(Buffer.byteLength(text, "utf8")).toBeGreaterThan(96 << 10);
+    expect(text).not.toContain("...[truncated]");
+    expect(JSON.parse(text)).toEqual(context);
+    expect(JSON.parse(text).node_catalog).toEqual(nodeCatalog);
+  });
+
+  it("keeps the complete Node Catalog in a defensive product context overflow envelope", async () => {
+    const nodeCatalog = {
+      version: 3,
+      nodes: [
+        {
+          node_type: "image_generation",
+          config_fields: [{ key: "generation_spec", fields: [{ key: "aspect_ratio" }] }],
+        },
+      ],
+    };
+    const client = {
+      productContext: async () => ({
+        schema_version: 1,
+        product: { source_note: "x".repeat((512 << 10) + 10_000) },
+        node_catalog: nodeCatalog,
+      }),
+    } as unknown as ProductFlowClient;
+    const tool = createProductFlowTools(runtime(baseScope, client)).find(
+      (candidate) => candidate.name === "get_product_workflow_context_v1",
+    );
+    if (!tool) throw new Error("product context tool was not registered");
+
+    const result = await tool.execute("overflowing-context", {}, undefined, undefined, {} as never);
+    const text = (result.content[0] as { text: string }).text;
+    const parsed = JSON.parse(text) as {
+      truncated: boolean;
+      node_catalog: unknown;
+    };
+
+    expect(parsed.truncated).toBe(true);
+    expect(parsed.node_catalog).toEqual(nodeCatalog);
+    expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(512 << 10);
+  });
+
+  it("returns a legal bounded JSON contract for oversized generic results", async () => {
+    const client = {
+      workflowRuns: async () => ({ runs: ["x".repeat(100_000)] }),
+    } as unknown as ProductFlowClient;
+    const tool = createProductFlowTools(runtime(baseScope, client)).find(
+      (candidate) => candidate.name === "inspect_workflow_runs_v1",
+    );
+    if (!tool) throw new Error("workflow runs tool was not registered");
+
+    const result = await tool.execute("large-generic-result", { limit: 1 }, undefined, undefined, {} as never);
+    const text = (result.content[0] as { text: string }).text;
+    const parsed = JSON.parse(text) as {
+      schema_version: number;
+      truncated: boolean;
+      original_bytes: number;
+      max_bytes: number;
+    };
+
+    expect(parsed).toMatchObject({
+      schema_version: 1,
+      truncated: true,
+      max_bytes: 96 << 10,
+    });
+    expect(parsed.original_bytes).toBeGreaterThan(parsed.max_bytes);
+    expect(text).not.toContain("...[truncated]");
+    expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(96 << 10);
+  });
+
   it("bounds structured draft failure details before they cross the Agent contract", async () => {
     const recordedFailures: unknown[] = [];
     const client = {

@@ -4,15 +4,15 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { GraphNode, GraphNodeCatalog, GraphProjection } from "../../../lib/types";
-import { GraphNodeCard } from "./GraphWorkflowCanvas";
+import { GraphGroupCard, GraphNodeCard } from "./GraphWorkflowCanvas";
 
 const catalog: GraphNodeCatalog = {
   version: 1,
   nodes: [
     { node_type: "product_source", output_data_type: "product_facts", kind: "source", accepts: [] },
     { node_type: "image_asset", output_data_type: "image_asset", kind: "source", accepts: [] },
-    { node_type: "creative_brief", output_data_type: "creative_brief", kind: "source", accepts: [] },
-    { node_type: "visual_system", output_data_type: "visual_system", kind: "source", accepts: [] },
+    { node_type: "creative_brief", output_data_type: "creative_brief", kind: "processing", accepts: [] },
+    { node_type: "visual_system", output_data_type: "visual_system", kind: "processing", accepts: [] },
     {
       node_type: "prompt_generation",
       output_data_type: "prompt",
@@ -84,6 +84,7 @@ function renderNodeCard(node: GraphNode, connectable = true): string {
       onRunToNode: () => undefined,
       onBind: () => undefined,
       onDuplicate: () => undefined,
+      onSaveRecipe: () => undefined,
       onDelete: () => undefined,
       onSelectNode: () => undefined,
       graph,
@@ -177,6 +178,7 @@ describe("graph workflow node ports", () => {
         onBind: () => undefined,
         onDuplicate: () => undefined,
         onDelete: () => undefined,
+        onSaveRecipe: () => undefined,
         onSelectNode: () => undefined,
         graph,
         catalog,
@@ -196,5 +198,42 @@ describe("graph workflow node ports", () => {
     );
     expect(markup).toContain("模型超时");
     expect(markup).toContain("可重试");
+  });
+});
+
+describe("graph group chrome", () => {
+  it("can enter a group and does not grow ports or run controls", () => {
+    const props: ComponentProps<typeof GraphGroupCard> = {
+      id: "group:group-1",
+      type: "graph-group",
+      data: {
+        kind: "group",
+        group: { id: "group-1", title: "主图组", member_ids: ["prompt"] },
+        bounds: { x: 0, y: 0, width: 320, height: 280 },
+        structureBusy: false,
+        onEnter: () => undefined,
+        onRename: () => undefined,
+        onDissolve: () => undefined,
+      },
+      dragging: false,
+      zIndex: 0,
+      selectable: true,
+      deletable: false,
+      selected: false,
+      draggable: true,
+      isConnectable: false,
+      positionAbsoluteX: 0,
+      positionAbsoluteY: 0,
+    };
+    const markup = renderToStaticMarkup(
+      createElement(ReactFlowProvider, null, createElement(GraphGroupCard, props)),
+    );
+    expect(markup).toContain("进入");
+    expect(markup).toContain("data-enter-group");
+    expect(markup).toContain("主图组");
+    expect(markup).toContain('aria-hidden="true"');
+    expect(handleMarkup(markup)).toEqual([]);
+    expect(markup).not.toContain("运行该节点");
+    expect(markup).not.toContain("graph.canvas.runNode");
   });
 });

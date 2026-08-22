@@ -8,8 +8,10 @@ import {
   buildRenameGroupOperations,
   computeGraphGroupBounds,
   createdGraphNodeIds,
+  graphCanvasView,
   graphViewportCenterPosition,
   selectedGraphEdges,
+  selectionInsideGroup,
 } from "./graphLayout";
 
 function node(partial: Partial<GraphNode> & Pick<GraphNode, "id" | "node_type">): GraphNode {
@@ -36,13 +38,13 @@ const graph: GraphProjection = {
   schema_version: 3,
   revision: 1,
   source_draft_revision_id: null,
-    last_operation_group_id: null,
-    can_undo: false,
-    can_redo: false,
+  last_operation_group_id: null,
+  can_undo: false,
+  can_redo: false,
   nodes: [
     node({ id: "source", node_type: "product_source", position_x: 400, position_y: 10 }),
-    node({ id: "prompt", node_type: "prompt_generation", position_x: 10, position_y: 10 }),
-    node({ id: "image", node_type: "image_generation", position_x: 10, position_y: 300 }),
+    node({ id: "prompt", node_type: "prompt_generation", position_x: 10, position_y: 10, group_id: "group-1" }),
+    node({ id: "image", node_type: "image_generation", position_x: 10, position_y: 300, group_id: "group-1" }),
   ],
   edges: [
     { id: "e1", source_node_id: "source", target_node_id: "prompt", data_type: "product_facts", role: "facts", order: 0 },
@@ -65,6 +67,7 @@ describe("graph layout commands", () => {
     const connects = operations.filter((item) => item.op === "connect_nodes");
     expect(creates).toHaveLength(2);
     expect(connects).toHaveLength(1);
+    expect(creates.every((item) => item.group_ref === "group-1")).toBe(true);
     expect(creates.every((item) => item.position_x === 10 + 24 || item.position_x === 10 + 24)).toBe(true);
   });
 
@@ -117,5 +120,20 @@ describe("graph layout commands", () => {
       ],
     };
     expect(createdGraphNodeIds(graph, after)).toEqual(["prompt-copy", "image-copy"]);
+  });
+
+  it("keeps a group-local view without turning the group into a node, and leaves cross-group edges on the full graph", () => {
+    expect(graph.edges.map((edge) => edge.id)).toEqual(["e1", "e2"]);
+    const inside = graphCanvasView(graph, "group-1");
+    expect(inside.nodes.map((node) => node.id)).toEqual(["prompt", "image"]);
+    expect(inside.edges.map((edge) => edge.id)).toEqual(["e2"]);
+    expect(inside.groups).toEqual([]);
+    expect(graphCanvasView(graph, null).edges.map((edge) => edge.id)).toEqual(["e1", "e2"]);
+    expect(selectionInsideGroup(graph, "group-1", ["source", "prompt", "image"])).toEqual(["prompt", "image"]);
+  });
+
+  it("auto-layouts only members when the view is an entered group", () => {
+    const positions = buildGraphAutoLayoutPositions(graphCanvasView(graph, "group-1"));
+    expect(positions.every((item) => item.node_id !== "source")).toBe(true);
   });
 });

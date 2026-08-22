@@ -45,6 +45,8 @@ const EMPTY_ACTIONS: GraphCanvasActions = {
   duplicateSelected: () => undefined,
   groupSelected: () => undefined,
   dissolveSelected: () => undefined,
+  saveRecipe: () => undefined,
+  appendRecipe: () => undefined,
   commitNode: async () => undefined,
 };
 
@@ -101,6 +103,9 @@ export function AgentProductWorkbenchPage({
   });
   const liveGraph = graphQuery.data ?? materialization ?? bootstrap.graph;
   const catalog = catalogQuery.data ?? null;
+  const catalogError = catalogQuery.error
+    ? errorDetail(catalogQuery.error, t("graph.inspector.catalogLoadFailed"))
+    : null;
   const workflowAvailable = Boolean(liveGraph);
   const selected = liveGraph?.nodes.find((node) => node.id === selectedNodeIds[0]) ?? null;
   const bindNode = bindNodeId
@@ -188,10 +193,10 @@ export function AgentProductWorkbenchPage({
           { queryKey: ["agent-workbench", bootstrap.product.id] },
           (current) => current?.mode === "agent"
             ? {
-                ...current,
-                conversation: application.conversation,
-                workflow_draft: application.draft,
-              }
+              ...current,
+              conversation: application.conversation,
+              workflow_draft: application.draft,
+            }
             : current,
         );
         await onRefetchBootstrap();
@@ -208,6 +213,11 @@ export function AgentProductWorkbenchPage({
   });
 
   const requestSidebarTool = useCallback(async (tool: AgentSidebarToolId): Promise<boolean> => {
+    try {
+      await flushInspectorRef.current();
+    } catch {
+      return false;
+    }
     sidebarToolRef.current = tool;
     setSidebarTool(tool);
     return true;
@@ -224,18 +234,16 @@ export function AgentProductWorkbenchPage({
       void requestSidebarTool("details");
     })();
   }, [liveGraph, requestSidebarTool]);
-  const selectCanvasNodes = useCallback((nodeIds: string[]) => {
-    void (async () => {
-      try {
-        await flushInspectorRef.current();
-      } catch {
-        return;
-      }
-      setSelectedNodeIds(nodeIds);
-      if (nodeIds.length === 1 && liveGraph && inspectableGraphNodeId(liveGraph, nodeIds[0])) {
-        void requestSidebarTool("details");
-      }
-    })();
+  const selectCanvasNodes = useCallback(async (nodeIds: string[]) => {
+    try {
+      await flushInspectorRef.current();
+    } catch {
+      return;
+    }
+    setSelectedNodeIds(nodeIds);
+    if (nodeIds.length === 1 && liveGraph && inspectableGraphNodeId(liveGraph, nodeIds[0])) {
+      void requestSidebarTool("details");
+    }
   }, [liveGraph, requestSidebarTool]);
 
   const confirmRevision = (revision: WorkflowDraftRevision) => {
@@ -266,6 +274,12 @@ export function AgentProductWorkbenchPage({
           onDuplicate={actions.duplicateSelected}
           onGroup={actions.groupSelected}
           onDissolve={actions.dissolveSelected}
+          canSaveFull={liveGraph.nodes.length > 0}
+          canSaveGroup={liveGraph.groups.length > 0}
+          canSaveSelection={selectedNodeIds.length > 0}
+          onSaveFull={() => actions.saveRecipe("workflow")}
+          onSaveGroup={() => actions.saveRecipe("group")}
+          onSaveSelection={() => actions.saveRecipe("selection")}
           onOpenRecipesTab={() => {
             void requestSidebarTool("recipes");
           }}
@@ -281,6 +295,9 @@ export function AgentProductWorkbenchPage({
           graph={liveGraph}
           node={selected}
           product={bootstrap.product}
+          catalog={catalog}
+          catalogError={catalogError}
+          onRetryCatalog={() => void catalogQuery.refetch()}
           busy={canvasBusy}
           onRegisterFlush={registerInspectorFlush}
           onCommit={async (input) => {
@@ -293,6 +310,8 @@ export function AgentProductWorkbenchPage({
           } : undefined}
           onJump={inspectNode}
           onPreviewImage={setPreviewImage}
+          onOpenAdd={() => void requestSidebarTool("add")}
+          onOpenLibrary={() => void requestSidebarTool("library")}
         />
       ),
     },
@@ -306,6 +325,7 @@ export function AgentProductWorkbenchPage({
           graph={liveGraph}
           selectedNodeId={selected?.id ?? null}
           structureBusy={canvasBusy}
+          onBeforeRun={beforeRun}
           onJump={inspectNode}
           onPreviewImage={setPreviewImage}
         />
@@ -365,7 +385,7 @@ export function AgentProductWorkbenchPage({
                 : null}
               application={recipeApplication}
               structureBusy={canvasBusy}
-              canAppend={() => false}
+              canAppend={(recipe) => Boolean(liveGraph) && recipe.kind === "workflow_recipe"}
               onRetry={() => void recipesQuery.refetch()}
               onApply={(recipe) => {
                 const idempotencyKey = recipeApplyKeysRef.current.get(recipe.id)
@@ -373,7 +393,14 @@ export function AgentProductWorkbenchPage({
                 recipeApplyKeysRef.current.set(recipe.id, idempotencyKey);
                 recipeMutation.mutate({ kind: "apply", recipe, idempotencyKey });
               }}
-              onAppend={() => undefined}
+              onAppend={(recipe) => {
+                actions.appendRecipe({
+                  id: recipe.id,
+                  version: recipe.current_version.version,
+                  title: recipe.current_version.title,
+                  description: recipe.current_version.description,
+                });
+              }}
               onArchive={setArchiveRecipe}
             />
           </div>

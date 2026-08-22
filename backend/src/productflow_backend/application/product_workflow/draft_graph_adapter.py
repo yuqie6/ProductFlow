@@ -120,6 +120,7 @@ def build_draft_initial_graph_change_set(
 
     nodes_by_key = {node.key: node for node in payload.nodes}
     edge_order: dict[tuple[str, str], int] = {}
+    mapped_reference_pairs: set[tuple[str, str]] = set()
     for edge in payload.edges:
         source = nodes_by_key[edge.source_node_key]
         target = nodes_by_key[edge.target_node_key]
@@ -136,6 +137,11 @@ def build_draft_initial_graph_change_set(
                 code="draft_graph_edge_unsupported",
                 issues=[{"path": f"edges.{edge.key}", "message": "节点类型在 v3 中不能连接"}],
             )
+        if (
+            source.node_type == WorkflowNodeType.REFERENCE_IMAGE
+            and target.node_type == WorkflowNodeType.IMAGE_GENERATION
+        ):
+            mapped_reference_pairs.add((edge.source_node_key, edge.target_node_key))
         key = (edge.source_node_key, edge.target_node_key)
         order = edge_order.get(key, 0)
         edge_order[key] = order + 1
@@ -147,6 +153,24 @@ def build_draft_initial_graph_change_set(
                 order=order,
             )
         )
+
+    reference_nodes = [node for node in payload.nodes if node.node_type == WorkflowNodeType.REFERENCE_IMAGE]
+    image_nodes = [node for node in payload.nodes if node.node_type == WorkflowNodeType.IMAGE_GENERATION]
+    for image in image_nodes:
+        for reference in reference_nodes:
+            pair = (reference.key, image.key)
+            if pair in mapped_reference_pairs:
+                continue
+            order = edge_order.get(pair, 0)
+            edge_order[pair] = order + 1
+            operations.append(
+                ConnectNodesOp(
+                    client_ref=f"edge-reference-{reference.key}-{image.key}",
+                    source_ref=reference.key,
+                    target_ref=image.key,
+                    order=order,
+                )
+            )
 
     _assert_image_nodes_have_prompt(payload)
 

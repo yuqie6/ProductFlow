@@ -20,6 +20,13 @@ export function isWorkflowCanvasViewportCompatible(
   return savedWideLayout === currentWideLayout && widthRatio <= 1.4;
 }
 
+export function isWorkflowCanvasViewportScopeActive(
+  activeGroupId: string | null | undefined,
+  updateGroupId: string | null | undefined,
+): boolean {
+  return (activeGroupId ?? null) === (updateGroupId ?? null);
+}
+
 export function workflowCanvasFitMinZoom(surfaceWidth: number): number {
   if (surfaceWidth < 480) return 0.24;
   if (surfaceWidth < 720) return 0.32;
@@ -28,7 +35,11 @@ export function workflowCanvasFitMinZoom(surfaceWidth: number): number {
 
 const VIEWPORT_STORAGE_PREFIX = "productflow.workflowV3.canvasState.v1:";
 
-export function workflowCanvasViewportStorageKey(workflowId: string): string {
+export function workflowCanvasViewportStorageKey(
+  workflowId: string,
+  groupId?: string | null,
+): string {
+  if (groupId) return `${VIEWPORT_STORAGE_PREFIX}${workflowId}:group:${groupId}`;
   return `${VIEWPORT_STORAGE_PREFIX}${workflowId}`;
 }
 
@@ -54,11 +65,14 @@ export function parseStoredWorkflowCanvasViewport(raw: string | null): WorkflowC
   }
 }
 
-export function readStoredWorkflowCanvasViewport(workflowId: string): WorkflowCanvasViewport | null {
+export function readStoredWorkflowCanvasViewport(
+  workflowId: string,
+  groupId?: string | null,
+): WorkflowCanvasViewport | null {
   if (typeof window === "undefined" || !workflowId) return null;
   try {
     return parseStoredWorkflowCanvasViewport(
-      window.localStorage.getItem(workflowCanvasViewportStorageKey(workflowId)),
+      window.localStorage.getItem(workflowCanvasViewportStorageKey(workflowId, groupId)),
     );
   } catch {
     return null;
@@ -68,10 +82,14 @@ export function readStoredWorkflowCanvasViewport(workflowId: string): WorkflowCa
 export function writeStoredWorkflowCanvasViewport(
   workflowId: string,
   viewport: WorkflowCanvasViewport,
+  groupId?: string | null,
 ): void {
   if (typeof window === "undefined" || !workflowId) return;
   try {
-    window.localStorage.setItem(workflowCanvasViewportStorageKey(workflowId), JSON.stringify(viewport));
+    window.localStorage.setItem(
+      workflowCanvasViewportStorageKey(workflowId, groupId),
+      JSON.stringify(viewport),
+    );
   } catch {
     // Private mode and quota errors stay client-local; the live viewport still works.
   }

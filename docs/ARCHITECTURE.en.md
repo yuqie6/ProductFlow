@@ -131,18 +131,18 @@ The online workflow lives on `workflow_graphs` with schema version 3. Node types
 
 - `product_source`: product-facts entry.
 - `image_asset`: one-to-one ProductImageAsset binding.
-- `creative_brief`: creative intent.
-- `visual_system`: visual-system reference.
-- `prompt_generation`: generate and edit prompt artifacts.
-- `image_generation`: generate images from compiled context and GenerationSpec.
+- `creative_brief`: running the node writes a creative brief from product facts and photos; the result is editable.
+- `visual_system`: running the node writes style and background constraints from product facts and photos; the result is editable.
+- `prompt_generation`: running the node writes a prompt from upstream context; the result is editable.
+- `image_generation`: generate images from the current prompt and GenerationSpec. Running this node does not fill empty visual or brief nodes; run those first, or use run-to-node.
 
-Canvas groups are one-level visual folders and do not change DAG execution. Edges use Node Catalog data types and roles.
+Canvas groups are one-level visual folders. You can enter a group and remember its viewport separately from the full graph. Groups do not change DAG execution, grow ports, or run/cancel/retry. Cross-group edges stay visible on the full graph. Edges use Node Catalog data types and roles. Node inspector forms render from the same `config_fields` document and save with `update_node_config`.
 
 `WorkflowGraphRun` and `WorkflowGraphNodeRun` store execution state. Execution reads the run snapshot, not the live graph. Image results write ProductImageAsset and `WorkflowGraphArtifact` rows.
 
 Workflow runs are created and validated through ProductFlow business endpoints. The workbench can submit the whole graph or one node without an Agent Conversation first. Agent run requests go through `agent_workflow_run_requests.py`; user confirmation uses the same `graph_runs.py` / `graph_execution.py` constraints.
 
-WorkflowRecipe stores user-created full workflows or fragments. Recipe payloads store reusable structure and configuration, without product identity, generated results, or media bytes. Saving a recipe from a live v3 graph is not implemented; applying a saved recipe creates a reviewable Draft.
+WorkflowRecipe stores user-created full workflows or fragments. Saving extracts a live schema-v3 graph fragment (nodes, edges, groups) without product identity, bound assets, generated results, or media bytes. Applying a full recipe to another product still creates a reviewable Draft; the workbench previews the nodes and edges that will be created. Fragment recipes return an explicit conflict against an existing workflow. The save HTTP entry is `POST /api/v3/products/{product_id}/workflows/{workflow_id}/recipes`.
 
 Graph rules live in `domain/graph_catalog.py` and `domain/graph_rules.py`. Structure commands use `graph_commands.py` / `graph_apply.py`. Runs use `graph_runs.py` / `graph_execution.py`. HTTP entry is `presentation/routes/workflow_graphs.py`.
 
@@ -170,7 +170,7 @@ Global media-library reads, folder/tag/archive organization, source saves, and w
 
 `ProviderProfile` stores endpoint, secret, capabilities, default models, and provider configuration. `ProviderBinding` maps one profile to a purpose:
 
-- `prompt`: prompt nodes.
+- `prompt`: visual system, creative brief, and prompt nodes.
 - `agent`: workflow Agent.
 - `image`: workflow and image-session generation.
 

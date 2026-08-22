@@ -1,4 +1,4 @@
-import { Boxes, CopyPlus, FolderPlus, Ungroup } from "lucide-react";
+import { BookmarkPlus, Boxes, CopyPlus, FolderPlus, Ungroup } from "lucide-react";
 import type { ReactNode } from "react";
 
 import type { TranslationKey } from "../../../lib/i18n";
@@ -27,6 +27,12 @@ export function GraphAddNodePanel({
   onDuplicate,
   onGroup,
   onDissolve,
+  onSaveFull,
+  onSaveGroup,
+  onSaveSelection,
+  canSaveFull = false,
+  canSaveGroup = false,
+  canSaveSelection = false,
   onOpenRecipesTab,
 }: {
   busy: boolean;
@@ -37,6 +43,12 @@ export function GraphAddNodePanel({
   onDuplicate?: () => void;
   onGroup?: () => void;
   onDissolve?: () => void;
+  canSaveFull?: boolean;
+  canSaveGroup?: boolean;
+  canSaveSelection?: boolean;
+  onSaveFull?: () => void;
+  onSaveGroup?: () => void;
+  onSaveSelection?: () => void;
   catalog?: GraphNodeCatalog | null;
   onOpenRecipesTab?: () => void;
 }) {
@@ -68,6 +80,33 @@ export function GraphAddNodePanel({
           hint={t("graph.palette.dissolveHint")}
           disabled={busy}
           onClick={onDissolve}
+        />
+      ) : null}
+      {canSaveFull && onSaveFull ? (
+        <SelectionAction
+          icon={<BookmarkPlus size={15} />}
+          title={t("workbench.recipe.saveFull")}
+          hint={t("workbench.recipe.sourceFull")}
+          disabled={busy}
+          onClick={onSaveFull}
+        />
+      ) : null}
+      {canSaveGroup && onSaveGroup ? (
+        <SelectionAction
+          icon={<BookmarkPlus size={15} />}
+          title={t("workbench.recipe.saveGroup")}
+          hint={t("workbench.recipe.saveGroupHint")}
+          disabled={busy}
+          onClick={onSaveGroup}
+        />
+      ) : null}
+      {canSaveSelection && onSaveSelection ? (
+        <SelectionAction
+          icon={<BookmarkPlus size={15} />}
+          title={t("workbench.recipe.saveSelection")}
+          hint={t("workbench.recipe.saveSelection")}
+          disabled={busy}
+          onClick={onSaveSelection}
         />
       ) : null}
 

@@ -17,6 +17,7 @@ from productflow_backend.domain.graph_catalog import (
     GraphInputContract,
     graph_input_contract,
     graph_node_output_type,
+    normalize_node_config,
     require_graph_connection,
     run_required_inputs,
 )
@@ -93,6 +94,8 @@ def typed_edge_from_nodes(
 
 def node_config_status(node: GraphRuleNode, incoming: Iterable[GraphRuleEdge]) -> GraphConfigStatus:
     incoming_list = list(incoming)
+    if node_config_error(node) is not None:
+        return GraphConfigStatus.INCOMPLETE
     if node.node_type == GraphNodeType.PRODUCT_SOURCE:
         # New nodes must make the binding decision explicit.  A missing key is
         # retained for legacy reads and resolved by the graph runtime owner.
@@ -108,10 +111,31 @@ def node_config_status(node: GraphRuleNode, incoming: Iterable[GraphRuleEdge]) -
         return GraphConfigStatus.INCOMPLETE
     if node.node_type == GraphNodeType.VISUAL_SYSTEM and not _has_visual_system_config(node.config):
         return GraphConfigStatus.INCOMPLETE
-    for contract in run_required_inputs(node.node_type):
-        if not any(edge.data_type == contract.data_type and edge.role == contract.role for edge in incoming_list):
-            return GraphConfigStatus.INCOMPLETE
+    if missing_required_inputs(node, incoming_list):
+        return GraphConfigStatus.INCOMPLETE
     return GraphConfigStatus.READY
+
+
+def node_config_error(node: GraphRuleNode) -> str | None:
+    try:
+        normalized = normalize_node_config(node.node_type, node.config)
+    except BusinessValidationError as exc:
+        return str(exc)
+    if node.node_type == GraphNodeType.IMAGE_GENERATION and "generation_spec" not in normalized:
+        return "图片生成节点缺少有效 GenerationSpec"
+    return None
+
+
+def missing_required_inputs(
+    node: GraphRuleNode,
+    incoming: Iterable[GraphRuleEdge],
+) -> tuple[GraphInputContract, ...]:
+    incoming_list = list(incoming)
+    return tuple(
+        contract
+        for contract in run_required_inputs(node.node_type)
+        if not any(edge.data_type == contract.data_type and edge.role == contract.role for edge in incoming_list)
+    )
 
 
 def _has_visual_system_config(config: dict[str, object] | None) -> bool:

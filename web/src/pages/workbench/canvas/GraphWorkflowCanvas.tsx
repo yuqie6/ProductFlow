@@ -27,7 +27,7 @@ import type {
   ReactFlowInstance,
   Viewport,
 } from "@xyflow/react";
-import { ChevronsRight, CopyPlus, Folder, Focus, Hand, Link2, Loader2, MousePointer2, Pencil, Play, Trash2, Ungroup } from "lucide-react";
+import { BookmarkPlus, ChevronsRight, CopyPlus, Folder, FolderOpen, Focus, Hand, Link2, Loader2, MousePointer2, Pencil, Play, Trash2, Ungroup } from "lucide-react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, MouseEvent as ReactMouseEvent } from "react";
 
@@ -73,6 +73,7 @@ import {
   GRAPH_NODE_WIDTH,
   GRAPH_SNAP,
   computeGraphGroupBounds,
+  graphCanvasView,
 } from "./graphLayout";
 
 const SNAP_GRID: [number, number] = [GRAPH_SNAP, GRAPH_SNAP];
@@ -97,6 +98,7 @@ interface GraphNodeData extends Record<string, unknown> {
   onRunToNode: (node: GraphNode) => void;
   onBind: (node: GraphNode) => void;
   onDuplicate: (node: GraphNode) => void;
+  onSaveRecipe: (node: GraphNode) => void;
   onDelete: (node: GraphNode) => void;
   onSelectNode: (nodeId: string, event: ReactMouseEvent<HTMLElement>) => void;
   graph: GraphProjection;
@@ -108,6 +110,7 @@ interface GraphGroupData extends Record<string, unknown> {
   group: GraphGroup;
   bounds: { x: number; y: number; width: number; height: number };
   structureBusy: boolean;
+  onEnter: (groupId: string) => void;
   onRename: (groupId: string, title: string) => void;
   onDissolve: (groupId: string) => void;
 }
@@ -248,6 +251,13 @@ export const GraphNodeCard = memo(function GraphNodeCard({
           <CopyPlus size={16} aria-hidden="true" />
         </WorkflowCanvasNodeToolbarButton>
         <WorkflowCanvasNodeToolbarButton
+          label={t("graph.canvas.saveRecipe")}
+          disabled={data.structureBusy || running}
+          onClick={() => data.onSaveRecipe(node)}
+        >
+          <BookmarkPlus size={16} aria-hidden="true" />
+        </WorkflowCanvasNodeToolbarButton>
+        <WorkflowCanvasNodeToolbarButton
           label={t("detail.fitSelection")}
           onClick={() => {
             void reactFlow.fitView({ padding: 0.22, duration: 180, maxZoom: 1.05, nodes: [{ id }] });
@@ -313,12 +323,12 @@ export const GraphNodeCard = memo(function GraphNodeCard({
   );
 });
 
-const GraphGroupCard = memo(function GraphGroupCard({
+export const GraphGroupCard = memo(function GraphGroupCard({
   data,
   selected,
 }: NodeProps<Node<GraphGroupData>>) {
   const { t } = useI18n();
-  const { group, bounds, structureBusy, onRename, onDissolve } = data;
+  const { group, bounds, structureBusy, onEnter, onRename, onDissolve } = data;
   const [draft, setDraft] = useState(group.title);
   const [editing, setEditing] = useState(false);
   useEffect(() => {
@@ -338,14 +348,22 @@ const GraphGroupCard = memo(function GraphGroupCard({
     <div
       style={{ width: bounds.width, height: bounds.height }}
       className={`group relative rounded-2xl border-2 border-dashed transition-all pointer-events-none ${selected
-          ? "border-slate-400 bg-slate-50/40 dark:border-slate-500 dark:bg-slate-800/20"
-          : "border-slate-300/80 bg-slate-50/30 dark:border-slate-700/80 dark:bg-[#0c1322]/25"
+        ? "border-slate-400 bg-slate-50/40 dark:border-slate-500 dark:bg-slate-800/20"
+        : "border-slate-300/80 bg-slate-50/30 dark:border-slate-700/80 dark:bg-[#0c1322]/25"
         }`}
       data-graph-group-id={group.id}
     >
-      <div className="pointer-events-auto flex items-center gap-2 border-b border-dashed border-slate-200/80 bg-white/70 px-3.5 py-2 backdrop-blur-sm dark:border-slate-800/80 dark:bg-[#0f172a]/60 rounded-t-2xl">
+      <div
+        className="pointer-events-auto flex items-center gap-2 border-b border-dashed border-slate-200/80 bg-white/70 px-3.5 py-2 backdrop-blur-sm dark:border-slate-800/80 dark:bg-[#0f172a]/60 rounded-t-2xl"
+        onDoubleClick={(event) => {
+          if (structureBusy) return;
+          if ((event.target as HTMLElement).closest("input, button")) return;
+          event.stopPropagation();
+          onEnter(group.id);
+        }}
+      >
         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-          <Folder size={13} />
+          <Folder size={13} aria-hidden="true" />
         </span>
         {editing ? (
           <input
@@ -377,6 +395,20 @@ const GraphGroupCard = memo(function GraphGroupCard({
           type="button"
           className="nodrag nowheel nopan flex h-7 w-7 items-center justify-center rounded-md text-slate-500 hover:bg-white hover:text-slate-800 disabled:opacity-40 dark:hover:bg-slate-900 dark:hover:text-slate-100"
           disabled={structureBusy}
+          title={t("graph.canvas.enterGroup")}
+          aria-label={t("graph.canvas.enterGroup")}
+          data-enter-group=""
+          onClick={(event) => {
+            event.stopPropagation();
+            onEnter(group.id);
+          }}
+        >
+          <FolderOpen size={12} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          className="nodrag nowheel nopan flex h-7 w-7 items-center justify-center rounded-md text-slate-500 hover:bg-white hover:text-slate-800 disabled:opacity-40 dark:hover:bg-slate-900 dark:hover:text-slate-100"
+          disabled={structureBusy}
           title={t("graph.canvas.renameGroup")}
           aria-label={t("graph.canvas.renameGroup")}
           onClick={(event) => {
@@ -384,7 +416,7 @@ const GraphGroupCard = memo(function GraphGroupCard({
             setEditing(true);
           }}
         >
-          <Pencil size={12} />
+          <Pencil size={12} aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -397,7 +429,7 @@ const GraphGroupCard = memo(function GraphGroupCard({
             onDissolve(group.id);
           }}
         >
-          <Ungroup size={12} />
+          <Ungroup size={12} aria-hidden="true" />
         </button>
       </div>
     </div>
@@ -466,7 +498,7 @@ const GraphCanvasEdgeCard = memo(function GraphCanvasEdgeCard({
           title={[data?.roleLabel, data?.deleteLabel].filter(Boolean).join(" · ")}
           aria-label={[data?.roleLabel, data?.deleteLabel].filter(Boolean).join(" · ")}
         >
-          <Trash2 size={13} strokeWidth={2.2} />
+          <Trash2 size={13} strokeWidth={2.2} aria-hidden="true" />
         </button>
       </EdgeToolbar>
     </>
@@ -493,6 +525,8 @@ export function GraphWorkflowCanvas({
   mobileInteractionMode = "edit",
   onMobileInteractionModeChange,
   compact = false,
+  enteredGroupId = null,
+  canvasSyncVersion = 0,
   onSelect,
   onConnect,
   onMove,
@@ -503,10 +537,12 @@ export function GraphWorkflowCanvas({
   onRunToNode,
   onBindNode,
   onDuplicateNode,
+  onSaveRecipeNode,
   onAutoLayout,
   onAssetDrop,
   onRenameGroup,
   onDissolveGroup,
+  onEnterGroup,
 }: {
   graph: GraphProjection;
   catalog: GraphNodeCatalog | null;
@@ -516,11 +552,13 @@ export function GraphWorkflowCanvas({
   nodePresentations?: Record<string, GraphNodeRunPresentation>;
   runningNodeId: string | null;
   viewport: WorkflowCanvasViewport | null;
-  onViewportChange: (viewport: WorkflowCanvasViewport) => void;
+  onViewportChange: (viewport: WorkflowCanvasViewport, groupId: string | null) => void;
   mobileInteractionMode?: CanvasInteractionMode;
   onMobileInteractionModeChange?: (mode: CanvasInteractionMode) => void;
   compact?: boolean;
-  onSelect: (nodeIds: string[]) => void;
+  enteredGroupId?: string | null;
+  canvasSyncVersion?: number;
+  onSelect: (nodeIds: string[]) => void | Promise<void>;
   onConnect: (source: string, target: string) => void;
   onMove: (positions: Array<{ node_id: string; position_x: number; position_y: number }>) => void;
   onTranslateGroup: (groupId: string, deltaX: number, deltaY: number) => void;
@@ -530,14 +568,17 @@ export function GraphWorkflowCanvas({
   onRunToNode?: (nodeId: string) => void;
   onBindNode: (nodeId: string) => void;
   onDuplicateNode: (nodeIds: string[]) => void;
+  onSaveRecipeNode?: (nodeId: string) => void;
   onAutoLayout: () => void;
   onAssetDrop?: (input: GraphAssetDropInput) => void;
   onRenameGroup: (groupId: string, title: string) => void;
   onDissolveGroup: (groupId: string) => void;
+  onEnterGroup: (groupId: string) => void;
 }) {
   const { t } = useI18n();
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const flowRef = useRef<ReactFlowInstance<GraphCanvasNode, GraphCanvasEdge> | null>(null);
+  const viewportInitTimerRef = useRef<number | null>(null);
   const [surfaceSize, setSurfaceSize] = useState(() => ({
     width: typeof window === "undefined" ? 1440 : window.innerWidth,
     height: typeof window === "undefined" ? 900 : window.innerHeight,
@@ -576,16 +617,25 @@ export function GraphWorkflowCanvas({
     return () => observer.disconnect();
   }, []);
 
+  useEffect(() => () => {
+    if (viewportInitTimerRef.current !== null) {
+      window.clearTimeout(viewportInitTimerRef.current);
+      viewportInitTimerRef.current = null;
+    }
+    flowRef.current = null;
+  }, []);
+
   const interactionPolicy = deriveWorkflowCanvasInteractionPolicy({
     compact,
     mode: mobileInteractionMode,
     locked: busy,
     connectionEditing: true,
   });
-  const graphIdentity = `${graph.id}:${graph.revision}`;
+  const graphIdentity = `${graph.id}:${graph.revision}:${enteredGroupId ?? "graph"}:${canvasSyncVersion}`;
+  const viewGraph = useMemo(() => graphCanvasView(graph, enteredGroupId), [enteredGroupId, graph]);
   const graphNodes = useMemo<GraphCanvasNode[]>(() => {
-    const groups = graph.groups.flatMap((group) => {
-      const bounds = computeGraphGroupBounds(graph, group);
+    const groups = viewGraph.groups.flatMap((group) => {
+      const bounds = computeGraphGroupBounds(viewGraph, group);
       if (!bounds) return [];
       return [{
         id: `group:${group.id}`,
@@ -601,12 +651,13 @@ export function GraphWorkflowCanvas({
           group,
           bounds,
           structureBusy: busy,
+          onEnter: onEnterGroup,
           onRename: onRenameGroup,
           onDissolve: onDissolveGroup,
         },
       }];
     });
-    const nodes = graph.nodes.map((node) => ({
+    const nodes = viewGraph.nodes.map((node) => ({
       id: node.id,
       type: "graph-node" as const,
       position: { x: node.position_x, y: node.position_y },
@@ -627,6 +678,7 @@ export function GraphWorkflowCanvas({
         onRunToNode: (item: GraphNode) => onRunToNode?.(item.id),
         onBind: (item: GraphNode) => onBindNode(item.id),
         onDuplicate: (item: GraphNode) => onDuplicateNode([item.id]),
+        onSaveRecipe: (item: GraphNode) => onSaveRecipeNode?.(item.id),
         onDelete: (item: GraphNode) => onDeleteNode(item.id),
         onSelectNode: selectNodeFromPointer,
         graph,
@@ -634,9 +686,9 @@ export function GraphWorkflowCanvas({
       },
     }));
     return [...groups, ...nodes];
-  }, [busy, catalog, graph, nodePresentations, nodeStatuses, onBindNode, onDeleteNode, onDissolveGroup, onDuplicateNode, onRenameGroup, onRunNode, onRunToNode, runningNodeId, selectNodeFromPointer, selectedNodeIds]);
+  }, [busy, catalog, graph, nodePresentations, nodeStatuses, onBindNode, onDeleteNode, onDissolveGroup, onDuplicateNode, onEnterGroup, onRenameGroup, onRunNode, onRunToNode, onSaveRecipeNode, runningNodeId, selectNodeFromPointer, selectedNodeIds, viewGraph]);
   const graphEdges = useMemo<GraphCanvasEdge[]>(
-    () => graph.edges.map((edge) => ({
+    () => viewGraph.edges.map((edge) => ({
       id: edge.id,
       source: edge.source_node_id,
       target: edge.target_node_id,
@@ -654,7 +706,7 @@ export function GraphWorkflowCanvas({
         onDelete: onDeleteEdge,
       },
     })),
-    [busy, graph.edges, onDeleteEdge, t],
+    [busy, onDeleteEdge, t, viewGraph.edges],
   );
   const [nodes, setNodes, onNodesChange] = useNodesState<GraphCanvasNode>(graphNodes);
   const previousIdentityRef = useRef(graphIdentity);
@@ -710,13 +762,13 @@ export function GraphWorkflowCanvas({
     ...CONTROL_FIT_VIEW_OPTIONS,
     minZoom: fitMinZoom,
   }), [fitMinZoom]);
-  const persistViewport = useCallback((nextViewport: Viewport) => {
+  const persistViewport = useCallback((nextViewport: Viewport, groupId = enteredGroupId) => {
     onViewportChange({
       ...nextViewport,
       surface_width: surfaceSize.width,
       surface_height: surfaceSize.height,
-    });
-  }, [onViewportChange, surfaceSize.height, surfaceSize.width]);
+    }, groupId);
+  }, [enteredGroupId, onViewportChange, surfaceSize.height, surfaceSize.width]);
   const handleSelectionChange = useCallback<OnSelectionChangeFunc<GraphCanvasNode, GraphCanvasEdge>>(
     ({ nodes: selectedNodes }) => {
       if (selectionBoxNodeIdsRef.current !== null) {
@@ -729,6 +781,13 @@ export function GraphWorkflowCanvas({
     if (!isRealNode(node)) return;
     selectNodeFromPointer(node.data.node.id, event);
   }, [selectNodeFromPointer]);
+  const handleNodeDoubleClick = useCallback<NodeMouseHandler<GraphCanvasNode>>((event, node) => {
+    if (busy || node.data.kind !== "group") return;
+    const target = event.target as HTMLElement | null;
+    if (target?.closest("input, button")) return;
+    event.preventDefault();
+    onEnterGroup(node.data.group.id);
+  }, [busy, onEnterGroup]);
   const handleConnect = useCallback((connection: Connection) => {
     if (connection.source && connection.target && isGraphConnectionValid(graph, connection.source, connection.target, catalog)) {
       onConnect(connection.source, connection.target);
@@ -744,26 +803,31 @@ export function GraphWorkflowCanvas({
   );
 
   const handleAssetDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
+    if (busy) {
+      event.dataTransfer.dropEffect = "none";
+      return;
+    }
     if (![...event.dataTransfer.types].includes(IMAGE_EXPLORER_DRAG_MIME)) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = "copy";
-  }, []);
+  }, [busy]);
   const handleAssetDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
-    if (!onAssetDrop || !flowRef.current) return;
+    if (busy || !onAssetDrop || !flowRef.current) return;
     const assetIds = decodeAssetDragPayload(event.dataTransfer.getData(IMAGE_EXPLORER_DRAG_MIME));
     if (!assetIds.length) return;
     event.preventDefault();
     const position = flowRef.current.screenToFlowPosition({ x: event.clientX, y: event.clientY });
     const hitId = document.elementFromPoint(event.clientX, event.clientY)?.closest(".react-flow__node")?.getAttribute("data-id");
-    const nodeId = hitId && graph.nodes.some((node) => node.id === hitId) ? hitId : null;
-    onAssetDrop({ assetIds, position, nodeId });
-  }, [graph.nodes, onAssetDrop]);
+    const nodeId = hitId && viewGraph.nodes.some((node) => node.id === hitId) ? hitId : null;
+    onAssetDrop({ assetIds, position, nodeId, groupId: enteredGroupId });
+  }, [busy, enteredGroupId, onAssetDrop, viewGraph.nodes]);
 
   return (
     <div
       ref={surfaceRef}
       className="absolute inset-0 min-h-0 w-full overflow-hidden"
       aria-label={t("graph.canvas.ariaLabel")}
+      data-graph-entered-group={enteredGroupId ?? undefined}
       onDragOver={handleAssetDragOver}
       onDrop={handleAssetDrop}
     >
@@ -781,10 +845,18 @@ export function GraphWorkflowCanvas({
         </div>
       ) : null}
       <ReactFlow<GraphCanvasNode, GraphCanvasEdge>
-        key={`${graph.id}:${restoredViewport ? "restore" : "fit"}`}
+        key={`${graph.id}:${enteredGroupId ?? "graph"}:${restoredViewport ? "restore" : "fit"}`}
         onInit={(instance) => {
           flowRef.current = instance;
-          window.setTimeout(() => persistViewport(instance.getViewport()), restoredViewport ? 0 : 220);
+          if (viewportInitTimerRef.current !== null) {
+            window.clearTimeout(viewportInitTimerRef.current);
+          }
+          const initialGroupId = enteredGroupId;
+          viewportInitTimerRef.current = window.setTimeout(() => {
+            viewportInitTimerRef.current = null;
+            if (flowRef.current !== instance) return;
+            persistViewport(instance.getViewport(), initialGroupId);
+          }, restoredViewport ? 0 : 220);
         }}
         nodes={nodes}
         edges={graphEdges}
@@ -794,6 +866,7 @@ export function GraphWorkflowCanvas({
         onNodeDragStart={handleNodeDragStart}
         onNodeDragStop={handleNodeDragStop}
         onNodeClick={handleNodeClick}
+        onNodeDoubleClick={handleNodeDoubleClick}
         onSelectionChange={handleSelectionChange}
         onSelectionStart={() => {
           selectionBoxNodeIdsRef.current = interactionPolicy.canSelectByBox ? [] : null;

@@ -6,6 +6,7 @@ export interface GraphAssetDropInput {
   assetIds: string[];
   position: { x: number; y: number };
   nodeId: string | null;
+  groupId?: string | null;
 }
 
 export type GraphAssetDropPlan =
@@ -63,21 +64,26 @@ export function resolveGraphAssetDrop(
     return {
       kind: "apply",
       summary: "添加参考图",
-      operations: buildCreateAndConnectOperations(assetIds, target.id, input.position),
+      operations: buildCreateAndConnectOperations(assetIds, target.id, input.position, undefined, input.groupId),
     };
   }
   if (target) return { kind: "ignored" };
   return {
     kind: "apply",
     summary: "添加图片素材",
-    operations: buildCreateBoundImageAssetOperations(assetIds, input.position),
+    operations: buildCreateBoundImageAssetOperations(assetIds, input.position, undefined, input.groupId),
   };
+}
+
+function createNodeGroupFields(groupId?: string | null): { group_ref: string } | Record<string, never> {
+  return groupId ? { group_ref: groupId } : {};
 }
 
 export function buildCreateBoundImageAssetOperations(
   assetIds: string[],
   position: { x: number; y: number },
   titleForIndex: (index: number) => string = (index) => `素材 ${index + 1}`,
+  groupId?: string | null,
 ): GraphChangeSet["operations"] {
   return uniqueAssetIds(assetIds).map((assetId, index) => ({
     op: "create_node",
@@ -88,6 +94,7 @@ export function buildCreateBoundImageAssetOperations(
     position_y: snapGraphCoordinate(position.y + index * GRAPH_DUPLICATE_OFFSET),
     config: {},
     bound_asset_id: assetId,
+    ...createNodeGroupFields(groupId),
   }));
 }
 
@@ -96,6 +103,7 @@ export function buildCreateAndConnectOperations(
   targetNodeId: string,
   position: { x: number; y: number },
   titleForIndex: (index: number) => string = (index) => `素材 ${index + 1}`,
+  groupId?: string | null,
 ): GraphChangeSet["operations"] {
   const operations: GraphChangeSet["operations"] = [];
   for (const [index, assetId] of uniqueAssetIds(assetIds).entries()) {
@@ -109,6 +117,7 @@ export function buildCreateAndConnectOperations(
       position_y: snapGraphCoordinate(position.y + index * GRAPH_DUPLICATE_OFFSET),
       config: {},
       bound_asset_id: assetId,
+      ...createNodeGroupFields(groupId),
     });
     operations.push({
       op: "connect_nodes",

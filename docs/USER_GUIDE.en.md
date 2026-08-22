@@ -12,7 +12,7 @@ This document is the canonical user-operations source. The in-product `/help` pa
 
 All three purposes are required by the core flow:
 
-- Prompt: prompt-generation nodes.
+- Prompt: visual system, creative brief, and prompt-generation nodes.
 - Agent: requirement clarification, library organization, and workflow creation.
 - Image: workflow and iterative image generation.
 
@@ -62,30 +62,41 @@ The confirmation view summarizes:
 
 Confirmation writes the draft into the workflow graph, then opens the product workbench with the same Agent conversation in the sidebar.
 
+### 2.5 Create the Canvas Directly
+
+Product creation can skip the Agent and write a runnable workflow immediately. After you upload references and choose image types, the graph includes product facts, references, visual system, creative brief, prompt nodes, and image nodes, with photos wired to the visual, brief, prompt, and image nodes. Open the workbench and run the visual system, creative brief, and prompt nodes first so the model writes into the inspector; then run image nodes or the whole graph.
+
 ## 3. Product Workbench
 
 ### 3.1 Node Types
 
 - Product facts: confirmed product facts.
 - Image asset: one explicit image from the product library.
-- Creative brief: workflow-level goals and constraints.
-- Visual system: a visual-system version reference.
-- Prompt generation: an editable prompt built from facts, brief, and visual rules.
+- Creative brief: running the node writes goals, copy, and constraints from product facts and photos; the result stays editable.
+- Visual system: running the node writes style, background, and constraints from product facts and photos; the result stays editable.
+- Prompt generation: running the node writes a prompt from product facts, photos, visual system, and brief; the result stays editable. Running this node does not render images.
 - Image generation: aspect ratio, resolution, quality, background, text policy, reference fidelity, and execution state.
 
 ### 3.2 Canvas Operations
 
-- Add nodes from the toolbar.
-- Drag from an output handle to a target input handle to create an edge.
+- Adding a node from the add panel places it near the current viewport center and selects it.
+- Drag from an output handle to a target input handle to create an edge. Legal targets turn green; illegal targets turn red.
 - Drag nodes to position them; zoom with wheel/touch and pan from blank canvas.
 - Ctrl/Cmd/Shift-click or marquee-select multiple nodes.
-- Check downstream dependencies before deleting selected nodes or edges.
+- Copy then paste selects the new nodes and keeps edges inside the selection.
+- Deleting nodes asks for confirmation; deleting an edge can be undone immediately.
+- Ctrl/Cmd+Z undoes the last graph edit; Ctrl/Cmd+Shift+Z redoes it unless a newer edit landed.
+- Node cards keep type color; running uses a glow; failures appear on the card and in the open inspector.
+- The node toolbar can run, run up to here, duplicate, focus, save as recipe, and delete; image assets also have bind.
+- Maximize hides the top navigation so the canvas fills the main area.
 - Use automatic layout to improve routing.
-- Put a local flow in a canvas group. A group changes visual organization only, not DAG execution order.
+- Put a local flow in a canvas group. Double-click the group or use the enter control to see only its members; the breadcrumb returns to the full graph. In-group and full-graph viewports are remembered separately. A group changes visual organization only, not DAG execution order. Cross-group edges stay visible on the full graph.
 
 Node cards show compact scanning summaries. Edit complete content in the inspector so cards remain readable.
 
 ### 3.3 Inspector
+
+With nothing selected, Details offers add-node, open-library, and run-graph. With a node selected:
 
 Reference nodes:
 
@@ -93,9 +104,19 @@ Reference nodes:
 - Preview the current binding.
 - Upload or save an image-session result to the product before binding a new reference.
 
+Creative brief nodes:
+
+- Run the node to generate the goal, design goals, and prohibitions from photos and product facts.
+- The result is written into the inspector and can be edited, then rerun.
+
+Visual system nodes:
+
+- Run the node to generate style keywords and background from photos and product facts.
+- The result is written into the inspector; without a version those values are used as-is.
+
 Prompt nodes:
 
-- Inspect the current prompt artifact.
+- Run the node to write a prompt into the inspector. This does not render images.
 - Edit image goal, composition, content, text, and atmosphere.
 - New executions retain artifact versions.
 
@@ -103,14 +124,17 @@ Image nodes:
 
 - Choose aspect ratio and resolution tier.
 - Set quality intent, reference fidelity, background, and text policy.
-- Supply an explicit language when image text is required.
+- Text policy constrains prompt generation and rendering. The default forbids on-image copy; switch to allow or required and set a language when the image needs letters.
+- Connect a reference image before running. Direct create wires uploads to visual, brief, prompt, and image nodes.
+- Running this node only renders an image. Empty visual, brief, and prompt nodes need their own runs, or use run-to-node on the image node.
 - Inspect output both on the node and in the library.
 
 ### 3.4 Runs
 
-- Run Workflow follows DAG dependencies for all targeted nodes.
-- Run Current Node submits only the required scope for the selected node.
-- The Runs panel shows state, node results, and safe errors.
+- Run this node executes only the selected processing node: visual, brief, and prompt write content; image generation renders.
+- Run to this node runs upstream processing nodes, then the selected node.
+- Run the whole graph follows DAG order: visual system, creative brief, prompt generation, then image generation.
+- The Runs panel shows state, node results, and failure reasons. Compiler keys stay out of the first screen.
 - Active runs can be cancelled. Retry is available for retryable failures.
 
 ## 4. Visual System and Prompts
@@ -156,11 +180,11 @@ The Agent can read bounded names, directories, and metadata; create or rename fo
 
 The workbench can save:
 
-- A complete workflow recipe.
-- The local flow represented by one folder.
+- A complete workflow preset.
+- The local flow of the current group.
 - A fragment from the current node selection.
 
-A recipe stores reusable structure, edges, and configuration. It excludes product identity, product images, and generated results. The recipe library contains only content explicitly saved by the user.
+A recipe stores reusable structure, edges, and configuration. It excludes product identity, product images, and generated results. The recipe library contains only content explicitly saved by the user. Applying a recipe on another product previews the nodes and edges that will be created, then writes a draft to review. Partial presets cannot merge into an existing workflow yet.
 
 ## 7. Iterative Image Generation
 
@@ -263,7 +287,7 @@ Check the Image binding, model, references, generation specification, and safe e
 
 ### Workflow Routing Is Hard to Read
 
-Use automatic layout, place one image type or local stage in a folder, and remove meaningless cross-folder edges. Folders do not require dependency changes.
+Use automatic layout, place one image type or local stage in a group, then enter the group to lay out only its members. Groups do not require dependency changes. Cross-group edges stay visible on the full graph.
 
 ### A Newly Saved Image Is Missing From the Media Library
 

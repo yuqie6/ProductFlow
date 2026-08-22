@@ -48,10 +48,15 @@ def test_direct_create_writes_v3_graph_without_draft_or_v2_workflow(db_session) 
         "price",
     }
     image_nodes = [node for node in result.projection.nodes if node.node_type == GraphNodeType.IMAGE_GENERATION]
+    prompt_nodes = [node for node in result.projection.nodes if node.node_type == GraphNodeType.PROMPT_GENERATION]
     assert len(image_nodes) == 3
     unused = [node for node in result.projection.nodes if node.unused]
-    assert len(unused) == 1
-    assert unused[0].node_type == GraphNodeType.IMAGE_ASSET
+    assert unused == []
+    asset = next(node for node in result.projection.nodes if node.node_type == GraphNodeType.IMAGE_ASSET)
+    assert asset.unused is False
+    assert all(any(edge.role.value == "reference" for edge in node.incoming) for node in image_nodes)
+    assert all(any(edge.role.value == "reference" for edge in node.incoming) for node in prompt_nodes)
+    assert all(any(edge.role.value == "facts" for edge in node.incoming) for node in prompt_nodes)
     assert db_session.scalar(select(func.count()).select_from(WorkflowDraft)) == 0
     assert db_session.scalar(select(func.count()).select_from(WorkflowGraph)) == 1
 
@@ -76,10 +81,12 @@ def test_direct_create_and_changeset_api_round_trip(configured_env, monkeypatch)
     assert payload["graph"]["schema_version"] == 3
     assert payload["graph"]["revision"] == 1
     assert payload["graph"]["last_operation_group_id"]
+    assert payload["graph"]["can_undo"] is True
+    assert payload["graph"]["can_redo"] is False
     source = next(node for node in payload["graph"]["nodes"] if node["node_type"] == "product_source")
     assert source["source_product"]["id"] == product_id
     assert source["product_fact_set"]["facts"][0]["key"] == "product_name"
-    assert any(node["node_type"] == "image_asset" and node["unused"] for node in payload["graph"]["nodes"])
+    assert any(node["node_type"] == "image_asset" and not node["unused"] for node in payload["graph"]["nodes"])
     current = client.get(f"/api/v3/products/{product_id}/workflows/current")
     assert current.status_code == 200, current.text
     assert current.json()["id"] == graph_id
@@ -134,3 +141,33 @@ def test_direct_create_and_changeset_api_round_trip(configured_env, monkeypatch)
         assert session.scalar(select(func.count()).select_from(WorkflowDraft)) == 0
     finally:
         session.close()
+
+
+def test_direct_create_api_writes_brief_and_generation_spec(configured_env) -> None:
+    client = TestClient(create_app())
+    _login(client)
+    created = client.post(
+        "/api/v3/products",
+        data={
+            "name": "带字海报商品",
+            "source_note": "无线洗地机，面向都市白领，画面干净专业",
+            "image_types": json.dumps([{"key": "hero", "quantity": 1}]),
+            "generation_spec": json.dumps(
+                {
+                    "aspect_ratio": "3:4",
+                    "text_policy": "required",
+                    "text_language": "zh-CN",
+                }
+            ),
+        },
+        files=[("images", ("product.png", _make_demo_image_bytes(), "image/png"))],
+    )
+    assert created.status_code == 201, created.text
+    payload = created.json()
+    assert payload["product"]["source_note"] == "无线洗地机，面向都市白领，画面干净专业"
+    brief = next(node for node in payload["graph"]["nodes"] if node["node_type"] == "creative_brief")
+    image = next(node for node in payload["graph"]["nodes"] if node["node_type"] == "image_generation")
+    assert brief["config"]["goal"] == "无线洗地机，面向都市白领，画面干净专业"
+    assert image["config"]["generation_spec"]["aspect_ratio"] == "3:4"
+    assert image["config"]["generation_spec"]["text_policy"] == "required"
+    assert image["config"]["generation_spec"]["text_language"] == "zh-CN"

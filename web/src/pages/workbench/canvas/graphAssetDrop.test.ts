@@ -81,6 +81,22 @@ describe("resolveGraphAssetDrop", () => {
     ))).toEqual(["asset-a", "asset-b"]);
   });
 
+  it("joins the entered group when dropping assets on empty canvas", () => {
+    const plan = resolveGraphAssetDrop(graph([]), {
+      assetIds: ["asset-a"],
+      position: { x: 48, y: 48 },
+      nodeId: null,
+      groupId: "group-1",
+    }, catalog);
+    expect(plan.kind).toBe("apply");
+    if (plan.kind !== "apply") return;
+    expect(plan.operations).toEqual([expect.objectContaining({
+      op: "create_node",
+      group_ref: "group-1",
+      bound_asset_id: "asset-a",
+    })]);
+  });
+
   it("rebinds an existing image_asset node without creating an edge", () => {
     const asset = node({ id: "asset-node", node_type: "image_asset", bound_asset_id: "old" });
     const plan = resolveGraphAssetDrop(graph([asset]), {

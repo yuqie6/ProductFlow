@@ -163,6 +163,30 @@ def product_source_snapshot_from_dict(payload: dict[str, Any] | None) -> Product
     )
 
 
+def merge_runtime_facts(
+    facts: tuple[dict[str, Any], ...],
+    product_source: ProductSourceSnapshot | None,
+) -> tuple[dict[str, Any], ...]:
+    """Keep stored facts, and fill identity keys from the bound product when missing."""
+
+    product = product_source.source_product if product_source is not None else None
+    if product is None:
+        return facts
+    existing = {str(item.get("key") or "").casefold() for item in facts}
+    identity = (
+        ("product_name", product.name),
+        ("category", product.category),
+        ("price", product.price),
+        ("source_note", product.source_note),
+    )
+    extras = tuple(
+        {"key": key, "value": value}
+        for key, value in identity
+        if value is not None and str(value).strip() and key.casefold() not in existing
+    )
+    return extras + facts
+
+
 def product_source_snapshot_to_dict(snapshot: ProductSourceSnapshot | None) -> dict[str, Any] | None:
     if snapshot is None:
         return None

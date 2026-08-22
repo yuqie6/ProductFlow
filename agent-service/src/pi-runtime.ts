@@ -1518,10 +1518,12 @@ export function toolStepDetailsForResult(name: string, result: unknown, isError:
           : {}),
         output_summary: "用户回答已保存，等待 Agent 恢复执行。",
       };
-    case "inspect_context":
+    case "inspect_context": {
+      const includesNodeCatalog =
+        name === "get_product_workflow_context_v1" || name === "inspect_global_workflow_context_v1";
       return {
         phase: "tool_result",
-        ...(name === "get_product_workflow_context_v1"
+        ...(includesNodeCatalog
           ? {
               context_sections: [
                 "product_facts",
@@ -1531,13 +1533,15 @@ export function toolStepDetailsForResult(name: string, result: unknown, isError:
                 "recipe_seed",
                 "legacy_seed",
                 "draft_guidance",
+                "node_catalog",
               ],
             }
           : {}),
-        output_summary: name === "get_product_workflow_context_v1"
-          ? "已读取当前商品事实、WorkflowDraft、参考资产和提交前校验指导。"
+        output_summary: includesNodeCatalog
+          ? "已读取当前商品事实、WorkflowDraft、参考资产、提交前校验指导和 Node Catalog config_fields；Inspector 与节点配置写入以此为唯一来源。"
           : "已读取有界 ProductFlow 上下文。",
       };
+    }
     case "inspect_image":
       return { phase: "tool_result", output_summary: "已读取选中图片的有界检查结果。" };
     case "propose_draft":

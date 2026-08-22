@@ -1,5 +1,6 @@
 import type { TranslationKey } from "../../../lib/i18n";
 import type {
+  GraphCatalogConfigField,
   GraphCatalogInputContract,
   GraphCatalogNode,
   GraphEdgeRole,
@@ -19,6 +20,13 @@ export const GRAPH_NODE_TYPE_ORDER: GraphNodeType[] = [
   "prompt_generation",
   "image_generation",
 ];
+
+export function graphNodeConfigFields(
+  catalog: GraphNodeCatalog | null | undefined,
+  nodeType: GraphNodeType,
+): GraphCatalogConfigField[] {
+  return graphCatalogNode(catalog, nodeType)?.config_fields ?? [];
+}
 
 export function graphCatalogNode(
   catalog: GraphNodeCatalog | null | undefined,

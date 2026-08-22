@@ -3,7 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { GraphNode, GraphProjection } from "../../../lib/types";
+import type { GraphCatalogConfigField, GraphNode, GraphNodeCatalog, GraphProjection } from "../../../lib/types";
 import { GraphNodeInspector } from "./GraphNodeInspector";
 
 function node(partial: Partial<GraphNode> & Pick<GraphNode, "id" | "node_type">): GraphNode {
@@ -23,6 +23,80 @@ function node(partial: Partial<GraphNode> & Pick<GraphNode, "id" | "node_type">)
   };
 }
 
+function field(
+  key: string,
+  control: GraphCatalogConfigField["control"],
+  extra: Partial<GraphCatalogConfigField> = {},
+): GraphCatalogConfigField {
+  return {
+    key,
+    value_kind: extra.value_kind ?? (control === "string_list" ? "string_list" : "string"),
+    required: false,
+    control,
+    ...extra,
+  };
+}
+
+const catalog: GraphNodeCatalog = {
+  version: 3,
+  nodes: [
+    {
+      node_type: "product_source", output_data_type: "product_facts", kind: "source", accepts: [], config_fields: [
+        field("source_product_id", "hidden", { value_kind: "string_or_null" }),
+      ]
+    },
+    {
+      node_type: "image_asset", output_data_type: "image_asset", kind: "source", accepts: [], config_fields: [
+        field("role", "text", { label_key: "graph.inspector.assetRole", value_kind: "string_or_null" }),
+        field("label", "text", { label_key: "graph.inspector.assetLabel", value_kind: "string_or_null" }),
+      ]
+    },
+    {
+      node_type: "creative_brief", output_data_type: "creative_brief", kind: "processing", accepts: [], config_fields: [
+        field("goal", "textarea", { label_key: "workflowConfirmation.designGoal" }),
+        field("design_goals", "string_list", { label_key: "graph.inspector.designGoals" }),
+      ]
+    },
+    {
+      node_type: "visual_system", output_data_type: "visual_system", kind: "processing", accepts: [], config_fields: [
+        field("visual_system_version_id", "hidden", { value_kind: "string_or_null" }),
+        field("visual_overlay", "group", {
+          value_kind: "object_or_null",
+          hint_key: "graph.inspector.visualVersionHint",
+          fields: [
+            field("style", "string_list", { label_key: "graph.inspector.visualStyle" }),
+            field("colors", "visual_background", { label_key: "graph.inspector.visualBackground", value_kind: "object" }),
+          ],
+        }),
+      ]
+    },
+    { node_type: "prompt_generation", output_data_type: "prompt", kind: "processing", accepts: [], config_fields: [] },
+    {
+      node_type: "image_generation", output_data_type: "image_asset", kind: "processing", accepts: [], config_fields: [
+        field("variation_instruction", "textarea", {
+          label_key: "workflowConfirmation.variation",
+          value_kind: "string_or_null",
+          max_length: 4000,
+        }),
+        field("generation_spec", "group", {
+          value_kind: "object",
+          label_key: "agentWorkbench.nodeEditor.generationSettings",
+          fields: [
+            field("aspect_ratio", "aspect_ratio", { label_key: "agentWorkbench.nodeEditor.aspectRatio", panel: "basic" }),
+          ],
+        }),
+        field("visual_overlay", "group", {
+          value_kind: "object_or_null",
+          fields: [
+            field("style", "string_list", { label_key: "graph.inspector.visualStyle" }),
+            field("colors", "visual_background", { label_key: "graph.inspector.visualBackground", value_kind: "object_list" }),
+          ],
+        }),
+      ]
+    },
+  ],
+};
+
 const graph: GraphProjection = {
   id: "g1",
   product_id: "p1",
@@ -30,9 +104,9 @@ const graph: GraphProjection = {
   schema_version: 3,
   revision: 4,
   source_draft_revision_id: null,
-    last_operation_group_id: null,
-    can_undo: false,
-    can_redo: false,
+  last_operation_group_id: null,
+  can_undo: false,
+  can_redo: false,
   nodes: [
     node({ id: "source", node_type: "product_source", title: "商品资料", config_status: "ready" }),
     node({
@@ -68,38 +142,108 @@ const graph: GraphProjection = {
   groups: [],
 };
 
-function renderInspector(selected: GraphNode | null): string {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function renderInspector(
+  selected: GraphNode | null,
+  client?: QueryClient,
+  nextCatalog: GraphNodeCatalog | null = catalog,
+  options: { busy?: boolean; catalogError?: string | null } = {},
+): string {
+  const queryClient = client ?? new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return renderToStaticMarkup(createElement(
     QueryClientProvider,
-    { client },
+    { client: queryClient },
     createElement(GraphNodeInspector, {
       graph,
       node: selected,
-      busy: false,
+      catalog: nextCatalog,
+      busy: options.busy ?? false,
+      catalogError: options.catalogError,
       onCommit: async () => graph,
+      onOpenAdd: () => undefined,
+      onOpenLibrary: () => undefined,
     }),
   ));
 }
 
 describe("GraphNodeInspector", () => {
-  it("shows graph summary instead of a JSON dump when nothing is selected", () => {
+  it("shows next actions instead of a revision dump when nothing is selected", () => {
     const markup = renderInspector(null);
     expect(markup).toContain("夏季主图");
-    expect(markup).toContain("版本 4");
-    expect(markup).toContain("点画布上的节点");
+    expect(markup).toContain("选一个节点继续改");
+    expect(markup).toContain("添加节点");
+    expect(markup).toContain("打开图库");
+    expect(markup).toContain("运行整张图");
+    expect(markup).not.toContain("版本 4");
     expect(markup).not.toContain("generation_spec");
     expect(markup).not.toContain("保存配置");
   });
 
-  it("renders typed generation settings instead of a raw config textarea", () => {
+  it("renders generation settings from catalog fields instead of a raw config textarea", () => {
     const markup = renderInspector(graph.nodes.find((item) => item.id === "image") ?? null);
     expect(markup).toContain("画面比例");
     expect(markup).toContain("4:5");
     expect(markup).toContain("先连上提示词节点");
+    expect(markup).toContain("先连上参考图");
     expect(markup).not.toContain("generation_spec");
     expect(markup).toContain("运行该节点");
     expect(markup).toContain("运行到这里");
+  });
+
+  it("renders an image node inline visual overlay from catalog fields", () => {
+    const markup = renderInspector(node({
+      id: "image-inline-overlay",
+      node_type: "image_generation",
+      title: "主图 1",
+      config: {
+        visual_overlay: {
+          style: ["暖色"],
+          colors: [{ role: "background", value: "#FFFFFF" }],
+        },
+      },
+    }));
+    expect(markup).toContain("风格关键词");
+    expect(markup).toContain("暖色");
+    expect(markup).toContain("背景色");
+  });
+
+  it("disables catalog controls while the graph is busy", () => {
+    const markup = renderInspector(graph.nodes.find((item) => item.id === "image") ?? null, undefined, catalog, { busy: true });
+    expect(markup).toContain("差异指令");
+    expect(markup).toContain('disabled=""');
+    expect(markup).toContain('maxLength="4000"');
+  });
+
+  it("shows a recoverable catalog error with a retry action", () => {
+    const markup = renderInspector(
+      graph.nodes.find((item) => item.id === "image") ?? null,
+      undefined,
+      null,
+      { catalogError: "配置暂时加载失败。" },
+    );
+    expect(markup).toContain('role="alert"');
+    expect(markup).toContain("配置暂时加载失败。");
+    expect(markup).toContain("重新加载");
+  });
+
+  it("renders a newly catalogued field without a typed inspector draft", () => {
+    const nextCatalog: GraphNodeCatalog = {
+      ...catalog,
+      nodes: catalog.nodes.map((item) => item.node_type === "creative_brief" ? {
+        ...item,
+        config_fields: [
+          ...(item.config_fields ?? []),
+          field("campaign_line", "text", { label_key: "graph.inspector.requiredCopy" }),
+        ],
+      } : item),
+    };
+    const markup = renderInspector(node({
+      id: "brief-extra",
+      node_type: "creative_brief",
+      title: "创作要求",
+      config: { campaign_line: "主标题留下" },
+    }), undefined, nextCatalog);
+    expect(markup).toContain("必要文案");
+    expect(markup).toContain("主标题留下");
   });
 
   it("renders creative brief fields and bound-but-unused state", () => {
@@ -120,6 +264,27 @@ describe("GraphNodeInspector", () => {
     expect(markup).not.toContain("这里只展示商品信息");
   });
 
+  it("runs visual system and creative brief nodes without treating them as sources", () => {
+    const visual = renderInspector(node({
+      id: "visual-run",
+      node_type: "visual_system",
+      title: "视觉规范",
+      config_status: "incomplete",
+    }));
+    expect(visual).toContain("运行该节点");
+
+    const brief = renderInspector(node({
+      id: "brief-run",
+      node_type: "creative_brief",
+      title: "创作要求",
+      config_status: "incomplete",
+    }));
+    expect(brief).toContain("运行该节点");
+
+    const source = renderInspector(graph.nodes.find((item) => item.id === "source") ?? null);
+    expect(source).not.toContain("运行该节点");
+  });
+
   it("lets a visual system be edited as overlay fields instead of a version UUID", () => {
     const markup = renderInspector(node({
       id: "visual",
@@ -131,5 +296,54 @@ describe("GraphNodeInspector", () => {
     expect(markup).toContain("干净白底");
     expect(markup).toContain("背景色");
     expect(markup).not.toContain("visual_system_version_id");
+  });
+
+  it("shows the last generated prompt on a prompt node", () => {
+    const markup = renderInspector(node({
+      id: "prompt",
+      node_type: "prompt_generation",
+      title: "首屏海报图提示词",
+      config_status: "ready",
+      current_artifact_payload: {
+        design_goal: "为筋膜枪生成首屏海报",
+        content: { background: "干净背景" },
+      },
+    }));
+    expect(markup).toContain("上次写出");
+    expect(markup).toContain("为筋膜枪生成首屏海报");
+    expect(markup).toContain("干净背景");
+  });
+
+  it("shows the last failure on the open inspector", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(["graph-runs", "p1", "g1"], {
+      items: [{
+        id: "run-9",
+        graph_id: "g1",
+        status: "failed",
+        scope: "node",
+        requested_node_id: "image",
+        graph_revision: 4,
+        failure_reason: "上游失败",
+        is_retryable: true,
+        started_at: "2026-08-21T00:00:00Z",
+        finished_at: "2026-08-21T00:00:02Z",
+        node_runs: [{
+          id: "nr-9",
+          node_id: "image",
+          status: "failed",
+          sort_order: 0,
+          compiled_context: null,
+          output: null,
+          failure_reason: "模型超时",
+          started_at: "2026-08-21T00:00:00Z",
+          finished_at: "2026-08-21T00:00:02Z",
+        }],
+      }],
+    });
+    const markup = renderInspector(graph.nodes.find((item) => item.id === "image") ?? null, client);
+    expect(markup).toContain("模型超时");
+    expect(markup).toContain("上次失败");
+    expect(markup).toContain("重试");
   });
 });

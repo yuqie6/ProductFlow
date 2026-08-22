@@ -15,9 +15,6 @@ import {
 } from "lucide-react";
 import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode, createContext } from "react";
 
-import { CompactInput, CompactNumberInput, CompactSelect } from "../../../components/CompactFormFields";
-import { ImageAspectRatioPicker } from "../../../components/ImageAspectRatioPicker";
-import { ImageGenerationSettingsTabs, type ImageGenerationSettingsTab } from "../../../components/ImageGenerationSettingsTabs";
 import { api, ApiError } from "../../../lib/api";
 import { formatDateTime } from "../../../lib/format";
 import type { DownloadableImage } from "../../../lib/image-downloads";
@@ -28,13 +25,11 @@ import type {
   CanonicalProductDetail,
   GraphConfigStatus,
   GraphEdgeRole,
+  GraphNodeCatalog,
   GraphProductFactSet,
   GraphNode,
-  GraphNodeType,
   GraphProjection,
   ProductFactsResponse,
-  WorkflowDeliverySpec,
-  WorkflowGenerationSpec,
   WorkflowNodeStatus,
 } from "../../../lib/types";
 import { IMAGE_PREVIEW_SURFACE_CLASS_NAME } from "../chrome/constants";
@@ -43,19 +38,19 @@ import { SaveStatusBadge, type SaveStatus } from "../chrome/SaveStatusBadge";
 import { TextArea } from "../chrome/TextArea";
 import { statusClass } from "../chrome/utils";
 import { workflowNodeKindTheme } from "../chrome/WorkflowNodeCard";
+import { CatalogConfigFields } from "./CatalogConfigFields";
+import {
+  catalogConfigForSave,
+  catalogNodeDraft,
+  normalizeCatalogDraft,
+  validateCatalogDraft,
+  type CatalogNodeDraft,
+} from "./catalogConfig";
 import { DeliveryRenditionPanel } from "./DeliveryRenditionPanel";
+import { graphNodeConfigFields } from "./graphCatalog";
 import { graphNodeTitleKey } from "./graphLayout";
 import { graphNodeRunPresentations } from "./graphRunDisplay";
 import {
-  defaultDeliverySpec,
-  graphBriefConfig,
-  graphBriefDraft,
-  graphImageAssetConfig,
-  graphImageAssetDraft,
-  graphImageGenerationConfig,
-  graphImageGenerationDraft,
-  graphPromptConfig,
-  graphPromptDraft,
   graphProductSourceConfig,
   graphProductSourceDraft,
   normalizeProductFactsDraft,
@@ -63,20 +58,11 @@ import {
   productFactsPayload,
   validateProductFactsDraft,
   graphTitleDraft,
-  graphVisualConfig,
-  graphVisualDraft,
-  normalizeGraphImageGenerationDraft,
-  validateGraphImageGenerationDraft,
   validateGraphTitle,
-  type GraphBriefDraft,
-  type GraphImageAssetDraft,
-  type GraphImageGenerationDraft,
-  type GraphPromptDraft,
   type GraphProductSourceDraft,
   type ProductFactsDraft,
   type ProductFactRowDraft,
   type GraphTitleDraft,
-  type GraphVisualDraft,
 } from "./graphNodeEditorDrafts";
 import { useNodeDraftAutosave, type NodeDraftAutosave } from "./useNodeDraftAutosave";
 
@@ -84,33 +70,14 @@ const ACTIVE_RUN_STATUSES = new Set(["queued", "running"]);
 type InspectorFlush = () => Promise<unknown>;
 type RegisterInspectorFlush = (id: string, flush: InspectorFlush) => () => void;
 const InspectorFlushContext = createContext<RegisterInspectorFlush>(() => () => undefined);
-const SELECT_OPTION_LABEL_KEYS = {
-  none: "agentWorkbench.nodeEditor.option.none",
-  allowed: "agentWorkbench.nodeEditor.option.allowed",
-  required: "agentWorkbench.nodeEditor.option.required",
-  standard: "agentWorkbench.nodeEditor.option.standard",
-  high: "agentWorkbench.nodeEditor.option.high",
-  ultra: "agentWorkbench.nodeEditor.option.ultra",
-  draft: "agentWorkbench.nodeEditor.option.draft",
-  low: "agentWorkbench.nodeEditor.option.low",
-  medium: "agentWorkbench.nodeEditor.option.medium",
-  auto: "agentWorkbench.nodeEditor.option.auto",
-  opaque: "agentWorkbench.nodeEditor.option.opaque",
-  transparent: "agentWorkbench.nodeEditor.option.transparent",
-  allow: "agentWorkbench.nodeEditor.option.allow",
-  contain: "agentWorkbench.nodeEditor.option.contain",
-  cover: "agentWorkbench.nodeEditor.option.cover",
-  center: "agentWorkbench.nodeEditor.option.center",
-  top: "agentWorkbench.nodeEditor.option.top",
-  bottom: "agentWorkbench.nodeEditor.option.bottom",
-  left: "agentWorkbench.nodeEditor.option.left",
-  right: "agentWorkbench.nodeEditor.option.right",
-} as const;
 
 export function GraphNodeInspector({
   graph,
   node,
   busy,
+  catalog: catalogProp,
+  catalogError,
+  onRetryCatalog,
   onCommit,
   onBind,
   onJump,
@@ -123,6 +90,9 @@ export function GraphNodeInspector({
   node: GraphNode | null;
   product?: CanonicalProductDetail | null;
   busy: boolean;
+  catalog?: GraphNodeCatalog | null;
+  catalogError?: string | null;
+  onRetryCatalog?: () => void;
   onCommit: (input: {
     title: string;
     config: Record<string, unknown>;
@@ -137,6 +107,23 @@ export function GraphNodeInspector({
 }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
+  const catalogQuery = useQuery({
+    queryKey: ["graph-node-catalog"],
+    queryFn: () => api.getGraphNodeCatalog(),
+    staleTime: 60_000,
+    enabled: catalogProp === undefined,
+  });
+  const catalog = catalogProp ?? catalogQuery.data ?? null;
+  const catalogLoadError = catalogError ?? (
+    catalogQuery.error ? errorMessage(catalogQuery.error, t("graph.inspector.catalogLoadFailed")) : null
+  );
+  const retryCatalog = useCallback(() => {
+    if (onRetryCatalog) {
+      onRetryCatalog();
+      return;
+    }
+    void catalogQuery.refetch();
+  }, [catalogQuery.refetch, onRetryCatalog]);
   const [saveState, setSaveState] = useState<{ status: SaveStatus; error: string | null }>({
     status: "idle",
     error: null,
@@ -208,6 +195,17 @@ export function GraphNodeInspector({
     onRegisterFlush?.(flushInspector);
   }, [flushInspector, onRegisterFlush]);
 
+  const retryRun = useCallback(async () => {
+    const runId = presentation?.runId;
+    if (!runId) return;
+    try {
+      await flushInspector();
+      retryMutation.mutate(runId);
+    } catch {
+      // The editor keeps its validation or save error visible.
+    }
+  }, [flushInspector, presentation?.runId, retryMutation]);
+
   if (!node) {
     return (
       <GraphInspectorDashboard
@@ -229,7 +227,13 @@ export function GraphNodeInspector({
   const image = nodePreview(node);
   const missingPrompt = node.node_type === "image_generation"
     && !node.incoming.some((edge) => edge.role === "prompt");
-  const canRun = node.node_type === "prompt_generation" || node.node_type === "image_generation";
+  const missingReference = node.node_type === "image_generation"
+    && !node.incoming.some((edge) => edge.role === "reference");
+  const runBlocked = missingPrompt || missingReference;
+  const canRun = node.node_type === "creative_brief"
+    || node.node_type === "visual_system"
+    || node.node_type === "prompt_generation"
+    || node.node_type === "image_generation";
   const mutationError = runMutation.error ?? cancelMutation.error ?? retryMutation.error;
   const incoming = node.incoming.map((edge) => ({
     edge,
@@ -242,207 +246,253 @@ export function GraphNodeInspector({
 
   return (
     <InspectorFlushContext.Provider value={registerFlush}>
-    <div className="space-y-3 pb-4" data-graph-node-inspector>
-      <section className="config-bubble rounded-2xl p-4 shadow-sm">
-        <div className="flex items-start gap-3">
-          <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border shadow-sm ${theme.iconBox}`}>
-            <Icon size={16} />
-          </span>
-          <div className="min-w-0 flex-1">
-            <h3 className="truncate text-base font-semibold text-zinc-950 dark:text-white">{node.title}</h3>
-            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-              <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${theme.badge}`}>
-                {t(graphNodeTitleKey(node.node_type))}
-              </span>
-              <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${statusClass(nodeStatus)}`}>
-                {ACTIVE_RUN_STATUSES.has(nodeStatus) ? <Loader2 size={10} className="mr-1 animate-spin" /> : null}
-                {t(`detail.nodeStatus.${nodeStatus}`)}
-              </span>
-              <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${
-                node.config_status === "ready"
+      <div className="space-y-3 pb-4" data-graph-node-inspector>
+        <section className="config-bubble rounded-2xl p-4 shadow-sm">
+          <div className="flex items-start gap-3">
+            <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border shadow-sm ${theme.iconBox}`}>
+              <Icon size={16} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <h3 className="truncate text-base font-semibold text-zinc-950 dark:text-white">{node.title}</h3>
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${theme.badge}`}>
+                  {t(graphNodeTitleKey(node.node_type))}
+                </span>
+                <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${statusClass(nodeStatus)}`}>
+                  {ACTIVE_RUN_STATUSES.has(nodeStatus) ? <Loader2 size={10} className="mr-1 animate-spin" /> : null}
+                  {t(`detail.nodeStatus.${nodeStatus}`)}
+                </span>
+                <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${node.config_status === "ready"
                   ? "border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
                   : "border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
-              }`}>
-                {t(configStatusKey(node.config_status))}
-              </span>
-              <SaveStatusBadge status={saveState.status} />
+                  }`}>
+                  {t(configStatusKey(node.config_status))}
+                </span>
+                <SaveStatusBadge status={saveState.status} />
+              </div>
             </div>
           </div>
-        </div>
 
-        {node.unused && node.bound_asset_id ? (
-          <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
-            {t("graph.inspector.unused")}
-          </div>
-        ) : null}
-        {node.node_type === "image_asset" && !node.bound_asset_id ? (
-          <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
-            {t("graph.inspector.unbound")}
-          </div>
-        ) : null}
-        {missingPrompt ? (
-          <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
-            {t("graph.inspector.missingPrompt")}
-          </div>
-        ) : null}
-        {presentation?.failureReason && !activeRun ? (
-          <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs leading-5 text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200">
-            <div className="font-semibold">{t("graph.inspector.lastFailed")}</div>
-            <p className="mt-1">{presentation.failureReason}</p>
-            {presentation.lastRunAt ? (
-              <p className="mt-1 text-[10px] text-red-600/80 dark:text-red-300/80">
-                {t("graph.inspector.lastRun", { time: formatDateTime(presentation.lastRunAt, t.locale) })}
-              </p>
-            ) : null}
-          </div>
-        ) : null}
-        {activeRun ? (
-          <div className="mt-3 flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
-            <Loader2 size={14} className="mt-0.5 shrink-0 animate-spin" />
-            <div className="font-semibold">{t(`detail.nodeStatus.${nodeStatus}`)}</div>
-          </div>
-        ) : null}
+          {node.unused && node.bound_asset_id ? (
+            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+              {t("graph.inspector.unused")}
+            </div>
+          ) : null}
+          {node.node_type === "image_asset" && !node.bound_asset_id ? (
+            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+              {t("graph.inspector.unbound")}
+            </div>
+          ) : null}
+          {missingPrompt ? (
+            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+              {t("graph.inspector.missingPrompt")}
+            </div>
+          ) : null}
+          {missingReference ? (
+            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+              {t("graph.inspector.missingReference")}
+            </div>
+          ) : null}
+          {presentation?.failureReason && !activeRun ? (
+            <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs leading-5 text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200">
+              <div className="font-semibold">{t("graph.inspector.lastFailed")}</div>
+              <p className="mt-1">{presentation.failureReason}</p>
+              {presentation.lastRunAt ? (
+                <p className="mt-1 text-[10px] text-red-600/80 dark:text-red-300/80">
+                  {t("graph.inspector.lastRun", { time: formatDateTime(presentation.lastRunAt, t.locale) })}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+          {activeRun ? (
+            <div className="mt-3 flex items-start gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+              <Loader2 size={14} className="mt-0.5 shrink-0 animate-spin" />
+              <div className="font-semibold">{t(`detail.nodeStatus.${nodeStatus}`)}</div>
+            </div>
+          ) : null}
 
-        {canRun || activeRun || presentation?.retryable ? (
-          <div className="mt-4 space-y-2">
-            {canRun ? (
-              <div className="grid grid-cols-2 gap-2">
+          {canRun || activeRun || presentation?.retryable ? (
+            <div className="mt-4 space-y-2">
+              {canRun ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void flushInspector()
+                        .then(() => runMutation.mutate({ scope: "node", node_id: node.id }))
+                        .catch(() => undefined);
+                    }}
+                    disabled={Boolean(activeRun) || runMutation.isPending || busy || runBlocked}
+                    className="inline-flex h-10 items-center justify-center rounded-xl bg-slate-900 px-3 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
+                  >
+                    {runMutation.isPending && runMutation.variables?.scope === "node" ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <Play size={14} className="mr-1.5" />}
+                    {t("graph.runs.scope.node")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void flushInspector()
+                        .then(() => runMutation.mutate({ scope: "to_node", node_id: node.id }))
+                        .catch(() => undefined);
+                    }}
+                    disabled={Boolean(activeRun) || runMutation.isPending || busy || runBlocked}
+                    className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                  >
+                    {runMutation.isPending && runMutation.variables?.scope === "to_node" ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <Play size={14} className="mr-1.5" />}
+                    {t("graph.runs.scope.toNode")}
+                  </button>
+                </div>
+              ) : null}
+              {activeRun ? (
                 <button
                   type="button"
-                  onClick={() => {
-                    void flushInspector()
-                      .then(() => runMutation.mutate({ scope: "node", node_id: node.id }))
-                      .catch(() => undefined);
-                  }}
-                  disabled={Boolean(activeRun) || runMutation.isPending || busy || missingPrompt}
-                  className="inline-flex h-10 items-center justify-center rounded-xl bg-slate-900 px-3 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
+                  onClick={() => cancelMutation.mutate(activeRun.id)}
+                  disabled={cancelMutation.isPending}
+                  className="inline-flex h-10 w-full items-center justify-center rounded-xl border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-900/50 dark:bg-transparent dark:text-red-300 dark:hover:bg-red-950/30"
                 >
-                  {runMutation.isPending && runMutation.variables?.scope === "node" ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <Play size={14} className="mr-1.5" />}
-                  {t("graph.runs.scope.node")}
+                  {cancelMutation.isPending ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <XCircle size={14} className="mr-1.5" />}
+                  {t("detail.cancel")}
                 </button>
+              ) : null}
+              {presentation?.retryable && presentation.runId && !activeRun ? (
                 <button
                   type="button"
-                  onClick={() => {
-                    void flushInspector()
-                      .then(() => runMutation.mutate({ scope: "to_node", node_id: node.id }))
-                      .catch(() => undefined);
-                  }}
-                  disabled={Boolean(activeRun) || runMutation.isPending || busy || missingPrompt}
-                  className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                  onClick={() => void retryRun()}
+                  disabled={retryMutation.isPending || busy}
+                  className="inline-flex h-10 w-full items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
                 >
-                  {runMutation.isPending && runMutation.variables?.scope === "to_node" ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <Play size={14} className="mr-1.5" />}
-                  {t("graph.runs.scope.toNode")}
+                  {retryMutation.isPending ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <RotateCcw size={14} className="mr-1.5" />}
+                  {t("graph.inspector.retryRun")}
                 </button>
-              </div>
-            ) : null}
-            {activeRun ? (
-              <button
-                type="button"
-                onClick={() => cancelMutation.mutate(activeRun.id)}
-                disabled={cancelMutation.isPending}
-                className="inline-flex h-10 w-full items-center justify-center rounded-xl border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-900/50 dark:bg-transparent dark:text-red-300 dark:hover:bg-red-950/30"
-              >
-                {cancelMutation.isPending ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <XCircle size={14} className="mr-1.5" />}
-                {t("detail.cancel")}
-              </button>
-            ) : null}
-            {presentation?.retryable && presentation.runId && !activeRun ? (
-              <button
-                type="button"
-                onClick={() => retryMutation.mutate(presentation.runId as string)}
-                disabled={retryMutation.isPending || busy}
-                className="inline-flex h-10 w-full items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-              >
-                {retryMutation.isPending ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <RotateCcw size={14} className="mr-1.5" />}
-                {t("graph.inspector.retryRun")}
-              </button>
-            ) : null}
+              ) : null}
+            </div>
+          ) : null}
+        </section>
+
+        {saveState.error || mutationError ? (
+          <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs leading-5 text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200">
+            <AlertCircle size={13} className="mr-1.5 inline" />
+            {saveState.error ?? t("workbench.error.structure")}
           </div>
         ) : null}
-      </section>
 
-      {saveState.error || mutationError ? (
-        <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs leading-5 text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200">
-          <AlertCircle size={13} className="mr-1.5 inline" />
-          {saveState.error ?? t("workbench.error.structure")}
-        </div>
-      ) : null}
+        {node.node_type === "prompt_generation" ? (
+          <PromptResult payload={node.current_artifact_payload} />
+        ) : null}
 
-      {node.node_type === "product_source" ? (
-        <ProductSourceEditor
-          key={node.id}
-          node={node}
-          graphProductId={graph.product_id}
-          busy={busy}
-          graphRevision={graph.revision}
-          onSave={persist}
-          onSaveStateChange={(status, error) => setSaveState({ status, error })}
-        />
-      ) : node.node_type === "image_asset" ? (
-        <ImageAssetEditor
-          key={node.id}
-          node={node}
-          image={image}
-          busy={busy}
-          graphRevision={graph.revision}
-          onBind={onBind}
-          onSave={persist}
-          onSaveStateChange={(status, error) => setSaveState({ status, error })}
-          onPreviewImage={onPreviewImage}
-        />
-      ) : node.node_type === "creative_brief" ? (
-        <BriefEditor
-          key={node.id}
-          node={node}
-          busy={busy}
-          graphRevision={graph.revision}
-          onSave={persist}
-          onSaveStateChange={(status, error) => setSaveState({ status, error })}
-        />
-      ) : node.node_type === "visual_system" ? (
-        <VisualEditor
-          key={node.id}
-          node={node}
-          busy={busy}
-          graphRevision={graph.revision}
-          onSave={persist}
-          onSaveStateChange={(status, error) => setSaveState({ status, error })}
-        />
-      ) : node.node_type === "prompt_generation" ? (
-        <PromptEditor
-          key={node.id}
-          node={node}
-          busy={busy}
-          graphRevision={graph.revision}
-          onSave={persist}
-          onSaveStateChange={(status, error) => setSaveState({ status, error })}
-        />
-      ) : (
-        <ImageGenerationEditor
-          key={node.id}
-          node={node}
-          image={image}
-          busy={busy}
-          graphRevision={graph.revision}
-          onSave={persist}
-          onSaveStateChange={(status, error) => setSaveState({ status, error })}
-          onPreviewImage={onPreviewImage}
-        />
-      )}
+        {node.node_type === "product_source" ? (
+          <ProductSourceEditor
+            key={node.id}
+            node={node}
+            graphProductId={graph.product_id}
+            busy={busy}
+            graphRevision={graph.revision}
+            onSave={persist}
+            onSaveStateChange={(status, error) => setSaveState({ status, error })}
+          />
+        ) : !catalog && catalogLoadError ? (
+          <CatalogLoadError
+            message={catalogLoadError}
+            busy={busy}
+            retrying={catalogQuery.isFetching}
+            onRetry={retryCatalog}
+          />
+        ) : !catalog ? (
+          <p className="px-1 text-xs text-zinc-500 dark:text-slate-400">{t("app.loading")}</p>
+        ) : node.node_type === "image_asset" ? (
+          <ImageAssetEditor
+            key={node.id}
+            node={node}
+            catalog={catalog}
+            image={image}
+            busy={busy}
+            graphRevision={graph.revision}
+            onBind={onBind}
+            onSave={persist}
+            onSaveStateChange={(status, error) => setSaveState({ status, error })}
+            onPreviewImage={onPreviewImage}
+          />
+        ) : (
+          <CatalogNodeEditor
+            key={node.id}
+            node={node}
+            catalog={catalog}
+            busy={busy}
+            graphRevision={graph.revision}
+            header={image && onPreviewImage ? <NodeImagePreview image={image} onPreview={onPreviewImage} /> : null}
+            onSave={persist}
+            onSaveStateChange={(status, error) => setSaveState({ status, error })}
+          />
+        )}
 
-      {node.node_type === "image_generation" && onPreviewImage ? (
-        <DeliveryRenditionPanel
-          productId={graph.product_id}
-          sourceAssetId={node.preview_asset_id}
-          deliverySpec={node.config.delivery_spec}
-          onPreviewImage={onPreviewImage}
-        />
-      ) : null}
+        {node.node_type === "image_generation" && onPreviewImage ? (
+          <DeliveryRenditionPanel
+            productId={graph.product_id}
+            sourceAssetId={node.preview_asset_id}
+            deliverySpec={node.config.delivery_spec}
+            onPreviewImage={onPreviewImage}
+          />
+        ) : null}
 
-      <EdgeList heading={t("graph.inspector.inputs")} empty={t("graph.inspector.inputsEmpty")} items={incoming} onJump={onJump} />
-      <EdgeList heading={t("graph.inspector.outputs")} empty={t("graph.inspector.outputsEmpty")} items={outgoing} onJump={onJump} />
-    </div>
+        <EdgeList heading={t("graph.inspector.inputs")} empty={t("graph.inspector.inputsEmpty")} items={incoming} onJump={onJump} />
+        <EdgeList heading={t("graph.inspector.outputs")} empty={t("graph.inspector.outputsEmpty")} items={outgoing} onJump={onJump} />
+      </div>
     </InspectorFlushContext.Provider>
+  );
+}
+
+function PromptResult({ payload }: { payload: Record<string, unknown> | null | undefined }) {
+  const { t } = useI18n();
+  const goal = typeof payload?.design_goal === "string" ? payload.design_goal.trim() : "";
+  if (!goal) return null;
+  const content = payload?.content && typeof payload.content === "object"
+    ? payload.content as Record<string, unknown>
+    : null;
+  const background = typeof content?.background === "string" ? content.background.trim() : "";
+  return (
+    <section className="config-bubble rounded-2xl p-4 shadow-sm">
+      <h4 className="text-xs font-semibold text-zinc-950 dark:text-white">{t("graph.inspector.lastPrompt")}</h4>
+      <p className="mt-2 text-xs leading-5 text-zinc-700 dark:text-slate-200">{goal}</p>
+      {background ? (
+        <p className="mt-1 text-[11px] leading-4 text-zinc-500 dark:text-slate-400">{background}</p>
+      ) : null}
+    </section>
+  );
+}
+
+function CatalogLoadError({
+  message,
+  busy,
+  retrying,
+  onRetry,
+}: {
+  message: string;
+  busy: boolean;
+  retrying: boolean;
+  onRetry: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div
+      role="alert"
+      className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs leading-5 text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200"
+    >
+      <AlertCircle size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+      <div className="min-w-0 flex-1">
+        <p>{message || t("graph.inspector.catalogLoadFailed")}</p>
+        <button
+          type="button"
+          onClick={onRetry}
+          disabled={busy || retrying}
+          aria-label={t("workbench.retry")}
+          title={t("workbench.retry")}
+          className="mt-2 inline-flex h-8 items-center gap-1.5 rounded-lg border border-red-200 bg-white px-2.5 text-[11px] font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-400/30 dark:bg-transparent dark:text-red-200 dark:hover:bg-red-950/30"
+        >
+          {retrying ? <Loader2 size={12} className="animate-spin" aria-hidden="true" /> : <RotateCcw size={12} aria-hidden="true" />}
+          {t("workbench.retry")}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -633,7 +683,7 @@ function ProductSourceEditor({
         <SectionTitle title={t("graph.inspector.productInfo")} />
         <SaveStatusBadge status={factsSaveState.status} />
       </div>
-      <TextInput label={t("graph.inspector.titleField")} value={editor.draft.title} maxLength={255} onChange={(title) => editor.update({ title })} />
+      <TextInput label={t("graph.inspector.titleField")} value={editor.draft.title} maxLength={255} disabled={busy} onChange={(title) => editor.update({ title })} />
       <p className="text-[11px] leading-5 text-zinc-500 dark:text-slate-400">{t("graph.inspector.productSourceHint")}</p>
       {!sourceProductId ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs leading-5 text-amber-800 dark:border-amber-400/30 dark:bg-amber-500/10 dark:text-amber-100">
@@ -648,6 +698,7 @@ function ProductSourceEditor({
             <Search size={14} className="pointer-events-none absolute left-3 top-3 text-zinc-400" aria-hidden="true" />
             <input
               value={search}
+              disabled={busy}
               onChange={(event) => setSearch(event.target.value)}
               placeholder={t("graph.inspector.productSourceSearchPlaceholder")}
               className="input-premium h-10 w-full pl-9 pr-3 text-xs outline-none"
@@ -698,15 +749,16 @@ function ProductSourceEditor({
             <SectionTitle title={t("graph.inspector.productFacts")} />
             {factSet ? <span className="text-[10px] text-zinc-500 dark:text-slate-400">{t("graph.inspector.productFactsVersion", { version: factSet.version })}</span> : null}
           </div>
-          <TextInput label={t("detail.inspector.productName")} value={factsForm.name} maxLength={255} onChange={(name) => setFactsForm({ ...factsForm, name })} />
-          <TextInput label={t("detail.inspector.category")} value={factsForm.category} maxLength={255} onChange={(category) => setFactsForm({ ...factsForm, category })} />
-          <TextInput label={t("detail.inspector.price")} value={factsForm.price} maxLength={120} onChange={(price) => setFactsForm({ ...factsForm, price })} />
-          <TextArea label={t("detail.inspector.productDescription")} value={factsForm.source_note} onChange={(source_note) => setFactsForm({ ...factsForm, source_note })} minRows={2} maxRows={8} />
+          <TextInput label={t("detail.inspector.productName")} value={factsForm.name} maxLength={255} disabled={busy} onChange={(name) => setFactsForm({ ...factsForm, name })} />
+          <TextInput label={t("detail.inspector.category")} value={factsForm.category} maxLength={255} disabled={busy} onChange={(category) => setFactsForm({ ...factsForm, category })} />
+          <TextInput label={t("detail.inspector.price")} value={factsForm.price} maxLength={120} disabled={busy} onChange={(price) => setFactsForm({ ...factsForm, price })} />
+          <TextArea label={t("detail.inspector.productDescription")} value={factsForm.source_note} onChange={(source_note) => setFactsForm({ ...factsForm, source_note })} minRows={2} maxRows={8} disabled={busy} />
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">
               <span className="text-[10px] font-semibold text-zinc-500 dark:text-slate-400">{t("graph.inspector.productFacts")}</span>
               <button
                 type="button"
+                disabled={busy}
                 onClick={() => setFactsForm({
                   ...factsForm,
                   facts: [...factsForm.facts, {
@@ -726,6 +778,7 @@ function ProductSourceEditor({
               <div key={fact.id} className="grid grid-cols-[minmax(0,0.85fr)_minmax(0,1fr)_32px] gap-1.5">
                 <input
                   value={fact.key}
+                  disabled={busy}
                   aria-label={`${t("graph.inspector.productFactKey")} ${index + 1}`}
                   onChange={(event) => updateFactRow(setFactsForm, factsForm, fact.id, { key: event.target.value })}
                   placeholder={t("graph.inspector.productFactKey")}
@@ -733,6 +786,7 @@ function ProductSourceEditor({
                 />
                 <input
                   value={fact.value}
+                  disabled={busy}
                   aria-label={`${t("graph.inspector.productFactValue")} ${index + 1}`}
                   onChange={(event) => updateFactRow(setFactsForm, factsForm, fact.id, { value: event.target.value })}
                   placeholder={t("graph.inspector.productFactValue")}
@@ -740,6 +794,7 @@ function ProductSourceEditor({
                 />
                 <button
                   type="button"
+                  disabled={busy}
                   aria-label={t("graph.inspector.productFactRemove")}
                   title={t("graph.inspector.productFactRemove")}
                   onClick={() => setFactsForm({ ...factsForm, facts: factsForm.facts.filter((item) => item.id !== fact.id) })}
@@ -774,6 +829,7 @@ function ProductSourceEditor({
 
 function ImageAssetEditor({
   node,
+  catalog,
   image,
   busy,
   graphRevision,
@@ -783,6 +839,7 @@ function ImageAssetEditor({
   onPreviewImage,
 }: {
   node: GraphNode;
+  catalog: GraphNodeCatalog;
   image: DownloadableImage | null;
   busy: boolean;
   graphRevision: number;
@@ -792,26 +849,44 @@ function ImageAssetEditor({
   onPreviewImage?: (image: DownloadableImage) => void;
 }) {
   const { t } = useI18n();
-  const editor = useNodeDraftAutosave<GraphImageAssetDraft>({
-    serverValue: graphImageAssetDraft(node),
+  const fields = graphNodeConfigFields(catalog, node.node_type);
+  const editor = useNodeDraftAutosave<CatalogNodeDraft>({
+    serverValue: catalogNodeDraft(node, fields),
     serverEditVersion: graphRevision,
     disabled: busy,
-    normalize: (draft) => ({ title: draft.title.trim(), role: draft.role.trim(), label: draft.label.trim() }),
-    validate: (draft) => validateGraphTitle(draft.title, t("agentWorkbench.nodeEditor.invalidDraft")),
+    normalize: (draft) => normalizeCatalogDraft(draft, fields),
+    validate: (draft) => validateCatalogDraft(draft, fields, t("agentWorkbench.nodeEditor.invalidDraft")),
     save: (draft) => onSave({
       title: draft.title,
-      config: graphImageAssetConfig(node, draft),
+      config: catalogConfigForSave(fields, draft.config),
       boundAssetId: node.bound_asset_id,
     }),
     onStateChange: onSaveStateChange,
   });
+  const unbind = useCallback(async () => {
+    try {
+      await editor.flush(true);
+      await onSave({
+        title: editor.draft.title.trim() || node.title,
+        config: catalogConfigForSave(fields, editor.draft.config),
+        boundAssetId: null,
+      });
+      onSaveStateChange("saved", null);
+    } catch (error) {
+      onSaveStateChange("failed", errorMessage(error, t("workbench.error.structure")));
+    }
+  }, [editor, fields, node.title, onSave, onSaveStateChange, t]);
   return (
     <AutosaveForm editor={editor} busy={busy}>
       {image && onPreviewImage ? <NodeImagePreview image={image} onPreview={onPreviewImage} /> : null}
       {!image ? <p className="text-xs text-zinc-500 dark:text-slate-400">{t("graph.inspector.noPreview")}</p> : null}
-      <TextInput label={t("graph.inspector.titleField")} value={editor.draft.title} maxLength={255} onChange={(title) => editor.update({ ...editor.draft, title })} />
-      <TextInput label={t("graph.inspector.assetRole")} value={editor.draft.role} maxLength={120} onChange={(role) => editor.update({ ...editor.draft, role })} />
-      <TextInput label={t("graph.inspector.assetLabel")} value={editor.draft.label} maxLength={255} onChange={(label) => editor.update({ ...editor.draft, label })} />
+      <TextInput label={t("graph.inspector.titleField")} value={editor.draft.title} maxLength={255} disabled={busy} onChange={(title) => editor.update({ ...editor.draft, title })} />
+      <CatalogConfigFields
+        fields={fields}
+        value={editor.draft.config}
+        onChange={(config) => editor.update({ ...editor.draft, config })}
+        disabled={busy}
+      />
       {onBind ? (
         <button
           type="button"
@@ -819,7 +894,7 @@ function ImageAssetEditor({
           disabled={busy}
           className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
         >
-          <Link2 size={14} />
+          <Link2 size={14} aria-hidden="true" />
           {node.bound_asset_id ? t("graph.inspector.rebind") : t("graph.inspector.bind")}
         </button>
       ) : null}
@@ -827,11 +902,7 @@ function ImageAssetEditor({
         <button
           type="button"
           disabled={busy}
-          onClick={() => void onSave({
-            title: editor.draft.title.trim() || node.title,
-            config: graphImageAssetConfig(node, editor.draft),
-            boundAssetId: null,
-          })}
+          onClick={() => void unbind()}
           className="inline-flex h-10 w-full items-center justify-center rounded-xl border border-slate-200 px-3 text-xs font-semibold text-slate-700 dark:border-slate-700 dark:text-slate-200"
         >
           {t("graph.inspector.unbind")}
@@ -841,345 +912,48 @@ function ImageAssetEditor({
   );
 }
 
-function BriefEditor({
+function CatalogNodeEditor({
   node,
+  catalog,
   busy,
   graphRevision,
+  header,
   onSave,
   onSaveStateChange,
 }: {
   node: GraphNode;
+  catalog: GraphNodeCatalog;
   busy: boolean;
   graphRevision: number;
+  header?: ReactNode;
   onSave: (input: { title: string; config: Record<string, unknown>; boundAssetId: string | null }) => Promise<{ edit_version: number }>;
   onSaveStateChange: (status: SaveStatus, error: string | null) => void;
 }) {
   const { t } = useI18n();
-  const editor = useNodeDraftAutosave<GraphBriefDraft>({
-    serverValue: graphBriefDraft(node),
+  const fields = graphNodeConfigFields(catalog, node.node_type);
+  const editor = useNodeDraftAutosave<CatalogNodeDraft>({
+    serverValue: catalogNodeDraft(node, fields),
     serverEditVersion: graphRevision,
     disabled: busy,
-    normalize: (draft) => ({
-      ...draft,
-      title: draft.title.trim(),
-      goal: draft.goal.trim(),
-    }),
-    validate: (draft) => validateGraphTitle(draft.title, t("agentWorkbench.nodeEditor.invalidDraft")),
+    normalize: (draft) => normalizeCatalogDraft(draft, fields),
+    validate: (draft) => validateCatalogDraft(draft, fields, t("agentWorkbench.nodeEditor.invalidDraft")),
     save: (draft) => onSave({
       title: draft.title,
-      config: graphBriefConfig(node, draft),
+      config: catalogConfigForSave(fields, draft.config),
       boundAssetId: node.bound_asset_id,
     }),
     onStateChange: onSaveStateChange,
   });
   return (
     <AutosaveForm editor={editor} busy={busy}>
-      <TextInput label={t("graph.inspector.titleField")} value={editor.draft.title} maxLength={255} onChange={(title) => editor.update({ ...editor.draft, title })} />
-      <TextArea label={t("workflowConfirmation.designGoal")} value={editor.draft.goal} onChange={(goal) => editor.update({ ...editor.draft, goal })} minRows={3} />
-      <LineListField label={t("graph.inspector.designGoals")} value={editor.draft.design_goals} onChange={(design_goals) => editor.update({ ...editor.draft, design_goals })} />
-      <LineListField label={t("graph.inspector.requiredCopy")} value={editor.draft.required_copy} onChange={(required_copy) => editor.update({ ...editor.draft, required_copy })} />
-      <LineListField label={t("workflowConfirmation.creativeBoundary")} value={editor.draft.prohibitions} onChange={(prohibitions) => editor.update({ ...editor.draft, prohibitions })} />
-    </AutosaveForm>
-  );
-}
-
-function VisualEditor({
-  node,
-  busy,
-  graphRevision,
-  onSave,
-  onSaveStateChange,
-}: {
-  node: GraphNode;
-  busy: boolean;
-  graphRevision: number;
-  onSave: (input: { title: string; config: Record<string, unknown>; boundAssetId: string | null }) => Promise<{ edit_version: number }>;
-  onSaveStateChange: (status: SaveStatus, error: string | null) => void;
-}) {
-  const { t } = useI18n();
-  const editor = useNodeDraftAutosave<GraphVisualDraft>({
-    serverValue: graphVisualDraft(node),
-    serverEditVersion: graphRevision,
-    disabled: busy,
-    normalize: (draft) => ({
-      title: draft.title.trim(),
-      visual_system_version_id: draft.visual_system_version_id,
-      style: draft.style,
-      prohibitions: draft.prohibitions,
-      background: draft.background.trim(),
-    }),
-    validate: (draft) => validateGraphTitle(draft.title, t("agentWorkbench.nodeEditor.invalidDraft")),
-    save: (draft) => onSave({
-      title: draft.title,
-      config: graphVisualConfig(node, draft),
-      boundAssetId: node.bound_asset_id,
-    }),
-    onStateChange: onSaveStateChange,
-  });
-  return (
-    <AutosaveForm editor={editor} busy={busy}>
-      <TextInput label={t("graph.inspector.titleField")} value={editor.draft.title} maxLength={255} onChange={(title) => editor.update({ ...editor.draft, title })} />
-      {editor.draft.visual_system_version_id ? (
-        <ReadOnlyRow label={t("graph.inspector.visualVersion")} value={editor.draft.visual_system_version_id} mono />
-      ) : null}
-      <p className="text-[11px] leading-5 text-zinc-500 dark:text-slate-400">{t("graph.inspector.visualVersionHint")}</p>
-      <LineListField label={t("graph.inspector.visualStyle")} value={editor.draft.style} onChange={(style) => editor.update({ ...editor.draft, style })} />
-      <TextInput
-        label={t("graph.inspector.visualBackground")}
-        value={editor.draft.background}
-        maxLength={32}
-        onChange={(background) => editor.update({ ...editor.draft, background })}
+      {header}
+      <TextInput label={t("graph.inspector.titleField")} value={editor.draft.title} maxLength={255} disabled={busy} onChange={(title) => editor.update({ ...editor.draft, title })} />
+      <CatalogConfigFields
+        fields={fields}
+        value={editor.draft.config}
+        onChange={(config) => editor.update({ ...editor.draft, config })}
+        disabled={busy}
       />
-      <LineListField label={t("workflowConfirmation.creativeBoundary")} value={editor.draft.prohibitions} onChange={(prohibitions) => editor.update({ ...editor.draft, prohibitions })} />
-    </AutosaveForm>
-  );
-}
-
-function PromptEditor({
-  node,
-  busy,
-  graphRevision,
-  onSave,
-  onSaveStateChange,
-}: {
-  node: GraphNode;
-  busy: boolean;
-  graphRevision: number;
-  onSave: (input: { title: string; config: Record<string, unknown>; boundAssetId: string | null }) => Promise<{ edit_version: number }>;
-  onSaveStateChange: (status: SaveStatus, error: string | null) => void;
-}) {
-  const { t } = useI18n();
-  const editor = useNodeDraftAutosave<GraphPromptDraft>({
-    serverValue: graphPromptDraft(node),
-    serverEditVersion: graphRevision,
-    disabled: busy,
-    normalize: (draft) => ({ ...draft, title: draft.title.trim() }),
-    validate: (draft) => validateGraphTitle(draft.title, t("agentWorkbench.nodeEditor.invalidDraft")),
-    save: (draft) => onSave({
-      title: draft.title,
-      config: graphPromptConfig(node, draft),
-      boundAssetId: node.bound_asset_id,
-    }),
-    onStateChange: onSaveStateChange,
-  });
-  return (
-    <AutosaveForm editor={editor} busy={busy}>
-      <SectionTitle title={t("graph.inspector.promptSection")} />
-      <TextInput label={t("graph.inspector.titleField")} value={editor.draft.title} maxLength={255} onChange={(title) => editor.update({ ...editor.draft, title })} />
-      <TextArea label={t("workflowConfirmation.designGoal")} value={editor.draft.design_goal} onChange={(design_goal) => editor.update({ ...editor.draft, design_goal })} minRows={3} />
-      <LineListField label={t("workflowConfirmation.sharedRules")} value={editor.draft.shared_rules} onChange={(shared_rules) => editor.update({ ...editor.draft, shared_rules })} />
-      <LineListField label={t("workflowConfirmation.creativeBoundary")} value={editor.draft.creative_boundary} onChange={(creative_boundary) => editor.update({ ...editor.draft, creative_boundary })} />
-
-      <FieldGroup title={t("workflowConfirmation.productFidelity")}>
-        <div className="grid gap-2 sm:grid-cols-2">
-          <CheckboxField label={t("agentWorkbench.nodeEditor.complexStructure")} checked={editor.draft.complex_structure} onChange={(complex_structure) => editor.update({ ...editor.draft, complex_structure })} />
-          <CheckboxField label={t("agentWorkbench.nodeEditor.productPresent")} checked={editor.draft.product_present} onChange={(product_present) => editor.update({ ...editor.draft, product_present })} />
-        </div>
-        <CompactSelect
-          label={t("agentWorkbench.nodeEditor.pictureInPicture")}
-          value={editor.draft.picture_in_picture}
-          options={selectOptions(["none", "allowed", "required"], t)}
-          onChange={(picture_in_picture) => editor.update({
-            ...editor.draft,
-            picture_in_picture: picture_in_picture as GraphPromptDraft["picture_in_picture"],
-          })}
-        />
-        <LineListField label={t("agentWorkbench.nodeEditor.requirements")} value={editor.draft.requirements} onChange={(requirements) => editor.update({ ...editor.draft, requirements })} />
-      </FieldGroup>
-
-      <FieldGroup title={t("workflowConfirmation.composition")}>
-        <TextInput label={t("agentWorkbench.nodeEditor.viewpoint")} value={editor.draft.viewpoint} onChange={(viewpoint) => editor.update({ ...editor.draft, viewpoint })} />
-        <CompactNumberInput
-          label={t("agentWorkbench.nodeEditor.productShare")}
-          value={editor.draft.product_share_percent}
-          min={1}
-          max={100}
-          onChange={(product_share_percent) => product_share_percent !== null && editor.update({ ...editor.draft, product_share_percent })}
-        />
-        <TextArea label={t("agentWorkbench.nodeEditor.layout")} value={editor.draft.layout} onChange={(layout) => editor.update({ ...editor.draft, layout })} />
-        <LineListField label={t("agentWorkbench.nodeEditor.copyRegions")} value={editor.draft.copy_regions} onChange={(copy_regions) => editor.update({ ...editor.draft, copy_regions })} />
-      </FieldGroup>
-
-      <FieldGroup title={t("workflowConfirmation.content")}>
-        <LineListField label={t("agentWorkbench.nodeEditor.focus")} value={editor.draft.focus} onChange={(focus) => editor.update({ ...editor.draft, focus })} />
-        <LineListField label={t("agentWorkbench.nodeEditor.sellingPoints")} value={editor.draft.selling_points} onChange={(selling_points) => editor.update({ ...editor.draft, selling_points })} />
-        <TextArea label={t("agentWorkbench.nodeEditor.background")} value={editor.draft.background} onChange={(background) => editor.update({ ...editor.draft, background })} />
-        <LineListField label={t("agentWorkbench.nodeEditor.decorations")} value={editor.draft.decorations} onChange={(decorations) => editor.update({ ...editor.draft, decorations })} />
-      </FieldGroup>
-
-      <FieldGroup title={t("workflowConfirmation.textContent")}>
-        <TextInput label={t("agentWorkbench.nodeEditor.headline")} value={editor.draft.headline} onChange={(headline) => editor.update({ ...editor.draft, headline })} />
-        <TextInput label={t("agentWorkbench.nodeEditor.subtitle")} value={editor.draft.subtitle} onChange={(subtitle) => editor.update({ ...editor.draft, subtitle })} />
-        <TextArea label={t("agentWorkbench.nodeEditor.body")} value={editor.draft.body} onChange={(body) => editor.update({ ...editor.draft, body })} />
-      </FieldGroup>
-
-      <FieldGroup title={t("workflowConfirmation.atmosphere")}>
-        <LineListField label={t("agentWorkbench.nodeEditor.keywords")} value={editor.draft.keywords} onChange={(keywords) => editor.update({ ...editor.draft, keywords })} />
-        <TextArea label={t("agentWorkbench.nodeEditor.lighting")} value={editor.draft.lighting} onChange={(lighting) => editor.update({ ...editor.draft, lighting })} />
-      </FieldGroup>
-    </AutosaveForm>
-  );
-}
-
-function ImageGenerationEditor({
-  node,
-  image,
-  busy,
-  graphRevision,
-  onSave,
-  onSaveStateChange,
-  onPreviewImage,
-}: {
-  node: GraphNode;
-  image: DownloadableImage | null;
-  busy: boolean;
-  graphRevision: number;
-  onSave: (input: { title: string; config: Record<string, unknown>; boundAssetId: string | null }) => Promise<{ edit_version: number }>;
-  onSaveStateChange: (status: SaveStatus, error: string | null) => void;
-  onPreviewImage?: (image: DownloadableImage) => void;
-}) {
-  const { t } = useI18n();
-  const [settingsTab, setSettingsTab] = useState<ImageGenerationSettingsTab>("basic");
-  const editor = useNodeDraftAutosave<GraphImageGenerationDraft>({
-    serverValue: graphImageGenerationDraft(node),
-    serverEditVersion: graphRevision,
-    disabled: busy,
-    normalize: normalizeGraphImageGenerationDraft,
-    validate: (draft) => validateGraphImageGenerationDraft(draft, t("agentWorkbench.nodeEditor.invalidDraft")),
-    save: (draft) => onSave({
-      title: draft.title,
-      config: graphImageGenerationConfig(node, draft),
-      boundAssetId: node.bound_asset_id,
-    }),
-    onStateChange: onSaveStateChange,
-  });
-  const { generation, delivery } = editor.draft;
-  const patchGeneration = (patch: Partial<WorkflowGenerationSpec>) => editor.update({
-    ...editor.draft,
-    generation: { ...generation, ...patch },
-  });
-  const patchDelivery = (patch: Partial<WorkflowDeliverySpec>) => {
-    if (delivery) editor.update({ ...editor.draft, delivery: { ...delivery, ...patch } });
-  };
-  return (
-    <AutosaveForm editor={editor} busy={busy}>
-      {image && onPreviewImage ? <NodeImagePreview image={image} onPreview={onPreviewImage} /> : null}
-      <TextInput label={t("graph.inspector.titleField")} value={editor.draft.title} maxLength={255} onChange={(title) => editor.update({ ...editor.draft, title })} />
-      <TextArea
-        label={t("workflowConfirmation.variation")}
-        value={editor.draft.variation}
-        onChange={(variation) => editor.update({ ...editor.draft, variation })}
-        minRows={3}
-        maxRows={12}
-      />
-      <FieldGroup title={t("agentWorkbench.nodeEditor.generationSettings")}>
-        <ImageGenerationSettingsTabs
-          value={settingsTab}
-          onChange={setSettingsTab}
-          basic={(
-            <div className="space-y-4">
-              <div>
-                <div className="mb-2 text-[11px] font-semibold text-slate-600 dark:text-slate-300">
-                  {t("agentWorkbench.nodeEditor.aspectRatio")}
-                </div>
-                <ImageAspectRatioPicker
-                  value={generation.aspect_ratio}
-                  onChange={(aspect_ratio) => patchGeneration({ aspect_ratio })}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <CompactSelect
-                  label={t("agentWorkbench.nodeEditor.resolution")}
-                  value={generation.resolution_tier}
-                  options={selectOptions(["standard", "high", "ultra"], t)}
-                  onChange={(resolution_tier) => patchGeneration({ resolution_tier: resolution_tier as WorkflowGenerationSpec["resolution_tier"] })}
-                />
-                <CompactSelect
-                  label={t("agentWorkbench.nodeEditor.quality")}
-                  value={generation.quality_intent}
-                  options={selectOptions(["draft", "standard", "high"], t)}
-                  onChange={(quality_intent) => patchGeneration({ quality_intent: quality_intent as WorkflowGenerationSpec["quality_intent"] })}
-                />
-              </div>
-            </div>
-          )}
-          advanced={(
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-2">
-                <CompactSelect
-                  label={t("agentWorkbench.nodeEditor.referenceFidelity")}
-                  value={generation.reference_fidelity}
-                  options={selectOptions(["low", "medium", "high"], t)}
-                  onChange={(reference_fidelity) => patchGeneration({ reference_fidelity: reference_fidelity as WorkflowGenerationSpec["reference_fidelity"] })}
-                />
-                <CompactSelect
-                  label={t("agentWorkbench.nodeEditor.backgroundIntent")}
-                  value={generation.background_intent}
-                  options={selectOptions(["auto", "opaque", "transparent"], t)}
-                  onChange={(background_intent) => patchGeneration({ background_intent: background_intent as WorkflowGenerationSpec["background_intent"] })}
-                />
-              </div>
-              <CompactSelect
-                label={t("agentWorkbench.nodeEditor.textPolicy")}
-                value={generation.text_policy}
-                options={selectOptions(["none", "allow", "required"], t)}
-                onChange={(textPolicy) => patchGeneration({
-                  text_policy: textPolicy as WorkflowGenerationSpec["text_policy"],
-                  text_language: textPolicy === "none" ? null : generation.text_language,
-                })}
-              />
-              {generation.text_policy !== "none" ? (
-                <CompactInput
-                  label={t("agentWorkbench.nodeEditor.textLanguage")}
-                  value={generation.text_language ?? ""}
-                  maxLength={80}
-                  onChange={(text_language) => patchGeneration({ text_language: text_language || null })}
-                />
-              ) : null}
-              <fieldset className="space-y-3 border-t border-zinc-200 pt-4 dark:border-slate-700">
-                <legend className="mb-1 text-xs font-semibold text-zinc-800 dark:text-slate-100">
-                  {t("workflowConfirmation.deliverySpec")}
-                </legend>
-                <CheckboxField
-                  label={t("agentWorkbench.nodeEditor.deliveryEnabled")}
-                  checked={delivery !== null}
-                  onChange={(enabled) => editor.update({
-                    ...editor.draft,
-                    delivery: enabled ? defaultDeliverySpec() : null,
-                  })}
-                />
-                {delivery ? (
-                  <>
-                    <div className="grid grid-cols-2 gap-2">
-                      <CompactNumberInput label={t("agentWorkbench.nodeEditor.width")} value={delivery.width} min={1} max={16384} onChange={(width) => width !== null && patchDelivery({ width })} />
-                      <CompactNumberInput label={t("agentWorkbench.nodeEditor.height")} value={delivery.height} min={1} max={16384} onChange={(height) => height !== null && patchDelivery({ height })} />
-                      <CompactSelect label={t("agentWorkbench.nodeEditor.format")} value={delivery.format} options={selectOptions(["png", "jpeg", "webp"], t)} onChange={(format) => patchDelivery({ format: format as WorkflowDeliverySpec["format"] })} />
-                      <CompactSelect
-                        label={t("agentWorkbench.nodeEditor.fit")}
-                        value={delivery.fit}
-                        options={selectOptions(["contain", "cover"], t)}
-                        onChange={(fitValue) => {
-                          const fit = fitValue as WorkflowDeliverySpec["fit"];
-                          patchDelivery({
-                            fit,
-                            crop_anchor: fit === "contain" ? null : delivery.crop_anchor,
-                            background_color: fit === "cover" ? null : delivery.background_color,
-                          });
-                        }}
-                      />
-                    </div>
-                    {delivery.fit === "contain" ? (
-                      <CompactInput label={t("agentWorkbench.nodeEditor.backgroundColor")} value={delivery.background_color ?? ""} maxLength={7} placeholder="#FFFFFF" onChange={(background_color) => patchDelivery({ background_color: background_color.trim() || null })} />
-                    ) : (
-                      <CompactSelect label={t("agentWorkbench.nodeEditor.cropAnchor")} value={delivery.crop_anchor ?? "center"} options={selectOptions(["center", "top", "bottom", "left", "right"], t)} onChange={(crop_anchor) => patchDelivery({ crop_anchor: crop_anchor as NonNullable<WorkflowDeliverySpec["crop_anchor"]> })} />
-                    )}
-                  </>
-                ) : null}
-              </fieldset>
-            </div>
-          )}
-        />
-      </FieldGroup>
     </AutosaveForm>
   );
 }
@@ -1278,15 +1052,6 @@ function NodeImagePreview({ image, onPreview }: { image: DownloadableImage; onPr
   );
 }
 
-function FieldGroup({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <fieldset className="space-y-3 border-t border-zinc-200 pt-4 dark:border-slate-700">
-      <legend className="mb-1 text-xs font-semibold text-zinc-800 dark:text-slate-100">{title}</legend>
-      {children}
-    </fieldset>
-  );
-}
-
 function SectionTitle({ title }: { title: string }) {
   return <h4 className="text-xs font-semibold text-zinc-800 dark:text-slate-100">{title}</h4>;
 }
@@ -1295,32 +1060,21 @@ function TextInput({
   label,
   value,
   maxLength,
+  disabled = false,
   onChange,
 }: {
   label: string;
   value: string;
   maxLength?: number;
+  disabled?: boolean;
   onChange: (value: string) => void;
 }) {
   return (
     <label className="block">
       <span className="mb-1.5 block text-[10px] font-semibold text-zinc-500 dark:text-slate-400">{label}</span>
-      <input value={value} maxLength={maxLength} onChange={(event) => onChange(event.target.value)} className="input-premium h-10 w-full px-3 text-xs outline-none" />
+      <input disabled={disabled} value={value} maxLength={maxLength} onChange={(event) => onChange(event.target.value)} className="input-premium h-10 w-full px-3 text-xs outline-none disabled:cursor-not-allowed disabled:opacity-60" />
     </label>
   );
-}
-
-function CheckboxField({ label, checked, onChange }: { label: string; checked: boolean; onChange: (checked: boolean) => void }) {
-  return (
-    <label className="flex min-h-10 items-center gap-2 rounded-xl border border-zinc-200 bg-zinc-50 px-3 text-xs font-medium text-zinc-700 dark:border-slate-700 dark:bg-[#0b1220] dark:text-slate-200">
-      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="h-4 w-4 accent-slate-800" />
-      <span>{label}</span>
-    </label>
-  );
-}
-
-function LineListField({ label, value, onChange }: { label: string; value: string[]; onChange: (value: string[]) => void }) {
-  return <TextArea label={label} value={value.join("\n")} onChange={(next) => onChange(next.split("\n").map((item) => item.trim()).filter(Boolean))} minRows={2} />;
 }
 
 function updateFactRow(
@@ -1371,16 +1125,6 @@ function ReadOnlyRow({ label, value, mono = false }: { label: string; value: str
       <dd className={`min-w-0 break-all text-zinc-800 dark:text-slate-100 ${mono ? "font-mono text-[10px]" : "font-medium"}`}>{value}</dd>
     </div>
   );
-}
-
-function selectOptionLabel(option: string, t: ReturnType<typeof useI18n>["t"]): string {
-  if (option === "png" || option === "jpeg" || option === "webp") return option.toUpperCase();
-  const key = SELECT_OPTION_LABEL_KEYS[option as keyof typeof SELECT_OPTION_LABEL_KEYS];
-  return key ? t(key) : option;
-}
-
-function selectOptions(options: readonly string[], t: ReturnType<typeof useI18n>["t"]) {
-  return options.map((option) => ({ value: option, label: selectOptionLabel(option, t) }));
 }
 
 function edgeRoleKey(role: GraphEdgeRole): TranslationKey {

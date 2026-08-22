@@ -8,6 +8,7 @@ import type { ImageContent } from "@earendil-works/pi-ai/compat";
 import {
   CheckpointKind,
   JsonObject,
+  MAX_PRODUCT_CONTEXT_BYTES,
   ProductFlowError,
   Scope,
   TurnAnswer,
@@ -145,10 +146,11 @@ export function createProductFlowTools(runtime: ToolRuntime): ToolDefinition[] {
       name: "get_product_workflow_context_v1",
       label: "Read product context",
       description:
-        "Read current bounded product facts, WorkflowDraft summary, missing information, and reference asset IDs. This is read-only.",
-      promptSnippet: "Read current product and workflow facts",
+        "Read current bounded product facts, WorkflowDraft summary, missing information, reference asset IDs, and the Node Catalog config_fields document. Inspector forms and node config writes use this same catalog. This is read-only.",
+      promptSnippet: "Read current product, workflow facts, and node catalog",
       parameters: EMPTY_OBJECT,
-      execute: async (): Promise<Result> => textResult(await runtime.client.productContext(runtime.scope.conversation_id, runtime.signal)),
+      execute: async (): Promise<Result> =>
+        productContextResult(await runtime.client.productContext(runtime.scope.conversation_id, runtime.signal)),
     }),
     defineTool({
       name: "inspect_workflow_runs_v1",
@@ -310,13 +312,15 @@ function createGlobalWorkflowContextTool(runtime: ToolRuntime): ToolDefinition {
     name: "inspect_global_workflow_context_v1",
     label: "Inspect product workflow",
     description:
-      "Read the bounded editable WorkflowDraft context for one explicit product, including the current revision and reference assets. This is read-only.",
+      "Read the bounded editable WorkflowDraft context for one explicit product, including the current revision, reference assets, and Node Catalog config_fields. Inspector forms and node config writes use this same catalog. This is read-only.",
     parameters: Type.Object(
       { product_id: Type.String({ minLength: 1, maxLength: 64 }) },
       { additionalProperties: false },
     ),
     execute: async (_toolCallID: string, params: { product_id: string }): Promise<Result> =>
-      textResult(await runtime.client.globalWorkflowContext(runtime.scope.conversation_id, params.product_id.trim(), runtime.signal)),
+      productContextResult(
+        await runtime.client.globalWorkflowContext(runtime.scope.conversation_id, params.product_id.trim(), runtime.signal),
+      ),
   });
 }
 
@@ -405,21 +409,21 @@ function createImageInspectionTool(runtime: ToolRuntime, global: boolean): ToolD
 function createWorkflowRunRequestTool(runtime: ToolRuntime, global: boolean): ToolDefinition {
   const parameters = global
     ? Type.Object(
-        {
-          product_id: Type.String({ minLength: 1, maxLength: 64 }),
-          workflow_id: Type.String({ minLength: 1, maxLength: 64 }),
-          expected_workflow_revision: Type.Integer({ minimum: 1 }),
-          source_run_id: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
-        },
-        { additionalProperties: false },
-      )
+      {
+        product_id: Type.String({ minLength: 1, maxLength: 64 }),
+        workflow_id: Type.String({ minLength: 1, maxLength: 64 }),
+        expected_workflow_revision: Type.Integer({ minimum: 1 }),
+        source_run_id: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+      },
+      { additionalProperties: false },
+    )
     : Type.Object(
-        {
-          expected_workflow_revision: Type.Integer({ minimum: 1 }),
-          source_run_id: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
-        },
-        { additionalProperties: false },
-      );
+      {
+        expected_workflow_revision: Type.Integer({ minimum: 1 }),
+        source_run_id: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+      },
+      { additionalProperties: false },
+    );
   return defineTool({
     name: "request_workflow_run_v1",
     label: "Request workflow run",
@@ -743,15 +747,57 @@ function textResult(value: unknown, details: JsonObject = {}): Result {
   };
 }
 
+function productContextResult(value: unknown): Result {
+  return {
+    content: [{ type: "text", text: boundedProductContextJSON(value) }],
+    details: {},
+  };
+}
+
 function boundedJSON(value: unknown): string {
-  let encoded: string;
-  try {
-    encoded = JSON.stringify(value) ?? "null";
-  } catch {
-    encoded = "[unserializable ProductFlow result]";
-  }
+  const encoded = encodeJSON(value);
   if (Buffer.byteLength(encoded, "utf8") <= MAX_TOOL_TEXT_BYTES) return encoded;
-  return `${Buffer.from(encoded, "utf8").subarray(0, MAX_TOOL_TEXT_BYTES).toString("utf8")}...[truncated]`;
+  return truncatedJSON(Buffer.byteLength(encoded, "utf8"), MAX_TOOL_TEXT_BYTES);
+}
+
+function boundedProductContextJSON(value: unknown): string {
+  const encoded = encodeJSON(value);
+  const originalBytes = Buffer.byteLength(encoded, "utf8");
+  if (originalBytes <= MAX_PRODUCT_CONTEXT_BYTES) return encoded;
+
+  const nodeCatalog = isRecord(value) ? value.node_catalog : undefined;
+  if (nodeCatalog !== undefined) {
+    const reduced = {
+      schema_version: isRecord(value) && typeof value.schema_version === "number" ? value.schema_version : 1,
+      truncated: true,
+      original_bytes: originalBytes,
+      max_bytes: MAX_PRODUCT_CONTEXT_BYTES,
+      node_catalog: nodeCatalog,
+    };
+    const reducedEncoded = encodeJSON(reduced);
+    if (Buffer.byteLength(reducedEncoded, "utf8") <= MAX_PRODUCT_CONTEXT_BYTES) return reducedEncoded;
+  }
+  return truncatedJSON(originalBytes, MAX_PRODUCT_CONTEXT_BYTES);
+}
+
+function encodeJSON(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? "null";
+  } catch {
+    return JSON.stringify({
+      schema_version: 1,
+      error: "unserializable ProductFlow result",
+    });
+  }
+}
+
+function truncatedJSON(originalBytes: number, maximumBytes: number): string {
+  return JSON.stringify({
+    schema_version: 1,
+    truncated: true,
+    original_bytes: originalBytes,
+    max_bytes: maximumBytes,
+  });
 }
 
 function buildSkillInstructionDetails(content: string): Pick<ToolStepDetails, "instruction_excerpt" | "instruction_truncated"> {
@@ -785,22 +831,22 @@ function toolFailureDetails(error: unknown): ToolStepDetails {
   const issuesValue = error.details?.issues;
   const validationIssues = Array.isArray(issuesValue)
     ? issuesValue.flatMap((issue) => {
-        if (
-          !issue ||
-          typeof issue !== "object" ||
-          Array.isArray(issue) ||
-          typeof (issue as { path?: unknown }).path !== "string" ||
-          typeof (issue as { message?: unknown }).message !== "string"
-        ) {
-          return [];
-        }
-        return [
-          {
-            path: boundedDetailText((issue as { path: string }).path, 200, "$"),
-            message: boundedDetailText((issue as { message: string }).message, 500, "ProductFlow validation failed"),
-          },
-        ];
-      })
+      if (
+        !issue ||
+        typeof issue !== "object" ||
+        Array.isArray(issue) ||
+        typeof (issue as { path?: unknown }).path !== "string" ||
+        typeof (issue as { message?: unknown }).message !== "string"
+      ) {
+        return [];
+      }
+      return [
+        {
+          path: boundedDetailText((issue as { path: string }).path, 200, "$"),
+          message: boundedDetailText((issue as { message: string }).message, 500, "ProductFlow validation failed"),
+        },
+      ];
+    })
     : undefined;
   return {
     phase: "tool_result",
@@ -851,4 +897,8 @@ function metadataIDs(value: unknown): string[] {
     if (!item || typeof item !== "object" || typeof (item as { id?: unknown }).id !== "string") return [];
     return [(item as { id: string }).id];
   });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }

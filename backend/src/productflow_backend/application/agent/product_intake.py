@@ -72,6 +72,11 @@ AGENT_PRODUCT_IMAGE_TYPE_CATALOG = (
     AgentProductImageTypeOption("shipping", "发货物流图", "展示发货流程与物流时效", 14),
 )
 AGENT_PRODUCT_IMAGE_TYPE_KEYS = frozenset(option.key for option in AGENT_PRODUCT_IMAGE_TYPE_CATALOG)
+_IMAGE_TYPE_BY_KEY = {option.key: option for option in AGENT_PRODUCT_IMAGE_TYPE_CATALOG}
+
+
+def agent_product_image_type_option(key: str) -> AgentProductImageTypeOption | None:
+    return _IMAGE_TYPE_BY_KEY.get(key)
 
 
 class StrictIntakeModel(BaseModel):
@@ -250,6 +255,7 @@ __all__ = [
     "AgentProductSelectionV1",
     "WORKFLOW_INTAKE_SCHEMA_VERSION",
     "WorkflowIntakeV1",
+    "agent_product_image_type_option",
     "agent_product_draft_workspace_request_hash",
     "agent_product_intake_request_hash",
     "agent_product_workspace_request_hash",

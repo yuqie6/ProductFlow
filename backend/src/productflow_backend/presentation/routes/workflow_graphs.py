@@ -26,7 +26,10 @@ from productflow_backend.application.product_workflow.graph_runs import (
     retry_graph_run,
     submit_graph_run,
 )
-from productflow_backend.application.product_workflow.graph_template import DirectCreateImageType
+from productflow_backend.application.product_workflow.graph_template import (
+    DirectCreateImageType,
+    resolve_template_generation_spec,
+)
 from productflow_backend.domain.enums import GraphActorType, GraphRunScope
 from productflow_backend.domain.errors import BusinessValidationError
 from productflow_backend.domain.graph_catalog import graph_catalog_document
@@ -67,6 +70,7 @@ async def create_product_with_direct_graph_endpoint(
     category: str | None = Form(default=None),
     price: str | None = Form(default=None),
     source_note: str | None = Form(default=None),
+    generation_spec: str | None = Form(default=None),
     session: Session = Depends(get_session),
 ) -> DirectCreateProductResponse:
     validate_reference_image_count(len(images))
@@ -82,6 +86,7 @@ async def create_product_with_direct_graph_endpoint(
         source_note=source_note,
         image_uploads=image_payloads,
         image_types=_parse_image_types(image_types),
+        generation_spec=_parse_generation_spec(generation_spec),
     )
     return serialize_direct_create(
         product=result.product,
@@ -267,6 +272,18 @@ def retry_graph_run_endpoint(
         run_id=run_id,
     )
     return serialize_graph_run(submission.run)
+
+
+def _parse_generation_spec(raw: str | None) -> dict | None:
+    if raw is None or not raw.strip():
+        return None
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise BusinessValidationError("出图设定必须是 JSON 对象") from exc
+    if not isinstance(payload, dict):
+        raise BusinessValidationError("出图设定必须是 JSON 对象")
+    return resolve_template_generation_spec(payload)
 
 
 def _parse_image_types(raw: str) -> list[DirectCreateImageType]:

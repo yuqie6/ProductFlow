@@ -4,9 +4,17 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+from pydantic import ValidationError
+
 from productflow_backend.application.workflow_drafts.contracts import (
     ImagePromptPayloadV1,
     VisualSystemDraftPayload,
+)
+from productflow_backend.infrastructure.prompt.context_payloads import (
+    DEFAULT_CREATIVE_BRIEF,
+    DEFAULT_VISUAL_OVERLAY,
+    GeneratedCreativeBrief,
+    GeneratedVisualOverlay,
 )
 from productflow_backend.infrastructure.provider_effects import ProviderEffectQueryResult
 
@@ -31,11 +39,40 @@ class PromptGenerationRequest:
     current_prompt: ImagePromptPayloadV1
     text_languages: tuple[str, ...]
     reference_images: tuple[PromptReferenceImage, ...]
+    generate_from_context: bool = False
+    image_type_title: str | None = None
+    image_type_description: str | None = None
+    text_policy: str = "none"
 
 
 @dataclass(frozen=True, slots=True)
 class PromptGenerationResult:
     payload: ImagePromptPayloadV1
+    model: str
+    response_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ContextGenerationRequest:
+    facts: tuple[dict[str, Any], ...]
+    reference_images: tuple[PromptReferenceImage, ...]
+    current_brief: dict[str, Any] | None = None
+    current_overlay: dict[str, Any] | None = None
+    text_policy: str = "none"
+    text_language: str | None = None
+    node_title: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class CreativeBriefGenerationResult:
+    payload: GeneratedCreativeBrief
+    model: str
+    response_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class VisualOverlayGenerationResult:
+    payload: GeneratedVisualOverlay
     model: str
     response_id: str | None = None
 
@@ -46,6 +83,18 @@ class PromptGenerationProvider(ABC):
     @abstractmethod
     def generate_prompt(self, request: PromptGenerationRequest) -> PromptGenerationResult:
         raise NotImplementedError
+
+    def generate_creative_brief(self, request: ContextGenerationRequest) -> CreativeBriefGenerationResult:
+        payload = _validated_brief(request.current_brief)
+        if request.text_policy == "none":
+            payload = payload.model_copy(update={"required_copy": []})
+        return CreativeBriefGenerationResult(payload=payload, model=self.provider_name)
+
+    def generate_visual_overlay(self, request: ContextGenerationRequest) -> VisualOverlayGenerationResult:
+        return VisualOverlayGenerationResult(
+            payload=_validated_overlay(request.current_overlay),
+            model=self.provider_name,
+        )
 
     def reconcile_prompt_effect(
         self,
@@ -61,9 +110,30 @@ class PromptGenerationProvider(ABC):
         )
 
 
+def _validated_brief(payload: dict[str, Any] | None) -> GeneratedCreativeBrief:
+    if not payload:
+        return DEFAULT_CREATIVE_BRIEF
+    try:
+        return GeneratedCreativeBrief.model_validate(payload)
+    except ValidationError:
+        return DEFAULT_CREATIVE_BRIEF
+
+
+def _validated_overlay(payload: dict[str, Any] | None) -> GeneratedVisualOverlay:
+    if not payload:
+        return DEFAULT_VISUAL_OVERLAY
+    try:
+        return GeneratedVisualOverlay.model_validate(payload)
+    except ValidationError:
+        return DEFAULT_VISUAL_OVERLAY
+
+
 __all__ = [
+    "ContextGenerationRequest",
+    "CreativeBriefGenerationResult",
     "PromptGenerationProvider",
     "PromptGenerationRequest",
     "PromptGenerationResult",
     "PromptReferenceImage",
+    "VisualOverlayGenerationResult",
 ]

@@ -3,11 +3,17 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
+from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm.attributes import flag_modified
 
+from productflow_backend.application.agent.product_intake import agent_product_image_type_option
 from productflow_backend.application.async_delivery import delivery_key_for_actor, stage_async_dispatch
 from productflow_backend.application.delivery_renditions.service import create_delivery_rendition_job
 from productflow_backend.application.product_images.assets import stage_product_image_asset
@@ -15,22 +21,29 @@ from productflow_backend.application.product_workflow.dependencies import (
     WorkflowExecutionDependencies,
     default_workflow_execution_dependencies,
 )
+from productflow_backend.application.product_workflow.graph_commands import load_applied_graph
 from productflow_backend.application.product_workflow.graph_compiler import (
+    ContextRuntimeInput,
     GraphRuntimeArtifacts,
+    GraphSourceRecord,
     ImageRuntimeInput,
     PromptRuntimeInput,
     applied_graph_from_snapshot,
     artifacts_from_sources,
+    compile_context_runtime,
     compile_image_runtime,
     compile_prompt_runtime,
     sources_from_snapshot,
     strip_v3_prompt_payload,
 )
+from productflow_backend.application.product_workflow.graph_runs import load_graph_sources
 from productflow_backend.application.storage_compensation import StorageWriteCompensation
 from productflow_backend.application.time import now_utc
 from productflow_backend.application.workflow_drafts.contracts import (
     GenerationSpec,
     ImagePromptPayloadV1,
+    PromptTextContent,
+    VisualExceptionPlan,
     VisualSystemDraftPayload,
 )
 from productflow_backend.domain.durable_generation_tasks import DELIVERY_RENDITION_TASK_CONTRACT
@@ -43,6 +56,7 @@ from productflow_backend.domain.enums import (
     WorkflowRunStatus,
 )
 from productflow_backend.domain.errors import BusinessValidationError, NotFoundError
+from productflow_backend.domain.graph_catalog import catalog_visual_overlay
 from productflow_backend.infrastructure.db.models import (
     Product,
     ProductImageAsset,
@@ -54,7 +68,11 @@ from productflow_backend.infrastructure.db.models import (
 )
 from productflow_backend.infrastructure.db.session import get_session_factory
 from productflow_backend.infrastructure.image.base import WorkflowImageReference, WorkflowImageRequest
-from productflow_backend.infrastructure.prompt.base import PromptGenerationRequest, PromptReferenceImage
+from productflow_backend.infrastructure.prompt.base import (
+    ContextGenerationRequest,
+    PromptGenerationRequest,
+    PromptReferenceImage,
+)
 from productflow_backend.infrastructure.storage import LocalStorage
 
 logger = logging.getLogger(__name__)
@@ -154,7 +172,104 @@ def _execute_node_run(
     if node_run.node_id is None:
         raise BusinessValidationError("运行节点已从当前图中删除")
     applied_node = graph.node(node_run.node_id)
-    if applied_node.node_type == GraphNodeType.PROMPT_GENERATION:
+    if applied_node.node_type == GraphNodeType.CREATIVE_BRIEF:
+        runtime = compile_context_runtime(graph, node_run.node_id, sources, artifacts)
+        node_run.compiled_context_json = _context_trace(runtime)
+        prompt_provider = dependencies.prompt_generation_provider()
+        result = prompt_provider.generate_creative_brief(
+            _to_context_request(
+                runtime,
+                title=applied_node.title,
+                storage=storage,
+                session=session,
+                product_id=product_id,
+            )
+        )
+        payload = result.payload.model_dump(mode="json")
+        artifact = _persist_artifact(
+            session,
+            run=run,
+            node_run=node_run,
+            artifact_type=GraphArtifactType.CREATIVE_BRIEF,
+            payload=payload,
+            input_digest=runtime.input_digest,
+            provider_name=prompt_provider.provider_name,
+            provider_model=result.model,
+        )
+        _write_generated_config(
+            session,
+            graph_id=run.graph_id,
+            graph_revision=run.graph_revision,
+            node_id=node_run.node_id,
+            updater=lambda config: {**config, **payload},
+        )
+        _refresh_artifact_digest_after_writeback(
+            session,
+            graph_id=run.graph_id,
+            graph_revision=run.graph_revision,
+            node_id=node_run.node_id,
+            node_type=applied_node.node_type,
+            artifact=artifact,
+        )
+        sources[node_run.node_id] = replace(
+            sources.get(node_run.node_id, GraphSourceRecord()),
+            brief=payload,
+            current_artifact_id=artifact.id,
+            current_artifact_type=GraphArtifactType.CREATIVE_BRIEF,
+            current_artifact_payload=payload,
+            current_input_digest=artifact.input_digest,
+        )
+        artifacts = artifacts.with_prompt(node_run.node_id, artifact_id=artifact.id, payload=payload)
+    elif applied_node.node_type == GraphNodeType.VISUAL_SYSTEM:
+        runtime = compile_context_runtime(graph, node_run.node_id, sources, artifacts)
+        node_run.compiled_context_json = _context_trace(runtime)
+        prompt_provider = dependencies.prompt_generation_provider()
+        result = prompt_provider.generate_visual_overlay(
+            _to_context_request(
+                runtime,
+                title=applied_node.title,
+                storage=storage,
+                session=session,
+                product_id=product_id,
+            )
+        )
+        dumped = result.payload.model_dump(mode="json")
+        overlay = catalog_visual_overlay(dumped) or dumped
+        artifact = _persist_artifact(
+            session,
+            run=run,
+            node_run=node_run,
+            artifact_type=GraphArtifactType.VISUAL_SYSTEM,
+            payload=overlay,
+            input_digest=runtime.input_digest,
+            provider_name=prompt_provider.provider_name,
+            provider_model=result.model,
+        )
+        _write_generated_config(
+            session,
+            graph_id=run.graph_id,
+            graph_revision=run.graph_revision,
+            node_id=node_run.node_id,
+            updater=lambda config: {**config, "visual_overlay": overlay},
+        )
+        _refresh_artifact_digest_after_writeback(
+            session,
+            graph_id=run.graph_id,
+            graph_revision=run.graph_revision,
+            node_id=node_run.node_id,
+            node_type=applied_node.node_type,
+            artifact=artifact,
+        )
+        sources[node_run.node_id] = replace(
+            sources.get(node_run.node_id, GraphSourceRecord()),
+            visual_payload=overlay,
+            current_artifact_id=artifact.id,
+            current_artifact_type=GraphArtifactType.VISUAL_SYSTEM,
+            current_artifact_payload=overlay,
+            current_input_digest=artifact.input_digest,
+        )
+        artifacts = artifacts.with_prompt(node_run.node_id, artifact_id=artifact.id, payload=overlay)
+    elif applied_node.node_type == GraphNodeType.PROMPT_GENERATION:
         runtime = compile_prompt_runtime(graph, node_run.node_id, sources, artifacts)
         node_run.compiled_context_json = _prompt_context_trace(runtime)
         prompt_provider = dependencies.prompt_generation_provider()
@@ -167,7 +282,12 @@ def _execute_node_run(
                 product_id=product_id,
             )
         )
-        payload = strip_v3_prompt_payload(result.payload.model_dump(mode="json"))
+        payload_model = _apply_text_policy_to_prompt_payload(
+            result.payload,
+            text_policy=runtime.text_policy,
+            keep_authored=_prompt_config_has_authored_text(runtime.prompt_config),
+        )
+        payload = strip_v3_prompt_payload(payload_model.model_dump(mode="json"))
         artifact = _persist_artifact(
             session,
             run=run,
@@ -177,6 +297,21 @@ def _execute_node_run(
             input_digest=runtime.input_digest,
             provider_name=prompt_provider.provider_name,
             provider_model=result.model,
+        )
+        _write_generated_config(
+            session,
+            graph_id=run.graph_id,
+            graph_revision=run.graph_revision,
+            node_id=node_run.node_id,
+            updater=lambda config: {**config, "prompt": payload},
+        )
+        _refresh_artifact_digest_after_writeback(
+            session,
+            graph_id=run.graph_id,
+            graph_revision=run.graph_revision,
+            node_id=node_run.node_id,
+            node_type=applied_node.node_type,
+            artifact=artifact,
         )
         artifacts = artifacts.with_prompt(node_run.node_id, artifact_id=artifact.id, payload=payload)
     elif applied_node.node_type == GraphNodeType.IMAGE_GENERATION:
@@ -318,6 +453,18 @@ def _persist_artifact(
     return artifact
 
 
+PROMPT_CONTEXT_DERIVED_PLACEHOLDER = "根据参考图、商品资料与图片类型生成"
+NO_ON_IMAGE_TEXT_RULE = "画面中不得出现文字、数字、价格、Logo 或水印"
+_AUTHORED_PROMPT_KEYS = (
+    "composition",
+    "content",
+    "atmosphere",
+    "text",
+    "product_fidelity",
+    "creative_boundary",
+)
+
+
 def _to_prompt_request(
     runtime: PromptRuntimeInput,
     *,
@@ -326,24 +473,187 @@ def _to_prompt_request(
     storage: LocalStorage,
     product_id: str,
 ) -> PromptGenerationRequest:
-    visual = (
-        VisualSystemDraftPayload.model_validate(runtime.visual_system)
-        if runtime.visual_system is not None
-        else None
-    )
+    visual, visual_exceptions = _prompt_visual_inputs(runtime)
+    generate_from_context = _prompt_config_is_generation_seed(runtime.prompt_config)
+    type_option = agent_product_image_type_option(runtime.image_type_key or "")
+    text_languages = (runtime.text_language,) if runtime.text_language else ()
     return PromptGenerationRequest(
         image_type_key=runtime.image_type_key or "unspecified",
         image_plan_keys=(V3_PROMPT_PROVIDER_PLAN_KEY,),
         facts=runtime.product_facts,
         visual_system=visual,
-        visual_exceptions=(),
-        current_prompt=_prompt_from_runtime(runtime, title=title),
-        text_languages=(),
+        visual_exceptions=visual_exceptions,
+        current_prompt=_prompt_from_runtime(runtime, title=title, generate_from_context=generate_from_context),
+        text_languages=text_languages,
         reference_images=tuple(
             _load_prompt_reference(session, product_id=product_id, reference=reference, storage=storage)
             for reference in runtime.reference_images
         ),
+        generate_from_context=generate_from_context,
+        image_type_title=type_option.title if type_option else None,
+        image_type_description=type_option.description if type_option else None,
+        text_policy=runtime.text_policy,
     )
+
+
+def _to_context_request(
+    runtime: ContextRuntimeInput,
+    *,
+    title: str,
+    session: Session,
+    storage: LocalStorage,
+    product_id: str,
+) -> ContextGenerationRequest:
+    current = runtime.current_config
+    brief = None
+    overlay = None
+    if runtime.node_type == GraphNodeType.CREATIVE_BRIEF:
+        brief = {
+            key: current.get(key)
+            for key in ("goal", "design_goals", "required_copy", "prohibitions")
+            if current.get(key) not in (None, "", [])
+        } or None
+    else:
+        raw = current.get("visual_overlay")
+        overlay = catalog_visual_overlay(raw if isinstance(raw, dict) else None)
+    return ContextGenerationRequest(
+        facts=runtime.product_facts,
+        reference_images=tuple(
+            _load_prompt_reference(session, product_id=product_id, reference=reference, storage=storage)
+            for reference in runtime.reference_images
+        ),
+        current_brief=brief,
+        current_overlay=overlay,
+        text_policy=runtime.text_policy,
+        text_language=runtime.text_language,
+        node_title=title,
+    )
+
+
+def _write_generated_config(
+    session: Session,
+    *,
+    graph_id: str,
+    graph_revision: int,
+    node_id: str,
+    updater: Callable[[dict[str, Any]], dict[str, Any]],
+) -> None:
+    live_graph = session.get(WorkflowGraph, graph_id)
+    if live_graph is None or live_graph.revision != graph_revision:
+        return
+    node = session.get(WorkflowGraphNode, node_id)
+    if node is None:
+        return
+    node.config_json = updater(dict(node.config_json or {}))
+    flag_modified(node, "config_json")
+    session.flush()
+
+
+def _refresh_artifact_digest_after_writeback(
+    session: Session,
+    *,
+    graph_id: str,
+    graph_revision: int,
+    node_id: str,
+    node_type: GraphNodeType,
+    artifact: WorkflowGraphArtifact,
+) -> None:
+    live_graph = session.get(WorkflowGraph, graph_id)
+    if live_graph is None or live_graph.revision != graph_revision:
+        return
+    applied = load_applied_graph(session, live_graph)
+    sources = load_graph_sources(session, live_graph, applied)
+    runtime_artifacts = artifacts_from_sources(sources)
+    if node_type in {GraphNodeType.CREATIVE_BRIEF, GraphNodeType.VISUAL_SYSTEM}:
+        runtime = compile_context_runtime(applied, node_id, sources, runtime_artifacts)
+    elif node_type == GraphNodeType.PROMPT_GENERATION:
+        runtime = compile_prompt_runtime(applied, node_id, sources, runtime_artifacts)
+    else:
+        return
+    artifact.input_digest = runtime.input_digest
+    session.flush()
+
+
+def _prompt_visual_inputs(
+    runtime: PromptRuntimeInput,
+) -> tuple[VisualSystemDraftPayload | None, tuple[dict[str, Any], ...]]:
+    if runtime.visual_system is not None:
+        try:
+            return VisualSystemDraftPayload.model_validate(runtime.visual_system), ()
+        except ValidationError as exc:
+            if runtime.visual_system_version_id is not None:
+                raise BusinessValidationError("视觉规范输入无效") from exc
+    overlay = runtime.visual_overlay or runtime.visual_system
+    if not isinstance(overlay, dict) or not overlay:
+        if runtime.visual_system is not None:
+            raise BusinessValidationError("视觉规范输入无效")
+        return None, ()
+    try:
+        exceptions = _visual_exceptions_from_overlay(overlay)
+    except ValidationError as overlay_error:
+        raise BusinessValidationError("视觉覆盖输入无效") from overlay_error
+    if not exceptions:
+        raise BusinessValidationError("视觉覆盖输入无效")
+    return None, exceptions
+
+
+_OVERLAY_COLOR_ROLE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
+
+def _overlay_color_role(raw: str, index: int, used: set[str]) -> str:
+    slug = re.sub(r"[^a-z0-9_-]+", "-", raw.strip().lower()).strip("-")
+    candidate = slug[:80] if slug and _OVERLAY_COLOR_ROLE_RE.fullmatch(slug) else f"color-{index + 1}"
+    if candidate in used:
+        suffix = 2
+        candidate = f"color-{index + 1}"
+        while candidate in used:
+            candidate = f"color-{index + 1}-{suffix}"
+            suffix += 1
+    used.add(candidate)
+    return candidate
+
+
+def _visual_exceptions_from_overlay(overlay: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    overrides: list[dict[str, Any]] = []
+    style = overlay.get("style")
+    if isinstance(style, list):
+        values = [item.strip() for item in style if isinstance(item, str) and item.strip()]
+        if values:
+            overrides.append({"field": "style", "value": values})
+    colors = overlay.get("colors")
+    if isinstance(colors, list):
+        coerced: list[dict[str, str]] = []
+        used_roles: set[str] = set()
+        for index, item in enumerate(colors):
+            if not isinstance(item, dict):
+                continue
+            value = item.get("value")
+            if not isinstance(value, str) or not value.strip():
+                continue
+            raw_role = item.get("role")
+            role_text = raw_role.strip() if isinstance(raw_role, str) else ""
+            role = _overlay_color_role(role_text, index, used_roles)
+            raw_label = item.get("label")
+            label = raw_label.strip() if isinstance(raw_label, str) and raw_label.strip() else (role_text or role)
+            coerced.append({"role": role, "value": value.strip(), "label": label})
+        if coerced:
+            overrides.append({"field": "colors", "value": coerced})
+    prohibitions = overlay.get("prohibitions")
+    if isinstance(prohibitions, list):
+        values = [item.strip() for item in prohibitions if isinstance(item, str) and item.strip()]
+        if values:
+            overrides.append({"field": "prohibitions", "value": values})
+    if not overrides:
+        return ()
+    exception = VisualExceptionPlan.model_validate(
+        {
+            "key": "graph-inline-overlay",
+            "scope": {"type": "workflow"},
+            "overrides": overrides,
+            "reason": "工作流内联视觉覆盖",
+        }
+    )
+    return (exception.model_dump(mode="json"),)
 
 
 def _to_image_request(
@@ -357,31 +667,8 @@ def _to_image_request(
         _load_image_reference(session, product_id=product_id, reference=item, storage=storage)
         for item in runtime.reference_images
     )
-    compiled = json.dumps(
-        {
-            "contract_version": 3,
-            "task": "generate_one_ecommerce_product_image",
-            "prompt_artifact": runtime.prompt_payload,
-            "visual_system": runtime.visual_system,
-            "visual_overlay": runtime.visual_overlay,
-            "variation_instruction": runtime.variation_instruction,
-            "generation_spec": runtime.generation_spec,
-            "reference_assets": [
-                {"asset_id": item.asset_id, "label": item.label, "edge_id": item.edge_id}
-                for item in runtime.reference_images
-            ],
-            "incoming_edge_ids": list(runtime.incoming_edge_ids),
-        },
-        ensure_ascii=False,
-        sort_keys=True,
-        indent=2,
-    )
     return WorkflowImageRequest(
-        compiled_prompt=(
-            "请严格依据以下已确认合同生成一张电商商品图片。商品形态以参考图为准；"
-            "不得编造 Logo、认证、规格、价格或未提供的商品特征。\n\n"
-            f"{compiled}"
-        ),
+        compiled_prompt=_compile_image_model_prompt(runtime),
         generation_spec=GenerationSpec.model_validate(runtime.generation_spec),
         references=references,
     )
@@ -446,47 +733,188 @@ def _read_asset(
         raise BusinessValidationError("参考图文件不可读取") from exc
 
 
-def _prompt_from_runtime(runtime: PromptRuntimeInput, *, title: str) -> ImagePromptPayloadV1:
+def _compile_image_model_prompt(runtime: ImageRuntimeInput) -> str:
+    payload = _prompt_payload_for_image_model(runtime)
+    spec = runtime.generation_spec if isinstance(runtime.generation_spec, dict) else {}
+    composition = payload.get("composition") if isinstance(payload.get("composition"), dict) else {}
+    content = payload.get("content") if isinstance(payload.get("content"), dict) else {}
+    atmosphere = payload.get("atmosphere") if isinstance(payload.get("atmosphere"), dict) else {}
+    fidelity = payload.get("product_fidelity") if isinstance(payload.get("product_fidelity"), dict) else {}
+    text = payload.get("text") if isinstance(payload.get("text"), dict) else {}
+    brief_lines = [
+        "根据参考图中的真实商品生成一张高质量电商商品图。",
+        "商品形态、结构、颜色、材质和可见特征以参考图为准。",
+        "上游提示词描述图类型、构图与氛围；参考图决定商品长什么样。",
+        "不得编造 Logo、认证、规格、价格或参考图与商品资料中未出现的特征。",
+    ]
+    policy = spec.get("text_policy") or "none"
+    if policy == "none":
+        brief_lines.append(NO_ON_IMAGE_TEXT_RULE + "。")
+    elif policy == "required":
+        language = spec.get("text_language")
+        if isinstance(language, str) and language.strip():
+            brief_lines.append(f"画面必须包含图片内文字，语种为{language.strip()}。")
+        else:
+            brief_lines.append("画面必须包含图片内文字。")
+    design_goal = _usable_prompt_text(payload.get("design_goal"))
+    if design_goal:
+        brief_lines.append(f"图目标：{design_goal}")
+    viewpoint = _usable_prompt_text(composition.get("viewpoint"))
+    layout = _usable_prompt_text(composition.get("layout"))
+    if viewpoint or layout:
+        brief_lines.append("构图：" + "，".join(item for item in (viewpoint, layout) if item))
+    share = composition.get("product_share_percent")
+    if isinstance(share, int | float):
+        brief_lines.append(f"商品占比约 {share:g}%")
+    focus = _usable_prompt_texts(content.get("focus"))
+    if focus:
+        brief_lines.append("主体：" + "、".join(focus))
+    selling_points = _usable_prompt_texts(content.get("selling_points"))
+    if selling_points:
+        brief_lines.append("卖点：" + "、".join(selling_points))
+    background = _usable_prompt_text(content.get("background"))
+    if background:
+        brief_lines.append(f"背景：{background}")
+    lighting = _usable_prompt_text(atmosphere.get("lighting"))
+    keywords = _usable_prompt_texts(atmosphere.get("keywords"))
+    mood = "、".join(keywords) if keywords else ""
+    if lighting or mood:
+        brief_lines.append("氛围：" + "，".join(item for item in (lighting, mood) if item))
+    requirements = _usable_prompt_texts(fidelity.get("requirements"))
+    if requirements:
+        brief_lines.append("保真：" + "、".join(requirements))
+    if policy != "none":
+        copy_bits = [
+            _usable_prompt_text(text.get("headline")),
+            _usable_prompt_text(text.get("subtitle")),
+            _usable_prompt_text(text.get("body")),
+        ]
+        copy_bits = [item for item in copy_bits if item]
+        if copy_bits:
+            brief_lines.append("图片内文字：" + "；".join(copy_bits))
+    shared_rules = _usable_prompt_texts(payload.get("shared_rules"))
+    if shared_rules:
+        brief_lines.append("规则：" + "；".join(shared_rules))
+    if runtime.variation_instruction:
+        brief_lines.append(f"变化：{runtime.variation_instruction}")
+    contract = json.dumps(
+        {
+            "contract_version": 3,
+            "task": "generate_one_ecommerce_product_image",
+            "prompt_artifact": payload,
+            "visual_system": runtime.visual_system,
+            "visual_overlay": runtime.visual_overlay,
+            "variation_instruction": runtime.variation_instruction,
+            "generation_spec": runtime.generation_spec,
+            "reference_assets": [
+                {"asset_id": item.asset_id, "label": item.label, "edge_id": item.edge_id}
+                for item in runtime.reference_images
+            ],
+            "incoming_edge_ids": list(runtime.incoming_edge_ids),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        indent=2,
+    )
+    return "\n".join(brief_lines) + "\n\n" + contract
+
+
+def _prompt_payload_for_image_model(runtime: ImageRuntimeInput) -> dict[str, Any]:
+    payload = dict(runtime.prompt_payload)
+    spec = runtime.generation_spec if isinstance(runtime.generation_spec, dict) else {}
+    if spec.get("text_policy") != "none":
+        return payload
+    payload["text"] = {"headline": None, "subtitle": None, "body": None}
+    composition = payload.get("composition")
+    if isinstance(composition, dict) and composition.get("copy_regions"):
+        payload["composition"] = {**composition, "copy_regions": []}
+    return payload
+
+
+def _usable_prompt_text(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    text = value.strip()
+    if not text or text == PROMPT_CONTEXT_DERIVED_PLACEHOLDER:
+        return ""
+    return text
+
+
+def _usable_prompt_texts(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in (_usable_prompt_text(entry) for entry in value) if item]
+
+
+def _prompt_from_runtime(
+    runtime: PromptRuntimeInput,
+    *,
+    title: str,
+    generate_from_context: bool | None = None,
+) -> ImagePromptPayloadV1:
     stored = strip_v3_prompt_payload(runtime.prompt_config) if runtime.prompt_config else {}
+    if generate_from_context is None:
+        seed = _prompt_config_is_generation_seed(runtime.prompt_config)
+    else:
+        seed = generate_from_context
     brief_goal, brief_copy, brief_prohibitions = _brief_fields(runtime.briefs)
-    design_goal = stored.get("design_goal") or brief_goal or f"生成{title}"
+    product_name = _fact_value(runtime.product_facts, "product_name")
+    type_option = agent_product_image_type_option(runtime.image_type_key or "")
+    design_goal = stored.get("design_goal") or brief_goal
+    if not design_goal:
+        if type_option:
+            design_goal = f"{type_option.title}：{type_option.description}"
+            if product_name:
+                design_goal = f"为「{product_name}」生成{design_goal}"
+        else:
+            design_goal = f"为「{product_name}」生成{title}" if product_name else f"生成{title}"
     creative_boundary = [item for item in stored.get("creative_boundary") or [] if isinstance(item, str) and item]
     for item in brief_prohibitions:
         if item not in creative_boundary:
             creative_boundary.append(item)
+    if runtime.text_policy == "none" and NO_ON_IMAGE_TEXT_RULE not in creative_boundary:
+        creative_boundary.append(NO_ON_IMAGE_TEXT_RULE)
     text = stored.get("text") if isinstance(stored.get("text"), dict) else {}
-    if brief_copy and not any(text.get(key) for key in ("headline", "subtitle", "body")):
+    if runtime.text_policy == "none" and not _prompt_config_has_authored_text(runtime.prompt_config):
+        text = {}
+    elif brief_copy and not any(text.get(key) for key in ("headline", "subtitle", "body")):
         text = {
             **text,
             "headline": brief_copy[0],
             "body": "\n".join(brief_copy[1:]) or None,
         }
     shared_rules = [item for item in stored.get("shared_rules") or [] if isinstance(item, str) and item]
+    if not shared_rules:
+        shared_rules = ["商品形态、结构、颜色和材质以参考图为准", "不得编造参考图与商品资料中未出现的特征"]
+    if runtime.text_policy == "none" and NO_ON_IMAGE_TEXT_RULE not in shared_rules:
+        shared_rules.append(NO_ON_IMAGE_TEXT_RULE)
+    stored_content = stored.get("content") if isinstance(stored.get("content"), dict) else None
+    derived = PROMPT_CONTEXT_DERIVED_PLACEHOLDER
     return ImagePromptPayloadV1.model_validate(
         {
             "schema_version": 1,
-            "shared_rules": shared_rules or ["保持商品结构与参考图一致"],
+            "shared_rules": shared_rules,
             "design_goal": design_goal,
             "product_fidelity": stored.get("product_fidelity")
             or {
                 "complex_structure": True,
                 "product_present": True,
                 "picture_in_picture": "none",
-                "requirements": ["还原商品形态"],
+                "requirements": ["还原参考图中的商品形态"],
             },
             "creative_boundary": creative_boundary,
             "composition": stored.get("composition")
             or {
-                "viewpoint": "正面",
+                "viewpoint": derived if seed else "正面",
                 "product_share_percent": 70,
-                "layout": "商品居中",
+                "layout": derived if seed else "商品居中",
                 "copy_regions": [],
             },
-            "content": stored.get("content")
+            "content": stored_content
             or {
-                "focus": [title],
+                "focus": [product_name or (type_option.title if type_option else title)],
                 "selling_points": [],
-                "background": "干净背景",
+                "background": derived if seed else "干净背景",
                 "decorations": [],
             },
             "text": {
@@ -494,7 +922,11 @@ def _prompt_from_runtime(runtime: PromptRuntimeInput, *, title: str) -> ImagePro
                 "subtitle": text.get("subtitle"),
                 "body": text.get("body"),
             },
-            "atmosphere": stored.get("atmosphere") or {"keywords": ["清晰"], "lighting": "均匀照明"},
+            "atmosphere": stored.get("atmosphere")
+            or {
+                "keywords": [derived] if seed else ["清晰"],
+                "lighting": derived if seed else "均匀照明",
+            },
             "images": [
                 {
                     "image_plan_key": V3_PROMPT_PROVIDER_PLAN_KEY,
@@ -503,6 +935,64 @@ def _prompt_from_runtime(runtime: PromptRuntimeInput, *, title: str) -> ImagePro
             ],
         }
     )
+
+
+def _apply_text_policy_to_prompt_payload(
+    payload: ImagePromptPayloadV1,
+    *,
+    text_policy: str,
+    keep_authored: bool,
+) -> ImagePromptPayloadV1:
+    if text_policy != "none" or keep_authored:
+        return payload
+    composition = payload.composition
+    if composition.copy_regions:
+        composition = composition.model_copy(update={"copy_regions": []})
+    return payload.model_copy(update={"text": PromptTextContent(), "composition": composition})
+
+
+def _prompt_config_has_authored_text(prompt_config: dict[str, Any] | None) -> bool:
+    if not prompt_config:
+        return False
+    text = prompt_config.get("text")
+    if isinstance(text, dict) and any(isinstance(item, str) and item.strip() for item in text.values()):
+        return True
+    composition = prompt_config.get("composition")
+    if isinstance(composition, dict):
+        regions = composition.get("copy_regions")
+        if isinstance(regions, list) and any(isinstance(item, str) and item.strip() for item in regions):
+            return True
+    return False
+
+
+def _prompt_config_is_generation_seed(prompt_config: dict[str, Any] | None) -> bool:
+    if not prompt_config:
+        return True
+    for key in _AUTHORED_PROMPT_KEYS:
+        value = prompt_config.get(key)
+        if key == "text" and isinstance(value, dict):
+            if any(isinstance(item, str) and item.strip() for item in value.values()):
+                return False
+            continue
+        if key == "creative_boundary" and isinstance(value, list):
+            if any(isinstance(item, str) and item.strip() for item in value):
+                return False
+            continue
+        if value in (None, {}, [], ""):
+            continue
+        return False
+    return True
+
+
+def _fact_value(facts: tuple[dict[str, Any], ...], key: str) -> str:
+    needle = key.casefold()
+    for item in facts:
+        if str(item.get("key") or "").casefold() != needle:
+            continue
+        value = item.get("value")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
 
 
 def _brief_fields(briefs: tuple[dict[str, Any], ...]) -> tuple[str, list[str], list[str]]:
@@ -540,6 +1030,20 @@ def _prompt_context_trace(runtime: PromptRuntimeInput) -> dict[str, Any]:
         "brief_count": len(runtime.briefs),
         "reference_asset_ids": [item.asset_id for item in runtime.reference_images],
         "visual_system_version_id": runtime.visual_system_version_id,
+        "text_policy": runtime.text_policy,
+        "text_language": runtime.text_language,
+    }
+
+
+def _context_trace(runtime: ContextRuntimeInput) -> dict[str, Any]:
+    return {
+        "incoming_edge_ids": list(runtime.incoming_edge_ids),
+        "input_digest": runtime.input_digest,
+        "node_type": runtime.node_type.value,
+        "fact_count": len(runtime.product_facts),
+        "reference_asset_ids": [item.asset_id for item in runtime.reference_images],
+        "text_policy": runtime.text_policy,
+        "text_language": runtime.text_language,
     }
 
 

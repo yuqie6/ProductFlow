@@ -36,9 +36,9 @@ from productflow_backend.domain.enums import (
     AsyncDispatchStatus,
     GraphActorType,
     GraphArtifactType,
-    GraphHistoryKind,
     GraphEdgeDataType,
     GraphEdgeRole,
+    GraphHistoryKind,
     GraphNodeType,
     GraphRunScope,
     ImageSessionAssetKind,
@@ -1782,7 +1782,7 @@ class WorkflowRecipeVersion(Base):
     __table_args__ = (
         UniqueConstraint("recipe_id", "version", name="uq_workflow_recipe_versions_recipe_version"),
         CheckConstraint("version > 0", name="ck_workflow_recipe_versions_positive_version"),
-        CheckConstraint("schema_version = 1", name="ck_workflow_recipe_versions_schema_version"),
+        CheckConstraint("schema_version = 3", name="ck_workflow_recipe_versions_schema_version"),
         CheckConstraint("length(payload_hash) = 64", name="ck_workflow_recipe_versions_payload_hash"),
     )
 
@@ -1796,7 +1796,7 @@ class WorkflowRecipeVersion(Base):
         ),
     )
     version: Mapped[int] = mapped_column(Integer)
-    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    schema_version: Mapped[int] = mapped_column(Integer, default=3)
     title: Mapped[str] = mapped_column(String(255))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSON)

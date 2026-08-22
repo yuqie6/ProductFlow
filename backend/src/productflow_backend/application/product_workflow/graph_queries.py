@@ -14,11 +14,19 @@ from productflow_backend.application.product_workflow.graph_commands import (
 )
 from productflow_backend.application.product_workflow.graph_compiler import (
     GraphSourceRecord,
+    compile_context_runtime,
     compile_image_runtime,
     compile_prompt_runtime,
 )
 from productflow_backend.application.product_workflow.product_sources import ProductSourceSnapshot
-from productflow_backend.domain.enums import GraphConfigStatus, GraphEdgeDataType, GraphEdgeRole, GraphHistoryKind, GraphNodeType
+from productflow_backend.domain.enums import (
+    GraphArtifactType,
+    GraphConfigStatus,
+    GraphEdgeDataType,
+    GraphEdgeRole,
+    GraphHistoryKind,
+    GraphNodeType,
+)
 from productflow_backend.domain.errors import BusinessValidationError, NotFoundError
 from productflow_backend.domain.graph_catalog import PROCESSING_NODE_TYPES
 from productflow_backend.infrastructure.db.models import (
@@ -62,6 +70,9 @@ class GraphNodeView:
     preview_asset_id: str | None
     config_status: GraphConfigStatus
     unused: bool
+    current_artifact_id: str | None
+    current_artifact_type: GraphArtifactType | None
+    current_artifact_payload: dict[str, object] | None
     incoming: tuple[GraphEdgeSummary, ...]
     outgoing: tuple[GraphEdgeSummary, ...]
 
@@ -204,6 +215,7 @@ def _project_node(
         for edge in applied.edges
         if edge.source_node_id == node.id
     )
+    record = (sources or {}).get(node.id)
     return GraphNodeView(
         id=node.id,
         node_type=node.node_type,
@@ -224,6 +236,11 @@ def _project_node(
             sources=sources,
         ),
         unused=unused,
+        current_artifact_id=record.current_artifact_id if record is not None else None,
+        current_artifact_type=record.current_artifact_type if record is not None else None,
+        current_artifact_payload=dict(record.current_artifact_payload)
+        if record is not None and record.current_artifact_payload is not None
+        else None,
         incoming=incoming,
         outgoing=outgoing,
     )
@@ -299,6 +316,8 @@ def _config_status_with_stale(
             runtime = compile_prompt_runtime(applied, node.id, sources)
         elif node.node_type == GraphNodeType.IMAGE_GENERATION:
             runtime = compile_image_runtime(applied, node.id, sources)
+        elif node.node_type in {GraphNodeType.CREATIVE_BRIEF, GraphNodeType.VISUAL_SYSTEM}:
+            runtime = compile_context_runtime(applied, node.id, sources)
         else:
             return status
     except BusinessValidationError:

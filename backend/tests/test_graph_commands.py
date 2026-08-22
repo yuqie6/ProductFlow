@@ -74,11 +74,11 @@ def test_stage_new_workflow_graph_persists_revision_and_operation_group(db_sessi
     asset_nodes = [node for node in applied.nodes if node.node_type == GraphNodeType.IMAGE_ASSET]
     assert len(asset_nodes) == 1
     assert asset_nodes[0].bound_asset_id == creation.created_assets[0].id
-    assert not any(edge.source_node_id == asset_nodes[0].id for edge in applied.edges)
+    assert any(edge.source_node_id == asset_nodes[0].id for edge in applied.edges)
 
     projection = project_workflow_graph(db_session, graph)
     unused_assets = [node for node in projection.nodes if node.node_type == GraphNodeType.IMAGE_ASSET]
-    assert unused_assets[0].unused is True
+    assert unused_assets[0].unused is False
     assert unused_assets[0].config_status == GraphConfigStatus.READY
     visual = next(node for node in projection.nodes if node.node_type == GraphNodeType.VISUAL_SYSTEM)
     assert visual.config_status == GraphConfigStatus.INCOMPLETE
