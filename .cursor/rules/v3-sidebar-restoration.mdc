@@ -1,0 +1,22 @@
+---
+description: schema-v3 工作台侧栏修葺北极星，防止把详情做成架构说明书或加深类型化 Inspector
+globs: web/src/pages/workbench/**/*,web/src/lib/i18n.ts,docs/specs/v3-sidebar-restoration.md
+alwaysApply: false
+---
+
+# V3 侧栏修葺
+
+改侧栏、详情、运行页、图库 hint 或配方面板时先读 `docs/specs/v3-sidebar-restoration.md`。画布合同仍以 `docs/specs/v3-canvas-restoration.md` 为准。
+
+```tsx
+// ❌ 空选展示「版本 {revision}」；失败只在卡片上
+// ❌ 运行证据第一屏铺 compiled_context 键、digest、id
+// ❌ 加深 GraphNodeInspector 私有字段（目的地是 Catalog config_fields）
+// ❌ 成功条画出 Draft id；390px 语言切片里新写一套壳
+
+// ✅ 打开详情能看见失败并重试；空选是下一步
+// ✅ 忙时锁定添加、详情、运行重试、图库绑定、配方应用
+// ✅ 文案说结果；内部名不出常规 chrome
+```
+
+禁止恢复 V1 文案编辑器、顶部流程统计条、hover-only 主操作。底抽屉与画布切片 G 同一刀。

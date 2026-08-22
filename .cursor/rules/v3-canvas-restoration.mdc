@@ -6,7 +6,7 @@ alwaysApply: false
 
 # V3 工作台修葺
 
-改画布、检查器、图命令或配方时先读 `docs/specs/v3-canvas-restoration.md`。交互表是清单，质量上限是该规格 §4 的整条链路。
+改画布、检查器、图命令或配方时先读 `docs/specs/v3-canvas-restoration.md`。改侧栏、详情文案、运行证据或图库 hint 时再读 `docs/specs/v3-sidebar-restoration.md`。交互表是清单，质量上限是规格 §4 的整条链路。
 
 ```tsx
 // ❌ 新卡片、新壳、V2 mutation、plan key、浏览器 undo 权威

@@ -15,7 +15,7 @@ paths: web/src/**/*.tsx,web/src/**/*.ts,web/src/**/*.css
 5. [frontend-design](../frontend-design/SKILL.md) — 反模板审美，但必须先读 [PRODUCTFLOW.md](../frontend-design/PRODUCTFLOW.md)
 6. [web-design-guidelines](../web-design-guidelines/SKILL.md) — 无障碍 / 焦点 / 触控审计
 
-画布、检查器、配方还要跟 `.cursor/rules/v3-canvas-restoration.mdc`。
+画布、检查器、配方还要跟 `.cursor/rules/v3-canvas-restoration.mdc`。侧栏、详情文案、运行证据还要跟 `.cursor/rules/v3-sidebar-restoration.mdc`。
 
 ## 这是什么产品
 
