@@ -28,6 +28,7 @@ import type {
   GraphNodeCatalog,
   GraphProductFactSet,
   GraphNode,
+  GraphNodeRun,
   GraphProjection,
   ProductFactsResponse,
   WorkflowNodeStatus,
@@ -51,7 +52,7 @@ import {
 import { DeliveryRenditionPanel } from "./DeliveryRenditionPanel";
 import { graphNodeConfigFields } from "./graphCatalog";
 import { graphNodeTitleKey } from "./graphLayout";
-import { graphNodeRunPresentations, graphRunsAreLive } from "./graphRunDisplay";
+import { graphContextEntries, graphNodeRunPresentations, graphRunsAreLive } from "./graphRunDisplay";
 import {
   graphProductSourceConfig,
   graphProductSourceDraft,
@@ -245,6 +246,9 @@ export function GraphNodeInspector({
     edge,
     related: graph.nodes.find((item) => item.id === edge.node_id) ?? null,
   }));
+  const lastNodeRun = runsQuery.data?.items
+    .flatMap((run) => run.node_runs)
+    .find((item) => item.node_id === node.id && item.compiled_context) ?? null;
 
   return (
     <InspectorFlushContext.Provider value={registerFlush}>
@@ -448,6 +452,7 @@ export function GraphNodeInspector({
         ) : null}
 
         <EdgeList heading={t("graph.inspector.inputs")} empty={t("graph.inspector.inputsEmpty")} items={incoming} onJump={onJump} />
+        <RuntimeInputList lastRun={lastNodeRun} />
         <EdgeList heading={t("graph.inspector.outputs")} empty={t("graph.inspector.outputsEmpty")} items={outgoing} onJump={onJump} />
       </div>
     </InspectorFlushContext.Provider>
@@ -1006,6 +1011,32 @@ function AutosaveForm<T>({
         </div>
       ) : null}
     </form>
+  );
+}
+
+function RuntimeInputList({
+  lastRun,
+}: {
+  lastRun: GraphNodeRun | null;
+}) {
+  const { t } = useI18n();
+  const entries = graphContextEntries(lastRun?.compiled_context ?? null).filter((item) => item.key !== "input_digest");
+  return (
+    <section className="config-bubble rounded-2xl p-4 shadow-sm" data-graph-runtime-inputs>
+      <h4 className="text-xs font-semibold text-zinc-800 dark:text-slate-100">{t("graph.inspector.runtimeInputs")}</h4>
+      {entries.length === 0 ? (
+        <p className="mt-2 text-xs text-zinc-500 dark:text-slate-400">{t("graph.inspector.runtimeInputsEmpty")}</p>
+      ) : (
+        <dl className="mt-2 space-y-1">
+          {entries.map((item) => (
+            <div key={item.key} className="flex min-w-0 items-baseline justify-between gap-3 px-2.5 py-1.5">
+              <dt className="shrink-0 text-[10px] text-zinc-500 dark:text-slate-400">{t(item.labelKey)}</dt>
+              <dd className="min-w-0 truncate text-right text-xs font-medium text-zinc-800 dark:text-slate-100">{item.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </section>
   );
 }
 

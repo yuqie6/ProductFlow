@@ -299,6 +299,48 @@ describe("GraphNodeInspector", () => {
     expect(markup).not.toContain("visual_system_version_id");
   });
 
+  it("shows compiled run inputs from the last node run, not the current edges", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(["graph-runs", "p1", "g1"], {
+      items: [{
+        id: "run-1",
+        graph_id: "g1",
+        status: "succeeded",
+        scope: "node",
+        requested_node_id: "image",
+        graph_revision: 4,
+        failure_reason: null,
+        is_retryable: false,
+        started_at: "2026-08-21T00:00:00Z",
+        finished_at: "2026-08-21T00:00:08Z",
+        node_runs: [{
+          id: "nr-1",
+          node_id: "image",
+          status: "succeeded",
+          sort_order: 0,
+          compiled_context: {
+            incoming_edge_ids: ["edge-1"],
+            fact_count: 2,
+            reference_asset_ids: ["asset-a"],
+            input_digest: "deadbeef",
+          },
+          output: null,
+          failure_reason: null,
+          started_at: "2026-08-21T00:00:00Z",
+          finished_at: "2026-08-21T00:00:08Z",
+        }],
+      }],
+    });
+    const markup = renderInspector(graph.nodes.find((item) => item.id === "image") ?? null, client);
+    expect(markup).toContain("实际运行输入");
+    expect(markup).toContain("data-graph-runtime-inputs");
+    expect(markup).toContain("商品信息");
+    expect(markup).toContain("2");
+    expect(markup).toContain("asset-a");
+    expect(markup).not.toContain("deadbeef");
+    expect(markup).not.toContain("顺序 0");
+  });
+
   it("shows the last generated prompt on a prompt node", () => {
     const markup = renderInspector(node({
       id: "prompt",

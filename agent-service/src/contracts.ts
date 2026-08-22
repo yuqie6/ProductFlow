@@ -4,7 +4,7 @@ export const API_VERSION = "v1alpha1" as const;
 export const EVENT_SCHEMA_VERSION = 1 as const;
 export const RUNTIME_NAME = "productflow-pi" as const;
 export const PI_SDK_VERSION = "0.83.0" as const;
-export const TOOL_CONTRACT_VERSION = 11 as const;
+export const TOOL_CONTRACT_VERSION = 12 as const;
 export const CONTEXT_SCHEMA_VERSION = 1 as const;
 /** Must stay aligned with backend AGENT_CONTEXT_MAX_BYTES. */
 export const MAX_PRODUCT_CONTEXT_BYTES = 512 << 10;
@@ -80,6 +80,8 @@ export const TOOL_STEP_KINDS = [
   "organize_assets",
   "request_workflow_run",
   "create_product",
+  "apply_graph",
+  "propose_graph",
 ] as const;
 export type ToolStepKind = (typeof TOOL_STEP_KINDS)[number];
 
@@ -141,6 +143,7 @@ export interface ProductFlowContract {
   draft_schema: JsonObject;
   workflow_draft_schema: JsonObject;
   tool_contract_version: number;
+  has_live_graph?: boolean;
 }
 
 export interface Scope {
@@ -156,6 +159,7 @@ export interface Scope {
   draft_schema: JsonObject;
   workflow_draft_schema: JsonObject;
   current_draft_version: number;
+  has_live_graph: boolean;
 }
 
 export interface StartTurnInput {
@@ -362,6 +366,8 @@ export function isTerminalStatus(status: TurnStatus): boolean {
 export function toolKind(name: string): ToolStepKind {
   if (name === "load_productflow_skill") return "load_skill";
   if (name === "ask_user") return "ask_question";
+  if (name === "apply_graph_change_set_v1") return "apply_graph";
+  if (name === "propose_graph_change_set_v1" || name.includes("graph_proposal")) return "propose_graph";
   if (name.includes("draft")) return "propose_draft";
   if (name.includes("request_workflow_run")) return "request_workflow_run";
   if (name.includes("workspace")) return "create_product";

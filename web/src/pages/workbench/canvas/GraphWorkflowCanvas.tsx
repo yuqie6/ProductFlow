@@ -36,6 +36,12 @@ import type { DownloadableImage } from "../../../lib/image-downloads";
 import { sanitizeFilenamePart } from "../../../lib/image-downloads";
 import { useI18n } from "../../../lib/preferences";
 import type { GraphGroup, GraphNode, GraphNodeCatalog, GraphProjection, WorkflowNodeStatus } from "../../../lib/types";
+import {
+  graphProposalEdgeStates,
+  graphProposalNodeStates,
+  overlayGraphProposal,
+  type GraphProposalState,
+} from "./graphProposalOverlay";
 import { IMAGE_EXPLORER_DRAG_MIME, decodeAssetDragPayload } from "../chrome/image-explorer/explorerState";
 import type { GraphAssetDropInput } from "./graphAssetDrop";
 import {
@@ -105,6 +111,7 @@ interface GraphNodeData extends Record<string, unknown> {
   onSelectNode: (nodeId: string, event: ReactMouseEvent<HTMLElement>) => void;
   graph: GraphProjection;
   catalog: GraphNodeCatalog | null;
+  proposalState?: GraphProposalState | null;
 }
 
 interface GraphGroupData extends Record<string, unknown> {
@@ -129,6 +136,7 @@ type GraphCanvasEdge = Edge<{
   deleteLabel: string;
   emphasis: "active" | "receded";
   onDelete: (edgeId: string) => void;
+  proposalState?: GraphProposalState | null;
 }, "graph-edge">;
 
 function nodeTypeLabel(type: GraphNode["node_type"], t: ReturnType<typeof useI18n>["t"]): string {
@@ -217,8 +225,20 @@ export const GraphNodeCard = memo(function GraphNodeCard({
     data.catalog,
   );
 
+  const proposalState = data.proposalState ?? null;
   return (
-    <div className="relative w-[248px] overflow-visible">
+    <div
+      className={`relative w-[248px] overflow-visible ${
+        proposalState === "deleted"
+          ? "opacity-40"
+          : proposalState === "added"
+            ? "opacity-90 outline-dashed outline-2 outline-indigo-400/80"
+            : proposalState === "changed"
+              ? "outline outline-2 outline-amber-400/80"
+              : ""
+      }`}
+      data-graph-proposal-state={proposalState ?? undefined}
+    >
       <WorkflowCanvasNodeToolbar visible={selected}>
         {node.node_type === "image_asset" ? (
           <WorkflowCanvasNodeToolbarButton
@@ -229,7 +249,7 @@ export const GraphNodeCard = memo(function GraphNodeCard({
             <Link2 size={16} aria-hidden="true" />
           </WorkflowCanvasNodeToolbarButton>
         ) : null}
-        {isProcessingNode(node, data.catalog) ? (
+        {isProcessingNode(node, data.catalog) && data.proposalState !== "added" ? (
           <>
             <WorkflowCanvasNodeToolbarButton
               label={t("graph.canvas.runNode")}
@@ -483,9 +503,16 @@ const GraphCanvasEdgeCard = memo(function GraphCanvasEdgeCard({
         id={id}
         path={edgePath}
         style={{
-          stroke: emphasis === "active" ? (selected ? "#334155" : "#64748b") : "rgba(148,163,184,0.28)",
+          stroke: data?.proposalState === "added"
+            ? "#6366f1"
+            : data?.proposalState === "deleted"
+              ? "rgba(148,163,184,0.45)"
+              : emphasis === "active" ? (selected ? "#334155" : "#64748b") : "rgba(148,163,184,0.28)",
           strokeWidth: emphasis === "active" ? (selected ? 2.2 : 1.6) : 1.1,
+          strokeDasharray: data?.proposalState === "added" || data?.proposalState === "deleted" ? "6 4" : undefined,
+          opacity: data?.proposalState === "deleted" ? 0.45 : 1,
         }}
+        data-graph-proposal-state={data?.proposalState ?? undefined}
         label={(hovered || selected) ? data?.roleLabel ?? undefined : undefined}
         labelStyle={{ fontSize: 10, fill: "#64748b" }}
       />
@@ -655,8 +682,11 @@ export function GraphWorkflowCanvas({
     locked: busy,
     connectionEditing: true,
   });
-  const graphIdentity = `${graph.id}:${graph.revision}:${enteredGroupId ?? "graph"}:${canvasSyncVersion}`;
-  const viewGraph = useMemo(() => graphCanvasView(graph, enteredGroupId), [enteredGroupId, graph]);
+  const displayGraph = useMemo(() => overlayGraphProposal(graph), [graph]);
+  const proposalNodeStates = useMemo(() => graphProposalNodeStates(graph.pending_proposal), [graph.pending_proposal]);
+  const proposalEdgeStates = useMemo(() => graphProposalEdgeStates(graph.pending_proposal), [graph.pending_proposal]);
+  const graphIdentity = `${graph.id}:${graph.revision}:${enteredGroupId ?? "graph"}:${canvasSyncVersion}:${graph.pending_proposal?.id ?? "none"}`;
+  const viewGraph = useMemo(() => graphCanvasView(displayGraph, enteredGroupId), [displayGraph, enteredGroupId]);
   const graphNodes = useMemo<GraphCanvasNode[]>(() => {
     const groups = viewGraph.groups.flatMap((group) => {
       const bounds = computeGraphGroupBounds(viewGraph, group);
@@ -706,12 +736,13 @@ export function GraphWorkflowCanvas({
         onSaveRecipe: (item: GraphNode) => onSaveRecipeNode?.(item.id),
         onDelete: (item: GraphNode) => onDeleteNode(item.id),
         onSelectNode: selectNodeFromPointer,
-        graph,
+        graph: displayGraph,
         catalog,
+        proposalState: proposalNodeStates[node.id] ?? null,
       },
     }));
     return [...groups, ...nodes];
-  }, [busy, catalog, graph, nodePresentations, nodeStatuses, onBindNode, onDeleteNode, onDissolveGroup, onDuplicateNode, onEnterGroup, onRenameGroup, onRunNode, onRunToNode, onSaveRecipeNode, runningNodeId, selectNodeFromPointer, selectedNodeIds, viewGraph]);
+  }, [busy, catalog, displayGraph, nodePresentations, nodeStatuses, onBindNode, onDeleteNode, onDissolveGroup, onDuplicateNode, onEnterGroup, onRenameGroup, onRunNode, onRunToNode, onSaveRecipeNode, proposalNodeStates, runningNodeId, selectNodeFromPointer, selectedNodeIds, viewGraph]);
   const selectedNodeIdSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
   const graphEdges = useMemo<GraphCanvasEdge[]>(
     () => viewGraph.edges.map((edge) => ({
@@ -735,6 +766,7 @@ export function GraphWorkflowCanvas({
           targetSelected: selectedNodeIdSet.has(edge.target_node_id),
         }),
         onDelete: onDeleteEdge,
+        proposalState: proposalEdgeStates[edge.id] ?? null,
       },
     })),
     [busy, onDeleteEdge, selectedNodeIdSet, t, viewGraph.edges],

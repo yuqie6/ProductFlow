@@ -1,4 +1,4 @@
-import { Bot, Workflow } from "lucide-react";
+import { Bot } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 
@@ -45,23 +45,22 @@ function initialCompactWorkbench(): boolean {
 export function deriveAgentWorkbenchRegionState({
   workflowAvailable,
   compact,
-  mobileView,
   confirmationOpen,
   activeSidebarTool = "agent",
   sidebarCollapsed = false,
 }: {
   workflowAvailable: boolean;
   compact: boolean;
-  mobileView: AgentWorkbenchMobileView;
+  mobileView?: AgentWorkbenchMobileView;
   confirmationOpen: boolean;
   activeSidebarTool?: string;
   sidebarCollapsed?: boolean;
 }): AgentWorkbenchRegionState {
   const sidebarInert = confirmationOpen
-    || (compact && workflowAvailable && mobileView !== "agent")
-    || (!compact && workflowAvailable && sidebarCollapsed);
+    || (!compact && workflowAvailable && sidebarCollapsed)
+    || (compact && workflowAvailable && sidebarCollapsed);
   return {
-    canvasInert: confirmationOpen || !workflowAvailable || (compact && mobileView !== "canvas"),
+    canvasInert: confirmationOpen || !workflowAvailable,
     sidebarInert,
     agentInert: sidebarInert || (workflowAvailable && activeSidebarTool !== "agent"),
   };
@@ -90,8 +89,6 @@ export function AgentWorkbenchShell({
   const resolvedActiveToolId = sidebarTools.some((tool) => tool.id === activeSidebarTool) || activeSidebarTool === "agent"
     ? activeSidebarTool
     : "agent";
-  const selectedTool = sidebarTools.find((tool) => tool.id === resolvedActiveToolId) ?? null;
-
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
       return;
@@ -143,9 +140,7 @@ export function AgentWorkbenchShell({
     sidebarCollapsed,
   });
   const canvasVisibleClass = workflowAvailable
-    ? mobileView === "canvas"
-      ? "visible opacity-100"
-      : "invisible pointer-events-none opacity-0 lg:visible lg:pointer-events-auto lg:opacity-100"
+    ? "visible opacity-100"
     : "invisible pointer-events-none opacity-0";
   const inspectorTrackWidth = getAgentWorkbenchInspectorTrackWidth(sidebarCollapsed, inspectorWidth);
   const inspectorTools: ProductWorkbenchInspectorTool[] = [
@@ -168,27 +163,6 @@ export function AgentWorkbenchShell({
       data-workbench-layout={workflowAvailable ? "canvas-sidebar" : "agent-only"}
       className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-slate-50 pb-[calc(4.5rem+env(safe-area-inset-bottom))] dark:bg-[#0b1220] lg:pb-0"
     >
-      {workflowAvailable ? (
-        <div
-          role="tablist"
-          aria-label={t("agentWorkbench.mobileView")}
-          className="grid h-13 shrink-0 grid-cols-2 gap-1 border-b border-zinc-200 bg-zinc-100 p-1.5 dark:border-slate-800 dark:bg-[#080d14] lg:hidden"
-        >
-          <MobileViewTab
-            active={mobileView === "canvas"}
-            icon={<Workflow size={16} />}
-            label={t("agentWorkbench.canvas")}
-            onClick={() => setMobileView("canvas")}
-          />
-          <MobileViewTab
-            active={mobileView === "agent"}
-            icon={resolvedActiveToolId === "agent" ? <Bot size={16} /> : selectedTool?.icon}
-            label={resolvedActiveToolId === "agent" ? t("agentWorkbench.agent") : selectedTool?.label ?? ""}
-            onClick={() => setMobileView("agent")}
-          />
-        </div>
-      ) : null}
-
       <div
         data-agent-workbench-work-area
         className={`relative min-h-0 flex-1 overflow-hidden lg:grid lg:transition-[grid-template-columns] lg:duration-300 lg:ease-out motion-reduce:lg:transition-none ${
@@ -221,7 +195,7 @@ export function AgentWorkbenchShell({
           resizeLabel={t("detail.resizeSidebar")}
           collapseLabel={t("detail.collapseSidebar")}
           expandLabel={t("detail.expandSidebar")}
-          mobileVisible={!workflowAvailable || mobileView === "agent"}
+          mobileVisible={!workflowAvailable || !sidebarCollapsed}
           inert={regions.sidebarInert}
           showActiveWhenCollapsed
           desktopLayout="grid-child"
@@ -239,34 +213,5 @@ export function AgentWorkbenchShell({
         </div>
       ) : null}
     </main>
-  );
-}
-
-function MobileViewTab({
-  active,
-  icon,
-  label,
-  onClick,
-}: {
-  active: boolean;
-  icon?: ReactNode;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={active}
-      onClick={onClick}
-      className={`inline-flex min-h-10 min-w-0 items-center justify-center gap-2 rounded-md px-2 text-sm font-semibold transition-colors ${
-        active
-          ? "bg-white text-indigo-700 shadow-sm dark:bg-slate-800 dark:text-violet-200"
-          : "text-zinc-500 hover:text-zinc-950 dark:text-slate-400 dark:hover:text-white"
-      }`}
-    >
-      <span className="shrink-0">{icon}</span>
-      <span className="min-w-0 truncate">{label}</span>
-    </button>
   );
 }

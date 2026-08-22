@@ -1265,6 +1265,7 @@ function scopeFromContract(contract: ProductFlowContract, lookup: RuntimeLookup)
     draft_schema: contract.draft_schema,
     workflow_draft_schema: contract.workflow_draft_schema,
     current_draft_version: contract.current_draft_version,
+    has_live_graph: Boolean(contract.has_live_graph),
   };
   validateScope(scope);
   return scope;
@@ -1378,6 +1379,8 @@ function toolStepKind(name: string): ToolStepKind {
   if (name === PRODUCTFLOW_SKILL_TOOL_NAME) return "load_skill";
   if (name === "ask_user") return "ask_question";
   if (name === "propose_workflow_draft" || name === "propose_global_draft") return "propose_draft";
+  if (name === "apply_graph_change_set_v1") return "apply_graph";
+  if (name === "propose_graph_change_set_v1" || name.includes("graph_proposal")) return "propose_graph";
   if (name === "request_workflow_run_v1") return "request_workflow_run";
   if (name === "create_product_workspace_v1") return "create_product";
   if (name === "finalize_product_intake_v1") return "inspect_context";
@@ -1409,6 +1412,10 @@ function toolStepSummary(name: string): string {
       return "请求执行工作流并等待确认";
     case "create_product":
       return "创建商品工作区";
+    case "apply_graph":
+      return "立即写入 live graph ChangeSet";
+    case "propose_graph":
+      return "提交未应用的图提案";
   }
   throw new Error(`unhandled ProductFlow tool step kind for ${name}`);
 }
@@ -1480,6 +1487,10 @@ function toolStepDetailsForStart(name: string, args: unknown): ToolStepDetails {
       return { phase: "tool_result", input_summary: "准备工作流执行请求，等待用户确认。" };
     case "create_product":
       return { phase: "tool_result", input_summary: "创建商品 onboarding 工作区。" };
+    case "apply_graph":
+      return { phase: "tool_result", input_summary: "立即把 Graph Command 写入 live graph。" };
+    case "propose_graph":
+      return { phase: "tool_result", input_summary: "提交未应用的图提案，等待确认。" };
     case "inject_context":
       return { phase: "context_injection" };
   }
@@ -1555,6 +1566,10 @@ export function toolStepDetailsForResult(name: string, result: unknown, isError:
       return { phase: "tool_result", output_summary: "执行请求已准备，当前等待用户确认。" };
     case "create_product":
       return { phase: "tool_result", output_summary: "商品工作区创建结果已返回。" };
+    case "apply_graph":
+      return { phase: "tool_result", output_summary: "Graph Command 已写入 live graph。" };
+    case "propose_graph":
+      return { phase: "tool_result", output_summary: "图提案已作为未应用幽灵预览提交。" };
     case "inject_context":
       return { phase: "context_injection", output_summary: "上下文已注入模型会话。" };
   }

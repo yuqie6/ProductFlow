@@ -142,7 +142,7 @@ export function ProductWorkbenchInspector({
     : mobileVisible
       ? "visible flex opacity-100"
       : workflowAvailable && collapsed
-        ? "invisible pointer-events-none flex opacity-0"
+        ? "invisible pointer-events-none flex opacity-0 lg:invisible"
         : "invisible pointer-events-none flex opacity-0 lg:visible lg:pointer-events-auto lg:opacity-100";
   const desktopGridChild = workflowAvailable && desktopLayout === "grid-child";
 
@@ -163,6 +163,16 @@ export function ProductWorkbenchInspector({
   return (
     <>
       {workflowAvailable && collapsed ? (
+        <>
+        <button
+          type="button"
+          data-product-workbench-drawer-handle
+          onClick={() => onCollapsedChange(false)}
+          className="glass-inspector absolute inset-x-4 bottom-3 z-30 flex h-11 items-center justify-center rounded-2xl text-xs font-semibold text-slate-600 shadow-lg lg:hidden dark:text-slate-200"
+          aria-label={expandLabel}
+        >
+          {expandLabel}
+        </button>
         <nav
           {...collapsedData}
           data-product-workbench-collapsed-tools
@@ -188,22 +198,24 @@ export function ProductWorkbenchInspector({
             </button>
           </div>
         </nav>
+        </>
       ) : null}
 
       <aside
         {...slotData}
         data-product-workbench-inspector
+        data-inspector-layout={workflowAvailable ? "drawer" : "page"}
         aria-hidden={inert || undefined}
         inert={inert}
-        className={`absolute inset-0 z-30 min-h-0 min-w-0 flex-col overflow-hidden bg-white transition-[opacity,visibility] duration-300 motion-reduce:transition-none dark:bg-[#070b11] lg:flex-row ${visibilityClassName} ${
+        className={`absolute z-30 min-h-0 min-w-0 flex-col overflow-hidden bg-white transition-[opacity,visibility] duration-300 motion-reduce:transition-none dark:bg-[#070b11] lg:flex-row ${visibilityClassName} ${
           workflowAvailable
-            ? `glass-inspector lg:inset-auto lg:w-[var(--product-workbench-inspector-width)] lg:rounded-[28px] lg:shadow-[0_24px_50px_rgba(15,23,42,0.18)] dark:lg:shadow-[0_32px_64px_rgba(0,0,0,0.45)] ${
+            ? `inset-x-0 bottom-0 top-auto h-[min(48vh,22rem)] max-h-[min(48vh,22rem)] rounded-t-[28px] shadow-[0_-12px_40px_rgba(15,23,42,0.16)] glass-inspector lg:inset-auto lg:h-auto lg:max-h-none lg:w-[var(--product-workbench-inspector-width)] lg:rounded-[28px] lg:shadow-[0_24px_50px_rgba(15,23,42,0.18)] dark:lg:shadow-[0_32px_64px_rgba(0,0,0,0.45)] ${
                 desktopGridChild
                   ? "lg:relative lg:z-auto lg:h-full lg:justify-self-stretch"
                   : desktopPositionClassName
               }`
-            : ""
-        } ${workflowAvailable && collapsed ? "lg:hidden" : ""}`}
+            : "inset-0"
+        } ${workflowAvailable && collapsed ? "hidden lg:hidden" : ""}`}
         style={inspectorStyle}
       >
         {workflowAvailable ? (
@@ -219,11 +231,19 @@ export function ProductWorkbenchInspector({
 
             <nav
               aria-label={ariaLabel}
-              className="flex h-auto shrink-0 gap-1 overflow-x-auto border-b border-slate-200/60 bg-white/80 px-2 py-2 dark:border-white/5 dark:bg-black/10 lg:h-full lg:flex-col lg:gap-2 lg:overflow-y-auto lg:border-b-0 lg:border-r lg:px-2 lg:py-4"
-              style={{ width: INSPECTOR_RAIL_WIDTH }}
+              className="flex h-auto w-full shrink-0 gap-1 overflow-x-auto border-b border-slate-200/60 bg-white/80 px-2 py-2 dark:border-white/5 dark:bg-black/10 lg:h-full lg:w-[72px] lg:flex-col lg:gap-2 lg:overflow-y-auto lg:border-b-0 lg:border-r lg:px-2 lg:py-4"
             >
               {railBefore}
               {renderRailTools(false)}
+              <button
+                type="button"
+                onClick={() => onCollapsedChange(true)}
+                className="ml-auto inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-400 hover:bg-white/40 hover:text-slate-800 lg:hidden dark:hover:bg-white/5"
+                title={collapseLabel}
+                aria-label={collapseLabel}
+              >
+                <ChevronRight size={16} />
+              </button>
               <div className="hidden w-full flex-1 lg:block" />
               <div className="hidden w-full justify-center border-t border-slate-200/40 pt-2 dark:border-white/5 lg:flex">
                 <button

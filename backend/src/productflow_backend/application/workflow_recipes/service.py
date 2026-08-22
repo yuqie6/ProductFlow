@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from productflow_backend.application.agent.sessions import new_agent_session
+from productflow_backend.application.product_workflow.graph_apply import AppliedGraph
 from productflow_backend.application.product_workflow.graph_commands import load_applied_graph
 from productflow_backend.application.time import now_utc
 from productflow_backend.application.workflow_recipes.contracts import (
@@ -20,22 +20,22 @@ from productflow_backend.application.workflow_recipes.contracts import (
     recipe_payload_hash,
 )
 from productflow_backend.application.workflow_recipes.extract import RecipeSourceType, extract_recipe_payload
-from productflow_backend.domain.enums import (
-    AgentConversationStatus,
-    WorkflowDraftStatus,
-    WorkflowRecipeKind,
+from productflow_backend.application.workflow_recipes.live_apply import (
+    RecipeApplyMode,
+    RecipeApplyPreview,
+    apply_recipe_payload,
+    preview_recipe_payload,
+    recipe_application_summary,
 )
+from productflow_backend.domain.enums import WorkflowRecipeKind
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
 from productflow_backend.infrastructure.db.models import (
-    AgentConversation,
     Product,
     VisualSystemVersion,
-    WorkflowDraft,
-    WorkflowDraftRecipeSeed,
     WorkflowGraph,
     WorkflowRecipe,
+    WorkflowRecipeApplication,
     WorkflowRecipeVersion,
-    new_id,
 )
 
 
@@ -49,9 +49,12 @@ class WorkflowRecipeArchiveResult:
 class WorkflowRecipeApplicationResult:
     recipe: WorkflowRecipe
     recipe_version: WorkflowRecipeVersion
-    draft: WorkflowDraft
-    conversation: AgentConversation
+    graph: WorkflowGraph
+    applied: AppliedGraph
+    mode: RecipeApplyMode
     created: bool
+    added_node_ids: tuple[str, ...]
+    added_edge_ids: tuple[str, ...]
 
 
 def _workflow_recipe_summary_query():
@@ -304,6 +307,34 @@ def archive_workflow_recipe(
     )
 
 
+def preview_workflow_recipe(
+    session: Session,
+    *,
+    product_id: str,
+    recipe_id: str,
+    expected_recipe_version: int,
+) -> RecipeApplyPreview:
+    product = session.get(Product, product_id)
+    if product is None:
+        raise NotFoundError("商品不存在")
+    recipe = get_workflow_recipe_or_raise(session, recipe_id=recipe_id)
+    if recipe.archived_at is not None:
+        raise ConflictError("已归档工作流配方不能应用")
+    recipe_version = recipe.current_version
+    if recipe_version is None or recipe_version.version != expected_recipe_version:
+        raise ConflictError("工作流配方版本已变化，请刷新后重试")
+    payload = parse_recipe_payload_or_raise(recipe_version)
+    return preview_recipe_payload(
+        session,
+        product_id=product_id,
+        recipe_id=recipe.id,
+        payload=payload,
+        recipe_kind=recipe.kind,
+        recipe_version=recipe_version.version,
+        summary=recipe_application_summary(recipe_version.title),
+    )
+
+
 def apply_workflow_recipe(
     session: Session,
     *,
@@ -322,16 +353,16 @@ def apply_workflow_recipe(
         product = session.scalar(select(Product).where(Product.id == product_id).with_for_update())
         if product is None:
             raise NotFoundError("商品不存在")
-        existing_seed = _recipe_seed_by_idempotency_key(
+        existing_application = _recipe_application_by_idempotency_key(
             session,
             product_id=product_id,
             idempotency_key=normalized_key,
         )
-        if existing_seed is not None:
-            if existing_seed.request_hash != request_hash:
+        if existing_application is not None:
+            if existing_application.request_hash != request_hash:
                 raise ConflictError("相同 idempotency key 不能应用不同的工作流配方")
             session.commit()
-            return _load_recipe_application(session, existing_seed.id, created=False)
+            return _load_recipe_graph_application(session, existing_application.id, created=False)
 
         recipe = session.scalar(
             select(WorkflowRecipe)
@@ -346,52 +377,45 @@ def apply_workflow_recipe(
         recipe_version = recipe.current_version
         if recipe_version is None or recipe_version.version != expected_recipe_version:
             raise ConflictError("工作流配方版本已变化，请刷新后重试")
-        parse_recipe_payload_or_raise(recipe_version)
-
-        if recipe.kind == WorkflowRecipeKind.RECIPE_FRAGMENT:
-            raise ConflictError("片段配方尚未支持合并进 schema-v3 工作流")
-
-        draft = WorkflowDraft(product_id=product_id, status=WorkflowDraftStatus.COLLECTING)
-        session.add(draft)
-        session.flush()
-        seed = WorkflowDraftRecipeSeed(
-            workflow_draft_id=draft.id,
-            recipe_version_id=recipe_version.id,
+        payload = parse_recipe_payload_or_raise(recipe_version)
+        command, mode, added_nodes, added_edges = apply_recipe_payload(
+            session,
             product_id=product_id,
-            schema_version=1,
+            recipe_kind=recipe.kind,
+            payload=payload,
+            summary=recipe_application_summary(recipe_version.title),
+            commit=False,
+        )
+        application = WorkflowRecipeApplication(
+            product_id=product_id,
+            recipe_version_id=recipe_version.id,
+            graph_id=command.graph.id,
+            operation_group_id=command.operation_group.id,
+            mode=mode,
             idempotency_key=normalized_key,
             request_hash=request_hash,
+            added_node_ids_json=list(added_nodes),
+            added_edge_ids_json=list(added_edges),
         )
-        conversation_id = new_id()
-        agent_session = new_agent_session(title=recipe_version.title)
-        session.add(agent_session)
-        session.flush()
-        conversation = AgentConversation(
-            id=conversation_id,
-            session_id=agent_session.id,
-            product_id=product_id,
-            workflow_draft_id=draft.id,
-            harness_run_id=conversation_id,
-            status=AgentConversationStatus.COLLECTING,
-        )
-        session.add_all([seed, conversation])
+        session.add(application)
         session.commit()
+        application_id = application.id
     except IntegrityError:
         session.rollback()
-        existing_seed = _recipe_seed_by_idempotency_key(
+        existing_application = _recipe_application_by_idempotency_key(
             session,
             product_id=product_id,
             idempotency_key=normalized_key,
         )
-        if existing_seed is not None:
-            if existing_seed.request_hash != request_hash:
+        if existing_application is not None:
+            if existing_application.request_hash != request_hash:
                 raise ConflictError("相同 idempotency key 不能应用不同的工作流配方") from None
-            return _load_recipe_application(session, existing_seed.id, created=False)
+            return _load_recipe_graph_application(session, existing_application.id, created=False)
         raise
     except Exception:
         session.rollback()
         raise
-    return _load_recipe_application(session, seed.id, created=True)
+    return _load_recipe_graph_application(session, application_id, created=True)
 
 
 def parse_recipe_payload_or_raise(version: WorkflowRecipeVersion) -> RecipePayload:
@@ -404,57 +428,50 @@ def parse_recipe_payload_or_raise(version: WorkflowRecipeVersion) -> RecipePaylo
     return payload
 
 
-def _recipe_seed_by_idempotency_key(
+def _recipe_application_by_idempotency_key(
     session: Session,
     *,
     product_id: str,
     idempotency_key: str,
-) -> WorkflowDraftRecipeSeed | None:
+) -> WorkflowRecipeApplication | None:
     return session.scalar(
-        select(WorkflowDraftRecipeSeed).where(
-            WorkflowDraftRecipeSeed.product_id == product_id,
-            WorkflowDraftRecipeSeed.idempotency_key == idempotency_key,
+        select(WorkflowRecipeApplication).where(
+            WorkflowRecipeApplication.product_id == product_id,
+            WorkflowRecipeApplication.idempotency_key == idempotency_key,
         )
     )
 
 
-def _load_recipe_application(
+def _load_recipe_graph_application(
     session: Session,
-    seed_id: str,
+    application_id: str,
     *,
     created: bool,
 ) -> WorkflowRecipeApplicationResult:
-    seed = session.scalar(
-        select(WorkflowDraftRecipeSeed)
+    application = session.scalar(
+        select(WorkflowRecipeApplication)
         .options(
-            selectinload(WorkflowDraftRecipeSeed.recipe_version).selectinload(
+            selectinload(WorkflowRecipeApplication.recipe_version).selectinload(
                 WorkflowRecipeVersion.recipe
             ),
-            selectinload(WorkflowDraftRecipeSeed.workflow_draft).selectinload(
-                WorkflowDraft.revisions
-            ),
-            selectinload(WorkflowDraftRecipeSeed.workflow_draft).selectinload(
-                WorkflowDraft.recipe_seed
-            ),
-            selectinload(WorkflowDraftRecipeSeed.workflow_draft).selectinload(
-                WorkflowDraft.agent_conversation
-            ),
+            selectinload(WorkflowRecipeApplication.graph),
         )
-        .where(WorkflowDraftRecipeSeed.id == seed_id)
+        .where(WorkflowRecipeApplication.id == application_id)
     )
-    if seed is None:
+    if application is None:
         raise NotFoundError("工作流配方应用记录不存在")
-    draft = seed.workflow_draft
-    conversation = draft.agent_conversation
-    if conversation is None:
-        raise ConflictError("工作流配方应用缺少 Agent conversation")
-    recipe_version = seed.recipe_version
+    graph = application.graph
+    applied = load_applied_graph(session, graph)
+    recipe_version = application.recipe_version
     return WorkflowRecipeApplicationResult(
         recipe=recipe_version.recipe,
         recipe_version=recipe_version,
-        draft=draft,
-        conversation=conversation,
+        graph=graph,
+        applied=applied,
+        mode=application.mode,  # type: ignore[arg-type]
         created=created,
+        added_node_ids=tuple(application.added_node_ids_json or ()),
+        added_edge_ids=tuple(application.added_edge_ids_json or ()),
     )
 
 
@@ -497,5 +514,6 @@ __all__ = [
     "get_workflow_recipe_or_raise",
     "list_workflow_recipes",
     "parse_recipe_payload_or_raise",
+    "preview_workflow_recipe",
     "workflow_recipe_query",
 ]

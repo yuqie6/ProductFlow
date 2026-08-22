@@ -81,6 +81,7 @@ import type {
   WorkflowDeliverySpec,
   WorkflowRecipe,
   WorkflowRecipeApplicationResult,
+  WorkflowRecipePreview,
   WorkflowRecipeSourceInput,
   WorkflowRecipeSummary,
 } from "./types";
@@ -1192,15 +1193,37 @@ export const api = {
     const params = new URLSearchParams({ expected_recipe_version: String(expectedRecipeVersion) });
     return request(`/api/v2/workflow-recipes/${recipeId}?${params}`, { method: "DELETE" });
   },
+  previewWorkflowRecipe(
+    productId: string,
+    recipeId: string,
+    input: { expected_recipe_version: number },
+  ): Promise<WorkflowRecipePreview> {
+    return request(`/api/v3/products/${encodeURIComponent(productId)}/workflow-recipes/${encodeURIComponent(recipeId)}/preview`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
   applyWorkflowRecipe(
     productId: string,
     recipeId: string,
     input: { expected_recipe_version: number; idempotency_key: string },
   ): Promise<WorkflowRecipeApplicationResult> {
-    return request(`/api/v2/products/${productId}/workflow-recipes/${recipeId}/apply`, {
+    return request(`/api/v3/products/${encodeURIComponent(productId)}/workflow-recipes/${encodeURIComponent(recipeId)}/apply`, {
       method: "POST",
       body: JSON.stringify(input),
     });
+  },
+  confirmGraphProposal(productId: string, workflowId: string, proposalId: string): Promise<GraphProjection> {
+    return request(
+      `/api/v3/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/proposals/${encodeURIComponent(proposalId)}/confirm`,
+      { method: "POST" },
+    );
+  },
+  discardGraphProposal(productId: string, workflowId: string, proposalId: string): Promise<GraphProjection> {
+    return request(
+      `/api/v3/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/proposals/${encodeURIComponent(proposalId)}/discard`,
+      { method: "POST" },
+    );
   },
   createWorkflowDraft(productId: string, input: CreateWorkflowDraftInput): Promise<WorkflowDraft> {
     return request(`/api/v2/products/${productId}/workflow-drafts`, {

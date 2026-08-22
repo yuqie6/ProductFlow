@@ -722,8 +722,20 @@ export function GraphCanvasPanel({
     return () => window.removeEventListener("keydown", handleShortcut);
   }, [applyMutation.isPending, duplicateSelected, requestDeleteNodes, runHistoryMutation, showNotice, t]);
 
-  const error = applyMutation.error ?? runMutation.error ?? undoMutation.error ?? redoMutation.error;
-  const busy = applyMutation.isPending || runMutation.isPending || undoMutation.isPending || redoMutation.isPending;
+  const proposalMutation = useMutation({
+    mutationFn: async (kind: "confirm" | "discard") => {
+      const proposal = graph.pending_proposal;
+      if (!proposal) throw new Error(t("graph.proposal.missing"));
+      return kind === "confirm"
+        ? api.confirmGraphProposal(productId, graph.id, proposal.id)
+        : api.discardGraphProposal(productId, graph.id, proposal.id);
+    },
+    onSuccess: (next) => {
+      onGraphChange(next);
+    },
+  });
+  const error = applyMutation.error ?? runMutation.error ?? undoMutation.error ?? redoMutation.error ?? proposalMutation.error;
+  const busy = applyMutation.isPending || runMutation.isPending || undoMutation.isPending || redoMutation.isPending || proposalMutation.isPending;
 
   useEffect(() => {
     onBusyChange?.(busy);
@@ -787,6 +799,37 @@ export function GraphCanvasPanel({
           />
         ) : null}
       </div>
+      {graph.pending_proposal ? (
+        <div
+          data-graph-proposal-banner
+          className={`absolute z-20 ${compact ? "left-3 right-3 top-[8.25rem]" : "left-4 top-16 max-w-md"}`}
+        >
+          <div className="rounded-xl border border-indigo-200 bg-white/95 p-3 text-xs shadow-sm dark:border-indigo-400/30 dark:bg-[#0f1726]/95">
+            <div className="font-semibold text-indigo-800 dark:text-indigo-200">{t("graph.proposal.title")}</div>
+            <p className="mt-1 leading-5 text-slate-600 dark:text-slate-300">
+              {graph.pending_proposal.stale ? t("graph.proposal.stale") : graph.pending_proposal.summary}
+            </p>
+            <div className="mt-2 flex gap-2">
+              <button
+                type="button"
+                disabled={busy || graph.pending_proposal.stale}
+                onClick={() => void proposalMutation.mutateAsync("confirm")}
+                className="inline-flex h-8 items-center rounded-lg bg-slate-900 px-3 text-[11px] font-semibold text-white disabled:opacity-45 dark:bg-slate-100 dark:text-slate-900"
+              >
+                {t("graph.proposal.confirm")}
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void proposalMutation.mutateAsync("discard")}
+                className="inline-flex h-8 items-center rounded-lg border border-slate-200 px-3 text-[11px] font-semibold text-slate-700 disabled:opacity-45 dark:border-slate-700 dark:text-slate-200"
+              >
+                {t("graph.proposal.discard")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {enteredGroup || error || notice ? (
         <div
           className={`absolute z-20 flex flex-col gap-2 ${compact ? "left-3 right-[16.5rem] top-[4.75rem]" : "left-4 top-4 max-w-sm"

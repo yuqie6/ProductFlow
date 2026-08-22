@@ -8,6 +8,7 @@ interface ConfirmDialogProps {
   confirmLabel: string;
   cancelLabel: string;
   busy?: boolean;
+  confirmDisabled?: boolean;
   destructive?: boolean;
   onConfirm: () => void;
   onClose: () => void;
@@ -20,6 +21,7 @@ export function ConfirmDialog({
   confirmLabel,
   cancelLabel,
   busy = false,
+  confirmDisabled = false,
   destructive = true,
   onConfirm,
   onClose,
@@ -89,7 +91,7 @@ export function ConfirmDialog({
           <button
             type="button"
             onClick={onConfirm}
-            disabled={busy}
+            disabled={busy || confirmDisabled}
             className={`inline-flex h-9 min-w-[72px] items-center justify-center rounded-lg px-3 text-sm font-semibold shadow-sm transition-colors focus:outline-none focus-visible:ring-2 disabled:opacity-60 ${confirmClassName}`}
           >
             {busy ? <Loader2 size={15} className="mr-2 animate-spin" /> : null}

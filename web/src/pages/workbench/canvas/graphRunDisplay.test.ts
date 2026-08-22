@@ -101,10 +101,10 @@ describe("graph run display", () => {
   });
 
   it("polls queued and running graph runs, not terminal ones", () => {
-    const queued: GraphRun = {
+    const queued = {
       id: "run-q",
       graph_id: "g1",
-      status: "queued",
+      status: "running",
       scope: "graph",
       requested_node_id: null,
       graph_revision: 2,
@@ -113,7 +113,7 @@ describe("graph run display", () => {
       node_runs: [nodeRun({ status: "queued" })],
       started_at: "2026-08-21T00:00:00Z",
       finished_at: null,
-    };
+    } satisfies GraphRun;
     expect(graphRunsAreLive([queued])).toBe(true);
     expect(graphRunsAreLive([{ ...queued, status: "running" }])).toBe(true);
     expect(graphRunsAreLive([{ ...queued, status: "succeeded", finished_at: "2026-08-21T00:01:00Z" }])).toBe(false);

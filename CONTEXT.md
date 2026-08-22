@@ -42,7 +42,7 @@ The current repository targets a personal live demo and self-hosted deployments.
 - Canvas folders are one-level visual groups. They have no execution status, ports, nesting, run, cancel, or retry behavior. Generating image types persist as one group with one prompt node and N image nodes; evidence types persist as unbound `image_asset` placeholders.
 - Graph compiler runtime inputs include only facts, references, briefs, and visual guidance that arrive on the target node's incoming edges. Disconnecting an edge removes that input; the compiler does not scan the rest of the graph.
 - Create-time uploads bind as `image_asset` nodes with role `product_identity`. That role string is the value sent to prompt and image providers.
-- Recipes are created only by an explicit user save. Applying one to another product produces a reviewable Draft; user confirmation persists that Draft as the online graph. Saving a recipe from a live schema-v3 graph is not implemented.
+- Recipes are created only by an explicit user save from a live schema-v3 graph (full graph, group, or selection). Applying one to another product first previews the nodes and edges that will appear, then one confirm writes that product's live graph through Graph Command. A full recipe cannot merge into a product that already has a live graph. Fragment recipes merge into an existing v3 graph or return an explicit conflict. Recipes do not store product identity, bound assets, generated results, or media bytes.
 
 ## Product Image Invariants
 

@@ -40,6 +40,7 @@ from productflow_backend.domain.enums import (
     GraphEdgeRole,
     GraphHistoryKind,
     GraphNodeType,
+    GraphProposalStatus,
     GraphRunScope,
     ImageSessionAssetKind,
     JobStatus,
@@ -232,6 +233,11 @@ class Product(Base, TimestampMixin):
         back_populates="product",
         cascade="all, delete-orphan",
         foreign_keys="WorkflowDraftRecipeSeed.product_id",
+    )
+    workflow_recipe_applications: Mapped[list[WorkflowRecipeApplication]] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+        foreign_keys="WorkflowRecipeApplication.product_id",
     )
     workflow_draft_legacy_archive_seeds: Mapped[list[WorkflowDraftLegacyArchiveSeed]] = relationship(
         back_populates="product",
@@ -1823,6 +1829,10 @@ class WorkflowRecipeVersion(Base):
         back_populates="recipe_version",
         foreign_keys="WorkflowDraftRecipeSeed.recipe_version_id",
     )
+    graph_applications: Mapped[list[WorkflowRecipeApplication]] = relationship(
+        back_populates="recipe_version",
+        foreign_keys="WorkflowRecipeApplication.recipe_version_id",
+    )
 
 
 class WorkflowDraftRecipeSeed(Base):
@@ -1888,6 +1898,72 @@ class WorkflowDraftRecipeSeed(Base):
         back_populates="workflow_draft_recipe_seeds",
         foreign_keys=[product_id],
     )
+
+
+class WorkflowRecipeApplication(Base):
+    """配方写入目标商品 live graph 的幂等记录。"""
+
+    __tablename__ = "workflow_recipe_applications"
+    __table_args__ = (
+        UniqueConstraint(
+            "product_id",
+            "idempotency_key",
+            name="uq_workflow_recipe_applications_product_key",
+        ),
+        CheckConstraint("schema_version = 1", name="ck_workflow_recipe_applications_schema_version"),
+        CheckConstraint("length(request_hash) = 64", name="ck_workflow_recipe_applications_request_hash"),
+        CheckConstraint("mode IN ('create', 'merge')", name="ck_workflow_recipe_applications_mode"),
+        Index(
+            "ix_workflow_recipe_applications_product_created",
+            "product_id",
+            "created_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    product_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("products.id", ondelete="CASCADE", name="fk_workflow_recipe_applications_product_id"),
+    )
+    recipe_version_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "workflow_recipe_versions.id",
+            ondelete="RESTRICT",
+            name="fk_workflow_recipe_applications_recipe_version_id",
+        ),
+    )
+    graph_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("workflow_graphs.id", ondelete="CASCADE", name="fk_workflow_recipe_applications_graph_id"),
+    )
+    operation_group_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "workflow_operation_groups.id",
+            ondelete="RESTRICT",
+            name="fk_workflow_recipe_applications_operation_group_id",
+        ),
+    )
+    mode: Mapped[str] = mapped_column(String(16))
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    idempotency_key: Mapped[str] = mapped_column(String(120))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    added_node_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    added_edge_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    product: Mapped[Product] = relationship(
+        back_populates="workflow_recipe_applications",
+        foreign_keys=[product_id],
+    )
+    recipe_version: Mapped[WorkflowRecipeVersion] = relationship(
+        back_populates="graph_applications",
+        foreign_keys=[recipe_version_id],
+    )
+    graph: Mapped[WorkflowGraph] = relationship(foreign_keys=[graph_id])
+    operation_group: Mapped[WorkflowOperationGroup] = relationship(foreign_keys=[operation_group_id])
 
 
 class WorkflowDraftLegacyArchiveSeed(Base):
@@ -1997,6 +2073,7 @@ _GRAPH_EDGE_DATA_TYPES = ", ".join(f"'{member.value}'" for member in GraphEdgeDa
 _GRAPH_EDGE_ROLES = ", ".join(f"'{member.value}'" for member in GraphEdgeRole)
 _GRAPH_ACTOR_TYPES = ", ".join(f"'{member.value}'" for member in GraphActorType)
 _GRAPH_HISTORY_KINDS = ", ".join(f"'{member.value}'" for member in GraphHistoryKind)
+_GRAPH_PROPOSAL_STATUSES = ", ".join(f"'{member.value}'" for member in GraphProposalStatus)
 _GRAPH_RUN_SCOPES = ", ".join(f"'{member.value}'" for member in GraphRunScope)
 _GRAPH_ARTIFACT_TYPES = ", ".join(f"'{member.value}'" for member in GraphArtifactType)
 _GRAPH_RUN_STATUSES = ", ".join(f"'{member.value}'" for member in WorkflowRunStatus)
@@ -2074,6 +2151,11 @@ class WorkflowGraph(Base, TimestampMixin):
         back_populates="graph",
         cascade="all, delete-orphan",
         order_by="WorkflowMediaLibraryAsset.created_at.desc(), WorkflowMediaLibraryAsset.media_library_asset_id.desc()",
+    )
+    proposals: Mapped[list[WorkflowGraphProposal]] = relationship(
+        back_populates="graph",
+        cascade="all, delete-orphan",
+        order_by="WorkflowGraphProposal.created_at.desc(), WorkflowGraphProposal.id.desc()",
     )
 
 
@@ -2241,6 +2323,60 @@ class WorkflowOperationGroup(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     graph: Mapped[WorkflowGraph] = relationship(back_populates="operation_groups")
+
+
+class WorkflowGraphProposal(Base):
+    """未应用的 Agent 图提案。确认前不写入 live graph，也不能运行。"""
+
+    __tablename__ = "workflow_graph_proposals"
+    __table_args__ = (
+        Index(
+            "uq_workflow_graph_proposals_one_pending_per_graph",
+            "graph_id",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+            sqlite_where=text("status = 'pending'"),
+        ),
+        CheckConstraint(
+            f"status IN ({_GRAPH_PROPOSAL_STATUSES})",
+            name="ck_workflow_graph_proposals_status",
+        ),
+        CheckConstraint("base_graph_revision >= 0", name="ck_workflow_graph_proposals_non_negative_base"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    graph_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("workflow_graphs.id", ondelete="CASCADE", name="fk_workflow_graph_proposals_graph_id"),
+    )
+    conversation_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "agent_conversations.id",
+            ondelete="SET NULL",
+            name="fk_workflow_graph_proposals_conversation_id",
+        ),
+        nullable=True,
+    )
+    status: Mapped[GraphProposalStatus] = mapped_column(String(16), default=GraphProposalStatus.PENDING)
+    summary: Mapped[str] = mapped_column(String(500))
+    base_graph_revision: Mapped[int] = mapped_column(Integer)
+    change_set_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    operation_group_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey(
+            "workflow_operation_groups.id",
+            ondelete="SET NULL",
+            name="fk_workflow_graph_proposals_operation_group_id",
+        ),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    graph: Mapped[WorkflowGraph] = relationship(back_populates="proposals")
+    conversation: Mapped[AgentConversation | None] = relationship(foreign_keys=[conversation_id])
+    operation_group: Mapped[WorkflowOperationGroup | None] = relationship(foreign_keys=[operation_group_id])
 
 
 class WorkflowGraphRun(Base):

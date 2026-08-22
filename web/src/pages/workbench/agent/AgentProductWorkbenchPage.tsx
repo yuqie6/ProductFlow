@@ -188,19 +188,12 @@ export function AgentProductWorkbenchPage({
         const application = result as WorkflowRecipeApplicationResult;
         recipeApplyKeysRef.current.delete(operation.recipe.id);
         setRecipeApplication(application);
-        queryClient.setQueriesData<AgentWorkbenchBootstrap>(
-          { queryKey: ["agent-workbench", bootstrap.product.id] },
-          (current) => current?.mode === "agent"
-            ? {
-              ...current,
-              conversation: application.conversation,
-              workflow_draft: application.draft,
-            }
-            : current,
+        queryClient.setQueriesData(
+          { queryKey: ["workflow-graph", bootstrap.product.id] },
+          application.graph,
         );
+        await queryClient.invalidateQueries({ queryKey: ["workflow-graph", bootstrap.product.id] });
         await onRefetchBootstrap();
-        sidebarToolRef.current = "agent";
-        setSidebarTool("agent");
       } else {
         await queryClient.invalidateQueries({ queryKey: ["workflow-recipes"] });
       }
@@ -385,8 +378,11 @@ export function AgentProductWorkbenchPage({
                 : null}
               application={recipeApplication}
               structureBusy={canvasBusy}
-              canAppend={(recipe) => Boolean(liveGraph) && recipe.kind === "workflow_recipe"}
+              canAppend={() => Boolean(liveGraph)}
               onRetry={() => void recipesQuery.refetch()}
+              onPreview={(recipe) => api.previewWorkflowRecipe(bootstrap.product.id, recipe.id, {
+                expected_recipe_version: recipe.current_version.version,
+              })}
               onApply={(recipe) => {
                 const idempotencyKey = recipeApplyKeysRef.current.get(recipe.id)
                   ?? newRecipeIdempotencyKey(recipe.id);

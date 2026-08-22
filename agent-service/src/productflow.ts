@@ -236,6 +236,30 @@ export class ProductFlowClient {
     await this.json(this.conversationPath(conversationID) + "/workflow-draft/validate", { method: "POST", body: { value }, signal });
   }
 
+  async applyGraphChangeSet(
+    conversationID: string,
+    changeSet: JsonObject,
+    signal?: AbortSignal,
+  ): Promise<JsonObject> {
+    return this.json<JsonObject>(this.conversationPath(conversationID) + "/graph/apply-change-set", {
+      method: "POST",
+      body: { change_set: changeSet },
+      signal,
+    });
+  }
+
+  async proposeGraphChangeSet(
+    conversationID: string,
+    changeSet: JsonObject,
+    signal?: AbortSignal,
+  ): Promise<JsonObject> {
+    return this.json<JsonObject>(this.conversationPath(conversationID) + "/graph/proposals", {
+      method: "POST",
+      body: { change_set: changeSet },
+      signal,
+    });
+  }
+
   async validateGlobalDraft(conversationID: string, value: unknown, signal?: AbortSignal): Promise<void> {
     await this.json(this.conversationPath(conversationID) + "/global-draft/validate", { method: "POST", body: { value }, signal });
   }

@@ -9,7 +9,7 @@ from sqlalchemy import event, func, select
 from workflow_draft_helpers import make_workflow_draft_payload
 
 from productflow_backend.application.agent import control as agent_control
-from productflow_backend.application.agent.control import synchronize_agent_turn_state
+from productflow_backend.application.agent.control import refresh_agent_turn, synchronize_agent_turn_state
 from productflow_backend.application.agent.conversations import (
     attach_agent_workflow_draft_artifact,
     bind_harness_turn,
@@ -864,7 +864,7 @@ def test_agent_read_tools_are_bounded_and_rename_is_reconcilable(db_session) -> 
     assert "background_color" in delivery_schema["required"]
     assert "oneOf" not in workflow_schema["properties"]["nodes"]["items"]
     assert "anyOf" in workflow_schema["properties"]["nodes"]["items"]
-    assert contract["tool_contract_version"] == 11
+    assert contract["tool_contract_version"] == 12
 
     context = get_agent_product_context(db_session, conversation.id)
     assert context["product"]["name"] == product.name
@@ -1187,7 +1187,7 @@ def test_internal_agent_routes_require_service_token_and_never_need_browser_sess
     contract = client.get(contract_path, headers=headers)
     assert contract.status_code == 200, contract.text
     assert contract.json()["conversation_id"] == conversation.id
-    assert contract.json()["tool_contract_version"] == 11
+    assert contract.json()["tool_contract_version"] == 12
 
     validation_path = f"/api/internal/v1/agent-conversations/{conversation.id}/workflow-draft/validate"
     validated = client.post(validation_path, headers=headers, json={"value": payload})
@@ -1772,6 +1772,118 @@ def test_stored_malformed_agent_tool_steps_degrade_safely_in_detail_and_list_rou
     assert "RAW_SENTINEL" not in detail_response.text
     assert "RAW_SENTINEL" not in list_response.text
     assert all(set(step) == {"step_id", "kind", "summary", "status"} for step in detail_steps)
+
+
+def test_submit_turn_defers_transient_start_failure_and_get_stays_queued(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.presentation.api import create_app
+    from productflow_backend.presentation.routes import agent_conversations as agent_routes
+
+    product, asset, draft, _ = _create_product_and_draft(db_session, name="Turn 提交延迟绑定")
+    conversation = create_agent_conversation(
+        db_session,
+        product_id=product.id,
+        workflow_draft_id=draft.id,
+    )
+    enqueued: list[str] = []
+
+    class _FailStartGateway:
+        def start_turn(self, **kwargs):  # noqa: ANN003
+            raise AgentServiceRequestError(
+                status_code=502,
+                code="invalid_response",
+                safe_message="Agent 服务返回了无效响应",
+            )
+
+        def get_turn(self, **kwargs):  # noqa: ANN003
+            raise AssertionError("unbound queued Turn must not refresh from Agent runtime")
+
+    gateway = _FailStartGateway()
+    monkeypatch.setattr(agent_routes, "_agent_gateway_or_raise", lambda: gateway)
+    monkeypatch.setattr(agent_routes, "_agent_gateway_or_none", lambda: gateway)
+    monkeypatch.setattr(
+        agent_routes,
+        "enqueue_agent_turn_sync",
+        lambda _session, projection_id: enqueued.append(projection_id),
+    )
+    client = TestClient(create_app())
+    _login(client)
+    submitted = client.post(
+        f"/api/v2/products/{product.id}/agent-conversations/{conversation.id}/turns",
+        json={
+            "input_text": "请读取当前商品工作流",
+            "asset_ids": [asset.id],
+            "idempotency_key": "defer-start-502",
+        },
+    )
+    assert submitted.status_code == 202, submitted.text
+    body = submitted.json()
+    assert body["created"] is True
+    assert body["turn"]["status"] == "queued"
+    assert body["turn"]["harness_turn_id"] is None
+    assert body["turn"]["sync_error"] == "Agent 服务暂时不可用"
+    assert enqueued == [body["turn"]["id"]]
+
+    polled = client.get(
+        f"/api/v2/products/{product.id}/agent-conversations/{conversation.id}/turns/{body['turn']['id']}"
+    )
+    assert polled.status_code == 200, polled.text
+    assert polled.json()["status"] == "queued"
+    assert polled.json()["harness_turn_id"] is None
+
+
+def test_get_queued_unbound_agent_turn_returns_projection_instead_of_conflict(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from productflow_backend.presentation.api import create_app
+    from productflow_backend.presentation.routes import agent_conversations as agent_routes
+
+    product, asset, draft, _ = _create_product_and_draft(db_session)
+    conversation = create_agent_conversation(
+        db_session,
+        product_id=product.id,
+        workflow_draft_id=draft.id,
+    )
+    projection = reserve_agent_turn(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        input_text="进入工作台后自动排队",
+        input_asset_ids=[asset.id],
+        idempotency_key="queued-unbound-poll",
+    ).projection
+    assert projection.harness_turn_id is None
+    assert projection.status == AgentTurnStatus.QUEUED
+
+    class _ForbiddenGateway:
+        def get_turn(self, **kwargs):  # noqa: ANN003
+            raise AssertionError("queued unbound Turn must not refresh from Agent runtime")
+
+    monkeypatch.setattr(agent_routes, "_agent_gateway_or_none", lambda: _ForbiddenGateway())
+    client = TestClient(create_app())
+    _login(client)
+    response = client.get(
+        f"/api/v2/products/{product.id}/agent-conversations/{conversation.id}/turns/{projection.id}"
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "queued"
+    assert body["harness_turn_id"] is None
+    refreshed = refresh_agent_turn(
+        db_session,
+        product_id=product.id,
+        conversation_id=conversation.id,
+        projection_id=projection.id,
+        gateway=_ForbiddenGateway(),
+        tolerate_transient_unavailable=True,
+    )
+    assert refreshed.id == projection.id
+    assert refreshed.status == AgentTurnStatus.QUEUED
+    assert refreshed.harness_turn_id is None
 
 
 def test_get_active_agent_turn_refreshes_and_attaches_artifact(

@@ -2,9 +2,9 @@
 
 ## 状态
 
-Accepted，implementation pending
+Accepted。Graph Command、live-graph GraphProposal 与配方 ChangeSet 已接线；确认和取消在画布。浏览器 1440/1024/390 连续动作证据、Intent+ChangeSet 收敛和 v1 归档重建仍待完成。
 
-批准依据：2026-08-20 产品与架构评审确认。本 ADR 描述已接受的目标合同。当前治理 checkout 已回到 `e6cf9e66` 的 schema-v2 基线，schema-v3 实现尚未重新开始。schema-v2 从未部署到生产环境；v3 完整链路通过验收后可以直接替换当前开发基线，但替换期间仍需保持 archive、Gallery bridge 和历史读取合同。
+批准依据：2026-08-20 产品与架构评审确认。本 ADR 描述已接受的目标合同。下文背景仍记录从 schema-v2 出发的理由；当前在线实现是 schema-v3。
 
 ## 背景
 

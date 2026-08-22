@@ -14,7 +14,7 @@ ProductFlow 是单管理员、单商家工作区，由七个运行单元组成�
 
 浏览器只访问 Web 和 FastAPI。Agent service 使用独立 bearer token 调用 FastAPI internal API；FastAPI 通过 agent-service internal HTTP/SSE 控制 Turn。API、worker 和 async dispatcher 共享 PostgreSQL、Redis 和 storage。`just dev` 与 Docker Compose 都会启动 dispatcher。
 
-本文只描述当前实现。模块所有权来自当前源码树，行为证据来自对应测试；产品合同见 `PRD.md`，长期理由见 `adr/`，未完成部署证据见 `rollout/`。改 Agent service 时再读 `adr/0007-pi-agent-runtime-boundary.md` 与 `specs/pi-agent-runtime-integration.md`。GraphProposal 和 Recipe ChangeSet 只从 `ROADMAP.md` 进入。
+本文只描述当前实现。模块所有权来自当前源码树，行为证据来自对应测试；产品合同见 `PRD.md`，长期理由见 `adr/`，未完成部署证据见 `rollout/`。改 Agent service 时再读 `adr/0007-pi-agent-runtime-boundary.md` 与 `specs/pi-agent-runtime-integration.md`。
 
 ## 2. 后端分层
 
@@ -37,8 +37,8 @@ ProductFlow 是单管理员、单商家工作区，由七个运行单元组成�
 | 全局素材库 | `media_library/` (`queries.py`, `service.py`, `organization.py`, `workflow.py`) | `routes/media_library.py` | `test_media_library.py`, `test_media_library_api.py` |
 | 全局素材整理 Draft | `media_library/draft_contracts.py`, `media_library/drafts.py`, `agent/control.py` | `routes/global_agent_conversations.py`, `routes/agent_internal.py` | `test_media_library_drafts.py` |
 | Draft 与 graph persist | `workflow_drafts/contracts.py`, `service.py`, `product_workflow/graph_draft_persist.py` | `routes/workflow_drafts.py`, `routes/workflow_graphs.py` | `test_workflow_draft_contracts.py`, `test_graph_draft_persist.py` |
-| schema-v3 图与执行 | `domain/graph_catalog.py`, `domain/graph_rules.py`, `product_workflow/graph_*.py` | `routes/workflow_graphs.py`, `workers.py` | graph compiler/run 测试 |
-| 配方 | `workflow_recipes/` | `routes/workflow_recipes.py` | `test_workflow_recipes.py` |
+| schema-v3 图与执行 | `domain/graph_catalog.py`, `domain/graph_rules.py`, `product_workflow/graph_*.py` | `routes/workflow_graphs.py`, `workers.py` | `test_graph_proposals.py`, graph compiler/run 测试 |
+| 配方 | `workflow_recipes/service.py`, `live_apply.py` | `routes/workflow_recipes.py` | `test_workflow_recipes.py` |
 | 交付图 | `delivery_renditions/` | `routes/delivery_renditions.py` | `test_delivery_renditions.py` |
 | 商品图片库 | `product_images/` (`queries.py`, `mutations.py`, `archives.py`, `assets.py`), `media_objects.py` | `routes/products.py` | `test_product_gallery_explorer.py`, `test_media_objects.py` |
 | 连续生图 | `image_sessions/` (`service.py`, `generation.py`) | `routes/image_sessions.py`, image adapters | image-session/provider tests |
@@ -140,9 +140,9 @@ Draft 状态依次覆盖 collecting、awaiting_confirmation、confirmed、materi
 
 `WorkflowGraphRun` 和 `WorkflowGraphNodeRun` 保存运行状态。执行读 run snapshot，不再读 live graph。图片结果写入 ProductImageAsset 和 `WorkflowGraphArtifact`。
 
-工作流运行由 ProductFlow 业务接口直接创建和校验。工作流页面可以直接提交整图或单个节点，用户不需要先创建 Agent Conversation。Agent 通过 `agent_workflow_run_requests.py` 创建待确认请求；用户确认后走同一套 `graph_runs.py` / `graph_execution.py` 约束。
+工作流运行由 ProductFlow 业务接口直接创建和校验。工作流页面可以直接提交整图或单个节点，用户不需要先创建 Agent Conversation。Agent 通过 `agent_workflow_run_requests.py` 创建待确认请求；用户确认后走同一套 `graph_runs.py` / `graph_execution.py` 约束。现图之后 Agent 不能再提交 WorkflowDraft。单次可逆改图走 `apply_graph_change_set`（Agent 立即写入也只接受一条 operation）；多节点重构写入未应用的 `WorkflowGraphProposal`，画布幽灵预览，确认和取消只在画布完成。
 
-WorkflowRecipe 保存用户主动创建的完整工作流或局部片段。保存从 live schema-v3 graph 提取，payload 是节点/边/分组片段，不含商品身份、绑定素材、生成结果或媒体字节。完整配方应用到另一商品仍生成待确认 Draft；应用前工作台预览将创建的节点和连线。片段配方对已有工作流返回明确冲突，不会静默写入。HTTP 保存入口是 `POST /api/v3/products/{product_id}/workflows/{workflow_id}/recipes`。
+WorkflowRecipe 保存用户主动创建的完整工作流或局部片段。保存从 live schema-v3 graph 提取，payload 是节点/边/分组片段，不含商品身份、绑定素材、生成结果或媒体字节。完整配方只在目标商品还没有 live graph 时创建；已有图时返回冲突。片段配方合并进已有 schema-v3 工作流，无法合并时返回明确冲突，不会写成 Draft 或退休模型。HTTP 保存入口是 `POST /api/v3/products/{product_id}/workflows/{workflow_id}/recipes`；预览/应用是 `POST /api/v3/products/{product_id}/workflow-recipes/{recipe_id}/preview` 与 `.../apply`。
 
 图规则由 `domain/graph_catalog.py` 与 `domain/graph_rules.py` 负责。目录同时给出端口合同和可编辑配置字段；ChangeSet 写入会拒绝未登记的 `config` 键。结构命令走 `graph_commands.py` / `graph_apply.py`，运行走 `graph_runs.py` / `graph_execution.py`。HTTP 入口是 `presentation/routes/workflow_graphs.py`。
 

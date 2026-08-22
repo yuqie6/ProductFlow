@@ -99,10 +99,15 @@ describe("AgentWorkbenchShell", () => {
     expect(shellSource).not.toContain("paddingRight");
   });
 
-  it("allows mobile tab labels to truncate instead of overflowing the viewport", () => {
+  it("keeps a bottom drawer inspector that does not equal the work-area box", () => {
     const markup = renderShell(true);
 
-    expect(markup).toContain("min-w-0 truncate");
+    expect(markup).toContain('data-inspector-layout="drawer"');
+    expect(markup).toContain("max-h-[min(48vh,22rem)]");
+    expect(markup).toContain("bottom-0");
+    expect(markup).toContain("data-agent-workbench-canvas-slot");
+    expect(markup).toContain("data-canvas-probe");
+    expect(markup).not.toMatch(/data-product-workbench-inspector[^>]*inset-0 z-30/);
   });
 
   it("keeps the canvas absolute below lg and makes it a normal grid child on desktop", () => {
@@ -132,13 +137,13 @@ describe("AgentWorkbenchShell", () => {
       compact: true,
       mobileView: "canvas",
       confirmationOpen: false,
-    })).toEqual({ canvasInert: false, sidebarInert: true, agentInert: true });
+    })).toEqual({ canvasInert: false, sidebarInert: false, agentInert: false });
     expect(deriveAgentWorkbenchRegionState({
       workflowAvailable: true,
       compact: true,
       mobileView: "agent",
       confirmationOpen: false,
-    })).toEqual({ canvasInert: true, sidebarInert: false, agentInert: false });
+    })).toEqual({ canvasInert: false, sidebarInert: false, agentInert: false });
     expect(deriveAgentWorkbenchRegionState({
       workflowAvailable: true,
       compact: false,
@@ -159,11 +164,13 @@ describe("AgentWorkbenchShell", () => {
     const gridChild = renderInspector({ desktopLayout: "grid-child" });
     const collapsedGridChild = renderInspector({ collapsed: true, desktopLayout: "grid-child", inert: true });
 
-    expect(overlay).toContain("absolute inset-0 z-30");
+    expect(overlay).toContain("data-inspector-layout=\"drawer\"");
+    expect(overlay).toContain("max-h-[min(48vh,22rem)]");
     expect(overlay).toContain("lg:bottom-6 lg:left-auto lg:right-6 lg:top-20");
     expect(overlay).not.toContain("lg:relative lg:z-auto lg:h-full lg:justify-self-stretch");
 
-    expect(gridChild).toContain("absolute inset-0 z-30");
+    expect(gridChild).toContain("data-inspector-layout=\"drawer\"");
+    expect(gridChild).toContain("max-h-[min(48vh,22rem)]");
     expect(gridChild).toContain("lg:relative lg:z-auto lg:h-full lg:justify-self-stretch");
     expect(gridChild).not.toContain("lg:bottom-6 lg:left-auto lg:right-6 lg:top-20");
     expect(gridChild).toContain(`--product-workbench-inspector-width:${INSPECTOR_RAIL_WIDTH + 360}px`);

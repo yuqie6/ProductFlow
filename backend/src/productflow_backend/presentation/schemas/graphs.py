@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from productflow_backend.application.product_workflow.graph_proposals import GraphProposalView
 from productflow_backend.application.product_workflow.graph_queries import (
     GraphEdgeSummary,
     GraphEdgeView,
@@ -98,6 +99,43 @@ class GraphGroupResponse(BaseModel):
     member_ids: list[str]
 
 
+class GraphProposalNodeResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    node_type: GraphNodeType
+    title: str
+    position_x: int
+    position_y: int
+    group_id: str | None = None
+    config: dict = Field(default_factory=dict)
+
+
+class GraphProposalEdgeResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    source_node_id: str
+    target_node_id: str
+    role: str
+    data_type: str
+    order: int
+
+
+class GraphProposalResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    summary: str
+    base_graph_revision: int
+    stale: bool
+    added_nodes: list[GraphProposalNodeResponse]
+    added_edges: list[GraphProposalEdgeResponse]
+    deleted_node_ids: list[str]
+    deleted_edge_ids: list[str]
+    changed_node_ids: list[str]
+
+
 class GraphProjectionResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -113,6 +151,7 @@ class GraphProjectionResponse(BaseModel):
     nodes: list[GraphNodeResponse]
     edges: list[GraphEdgeResponse]
     groups: list[GraphGroupResponse]
+    pending_proposal: GraphProposalResponse | None = None
 
 
 class GraphSourceProductResponse(BaseModel):
@@ -222,6 +261,44 @@ def serialize_graph_projection(projection: GraphProjection) -> GraphProjectionRe
         nodes=[_serialize_node(node) for node in projection.nodes],
         edges=[_serialize_edge(edge) for edge in projection.edges],
         groups=[_serialize_group(group) for group in projection.groups],
+        pending_proposal=_serialize_proposal(projection.pending_proposal),
+    )
+
+
+def _serialize_proposal(proposal: GraphProposalView | None) -> GraphProposalResponse | None:
+    if proposal is None:
+        return None
+    return GraphProposalResponse(
+        id=proposal.id,
+        summary=proposal.summary,
+        base_graph_revision=proposal.base_graph_revision,
+        stale=proposal.stale,
+        added_nodes=[
+            GraphProposalNodeResponse(
+                id=node.id,
+                node_type=node.node_type,
+                title=node.title,
+                position_x=node.position_x,
+                position_y=node.position_y,
+                group_id=node.group_id,
+                config=dict(node.config),
+            )
+            for node in proposal.added_nodes
+        ],
+        added_edges=[
+            GraphProposalEdgeResponse(
+                id=edge.id,
+                source_node_id=edge.source_node_id,
+                target_node_id=edge.target_node_id,
+                role=edge.role,
+                data_type=edge.data_type,
+                order=edge.order,
+            )
+            for edge in proposal.added_edges
+        ],
+        deleted_node_ids=list(proposal.deleted_node_ids),
+        deleted_edge_ids=list(proposal.deleted_edge_ids),
+        changed_node_ids=list(proposal.changed_node_ids),
     )
 
 

@@ -38,6 +38,7 @@ const baseScope: Scope = {
   draft_schema: { type: "object" },
   workflow_draft_schema: { type: "object" },
   current_draft_version: 1,
+  has_live_graph: false,
 };
 
 describe("ProductFlow Pi tools", () => {
@@ -47,10 +48,21 @@ describe("ProductFlow Pi tools", () => {
     expect(names).toContain("propose_workflow_draft");
     expect(names).toContain("request_workflow_run_v1");
     expect(names).toContain("finalize_product_intake_v1");
+    expect(names).not.toContain("apply_graph_change_set_v1");
     expect(names).not.toContain("create_product_image_folder_v1");
     expect(names).not.toContain("rename_product_image_asset_v1");
     expect(names).not.toContain("move_product_image_assets_v1");
     expect(names).not.toContain("propose_global_draft");
+  });
+
+  it("exposes live-graph command tools and hides covering drafts", () => {
+    const names = createProductFlowTools(runtime({ ...baseScope, has_live_graph: true })).map((tool) => tool.name).sort();
+    expect(names).toContain("apply_graph_change_set_v1");
+    expect(names).toContain("propose_graph_change_set_v1");
+    expect(names).not.toContain("confirm_graph_proposal_v1");
+    expect(names).not.toContain("discard_graph_proposal_v1");
+    expect(names).toContain("request_workflow_run_v1");
+    expect(names).not.toContain("propose_workflow_draft");
   });
 
   it("persists product intake from conversation asset IDs", async () => {

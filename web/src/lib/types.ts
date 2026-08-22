@@ -1252,13 +1252,41 @@ export interface AgentWorkbenchBootstrap {
   latest_workflow_revision: number;
 }
 
+export interface WorkflowRecipePreview {
+  mode: "create" | "merge";
+  recipe_id: string;
+  recipe_version: number;
+  nodes: Array<{
+    key: string;
+    node_type: GraphNodeType;
+    title: string;
+    position_x: number;
+    position_y: number;
+  }>;
+  edges: Array<{
+    key: string;
+    source_node_key: string;
+    target_node_key: string;
+    role: string;
+    data_type: string;
+    order: number;
+  }>;
+  groups: Array<{
+    key: string;
+    title: string;
+    member_keys: string[];
+  }>;
+}
+
 export interface WorkflowRecipeApplicationResult {
   created: boolean;
   recipe_id: string;
   recipe_version_id: string;
   recipe_version: number;
-  draft: WorkflowDraft;
-  conversation: AgentConversation;
+  mode: "create" | "merge";
+  graph: GraphProjection;
+  added_node_ids: string[];
+  added_edge_ids: string[];
 }
 
 export interface WorkflowRecipeSourceInput {
@@ -1679,6 +1707,33 @@ export interface GraphGroup {
   member_ids: string[];
 }
 
+export interface GraphProposalOverlay {
+  id: string;
+  summary: string;
+  base_graph_revision: number;
+  stale: boolean;
+  added_nodes: Array<{
+    id: string;
+    node_type: GraphNodeType;
+    title: string;
+    position_x: number;
+    position_y: number;
+    group_id: string | null;
+    config: Record<string, unknown>;
+  }>;
+  added_edges: Array<{
+    id: string;
+    source_node_id: string;
+    target_node_id: string;
+    role: GraphEdgeRole;
+    data_type: GraphEdgeDataType;
+    order: number;
+  }>;
+  deleted_node_ids: string[];
+  deleted_edge_ids: string[];
+  changed_node_ids: string[];
+}
+
 export interface GraphProjection {
   id: string;
   product_id: string;
@@ -1692,6 +1747,7 @@ export interface GraphProjection {
   nodes: GraphNode[];
   edges: GraphEdge[];
   groups: GraphGroup[];
+  pending_proposal?: GraphProposalOverlay | null;
 }
 
 export interface DirectCreateProductResponse {

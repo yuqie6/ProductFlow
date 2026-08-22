@@ -53,6 +53,14 @@ describe("RecipeLibraryPanel", () => {
       application: null,
       canAppend: () => true,
       onRetry: () => undefined,
+      onPreview: async () => ({
+        mode: "create" as const,
+        recipe_id: "r1",
+        recipe_version: 1,
+        nodes: [],
+        edges: [],
+        groups: [],
+      }),
       onApply: () => undefined,
       onAppend: () => undefined,
       onArchive: () => undefined,
@@ -64,20 +72,28 @@ describe("RecipeLibraryPanel", () => {
     expect(markup).toContain("应用");
   });
 
-  it("blocks fragment apply with a visible conflict, not a silent write", () => {
+  it("lets fragment recipes request a live-graph preview", () => {
     const markup = renderToStaticMarkup(createElement(RecipeLibraryPanel, {
       recipes: [recipe("recipe_fragment")],
       loading: false,
       error: null,
       operationRecipeId: null,
       application: null,
-      canAppend: (item) => item.kind === "workflow_recipe",
+      canAppend: () => true,
       onRetry: () => undefined,
+      onPreview: async () => ({
+        mode: "merge" as const,
+        recipe_id: "r1",
+        recipe_version: 1,
+        nodes: [],
+        edges: [],
+        groups: [],
+      }),
       onApply: () => undefined,
       onAppend: () => undefined,
       onArchive: () => undefined,
     }));
-    expect(markup).toContain("局部预设还不能合并到已有工作流");
-    expect(markup).toMatch(/\sdisabled(?:="")?(?:\s|>)/);
+    expect(markup).toContain("应用");
+    expect(markup).not.toContain("局部预设还不能合并到已有工作流");
   });
 });

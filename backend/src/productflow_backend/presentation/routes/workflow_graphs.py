@@ -15,6 +15,10 @@ from productflow_backend.application.product_workflow.graph_commands import (
 from productflow_backend.application.product_workflow.graph_contracts import WorkflowChangeSet
 from productflow_backend.application.product_workflow.graph_direct_create import create_product_with_direct_graph
 from productflow_backend.application.product_workflow.graph_draft_persist import persist_confirmed_draft_graph
+from productflow_backend.application.product_workflow.graph_proposals import (
+    confirm_graph_proposal,
+    discard_graph_proposal,
+)
 from productflow_backend.application.product_workflow.graph_queries import (
     get_active_graph_projection,
     get_graph_projection,
@@ -188,6 +192,48 @@ def redo_workflow_change_set_endpoint(
     result = redo_last_graph_change_set(session, product_id=product_id, graph_id=workflow_id)
     return serialize_graph_projection(
         get_graph_projection(session, product_id=product_id, graph_id=result.graph.id)
+    )
+
+
+@router.post(
+    "/products/{product_id}/workflows/{workflow_id}/proposals/{proposal_id}/confirm",
+    response_model=GraphProjectionResponse,
+)
+def confirm_graph_proposal_endpoint(
+    product_id: str,
+    workflow_id: str,
+    proposal_id: str,
+    session: Session = Depends(get_session),
+) -> GraphProjectionResponse:
+    result = confirm_graph_proposal(
+        session,
+        product_id=product_id,
+        graph_id=workflow_id,
+        proposal_id=proposal_id,
+    )
+    return serialize_graph_projection(
+        get_graph_projection(session, product_id=product_id, graph_id=result.id)
+    )
+
+
+@router.post(
+    "/products/{product_id}/workflows/{workflow_id}/proposals/{proposal_id}/discard",
+    response_model=GraphProjectionResponse,
+)
+def discard_graph_proposal_endpoint(
+    product_id: str,
+    workflow_id: str,
+    proposal_id: str,
+    session: Session = Depends(get_session),
+) -> GraphProjectionResponse:
+    discard_graph_proposal(
+        session,
+        product_id=product_id,
+        graph_id=workflow_id,
+        proposal_id=proposal_id,
+    )
+    return serialize_graph_projection(
+        get_graph_projection(session, product_id=product_id, graph_id=workflow_id)
     )
 
 

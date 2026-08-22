@@ -57,6 +57,7 @@ class AgentContractResponse(BaseModel):
     tool_contract_version: int
     draft_kind: Literal["workflow", "library_organization", "global"] | None = None
     draft_schema: dict[str, Any] = Field(default_factory=dict)
+    has_live_graph: bool = False
 
 
 class AgentRuntimeContextResponse(BaseModel):
@@ -169,6 +170,10 @@ class AgentPageContextSnapshotRequest(StrictAgentRequest):
 
 class AgentWorkflowDraftValidationRequest(StrictAgentRequest):
     value: dict[str, Any]
+
+
+class AgentGraphChangeSetRequest(StrictAgentRequest):
+    change_set: dict[str, Any]
 
 
 class AgentWorkflowDraftValidationResponse(BaseModel):

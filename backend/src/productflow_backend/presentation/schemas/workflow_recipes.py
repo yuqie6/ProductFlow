@@ -6,21 +6,15 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from productflow_backend.application.workflow_recipes.contracts import RECIPE_SCHEMA_VERSION, RecipePayload
+from productflow_backend.application.workflow_recipes.live_apply import RecipeApplyPreview
 from productflow_backend.application.workflow_recipes.service import (
     WorkflowRecipeApplicationResult,
     WorkflowRecipeArchiveResult,
     parse_recipe_payload_or_raise,
 )
-from productflow_backend.domain.enums import WorkflowRecipeKind
+from productflow_backend.domain.enums import GraphNodeType, WorkflowRecipeKind
 from productflow_backend.infrastructure.db.models import WorkflowRecipe, WorkflowRecipeVersion
-from productflow_backend.presentation.schemas.agent_conversations import (
-    AgentConversationResponse,
-    serialize_agent_conversation,
-)
-from productflow_backend.presentation.schemas.workflow_drafts import (
-    WorkflowDraftResponse,
-    serialize_workflow_draft,
-)
+from productflow_backend.presentation.schemas.graphs import GraphProjectionResponse
 
 
 class StrictRecipeRequest(BaseModel):
@@ -53,6 +47,10 @@ class CreateWorkflowRecipeRequest(RecipeSourceRequest):
 
 
 class AppendWorkflowRecipeVersionRequest(CreateWorkflowRecipeRequest):
+    expected_recipe_version: int = Field(ge=1)
+
+
+class PreviewWorkflowRecipeRequest(StrictRecipeRequest):
     expected_recipe_version: int = Field(ge=1)
 
 
@@ -93,13 +91,47 @@ class WorkflowRecipeArchiveResponse(BaseModel):
     recipe: WorkflowRecipeResponse
 
 
+class RecipePreviewNodeResponse(BaseModel):
+    key: str
+    node_type: GraphNodeType
+    title: str
+    position_x: int
+    position_y: int
+
+
+class RecipePreviewEdgeResponse(BaseModel):
+    key: str
+    source_node_key: str
+    target_node_key: str
+    role: str
+    data_type: str
+    order: int
+
+
+class RecipePreviewGroupResponse(BaseModel):
+    key: str
+    title: str
+    member_keys: list[str]
+
+
+class WorkflowRecipePreviewResponse(BaseModel):
+    mode: Literal["create", "merge"]
+    recipe_id: str
+    recipe_version: int
+    nodes: list[RecipePreviewNodeResponse]
+    edges: list[RecipePreviewEdgeResponse]
+    groups: list[RecipePreviewGroupResponse]
+
+
 class WorkflowRecipeApplicationResponse(BaseModel):
     created: bool
     recipe_id: str
     recipe_version_id: str
     recipe_version: int
-    draft: WorkflowDraftResponse
-    conversation: AgentConversationResponse
+    mode: Literal["create", "merge"]
+    graph: GraphProjectionResponse
+    added_node_ids: list[str]
+    added_edge_ids: list[str]
 
 
 def serialize_workflow_recipe_version(
@@ -154,14 +186,54 @@ def serialize_workflow_recipe_archive(
 
 def serialize_workflow_recipe_application(
     result: WorkflowRecipeApplicationResult,
+    graph: GraphProjectionResponse,
 ) -> WorkflowRecipeApplicationResponse:
     return WorkflowRecipeApplicationResponse(
         created=result.created,
         recipe_id=result.recipe.id,
         recipe_version_id=result.recipe_version.id,
         recipe_version=result.recipe_version.version,
-        draft=serialize_workflow_draft(result.draft),
-        conversation=serialize_agent_conversation(result.conversation),
+        mode=result.mode,
+        graph=graph,
+        added_node_ids=list(result.added_node_ids),
+        added_edge_ids=list(result.added_edge_ids),
+    )
+
+
+def serialize_workflow_recipe_preview(preview: RecipeApplyPreview) -> WorkflowRecipePreviewResponse:
+    return WorkflowRecipePreviewResponse(
+        mode=preview.mode,
+        recipe_id=preview.recipe_id,
+        recipe_version=preview.recipe_version,
+        nodes=[
+            RecipePreviewNodeResponse(
+                key=node.key,
+                node_type=node.node_type,
+                title=node.title,
+                position_x=node.position_x,
+                position_y=node.position_y,
+            )
+            for node in preview.nodes
+        ],
+        edges=[
+            RecipePreviewEdgeResponse(
+                key=edge.key,
+                source_node_key=edge.source_node_key,
+                target_node_key=edge.target_node_key,
+                role=edge.role,
+                data_type=edge.data_type,
+                order=edge.order,
+            )
+            for edge in preview.edges
+        ],
+        groups=[
+            RecipePreviewGroupResponse(
+                key=group.key,
+                title=group.title,
+                member_keys=list(group.member_keys),
+            )
+            for group in preview.groups
+        ],
     )
 
 
@@ -169,13 +241,16 @@ __all__ = [
     "AppendWorkflowRecipeVersionRequest",
     "ApplyWorkflowRecipeRequest",
     "CreateWorkflowRecipeRequest",
+    "PreviewWorkflowRecipeRequest",
     "RECIPE_SCHEMA_VERSION",
     "WorkflowRecipeArchiveResponse",
     "WorkflowRecipeApplicationResponse",
+    "WorkflowRecipePreviewResponse",
     "WorkflowRecipeResponse",
     "WorkflowRecipeSummaryResponse",
     "serialize_workflow_recipe",
     "serialize_workflow_recipe_archive",
     "serialize_workflow_recipe_application",
+    "serialize_workflow_recipe_preview",
     "serialize_workflow_recipe_summary",
 ]

@@ -133,6 +133,14 @@ class GraphHistoryKind(StrEnum):
     REDO = "redo"
 
 
+class GraphProposalStatus(StrEnum):
+    """未应用 GraphProposal 的生命周期。提案层不能运行。"""
+
+    PENDING = "pending"
+    CONFIRMED = "confirmed"
+    DISCARDED = "discarded"
+
+
 class GraphRunScope(StrEnum):
     """v3 运行范围。"""
 

@@ -51,12 +51,12 @@
 
 ### 只从 ROADMAP 进入
 
-在线工作流已经是 schema-v3 `workflow_graphs`。Agent 对 live graph 的 GraphProposal、配方应用到 live graph 的 ChangeSet 仍未交付。工作台修葺未完成项只从 `ROADMAP.md` §2 进入，实施北极星是 `specs/v3-canvas-restoration.md` 与 `specs/v3-sidebar-restoration.md`。不要把下列未完成项写进 CONTEXT、PRD 或 ARCHITECTURE 的当前事实段落：
+在线工作流已经是 schema-v3 `workflow_graphs`。配方应用到 live graph 与 Agent GraphProposal 已作为当前实现写进 `ARCHITECTURE.md`。工作台修葺未完成项只从 `ROADMAP.md` §2 进入，实施北极星是 `specs/v3-canvas-restoration.md` 与 `specs/v3-sidebar-restoration.md`。不要把下列未完成项写进 CONTEXT、PRD 或 ARCHITECTURE 的当前事实段落：
 
 - `ROADMAP.md` §2 未完成项
 - `specs/v3-canvas-restoration.md` 中尚未落地的切片 A–G
 - `specs/v3-sidebar-restoration.md` 中尚未落地的切片 S1–S4
-- `adr/0008-free-canvas-agent-graph-authority.md` 中尚未落地的 GraphProposal / Recipe ChangeSet
+- `adr/0008-free-canvas-agent-graph-authority.md` 中尚未落地的 Intent+ChangeSet 收敛与 v1 归档重建
 - `specs/schema-v3-admission-slice.md` 中尚未落地的后续切片
 - `rollout/free-canvas-v3-interaction-parity.md` 中尚未完成的交互项
 

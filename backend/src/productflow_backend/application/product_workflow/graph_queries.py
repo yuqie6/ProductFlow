@@ -18,6 +18,10 @@ from productflow_backend.application.product_workflow.graph_compiler import (
     compile_image_runtime,
     compile_prompt_runtime,
 )
+from productflow_backend.application.product_workflow.graph_proposals import (
+    GraphProposalView,
+    pending_proposal_view,
+)
 from productflow_backend.application.product_workflow.product_sources import ProductSourceSnapshot
 from productflow_backend.domain.enums import (
     GraphArtifactType,
@@ -98,6 +102,7 @@ class GraphProjection:
     nodes: tuple[GraphNodeView, ...]
     edges: tuple[GraphEdgeView, ...]
     groups: tuple[GraphGroupView, ...]
+    pending_proposal: GraphProposalView | None = None
 
 
 def get_graph_projection(session: Session, *, product_id: str, graph_id: str) -> GraphProjection:
@@ -126,6 +131,7 @@ def project_workflow_graph(session: Session, graph: WorkflowGraph) -> GraphProje
         preview_asset_ids=_preview_asset_ids(session, graph.id),
         artifact_input_digests=_artifact_input_digests(session, graph.id),
         sources=load_graph_sources(session, graph, applied),
+        pending_proposal=pending_proposal_view(session, graph, applied),
     )
 
 
@@ -139,6 +145,7 @@ def build_graph_projection(
     preview_asset_ids: dict[str, str] | None = None,
     artifact_input_digests: dict[str, str] | None = None,
     sources: dict[str, GraphSourceRecord] | None = None,
+    pending_proposal: GraphProposalView | None = None,
 ) -> GraphProjection:
     outgoing_ids = {edge.source_node_id for edge in applied.edges}
     member_ids: dict[str, list[str]] = {group.id: [] for group in applied.groups}
@@ -181,6 +188,7 @@ def build_graph_projection(
             GraphGroupView(id=group.id, title=group.title, member_ids=tuple(member_ids.get(group.id, ())))
             for group in applied.groups
         ),
+        pending_proposal=pending_proposal,
     )
 
 

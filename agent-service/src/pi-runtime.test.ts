@@ -19,6 +19,7 @@ const scope: Scope = {
   draft_schema: { type: "object" },
   workflow_draft_schema: { type: "object" },
   current_draft_version: 1,
+  has_live_graph: false,
 };
 
 const config = {

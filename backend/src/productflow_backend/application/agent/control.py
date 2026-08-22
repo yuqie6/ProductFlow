@@ -187,7 +187,7 @@ def refresh_agent_turn(
         projection_id=projection_id,
     )
     if projection.harness_turn_id is None:
-        raise ConflictError("Agent Turn 尚未绑定 runtime Turn")
+        return projection
     try:
         state = gateway.get_turn(
             conversation_id=conversation_id,

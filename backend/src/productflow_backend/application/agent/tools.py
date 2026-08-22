@@ -50,6 +50,11 @@ from productflow_backend.application.product_images.queries import (
     list_gallery_assets,
 )
 from productflow_backend.application.product_workflow.graph_commands import get_active_workflow_graph
+from productflow_backend.application.product_workflow.graph_proposals import (
+    apply_agent_graph_change_set,
+    parse_agent_change_set,
+    propose_graph_change_set,
+)
 from productflow_backend.application.product_workflow.graph_queries import project_workflow_graph
 from productflow_backend.application.workflow_drafts.contracts import (
     WorkflowDraftPayloadV1,
@@ -86,7 +91,7 @@ from productflow_backend.infrastructure.db.models import (
 )
 from productflow_backend.infrastructure.storage import LocalStorage
 
-AGENT_TOOL_CONTRACT_VERSION = 11
+AGENT_TOOL_CONTRACT_VERSION = 12
 AGENT_ASSET_LIST_DEFAULT_LIMIT = 50
 AGENT_ASSET_LIST_MAX_LIMIT = 100
 AGENT_ASSET_MAX_BYTES = 20 * 1024 * 1024
@@ -143,15 +148,19 @@ WORKFLOW_AGENT_LIVE_GRAPH_PROMPT = """你是 ProductFlow 的商品工作流协�
 3. 只有缺少会改变运行或解释结果的事实时才使用 ask_user。
 4. 商品外观必须以已核验参考图为依据。确有需要时 inspect 明确选中的图片，单次最多 6 张。
    用户可以在本对话继续上传图片；本轮附件 ID 是权威输入。
-5. 用户要求运行时，使用 request_workflow_run_v1 创建待确认运行请求；不要声称已经开始运行。
-6. 解释节点、检查配置缺口、对照 Catalog。改节点配置和连线由用户在画布完成。
+5. 用户明确要求的、可逆的单次改图（改一个节点配置、连一条边、断一条边、改名）：
+   调用 apply_graph_change_set_v1，且 operations 只能有一条。一次撤销能收回。
+6. 多节点重构、批量删除、覆盖预设：调用 propose_graph_change_set_v1，在画布上留下未应用幽灵预览。
+   不要声称已经改图。确认和取消只在画布上，不要调用确认或取消提案的工具。
+7. 用户要求运行时，使用 request_workflow_run_v1 创建待确认运行请求；不要声称已经开始运行。
+8. 解释节点、检查配置缺口、对照 Catalog 可以直接做。
 
 不可违反：
 - 不得调用 propose_workflow_draft，也不得把一份新 Draft 当成现图替换方案。
 - 不得删除素材、臆造资产或商品事实，不得输出 base64、data URL、存储路径和内部 URL。
-- 不得逐节点写入画布。
+- 提案层不能运行。确认和取消提案只在画布完成。
 
-成功条件：准确解释当前图、指出未配置或未使用节点，并在用户要求时提交可确认的运行请求。
+成功条件：准确解释当前图、指出未配置或未使用节点；单次改图立即可见；批量改图先预览；用户要求时提交可确认的运行请求。
 """
 
 GLOBAL_AGENT_SYSTEM_PROMPT = """你是 ProductFlow 的全局素材与工作流辅助 Agent。
@@ -302,6 +311,7 @@ def _agent_contract_for_conversation(session: Session, conversation: AgentConver
             "draft_schema": global_agent_draft_schema(),
             "workflow_draft_schema": {},
             "tool_contract_version": AGENT_TOOL_CONTRACT_VERSION,
+            "has_live_graph": False,
         }
     draft = conversation.workflow_draft
     if conversation.product_id is None or draft is None:
@@ -325,6 +335,7 @@ def _agent_contract_for_conversation(session: Session, conversation: AgentConver
         "draft_schema": workflow_draft_tool_schema(),
         "workflow_draft_schema": workflow_draft_tool_schema(),
         "tool_contract_version": AGENT_TOOL_CONTRACT_VERSION,
+        "has_live_graph": live_graph is not None,
     }
 
 
@@ -1863,6 +1874,54 @@ def _commit_tool_mutation(
     return result
 
 
+def apply_agent_graph_change_set_tool(
+    session: Session,
+    *,
+    conversation_id: str,
+    change_set: dict[str, Any],
+) -> dict[str, Any]:
+    conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
+    _require_product_conversation(conversation)
+    parsed = parse_agent_change_set(change_set)
+    graph = apply_agent_graph_change_set(
+        session,
+        conversation_id=conversation_id,
+        change_set=parsed,
+    )
+    return {
+        "accepted": True,
+        "applied": True,
+        "graph_id": graph.id,
+        "revision": graph.revision,
+        "summary": parsed.summary,
+    }
+
+
+def propose_agent_graph_change_set_tool(
+    session: Session,
+    *,
+    conversation_id: str,
+    change_set: dict[str, Any],
+) -> dict[str, Any]:
+    conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
+    _require_product_conversation(conversation)
+    parsed = parse_agent_change_set(change_set)
+    proposal = propose_graph_change_set(
+        session,
+        conversation_id=conversation_id,
+        change_set=parsed,
+    )
+    return {
+        "accepted": True,
+        "applied": False,
+        "pending_confirmation": True,
+        "proposal_id": proposal.id,
+        "graph_id": proposal.graph_id,
+        "base_graph_revision": proposal.base_graph_revision,
+        "summary": proposal.summary,
+    }
+
+
 __all__ = [
     "AGENT_ASSET_LIST_DEFAULT_LIMIT",
     "AGENT_ASSET_LIST_MAX_LIMIT",
@@ -1915,4 +1974,6 @@ __all__ = [
     "validate_agent_workflow_draft",
     "validate_agent_library_organization_draft",
     "validate_agent_global_draft",
+    "apply_agent_graph_change_set_tool",
+    "propose_agent_graph_change_set_tool",
 ]

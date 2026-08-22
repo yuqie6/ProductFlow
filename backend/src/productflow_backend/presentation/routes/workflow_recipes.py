@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
+from productflow_backend.application.product_workflow.graph_queries import get_graph_projection
 from productflow_backend.application.workflow_recipes.service import (
     append_workflow_recipe_version,
     apply_workflow_recipe,
@@ -10,19 +11,24 @@ from productflow_backend.application.workflow_recipes.service import (
     create_workflow_recipe,
     get_workflow_recipe_or_raise,
     list_workflow_recipes,
+    preview_workflow_recipe,
 )
 from productflow_backend.presentation.deps import get_session, require_admin
+from productflow_backend.presentation.schemas.graphs import serialize_graph_projection
 from productflow_backend.presentation.schemas.workflow_recipes import (
     AppendWorkflowRecipeVersionRequest,
     ApplyWorkflowRecipeRequest,
     CreateWorkflowRecipeRequest,
+    PreviewWorkflowRecipeRequest,
     WorkflowRecipeApplicationResponse,
     WorkflowRecipeArchiveResponse,
+    WorkflowRecipePreviewResponse,
     WorkflowRecipeResponse,
     WorkflowRecipeSummaryResponse,
     serialize_workflow_recipe,
     serialize_workflow_recipe_application,
     serialize_workflow_recipe_archive,
+    serialize_workflow_recipe_preview,
     serialize_workflow_recipe_summary,
 )
 
@@ -149,6 +155,35 @@ def append_workflow_recipe_version_endpoint(
 
 
 @router.post(
+    "/products/{product_id}/workflow-recipes/{recipe_id}/preview",
+    response_model=WorkflowRecipePreviewResponse,
+)
+@v3_router.post(
+    "/products/{product_id}/workflow-recipes/{recipe_id}/preview",
+    response_model=WorkflowRecipePreviewResponse,
+)
+def preview_workflow_recipe_endpoint(
+    product_id: str,
+    recipe_id: str,
+    payload: PreviewWorkflowRecipeRequest,
+    session: Session = Depends(get_session),
+) -> WorkflowRecipePreviewResponse:
+    return serialize_workflow_recipe_preview(
+        preview_workflow_recipe(
+            session,
+            product_id=product_id,
+            recipe_id=recipe_id,
+            expected_recipe_version=payload.expected_recipe_version,
+        )
+    )
+
+
+@router.post(
+    "/products/{product_id}/workflow-recipes/{recipe_id}/apply",
+    response_model=WorkflowRecipeApplicationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+@v3_router.post(
     "/products/{product_id}/workflow-recipes/{recipe_id}/apply",
     response_model=WorkflowRecipeApplicationResponse,
     status_code=status.HTTP_201_CREATED,
@@ -159,14 +194,21 @@ def apply_workflow_recipe_endpoint(
     payload: ApplyWorkflowRecipeRequest,
     session: Session = Depends(get_session),
 ) -> WorkflowRecipeApplicationResponse:
+    result = apply_workflow_recipe(
+        session,
+        product_id=product_id,
+        recipe_id=recipe_id,
+        expected_recipe_version=payload.expected_recipe_version,
+        idempotency_key=payload.idempotency_key,
+    )
+    projection = get_graph_projection(
+        session,
+        product_id=product_id,
+        graph_id=result.graph.id,
+    )
     return serialize_workflow_recipe_application(
-        apply_workflow_recipe(
-            session,
-            product_id=product_id,
-            recipe_id=recipe_id,
-            expected_recipe_version=payload.expected_recipe_version,
-            idempotency_key=payload.idempotency_key,
-        )
+        result,
+        serialize_graph_projection(projection),
     )
 
 

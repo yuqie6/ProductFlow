@@ -27,6 +27,7 @@ from productflow_backend.application.agent.tools import (
     apply_agent_asset_rename,
     apply_agent_folder_create,
     apply_agent_folder_rename,
+    apply_agent_graph_change_set_tool,
     finalize_agent_product_intake,
     get_agent_contract,
     get_agent_global_workflow_context,
@@ -42,6 +43,7 @@ from productflow_backend.application.agent.tools import (
     prepare_agent_asset_rename,
     prepare_agent_folder_create,
     prepare_agent_folder_rename,
+    propose_agent_graph_change_set_tool,
     read_agent_global_media_asset_content,
     read_agent_product_asset_content,
     reconcile_agent_asset_move,
@@ -108,6 +110,7 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     AgentGlobalProductListResponse,
     AgentGlobalProductResponse,
     AgentGlobalWorkflowRunRequestCreateRequest,
+    AgentGraphChangeSetRequest,
     AgentLegacyArchiveInspectResponse,
     AgentLegacyArchiveListResponse,
     AgentProductWorkspaceLaunchRequest,
@@ -209,6 +212,32 @@ def validate_agent_workflow_draft_endpoint(
         value=payload.value,
     )
     return AgentWorkflowDraftValidationResponse()
+
+
+@router.post("/{conversation_id}/graph/apply-change-set")
+def apply_agent_graph_change_set_endpoint(
+    conversation_id: str,
+    payload: AgentGraphChangeSetRequest,
+    session: Session = Depends(get_session),
+) -> dict:
+    return apply_agent_graph_change_set_tool(
+        session,
+        conversation_id=conversation_id,
+        change_set=payload.change_set,
+    )
+
+
+@router.post("/{conversation_id}/graph/proposals")
+def propose_agent_graph_change_set_endpoint(
+    conversation_id: str,
+    payload: AgentGraphChangeSetRequest,
+    session: Session = Depends(get_session),
+) -> dict:
+    return propose_agent_graph_change_set_tool(
+        session,
+        conversation_id=conversation_id,
+        change_set=payload.change_set,
+    )
 
 
 @router.post(

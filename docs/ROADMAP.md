@@ -1,6 +1,6 @@
 # ProductFlow Roadmap
 
-本文只记录尚未实现或尚未取得真实验证证据的方向。当前已交付能力见 `PRD.md`，当前代码结构见 `ARCHITECTURE.md`，V1 切换证据见 `rollout/workflow-v2-cutover.md`。在线 schema-v3 图已经写进那些当前实现文档；GraphProposal、配方应用到 live graph 的 ChangeSet 只从本文 §2 进入。
+本文只记录尚未实现或尚未取得真实验证证据的方向。当前已交付能力见 `PRD.md`，当前代码结构见 `ARCHITECTURE.md`，V1 切换证据见 `rollout/workflow-v2-cutover.md`。在线 schema-v3 图、配方应用到 live graph 的 ChangeSet，以及 live-graph Agent GraphProposal 已经写进那些当前实现文档。浏览器 1440/1024/390 连续动作证据仍待补。
 
 ## 近期优先级
 
@@ -28,9 +28,9 @@
 - 服务端 Redo（`POST .../redo`，inverse ChangeSet；不得把 Redo 映射成再调 Undo）。代码已接线；浏览器证据仍待切片 G。
 - Inspector 已按 Node Catalog `config_fields` 渲染；保存仍走 `update_node_config`。浏览器证据仍待切片 G。详情失败/空选下一步/结果语言是侧栏切片 S1。
 - 进入分组已接线：双击或按钮进入、面包屑返回、组内/全图分记视口。分组仍非 DAG 节点。浏览器证据仍待切片 G。
-- 从 live v3 graph 提取并保存配方已接线（全图/分组/选区；无 V2 payload）。应用到另一商品仍产生待确认 Draft，应用前预览节点/边。片段配方明确冲突。Recipe ChangeSet 直接写到另一张 live graph 仍未交付。浏览器证据仍待切片 G。
-- Agent 对 live graph 的 GraphProposal / ChangeSet。目标合同见 `docs/adr/0008-free-canvas-agent-graph-authority.md`。镜头/场景落图与编译器入边合同见 `docs/specs/shot-scene-assembly.md`；现图 Agent 仍不能写 ChangeSet。
-- 侧栏 390px 底抽屉；当前窄屏打开详情会整页盖住画布。
+- 从 live v3 graph 提取、保存并应用到另一商品 live graph 已接线（全图创建；片段合并或明确冲突）。浏览器 1440/1024/390 证据仍待切片 G。
+- Agent 对 live graph 的单次 Graph Command 与未应用 GraphProposal（幽灵预览、确认、取消）已接线。目标合同见 `docs/adr/0008-free-canvas-agent-graph-authority.md`。浏览器证据仍待切片 G。
+- 侧栏 390px 底抽屉已接到 `ProductWorkbenchInspector`；浏览器证据仍待切片 G。
 - `docs/rollout/free-canvas-v3-interaction-parity.md` 中尚未完成的交互项；该表是检查清单，质量上限以画布/侧栏修葺北极星为准。
 - 真实 provider、PostgreSQL/Redis/worker、桌面与 390px 浏览器、console/network error、取消/retry 和无 retired runtime fallback 的完整 gate。
 
@@ -63,9 +63,8 @@
 
 ### 6. 配方
 
-- Recipe ChangeSet 直接写到另一张 live graph（当前完整配方仍落到待确认 Draft）。
-- 片段配方合并进已有工作流。
 - 保持配方完全由用户主动保存。
+- 浏览器侧应用预览/确认与片段合并的证据仍待切片 G。
 
 ### 7. 开发体验
 

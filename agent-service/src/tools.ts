@@ -252,7 +252,9 @@ export function createProductFlowTools(runtime: ToolRuntime): ToolDefinition[] {
   ];
 
   if (runtime.scope.scope_type === "product_workflow") {
-    if (runtime.scope.task_id === null) {
+    if (runtime.scope.has_live_graph) {
+      tools.push(createApplyGraphChangeSetTool(runtime), createProposeGraphChangeSetTool(runtime));
+    } else if (runtime.scope.task_id === null) {
       tools.push(
         createDraftTool(runtime, "propose_workflow_draft", "Propose workflow draft", runtime.scope.workflow_draft_schema, false),
       );
@@ -843,6 +845,50 @@ function createGlobalWorkspaceTool(runtime: ToolRuntime): ToolDefinition {
       });
       return textResult(result, { product_workspace_created: true });
     },
+  });
+}
+
+const applyGraphChangeSetParameters = Type.Object(
+  {
+    base_graph_revision: Type.Integer({ minimum: 0 }),
+    summary: Type.String({ minLength: 1, maxLength: 500 }),
+    operations: Type.Array(Type.Object({}, { additionalProperties: true }), { minItems: 1, maxItems: 1 }),
+  },
+  { additionalProperties: false },
+);
+
+const proposeGraphChangeSetParameters = Type.Object(
+  {
+    base_graph_revision: Type.Integer({ minimum: 0 }),
+    summary: Type.String({ minLength: 1, maxLength: 500 }),
+    operations: Type.Array(Type.Object({}, { additionalProperties: true }), { minItems: 1, maxItems: 128 }),
+  },
+  { additionalProperties: false },
+);
+
+function createApplyGraphChangeSetTool(runtime: ToolRuntime): ToolDefinition {
+  return defineTool({
+    name: "apply_graph_change_set_v1",
+    label: "Apply graph change",
+    description:
+      "Apply one reversible Graph Command to the live schema-v3 graph. operations must contain exactly one edit such as updating one node, connecting or disconnecting one edge, or renaming. Do not use this for multi-node reconstructs or bulk deletes.",
+    parameters: applyGraphChangeSetParameters,
+    execute: async (_toolCallID: string, params: { base_graph_revision: number; summary: string; operations: object[] }): Promise<Result> =>
+      textResult(await runtime.client.applyGraphChangeSet(runtime.scope.conversation_id, params as JsonObject, runtime.signal)),
+  });
+}
+
+function createProposeGraphChangeSetTool(runtime: ToolRuntime): ToolDefinition {
+  return defineTool({
+    name: "propose_graph_change_set_v1",
+    label: "Propose graph change",
+    description:
+      "Store an unapplied GraphProposal overlay on the live canvas. Use for multi-node reconstructs, bulk deletes, or preset overlays. The proposal cannot run. The user confirms or discards it on the canvas.",
+    parameters: proposeGraphChangeSetParameters,
+    execute: async (_toolCallID: string, params: { base_graph_revision: number; summary: string; operations: object[] }): Promise<Result> =>
+      textResult(await runtime.client.proposeGraphChangeSet(runtime.scope.conversation_id, params as JsonObject, runtime.signal), {
+        pending_confirmation: true,
+      }),
   });
 }
 

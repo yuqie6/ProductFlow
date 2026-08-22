@@ -15,17 +15,12 @@ from productflow_backend.application.agent.conversations import (
     project_agent_turn_state,
     reserve_agent_turn,
 )
-from productflow_backend.application.agent.tools import get_agent_contract, get_agent_product_context
+from productflow_backend.application.agent.sessions import new_agent_session
 from productflow_backend.application.product_workflow.graph_commands import apply_graph_change_set, load_applied_graph
 from productflow_backend.application.product_workflow.graph_contracts import CreateGroupOp, WorkflowChangeSet
 from productflow_backend.application.product_workflow.graph_direct_create import create_product_with_direct_graph
-from productflow_backend.application.product_workflow.graph_draft_persist import persist_confirmed_draft_graph
 from productflow_backend.application.product_workflow.graph_template import DirectCreateImageType
 from productflow_backend.application.products import create_canonical_product
-from productflow_backend.application.workflow_drafts.service import (
-    append_workflow_draft_revision,
-    confirm_workflow_draft_revision,
-)
 from productflow_backend.application.workflow_recipes.contracts import RecipePayload, recipe_payload_hash
 from productflow_backend.application.workflow_recipes.extract import extract_recipe_payload
 from productflow_backend.application.workflow_recipes.service import (
@@ -34,8 +29,16 @@ from productflow_backend.application.workflow_recipes.service import (
     archive_workflow_recipe,
     create_workflow_recipe,
     list_workflow_recipes,
+    preview_workflow_recipe,
 )
-from productflow_backend.domain.enums import AgentTurnStatus, GraphActorType, GraphNodeType, WorkflowRecipeKind
+from productflow_backend.domain.enums import (
+    AgentConversationStatus,
+    AgentTurnStatus,
+    GraphActorType,
+    GraphNodeType,
+    WorkflowDraftStatus,
+    WorkflowRecipeKind,
+)
 from productflow_backend.domain.errors import ConflictError
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
@@ -302,12 +305,26 @@ def test_seeded_recipe_archive_hides_active_recipe(db_session) -> None:
     assert replay.changed is False
 
 
-def test_recipe_apply_creates_version_zero_then_first_artifact_can_persist_v3_graph(db_session) -> None:
+def test_recipe_apply_writes_live_graph_via_graph_command(db_session) -> None:
     recipe = _seed_recipe(db_session)
     target = _create_product(db_session, name="目标商品")
 
     assert "product_workflows" not in Base.metadata.tables
     assert db_session.scalar(select(WorkflowGraph).where(WorkflowGraph.product_id == target.id)) is None
+
+    preview = preview_workflow_recipe(
+        db_session,
+        product_id=target.id,
+        recipe_id=recipe.id,
+        expected_recipe_version=1,
+    )
+    assert preview.mode == "create"
+    assert {node.node_type for node in preview.nodes} >= {
+        GraphNodeType.PRODUCT_SOURCE,
+        GraphNodeType.PROMPT_GENERATION,
+        GraphNodeType.IMAGE_GENERATION,
+    }
+    assert preview.edges
 
     applied = apply_workflow_recipe(
         db_session,
@@ -317,14 +334,22 @@ def test_recipe_apply_creates_version_zero_then_first_artifact_can_persist_v3_gr
         idempotency_key="target-apply-1",
     )
     assert applied.created is True
-    assert applied.draft.status.value == "collecting"
-    assert applied.draft.current_revision_id is None
-    assert applied.draft.current_revision is None
-    assert applied.draft.revisions == []
-    assert applied.draft.recipe_seed is not None
-    assert applied.draft.recipe_seed.recipe_version_id == recipe.current_version_id
-    assert applied.conversation.workflow_draft_id == applied.draft.id
-    assert db_session.scalar(select(WorkflowGraph).where(WorkflowGraph.product_id == target.id)) is None
+    assert applied.mode == "create"
+    assert applied.graph.product_id == target.id
+    assert applied.graph.schema_version == 3
+    assert applied.added_node_ids
+    dumped = recipe.current_version.payload_json
+    assert "product_identity" not in json.dumps(dumped)
+    live = load_applied_graph(db_session, applied.graph)
+    assert {node.node_type for node in live.nodes} >= {
+        GraphNodeType.PRODUCT_SOURCE,
+        GraphNodeType.PROMPT_GENERATION,
+        GraphNodeType.IMAGE_GENERATION,
+    }
+    source = next(node for node in live.nodes if node.node_type == GraphNodeType.PRODUCT_SOURCE)
+    assert source.config.get("source_product_id") == target.id
+    assert all(node.bound_asset_id is None for node in live.nodes if node.node_type == GraphNodeType.IMAGE_ASSET)
+    assert db_session.scalar(select(WorkflowDraft).where(WorkflowDraft.product_id == target.id)) is None
 
     replay = apply_workflow_recipe(
         db_session,
@@ -334,12 +359,8 @@ def test_recipe_apply_creates_version_zero_then_first_artifact_can_persist_v3_gr
         idempotency_key="target-apply-1",
     )
     assert replay.created is False
-    assert replay.draft.id == applied.draft.id
-    assert replay.conversation.id == applied.conversation.id
-    assert len(list(db_session.scalars(select(WorkflowDraft).where(WorkflowDraft.product_id == target.id)))) == 1
-    assert len(
-        list(db_session.scalars(select(AgentConversation).where(AgentConversation.product_id == target.id)))
-    ) == 1
+    assert replay.graph.id == applied.graph.id
+    assert replay.added_node_ids == applied.added_node_ids
 
     with pytest.raises(ConflictError, match="相同 idempotency key"):
         apply_workflow_recipe(
@@ -350,66 +371,12 @@ def test_recipe_apply_creates_version_zero_then_first_artifact_can_persist_v3_gr
             idempotency_key="target-apply-1",
         )
 
-    contract = get_agent_contract(db_session, applied.conversation.id)
-    assert contract["current_draft_version"] == 0
-    context = get_agent_product_context(db_session, applied.conversation.id)
-    assert context["workflow_draft"] == {
-        "id": applied.draft.id,
-        "status": "collecting",
-        "version": 0,
-        "payload": None,
-        "intake": None,
-    }
-    seed_context = context["workflow_recipe_seed"]
-    assert seed_context["recipe_id"] == recipe.id
-    assert seed_context["recipe_version"] == 1
-    assert seed_context["payload"] == recipe.current_version.payload_json
-    assert "base_workflow" not in seed_context
-    assert "不得把 recipe payload 直接作为 WorkflowDraft" in contract["system_prompt"]
 
-    target_payload = make_workflow_draft_payload(reference_asset_id=target.image_assets[0].id)
-    target_payload["title"] = "目标商品工作流"
-    first_revision = append_workflow_draft_revision(
-        db_session,
-        product_id=target.id,
-        draft_id=applied.draft.id,
-        expected_draft_version=0,
-        payload=target_payload,
-        ready_for_confirmation=True,
-        source_turn_id="target-turn-1",
-        source_artifact_step_id="target-artifact-1",
-    )
-    assert first_revision.current_revision is not None
-    assert first_revision.current_revision.version == 1
-    assert len(first_revision.revisions) == 1
-
-    confirmed = confirm_workflow_draft_revision(
-        db_session,
-        product_id=target.id,
-        draft_id=applied.draft.id,
-        expected_draft_version=1,
-    )
-    assert confirmed.status.value == "confirmed"
-
-    persisted = persist_confirmed_draft_graph(
-        db_session,
-        product_id=target.id,
-        draft_id=applied.draft.id,
-        expected_draft_version=1,
-    )
-    assert persisted.created is True
-    assert persisted.graph.product_id == target.id
-    assert persisted.graph.schema_version == 3
-    assert persisted.graph.revision == 1
-    assert persisted.graph.source_draft_revision_id == confirmed.current_revision_id
-    assert db_session.scalar(select(WorkflowGraph).where(WorkflowGraph.product_id == target.id)) is not None
-
-
-def test_fragment_apply_conflicts_on_v3_product(db_session) -> None:
+def test_fragment_apply_merges_into_existing_v3_graph(db_session) -> None:
     fragment = _seed_recipe(db_session, kind=WorkflowRecipeKind.RECIPE_FRAGMENT, title="v3 目标片段")
     target = _create_product(db_session, name="片段目标商品")
 
-    with pytest.raises(ConflictError, match="片段配方尚未支持合并进 schema-v3 工作流"):
+    with pytest.raises(ConflictError, match="片段配方需要已有 schema-v3 工作流"):
         apply_workflow_recipe(
             db_session,
             product_id=target.id,
@@ -427,30 +394,87 @@ def test_fragment_apply_conflicts_on_v3_product(db_session) -> None:
         image_uploads=[(_make_demo_image_bytes(), "v3.png", "image/png")],
         image_types=[DirectCreateImageType(key="hero", quantity=1, order=0)],
     )
-    with pytest.raises(ConflictError, match="片段配方尚未支持合并进 schema-v3 工作流"):
+    before = load_applied_graph(db_session, v3.graph)
+    preview = preview_workflow_recipe(
+        db_session,
+        product_id=v3.product.id,
+        recipe_id=fragment.id,
+        expected_recipe_version=1,
+    )
+    assert preview.mode == "merge"
+    assert preview.nodes
+    applied = apply_workflow_recipe(
+        db_session,
+        product_id=v3.product.id,
+        recipe_id=fragment.id,
+        expected_recipe_version=1,
+        idempotency_key="fragment-v3-existing-graph",
+    )
+    assert applied.created is True
+    assert applied.mode == "merge"
+    after = load_applied_graph(db_session, v3.graph)
+    assert len(after.nodes) == len(before.nodes) + len(preview.nodes)
+    assert {node.id for node in before.nodes} < {node.id for node in after.nodes}
+
+
+def test_full_recipe_conflicts_on_existing_v3_graph(db_session) -> None:
+    recipe = _seed_recipe(db_session, title="完整配方不能并进现图")
+    v3 = create_product_with_direct_graph(
+        db_session,
+        name="已有图的完整配方目标",
+        category=None,
+        price=None,
+        source_note=None,
+        image_uploads=[(_make_demo_image_bytes(), "v3.png", "image/png")],
+        image_types=[DirectCreateImageType(key="hero", quantity=1, order=0)],
+    )
+    with pytest.raises(ConflictError, match="完整配方不能合并进已有工作流"):
+        preview_workflow_recipe(
+            db_session,
+            product_id=v3.product.id,
+            recipe_id=recipe.id,
+            expected_recipe_version=1,
+        )
+    with pytest.raises(ConflictError, match="完整配方不能合并进已有工作流"):
         apply_workflow_recipe(
             db_session,
             product_id=v3.product.id,
-            recipe_id=fragment.id,
+            recipe_id=recipe.id,
             expected_recipe_version=1,
-            idempotency_key="fragment-v3-existing-graph",
+            idempotency_key="full-recipe-existing-graph",
         )
 
 
 def test_version_zero_agent_artifact_sync_creates_first_revision_idempotently(db_session) -> None:
-    recipe = _seed_recipe(db_session, title="Agent 首次制品配方")
     target = _create_product(db_session, name="Agent 配方目标")
-    applied = apply_workflow_recipe(
-        db_session,
+    draft = WorkflowDraft(
         product_id=target.id,
-        recipe_id=recipe.id,
-        expected_recipe_version=1,
-        idempotency_key="agent-artifact-apply",
+        status=WorkflowDraftStatus.COLLECTING,
+        intake_schema_version=1,
+        intake_json={
+            "schema_version": 1,
+            "image_types": [{"key": "hero", "quantity": 1, "order": 0}],
+            "reference_asset_ids": [target.image_assets[0].id],
+        },
     )
+    db_session.add(draft)
+    db_session.flush()
+    agent_session = new_agent_session(title="Agent 配方目标")
+    db_session.add(agent_session)
+    db_session.flush()
+    conversation = AgentConversation(
+        session_id=agent_session.id,
+        product_id=target.id,
+        workflow_draft_id=draft.id,
+        harness_run_id=draft.id,
+        status=AgentConversationStatus.COLLECTING,
+    )
+    db_session.add(conversation)
+    db_session.commit()
     projection = reserve_agent_turn(
         db_session,
         product_id=target.id,
-        conversation_id=applied.conversation.id,
+        conversation_id=conversation.id,
         input_text="请按配方重建目标商品工作流",
         input_asset_ids=[target.image_assets[0].id],
         idempotency_key="agent-artifact-turn",
@@ -458,7 +482,7 @@ def test_version_zero_agent_artifact_sync_creates_first_revision_idempotently(db
     projection = bind_harness_turn(
         db_session,
         product_id=target.id,
-        conversation_id=applied.conversation.id,
+        conversation_id=conversation.id,
         projection_id=projection.id,
         harness_turn_id="harness-recipe-turn",
         status=AgentTurnStatus.RUNNING,
@@ -466,7 +490,7 @@ def test_version_zero_agent_artifact_sync_creates_first_revision_idempotently(db
     projection = project_agent_turn_state(
         db_session,
         product_id=target.id,
-        conversation_id=applied.conversation.id,
+        conversation_id=conversation.id,
         projection_id=projection.id,
         harness_turn_id="harness-recipe-turn",
         status=AgentTurnStatus.AWAITING_CONFIRMATION,
@@ -479,7 +503,7 @@ def test_version_zero_agent_artifact_sync_creates_first_revision_idempotently(db
     synced = attach_agent_workflow_draft_artifact(
         db_session,
         product_id=target.id,
-        conversation_id=applied.conversation.id,
+        conversation_id=conversation.id,
         projection_id=projection.id,
         harness_turn_id="harness-recipe-turn",
         artifact_name="propose_workflow_draft",
@@ -487,7 +511,7 @@ def test_version_zero_agent_artifact_sync_creates_first_revision_idempotently(db
         artifact_value=payload,
     )
     assert synced.workflow_draft_revision_id is not None
-    refreshed = db_session.get(WorkflowDraft, applied.draft.id)
+    refreshed = db_session.get(WorkflowDraft, draft.id)
     assert refreshed is not None
     db_session.refresh(refreshed)
     assert refreshed.current_revision is not None
@@ -497,7 +521,7 @@ def test_version_zero_agent_artifact_sync_creates_first_revision_idempotently(db
     repeated = attach_agent_workflow_draft_artifact(
         db_session,
         product_id=target.id,
-        conversation_id=applied.conversation.id,
+        conversation_id=conversation.id,
         projection_id=projection.id,
         harness_turn_id="harness-recipe-turn",
         artifact_name="propose_workflow_draft",
@@ -554,3 +578,51 @@ def test_recipe_api_saves_v3_fragment_from_live_graph(configured_env) -> None:
     assert listed_after.status_code == 200
     assert len(listed_after.json()) == 1
     assert listed_after.json()[0]["current_version"]["payload"]["schema_version"] == 3
+
+    other = client.post(
+        "/api/v3/products",
+        data={
+            "name": "配方应用目标",
+            "image_types": json.dumps([{"key": "hero", "quantity": 1}]),
+        },
+        files=[("images", ("other.png", _make_demo_image_bytes(), "image/png"))],
+    )
+    assert other.status_code == 201, other.text
+    other_id = other.json()["product"]["id"]
+    blocked = client.post(
+        f"/api/v3/products/{other_id}/workflow-recipes/{body['id']}/preview",
+        json={"expected_recipe_version": 1},
+    )
+    assert blocked.status_code == 409, blocked.text
+    assert "完整配方不能合并" in blocked.text
+
+    prompt_id = next(node["id"] for node in graph["nodes"] if node["node_type"] == "prompt_generation")
+    image_id = next(node["id"] for node in graph["nodes"] if node["node_type"] == "image_generation")
+    fragment = client.post(
+        f"/api/v3/products/{product_id}/workflows/{graph['id']}/recipes",
+        json={
+            "source_type": "selection",
+            "node_ids": [prompt_id, image_id],
+            "expected_graph_revision": graph["revision"],
+            "title": "API 片段",
+        },
+    )
+    assert fragment.status_code == 201, fragment.text
+    assert fragment.json()["kind"] == "recipe_fragment"
+    preview = client.post(
+        f"/api/v3/products/{other_id}/workflow-recipes/{fragment.json()['id']}/preview",
+        json={"expected_recipe_version": 1},
+    )
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["mode"] == "merge"
+    assert preview.json()["nodes"]
+    applied = client.post(
+        f"/api/v3/products/{other_id}/workflow-recipes/{fragment.json()['id']}/apply",
+        json={"expected_recipe_version": 1, "idempotency_key": "api-apply-1"},
+    )
+    assert applied.status_code == 201, applied.text
+    applied_body = applied.json()
+    assert applied_body["mode"] == "merge"
+    assert "draft" not in applied_body
+    assert applied_body["graph"]["id"] == other.json()["graph"]["id"]
+    assert applied_body["added_node_ids"]
