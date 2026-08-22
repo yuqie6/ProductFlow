@@ -378,9 +378,10 @@ def _execute_node_run(
         )
         generated = image_result.images[0]
         dimensions = image_dimensions_from_bytes(generated.bytes_data)
-        measured_width, measured_height = dimensions or (0, 0)
-        if dimensions is None or not measured_aspect_matches_spec(spec, measured_width, measured_height):
-            raise BusinessValidationError(aspect_mismatch_message(spec, measured_width, measured_height))
+        if dimensions is None:
+            raise BusinessValidationError("供应商没有返回可读取的图片")
+        measured_width, measured_height = dimensions
+        aspect_matched = measured_aspect_matches_spec(spec, measured_width, measured_height)
         product = session.get(Product, product_id)
         if product is None:
             raise NotFoundError("商品不存在")
@@ -412,6 +413,10 @@ def _execute_node_run(
                 "measured_width": measured_width,
                 "measured_height": measured_height,
                 "requested_quality": spec.quality_intent,
+                "aspect_matched": aspect_matched,
+                "aspect_mismatch": None
+                if aspect_matched
+                else aspect_mismatch_message(spec, measured_width, measured_height),
             },
         }
         artifact = _persist_artifact(

@@ -146,7 +146,7 @@ function renderInspector(
   selected: GraphNode | null,
   client?: QueryClient,
   nextCatalog: GraphNodeCatalog | null = catalog,
-  options: { busy?: boolean; catalogError?: string | null } = {},
+  options: { busy?: boolean; catalogError?: string | null; preview?: boolean } = {},
 ): string {
   const queryClient = client ?? new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return renderToStaticMarkup(createElement(
@@ -161,6 +161,7 @@ function renderInspector(
       onCommit: async () => graph,
       onOpenAdd: () => undefined,
       onOpenLibrary: () => undefined,
+      onPreviewImage: options.preview ? () => undefined : undefined,
     }),
   ));
 }
@@ -345,5 +346,81 @@ describe("GraphNodeInspector", () => {
     expect(markup).toContain("模型超时");
     expect(markup).toContain("上次失败");
     expect(markup).toContain("重试");
+  });
+
+  it("shows requested vs measured output and uses the node spec for preview ratio", () => {
+    const markup = renderInspector(node({
+      id: "hero-measured",
+      node_type: "image_generation",
+      title: "首屏海报图 1",
+      preview_asset_id: "asset-hero",
+      config: {
+        generation_spec: {
+          aspect_ratio: "3:4",
+          resolution_tier: "high",
+          quality_intent: "high",
+          reference_fidelity: "high",
+          background_intent: "auto",
+          text_policy: "required",
+          text_language: "zh-CN",
+        },
+      },
+      current_artifact_payload: {
+        measured_output: {
+          mime_type: "image/png",
+          provider_status: "completed",
+          requested_aspect_ratio: "3:4",
+          measured_width: 1024,
+          measured_height: 1536,
+          requested_quality: "high",
+          effective_parameters: {
+            action: "generate",
+            quality: "high",
+            notes: [{ kind: "fallback", message: "供应商不支持部分参数，已按基础参数完成。" }],
+          },
+        },
+      },
+    }), undefined, catalog, { preview: true });
+    expect(markup).toContain("出图结果");
+    expect(markup).toContain("要求比例");
+    expect(markup).toContain("3:4");
+    expect(markup).toContain("1024×1536");
+    expect(markup).toContain("generate");
+    expect(markup).toContain("供应商回退");
+    expect(markup).toContain("data-preview-aspect=\"3:4\"");
+    expect(markup).not.toContain("aspect-[4/3]");
+    expect(markup).toContain("data-aspect-matched=\"true\"");
+  });
+
+  it("keeps a mismatched generation and shows the measured ratio instead of failing silently", () => {
+    const markup = renderInspector(node({
+      id: "hero-mismatch",
+      node_type: "image_generation",
+      title: "首屏海报图 1",
+      preview_asset_id: "asset-hero",
+      config: {
+        generation_spec: {
+          aspect_ratio: "3:4",
+          resolution_tier: "high",
+          quality_intent: "high",
+          reference_fidelity: "high",
+          background_intent: "auto",
+          text_policy: "none",
+        },
+      },
+      current_artifact_payload: {
+        measured_output: {
+          requested_aspect_ratio: "3:4",
+          measured_width: 1448,
+          measured_height: 1086,
+          aspect_matched: false,
+          aspect_mismatch: "供应商没有按 3:4 出图（实际 1448×1086）",
+          effective_parameters: { action: "generate" },
+        },
+      },
+    }), undefined, catalog, { preview: true });
+    expect(markup).toContain("data-aspect-matched=\"false\"");
+    expect(markup).toContain("未按 3:4 出图，实际 1448×1086");
+    expect(markup).toContain("data-preview-aspect=\"3:4\"");
   });
 });

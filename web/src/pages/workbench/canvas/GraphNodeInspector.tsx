@@ -32,7 +32,9 @@ import type {
   ProductFactsResponse,
   WorkflowNodeStatus,
 } from "../../../lib/types";
+import { parseAspectRatio } from "../../../components/ImageRatioFrame";
 import { IMAGE_PREVIEW_SURFACE_CLASS_NAME } from "../chrome/constants";
+import { parseWorkflowGenerationSpec } from "./generationSpec";
 import { DownloadLink } from "../chrome/ImageDownloadComponents";
 import { SaveStatusBadge, type SaveStatus } from "../chrome/SaveStatusBadge";
 import { TextArea } from "../chrome/TextArea";
@@ -419,7 +421,18 @@ export function GraphNodeInspector({
             catalog={catalog}
             busy={busy}
             graphRevision={graph.revision}
-            header={image && onPreviewImage ? <NodeImagePreview image={image} onPreview={onPreviewImage} /> : null}
+            header={image && onPreviewImage ? (
+              <div className="space-y-3">
+                <NodeImagePreview
+                  image={image}
+                  onPreview={onPreviewImage}
+                  aspectRatio={requestedAspectRatio(node)}
+                />
+                {node.node_type === "image_generation" ? <MeasuredOutputStrip node={node} /> : null}
+              </div>
+            ) : node.node_type === "image_generation" ? (
+              <MeasuredOutputStrip node={node} />
+            ) : null}
             onSave={persist}
             onSaveStateChange={(status, error) => setSaveState({ status, error })}
           />
@@ -878,7 +891,7 @@ function ImageAssetEditor({
   }, [editor, fields, node.title, onSave, onSaveStateChange, t]);
   return (
     <AutosaveForm editor={editor} busy={busy}>
-      {image && onPreviewImage ? <NodeImagePreview image={image} onPreview={onPreviewImage} /> : null}
+      {image && onPreviewImage ? <NodeImagePreview image={image} onPreview={onPreviewImage} aspectRatio={requestedAspectRatio(node)} /> : null}
       {!image ? <p className="text-xs text-zinc-500 dark:text-slate-400">{t("graph.inspector.noPreview")}</p> : null}
       <TextInput label={t("graph.inspector.titleField")} value={editor.draft.title} maxLength={255} disabled={busy} onChange={(title) => editor.update({ ...editor.draft, title })} />
       <CatalogConfigFields
@@ -1035,15 +1048,110 @@ function EdgeList({
   );
 }
 
-function NodeImagePreview({ image, onPreview }: { image: DownloadableImage; onPreview: (image: DownloadableImage) => void }) {
+function requestedAspectRatio(node: GraphNode): string {
+  const spec = parseWorkflowGenerationSpec(node.config.generation_spec);
+  if (spec?.aspect_ratio) return spec.aspect_ratio;
+  const raw = node.config.generation_spec;
+  if (raw && typeof raw === "object" && "aspect_ratio" in raw && typeof raw.aspect_ratio === "string") {
+    return raw.aspect_ratio;
+  }
+  return "";
+}
+
+function MeasuredOutputStrip({ node }: { node: GraphNode }) {
   const { t } = useI18n();
+  const payload = node.current_artifact_payload;
+  const measured = payload && typeof payload.measured_output === "object" && payload.measured_output !== null
+    ? payload.measured_output as Record<string, unknown>
+    : null;
+  if (!measured) return null;
+  const requestedAspect = typeof measured.requested_aspect_ratio === "string"
+    ? measured.requested_aspect_ratio
+    : requestedAspectRatio(node);
+  const measuredWidth = measured.measured_width;
+  const measuredHeight = measured.measured_height;
+  const parameters = measured.effective_parameters && typeof measured.effective_parameters === "object"
+    ? measured.effective_parameters as Record<string, unknown>
+    : {};
+  const quality = typeof measured.requested_quality === "string"
+    ? measured.requested_quality
+    : typeof parameters.quality === "string" ? parameters.quality : "";
+  const action = typeof parameters.action === "string" ? parameters.action : "";
+  const notes = Array.isArray(parameters.notes)
+    ? parameters.notes.filter((note): note is Record<string, unknown> => Boolean(note) && typeof note === "object")
+    : [];
+  const fallback = notes.find((note) => note.kind === "fallback" || note.kind === "parameter_not_sent");
+  const aspectMatched = measured.aspect_matched !== false;
+  return (
+    <section
+      data-measured-output=""
+      data-aspect-matched={aspectMatched ? "true" : "false"}
+      className="config-bubble rounded-2xl p-4 shadow-sm"
+    >
+      <h4 className="text-xs font-semibold text-zinc-950 dark:text-white">{t("graph.inspector.measuredOutput")}</h4>
+      {aspectMatched ? null : (
+        <p role="status" className="mt-2 text-[11px] leading-4 text-amber-700 dark:text-amber-300">
+          {t("graph.inspector.aspectMismatch", {
+            requested: requestedAspect || "—",
+            size: typeof measuredWidth === "number" && typeof measuredHeight === "number"
+              ? `${measuredWidth}×${measuredHeight}`
+              : "—",
+          })}
+        </p>
+      )}
+      <dl className="mt-2 space-y-1 text-[11px] leading-4 text-zinc-600 dark:text-slate-300">
+        {requestedAspect ? (
+          <div className="flex justify-between gap-3">
+            <dt>{t("graph.inspector.requestedAspect")}</dt>
+            <dd className="font-medium text-zinc-800 dark:text-slate-100">{requestedAspect}</dd>
+          </div>
+        ) : null}
+        {typeof measuredWidth === "number" && typeof measuredHeight === "number" ? (
+          <div className="flex justify-between gap-3">
+            <dt>{t("graph.inspector.measuredSize")}</dt>
+            <dd className="font-medium text-zinc-800 dark:text-slate-100">{measuredWidth}×{measuredHeight}</dd>
+          </div>
+        ) : null}
+        {quality ? (
+          <div className="flex justify-between gap-3">
+            <dt>{t("graph.inspector.measuredQuality")}</dt>
+            <dd className="font-medium text-zinc-800 dark:text-slate-100">{quality}</dd>
+          </div>
+        ) : null}
+        {action ? (
+          <div className="flex justify-between gap-3">
+            <dt>{t("graph.inspector.measuredAction")}</dt>
+            <dd className="font-medium text-zinc-800 dark:text-slate-100">{action}</dd>
+          </div>
+        ) : null}
+      </dl>
+      {fallback && typeof fallback.message === "string" ? (
+        <p className="mt-2 text-[11px] leading-4 text-amber-700 dark:text-amber-300">{t("graph.inspector.generationFallback")}: {fallback.message}</p>
+      ) : null}
+    </section>
+  );
+}
+
+function NodeImagePreview({
+  image,
+  onPreview,
+  aspectRatio,
+}: {
+  image: DownloadableImage;
+  onPreview: (image: DownloadableImage) => void;
+  aspectRatio: string;
+}) {
+  const { t } = useI18n();
+  const parsed = parseAspectRatio(aspectRatio);
   return (
     <div className="relative overflow-hidden rounded-xl border border-zinc-200 dark:border-slate-700">
       <button
         type="button"
         onClick={() => onPreview(image)}
-        className={`block aspect-[4/3] w-full ${IMAGE_PREVIEW_SURFACE_CLASS_NAME}`}
+        className={`block w-full ${IMAGE_PREVIEW_SURFACE_CLASS_NAME}`}
+        style={parsed ? { aspectRatio: `${parsed.width} / ${parsed.height}` } : undefined}
         aria-label={t("detail.previewImage", { alt: image.alt })}
+        data-preview-aspect={parsed ? `${parsed.width}:${parsed.height}` : undefined}
       >
         <img src={image.previewUrl} alt={image.alt} className="h-full w-full object-contain" />
       </button>

@@ -821,7 +821,7 @@ class BoomImageProvider(RecordingImageProvider):
         raise RuntimeError("provider exploded")
 
 
-def test_image_node_fails_when_measured_aspect_disagrees_with_spec(db_session) -> None:
+def test_image_node_keeps_bytes_when_measured_aspect_disagrees_with_spec(db_session) -> None:
     image_bytes = _make_demo_image_bytes()
     created = create_product_with_direct_graph(
         db_session,
@@ -843,7 +843,12 @@ def test_image_node_fails_when_measured_aspect_disagrees_with_spec(db_session) -
             base_graph_revision=created.graph.revision,
             summary="改成竖版",
             actor_type=GraphActorType.USER,
-            operations=[UpdateNodeConfigOp(node_ref=image_node.id, config={**image_node.config, "generation_spec": spec})],
+            operations=[
+                UpdateNodeConfigOp(
+                    node_ref=image_node.id,
+                    config={**image_node.config, "generation_spec": spec},
+                )
+            ],
         ),
     )
     image_provider = RecordingImageProvider(image_bytes)
@@ -860,14 +865,20 @@ def test_image_node_fails_when_measured_aspect_disagrees_with_spec(db_session) -
             ),
         ),
     )
-    assert submission.run.status == WorkflowRunStatus.FAILED
+    assert submission.run.status == WorkflowRunStatus.SUCCEEDED
     image_run = next(item for item in submission.run.node_runs if item.node_id == image_node.id)
-    assert image_run.status == WorkflowNodeStatus.FAILED
-    assert image_run.failure_reason is not None
-    assert "3:4" in image_run.failure_reason
+    assert image_run.status == WorkflowNodeStatus.SUCCEEDED
     assert image_provider.requests
-    artifacts = list(db_session.scalars(select(WorkflowGraphArtifact).where(WorkflowGraphArtifact.artifact_type == "image")))
-    assert artifacts == []
+    artifacts = list(
+        db_session.scalars(select(WorkflowGraphArtifact).where(WorkflowGraphArtifact.artifact_type == "image"))
+    )
+    assert len(artifacts) == 1
+    measured = artifacts[0].payload_json["measured_output"]
+    assert measured["aspect_matched"] is False
+    assert measured["requested_aspect_ratio"] == "3:4"
+    assert measured["measured_width"] == 800
+    assert measured["measured_height"] == 800
+    assert "3:4" in (measured["aspect_mismatch"] or "")
 
 
 def test_failed_run_does_not_keep_executing_queued_nodes(db_session) -> None:
@@ -899,12 +910,10 @@ def test_failed_run_does_not_keep_executing_queued_nodes(db_session) -> None:
         ),
     )
     assert submission.run.status == WorkflowRunStatus.FAILED
-    image_runs = [
-        item
-        for item in submission.run.node_runs
-        if item.node_id
-        and next(node for node in created.projection.nodes if node.id == item.node_id).node_type == GraphNodeType.IMAGE_GENERATION
-    ]
+    image_ids = {
+        node.id for node in created.projection.nodes if node.node_type == GraphNodeType.IMAGE_GENERATION
+    }
+    image_runs = [item for item in submission.run.node_runs if item.node_id in image_ids]
     assert len(image_runs) == 2
     assert {item.status for item in image_runs} == {WorkflowNodeStatus.FAILED, WorkflowNodeStatus.QUEUED}
     queued = next(item for item in image_runs if item.status == WorkflowNodeStatus.QUEUED)
@@ -1045,7 +1054,12 @@ def test_matching_digest_skips_provider_and_stale_only_after_input_edit(db_sessi
             base_graph_revision=graph.revision,
             summary="改文案策略",
             actor_type=GraphActorType.USER,
-            operations=[UpdateNodeConfigOp(node_ref=image_view.id, config={**image_view.config, "generation_spec": spec})],
+            operations=[
+                UpdateNodeConfigOp(
+                    node_ref=image_view.id,
+                    config={**image_view.config, "generation_spec": spec},
+                )
+            ],
         ),
     )
     db_session.expire_all()
