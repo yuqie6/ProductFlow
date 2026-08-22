@@ -55,5 +55,8 @@ aegis/
 # Antigravity CLI local state
 .antigravitycli/
 
+# Grok local skills and session state
+.grok/
+
 # Local AI memory
 .ai_memory/
