@@ -175,6 +175,10 @@ export function AgentProductCreatePage() {
   const options = optionsQuery.data ?? null;
 
   useEffect(() => {
+    void import("./workbench/ProductWorkbenchPage");
+  }, []);
+
+  useEffect(() => {
     if (!workspace) return;
     setName(workspace.product.name);
     if (workspace.intake_finalized || !conversationId) return;

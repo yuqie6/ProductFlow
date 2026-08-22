@@ -6,6 +6,7 @@ import {
   INITIAL_AGENT_TURN_TEXT,
   flattenAgentTurnPages,
   initialAgentTurnInput,
+  initialTurnReferenceAssetIds,
   selectNewestAgentTurnProjection,
   upsertAgentTurnPageData,
 } from "./useAgentConversation";
@@ -59,6 +60,24 @@ describe("Agent conversation model", () => {
     expect(firstTask.idempotency_key).toBe("initial:conversation-1:task-1");
     expect(secondTask.idempotency_key).toBe("initial:conversation-1:task-2");
     expect(firstTask.idempotency_key).not.toBe(secondTask.idempotency_key);
+  });
+
+  it("attaches unique graph-bound photos when intake has no reference ids", () => {
+    expect(
+      initialTurnReferenceAssetIds(undefined, {
+        nodes: [
+          { bound_asset_id: "asset-a" },
+          { bound_asset_id: "asset-a" },
+          { bound_asset_id: "asset-b" },
+          { bound_asset_id: null },
+        ],
+      }),
+    ).toEqual(["asset-a", "asset-b"]);
+    expect(
+      initialTurnReferenceAssetIds(["intake-1"], {
+        nodes: [{ bound_asset_id: "asset-a" }],
+      }),
+    ).toEqual(["intake-1"]);
   });
 
   it("prepends reverse-keyset pages into one chronological transcript and removes overlap", () => {

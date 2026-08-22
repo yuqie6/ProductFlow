@@ -19,7 +19,7 @@ describe("WorkflowOnboardingHero", () => {
 
     // Pathway 1: Agent Intelligent Planning
     expect(markup).toContain("Agent 智能批量规划");
-    expect(markup).toContain("唤起智能规划");
+    expect(markup).toContain("打开对话");
 
     // Pathway 2: Industry Presets
     expect(markup).toContain("套用工作流预设");

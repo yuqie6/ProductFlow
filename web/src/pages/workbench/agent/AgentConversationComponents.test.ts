@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import type { AgentQuestion, AgentSession, AgentTurn, GalleryAsset, WorkflowDraft } from "../../../lib/types";
 import { AgentAssistantMarkdown } from "./AgentAssistantMarkdown";
-import { AgentComposer } from "./AgentComposer";
+import { AgentComposer, classifyImageFiles } from "./AgentComposer";
 import { hasUnsyncedWorkflowDraftRevision } from "./AgentConversationPanel";
 import { AgentMessageList } from "./AgentMessageList";
 import { AgentQuestionPrompt } from "./AgentQuestionPrompt";
@@ -138,6 +138,29 @@ describe("Agent conversation components", () => {
     expect(markup).toContain("从商品图库选择图片");
   });
 
+  it("exposes a reference upload control when the conversation can accept files", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AgentComposer, {
+        value: "",
+        selectedAssets: [],
+        isSubmitting: false,
+        canSubmit: false,
+        stopAvailable: false,
+        isStopping: false,
+        error: null,
+        onChange: () => undefined,
+        onOpenAssets: () => undefined,
+        onRemoveAsset: () => undefined,
+        onPreviewAsset: () => undefined,
+        onSubmit: () => undefined,
+        onStop: () => undefined,
+        onUploadFiles: () => undefined,
+      }),
+    );
+    expect(markup).toContain("上传参考图");
+    expect(markup).toContain("accept=\"image/jpeg,image/png,image/webp\"");
+  });
+
   it("switches the composer primary action to Stop without discarding the typed draft", () => {
     const markup = renderToStaticMarkup(
       createElement(AgentComposer, {
@@ -185,6 +208,44 @@ describe("Agent conversation components", () => {
     expect(markup).toContain("分析视觉风格与打光");
     expect(markup).toContain("生成当前工作流执行草案");
     expect(markup).toContain("Enter 发送，Shift + Enter 换行");
+  });
+
+  it("accepts jpeg/png/webp and files without a MIME type when the extension matches", () => {
+    const png = new File([""], "front.png", { type: "image/png" });
+    const gif = new File([""], "loop.gif", { type: "image/gif" });
+    const unnamedPng = new File([""], "detail.PNG", { type: "" });
+
+    expect(classifyImageFiles([png, gif, unnamedPng])).toEqual({
+      accepted: [png, unnamedPng],
+      rejected: true,
+    });
+    expect(classifyImageFiles([gif]).rejected).toBe(true);
+    expect(classifyImageFiles([png])).toEqual({ accepted: [png], rejected: false });
+  });
+
+  it("renders an upload control when the conversation can accept reference files", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AgentComposer, {
+        value: "",
+        selectedAssets: [],
+        isSubmitting: false,
+        canSubmit: false,
+        stopAvailable: false,
+        isStopping: false,
+        error: null,
+        onChange: () => undefined,
+        onOpenAssets: () => undefined,
+        onRemoveAsset: () => undefined,
+        onPreviewAsset: () => undefined,
+        onSubmit: () => undefined,
+        onStop: () => undefined,
+        onUploadFiles: () => undefined,
+      }),
+    );
+
+    expect(markup).toContain("上传参考图");
+    expect(markup).toContain('type="file"');
+    expect(markup).toContain("把参考图拖进来，直接说你要什么");
   });
 
   it("renders listed Question options, free text, and the recoverable resume state", () => {

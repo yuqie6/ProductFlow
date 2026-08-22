@@ -33,6 +33,7 @@ import {
   AgentWorkbenchShell,
   type AgentWorkbenchSidebarTool,
 } from "./AgentWorkbenchShell";
+import { isHttpErrorStatus, readWorkflowGraphOrNull } from "./productWorkbenchRoute";
 import { useWorkflowMaterialization } from "./useWorkflowMaterialization";
 import { WorkflowDraftConfirmation } from "./WorkflowDraftConfirmation";
 import { WorkflowOnboardingHero } from "./WorkflowOnboardingHero";
@@ -95,12 +96,9 @@ export function AgentProductWorkbenchPage({
   });
   const graphQuery = useQuery({
     queryKey: ["workflow-graph", bootstrap.product.id],
-    queryFn: () => api.getCurrentWorkflowGraph(bootstrap.product.id),
+    queryFn: () => readWorkflowGraphOrNull(() => api.getCurrentWorkflowGraph(bootstrap.product.id)),
     initialData: bootstrap.graph ?? undefined,
-    retry: (failureCount, error) => {
-      if (error instanceof ApiError && error.status === 404) return false;
-      return failureCount < 2;
-    },
+    retry: (failureCount, error) => !isHttpErrorStatus(error, 404) && failureCount < 2,
   });
   const liveGraph = graphQuery.data ?? materialization ?? bootstrap.graph;
   const catalog = catalogQuery.data ?? null;
@@ -446,7 +444,8 @@ export function AgentProductWorkbenchPage({
           <WorkflowOnboardingHero
             productName={bootstrap.product.name}
             onOpenAgent={() => {
-              openGlobalAgent({ tab: "chat", sessionId: bootstrap.conversation.session_id ?? undefined });
+              const composer = document.querySelector<HTMLTextAreaElement>("[data-agent-composer] textarea");
+              composer?.focus();
             }}
             onOpenRecipes={() => {
               void requestSidebarTool("recipes");
@@ -462,6 +461,7 @@ export function AgentProductWorkbenchPage({
             productName={bootstrap.product.name}
             conversation={bootstrap.conversation}
             workflowDraft={bootstrap.workflow_draft}
+            graph={liveGraph}
             taskId={agentTaskId}
             pageContext={pageContext}
             reviewDraftAvailable={Boolean(reviewableRevision)}

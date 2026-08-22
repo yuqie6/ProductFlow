@@ -1,4 +1,3 @@
-import { ApiError } from "../../../lib/api";
 import type { AgentWorkbenchBootstrap, GraphProjection } from "../../../lib/types";
 
 export type ProductWorkbenchRouteInput = {
@@ -19,12 +18,30 @@ export type ProductWorkbenchSurface<TAgent extends ProductWorkbenchRouteInput = 
   | { kind: "agent"; bootstrap: TAgent }
   | { kind: "graph"; graph: GraphProjection };
 
+export function isHttpErrorStatus(error: unknown, status: number): boolean {
+  if (typeof error !== "object" || error === null || !("status" in error)) {
+    return false;
+  }
+  return (error as { status: unknown }).status === status;
+}
+
 export function isWorkflowGraphMissing(error: unknown): boolean {
-  return error instanceof ApiError && error.status === 404;
+  return isHttpErrorStatus(error, 404);
 }
 
 export function isAgentWorkbenchMissing(error: unknown): boolean {
-  return error instanceof ApiError && error.status === 409;
+  return isHttpErrorStatus(error, 409);
+}
+
+export async function readWorkflowGraphOrNull(
+  load: () => Promise<GraphProjection>,
+): Promise<GraphProjection | null> {
+  try {
+    return await load();
+  } catch (error) {
+    if (isWorkflowGraphMissing(error)) return null;
+    throw error;
+  }
 }
 
 export function resolveProductWorkbenchSurface<TAgent extends ProductWorkbenchRouteInput>(input: {

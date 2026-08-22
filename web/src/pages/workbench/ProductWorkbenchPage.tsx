@@ -1,22 +1,18 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, RotateCw } from "lucide-react";
-import { lazy } from "react";
 import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
 
 import { api, ApiError } from "../../lib/api";
 import { useI18n } from "../../lib/preferences";
+import { AgentProductWorkbenchPage } from "./agent/AgentProductWorkbenchPage";
 import {
   agentProductIntakeResumePath,
   isAgentWorkbenchMissing,
+  isHttpErrorStatus,
+  readWorkflowGraphOrNull,
   resolveProductWorkbenchSurface,
 } from "./agent/productWorkbenchRoute";
 import { GraphAgentPanel, GraphWorkbenchPage } from "./GraphWorkbenchPage";
-
-const AgentProductWorkbenchPage = lazy(() =>
-  import("./agent/AgentProductWorkbenchPage").then((module) => ({
-    default: module.AgentProductWorkbenchPage,
-  })),
-);
 
 export function ProductWorkbenchPage() {
   const { productId = "" } = useParams();
@@ -26,21 +22,15 @@ export function ProductWorkbenchPage() {
   const agentTaskId = searchParams.get("agent_task_id");
   const graphQuery = useQuery({
     queryKey: ["workflow-graph", productId],
-    queryFn: () => api.getCurrentWorkflowGraph(productId),
+    queryFn: () => readWorkflowGraphOrNull(() => api.getCurrentWorkflowGraph(productId)),
     enabled: Boolean(productId),
-    retry: (failureCount, error) => {
-      if (error instanceof ApiError && error.status === 404) return false;
-      return failureCount < 2;
-    },
+    retry: (failureCount, error) => !isHttpErrorStatus(error, 404) && failureCount < 2,
   });
   const agentQuery = useQuery({
     queryKey: ["agent-workbench", productId, agentSessionId, agentTaskId],
     queryFn: () => api.getAgentWorkbench(productId, agentSessionId, agentTaskId),
     enabled: Boolean(productId),
-    retry: (failureCount, error) => {
-      if (error instanceof ApiError && error.status === 409) return false;
-      return failureCount < 2;
-    },
+    retry: (failureCount, error) => !isAgentWorkbenchMissing(error) && failureCount < 2,
   });
   const missingAgent = !agentQuery.isPending && isAgentWorkbenchMissing(agentQuery.error);
   const shouldEnsureAgent = Boolean(productId) && missingAgent && Boolean(graphQuery.data) && !agentTaskId;
@@ -58,7 +48,7 @@ export function ProductWorkbenchPage() {
     retry: false,
   });
   const surface = resolveProductWorkbenchSurface({
-    graph: graphQuery.data,
+    graph: graphQuery.data ?? undefined,
     graphPending: graphQuery.isPending,
     graphError: graphQuery.error,
     agent: agentQuery.data ?? ensureQuery.data,

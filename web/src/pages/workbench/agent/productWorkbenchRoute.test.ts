@@ -5,7 +5,11 @@ import type { GraphProjection } from "../../../lib/types";
 import {
   agentProductIntakeResumePath,
   agentProductWorkbenchPath,
+  isAgentWorkbenchMissing,
+  isHttpErrorStatus,
+  isWorkflowGraphMissing,
   productWorkbenchRouteTarget,
+  readWorkflowGraphOrNull,
   resolveProductWorkbenchSurface,
   type ProductWorkbenchRouteInput,
 } from "./productWorkbenchRoute";
@@ -122,6 +126,16 @@ describe("resolveProductWorkbenchSurface", () => {
     }).kind).toBe("agent");
   });
 
+  it("keeps the Agent workbench when a missing graph resolved as empty instead of erroring", () => {
+    expect(resolveProductWorkbenchSurface({
+      graphPending: false,
+      graphError: null,
+      agent: intake,
+      agentPending: false,
+      agentError: null,
+    })).toEqual({ kind: "agent", bootstrap: intake });
+  });
+
   it("keeps an empty draft on the Agent workbench when a v3 graph already exists", () => {
     expect(resolveProductWorkbenchSurface({
       graph,
@@ -131,6 +145,29 @@ describe("resolveProductWorkbenchSurface", () => {
       agentPending: false,
       agentError: null,
     })).toEqual({ kind: "agent", bootstrap: intake });
+  });
+
+  it("treats graph 404 and Agent 409 by status even without the ApiError class", () => {
+    expect(isHttpErrorStatus({ status: 404 }, 404)).toBe(true);
+    expect(isWorkflowGraphMissing({ status: 404, detail: "missing" })).toBe(true);
+    expect(isAgentWorkbenchMissing({ status: 409, detail: "no workspace" })).toBe(true);
+    expect(isWorkflowGraphMissing({ status: 500 })).toBe(false);
+  });
+
+  it("reads a missing workflow graph as empty instead of throwing", async () => {
+    await expect(
+      readWorkflowGraphOrNull(async () => {
+        throw { status: 404, detail: "商品工作流不存在" };
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      readWorkflowGraphOrNull(async () => graph),
+    ).resolves.toBe(graph);
+    await expect(
+      readWorkflowGraphOrNull(async () => {
+        throw { status: 500, detail: "boom" };
+      }),
+    ).rejects.toEqual({ status: 500, detail: "boom" });
   });
 
   it("waits until graph and Agent queries settle", () => {

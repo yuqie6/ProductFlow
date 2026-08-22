@@ -15,6 +15,8 @@ import type {
   AgentTurn,
   AgentWorkflowRunRequest,
   GalleryAsset,
+  GraphProjection,
+  ProductImageAsset,
   WorkflowDraft,
 } from "../../../lib/types";
 import {
@@ -34,6 +36,7 @@ interface AgentConversationPanelProps {
   productName: string;
   conversation: AgentConversation;
   workflowDraft: WorkflowDraft;
+  graph?: GraphProjection | null;
   taskId?: string | null;
   pageContext?: AgentPageContextSnapshotInput | null;
   className?: string;
@@ -48,6 +51,7 @@ export function AgentConversationPanel({
   productName,
   conversation,
   workflowDraft,
+  graph = null,
   taskId = null,
   pageContext = null,
   className = "",
@@ -58,7 +62,7 @@ export function AgentConversationPanel({
 }: AgentConversationPanelProps) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
-  const agent = useAgentConversation({ productId, conversation, workflowDraft, taskId, pageContext });
+  const agent = useAgentConversation({ productId, conversation, workflowDraft, graph, taskId, pageContext });
   const workflowRunRequestQueryKey = [
     "agent-workflow-run-request",
     productId,
@@ -159,6 +163,18 @@ export function AgentConversationPanel({
   const rotateComposerKey = () => {
     composerKeyRef.current = globalThis.crypto.randomUUID();
   };
+  const uploadAssetsMutation = useMutation({
+    mutationFn: (files: File[]) => api.addCanonicalProductImages(productId, files),
+    onSuccess: (result) => {
+      setComposerAssets((current) => mergeUploadedComposerAssets(current, result.items));
+      rotateComposerKey();
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["product-image-library", productId] }),
+        queryClient.invalidateQueries({ queryKey: ["product-image-library-assets", productId] }),
+        queryClient.invalidateQueries({ queryKey: ["product", productId] }),
+      ]);
+    },
+  });
   const canSubmitMessage = Boolean(!agent.activeTurn && agent.turns.length > 0);
   const submitMessage = async () => {
     const normalized = composerText.trim();
@@ -240,7 +256,8 @@ export function AgentConversationPanel({
         agent.activeTurn?.resume_required),
   );
   const questionError = errorDetailOrNull(agent.answerQuestionMutation.error);
-  const composerError = errorDetailOrNull(agent.submitTurnMutation.error);
+  const composerError =
+    errorDetailOrNull(agent.submitTurnMutation.error) ?? errorDetailOrNull(uploadAssetsMutation.error);
   const initialError = !agent.turns.length
     ? errorDetailOrNull(agent.initialTurnMutation.error)
     : null;
@@ -476,12 +493,40 @@ export function AgentConversationPanel({
           onPreviewAsset={previewSelectedAsset}
           onSubmit={() => void submitMessage()}
           onStop={() => agent.cancelTurnMutation.mutate(agent.activeTurn?.id ?? "")}
+          onUploadFiles={(files) => uploadAssetsMutation.mutate(files)}
+          isUploading={uploadAssetsMutation.isPending}
         />
       ) : null}
 
       {typeof document === "undefined" ? dialogs : createPortal(dialogs, document.body)}
     </section>
   );
+}
+
+function galleryAssetFromUpload(asset: ProductImageAsset): GalleryAsset {
+  return {
+    ...asset,
+    user_folder_name: null,
+    image_type_title: null,
+    generation: null,
+    rendition: null,
+  };
+}
+
+function mergeUploadedComposerAssets(
+  current: readonly GalleryAsset[],
+  uploaded: readonly ProductImageAsset[],
+): GalleryAsset[] {
+  const seen = new Set(current.map((asset) => asset.id));
+  const next = [...current];
+  for (const asset of uploaded) {
+    if (seen.has(asset.id) || next.length >= AGENT_COMPOSER_MAX_ASSETS) {
+      continue;
+    }
+    seen.add(asset.id);
+    next.push(galleryAssetFromUpload(asset));
+  }
+  return next;
 }
 
 export function hasUnsyncedWorkflowDraftRevision(

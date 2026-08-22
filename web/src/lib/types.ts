@@ -1073,7 +1073,7 @@ export interface AgentTurnEffectReconciliation {
   id: string;
   projection_id: string;
   tool_call_id: string;
-  tool_name: "request_workflow_run_v1" | "create_product_workspace_v1";
+  tool_name: "request_workflow_run_v1" | "create_product_workspace_v1" | "finalize_product_intake_v1";
   idempotency_key: string;
   effect_result: AgentTurnEffectResult;
   reconciliation_state: AgentTurnReconciliationState;

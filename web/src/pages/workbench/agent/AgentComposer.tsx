@@ -1,12 +1,28 @@
-import { ImagePlus, Loader2, Send, Sparkles, Square, Trash2, X } from "lucide-react";
-import type { KeyboardEvent } from "react";
-import { useEffect, useId, useRef } from "react";
+import { ImagePlus, Loader2, Send, Sparkles, Square, Trash2, Upload, X } from "lucide-react";
+import type { ClipboardEvent, DragEvent, KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { api } from "../../../lib/api";
 import { useI18n } from "../../../lib/preferences";
 import type { AgentAttachment } from "../../../lib/types";
 
 export const AGENT_COMPOSER_MAX_ASSETS = 6;
+const ACCEPT_IMAGE_TYPES = "image/jpeg,image/png,image/webp";
+const ACCEPT_IMAGE_TYPE_SET = new Set(["image/jpeg", "image/png", "image/webp"]);
+const ACCEPT_IMAGE_EXTENSION = /\.(png|jpe?g|webp)$/i;
+
+export function classifyImageFiles(list: FileList | File[] | null | undefined): {
+  accepted: File[];
+  rejected: boolean;
+} {
+  const files = list ? Array.from(list) : [];
+  const accepted = files.filter((file) => {
+    if (ACCEPT_IMAGE_TYPE_SET.has(file.type)) return true;
+    if (file.type) return false;
+    return ACCEPT_IMAGE_EXTENSION.test(file.name);
+  });
+  return { accepted, rejected: files.length > 0 && accepted.length !== files.length };
+}
 
 interface AgentComposerProps {
   value: string;
@@ -26,6 +42,8 @@ interface AgentComposerProps {
   onPreviewAsset: (asset: AgentAttachment) => void;
   onSubmit: () => void;
   onStop: () => void;
+  onUploadFiles?: (files: File[]) => void;
+  isUploading?: boolean;
 }
 
 const QUICK_PROMPTS = [
@@ -52,11 +70,16 @@ export function AgentComposer({
   onPreviewAsset,
   onSubmit,
   onStop,
+  onUploadFiles,
+  isUploading = false,
 }: AgentComposerProps) {
   const { t } = useI18n();
   const keyboardHintId = useId();
+  const uploadInputId = useId();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const submitReady = canSubmit && !isSubmitting && Boolean(value.trim());
+  const [dragging, setDragging] = useState(false);
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null);
+  const submitReady = canSubmit && !isSubmitting && !isUploading && Boolean(value.trim());
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -79,6 +102,45 @@ export function AgentComposer({
     for (const asset of selectedAssets) {
       onRemoveAsset(asset.id);
     }
+  };
+
+  const takeUploadedFiles = (list: FileList | File[] | null | undefined) => {
+    if (!onUploadFiles || isSubmitting || isUploading) {
+      return;
+    }
+    const { accepted, rejected } = classifyImageFiles(list);
+    if (rejected) {
+      setUploadNotice(t("agentWorkbench.uploadUnsupported"));
+    }
+    if (!accepted.length) {
+      return;
+    }
+    const remaining = AGENT_COMPOSER_MAX_ASSETS - selectedAssets.length;
+    if (remaining <= 0) {
+      setUploadNotice(t("agentWorkbench.uploadLimit", { maximum: AGENT_COMPOSER_MAX_ASSETS }));
+      return;
+    }
+    const limited = accepted.length > remaining;
+    if (limited) {
+      setUploadNotice(t("agentWorkbench.uploadLimit", { maximum: AGENT_COMPOSER_MAX_ASSETS }));
+    } else if (!rejected) {
+      setUploadNotice(null);
+    }
+    onUploadFiles(accepted.slice(0, remaining));
+  };
+
+  const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!event.clipboardData.files.length) {
+      return;
+    }
+    event.preventDefault();
+    takeUploadedFiles(event.clipboardData.files);
+  };
+
+  const handleDrop = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setDragging(false);
+    takeUploadedFiles(event.dataTransfer.files);
   };
 
   return (
@@ -106,13 +168,26 @@ export function AgentComposer({
           </div>
         ) : null}
 
-        {error ? (
+        {error || uploadNotice ? (
           <div role="alert" className="mb-2 rounded-lg border border-state-error/20 bg-state-error/10 px-3 py-2 text-xs leading-5 text-state-error">
-            {error}
+            {error || uploadNotice}
           </div>
         ) : null}
 
-        <div className="overflow-hidden rounded-[22px] border border-border-l3 bg-surface-raised shadow-[0_8px_24px_rgb(15_23_42_/_0.07)] transition-shadow focus-within:border-accent/70 focus-within:shadow-[0_8px_28px_rgb(99_102_241_/_0.14)] dark:shadow-[0_12px_30px_rgb(0_0_0_/_0.22)] dark:focus-within:shadow-[0_12px_34px_rgb(99_102_241_/_0.16)]">
+        <div
+          className={`overflow-hidden rounded-[22px] border bg-surface-raised shadow-[0_8px_24px_rgb(15_23_42_/_0.07)] transition-shadow focus-within:border-accent/70 focus-within:shadow-[0_8px_28px_rgb(99_102_241_/_0.14)] dark:shadow-[0_12px_30px_rgb(0_0_0_/_0.22)] dark:focus-within:shadow-[0_12px_34px_rgb(99_102_241_/_0.16)] ${
+            dragging ? "border-accent/80" : "border-border-l3"
+          }`}
+          onDragOver={(event) => {
+            if (!onUploadFiles) {
+              return;
+            }
+            event.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={handleDrop}
+        >
           {selectedAssets.length ? (
             <div className="border-b border-border-l1 px-3 pb-3 pt-3">
               <div className="mb-2 flex items-center justify-between gap-3 text-[11px] font-medium text-text-secondary">
@@ -168,6 +243,7 @@ export function AgentComposer({
             rows={1}
             onChange={(event) => onChange(event.target.value)}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             placeholder={placeholder ?? t("agentWorkbench.composerPlaceholder")}
             aria-label={t("agentWorkbench.composerLabel")}
             aria-describedby={keyboardHintId}
@@ -176,6 +252,35 @@ export function AgentComposer({
 
           <div className="flex min-h-12 items-center justify-between gap-3 px-2 pb-2 pt-1">
             <div className="flex min-w-0 items-center gap-1.5">
+              {onUploadFiles ? (
+                <>
+                  <input
+                    id={uploadInputId}
+                    type="file"
+                    accept={ACCEPT_IMAGE_TYPES}
+                    multiple
+                    className="sr-only"
+                    disabled={isSubmitting || isUploading || selectedAssets.length >= AGENT_COMPOSER_MAX_ASSETS}
+                    onChange={(event) => {
+                      takeUploadedFiles(event.target.files);
+                      event.target.value = "";
+                    }}
+                  />
+                  <label
+                    htmlFor={uploadInputId}
+                    title={t("agentWorkbench.uploadAssets")}
+                    aria-disabled={isSubmitting || isUploading || selectedAssets.length >= AGENT_COMPOSER_MAX_ASSETS}
+                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors ${
+                      isSubmitting || isUploading || selectedAssets.length >= AGENT_COMPOSER_MAX_ASSETS
+                        ? "pointer-events-none cursor-not-allowed opacity-40"
+                        : "cursor-pointer text-text-muted hover:bg-surface-subtle hover:text-text-primary"
+                    }`}
+                  >
+                    {isUploading ? <Loader2 size={16} className="animate-spin motion-reduce:animate-none" /> : <Upload size={16} />}
+                    <span className="sr-only">{t("agentWorkbench.uploadAssets")}</span>
+                  </label>
+                </>
+              ) : null}
               {showAssetPicker ? (
                 <button
                   type="button"
