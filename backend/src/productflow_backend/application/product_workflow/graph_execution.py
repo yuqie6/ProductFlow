@@ -4,12 +4,14 @@ import hashlib
 import json
 import logging
 import re
-from collections.abc import Callable
+import threading
+import uuid
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from typing import Any
 
 from pydantic import ValidationError
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.orm.attributes import flag_modified
@@ -63,7 +65,7 @@ from productflow_backend.domain.enums import (
     WorkflowRunStatus,
 )
 from productflow_backend.domain.errors import BusinessValidationError, NotFoundError
-from productflow_backend.domain.graph_catalog import catalog_visual_overlay
+from productflow_backend.domain.graph_catalog import PROCESSING_NODE_TYPES, catalog_visual_overlay
 from productflow_backend.infrastructure.db.models import (
     Product,
     ProductImageAsset,
@@ -92,6 +94,9 @@ logger = logging.getLogger(__name__)
 SUPPORTED_REFERENCE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp"}
 # ImagePromptPayloadV1 still requires images[].image_plan_key; stored v3 artifacts strip it.
 V3_PROMPT_PROVIDER_PLAN_KEY = "output"
+GRAPH_RUN_ADVISORY_LOCK_NAMESPACE = 847261
+_graph_run_execution_locks_guard = threading.Lock()
+_graph_run_execution_locks: dict[str, threading.Lock] = {}
 
 
 def execute_graph_run(
@@ -100,15 +105,27 @@ def execute_graph_run(
     dependencies: WorkflowExecutionDependencies | None = None,
     storage: LocalStorage | None = None,
 ) -> None:
+    execution_lock = _acquire_graph_run_execution_lock(run_id)
+    if execution_lock is None:
+        logger.info("schema-v3 graph run already executing: run_id=%s", run_id)
+        return
     session = get_session_factory()()
+    pg_locked = False
     try:
+        pg_locked = _try_acquire_graph_run_advisory_lock(session, run_id)
+        if not pg_locked:
+            logger.info("schema-v3 graph run already executing on another connection: run_id=%s", run_id)
+            return
         _execute_graph_run(session, run_id=run_id, dependencies=dependencies, storage=storage)
     except Exception:
         session.rollback()
         logger.exception("schema-v3 graph run failed: run_id=%s", run_id)
         _fail_run(session, run_id=run_id, reason="工作流运行失败")
     finally:
+        if pg_locked:
+            _release_graph_run_advisory_lock(session, run_id)
         session.close()
+        _release_graph_run_execution_lock(run_id, execution_lock)
 
 
 def _execute_graph_run(
@@ -140,8 +157,11 @@ def _execute_graph_run(
         session.refresh(run)
         if run.status in {WorkflowRunStatus.CANCELLED, WorkflowRunStatus.FAILED}:
             return
-        session.refresh(node_run)
+        for item in node_runs:
+            session.refresh(item)
         if node_run.status != WorkflowNodeStatus.QUEUED:
+            continue
+        if not _upstream_processing_runs_succeeded(graph, node_runs, node_run):
             continue
         if not _claim_queued_node_run(session, node_run):
             continue
@@ -169,10 +189,16 @@ def _execute_graph_run(
             _fail_claimed_node(session, run_id=run.id, node_run_id=node_run.id, reason="节点运行失败")
             return
     session.refresh(run)
-    if run.status == WorkflowRunStatus.RUNNING:
-        run.status = WorkflowRunStatus.SUCCEEDED
-        run.finished_at = now_utc()
-        session.commit()
+    if run.status != WorkflowRunStatus.RUNNING:
+        return
+    unfinished_statuses = session.scalars(
+        select(WorkflowGraphNodeRun.status).where(WorkflowGraphNodeRun.graph_run_id == run.id)
+    ).all()
+    if any(status in {WorkflowNodeStatus.QUEUED, WorkflowNodeStatus.RUNNING} for status in unfinished_statuses):
+        return
+    run.status = WorkflowRunStatus.SUCCEEDED
+    run.finished_at = now_utc()
+    session.commit()
 
 
 def _execute_node_run(
@@ -501,7 +527,7 @@ def _persist_artifact(
         select(WorkflowGraphArtifact).where(WorkflowGraphArtifact.node_run_id == node_run.id)
     )
     if artifact is None:
-        artifact = WorkflowGraphArtifact(
+        candidate = WorkflowGraphArtifact(
             graph_id=run.graph_id,
             node_id=node_run.node_id,
             node_run_id=node_run.id,
@@ -515,18 +541,27 @@ def _persist_artifact(
             provider_name=provider_name,
             provider_model=provider_model,
         )
-        session.add(artifact)
-    else:
-        artifact.artifact_type = artifact_type
-        artifact.schema_version = 3
-        artifact.graph_revision = run.graph_revision
-        artifact.payload_json = payload
-        artifact.payload_hash = payload_hash
-        artifact.input_digest = input_digest
-        artifact.product_image_asset_id = product_image_asset_id
-        artifact.provider_name = provider_name
-        artifact.provider_model = provider_model
-        flag_modified(artifact, "payload_json")
+        try:
+            with session.begin_nested():
+                session.add(candidate)
+                session.flush()
+            artifact = candidate
+        except IntegrityError:
+            artifact = session.scalar(
+                select(WorkflowGraphArtifact).where(WorkflowGraphArtifact.node_run_id == node_run.id)
+            )
+            if artifact is None:
+                raise
+    artifact.artifact_type = artifact_type
+    artifact.schema_version = 3
+    artifact.graph_revision = run.graph_revision
+    artifact.payload_json = payload
+    artifact.payload_hash = payload_hash
+    artifact.input_digest = input_digest
+    artifact.product_image_asset_id = product_image_asset_id
+    artifact.provider_name = provider_name
+    artifact.provider_model = provider_model
+    flag_modified(artifact, "payload_json")
     session.flush()
     live_graph = session.get(WorkflowGraph, run.graph_id)
     if live_graph is not None and live_graph.revision == run.graph_revision:
@@ -1174,6 +1209,82 @@ def _image_context_trace(runtime: ImageRuntimeInput) -> dict[str, Any]:
         "reference_asset_ids": [item.asset_id for item in runtime.reference_images],
         "visual_system_version_id": runtime.visual_system_version_id,
     }
+
+
+def _acquire_graph_run_execution_lock(run_id: str) -> threading.Lock | None:
+    with _graph_run_execution_locks_guard:
+        lock = _graph_run_execution_locks.get(run_id)
+        if lock is None:
+            lock = threading.Lock()
+            _graph_run_execution_locks[run_id] = lock
+    if not lock.acquire(blocking=False):
+        return None
+    return lock
+
+
+def _release_graph_run_execution_lock(run_id: str, lock: threading.Lock) -> None:
+    lock.release()
+    with _graph_run_execution_locks_guard:
+        current = _graph_run_execution_locks.get(run_id)
+        if current is lock and not lock.locked():
+            _graph_run_execution_locks.pop(run_id, None)
+
+
+def _graph_run_advisory_lock_keys(run_id: str) -> tuple[int, int]:
+    try:
+        ident = uuid.UUID(run_id).int
+    except ValueError:
+        ident = int.from_bytes(hashlib.sha256(run_id.encode("utf-8")).digest()[:8], "big")
+    return GRAPH_RUN_ADVISORY_LOCK_NAMESPACE, ident % (2**31)
+
+
+def _try_acquire_graph_run_advisory_lock(session: Session, run_id: str) -> bool:
+    if session.get_bind().dialect.name != "postgresql":
+        return True
+    namespace, key = _graph_run_advisory_lock_keys(run_id)
+    acquired = session.execute(
+        text("SELECT pg_try_advisory_lock(:namespace, :key)"),
+        {"namespace": namespace, "key": key},
+    ).scalar()
+    return bool(acquired)
+
+
+def _release_graph_run_advisory_lock(session: Session, run_id: str) -> None:
+    if session.get_bind().dialect.name != "postgresql":
+        return
+    namespace, key = _graph_run_advisory_lock_keys(run_id)
+    try:
+        session.rollback()
+        session.execute(
+            text("SELECT pg_advisory_unlock(:namespace, :key)"),
+            {"namespace": namespace, "key": key},
+        )
+        session.commit()
+    except Exception:
+        logger.exception("schema-v3 graph run lock release failed: run_id=%s", run_id)
+
+
+def _upstream_processing_runs_succeeded(
+    graph: Any,
+    node_runs: Sequence[WorkflowGraphNodeRun],
+    node_run: WorkflowGraphNodeRun,
+) -> bool:
+    if node_run.node_id is None:
+        return True
+    by_node_id = {item.node_id: item for item in node_runs if item.node_id is not None}
+    for edge in graph.incoming(node_run.node_id):
+        try:
+            source = graph.node(edge.source_node_id)
+        except BusinessValidationError:
+            continue
+        if source.node_type not in PROCESSING_NODE_TYPES:
+            continue
+        upstream = by_node_id.get(source.id)
+        if upstream is None:
+            continue
+        if upstream.status != WorkflowNodeStatus.SUCCEEDED:
+            return False
+    return True
 
 
 def _claim_queued_node_run(session: Session, node_run: WorkflowGraphNodeRun) -> bool:

@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+import threading
+
 from helpers import _make_demo_image_bytes
 from sqlalchemy import select
 
 from productflow_backend.application.product_workflow.dependencies import WorkflowExecutionDependencies
 from productflow_backend.application.product_workflow.graph_commands import apply_graph_change_set, get_workflow_graph
+from productflow_backend.application.product_workflow.graph_compiler import (
+    applied_graph_from_snapshot,
+    compile_context_runtime,
+    compile_prompt_runtime,
+    sources_from_snapshot,
+)
 from productflow_backend.application.product_workflow.graph_contracts import (
     DisconnectEdgeOp,
     MoveNodesOp,
@@ -37,6 +45,7 @@ from productflow_backend.infrastructure.db.models import (
     WorkflowGraphArtifact,
     WorkflowGraphNode,
     WorkflowGraphNodeRun,
+    WorkflowGraphRun,
 )
 from productflow_backend.infrastructure.image.base import (
     ImageProvider,
@@ -45,6 +54,7 @@ from productflow_backend.infrastructure.image.base import (
     WorkflowImageResult,
 )
 from productflow_backend.infrastructure.prompt.base import (
+    ContextGenerationRequest,
     PromptGenerationProvider,
     PromptGenerationRequest,
     PromptGenerationResult,
@@ -73,11 +83,20 @@ class RecordingPromptProvider(PromptGenerationProvider):
 
     def __init__(self) -> None:
         self.requests: list[PromptGenerationRequest] = []
+        self.context_requests: list[ContextGenerationRequest] = []
 
     def generate_prompt(self, request: PromptGenerationRequest) -> PromptGenerationResult:
         self.requests.append(request)
         payload = request.current_prompt.model_copy(update={"design_goal": "由 v3 运行写出的提示词"})
         return PromptGenerationResult(payload=payload, model="recording-prompt", response_id="resp-1")
+
+    def generate_creative_brief(self, request: ContextGenerationRequest):
+        self.context_requests.append(request)
+        return super().generate_creative_brief(request)
+
+    def generate_visual_overlay(self, request: ContextGenerationRequest):
+        self.context_requests.append(request)
+        return super().generate_visual_overlay(request)
 
 
 class RecordingImageProvider(ImageProvider):
@@ -1069,3 +1088,186 @@ def test_matching_digest_skips_provider_and_stale_only_after_input_edit(db_sessi
     prompt_after = next(node for node in after_edit.nodes if node.node_type == GraphNodeType.PROMPT_GENERATION)
     assert visual_after.config_status == GraphConfigStatus.STALE
     assert prompt_after.config_status == GraphConfigStatus.STALE
+
+
+def _direct_graph_with_recording(db_session, *, name: str):
+    image_bytes = _make_demo_image_bytes()
+    created = create_product_with_direct_graph(
+        db_session,
+        name=name,
+        category=None,
+        price=None,
+        source_note=None,
+        image_uploads=[(image_bytes, "ref.png", "image/png")],
+        image_types=[DirectCreateImageType(key="hero", quantity=1, order=0)],
+    )
+    prompt_provider = RecordingPromptProvider()
+    image_provider = RecordingImageProvider(image_bytes)
+    dependencies = WorkflowExecutionDependencies(
+        prompt_generation_provider_resolver=lambda: prompt_provider,
+        image_provider_resolver=lambda: image_provider,
+    )
+    return created, prompt_provider, image_provider, dependencies
+
+
+def test_disconnected_reference_edge_is_absent_from_compiled_runtime_and_provider_request(db_session) -> None:
+    created, prompt_provider, image_provider, dependencies = _direct_graph_with_recording(
+        db_session,
+        name="断参考边运行",
+    )
+    prompt_node = next(
+        node for node in created.projection.nodes if node.node_type == GraphNodeType.PROMPT_GENERATION
+    )
+    optional_reference_edges = [
+        edge
+        for node in created.projection.nodes
+        if node.node_type != GraphNodeType.IMAGE_GENERATION
+        for edge in node.incoming
+        if edge.role == GraphEdgeRole.REFERENCE
+    ]
+    assert optional_reference_edges
+    apply_graph_change_set(
+        db_session,
+        product_id=created.product.id,
+        graph_id=created.graph.id,
+        change_set=WorkflowChangeSet(
+            base_graph_revision=created.graph.revision,
+            summary="断开提示词与上下文参考边",
+            operations=[DisconnectEdgeOp(edge_ref=edge.id) for edge in optional_reference_edges],
+        ),
+    )
+    graph = get_workflow_graph(db_session, product_id=created.product.id, graph_id=created.graph.id)
+    submission = submit_graph_run(
+        db_session,
+        product_id=created.product.id,
+        graph_id=graph.id,
+        scope=GraphRunScope.GRAPH,
+        enqueue=lambda run_id: execute_graph_run(run_id, dependencies=dependencies),
+    )
+    assert submission.run.status == WorkflowRunStatus.SUCCEEDED
+    snapshot_graph = applied_graph_from_snapshot(submission.run.snapshot_json)
+    snapshot_sources = sources_from_snapshot(submission.run.snapshot_json)
+    prompt_runtime = compile_prompt_runtime(snapshot_graph, prompt_node.id, snapshot_sources)
+    assert prompt_runtime.reference_images == ()
+    assert prompt_provider.requests
+    assert all(request.reference_images == () for request in prompt_provider.requests)
+    assert all(request.reference_images == () for request in prompt_provider.context_requests)
+    prompt_run = next(item for item in submission.run.node_runs if item.node_id == prompt_node.id)
+    compiled = prompt_run.compiled_context_json or prompt_run.output_json or {}
+    assert compiled.get("reference_asset_ids") == []
+
+
+def test_disconnected_facts_edge_is_absent_from_compiled_runtime_and_provider_request(db_session) -> None:
+    created, prompt_provider, _, dependencies = _direct_graph_with_recording(
+        db_session,
+        name="断资料边运行",
+    )
+    visual_node = next(node for node in created.projection.nodes if node.node_type == GraphNodeType.VISUAL_SYSTEM)
+    prompt_node = next(
+        node for node in created.projection.nodes if node.node_type == GraphNodeType.PROMPT_GENERATION
+    )
+    facts_edges = [
+        edge
+        for node in created.projection.nodes
+        for edge in node.incoming
+        if edge.role == GraphEdgeRole.FACTS
+    ]
+    assert facts_edges
+    apply_graph_change_set(
+        db_session,
+        product_id=created.product.id,
+        graph_id=created.graph.id,
+        change_set=WorkflowChangeSet(
+            base_graph_revision=created.graph.revision,
+            summary="断开全部资料边",
+            operations=[DisconnectEdgeOp(edge_ref=edge.id) for edge in facts_edges],
+        ),
+    )
+    graph = get_workflow_graph(db_session, product_id=created.product.id, graph_id=created.graph.id)
+    submission = submit_graph_run(
+        db_session,
+        product_id=created.product.id,
+        graph_id=graph.id,
+        scope=GraphRunScope.GRAPH,
+        enqueue=lambda run_id: execute_graph_run(run_id, dependencies=dependencies),
+    )
+    assert submission.run.status == WorkflowRunStatus.SUCCEEDED
+    snapshot_graph = applied_graph_from_snapshot(submission.run.snapshot_json)
+    snapshot_sources = sources_from_snapshot(submission.run.snapshot_json)
+    visual_runtime = compile_context_runtime(snapshot_graph, visual_node.id, snapshot_sources)
+    prompt_runtime = compile_prompt_runtime(snapshot_graph, prompt_node.id, snapshot_sources)
+    assert visual_runtime.product_facts == ()
+    assert prompt_runtime.product_facts == ()
+    assert all(request.facts == () for request in prompt_provider.requests)
+    assert all(request.facts == () for request in prompt_provider.context_requests)
+    visual_run = next(item for item in submission.run.node_runs if item.node_id == visual_node.id)
+    compiled = visual_run.compiled_context_json or {}
+    assert compiled.get("fact_count") == 0
+
+
+class _GatedPromptProvider(RecordingPromptProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.brief_calls = 0
+
+    def generate_creative_brief(self, request: ContextGenerationRequest):
+        self.brief_calls += 1
+        self.entered.set()
+        assert self.release.wait(timeout=5)
+        return super().generate_creative_brief(request)
+
+
+def test_duplicate_execute_graph_run_does_not_fail_or_double_persist(db_session) -> None:
+    created, _, image_provider, _ = _direct_graph_with_recording(db_session, name="并发投递运行")
+    prompt_provider = _GatedPromptProvider()
+    dependencies = WorkflowExecutionDependencies(
+        prompt_generation_provider_resolver=lambda: prompt_provider,
+        image_provider_resolver=lambda: image_provider,
+    )
+    submission = submit_graph_run(
+        db_session,
+        product_id=created.product.id,
+        graph_id=created.graph.id,
+        scope=GraphRunScope.GRAPH,
+        enqueue=lambda _run_id: None,
+    )
+    run_id = submission.run.id
+    assert submission.run.status == WorkflowRunStatus.RUNNING
+
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            execute_graph_run(run_id, dependencies=dependencies)
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    first = threading.Thread(target=worker)
+    second = threading.Thread(target=worker)
+    first.start()
+    assert prompt_provider.entered.wait(timeout=5)
+    second.start()
+    second.join(timeout=5)
+    prompt_provider.release.set()
+    first.join(timeout=30)
+    assert first.is_alive() is False
+    assert second.is_alive() is False
+    assert errors == []
+    db_session.expire_all()
+    run = db_session.get(WorkflowGraphRun, run_id)
+    assert run is not None
+    assert run.status == WorkflowRunStatus.SUCCEEDED
+    assert prompt_provider.brief_calls == 1
+    artifacts = list(db_session.scalars(select(WorkflowGraphArtifact)))
+    assert {artifact.artifact_type for artifact in artifacts} == {
+        "creative_brief",
+        "visual_system",
+        "prompt",
+        "image",
+    }
+    node_runs = list(
+        db_session.scalars(select(WorkflowGraphNodeRun).where(WorkflowGraphNodeRun.graph_run_id == run_id))
+    )
+    assert {item.status for item in node_runs} == {WorkflowNodeStatus.SUCCEEDED}
