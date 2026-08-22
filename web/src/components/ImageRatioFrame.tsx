@@ -2,6 +2,7 @@ interface ImageRatioFrameProps {
   aspectRatio: string;
   label?: string;
   className?: string;
+  size?: "sm" | "md";
 }
 
 export interface ParsedAspectRatio {
@@ -10,9 +11,10 @@ export interface ParsedAspectRatio {
 }
 
 const ASPECT_RATIO_PATTERN = /^([1-9][0-9]{0,2}):([1-9][0-9]{0,2})$/;
-const FRAME_MAX_WIDTH = 40;
-const FRAME_MAX_HEIGHT = 40;
-const FRAME_MIN_EDGE = 18;
+const FRAME_SIZE = {
+  md: { maxWidth: 40, maxHeight: 40, minEdge: 18, wrap: "h-10 w-10" },
+  sm: { maxWidth: 20, maxHeight: 20, minEdge: 9, wrap: "h-5 w-5" },
+} as const;
 
 export function parseAspectRatio(value: string): ParsedAspectRatio | null {
   const match = ASPECT_RATIO_PATTERN.exec(value.trim());
@@ -34,28 +36,37 @@ export function formatAspectRatio(width: string, height: string): string | null 
   return `${nextWidth}:${nextHeight}`;
 }
 
-export function aspectRatioFrameSize(aspectRatio: string): { width: number; height: number } {
+export function aspectRatioFrameSize(
+  aspectRatio: string,
+  size: keyof typeof FRAME_SIZE = "md",
+): { width: number; height: number } {
+  const { maxWidth, maxHeight, minEdge } = FRAME_SIZE[size];
   const parsed = parseAspectRatio(aspectRatio) ?? { width: 1, height: 1 };
   const ratio = parsed.width / parsed.height;
   if (ratio >= 1) {
     return {
-      width: FRAME_MAX_WIDTH,
-      height: Math.max(FRAME_MIN_EDGE, Math.round(FRAME_MAX_WIDTH / ratio)),
+      width: maxWidth,
+      height: Math.max(minEdge, Math.round(maxWidth / ratio)),
     };
   }
   return {
-    width: Math.max(FRAME_MIN_EDGE, Math.round(FRAME_MAX_HEIGHT * ratio)),
-    height: FRAME_MAX_HEIGHT,
+    width: Math.max(minEdge, Math.round(maxHeight * ratio)),
+    height: maxHeight,
   };
 }
 
-export function ImageRatioFrame({ aspectRatio, label, className = "" }: ImageRatioFrameProps) {
-  const size = aspectRatioFrameSize(aspectRatio);
+export function ImageRatioFrame({
+  aspectRatio,
+  label,
+  className = "",
+  size = "md",
+}: ImageRatioFrameProps) {
+  const frame = aspectRatioFrameSize(aspectRatio, size);
   return (
-    <span className={`flex h-10 w-10 items-center justify-center ${className}`} aria-hidden="true">
+    <span className={`flex items-center justify-center ${FRAME_SIZE[size].wrap} ${className}`} aria-hidden="true">
       <span
         className="flex items-center justify-center rounded-sm border-2 border-current text-[10px] font-black leading-none"
-        style={size}
+        style={frame}
       >
         {label}
       </span>

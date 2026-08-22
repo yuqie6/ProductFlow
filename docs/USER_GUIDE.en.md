@@ -20,12 +20,13 @@ All three purposes are required by the core flow:
 
 Open `/products/new`.
 
-### 2.1 Choose an Image Plan
+### 2.1 Product details and image plan
 
-- Enter the product name.
-- Select the required image types.
-- Each type defaults to two images and has an independent quantity control.
-- Multiple hero images are usually candidates. For multi-angle output, describe the intended angle or content of each image during clarification.
+- Enter the product name and a product brief (selling points, audience, style).
+- Select the required image types. Types are grouped as photography, infographic, and evidence.
+- Photography and infographic types default to two images in the same shot, sharing one prompt.
+- Certification and factory are evidence types: one unbound asset placeholder, not generated.
+- Each generating type has its own aspect ratio, editable in output settings. Hero defaults to 3:4, detail and SKU to 1:1, scene to 4:3.
 
 ### 2.2 Upload Real References
 
@@ -36,17 +37,19 @@ Open `/products/new`.
 
 References are product evidence and candidates for reference-node bindings. Product cover selection is automatic; no separate cover prop is required.
 
-### 2.3 Clarify with the Agent
+### 2.3 Talk with the Agent
 
-The Agent checks the selected image types and uploaded references for gaps. Common questions cover:
+After entering a product name, open the workbench conversation. Upload one to six reference photos in the composer and say which images you need. The Agent writes that as product intake, then asks only for facts that change the result.
+
+Image types and references on the create page still feed direct create, and remain an optional shortcut before you click Start conversation. After you are in chat, keep sending photos and text there.
+
+Common follow-up questions cover:
 
 - Price, category, specifications, and selling points.
 - Visual style, colors, typography, photography, and realism.
 - Image-text language, copy density, and forbidden content.
 - Aspect ratio, quality, reference fidelity, and background.
 - Whether multiple images of one type are candidates or distinct angles/content.
-
-Questions should affect the workflow or image result. The user can add text or upload more verifiable product material.
 
 ### 2.4 Confirm the Draft
 
@@ -64,7 +67,7 @@ Confirmation writes the draft into the workflow graph, then opens the product wo
 
 ### 2.5 Create the Canvas Directly
 
-Product creation can skip the Agent and write a runnable workflow immediately. After you upload references and choose image types, the graph includes product facts, references, visual system, creative brief, prompt nodes, and image nodes, with photos wired to the visual, brief, prompt, and image nodes. Open the workbench and run the visual system, creative brief, and prompt nodes first so the model writes into the inspector; then run image nodes or the whole graph.
+On the create page, enter a product brief plus on-image copy and language, then set an aspect ratio for each image type. Skip the Agent to write a runnable workflow immediately. The brief is written into the creative-brief node; copy requirement and language are written onto every image node; aspect ratio is written per type. Defaults are required copy and Simplified Chinese, with type-specific frames such as 3:4 for hero and 1:1 for detail. After you upload references and choose image types, the graph includes product facts, identity references, visual system, creative brief, and one group per photography/infographic shot (one prompt plus N images). Evidence types are unbound placeholders. Identity photos connect to visual, brief, and generating shots, not to evidence placeholders. You can talk to the Agent as soon as the workbench opens; the photos are already on the product, so you do not resubmit create-page image requirements. If something is missing, the Agent asks in chat. Edit nodes and edges on the canvas, or use Add a shot. The Agent can explain the graph, check configuration, and request a run; it cannot submit a Draft that replaces the live graph. Open the workbench and run the visual system, creative brief, and prompt nodes first so the model writes into the inspector; then run image nodes, a shot, or the whole graph.
 
 ## 3. Product Workbench
 
@@ -79,7 +82,9 @@ Product creation can skip the Agent and write a runnable workflow immediately. A
 
 ### 3.2 Canvas Operations
 
-- Adding a node from the add panel places it near the current viewport center and selects it.
+- The add panel can add a shot: one group, one prompt, and one image node, connected to existing product facts, visual system, and creative brief. Selected identity references are connected too.
+- Running a shot uses run-to-node on the first image in the group, then run-node on the remaining images.
+- Adding a single node from the add panel places it near the current viewport center and selects it.
 - Drag from an output handle to a target input handle to create an edge. Legal targets turn green; illegal targets turn red.
 - Drag nodes to position them; zoom with wheel/touch and pan from blank canvas.
 - Ctrl/Cmd/Shift-click or marquee-select multiple nodes.
@@ -124,7 +129,7 @@ Image nodes:
 
 - Choose aspect ratio and resolution tier.
 - Set quality intent, reference fidelity, background, and text policy.
-- Text policy constrains prompt generation and rendering. The default forbids on-image copy; switch to allow or required and set a language when the image needs letters.
+- Text policy constrains prompt generation and rendering. Direct create defaults to required on-image copy with a language; a new image node added on the canvas defaults to no copy. Switch to allow or required and set a language when the image needs letters.
 - Connect a reference image before running. Direct create wires uploads to visual, brief, prompt, and image nodes.
 - Running this node only renders an image. Empty visual, brief, and prompt nodes need their own runs, or use run-to-node on the image node.
 - Inspect output both on the node and in the library.
@@ -269,9 +274,9 @@ The Agent may propose a library-organization Draft. Names, folders, tags, and ar
 
 ## 12. Troubleshooting
 
-### Agent Creation Cannot Start
+### Agent Conversation Cannot Start
 
-Select at least one image type and upload one to six valid product images. Then check the Agent binding and Agent service health.
+Check that a product name was entered. Upload references in the workbench composer; the create form does not have to be completed first. Then check the Agent binding and Agent service health.
 
 ### The Agent Replied but No Workflow Appeared
 

@@ -40,7 +40,9 @@ GraphConfigControl = Literal[
 ]
 GraphConfigVisibleWhenOp = Literal["in"]
 
-GRAPH_CATALOG_VERSION = 4
+GRAPH_CATALOG_VERSION = 5
+
+IMAGE_ASSET_ROLES = ("product_identity", "environment", "style", "evidence")
 
 FORBIDDEN_GRAPH_CONFIG_KEYS = frozenset(
     {
@@ -435,7 +437,14 @@ _CONFIG_FIELDS: dict[GraphNodeType, tuple[GraphConfigFieldDocument, ...]] = {
         _hidden("fact_set_version_id", "string_or_null"),
     ),
     GraphNodeType.IMAGE_ASSET: (
-        _field("role", "string_or_null", label_key="graph.inspector.assetRole", max_length=120),
+        _field(
+            "role",
+            "string_or_null",
+            control="select",
+            label_key="graph.inspector.assetRole",
+            choices=IMAGE_ASSET_ROLES,
+            max_length=120,
+        ),
         _field("label", "string_or_null", label_key="graph.inspector.assetLabel", max_length=255),
     ),
     GraphNodeType.CREATIVE_BRIEF: (

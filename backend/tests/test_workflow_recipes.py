@@ -215,11 +215,12 @@ def test_extract_group_includes_members_and_internal_edges(db_session) -> None:
             ],
         ),
     )
-    payload = extract_recipe_payload(grouped.applied, source_type="group", group_id=grouped.applied.groups[0].id)
+    shot_group = next(group for group in grouped.applied.groups if group.title == "主图组")
+    payload = extract_recipe_payload(grouped.applied, source_type="group", group_id=shot_group.id)
     assert {node.key for node in payload.nodes} == {prompt.id, image.id}
-    assert len(payload.groups) == 1
-    assert payload.groups[0].title == "主图组"
-    assert set(payload.groups[0].member_keys) == {prompt.id, image.id}
+    named = [group for group in payload.groups if group.title == "主图组"]
+    assert len(named) == 1
+    assert set(named[0].member_keys) == {prompt.id, image.id}
 
 
 def test_create_and_append_recipe_from_live_graph(db_session) -> None:

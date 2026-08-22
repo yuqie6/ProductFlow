@@ -18,9 +18,8 @@ The public instance is a personal live demo with one administrator and one merch
 
 ### Agent Product Creation
 
-- `/products/new` is the canonical creation route.
-- Users choose hero, selling-point, scene, detail, SKU, dimension, and other image types. Each type defaults to two images and has an independent quantity control.
-- Every product starts with one to six real product reference images in PNG, JPEG, or WebP.
+- `/products/new` is the canonical creation route. A product name is enough to open the Agent conversation; send reference photos and image requirements there.
+- The create form still accepts image types and one to six PNG, JPEG, or WebP references for direct canvas create.
 - The Agent can ask for price, generation style, image text language, copy requirements, and visual-system decisions.
 - After the user confirms the WorkflowDraft, the system persists a schema-v3 graph and opens the product workbench while continuing the same Agent conversation in the sidebar.
 

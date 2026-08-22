@@ -9,11 +9,18 @@ from dataclasses import replace
 from typing import Any
 
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.orm.attributes import flag_modified
 
-from productflow_backend.application.agent.product_intake import agent_product_image_type_option
+from productflow_backend.application.agent.product_intake import (
+    LISTING_LOOK_RULE,
+    agent_product_image_type_option,
+    image_type_family,
+    image_type_generation_job,
+    image_type_prompt_goal,
+)
 from productflow_backend.application.async_delivery import delivery_key_for_actor, stage_async_dispatch
 from productflow_backend.application.delivery_renditions.service import create_delivery_rendition_job
 from productflow_backend.application.product_images.assets import stage_product_image_asset
@@ -67,7 +74,13 @@ from productflow_backend.infrastructure.db.models import (
     WorkflowGraphRun,
 )
 from productflow_backend.infrastructure.db.session import get_session_factory
-from productflow_backend.infrastructure.image.base import WorkflowImageReference, WorkflowImageRequest
+from productflow_backend.infrastructure.image.base import (
+    WorkflowImageReference,
+    WorkflowImageRequest,
+    aspect_mismatch_message,
+    image_dimensions_from_bytes,
+    measured_aspect_matches_spec,
+)
 from productflow_backend.infrastructure.prompt.base import (
     ContextGenerationRequest,
     PromptGenerationRequest,
@@ -125,9 +138,12 @@ def _execute_graph_run(
     ).all()
     for node_run in node_runs:
         session.refresh(run)
-        if run.status == WorkflowRunStatus.CANCELLED:
+        if run.status in {WorkflowRunStatus.CANCELLED, WorkflowRunStatus.FAILED}:
             return
+        session.refresh(node_run)
         if node_run.status != WorkflowNodeStatus.QUEUED:
+            continue
+        if not _claim_queued_node_run(session, node_run):
             continue
         try:
             artifacts = _execute_node_run(
@@ -142,11 +158,15 @@ def _execute_graph_run(
                 product_id=product_id,
             )
         except BusinessValidationError as exc:
-            _fail_node_and_run(session, run=run, node_run=node_run, reason=str(exc))
+            _fail_claimed_node(session, run_id=run.id, node_run_id=node_run.id, reason=str(exc))
+            return
+        except IntegrityError:
+            logger.exception("schema-v3 graph node persist conflict: run_id=%s node_run_id=%s", run.id, node_run.id)
+            _fail_claimed_node(session, run_id=run.id, node_run_id=node_run.id, reason="节点运行失败")
             return
         except Exception:
             logger.exception("schema-v3 graph node run failed: run_id=%s node_run_id=%s", run.id, node_run.id)
-            _fail_node_and_run(session, run=run, node_run=node_run, reason="节点运行失败")
+            _fail_claimed_node(session, run_id=run.id, node_run_id=node_run.id, reason="节点运行失败")
             return
     session.refresh(run)
     if run.status == WorkflowRunStatus.RUNNING:
@@ -167,13 +187,20 @@ def _execute_node_run(
     storage: LocalStorage,
     product_id: str,
 ) -> GraphRuntimeArtifacts:
-    node_run.status = WorkflowNodeStatus.RUNNING
-    session.commit()
     if node_run.node_id is None:
         raise BusinessValidationError("运行节点已从当前图中删除")
     applied_node = graph.node(node_run.node_id)
     if applied_node.node_type == GraphNodeType.CREATIVE_BRIEF:
         runtime = compile_context_runtime(graph, node_run.node_id, sources, artifacts)
+        skipped = _complete_skipped_node_run(
+            session,
+            node_run=node_run,
+            sources=sources,
+            input_digest=runtime.input_digest,
+            trace=_context_trace(runtime),
+        )
+        if skipped:
+            return artifacts
         node_run.compiled_context_json = _context_trace(runtime)
         prompt_provider = dependencies.prompt_generation_provider()
         result = prompt_provider.generate_creative_brief(
@@ -222,6 +249,15 @@ def _execute_node_run(
         artifacts = artifacts.with_prompt(node_run.node_id, artifact_id=artifact.id, payload=payload)
     elif applied_node.node_type == GraphNodeType.VISUAL_SYSTEM:
         runtime = compile_context_runtime(graph, node_run.node_id, sources, artifacts)
+        skipped = _complete_skipped_node_run(
+            session,
+            node_run=node_run,
+            sources=sources,
+            input_digest=runtime.input_digest,
+            trace=_context_trace(runtime),
+        )
+        if skipped:
+            return artifacts
         node_run.compiled_context_json = _context_trace(runtime)
         prompt_provider = dependencies.prompt_generation_provider()
         result = prompt_provider.generate_visual_overlay(
@@ -271,6 +307,15 @@ def _execute_node_run(
         artifacts = artifacts.with_prompt(node_run.node_id, artifact_id=artifact.id, payload=overlay)
     elif applied_node.node_type == GraphNodeType.PROMPT_GENERATION:
         runtime = compile_prompt_runtime(graph, node_run.node_id, sources, artifacts)
+        skipped = _complete_skipped_node_run(
+            session,
+            node_run=node_run,
+            sources=sources,
+            input_digest=runtime.input_digest,
+            trace=_prompt_context_trace(runtime),
+        )
+        if skipped:
+            return artifacts
         node_run.compiled_context_json = _prompt_context_trace(runtime)
         prompt_provider = dependencies.prompt_generation_provider()
         result = prompt_provider.generate_prompt(
@@ -316,12 +361,26 @@ def _execute_node_run(
         artifacts = artifacts.with_prompt(node_run.node_id, artifact_id=artifact.id, payload=payload)
     elif applied_node.node_type == GraphNodeType.IMAGE_GENERATION:
         runtime = compile_image_runtime(graph, node_run.node_id, sources, artifacts)
+        skipped = _complete_skipped_node_run(
+            session,
+            node_run=node_run,
+            sources=sources,
+            input_digest=runtime.input_digest,
+            trace=_image_context_trace(runtime),
+        )
+        if skipped:
+            return artifacts
         node_run.compiled_context_json = _image_context_trace(runtime)
         image_provider = dependencies.image_provider()
+        spec = GenerationSpec.model_validate(runtime.generation_spec)
         image_result = image_provider.generate_workflow_image(
             _to_image_request(runtime, session=session, storage=storage, product_id=product_id)
         )
         generated = image_result.images[0]
+        dimensions = image_dimensions_from_bytes(generated.bytes_data)
+        measured_width, measured_height = dimensions or (0, 0)
+        if dimensions is None or not measured_aspect_matches_spec(spec, measured_width, measured_height):
+            raise BusinessValidationError(aspect_mismatch_message(spec, measured_width, measured_height))
         product = session.get(Product, product_id)
         if product is None:
             raise NotFoundError("商品不存在")
@@ -349,6 +408,10 @@ def _execute_node_run(
                 "mime_type": generated.mime_type,
                 "provider_status": image_result.provider_status,
                 "effective_parameters": image_result.effective_parameters,
+                "requested_aspect_ratio": spec.aspect_ratio,
+                "measured_width": measured_width,
+                "measured_height": measured_height,
+                "requested_quality": spec.quality_intent,
             },
         }
         artifact = _persist_artifact(
@@ -428,21 +491,37 @@ def _persist_artifact(
     product_image_asset_id: str | None = None,
 ) -> WorkflowGraphArtifact:
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True)
-    artifact = WorkflowGraphArtifact(
-        graph_id=run.graph_id,
-        node_id=node_run.node_id,
-        node_run_id=node_run.id,
-        artifact_type=artifact_type,
-        schema_version=3,
-        graph_revision=run.graph_revision,
-        payload_json=payload,
-        payload_hash=hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
-        input_digest=input_digest,
-        product_image_asset_id=product_image_asset_id,
-        provider_name=provider_name,
-        provider_model=provider_model,
+    payload_hash = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+    artifact = session.scalar(
+        select(WorkflowGraphArtifact).where(WorkflowGraphArtifact.node_run_id == node_run.id)
     )
-    session.add(artifact)
+    if artifact is None:
+        artifact = WorkflowGraphArtifact(
+            graph_id=run.graph_id,
+            node_id=node_run.node_id,
+            node_run_id=node_run.id,
+            artifact_type=artifact_type,
+            schema_version=3,
+            graph_revision=run.graph_revision,
+            payload_json=payload,
+            payload_hash=payload_hash,
+            input_digest=input_digest,
+            product_image_asset_id=product_image_asset_id,
+            provider_name=provider_name,
+            provider_model=provider_model,
+        )
+        session.add(artifact)
+    else:
+        artifact.artifact_type = artifact_type
+        artifact.schema_version = 3
+        artifact.graph_revision = run.graph_revision
+        artifact.payload_json = payload
+        artifact.payload_hash = payload_hash
+        artifact.input_digest = input_digest
+        artifact.product_image_asset_id = product_image_asset_id
+        artifact.provider_name = provider_name
+        artifact.provider_model = provider_model
+        flag_modified(artifact, "payload_json")
     session.flush()
     live_graph = session.get(WorkflowGraph, run.graph_id)
     if live_graph is not None and live_graph.revision == run.graph_revision:
@@ -455,6 +534,13 @@ def _persist_artifact(
 
 PROMPT_CONTEXT_DERIVED_PLACEHOLDER = "根据参考图、商品资料与图片类型生成"
 NO_ON_IMAGE_TEXT_RULE = "画面中不得出现文字、数字、价格、Logo 或水印"
+IDENTITY_SHARED_RULES = (
+    "商品外形、结构、颜色和材质以参考图为准",
+    "不要编造参考图和资料里没有的认证、Logo、价格或结构",
+    "参考图只提供商品本体，必须按图种重新构图，禁止原图贴字交差",
+    "不要极简大留白或浅灰空棚，也不要爆炸贴或满屏色块",
+)
+NO_CAPTION_ON_REFERENCE_RULE = "禁止把参考图原样放大缩小后只加一行字交差"
 _AUTHORED_PROMPT_KEYS = (
     "composition",
     "content",
@@ -477,8 +563,9 @@ def _to_prompt_request(
     generate_from_context = _prompt_config_is_generation_seed(runtime.prompt_config)
     type_option = agent_product_image_type_option(runtime.image_type_key or "")
     text_languages = (runtime.text_language,) if runtime.text_language else ()
+    image_type_key = runtime.image_type_key or "unspecified"
     return PromptGenerationRequest(
-        image_type_key=runtime.image_type_key or "unspecified",
+        image_type_key=image_type_key,
         image_plan_keys=(V3_PROMPT_PROVIDER_PLAN_KEY,),
         facts=runtime.product_facts,
         visual_system=visual,
@@ -493,6 +580,8 @@ def _to_prompt_request(
         image_type_title=type_option.title if type_option else None,
         image_type_description=type_option.description if type_option else None,
         text_policy=runtime.text_policy,
+        image_type_family=image_type_family(image_type_key),
+        image_type_job=image_type_generation_job(image_type_key) or None,
     )
 
 
@@ -527,6 +616,7 @@ def _to_context_request(
         text_policy=runtime.text_policy,
         text_language=runtime.text_language,
         node_title=title,
+        image_types=runtime.image_types,
     )
 
 
@@ -671,6 +761,7 @@ def _to_image_request(
         compiled_prompt=_compile_image_model_prompt(runtime),
         generation_spec=GenerationSpec.model_validate(runtime.generation_spec),
         references=references,
+        image_type_key=runtime.image_type_key,
     )
 
 
@@ -684,7 +775,7 @@ def _load_prompt_reference(
     asset, image_bytes = _read_asset(session, product_id=product_id, asset_id=reference.asset_id, storage=storage)
     return PromptReferenceImage(
         asset_id=asset.id,
-        role="reference",
+        role=reference.role,
         label=reference.label,
         filename=asset.original_filename,
         mime_type=asset.media_object.mime_type,
@@ -702,7 +793,7 @@ def _load_image_reference(
     asset, image_bytes = _read_asset(session, product_id=product_id, asset_id=reference.asset_id, storage=storage)
     return WorkflowImageReference(
         asset_id=asset.id,
-        role="reference",
+        role=reference.role,
         label=reference.label,
         filename=asset.original_filename,
         mime_type=asset.media_object.mime_type,
@@ -741,21 +832,41 @@ def _compile_image_model_prompt(runtime: ImageRuntimeInput) -> str:
     atmosphere = payload.get("atmosphere") if isinstance(payload.get("atmosphere"), dict) else {}
     fidelity = payload.get("product_fidelity") if isinstance(payload.get("product_fidelity"), dict) else {}
     text = payload.get("text") if isinstance(payload.get("text"), dict) else {}
+    image_type_key = runtime.image_type_key or ""
+    family = image_type_family(image_type_key)
+    type_option = agent_product_image_type_option(image_type_key)
+    type_title = type_option.title if type_option else image_type_key or "电商商品图"
+    job = image_type_generation_job(image_type_key)
     brief_lines = [
-        "根据参考图中的真实商品生成一张高质量电商商品图。",
-        "商品形态、结构、颜色、材质和可见特征以参考图为准。",
-        "上游提示词描述图类型、构图与氛围；参考图决定商品长什么样。",
-        "不得编造 Logo、认证、规格、价格或参考图与商品资料中未出现的特征。",
+        f"生成一张能上淘宝/天猫详情的{type_title}，不是参考图修图交差。",
+        "商品外形、结构、颜色、材质和可见零件以参考图为准。",
+        "参考图只提供商品本体，构图、布光、场景和排版必须按图种重做。",
+        LISTING_LOOK_RULE,
+        NO_CAPTION_ON_REFERENCE_RULE + "。",
+        "不要编造 Logo、认证、规格数字、价格或参考图与商品资料中未出现的结构。",
     ]
+    if job:
+        brief_lines.append(f"图种任务：{job}")
+    if family == "infographic":
+        brief_lines.append(
+            "这是详情卖点图：抠出商品重新排版。一个主标题加 2 到 4 条对齐的短利益点，色块克制。商品仍是主角。"
+        )
+    elif family == "evidence":
+        brief_lines.append("只能使用用户提供的资质或工厂画面，没有素材就不要生成假文件或假车间。")
+    else:
+        brief_lines.append(
+            "这是可上架的商品摄影：主体约占画面 55%–75%，有光影质感。"
+            "不要大面积空洞把商品挤到一角，也不要贴满标签。"
+        )
     policy = spec.get("text_policy") or "none"
     if policy == "none":
         brief_lines.append(NO_ON_IMAGE_TEXT_RULE + "。")
     elif policy == "required":
         language = spec.get("text_language")
         if isinstance(language, str) and language.strip():
-            brief_lines.append(f"画面必须包含图片内文字，语种为{language.strip()}。")
+            brief_lines.append(f"画面必须包含图片内文字，语种为{language.strip()}，写短利益点，不要说明书。")
         else:
-            brief_lines.append("画面必须包含图片内文字。")
+            brief_lines.append("画面必须包含图片内文字，写短利益点，不要说明书。")
     design_goal = _usable_prompt_text(payload.get("design_goal"))
     if design_goal:
         brief_lines.append(f"图目标：{design_goal}")
@@ -800,7 +911,9 @@ def _compile_image_model_prompt(runtime: ImageRuntimeInput) -> str:
     contract = json.dumps(
         {
             "contract_version": 3,
-            "task": "generate_one_ecommerce_product_image",
+            "task": "generate_one_ecommerce_listing_image",
+            "image_type_key": image_type_key or None,
+            "image_type_family": family,
             "prompt_artifact": payload,
             "visual_system": runtime.visual_system,
             "visual_overlay": runtime.visual_overlay,
@@ -863,7 +976,7 @@ def _prompt_from_runtime(
     design_goal = stored.get("design_goal") or brief_goal
     if not design_goal:
         if type_option:
-            design_goal = f"{type_option.title}：{type_option.description}"
+            design_goal = image_type_prompt_goal(type_option.key)
             if product_name:
                 design_goal = f"为「{product_name}」生成{design_goal}"
         else:
@@ -885,7 +998,7 @@ def _prompt_from_runtime(
         }
     shared_rules = [item for item in stored.get("shared_rules") or [] if isinstance(item, str) and item]
     if not shared_rules:
-        shared_rules = ["商品形态、结构、颜色和材质以参考图为准", "不得编造参考图与商品资料中未出现的特征"]
+        shared_rules = list(IDENTITY_SHARED_RULES)
     if runtime.text_policy == "none" and NO_ON_IMAGE_TEXT_RULE not in shared_rules:
         shared_rules.append(NO_ON_IMAGE_TEXT_RULE)
     stored_content = stored.get("content") if isinstance(stored.get("content"), dict) else None
@@ -900,7 +1013,7 @@ def _prompt_from_runtime(
                 "complex_structure": True,
                 "product_present": True,
                 "picture_in_picture": "none",
-                "requirements": ["还原参考图中的商品形态"],
+                "requirements": ["锁住参考图中的商品外形和材质", "构图和排版按图种重做"],
             },
             "creative_boundary": creative_boundary,
             "composition": stored.get("composition")
@@ -1056,6 +1169,53 @@ def _image_context_trace(runtime: ImageRuntimeInput) -> dict[str, Any]:
         "reference_asset_ids": [item.asset_id for item in runtime.reference_images],
         "visual_system_version_id": runtime.visual_system_version_id,
     }
+
+
+def _claim_queued_node_run(session: Session, node_run: WorkflowGraphNodeRun) -> bool:
+    result = session.execute(
+        update(WorkflowGraphNodeRun)
+        .where(
+            WorkflowGraphNodeRun.id == node_run.id,
+            WorkflowGraphNodeRun.status == WorkflowNodeStatus.QUEUED,
+        )
+        .values(status=WorkflowNodeStatus.RUNNING)
+    )
+    session.commit()
+    session.refresh(node_run)
+    return result.rowcount == 1
+
+
+def _complete_skipped_node_run(
+    session: Session,
+    *,
+    node_run: WorkflowGraphNodeRun,
+    sources: dict[str, GraphSourceRecord],
+    input_digest: str,
+    trace: dict[str, Any],
+) -> bool:
+    if node_run.node_id is None:
+        return False
+    record = sources.get(node_run.node_id)
+    if record is None or record.current_artifact_id is None or record.current_input_digest != input_digest:
+        return False
+    node_run.status = WorkflowNodeStatus.SUCCEEDED
+    node_run.finished_at = now_utc()
+    node_run.compiled_context_json = trace
+    node_run.output_json = {"artifact_id": record.current_artifact_id, "skipped": True}
+    session.commit()
+    return True
+
+
+def _fail_claimed_node(session: Session, *, run_id: str, node_run_id: str, reason: str) -> None:
+    session.rollback()
+    run = session.get(WorkflowGraphRun, run_id)
+    node_run = session.get(WorkflowGraphNodeRun, node_run_id)
+    if run is None:
+        return
+    if node_run is None:
+        _fail_run(session, run_id=run_id, reason=reason)
+        return
+    _fail_node_and_run(session, run=run, node_run=node_run, reason=reason)
 
 
 def _fail_node_and_run(session: Session, *, run: WorkflowGraphRun, node_run: WorkflowGraphNodeRun, reason: str) -> None:

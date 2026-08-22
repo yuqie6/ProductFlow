@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import type { AgentProductImageTypeKey, AgentProductWorkspaceLimits } from "../../lib/types";
 import {
   agentImageTotal,
+  aspectRatioForSelection,
   buildAgentProductSelection,
   toggleAgentImageType,
+  updateAgentImageTypeAspectRatio,
   updateAgentImageTypeQuantity,
   validateAgentProductWorkspaceInput,
   type AgentImageTypeSelectionDraft,
@@ -40,8 +42,8 @@ describe("Agent product image type selection", () => {
     current = toggleAgentImageType(current, "hero", true, limits.default_images_per_type);
 
     expect(current).toEqual([
-      { key: "scene", quantity: 2 },
-      { key: "hero", quantity: 2 },
+      { key: "scene", quantity: 2, aspectRatio: "4:3" },
+      { key: "hero", quantity: 2, aspectRatio: "3:4" },
     ]);
     expect(buildAgentProductSelection(current)).toEqual({
       schema_version: 1,
@@ -94,5 +96,23 @@ describe("Agent product image type selection", () => {
 
     expect(initial).toEqual([{ key: "hero", quantity: 2 }]);
     expect(next).toEqual([{ key: "hero", quantity: 3 }]);
+  });
+
+  it("locks evidence types to quantity 1 and excludes them from generated totals", () => {
+    const selected = toggleAgentImageType([], "certification", true, 2);
+    expect(selected).toEqual([{ key: "certification", quantity: 1, aspectRatio: "1:1" }]);
+    expect(updateAgentImageTypeQuantity(selected, "certification", 4)).toEqual(selected);
+    expect(agentImageTotal(selected)).toBe(0);
+    expect(agentImageTotal([...selected, { key: "hero", quantity: 2 }])).toBe(2);
+    expect(validate(selected)).toBeNull();
+  });
+
+  it("keeps aspect ratio on the selection draft and out of the Agent intake payload", () => {
+    const withRatio = updateAgentImageTypeAspectRatio([{ key: "hero", quantity: 2, aspectRatio: "3:4" }], "hero", "9:16");
+    expect(aspectRatioForSelection({ key: "detail", quantity: 1 })).toBe("1:1");
+    expect(withRatio).toEqual([{ key: "hero", quantity: 2, aspectRatio: "9:16" }]);
+    expect(buildAgentProductSelection(withRatio).image_types).toEqual([
+      { key: "hero", quantity: 2, order: 0 },
+    ]);
   });
 });

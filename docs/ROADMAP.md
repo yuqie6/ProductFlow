@@ -29,7 +29,7 @@
 - Inspector 已按 Node Catalog `config_fields` 渲染；保存仍走 `update_node_config`。浏览器证据仍待切片 G。详情失败/空选下一步/结果语言是侧栏切片 S1。
 - 进入分组已接线：双击或按钮进入、面包屑返回、组内/全图分记视口。分组仍非 DAG 节点。浏览器证据仍待切片 G。
 - 从 live v3 graph 提取并保存配方已接线（全图/分组/选区；无 V2 payload）。应用到另一商品仍产生待确认 Draft，应用前预览节点/边。片段配方明确冲突。Recipe ChangeSet 直接写到另一张 live graph 仍未交付。浏览器证据仍待切片 G。
-- Agent 对 live graph 的 GraphProposal / ChangeSet。目标合同见 `docs/adr/0008-free-canvas-agent-graph-authority.md`。
+- Agent 对 live graph 的 GraphProposal / ChangeSet。目标合同见 `docs/adr/0008-free-canvas-agent-graph-authority.md`。镜头/场景落图与编译器入边合同见 `docs/specs/shot-scene-assembly.md`；现图 Agent 仍不能写 ChangeSet。
 - 侧栏 390px 底抽屉；当前窄屏打开详情会整页盖住画布。
 - `docs/rollout/free-canvas-v3-interaction-parity.md` 中尚未完成的交互项；该表是检查清单，质量上限以画布/侧栏修葺北极星为准。
 - 真实 provider、PostgreSQL/Redis/worker、桌面与 390px 浏览器、console/network error、取消/retry 和无 retired runtime fallback 的完整 gate。

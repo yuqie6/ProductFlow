@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import type { AgentProductImageTypeKey, AgentProductWorkspaceOptions } from "../../lib/types";
 import { AgentProductCreateForm } from "./AgentProductCreateForm";
+import { defaultCreateOutputDraft } from "./createIntake";
 
 const imageTypeKeys: AgentProductImageTypeKey[] = [
   "hero",
@@ -46,7 +47,7 @@ const options: AgentProductWorkspaceOptions = {
 };
 
 function renderForm(
-  selections: Array<{ key: "hero" | "scene"; quantity: number }> = [],
+  selections: Array<{ key: AgentProductImageTypeKey; quantity: number }> = [],
   input: {
     productName?: string;
     isProductNameReadOnly?: boolean;
@@ -71,8 +72,13 @@ function renderForm(
       onProductNameChange: () => undefined,
       onToggleImageType: () => undefined,
       onQuantityChange: () => undefined,
+      onAspectRatioChange: () => undefined,
       onAddReferenceFiles: () => undefined,
       onRemoveReferenceFile: () => undefined,
+      brief: "无线洗地机，面向都市白领",
+      outputDraft: defaultCreateOutputDraft(),
+      onBriefChange: () => undefined,
+      onOutputChange: () => undefined,
       onRetryOptions: () => undefined,
       onSubmit: () => undefined,
     }),
@@ -80,21 +86,39 @@ function renderForm(
 }
 
 describe("AgentProductCreateForm", () => {
-  it("renders product name, all image types, reference upload, and submit in one form", () => {
+  it("renders product name, brief, image types, output settings, reference upload, and submit in one form", () => {
     const markup = renderForm();
 
     expect(markup.match(/<form/g)).toHaveLength(1);
     expect(markup).toContain('id="agent-product-name"');
     expect(markup).toContain('value="Sample product"');
+    expect(markup).toContain('id="agent-product-brief"');
+    expect(markup).toContain("无线洗地机，面向都市白领");
+    expect(markup).toContain("商品说明");
+    expect(markup).toContain("出图设定");
+    expect(markup).toContain("要文案");
+    expect(markup).toContain("可有文案");
+    expect(markup).toContain("不要文案");
+    expect(markup).toContain("先选择图片类型");
     expect(markup.match(/data-image-type=/g)).toHaveLength(15);
     expect(markup.match(/type="checkbox"/g)).toHaveLength(15);
     expect(markup).toContain("上传商品参考图");
     expect(markup).toContain('type="submit"');
-    expect(markup).toContain("创建并进入 Agent");
+    expect(markup).toContain("开始对话");
     expect(markup).not.toContain("checked=\"\"");
     expect(markup).not.toContain("商品主图");
     expect(markup).not.toContain("选择模板");
     expect(markup).toContain("已选 0 类，共 0 张");
+    expect(markup).toContain('data-image-type-family="photography"');
+    expect(markup).toContain('data-image-type-family="infographic"');
+    expect(markup).toContain('data-image-type-family="evidence"');
+    expect(markup).toContain("摄影镜头");
+    expect(markup).toContain("信息图");
+    expect(markup).toContain("证据图");
+    expect(markup).toContain("绑定已有真图，不会生成");
+    expect(markup).toContain("data-create-form-bottom-spacer");
+    expect(markup).toContain("pb-56");
+    expect(markup).toContain("h-28");
   });
 
   it("makes the product name read-only after a workspace persists and disables it while submitting", () => {
@@ -128,5 +152,25 @@ describe("AgentProductCreateForm", () => {
     expect(markup).toContain("已选 1 类，共 2 张");
     expect(markup).toContain("value=\"2\"");
     expect(markup.match(/type="number"/g)).toHaveLength(1);
+  });
+
+  it("locks evidence types to binding copy without a quantity stepper", () => {
+    const markup = renderForm([{ key: "certification", quantity: 1 }]);
+    expect(markup).toContain("绑定已有真图");
+    expect(markup).toContain("已选 1 类，共 0 张");
+    expect(markup.match(/type="number"/g)).toBeNull();
+  });
+
+  it("lets each selected image type pick its own aspect ratio", () => {
+    const markup = renderForm([
+      { key: "hero", quantity: 2 },
+      { key: "detail", quantity: 1 },
+    ]);
+
+    expect(markup).toContain('data-image-type-aspect="hero"');
+    expect(markup).toContain('data-image-type-aspect="detail"');
+    expect(markup).toContain("3:4");
+    expect(markup).toContain("1:1");
+    expect(markup).not.toContain("先选择图片类型");
   });
 });

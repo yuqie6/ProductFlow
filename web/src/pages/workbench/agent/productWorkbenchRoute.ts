@@ -59,16 +59,24 @@ export function resolveProductWorkbenchSurface<TAgent extends ProductWorkbenchRo
 export function productWorkbenchRouteTarget(
   bootstrap: ProductWorkbenchRouteInput,
 ): ProductWorkbenchRouteTarget {
-  const draft = bootstrap.workflow_draft;
-  if (
-    draft.intake === null &&
-    draft.current_revision === null &&
-    draft.recipe_seed === null &&
-    draft.legacy_archive_seed === null
-  ) {
-    return "agent_intake";
-  }
+  void bootstrap;
   return "agent";
+}
+
+export function agentProductWorkbenchPath(
+  productId: string,
+  agentSessionId?: string | null,
+  agentTaskId?: string | null,
+): string {
+  const params = new URLSearchParams();
+  if (agentSessionId) {
+    params.set("agent_session_id", agentSessionId);
+  }
+  if (agentTaskId) {
+    params.set("agent_task_id", agentTaskId);
+  }
+  const query = params.size ? `?${params}` : "";
+  return `/products/${encodeURIComponent(productId)}${query}`;
 }
 
 export function agentProductIntakeResumePath(

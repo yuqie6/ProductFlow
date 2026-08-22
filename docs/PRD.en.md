@@ -17,14 +17,12 @@ The current release serves a personal project and live demo, but upgrades for de
 ### 3.1 Create a Product
 
 1. The user opens `/products/new` and enters a product name.
-2. Image types start unselected. Selecting a type initializes its quantity to two; each selected type can be adjusted from one to six and the total plan cannot exceed 30 images.
-3. The user uploads one to six references and should include at least one image that identifies the real product or an authoritative product rendering. The backend deterministically validates count, ownership, bytes, and media format; semantic adequacy remains an Agent/user review responsibility.
-4. The system creates a Product, WorkflowDraft, AgentSession, and AgentConversation.
-5. The Agent checks known information and asks about missing price, style, text language, copy requirements, and visual-system decisions.
-6. The Agent produces product facts, a visual system, image plans, per-image prompts, reference bindings, and generation specifications.
-7. The user reviews and confirms the Draft.
-8. The system persists the confirmed Draft as a schema-v3 workflow graph and opens the product workbench.
-9. The creation screen transitions into the product workbench while the same Agent conversation continues in the sidebar.
+2. Agent path: the system creates the Product, an empty WorkflowDraft, AgentSession, and AgentConversation, then opens the workbench conversation. The user uploads one to six references in the composer and names the image types; the Agent persists that as immutable intake. Types and files on the create form remain an optional shortcut before entering chat.
+3. Direct create: select image types, upload one to six references, fill the brief and output settings on the form, and write a runnable canvas immediately.
+4. The Agent checks known information and asks about missing price, style, text language, copy requirements, and visual-system decisions.
+5. The Agent produces product facts, a visual system, image plans, per-image prompts, reference bindings, and generation specifications.
+6. The user reviews and confirms the Draft.
+7. The system persists the confirmed Draft as a schema-v3 workflow graph; the same Agent conversation continues in the workbench sidebar.
 
 ### 3.2 Edit and Run a Workflow
 
@@ -99,7 +97,7 @@ The current release serves a personal project and live demo, but upgrades for de
 
 ## 6. Product Contracts
 
-- One to six media-verified references are required before the Agent creation flow begins. The Agent and user review whether product identity is sufficiently represented; the backend does not claim to prove image authenticity automatically.
+- Agent conversation can start after a product name. One to six media-verified references and image types are submitted in that conversation, or optionally on the create form first. Direct create still requires them on the form. The Agent and user review whether product identity is sufficiently represented; the backend does not claim to prove image authenticity automatically.
 - Image types start unselected. Every selected type has a quantity from one to six, defaults to two, and the total plan is limited to 30 images.
 - Confirmed structured facts outrank unconfirmed user input, which outranks Agent image observations. Conflicting required facts cannot pass final Draft confirmation.
 - The Agent may organize, rename, and move product-library assets and inspect selected images. It does not load the entire library into model context.
@@ -121,7 +119,7 @@ The current release serves a personal project and live demo, but upgrades for de
 
 ## 8. Success Criteria
 
-- A user can move from references and image-type selection through Agent clarification, confirmation, and graph persist.
+- A user can send photos and image requirements in the Agent conversation, confirm a Draft, and persist the graph. Direct create still starts from the create form.
 - A user can keep editing nodes, edges, folders, prompts, reference bindings, and generation specifications manually.
 - Uploads, workflow results, and image-session attachments are manageable in one product image library. Cross-product long-lived media lives in `/media-library`.
 - Provider configuration, Agent Turns, workflow runs, and image jobs have explicit failure and restart state.

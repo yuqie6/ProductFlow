@@ -10,6 +10,7 @@ import type {
   AgentProductImageTypeKey,
   AgentProductWorkspaceSnapshot,
 } from "../lib/types";
+import { agentProductWorkbenchPath } from "./workbench/agent/productWorkbenchRoute";
 import { AgentProductCreateForm } from "./product-create/AgentProductCreateForm";
 import {
   isAmbiguousFinalizeError,
@@ -19,13 +20,22 @@ import {
   type PendingDraftState,
 } from "./product-create/intakeSubmission";
 import {
+  aspectRatioForSelection,
   buildAgentProductSelection,
   toggleAgentImageType,
+  updateAgentImageTypeAspectRatio,
   updateAgentImageTypeQuantity,
   validateAgentProductWorkspaceInput,
   type AgentImageTypeSelectionDraft,
   type AgentProductCreateValidationIssue,
 } from "./product-create/imageTypeSelection";
+import {
+  buildCreateGenerationSpec,
+  defaultCreateOutputDraft,
+  isCreateBriefReady,
+  isCreateOutputReady,
+  type CreateOutputDraft,
+} from "./product-create/createIntake";
 
 const PENDING_DRAFT_STORAGE_KEY = "productflow.agent-create.pending-draft.v1";
 const INTAKE_STORAGE_KEY_PREFIX = "productflow.agent-create.intake.v1:";
@@ -129,6 +139,8 @@ export function AgentProductCreatePage() {
   const queryClient = useQueryClient();
   const [pendingDraft] = useState(readPendingDraft);
   const [name, setName] = useState(pendingDraft?.name ?? "");
+  const [brief, setBrief] = useState("");
+  const [outputDraft, setOutputDraft] = useState<CreateOutputDraft>(defaultCreateOutputDraft);
   const [localWorkspace, setLocalWorkspace] = useState<AgentProductWorkspaceSnapshot | null>(null);
   const [selections, setSelections] = useState<AgentImageTypeSelectionDraft[]>([]);
   const [referenceFiles, setReferenceFiles] = useState<File[]>([]);
@@ -178,9 +190,16 @@ export function AgentProductCreatePage() {
     setLeaving(true);
     const delay = prefersReducedMotion() ? 0 : 180;
     navigationTimerRef.current = window.setTimeout(() => {
-      navigate(`/products/${workspace.product.id}`, { replace: true });
+      navigate(
+        agentProductWorkbenchPath(
+          workspace.product.id,
+          workspace.conversation.session_id,
+          workspace.task_id || agentTaskId,
+        ),
+        { replace: true },
+      );
     }, delay);
-  }, [navigate, workspace]);
+  }, [agentTaskId, navigate, workspace]);
 
   useEffect(
     () => () => {
@@ -221,9 +240,9 @@ export function AgentProductCreatePage() {
       intakeIdempotencyRef.current?.conversationId === targetConversationId
         ? intakeIdempotencyRef.current
         : {
-            conversationId: targetConversationId,
-            idempotencyKey: readOrCreateIntakeIdempotencyKey(targetConversationId),
-          };
+          conversationId: targetConversationId,
+          idempotencyKey: readOrCreateIntakeIdempotencyKey(targetConversationId),
+        };
     intakeIdempotencyRef.current = idempotencyState;
     return api.finalizeAgentProductWorkspaceIntake({
       conversation_id: targetConversationId,
@@ -310,6 +329,48 @@ export function AgentProductCreatePage() {
     },
   });
 
+  const startAgentMutation = useMutation({
+    mutationFn: async () => {
+      const trimmedName = name.trim();
+      const pending = {
+        name: trimmedName,
+        idempotencyKey: draftIdempotencyKeyRef.current,
+        ...(workspace ? { conversationId: workspace.conversation.id } : {}),
+        ...(agentSessionId ? { agentSessionId } : {}),
+        ...(agentTaskId ? { agentTaskId } : {}),
+      } satisfies PendingDraftState;
+      if (workspace) {
+        return workspace;
+      }
+      writeSessionValue(PENDING_DRAFT_STORAGE_KEY, JSON.stringify(pending));
+      return api.createAgentProductDraftWorkspace({
+        name: trimmedName,
+        idempotency_key: pending.idempotencyKey,
+        agent_session_id: pending.agentSessionId,
+      });
+    },
+    onSuccess: (createdWorkspace) => {
+      setError("");
+      removeSessionValue(PENDING_DRAFT_STORAGE_KEY);
+      void queryClient.invalidateQueries({ queryKey: ["products"] });
+      void queryClient.invalidateQueries({
+        queryKey: ["agent-workbench", createdWorkspace.product.id],
+      });
+      navigationScheduledRef.current = true;
+      navigate(
+        agentProductWorkbenchPath(
+          createdWorkspace.product.id,
+          createdWorkspace.conversation.session_id,
+          createdWorkspace.task_id || agentTaskId,
+        ),
+        { replace: true },
+      );
+    },
+    onError: (mutationError) => {
+      setError(errorDetail(mutationError, t("agentCreate.error.failed")));
+    },
+  });
+
   const reconciliationMutation = useMutation({
     mutationFn: async () => {
       if (!workspace) throw new Error(t("agentCreate.error.reconcileFailed"));
@@ -324,6 +385,35 @@ export function AgentProductCreatePage() {
       setError(t("agentCreate.error.reconcileFailed"));
     },
   });
+
+  useEffect(() => {
+    if (!workspace || workspace.intake_finalized || navigationScheduledRef.current) {
+      return;
+    }
+    if (
+      submitMutation.isPending ||
+      startAgentMutation.isPending ||
+      reconciliationMutation.isPending
+    ) {
+      return;
+    }
+    navigationScheduledRef.current = true;
+    navigate(
+      agentProductWorkbenchPath(
+        workspace.product.id,
+        workspace.conversation.session_id,
+        workspace.task_id || agentTaskId,
+      ),
+      { replace: true },
+    );
+  }, [
+    agentTaskId,
+    navigate,
+    reconciliationMutation.isPending,
+    startAgentMutation.isPending,
+    submitMutation.isPending,
+    workspace,
+  ]);
 
   const rotateIntakeIdempotencyKey = () => {
     if (!conversationId) return;
@@ -346,7 +436,13 @@ export function AgentProductCreatePage() {
       return api.createProductDirect({
         name: trimmedName,
         images: [...referenceFiles],
-        imageTypes: selections.map((item) => ({ key: item.key, quantity: item.quantity })),
+        imageTypes: selections.map((item) => ({
+          key: item.key,
+          quantity: item.quantity,
+          aspect_ratio: aspectRatioForSelection(item),
+        })),
+        sourceNote: brief.trim(),
+        generationSpec: buildCreateGenerationSpec(outputDraft) ?? undefined,
       });
     },
     onSuccess: (result) => {
@@ -361,7 +457,7 @@ export function AgentProductCreatePage() {
   });
 
   const handleDirectCreate = () => {
-    if (workspace || submitMutation.isPending || directCreateMutation.isPending) return;
+    if (workspace || submitMutation.isPending || startAgentMutation.isPending || directCreateMutation.isPending) return;
     const issue = validateAgentProductWorkspaceInput({
       name,
       selections,
@@ -370,6 +466,14 @@ export function AgentProductCreatePage() {
     });
     if (issue) {
       setError(validationMessage(t, issue));
+      return;
+    }
+    if (!isCreateBriefReady(brief)) {
+      setError(t("agentCreate.error.briefRequired"));
+      return;
+    }
+    if (!isCreateOutputReady(outputDraft)) {
+      setError(t("agentCreate.error.outputInvalid"));
       return;
     }
     setError("");
@@ -381,19 +485,30 @@ export function AgentProductCreatePage() {
       if (!reconciliationMutation.isPending) reconciliationMutation.mutate();
       return;
     }
-    if (submitMutation.isPending || workspace?.intake_finalized) return;
-    const issue = validateAgentProductWorkspaceInput({
-      name: workspace?.product.name ?? name,
-      selections,
-      referenceImageCount: referenceFiles.length,
-      limits: options?.limits ?? null,
-    });
-    if (issue) {
-      setError(validationMessage(t, issue));
+    if (submitMutation.isPending || startAgentMutation.isPending || workspace?.intake_finalized) return;
+    const trimmedName = (workspace?.product.name ?? name).trim();
+    if (!trimmedName) {
+      setError(t("agentCreate.error.nameRequired"));
       return;
     }
+    if (!options) {
+      if (optionsQuery.isLoading) return;
+      setError("");
+      startAgentMutation.mutate();
+      return;
+    }
+    const intakeIssue = validateAgentProductWorkspaceInput({
+      name: trimmedName,
+      selections,
+      referenceImageCount: referenceFiles.length,
+      limits: options.limits,
+    });
     setError("");
-    submitMutation.mutate();
+    if (intakeIssue === null) {
+      submitMutation.mutate();
+      return;
+    }
+    startAgentMutation.mutate();
   };
 
   const handleToggleImageType = (key: AgentProductImageTypeKey, selected: boolean) => {
@@ -408,6 +523,11 @@ export function AgentProductCreatePage() {
   const handleQuantityChange = (key: AgentProductImageTypeKey, quantity: number) => {
     setSelections((current) => updateAgentImageTypeQuantity(current, key, quantity));
     rotateIntakeIdempotencyKey();
+    setError("");
+  };
+
+  const handleAspectRatioChange = (key: AgentProductImageTypeKey, aspectRatio: string) => {
+    setSelections((current) => updateAgentImageTypeAspectRatio(current, key, aspectRatio));
     setError("");
   };
 
@@ -443,11 +563,11 @@ export function AgentProductCreatePage() {
 
   const liveIssue = options
     ? validateAgentProductWorkspaceInput({
-        name: workspace?.product.name ?? name,
-        selections,
-        referenceImageCount: Math.max(referenceFiles.length, options.limits.min_reference_images),
-        limits: options.limits,
-      })
+      name: workspace?.product.name ?? name,
+      selections,
+      referenceImageCount: Math.max(referenceFiles.length, options.limits.min_reference_images),
+      limits: options.limits,
+    })
     : null;
   const liveError =
     error ||
@@ -456,16 +576,19 @@ export function AgentProductCreatePage() {
       : "");
   const restoring = Boolean(workspaceId && !workspace && workspaceQuery.isLoading);
   const restoreError = workspaceId && !workspace ? workspaceQuery.error : null;
-  const isSubmitting = submitMutation.isPending || reconciliationMutation.isPending || directCreateMutation.isPending;
+  const isSubmitting =
+    submitMutation.isPending ||
+    startAgentMutation.isPending ||
+    reconciliationMutation.isPending ||
+    directCreateMutation.isPending;
   const restoredUnfinalizedWorkspace = Boolean(
     workspaceId && workspace && !workspace.intake_finalized && !localWorkspace,
   );
 
   return (
     <div
-      className={`relative flex h-dvh min-h-[560px] flex-col overflow-hidden bg-surface-base text-text-primary transition-opacity duration-200 motion-reduce:transition-none ${
-        leaving ? "opacity-0" : "opacity-100"
-      }`}
+      className={`relative flex h-dvh min-h-[560px] flex-col overflow-hidden bg-surface-base text-text-primary transition-opacity duration-200 motion-reduce:transition-none ${leaving ? "opacity-0" : "opacity-100"
+        }`}
     >
       <header className="relative z-20 flex h-14 shrink-0 items-center justify-between border-b border-border-l1 bg-surface-raised/85 px-4 backdrop-blur-md sm:px-6">
         <div className="flex min-w-0 items-center gap-2.5">
@@ -573,8 +696,19 @@ export function AgentProductCreatePage() {
               onProductNameChange={handleNameChange}
               onToggleImageType={handleToggleImageType}
               onQuantityChange={handleQuantityChange}
+              onAspectRatioChange={handleAspectRatioChange}
               onAddReferenceFiles={handleAddReferenceFiles}
               onRemoveReferenceFile={handleRemoveReferenceFile}
+              brief={brief}
+              outputDraft={outputDraft}
+              onBriefChange={(value) => {
+                setBrief(value);
+                setError("");
+              }}
+              onOutputChange={(value) => {
+                setOutputDraft(value);
+                setError("");
+              }}
               onRetryOptions={() => void optionsQuery.refetch()}
               onSubmit={handleSubmit}
               onDirectCreate={workspace ? undefined : handleDirectCreate}

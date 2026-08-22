@@ -63,6 +63,17 @@ describe("GraphAddNodePanel", () => {
     expect(markup).toContain("保存选中节点为预设");
   });
 
+  it("shows add-shot when the canvas can create a shot", () => {
+    const markup = renderToStaticMarkup(createElement(GraphAddNodePanel, {
+      busy: false,
+      onCreate: () => undefined,
+      onCreateShot: () => undefined,
+    }));
+    expect(markup).toContain("添加场景");
+    expect(markup).toContain("data-add-shot");
+    expect(markup).toContain("首屏海报图");
+  });
+
   it("exposes recipes as an optional entrance, not a node type", () => {
     const markup = renderToStaticMarkup(createElement(GraphAddNodePanel, {
       busy: false,

@@ -201,6 +201,7 @@ class DirectCreateImageTypeRequest(BaseModel):
 
     key: str = Field(min_length=1, max_length=80)
     quantity: int = Field(ge=1, le=6)
+    aspect_ratio: str | None = Field(default=None, pattern=r"^[1-9][0-9]{0,2}:[1-9][0-9]{0,2}$")
 
 
 def serialize_graph_catalog(document: GraphCatalogDocument) -> GraphCatalogResponse:

@@ -4,6 +4,7 @@ from dataclasses import replace
 
 import pytest
 
+from productflow_backend.application.agent.product_intake import image_type_prompt_goal
 from productflow_backend.application.product_workflow.graph_apply import EMPTY_GRAPH, apply_workflow_change_set
 from productflow_backend.application.product_workflow.graph_compiler import (
     GraphRuntimeArtifacts,
@@ -72,6 +73,8 @@ def test_context_compiler_reads_template_facts_and_references() -> None:
     assert brief_runtime.node_type == GraphNodeType.CREATIVE_BRIEF
     assert [item.asset_id for item in brief_runtime.reference_images] == ["asset-a"]
     assert brief_runtime.text_policy == "none"
+    assert {item["key"] for item in visual_runtime.image_types} >= {"hero"}
+    assert any(item["family"] == "photography" for item in visual_runtime.image_types)
 
 
 def test_prompt_compiler_includes_template_reference_images() -> None:
@@ -331,7 +334,7 @@ def test_image_compiler_reads_visual_overrides_list() -> None:
     runtime = compile_image_runtime(graph, image.id, _sources_for(graph), artifacts)
     assert runtime.visual_overlay == {"colors": [{"role": "background", "value": "#FFFFFF", "label": "白底"}]}
     prompt_runtime = compile_prompt_runtime(graph, prompt.id, _sources_for(graph))
-    assert prompt_runtime.prompt_config == {"design_goal": "首屏海报图：快速抓住用户注意力，传递产品核心定位"}
+    assert prompt_runtime.prompt_config == {"design_goal": image_type_prompt_goal("hero")}
 
 
 def test_prompt_compiler_ignores_disconnected_image_assets() -> None:
@@ -383,3 +386,190 @@ def test_prompt_compiler_reads_downstream_image_text_policy() -> None:
     runtime = compile_prompt_runtime(updated, prompt.id, _sources_for(updated))
     assert runtime.text_policy == "required"
     assert runtime.text_language == "zh-CN"
+
+
+def test_context_compiler_uses_only_incoming_edges() -> None:
+    graph = _template_graph()
+    visual = next(node for node in graph.nodes if node.node_type == GraphNodeType.VISUAL_SYSTEM)
+    brief = next(node for node in graph.nodes if node.node_type == GraphNodeType.CREATIVE_BRIEF)
+    sources = _sources_for(graph, facts=({"key": "product_name", "value": "刀架"},), visual=False)
+    connected = compile_context_runtime(graph, visual.id, sources)
+    assert [item.asset_id for item in connected.reference_images] == ["asset-a"]
+    assert all(item.edge_id for item in connected.reference_images)
+    assert connected.product_facts[0]["value"] == "刀架"
+
+    ref_edge = next(edge for edge in graph.edges if edge.target_node_id == visual.id and edge.role.value == "reference")
+    facts_edge = next(edge for edge in graph.edges if edge.target_node_id == visual.id and edge.role.value == "facts")
+    without_ref = apply_workflow_change_set(
+        graph,
+        WorkflowChangeSet(
+            base_graph_revision=graph.revision,
+            summary="断开视觉参考",
+            operations=[DisconnectEdgeOp(edge_ref=ref_edge.id)],
+        ),
+    )
+    without_ref_runtime = compile_context_runtime(without_ref, visual.id, _sources_for(without_ref, facts=({"key": "product_name", "value": "刀架"},), visual=False))
+    assert without_ref_runtime.reference_images == ()
+    assert without_ref_runtime.product_facts[0]["value"] == "刀架"
+
+    without_facts = apply_workflow_change_set(
+        graph,
+        WorkflowChangeSet(
+            base_graph_revision=graph.revision,
+            summary="断开视觉事实",
+            operations=[DisconnectEdgeOp(edge_ref=facts_edge.id)],
+        ),
+    )
+    without_facts_runtime = compile_context_runtime(
+        without_facts,
+        visual.id,
+        _sources_for(without_facts, facts=({"key": "product_name", "value": "刀架"},), visual=False),
+    )
+    assert without_facts_runtime.product_facts == ()
+    assert [item.asset_id for item in without_facts_runtime.reference_images] == ["asset-a"]
+    assert all(item.edge_id for item in without_facts_runtime.reference_images)
+
+    brief_ref = next(edge for edge in graph.edges if edge.target_node_id == brief.id and edge.role.value == "reference")
+    without_brief_ref = apply_workflow_change_set(
+        graph,
+        WorkflowChangeSet(
+            base_graph_revision=graph.revision,
+            summary="断开创作参考",
+            operations=[DisconnectEdgeOp(edge_ref=brief_ref.id)],
+        ),
+    )
+    brief_runtime = compile_context_runtime(
+        without_brief_ref,
+        brief.id,
+        _sources_for(without_brief_ref, facts=({"key": "product_name", "value": "刀架"},), visual=False),
+    )
+    assert brief_runtime.reference_images == ()
+
+
+def test_context_digest_ignores_written_overlay_and_changes_with_inputs() -> None:
+    graph = _template_graph()
+    visual = next(node for node in graph.nodes if node.node_type == GraphNodeType.VISUAL_SYSTEM)
+    brief = next(node for node in graph.nodes if node.node_type == GraphNodeType.CREATIVE_BRIEF)
+    prompt = next(node for node in graph.nodes if node.node_type == GraphNodeType.PROMPT_GENERATION)
+    sources = _sources_for(graph, facts=({"key": "product_name", "value": "刀架"},), visual=False)
+    visual_baseline = compile_context_runtime(graph, visual.id, sources)
+    brief_baseline = compile_context_runtime(graph, brief.id, sources)
+    prompt_baseline = compile_prompt_runtime(graph, prompt.id, sources)
+
+    overlay_graph = apply_workflow_change_set(
+        graph,
+        WorkflowChangeSet(
+            base_graph_revision=graph.revision,
+            summary="写回视觉 overlay",
+            operations=[
+                UpdateNodeConfigOp(
+                    node_ref=visual.id,
+                    config={
+                        **visual.config,
+                        "visual_overlay": {
+                            "style": ["干净留白"],
+                            "colors": [{"role": "background", "value": "#F1F1F0"}],
+                            "prohibitions": ["变形"],
+                        },
+                    },
+                )
+            ],
+        ),
+    )
+    overlay_visual = next(node for node in overlay_graph.nodes if node.id == visual.id)
+    overlay_runtime = compile_context_runtime(
+        overlay_graph,
+        overlay_visual.id,
+        _sources_for(overlay_graph, facts=({"key": "product_name", "value": "刀架"},), visual=False),
+    )
+    assert overlay_runtime.input_digest == visual_baseline.input_digest
+
+    brief_graph = apply_workflow_change_set(
+        graph,
+        WorkflowChangeSet(
+            base_graph_revision=graph.revision,
+            summary="写回创作要求",
+            operations=[
+                UpdateNodeConfigOp(
+                    node_ref=brief.id,
+                    config={
+                        **brief.config,
+                        "goal": "都市生活套图",
+                        "design_goals": ["锁结构"],
+                        "required_copy": ["云白陶瓷马克杯"],
+                        "prohibitions": ["假 Logo"],
+                    },
+                )
+            ],
+        ),
+    )
+    brief_written = next(node for node in brief_graph.nodes if node.id == brief.id)
+    brief_written_runtime = compile_context_runtime(
+        brief_graph,
+        brief_written.id,
+        _sources_for(brief_graph, facts=({"key": "product_name", "value": "刀架"},), visual=False),
+    )
+    assert brief_written_runtime.input_digest == brief_baseline.input_digest
+
+    prompt_graph = apply_workflow_change_set(
+        graph,
+        WorkflowChangeSet(
+            base_graph_revision=graph.revision,
+            summary="写回提示词",
+            operations=[
+                UpdateNodeConfigOp(
+                    node_ref=prompt.id,
+                    config={
+                        **prompt.config,
+                        "prompt": {"design_goal": "由运行写出的提示词", "shared_rules": ["锁结构"]},
+                    },
+                )
+            ],
+        ),
+    )
+    prompt_written = next(node for node in prompt_graph.nodes if node.id == prompt.id)
+    prompt_written_runtime = compile_prompt_runtime(
+        prompt_graph,
+        prompt_written.id,
+        _sources_for(prompt_graph, facts=({"key": "product_name", "value": "刀架"},), visual=False),
+    )
+    assert prompt_written_runtime.input_digest == prompt_baseline.input_digest
+
+    changed_facts = _sources_for(graph, facts=({"key": "product_name", "value": "别的杯子"},), visual=False)
+    assert compile_context_runtime(graph, visual.id, changed_facts).input_digest != visual_baseline.input_digest
+    assert compile_context_runtime(graph, brief.id, changed_facts).input_digest != brief_baseline.input_digest
+    ref_edge = next(edge for edge in graph.edges if edge.target_node_id == visual.id and edge.role.value == "reference")
+    without_ref = apply_workflow_change_set(
+        graph,
+        WorkflowChangeSet(
+            base_graph_revision=graph.revision,
+            summary="断开视觉参考",
+            operations=[DisconnectEdgeOp(edge_ref=ref_edge.id)],
+        ),
+    )
+    without_ref_runtime = compile_context_runtime(
+        without_ref,
+        visual.id,
+        _sources_for(without_ref, facts=({"key": "product_name", "value": "刀架"},), visual=False),
+    )
+    assert without_ref_runtime.input_digest != visual_baseline.input_digest
+
+
+def test_compiled_references_never_use_empty_edge_ids() -> None:
+    graph = _template_graph()
+    visual = next(node for node in graph.nodes if node.node_type == GraphNodeType.VISUAL_SYSTEM)
+    prompt = next(node for node in graph.nodes if node.node_type == GraphNodeType.PROMPT_GENERATION)
+    image = next(node for node in graph.nodes if node.node_type == GraphNodeType.IMAGE_GENERATION)
+    artifacts = GraphRuntimeArtifacts().with_prompt(
+        prompt.id,
+        artifact_id="art-1",
+        payload={"design_goal": "海报", "shared_rules": ["保持结构"]},
+    )
+    sources = _sources_for(graph, facts=({"key": "product_name", "value": "刀架"},))
+    for runtime in (
+        compile_context_runtime(graph, visual.id, sources),
+        compile_prompt_runtime(graph, prompt.id, sources),
+        compile_image_runtime(graph, image.id, sources, artifacts),
+    ):
+        assert runtime.reference_images
+        assert all(item.edge_id for item in runtime.reference_images)

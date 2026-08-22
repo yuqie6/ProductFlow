@@ -302,6 +302,11 @@ def _parse_image_types(raw: str) -> list[DirectCreateImageType]:
     if unknown:
         raise BusinessValidationError(f"不支持的图片类型: {', '.join(unknown)}")
     return [
-        DirectCreateImageType(key=item.key, quantity=item.quantity, order=index)
+        DirectCreateImageType(
+            key=item.key,
+            quantity=item.quantity,
+            order=index,
+            aspect_ratio=item.aspect_ratio,
+        )
         for index, item in enumerate(parsed)
     ]

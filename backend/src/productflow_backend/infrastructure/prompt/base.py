@@ -43,6 +43,8 @@ class PromptGenerationRequest:
     image_type_title: str | None = None
     image_type_description: str | None = None
     text_policy: str = "none"
+    image_type_family: str = "photography"
+    image_type_job: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +63,7 @@ class ContextGenerationRequest:
     text_policy: str = "none"
     text_language: str | None = None
     node_title: str = ""
+    image_types: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

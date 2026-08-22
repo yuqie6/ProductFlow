@@ -7,6 +7,7 @@ from typing import Any
 from openai import OpenAI
 from pydantic import ValidationError
 
+from productflow_backend.application.agent.product_intake import LISTING_LOOK_CONTEXT, LISTING_LOOK_RULE
 from productflow_backend.application.workflow_drafts.contracts import ImagePromptPayloadV1
 from productflow_backend.infrastructure.prompt.base import (
     ContextGenerationRequest,
@@ -24,33 +25,61 @@ from productflow_backend.infrastructure.provider_config import (
 from productflow_backend.infrastructure.provider_effects import ProviderEffectQueryResult
 
 PROMPT_GENERATION_INSTRUCTIONS = (
-    "You write one high-quality ImagePromptPayloadV1 for a single ecommerce listing image. "
-    "The attached product photos and confirmed facts are the source of product identity: shape, materials, color, "
-    "structure, and visible features. Use image_type_key, image_type_title, and image_type_description to decide "
-    "the shot (hero, scene, detail, and so on). If visual_system or visual_exceptions are present, obey them. "
-    "When generate_from_context is true, current_prompt is a schema seed, not a confirmed creative plan. "
-    "Observe the photos and write composition, background, lighting, focus, and selling points for that image type. "
-    "Do not keep placeholder phrases such as 干净背景, 正面, 均匀照明, or 根据参考图、商品资料与图片类型生成 "
-    "as the final look. When generate_from_context is false, refine current_prompt and keep user-authored fields. "
+    "You write one ImagePromptPayloadV1 for a clickable commercial listing image. "
+    "Attached photos lock product identity only: shape, materials, color, structure, visible parts. "
+    "The photo's crop, empty background, camera distance, and layout are not the finished frame. "
+    "Follow listing_look: product is the hero, hierarchy is clear, benefits are readable. "
+    "Forbidden both extremes: empty gray still-life / huge whitespace; and sticker-bomb / neon carnival layouts. "
+    "Treat leftover brief text such as 极简, 浅灰, 静物, or 干净 as product-photo notes, not the listing look. "
+    "Do not invert those notes into busy sticker spam. "
+    "Use image_type_key, image_type_family, image_type_job, image_type_title, and image_type_description as the job. "
+    "photography: commercial product photography; product occupies about 55-75% of the frame; real lighting; "
+    "category-appropriate background; never shrink the product into a corner of empty canvas; never cover it with badges. "
+    "infographic: cut the product out and redesign the layout. One clear headline plus 2-4 short aligned benefits. "
+    "Restrained color blocks, readable type. The product stays the visual hero. Never paste a caption onto the original photo. "
+    "evidence: only user-supplied certificates or factory photos; if missing, leave the gap; "
+    "never invent seals or plants. "
+    "Do not invent logos, certifications, prices, spec numbers, or structures absent from facts and photos. "
+    "When generate_from_context is true, current_prompt is a schema seed. Observe the photos and write composition, "
+    "background, lighting, focus, and selling points for that image type. "
+    "Do not keep placeholder phrases such as 干净背景, 正面, 均匀照明, or 根据参考图、商品资料与图片类型生成. "
+    "When generate_from_context is false, refine current_prompt and keep user-authored fields. "
     "Obey text_policy. none means no on-image letters, digits, prices, logos, or watermarks; keep text.headline, "
-    "subtitle, and body null and copy_regions empty. allow means on-image copy is optional. required means write "
-    "text fields in text_language. Product facts such as price may describe the product; they are not on-image copy "
-    "unless text_policy is allow or required. Keep exactly the supplied image_plan_keys. Do not invent logos, "
-    "certifications, prices, product features, or source images that are not in the facts or visible in the photos."
+    "subtitle, and body null and copy_regions empty. "
+    "required means short benefit copy in text_language, not a spec sheet. "
+    "Keep exactly the supplied image_plan_keys."
 )
 
 CREATIVE_BRIEF_INSTRUCTIONS = (
-    "You write one ecommerce creative brief from the attached product photos and confirmed facts. "
-    "goal is the shoot purpose. design_goals are concrete visual aims. prohibitions block invented features. "
-    "Obey text_policy: none means required_copy must be empty; allow or required may include short on-image copy "
-    "only when the photos or facts actually need it. Do not invent logos, certifications, prices as on-image copy, "
-    "or product features that are not in the facts or visible in the photos."
+    "You write one ecommerce listing brief from the attached product photos, confirmed facts, and image_types. "
+    "Follow listing_look: a shopper would click, the product is the hero, hierarchy is clear. "
+    "goal is the listing job, not a restatement of studio notes. "
+    "current_brief.goal and source notes are product facts (what it is, who it is for). "
+    "Ignore leftover art-direction words such as 极简, 浅灰, 静物, 干净, 留白. "
+    "Do not invert them into sticker-bomb or oversaturated layouts either. "
+    "design_goals are concrete layout and photography aims for the planned image_types. "
+    "If image_types include infographic keys such as selling_point, require cutout, recomposed layout, "
+    "and 2-4 short aligned benefits with restrained color. If they include photography keys such as hero or scene, "
+    "require a large product and commercial lighting, not empty-canvas still life and not badge spam. "
+    "prohibitions must include both extremes: 极简大留白/浅灰空棚/杂志静物, and 爆炸贴/满屏色块/牛皮癣标签. "
+    "Also block invented logos, certificates, prices, and product structures. "
+    "Do not prohibit new composition, lighting, scene, or type layout. "
+    "Obey text_policy: none means required_copy must be empty; allow or required may include "
+    "short on-image benefit copy in text_language. "
+    "Do not invent facts that are not in the photos or confirmed facts."
 )
 
 VISUAL_OVERLAY_INSTRUCTIONS = (
-    "You write a compact visual overlay for ecommerce product photography. "
-    "style is 2 to 6 keywords describing look. colors must include a background swatch sampled from the photos "
-    "or a clean studio fallback, with hex values like #F4F4F5. prohibitions block changes to product identity. "
+    "You write a compact visual overlay for a commercial listing set. "
+    "style is 2 to 6 keywords for a balanced sellable look "
+    "(product hero, clear hierarchy, category-appropriate color), "
+    "not 极简静物, not 干净商业摄影, not 花里胡哨. "
+    "Do not copy the reference photo's empty background or crop as the brand system; "
+    "only lock product material colors. "
+    "colors must include a background with presence (warm off-white or a category color, never empty zinc-gray studio) "
+    "plus one muted accent for headlines or modules. Hex values like #F3EFE8. Never neon carnival palettes. "
+    "prohibitions block product-identity changes and both listing extremes "
+    "(empty gray still-life, sticker-bomb layouts). Do not block layout changes. "
     "Do not invent a brand system that is not visible in the photos or facts."
 )
 
@@ -213,6 +242,9 @@ def _request_content(request: PromptGenerationRequest | ContextGenerationRequest
             "text_policy": request.text_policy,
             "text_language": request.text_language,
             "reference_images": reference_metadata,
+            "image_types": list(request.image_types),
+            "listing_look": LISTING_LOOK_CONTEXT,
+            "listing_look_rule": LISTING_LOOK_RULE,
         }
     else:
         context = {
@@ -221,6 +253,8 @@ def _request_content(request: PromptGenerationRequest | ContextGenerationRequest
             "image_type_key": request.image_type_key,
             "image_type_title": request.image_type_title,
             "image_type_description": request.image_type_description,
+            "image_type_family": request.image_type_family,
+            "image_type_job": request.image_type_job,
             "image_plan_keys": list(request.image_plan_keys),
             "confirmed_facts": list(request.facts),
             "visual_system": (
@@ -231,6 +265,8 @@ def _request_content(request: PromptGenerationRequest | ContextGenerationRequest
             "text_policy": request.text_policy,
             "text_languages": list(request.text_languages),
             "reference_images": reference_metadata,
+            "listing_look": LISTING_LOOK_CONTEXT,
+            "listing_look_rule": LISTING_LOOK_RULE,
         }
     content: list[dict[str, Any]] = [
         {

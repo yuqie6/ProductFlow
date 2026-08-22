@@ -11,6 +11,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from openai import OpenAI
 
+from productflow_backend.application.agent.product_intake import image_type_family
 from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.config import (
     IMAGE_TOOL_FIELD_KEYS,
@@ -787,13 +788,35 @@ class OpenAIResponsesImageProvider(ImageProvider):
                         "message": f"Responses adapter 未发送 {key}，当前 provider 配置未开放该字段。",
                     }
                 )
-        if request.generation_spec.reference_fidelity == "medium" and request.references:
+        if (
+            request.generation_spec.reference_fidelity == "medium"
+            and request.references
+            and image_type_family(request.image_type_key or "") != "infographic"
+        ):
             notes.append(
                 {
                     "kind": "reference_fidelity_mapped",
                     "requested": "medium",
                     "effective": "high",
                     "message": "Responses image tool 不支持 medium input_fidelity，已映射为 high。",
+                }
+            )
+        if request.references and image_type_family(request.image_type_key or "") == "infographic":
+            notes.append(
+                {
+                    "kind": "reference_fidelity_mapped",
+                    "requested": request.generation_spec.reference_fidelity,
+                    "effective": "low",
+                    "message": "卖点/信息图需要重新构图，参考保真按 low 发送，避免原图贴字。",
+                }
+            )
+        if image_type_family(request.image_type_key or "") == "infographic" and request.references:
+            notes.append(
+                {
+                    "kind": "reference_fidelity_mapped",
+                    "requested": request.generation_spec.reference_fidelity,
+                    "effective": "low",
+                    "message": "卖点或信息图需要重新构图，参考保真按 low 发送，避免原图贴字。",
                 }
             )
         effective_parameters = {
@@ -842,14 +865,19 @@ def _responses_reference(reference: WorkflowImageReference) -> ResponsesReferenc
 def _workflow_responses_tool_options(request: WorkflowImageRequest) -> dict[str, Any]:
     spec = request.generation_spec
     options: dict[str, Any] = {
+        "action": "generate",
         "quality": {"draft": "low", "standard": "medium", "high": "high"}[spec.quality_intent],
         "output_format": "png",
         "background": spec.background_intent,
     }
     if request.references:
-        options["input_fidelity"] = {
-            "low": "low",
-            "medium": "high",
-            "high": "high",
-        }[spec.reference_fidelity]
+        family = image_type_family(request.image_type_key or "")
+        if family == "infographic":
+            options["input_fidelity"] = "low"
+        else:
+            options["input_fidelity"] = {
+                "low": "low",
+                "medium": "high",
+                "high": "high",
+            }[spec.reference_fidelity]
     return options

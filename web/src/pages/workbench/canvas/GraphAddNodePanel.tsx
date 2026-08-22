@@ -1,10 +1,12 @@
 import { BookmarkPlus, Boxes, CopyPlus, FolderPlus, Ungroup } from "lucide-react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
+import { generatingImageTypeKeys } from "../../../lib/imageTypeFamilies";
 import type { TranslationKey } from "../../../lib/i18n";
 import { useI18n } from "../../../lib/preferences";
-import type { GraphNodeCatalog, GraphNodeType } from "../../../lib/types";
+import type { AgentProductImageTypeKey, GraphNodeCatalog, GraphNodeType } from "../../../lib/types";
 import { workflowNodeKindTheme } from "../chrome/WorkflowNodeCard";
+import { AGENT_IMAGE_TYPE_TRANSLATIONS } from "../../product-create/imageTypeSelection";
 import { graphNodeTypeOrder } from "./graphCatalog";
 import { graphNodeTitleKey } from "./graphLayout";
 
@@ -21,6 +23,7 @@ export function GraphAddNodePanel({
   catalog = null,
   busy,
   onCreate,
+  onCreateShot,
   canDuplicate = false,
   canGroup = false,
   canDissolve = false,
@@ -37,6 +40,7 @@ export function GraphAddNodePanel({
 }: {
   busy: boolean;
   onCreate: (nodeType: GraphNodeType) => void;
+  onCreateShot?: (imageTypeKey: AgentProductImageTypeKey) => void;
   canDuplicate?: boolean;
   canGroup?: boolean;
   canDissolve?: boolean;
@@ -53,6 +57,8 @@ export function GraphAddNodePanel({
   onOpenRecipesTab?: () => void;
 }) {
   const { t } = useI18n();
+  const shotKeys = generatingImageTypeKeys();
+  const [shotKey, setShotKey] = useState<AgentProductImageTypeKey>(shotKeys[0] ?? "hero");
   return (
     <div className="space-y-4 p-3.5 pb-6 text-left" data-graph-add-node-panel>
       {canDuplicate && onDuplicate ? (
@@ -108,6 +114,45 @@ export function GraphAddNodePanel({
           disabled={busy}
           onClick={onSaveSelection}
         />
+      ) : null}
+
+      {onCreateShot ? (
+        <div data-add-shot="">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+            {t("graph.palette.addShot")}
+          </h3>
+          <p className="mt-0.5 text-[11px] text-slate-400 dark:text-slate-500">
+            {t("graph.palette.addShotHint")}
+          </p>
+          <div className="mt-2 flex gap-2">
+            <label className="min-w-0 flex-1">
+              <span className="sr-only">{t("graph.palette.addShot")}</span>
+              <select
+                value={shotKey}
+                disabled={busy}
+                onChange={(event) => setShotKey(event.target.value as AgentProductImageTypeKey)}
+                className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-800 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+              >
+                {shotKeys.map((key) => {
+                  const translations = AGENT_IMAGE_TYPE_TRANSLATIONS[key];
+                  return (
+                    <option key={key} value={key}>
+                      {translations ? t(translations.title) : key}
+                    </option>
+                  );
+                })}
+              </select>
+            </label>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onCreateShot(shotKey)}
+              className="inline-flex h-9 shrink-0 items-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+            >
+              {t("graph.palette.addShotAction")}
+            </button>
+          </div>
+        </div>
       ) : null}
 
       <div>

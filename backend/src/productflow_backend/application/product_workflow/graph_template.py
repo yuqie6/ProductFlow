@@ -7,11 +7,16 @@ from pydantic import ValidationError
 
 from productflow_backend.application.agent.product_intake import (
     AGENT_PRODUCT_IMAGE_TYPE_CATALOG,
+    LISTING_LOOK_RULE,
     agent_product_image_type_option,
+    image_type_family,
+    image_type_prompt_goal,
 )
 from productflow_backend.application.product_workflow.graph_contracts import (
     ConnectNodesOp,
+    CreateGroupOp,
     CreateNodeOp,
+    GraphOperation,
     WorkflowChangeSet,
 )
 from productflow_backend.application.workflow_drafts.contracts import (
@@ -42,6 +47,7 @@ class DirectCreateImageType:
     quantity: int
     order: int
     title: str | None = None
+    aspect_ratio: str | None = None
 
 
 def resolve_template_generation_spec(overrides: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -58,7 +64,15 @@ def creative_brief_config_from_source_note(source_note: str | None) -> dict[str,
     text = source_note.strip() if isinstance(source_note, str) else ""
     if not text:
         return {}
-    return {"goal": text[:4000]}
+    return {
+        "goal": LISTING_LOOK_RULE,
+        "design_goals": [f"商品与受众资料：{text[:3900]}"],
+        "prohibitions": [
+            "商品资料只作事实，不要把浅灰、静物、极简、干净当成套图画风",
+            "不要极简大留白、浅灰空棚、杂志静物",
+            "不要爆炸贴、满屏色块、牛皮癣标签",
+        ],
+    }
 
 
 def build_direct_create_template(
@@ -82,8 +96,10 @@ def build_direct_create_template(
     type_keys = [item.key for item in image_types]
     if len(type_keys) != len(set(type_keys)):
         raise BusinessValidationError("图片类型不能重复")
+    generating_types = [item for item in image_types if image_type_family(item.key) != "evidence"]
+    evidence_types = [item for item in image_types if image_type_family(item.key) == "evidence"]
     total_images = 0
-    for item in image_types:
+    for item in generating_types:
         if item.quantity < WORKFLOW_DRAFT_MIN_IMAGES_PER_TYPE or item.quantity > WORKFLOW_DRAFT_MAX_IMAGES_PER_TYPE:
             raise BusinessValidationError(
                 f"每种图片数量必须在 {WORKFLOW_DRAFT_MIN_IMAGES_PER_TYPE} 到 {WORKFLOW_DRAFT_MAX_IMAGES_PER_TYPE} 之间"
@@ -91,9 +107,8 @@ def build_direct_create_template(
         total_images += item.quantity
     if total_images > WORKFLOW_DRAFT_MAX_TOTAL_IMAGES:
         raise BusinessValidationError(f"图片生成总数不能超过 {WORKFLOW_DRAFT_MAX_TOTAL_IMAGES}")
-    image_generation_spec = resolve_template_generation_spec(generation_spec)
 
-    operations: list[CreateNodeOp | ConnectNodesOp] = [
+    operations: list[GraphOperation] = [
         CreateNodeOp(
             client_ref="product-source",
             node_type=GraphNodeType.PRODUCT_SOURCE,
@@ -122,50 +137,57 @@ def build_direct_create_template(
             config=creative_brief_config_from_source_note(source_note),
         ),
     ]
+    identity_refs = [f"image-asset-{index + 1}" for index in range(len(reference_asset_ids))]
     for index, asset_id in enumerate(reference_asset_ids):
         operations.append(
             CreateNodeOp(
-                client_ref=f"image-asset-{index + 1}",
+                client_ref=identity_refs[index],
                 node_type=GraphNodeType.IMAGE_ASSET,
                 title=f"参考图 {index + 1}",
                 position_x=80 + index * 220,
                 position_y=560,
+                config={"role": "product_identity"},
                 bound_asset_id=asset_id,
             )
         )
 
     processing_refs: list[str] = []
     prompt_refs: list[str] = []
-    ordered_types = sorted(image_types, key=lambda item: (item.order, item.key))
-    for type_index, image_type in enumerate(ordered_types):
+    ordered_generating = sorted(generating_types, key=lambda item: (item.order, item.key))
+    for type_index, image_type in enumerate(ordered_generating):
         type_title = image_type.title or _IMAGE_TYPE_TITLES.get(image_type.key, image_type.key)
         type_option = agent_product_image_type_option(image_type.key)
+        group_ref = f"shot-{image_type.key}"
         prompt_ref = f"prompt-{image_type.key}"
         prompt_refs.append(prompt_ref)
         processing_refs.append(prompt_ref)
-        prompt_goal = f"{type_title}：{type_option.description}" if type_option else type_title
+        prompt_goal = image_type_prompt_goal(image_type.key) if type_option else type_title
+        group_y = 40 + type_index * 280
+        operations.append(CreateGroupOp(client_ref=group_ref, title=type_title, member_refs=()))
         operations.append(
             CreateNodeOp(
                 client_ref=prompt_ref,
                 node_type=GraphNodeType.PROMPT_GENERATION,
                 title=f"{type_title}提示词",
                 position_x=420,
-                position_y=40 + type_index * 200,
+                position_y=group_y,
+                group_ref=group_ref,
                 config={
                     "image_type_key": image_type.key,
                     "prompt": {"design_goal": prompt_goal},
                 },
             )
         )
-        for asset_index in range(len(reference_asset_ids)):
+        for asset_index, identity_ref in enumerate(identity_refs):
             operations.append(
                 ConnectNodesOp(
                     client_ref=f"edge-ref-{asset_index + 1}-{prompt_ref}",
-                    source_ref=f"image-asset-{asset_index + 1}",
+                    source_ref=identity_ref,
                     target_ref=prompt_ref,
                     order=asset_index,
                 )
             )
+        type_generation_spec = _generation_spec_for_shot(image_type, generation_spec)
         for image_index in range(image_type.quantity):
             image_ref = f"image-{image_type.key}-{image_index + 1}"
             processing_refs.append(image_ref)
@@ -175,10 +197,11 @@ def build_direct_create_template(
                     node_type=GraphNodeType.IMAGE_GENERATION,
                     title=f"{type_title} {image_index + 1}",
                     position_x=760,
-                    position_y=40 + type_index * 200 + image_index * 90,
+                    position_y=group_y + image_index * 90,
+                    group_ref=group_ref,
                     config={
                         "image_type_key": image_type.key,
-                        "generation_spec": dict(image_generation_spec),
+                        "generation_spec": dict(type_generation_spec),
                     },
                 )
             )
@@ -190,15 +213,28 @@ def build_direct_create_template(
                     order=image_index,
                 )
             )
-            for asset_index in range(len(reference_asset_ids)):
+            for asset_index, identity_ref in enumerate(identity_refs):
                 operations.append(
                     ConnectNodesOp(
                         client_ref=f"edge-ref-{asset_index + 1}-{image_ref}",
-                        source_ref=f"image-asset-{asset_index + 1}",
+                        source_ref=identity_ref,
                         target_ref=image_ref,
                         order=asset_index,
                     )
                 )
+
+    for evidence_index, image_type in enumerate(sorted(evidence_types, key=lambda item: (item.order, item.key))):
+        type_title = image_type.title or _IMAGE_TYPE_TITLES.get(image_type.key, image_type.key)
+        operations.append(
+            CreateNodeOp(
+                client_ref=f"evidence-{image_type.key}",
+                node_type=GraphNodeType.IMAGE_ASSET,
+                title=f"{type_title}（待绑定）",
+                position_x=80 + evidence_index * 220,
+                position_y=760,
+                config={"role": "evidence"},
+            )
+        )
 
     for order, prompt_ref in enumerate(prompt_refs):
         operations.append(
@@ -233,11 +269,11 @@ def build_direct_create_template(
             order=0,
         )
     )
-    for asset_index in range(len(reference_asset_ids)):
+    for asset_index, identity_ref in enumerate(identity_refs):
         operations.append(
             ConnectNodesOp(
                 client_ref=f"edge-ref-{asset_index + 1}-visual-system",
-                source_ref=f"image-asset-{asset_index + 1}",
+                source_ref=identity_ref,
                 target_ref="visual-system",
                 order=asset_index,
             )
@@ -245,7 +281,7 @@ def build_direct_create_template(
         operations.append(
             ConnectNodesOp(
                 client_ref=f"edge-ref-{asset_index + 1}-creative-brief",
-                source_ref=f"image-asset-{asset_index + 1}",
+                source_ref=identity_ref,
                 target_ref="creative-brief",
                 order=asset_index,
             )
@@ -266,3 +302,16 @@ def build_direct_create_template(
         actor_type=GraphActorType.USER,
         operations=operations,
     )
+
+
+def _generation_spec_for_shot(
+    image_type: DirectCreateImageType,
+    generation_spec: dict[str, Any] | None,
+) -> dict[str, Any]:
+    overrides = dict(generation_spec or {})
+    if image_type.aspect_ratio:
+        overrides["aspect_ratio"] = image_type.aspect_ratio
+    if image_type_family(image_type.key) == "infographic" and "text_policy" not in (generation_spec or {}):
+        overrides["text_policy"] = "required"
+        overrides.setdefault("text_language", "zh-CN")
+    return resolve_template_generation_spec(overrides)

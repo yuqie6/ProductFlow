@@ -287,6 +287,20 @@ def make_workflow_draft_payload(*, reference_asset_id: str = "00000000-0000-0000
                 "source_handle": "prompt",
                 "target_handle": "prompt",
             },
+            {
+                "key": "reference-to-image-1",
+                "source_node_key": "product-reference-node",
+                "target_node_key": "hero-image-1-node",
+                "source_handle": "asset",
+                "target_handle": "reference",
+            },
+            {
+                "key": "reference-to-image-2",
+                "source_node_key": "product-reference-node",
+                "target_node_key": "hero-image-2-node",
+                "source_handle": "asset",
+                "target_handle": "reference",
+            },
         ],
         "confirmation_summary": "生成 2 张首屏海报图，使用中文图片文字和统一工业视觉体系。",
     }

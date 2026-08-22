@@ -1,3 +1,8 @@
+import {
+  IMAGE_TYPE_ASPECT_RATIOS,
+  defaultAspectRatioForType as familyDefaultAspectRatio,
+  isEvidenceImageType,
+} from "../../lib/imageTypeFamilies";
 import type { TranslationKey } from "../../lib/i18n";
 import type {
   AgentProductImageTypeKey,
@@ -8,6 +13,7 @@ import type {
 export interface AgentImageTypeSelectionDraft {
   key: AgentProductImageTypeKey;
   quantity: number;
+  aspectRatio?: string;
 }
 
 export type AgentProductCreateValidationIssue =
@@ -64,6 +70,19 @@ export const AGENT_IMAGE_TYPE_TRANSLATIONS: Record<
   shipping: { title: "agentCreate.type.shipping.title", description: "agentCreate.type.shipping.description" },
 };
 
+export const CREATE_TYPE_ASPECT_RATIOS = IMAGE_TYPE_ASPECT_RATIOS;
+
+export const CREATE_ASPECT_RATIO_PRESETS = ["1:1", "4:5", "3:4", "9:16", "4:3", "16:9"] as const;
+
+export function defaultAspectRatioForType(key: AgentProductImageTypeKey): string {
+  return familyDefaultAspectRatio(key);
+}
+
+export function aspectRatioForSelection(item: AgentImageTypeSelectionDraft): string {
+  const current = item.aspectRatio?.trim();
+  return current || CREATE_TYPE_ASPECT_RATIOS[item.key];
+}
+
 export function toggleAgentImageType(
   current: readonly AgentImageTypeSelectionDraft[],
   key: AgentProductImageTypeKey,
@@ -72,7 +91,8 @@ export function toggleAgentImageType(
 ): AgentImageTypeSelectionDraft[] {
   const alreadySelected = current.some((item) => item.key === key);
   if (selected) {
-    return alreadySelected ? [...current] : [...current, { key, quantity: defaultQuantity }];
+    const quantity = isEvidenceImageType(key) ? 1 : defaultQuantity;
+    return alreadySelected ? [...current] : [...current, { key, quantity, aspectRatio: defaultAspectRatioForType(key) }];
   }
   return alreadySelected ? current.filter((item) => item.key !== key) : [...current];
 }
@@ -82,11 +102,21 @@ export function updateAgentImageTypeQuantity(
   key: AgentProductImageTypeKey,
   quantity: number,
 ): AgentImageTypeSelectionDraft[] {
-  return current.map((item) => (item.key === key ? { ...item, quantity } : item));
+  return current.map((item) => (
+    item.key === key ? { ...item, quantity: isEvidenceImageType(key) ? 1 : quantity } : item
+  ));
+}
+
+export function updateAgentImageTypeAspectRatio(
+  current: readonly AgentImageTypeSelectionDraft[],
+  key: AgentProductImageTypeKey,
+  aspectRatio: string,
+): AgentImageTypeSelectionDraft[] {
+  return current.map((item) => (item.key === key ? { ...item, aspectRatio } : item));
 }
 
 export function agentImageTotal(current: readonly AgentImageTypeSelectionDraft[]): number {
-  return current.reduce((total, item) => total + item.quantity, 0);
+  return current.reduce((total, item) => total + (isEvidenceImageType(item.key) ? 0 : item.quantity), 0);
 }
 
 export function buildAgentProductSelection(
@@ -94,7 +124,7 @@ export function buildAgentProductSelection(
 ): AgentProductSelectionV1 {
   return {
     schema_version: 1,
-    image_types: current.map((item, order) => ({ ...item, order })),
+    image_types: current.map((item, order) => ({ key: item.key, quantity: item.quantity, order })),
   };
 }
 

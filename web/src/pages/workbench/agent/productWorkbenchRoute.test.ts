@@ -4,6 +4,7 @@ import { ApiError } from "../../../lib/api";
 import type { GraphProjection } from "../../../lib/types";
 import {
   agentProductIntakeResumePath,
+  agentProductWorkbenchPath,
   productWorkbenchRouteTarget,
   resolveProductWorkbenchSurface,
   type ProductWorkbenchRouteInput,
@@ -51,7 +52,7 @@ describe("productWorkbenchRouteTarget", () => {
     expect(productWorkbenchRouteTarget(bootstrap)).toBe("agent");
   });
 
-  it("returns an unfinished empty draft to its creation workspace", () => {
+  it("keeps an unfinished empty draft on the Agent workbench so the user can chat and upload", () => {
     const bootstrap = {
       workflow_draft: {
         intake: null,
@@ -61,12 +62,12 @@ describe("productWorkbenchRouteTarget", () => {
       },
     } satisfies ProductWorkbenchRouteInput;
 
-    expect(productWorkbenchRouteTarget(bootstrap)).toBe("agent_intake");
+    expect(productWorkbenchRouteTarget(bootstrap)).toBe("agent");
+    expect(agentProductWorkbenchPath("product/1", "session/1", "task/1")).toBe(
+      "/products/product%2F1?agent_session_id=session%2F1&agent_task_id=task%2F1",
+    );
     expect(agentProductIntakeResumePath("conversation/1", "session/1")).toBe(
       "/products/new?workspace=conversation%2F1&agent_session_id=session%2F1",
-    );
-    expect(agentProductIntakeResumePath("conversation/1", "session/1", "task/1")).toBe(
-      "/products/new?workspace=conversation%2F1&agent_session_id=session%2F1&agent_task_id=task%2F1",
     );
   });
 });
@@ -111,14 +112,14 @@ describe("resolveProductWorkbenchSurface", () => {
     })).toEqual({ kind: "graph", graph });
   });
 
-  it("returns unfinished empty drafts to creation intake", () => {
+  it("keeps unfinished empty drafts on the Agent workbench", () => {
     expect(resolveProductWorkbenchSurface({
       graphPending: false,
       graphError: new ApiError(404, "商品工作流不存在"),
       agent: intake,
       agentPending: false,
       agentError: null,
-    }).kind).toBe("intake");
+    }).kind).toBe("agent");
   });
 
   it("keeps an empty draft on the Agent workbench when a v3 graph already exists", () => {

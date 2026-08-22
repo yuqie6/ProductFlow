@@ -80,4 +80,50 @@ describe("v3 graph API helpers", () => {
     ]);
     expect(JSON.parse(requests[1].body)).toMatchObject({ expected_fact_version: 2, facts: [{ key: "material", value: "steel" }] });
   });
+
+  it("posts direct-create intake as source_note and generation_spec form fields", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: async () => ({ product: { id: "product-1" }, graph: { id: "graph-1" } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const image = new File(["ref"], "ref.png", { type: "image/png" });
+
+    await api.createProductDirect({
+      name: "带字海报商品",
+      images: [image],
+      imageTypes: [
+        { key: "hero", quantity: 1, aspect_ratio: "3:4" },
+        { key: "detail", quantity: 1, aspect_ratio: "1:1" },
+      ],
+      sourceNote: "无线洗地机，面向都市白领",
+      generationSpec: {
+        aspect_ratio: "3:4",
+        resolution_tier: "high",
+        quality_intent: "high",
+        reference_fidelity: "high",
+        background_intent: "auto",
+        text_policy: "required",
+        text_language: "zh-CN",
+      },
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v3/products");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBeInstanceOf(FormData);
+    const formData = init.body as FormData;
+    expect(formData.get("name")).toBe("带字海报商品");
+    expect(formData.get("source_note")).toBe("无线洗地机，面向都市白领");
+    expect(JSON.parse(String(formData.get("image_types")))).toEqual([
+      { key: "hero", quantity: 1, aspect_ratio: "3:4" },
+      { key: "detail", quantity: 1, aspect_ratio: "1:1" },
+    ]);
+    expect(JSON.parse(String(formData.get("generation_spec")))).toMatchObject({
+      text_policy: "required",
+      text_language: "zh-CN",
+    });
+    expect(formData.getAll("images")).toEqual([image]);
+  });
 });

@@ -6,6 +6,7 @@ from sqlalchemy import select
 from productflow_backend.application.product_workflow.dependencies import WorkflowExecutionDependencies
 from productflow_backend.application.product_workflow.graph_commands import apply_graph_change_set, get_workflow_graph
 from productflow_backend.application.product_workflow.graph_contracts import (
+    DisconnectEdgeOp,
     MoveNodesOp,
     RenameNodeOp,
     UpdateNodeConfigOp,
@@ -23,6 +24,7 @@ from productflow_backend.domain.enums import (
     AsyncDispatchStatus,
     GraphActorType,
     GraphConfigStatus,
+    GraphEdgeRole,
     GraphNodeType,
     GraphRunScope,
     JobStatus,
@@ -147,14 +149,18 @@ def test_prompt_then_image_run_writes_artifacts_without_plan_keys(db_session) ->
     assert prompt_provider.requests[0].current_prompt.text.headline is None
     assert NO_ON_IMAGE_TEXT_RULE in prompt_provider.requests[0].current_prompt.shared_rules
     assert prompt_provider.requests[0].image_type_title == "首屏海报图"
-    assert prompt_provider.requests[0].image_type_description == "快速抓住用户注意力，传递产品核心定位"
+    assert prompt_provider.requests[0].image_type_description == "搜索列表首图，商品够大能认"
+    assert prompt_provider.requests[0].image_type_family == "photography"
+    assert prompt_provider.requests[0].image_type_job is not None
+    assert "55%" in prompt_provider.requests[0].image_type_job or "占画面" in prompt_provider.requests[0].image_type_job
     assert prompt_provider.requests[0].reference_images
     assert prompt_provider.requests[0].current_prompt.content.background != "干净背景"
     assert "首屏海报图" in prompt_provider.requests[0].current_prompt.design_goal
     assert any(fact.get("key") == "product_name" for fact in prompt_provider.requests[0].facts)
     assert any(fact.get("value") == "运行演示商品" for fact in prompt_provider.requests[0].facts)
-    assert "高质量电商商品图" in image_provider.requests[0].compiled_prompt
+    assert "能上淘宝" in image_provider.requests[0].compiled_prompt
     assert NO_ON_IMAGE_TEXT_RULE in image_provider.requests[0].compiled_prompt
+    assert "原图贴字" in image_provider.requests[0].compiled_prompt or "只加一行字" in image_provider.requests[0].compiled_prompt
     assert "contract_version" in image_provider.requests[0].compiled_prompt
     assert "image_plan_key" not in image_provider.requests[0].compiled_prompt
     assert image_provider.requests[0].references
@@ -168,6 +174,56 @@ def test_prompt_then_image_run_writes_artifacts_without_plan_keys(db_session) ->
     asset_node = next(node for node in projection.nodes if node.node_type == GraphNodeType.IMAGE_ASSET)
     assert asset_node.preview_asset_id == asset_node.bound_asset_id
     assert asset_node.unused is False
+    assert asset_node.config.get("role") == "product_identity"
+    assert prompt_provider.requests[0].reference_images[0].role == "product_identity"
+    assert image_provider.requests[0].references[0].role == "product_identity"
+
+
+def test_workflow_run_passes_image_asset_role_to_providers(db_session) -> None:
+    image_bytes = _make_demo_image_bytes()
+    created = create_product_with_direct_graph(
+        db_session,
+        name="参考角色演示商品",
+        category=None,
+        price=None,
+        source_note=None,
+        image_uploads=[(image_bytes, "ref.png", "image/png")],
+        image_types=[DirectCreateImageType(key="hero", quantity=1, order=0)],
+    )
+    asset_node = next(node for node in created.projection.nodes if node.node_type == GraphNodeType.IMAGE_ASSET)
+    apply_graph_change_set(
+        db_session,
+        product_id=created.product.id,
+        graph_id=created.graph.id,
+        change_set=WorkflowChangeSet(
+            base_graph_revision=created.graph.revision,
+            summary="环境参考",
+            actor_type=GraphActorType.USER,
+            operations=[
+                UpdateNodeConfigOp(
+                    node_ref=asset_node.id,
+                    config={**asset_node.config, "role": "environment"},
+                    bound_asset_id=asset_node.bound_asset_id,
+                )
+            ],
+        ),
+    )
+    prompt_provider = RecordingPromptProvider()
+    image_provider = RecordingImageProvider(image_bytes)
+    dependencies = WorkflowExecutionDependencies(
+        prompt_generation_provider_resolver=lambda: prompt_provider,
+        image_provider_resolver=lambda: image_provider,
+    )
+    submission = submit_graph_run(
+        db_session,
+        product_id=created.product.id,
+        graph_id=created.graph.id,
+        scope=GraphRunScope.GRAPH,
+        enqueue=lambda run_id: execute_graph_run(run_id, dependencies=dependencies),
+    )
+    assert submission.run.status == WorkflowRunStatus.SUCCEEDED
+    assert prompt_provider.requests[0].reference_images[0].role == "environment"
+    assert image_provider.requests[0].references[0].role == "environment"
 
 
 def test_visual_node_run_fills_overlay_without_generating_images(db_session) -> None:
@@ -674,25 +730,15 @@ def test_prompt_run_uses_stored_prompt_and_brief_fields(db_session) -> None:
     projection = project_workflow_graph(db_session, created.graph)
     prompt_view = next(node for node in projection.nodes if node.id == prompt_node.id)
     assert prompt_view.config_status == GraphConfigStatus.READY
+    reference_edge = next(edge for edge in prompt_view.incoming if edge.role == GraphEdgeRole.REFERENCE)
     apply_graph_change_set(
         db_session,
         product_id=created.product.id,
         graph_id=created.graph.id,
         change_set=WorkflowChangeSet(
             base_graph_revision=updated.graph.revision,
-            summary="改提示词使产物过期",
-            operations=[
-                UpdateNodeConfigOp(
-                    node_ref=prompt_node.id,
-                    config={
-                        "image_type_key": "hero",
-                        "prompt": {
-                            "shared_rules": ["已改过"],
-                            "design_goal": "新目标",
-                        },
-                    },
-                )
-            ],
+            summary="断开参考图使产物过期",
+            operations=[DisconnectEdgeOp(edge_ref=reference_edge.id)],
         ),
     )
     stale = project_workflow_graph(db_session, created.graph)
@@ -767,3 +813,245 @@ def test_image_success_queues_delivery_rendition_from_live_node_spec(db_session)
     assert dispatch is not None
     assert dispatch.status == AsyncDispatchStatus.PENDING
     assert dispatch.actor_name == "run_delivery_rendition_job"
+
+
+class BoomImageProvider(RecordingImageProvider):
+    def generate_workflow_image(self, request: WorkflowImageRequest) -> WorkflowImageResult:
+        self.requests.append(request)
+        raise RuntimeError("provider exploded")
+
+
+def test_image_node_fails_when_measured_aspect_disagrees_with_spec(db_session) -> None:
+    image_bytes = _make_demo_image_bytes()
+    created = create_product_with_direct_graph(
+        db_session,
+        name="比例校验商品",
+        category=None,
+        price=None,
+        source_note=None,
+        image_uploads=[(image_bytes, "ref.png", "image/png")],
+        image_types=[DirectCreateImageType(key="hero", quantity=1, order=0)],
+    )
+    image_node = next(node for node in created.projection.nodes if node.node_type == GraphNodeType.IMAGE_GENERATION)
+    spec = dict(image_node.config.get("generation_spec") or {})
+    spec["aspect_ratio"] = "3:4"
+    apply_graph_change_set(
+        db_session,
+        product_id=created.product.id,
+        graph_id=created.graph.id,
+        change_set=WorkflowChangeSet(
+            base_graph_revision=created.graph.revision,
+            summary="改成竖版",
+            actor_type=GraphActorType.USER,
+            operations=[UpdateNodeConfigOp(node_ref=image_node.id, config={**image_node.config, "generation_spec": spec})],
+        ),
+    )
+    image_provider = RecordingImageProvider(image_bytes)
+    submission = submit_graph_run(
+        db_session,
+        product_id=created.product.id,
+        graph_id=created.graph.id,
+        scope=GraphRunScope.GRAPH,
+        enqueue=lambda run_id: execute_graph_run(
+            run_id,
+            dependencies=WorkflowExecutionDependencies(
+                prompt_generation_provider_resolver=lambda: RecordingPromptProvider(),
+                image_provider_resolver=lambda: image_provider,
+            ),
+        ),
+    )
+    assert submission.run.status == WorkflowRunStatus.FAILED
+    image_run = next(item for item in submission.run.node_runs if item.node_id == image_node.id)
+    assert image_run.status == WorkflowNodeStatus.FAILED
+    assert image_run.failure_reason is not None
+    assert "3:4" in image_run.failure_reason
+    assert image_provider.requests
+    artifacts = list(db_session.scalars(select(WorkflowGraphArtifact).where(WorkflowGraphArtifact.artifact_type == "image")))
+    assert artifacts == []
+
+
+def test_failed_run_does_not_keep_executing_queued_nodes(db_session) -> None:
+    image_bytes = _make_demo_image_bytes()
+    created = create_product_with_direct_graph(
+        db_session,
+        name="失败停跑商品",
+        category=None,
+        price=None,
+        source_note=None,
+        image_uploads=[(image_bytes, "ref.png", "image/png")],
+        image_types=[
+            DirectCreateImageType(key="hero", quantity=1, order=0),
+            DirectCreateImageType(key="scene", quantity=1, order=1),
+        ],
+    )
+    image_provider = BoomImageProvider(image_bytes)
+    submission = submit_graph_run(
+        db_session,
+        product_id=created.product.id,
+        graph_id=created.graph.id,
+        scope=GraphRunScope.GRAPH,
+        enqueue=lambda run_id: execute_graph_run(
+            run_id,
+            dependencies=WorkflowExecutionDependencies(
+                prompt_generation_provider_resolver=lambda: RecordingPromptProvider(),
+                image_provider_resolver=lambda: image_provider,
+            ),
+        ),
+    )
+    assert submission.run.status == WorkflowRunStatus.FAILED
+    image_runs = [
+        item
+        for item in submission.run.node_runs
+        if item.node_id
+        and next(node for node in created.projection.nodes if node.id == item.node_id).node_type == GraphNodeType.IMAGE_GENERATION
+    ]
+    assert len(image_runs) == 2
+    assert {item.status for item in image_runs} == {WorkflowNodeStatus.FAILED, WorkflowNodeStatus.QUEUED}
+    queued = next(item for item in image_runs if item.status == WorkflowNodeStatus.QUEUED)
+    execute_graph_run(
+        submission.run.id,
+        dependencies=WorkflowExecutionDependencies(
+            prompt_generation_provider_resolver=lambda: RecordingPromptProvider(),
+            image_provider_resolver=lambda: RecordingImageProvider(image_bytes),
+        ),
+    )
+    db_session.refresh(queued)
+    db_session.refresh(submission.run)
+    assert queued.status == WorkflowNodeStatus.QUEUED
+    assert submission.run.status == WorkflowRunStatus.FAILED
+
+
+def test_duplicate_artifact_persist_does_not_crash_graph_run(db_session) -> None:
+    image_bytes = _make_demo_image_bytes()
+    created = create_product_with_direct_graph(
+        db_session,
+        name="幂等落库商品",
+        category=None,
+        price=None,
+        source_note=None,
+        image_uploads=[(image_bytes, "ref.png", "image/png")],
+        image_types=[DirectCreateImageType(key="hero", quantity=1, order=0)],
+    )
+    visual_node = next(node for node in created.projection.nodes if node.node_type == GraphNodeType.VISUAL_SYSTEM)
+    submission = submit_graph_run(
+        db_session,
+        product_id=created.product.id,
+        graph_id=created.graph.id,
+        scope=GraphRunScope.NODE,
+        target_node_id=visual_node.id,
+        enqueue=lambda _run_id: None,
+    )
+    visual_run = next(item for item in submission.run.node_runs if item.node_id == visual_node.id)
+    digest = "a" * 64
+    db_session.add(
+        WorkflowGraphArtifact(
+            graph_id=created.graph.id,
+            node_id=visual_node.id,
+            node_run_id=visual_run.id,
+            artifact_type="visual_system",
+            schema_version=3,
+            graph_revision=created.graph.revision,
+            payload_json={"style": ["占位"]},
+            payload_hash=digest,
+            input_digest=digest,
+            provider_name="preloaded",
+            provider_model="preloaded",
+        )
+    )
+    db_session.commit()
+    execute_graph_run(
+        submission.run.id,
+        dependencies=WorkflowExecutionDependencies(
+            prompt_generation_provider_resolver=lambda: RecordingPromptProvider(),
+            image_provider_resolver=lambda: RecordingImageProvider(image_bytes),
+        ),
+    )
+    db_session.refresh(submission.run)
+    assert submission.run.status == WorkflowRunStatus.SUCCEEDED
+    artifacts = list(
+        db_session.scalars(
+            select(WorkflowGraphArtifact).where(WorkflowGraphArtifact.node_run_id == visual_run.id)
+        )
+    )
+    assert len(artifacts) == 1
+
+
+def test_matching_digest_skips_provider_and_stale_only_after_input_edit(db_session) -> None:
+    image_bytes = _make_demo_image_bytes()
+    created = create_product_with_direct_graph(
+        db_session,
+        name="跳过最新节点商品",
+        category=None,
+        price=None,
+        source_note=None,
+        image_uploads=[(image_bytes, "ref.png", "image/png")],
+        image_types=[DirectCreateImageType(key="hero", quantity=1, order=0)],
+    )
+    first_prompt = RecordingPromptProvider()
+    first_image = RecordingImageProvider(image_bytes)
+    first = submit_graph_run(
+        db_session,
+        product_id=created.product.id,
+        graph_id=created.graph.id,
+        scope=GraphRunScope.GRAPH,
+        enqueue=lambda run_id: execute_graph_run(
+            run_id,
+            dependencies=WorkflowExecutionDependencies(
+                prompt_generation_provider_resolver=lambda: first_prompt,
+                image_provider_resolver=lambda: first_image,
+            ),
+        ),
+    )
+    assert first.run.status == WorkflowRunStatus.SUCCEEDED
+    db_session.expire_all()
+    graph = get_workflow_graph(db_session, product_id=created.product.id, graph_id=created.graph.id)
+    projection = project_workflow_graph(db_session, graph)
+    visual_view = next(node for node in projection.nodes if node.node_type == GraphNodeType.VISUAL_SYSTEM)
+    brief_view = next(node for node in projection.nodes if node.node_type == GraphNodeType.CREATIVE_BRIEF)
+    prompt_view = next(node for node in projection.nodes if node.node_type == GraphNodeType.PROMPT_GENERATION)
+    assert visual_view.config_status == GraphConfigStatus.READY
+    assert brief_view.config_status == GraphConfigStatus.READY
+    assert prompt_view.config_status == GraphConfigStatus.READY
+
+    second_prompt = RecordingPromptProvider()
+    second_image = RecordingImageProvider(image_bytes)
+    second = submit_graph_run(
+        db_session,
+        product_id=created.product.id,
+        graph_id=created.graph.id,
+        scope=GraphRunScope.GRAPH,
+        enqueue=lambda run_id: execute_graph_run(
+            run_id,
+            dependencies=WorkflowExecutionDependencies(
+                prompt_generation_provider_resolver=lambda: second_prompt,
+                image_provider_resolver=lambda: second_image,
+            ),
+        ),
+    )
+    assert second.run.status == WorkflowRunStatus.SUCCEEDED
+    assert second_prompt.requests == []
+    assert second_image.requests == []
+    assert all(item.output_json and item.output_json.get("skipped") for item in second.run.node_runs)
+
+    image_view = next(node for node in projection.nodes if node.node_type == GraphNodeType.IMAGE_GENERATION)
+    spec = dict(image_view.config.get("generation_spec") or {})
+    spec["text_policy"] = "required"
+    spec["text_language"] = "zh-CN"
+    apply_graph_change_set(
+        db_session,
+        product_id=created.product.id,
+        graph_id=created.graph.id,
+        change_set=WorkflowChangeSet(
+            base_graph_revision=graph.revision,
+            summary="改文案策略",
+            actor_type=GraphActorType.USER,
+            operations=[UpdateNodeConfigOp(node_ref=image_view.id, config={**image_view.config, "generation_spec": spec})],
+        ),
+    )
+    db_session.expire_all()
+    graph = get_workflow_graph(db_session, product_id=created.product.id, graph_id=created.graph.id)
+    after_edit = project_workflow_graph(db_session, graph)
+    visual_after = next(node for node in after_edit.nodes if node.node_type == GraphNodeType.VISUAL_SYSTEM)
+    prompt_after = next(node for node in after_edit.nodes if node.node_type == GraphNodeType.PROMPT_GENERATION)
+    assert visual_after.config_status == GraphConfigStatus.STALE
+    assert prompt_after.config_status == GraphConfigStatus.STALE

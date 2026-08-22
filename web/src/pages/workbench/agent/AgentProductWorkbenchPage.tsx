@@ -42,6 +42,7 @@ type AgentSidebarToolId = "agent" | "add" | "details" | "runs" | "library" | "re
 
 const EMPTY_ACTIONS: GraphCanvasActions = {
   createNode: () => undefined,
+  createShot: () => undefined,
   duplicateSelected: () => undefined,
   groupSelected: () => undefined,
   dissolveSelected: () => undefined,
@@ -268,6 +269,7 @@ export function AgentProductWorkbenchPage({
           catalog={catalog}
           busy={canvasBusy}
           onCreate={actions.createNode}
+          onCreateShot={actions.createShot}
           canDuplicate={selectedNodeIds.length > 0}
           canGroup={selectedNodeIds.length > 1}
           canDissolve={liveGraph.nodes.some((node) => selectedNodeIds.includes(node.id) && Boolean(node.group_id))}

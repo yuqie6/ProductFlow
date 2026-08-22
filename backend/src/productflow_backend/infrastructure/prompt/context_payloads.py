@@ -36,14 +36,28 @@ class GeneratedVisualOverlay(BaseModel):
 
 
 DEFAULT_CREATIVE_BRIEF = GeneratedCreativeBrief(
-    goal="根据参考图和商品资料制定电商拍摄要求",
-    design_goals=["还原商品真实形态", "突出可辨认的卖点"],
+    goal="做成能点击的商业套图：商品是主角，层次清楚，卖点好读。不要极简空棚，也不要爆炸贴墙。",
+    design_goals=["商品一眼能认并占主体", "构图、布光和排版按图种设计", "卖点写成用户利益，条目克制好读"],
     required_copy=[],
-    prohibitions=["不得编造参考图或商品资料中未出现的特征"],
+    prohibitions=[
+        "不要编造参考图和资料里没有的认证、Logo、价格或结构",
+        "不要复制参考图构图后只加一行字",
+        "不要极简大留白、浅灰空棚、杂志静物",
+        "不要爆炸贴、满屏色块、牛皮癣标签",
+    ],
 )
 
 DEFAULT_VISUAL_OVERLAY = GeneratedVisualOverlay(
-    style=["干净商业摄影", "还原商品材质"],
-    colors=[GeneratedVisualColor(role="background", value="#F4F4F5", label="浅灰背景")],
-    prohibitions=["不要改变商品结构、颜色或材质"],
+    style=["商业套图", "商品是主角", "层次清楚"],
+    colors=[
+        GeneratedVisualColor(role="background", value="#F3EFE8", label="暖白底"),
+        GeneratedVisualColor(role="headline", value="#1C1917", label="标题色"),
+        GeneratedVisualColor(role="accent", value="#6B7C6A", label="克制点缀"),
+    ],
+    prohibitions=[
+        "不要改变商品结构、颜色或材质",
+        "不要把参考图构图当完成稿",
+        "不要浅灰空棚或极简大留白",
+        "不要爆炸贴或满屏色块",
+    ],
 )

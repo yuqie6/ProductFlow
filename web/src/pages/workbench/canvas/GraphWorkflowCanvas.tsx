@@ -75,6 +75,7 @@ import {
   computeGraphGroupBounds,
   graphCanvasView,
 } from "./graphLayout";
+import { graphEdgeEmphasis, graphPortVisualScale } from "./graphCanvasVisual";
 
 const SNAP_GRID: [number, number] = [GRAPH_SNAP, GRAPH_SNAP];
 const PRO_OPTIONS = { hideAttribution: true };
@@ -96,6 +97,7 @@ interface GraphNodeData extends Record<string, unknown> {
   structureBusy: boolean;
   onRun: (node: GraphNode) => void;
   onRunToNode: (node: GraphNode) => void;
+  onRunShot?: (groupId: string) => void;
   onBind: (node: GraphNode) => void;
   onDuplicate: (node: GraphNode) => void;
   onSaveRecipe: (node: GraphNode) => void;
@@ -113,6 +115,7 @@ interface GraphGroupData extends Record<string, unknown> {
   onEnter: (groupId: string) => void;
   onRename: (groupId: string, title: string) => void;
   onDissolve: (groupId: string) => void;
+  onRunShot?: (groupId: string) => void;
 }
 
 type GraphCanvasNode =
@@ -124,6 +127,7 @@ type GraphCanvasEdge = Edge<{
   roleLabel: string | null;
   structureBusy: boolean;
   deleteLabel: string;
+  emphasis: "active" | "receded";
   onDelete: (edgeId: string) => void;
 }, "graph-edge">;
 
@@ -173,7 +177,7 @@ export const GraphNodeCard = memo(function GraphNodeCard({
   const reactFlow = useReactFlow();
   const { node } = data;
   const { zoom } = useViewport();
-  const portVisualScale = Math.min(4.25, Math.max(1, 1 / zoom));
+  const portVisualScale = graphPortVisualScale(zoom);
   const connection = useConnection<GraphCanvasNode, ConnectionHandleSnapshot>((snapshot) => ({
     inProgress: snapshot.inProgress,
     fromHandle: snapshot.fromHandle
@@ -328,7 +332,7 @@ export const GraphGroupCard = memo(function GraphGroupCard({
   selected,
 }: NodeProps<Node<GraphGroupData>>) {
   const { t } = useI18n();
-  const { group, bounds, structureBusy, onEnter, onRename, onDissolve } = data;
+  const { group, bounds, structureBusy, onEnter, onRename, onDissolve, onRunShot } = data;
   const [draft, setDraft] = useState(group.title);
   const [editing, setEditing] = useState(false);
   useEffect(() => {
@@ -391,6 +395,22 @@ export const GraphGroupCard = memo(function GraphGroupCard({
         <span className="rounded-full bg-slate-200/70 px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
           {t("workbench.folder.memberCount", { count: group.member_ids.length })}
         </span>
+        {onRunShot ? (
+          <button
+            type="button"
+            className="nodrag nowheel nopan flex h-7 w-7 items-center justify-center rounded-md text-slate-500 hover:bg-white hover:text-slate-800 disabled:opacity-40 dark:hover:bg-slate-900 dark:hover:text-slate-100"
+            disabled={structureBusy}
+            title={t("graph.canvas.runShot")}
+            aria-label={t("graph.canvas.runShot")}
+            data-run-shot=""
+            onClick={(event) => {
+              event.stopPropagation();
+              onRunShot(group.id);
+            }}
+          >
+            <Play size={12} aria-hidden="true" />
+          </button>
+        ) : null}
         <button
           type="button"
           className="nodrag nowheel nopan flex h-7 w-7 items-center justify-center rounded-md text-slate-500 hover:bg-white hover:text-slate-800 disabled:opacity-40 dark:hover:bg-slate-900 dark:hover:text-slate-100"
@@ -456,14 +476,15 @@ const GraphCanvasEdgeCard = memo(function GraphCanvasEdgeCard({
     targetPosition,
   });
   const [hovered, setHovered] = useState(false);
+  const emphasis = hovered || selected ? "active" : data?.emphasis ?? "receded";
   return (
     <>
       <BaseEdge
         id={id}
         path={edgePath}
         style={{
-          stroke: selected ? "#334155" : hovered ? "#64748b" : "#94a3b8",
-          strokeWidth: selected ? 2.2 : 1.8,
+          stroke: emphasis === "active" ? (selected ? "#334155" : "#64748b") : "rgba(148,163,184,0.28)",
+          strokeWidth: emphasis === "active" ? (selected ? 2.2 : 1.6) : 1.1,
         }}
         label={(hovered || selected) ? data?.roleLabel ?? undefined : undefined}
         labelStyle={{ fontSize: 10, fill: "#64748b" }}
@@ -473,6 +494,7 @@ const GraphCanvasEdgeCard = memo(function GraphCanvasEdgeCard({
         fill="none"
         stroke="transparent"
         strokeWidth={15}
+        data-edge-emphasis={emphasis}
         className="cursor-pointer"
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
@@ -535,6 +557,7 @@ export function GraphWorkflowCanvas({
   onDeleteEdge,
   onRunNode,
   onRunToNode,
+  onRunShot,
   onBindNode,
   onDuplicateNode,
   onSaveRecipeNode,
@@ -566,6 +589,7 @@ export function GraphWorkflowCanvas({
   onDeleteEdge: (edgeId: string) => void;
   onRunNode: (nodeId: string) => void;
   onRunToNode?: (nodeId: string) => void;
+  onRunShot?: (groupId: string) => void;
   onBindNode: (nodeId: string) => void;
   onDuplicateNode: (nodeIds: string[]) => void;
   onSaveRecipeNode?: (nodeId: string) => void;
@@ -654,6 +678,7 @@ export function GraphWorkflowCanvas({
           onEnter: onEnterGroup,
           onRename: onRenameGroup,
           onDissolve: onDissolveGroup,
+          onRunShot,
         },
       }];
     });
@@ -687,6 +712,7 @@ export function GraphWorkflowCanvas({
     }));
     return [...groups, ...nodes];
   }, [busy, catalog, graph, nodePresentations, nodeStatuses, onBindNode, onDeleteNode, onDissolveGroup, onDuplicateNode, onEnterGroup, onRenameGroup, onRunNode, onRunToNode, onSaveRecipeNode, runningNodeId, selectNodeFromPointer, selectedNodeIds, viewGraph]);
+  const selectedNodeIdSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
   const graphEdges = useMemo<GraphCanvasEdge[]>(
     () => viewGraph.edges.map((edge) => ({
       id: edge.id,
@@ -703,10 +729,15 @@ export function GraphWorkflowCanvas({
         })(),
         structureBusy: busy,
         deleteLabel: t("detail.deleteEdge"),
+        emphasis: graphEdgeEmphasis({
+          edgeSelected: false,
+          sourceSelected: selectedNodeIdSet.has(edge.source_node_id),
+          targetSelected: selectedNodeIdSet.has(edge.target_node_id),
+        }),
         onDelete: onDeleteEdge,
       },
     })),
-    [busy, onDeleteEdge, t, viewGraph.edges],
+    [busy, onDeleteEdge, selectedNodeIdSet, t, viewGraph.edges],
   );
   const [nodes, setNodes, onNodesChange] = useNodesState<GraphCanvasNode>(graphNodes);
   const previousIdentityRef = useRef(graphIdentity);

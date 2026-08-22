@@ -4,8 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ConfirmDialog } from "../../../components/ConfirmDialog";
 import { api, ApiError } from "../../../lib/api";
+import { AGENT_IMAGE_TYPE_TRANSLATIONS } from "../../product-create/imageTypeSelection";
 import { useI18n } from "../../../lib/preferences";
-import type { GraphChangeSet, GraphNodeCatalog, GraphNodeType, GraphProjection } from "../../../lib/types";
+import type { AgentProductImageTypeKey, GraphChangeSet, GraphNodeCatalog, GraphNodeType, GraphProjection } from "../../../lib/types";
 import { ProductWorkbenchCanvasChromeToggle } from "../chrome/ProductWorkbenchCanvasChromeToggle";
 import { getWorkflowKeyboardShortcut, type WorkflowKeyboardShortcut } from "../chrome/shortcuts";
 import type { CanvasInteractionMode } from "../chrome/workflowCanvasInteraction";
@@ -42,9 +43,16 @@ import {
   selectionInsideGroup,
 } from "./graphLayout";
 import { graphNodeRunPresentations, graphRunsAreLive } from "./graphRunDisplay";
+import {
+  buildCreateShotOperations,
+  sequenceShotRuns,
+  shotRunRequests,
+  waitUntilGraphRunNotRunning,
+} from "./shotChangeSet";
 
 export interface GraphCanvasActions {
   createNode: (nodeType: GraphNodeType) => void;
+  createShot: (imageTypeKey: AgentProductImageTypeKey) => void;
   duplicateSelected: () => void;
   groupSelected: () => void;
   dissolveSelected: () => void;
@@ -403,6 +411,23 @@ export function GraphCanvasPanel({
     });
   }, [applyAsync, selectCreatedNodes, t]);
 
+  const createShot = useCallback((imageTypeKey: AgentProductImageTypeKey) => {
+    const before = graphRef.current;
+    const position = graphViewportCenterPosition(viewportRef.current);
+    const translations = AGENT_IMAGE_TYPE_TRANSLATIONS[imageTypeKey];
+    const operations = buildCreateShotOperations({
+      imageTypeKey,
+      title: translations ? t(translations.title) : imageTypeKey,
+      position: { x: position.position_x, y: position.position_y },
+      graph: before,
+      selectedNodeIds: selectedRef.current,
+    });
+    if (!operations.length) return;
+    void applyAsync("添加场景", operations).then((next) => {
+      if (next) selectCreatedNodes(before, next);
+    });
+  }, [applyAsync, selectCreatedNodes, t]);
+
   const duplicateSelected = useCallback((nodeIds = selectedRef.current, noticeKey?: "pasted" | "duplicated") => {
     const { operations } = buildDuplicateGraphOperations(graphRef.current, nodeIds);
     if (!operations.length) return;
@@ -539,8 +564,27 @@ export function GraphCanvasPanel({
     } catch {
       return;
     }
-    runMutation.mutate(input);
+    await runMutation.mutateAsync(input);
   }, [onBeforeRun, runMutation]);
+
+  const runShot = useCallback(async (groupId: string) => {
+    const requests = shotRunRequests(graphRef.current, groupId);
+    if (!requests.length) return;
+    try {
+      await onBeforeRun?.();
+    } catch {
+      return;
+    }
+    const workflowId = graphRef.current.id;
+    await sequenceShotRuns(
+      requests,
+      (input) => runMutation.mutateAsync(input),
+      (run) => waitUntilGraphRunNotRunning(
+        run,
+        (runId) => api.getGraphRun(productId, workflowId, runId),
+      ),
+    );
+  }, [onBeforeRun, productId, runMutation]);
 
   const handleViewportChange = useCallback((next: WorkflowCanvasViewport, groupId: string | null) => {
     if (!isWorkflowCanvasViewportScopeActive(enteredGroupIdRef.current, groupId)) return;
@@ -601,6 +645,7 @@ export function GraphCanvasPanel({
 
   const actionsRef = useRef<GraphCanvasActions>({
     createNode,
+    createShot,
     duplicateSelected,
     groupSelected,
     dissolveSelected,
@@ -610,6 +655,7 @@ export function GraphCanvasPanel({
   });
   actionsRef.current = {
     createNode,
+    createShot,
     duplicateSelected,
     groupSelected,
     dissolveSelected,
@@ -620,6 +666,7 @@ export function GraphCanvasPanel({
   useEffect(() => {
     onRegisterActions?.({
       createNode: (nodeType) => actionsRef.current.createNode(nodeType),
+      createShot: (imageTypeKey) => actionsRef.current.createShot(imageTypeKey),
       duplicateSelected: () => actionsRef.current.duplicateSelected(),
       groupSelected: () => actionsRef.current.groupSelected(),
       dissolveSelected: () => actionsRef.current.dissolveSelected(),
@@ -814,6 +861,7 @@ export function GraphCanvasPanel({
           onDeleteEdge={(edgeId) => apply("断开连线", [{ op: "disconnect_edge", edge_ref: edgeId }])}
           onRunNode={(nodeId) => void submitRun({ scope: "node", node_id: nodeId })}
           onRunToNode={(nodeId) => void submitRun({ scope: "to_node", node_id: nodeId })}
+          onRunShot={(groupId) => void runShot(groupId)}
           onBindNode={(nodeId) => onBindNode?.(nodeId)}
           onDuplicateNode={(nodeIds) => duplicateSelected(nodeIds, "duplicated")}
           onSaveRecipeNode={(nodeId) => openRecipeSave("selection", [nodeId])}

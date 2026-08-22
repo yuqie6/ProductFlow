@@ -25,6 +25,7 @@ class WorkflowImageRequest(BaseModel):
     compiled_prompt: str
     generation_spec: GenerationSpec
     references: tuple[WorkflowImageReference, ...] = ()
+    image_type_key: str | None = None
 
 
 class WorkflowGeneratedImage(BaseModel):
@@ -94,6 +95,27 @@ def image_dimensions_from_bytes(bytes_data: bytes) -> tuple[int, int] | None:
 def aspect_ratio_value(aspect_ratio: str) -> float:
     width, height = (int(value) for value in aspect_ratio.split(":", maxsplit=1))
     return width / height
+
+
+ASPECT_RATIO_MISMATCH_TOLERANCE = 0.08
+
+
+def measured_aspect_matches_spec(
+    spec: GenerationSpec,
+    width: int,
+    height: int,
+    *,
+    tolerance: float = ASPECT_RATIO_MISMATCH_TOLERANCE,
+) -> bool:
+    if width <= 0 or height <= 0:
+        return False
+    requested = aspect_ratio_value(spec.aspect_ratio)
+    actual = width / height
+    return abs(actual - requested) <= requested * tolerance
+
+
+def aspect_mismatch_message(spec: GenerationSpec, width: int, height: int) -> str:
+    return f"供应商没有按 {spec.aspect_ratio} 出图（实际 {width}×{height}）"
 
 
 def map_generation_spec_to_openai_size(spec: GenerationSpec) -> str:

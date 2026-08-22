@@ -72,17 +72,17 @@ Draft 拓扑字段仍在 `workflow_drafts/contracts.py` 的 `WorkflowDraftPayloa
 |---|---|
 | 商品 | 一个 `product_source`（事实可空，节点合法） |
 | 每张上传参考图 | 一个 `image_asset`，已绑定该 `ProductImageAsset` |
-| 每个选中的图片类型 | 一个 `prompt_generation`（current Artifact 为空） |
-| 该类型的每一张计划图 | 一个 `image_generation`（有 GenerationSpec 默认值；current Artifact 为空） |
+| 每个摄影/信息图类型 | 一个一层 Group，内含一个 `prompt_generation` 和 quantity 个 `image_generation` |
+| 每个证据类型 | 一个未绑定 `image_asset`（`role=evidence`），不建 prompt/生图 |
 | 工作流级 | 一个空的或预设的 `visual_system`、一个空的 `creative_brief`（均可 incomplete） |
 
-默认边（必须出现在画布上，用户可删）：
+默认边（必须出现在画布上，用户可删）。当前矩阵见 `docs/specs/shot-scene-assembly.md`：
 
-- `product_source` → 每个 `prompt_generation`（`facts`）
-- 每个 `prompt_generation` → 该类型下的每个 `image_generation`（`prompt`）
-- `creative_brief` → 每个 `prompt_generation`（`brief`）
-- `visual_system` → 每个 `prompt_generation` 和 `image_generation`（`visual_guidance`）
-- 上传得到的 `image_asset`：模版把每张参考图连到视觉规范、创作要求、每个 `prompt_generation` 和每个 `image_generation`（`reference`）。用户仍可删边；删后画布标未使用，没有参考边的生图节点也不能运行。
+- `product_source` → 每个会生图镜头的 `prompt_generation`（`facts`）
+- 每个 `prompt_generation` → 该镜头下的每个 `image_generation`（`prompt`）
+- `creative_brief` → 每个会生图镜头的 `prompt_generation`（`brief`）
+- `visual_system` → 每个会生图镜头的 `prompt_generation` 和 `image_generation`（`visual_guidance`）
+- 上传得到的身份 `image_asset`：接到视觉规范、创作要求、每个会生图镜头的 `prompt_generation` 和 `image_generation`（`reference`）。不接到证据占位节点。用户仍可删边；删后 compiler 不再把该参考填回运行输入。
 
 进入工作台时图就是正式图。提示词正文、视觉规范内容和商品事实都可以缺。用户在 Inspector 填，或 **运行** `prompt_generation`（以及后续若有的风格生成）来写出 Artifact，再运行 `image_generation`。不要求先跟 Agent 聊完才能跑。
 
@@ -144,7 +144,7 @@ V2 把 Visual System 当作整图运行时隐式输入。ADR 0008 禁止 compile
 `reference_bindings` 生成 `image_asset` 节点后：
 
 - Draft 里已有出边：按节点类型映射成对应 `reference` edge，不重复写同一对节点
-- 每个 `image_generation`：若 Draft 没写该参考图的出边，adapter 仍补一条 `reference` 边（与直接创建模版一致，否则生图节点缺必要输入）。用户确认后可立刻删
+- 每个 `image_generation`：只映射 Draft 已声明的参考边。缺少必要 `reference` 边时结构化失败，不按笛卡尔积补边。见 `docs/specs/shot-scene-assembly.md`。
 - 指向 `prompt_generation` / `creative_brief` / `visual_system` 的参考边只按 Draft 原样映射，不自动补全
 
 换绑不在 adapter 里发生。folder 仍是组织对象，按 Draft `folders[]` / `folder_key` 写入，不进入 DAG。

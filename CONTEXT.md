@@ -12,11 +12,11 @@ The current repository targets a personal live demo and self-hosted deployments.
 2. Image types start unselected. Selecting a type initializes its quantity to 2.
 3. Each selected type has a quantity from 1 to 6; the total planned images cannot exceed 30.
 4. The user uploads 1 to 6 verified references and is expected to include at least one image that identifies the real product or an authoritative product rendering. The backend deterministically validates count, ownership, bytes, and media format; semantic adequacy remains an Agent/user review responsibility.
-5. ProductFlow persists the draft Product, uploaded `ProductImageAsset` records, one `WorkflowDraft`, one product-scoped `AgentConversation`, and its associated `AgentSession` before the first Agent Turn. `AgentSession` is the longer-lived conversation container; the current Turn runtime still uses the product-scoped conversation projection.
+5. Agent-first create can start from a product name. It persists the draft Product, one collecting `WorkflowDraft`, one product-scoped `AgentConversation`, and its associated `AgentSession`. The user uploads 1 to 6 verified references in that conversation and names the image types in text; the Agent persists them as immutable intake. The create form can still collect types and files first as a shortcut, and remains the required path for direct create. Direct create persists the product, references, and schema-v3 graph without a conversation; the workbench later attaches one. Missing image types or references do not block Agent Turns. `AgentSession` is the longer-lived conversation container; the current Turn runtime still uses the product-scoped conversation projection.
 6. The Agent asks for missing facts and proposes a versioned, structured Draft. It may suggest plan changes but cannot silently change confirmed user choices or facts.
 7. The user confirms an explicit Draft revision. Agent confirmation persists that revision as a schema-v3 graph; the product-create form can also create the same graph directly without a Draft.
 8. Draft confirmation and direct create persist a complete schema-v3 graph in one transaction. The workbench reads that graph after persist; it does not assemble the graph incrementally in the browser.
-9. The same Agent conversation continues in the product workbench beside the editable workflow.
+9. The same Agent conversation continues in the product workbench beside the editable workflow. After a live schema-v3 graph exists, the Agent inspects, explains, and may request runs; it does not submit a WorkflowDraft that would replace that graph.
 
 ## Authorities
 
@@ -39,7 +39,9 @@ The current repository targets a personal live demo and self-hosted deployments.
 - Product facts, visual systems, prompts, recipes, and execution inputs preserve immutable versions used by prior runs.
 - `GenerationSpec` describes model-generation intent. Provider-effective values and measured output remain separately observable.
 - `DeliverySpec` describes deterministic rendition work. Changing delivery dimensions or format does not invoke the image model or replace the generated source.
-- Canvas folders are one-level visual groups. They have no execution status, ports, nesting, run, cancel, or retry behavior.
+- Canvas folders are one-level visual groups. They have no execution status, ports, nesting, run, cancel, or retry behavior. Generating image types persist as one group with one prompt node and N image nodes; evidence types persist as unbound `image_asset` placeholders.
+- Graph compiler runtime inputs include only facts, references, briefs, and visual guidance that arrive on the target node's incoming edges. Disconnecting an edge removes that input; the compiler does not scan the rest of the graph.
+- Create-time uploads bind as `image_asset` nodes with role `product_identity`. That role string is the value sent to prompt and image providers.
 - Recipes are created only by an explicit user save. Applying one to another product produces a reviewable Draft; user confirmation persists that Draft as the online graph. Saving a recipe from a live schema-v3 graph is not implemented.
 
 ## Product Image Invariants

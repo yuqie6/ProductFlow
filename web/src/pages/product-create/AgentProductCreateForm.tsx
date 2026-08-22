@@ -20,6 +20,7 @@ import {
   Ruler,
   ShieldCheck,
   Sparkles,
+  Type,
   Truck,
   X,
   ZoomIn,
@@ -27,6 +28,8 @@ import {
 import type { LucideIcon } from "lucide-react";
 
 import { ImageDropZone } from "../../components/ImageDropZone";
+import { IMAGE_TYPE_FAMILY_ORDER, imageTypeFamily, isEvidenceImageType } from "../../lib/imageTypeFamilies";
+import type { ImageTypeFamily } from "../../lib/imageTypeFamilies";
 import { useI18n } from "../../lib/preferences";
 import type {
   AgentProductImageTypeKey,
@@ -35,8 +38,20 @@ import type {
 import {
   AGENT_IMAGE_TYPE_TRANSLATIONS,
   agentImageTotal,
+  aspectRatioForSelection,
   type AgentImageTypeSelectionDraft,
 } from "./imageTypeSelection";
+import { CreateAspectRatioChips } from "./CreateAspectRatioChips";
+import {
+  CREATE_BRIEF_MAX_LENGTH,
+  CREATE_DEFAULT_TEXT_LANGUAGE,
+  CREATE_TEXT_LANGUAGE_OPTIONS,
+  CREATE_TEXT_POLICIES,
+  createOutputSummary,
+  isCreateBriefReady,
+  isCreateOutputReady,
+  type CreateOutputDraft,
+} from "./createIntake";
 
 interface AgentProductCreateFormProps {
   productName: string;
@@ -53,8 +68,13 @@ interface AgentProductCreateFormProps {
   onProductNameChange: (name: string) => void;
   onToggleImageType: (key: AgentProductImageTypeKey, selected: boolean) => void;
   onQuantityChange: (key: AgentProductImageTypeKey, quantity: number) => void;
+  onAspectRatioChange: (key: AgentProductImageTypeKey, aspectRatio: string) => void;
   onAddReferenceFiles: (files: File[]) => void;
   onRemoveReferenceFile: (index: number) => void;
+  brief: string;
+  outputDraft: CreateOutputDraft;
+  onBriefChange: (value: string) => void;
+  onOutputChange: (value: CreateOutputDraft) => void;
   onRetryOptions: () => void;
   onSubmit: () => void;
   onDirectCreate?: () => void;
@@ -79,7 +99,25 @@ const IMAGE_TYPE_ICONS: Partial<Record<AgentProductImageTypeKey, LucideIcon>> = 
   shipping: Truck,
 };
 
-const STAGE_ICONS: [LucideIcon, LucideIcon, LucideIcon] = [Package, Images, ImagePlus];
+const STAGE_ICONS: [LucideIcon, LucideIcon, LucideIcon, LucideIcon] = [Package, Images, ImagePlus, Type];
+
+const TEXT_POLICY_LABELS = {
+  required: "agentCreate.textPolicy.required",
+  allow: "agentCreate.textPolicy.allow",
+  none: "agentCreate.textPolicy.none",
+} as const;
+
+function familyTitleKey(family: ImageTypeFamily): "agentCreate.family.photography" | "agentCreate.family.infographic" | "agentCreate.family.evidence" {
+  if (family === "infographic") return "agentCreate.family.infographic";
+  if (family === "evidence") return "agentCreate.family.evidence";
+  return "agentCreate.family.photography";
+}
+
+function familyHintKey(family: ImageTypeFamily): "agentCreate.family.photographyHint" | "agentCreate.family.infographicHint" | "agentCreate.family.evidenceHint" {
+  if (family === "infographic") return "agentCreate.family.infographicHint";
+  if (family === "evidence") return "agentCreate.family.evidenceHint";
+  return "agentCreate.family.photographyHint";
+}
 
 const stepClass =
   "flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#6366f1] to-[#8b5cf6] text-[11px] font-bold text-white shadow-[0_3px_8px_rgb(99_102_241/0.3)]";
@@ -114,8 +152,13 @@ export function AgentProductCreateForm({
   onProductNameChange,
   onToggleImageType,
   onQuantityChange,
+  onAspectRatioChange,
   onAddReferenceFiles,
   onRemoveReferenceFile,
+  brief,
+  outputDraft,
+  onBriefChange,
+  onOutputChange,
   onRetryOptions,
   onSubmit,
   onDirectCreate,
@@ -162,10 +205,36 @@ export function AgentProductCreateForm({
   const minReferences = options?.limits.min_reference_images ?? 0;
   const maxReferences = options?.limits.max_reference_images ?? 0;
   const nameReady = productName.trim().length > 0;
+  const briefReady = isCreateBriefReady(brief);
   const planReady = selections.length > 0;
   const referenceReady = referenceFiles.length >= minReferences;
+  const outputReady = isCreateOutputReady(outputDraft);
+  const outputSummary = createOutputSummary(outputDraft);
+  const selectedRatios = [...new Set(selections.map((item) => aspectRatioForSelection(item)))];
+  const languageLabel =
+    CREATE_TEXT_LANGUAGE_OPTIONS.find((option) => option.value === outputDraft.textLanguage)?.label
+    ?? outputDraft.textLanguage;
 
-  const stageCard = (stage: 1 | 2 | 3, meta: string, isActive: boolean, body: ReactNode) => {
+  const stageTitle = (stage: 1 | 2 | 3 | 4): string => {
+    if (stage === 1) return t("agentCreate.productInfo");
+    if (stage === 2) return t("agentCreate.imageTypes");
+    if (stage === 3) return t("agentCreate.references");
+    return t("agentCreate.output");
+  };
+
+  const updateOutput = (patch: Partial<CreateOutputDraft>) => {
+    const nextPolicy = patch.textPolicy ?? outputDraft.textPolicy;
+    const nextLanguage = patch.textLanguage ?? outputDraft.textLanguage;
+    onOutputChange({
+      textPolicy: nextPolicy,
+      textLanguage:
+        nextPolicy === "none"
+          ? nextLanguage
+          : nextLanguage.trim() || CREATE_DEFAULT_TEXT_LANGUAGE,
+    });
+  };
+
+  const stageCard = (stage: 1 | 2 | 3 | 4, meta: string, isActive: boolean, body: ReactNode) => {
     const Icon = STAGE_ICONS[stage - 1];
     return (
       <section aria-labelledby={`agent-stage-${stage}-title`} className={cardShellClass(isActive)}>
@@ -179,7 +248,7 @@ export function AgentProductCreateForm({
               className="flex items-center gap-2 text-sm font-semibold text-text-primary"
             >
               <Icon size={16} className="text-accent" aria-hidden="true" />
-              {stage === 1 ? t("agentCreate.productName") : stage === 2 ? t("agentCreate.imageTypes") : t("agentCreate.references")}
+              {stageTitle(stage)}
             </h2>
             <p className="mt-0.5 text-xs leading-4 text-text-muted">{meta}</p>
           </div>
@@ -251,23 +320,37 @@ export function AgentProductCreateForm({
         event.preventDefault();
         onSubmit();
       }}
-      className="mt-6 min-w-0 space-y-4 pb-40"
+      className="mt-6 min-w-0 space-y-4 pb-56"
     >
-      {stageCard(1, t("agentCreate.nameHint"), nameReady, (
-        <label htmlFor="agent-product-name" className="block">
-          <span className="sr-only">{t("agentCreate.productName")}</span>
-          <input
-            id="agent-product-name"
-            autoFocus={!isProductNameReadOnly}
-            autoComplete="off"
-            value={productName}
-            readOnly={isProductNameReadOnly}
-            disabled={isSubmitting || editingLocked}
-            onChange={(event) => onProductNameChange(event.target.value)}
-            placeholder={t("agentCreate.namePlaceholder")}
-            className="input-premium h-12 w-full px-4 text-[15px] font-medium text-text-primary read-only:cursor-not-allowed read-only:bg-surface-subtle/70 read-only:text-text-secondary disabled:cursor-not-allowed disabled:opacity-60"
-          />
-        </label>
+      {stageCard(1, t("agentCreate.productInfoHint"), nameReady && briefReady, (
+        <div className="space-y-4">
+          <label htmlFor="agent-product-name" className="block">
+            <span className="sr-only">{t("agentCreate.productName")}</span>
+            <input
+              id="agent-product-name"
+              autoFocus={!isProductNameReadOnly}
+              autoComplete="off"
+              value={productName}
+              readOnly={isProductNameReadOnly}
+              disabled={isSubmitting || editingLocked}
+              onChange={(event) => onProductNameChange(event.target.value)}
+              placeholder={t("agentCreate.namePlaceholder")}
+              className="input-premium h-12 w-full px-4 text-[15px] font-medium text-text-primary read-only:cursor-not-allowed read-only:bg-surface-subtle/70 read-only:text-text-secondary disabled:cursor-not-allowed disabled:opacity-60"
+            />
+          </label>
+          <label htmlFor="agent-product-brief" className="block">
+            <span className="mb-1.5 block text-xs font-medium text-text-secondary">{t("agentCreate.brief")}</span>
+            <textarea
+              id="agent-product-brief"
+              value={brief}
+              maxLength={CREATE_BRIEF_MAX_LENGTH}
+              disabled={isSubmitting || editingLocked}
+              onChange={(event) => onBriefChange(event.target.value)}
+              placeholder={t("agentCreate.briefPlaceholder")}
+              className="textarea-premium min-h-28 w-full resize-y px-4 py-3 text-[15px] leading-6 text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
+            />
+          </label>
+        </div>
       ))}
 
       {stageCard(2, t("agentCreate.imageTypesMeta", { selected: selections.length, total: totalImages }), planReady, (
@@ -294,50 +377,68 @@ export function AgentProductCreateForm({
           ) : null}
 
           {options ? (
-            <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
-              {sortedOptions.map((option) => {
-                const selected = selectedByKey.get(option.key);
-                const translations = AGENT_IMAGE_TYPE_TRANSLATIONS[option.key];
-                const title = translations ? t(translations.title) : option.title;
-                const description = translations ? t(translations.description) : option.description;
-                const Icon = IMAGE_TYPE_ICONS[option.key] ?? Images;
-                const iconColor = selected ? "text-accent" : "text-text-muted";
+            <div className="space-y-5">
+              {IMAGE_TYPE_FAMILY_ORDER.map((family) => {
+                const familyOptions = sortedOptions.filter((option) => imageTypeFamily(option.key) === family);
+                if (!familyOptions.length) return null;
                 return (
-                  <label
-                    key={option.key}
-                    data-image-type={option.key}
-                    className={`group flex min-h-32 cursor-pointer flex-col rounded-xl border p-4 transition-[border-color,background-color,box-shadow] duration-200 ${
-                      selected
-                        ? "border-accent/60 bg-accent-soft/60 shadow-[0_8px_24px_-14px_rgb(99_102_241/0.45)] dark:bg-accent/10"
-                        : "border-border-l1 bg-surface-base/60 hover:border-border-l3 hover:bg-surface-raised"
-                    }`}
-                  >
-                    <span className="flex min-h-10 items-start gap-2.5">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(selected)}
-                        disabled={isSubmitting || editingLocked}
-                        onChange={(event) => onToggleImageType(option.key, event.target.checked)}
-                        className="peer sr-only"
-                      />
-                      <span
-                        aria-hidden="true"
-                        className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-slate-400/80 bg-surface-raised transition-colors group-hover:border-accent/60 peer-focus-visible:ring-2 peer-focus-visible:ring-accent peer-focus-visible:ring-offset-2 peer-disabled:opacity-50 peer-checked:hidden dark:border-slate-500 dark:peer-focus-visible:ring-offset-surface-raised"
-                      />
-                      <span
-                        aria-hidden="true"
-                        className="mt-0.5 hidden h-5 w-5 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-[#6366f1] to-[#8b5cf6] text-white shadow-[0_2px_6px_rgb(99_102_241/0.4)] transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-accent peer-focus-visible:ring-offset-2 peer-disabled:opacity-50 peer-checked:flex dark:peer-focus-visible:ring-offset-surface-raised"
-                      >
-                        <Check size={12} strokeWidth={3} aria-hidden="true" />
-                      </span>
-                      <span className="flex min-w-0 items-start gap-1.5 text-sm font-semibold leading-5 text-text-primary">
-                        <Icon size={15} className={`${iconColor} mt-0.5 shrink-0`} aria-hidden="true" />
-                        <span className="min-w-0 line-clamp-2">{title}</span>
-                      </span>
-                    </span>
-                    <span className="mt-1.5 block text-xs leading-5 text-text-muted">{description}</span>
-                    <span className="mt-auto flex justify-end pt-2.5">{stepper(option.key, title)}</span>
-                  </label>
+                  <div key={family} data-image-type-family={family}>
+                    <h3 className="text-xs font-semibold text-text-secondary">{t(familyTitleKey(family))}</h3>
+                    <p className="mt-0.5 text-xs leading-5 text-text-muted">{t(familyHintKey(family))}</p>
+                    <div className="mt-2 grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+                      {familyOptions.map((option) => {
+                        const selected = selectedByKey.get(option.key);
+                        const translations = AGENT_IMAGE_TYPE_TRANSLATIONS[option.key];
+                        const title = translations ? t(translations.title) : option.title;
+                        const description = translations ? t(translations.description) : option.description;
+                        const Icon = IMAGE_TYPE_ICONS[option.key] ?? Images;
+                        const iconColor = selected ? "text-accent" : "text-text-muted";
+                        const evidence = isEvidenceImageType(option.key);
+                        return (
+                          <label
+                            key={option.key}
+                            data-image-type={option.key}
+                            className={`group flex min-h-32 cursor-pointer flex-col rounded-xl border p-4 transition-[border-color,background-color,box-shadow] duration-200 ${selected
+                              ? "border-accent/60 bg-accent-soft/60 shadow-[0_8px_24px_-14px_rgb(99_102_241/0.45)] dark:bg-accent/10"
+                              : "border-border-l1 bg-surface-base/60 hover:border-border-l3 hover:bg-surface-raised"
+                              }`}
+                          >
+                            <span className="flex min-h-10 items-start gap-2.5">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(selected)}
+                                disabled={isSubmitting || editingLocked}
+                                onChange={(event) => onToggleImageType(option.key, event.target.checked)}
+                                className="peer sr-only"
+                              />
+                              <span
+                                aria-hidden="true"
+                                className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-slate-400/80 bg-surface-raised transition-colors group-hover:border-accent/60 peer-focus-visible:ring-2 peer-focus-visible:ring-accent peer-focus-visible:ring-offset-2 peer-disabled:opacity-50 peer-checked:hidden dark:border-slate-500 dark:peer-focus-visible:ring-offset-surface-raised"
+                              />
+                              <span
+                                aria-hidden="true"
+                                className="mt-0.5 hidden h-5 w-5 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-[#6366f1] to-[#8b5cf6] text-white shadow-[0_2px_6px_rgb(99_102_241/0.4)] transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-accent peer-focus-visible:ring-offset-2 peer-disabled:opacity-50 peer-checked:flex dark:peer-focus-visible:ring-offset-surface-raised"
+                              >
+                                <Check size={12} strokeWidth={3} aria-hidden="true" />
+                              </span>
+                              <span className="flex min-w-0 items-start gap-1.5 text-sm font-semibold leading-5 text-text-primary">
+                                <Icon size={15} className={`${iconColor} mt-0.5 shrink-0`} aria-hidden="true" />
+                                <span className="min-w-0 line-clamp-2">{title}</span>
+                              </span>
+                            </span>
+                            <span className="mt-1.5 block text-xs leading-5 text-text-muted">{description}</span>
+                            <span className="mt-auto flex justify-end pt-2.5">
+                              {evidence ? (
+                                <span className="text-xs leading-5 text-text-muted">{t("agentCreate.evidenceBind")}</span>
+                              ) : (
+                                stepper(option.key, title)
+                              )}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
                 );
               })}
             </div>
@@ -413,6 +514,88 @@ export function AgentProductCreateForm({
         </div>
       ))}
 
+      {stageCard(4, t("agentCreate.outputHint"), outputReady, (
+        <div className="space-y-4" data-create-output>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
+            <div role="radiogroup" aria-label={t("agentCreate.textPolicy")} className="grid min-w-0 flex-1 grid-cols-3 gap-1.5">
+              {CREATE_TEXT_POLICIES.map((policy) => {
+                const selected = outputDraft.textPolicy === policy;
+                return (
+                  <button
+                    key={policy}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    disabled={isSubmitting || editingLocked}
+                    onClick={() => updateOutput({ textPolicy: policy })}
+                    className={`flex h-11 items-center justify-center rounded-lg border px-2 text-sm font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 ${selected
+                        ? "border-accent/60 bg-accent-soft/60 text-accent-strong"
+                        : "border-border-l1 bg-surface-base/60 text-text-secondary hover:border-border-l3 hover:bg-surface-raised hover:text-text-primary"
+                      }`}
+                  >
+                    {t(TEXT_POLICY_LABELS[policy])}
+                  </button>
+                );
+              })}
+            </div>
+            {outputDraft.textPolicy === "none" ? null : (
+              <label htmlFor="agent-create-text-language" className="block shrink-0 sm:w-40">
+                <span className="sr-only">{t("agentCreate.textLanguage")}</span>
+                <select
+                  id="agent-create-text-language"
+                  value={outputDraft.textLanguage}
+                  disabled={isSubmitting || editingLocked}
+                  onChange={(event) => updateOutput({ textLanguage: event.target.value })}
+                  className="input-premium h-11 w-full px-3 text-sm text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {CREATE_TEXT_LANGUAGE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
+          <div>
+            <div id="agent-create-type-ratios" className="mb-1 text-xs font-medium text-text-secondary">
+              {t("agentCreate.aspectRatio")}
+            </div>
+            {selections.length === 0 ? (
+              <p className="text-xs leading-5 text-text-muted">{t("agentCreate.aspectRatioEmpty")}</p>
+            ) : (
+              <ul className="divide-y divide-border-l2">
+                {selections.map((item) => {
+                  const translations = AGENT_IMAGE_TYPE_TRANSLATIONS[item.key];
+                  const title = translations ? t(translations.title) : item.key;
+                  const headingId = `agent-create-ratio-${item.key}`;
+                  const Icon = IMAGE_TYPE_ICONS[item.key] ?? Images;
+                  return (
+                    <li
+                      key={item.key}
+                      data-image-type-aspect={item.key}
+                      className="flex flex-col gap-2 py-2.5 first:pt-1 last:pb-0 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
+                    >
+                      <div id={headingId} className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-text-primary">
+                        <Icon size={14} className="shrink-0 text-accent" aria-hidden="true" />
+                        <span className="truncate">{title}</span>
+                      </div>
+                      <CreateAspectRatioChips
+                        value={aspectRatioForSelection(item)}
+                        disabled={isSubmitting || editingLocked}
+                        labelledBy={headingId}
+                        className="sm:justify-end"
+                        onChange={(aspectRatio) => onAspectRatioChange(item.key, aspectRatio)}
+                      />
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        </div>
+      ))}
+
       {error ? (
         <div
           role="alert"
@@ -437,6 +620,22 @@ export function AgentProductCreateForm({
               {t("agentCreate.referenceImages")}:{" "}
               <strong className="font-semibold tabular-nums text-text-primary">{referenceFiles.length}</strong>
             </span>
+            <span>
+              {t("agentCreate.textPolicy")}:{" "}
+              <strong className="font-semibold text-text-primary">{t(TEXT_POLICY_LABELS[outputSummary.textPolicy])}</strong>
+            </span>
+            {outputSummary.textLanguage ? (
+              <span>
+                {t("agentCreate.textLanguage")}:{" "}
+                <strong className="font-semibold text-text-primary">{languageLabel}</strong>
+              </span>
+            ) : null}
+            {selectedRatios.length > 0 ? (
+              <span>
+                {t("agentCreate.aspectRatio")}:{" "}
+                <strong className="font-semibold tabular-nums text-text-primary">{selectedRatios.join(" · ")}</strong>
+              </span>
+            ) : null}
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">
             {onDirectCreate ? (
@@ -465,6 +664,8 @@ export function AgentProductCreateForm({
           </div>
         </div>
       </div>
+
+      <div data-create-form-bottom-spacer="" className="h-28 shrink-0" aria-hidden="true" />
 
       {previewFile && previewUrl ? (
         <div

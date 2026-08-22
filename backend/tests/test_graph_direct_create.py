@@ -7,6 +7,7 @@ from helpers import _login, _make_demo_image_bytes
 from sqlalchemy import func, select
 from test_graph_execution import RecordingImageProvider, RecordingPromptProvider
 
+from productflow_backend.application.agent.product_intake import LISTING_LOOK_RULE
 from productflow_backend.application.product_workflow.dependencies import WorkflowExecutionDependencies
 from productflow_backend.application.product_workflow.graph_direct_create import create_product_with_direct_graph
 from productflow_backend.application.product_workflow.graph_execution import execute_graph_run
@@ -151,10 +152,14 @@ def test_direct_create_api_writes_brief_and_generation_spec(configured_env) -> N
         data={
             "name": "带字海报商品",
             "source_note": "无线洗地机，面向都市白领，画面干净专业",
-            "image_types": json.dumps([{"key": "hero", "quantity": 1}]),
+            "image_types": json.dumps(
+                [
+                    {"key": "hero", "quantity": 1, "aspect_ratio": "3:4"},
+                    {"key": "detail", "quantity": 1, "aspect_ratio": "1:1"},
+                ]
+            ),
             "generation_spec": json.dumps(
                 {
-                    "aspect_ratio": "3:4",
                     "text_policy": "required",
                     "text_language": "zh-CN",
                 }
@@ -166,8 +171,35 @@ def test_direct_create_api_writes_brief_and_generation_spec(configured_env) -> N
     payload = created.json()
     assert payload["product"]["source_note"] == "无线洗地机，面向都市白领，画面干净专业"
     brief = next(node for node in payload["graph"]["nodes"] if node["node_type"] == "creative_brief")
-    image = next(node for node in payload["graph"]["nodes"] if node["node_type"] == "image_generation")
-    assert brief["config"]["goal"] == "无线洗地机，面向都市白领，画面干净专业"
-    assert image["config"]["generation_spec"]["aspect_ratio"] == "3:4"
-    assert image["config"]["generation_spec"]["text_policy"] == "required"
-    assert image["config"]["generation_spec"]["text_language"] == "zh-CN"
+    hero = next(
+        node
+        for node in payload["graph"]["nodes"]
+        if node["node_type"] == "image_generation" and node["config"]["image_type_key"] == "hero"
+    )
+    detail = next(
+        node
+        for node in payload["graph"]["nodes"]
+        if node["node_type"] == "image_generation" and node["config"]["image_type_key"] == "detail"
+    )
+    assert brief["config"]["goal"] == LISTING_LOOK_RULE
+    assert any("无线洗地机" in item for item in brief["config"]["design_goals"])
+    assert hero["config"]["generation_spec"]["aspect_ratio"] == "3:4"
+    assert detail["config"]["generation_spec"]["aspect_ratio"] == "1:1"
+    assert hero["config"]["generation_spec"]["text_policy"] == "required"
+    assert detail["config"]["generation_spec"]["text_language"] == "zh-CN"
+
+
+def test_direct_create_api_rejects_invalid_generation_spec(configured_env) -> None:
+    client = TestClient(create_app())
+    _login(client)
+    created = client.post(
+        "/api/v3/products",
+        data={
+            "name": "无效出图商品",
+            "image_types": json.dumps([{"key": "hero", "quantity": 1}]),
+            "generation_spec": json.dumps({"text_policy": "required"}),
+        },
+        files=[("images", ("product.png", _make_demo_image_bytes(), "image/png"))],
+    )
+    assert created.status_code == 400, created.text
+    assert created.json()["detail"] == "出图设定无效"

@@ -5,6 +5,11 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+from productflow_backend.application.agent.product_intake import (
+    agent_product_image_type_option,
+    image_type_family,
+    image_type_generation_job,
+)
 from productflow_backend.application.product_workflow.graph_apply import (
     AppliedGraph,
     AppliedGraphEdge,
@@ -80,6 +85,7 @@ class CompiledReference:
     label: str
     mime_type: str | None = None
     order: int = 0
+    role: str = "reference"
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +99,7 @@ class ContextRuntimeInput:
     input_digest: str
     text_policy: str = "none"
     text_language: str | None = None
+    image_types: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +133,7 @@ class ImageRuntimeInput:
     variation_instruction: str | None
     incoming_edge_ids: tuple[str, ...]
     input_digest: str
+    image_type_key: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,36 +229,6 @@ def _graph_text_intent(graph: AppliedGraph) -> tuple[str, str | None]:
     return "allow", language
 
 
-def _graph_source_facts(graph: AppliedGraph, sources: dict[str, GraphSourceRecord]) -> list[dict[str, Any]]:
-    facts: list[dict[str, Any]] = []
-    for node in graph.nodes:
-        if node.node_type != GraphNodeType.PRODUCT_SOURCE:
-            continue
-        record = sources.get(node.id, GraphSourceRecord())
-        facts.extend(merge_runtime_facts(record.facts, record.product_source))
-    return facts
-
-
-def _graph_source_references(graph: AppliedGraph, sources: dict[str, GraphSourceRecord]) -> list[CompiledReference]:
-    references: list[CompiledReference] = []
-    for order, node in enumerate(node for node in graph.nodes if node.node_type == GraphNodeType.IMAGE_ASSET):
-        record = sources.get(node.id, GraphSourceRecord())
-        asset_id = record.bound_asset_id or node.bound_asset_id
-        if not isinstance(asset_id, str) or not asset_id:
-            continue
-        references.append(
-            CompiledReference(
-                edge_id="",
-                source_node_id=node.id,
-                asset_id=asset_id,
-                label=record.bound_asset_label or node.title,
-                mime_type=record.bound_asset_mime_type,
-                order=order,
-            )
-        )
-    return references
-
-
 def strip_v3_prompt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in payload.items() if key not in V3_PROMPT_STRIPPED_KEYS}
 
@@ -292,7 +270,7 @@ def compile_prompt_runtime(
     digest = _input_digest(
         {
             "node_id": node_id,
-            "config": node.config,
+            "config": _request_config_for_digest(node.node_type, node.config),
             "facts": facts,
             "briefs": briefs,
             "references": [reference.asset_id for reference in references],
@@ -321,6 +299,29 @@ def compile_prompt_runtime(
     )
 
 
+def _planned_image_types(graph: AppliedGraph) -> tuple[dict[str, Any], ...]:
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for node in graph.nodes:
+        if node.node_type != GraphNodeType.IMAGE_GENERATION:
+            continue
+        key = node.config.get("image_type_key")
+        if not isinstance(key, str) or not key or key in seen:
+            continue
+        seen.add(key)
+        option = agent_product_image_type_option(key)
+        items.append(
+            {
+                "key": key,
+                "title": option.title if option else key,
+                "description": option.description if option else "",
+                "family": image_type_family(key),
+                "generation_job": image_type_generation_job(key),
+            }
+        )
+    return tuple(items)
+
+
 def compile_context_runtime(
     graph: AppliedGraph,
     node_id: str,
@@ -340,10 +341,6 @@ def compile_context_runtime(
             facts.extend(merge_runtime_facts(record.facts, record.product_source))
         elif edge.role == GraphEdgeRole.REFERENCE:
             references.append(_compile_reference(graph, edge, sources, artifacts))
-    if not facts:
-        facts.extend(_graph_source_facts(graph, sources))
-    if not references:
-        references.extend(_graph_source_references(graph, sources))
     text_policy, text_language = _graph_text_intent(graph)
     incoming_ids = tuple(edge.id for edge in edges)
     current_config = dict(node.config)
@@ -352,16 +349,18 @@ def compile_context_runtime(
         overlay = catalog_visual_overlay(overlay_raw if isinstance(overlay_raw, dict) else None)
         if overlay:
             current_config = {**current_config, "visual_overlay": overlay}
+    image_types = _planned_image_types(graph)
     digest = _input_digest(
         {
             "node_id": node_id,
             "node_type": node.node_type.value,
-            "config": current_config,
+            "config": _request_config_for_digest(node.node_type, node.config),
             "facts": facts,
             "references": [reference.asset_id for reference in references],
             "text_policy": text_policy,
             "text_language": text_language,
             "incoming_edge_ids": incoming_ids,
+            "image_types": list(image_types),
         }
     )
     return ContextRuntimeInput(
@@ -374,6 +373,7 @@ def compile_context_runtime(
         input_digest=digest,
         text_policy=text_policy,
         text_language=text_language,
+        image_types=image_types,
     )
 
 
@@ -410,6 +410,7 @@ def compile_image_runtime(
     variation = normalized_config.get("variation_instruction")
     overlay = visual_overlay_from_config(normalized_config)
     incoming_ids = tuple(edge.id for edge in edges)
+    image_type_key = node.config.get("image_type_key")
     digest = _input_digest(
         {
             "node_id": node_id,
@@ -433,6 +434,7 @@ def compile_image_runtime(
         variation_instruction=variation if isinstance(variation, str) else None,
         incoming_edge_ids=incoming_ids,
         input_digest=digest,
+        image_type_key=image_type_key if isinstance(image_type_key, str) else None,
     )
 
 
@@ -609,7 +611,15 @@ def _compile_reference(
         label=label,
         mime_type=mime_type,
         order=edge.order,
+        role=_asset_role(source),
     )
+
+
+def _asset_role(source: AppliedGraphNode) -> str:
+    raw = source.config.get("role")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    return "reference"
 
 
 def _compile_visual(
@@ -719,6 +729,18 @@ def _topo_order(graph: AppliedGraph, selected: list[str]) -> list[str]:
                 ready.append(target)
                 ready.sort()
     return ordered
+
+
+_SELF_OUTPUT_CONFIG_KEYS: dict[GraphNodeType, frozenset[str]] = {
+    GraphNodeType.VISUAL_SYSTEM: frozenset({"visual_overlay"}),
+    GraphNodeType.CREATIVE_BRIEF: frozenset({"goal", "design_goals", "required_copy", "prohibitions"}),
+    GraphNodeType.PROMPT_GENERATION: frozenset({"prompt"}),
+}
+
+
+def _request_config_for_digest(node_type: GraphNodeType, config: dict[str, Any]) -> dict[str, Any]:
+    excluded = _SELF_OUTPUT_CONFIG_KEYS.get(node_type, frozenset())
+    return {key: value for key, value in config.items() if key not in excluded}
 
 
 def _input_digest(payload: dict[str, Any]) -> str:

@@ -24,5 +24,7 @@ describe("image aspect ratio helpers", () => {
     expect(aspectRatioFrameSize("16:9")).toEqual({ width: 40, height: 23 });
     expect(aspectRatioFrameSize("9:16")).toEqual({ width: 23, height: 40 });
     expect(aspectRatioFrameSize("999:1")).toEqual({ width: 40, height: 18 });
+    expect(aspectRatioFrameSize("1:1", "sm")).toEqual({ width: 20, height: 20 });
+    expect(aspectRatioFrameSize("9:16", "sm")).toEqual({ width: 11, height: 20 });
   });
 });

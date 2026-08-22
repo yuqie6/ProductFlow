@@ -57,6 +57,7 @@ import type {
   DirectCreateProductResponse,
   DraftGraphPersistResponse,
   GraphChangeSet,
+  WorkflowGenerationSpec,
   GraphNodeCatalog,
   GraphProjection,
   GraphRun,
@@ -1063,10 +1064,11 @@ export const api = {
   createProductDirect(input: {
     name: string;
     images: File[];
-    imageTypes: Array<{ key: string; quantity: number }>;
+    imageTypes: Array<{ key: string; quantity: number; aspect_ratio?: string }>;
     category?: string;
     price?: string;
     sourceNote?: string;
+    generationSpec?: WorkflowGenerationSpec;
   }): Promise<DirectCreateProductResponse> {
     const body = new FormData();
     body.append("name", input.name);
@@ -1074,6 +1076,7 @@ export const api = {
     if (input.category) body.append("category", input.category);
     if (input.price) body.append("price", input.price);
     if (input.sourceNote) body.append("source_note", input.sourceNote);
+    if (input.generationSpec) body.append("generation_spec", JSON.stringify(input.generationSpec));
     for (const image of input.images) {
       body.append("images", image);
     }
