@@ -133,15 +133,15 @@ def stage_new_workflow_graph(
     session.add(graph)
     session.flush()
     _replace_graph_contents(session, graph, applied)
-        operation_group = _record_operation_group(
-            session,
-            graph=graph,
-            change_set=change_set,
-            inverse_operations=invert_applied_graph(EMPTY_GRAPH, applied),
-            base_revision=0,
-            result_revision=applied.revision,
-            history_kind=GraphHistoryKind.EDIT,
-        )
+    operation_group = _record_operation_group(
+        session,
+        graph=graph,
+        change_set=change_set,
+        inverse_operations=invert_applied_graph(EMPTY_GRAPH, applied),
+        base_revision=0,
+        result_revision=applied.revision,
+        history_kind=GraphHistoryKind.EDIT,
+    )
     graph.updated_at = now_utc()
     session.flush()
     return GraphCommandResult(graph=graph, applied=applied, operation_group=operation_group)
