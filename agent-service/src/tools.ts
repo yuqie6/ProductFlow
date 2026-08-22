@@ -248,6 +248,7 @@ export function createProductFlowTools(runtime: ToolRuntime): ToolDefinition[] {
     }),
     createImageInspectionTool(runtime, false),
     createWorkflowRunRequestTool(runtime, false),
+    createProductIntakeTool(runtime),
   ];
 
   if (runtime.scope.scope_type === "product_workflow") {
@@ -272,6 +273,139 @@ export function createProductFlowTools(runtime: ToolRuntime): ToolDefinition[] {
     tools.find((tool) => tool.name === PRODUCTFLOW_SKILL_TOOL_NAME)!,
     tools.find((tool) => tool.name === "ask_user")!,
   ];
+}
+
+function createProductIntakeTool(runtime: ToolRuntime): ToolDefinition {
+  return defineTool({
+    name: "finalize_product_intake_v1",
+    label: "Save product intake",
+    description:
+      "Persist image types and already-uploaded reference asset IDs as this product's immutable intake. Use after the user sent photos and requirements in this conversation. This does not propose a WorkflowDraft or start a run.",
+    parameters: Type.Object(
+      {
+        selection: Type.Object(
+          {
+            schema_version: Type.Literal(1),
+            image_types: Type.Array(
+              Type.Object(
+                {
+                  key: Type.String({ minLength: 1, maxLength: 64 }),
+                  quantity: Type.Integer({ minimum: 1, maximum: 6 }),
+                  order: Type.Integer({ minimum: 0 }),
+                },
+                { additionalProperties: false },
+              ),
+              { minItems: 1, maxItems: 15 },
+            ),
+          },
+          { additionalProperties: false },
+        ),
+        reference_asset_ids: Type.Array(Type.String({ minLength: 1, maxLength: 64 }), { minItems: 1, maxItems: 6 }),
+      },
+      { additionalProperties: false },
+    ),
+    execute: async (
+      toolCallID: string,
+      params: {
+        selection: { schema_version: 1; image_types: Array<{ key: string; quantity: number; order: number }> };
+        reference_asset_ids: string[];
+      },
+    ): Promise<Result> => {
+      const idempotencyKey = runtime.idempotencyKey(toolCallID);
+      const body = {
+        selection: params.selection,
+        reference_asset_ids: uniqueIDs(params.reference_asset_ids, 6),
+        task_id: runtime.scope.task_id,
+      };
+      await runtime.checkpoint("tool_effect_intent", {
+        tool_name: "finalize_product_intake_v1",
+        tool_call_id: toolCallID,
+        idempotency_key: idempotencyKey,
+        selection: body.selection,
+        reference_asset_ids: body.reference_asset_ids,
+      });
+      try {
+        const result = await runtime.client.finalizeProductIntake(
+          runtime.scope.conversation_id,
+          body,
+          idempotencyKey,
+          runtime.signal,
+        );
+        await runtime.checkpoint("tool_effect_result", {
+          tool_name: "finalize_product_intake_v1",
+          tool_call_id: toolCallID,
+          idempotency_key: idempotencyKey,
+          result: "applied",
+        });
+        return textResult(result);
+      } catch (error) {
+        if (!(error instanceof ProductFlowError) || error.status < 500) {
+          await runtime.checkpoint("tool_effect_result", {
+            tool_name: "finalize_product_intake_v1",
+            tool_call_id: toolCallID,
+            idempotency_key: idempotencyKey,
+            result: "failed",
+          });
+          throw error;
+        }
+        let reconciled: ReconcileResult;
+        try {
+          reconciled = await runtime.client.reconcileProductIntake(
+            runtime.scope.conversation_id,
+            body,
+            idempotencyKey,
+            runtime.signal,
+          );
+        } catch (reconcileError) {
+          await recordUnknownEffect(
+            runtime,
+            toolCallID,
+            {
+              tool_name: "finalize_product_intake_v1",
+              tool_call_id: toolCallID,
+              idempotency_key: idempotencyKey,
+              result: "unknown",
+              reconciliation_state: "unavailable",
+            },
+            "Product intake result is unknown",
+          );
+          throw reconcileError;
+        }
+        if (reconciled.state === "applied") {
+          await runtime.checkpoint("tool_effect_result", {
+            tool_name: "finalize_product_intake_v1",
+            tool_call_id: toolCallID,
+            idempotency_key: idempotencyKey,
+            result: "applied",
+          });
+          return textResult(reconciled.result ?? { accepted: true, intake_finalized: true });
+        }
+        if (reconciled.state === "not_applied" || reconciled.state === "conflict") {
+          await runtime.checkpoint("tool_effect_result", {
+            tool_name: "finalize_product_intake_v1",
+            tool_call_id: toolCallID,
+            idempotency_key: idempotencyKey,
+            result: "failed",
+            reconciliation_state: reconciled.state,
+          });
+          throw error;
+        }
+        await recordUnknownEffect(
+          runtime,
+          toolCallID,
+          {
+            tool_name: "finalize_product_intake_v1",
+            tool_call_id: toolCallID,
+            idempotency_key: idempotencyKey,
+            result: "unknown",
+            reconciliation_state: reconciled.state,
+          },
+          "Product intake result is unknown",
+        );
+        throw error;
+      }
+    },
+  });
 }
 
 function createGlobalProductListTool(runtime: ToolRuntime): ToolDefinition {
@@ -582,7 +716,7 @@ function createGlobalWorkspaceTool(runtime: ToolRuntime): ToolDefinition {
     name: "create_product_workspace_v1",
     label: "Create product workspace",
     description:
-      "Create one blank ProductFlow product onboarding workspace. This does not upload images, submit intake, materialize a workflow, or start a run.",
+      "Create one blank ProductFlow product onboarding workspace. This does not upload images, submit intake, materialize a workflow, or start a run. After success, send the user to the product workbench conversation to upload references and state requirements there.",
     parameters: Type.Object(
       { name: Type.String({ minLength: 1, maxLength: 255 }) },
       { additionalProperties: false },

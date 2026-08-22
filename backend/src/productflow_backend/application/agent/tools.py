@@ -14,10 +14,18 @@ from sqlalchemy.orm import Session, selectinload
 
 from productflow_backend.application.agent.conversations import (
     AGENT_MAX_INPUT_ASSETS,
+    LIVE_GRAPH_BLOCKS_WORKFLOW_DRAFT,
     get_agent_conversation_by_id_or_raise,
 )
 from productflow_backend.application.agent.global_draft_contracts import global_agent_draft_schema
-from productflow_backend.application.agent.product_intake import parse_workflow_intake
+from productflow_backend.application.agent.product_intake import (
+    AgentProductSelectionV1,
+    agent_product_image_type_catalog_json,
+    parse_workflow_intake,
+)
+from productflow_backend.application.agent.product_workspaces import (
+    finalize_agent_product_workspace_intake_from_assets,
+)
 from productflow_backend.application.agent.sessions import get_agent_session_or_raise
 from productflow_backend.application.agent.tasks import task_contract
 from productflow_backend.application.legacy_archive_rebuilds import legacy_archive_seed_summary
@@ -41,6 +49,8 @@ from productflow_backend.application.product_images.queries import (
     GalleryDirectoryKind,
     list_gallery_assets,
 )
+from productflow_backend.application.product_workflow.graph_commands import get_active_workflow_graph
+from productflow_backend.application.product_workflow.graph_queries import project_workflow_graph
 from productflow_backend.application.workflow_drafts.contracts import (
     WorkflowDraftPayloadV1,
     parse_workflow_draft_payload,
@@ -76,7 +86,7 @@ from productflow_backend.infrastructure.db.models import (
 )
 from productflow_backend.infrastructure.storage import LocalStorage
 
-AGENT_TOOL_CONTRACT_VERSION = 10
+AGENT_TOOL_CONTRACT_VERSION = 11
 AGENT_ASSET_LIST_DEFAULT_LIMIT = 50
 AGENT_ASSET_LIST_MAX_LIMIT = 100
 AGENT_ASSET_MAX_BYTES = 20 * 1024 * 1024
@@ -94,9 +104,12 @@ WORKFLOW_AGENT_SYSTEM_PROMPT = """你是 ProductFlow 的商品工作流设计 Ag
 
 执行顺序：
 1. 调用 load_productflow_skill 加载 productflow-core；任务涉及 WorkflowDraft 时继续加载 workflow-draft。
-2. 调用 get_product_workflow_context_v1，核对当前商品事实、最新 revision、intake、已核验参考资产、
+2. 调用 get_product_workflow_context_v1，核对当前商品事实、最新 revision、intake、live_graph、已核验参考资产、
    recipe/legacy seed、draft_guidance 和 node_catalog。node_catalog 是上下文内容，包含当前 schema-v3 节点及其
    config_fields；Inspector 和节点配置写入的唯一来源是该 Catalog。
+   若 intake 为空且 live_graph 为空：用户会在本对话里上传参考图并说明要做的图片。读取本轮
+   选中的资产 ID，必要时 inspect。根据用户文字确定图片类型和数量；看不懂再用 ask_user。
+   然后调用 finalize_product_intake_v1 写入 intake。继续对话并动手，不要让用户去创建页或任何其他表单。
 3. 只有缺少会改变成图或文案结果的事实时才使用 ask_user；问题要集中、提供有描述的选择，
    并等待回答后重新读取当前 ProductFlow 事实。
 4. 商品外观必须以用户提供的已核验参考图为依据。图库列表只提供元数据；确有需要时 inspect 明确选中的图片，单次最多 6 张。
@@ -117,6 +130,28 @@ WORKFLOW_AGENT_SYSTEM_PROMPT = """你是 ProductFlow 的商品工作流设计 Ag
 
 成功条件：propose_workflow_draft 返回 accepted=true、pending_confirmation=true。
 此结果表示草案进入审核，不表示已经确认或已运行工作流。
+"""
+
+WORKFLOW_AGENT_LIVE_GRAPH_PROMPT = """你是 ProductFlow 的商品工作流协作 Agent。
+当前商品已经有一份可运行的 schema-v3 工作流图。用户是画布的主编辑者；你不能再提交 WorkflowDraft 去覆盖或重写这张图。
+
+执行顺序：
+1. 调用 load_productflow_skill 加载 productflow-core。
+2. 调用 get_product_workflow_context_v1，核对商品事实、参考图、node_catalog 和 live_graph。
+   node_catalog 的 config_fields 是 Inspector 与节点配置写入的唯一来源。
+   live_graph 给出当前节点、连线角色和配置状态，不含完整配置正文。
+3. 只有缺少会改变运行或解释结果的事实时才使用 ask_user。
+4. 商品外观必须以已核验参考图为依据。确有需要时 inspect 明确选中的图片，单次最多 6 张。
+   用户可以在本对话继续上传图片；本轮附件 ID 是权威输入。
+5. 用户要求运行时，使用 request_workflow_run_v1 创建待确认运行请求；不要声称已经开始运行。
+6. 解释节点、检查配置缺口、对照 Catalog。改节点配置和连线由用户在画布完成。
+
+不可违反：
+- 不得调用 propose_workflow_draft，也不得把一份新 Draft 当成现图替换方案。
+- 不得删除素材、臆造资产或商品事实，不得输出 base64、data URL、存储路径和内部 URL。
+- 不得逐节点写入画布。
+
+成功条件：准确解释当前图、指出未配置或未使用节点，并在用户要求时提交可确认的运行请求。
 """
 
 GLOBAL_AGENT_SYSTEM_PROMPT = """你是 ProductFlow 的全局素材与工作流辅助 Agent。
@@ -142,8 +177,7 @@ GLOBAL_AGENT_SYSTEM_PROMPT = """你是 ProductFlow 的全局素材与工作流�
 8. 不要输出 base64、data URL、存储路径或内部 URL；用资产名称、来源和可验证的对象 ID 描述结果。
 9. 用户明确要求创建商品时，可以调用商品创建工作区工具。该工具只建立当前 Session 下的空商品草稿、商品 Conversation
    和 WorkflowDraft，不上传参考图、不提交图片需求、不生成正式 Workflow，也不启动运行。
-   工具成功后，应明确告诉用户商品创建工作区已准备好，并从 Agent Dock 的当前 Session 商品工作区入口进入，继续提交参考图
-   和图片需求。
+   工具成功后，应明确告诉用户进入商品工作台对话：在对话框里上传参考图并直接说明需求，不要去创建表单。
 """
 
 
@@ -204,12 +238,12 @@ AgentAssetRenameReconcileResult = AgentToolReconcileResult
 
 def get_agent_contract(session: Session, conversation_id: str) -> dict[str, Any]:
     conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
-    return _agent_contract_for_conversation(conversation)
+    return _agent_contract_for_conversation(session, conversation)
 
 
 def get_agent_task_contract(session: Session, task_id: str) -> dict[str, Any]:
     task, conversation = task_contract(session, task_id)
-    contract = _agent_contract_for_conversation(conversation)
+    contract = _agent_contract_for_conversation(session, conversation)
     contract["task_id"] = task.id
     contract["task_goal"] = task.goal
     contract["harness_run_id"] = task.harness_run_id
@@ -249,7 +283,7 @@ def get_agent_runtime_context(
     return payload
 
 
-def _agent_contract_for_conversation(conversation: AgentConversation) -> dict[str, Any]:
+def _agent_contract_for_conversation(session: Session, conversation: AgentConversation) -> dict[str, Any]:
     if conversation.scope_type == AgentConversationScope.GLOBAL:
         organization_draft = conversation.library_organization_draft
         current_revision = organization_draft.current_revision if organization_draft is not None else None
@@ -273,6 +307,7 @@ def _agent_contract_for_conversation(conversation: AgentConversation) -> dict[st
     if conversation.product_id is None or draft is None:
         raise ConflictError("商品工作流 Agent conversation 缺少商品或 WorkflowDraft")
     current_revision = draft.current_revision
+    live_graph = get_active_workflow_graph(session, product_id=conversation.product_id)
     return {
         "schema_version": 1,
         "scope_type": AgentConversationScope.PRODUCT_WORKFLOW,
@@ -283,7 +318,9 @@ def _agent_contract_for_conversation(conversation: AgentConversation) -> dict[st
         "workflow_draft_id": conversation.workflow_draft_id,
         "harness_run_id": conversation.harness_run_id,
         "current_draft_version": current_revision.version if current_revision is not None else 0,
-        "system_prompt": WORKFLOW_AGENT_SYSTEM_PROMPT,
+        "system_prompt": (
+            WORKFLOW_AGENT_LIVE_GRAPH_PROMPT if live_graph is not None else WORKFLOW_AGENT_SYSTEM_PROMPT
+        ),
         "draft_kind": "workflow",
         "draft_schema": workflow_draft_tool_schema(),
         "workflow_draft_schema": workflow_draft_tool_schema(),
@@ -299,6 +336,11 @@ def validate_agent_workflow_draft(
 ) -> WorkflowDraftPayloadV1:
     conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
     _require_product_conversation(conversation)
+    product_id = conversation.product_id
+    if product_id is None:
+        raise ConflictError("当前 Agent conversation 不是商品工作流作用域")
+    if get_active_workflow_graph(session, product_id=product_id) is not None:
+        raise ConflictError(LIVE_GRAPH_BLOCKS_WORKFLOW_DRAFT)
     try:
         artifact = parse_workflow_draft_payload(value)
     except ValidationError as exc:
@@ -327,6 +369,41 @@ def validate_agent_workflow_draft(
             issues=[{"path": "$", "message": str(exc)}],
         ) from exc
     return artifact
+
+
+def finalize_agent_product_intake(
+    session: Session,
+    *,
+    conversation_id: str,
+    selection: dict[str, Any],
+    reference_asset_ids: list[str],
+    idempotency_key: str,
+    task_id: str | None = None,
+) -> dict[str, Any]:
+    conversation = get_agent_conversation_by_id_or_raise(session, conversation_id)
+    _require_product_conversation(conversation)
+    try:
+        parsed = AgentProductSelectionV1.model_validate(selection)
+    except ValidationError as exc:
+        raise BusinessValidationError("图片类型选择不符合 AgentProductSelectionV1") from exc
+    if len(reference_asset_ids) != len(set(reference_asset_ids)):
+        raise BusinessValidationError("参考图资产不能重复")
+    creation = finalize_agent_product_workspace_intake_from_assets(
+        session,
+        conversation_id=conversation_id,
+        selection=parsed,
+        reference_asset_ids=reference_asset_ids,
+        idempotency_key=idempotency_key,
+        task_id=task_id,
+    )
+    return {
+        "accepted": True,
+        "intake_finalized": True,
+        "product_id": creation.product.id,
+        "workflow_draft_id": creation.workflow_draft.id,
+        "reference_asset_ids": [asset.id for asset in creation.created_assets],
+        "intake": creation.workflow_draft.intake_json,
+    }
 
 
 def validate_agent_library_organization_draft(
@@ -406,11 +483,59 @@ def get_agent_product_context(session: Session, conversation_id: str) -> dict[st
         "legacy_archive_seed": archive_seed,
         "draft_guidance": workflow_draft_agent_guidance(),
         "node_catalog": graph_catalog_json(),
+        "image_type_catalog": agent_product_image_type_catalog_json(),
+        "live_graph": _live_graph_agent_summary(session, product_id=product.id),
     }
     encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
     if len(encoded) > AGENT_CONTEXT_MAX_BYTES:
         raise ConflictError("商品与 WorkflowDraft 上下文超过 Agent 工具输出上限")
     return payload
+
+
+def _live_graph_agent_summary(session: Session, *, product_id: str) -> dict[str, Any] | None:
+    graph = get_active_workflow_graph(session, product_id=product_id)
+    if graph is None:
+        return None
+    projection = project_workflow_graph(session, graph)
+    return {
+        "id": projection.id,
+        "title": projection.title,
+        "schema_version": projection.schema_version,
+        "revision": projection.revision,
+        "nodes": [
+            {
+                "id": node.id,
+                "node_type": node.node_type.value,
+                "title": node.title,
+                "config_status": node.config_status.value,
+                "unused": node.unused,
+                "bound_asset_id": node.bound_asset_id,
+                "group_id": node.group_id,
+                "has_current_artifact": node.current_artifact_id is not None,
+                "incoming_roles": [edge.role.value for edge in node.incoming],
+                "outgoing_roles": [edge.role.value for edge in node.outgoing],
+            }
+            for node in projection.nodes
+        ],
+        "edges": [
+            {
+                "id": edge.id,
+                "source_node_id": edge.source_node_id,
+                "target_node_id": edge.target_node_id,
+                "role": edge.role.value,
+                "data_type": edge.data_type.value,
+            }
+            for edge in projection.edges
+        ],
+        "groups": [
+            {
+                "id": group.id,
+                "title": group.title,
+                "member_ids": list(group.member_ids),
+            }
+            for group in projection.groups
+        ],
+    }
 
 
 def get_agent_global_workflow_target(
@@ -1764,6 +1889,7 @@ __all__ = [
     "apply_agent_asset_rename",
     "apply_agent_folder_create",
     "apply_agent_folder_rename",
+    "finalize_agent_product_intake",
     "get_agent_contract",
     "get_agent_runtime_context",
     "get_agent_task_contract",

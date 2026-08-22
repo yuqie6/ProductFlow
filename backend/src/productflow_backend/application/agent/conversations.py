@@ -18,6 +18,7 @@ from productflow_backend.application.agent.tasks import (
     normalize_page_context,
     update_agent_task_from_turn,
 )
+from productflow_backend.application.product_workflow.graph_commands import get_active_workflow_graph
 from productflow_backend.application.time import now_utc
 from productflow_backend.application.workflow_drafts.service import (
     append_workflow_draft_revision,
@@ -55,6 +56,9 @@ AGENT_TURN_CURSOR_VERSION = 1
 AGENT_TURN_DEFAULT_PAGE_SIZE = 20
 AGENT_TURN_MAX_PAGE_SIZE = 50
 WORKFLOW_DRAFT_ARTIFACT_NAME = "propose_workflow_draft"
+LIVE_GRAPH_BLOCKS_WORKFLOW_DRAFT = (
+    "商品已有可运行的工作流。改图请在画布上操作；Agent 可以解释配置、检查图片和请求运行，不能再提交一份 Draft 覆盖现图"
+)
 
 PRODUCT_WORKFLOW_SCOPE = AgentConversationScope.PRODUCT_WORKFLOW
 GLOBAL_SCOPE = AgentConversationScope.GLOBAL
@@ -431,14 +435,6 @@ def reserve_agent_turn(
         )
         if draft is None:
             raise ConflictError("Agent conversation 绑定的 WorkflowDraft 不存在")
-        if (
-            draft.intake_json is None
-            and draft.current_revision_id is None
-            and draft.recipe_seed is None
-            and draft.legacy_archive_seed is None
-        ):
-            raise ConflictError("请先完成商品图片需求和参考图，再启动 Agent Turn")
-
         if product_id is None:
             raise ConflictError("商品工作流 Agent conversation 缺少商品作用域")
         _validate_product_assets(
@@ -714,6 +710,10 @@ def attach_agent_workflow_draft_artifact(
     if projection.artifact_step_id is not None and projection.artifact_step_id != normalized_step_id:
         raise ConflictError("Agent turn projection 已绑定其他 artifact step")
     conversation = projection.conversation
+    if conversation.product_id is not None and get_active_workflow_graph(
+        session, product_id=conversation.product_id
+    ) is not None:
+        raise ConflictError(LIVE_GRAPH_BLOCKS_WORKFLOW_DRAFT)
     draft = conversation.workflow_draft
     expected_version = draft.current_revision.version if draft.current_revision is not None else 0
     draft_id = draft.id
@@ -988,6 +988,7 @@ __all__ = [
     "AGENT_MAX_INPUT_TEXT_CHARS",
     "AGENT_TURN_DEFAULT_PAGE_SIZE",
     "AGENT_TURN_MAX_PAGE_SIZE",
+    "LIVE_GRAPH_BLOCKS_WORKFLOW_DRAFT",
     "WORKFLOW_DRAFT_ARTIFACT_NAME",
     "AgentTurnPage",
     "AgentTurnReservation",

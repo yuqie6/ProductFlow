@@ -20,10 +20,14 @@ from productflow_backend.application.agent.product_workspaces import (
     create_agent_product_draft_workspace_from_global_conversation,
     create_agent_product_workspace,
     finalize_agent_product_workspace_intake,
+    finalize_agent_product_workspace_intake_from_assets,
     get_agent_product_workspace,
     reconcile_agent_product_draft_workspace_from_global_conversation,
+    reconcile_agent_product_intake_from_assets,
 )
 from productflow_backend.application.agent.sessions import create_agent_session
+from productflow_backend.application.agent.tools import finalize_agent_product_intake, get_agent_contract
+from productflow_backend.application.products import add_canonical_product_images
 from productflow_backend.domain.enums import AgentConversationScope, AgentTaskStatus
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError
 from productflow_backend.infrastructure.db.models import (
@@ -393,7 +397,7 @@ def test_global_agent_product_workspace_launch_endpoint_is_scoped_and_idempotent
     assert payload["global_conversation_id"] == global_conversation.id
     assert payload["product_name"] == "全局 API 商品"
     assert payload["task_id"]
-    assert payload["navigation_path"].startswith("/products/new?workspace=")
+    assert payload["navigation_path"].startswith(f"/products/{payload['product_id']}?")
     assert f"agent_session_id={agent_session.id}" in payload["navigation_path"]
     assert f"agent_task_id={payload['task_id']}" in payload["navigation_path"]
     check_session = get_session_factory()()
@@ -523,7 +527,7 @@ def test_agent_product_workspace_intake_failure_preserves_empty_draft_and_cleans
     assert _media_files(configured_env) == []
 
 
-def test_empty_agent_product_draft_rejects_turn_until_intake_is_finalized(
+def test_empty_agent_product_draft_allows_turn_and_asks_for_intake(
     configured_env: Path,
     db_session,
 ) -> None:
@@ -532,15 +536,20 @@ def test_empty_agent_product_draft_rejects_turn_until_intake_is_finalized(
         name="Turn 边界商品",
         idempotency_key="draft-turn-boundary",
     )
-    with pytest.raises(ConflictError, match="请先完成商品图片需求和参考图"):
-        reserve_agent_turn(
-            db_session,
-            product_id=workspace.product.id,
-            conversation_id=workspace.conversation.id,
-            input_text="开始",
-            input_asset_ids=[],
-            idempotency_key="turn-before-intake",
-        )
+    reservation = reserve_agent_turn(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        input_text="开始",
+        input_asset_ids=[],
+        idempotency_key="turn-before-intake",
+    )
+    assert reservation.created is True
+    contract = get_agent_contract(db_session, workspace.conversation.id)
+    assert "finalize_product_intake_v1" in contract["system_prompt"]
+    assert "不要让用户去创建页" in contract["system_prompt"]
+    assert "请用户在创建页" not in contract["system_prompt"]
+    assert "继续对话" in contract["system_prompt"]
 
     finalized = finalize_agent_product_workspace_intake(
         db_session,
@@ -549,6 +558,8 @@ def test_empty_agent_product_draft_rejects_turn_until_intake_is_finalized(
         image_uploads=_workspace_uploads(),
         idempotency_key="turn-intake",
     )
+    assert finalized.created_assets
+    assert finalized.workflow_draft.intake_json is not None
     reservation = reserve_agent_turn(
         db_session,
         product_id=workspace.product.id,
@@ -558,6 +569,73 @@ def test_empty_agent_product_draft_rejects_turn_until_intake_is_finalized(
         idempotency_key="turn-after-intake",
     )
     assert reservation.created is True
+
+
+def test_agent_finalizes_intake_from_conversation_assets(
+    configured_env: Path,
+    db_session,
+) -> None:
+    workspace = create_agent_product_draft_workspace(
+        db_session,
+        name="会话上传商品",
+        idempotency_key="draft-conversation-intake",
+    )
+    assets = add_canonical_product_images(
+        db_session,
+        product_id=workspace.product.id,
+        image_uploads=_workspace_uploads(),
+    )
+    asset_ids = [asset.id for asset in assets]
+    reservation = reserve_agent_turn(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        input_text="主图两张，用刚传的参考图",
+        input_asset_ids=asset_ids,
+        idempotency_key="turn-with-uploads",
+    )
+    assert reservation.created is True
+
+    first = finalize_agent_product_intake(
+        db_session,
+        conversation_id=workspace.conversation.id,
+        selection=_selection(("hero", 2)).model_dump(mode="json"),
+        reference_asset_ids=asset_ids,
+        idempotency_key="conversation-intake",
+        task_id=workspace.onboarding_task_id,
+    )
+    assert first["intake_finalized"] is True
+    assert first["reference_asset_ids"] == asset_ids
+    assert first["intake"]["image_types"][0]["key"] == "hero"
+
+    replay = finalize_agent_product_workspace_intake_from_assets(
+        db_session,
+        conversation_id=workspace.conversation.id,
+        selection=_selection(("hero", 2)),
+        reference_asset_ids=asset_ids,
+        idempotency_key="conversation-intake",
+        task_id=workspace.onboarding_task_id,
+    )
+    assert [asset.id for asset in replay.created_assets] == asset_ids
+    assert replay.workflow_draft.intake_json == first["intake"]
+
+    reconciled = reconcile_agent_product_intake_from_assets(
+        db_session,
+        conversation_id=workspace.conversation.id,
+        selection=_selection(("hero", 2)),
+        reference_asset_ids=asset_ids,
+        idempotency_key="conversation-intake",
+    )
+    assert reconciled.state == "applied"
+
+    with pytest.raises(ConflictError, match="不能提交不同请求"):
+        finalize_agent_product_workspace_intake_from_assets(
+            db_session,
+            conversation_id=workspace.conversation.id,
+            selection=_selection(("scene", 1)),
+            reference_asset_ids=asset_ids,
+            idempotency_key="conversation-intake",
+        )
 
 
 def test_agent_product_workspace_idempotency_replays_and_rejects_payload_drift(

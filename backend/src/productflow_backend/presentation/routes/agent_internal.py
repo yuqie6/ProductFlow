@@ -3,6 +3,7 @@ from __future__ import annotations
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Header, Query, Response
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from productflow_backend.application.agent.execution import (
@@ -12,9 +13,11 @@ from productflow_backend.application.agent.execution import (
     heartbeat_agent_turn_execution,
     release_agent_turn_execution,
 )
+from productflow_backend.application.agent.product_intake import AgentProductSelectionV1
 from productflow_backend.application.agent.product_workspaces import (
     create_agent_product_draft_workspace_from_global_conversation,
     reconcile_agent_product_draft_workspace_from_global_conversation,
+    reconcile_agent_product_intake_from_assets,
 )
 from productflow_backend.application.agent.tools import (
     AGENT_ASSET_LIST_DEFAULT_LIMIT,
@@ -24,6 +27,7 @@ from productflow_backend.application.agent.tools import (
     apply_agent_asset_rename,
     apply_agent_folder_create,
     apply_agent_folder_rename,
+    finalize_agent_product_intake,
     get_agent_contract,
     get_agent_global_workflow_context,
     get_agent_product_context,
@@ -79,7 +83,7 @@ from productflow_backend.application.legacy_archive_rebuilds import (
 from productflow_backend.application.legacy_archives import LegacyArchiveKind
 from productflow_backend.application.product_images.mutations import GalleryAssetMove
 from productflow_backend.application.product_images.queries import GalleryAssetSort, GalleryDirectoryKind
-from productflow_backend.domain.errors import ConflictError
+from productflow_backend.domain.errors import BusinessValidationError, ConflictError
 from productflow_backend.presentation.deps import get_session, require_agent_service
 from productflow_backend.presentation.schemas.agent_conversations import (
     AgentAssetListResponse,
@@ -92,6 +96,9 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     AgentAssetRenameReconcileResponse,
     AgentAssetRenameResultResponse,
     AgentContractResponse,
+    AgentFinalizeProductIntakeReconcileResponse,
+    AgentFinalizeProductIntakeRequest,
+    AgentFinalizeProductIntakeResponse,
     AgentFolderCreatePreparedRequest,
     AgentFolderCreateReconcileResponse,
     AgentFolderCreateResultResponse,
@@ -158,9 +165,9 @@ def _serialize_agent_product_workspace_launch(
     if session_id is None or workflow_draft_id is None or task_id is None:
         raise ConflictError("Agent 商品工作区缺少 Session 或 WorkflowDraft")
     navigation_path = (
-        "/products/new?workspace="
-        + quote(creation.conversation.id, safe="")
-        + "&agent_session_id="
+        "/products/"
+        + quote(creation.product.id, safe="")
+        + "?agent_session_id="
         + quote(session_id, safe="")
         + "&agent_task_id="
         + quote(task_id, safe="")
@@ -244,6 +251,67 @@ def get_agent_product_context_endpoint(
     session: Session = Depends(get_session),
 ) -> dict:
     return get_agent_product_context(session, conversation_id)
+
+
+@router.post(
+    "/{conversation_id}/product-intake",
+    response_model=AgentFinalizeProductIntakeResponse,
+)
+def finalize_agent_product_intake_endpoint(
+    conversation_id: str,
+    payload: AgentFinalizeProductIntakeRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
+    session: Session = Depends(get_session),
+) -> AgentFinalizeProductIntakeResponse:
+    result = finalize_agent_product_intake(
+        session,
+        conversation_id=conversation_id,
+        selection=payload.selection,
+        reference_asset_ids=payload.reference_asset_ids,
+        idempotency_key=idempotency_key,
+        task_id=payload.task_id,
+    )
+    return AgentFinalizeProductIntakeResponse.model_validate(result)
+
+
+@router.post(
+    "/{conversation_id}/product-intake/reconcile",
+    response_model=AgentFinalizeProductIntakeReconcileResponse,
+)
+def reconcile_agent_product_intake_endpoint(
+    conversation_id: str,
+    payload: AgentFinalizeProductIntakeRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
+    session: Session = Depends(get_session),
+) -> AgentFinalizeProductIntakeReconcileResponse:
+    try:
+        selection = AgentProductSelectionV1.model_validate(payload.selection)
+    except ValidationError as exc:
+        raise BusinessValidationError("图片类型选择不符合 AgentProductSelectionV1") from exc
+    reconciled = reconcile_agent_product_intake_from_assets(
+        session,
+        conversation_id=conversation_id,
+        selection=selection,
+        reference_asset_ids=payload.reference_asset_ids,
+        idempotency_key=idempotency_key,
+    )
+    result = None
+    if reconciled.creation is not None:
+        result = AgentFinalizeProductIntakeResponse(
+            accepted=True,
+            intake_finalized=reconciled.creation.workflow_draft.intake_json is not None,
+            product_id=reconciled.creation.product.id,
+            workflow_draft_id=reconciled.creation.workflow_draft.id,
+            reference_asset_ids=[asset.id for asset in reconciled.creation.created_assets],
+            intake=reconciled.creation.workflow_draft.intake_json,
+        )
+    if reconciled.state not in {"applied", "not_applied", "conflict", "unknown"}:
+        raise ConflictError("商品输入对账状态无效")
+    return AgentFinalizeProductIntakeReconcileResponse(
+        state=reconciled.state,
+        result=result,
+        detail=reconciled.detail,
+    )
 
 
 @router.get("/{conversation_id}/global-workflow-context")

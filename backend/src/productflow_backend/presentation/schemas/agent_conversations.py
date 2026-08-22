@@ -238,6 +238,28 @@ class AgentProductWorkspaceLaunchRequest(StrictAgentRequest):
     name: str = Field(min_length=1, max_length=255)
 
 
+class AgentFinalizeProductIntakeRequest(StrictAgentRequest):
+    selection: dict[str, Any]
+    reference_asset_ids: list[str] = Field(min_length=1, max_length=6)
+    task_id: str | None = None
+
+
+class AgentFinalizeProductIntakeResponse(BaseModel):
+    schema_version: Literal[1] = 1
+    accepted: bool
+    intake_finalized: bool
+    product_id: str
+    workflow_draft_id: str
+    reference_asset_ids: list[str]
+    intake: dict[str, Any] | None = None
+
+
+class AgentFinalizeProductIntakeReconcileResponse(BaseModel):
+    state: Literal["applied", "not_applied", "conflict", "unknown"]
+    result: AgentFinalizeProductIntakeResponse | None = None
+    detail: str | None = None
+
+
 class AgentProductWorkspaceLaunchResponse(BaseModel):
     schema_version: Literal[1] = 1
     created: bool
@@ -524,7 +546,7 @@ class AgentTurnEffectReconciliationResponse(BaseModel):
     id: str
     projection_id: str
     tool_call_id: str
-    tool_name: Literal["request_workflow_run_v1", "create_product_workspace_v1"]
+    tool_name: Literal["request_workflow_run_v1", "create_product_workspace_v1", "finalize_product_intake_v1"]
     idempotency_key: str
     effect_result: Literal["applied", "failed", "unknown"]
     reconciliation_state: Literal["applied", "not_applied", "conflict", "unknown"]

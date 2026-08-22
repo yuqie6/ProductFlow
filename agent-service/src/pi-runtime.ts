@@ -1380,6 +1380,7 @@ function toolStepKind(name: string): ToolStepKind {
   if (name === "propose_workflow_draft" || name === "propose_global_draft") return "propose_draft";
   if (name === "request_workflow_run_v1") return "request_workflow_run";
   if (name === "create_product_workspace_v1") return "create_product";
+  if (name === "finalize_product_intake_v1") return "inspect_context";
   if (name.includes("legacy")) return "read_history";
   if (name.includes("inspect") && name.includes("asset")) return "inspect_image";
   if (name.includes("rename") || name.includes("folder") || name.includes("move")) return "organize_assets";

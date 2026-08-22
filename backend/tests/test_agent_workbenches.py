@@ -8,9 +8,20 @@ from helpers import _login, _make_demo_image_bytes
 from sqlalchemy import event, func, select
 from workflow_draft_helpers import make_workflow_draft_payload
 
-from productflow_backend.application.agent.conversations import create_agent_conversation
+from productflow_backend.application.agent.conversations import (
+    create_agent_conversation,
+    reserve_agent_turn,
+)
 from productflow_backend.application.agent.product_intake import AgentProductSelectionV1
-from productflow_backend.application.agent.product_workspaces import create_agent_product_workspace
+from productflow_backend.application.agent.product_workspaces import (
+    create_agent_product_workspace,
+    finalize_agent_product_workspace_intake_from_assets,
+)
+from productflow_backend.application.agent.tools import (
+    get_agent_contract,
+    get_agent_product_context,
+    validate_agent_workflow_draft,
+)
 from productflow_backend.application.agent.workbenches import (
     AgentWorkbenchBootstrap,
     ensure_agent_workbench_bootstrap,
@@ -148,6 +159,78 @@ def test_ensure_agent_workbench_attaches_conversation_to_direct_created_graph(db
     assert first.graph is not None
     assert first.graph.id == created.graph.id
     assert loaded.workflow_draft.product_id == created.product.id
+
+
+def test_direct_created_graph_allows_agent_turn_without_draft_intake(db_session) -> None:
+    created = create_product_with_direct_graph(
+        db_session,
+        name="直接创建后对话",
+        category=None,
+        price=None,
+        source_note=None,
+        image_uploads=[(_make_demo_image_bytes(), "reference.png", "image/png")],
+        image_types=[DirectCreateImageType(key="hero", quantity=1, order=0)],
+    )
+    bootstrap = ensure_agent_workbench_bootstrap(
+        db_session,
+        product_id=created.product.id,
+        idempotency_key="direct-graph-turn",
+    )
+
+    reservation = reserve_agent_turn(
+        db_session,
+        product_id=created.product.id,
+        conversation_id=bootstrap.conversation.id,
+        input_text="这张图画了什么",
+        input_asset_ids=[],
+        idempotency_key="direct-graph-first-turn",
+    )
+
+    assert reservation.created is True
+    contract = get_agent_contract(db_session, bootstrap.conversation.id)
+    assert "不得调用 propose_workflow_draft" in contract["system_prompt"]
+    assert "request_workflow_run_v1" in contract["system_prompt"]
+    context = get_agent_product_context(db_session, bootstrap.conversation.id)
+    assert context["live_graph"] is not None
+    assert context["live_graph"]["id"] == created.graph.id
+    assert any(node["node_type"] == "image_generation" for node in context["live_graph"]["nodes"])
+    assert context["workflow_draft"]["intake"] is None
+    with pytest.raises(ConflictError, match="已有可运行的工作流"):
+        validate_agent_workflow_draft(
+            db_session,
+            conversation_id=bootstrap.conversation.id,
+            value={},
+        )
+
+
+def test_live_graph_blocks_conversation_intake(db_session) -> None:
+    created = create_product_with_direct_graph(
+        db_session,
+        name="已有画布不能再提交创建输入",
+        category=None,
+        price=None,
+        source_note=None,
+        image_uploads=[(_make_demo_image_bytes(), "reference.png", "image/png")],
+        image_types=[DirectCreateImageType(key="hero", quantity=1, order=0)],
+    )
+    bootstrap = ensure_agent_workbench_bootstrap(
+        db_session,
+        product_id=created.product.id,
+        idempotency_key="live-graph-blocks-intake",
+    )
+    with pytest.raises(ConflictError, match="已有可运行的工作流"):
+        finalize_agent_product_workspace_intake_from_assets(
+            db_session,
+            conversation_id=bootstrap.conversation.id,
+            selection=AgentProductSelectionV1.model_validate(
+                {
+                    "schema_version": 1,
+                    "image_types": [{"key": "hero", "quantity": 1, "order": 0}],
+                }
+            ),
+            reference_asset_ids=[created.created_assets[0].id],
+            idempotency_key="blocked-intake",
+        )
 
 
 def test_agent_workbench_bootstrap_exposes_persisted_graph(db_session) -> None:

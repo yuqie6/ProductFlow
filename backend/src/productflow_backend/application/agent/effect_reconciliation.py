@@ -4,13 +4,16 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from productflow_backend.application.agent.conversations import get_agent_turn_or_raise
+from productflow_backend.application.agent.product_intake import AgentProductSelectionV1
 from productflow_backend.application.agent.product_workspaces import (
     reconcile_agent_product_draft_workspace_from_global_conversation,
+    reconcile_agent_product_intake_from_assets,
 )
 from productflow_backend.application.agent.workflow_run_requests import (
     reconcile_agent_global_workflow_run_request,
@@ -28,6 +31,7 @@ MAX_RECONCILIATION_RESULT_BYTES = 64 * 1024
 _SUPPORTED_EFFECT_TOOLS = {
     "request_workflow_run_v1",
     "create_product_workspace_v1",
+    "finalize_product_intake_v1",
 }
 _RECONCILIATION_STATES = {"applied", "not_applied", "conflict", "unknown"}
 _EFFECT_RESULTS = {"applied", "failed", "unknown"}
@@ -202,6 +206,40 @@ def _reconcile_business_effect(
             idempotency_key=idempotency_key,
         )
         result_json = _workspace_summary(reconciled.creation, conversation.id)
+        return reconciled.state, result_json, reconciled.detail
+
+    if tool_name == "finalize_product_intake_v1":
+        if conversation.scope_type != AgentConversationScope.PRODUCT_WORKFLOW or product_id is None:
+            raise ConflictError("全局 Agent Turn 不能提交商品创建输入")
+        if conversation.product_id != product_id:
+            raise ConflictError("商品 Agent Turn 与当前商品不匹配")
+        selection_payload = payload.get("selection")
+        if not isinstance(selection_payload, dict):
+            raise BusinessValidationError("商品输入对账缺少 selection")
+        try:
+            selection = AgentProductSelectionV1.model_validate(selection_payload)
+        except ValidationError as exc:
+            raise BusinessValidationError("商品输入对账的图片类型选择无效") from exc
+        raw_ids = payload.get("reference_asset_ids")
+        if not isinstance(raw_ids, list) or not all(isinstance(item, str) for item in raw_ids):
+            raise BusinessValidationError("商品输入对账缺少 reference_asset_ids")
+        reconciled = reconcile_agent_product_intake_from_assets(
+            session,
+            conversation_id=conversation.id,
+            selection=selection,
+            reference_asset_ids=raw_ids,
+            idempotency_key=idempotency_key,
+        )
+        result_json = (
+            {
+                "kind": "product_intake",
+                "product_id": reconciled.creation.product.id,
+                "workflow_draft_id": reconciled.creation.workflow_draft.id,
+                "intake_finalized": reconciled.creation.workflow_draft.intake_json is not None,
+            }
+            if reconciled.creation is not None
+            else None
+        )
         return reconciled.state, result_json, reconciled.detail
 
     raise BusinessValidationError("不支持该 Agent 副作用工具的对账")

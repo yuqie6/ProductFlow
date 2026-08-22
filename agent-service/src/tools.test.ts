@@ -46,10 +46,43 @@ describe("ProductFlow Pi tools", () => {
     expect(names).toContain("load_productflow_skill");
     expect(names).toContain("propose_workflow_draft");
     expect(names).toContain("request_workflow_run_v1");
+    expect(names).toContain("finalize_product_intake_v1");
     expect(names).not.toContain("create_product_image_folder_v1");
     expect(names).not.toContain("rename_product_image_asset_v1");
     expect(names).not.toContain("move_product_image_assets_v1");
     expect(names).not.toContain("propose_global_draft");
+  });
+
+  it("persists product intake from conversation asset IDs", async () => {
+    const calls: string[] = [];
+    const client = {
+      finalizeProductIntake: async () => {
+        calls.push("finalize");
+        return { accepted: true, intake_finalized: true, product_id: "product-1" };
+      },
+    } as unknown as ProductFlowClient;
+    const tool = createProductFlowTools(runtime(baseScope, client)).find(
+      (candidate) => candidate.name === "finalize_product_intake_v1",
+    );
+    if (!tool) throw new Error("intake tool was not registered");
+
+    const result = await tool.execute(
+      "tool-1",
+      {
+        selection: {
+          schema_version: 1,
+          image_types: [{ key: "hero", quantity: 2, order: 0 }],
+        },
+        reference_asset_ids: ["asset-1"],
+      },
+      undefined,
+      undefined,
+      {} as never,
+    );
+
+    expect(calls).toEqual(["finalize"]);
+    expect(result.content[0]).toMatchObject({ type: "text" });
+    expect(String((result.content[0] as { text: string }).text)).toContain("intake_finalized");
   });
 
   it("uses the global draft envelope and does not expose product-only context", () => {
@@ -68,6 +101,7 @@ describe("ProductFlow Pi tools", () => {
     expect(names).toContain("create_product_workspace_v1");
     expect(names).not.toContain("get_product_workflow_context_v1");
     expect(names).not.toContain("propose_workflow_draft");
+    expect(names).not.toContain("finalize_product_intake_v1");
   });
 
   it("returns bounded Skill evidence while keeping the full instruction for the model", async () => {

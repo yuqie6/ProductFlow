@@ -244,6 +244,34 @@ export class ProductFlowClient {
     await this.json(this.conversationPath(conversationID) + "/library-organization-draft/validate", { method: "POST", body: { value }, signal });
   }
 
+  async finalizeProductIntake(
+    conversationID: string,
+    args: { selection: Record<string, unknown>; reference_asset_ids: string[]; task_id: string | null },
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    return this.json(this.conversationPath(conversationID) + "/product-intake", {
+      method: "POST",
+      body: args,
+      idempotencyKey,
+      signal,
+    });
+  }
+
+  async reconcileProductIntake(
+    conversationID: string,
+    args: { selection: Record<string, unknown>; reference_asset_ids: string[]; task_id: string | null },
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<ReconcileResult> {
+    return this.json<ReconcileResult>(this.conversationPath(conversationID) + "/product-intake/reconcile", {
+      method: "POST",
+      body: args,
+      idempotencyKey,
+      signal,
+    });
+  }
+
   async createProductWorkspace(conversationID: string, name: string, idempotencyKey: string, signal?: AbortSignal): Promise<unknown> {
     return this.json(this.conversationPath(conversationID) + "/product-workspaces", {
       method: "POST",
