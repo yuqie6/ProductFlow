@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import type { GraphNode, GraphNodeCatalog, GraphProjection } from "../../../lib/types";
+import { GRAPH_PORT_MAX_VISUAL_SCALE, graphEdgeEmphasis, graphPortVisualScale } from "./graphCanvasVisual";
 import { GraphGroupCard, GraphNodeCard } from "./GraphWorkflowCanvas";
 
 const catalog: GraphNodeCatalog = {
@@ -198,6 +199,21 @@ describe("graph workflow node ports", () => {
     );
     expect(markup).toContain("模型超时");
     expect(markup).toContain("可重试");
+  });
+});
+
+describe("graph canvas visual scale", () => {
+  it("keeps port scale bounded when zoomed out", () => {
+    expect(graphPortVisualScale(0.2)).toBeLessThanOrEqual(GRAPH_PORT_MAX_VISUAL_SCALE);
+    expect(graphPortVisualScale(0.2)).toBe(GRAPH_PORT_MAX_VISUAL_SCALE);
+    expect(graphPortVisualScale(1)).toBe(1);
+    expect(GRAPH_PORT_MAX_VISUAL_SCALE).toBeLessThanOrEqual(1.4);
+  });
+
+  it("recedes unselected edges and emphasizes edges touching the selection", () => {
+    expect(graphEdgeEmphasis({ edgeSelected: false, sourceSelected: false, targetSelected: false })).toBe("receded");
+    expect(graphEdgeEmphasis({ edgeSelected: false, sourceSelected: true, targetSelected: false })).toBe("active");
+    expect(graphEdgeEmphasis({ edgeSelected: true, sourceSelected: false, targetSelected: false })).toBe("active");
   });
 });
 
