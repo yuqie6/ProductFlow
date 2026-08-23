@@ -176,6 +176,12 @@ class AgentGraphChangeSetRequest(StrictAgentRequest):
     change_set: dict[str, Any]
 
 
+class AgentGraphChangeSetReconcileResponse(BaseModel):
+    state: Literal["applied", "not_applied", "conflict", "unknown"]
+    result: dict[str, Any] | None = None
+    detail: str | None = None
+
+
 class AgentWorkflowDraftValidationResponse(BaseModel):
     accepted: Literal[True] = True
 

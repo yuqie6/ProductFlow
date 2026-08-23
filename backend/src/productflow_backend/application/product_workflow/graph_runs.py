@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from productflow_backend.application.async_delivery import delivery_key_for_actor, stage_async_dispatch
 from productflow_backend.application.product_workflow.graph_apply import AppliedGraph
 from productflow_backend.application.product_workflow.graph_commands import (
     get_workflow_graph,
@@ -14,6 +15,8 @@ from productflow_backend.application.product_workflow.graph_commands import (
 from productflow_backend.application.product_workflow.graph_compiler import (
     GraphRuntimeArtifacts,
     GraphSourceRecord,
+    graph_snapshot_input_trace,
+    graph_snapshot_node_title,
     select_run_node_ids,
     snapshot_graph,
 )
@@ -22,6 +25,7 @@ from productflow_backend.application.product_workflow.graph_visual import (
     visual_overlay_from_config,
 )
 from productflow_backend.application.product_workflow.product_sources import resolve_product_source
+from productflow_backend.application.queue_submission import raise_queue_unavailable
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.durable_generation_tasks import GRAPH_RUN_GENERATION_TASK_CONTRACT
 from productflow_backend.domain.enums import (
@@ -42,7 +46,15 @@ from productflow_backend.infrastructure.db.models import (
     WorkflowGraphNodeRun,
     WorkflowGraphRun,
 )
-from productflow_backend.infrastructure.queue import enqueue_graph_run
+
+
+def stage_graph_run_dispatch(session: Session, run_id: str):
+    return stage_async_dispatch(
+        session,
+        delivery_key=delivery_key_for_actor(GRAPH_RUN_GENERATION_TASK_CONTRACT.actor_name, run_id),
+        actor_name=GRAPH_RUN_GENERATION_TASK_CONTRACT.actor_name,
+        aggregate_id=run_id,
+    )
 
 GRAPH_CANCELLED_REASON = "已取消"
 
@@ -182,15 +194,22 @@ def submit_graph_run(
             and active.requested_node_id == target_node_id
             and active.graph_revision == graph.revision
         ):
+            if enqueue is None:
+                stage_graph_run_dispatch(session, active.id)
+            if commit:
+                session.commit()
+                session.expire_all()
+                active = get_graph_run(session, product_id=product_id, graph_id=graph_id, run_id=active.id)
             return GraphRunSubmission(run=active, created=False)
         raise ConflictError("工作流已有正在进行的运行")
+    snapshot = snapshot_graph(applied, sources)
     run = WorkflowGraphRun(
         graph_id=graph.id,
         status=WorkflowRunStatus.RUNNING,
         run_scope=scope,
         requested_node_id=target_node_id,
         graph_revision=graph.revision,
-        snapshot_json=snapshot_graph(applied, sources),
+        snapshot_json=snapshot,
         progress_metadata={"run_scope": scope.value, "requested_node_id": target_node_id},
     )
     session.add(run)
@@ -202,15 +221,24 @@ def submit_graph_run(
                 node_id=node_id,
                 status=WorkflowNodeStatus.QUEUED,
                 sort_order=index,
+                compiled_context_json={
+                    "node_title": graph_snapshot_node_title(snapshot, node_id),
+                    "input_trace": graph_snapshot_input_trace(snapshot, node_id),
+                },
             )
         )
     session.flush()
     run_id = run.id
+    if enqueue is None:
+        stage_graph_run_dispatch(session, run_id)
     if commit:
         session.commit()
         session.expire_all()
-        dispatch = enqueue or enqueue_graph_run
-        dispatch(run_id)
+        if enqueue is not None:
+            try:
+                enqueue(run_id)
+            except Exception as exc:  # noqa: BLE001
+                raise_queue_unavailable(exc)
         run = get_graph_run(session, product_id=product_id, graph_id=graph_id, run_id=run_id)
     elif enqueue is not None:
         raise ValueError("不能在延迟提交的图运行中直接 enqueue")
@@ -262,7 +290,15 @@ def cancel_graph_run(
     graph_id: str,
     run_id: str,
 ) -> WorkflowGraphRun:
-    run = get_graph_run(session, product_id=product_id, graph_id=graph_id, run_id=run_id)
+    get_workflow_graph(session, product_id=product_id, graph_id=graph_id)
+    run = session.scalar(
+        select(WorkflowGraphRun)
+        .options(selectinload(WorkflowGraphRun.node_runs))
+        .where(WorkflowGraphRun.id == run_id, WorkflowGraphRun.graph_id == graph_id)
+        .with_for_update()
+    )
+    if run is None:
+        raise NotFoundError("工作流运行不存在")
     if run.status == WorkflowRunStatus.CANCELLED:
         return run
     if GRAPH_RUN_GENERATION_TASK_CONTRACT.is_terminal(run.status):
@@ -276,6 +312,8 @@ def cancel_graph_run(
             node_run.status = WorkflowNodeStatus.FAILED
             node_run.failure_reason = GRAPH_CANCELLED_REASON
             node_run.finished_at = now
+            node_run.active_attempt_id = None
+            node_run.progress_updated_at = now
     session.commit()
     session.expire_all()
     return get_graph_run(session, product_id=product_id, graph_id=graph_id, run_id=run_id)

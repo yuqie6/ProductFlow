@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 from helpers import _login, _make_demo_image_bytes
+from sqlalchemy import select
 from workflow_draft_helpers import make_workflow_draft_payload
 
+from productflow_backend.infrastructure.db.models import AsyncDispatch
+from productflow_backend.infrastructure.db.session import get_session_factory
 from productflow_backend.presentation.api import create_app
 
 
@@ -18,13 +21,7 @@ def _create_canonical_product(client: TestClient, *, name: str = "硬质刀具�
     return {**payload["product"], "created_assets": payload["created_assets"]}
 
 
-def test_workflow_draft_api_confirms_persists_v3_graph_and_submits_run(configured_env, monkeypatch) -> None:
-    enqueued_run_ids: list[str] = []
-    monkeypatch.setattr(
-        "productflow_backend.application.product_workflow.graph_runs.enqueue_graph_run",
-        enqueued_run_ids.append,
-    )
-
+def test_workflow_draft_api_confirms_persists_v3_graph_and_submits_run(configured_env) -> None:
     client = TestClient(create_app())
     _login(client)
     product = _create_canonical_product(client)
@@ -88,7 +85,17 @@ def test_workflow_draft_api_confirms_persists_v3_graph_and_submits_run(configure
     assert run_payload["requested_node_id"] == image_node["id"]
     assert run_payload["graph_revision"] == 1
     assert {item["status"] for item in run_payload["node_runs"]} == {"queued"}
-    assert enqueued_run_ids == [run_payload["id"]]
+    factory = get_session_factory()
+    session = factory()
+    try:
+        dispatch = session.scalar(
+            select(AsyncDispatch).where(AsyncDispatch.aggregate_id == run_payload["id"])
+        )
+        assert dispatch is not None
+        assert dispatch.status.value == "pending"
+        assert dispatch.actor_name == "run_workflow_graph_run"
+    finally:
+        session.close()
 
 
 def test_workflow_draft_api_rejects_unknown_fields(configured_env) -> None:

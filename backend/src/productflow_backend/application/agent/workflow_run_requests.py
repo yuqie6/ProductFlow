@@ -43,7 +43,6 @@ from productflow_backend.infrastructure.db.models import (
     WorkflowGraph,
     new_id,
 )
-from productflow_backend.infrastructure.queue import enqueue_graph_run
 
 AGENT_WORKFLOW_RUN_REQUEST_MAX_KEY_BYTES = 200
 AGENT_WORKFLOW_RUN_REQUEST_MAX_STEP_ID_LENGTH = 120
@@ -578,10 +577,7 @@ def confirm_agent_workflow_run_request(
         _mark_task_running(request.task)
         request.conversation.status = AgentConversationStatus.COMPLETED
         request.conversation.updated_at = now_utc()
-        run_id = submission.run.id
         session.commit()
-        if submission.created:
-            enqueue_graph_run(run_id)
         return _load_request(session, request.id)
 
     raise ConflictError("当前商品没有可执行的 schema-v3 工作流")

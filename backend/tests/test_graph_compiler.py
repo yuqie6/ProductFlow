@@ -408,7 +408,11 @@ def test_context_compiler_uses_only_incoming_edges() -> None:
             operations=[DisconnectEdgeOp(edge_ref=ref_edge.id)],
         ),
     )
-    without_ref_runtime = compile_context_runtime(without_ref, visual.id, _sources_for(without_ref, facts=({"key": "product_name", "value": "刀架"},), visual=False))
+    without_ref_runtime = compile_context_runtime(
+        without_ref,
+        visual.id,
+        _sources_for(without_ref, facts=({"key": "product_name", "value": "刀架"},), visual=False),
+    )
     assert without_ref_runtime.reference_images == ()
     assert without_ref_runtime.product_facts[0]["value"] == "刀架"
 

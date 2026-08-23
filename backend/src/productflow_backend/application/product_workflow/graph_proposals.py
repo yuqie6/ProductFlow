@@ -72,6 +72,7 @@ def apply_agent_graph_change_set(
     *,
     conversation_id: str,
     change_set: WorkflowChangeSet,
+    commit: bool = True,
 ) -> WorkflowGraph:
     if len(change_set.operations) != 1:
         raise BusinessValidationError("立即写入只接受一条可逆改图命令；多步改图请提交提案")
@@ -87,6 +88,7 @@ def apply_agent_graph_change_set(
         product_id=graph.product_id,
         graph_id=graph.id,
         change_set=parsed,
+        commit=commit,
     )
     return result.graph
 
@@ -96,6 +98,7 @@ def propose_graph_change_set(
     *,
     conversation_id: str,
     change_set: WorkflowChangeSet,
+    commit: bool = True,
 ) -> WorkflowGraphProposal:
     graph = session.scalar(
         select(WorkflowGraph)
@@ -132,11 +135,14 @@ def propose_graph_change_set(
         change_set_json=parsed.model_dump(mode="json"),
     )
     session.add(proposal)
-    session.commit()
-    session.expire_all()
-    loaded = session.get(WorkflowGraphProposal, proposal.id)
-    assert loaded is not None
-    return loaded
+    session.flush()
+    if commit:
+        session.commit()
+        session.expire_all()
+        loaded = session.get(WorkflowGraphProposal, proposal.id)
+        assert loaded is not None
+        return loaded
+    return proposal
 
 
 def confirm_graph_proposal(

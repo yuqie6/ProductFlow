@@ -106,6 +106,18 @@ export function graphIncomingSourceEntries(
     });
 }
 
+export function graphRunInputTraceEntries(nodeRun: GraphNodeRun): GraphIncomingSourceEntry[] {
+  return (nodeRun.input_trace ?? [])
+    .slice()
+    .sort((left, right) => left.order - right.order || left.edge_id.localeCompare(right.edge_id))
+    .map((item) => ({
+      id: item.edge_id,
+      title: item.source_title?.trim() ?? "",
+      role: item.role,
+      order: item.order,
+    }));
+}
+
 export function graphContextEntries(value: Record<string, unknown> | null): Array<{
   key: string;
   labelKey: TranslationKey;

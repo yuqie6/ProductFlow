@@ -45,8 +45,19 @@ from productflow_backend.application.product_workflow.graph_compiler import (
     sources_from_snapshot,
     strip_v3_prompt_payload,
 )
+from productflow_backend.application.product_workflow.graph_provider_effects import (
+    GraphRunEffectCrash,
+    GraphRunProviderUnknown,
+    ensure_graph_provider_effect_intent,
+    graph_provider_effect_request_hash,
+    mark_graph_run_provider_unknown,
+    record_graph_provider_effect_result,
+)
 from productflow_backend.application.product_workflow.graph_runs import load_graph_sources
-from productflow_backend.application.storage_compensation import StorageWriteCompensation
+from productflow_backend.application.storage_compensation import (
+    StorageWriteCompensation,
+    compensate_storage_writes,
+)
 from productflow_backend.application.time import now_utc
 from productflow_backend.application.workflow_drafts.contracts import (
     GenerationSpec,
@@ -55,7 +66,12 @@ from productflow_backend.application.workflow_drafts.contracts import (
     VisualExceptionPlan,
     VisualSystemDraftPayload,
 )
-from productflow_backend.domain.durable_generation_tasks import DELIVERY_RENDITION_TASK_CONTRACT
+from productflow_backend.domain.durable_generation_tasks import (
+    DELIVERY_RENDITION_TASK_CONTRACT,
+    WORKFLOW_PROVIDER_EFFECT_CALL_PHASE,
+    WORKFLOW_PROVIDER_EFFECT_RESULT_PHASE,
+    WORKFLOW_PROVIDER_EFFECT_UNKNOWN_DETAIL,
+)
 from productflow_backend.domain.enums import (
     GraphArtifactType,
     GraphNodeType,
@@ -92,6 +108,8 @@ from productflow_backend.infrastructure.storage import LocalStorage
 
 logger = logging.getLogger(__name__)
 SUPPORTED_REFERENCE_MIME_TYPES = {"image/png", "image/jpeg", "image/webp"}
+_effect_phase_hook: Callable[[str, WorkflowGraphNodeRun], None] | None = None
+_storage_bound_commit_hook: Callable[[Session, StorageWriteCompensation], None] | None = None
 # ImagePromptPayloadV1 still requires images[].image_plan_key; stored v3 artifacts strip it.
 V3_PROMPT_PROVIDER_PLAN_KEY = "output"
 GRAPH_RUN_ADVISORY_LOCK_NAMESPACE = 847261
@@ -117,6 +135,10 @@ def execute_graph_run(
             logger.info("schema-v3 graph run already executing on another connection: run_id=%s", run_id)
             return
         _execute_graph_run(session, run_id=run_id, dependencies=dependencies, storage=storage)
+    except GraphRunEffectCrash:
+        return
+    except GraphRunProviderUnknown:
+        return
     except Exception:
         session.rollback()
         logger.exception("schema-v3 graph run failed: run_id=%s", run_id)
@@ -153,6 +175,12 @@ def _execute_graph_run(
         .where(WorkflowGraphNodeRun.graph_run_id == run.id)
         .order_by(WorkflowGraphNodeRun.sort_order, WorkflowGraphNodeRun.id)
     ).all()
+    artifacts, sources = _hydrate_runtime_from_succeeded_node_runs(
+        session,
+        node_runs=node_runs,
+        sources=sources,
+        artifacts=artifacts,
+    )
     for node_run in node_runs:
         session.refresh(run)
         if run.status in {WorkflowRunStatus.CANCELLED, WorkflowRunStatus.FAILED}:
@@ -177,6 +205,10 @@ def _execute_graph_run(
                 storage=resolved_storage,
                 product_id=product_id,
             )
+        except GraphRunEffectCrash:
+            return
+        except GraphRunProviderUnknown:
+            return
         except BusinessValidationError as exc:
             _fail_claimed_node(session, run_id=run.id, node_run_id=node_run.id, reason=str(exc))
             return
@@ -227,17 +259,26 @@ def _execute_node_run(
         )
         if skipped:
             return artifacts
-        node_run.compiled_context_json = _context_trace(runtime)
+        _merge_compiled_context(node_run, _context_trace(runtime))
         prompt_provider = dependencies.prompt_generation_provider()
-        result = prompt_provider.generate_creative_brief(
-            _to_context_request(
-                runtime,
-                title=applied_node.title,
-                storage=storage,
-                session=session,
-                product_id=product_id,
-            )
+        result, may_promote = _call_node_provider(
+            session,
+            run=run,
+            node_run=node_run,
+            provider_name=prompt_provider.provider_name,
+            request_json=_provider_request_json(node_run, runtime.input_digest, applied_node.node_type),
+            invoke=lambda: prompt_provider.generate_creative_brief(
+                _to_context_request(
+                    runtime,
+                    title=applied_node.title,
+                    storage=storage,
+                    session=session,
+                    product_id=product_id,
+                )
+            ),
         )
+        if result is None:
+            return artifacts
         payload = result.payload.model_dump(mode="json")
         artifact = _persist_artifact(
             session,
@@ -248,7 +289,11 @@ def _execute_node_run(
             input_digest=runtime.input_digest,
             provider_name=prompt_provider.provider_name,
             provider_model=result.model,
+            promote_current=may_promote,
         )
+        if not may_promote:
+            session.commit()
+            return artifacts
         _write_generated_config(
             session,
             graph_id=run.graph_id,
@@ -284,17 +329,26 @@ def _execute_node_run(
         )
         if skipped:
             return artifacts
-        node_run.compiled_context_json = _context_trace(runtime)
+        _merge_compiled_context(node_run, _context_trace(runtime))
         prompt_provider = dependencies.prompt_generation_provider()
-        result = prompt_provider.generate_visual_overlay(
-            _to_context_request(
-                runtime,
-                title=applied_node.title,
-                storage=storage,
-                session=session,
-                product_id=product_id,
-            )
+        result, may_promote = _call_node_provider(
+            session,
+            run=run,
+            node_run=node_run,
+            provider_name=prompt_provider.provider_name,
+            request_json=_provider_request_json(node_run, runtime.input_digest, applied_node.node_type),
+            invoke=lambda: prompt_provider.generate_visual_overlay(
+                _to_context_request(
+                    runtime,
+                    title=applied_node.title,
+                    storage=storage,
+                    session=session,
+                    product_id=product_id,
+                )
+            ),
         )
+        if result is None:
+            return artifacts
         dumped = result.payload.model_dump(mode="json")
         overlay = catalog_visual_overlay(dumped) or dumped
         artifact = _persist_artifact(
@@ -306,7 +360,11 @@ def _execute_node_run(
             input_digest=runtime.input_digest,
             provider_name=prompt_provider.provider_name,
             provider_model=result.model,
+            promote_current=may_promote,
         )
+        if not may_promote:
+            session.commit()
+            return artifacts
         _write_generated_config(
             session,
             graph_id=run.graph_id,
@@ -342,17 +400,26 @@ def _execute_node_run(
         )
         if skipped:
             return artifacts
-        node_run.compiled_context_json = _prompt_context_trace(runtime)
+        _merge_compiled_context(node_run, _prompt_context_trace(runtime))
         prompt_provider = dependencies.prompt_generation_provider()
-        result = prompt_provider.generate_prompt(
-            _to_prompt_request(
-                runtime,
-                title=applied_node.title,
-                storage=storage,
-                session=session,
-                product_id=product_id,
-            )
+        result, may_promote = _call_node_provider(
+            session,
+            run=run,
+            node_run=node_run,
+            provider_name=prompt_provider.provider_name,
+            request_json=_provider_request_json(node_run, runtime.input_digest, applied_node.node_type),
+            invoke=lambda: prompt_provider.generate_prompt(
+                _to_prompt_request(
+                    runtime,
+                    title=applied_node.title,
+                    storage=storage,
+                    session=session,
+                    product_id=product_id,
+                )
+            ),
         )
+        if result is None:
+            return artifacts
         payload_model = _apply_text_policy_to_prompt_payload(
             result.payload,
             text_policy=runtime.text_policy,
@@ -368,7 +435,11 @@ def _execute_node_run(
             input_digest=runtime.input_digest,
             provider_name=prompt_provider.provider_name,
             provider_model=result.model,
+            promote_current=may_promote,
         )
+        if not may_promote:
+            session.commit()
+            return artifacts
         _write_generated_config(
             session,
             graph_id=run.graph_id,
@@ -396,12 +467,21 @@ def _execute_node_run(
         )
         if skipped:
             return artifacts
-        node_run.compiled_context_json = _image_context_trace(runtime)
+        _merge_compiled_context(node_run, _image_context_trace(runtime))
         image_provider = dependencies.image_provider()
         spec = GenerationSpec.model_validate(runtime.generation_spec)
-        image_result = image_provider.generate_workflow_image(
-            _to_image_request(runtime, session=session, storage=storage, product_id=product_id)
+        image_result, may_promote = _call_node_provider(
+            session,
+            run=run,
+            node_run=node_run,
+            provider_name=image_provider.provider_name,
+            request_json=_provider_request_json(node_run, runtime.input_digest, applied_node.node_type),
+            invoke=lambda: image_provider.generate_workflow_image(
+                _to_image_request(runtime, session=session, storage=storage, product_id=product_id)
+            ),
         )
+        if image_result is None:
+            return artifacts
         generated = image_result.images[0]
         dimensions = image_dimensions_from_bytes(generated.bytes_data)
         if dimensions is None:
@@ -411,62 +491,72 @@ def _execute_node_run(
         product = session.get(Product, product_id)
         if product is None:
             raise NotFoundError("商品不存在")
-        storage_writes = StorageWriteCompensation()
-        image_type_key = applied_node.config.get("image_type_key")
-        asset = stage_product_image_asset(
-            session,
-            product=product,
-            content=generated.bytes_data,
-            filename=f"{applied_node.title}.png",
-            expected_mime_type=generated.mime_type,
-            display_name=applied_node.title,
-            origin_type=ProductImageOriginType.WORKFLOW_GENERATION,
-            storage=storage,
-            storage_writes=storage_writes,
-            image_type_key=image_type_key if isinstance(image_type_key, str) else None,
-        )
-        session.flush()
-        payload = {
-            "schema_version": 3,
-            "product_image_asset_id": asset.id,
-            "generation_spec": runtime.generation_spec,
-            "prompt_artifact_id": runtime.prompt_artifact_id,
-            "measured_output": {
-                "mime_type": generated.mime_type,
-                "provider_status": image_result.provider_status,
-                "effective_parameters": image_result.effective_parameters,
-                "requested_aspect_ratio": spec.aspect_ratio,
-                "measured_width": measured_width,
-                "measured_height": measured_height,
-                "requested_quality": spec.quality_intent,
-                "aspect_matched": aspect_matched,
-                "aspect_mismatch": None
-                if aspect_matched
-                else aspect_mismatch_message(spec, measured_width, measured_height),
-            },
-        }
-        artifact = _persist_artifact(
-            session,
-            run=run,
-            node_run=node_run,
-            artifact_type=GraphArtifactType.IMAGE,
-            payload=payload,
-            input_digest=runtime.input_digest,
-            provider_name=image_provider.provider_name,
-            provider_model=image_result.model,
-            product_image_asset_id=asset.id,
-        )
-        artifacts = artifacts.with_image(node_run.node_id, artifact_id=artifact.id, asset_id=asset.id)
-        _queue_delivery_rendition_after_image_success(
-            session,
-            node_id=node_run.node_id,
-            source_asset_id=asset.id,
-        )
-        storage_writes.release()
+        with compensate_storage_writes(session) as storage_writes:
+            image_type_key = applied_node.config.get("image_type_key")
+            asset = stage_product_image_asset(
+                session,
+                product=product,
+                content=generated.bytes_data,
+                filename=f"{applied_node.title}.png",
+                expected_mime_type=generated.mime_type,
+                display_name=applied_node.title,
+                origin_type=ProductImageOriginType.WORKFLOW_GENERATION,
+                storage=storage,
+                storage_writes=storage_writes,
+                image_type_key=image_type_key if isinstance(image_type_key, str) else None,
+            )
+            session.flush()
+            payload = {
+                "schema_version": 3,
+                "product_image_asset_id": asset.id,
+                "generation_spec": runtime.generation_spec,
+                "prompt_artifact_id": runtime.prompt_artifact_id,
+                "measured_output": {
+                    "mime_type": generated.mime_type,
+                    "provider_status": image_result.provider_status,
+                    "effective_parameters": image_result.effective_parameters,
+                    "requested_aspect_ratio": spec.aspect_ratio,
+                    "measured_width": measured_width,
+                    "measured_height": measured_height,
+                    "requested_quality": spec.quality_intent,
+                    "aspect_matched": aspect_matched,
+                    "aspect_mismatch": None
+                    if aspect_matched
+                    else aspect_mismatch_message(spec, measured_width, measured_height),
+                },
+            }
+            artifact = _persist_artifact(
+                session,
+                run=run,
+                node_run=node_run,
+                artifact_type=GraphArtifactType.IMAGE,
+                payload=payload,
+                input_digest=runtime.input_digest,
+                provider_name=image_provider.provider_name,
+                provider_model=image_result.model,
+                product_image_asset_id=asset.id,
+                promote_current=may_promote,
+            )
+            if not may_promote:
+                _commit_storage_bound(session, storage_writes)
+                return artifacts
+            artifacts = artifacts.with_image(node_run.node_id, artifact_id=artifact.id, asset_id=asset.id)
+            _queue_delivery_rendition_after_image_success(
+                session,
+                node_id=node_run.node_id,
+                source_asset_id=asset.id,
+            )
+            node_run.status = WorkflowNodeStatus.SUCCEEDED
+            node_run.finished_at = now_utc()
+            node_run.active_attempt_id = None
+            node_run.output_json = {"artifact_id": artifact.id}
+            _commit_storage_bound(session, storage_writes)
+            return artifacts
     else:
         raise BusinessValidationError("不能运行该节点类型")
     node_run.status = WorkflowNodeStatus.SUCCEEDED
     node_run.finished_at = now_utc()
+    node_run.active_attempt_id = None
     node_run.output_json = {"artifact_id": artifact.id}
     session.commit()
     return artifacts
@@ -520,6 +610,7 @@ def _persist_artifact(
     provider_name: str,
     provider_model: str | None,
     product_image_asset_id: str | None = None,
+    promote_current: bool = True,
 ) -> WorkflowGraphArtifact:
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     payload_hash = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
@@ -563,12 +654,13 @@ def _persist_artifact(
     artifact.provider_model = provider_model
     flag_modified(artifact, "payload_json")
     session.flush()
-    live_graph = session.get(WorkflowGraph, run.graph_id)
-    if live_graph is not None and live_graph.revision == run.graph_revision:
-        node = session.get(WorkflowGraphNode, node_run.node_id)
-        if node is not None:
-            node.current_artifact_id = artifact.id
-            session.flush()
+    if promote_current:
+        live_graph = session.get(WorkflowGraph, run.graph_id)
+        if live_graph is not None and live_graph.revision == run.graph_revision:
+            node = session.get(WorkflowGraphNode, node_run.node_id)
+            if node is not None:
+                node.current_artifact_id = artifact.id
+                session.flush()
     return artifact
 
 
@@ -1287,17 +1379,283 @@ def _upstream_processing_runs_succeeded(
     return True
 
 
+def _hydrate_runtime_from_succeeded_node_runs(
+    session: Session,
+    *,
+    node_runs: Sequence[WorkflowGraphNodeRun],
+    sources: dict[str, GraphSourceRecord],
+    artifacts: GraphRuntimeArtifacts,
+) -> tuple[GraphRuntimeArtifacts, dict[str, GraphSourceRecord]]:
+    succeeded_ids = [item.id for item in node_runs if item.status == WorkflowNodeStatus.SUCCEEDED]
+    if not succeeded_ids:
+        return artifacts, sources
+    persisted = {
+        artifact.node_run_id: artifact
+        for artifact in session.scalars(
+            select(WorkflowGraphArtifact).where(WorkflowGraphArtifact.node_run_id.in_(succeeded_ids))
+        )
+    }
+    for node_run in node_runs:
+        if node_run.status != WorkflowNodeStatus.SUCCEEDED or node_run.node_id is None:
+            continue
+        artifact = persisted.get(node_run.id)
+        if artifact is None:
+            continue
+        payload = dict(artifact.payload_json)
+        artifact_type = GraphArtifactType(artifact.artifact_type)
+        if artifact_type == GraphArtifactType.IMAGE:
+            if artifact.product_image_asset_id:
+                artifacts = artifacts.with_image(
+                    node_run.node_id,
+                    artifact_id=artifact.id,
+                    asset_id=artifact.product_image_asset_id,
+                )
+            current = sources.get(node_run.node_id, GraphSourceRecord())
+            sources[node_run.node_id] = replace(
+                current,
+                current_artifact_id=artifact.id,
+                current_artifact_type=artifact_type,
+                current_artifact_payload=payload,
+                current_output_asset_id=artifact.product_image_asset_id,
+                current_input_digest=artifact.input_digest,
+            )
+            continue
+        artifacts = artifacts.with_prompt(node_run.node_id, artifact_id=artifact.id, payload=payload)
+        current = sources.get(node_run.node_id, GraphSourceRecord())
+        if artifact_type == GraphArtifactType.CREATIVE_BRIEF:
+            sources[node_run.node_id] = replace(
+                current,
+                brief=payload,
+                current_artifact_id=artifact.id,
+                current_artifact_type=artifact_type,
+                current_artifact_payload=payload,
+                current_input_digest=artifact.input_digest,
+            )
+        elif artifact_type == GraphArtifactType.VISUAL_SYSTEM:
+            sources[node_run.node_id] = replace(
+                current,
+                visual_payload=payload,
+                current_artifact_id=artifact.id,
+                current_artifact_type=artifact_type,
+                current_artifact_payload=payload,
+                current_input_digest=artifact.input_digest,
+            )
+        else:
+            sources[node_run.node_id] = replace(
+                current,
+                current_artifact_id=artifact.id,
+                current_artifact_type=artifact_type,
+                current_artifact_payload=payload,
+                current_input_digest=artifact.input_digest,
+            )
+    return artifacts, sources
+
+
+def _commit_storage_bound(session: Session, storage_writes: StorageWriteCompensation) -> None:
+    hook = _storage_bound_commit_hook
+    if hook is not None:
+        hook(session, storage_writes)
+    session.commit()
+    storage_writes.release()
+
+
+def _notify_effect_phase(phase: str, node_run: WorkflowGraphNodeRun) -> None:
+    hook = _effect_phase_hook
+    if hook is not None:
+        hook(phase, node_run)
+
+
+def _merge_compiled_context(node_run: WorkflowGraphNodeRun, runtime_trace: dict[str, Any]) -> None:
+    existing = dict(node_run.compiled_context_json or {})
+    merged = dict(runtime_trace)
+    if existing.get("node_title"):
+        merged["node_title"] = existing["node_title"]
+    if existing.get("input_trace"):
+        merged["input_trace"] = existing["input_trace"]
+    node_run.compiled_context_json = merged
+    flag_modified(node_run, "compiled_context_json")
+
+
+def _provider_request_json(
+    node_run: WorkflowGraphNodeRun,
+    input_digest: str,
+    node_type: GraphNodeType,
+) -> dict[str, Any]:
+    return {
+        "node_id": node_run.node_id,
+        "node_type": node_type.value,
+        "input_digest": input_digest,
+        "attempt_id": node_run.active_attempt_id,
+    }
+
+
+def _provider_result_json(result: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    model = getattr(result, "model", None)
+    if isinstance(model, str):
+        payload["model"] = model
+    response_id = getattr(result, "response_id", None)
+    if isinstance(response_id, str):
+        payload["response_id"] = response_id
+    provider_status = getattr(result, "provider_status", None)
+    if isinstance(provider_status, str):
+        payload["provider_status"] = provider_status
+    return payload
+
+
+def _advance_node_effect_phase(
+    session: Session,
+    *,
+    node_run: WorkflowGraphNodeRun,
+    attempt_id: str,
+    phase: str,
+) -> bool:
+    now = now_utc()
+    result = session.execute(
+        update(WorkflowGraphNodeRun)
+        .where(
+            WorkflowGraphNodeRun.id == node_run.id,
+            WorkflowGraphNodeRun.active_attempt_id == attempt_id,
+            WorkflowGraphNodeRun.status == WorkflowNodeStatus.RUNNING,
+        )
+        .values(progress_phase=phase, progress_updated_at=now)
+    )
+    if result.rowcount != 1:
+        session.rollback()
+        session.refresh(node_run)
+        return False
+    session.commit()
+    session.refresh(node_run)
+    return True
+
+
+def _attempt_may_promote(
+    session: Session,
+    *,
+    run: WorkflowGraphRun,
+    node_run: WorkflowGraphNodeRun,
+    attempt_id: str,
+) -> bool:
+    locked_run = session.scalar(
+        select(WorkflowGraphRun)
+        .where(WorkflowGraphRun.id == run.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    locked_node = session.scalar(
+        select(WorkflowGraphNodeRun)
+        .where(WorkflowGraphNodeRun.id == node_run.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if locked_run is None or locked_node is None:
+        return False
+    session.refresh(run)
+    session.refresh(node_run)
+    return (
+        locked_run.status == WorkflowRunStatus.RUNNING
+        and locked_node.status == WorkflowNodeStatus.RUNNING
+        and locked_node.active_attempt_id == attempt_id
+    )
+
+
+def _call_node_provider(
+    session: Session,
+    *,
+    run: WorkflowGraphRun,
+    node_run: WorkflowGraphNodeRun,
+    provider_name: str,
+    request_json: dict[str, Any],
+    invoke: Callable[[], Any],
+) -> tuple[Any, bool]:
+    attempt_id = node_run.active_attempt_id
+    if not attempt_id:
+        raise BusinessValidationError("节点运行缺少 attempt token")
+    if not _advance_node_effect_phase(
+        session,
+        node_run=node_run,
+        attempt_id=attempt_id,
+        phase="prepared",
+    ):
+        return None, False
+    _notify_effect_phase("prepared", node_run)
+    request_hash = graph_provider_effect_request_hash(request_json)
+    if not ensure_graph_provider_effect_intent(
+        session,
+        node_run_id=node_run.id,
+        attempt_id=attempt_id,
+        request_hash=request_hash,
+        provider_name=provider_name,
+        request_json=request_json,
+    ):
+        return None, False
+    session.commit()
+    if not _advance_node_effect_phase(
+        session,
+        node_run=node_run,
+        attempt_id=attempt_id,
+        phase=WORKFLOW_PROVIDER_EFFECT_CALL_PHASE,
+    ):
+        return None, False
+    _notify_effect_phase("provider_call", node_run)
+    try:
+        result = invoke()
+    except GraphRunEffectCrash:
+        raise
+    except Exception:
+        mark_graph_run_provider_unknown(
+            session,
+            run_id=run.id,
+            node_run_id=node_run.id,
+            attempt_id=attempt_id,
+            detail=WORKFLOW_PROVIDER_EFFECT_UNKNOWN_DETAIL,
+        )
+        session.commit()
+        raise GraphRunProviderUnknown from None
+    _notify_effect_phase("provider_returned", node_run)
+    if not record_graph_provider_effect_result(
+        session,
+        node_run_id=node_run.id,
+        attempt_id=attempt_id,
+        provider_response_id=_provider_result_json(result).get("response_id"),
+        provider_status=_provider_result_json(result).get("provider_status"),
+        result_json=_provider_result_json(result) or None,
+    ):
+        return result, False
+    session.commit()
+    if not _advance_node_effect_phase(
+        session,
+        node_run=node_run,
+        attempt_id=attempt_id,
+        phase=WORKFLOW_PROVIDER_EFFECT_RESULT_PHASE,
+    ):
+        return result, False
+    _notify_effect_phase("provider_result_received", node_run)
+    return result, _attempt_may_promote(session, run=run, node_run=node_run, attempt_id=attempt_id)
+
+
 def _claim_queued_node_run(session: Session, node_run: WorkflowGraphNodeRun) -> bool:
+    now = now_utc()
+    attempt_id = str(uuid.uuid4())
     result = session.execute(
         update(WorkflowGraphNodeRun)
         .where(
             WorkflowGraphNodeRun.id == node_run.id,
             WorkflowGraphNodeRun.status == WorkflowNodeStatus.QUEUED,
         )
-        .values(status=WorkflowNodeStatus.RUNNING)
+        .values(
+            status=WorkflowNodeStatus.RUNNING,
+            active_attempt_id=attempt_id,
+            progress_phase="claimed",
+            progress_updated_at=now,
+            started_at=now,
+            failure_reason=None,
+        )
     )
     session.commit()
     session.refresh(node_run)
+    if result.rowcount == 1:
+        _notify_effect_phase("claimed", node_run)
     return result.rowcount == 1
 
 
@@ -1314,9 +1672,10 @@ def _complete_skipped_node_run(
     record = sources.get(node_run.node_id)
     if record is None or record.current_artifact_id is None or record.current_input_digest != input_digest:
         return False
+    _merge_compiled_context(node_run, trace)
     node_run.status = WorkflowNodeStatus.SUCCEEDED
     node_run.finished_at = now_utc()
-    node_run.compiled_context_json = trace
+    node_run.active_attempt_id = None
     node_run.output_json = {"artifact_id": record.current_artifact_id, "skipped": True}
     session.commit()
     return True
@@ -1330,6 +1689,16 @@ def _fail_claimed_node(session: Session, *, run_id: str, node_run_id: str, reaso
         return
     if node_run is None:
         _fail_run(session, run_id=run_id, reason=reason)
+        return
+    if node_run.progress_phase in {WORKFLOW_PROVIDER_EFFECT_CALL_PHASE, WORKFLOW_PROVIDER_EFFECT_RESULT_PHASE}:
+        mark_graph_run_provider_unknown(
+            session,
+            run_id=run_id,
+            node_run_id=node_run_id,
+            attempt_id=node_run.active_attempt_id,
+            detail=WORKFLOW_PROVIDER_EFFECT_UNKNOWN_DETAIL,
+        )
+        session.commit()
         return
     _fail_node_and_run(session, run=run, node_run=node_run, reason=reason)
 

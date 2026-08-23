@@ -355,3 +355,31 @@ def test_ensure_agent_workbench_api_creates_workspace_for_direct_created_product
     loaded = client.get(f"/api/v2/products/{product_id}/agent-workbench")
     assert loaded.status_code == 200, loaded.text
     assert loaded.json()["conversation"]["id"] == payload["conversation"]["id"]
+
+
+def test_ensure_agent_workbench_api_bootstraps_graph_product_without_get_409(configured_env) -> None:
+    from productflow_backend.infrastructure.db.session import get_session_factory
+    from productflow_backend.presentation.api import create_app
+
+    factory = get_session_factory()
+    with factory() as session:
+        created = create_product_with_direct_graph(
+            session,
+            name="首次确保工作台商品",
+            category=None,
+            price=None,
+            source_note=None,
+            image_uploads=[(_make_demo_image_bytes(), "reference.png", "image/png")],
+            image_types=[DirectCreateImageType(key="hero", quantity=1, order=0)],
+        )
+        product_id = created.product.id
+
+    client = TestClient(create_app())
+    _login(client)
+    first = client.post(
+        f"/api/v2/products/{product_id}/agent-workbench",
+        headers={"Idempotency-Key": f"agent-workbench:{product_id}"},
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["mode"] == "agent"
+    assert first.json()["graph"]["id"]

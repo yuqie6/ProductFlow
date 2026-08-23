@@ -179,7 +179,8 @@ def test_prompt_then_image_run_writes_artifacts_without_plan_keys(db_session) ->
     assert any(fact.get("value") == "运行演示商品" for fact in prompt_provider.requests[0].facts)
     assert "能上淘宝" in image_provider.requests[0].compiled_prompt
     assert NO_ON_IMAGE_TEXT_RULE in image_provider.requests[0].compiled_prompt
-    assert "原图贴字" in image_provider.requests[0].compiled_prompt or "只加一行字" in image_provider.requests[0].compiled_prompt
+    compiled_prompt = image_provider.requests[0].compiled_prompt
+    assert "原图贴字" in compiled_prompt or "只加一行字" in compiled_prompt
     assert "contract_version" in image_provider.requests[0].compiled_prompt
     assert "image_plan_key" not in image_provider.requests[0].compiled_prompt
     assert image_provider.requests[0].references
@@ -928,14 +929,14 @@ def test_failed_run_does_not_keep_executing_queued_nodes(db_session) -> None:
             ),
         ),
     )
-    assert submission.run.status == WorkflowRunStatus.FAILED
+    assert submission.run.status == WorkflowRunStatus.UNKNOWN
     image_ids = {
         node.id for node in created.projection.nodes if node.node_type == GraphNodeType.IMAGE_GENERATION
     }
     image_runs = [item for item in submission.run.node_runs if item.node_id in image_ids]
     assert len(image_runs) == 2
-    assert {item.status for item in image_runs} == {WorkflowNodeStatus.FAILED, WorkflowNodeStatus.QUEUED}
-    queued = next(item for item in image_runs if item.status == WorkflowNodeStatus.QUEUED)
+    assert {item.status for item in image_runs} == {WorkflowNodeStatus.UNKNOWN, WorkflowNodeStatus.FAILED}
+    leftover = next(item for item in image_runs if item.status == WorkflowNodeStatus.FAILED)
     execute_graph_run(
         submission.run.id,
         dependencies=WorkflowExecutionDependencies(
@@ -943,10 +944,10 @@ def test_failed_run_does_not_keep_executing_queued_nodes(db_session) -> None:
             image_provider_resolver=lambda: RecordingImageProvider(image_bytes),
         ),
     )
-    db_session.refresh(queued)
+    db_session.refresh(leftover)
     db_session.refresh(submission.run)
-    assert queued.status == WorkflowNodeStatus.QUEUED
-    assert submission.run.status == WorkflowRunStatus.FAILED
+    assert leftover.status == WorkflowNodeStatus.FAILED
+    assert submission.run.status == WorkflowRunStatus.UNKNOWN
 
 
 def test_duplicate_artifact_persist_does_not_crash_graph_run(db_session) -> None:

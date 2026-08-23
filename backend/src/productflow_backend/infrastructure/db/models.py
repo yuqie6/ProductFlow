@@ -2434,6 +2434,12 @@ class WorkflowGraphNodeRun(Base):
         ),
         CheckConstraint("sort_order >= 0", name="ck_workflow_graph_node_runs_non_negative_order"),
         CheckConstraint(f"status IN ({_GRAPH_NODE_RUN_STATUSES})", name="ck_workflow_graph_node_runs_status"),
+        CheckConstraint(
+            "progress_phase IS NULL OR progress_phase IN ("
+            "'claimed', 'prepared', 'provider_call', 'provider_result_received', "
+            "'unknown_provider_effect', 'requeued_after_idle')",
+            name="ck_workflow_graph_node_runs_progress_phase",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -2451,6 +2457,9 @@ class WorkflowGraphNodeRun(Base):
     compiled_context_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     output_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    active_attempt_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    progress_phase: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    progress_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -2461,6 +2470,64 @@ class WorkflowGraphNodeRun(Base):
         uselist=False,
         foreign_keys="WorkflowGraphArtifact.node_run_id",
     )
+    provider_effect: Mapped[WorkflowGraphProviderEffect | None] = relationship(
+        back_populates="node_run",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+
+
+class WorkflowGraphProviderEffect(Base, TimestampMixin):
+    """One provider request made while executing a schema-v3 graph node run."""
+
+    __tablename__ = "workflow_graph_provider_effects"
+    __table_args__ = (
+        UniqueConstraint("node_run_id", name="uq_workflow_graph_provider_effects_node_run_id"),
+        UniqueConstraint("operation_key", name="uq_workflow_graph_provider_effects_operation_key"),
+        CheckConstraint(
+            "effect_result IN ('pending', 'applied', 'failed', 'unknown')",
+            name="ck_workflow_graph_provider_effects_effect_result",
+        ),
+        CheckConstraint(
+            "reconciliation_state IN ('not_requested', 'applied', 'not_applied', 'unknown', 'unsupported')",
+            name="ck_workflow_graph_provider_effects_reconciliation_state",
+        ),
+        CheckConstraint(
+            "length(request_hash) = 64",
+            name="ck_workflow_graph_provider_effects_request_hash",
+        ),
+        Index(
+            "ix_workflow_graph_provider_effects_reconciliation",
+            "effect_result",
+            "reconciliation_state",
+            "updated_at",
+            "id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    node_run_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey(
+            "workflow_graph_node_runs.id",
+            ondelete="CASCADE",
+            name="fk_workflow_graph_provider_effects_node_run_id",
+        ),
+    )
+    operation_key: Mapped[str] = mapped_column(String(255))
+    effect_kind: Mapped[str] = mapped_column(String(80), default="workflow_graph_generation")
+    request_hash: Mapped[str] = mapped_column(String(64))
+    provider_name: Mapped[str] = mapped_column(String(80))
+    attempt_id: Mapped[str] = mapped_column(String(36))
+    effect_result: Mapped[str] = mapped_column(String(20), default="pending")
+    reconciliation_state: Mapped[str] = mapped_column(String(20), default="not_requested")
+    provider_response_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    provider_status: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    request_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    result_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    node_run: Mapped[WorkflowGraphNodeRun] = relationship(back_populates="provider_effect")
 
 
 class WorkflowGraphArtifact(Base):

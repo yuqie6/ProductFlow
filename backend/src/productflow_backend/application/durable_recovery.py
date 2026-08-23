@@ -8,6 +8,12 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session, selectinload
 
+from productflow_backend.application.product_workflow.graph_provider_effects import (
+    load_node_run_effect,
+    mark_graph_run_provider_unknown,
+    node_run_effect_is_safe_to_requeue,
+    reset_graph_node_run_for_safe_requeue,
+)
 from productflow_backend.application.runtime_settings import get_runtime_settings
 from productflow_backend.domain.durable_generation_tasks import (
     DELIVERY_RENDITION_TASK_CONTRACT,
@@ -15,10 +21,11 @@ from productflow_backend.domain.durable_generation_tasks import (
     IMAGE_SESSION_GENERATION_TASK_CONTRACT,
     IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_DETAIL,
     IMAGE_SESSION_PROVIDER_EFFECT_UNKNOWN_PHASE,
+    WORKFLOW_PROVIDER_EFFECT_UNKNOWN_DETAIL,
     WorkflowRunDeliveryState,
     classify_workflow_run_delivery,
 )
-from productflow_backend.domain.enums import JobStatus, WorkflowNodeStatus
+from productflow_backend.domain.enums import JobStatus
 from productflow_backend.infrastructure.db.models import (
     DeliveryRenditionJob,
     ImageSessionGenerationTask,
@@ -41,6 +48,11 @@ def _as_aware_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
     return value
+
+
+def _graph_node_heartbeat(node_run) -> datetime:
+    stamp = node_run.progress_updated_at or node_run.started_at
+    return _as_aware_utc(stamp)
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +99,7 @@ def recover_unfinished_workflow_runs(
     runs_to_enqueue: list[str] = []
     queued_runs = 0
     stale_running_runs = 0
+    unknown_runs = 0
 
     try:
         runs = list(
@@ -138,7 +151,7 @@ def recover_unfinished_workflow_runs(
             stale_node_runs = [
                 node_run
                 for node_run in running_node_runs
-                if node_run.started_at is not None and _as_aware_utc(node_run.started_at) <= cutoff
+                if _graph_node_heartbeat(node_run) <= cutoff
             ]
             if not reset_stale_running or not stale_node_runs:
                 continue
@@ -155,22 +168,39 @@ def recover_unfinished_workflow_runs(
                 node_run
                 for node_run in locked_run.node_runs
                 if GRAPH_RUN_GENERATION_TASK_CONTRACT.execution_is_running(node_run.status)
-                and node_run.started_at is not None
-                and _as_aware_utc(node_run.started_at) <= cutoff
+                and _graph_node_heartbeat(node_run) <= cutoff
             ]
             if not locked_stale_node_runs:
                 session.rollback()
                 continue
+            marked_unknown = False
+            safe_requeued = False
             for stale_node_run in sorted(locked_stale_node_runs, key=lambda item: (item.node_id or "", item.id)):
-                stale_node_run.status = WorkflowNodeStatus.QUEUED
-                stale_node_run.failure_reason = None
-                stale_node_run.finished_at = None
+                effect = load_node_run_effect(session, stale_node_run.id)
+                if node_run_effect_is_safe_to_requeue(stale_node_run, effect):
+                    reset_graph_node_run_for_safe_requeue(session, stale_node_run)
+                    safe_requeued = True
+                    continue
+                mark_graph_run_provider_unknown(
+                    session,
+                    run_id=locked_run.id,
+                    node_run_id=stale_node_run.id,
+                    attempt_id=stale_node_run.active_attempt_id,
+                    detail=WORKFLOW_PROVIDER_EFFECT_UNKNOWN_DETAIL,
+                )
+                marked_unknown = True
+                break
+            if marked_unknown:
+                session.commit()
+                unknown_runs += 1
+                continue
             locked_run.failure_reason = None
             if stage_dispatch is not None:
                 stage_dispatch(session, run_id)
             session.commit()
-            stale_running_runs += 1
-            runs_to_enqueue.append(run_id)
+            if safe_requeued:
+                stale_running_runs += 1
+                runs_to_enqueue.append(run_id)
     except Exception:
         session.rollback()
         logger.exception("恢复滞留工作流运行时读取数据库失败")
@@ -189,18 +219,19 @@ def recover_unfinished_workflow_runs(
             except Exception:
                 logger.exception("恢复滞留工作流运行入队失败: workflow_run_id=%s", run_id)
 
-    if runs_to_enqueue:
+    if runs_to_enqueue or unknown_runs:
         logger.info(
-            "已恢复滞留工作流运行: queued=%s stale_running=%s enqueued=%s",
+            "已恢复滞留工作流运行: queued=%s stale_running=%s unknown=%s enqueued=%s",
             queued_runs,
             stale_running_runs,
+            unknown_runs,
             enqueued_runs,
         )
     return WorkflowRunRecoverySummary(
         queued_runs=queued_runs,
         stale_running_runs=stale_running_runs,
         enqueued_runs=enqueued_runs,
-        unknown_runs=0,
+        unknown_runs=unknown_runs,
     )
 
 

@@ -33,6 +33,28 @@ export function isAgentWorkbenchMissing(error: unknown): boolean {
   return isHttpErrorStatus(error, 409);
 }
 
+export function loadProductWorkbenchAgent(
+  loaders: {
+    getAgentWorkbench: (
+      productId: string,
+      agentSessionId?: string | null,
+      agentTaskId?: string | null,
+    ) => Promise<AgentWorkbenchBootstrap>;
+    ensureAgentWorkbench: (
+      productId: string,
+      agentSessionId?: string | null,
+    ) => Promise<AgentWorkbenchBootstrap>;
+  },
+  productId: string,
+  agentSessionId?: string | null,
+  agentTaskId?: string | null,
+): Promise<AgentWorkbenchBootstrap> {
+  if (agentTaskId) {
+    return loaders.getAgentWorkbench(productId, agentSessionId, agentTaskId);
+  }
+  return loaders.ensureAgentWorkbench(productId, agentSessionId);
+}
+
 export async function readWorkflowGraphOrNull(
   load: () => Promise<GraphProjection>,
 ): Promise<GraphProjection | null> {

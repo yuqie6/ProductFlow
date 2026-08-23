@@ -47,19 +47,13 @@ from productflow_backend.infrastructure.agent_service import AgentServiceToolSte
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
     AgentWorkflowRunRequest,
+    AsyncDispatch,
     WorkflowGraphRun,
 )
 
 
-def _silence_graph_run_enqueue(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "productflow_backend.application.agent.workflow_run_requests.enqueue_graph_run",
-        lambda run_id: None,
-    )
-    monkeypatch.setattr(
-        "productflow_backend.application.product_workflow.graph_runs.enqueue_graph_run",
-        lambda run_id: None,
-    )
+def _silence_graph_run_enqueue(_monkeypatch) -> None:
+    return
 
 
 def test_global_agent_can_inspect_recent_runs_for_selected_workflows(db_session, monkeypatch) -> None:
@@ -592,11 +586,7 @@ def _create_v3_requestable_workspace(
     return workspace, persisted.graph
 
 
-def test_agent_workflow_run_request_confirms_v3_graph(db_session, monkeypatch) -> None:
-    monkeypatch.setattr(
-        "productflow_backend.application.agent.workflow_run_requests.enqueue_graph_run",
-        lambda run_id: None,
-    )
+def test_agent_workflow_run_request_confirms_v3_graph(db_session) -> None:
     workspace, graph = _create_v3_requestable_workspace(db_session)
     prepared = prepare_agent_workflow_run_request(
         db_session,
@@ -630,6 +620,11 @@ def test_agent_workflow_run_request_confirms_v3_graph(db_session, monkeypatch) -
     assert graph_run is not None
     assert graph_run.status == WorkflowRunStatus.RUNNING
     assert graph_run.graph_id == graph.id
+    dispatch = db_session.scalar(
+        select(AsyncDispatch).where(AsyncDispatch.aggregate_id == graph_run.id)
+    )
+    assert dispatch is not None
+    assert dispatch.status.value == "pending"
 
 
 def test_list_agent_workflow_runs_returns_v3_graph_runs(db_session) -> None:

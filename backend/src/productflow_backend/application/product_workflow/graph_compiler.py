@@ -507,6 +507,47 @@ def snapshot_graph(
     }
 
 
+def graph_snapshot_node_title(snapshot: dict[str, Any], node_id: str | None) -> str | None:
+    if not node_id:
+        return None
+    for node in snapshot.get("nodes") or ():
+        if not isinstance(node, dict) or node.get("id") != node_id:
+            continue
+        title = node.get("title")
+        if isinstance(title, str) and title.strip():
+            return title
+        return None
+    return None
+
+
+def graph_snapshot_input_trace(snapshot: dict[str, Any], node_id: str | None) -> list[dict[str, Any]]:
+    if not node_id:
+        return []
+    titles = {
+        node.get("id"): node.get("title")
+        for node in snapshot.get("nodes") or ()
+        if isinstance(node, dict)
+    }
+    entries: list[dict[str, Any]] = []
+    for edge in snapshot.get("edges") or ():
+        if not isinstance(edge, dict) or edge.get("target_node_id") != node_id:
+            continue
+        source_id = edge.get("source_node_id")
+        title = titles.get(source_id)
+        order = edge.get("order") or 0
+        entries.append(
+            {
+                "edge_id": str(edge.get("id") or ""),
+                "source_node_id": str(source_id) if source_id else None,
+                "source_title": title if isinstance(title, str) and title.strip() else None,
+                "role": str(edge.get("role") or ""),
+                "order": int(order) if isinstance(order, int) else 0,
+            }
+        )
+    entries.sort(key=lambda item: (item["order"], item["edge_id"]))
+    return entries
+
+
 def applied_graph_from_snapshot(payload: dict[str, Any]) -> AppliedGraph:
     from productflow_backend.domain.enums import GraphEdgeDataType, GraphEdgeRole
 

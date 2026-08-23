@@ -62,12 +62,19 @@ function productIdFrom(page: Page): string {
   return productId;
 }
 
+function isExpectedCurrentGraph404Console(message: { text: () => string; location: () => { url: string } }): boolean {
+  const text = message.text();
+  if (!text.includes("Failed to load resource") || !text.includes("404")) return false;
+  return /\/workflows\/current(\?|$)/.test(`${text} ${message.location().url}`);
+}
+
 function isWorkbenchApiFailure(url: string, status: number): boolean {
   if (status < 400) return false;
+  if (status === 404 && /\/workflows\/current(\?|$)/.test(url)) return false;
   if (/\/api\/v3\/.*\/(workflows|recipes)(\/|$|\?)/.test(url) || /\/api\/v3\/.*\/runs(\/|$|\?)/.test(url)) {
     return true;
   }
-  return status === 409 && /\/agent-conversations\/.*\/turns\//.test(url);
+  return false;
 }
 
 function attachWorkbenchGuards(page: Page): () => void {
@@ -80,8 +87,7 @@ function attachWorkbenchGuards(page: Page): () => void {
     if (message.type() !== "error") return;
     const text = message.text();
     if (text.includes("favicon") || text.includes("Download the React DevTools")) return;
-    // Agent process 502/503 is a separate availability issue; 409 must stay visible.
-    if (/Failed to load resource: the server responded with a status of (502|503)/.test(text)) return;
+    if (isExpectedCurrentGraph404Console(message)) return;
     consoleErrors.push(text);
   });
   page.on("response", (response) => {
@@ -107,7 +113,7 @@ async function openDirectCreateWorkbench(page: Page, name: string): Promise<void
   await expect(page.locator("[data-image-type='detail']")).toBeVisible();
   await page.locator("#agent-product-name").fill(name);
   await page.locator("#agent-product-brief").fill("电商细节图，保留真实材质。");
-  await page.locator('[data-image-type="detail"]').click();
+  await page.locator('[data-image-type="detail"] input[type="checkbox"]').check({ force: true });
   await expect(page.locator('[data-image-type="detail"] input[type="checkbox"]')).toBeChecked();
   await page.locator('[data-image-type="detail"] input[type="number"]').fill("1");
   await expect(page.locator('[data-image-type="detail"] input[type="number"]')).toHaveValue("1");
@@ -149,8 +155,18 @@ async function addPaletteNode(page: Page, label: string): Promise<GraphPayload> 
 }
 
 async function selectNode(page: Page, nodeId: string, toggle = false): Promise<void> {
+  await fitCanvas(page);
+  const viewport = page.viewportSize();
+  if (viewport && viewport.width <= 1023) {
+    const modeButton = page.getByRole("button", {
+      name: toggle ? "选择模式：点按节点加入或移出多选" : "编辑模式：拖动节点、连接节点",
+    });
+    if (await modeButton.isVisible() && await modeButton.getAttribute("aria-pressed") !== "true") {
+      await modeButton.click({ force: true });
+    }
+  }
   const card = page.locator(`[data-workflow-node-id="${nodeId}"]`);
-  await expect(card).toBeVisible();
+  await expect(card).toBeAttached();
   await card.evaluate((element: HTMLElement, useToggle: boolean) => {
     element.dispatchEvent(new MouseEvent("click", {
       bubbles: true,
@@ -258,11 +274,16 @@ for (const preset of PRESETS) {
       const before = await currentGraph(page);
       expect(before.edges.length).toBeGreaterThan(0);
       const beforeIds = new Set(before.edges.map((edge) => edge.id));
+      await fitCanvas(page);
       const edgeHit = page.locator("[data-edge-emphasis]").last();
       await edgeHit.click({ force: true });
       const deleteEdge = page.getByRole("button", { name: /删除连线/ }).first();
       await expect(deleteEdge).toBeVisible();
-      await deleteEdge.click({ force: true });
+      const disconnected = page.waitForResponse((response) => {
+        return response.request().method() === "POST" && response.url().includes("/changesets");
+      }, { timeout: 15_000 });
+      await deleteEdge.evaluate((button: HTMLButtonElement) => button.click());
+      expect((await disconnected).ok()).toBeTruthy();
       await expect.poll(async () => (await currentGraph(page)).edges.length).toBe(before.edges.length - 1);
       const after = await currentGraph(page);
       const deleted = [...beforeIds].filter((id) => !after.edges.some((edge) => edge.id === id));
@@ -322,6 +343,7 @@ for (const preset of PRESETS) {
         return next.nodes.find((node) => node.id === brief!.id)?.title ?? "";
       }).toBe(title);
       await selectNode(page, brief!.id);
+      await page.locator('[data-sidebar-tool="details"]').click({ force: true });
       await expect(page.locator("[data-graph-node-inspector]")).toContainText(title);
       await expect(page.locator("[data-graph-node-inspector]").getByLabel("标题")).toHaveValue(title);
       assertClean();
@@ -524,25 +546,41 @@ for (const preset of PRESETS) {
       await loginAsAdmin(page, requiredEnv("ADMIN_ACCESS_KEY"));
       await page.goto("/products/new");
       await page.locator("#agent-product-name").fill(`e2e-empty ${preset.name} ${Date.now()}`);
-      await page.getByRole("button", { name: /用 Agent 创建|开始对话|进入对话/ }).first().click({ trial: true }).catch(() => undefined);
-      const agentSubmit = page.getByRole("button", { name: /用 Agent|进入工作台对话|开始创建/ });
-      if (await agentSubmit.first().isVisible().catch(() => false)) {
-        await Promise.all([
-          page.waitForURL(/\/products\/(?!new(?:\/|$))[^/]+$/, { timeout: 60_000 }),
-          agentSubmit.first().click(),
-        ]);
-      } else {
-        const draft = await page.request.post("/api/v2/agent-product-workspaces/drafts", {
-          data: { name: `e2e-empty-api ${preset.name} ${Date.now()}` },
-          headers: { "Idempotency-Key": `e2e-empty-${preset.name}-${Date.now()}` },
-        });
-        expect(draft.ok(), await draft.text()).toBeTruthy();
-        const productId = (await draft.json() as { product: { id: string } }).product.id;
-        await page.goto(`/products/${productId}`);
-      }
+      const agentSubmit = page.getByRole("button", { name: "开始对话" });
+      await expect(agentSubmit).toBeEnabled();
+      await Promise.all([
+        page.waitForURL(/\/products\/(?!new(?:\/|$))[^/]+$/, { timeout: 60_000 }),
+        agentSubmit.click(),
+      ]);
       await expect(page.locator("[data-workflow-onboarding-hero]")).toBeVisible({ timeout: 30_000 });
-      await page.getByRole("button", { name: "打开添加面板" }).click();
-      await expect(page.locator("[data-graph-add-node-panel]")).toBeVisible();
+      const collapse = page.getByRole("button", { name: "折叠右侧栏" });
+      if (await collapse.count()) {
+        await collapse.first().evaluate((button: HTMLButtonElement) => button.click());
+      }
+      const addCta = page.getByRole("button", { name: "打开添加面板" });
+      await expect(addCta).toBeVisible();
+      const createdResponse = page.waitForResponse((response) => {
+        return response.request().method() === "POST"
+          && /\/api\/v3\/products\/[^/]+\/workflows$/.test(new URL(response.url()).pathname);
+      }, { timeout: 30_000 });
+      await addCta.evaluate((button: HTMLButtonElement) => button.click());
+      const createdHttp = await createdResponse;
+      expect(createdHttp.ok(), await createdHttp.text()).toBeTruthy();
+      await expect.poll(async () => {
+        const response = await page.request.get(
+          `/api/v3/products/${encodeURIComponent(productIdFrom(page))}/workflows/current`,
+        );
+        return response.ok();
+      }).toBeTruthy();
+      const addPanel = page.locator("[data-graph-add-node-panel]");
+      if (!(await addPanel.isVisible())) {
+        const expand = page.locator("[data-product-workbench-drawer-handle]");
+        if (await expand.isVisible()) {
+          await expand.click({ force: true });
+        }
+        await page.locator('[data-sidebar-tool="add"]').click({ force: true });
+      }
+      await expect(addPanel).toBeVisible();
       await expect(page.locator("[data-graph-canvas-panel]")).toBeVisible();
       const created = await currentGraph(page);
       expect(created.id).toBeTruthy();

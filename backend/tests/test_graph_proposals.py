@@ -4,9 +4,11 @@ import pytest
 from helpers import _make_demo_image_bytes
 
 from productflow_backend.application.agent.tools import (
+    APPLY_GRAPH_TOOL_NAME,
     apply_agent_graph_change_set_tool,
     get_agent_contract,
     propose_agent_graph_change_set_tool,
+    reconcile_agent_graph_change_set_tool,
     validate_agent_workflow_draft,
 )
 from productflow_backend.application.agent.workbenches import ensure_agent_workbench_bootstrap
@@ -23,8 +25,9 @@ from productflow_backend.application.product_workflow.graph_proposals import (
 )
 from productflow_backend.application.product_workflow.graph_queries import project_workflow_graph
 from productflow_backend.application.product_workflow.graph_template import DirectCreateImageType
-from productflow_backend.domain.enums import GraphActorType, GraphNodeType
+from productflow_backend.domain.enums import AgentToolMutationStatus, GraphActorType, GraphNodeType
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError
+from productflow_backend.infrastructure.db.models import AgentToolMutation
 
 
 def _live_workbench(db_session):
@@ -69,6 +72,7 @@ def test_single_agent_edit_applies_through_graph_command_and_undoes(db_session) 
     result = apply_agent_graph_change_set_tool(
         db_session,
         conversation_id=bootstrap.conversation.id,
+        idempotency_key="apply-rename-1",
         change_set={
             "base_graph_revision": created.graph.revision,
             "summary": "改提示词标题",
@@ -94,6 +98,7 @@ def test_multi_node_proposal_is_unapplied_until_confirm_and_discard_leaves_zero(
     proposed = propose_agent_graph_change_set_tool(
         db_session,
         conversation_id=bootstrap.conversation.id,
+        idempotency_key="propose-batch-1",
         change_set={
             "base_graph_revision": created.graph.revision,
             "summary": "批量改名",
@@ -125,6 +130,7 @@ def test_multi_node_proposal_is_unapplied_until_confirm_and_discard_leaves_zero(
     proposed_again = propose_agent_graph_change_set_tool(
         db_session,
         conversation_id=bootstrap.conversation.id,
+        idempotency_key="propose-batch-2",
         change_set={
             "base_graph_revision": created.graph.revision,
             "summary": "再次批量改名",
@@ -165,6 +171,7 @@ def test_concurrent_same_node_write_returns_structured_conflict(db_session) -> N
         apply_agent_graph_change_set_tool(
             db_session,
             conversation_id=bootstrap.conversation.id,
+            idempotency_key="apply-stale-1",
             change_set={
                 "base_graph_revision": base_revision,
                 "summary": "Agent 后写",
@@ -183,6 +190,7 @@ def test_agent_immediate_apply_rejects_multi_operation_change_set(db_session) ->
         apply_agent_graph_change_set_tool(
             db_session,
             conversation_id=bootstrap.conversation.id,
+            idempotency_key="apply-multi-1",
             change_set={
                 "base_graph_revision": created.graph.revision,
                 "summary": "一次改两个标题",
@@ -195,3 +203,99 @@ def test_agent_immediate_apply_rejects_multi_operation_change_set(db_session) ->
     live = load_applied_graph(db_session, created.graph)
     assert live.node(prompt.id).title == prompt.title
     assert live.node(image.id).title == image.title
+
+
+def test_agent_graph_apply_replays_same_idempotency_key(db_session) -> None:
+    created, bootstrap = _live_workbench(db_session)
+    prompt = next(node for node in created.projection.nodes if node.node_type == GraphNodeType.PROMPT_GENERATION)
+    change_set = {
+        "base_graph_revision": created.graph.revision,
+        "summary": "幂等改名",
+        "operations": [{"op": "rename_node", "node_ref": prompt.id, "title": "幂等标题"}],
+    }
+    first = apply_agent_graph_change_set_tool(
+        db_session,
+        conversation_id=bootstrap.conversation.id,
+        idempotency_key="apply-replay-1",
+        change_set=change_set,
+    )
+    second = apply_agent_graph_change_set_tool(
+        db_session,
+        conversation_id=bootstrap.conversation.id,
+        idempotency_key="apply-replay-1",
+        change_set=change_set,
+    )
+    assert second == first
+    live = load_applied_graph(db_session, created.graph)
+    assert live.node(prompt.id).title == "幂等标题"
+    assert live.revision == first["revision"]
+
+
+def test_agent_graph_apply_rejects_different_request_hash(db_session) -> None:
+    created, bootstrap = _live_workbench(db_session)
+    prompt = next(node for node in created.projection.nodes if node.node_type == GraphNodeType.PROMPT_GENERATION)
+    apply_agent_graph_change_set_tool(
+        db_session,
+        conversation_id=bootstrap.conversation.id,
+        idempotency_key="apply-hash-1",
+        change_set={
+            "base_graph_revision": created.graph.revision,
+            "summary": "第一次改名",
+            "operations": [{"op": "rename_node", "node_ref": prompt.id, "title": "第一次"}],
+        },
+    )
+    with pytest.raises(ConflictError, match="同一工具 idempotency key"):
+        apply_agent_graph_change_set_tool(
+            db_session,
+            conversation_id=bootstrap.conversation.id,
+            idempotency_key="apply-hash-1",
+            change_set={
+                "base_graph_revision": created.graph.revision + 1,
+                "summary": "第二次改名",
+                "operations": [{"op": "rename_node", "node_ref": prompt.id, "title": "第二次"}],
+            },
+        )
+
+
+def test_agent_graph_apply_unknown_is_queryable_by_key(db_session) -> None:
+    created, bootstrap = _live_workbench(db_session)
+    prompt = next(node for node in created.projection.nodes if node.node_type == GraphNodeType.PROMPT_GENERATION)
+    change_set = {
+        "base_graph_revision": created.graph.revision,
+        "summary": "未知结果",
+        "operations": [{"op": "rename_node", "node_ref": prompt.id, "title": "未知标题"}],
+    }
+    apply_agent_graph_change_set_tool(
+        db_session,
+        conversation_id=bootstrap.conversation.id,
+        idempotency_key="apply-unknown-1",
+        change_set=change_set,
+    )
+    from sqlalchemy import select
+
+    mutation = db_session.scalar(
+        select(AgentToolMutation).where(
+            AgentToolMutation.conversation_id == bootstrap.conversation.id,
+            AgentToolMutation.tool_name == APPLY_GRAPH_TOOL_NAME,
+            AgentToolMutation.idempotency_key == "apply-unknown-1",
+        )
+    )
+    assert mutation is not None
+    mutation.status = AgentToolMutationStatus.UNKNOWN
+    mutation.result_json = None
+    db_session.commit()
+    with pytest.raises(ConflictError, match="副作用账本"):
+        apply_agent_graph_change_set_tool(
+            db_session,
+            conversation_id=bootstrap.conversation.id,
+            idempotency_key="apply-unknown-1",
+            change_set=change_set,
+        )
+    reconciled = reconcile_agent_graph_change_set_tool(
+        db_session,
+        conversation_id=bootstrap.conversation.id,
+        idempotency_key="apply-unknown-1",
+        change_set=change_set,
+        tool_name=APPLY_GRAPH_TOOL_NAME,
+    )
+    assert reconciled.state == "unknown"

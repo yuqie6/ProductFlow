@@ -5,6 +5,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from productflow_backend.application.product_workflow.graph_compiler import (
+    graph_snapshot_input_trace,
+    graph_snapshot_node_title,
+)
 from productflow_backend.application.product_workflow.graph_proposals import GraphProposalView
 from productflow_backend.application.product_workflow.graph_queries import (
     GraphEdgeSummary,
@@ -431,14 +435,26 @@ class GraphRunRequest(BaseModel):
     node_id: str | None = None
 
 
+class GraphRunInputTraceEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    edge_id: str
+    source_node_id: str | None = None
+    source_title: str | None = None
+    role: str
+    order: int = 0
+
+
 class GraphNodeRunResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
     node_id: str | None
+    node_title: str | None = None
     status: WorkflowNodeStatus
     sort_order: int
     compiled_context: dict | None = None
+    input_trace: list[GraphRunInputTraceEntry] = []
     output: dict | None = None
     failure_reason: str | None = None
     started_at: str
@@ -469,6 +485,7 @@ class GraphRunListResponse(BaseModel):
 
 def serialize_graph_run(run: WorkflowGraphRun) -> GraphRunResponse:
     node_runs = sorted(run.node_runs, key=lambda item: (item.sort_order, item.id))
+    snapshot = run.snapshot_json if isinstance(run.snapshot_json, dict) else {}
     return GraphRunResponse(
         id=run.id,
         graph_id=run.graph_id,
@@ -478,19 +495,33 @@ def serialize_graph_run(run: WorkflowGraphRun) -> GraphRunResponse:
         graph_revision=run.graph_revision,
         failure_reason=run.failure_reason,
         is_retryable=run.is_retryable,
-        node_runs=[_serialize_node_run(item) for item in node_runs],
+        node_runs=[_serialize_node_run(item, snapshot) for item in node_runs],
         started_at=run.started_at.isoformat(),
         finished_at=run.finished_at.isoformat() if run.finished_at else None,
     )
 
 
-def _serialize_node_run(node_run: WorkflowGraphNodeRun) -> GraphNodeRunResponse:
+def _serialize_node_run(node_run: WorkflowGraphNodeRun, snapshot: dict) -> GraphNodeRunResponse:
+    compiled = node_run.compiled_context_json if isinstance(node_run.compiled_context_json, dict) else {}
+    node_title = compiled.get("node_title")
+    if not isinstance(node_title, str) or not node_title.strip():
+        node_title = graph_snapshot_node_title(snapshot, node_run.node_id)
+    raw_trace = compiled.get("input_trace")
+    if not isinstance(raw_trace, list) or not raw_trace:
+        raw_trace = graph_snapshot_input_trace(snapshot, node_run.node_id)
+    input_trace = [
+        GraphRunInputTraceEntry.model_validate(item)
+        for item in raw_trace
+        if isinstance(item, dict)
+    ]
     return GraphNodeRunResponse(
         id=node_run.id,
         node_id=node_run.node_id,
+        node_title=node_title,
         status=WorkflowNodeStatus(node_run.status),
         sort_order=node_run.sort_order,
         compiled_context=node_run.compiled_context_json,
+        input_trace=input_trace,
         output=node_run.output_json,
         failure_reason=node_run.failure_reason,
         started_at=node_run.started_at.isoformat(),

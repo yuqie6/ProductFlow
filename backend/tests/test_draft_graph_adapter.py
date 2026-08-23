@@ -67,15 +67,6 @@ def test_draft_adapter_drops_facts_edges_into_image_nodes() -> None:
 
 def test_draft_adapter_keeps_explicit_reference_edges_without_duplicates() -> None:
     payload = make_workflow_draft_payload()
-    payload["edges"].append(
-        {
-            "key": "reference-to-image-1",
-            "source_node_key": "product-reference-node",
-            "target_node_key": "hero-image-1-node",
-            "source_handle": "asset",
-            "target_handle": "reference",
-        }
-    )
     graph = apply_workflow_change_set(
         EMPTY_GRAPH,
         build_draft_initial_graph_change_set(

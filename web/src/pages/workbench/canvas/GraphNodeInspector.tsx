@@ -52,7 +52,7 @@ import {
 import { DeliveryRenditionPanel } from "./DeliveryRenditionPanel";
 import { graphEdgeRoleLabelKey, graphNodeConfigFields } from "./graphCatalog";
 import { graphNodeTitleKey } from "./graphLayout";
-import { graphContextEntries, graphIncomingSourceEntries, graphNodeRunPresentations, graphRunsAreLive } from "./graphRunDisplay";
+import { graphContextEntries, graphIncomingSourceEntries, graphNodeRunPresentations, graphRunInputTraceEntries, graphRunsAreLive } from "./graphRunDisplay";
 import {
   graphProductSourceConfig,
   graphProductSourceDraft,
@@ -1024,16 +1024,37 @@ function RuntimeInputList({
   lastRun: GraphNodeRun | null;
 }) {
   const { t } = useI18n();
-  const sources = graphIncomingSourceEntries(node, graph);
+  const currentSources = graphIncomingSourceEntries(node, graph);
+  const historicalSources = lastRun ? graphRunInputTraceEntries(lastRun) : [];
   const technical = graphContextEntries(lastRun?.compiled_context ?? null);
   return (
     <section className="config-bubble rounded-2xl p-4 shadow-sm" data-graph-runtime-inputs>
-      <h4 className="text-xs font-semibold text-zinc-800 dark:text-slate-100">{t("graph.inspector.runtimeInputs")}</h4>
-      {sources.length === 0 ? (
-        <p className="mt-2 text-xs text-zinc-500 dark:text-slate-400">{t("graph.inspector.inputsEmpty")}</p>
+      <h4 className="text-xs font-semibold text-zinc-800 dark:text-slate-100">{t("graph.inspector.currentWiring")}</h4>
+      {currentSources.length === 0 ? (
+        <p className="mt-2 text-xs text-zinc-500 dark:text-slate-400">{t("graph.inspector.currentWiringEmpty")}</p>
       ) : (
-        <ul className="mt-2 space-y-1">
-          {sources.map((item) => {
+        <ul data-graph-current-wiring className="mt-2 space-y-1">
+          {currentSources.map((item) => {
+            const roleKey = graphEdgeRoleLabelKey(item.role);
+            return (
+              <li key={item.id} className="flex min-w-0 items-center justify-between gap-2 px-2.5 py-1.5">
+                <span className="min-w-0 truncate text-xs font-medium text-zinc-800 dark:text-slate-100">
+                  {item.title || t("graph.runs.deletedNode")}
+                </span>
+                <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-slate-800 dark:text-slate-300">
+                  {roleKey ? t(roleKey) : item.role}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <h4 className="mt-4 text-xs font-semibold text-zinc-800 dark:text-slate-100">{t("graph.inspector.runtimeInputs")}</h4>
+      {historicalSources.length === 0 ? (
+        <p className="mt-2 text-xs text-zinc-500 dark:text-slate-400">{t("graph.inspector.runtimeInputsEmpty")}</p>
+      ) : (
+        <ul data-graph-run-inputs className="mt-2 space-y-1">
+          {historicalSources.map((item) => {
             const roleKey = graphEdgeRoleLabelKey(item.role);
             return (
               <li key={item.id} className="flex min-w-0 items-center justify-between gap-2 px-2.5 py-1.5">

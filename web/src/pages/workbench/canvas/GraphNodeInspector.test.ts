@@ -325,6 +325,14 @@ describe("GraphNodeInspector", () => {
           node_id: "image",
           status: "succeeded",
           sort_order: 0,
+          node_title: "主图 1",
+          input_trace: [{
+            edge_id: "edge-1",
+            source_node_id: "brief",
+            source_title: "创作要求",
+            role: "brief",
+            order: 0,
+          }],
           compiled_context: {
             incoming_edge_ids: ["edge-1"],
             fact_count: 2,
@@ -340,8 +348,10 @@ describe("GraphNodeInspector", () => {
     });
     const markup = renderInspector(graph.nodes.find((item) => item.id === "image") ?? null, client);
     const firstScreen = markup.split("data-graph-runtime-inputs-technical")[0];
+    expect(firstScreen).toContain("当前连线");
     expect(firstScreen).toContain("实际运行输入");
     expect(firstScreen).toContain("data-graph-runtime-inputs");
+    expect(firstScreen).toContain("data-graph-current-wiring");
     expect(firstScreen).toContain("创作要求");
     expect(firstScreen).not.toContain("asset-a");
     expect(firstScreen).not.toContain("deadbeef");

@@ -873,8 +873,22 @@ function createApplyGraphChangeSetTool(runtime: ToolRuntime): ToolDefinition {
     description:
       "Apply one reversible Graph Command to the live schema-v3 graph. operations must contain exactly one edit such as updating one node, connecting or disconnecting one edge, or renaming. Do not use this for multi-node reconstructs or bulk deletes.",
     parameters: applyGraphChangeSetParameters,
-    execute: async (_toolCallID: string, params: { base_graph_revision: number; summary: string; operations: object[] }): Promise<Result> =>
-      textResult(await runtime.client.applyGraphChangeSet(runtime.scope.conversation_id, params as JsonObject, runtime.signal)),
+    execute: async (toolCallID: string, params: { base_graph_revision: number; summary: string; operations: object[] }): Promise<Result> =>
+      executeGraphMutationTool(runtime, {
+        toolCallID,
+        toolName: "apply_graph_change_set_v1",
+        params: params as JsonObject,
+        mutate: (idempotencyKey) =>
+          runtime.client.applyGraphChangeSet(runtime.scope.conversation_id, params as JsonObject, idempotencyKey, runtime.signal),
+        reconcile: (idempotencyKey) =>
+          runtime.client.reconcileApplyGraphChangeSet(
+            runtime.scope.conversation_id,
+            params as JsonObject,
+            idempotencyKey,
+            runtime.signal,
+          ),
+        unknownReason: "Graph apply result is unknown",
+      }),
   });
 }
 
@@ -885,11 +899,115 @@ function createProposeGraphChangeSetTool(runtime: ToolRuntime): ToolDefinition {
     description:
       "Store an unapplied GraphProposal overlay on the live canvas. Use for multi-node reconstructs, bulk deletes, or preset overlays. The proposal cannot run. The user confirms or discards it on the canvas.",
     parameters: proposeGraphChangeSetParameters,
-    execute: async (_toolCallID: string, params: { base_graph_revision: number; summary: string; operations: object[] }): Promise<Result> =>
-      textResult(await runtime.client.proposeGraphChangeSet(runtime.scope.conversation_id, params as JsonObject, runtime.signal), {
-        pending_confirmation: true,
+    execute: async (toolCallID: string, params: { base_graph_revision: number; summary: string; operations: object[] }): Promise<Result> =>
+      executeGraphMutationTool(runtime, {
+        toolCallID,
+        toolName: "propose_graph_change_set_v1",
+        params: params as JsonObject,
+        mutate: (idempotencyKey) =>
+          runtime.client.proposeGraphChangeSet(runtime.scope.conversation_id, params as JsonObject, idempotencyKey, runtime.signal),
+        reconcile: (idempotencyKey) =>
+          runtime.client.reconcileProposeGraphChangeSet(
+            runtime.scope.conversation_id,
+            params as JsonObject,
+            idempotencyKey,
+            runtime.signal,
+          ),
+        unknownReason: "Graph proposal result is unknown",
+        extraDetails: { pending_confirmation: true },
       }),
   });
+}
+
+async function executeGraphMutationTool(
+  runtime: ToolRuntime,
+  args: {
+    toolCallID: string;
+    toolName: string;
+    params: JsonObject;
+    mutate: (idempotencyKey: string) => Promise<JsonObject>;
+    reconcile: (idempotencyKey: string) => Promise<ReconcileResult>;
+    unknownReason: string;
+    extraDetails?: JsonObject;
+  },
+): Promise<Result> {
+  const idempotencyKey = runtime.idempotencyKey(args.toolCallID);
+  await runtime.checkpoint("tool_effect_intent", {
+    tool_name: args.toolName,
+    tool_call_id: args.toolCallID,
+    idempotency_key: idempotencyKey,
+    change_set: args.params,
+  });
+  try {
+    const result = await args.mutate(idempotencyKey);
+    await runtime.checkpoint("tool_effect_result", {
+      tool_name: args.toolName,
+      tool_call_id: args.toolCallID,
+      idempotency_key: idempotencyKey,
+      result: "applied",
+    });
+    return textResult(result, args.extraDetails);
+  } catch (error) {
+    if (!(error instanceof ProductFlowError) || error.status < 500) {
+      await runtime.checkpoint("tool_effect_result", {
+        tool_name: args.toolName,
+        tool_call_id: args.toolCallID,
+        idempotency_key: idempotencyKey,
+        result: "failed",
+      });
+      throw error;
+    }
+    let reconciled: ReconcileResult;
+    try {
+      reconciled = await args.reconcile(idempotencyKey);
+    } catch (reconcileError) {
+      await recordUnknownEffect(
+        runtime,
+        args.toolCallID,
+        {
+          tool_name: args.toolName,
+          tool_call_id: args.toolCallID,
+          idempotency_key: idempotencyKey,
+          result: "unknown",
+          reconciliation_state: "unavailable",
+        },
+        args.unknownReason,
+      );
+      throw reconcileError;
+    }
+    if (reconciled.state === "applied") {
+      await runtime.checkpoint("tool_effect_result", {
+        tool_name: args.toolName,
+        tool_call_id: args.toolCallID,
+        idempotency_key: idempotencyKey,
+        result: "applied",
+      });
+      return textResult((reconciled.result as JsonObject) ?? { accepted: true }, args.extraDetails);
+    }
+    if (reconciled.state === "not_applied") {
+      await runtime.checkpoint("tool_effect_result", {
+        tool_name: args.toolName,
+        tool_call_id: args.toolCallID,
+        idempotency_key: idempotencyKey,
+        result: "failed",
+        reconciliation_state: reconciled.state,
+      });
+      throw error;
+    }
+    await recordUnknownEffect(
+      runtime,
+      args.toolCallID,
+      {
+        tool_name: args.toolName,
+        tool_call_id: args.toolCallID,
+        idempotency_key: idempotencyKey,
+        result: "unknown",
+        reconciliation_state: reconciled.state,
+      },
+      args.unknownReason,
+    );
+    throw error;
+  }
 }
 
 function createDraftTool(

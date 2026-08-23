@@ -8,11 +8,56 @@ import {
   isAgentWorkbenchMissing,
   isHttpErrorStatus,
   isWorkflowGraphMissing,
+  loadProductWorkbenchAgent,
   productWorkbenchRouteTarget,
   readWorkflowGraphOrNull,
   resolveProductWorkbenchSurface,
   type ProductWorkbenchRouteInput,
 } from "./productWorkbenchRoute";
+
+describe("loadProductWorkbenchAgent", () => {
+  it("bootstraps a graph product with ensure instead of GET 409", async () => {
+    const calls: string[] = [];
+    const bootstrap = { mode: "agent" };
+    const result = await loadProductWorkbenchAgent(
+      {
+        getAgentWorkbench: async () => {
+          calls.push("get");
+          throw new ApiError(409, "商品还没有 Agent 工作区");
+        },
+        ensureAgentWorkbench: async (productId, sessionId) => {
+          calls.push(`ensure:${productId}:${sessionId ?? ""}`);
+          return bootstrap as never;
+        },
+      },
+      "product-1",
+      "session-1",
+    );
+    expect(calls).toEqual(["ensure:product-1:session-1"]);
+    expect(result).toBe(bootstrap);
+  });
+
+  it("reads an existing Task-scoped workbench without creating a workspace", async () => {
+    const calls: string[] = [];
+    const bootstrap = { mode: "agent" };
+    await loadProductWorkbenchAgent(
+      {
+        getAgentWorkbench: async (productId, sessionId, taskId) => {
+          calls.push(`get:${productId}:${sessionId}:${taskId}`);
+          return bootstrap as never;
+        },
+        ensureAgentWorkbench: async () => {
+          calls.push("ensure");
+          return bootstrap as never;
+        },
+      },
+      "product-1",
+      "session-1",
+      "task-1",
+    );
+    expect(calls).toEqual(["get:product-1:session-1:task-1"]);
+  });
+});
 
 describe("productWorkbenchRouteTarget", () => {
   it("keeps an Agent product on the workbench when no workflow has been persisted yet", () => {

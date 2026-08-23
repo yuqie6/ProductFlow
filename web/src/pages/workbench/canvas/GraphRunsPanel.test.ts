@@ -71,6 +71,14 @@ const run: GraphRun = {
     node_id: "image",
     status: "succeeded",
     sort_order: 0,
+    node_title: "主图 1",
+    input_trace: [{
+      edge_id: "edge-prompt",
+      source_node_id: "prompt",
+      source_title: "主图提示词",
+      role: "prompt",
+      order: 0,
+    }],
     compiled_context: {
       incoming_edge_ids: ["edge-1"],
       prompt_artifact_id: "art-1",
@@ -110,5 +118,31 @@ describe("GraphRunsPanel", () => {
     expect(markup).not.toContain("mystery_digest");
     expect(markup).not.toContain("deadbeef");
     expect(markup).not.toContain("版本 2");
+  });
+
+  it("keeps rev N input titles after the live graph is renamed", () => {
+    const renamed: GraphProjection = {
+      ...graph,
+      revision: 3,
+      nodes: graph.nodes.map((node) => (
+        node.id === "prompt" ? { ...node, title: "改名后的提示词" } : node
+      )),
+    };
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(["graph-runs", "p1", "g1"], { items: [run] });
+    const markup = renderToStaticMarkup(createElement(
+      QueryClientProvider,
+      { client },
+      createElement(GraphRunsPanel, {
+        productId: "p1",
+        graph: renamed,
+        selectedNodeId: "image",
+        onJump: () => undefined,
+        onPreviewImage: () => undefined,
+      }),
+    ));
+    const firstScreen = markup.split("data-graph-run-inputs-technical")[0];
+    expect(firstScreen).toContain("主图提示词");
+    expect(firstScreen).not.toContain("改名后的提示词");
   });
 });

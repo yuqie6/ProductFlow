@@ -23,6 +23,8 @@ from productflow_backend.application.agent.tools import (
     AGENT_ASSET_LIST_DEFAULT_LIMIT,
     AGENT_ASSET_LIST_MAX_LIMIT,
     AGENT_GLOBAL_PRODUCT_LIST_MAX_LIMIT,
+    APPLY_GRAPH_TOOL_NAME,
+    PROPOSE_GRAPH_TOOL_NAME,
     apply_agent_asset_move,
     apply_agent_asset_rename,
     apply_agent_folder_create,
@@ -50,6 +52,7 @@ from productflow_backend.application.agent.tools import (
     reconcile_agent_asset_rename,
     reconcile_agent_folder_create,
     reconcile_agent_folder_rename,
+    reconcile_agent_graph_change_set_tool,
     validate_agent_global_draft,
     validate_agent_library_organization_draft,
     validate_agent_workflow_draft,
@@ -110,6 +113,7 @@ from productflow_backend.presentation.schemas.agent_conversations import (
     AgentGlobalProductListResponse,
     AgentGlobalProductResponse,
     AgentGlobalWorkflowRunRequestCreateRequest,
+    AgentGraphChangeSetReconcileResponse,
     AgentGraphChangeSetRequest,
     AgentLegacyArchiveInspectResponse,
     AgentLegacyArchiveListResponse,
@@ -218,12 +222,38 @@ def validate_agent_workflow_draft_endpoint(
 def apply_agent_graph_change_set_endpoint(
     conversation_id: str,
     payload: AgentGraphChangeSetRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
     session: Session = Depends(get_session),
 ) -> dict:
     return apply_agent_graph_change_set_tool(
         session,
         conversation_id=conversation_id,
         change_set=payload.change_set,
+        idempotency_key=idempotency_key,
+    )
+
+
+@router.post(
+    "/{conversation_id}/graph/apply-change-set/reconcile",
+    response_model=AgentGraphChangeSetReconcileResponse,
+)
+def reconcile_agent_graph_apply_endpoint(
+    conversation_id: str,
+    payload: AgentGraphChangeSetRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
+    session: Session = Depends(get_session),
+) -> AgentGraphChangeSetReconcileResponse:
+    result = reconcile_agent_graph_change_set_tool(
+        session,
+        conversation_id=conversation_id,
+        change_set=payload.change_set,
+        idempotency_key=idempotency_key,
+        tool_name=APPLY_GRAPH_TOOL_NAME,
+    )
+    return AgentGraphChangeSetReconcileResponse(
+        state=result.state,
+        result=result.result,
+        detail=result.detail,
     )
 
 
@@ -231,12 +261,38 @@ def apply_agent_graph_change_set_endpoint(
 def propose_agent_graph_change_set_endpoint(
     conversation_id: str,
     payload: AgentGraphChangeSetRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
     session: Session = Depends(get_session),
 ) -> dict:
     return propose_agent_graph_change_set_tool(
         session,
         conversation_id=conversation_id,
         change_set=payload.change_set,
+        idempotency_key=idempotency_key,
+    )
+
+
+@router.post(
+    "/{conversation_id}/graph/proposals/reconcile",
+    response_model=AgentGraphChangeSetReconcileResponse,
+)
+def reconcile_agent_graph_propose_endpoint(
+    conversation_id: str,
+    payload: AgentGraphChangeSetRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
+    session: Session = Depends(get_session),
+) -> AgentGraphChangeSetReconcileResponse:
+    result = reconcile_agent_graph_change_set_tool(
+        session,
+        conversation_id=conversation_id,
+        change_set=payload.change_set,
+        idempotency_key=idempotency_key,
+        tool_name=PROPOSE_GRAPH_TOOL_NAME,
+    )
+    return AgentGraphChangeSetReconcileResponse(
+        state=result.state,
+        result=result.result,
+        detail=result.detail,
     )
 
 

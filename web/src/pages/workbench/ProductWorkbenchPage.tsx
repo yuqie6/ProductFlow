@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Loader2, RotateCw } from "lucide-react";
 import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
 
@@ -7,8 +7,8 @@ import { useI18n } from "../../lib/preferences";
 import { AgentProductWorkbenchPage } from "./agent/AgentProductWorkbenchPage";
 import {
   agentProductIntakeResumePath,
-  isAgentWorkbenchMissing,
   isHttpErrorStatus,
+  loadProductWorkbenchAgent,
   readWorkflowGraphOrNull,
   resolveProductWorkbenchSurface,
 } from "./agent/productWorkbenchRoute";
@@ -17,7 +17,6 @@ import { GraphAgentPanel, GraphWorkbenchPage } from "./GraphWorkbenchPage";
 export function ProductWorkbenchPage() {
   const { productId = "" } = useParams();
   const [searchParams] = useSearchParams();
-  const queryClient = useQueryClient();
   const agentSessionId = searchParams.get("agent_session_id");
   const agentTaskId = searchParams.get("agent_task_id");
   const graphQuery = useQuery({
@@ -28,32 +27,18 @@ export function ProductWorkbenchPage() {
   });
   const agentQuery = useQuery({
     queryKey: ["agent-workbench", productId, agentSessionId, agentTaskId],
-    queryFn: () => api.getAgentWorkbench(productId, agentSessionId, agentTaskId),
+    queryFn: () => loadProductWorkbenchAgent(api, productId, agentSessionId, agentTaskId),
     enabled: Boolean(productId),
-    retry: (failureCount, error) => !isAgentWorkbenchMissing(error) && failureCount < 2,
-  });
-  const missingAgent = !agentQuery.isPending && isAgentWorkbenchMissing(agentQuery.error);
-  const shouldEnsureAgent = Boolean(productId) && missingAgent && Boolean(graphQuery.data) && !agentTaskId;
-  const ensureQuery = useQuery({
-    queryKey: ["agent-workbench", productId, agentSessionId, "ensure"],
-    queryFn: async () => {
-      const bootstrap = await api.ensureAgentWorkbench(productId, agentSessionId);
-      queryClient.setQueryData(
-        ["agent-workbench", productId, agentSessionId, agentTaskId],
-        bootstrap,
-      );
-      return bootstrap;
-    },
-    enabled: shouldEnsureAgent,
-    retry: false,
+    retry: (failureCount, error) =>
+      !isHttpErrorStatus(error, 404) && !isHttpErrorStatus(error, 409) && failureCount < 2,
   });
   const surface = resolveProductWorkbenchSurface({
     graph: graphQuery.data ?? undefined,
     graphPending: graphQuery.isPending,
     graphError: graphQuery.error,
-    agent: agentQuery.data ?? ensureQuery.data,
-    agentPending: agentQuery.isPending || (shouldEnsureAgent && ensureQuery.isPending),
-    agentError: ensureQuery.error ?? agentQuery.error,
+    agent: agentQuery.data,
+    agentPending: agentQuery.isPending,
+    agentError: agentQuery.error,
   });
   const productQuery = useQuery({
     queryKey: ["product", productId],
@@ -82,7 +67,6 @@ export function ProductWorkbenchPage() {
         onRetry={() => {
           void graphQuery.refetch();
           void agentQuery.refetch();
-          void ensureQuery.refetch();
         }}
       />
     );
@@ -115,8 +99,8 @@ export function ProductWorkbenchPage() {
         initialGraph={surface.graph}
         agentContent={(
           <GraphAgentPanel
-            error={ensureQuery.error}
-            onRetry={() => void ensureQuery.refetch()}
+            error={agentQuery.error}
+            onRetry={() => void agentQuery.refetch()}
           />
         )}
       />

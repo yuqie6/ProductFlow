@@ -122,9 +122,24 @@ def test_direct_create_and_changeset_api_round_trip(configured_env, monkeypatch)
     def execute_inline(run_id: str) -> None:
         execute_graph_run(run_id, dependencies=dependencies)
 
+    from productflow_backend.application.async_delivery import stage_async_dispatch as real_stage
+
+    def stage_and_run(session, *, delivery_key, actor_name, aggregate_id, payload=None, available_at=None):
+        dispatch = real_stage(
+            session,
+            delivery_key=delivery_key,
+            actor_name=actor_name,
+            aggregate_id=aggregate_id,
+            payload=payload,
+            available_at=available_at,
+        )
+        session.commit()
+        execute_inline(aggregate_id)
+        return dispatch
+
     monkeypatch.setattr(
-        "productflow_backend.application.product_workflow.graph_runs.enqueue_graph_run",
-        execute_inline,
+        "productflow_backend.application.product_workflow.graph_runs.stage_async_dispatch",
+        stage_and_run,
     )
     image_node_id = next(
         node["id"] for node in renamed.json()["nodes"] if node["node_type"] == "image_generation"

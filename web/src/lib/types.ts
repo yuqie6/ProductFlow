@@ -1767,12 +1767,22 @@ export interface DraftGraphPersistResponse {
   graph: GraphProjection;
 }
 
+export interface GraphRunInputTraceEntry {
+  edge_id: string;
+  source_node_id: string | null;
+  source_title: string | null;
+  role: string;
+  order: number;
+}
+
 export interface GraphNodeRun {
   id: string;
   node_id: string | null;
+  node_title?: string | null;
   status: WorkflowNodeStatus;
   sort_order: number;
   compiled_context: Record<string, unknown> | null;
+  input_trace?: GraphRunInputTraceEntry[];
   output: Record<string, unknown> | null;
   failure_reason: string | null;
   started_at: string;

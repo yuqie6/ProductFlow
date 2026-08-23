@@ -22,8 +22,8 @@ import { statusClass } from "../chrome/utils";
 import { graphEdgeRoleLabelKey } from "./graphCatalog";
 import {
   graphContextEntries,
-  graphIncomingSourceEntries,
   graphNodeRunPreviewAssetId,
+  graphRunInputTraceEntries,
   graphRunScopeLabelKey,
   graphRunsAreLive,
   LIVE_RUN_STATUSES,
@@ -197,9 +197,9 @@ function GraphRunRecord({
           <NodeRunRecord
             key={nodeRun.id}
             nodeRun={nodeRun}
-            graph={graph}
-            title={graph.nodes.find((node) => node.id === nodeRun.node_id)?.title
-              ?? t("graph.runs.deletedNode")}
+            title={nodeRun.node_title
+              || graph.nodes.find((node) => node.id === nodeRun.node_id)?.title
+              || t("graph.runs.deletedNode")}
             selected={Boolean(nodeRun.node_id && nodeRun.node_id === selectedNodeId)}
             previewAssetId={graphNodeRunPreviewAssetId(nodeRun, graph)}
             onJump={onJump && nodeRun.node_id ? () => onJump(nodeRun.node_id as string) : undefined}
@@ -213,7 +213,6 @@ function GraphRunRecord({
 
 function NodeRunRecord({
   nodeRun,
-  graph,
   title,
   selected,
   previewAssetId,
@@ -221,7 +220,6 @@ function NodeRunRecord({
   onPreviewImage,
 }: {
   nodeRun: GraphNodeRun;
-  graph: GraphProjection;
   title: string;
   selected: boolean;
   previewAssetId: string | null;
@@ -230,8 +228,7 @@ function NodeRunRecord({
 }) {
   const { t } = useI18n();
   const active = LIVE_RUN_STATUSES.has(nodeRun.status);
-  const node = nodeRun.node_id ? graph.nodes.find((item) => item.id === nodeRun.node_id) ?? null : null;
-  const sources = node ? graphIncomingSourceEntries(node, graph) : [];
+  const sources = graphRunInputTraceEntries(nodeRun);
   const evidence = graphContextEntries(nodeRun.compiled_context);
   return (
     <div className={selected ? "bg-slate-50 dark:bg-slate-800/50" : ""}>

@@ -706,4 +706,58 @@ describe("ProductFlow Pi tools", () => {
       payload: { result: "unknown", reconciliation_state: "unknown" },
     });
   });
+
+  it("sends Idempotency-Key derived from toolCallID for graph mutations", async () => {
+    const keys: string[] = [];
+    const client = {
+      applyGraphChangeSet: async (_conversationID: string, _changeSet: object, idempotencyKey: string) => {
+        keys.push(idempotencyKey);
+        return { accepted: true, applied: true, revision: 2 };
+      },
+      proposeGraphChangeSet: async (_conversationID: string, _changeSet: object, idempotencyKey: string) => {
+        keys.push(idempotencyKey);
+        return { accepted: true, applied: false, pending_confirmation: true, proposal_id: "p1" };
+      },
+    } as unknown as ProductFlowClient;
+    const tools = createProductFlowTools(runtime({ ...baseScope, has_live_graph: true }, client));
+    const apply = tools.find((candidate) => candidate.name === "apply_graph_change_set_v1");
+    const propose = tools.find((candidate) => candidate.name === "propose_graph_change_set_v1");
+    if (!apply || !propose) throw new Error("graph mutation tools were not registered");
+    const params = {
+      base_graph_revision: 1,
+      summary: "改名",
+      operations: [{ op: "rename_node", node_ref: "n1", title: "新标题" }],
+    };
+    await apply.execute("tool-apply-1", params, undefined, undefined, {} as never);
+    await propose.execute("tool-propose-1", { ...params, operations: [params.operations[0], params.operations[0]] }, undefined, undefined, {} as never);
+    expect(keys).toEqual(["pi-test-tool-apply-1", "pi-test-tool-propose-1"]);
+  });
+
+  it("reconciles unknown graph apply results by idempotency key", async () => {
+    const unknownReasons: string[] = [];
+    const client = {
+      applyGraphChangeSet: async () => {
+        throw new ProductFlowError(503, "timeout", "timeout");
+      },
+      reconcileApplyGraphChangeSet: async () => ({ state: "unknown", detail: "副作用结果仍不明确" }),
+    } as unknown as ProductFlowClient;
+    const tool = createProductFlowTools(
+      runtime({ ...baseScope, has_live_graph: true }, client, (_id, reason) => unknownReasons.push(reason ?? "")),
+    ).find((candidate) => candidate.name === "apply_graph_change_set_v1");
+    if (!tool) throw new Error("apply tool was not registered");
+    await expect(
+      tool.execute(
+        "tool-apply-unknown",
+        {
+          base_graph_revision: 1,
+          summary: "改名",
+          operations: [{ op: "rename_node", node_ref: "n1", title: "新标题" }],
+        },
+        undefined,
+        undefined,
+        {} as never,
+      ),
+    ).rejects.toMatchObject({ code: "timeout" });
+    expect(unknownReasons).toEqual(["Graph apply result is unknown"]);
+  });
 });

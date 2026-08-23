@@ -239,11 +239,27 @@ export class ProductFlowClient {
   async applyGraphChangeSet(
     conversationID: string,
     changeSet: JsonObject,
+    idempotencyKey: string,
     signal?: AbortSignal,
   ): Promise<JsonObject> {
     return this.json<JsonObject>(this.conversationPath(conversationID) + "/graph/apply-change-set", {
       method: "POST",
       body: { change_set: changeSet },
+      idempotencyKey,
+      signal,
+    });
+  }
+
+  async reconcileApplyGraphChangeSet(
+    conversationID: string,
+    changeSet: JsonObject,
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<ReconcileResult> {
+    return this.json<ReconcileResult>(this.conversationPath(conversationID) + "/graph/apply-change-set/reconcile", {
+      method: "POST",
+      body: { change_set: changeSet },
+      idempotencyKey,
       signal,
     });
   }
@@ -251,11 +267,27 @@ export class ProductFlowClient {
   async proposeGraphChangeSet(
     conversationID: string,
     changeSet: JsonObject,
+    idempotencyKey: string,
     signal?: AbortSignal,
   ): Promise<JsonObject> {
     return this.json<JsonObject>(this.conversationPath(conversationID) + "/graph/proposals", {
       method: "POST",
       body: { change_set: changeSet },
+      idempotencyKey,
+      signal,
+    });
+  }
+
+  async reconcileProposeGraphChangeSet(
+    conversationID: string,
+    changeSet: JsonObject,
+    idempotencyKey: string,
+    signal?: AbortSignal,
+  ): Promise<ReconcileResult> {
+    return this.json<ReconcileResult>(this.conversationPath(conversationID) + "/graph/proposals/reconcile", {
+      method: "POST",
+      body: { change_set: changeSet },
+      idempotencyKey,
       signal,
     });
   }
