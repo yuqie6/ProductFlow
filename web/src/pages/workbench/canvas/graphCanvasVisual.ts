@@ -17,3 +17,9 @@ export function graphEdgeEmphasis(input: {
   }
   return "receded";
 }
+
+export function graphEdgeDeleteClassName(selected: boolean, hovered: boolean): string {
+  return selected || hovered
+    ? "pointer-events-auto scale-100 opacity-100"
+    : "pointer-events-none scale-75 opacity-0";
+}

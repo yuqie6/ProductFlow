@@ -1,14 +1,21 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, CircleDot, Eye, Images, Plus, RotateCw } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Bot, Boxes, CircleDot, Eye, Images, Plus, RotateCw } from "lucide-react";
 import { useCallback, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 
+import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { GalleryImagePreviewDialog } from "../../components/GalleryImagePreviewDialog";
 import { TopNav } from "../../components/TopNav";
 import { api, ApiError } from "../../lib/api";
 import type { DownloadableImage } from "../../lib/image-downloads";
 import { useI18n } from "../../lib/preferences";
-import type { CanonicalProductDetail, GraphProjection } from "../../lib/types";
+import type {
+  CanonicalProductDetail,
+  GraphProjection,
+  WorkflowRecipe,
+  WorkflowRecipeApplicationResult,
+  WorkflowRecipeSummary,
+} from "../../lib/types";
 import { AgentWorkbenchShell } from "./agent/AgentWorkbenchShell";
 import { GraphAddNodePanel } from "./canvas/GraphAddNodePanel";
 import { GraphCanvasPanel, type GraphCanvasActions } from "./canvas/GraphCanvasPanel";
@@ -16,6 +23,7 @@ import { inspectableGraphNodeId } from "./canvas/graphCatalog";
 import { GraphLibraryPanel } from "./canvas/GraphLibraryPanel";
 import { GraphNodeInspector } from "./canvas/GraphNodeInspector";
 import { GraphRunsPanel } from "./canvas/GraphRunsPanel";
+import { RecipeLibraryPanel } from "./canvas/RecipeLibraryPanel";
 
 const EMPTY_ACTIONS: GraphCanvasActions = {
   createNode: () => undefined,
@@ -47,6 +55,10 @@ export function GraphWorkbenchPage({
   const [previewImage, setPreviewImage] = useState<DownloadableImage | null>(null);
   const [canvasBusy, setCanvasBusy] = useState(false);
   const [chromeCollapsed, setChromeCollapsed] = useState(false);
+  const [archiveRecipe, setArchiveRecipe] = useState<WorkflowRecipeSummary | null>(null);
+  const [recipeApplication, setRecipeApplication] = useState<WorkflowRecipeApplicationResult | null>(null);
+  const [recipeError, setRecipeError] = useState<string | null>(null);
+  const recipeApplyKeysRef = useRef(new Map<string, string>());
   const flushInspectorRef = useRef<() => Promise<void>>(async () => undefined);
   const registerInspectorFlush = useCallback((flush: () => Promise<void>) => {
     flushInspectorRef.current = flush;
@@ -71,6 +83,46 @@ export function GraphWorkbenchPage({
     queryKey: ["graph-node-catalog"],
     queryFn: () => api.getGraphNodeCatalog(),
     staleTime: Infinity,
+  });
+  const recipesQuery = useQuery({
+    queryKey: ["workflow-recipes", false],
+    queryFn: () => api.listWorkflowRecipes(false),
+    enabled: tool === "recipes",
+  });
+  const recipeMutation = useMutation({
+    mutationFn: async (operation: {
+      kind: "apply" | "archive";
+      recipe: WorkflowRecipeSummary;
+      idempotencyKey?: string;
+    }): Promise<WorkflowRecipe | WorkflowRecipeApplicationResult> => {
+      if (operation.kind === "apply") {
+        return api.applyWorkflowRecipe(product.id, operation.recipe.id, {
+          expected_recipe_version: operation.recipe.current_version.version,
+          idempotency_key: operation.idempotencyKey ?? newRecipeIdempotencyKey(operation.recipe.id),
+        });
+      }
+      const result = await api.archiveWorkflowRecipe(
+        operation.recipe.id,
+        operation.recipe.current_version.version,
+      );
+      return result.recipe;
+    },
+    onMutate: () => setRecipeError(null),
+    onSuccess: async (result, operation) => {
+      if (operation.kind === "apply") {
+        const application = result as WorkflowRecipeApplicationResult;
+        recipeApplyKeysRef.current.delete(operation.recipe.id);
+        setRecipeApplication(application);
+        queryClient.setQueryData(["workflow-graph", product.id], application.graph);
+        await queryClient.invalidateQueries({ queryKey: ["workflow-graph", product.id] });
+      } else {
+        await queryClient.invalidateQueries({ queryKey: ["workflow-recipes"] });
+      }
+      setArchiveRecipe(null);
+    },
+    onError: (error) => {
+      setRecipeError(error instanceof ApiError ? error.detail : t("workbench.error.recipe"));
+    },
   });
   const liveGraph = graphQuery.data ?? initialGraph;
   const catalog = catalogQuery.data ?? null;
@@ -166,6 +218,7 @@ export function GraphWorkbenchPage({
                 onSaveFull={() => actions.saveRecipe("workflow")}
                 onSaveGroup={() => actions.saveRecipe("group")}
                 onSaveSelection={() => actions.saveRecipe("selection")}
+                onOpenRecipesTab={() => void requestSidebarTool("recipes")}
               />
             ),
           },
@@ -238,9 +291,75 @@ export function GraphWorkbenchPage({
               />
             ),
           },
+          {
+            id: "recipes",
+            label: t("workbench.sidebar.recipes"),
+            icon: <Boxes size={17} />,
+            contentClassName: "flex min-h-0 flex-1 flex-col overflow-hidden",
+            content: (
+              <>
+                {recipeError ? (
+                  <p role="alert" className="px-3 pt-3 text-xs text-red-700">{recipeError}</p>
+                ) : null}
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  <RecipeLibraryPanel
+                    recipes={recipesQuery.data ?? []}
+                    loading={recipesQuery.isLoading}
+                    error={recipesQuery.isError
+                      ? (recipesQuery.error instanceof ApiError
+                        ? recipesQuery.error.detail
+                        : t("workbench.error.recipes"))
+                      : null}
+                    operationRecipeId={recipeMutation.isPending && recipeMutation.variables?.kind === "apply"
+                      ? recipeMutation.variables.recipe.id
+                      : null}
+                    application={recipeApplication}
+                    structureBusy={canvasBusy}
+                    canAppend={() => Boolean(liveGraph)}
+                    onRetry={() => void recipesQuery.refetch()}
+                    onPreview={(recipe) => api.previewWorkflowRecipe(product.id, recipe.id, {
+                      expected_recipe_version: recipe.current_version.version,
+                    })}
+                    onApply={(recipe) => {
+                      const idempotencyKey = recipeApplyKeysRef.current.get(recipe.id)
+                        ?? newRecipeIdempotencyKey(recipe.id);
+                      recipeApplyKeysRef.current.set(recipe.id, idempotencyKey);
+                      recipeMutation.mutate({ kind: "apply", recipe, idempotencyKey });
+                    }}
+                    onAppend={(recipe) => {
+                      actions.appendRecipe({
+                        id: recipe.id,
+                        version: recipe.current_version.version,
+                        title: recipe.current_version.title,
+                        description: recipe.current_version.description,
+                      });
+                    }}
+                    onArchive={setArchiveRecipe}
+                  />
+                </div>
+              </>
+            ),
+          },
         ]}
         activeSidebarTool={tool}
         onSidebarToolChange={requestSidebarTool}
+      />
+      <ConfirmDialog
+        open={archiveRecipe !== null}
+        title={t("workbench.recipe.archive")}
+        description={t("workbench.recipe.archiveConfirm", {
+          title: archiveRecipe?.current_version.title ?? "",
+        })}
+        confirmLabel={t("workbench.recipe.archive")}
+        cancelLabel={t("common.cancel")}
+        busy={recipeMutation.isPending}
+        destructive
+        onClose={() => setArchiveRecipe(null)}
+        onConfirm={() => {
+          if (archiveRecipe) {
+            recipeMutation.mutate({ kind: "archive", recipe: archiveRecipe });
+          }
+        }}
       />
       {previewImage ? (
         <GalleryImagePreviewDialog
@@ -259,6 +378,13 @@ export function GraphWorkbenchPage({
       ) : null}
     </div>
   );
+}
+
+function newRecipeIdempotencyKey(recipeId: string): string {
+  const suffix = typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `recipe-${recipeId}-${suffix}`.slice(0, 120);
 }
 
 export function GraphAgentPanel({

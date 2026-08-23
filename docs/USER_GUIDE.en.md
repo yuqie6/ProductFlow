@@ -85,7 +85,9 @@ On the create page, enter a product brief plus on-image copy and language, then 
 - The add panel can add a shot: one group, one prompt, and one image node, connected to existing product facts, visual system, and creative brief. Selected identity references are connected too.
 - Running a shot uses run-to-node on the first image in the group, then run-node on the remaining images.
 - Adding a single node from the add panel places it near the current viewport center and selects it.
-- Drag from an output handle to a target input handle to create an edge. Legal targets turn green; illegal targets turn red.
+- Drag from an output handle to a target input handle to create an edge. Legal targets turn green; illegal targets turn red. An illegal drop writes the reason on the canvas.
+- If the product has no workflow yet, blank-canvas create writes an empty graph, then you can add all six node types.
+- With two or more nodes selected, the node toolbar can duplicate, group, save as recipe, and delete.
 - Drag nodes to position them; zoom with wheel/touch and pan from blank canvas.
 - Ctrl/Cmd/Shift-click or marquee-select multiple nodes.
 - Copy then paste selects the new nodes and keeps edges inside the selection.
@@ -101,7 +103,9 @@ Node cards show compact scanning summaries. Edit complete content in the inspect
 
 ### 3.3 Inspector
 
-With nothing selected, Details offers add-node, open-library, and run-graph. With a node selected:
+With nothing selected, Details offers add-node, open-library, and run-graph. With a node selected, Details and Runs explain actual inputs with source titles and edge roles on the first screen; they do not put internal ids on that screen. Processing nodes show missing required inputs on the card. A selected edge keeps a visible delete control. On a narrow screen the inspector is a bottom drawer and a strip of canvas nodes stays visible.
+
+With a node selected:
 
 Reference nodes:
 
@@ -189,7 +193,7 @@ The workbench can save:
 - The local flow of the current group.
 - A fragment from the current node selection.
 
-A recipe stores reusable structure, edges, and configuration. It excludes product identity, product images, and generated results. The recipe library contains only content explicitly saved by the user. Applying a recipe on another product previews the nodes and edges that will be created, then writes a draft to review. Partial presets cannot merge into an existing workflow yet.
+A recipe stores reusable structure, edges, and configuration. It excludes product identity, product images, and generated results. The recipe library contains only content explicitly saved by the user. Apply preview names create vs merge and lists the nodes and edges that will appear; a failed preview cannot be confirmed. Confirm writes the target product's live graph once. A full preset only writes when the product has no workflow yet; an existing workflow is an explicit conflict. Fragment recipes merge into an existing workflow or return a conflict. A workbench with no graph can still preview and apply a recipe.
 
 ## 7. Iterative Image Generation
 

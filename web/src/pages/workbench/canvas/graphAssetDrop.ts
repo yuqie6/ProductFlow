@@ -18,6 +18,7 @@ export type GraphAssetDropPlan =
     existing: GraphNode[];
     position: { x: number; y: number };
   }
+  | { kind: "rejected"; reasonKey: "graph.drop.incompatible" | "graph.drop.catalogMissing" }
   | { kind: "ignored" };
 
 export function boundImageAssetNodes(graph: GraphProjection, assetId: string): GraphNode[] {
@@ -46,6 +47,9 @@ export function resolveGraphAssetDrop(
       }],
     };
   }
+  if (target && !catalog) {
+    return { kind: "rejected", reasonKey: "graph.drop.catalogMissing" };
+  }
   if (target && graphNodeHasInput(target.node_type, catalog)) {
     if (assetIds.length === 1) {
       const existing = boundImageAssetNodes(graph, assetIds[0]).filter((node) => (
@@ -67,7 +71,7 @@ export function resolveGraphAssetDrop(
       operations: buildCreateAndConnectOperations(assetIds, target.id, input.position, undefined, input.groupId),
     };
   }
-  if (target) return { kind: "ignored" };
+  if (target) return { kind: "rejected", reasonKey: "graph.drop.incompatible" };
   return {
     kind: "apply",
     summary: "添加图片素材",

@@ -21,13 +21,14 @@ import type {
   Node,
   NodeProps,
   NodeMouseHandler,
+  OnConnectEnd,
   OnMoveEnd,
   OnNodeDrag,
   OnSelectionChangeFunc,
   ReactFlowInstance,
   Viewport,
 } from "@xyflow/react";
-import { BookmarkPlus, ChevronsRight, CopyPlus, Folder, FolderOpen, Focus, Hand, Link2, Loader2, MousePointer2, Pencil, Play, Trash2, Ungroup } from "lucide-react";
+import { BookmarkPlus, ChevronsRight, CopyPlus, Folder, FolderOpen, FolderPlus, Focus, Hand, Link2, Loader2, MousePointer2, Pencil, Play, Trash2, Ungroup } from "lucide-react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { DragEvent, MouseEvent as ReactMouseEvent } from "react";
 
@@ -67,12 +68,14 @@ import {
   type WorkflowCanvasViewport,
 } from "./canvasState";
 import {
+  graphConnectionInvalidReason,
   graphEdgeRoleLabelKey,
   graphNodeHasInput,
   graphNodePresentationKind,
   graphPortVisualState,
   isGraphConnectionValid,
   isProcessingNode,
+  missingRequiredRunRoles,
 } from "./graphCatalog";
 import type { GraphNodeRunPresentation } from "./graphRunDisplay";
 import {
@@ -81,11 +84,27 @@ import {
   computeGraphGroupBounds,
   graphCanvasView,
 } from "./graphLayout";
-import { graphEdgeEmphasis, graphPortVisualScale } from "./graphCanvasVisual";
+import { graphEdgeDeleteClassName, graphEdgeEmphasis, graphPortVisualScale } from "./graphCanvasVisual";
 
 const SNAP_GRID: [number, number] = [GRAPH_SNAP, GRAPH_SNAP];
 const PRO_OPTIONS = { hideAttribution: true };
 const CONTROL_FIT_VIEW_OPTIONS = { padding: 0.22, duration: 180, maxZoom: 1.05 };
+
+export function rejectedGraphConnectionNotice(
+  graph: GraphProjection,
+  state: {
+    isValid: boolean | null;
+    fromNodeId: string | null;
+    toNodeId: string | null;
+    toHandleId?: string | null;
+  },
+  catalog: GraphNodeCatalog | null | undefined,
+): ReturnType<typeof graphConnectionInvalidReason> {
+  if (state.isValid) return null;
+  if (!state.fromNodeId || !state.toNodeId) return null;
+  if (state.toHandleId === null) return null;
+  return graphConnectionInvalidReason(graph, state.fromNodeId, state.toNodeId, catalog);
+}
 
 type ConnectionHandleSnapshot = {
   inProgress: boolean;
@@ -108,6 +127,13 @@ interface GraphNodeData extends Record<string, unknown> {
   onDuplicate: (node: GraphNode) => void;
   onSaveRecipe: (node: GraphNode) => void;
   onDelete: (node: GraphNode) => void;
+  onDuplicateSelection?: () => void;
+  onGroupSelection?: () => void;
+  onSaveSelection?: () => void;
+  onDeleteSelection?: () => void;
+  selectedCount: number;
+  selectionPrimary: boolean;
+  missingRunLabels: string[];
   onSelectNode: (nodeId: string, event: ReactMouseEvent<HTMLElement>) => void;
   graph: GraphProjection;
   catalog: GraphNodeCatalog | null;
@@ -226,6 +252,7 @@ export const GraphNodeCard = memo(function GraphNodeCard({
   );
 
   const proposalState = data.proposalState ?? null;
+  const multi = data.selectedCount >= 2 && data.selectionPrimary;
   return (
     <div
       className={`relative w-[248px] overflow-visible ${
@@ -239,6 +266,43 @@ export const GraphNodeCard = memo(function GraphNodeCard({
       }`}
       data-graph-proposal-state={proposalState ?? undefined}
     >
+      {multi ? (
+        <div
+          data-graph-selection-actions
+          data-node-action
+          className="nodrag nopan nowheel absolute -top-12 left-1/2 z-50 flex -translate-x-1/2 items-center gap-1 rounded-xl border border-slate-200 bg-white/98 p-1 shadow-lg dark:border-slate-700/80 dark:bg-[#111a2b]/98"
+        >
+          <WorkflowCanvasNodeToolbarButton
+            label={t("detail.duplicate")}
+            disabled={data.structureBusy || running}
+            onClick={() => data.onDuplicateSelection?.()}
+          >
+            <CopyPlus size={16} aria-hidden="true" />
+          </WorkflowCanvasNodeToolbarButton>
+          <WorkflowCanvasNodeToolbarButton
+            label={t("graph.palette.group")}
+            disabled={data.structureBusy || running}
+            onClick={() => data.onGroupSelection?.()}
+          >
+            <FolderPlus size={16} aria-hidden="true" />
+          </WorkflowCanvasNodeToolbarButton>
+          <WorkflowCanvasNodeToolbarButton
+            label={t("graph.canvas.saveRecipe")}
+            disabled={data.structureBusy || running}
+            onClick={() => data.onSaveSelection?.()}
+          >
+            <BookmarkPlus size={16} aria-hidden="true" />
+          </WorkflowCanvasNodeToolbarButton>
+          <WorkflowCanvasNodeToolbarButton
+            label={t("graph.canvas.delete")}
+            disabled={data.structureBusy || running}
+            destructive
+            onClick={() => data.onDeleteSelection?.()}
+          >
+            <Trash2 size={16} aria-hidden="true" />
+          </WorkflowCanvasNodeToolbarButton>
+        </div>
+      ) : (
       <WorkflowCanvasNodeToolbar visible={selected}>
         {node.node_type === "image_asset" ? (
           <WorkflowCanvasNodeToolbarButton
@@ -298,6 +362,7 @@ export const GraphNodeCard = memo(function GraphNodeCard({
           <Trash2 size={16} aria-hidden="true" />
         </WorkflowCanvasNodeToolbarButton>
       </WorkflowCanvasNodeToolbar>
+      )}
       {hasInput ? (
         <WorkflowCanvasNodePort
           id="input"
@@ -333,7 +398,7 @@ export const GraphNodeCard = memo(function GraphNodeCard({
         imageWaiting={node.node_type === "image_generation" && running}
         waitingLabel={nodeStatusLabel(data.status, t)}
         activityText={running ? nodeStatusLabel(data.status, t) : null}
-        failureReason={data.failureReason}
+        failureReason={data.failureReason ?? (data.missingRunLabels.length ? data.missingRunLabels.join(" · ") : null)}
         lastRunAt={data.lastRunAt}
         retryable={data.retryable}
         primarySelected={selected}
@@ -343,6 +408,9 @@ export const GraphNodeCard = memo(function GraphNodeCard({
           data.onSelectNode(node.id, event);
         }}
       />
+      {data.missingRunLabels.length ? (
+        <div data-graph-missing-run-input className="sr-only">{data.missingRunLabels.join(" · ")}</div>
+      ) : null}
     </div>
   );
 });
@@ -531,8 +599,7 @@ const GraphCanvasEdgeCard = memo(function GraphCanvasEdgeCard({
         x={labelX}
         y={labelY}
         isVisible
-        className={`nodrag nowheel nopan transition-all duration-200 ${hovered || selected ? "pointer-events-auto scale-100 opacity-100" : "pointer-events-none scale-75 opacity-0"
-          }`}
+        className={`nodrag nowheel nopan transition-all duration-200 ${graphEdgeDeleteClassName(Boolean(selected), hovered)}`}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
       >
@@ -588,6 +655,10 @@ export function GraphWorkflowCanvas({
   onBindNode,
   onDuplicateNode,
   onSaveRecipeNode,
+  onGroupSelected,
+  onDeleteSelected,
+  onSaveSelection,
+  onConnectionRejected,
   onAutoLayout,
   onAssetDrop,
   onRenameGroup,
@@ -620,6 +691,10 @@ export function GraphWorkflowCanvas({
   onBindNode: (nodeId: string) => void;
   onDuplicateNode: (nodeIds: string[]) => void;
   onSaveRecipeNode?: (nodeId: string) => void;
+  onGroupSelected?: () => void;
+  onDeleteSelected?: () => void;
+  onSaveSelection?: () => void;
+  onConnectionRejected?: (reasonKey: ReturnType<typeof graphConnectionInvalidReason>) => void;
   onAutoLayout: () => void;
   onAssetDrop?: (input: GraphAssetDropInput) => void;
   onRenameGroup: (groupId: string, title: string) => void;
@@ -735,6 +810,16 @@ export function GraphWorkflowCanvas({
         onDuplicate: (item: GraphNode) => onDuplicateNode([item.id]),
         onSaveRecipe: (item: GraphNode) => onSaveRecipeNode?.(item.id),
         onDelete: (item: GraphNode) => onDeleteNode(item.id),
+        onDuplicateSelection: () => onDuplicateNode(selectedNodeIds),
+        onGroupSelection: onGroupSelected,
+        onSaveSelection,
+        onDeleteSelection: onDeleteSelected,
+        selectedCount: selectedNodeIds.length,
+        selectionPrimary: selectedNodeIds[0] === node.id,
+        missingRunLabels: missingRequiredRunRoles(node, catalog).map((role) => {
+          const key = graphEdgeRoleLabelKey(role);
+          return t("graph.missingRunInput", { role: key ? t(key) : role });
+        }),
         onSelectNode: selectNodeFromPointer,
         graph: displayGraph,
         catalog,
@@ -742,7 +827,7 @@ export function GraphWorkflowCanvas({
       },
     }));
     return [...groups, ...nodes];
-  }, [busy, catalog, displayGraph, nodePresentations, nodeStatuses, onBindNode, onDeleteNode, onDissolveGroup, onDuplicateNode, onEnterGroup, onRenameGroup, onRunNode, onRunToNode, onSaveRecipeNode, proposalNodeStates, runningNodeId, selectNodeFromPointer, selectedNodeIds, viewGraph]);
+  }, [busy, catalog, displayGraph, nodePresentations, nodeStatuses, onBindNode, onDeleteNode, onDeleteSelected, onDissolveGroup, onDuplicateNode, onEnterGroup, onGroupSelected, onRenameGroup, onRunNode, onRunShot, onRunToNode, onSaveRecipeNode, onSaveSelection, proposalNodeStates, runningNodeId, selectNodeFromPointer, selectedNodeIds, t, viewGraph]);
   const selectedNodeIdSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
   const graphEdges = useMemo<GraphCanvasEdge[]>(
     () => viewGraph.edges.map((edge) => ({
@@ -856,6 +941,15 @@ export function GraphWorkflowCanvas({
       onConnect(connection.source, connection.target);
     }
   }, [catalog, graph, onConnect]);
+  const handleConnectEnd = useCallback<OnConnectEnd>((_event, state) => {
+    const reason = rejectedGraphConnectionNotice(graph, {
+      isValid: state.isValid,
+      fromNodeId: state.fromNode?.id ?? null,
+      toNodeId: state.toNode?.id ?? null,
+      toHandleId: state.toHandle?.id ?? null,
+    }, catalog);
+    if (reason) onConnectionRejected?.(reason);
+  }, [catalog, graph, onConnectionRejected]);
   const isValidConnection = useCallback<IsValidConnection<GraphCanvasEdge>>(
     (connection) => Boolean(
       connection.source
@@ -972,6 +1066,7 @@ export function GraphWorkflowCanvas({
         connectionLineStyle={{ stroke: "#64748b", strokeWidth: 2, strokeDasharray: "6 4" }}
         autoPanOnConnect
         onConnect={handleConnect}
+        onConnectEnd={handleConnectEnd}
         isValidConnection={isValidConnection}
         className="bg-transparent"
         proOptions={PRO_OPTIONS}
@@ -980,6 +1075,7 @@ export function GraphWorkflowCanvas({
         <WorkflowCanvasControls
           labels={{
             resetZoom: t("detail.resetZoom"),
+            fitView: t("detail.fitCanvas"),
             fitSelection: t("detail.fitSelection"),
             controls: t("detail.canvasControls"),
             snapToGrid: t("detail.snapToGrid"),

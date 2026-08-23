@@ -31,6 +31,7 @@
 - 从 live v3 graph 提取、保存并应用到另一商品 live graph 已接线（全图创建；片段合并或明确冲突）。浏览器 1440/1024/390 证据仍待切片 G。
 - Agent 对 live graph 的单次 Graph Command 与未应用 GraphProposal（幽灵预览、确认、取消）已接线。目标合同见 `docs/adr/0008-free-canvas-agent-graph-authority.md`。浏览器证据仍待切片 G。
 - 侧栏 390px 底抽屉已接到 `ProductWorkbenchInspector`；浏览器证据仍待切片 G。
+- 无 live graph 时可写入空的 schema-v3 图，再经 Graph Command 添加六类节点；重复创建返回冲突。浏览器证据仍待切片 G。
 - `docs/rollout/free-canvas-v3-interaction-parity.md` 中尚未完成的交互项；该表是检查清单，质量上限以画布/侧栏修葺北极星为准。
 - 真实 provider、PostgreSQL/Redis/worker、桌面与 390px 浏览器、console/network error、取消/retry 和无 retired runtime fallback 的完整 gate。
 

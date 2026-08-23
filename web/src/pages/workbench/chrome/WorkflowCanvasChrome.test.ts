@@ -3,7 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { WorkflowCanvasMobileModeTabs, WorkflowCanvasNodePort } from "./WorkflowCanvasChrome";
+import { WorkflowCanvasControls, WorkflowCanvasMobileModeTabs, WorkflowCanvasNodePort } from "./WorkflowCanvasChrome";
 
 describe("shared workflow canvas chrome", () => {
   it("renders the stable browse, edit, and select modes with one active choice", () => {
@@ -22,6 +22,33 @@ describe("shared workflow canvas chrome", () => {
     expect(markup).toContain("浏览");
     expect(markup).toContain("编辑");
     expect(markup).toContain("选择");
+  });
+
+  it("gives fit-view a localized accessible name", () => {
+    const markup = renderToStaticMarkup(
+      createElement(
+        ReactFlowProvider,
+        null,
+        createElement(WorkflowCanvasControls, {
+          labels: {
+            resetZoom: "重置画布缩放",
+            fitView: "适配全图",
+            fitSelection: "聚焦选中节点",
+            controls: "画布控制",
+            snapToGrid: "网格磁吸",
+            autoLayout: "一键整理",
+          },
+          selectedNodeIds: [],
+          onViewportCommit: () => undefined,
+          snapToGrid: false,
+          onToggleSnapToGrid: () => undefined,
+          onAutoLayout: () => undefined,
+          fitViewOptions: { padding: 0.22 },
+        }),
+      ),
+    );
+    expect(markup).toContain("适配全图");
+    expect(markup).not.toContain("Fit View");
   });
 
   it("keeps idle input ports visually distinct from the node card", () => {

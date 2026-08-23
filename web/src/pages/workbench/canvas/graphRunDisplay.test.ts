@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { GraphNodeRun, GraphProjection, GraphRun } from "../../../lib/types";
 import {
   graphContextEntries,
+  graphIncomingSourceEntries,
   graphNodeRunPresentations,
   graphNodeRunPreviewAssetId,
   graphRunScopeLabelKey,
@@ -29,6 +30,26 @@ const graph: GraphProjection = {
     bound_asset_id: null,
     group_id: null,
     preview_asset_id: "preview-1",
+    config_status: "ready",
+    unused: false,
+    incoming: [{
+      id: "edge-1",
+      node_id: "prompt",
+      data_type: "prompt",
+      role: "prompt",
+      order: 0,
+    }],
+    outgoing: [],
+  }, {
+    id: "prompt",
+    node_type: "prompt_generation",
+    title: "主图提示词",
+    position_x: 0,
+    position_y: 0,
+    config: {},
+    bound_asset_id: null,
+    group_id: null,
+    preview_asset_id: null,
     config_status: "ready",
     unused: false,
     incoming: [],
@@ -64,6 +85,29 @@ describe("graph run display", () => {
     expect(graphNodeRunPreviewAssetId(nodeRun({ output: { product_image_asset_id: "out-1" } }), graph)).toBe("out-1");
     expect(graphNodeRunPreviewAssetId(nodeRun({ output: { artifact_id: "art-1" } }), graph)).toBe("preview-1");
     expect(graphNodeRunPreviewAssetId(nodeRun({ status: "failed" }), graph)).toBeNull();
+  });
+
+  it("projects incoming sources as node title and role", () => {
+    expect(graphIncomingSourceEntries(graph.nodes[0], graph)).toEqual([
+      { id: "edge-1", title: "主图提示词", role: "prompt", order: 0 },
+    ]);
+  });
+
+  it("keeps the row when the source title is blank or the node is gone", () => {
+    const untitled = {
+      ...graph,
+      nodes: graph.nodes.map((node) => node.id === "prompt" ? { ...node, title: "  " } : node),
+    };
+    expect(graphIncomingSourceEntries(untitled.nodes[0], untitled)).toEqual([
+      { id: "edge-1", title: "—", role: "prompt", order: 0 },
+    ]);
+    const missing = {
+      ...graph,
+      nodes: graph.nodes.filter((node) => node.id !== "prompt"),
+    };
+    expect(graphIncomingSourceEntries(missing.nodes[0], missing)).toEqual([
+      { id: "edge-1", title: "", role: "prompt", order: 0 },
+    ]);
   });
 
   it("flattens compiled context for the evidence list", () => {

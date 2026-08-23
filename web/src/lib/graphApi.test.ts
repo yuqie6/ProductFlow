@@ -19,6 +19,7 @@ describe("v3 graph API helpers", () => {
     });
 
     await api.getGraphNodeCatalog();
+    await api.createEmptyWorkflowGraph("product/1");
     await api.getCurrentWorkflowGraph("product/1");
     await api.applyWorkflowChangeSet("product/1", "graph/1", {
       base_graph_revision: 1,
@@ -32,6 +33,7 @@ describe("v3 graph API helpers", () => {
 
     expect(calls).toEqual([
       "GET /api/v3/node-catalog",
+      "POST /api/v3/products/product%2F1/workflows",
       "GET /api/v3/products/product%2F1/workflows/current",
       "POST /api/v3/products/product%2F1/workflows/graph%2F1/changesets",
       "POST /api/v3/products/product%2F1/workflows/graph%2F1/runs",

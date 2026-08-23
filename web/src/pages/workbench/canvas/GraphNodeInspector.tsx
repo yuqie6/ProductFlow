@@ -50,9 +50,9 @@ import {
   type CatalogNodeDraft,
 } from "./catalogConfig";
 import { DeliveryRenditionPanel } from "./DeliveryRenditionPanel";
-import { graphNodeConfigFields } from "./graphCatalog";
+import { graphEdgeRoleLabelKey, graphNodeConfigFields } from "./graphCatalog";
 import { graphNodeTitleKey } from "./graphLayout";
-import { graphContextEntries, graphNodeRunPresentations, graphRunsAreLive } from "./graphRunDisplay";
+import { graphContextEntries, graphIncomingSourceEntries, graphNodeRunPresentations, graphRunsAreLive } from "./graphRunDisplay";
 import {
   graphProductSourceConfig,
   graphProductSourceDraft,
@@ -452,7 +452,7 @@ export function GraphNodeInspector({
         ) : null}
 
         <EdgeList heading={t("graph.inspector.inputs")} empty={t("graph.inspector.inputsEmpty")} items={incoming} onJump={onJump} />
-        <RuntimeInputList lastRun={lastNodeRun} />
+        <RuntimeInputList node={node} graph={graph} lastRun={lastNodeRun} />
         <EdgeList heading={t("graph.inspector.outputs")} empty={t("graph.inspector.outputsEmpty")} items={outgoing} onJump={onJump} />
       </div>
     </InspectorFlushContext.Provider>
@@ -1015,27 +1015,54 @@ function AutosaveForm<T>({
 }
 
 function RuntimeInputList({
+  node,
+  graph,
   lastRun,
 }: {
+  node: GraphNode;
+  graph: GraphProjection;
   lastRun: GraphNodeRun | null;
 }) {
   const { t } = useI18n();
-  const entries = graphContextEntries(lastRun?.compiled_context ?? null).filter((item) => item.key !== "input_digest");
+  const sources = graphIncomingSourceEntries(node, graph);
+  const technical = graphContextEntries(lastRun?.compiled_context ?? null);
   return (
     <section className="config-bubble rounded-2xl p-4 shadow-sm" data-graph-runtime-inputs>
       <h4 className="text-xs font-semibold text-zinc-800 dark:text-slate-100">{t("graph.inspector.runtimeInputs")}</h4>
-      {entries.length === 0 ? (
-        <p className="mt-2 text-xs text-zinc-500 dark:text-slate-400">{t("graph.inspector.runtimeInputsEmpty")}</p>
+      {sources.length === 0 ? (
+        <p className="mt-2 text-xs text-zinc-500 dark:text-slate-400">{t("graph.inspector.inputsEmpty")}</p>
       ) : (
-        <dl className="mt-2 space-y-1">
-          {entries.map((item) => (
-            <div key={item.key} className="flex min-w-0 items-baseline justify-between gap-3 px-2.5 py-1.5">
-              <dt className="shrink-0 text-[10px] text-zinc-500 dark:text-slate-400">{t(item.labelKey)}</dt>
-              <dd className="min-w-0 truncate text-right text-xs font-medium text-zinc-800 dark:text-slate-100">{item.value}</dd>
-            </div>
-          ))}
-        </dl>
+        <ul className="mt-2 space-y-1">
+          {sources.map((item) => {
+            const roleKey = graphEdgeRoleLabelKey(item.role);
+            return (
+              <li key={item.id} className="flex min-w-0 items-center justify-between gap-2 px-2.5 py-1.5">
+                <span className="min-w-0 truncate text-xs font-medium text-zinc-800 dark:text-slate-100">
+                  {item.title || t("graph.runs.deletedNode")}
+                </span>
+                <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-slate-800 dark:text-slate-300">
+                  {roleKey ? t(roleKey) : item.role}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
       )}
+      {technical.length ? (
+        <details data-graph-runtime-inputs-technical className="mt-3 border-t border-zinc-100 pt-2 dark:border-slate-800">
+          <summary className="cursor-pointer text-[10px] font-semibold text-zinc-500 dark:text-slate-400">
+            {t("graph.inspector.runtimeInputsTechnical")}
+          </summary>
+          <dl className="mt-2 space-y-1">
+            {technical.map((item) => (
+              <div key={item.key} className="flex min-w-0 items-baseline justify-between gap-3 px-2.5 py-1.5">
+                <dt className="shrink-0 text-[10px] text-zinc-500 dark:text-slate-400">{t(item.labelKey)}</dt>
+                <dd className="min-w-0 truncate text-right text-xs font-medium text-zinc-800 dark:text-slate-100">{item.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </details>
+      ) : null}
     </section>
   );
 }
@@ -1066,7 +1093,7 @@ function EdgeList({
               className="flex w-full min-w-0 items-center justify-between gap-2 rounded-xl px-2.5 py-2 text-left hover:bg-zinc-50 disabled:text-zinc-400 dark:hover:bg-slate-900/60"
             >
               <span className="min-w-0 truncate text-xs font-medium text-zinc-800 dark:text-slate-100">
-                {related?.title ?? edge.node_id}
+                {related?.title ?? t("graph.runs.deletedNode")}
               </span>
               <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-slate-800 dark:text-slate-300">
                 {t(edgeRoleKey(edge.role))}

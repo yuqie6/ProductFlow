@@ -1213,6 +1213,9 @@ export const api = {
       body: JSON.stringify(input),
     });
   },
+  createEmptyWorkflowGraph(productId: string): Promise<GraphProjection> {
+    return request(`/api/v3/products/${encodeURIComponent(productId)}/workflows`, { method: "POST" });
+  },
   confirmGraphProposal(productId: string, workflowId: string, proposalId: string): Promise<GraphProjection> {
     return request(
       `/api/v3/products/${encodeURIComponent(productId)}/workflows/${encodeURIComponent(workflowId)}/proposals/${encodeURIComponent(proposalId)}/confirm`,

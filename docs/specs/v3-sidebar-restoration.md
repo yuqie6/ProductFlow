@@ -27,7 +27,7 @@
 6. **配方来自用户主动保存。** 应用可以先落到待确认 Draft，但必须能预览将产生的图变更。禁止写出 V2 recipe payload，也禁止把 Draft id 画在成功条上。配方写路径仍属画布切片 E。
 7. **文案是结果语言。** 用户看见的是下一步和结果。`ChangeSet`、`revision`、digest、asset id、`schema-v3`、`ProductImageAsset` 不出常规 chrome。完整句子只留给空态、确认、不可恢复错误。
 8. **完成证据是浏览器。** 单元测试证明投影和命令形状。切片完成还要桌面、窄桌面、390px、亮/暗色、reduced-motion。
-9. **390px 底抽屉属于工作台 gate。** 规格要检查器不挡节点。当前 ≤1023px 整页盖住画布。底抽屉与画布切片 G 同一刀验收，不在语言切片里新写一套移动壳。
+9. **390px 底抽屉属于工作台 gate。** 规格要检查器不挡节点。底抽屉已接到 `ProductWorkbenchInspector`（窄屏不再整页盖住画布）。与画布切片 G 同一刀验收，不在语言切片里新写一套移动壳。
 10. **Go 后端重写不得插入本程序。**
 
 ## 4. 质量上限
@@ -99,7 +99,7 @@ S1 不改 Inspector 字段模型。S2 之前只修语言、失败、空选、flu
 ## 8. 文档同步
 
 - 行为落地后更新 `docs/USER_GUIDE.md` 与 `web/src/pages/HelpPage.tsx` 同一提交。
-- `ARCHITECTURE.md` 只写保存提取与 Draft 预览的当前事实；Recipe ChangeSet 直接写到另一张 live graph 仍未交付。
+- `ARCHITECTURE.md` 写保存提取与配方应用到 live graph 的当前事实。浏览器证据仍待切片 G。
 - 交互表状态列落后于代码时改交互表，不要为了表格绿灯降低 §4。
 
 ## 9. 代码锚点

@@ -1,10 +1,11 @@
-import { useEffect, useId } from "react";
+import { useEffect, useId, type ReactNode } from "react";
 import { Loader2, TriangleAlert } from "lucide-react";
 
 interface ConfirmDialogProps {
   open: boolean;
   title: string;
   description: string;
+  body?: ReactNode;
   confirmLabel: string;
   cancelLabel: string;
   busy?: boolean;
@@ -18,6 +19,7 @@ export function ConfirmDialog({
   open,
   title,
   description,
+  body,
   confirmLabel,
   cancelLabel,
   busy = false,
@@ -77,6 +79,7 @@ export function ConfirmDialog({
             <p id={descriptionId} className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">
               {description}
             </p>
+            {body ? <div className="mt-3 min-w-0">{body}</div> : null}
           </div>
         </div>
         <div className="mt-6 flex justify-end gap-2 border-t border-slate-100 bg-slate-50 px-5 py-3 dark:border-slate-800 dark:bg-slate-950/45">

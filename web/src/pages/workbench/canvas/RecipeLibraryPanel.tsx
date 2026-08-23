@@ -78,7 +78,7 @@ export function RecipeLibraryPanel({
   };
 
   return (
-    <div className="space-y-3 p-3">
+    <div className="space-y-3 p-3" data-graph-recipe-panel>
       {application ? (
         <section className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-400/30 dark:!bg-emerald-500/10" aria-live="polite">
           <div className="flex items-start gap-2">
@@ -149,10 +149,11 @@ export function RecipeLibraryPanel({
         title={t("workbench.recipe.previewTitle")}
         description={previewError
           ? previewError
-          : `${t("workbench.recipe.previewDetail", {
+          : t("workbench.recipe.previewDetail", {
             nodes: previewNodes.length,
             edges: previewEdges.length,
-          })} ${previewNodes.map((node) => node.title).join(" · ")}`}
+          })}
+        body={previewError || !previewResult ? null : <RecipeApplyPreviewBody preview={previewResult} />}
         confirmLabel={t("workbench.recipe.previewConfirm")}
         cancelLabel={t("common.cancel")}
         busy={previewBusy}
@@ -171,6 +172,35 @@ export function RecipeLibraryPanel({
           setPreviewError(null);
         }}
       />
+    </div>
+  );
+}
+
+export function RecipeApplyPreviewBody({ preview }: { preview: WorkflowRecipePreview }) {
+  const { t } = useI18n();
+  const nodeTitle = new Map(preview.nodes.map((node) => [node.key, node.title]));
+  return (
+    <div data-recipe-preview data-recipe-preview-mode={preview.mode} className="space-y-2 text-left">
+      <div className="text-xs font-semibold text-slate-800 dark:text-slate-100">
+        {preview.mode === "merge" ? t("workbench.recipe.previewModeMerge") : t("workbench.recipe.previewModeCreate")}
+      </div>
+      <p className="text-[11px] text-slate-500 dark:text-slate-400">{t("workbench.recipe.previewWillAdd")}</p>
+      <ul data-recipe-preview-nodes className="max-h-32 space-y-1 overflow-y-auto text-xs text-slate-700 dark:text-slate-200">
+        {preview.nodes.map((node) => (
+          <li key={node.key}>{node.title}</li>
+        ))}
+      </ul>
+      {preview.edges.length ? (
+        <ul data-recipe-preview-edges className="max-h-24 space-y-1 overflow-y-auto text-[11px] text-slate-500 dark:text-slate-400">
+          {preview.edges.map((edge) => (
+            <li key={edge.key}>
+              {nodeTitle.get(edge.source_node_key) ?? edge.source_node_key}
+              {" → "}
+              {nodeTitle.get(edge.target_node_key) ?? edge.target_node_key}
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   );
 }

@@ -142,7 +142,11 @@ Canvas groups are one-level visual folders. You can enter a group and remember i
 
 Workflow runs are created and validated through ProductFlow business endpoints. The workbench can submit the whole graph or one node without an Agent Conversation first. Agent run requests go through `agent_workflow_run_requests.py`; user confirmation uses the same `graph_runs.py` / `graph_execution.py` constraints.
 
-WorkflowRecipe stores user-created full workflows or fragments. Saving extracts a live schema-v3 graph fragment (nodes, edges, groups) without product identity, bound assets, generated results, or media bytes. Applying a full recipe to another product still creates a reviewable Draft; the workbench previews the nodes and edges that will be created. Fragment recipes return an explicit conflict against an existing workflow. The save HTTP entry is `POST /api/v3/products/{product_id}/workflows/{workflow_id}/recipes`.
+After a live graph exists, the Agent cannot submit a WorkflowDraft that would replace it. Single reversible edits go through `apply_graph_change_set`. Multi-node rewrites land as an unapplied `WorkflowGraphProposal`; ghost preview, confirm, and cancel happen on the canvas.
+
+WorkflowRecipe stores user-created full workflows or fragments. Saving extracts a live schema-v3 graph fragment (nodes, edges, groups) without product identity, bound assets, generated results, or media bytes. A full recipe creates a live graph only when the target product has none; an existing graph returns a conflict. Fragment recipes merge into an existing schema-v3 graph or return an explicit conflict. They are not written as a Draft. Save HTTP is `POST /api/v3/products/{product_id}/workflows/{workflow_id}/recipes`; preview/apply are `POST /api/v3/products/{product_id}/workflow-recipes/{recipe_id}/preview` and `.../apply`.
+
+A product with no live graph can `POST /api/v3/products/{product_id}/workflows` to persist an empty schema-v3 graph (revision 1, no nodes or edges). A second create is a conflict. Empty birth is not an empty ChangeSet (`operations` has min length 1). Later node/edge writes still use `apply_graph_change_set`.
 
 Graph rules live in `domain/graph_catalog.py` and `domain/graph_rules.py`. Structure commands use `graph_commands.py` / `graph_apply.py`. Runs use `graph_runs.py` / `graph_execution.py`. HTTP entry is `presentation/routes/workflow_graphs.py`.
 

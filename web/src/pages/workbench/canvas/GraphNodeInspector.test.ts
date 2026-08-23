@@ -126,6 +126,13 @@ const graph: GraphProjection = {
       id: "image",
       node_type: "image_generation",
       title: "主图 1",
+      incoming: [{
+        id: "edge-prompt",
+        node_id: "brief",
+        data_type: "creative_brief",
+        role: "brief",
+        order: 0,
+      }],
       config: {
         generation_spec: {
           aspect_ratio: "4:5",
@@ -299,7 +306,7 @@ describe("GraphNodeInspector", () => {
     expect(markup).not.toContain("visual_system_version_id");
   });
 
-  it("shows compiled run inputs from the last node run, not the current edges", () => {
+  it("shows incoming sources as title and role on the first screen, not compiled ids", () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     client.setQueryData(["graph-runs", "p1", "g1"], {
       items: [{
@@ -332,13 +339,13 @@ describe("GraphNodeInspector", () => {
       }],
     });
     const markup = renderInspector(graph.nodes.find((item) => item.id === "image") ?? null, client);
-    expect(markup).toContain("实际运行输入");
-    expect(markup).toContain("data-graph-runtime-inputs");
-    expect(markup).toContain("商品信息");
-    expect(markup).toContain("2");
-    expect(markup).toContain("asset-a");
-    expect(markup).not.toContain("deadbeef");
-    expect(markup).not.toContain("顺序 0");
+    const firstScreen = markup.split("data-graph-runtime-inputs-technical")[0];
+    expect(firstScreen).toContain("实际运行输入");
+    expect(firstScreen).toContain("data-graph-runtime-inputs");
+    expect(firstScreen).toContain("创作要求");
+    expect(firstScreen).not.toContain("asset-a");
+    expect(firstScreen).not.toContain("deadbeef");
+    expect(markup).toContain("data-graph-runtime-inputs-technical");
   });
 
   it("shows the last generated prompt on a prompt node", () => {

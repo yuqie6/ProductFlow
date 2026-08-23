@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { GRAPH_PORT_MAX_VISUAL_SCALE, graphEdgeEmphasis, graphPortVisualScale } from "./graphCanvasVisual";
+import { GRAPH_PORT_MAX_VISUAL_SCALE, graphEdgeDeleteClassName, graphEdgeEmphasis, graphPortVisualScale } from "./graphCanvasVisual";
 
 describe("graphCanvasVisual", () => {
   it("caps port scale at low zoom", () => {
@@ -14,5 +14,11 @@ describe("graphCanvasVisual", () => {
       sourceSelected: false,
       targetSelected: false,
     })).toBe("receded");
+  });
+
+  it("keeps selected-edge delete visible without hover", () => {
+    expect(graphEdgeDeleteClassName(true, false)).toContain("opacity-100");
+    expect(graphEdgeDeleteClassName(true, false)).not.toContain("opacity-0");
+    expect(graphEdgeDeleteClassName(false, false)).toContain("opacity-0");
   });
 });

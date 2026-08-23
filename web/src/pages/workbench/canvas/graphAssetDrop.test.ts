@@ -146,21 +146,21 @@ describe("resolveGraphAssetDrop", () => {
     })]);
   });
 
-  it("ignores drops on nodes that cannot take a reference", () => {
+  it("rejects drops on nodes that cannot take a reference", () => {
     const plan = resolveGraphAssetDrop(graph([node({ id: "facts", node_type: "product_source" })]), {
       assetIds: ["asset-a"],
       position: { x: 0, y: 0 },
       nodeId: "facts",
     }, catalog);
-    expect(plan.kind).toBe("ignored");
+    expect(plan).toEqual({ kind: "rejected", reasonKey: "graph.drop.incompatible" });
   });
 
-  it("ignores drops onto processing nodes until catalog is loaded", () => {
+  it("rejects drops onto processing nodes until catalog is loaded", () => {
     const plan = resolveGraphAssetDrop(graph([node({ id: "prompt", node_type: "prompt_generation" })]), {
       assetIds: ["asset-a"],
       position: { x: 0, y: 0 },
       nodeId: "prompt",
     }, null);
-    expect(plan.kind).toBe("ignored");
+    expect(plan).toEqual({ kind: "rejected", reasonKey: "graph.drop.catalogMissing" });
   });
 });

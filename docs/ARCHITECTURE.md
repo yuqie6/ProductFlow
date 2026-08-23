@@ -144,6 +144,8 @@ Draft 状态依次覆盖 collecting、awaiting_confirmation、confirmed、materi
 
 WorkflowRecipe 保存用户主动创建的完整工作流或局部片段。保存从 live schema-v3 graph 提取，payload 是节点/边/分组片段，不含商品身份、绑定素材、生成结果或媒体字节。完整配方只在目标商品还没有 live graph 时创建；已有图时返回冲突。片段配方合并进已有 schema-v3 工作流，无法合并时返回明确冲突，不会写成 Draft 或退休模型。HTTP 保存入口是 `POST /api/v3/products/{product_id}/workflows/{workflow_id}/recipes`；预览/应用是 `POST /api/v3/products/{product_id}/workflow-recipes/{recipe_id}/preview` 与 `.../apply`。
 
+无 live graph 时，`POST /api/v3/products/{product_id}/workflows` 写入一张空的 schema-v3 图（revision 1，无节点/边）；已有 active graph 时返回冲突。空图出生不是空 ChangeSet（operations 至少一条）。节点、边、分组写入仍走 `apply_graph_change_set`。
+
 图规则由 `domain/graph_catalog.py` 与 `domain/graph_rules.py` 负责。目录同时给出端口合同和可编辑配置字段；ChangeSet 写入会拒绝未登记的 `config` 键。结构命令走 `graph_commands.py` / `graph_apply.py`，运行走 `graph_runs.py` / `graph_execution.py`。HTTP 入口是 `presentation/routes/workflow_graphs.py`。
 
 ## 7. 图片模型

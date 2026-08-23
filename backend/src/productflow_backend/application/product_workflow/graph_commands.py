@@ -147,6 +147,45 @@ def stage_new_workflow_graph(
     return GraphCommandResult(graph=graph, applied=applied, operation_group=operation_group)
 
 
+def create_empty_workflow_graph(
+    session: Session,
+    *,
+    product_id: str,
+    title: str = DEFAULT_GRAPH_TITLE,
+    commit: bool = True,
+) -> WorkflowGraph:
+    """Persist an empty active schema-v3 graph.
+
+    `WorkflowChangeSet.operations` requires at least one op, so an empty canvas cannot
+    be born as a no-op ChangeSet. Later node/edge writes still go through `apply_graph_change_set`.
+    """
+    try:
+        _lock_product(session, product_id)
+        if get_active_workflow_graph(session, product_id=product_id) is not None:
+            raise ConflictError("商品已有 active schema-v3 工作流")
+        graph = WorkflowGraph(
+            product_id=product_id,
+            title=title,
+            active=True,
+            schema_version=GRAPH_SCHEMA_VERSION,
+            revision=1,
+            source_draft_revision_id=None,
+        )
+        session.add(graph)
+        session.flush()
+        graph.updated_at = now_utc()
+        session.flush()
+        graph_id = graph.id
+        if commit:
+            session.commit()
+            session.expire_all()
+            graph = get_workflow_graph(session, product_id=product_id, graph_id=graph_id)
+        return graph
+    except Exception:
+        session.rollback()
+        raise
+
+
 def apply_graph_change_set(
     session: Session,
     *,

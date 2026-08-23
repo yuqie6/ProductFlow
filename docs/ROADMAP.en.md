@@ -1,6 +1,6 @@
 # ProductFlow Roadmap
 
-This document records only directions that remain unimplemented or lack real validation evidence. Current capabilities live in `PRD.en.md`, current code structure in `ARCHITECTURE.en.md`, and V1 cutover evidence in `rollout/workflow-v2-cutover.md`. The online schema-v3 graph is already documented there; GraphProposal and applying a Recipe ChangeSet onto a live graph are entered only from §2.
+This document records only directions that remain unimplemented or lack real validation evidence. Current capabilities live in `PRD.en.md`, current code structure in `ARCHITECTURE.en.md`, and V1 cutover evidence in `rollout/workflow-v2-cutover.md`. The online schema-v3 graph, live-graph Recipe ChangeSet apply, and live-graph Agent GraphProposal are already documented there. Desktop/1024/390 continuous-action browser evidence is still pending.
 
 ## Near-Term Priorities
 
@@ -28,9 +28,10 @@ The online workflow authority is already `workflow_graphs`. Current implementati
 - Server-side Redo (`POST .../redo`, inverse ChangeSet; Redo must not call Undo again). Code is wired; browser evidence still belongs to slice G.
 - Inspector now renders from Node Catalog `config_fields`; saves still use `update_node_config`. Browser evidence still belongs to slice G. Inspector failure/empty next-actions/result language is sidebar slice S1.
 - Enter-group is wired: double-click or the enter control, breadcrumb return, separate in-group and full-graph viewports. Groups remain non-DAG nodes. Browser evidence still belongs to slice G.
-- Extracting and saving a recipe from a live v3 graph is wired (full graph / group / selection; no V2 payload). Applying a saved recipe on another product still produces a reviewable Draft, with a preview of nodes and edges. Fragment recipes conflict explicitly. Applying a Recipe ChangeSet directly onto another live graph is still undelivered. Browser evidence still belongs to slice G.
-- Agent GraphProposal / ChangeSet against a live graph. Target contract: `docs/adr/0008-free-canvas-agent-graph-authority.md`.
-- 390px bottom drawer for the inspector; the narrow layout currently covers the canvas.
+- Extracting a recipe from a live v3 graph, saving it, and applying it onto another product's live graph is wired (full-graph create; fragment merge or an explicit conflict). Browser 1440/1024/390 evidence still belongs to slice G.
+- Agent single Graph Command and unapplied GraphProposal against a live graph (ghost preview, confirm, cancel) is wired. Target contract: `docs/adr/0008-free-canvas-agent-graph-authority.md`. Browser evidence still belongs to slice G.
+- The 390px inspector is a bottom drawer on `ProductWorkbenchInspector`; browser evidence still belongs to slice G.
+- A product with no live graph can persist an empty schema-v3 graph, then add catalog node types through Graph Command; a second empty-create is an explicit conflict. Browser evidence still belongs to slice G.
 - Remaining interaction items in `docs/rollout/free-canvas-v3-interaction-parity.md`. That table is a checklist; the quality ceiling is the canvas/sidebar restoration specs.
 - The full gate with a real provider, PostgreSQL/Redis/worker, desktop and 390px browsers, console/network errors, cancel/retry, and a retired-runtime residue scan.
 

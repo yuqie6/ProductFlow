@@ -19,8 +19,10 @@ import { sanitizeFilenamePart } from "../../../lib/image-downloads";
 import { useI18n } from "../../../lib/preferences";
 import type { GraphNodeRun, GraphProjection, GraphRun, WorkflowNodeStatus } from "../../../lib/types";
 import { statusClass } from "../chrome/utils";
+import { graphEdgeRoleLabelKey } from "./graphCatalog";
 import {
   graphContextEntries,
+  graphIncomingSourceEntries,
   graphNodeRunPreviewAssetId,
   graphRunScopeLabelKey,
   graphRunsAreLive,
@@ -195,6 +197,7 @@ function GraphRunRecord({
           <NodeRunRecord
             key={nodeRun.id}
             nodeRun={nodeRun}
+            graph={graph}
             title={graph.nodes.find((node) => node.id === nodeRun.node_id)?.title
               ?? t("graph.runs.deletedNode")}
             selected={Boolean(nodeRun.node_id && nodeRun.node_id === selectedNodeId)}
@@ -210,6 +213,7 @@ function GraphRunRecord({
 
 function NodeRunRecord({
   nodeRun,
+  graph,
   title,
   selected,
   previewAssetId,
@@ -217,6 +221,7 @@ function NodeRunRecord({
   onPreviewImage,
 }: {
   nodeRun: GraphNodeRun;
+  graph: GraphProjection;
   title: string;
   selected: boolean;
   previewAssetId: string | null;
@@ -225,6 +230,8 @@ function NodeRunRecord({
 }) {
   const { t } = useI18n();
   const active = LIVE_RUN_STATUSES.has(nodeRun.status);
+  const node = nodeRun.node_id ? graph.nodes.find((item) => item.id === nodeRun.node_id) ?? null : null;
+  const sources = node ? graphIncomingSourceEntries(node, graph) : [];
   const evidence = graphContextEntries(nodeRun.compiled_context);
   return (
     <div className={selected ? "bg-slate-50 dark:bg-slate-800/50" : ""}>
@@ -245,6 +252,19 @@ function NodeRunRecord({
               {t(`detail.nodeStatus.${nodeRun.status}`)}
             </span>
           </div>
+          {sources.length ? (
+            <ul data-graph-run-inputs className="mt-1.5 space-y-0.5">
+              {sources.map((item) => {
+                const roleKey = graphEdgeRoleLabelKey(item.role);
+                return (
+                  <li key={item.id} className="flex min-w-0 items-center justify-between gap-2 text-[10px] text-zinc-500 dark:text-slate-400">
+                    <span className="min-w-0 truncate">{item.title || t("graph.runs.deletedNode")}</span>
+                    <span>{roleKey ? t(roleKey) : item.role}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
           {nodeRun.failure_reason ? (
             <div className="mt-1.5 text-[10px] leading-4 text-red-600 dark:text-red-300">{nodeRun.failure_reason}</div>
           ) : null}
@@ -264,7 +284,7 @@ function NodeRunRecord({
         ) : null}
       </div>
       {evidence.length ? (
-        <details className="group border-t border-zinc-100 px-3.5 py-2.5 dark:border-slate-800">
+        <details data-graph-run-inputs-technical className="group border-t border-zinc-100 px-3.5 py-2.5 dark:border-slate-800">
           <summary className="flex cursor-pointer list-none items-center gap-2 text-[10px] font-semibold text-zinc-500 marker:hidden dark:text-slate-400 [&::-webkit-details-marker]:hidden">
             <FileText size={12} />
             <span>{t("agentWorkbench.runHistory.evidence")}</span>

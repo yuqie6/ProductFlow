@@ -119,7 +119,7 @@
 ## 8. 文档同步
 
 - 行为落地后更新 `docs/USER_GUIDE.md` 与 `web/src/pages/HelpPage.tsx` 同一提交。
-- `PRD.md` 已写「完整工作流、文件夹或多选节点保存为配方」。保存已从 live v3 graph 提取；应用到 live graph 的 ChangeSet 仍未交付，ARCHITECTURE 只写当前 Draft+预览事实。
+- `PRD.md` 已写「完整工作流、文件夹或多选节点保存为配方」。保存从 live v3 graph 提取；应用到另一商品 live graph 的 ChangeSet 已接线。浏览器证据仍待切片 G。
 - 交互表状态列落后于代码时改交互表，不要为了表格绿灯降低 §4。
 
 ## 9. 代码锚点

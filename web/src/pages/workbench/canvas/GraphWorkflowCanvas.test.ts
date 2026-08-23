@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import type { GraphNode, GraphNodeCatalog, GraphProjection } from "../../../lib/types";
 import { GRAPH_PORT_MAX_VISUAL_SCALE, graphEdgeEmphasis, graphPortVisualScale } from "./graphCanvasVisual";
-import { GraphGroupCard, GraphNodeCard } from "./GraphWorkflowCanvas";
+import { GraphGroupCard, GraphNodeCard, rejectedGraphConnectionNotice } from "./GraphWorkflowCanvas";
 
 const catalog: GraphNodeCatalog = {
   version: 1,
@@ -87,6 +87,9 @@ function renderNodeCard(node: GraphNode, connectable = true): string {
       onDuplicate: () => undefined,
       onSaveRecipe: () => undefined,
       onDelete: () => undefined,
+      selectedCount: 1,
+      selectionPrimary: true,
+      missingRunLabels: [],
       onSelectNode: () => undefined,
       graph,
       catalog,
@@ -180,6 +183,9 @@ describe("graph workflow node ports", () => {
         onDuplicate: () => undefined,
         onDelete: () => undefined,
         onSaveRecipe: () => undefined,
+        selectedCount: 1,
+        selectionPrimary: true,
+        missingRunLabels: [],
         onSelectNode: () => undefined,
         graph,
         catalog,
@@ -200,6 +206,109 @@ describe("graph workflow node ports", () => {
     expect(markup).toContain("模型超时");
     expect(markup).toContain("可重试");
   });
+
+  it("shows missing Catalog required_to_run inputs on the card", () => {
+    const graph = graphWith(graphNode({
+      id: "image",
+      node_type: "image_generation",
+      title: "主图 1",
+    }));
+    const props: ComponentProps<typeof GraphNodeCard> = {
+      id: "image",
+      type: "graph-node",
+      data: {
+        kind: "node",
+        node: graph.nodes[0],
+        status: "idle",
+        failureReason: null,
+        lastRunAt: null,
+        retryable: false,
+        runBusy: false,
+        structureBusy: false,
+        onRun: () => undefined,
+        onRunToNode: () => undefined,
+        onBind: () => undefined,
+        onDuplicate: () => undefined,
+        onSaveRecipe: () => undefined,
+        onDelete: () => undefined,
+        selectedCount: 1,
+        selectionPrimary: true,
+        missingRunLabels: ["还缺提示词，先连上再运行"],
+        onSelectNode: () => undefined,
+        graph,
+        catalog,
+      },
+      dragging: false,
+      zIndex: 0,
+      selectable: true,
+      deletable: false,
+      selected: false,
+      draggable: true,
+      isConnectable: true,
+      positionAbsoluteX: 0,
+      positionAbsoluteY: 0,
+    };
+    const gapMarkup = renderToStaticMarkup(
+      createElement(ReactFlowProvider, null, createElement(GraphNodeCard, props)),
+    );
+    expect(gapMarkup).toContain("data-graph-missing-run-input");
+    expect(gapMarkup).toContain("还缺提示词，先连上再运行");
+  });
+
+  it("puts copy, group, delete, and save-as-recipe on a multi-selection toolbar", () => {
+    const graph = graphWith(graphNode({
+      id: "image",
+      node_type: "image_generation",
+      title: "主图 1",
+    }));
+    const props: ComponentProps<typeof GraphNodeCard> = {
+      id: "image",
+      type: "graph-node",
+      data: {
+        kind: "node",
+        node: graph.nodes[0],
+        status: "idle",
+        failureReason: null,
+        lastRunAt: null,
+        retryable: false,
+        runBusy: false,
+        structureBusy: false,
+        onRun: () => undefined,
+        onRunToNode: () => undefined,
+        onBind: () => undefined,
+        onDuplicate: () => undefined,
+        onSaveRecipe: () => undefined,
+        onDelete: () => undefined,
+        onDuplicateSelection: () => undefined,
+        onGroupSelection: () => undefined,
+        onSaveSelection: () => undefined,
+        onDeleteSelection: () => undefined,
+        selectedCount: 2,
+        selectionPrimary: true,
+        missingRunLabels: [],
+        onSelectNode: () => undefined,
+        graph,
+        catalog,
+      },
+      dragging: false,
+      zIndex: 0,
+      selectable: true,
+      deletable: false,
+      selected: true,
+      draggable: true,
+      isConnectable: true,
+      positionAbsoluteX: 0,
+      positionAbsoluteY: 0,
+    };
+    const markup = renderToStaticMarkup(
+      createElement(ReactFlowProvider, null, createElement(GraphNodeCard, props)),
+    );
+    expect(markup).toContain("data-graph-selection-actions");
+    expect(markup).toContain("复制");
+    expect(markup).toContain("编组");
+    expect(markup).toContain("存为配方");
+    expect(markup).toContain("删除");
+  });
 });
 
 describe("graph canvas visual scale", () => {
@@ -214,6 +323,52 @@ describe("graph canvas visual scale", () => {
     expect(graphEdgeEmphasis({ edgeSelected: false, sourceSelected: false, targetSelected: false })).toBe("receded");
     expect(graphEdgeEmphasis({ edgeSelected: false, sourceSelected: true, targetSelected: false })).toBe("active");
     expect(graphEdgeEmphasis({ edgeSelected: true, sourceSelected: false, targetSelected: false })).toBe("active");
+  });
+});
+
+describe("rejectedGraphConnectionNotice", () => {
+  it("returns the catalog reason when a drop is illegal", () => {
+    const graph: GraphProjection = {
+      id: "g1",
+      product_id: "p1",
+      title: "夏季主图",
+      schema_version: 3,
+      revision: 1,
+      source_draft_revision_id: null,
+      last_operation_group_id: null,
+      can_undo: false,
+      can_redo: false,
+      nodes: [
+        graphNode({ id: "source", node_type: "product_source", title: "商品资料" }),
+        graphNode({ id: "image", node_type: "image_generation", title: "主图 1" }),
+      ],
+      edges: [],
+      groups: [],
+    };
+    expect(rejectedGraphConnectionNotice(graph, {
+      isValid: false,
+      fromNodeId: "source",
+      toNodeId: "image",
+      toHandleId: "input",
+    }, catalog)).toBe("graph.connect.incompatible");
+    expect(rejectedGraphConnectionNotice(graph, {
+      isValid: true,
+      fromNodeId: "source",
+      toNodeId: "image",
+      toHandleId: "input",
+    }, catalog)).toBeNull();
+    expect(rejectedGraphConnectionNotice(graph, {
+      isValid: false,
+      fromNodeId: "source",
+      toNodeId: null,
+      toHandleId: "input",
+    }, catalog)).toBeNull();
+    expect(rejectedGraphConnectionNotice(graph, {
+      isValid: false,
+      fromNodeId: "source",
+      toNodeId: "image",
+      toHandleId: null,
+    }, catalog)).toBeNull();
   });
 });
 

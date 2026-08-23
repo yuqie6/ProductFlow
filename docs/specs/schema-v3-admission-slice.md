@@ -5,9 +5,9 @@
 - 文档状态：Approved for implementation
 - 批准依据：仓库 owner 确认设计稳单并开始落地。目标合同：`docs/adr/0008-free-canvas-agent-graph-authority.md`
 - 交互继承：`docs/rollout/free-canvas-v3-interaction-parity.md`
-- 当前运行事实：`CONTEXT.md`、`docs/ARCHITECTURE.md`、在线 schema-v3 `workflow_graphs`。本文是已落地准入切片的设计记录；配方从 live graph 提取保存已接线。GraphProposal、配方应用到 live graph 的 ChangeSet 仍未交付。
+- 当前运行事实：`CONTEXT.md`、`docs/ARCHITECTURE.md`、在线 schema-v3 `workflow_graphs`。本文是已落地准入切片的设计记录。配方从 live graph 提取、保存并应用到另一商品 live graph、live-graph GraphProposal、以及无图时写入空 graph 均已接线。浏览器 1440/1024/390 证据仍待切片 G。
 - 阅读入口：未完成项只从 `docs/ROADMAP.md` §2 进入，不进入默认阅读。
-- 代码基线：`codex/development`。迁移头：`20260822_0083`。v3 graph、ChangeSet、compiler、run、直接创建、Draft 确认 persist 和工作台画布数据源已落地。工作流子图库关联挂在 `workflow_graphs` 上。在线 V2 图合同已从应用层删除。
+- 代码基线：`codex/development`。迁移头：`20260822_0084`。v3 graph、ChangeSet、compiler、run、直接创建、Draft 确认 persist、空图创建、配方 live apply、GraphProposal 和工作台画布数据源已落地。工作流子图库关联挂在 `workflow_graphs` 上。在线 V2 图合同已从应用层删除。
 
 人是工作台的主控。画布上每一种持久操作都必须能由用户单独完成，并且自洽、可撤销、体验完整。Agent 是加速手段，不是进画布或写出提示词/风格的闸门。
 
@@ -42,11 +42,9 @@
 
 本切片交付后，同一环境只有 schema-v3 作为在线图权威。在线 V2 的删除放在本切片完整 gate 之后，见 §10。
 
-本切片不包含：
+准入切片当时不包含下列项。其中 GraphProposal 与配方 live apply 已在后续接线；仍未交付的是 Intent 收敛和 v1 归档重建：
 
 - `WorkflowIntent` 取代 WorkflowDraft 拓扑（ADR 0008 §11，后续收敛）
-- GraphProposal 幽灵层与 Agent 对 **live graph** 的 `propose_workflow_changes`
-- Recipe payload 直接解析为 ChangeSet（配方仍走 Draft → 本 adapter，见 §4.8）
 - v1 archive → WorkflowIntent 重建（gate 后独立切片）
 - 继续收 `application/` 根上的 durable/settings 平铺文件
 - 恢复已删除的 `0071-0074`

@@ -80,7 +80,9 @@ export function AgentProductWorkbenchPage({
   const [previewImage, setPreviewImage] = useState<DownloadableImage | null>(null);
   const [canvasBusy, setCanvasBusy] = useState(false);
   const [chromeCollapsed, setChromeCollapsed] = useState(false);
+  const [emptyGraphError, setEmptyGraphError] = useState<string | null>(null);
   const recipeApplyKeysRef = useRef(new Map<string, string>());
+  const emptyGraphInFlightRef = useRef(false);
   const sidebarToolRef = useRef<AgentSidebarToolId>(sidebarTool);
   const flushInspectorRef = useRef<() => Promise<void>>(async () => undefined);
   sidebarToolRef.current = sidebarTool;
@@ -161,6 +163,18 @@ export function AgentProductWorkbenchPage({
       setMaterialization(result);
       setConflictDetected(false);
       setDismissedRevisionId(result.source_draft_revision_id);
+    },
+  });
+
+  const createEmptyGraphMutation = useMutation({
+    mutationFn: () => createOrLoadEmptyWorkflowGraph({
+      create: () => api.createEmptyWorkflowGraph(bootstrap.product.id),
+      loadCurrent: () => api.getCurrentWorkflowGraph(bootstrap.product.id),
+      isConflict: (error) => isHttpErrorStatus(error, 409),
+    }),
+    onMutate: () => setEmptyGraphError(null),
+    onSuccess: (graph) => {
+      queryClient.setQueryData(["workflow-graph", bootstrap.product.id], graph);
     },
   });
 
@@ -437,19 +451,36 @@ export function AgentProductWorkbenchPage({
             }}
           />
         ) : (
-          <WorkflowOnboardingHero
-            productName={bootstrap.product.name}
-            onOpenAgent={() => {
-              const composer = document.querySelector<HTMLTextAreaElement>("[data-agent-composer] textarea");
-              composer?.focus();
-            }}
-            onOpenRecipes={() => {
-              void requestSidebarTool("recipes");
-            }}
-            onOpenAddPanel={() => {
-              void requestSidebarTool("add");
-            }}
-          />
+          <div className="relative h-full min-h-0">
+            {emptyGraphError ? (
+              <p role="alert" className="absolute inset-x-4 top-4 z-10 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs leading-5 text-red-700 dark:border-red-400/30 dark:bg-red-500/10 dark:text-red-200">
+                {emptyGraphError}
+              </p>
+            ) : null}
+            <WorkflowOnboardingHero
+              productName={bootstrap.product.name}
+              onOpenAgent={() => {
+                const composer = document.querySelector<HTMLTextAreaElement>("[data-agent-composer] textarea");
+                composer?.focus();
+              }}
+              onOpenRecipes={() => {
+                void requestSidebarTool("recipes");
+              }}
+              onOpenAddPanel={() => {
+                if (emptyGraphInFlightRef.current || createEmptyGraphMutation.isPending) return;
+                emptyGraphInFlightRef.current = true;
+                void startEmptyCanvasAdd({
+                  hasGraph: Boolean(liveGraph),
+                  createGraph: () => createEmptyGraphMutation.mutateAsync(),
+                  openAdd: () => requestSidebarTool("add"),
+                }).catch((error) => {
+                  setEmptyGraphError(errorDetail(error, t("workbench.error.structure")));
+                }).finally(() => {
+                  emptyGraphInFlightRef.current = false;
+                });
+              }}
+            />
+          </div>
         )}
         agentContent={(
           <AgentConversationPanel
@@ -555,6 +586,33 @@ export function resolveAgentWorkbenchSidebarTool(
     return requested;
   }
   return workflowAvailable ? requested : "agent";
+}
+
+export async function startEmptyCanvasAdd(input: {
+  hasGraph: boolean;
+  createGraph: () => Promise<GraphProjection>;
+  openAdd: () => void | Promise<boolean | void>;
+}): Promise<"created" | "opened"> {
+  if (!input.hasGraph) {
+    await input.createGraph();
+  }
+  await input.openAdd();
+  return input.hasGraph ? "opened" : "created";
+}
+
+export async function createOrLoadEmptyWorkflowGraph(input: {
+  create: () => Promise<GraphProjection>;
+  loadCurrent: () => Promise<GraphProjection>;
+  isConflict: (error: unknown) => boolean;
+}): Promise<GraphProjection> {
+  try {
+    return await input.create();
+  } catch (error) {
+    if (input.isConflict(error)) {
+      return input.loadCurrent();
+    }
+    throw error;
+  }
 }
 
 function SidebarError({

@@ -10,7 +10,7 @@ import {
   useViewport,
 } from "@xyflow/react";
 import type { FitViewOptions, Viewport } from "@xyflow/react";
-import { Focus, Grid, Loader2, Sparkles } from "lucide-react";
+import { Expand, Focus, Grid, Loader2, Sparkles } from "lucide-react";
 import type { ReactNode } from "react";
 import { useCallback } from "react";
 
@@ -146,6 +146,7 @@ export function WorkflowCanvasNodeToolbarButton({
 
 export interface WorkflowCanvasControlLabels {
   resetZoom: string;
+  fitView: string;
   fitSelection: string;
   controls: string;
   snapToGrid: string;
@@ -205,15 +206,24 @@ export function WorkflowCanvasControls({
       position="top-left"
       orientation="horizontal"
       showInteractive={false}
+      showFitView={false}
       fitViewOptions={fitViewOptions}
       onZoomIn={commitViewportAfterControlAction}
       onZoomOut={commitViewportAfterControlAction}
-      onFitView={commitViewportAfterControlAction}
       aria-label={labels.controls}
       className="workflow-canvas-controls nopan nodrag nowheel z-30 !m-0 translate-x-3 translate-y-3 lg:translate-x-4 lg:translate-y-4"
     >
       <ControlButton onClick={() => zoomTo(1)} aria-label={labels.resetZoom} title={labels.resetZoom}>
         <span className="text-[11px] tabular-nums">{Math.round(normalizeZoom(zoom) * 100)}%</span>
+      </ControlButton>
+      <ControlButton
+        onClick={() => {
+          void reactFlow.fitView(fitViewOptions).then(commitCurrentViewport);
+        }}
+        aria-label={labels.fitView}
+        title={labels.fitView}
+      >
+        <Expand aria-hidden="true" size={13} />
       </ControlButton>
       <ControlButton
         onClick={fitSelectedNodes}

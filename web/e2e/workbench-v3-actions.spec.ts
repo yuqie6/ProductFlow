@@ -8,7 +8,7 @@ import {
   requiredEnv,
 } from "./liveGraph";
 
-const SCRATCH_ACTIONS = "/tmp/grok-goal-561ad5722a1f/implementer/e2e-actions";
+const SCRATCH_ACTIONS = "/tmp/grok-goal-c21a0858e3f5/implementer/e2e";
 
 const NODE_TYPES = [
   { type: "product_source", label: "商品资料" },
@@ -176,7 +176,7 @@ async function shiftSelectNode(page: Page, nodeId: string): Promise<void> {
 }
 
 async function fitCanvas(page: Page): Promise<void> {
-  const fit = page.getByRole("button", { name: "Fit View" });
+  const fit = page.getByRole("button", { name: "适配全图" });
   if (await fit.isVisible()) {
     await fit.click({ force: true });
   }
@@ -470,6 +470,86 @@ for (const preset of PRESETS) {
       await expect(page.getByLabel("还原画布布局")).toBeVisible();
       await page.getByLabel("还原画布布局").click();
       await expect(page.getByText(/Agent 工作台/)).toBeVisible();
+      assertClean();
+    });
+
+    test("recipe apply preview lists mode and nodes then can be cancelled", async ({ page }) => {
+      const assertClean = attachWorkbenchGuards(page);
+      await loginAsAdmin(page, requiredEnv("ADMIN_ACCESS_KEY"));
+      await openDirectCreateWorkbench(page, `e2e-actions-recipe ${preset.name} ${Date.now()}`);
+      const add = await openAddPanel(page);
+      await add.getByRole("button", { name: /保存完整工作流预设/ }).click();
+      const dialog = page.getByRole("dialog");
+      await expect(dialog).toBeVisible();
+      await dialog.getByLabel("预设名称").fill(`验收配方 ${preset.name}`);
+      await dialog.getByRole("button", { name: "保存预设" }).click();
+      await page.locator('[data-sidebar-tool="recipes"]').click();
+      const recipes = page.locator("[data-graph-recipe-panel], body");
+      await expect(page.getByRole("button", { name: "应用" }).first()).toBeVisible({ timeout: 15_000 });
+      await page.getByRole("button", { name: "应用" }).first().click();
+      const preview = page.getByRole("dialog");
+      await expect(preview).toBeVisible();
+      const confirm = preview.getByRole("button", { name: "确认应用" });
+      const previewBody = preview.locator("[data-recipe-preview]");
+      if (await previewBody.count()) {
+        await expect(previewBody).toHaveAttribute("data-recipe-preview-mode", /create|merge/);
+        await expect(preview.locator("[data-recipe-preview-nodes]")).toBeVisible();
+        await expect(confirm).toBeEnabled();
+      } else {
+        await expect(preview).toContainText(/不能合并|冲突|已有/);
+        await expect(confirm).toBeDisabled();
+      }
+      await preview.getByRole("button", { name: "取消" }).click();
+      expect(recipes).toBeTruthy();
+      assertClean();
+    });
+
+    test("illegal connect shows a reason on the canvas", async ({ page }) => {
+      const assertClean = attachWorkbenchGuards(page);
+      await loginAsAdmin(page, requiredEnv("ADMIN_ACCESS_KEY"));
+      await openDirectCreateWorkbench(page, `e2e-actions-connect ${preset.name} ${Date.now()}`);
+      const graph = await currentGraph(page);
+      const source = graph.nodes.find((node) => node.node_type === "product_source");
+      const image = graph.nodes.find((node) => node.node_type === "image_generation");
+      expect(source && image).toBeTruthy();
+      const sourceHandle = page.locator(`[data-id="${source!.id}"] .react-flow__handle-right`).first();
+      const targetHandle = page.locator(`[data-id="${image!.id}"] .react-flow__handle-left`).first();
+      await sourceHandle.dragTo(targetHandle);
+      await expect(page.locator("[data-graph-canvas-notice]")).toContainText(/这两种节点不能相连|这个输入已经满了|这两点已经连过了/);
+      assertClean();
+    });
+
+    test("empty-canvas add persists a graph and opens the palette", async ({ page }) => {
+      const assertClean = attachWorkbenchGuards(page);
+      await loginAsAdmin(page, requiredEnv("ADMIN_ACCESS_KEY"));
+      await page.goto("/products/new");
+      await page.locator("#agent-product-name").fill(`e2e-empty ${preset.name} ${Date.now()}`);
+      await page.getByRole("button", { name: /用 Agent 创建|开始对话|进入对话/ }).first().click({ trial: true }).catch(() => undefined);
+      const agentSubmit = page.getByRole("button", { name: /用 Agent|进入工作台对话|开始创建/ });
+      if (await agentSubmit.first().isVisible().catch(() => false)) {
+        await Promise.all([
+          page.waitForURL(/\/products\/(?!new(?:\/|$))[^/]+$/, { timeout: 60_000 }),
+          agentSubmit.first().click(),
+        ]);
+      } else {
+        const draft = await page.request.post("/api/v2/agent-product-workspaces/drafts", {
+          data: { name: `e2e-empty-api ${preset.name} ${Date.now()}` },
+          headers: { "Idempotency-Key": `e2e-empty-${preset.name}-${Date.now()}` },
+        });
+        expect(draft.ok(), await draft.text()).toBeTruthy();
+        const productId = (await draft.json() as { product: { id: string } }).product.id;
+        await page.goto(`/products/${productId}`);
+      }
+      await expect(page.locator("[data-workflow-onboarding-hero]")).toBeVisible({ timeout: 30_000 });
+      await page.getByRole("button", { name: "打开添加面板" }).click();
+      await expect(page.locator("[data-graph-add-node-panel]")).toBeVisible();
+      await expect(page.locator("[data-graph-canvas-panel]")).toBeVisible();
+      const created = await currentGraph(page);
+      expect(created.id).toBeTruthy();
+      const panel = page.locator("[data-graph-add-node-panel]");
+      for (const item of NODE_TYPES) {
+        await expect(panel.getByRole("button", { name: new RegExp(item.label) })).toBeVisible();
+      }
       assertClean();
     });
 

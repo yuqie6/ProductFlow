@@ -3,10 +3,12 @@ import { describe, expect, it } from "vitest";
 import type { GraphNodeCatalog, GraphProjection } from "../../../lib/types";
 import {
   GRAPH_NODE_TYPE_ORDER,
+  graphConnectionInvalidReason,
   graphNodeHasInput,
   graphNodeTypeOrder,
   inspectableGraphNodeId,
   isGraphConnectionValid,
+  missingRequiredRunRoles,
 } from "./graphCatalog";
 
 const catalog: GraphNodeCatalog = {
@@ -185,6 +187,20 @@ describe("isGraphConnectionValid", () => {
   it("fails closed when the catalog is not loaded", () => {
     expect(isGraphConnectionValid(graph, "source", "prompt", null)).toBe(false);
     expect(isGraphConnectionValid(graph, "prompt", "image", undefined)).toBe(false);
+  });
+
+  it("returns a user-visible reason for illegal connections", () => {
+    expect(graphConnectionInvalidReason(graph, "source", "image", catalog)).toBe("graph.connect.incompatible");
+    expect(graphConnectionInvalidReason(graph, "source", "source", catalog)).toBe("graph.connect.self");
+    expect(graphConnectionInvalidReason(graph, "source", "prompt", null)).toBe("graph.connect.catalogMissing");
+  });
+});
+
+describe("missingRequiredRunRoles", () => {
+  it("lists Catalog required_to_run gaps on the node", () => {
+    const image = graph.nodes.find((node) => node.id === "image");
+    expect(image).toBeTruthy();
+    expect(missingRequiredRunRoles(image!, catalog)).toEqual(["reference", "prompt"]);
   });
 });
 

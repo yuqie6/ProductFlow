@@ -43,8 +43,6 @@ function initialCompactWorkbench(): boolean {
 }
 
 export function deriveAgentWorkbenchRegionState({
-  workflowAvailable,
-  compact,
   confirmationOpen,
   activeSidebarTool = "agent",
   sidebarCollapsed = false,
@@ -56,13 +54,11 @@ export function deriveAgentWorkbenchRegionState({
   activeSidebarTool?: string;
   sidebarCollapsed?: boolean;
 }): AgentWorkbenchRegionState {
-  const sidebarInert = confirmationOpen
-    || (!compact && workflowAvailable && sidebarCollapsed)
-    || (compact && workflowAvailable && sidebarCollapsed);
+  const sidebarInert = confirmationOpen || sidebarCollapsed;
   return {
-    canvasInert: confirmationOpen || !workflowAvailable,
+    canvasInert: confirmationOpen,
     sidebarInert,
-    agentInert: sidebarInert || (workflowAvailable && activeSidebarTool !== "agent"),
+    agentInert: sidebarInert || activeSidebarTool !== "agent",
   };
 }
 
@@ -139,9 +135,7 @@ export function AgentWorkbenchShell({
     activeSidebarTool: resolvedActiveToolId,
     sidebarCollapsed,
   });
-  const canvasVisibleClass = workflowAvailable
-    ? "visible opacity-100"
-    : "invisible pointer-events-none opacity-0";
+  const canvasVisibleClass = "visible opacity-100";
   const inspectorTrackWidth = getAgentWorkbenchInspectorTrackWidth(sidebarCollapsed, inspectorWidth);
   const inspectorTools: ProductWorkbenchInspectorTool[] = [
     {
@@ -160,18 +154,16 @@ export function AgentWorkbenchShell({
   return (
     <main
       data-agent-workbench-shell
-      data-workbench-layout={workflowAvailable ? "canvas-sidebar" : "agent-only"}
+      data-workbench-layout="canvas-sidebar"
       className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-slate-50 pb-[calc(4.5rem+env(safe-area-inset-bottom))] dark:bg-[#0b1220] lg:pb-0"
     >
       <div
         data-agent-workbench-work-area
-        className={`relative min-h-0 flex-1 overflow-hidden lg:grid lg:transition-[grid-template-columns] lg:duration-300 lg:ease-out motion-reduce:lg:transition-none ${
-          workflowAvailable ? "lg:gap-[var(--agent-workbench-inspector-gap)] lg:pr-[var(--agent-workbench-inspector-gap)]" : ""
-        }`}
-        style={workflowAvailable ? ({
+        className="relative min-h-0 flex-1 overflow-hidden lg:grid lg:gap-[var(--agent-workbench-inspector-gap)] lg:pr-[var(--agent-workbench-inspector-gap)] lg:transition-[grid-template-columns] lg:duration-300 lg:ease-out motion-reduce:lg:transition-none"
+        style={{
           "--agent-workbench-inspector-gap": `${INSPECTOR_CANVAS_GAP}px`,
           gridTemplateColumns: `minmax(0, 1fr) ${inspectorTrackWidth}px`,
-        } as CSSProperties) : undefined}
+        } as CSSProperties}
       >
         <section
           data-agent-workbench-canvas-slot
@@ -183,7 +175,7 @@ export function AgentWorkbenchShell({
         </section>
 
         <ProductWorkbenchInspector
-          workflowAvailable={workflowAvailable}
+          workflowAvailable
           tools={inspectorTools}
           activeToolId={resolvedActiveToolId}
           onToolChange={selectSidebarTool}
@@ -195,7 +187,7 @@ export function AgentWorkbenchShell({
           resizeLabel={t("detail.resizeSidebar")}
           collapseLabel={t("detail.collapseSidebar")}
           expandLabel={t("detail.expandSidebar")}
-          mobileVisible={!workflowAvailable || !sidebarCollapsed}
+          mobileVisible={!sidebarCollapsed}
           inert={regions.sidebarInert}
           showActiveWhenCollapsed
           desktopLayout="grid-child"

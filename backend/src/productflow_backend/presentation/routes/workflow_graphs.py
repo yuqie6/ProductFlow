@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from productflow_backend.application.agent.product_intake import AGENT_PRODUCT_IMAGE_TYPE_KEYS
 from productflow_backend.application.product_workflow.graph_commands import (
     apply_graph_change_set,
+    create_empty_workflow_graph,
     redo_last_graph_change_set,
     undo_last_graph_change_set,
 )
@@ -97,6 +98,19 @@ async def create_product_with_direct_graph_endpoint(
         created_assets=result.created_assets,
         projection=result.projection,
     )
+
+
+@router.post(
+    "/products/{product_id}/workflows",
+    response_model=GraphProjectionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_empty_workflow_graph_endpoint(
+    product_id: str,
+    session: Session = Depends(get_session),
+) -> GraphProjectionResponse:
+    graph = create_empty_workflow_graph(session, product_id=product_id)
+    return serialize_graph_projection(get_graph_projection(session, product_id=product_id, graph_id=graph.id))
 
 
 @router.get("/products/{product_id}/workflows/current", response_model=GraphProjectionResponse)

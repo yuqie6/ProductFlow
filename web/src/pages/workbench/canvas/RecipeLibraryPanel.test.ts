@@ -2,8 +2,9 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { WorkflowRecipeSummary } from "../../../lib/types";
-import { RecipeLibraryPanel } from "./RecipeLibraryPanel";
+import { ConfirmDialog } from "../../../components/ConfirmDialog";
+import type { WorkflowRecipePreview, WorkflowRecipeSummary } from "../../../lib/types";
+import { RecipeApplyPreviewBody, RecipeLibraryPanel } from "./RecipeLibraryPanel";
 
 function recipe(kind: WorkflowRecipeSummary["kind"] = "workflow_recipe"): WorkflowRecipeSummary {
   return {
@@ -95,5 +96,49 @@ describe("RecipeLibraryPanel", () => {
     }));
     expect(markup).toContain("应用");
     expect(markup).not.toContain("局部预设还不能合并到已有工作流");
+  });
+
+  it("lists preview mode plus node and edge titles", () => {
+    const preview: WorkflowRecipePreview = {
+      mode: "merge",
+      recipe_id: "r1",
+      recipe_version: 1,
+      nodes: [
+        { key: "prompt", node_type: "prompt_generation", title: "主图提示词", position_x: 0, position_y: 0 },
+        { key: "image", node_type: "image_generation", title: "主图 1", position_x: 40, position_y: 0 },
+      ],
+      edges: [{
+        key: "e1",
+        source_node_key: "prompt",
+        target_node_key: "image",
+        role: "prompt",
+        data_type: "prompt",
+        order: 0,
+      }],
+      groups: [],
+    };
+    const markup = renderToStaticMarkup(createElement(RecipeApplyPreviewBody, { preview }));
+    expect(markup).toContain("data-recipe-preview-mode=\"merge\"");
+    expect(markup).toContain("将合并进当前工作流");
+    expect(markup).toContain("主图提示词");
+    expect(markup).toContain("主图 1");
+    expect(markup).toContain("主图提示词 → 主图 1");
+  });
+
+  it("disables confirm when preview failed", () => {
+    const markup = renderToStaticMarkup(createElement(ConfirmDialog, {
+      open: true,
+      title: "将出现这些节点",
+      description: "配方无法合并进当前工作流",
+      confirmLabel: "确认应用",
+      cancelLabel: "取消",
+      confirmDisabled: true,
+      destructive: false,
+      onConfirm: () => undefined,
+      onClose: () => undefined,
+    }));
+    expect(markup).toMatch(/确认应用<\/button>/);
+    expect(markup).toContain("disabled");
+    expect(markup).toContain("配方无法合并进当前工作流");
   });
 });

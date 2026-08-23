@@ -78,6 +78,19 @@ export function graphHistoryShortcutAction(
   return null;
 }
 
+export function GraphCanvasNotice({ notice }: { notice: string | null }) {
+  if (!notice) return null;
+  return (
+    <div
+      role="status"
+      data-graph-canvas-notice
+      className="rounded-lg border border-slate-200 bg-white/95 px-3 py-2 text-xs font-medium text-slate-700 shadow-sm dark:border-slate-700 dark:bg-[#111a2b] dark:text-slate-200"
+    >
+      {notice}
+    </div>
+  );
+}
+
 function compactWorkbench(): boolean {
   return typeof window !== "undefined"
     && typeof window.matchMedia === "function"
@@ -386,12 +399,16 @@ export function GraphCanvasPanel({
   const handleAssetDrop = useCallback((input: Parameters<typeof resolveGraphAssetDrop>[1]) => {
     const plan = resolveGraphAssetDrop(graphRef.current, input, catalogRef.current);
     if (plan.kind === "ignored") return;
+    if (plan.kind === "rejected") {
+      showNotice(t(plan.reasonKey));
+      return;
+    }
     if (plan.kind === "choose_reuse") {
       setReusePrompt(plan);
       return;
     }
     apply(plan.summary, plan.operations);
-  }, [apply]);
+  }, [apply, showNotice, t]);
 
   const createNode = useCallback((nodeType: GraphNodeType) => {
     const before = graphRef.current;
@@ -735,11 +752,13 @@ export function GraphCanvasPanel({
     },
   });
   const error = applyMutation.error ?? runMutation.error ?? undoMutation.error ?? redoMutation.error ?? proposalMutation.error;
-  const busy = applyMutation.isPending || runMutation.isPending || undoMutation.isPending || redoMutation.isPending || proposalMutation.isPending;
+  const structureBusy = applyMutation.isPending || undoMutation.isPending || redoMutation.isPending || proposalMutation.isPending;
+  const runBusy = runMutation.isPending;
+  const busy = structureBusy || runBusy;
 
   useEffect(() => {
-    onBusyChange?.(busy);
-  }, [busy, onBusyChange]);
+    onBusyChange?.(structureBusy);
+  }, [onBusyChange, structureBusy]);
   useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
 
   const pendingDeleteTitle = pendingDeleteIds?.length === 1
@@ -760,7 +779,7 @@ export function GraphCanvasPanel({
       >
         <button
           type="button"
-          disabled={busy || !graph.can_undo}
+          disabled={structureBusy || !graph.can_undo}
           onClick={() => void runHistoryMutation("undo")}
           className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-text-secondary hover:bg-surface-subtle hover:text-text-primary disabled:opacity-45 lg:h-9 lg:w-9"
           aria-label={t("graph.canvas.undo")}
@@ -770,7 +789,7 @@ export function GraphCanvasPanel({
         </button>
         <button
           type="button"
-          disabled={busy || !graph.can_redo}
+          disabled={structureBusy || !graph.can_redo}
           onClick={() => void runHistoryMutation("redo")}
           className="inline-flex h-11 w-11 items-center justify-center rounded-lg text-text-secondary hover:bg-surface-subtle hover:text-text-primary disabled:opacity-45 lg:h-9 lg:w-9"
           aria-label={t("graph.canvas.redo")}
@@ -858,11 +877,9 @@ export function GraphCanvasPanel({
             <div role="alert" className="rounded bg-red-50 px-3 py-2 text-xs text-red-700">
               {error instanceof ApiError ? error.detail : t("workbench.error.structure")}
             </div>
-          ) : notice ? (
-            <div role="status" className="rounded-lg border border-slate-200 bg-white/95 px-3 py-2 text-xs font-medium text-slate-700 shadow-sm dark:border-slate-700 dark:bg-[#111a2b] dark:text-slate-200">
-              {notice}
-            </div>
-          ) : null}
+          ) : (
+            <GraphCanvasNotice notice={notice} />
+          )}
         </div>
       ) : null}
       <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -870,7 +887,7 @@ export function GraphCanvasPanel({
           graph={graph}
           catalog={catalog}
           selectedNodeIds={selectedNodeIds}
-          busy={busy}
+          busy={structureBusy}
           nodeStatuses={nodeStatuses}
           nodePresentations={nodePresentations}
           runningNodeId={runningNodeId}
@@ -888,6 +905,12 @@ export function GraphCanvasPanel({
             source_ref: source,
             target_ref: target,
           }])}
+          onConnectionRejected={(reasonKey) => {
+            if (reasonKey) showNotice(t(reasonKey));
+          }}
+          onGroupSelected={groupSelected}
+          onDeleteSelected={() => requestDeleteNodes(selectedRef.current)}
+          onSaveSelection={() => openRecipeSave("selection")}
           onMove={(nodes) => apply("移动节点", [{
             op: "move_nodes",
             nodes: nodes.map((item) => [item.node_id, item.position_x, item.position_y]),

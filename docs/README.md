@@ -48,6 +48,7 @@
 - 全局 Agent 产品边界：`specs/global-agent-human-workflow-design.md`。
 - V1 切换：`rollout/workflow-v2-cutover.md` 与 `operations/legacy-v1-cutover.md`。
 - schema-v3 工作台修葺：`specs/v3-canvas-restoration.md`、`specs/v3-sidebar-restoration.md`、`rollout/free-canvas-v3-interaction-parity.md`、`adr/0008-free-canvas-agent-graph-authority.md`。
+- schema-v3 leftover 与合同包时机：`rollout/v3-leftover-inventory.md`。
 
 ### 只从 ROADMAP 进入
 

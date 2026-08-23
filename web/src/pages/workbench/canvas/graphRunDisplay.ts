@@ -80,6 +80,32 @@ const CONTEXT_LABEL_KEYS = {
   prompt_edge_id: "graph.runs.context.promptEdge",
 } as const;
 
+export interface GraphIncomingSourceEntry {
+  id: string;
+  title: string;
+  role: string;
+  order: number;
+}
+
+export function graphIncomingSourceEntries(
+  node: { incoming: Array<{ id: string; node_id: string; role: string; order: number }> },
+  graph: GraphProjection,
+): GraphIncomingSourceEntry[] {
+  return node.incoming
+    .slice()
+    .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))
+    .map((edge) => {
+      const source = graph.nodes.find((item) => item.id === edge.node_id);
+      const title = source?.title?.trim() ?? "";
+      return {
+        id: edge.id,
+        title: title || (source ? "—" : ""),
+        role: edge.role,
+        order: edge.order,
+      };
+    });
+}
+
 export function graphContextEntries(value: Record<string, unknown> | null): Array<{
   key: string;
   labelKey: TranslationKey;

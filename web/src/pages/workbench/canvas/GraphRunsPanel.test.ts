@@ -28,6 +28,26 @@ const graph: GraphProjection = {
     preview_asset_id: "preview-1",
     config_status: "ready",
     unused: false,
+    incoming: [{
+      id: "edge-prompt",
+      node_id: "prompt",
+      data_type: "prompt",
+      role: "prompt",
+      order: 0,
+    }],
+    outgoing: [],
+  }, {
+    id: "prompt",
+    node_type: "prompt_generation",
+    title: "主图提示词",
+    position_x: 0,
+    position_y: 0,
+    config: {},
+    bound_asset_id: null,
+    group_id: null,
+    preview_asset_id: null,
+    config_status: "ready",
+    unused: false,
     incoming: [],
     outgoing: [],
   }],
@@ -79,12 +99,13 @@ describe("GraphRunsPanel", () => {
         onPreviewImage: () => undefined,
       }),
     ));
-    expect(markup).toContain("运行到这里");
-    expect(markup).toContain("主图 1");
+    const firstScreen = markup.split("data-graph-run-inputs-technical")[0];
+    expect(firstScreen).toContain("运行到这里");
+    expect(firstScreen).toContain("主图 1");
+    expect(firstScreen).toContain("主图提示词");
+    expect(firstScreen).toContain("提示词");
+    expect(firstScreen).not.toContain("asset-a");
     expect(markup).toContain("运行证据");
-    expect(markup).toContain("连入数量");
-    expect(markup).toContain("提示词结果");
-    expect(markup).toContain("参考图");
     expect(markup).not.toContain("incoming_edge_ids");
     expect(markup).not.toContain("mystery_digest");
     expect(markup).not.toContain("deadbeef");

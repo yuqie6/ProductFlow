@@ -67,21 +67,21 @@ export function graphNodePresentationKind(nodeType: GraphNodeType): WorkflowNode
   return nodeType;
 }
 
-export function isGraphConnectionValid(
+export function graphConnectionInvalidReason(
   graph: GraphProjection,
   sourceNodeId: string,
   targetNodeId: string,
   catalog: GraphNodeCatalog | null | undefined,
-): boolean {
-  if (!catalog) return false;
-  if (sourceNodeId === targetNodeId) return false;
+): TranslationKey | null {
+  if (!catalog) return "graph.connect.catalogMissing";
+  if (sourceNodeId === targetNodeId) return "graph.connect.self";
   const source = graph.nodes.find((node) => node.id === sourceNodeId);
   const target = graph.nodes.find((node) => node.id === targetNodeId);
-  if (!source || !target) return false;
+  if (!source || !target) return "graph.connect.missingNode";
   const contract = graphConnectionContract(catalog, source.node_type, target.node_type);
-  if (!contract) return false;
+  if (!contract) return "graph.connect.incompatible";
   if (graph.edges.some((edge) => edge.source_node_id === sourceNodeId && edge.target_node_id === targetNodeId)) {
-    return false;
+    return "graph.connect.duplicate";
   }
   if (contract.max_count != null) {
     const sameRoleCount = graph.edges.filter((edge) => (
@@ -89,9 +89,32 @@ export function isGraphConnectionValid(
       && edge.data_type === contract.data_type
       && edge.role === contract.role
     )).length;
-    if (sameRoleCount >= contract.max_count) return false;
+    if (sameRoleCount >= contract.max_count) return "graph.connect.cardinality";
   }
-  return !wouldCreateCycle(graph, sourceNodeId, targetNodeId);
+  return wouldCreateCycle(graph, sourceNodeId, targetNodeId) ? "graph.connect.cycle" : null;
+}
+
+export function isGraphConnectionValid(
+  graph: GraphProjection,
+  sourceNodeId: string,
+  targetNodeId: string,
+  catalog: GraphNodeCatalog | null | undefined,
+): boolean {
+  return graphConnectionInvalidReason(graph, sourceNodeId, targetNodeId, catalog) === null;
+}
+
+export function missingRequiredRunRoles(
+  node: GraphNode,
+  catalog: GraphNodeCatalog | null | undefined,
+): GraphEdgeRole[] {
+  const spec = graphCatalogNode(catalog, node.node_type);
+  if (!spec) return [];
+  return spec.accepts
+    .filter((input) => input.required_to_run)
+    .filter((input) => !node.incoming.some((edge) => (
+      edge.role === input.role && edge.data_type === input.data_type
+    )))
+    .map((input) => input.role);
 }
 
 export function graphPortVisualState(

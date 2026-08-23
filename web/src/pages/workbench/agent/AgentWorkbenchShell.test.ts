@@ -71,7 +71,7 @@ describe("AgentWorkbenchShell", () => {
     const agentOnly = renderShell(false);
     const canvasSidebar = renderShell(true);
 
-    expect(agentOnly).toContain('data-workbench-layout="agent-only"');
+    expect(agentOnly).toContain('data-workbench-layout="canvas-sidebar"');
     expect(canvasSidebar).toContain('data-workbench-layout="canvas-sidebar"');
     for (const markup of [agentOnly, canvasSidebar]) {
       expect(markup.match(/data-agent-workbench-agent-slot/g)).toHaveLength(1);
@@ -107,7 +107,9 @@ describe("AgentWorkbenchShell", () => {
     expect(markup).toContain("bottom-0");
     expect(markup).toContain("data-agent-workbench-canvas-slot");
     expect(markup).toContain("data-canvas-probe");
-    expect(markup).not.toMatch(/data-product-workbench-inspector[^>]*inset-0 z-30/);
+    const inspectorTag = markup.match(/<aside[^>]*data-product-workbench-inspector[^>]*>/)?.[0] ?? "";
+    expect(inspectorTag).not.toMatch(/(?:^|[\s"])inset-0(?:[\s"]|$)/);
+    expect(inspectorTag).not.toContain('data-inspector-layout="page"');
   });
 
   it("keeps the canvas absolute below lg and makes it a normal grid child on desktop", () => {
@@ -129,6 +131,19 @@ describe("AgentWorkbenchShell", () => {
     expect(markup.match(/data-agent-probe/g)).toHaveLength(1);
     expect(markup.match(/data-canvas-probe/g)).toHaveLength(1);
     expect(state).toEqual({ canvasInert: true, sidebarInert: true, agentInert: true });
+  });
+
+  it("does not inert the canvas just because a live graph is missing", () => {
+    expect(deriveAgentWorkbenchRegionState({
+      workflowAvailable: false,
+      compact: false,
+      confirmationOpen: false,
+    })).toEqual({ canvasInert: false, sidebarInert: false, agentInert: false });
+    expect(deriveAgentWorkbenchRegionState({
+      workflowAvailable: false,
+      compact: true,
+      confirmationOpen: false,
+    })).toEqual({ canvasInert: false, sidebarInert: false, agentInert: false });
   });
 
   it("uses inert visibility switching only on compact layouts", () => {
@@ -194,9 +209,32 @@ describe("AgentWorkbenchShell", () => {
     const agentPanelStart = markup.indexOf('data-product-workbench-tool-panel="agent"');
     const agentPanelMarkup = markup.slice(agentPanelStart, agentPanelStart + 500);
 
-    expect(markup).toContain('data-workbench-layout="agent-only"');
+    expect(markup).toContain('data-workbench-layout="canvas-sidebar"');
     expect(agentPanelMarkup).toContain("visible opacity-100");
     expect(agentPanelMarkup).not.toContain("invisible pointer-events-none opacity-0");
+  });
+
+  it("keeps the empty-canvas onboarding CTA visible and clickable when no graph exists", () => {
+    const markup = renderToStaticMarkup(createElement(AgentWorkbenchShell, {
+      workflowAvailable: false,
+      canvasContent: createElement("button", { type: "button" }, "打开添加面板"),
+      agentContent: createElement("div", { "data-agent-probe": true }),
+    }));
+    const canvasTag = markup.match(/<section[^>]*data-agent-workbench-canvas-slot[^>]*>/)?.[0] ?? "";
+    const inspectorTag = markup.match(/<aside[^>]*data-product-workbench-inspector[^>]*>/)?.[0] ?? "";
+
+    expect(markup).toContain("打开添加面板");
+    expect(canvasTag).toContain("visible opacity-100");
+    expect(canvasTag).not.toContain("inert");
+    expect(canvasTag).not.toContain("pointer-events-none");
+    expect(canvasTag).not.toContain("invisible");
+    expect(inspectorTag).toContain('data-inspector-layout="drawer"');
+    expect(inspectorTag).not.toContain('data-inspector-layout="page"');
+    expect(deriveAgentWorkbenchRegionState({
+      workflowAvailable: false,
+      compact: false,
+      confirmationOpen: false,
+    })).toEqual({ canvasInert: false, sidebarInert: false, agentInert: false });
   });
 
   it("keeps the Agent mounted while lazily switching the active sidebar tool", () => {
