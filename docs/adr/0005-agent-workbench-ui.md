@@ -18,7 +18,7 @@ Agent 商品工作台（`pages/workbench/agent/`）目前是"能用的功能拼�
 
 当前 `AgentWorkbenchShell.tsx` 用 `absolute inset-0` 叠加 canvas 与 inspector，靠 `invisible/opacity-0` 切换，padding 由 JS 计算。改为语义化的三层结构：
 
-- **Canvas 层**：V2 workflow 画布，占主导区域。
+- **Canvas 层**：schema-v3 workflow 画布，占主导区域。
 - **对话层**：Agent 对话，在窄视口下作为独立视图（沿用现有 mobileView tab），在宽视口下作为 inspector 的一个 tool。
 - **Inspector 层**：复用现有 `ProductWorkbenchInspector`（已具备 resize、collapse、storage 持久化）。
 
@@ -101,7 +101,7 @@ chip token（`/name`、`@subagent` 这类在文本流里按"单个实体"渲染�
 - `tool.step` 的新增详情字段需要 Agent service、ProductFlow 和 Web 同步升级；旧四字段步骤仍可读取，未知详情字段在后端和前端都被拒绝或过滤。
 - 布局改造有回归风险（画布拖拽/缩放/选择/edge 编辑/inspector/run history 必须保留，见 `web/AGENTS.md` 的 Canvas And Image Workflows）。
 - token 体系改造面大（现有组件散落硬编码），需分阶段，先建 token 再逐组件迁移，避免一次大爆炸。
-- 这些决策不改变 Agent 的权威边界（ADR 0001）、canonical 图片身份（ADR 0002）、schema-v2 工作流（ADR 0003）、V1 cutover（ADR 0004）。
+- 这些决策不改变 Agent 的权威边界（ADR 0001）、canonical 图片身份（ADR 0002）、GenerationSpec/DeliverySpec（ADR 0003）、V1 cutover（ADR 0004）。在线图权威见 ADR 0008。
 
 ## 排除方案
 

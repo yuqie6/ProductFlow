@@ -2,13 +2,13 @@
 
 ## 状态
 
-Accepted。Graph Command、live-graph GraphProposal 与配方 ChangeSet 已接线；确认和取消在画布。浏览器 1440/1024/390 连续动作证据、Intent+ChangeSet 收敛和 v1 归档重建仍待完成。
+Accepted。当前在线图是 schema-v3 `workflow_graphs`。Graph Command、live-graph GraphProposal 与配方 ChangeSet 是本 ADR 的已接受合同。
 
-批准依据：2026-08-20 产品与架构评审确认。本 ADR 描述已接受的目标合同。下文背景仍记录从 schema-v2 出发的理由；当前在线实现是 schema-v3。
+下文背景记录从 schema-v2 出发的理由，不是当前实现。尚未交付的后续：工作台浏览器证明见 [`docs/ROADMAP.md`](../ROADMAP.md)；Draft 拓扑收敛为 WorkflowIntent + ChangeSet、以及 v1 archive 重建，仍属后续决策。
 
 ## 背景
 
-当前 schema-v2 将工作流计划物化为 `product_context`、`reference_image`、`prompt_generation` 和 `image_generation` 节点。画布可以展示和编辑部分关系，但提示词、图片计划和运行归属仍同时存在于 Prompt Artifact、节点配置 key 和 edge 中。为了维持三份关系一致，当前实现要求特定 lineage edge 必须存在，并把提示词节点和图片节点绑定为隐藏的计划组。
+决策当时，schema-v2 将工作流计划物化为 `product_context`、`reference_image`、`prompt_generation` 和 `image_generation` 节点。画布可以展示和编辑部分关系，但提示词、图片计划和运行归属仍同时存在于 Prompt Artifact、节点配置 key 和 edge 中。为了维持三份关系一致，当时的实现要求特定 lineage edge 必须存在，并把提示词节点和图片节点绑定为隐藏的计划组。
 
 这种模型可以表达经过确认的固定生产计划，但不能作为自由 DAG 编辑器的长期基础：
 
@@ -443,7 +443,7 @@ schema-v2 从未部署到生产环境，没有需要保留的 v2 工作流、运
 - Prompt Artifact、图片节点和 edge 的三重拓扑所有权将收敛到 typed edge。
 - Agent 的完整 WorkflowDraft 拓扑将收敛为 WorkflowIntent 与 WorkflowChangeSet。
 - 所有批量图操作需要 operation group、inverse operation 和 revision 冲突合同。
-- schema-v2 继续描述治理期间的当前实现。v3 完成时同步更新 `CONTEXT.md`、`ARCHITECTURE.md`、PRD、用户指南和对应英文文档，并在完整验收后删除 v2 在线合同。
+- 在线 v2 合同已经删除。当前实现写在 `CONTEXT.md`、`ARCHITECTURE.md`、PRD 和用户指南。
 
 ## 排除方案
 
@@ -459,6 +459,6 @@ schema-v2 从未部署到生产环境，没有需要保留的 v2 工作流、运
 ## 相关决策
 
 - ADR 0001：Agent Draft 权威边界。v3 实施后，工作流拓扑部分由本 ADR 的 WorkflowIntent/ChangeSet 合同取代。
-- ADR 0003：当前 schema-v2 工作流。本 ADR 是后续目标决策，不在 v3 cutover 前改写当前在线事实。
+- ADR 0003：GenerationSpec、DeliverySpec 和一层分组仍然有效。在线图权威以本 ADR 为准。
 - ADR 0005：Agent 工作台 UI。本 ADR 进一步确定画布为主要工作面及 Agent 提案层边界。
 - ADR 0007：Pi Agent runtime。Pi 继续负责模型 loop，ProductFlow Graph Command Service 继续拥有业务写入权威。

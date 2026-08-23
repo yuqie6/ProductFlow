@@ -1,74 +1,81 @@
-# ProductFlow 文档地图
+# ProductFlow 文档
 
-本文定义仓库文档的职责。遇到重复或冲突时，按下表找到唯一所有者，并删除其他文档中的重复实现细节。
+按成品仓库组织。一份事实一个家。修葺切片、接线仪表盘、「只从某节进入」不是文档类型。
 
-| 文档 | 唯一职责 | 不应包含 |
+代码、测试、迁移和真实运行行为是最终证据。文档与它们冲突时改文档。
+
+## 当前产品
+
+| 文档 | 管什么 | 不管什么 |
 |---|---|---|
-| `../CONTEXT.md` | 领域词汇、权威边界、跨版本稳定不变量 | 页面操作说明、文件清单、未来计划 |
-| `PRD.md` | 当前用户能力、产品合同、非目标、成功标准 | Python/TypeScript 模块所有权、部署命令 |
-| `ARCHITECTURE.md` | 当前运行单元、代码所有权、数据流、实现和测试锚点 | 未实现设想、逐步用户教程、lease/SSE 运行时小说 |
-| `USER_GUIDE.md` | 用户可以执行的页面操作和故障提示；产品内 `/help` 的权威正文 | 内部事务、模型表、未来计划 |
-| `ROADMAP.md` | 尚未实现或尚未验证的产品与工程方向；schema-v3 目标合同的唯一默认入口 | 已交付能力清单、当前架构复述 |
-| `specs/` | scoped PRD 与实现设计；状态必须标注 `文档状态：Draft` 或 `文档状态：Approved`；Approved 必须给出批准 issue、decision 或任务 evidence | 冒充当前运行事实、部署证据、会频繁变化的任务状态 |
-| `adr/` | 已接受决策的背景、选择、后果 | 会频繁随重构变化的文件列表 |
-| `rollout/` | 某次迁移或发布的已完成项、缺失证据和停止条件 | 长期工程规则、已完成的一次性审计 |
-| `operations/` | 操作者命令、前置条件、回滚和证据处理 | 产品愿景、普通开发流程 |
-| `archive/` | 已退出默认阅读路径的历史设计、过程记录和本地 method-pack 残留 | 当前实现、当前决策、部署操作依据 |
-| `audits/` | 某次治理、回退或知识迁移的执行记录，不是长期规范 | 当前产品合同、当前架构复述 |
-| `agents/` | 仓库协作元数据：issue tracker、triage、domain 阅读约定 | 产品能力或运行时实现 |
-| `assets/` | 品牌图和静态文档资源 | 产品说明或架构正文 |
-| `../AGENTS.md` | 全仓开发方法和验证要求 | 领域需求复述 |
-| `../backend/AGENTS.md` | 后端可执行工程约束 | 产品路线图 |
-| `../web/AGENTS.md` | 前端可执行工程约束 | 后端内部实现细节 |
+| [`../CONTEXT.md`](../CONTEXT.md) | 领域词汇、权威边界、稳定不变量 | 页面教程、文件清单、未实现方向 |
+| [`PRD.md`](PRD.md) | 用户现在能做什么、非目标、成功标准 | 模块路径、部署命令 |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | 运行单元、代码所有权、数据流、测试锚点 | 未实现设想、操作教程 |
+| [`USER_GUIDE.md`](USER_GUIDE.md) | 页面怎么操作、故障怎么处理 | 内部事务、模型表 |
+| [`../AGENTS.md`](../AGENTS.md)、[`../backend/AGENTS.md`](../backend/AGENTS.md)、[`../web/AGENTS.md`](../web/AGENTS.md) | 怎么改这个仓库 | 产品愿景复述 |
 
-英文 `*.en.md` 是对应中文产品/用户文档的翻译，不是独立规范。修改当前能力、架构或路线图时，同一提交更新对应翻译。
+`web/src/pages/HelpPage.tsx` 是 `USER_GUIDE.md` 的产品内投影，同一提交更新。
 
-`web/src/pages/HelpPage.tsx` 是 `USER_GUIDE.md` 的产品内投影，不是第二份用户操作规范。用户操作变化必须同一提交更新指南和 HelpPage。
+英文 `PRD.en.md`、`ARCHITECTURE.en.md`、`USER_GUIDE.en.md`、`ROADMAP.en.md` 是翻译，不是第二份规范。改当前能力或路线时同一提交更新。
 
-## 阅读路径
+## 为什么这样建
 
-开发前按改动类型读取最小集合。
+[`adr/`](adr/) 记录已接受决策。正文冻结。被取代的部分在状态行标明后继 ADR，不把旧 ADR 改写成今天的实现。
 
-### 默认阅读
+## 还没做成产品
 
-普通功能开发只需要：`CONTEXT.md`、本文件、对应 package `AGENTS.md`，以及相关的 `PRD.md` / `ARCHITECTURE.md` 段落。
+[`ROADMAP.md`](ROADMAP.md) 只写尚未存在、或尚未被真实验证的方向。每条最多指向一份规格。已接线的能力写在 PRD / ARCHITECTURE / USER_GUIDE，不在路线图里再列一遍。
 
-只有改动触及对应边界时，才继续读取 ADR、spec、rollout 或 operations。`archive/` 和 `audits/` 默认跳过。
+## 进行中的设计
 
-- 当前产品语义：`CONTEXT.md`、`PRD.md`、相关已落地 ADR（0001–0007）。
-- 后端：`backend/AGENTS.md`、`ARCHITECTURE.md` 中对应所有权、相关代码和测试。
-- 前端：`web/AGENTS.md`、`ARCHITECTURE.md` 中对应所有权、相关代码和测试。
-- 跨层合同：以上两份 package `AGENTS.md`，沿 wire DTO、应用用例、持久化、API client 和 UI projection 验证完整链路。
-- 用户操作：`USER_GUIDE.md`；产品内文案同步 `web/src/pages/HelpPage.tsx`。
+[`specs/`](specs/) 是临时合同。落地后内容进入 PRD / ARCHITECTURE / USER_GUIDE，规格删除或缩成一句指针。规格必须标注 `文档状态：Draft` 或 `文档状态：Approved`。
 
-### 仅在触及对应边界时
+| 文档 | 状态 | 相对当前产品多出来的东西 |
+|---|---|---|
+| `specs/workbench.md` | Draft | 工作台作为生产面必须达到的完成度；浏览器证明之前不宣称完成 |
+| `specs/productflow-studio-requirements.md` | Draft | 镜头默认主区、官方配方、局部修、交付预设 |
+| `specs/shot-scene-assembly.md` | Approved | Shot/scene 的 group 与默认边 |
+| `specs/global-agent-human-workflow-design.md` | Approved | Session、Task、人工接管与 WorkflowRun 边界 |
+| `specs/pi-agent-runtime-integration.md` | Approved | Pi runtime、Skill、Context、Tool |
+| `specs/go-backend-rewrite-prd.md` | Draft, deferred | 业务后端迁 Go 的产品合同；工作台证明完成前不开工 |
+| `specs/go-backend-rewrite-design.md` | Draft, deferred | 上述迁移的实现设计 |
 
-- Agent service / Pi adapter：`adr/0007-pi-agent-runtime-boundary.md`、`specs/pi-agent-runtime-integration.md`，并回看 `ARCHITECTURE.md` 的当前实现段落。
-- 全局素材未完成迁移证据：`rollout/media-library-transition.md`；产品剩余项见 `specs/media-library-prd.md`。
-- 全局 Agent 产品边界：`specs/global-agent-human-workflow-design.md`。
-- V1 切换：`rollout/workflow-v2-cutover.md` 与 `operations/legacy-v1-cutover.md`。
-- schema-v3 工作台修葺：`specs/v3-canvas-restoration.md`、`specs/v3-sidebar-restoration.md`、`rollout/free-canvas-v3-interaction-parity.md`、`adr/0008-free-canvas-agent-graph-authority.md`。
-- schema-v3 leftover 与合同包时机：`rollout/v3-leftover-inventory.md`。
+## 某次部署的证据
 
-### 只从 ROADMAP 进入
+[`rollout/`](rollout/) 和 [`operations/`](operations/) 管迁移证据、停止条件和操作命令，不管产品愿景。
 
-在线工作流已经是 schema-v3 `workflow_graphs`。配方应用到 live graph 与 Agent GraphProposal 已作为当前实现写进 `ARCHITECTURE.md`。工作台修葺未完成项只从 `ROADMAP.md` §2 进入，实施北极星是 `specs/v3-canvas-restoration.md` 与 `specs/v3-sidebar-restoration.md`。不要把下列未完成项写进 CONTEXT、PRD 或 ARCHITECTURE 的当前事实段落：
+| 文档 | 作用 |
+|---|---|
+| `rollout/legacy-v1-retirement.md` | V1 退役检查点和部署证据缺口 |
+| `rollout/media-library-transition.md` | 素材库回填、清理资格与停止条件 |
+| `rollout/pi-agent-durability.md` | Pi Agent 耐久证据与生产开关 |
+| `operations/legacy-v1-cutover.md` | V1 冻结、预检、回滚命令 |
 
-- `ROADMAP.md` §2 未完成项
-- `specs/v3-canvas-restoration.md` 中尚未落地的切片 A–G
-- `specs/v3-sidebar-restoration.md` 中尚未落地的切片 S1–S4
-- `adr/0008-free-canvas-agent-graph-authority.md` 中尚未落地的 Intent+ChangeSet 收敛与 v1 归档重建
-- `specs/schema-v3-admission-slice.md` 中尚未落地的后续切片
-- `rollout/free-canvas-v3-interaction-parity.md` 中尚未完成的交互项
+## ADR
 
-Python 业务后端迁到 Go 也不是当前实现，且主线仍是 schema-v3。不要把下列文档写进 CONTEXT、PRD 或 ARCHITECTURE 的当前事实段落，也不得在 schema-v3 治理基线完成前开工：
+| 文档 | 状态 | 何时读 |
+|---|---|---|
+| `adr/0001-agent-draft-authority.md` | Accepted | Agent、Draft 确认、业务写入边界 |
+| `adr/0002-canonical-product-images.md` | Accepted | 媒体身份、商品图片、封面、lineage |
+| `adr/0003-schema-v2-workflow.md` | Partially superseded by 0008 | GenerationSpec、DeliverySpec、一层分组；在线图读 0008 |
+| `adr/0004-legacy-v1-cutover.md` | Accepted | V1 归档、冻结、清理闸门 |
+| `adr/0005-agent-workbench-ui.md` | Accepted | 工作台交互与工具步骤投影 |
+| `adr/0006-media-library-authority.md` | Accepted, amended | 全局图库、子图库、来源生命周期 |
+| `adr/0007-pi-agent-runtime-boundary.md` | Accepted, rollout pending | Pi adapter、Skill、Tool |
+| `adr/0008-free-canvas-agent-graph-authority.md` | Accepted | schema-v3 图、ChangeSet、GraphProposal、配方 |
 
-- `ROADMAP.md`「schema-v3 之后的工程运行时」
-- `specs/go-backend-rewrite-prd.md`（Draft）
-- `specs/go-backend-rewrite-design.md`（Draft）
+## 协作元数据
 
-已批准但未交付的其他变更同样先出现在 `ROADMAP.md` 和对应 spec，不得提前写成当前事实。
+[`agents/`](agents/) 只管 issue tracker、triage、domain 阅读约定。
 
-代码、测试、迁移和真实运行行为始终是当前实现证据。稳定文档中的实现敏感声明应指向当前代码所有者或测试；路径变化时同步更新文档。
+[`archive/`](archive/) 只管仍有独立追溯价值的一次性记录。被当前文档吸收的草稿直接删除，历史用 Git。
 
-运行 `just docs-check` 校验当前前端路由、核心 code owner 路径、spec 状态标注和仓库内 Markdown 链接。该检查覆盖可机械验证的漂移；产品语义仍需沿真实调用链和测试审阅。
+## 写作规则
+
+1. 当前事实写在 CONTEXT / PRD / ARCHITECTURE / USER_GUIDE。未验证的浏览器证据写在 ROADMAP，不把「已接线」再抄进路线图。
+2. 规格不复述已交付合同。只写相对 PRD 多出来的能力、验收和不做。
+3. ADR 不更新成现状仪表盘。
+4. 用户操作变化必须同时改 USER_GUIDE 和 HelpPage。
+5. 实现敏感声明指向当前代码所有者或测试。
+
+`just docs-check` 校验索引、前端路由、code owner 路径、规格状态标注和仓库内链接。它不检查「同一句话是否写了六遍」。

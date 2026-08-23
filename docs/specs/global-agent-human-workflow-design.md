@@ -7,7 +7,6 @@
 - 本文负责 Global Agent、AgentSession、AgentTask、人工接管和 WorkflowRun 的产品语义。
 - 当前实现以代码、测试和真实运行证据为准；本文不替代 `CONTEXT.md`、`PRD.md` 或 `docs/ARCHITECTURE.md`。
 - Pi runtime、Skill、动态 Context、ProductFlow Tool、事件翻译和迁移验收由 `docs/adr/0007-pi-agent-runtime-boundary.md` 与 `docs/specs/pi-agent-runtime-integration.md` 负责。
-- 原始长版设计和当时的阶段审计保存在 `docs/archive/specs/2026-08-17-global-agent-human-workflow-design.md`，不属于默认阅读路径。
 
 ## 2. 产品目标
 

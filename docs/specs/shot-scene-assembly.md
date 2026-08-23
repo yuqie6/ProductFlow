@@ -5,7 +5,7 @@
 - 文档状态：Approved
 - 批准依据：仓库目标「完成 Shot/scene assembly plan」。
 - 目标合同：`docs/adr/0008-free-canvas-agent-graph-authority.md`
-- 相关：`docs/specs/schema-v3-admission-slice.md` 的默认落图边由本文覆盖。
+- 当前实现：`backend/src/productflow_backend/application/product_workflow/graph_draft_persist.py`、`web/src/pages/workbench/canvas/shotChangeSet.ts`
 
 ## 2. 用户对象
 

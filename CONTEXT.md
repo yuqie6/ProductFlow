@@ -69,18 +69,17 @@ The current repository targets a personal live demo and self-hosted deployments.
 
 The online V1 editor, executor, mutation routes, template catalog, and default-DAG creation path have been removed. The repository retains additive archive/backfill tools, a read-only history UI, an Agent rebuild seed, V1 source tables needed for audit, and a durable cutover evidence gate.
 
-This code state does not prove that a production cutover occurred. Production-source audit, canonical mapping reconciliation, archive reconciliation, backup/storage restore rehearsal, active/unknown-run drain, and gate approval are operational evidence that must be produced for each deployment. See `docs/rollout/workflow-v2-cutover.md` and `docs/operations/legacy-v1-cutover.md`.
+This code state does not prove that a production cutover occurred. Production-source audit, canonical mapping reconciliation, archive reconciliation, backup/storage restore rehearsal, active/unknown-run drain, and gate approval are operational evidence that must be produced for each deployment. See `docs/rollout/legacy-v1-retirement.md` and `docs/operations/legacy-v1-cutover.md`.
 
 ## Documentation Map
 
-- `docs/README.md`: documentation ownership and minimum reading paths.
+- `docs/README.md`: documentation ownership.
 - `docs/PRD.md`: current user-facing product contract.
-- `docs/USER_GUIDE.md`: canonical page operations; `web/src/pages/HelpPage.tsx` is the in-product projection and must change in the same commit.
+- `docs/USER_GUIDE.md`: page operations; `web/src/pages/HelpPage.tsx` is the in-product projection and must change in the same commit.
 - `docs/ARCHITECTURE.md`: current implementation structure and data flow.
-- `docs/ROADMAP.md`: unimplemented or unverified directions, including the only default entry to schema-v3 target contracts.
-- `docs/adr/`: decisions whose rationale should survive implementation changes.
-- `docs/rollout/workflow-v2-cutover.md`: current migration checkpoint and remaining evidence.
-- `docs/operations/legacy-v1-cutover.md`: operator commands, stop conditions, and recovery procedure.
-- `AGENTS.md`, `backend/AGENTS.md`, `web/AGENTS.md`: executable engineering guidance for coding agents.
+- `docs/ROADMAP.md`: directions that are not yet product fact.
+- `docs/adr/`: frozen decisions.
+- `docs/rollout/` and `docs/operations/`: deployment evidence and operator commands.
+- `AGENTS.md`, `backend/AGENTS.md`, `web/AGENTS.md`: how to change this repository.
 
 Code, tests, migrations, and runtime behavior remain the final source of current implementation truth. Documentation must be corrected when they disagree.

@@ -55,7 +55,7 @@ ProductFlow 是面向单商家创作者的开源商品视觉工作台。用户�
 - 单管理员、单商家实例。
 - 不提供多租户、团队权限、支付、托管账号、自动上架、广告投放或视频生成。
 - 公网体验站数据可能在版本升级时重置。
-- Alembic 历史迁移保留用于从空库构建当前 schema；在线运行时只有当前 V2 合同。
+- Alembic 历史迁移保留用于从空库构建当前 schema；在线工作流只有 schema-v3 `workflow_graphs` 合同。
 
 ## 页面入口
 
@@ -63,7 +63,7 @@ ProductFlow 是面向单商家创作者的开源商品视觉工作台。用户�
 |---|---|
 | `/products` | 商品列表 |
 | `/products/new` | Agent 创建商品 |
-| `/products/:productId` | Agent 对话 + V2 工作流 + 图片库 |
+| `/products/:productId` | Agent 对话 + schema-v3 工作流 + 图片库 |
 | `/image-chat` | 连续文/图生图 |
 | `/media-library` | 全局素材库 |
 | `/gallery` | 旧收藏画廊书签兼容重定向 |

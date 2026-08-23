@@ -2,7 +2,7 @@
 
 ## 状态
 
-Accepted
+Accepted. References to schema-v2 as the online replacement describe the original cutover decision and are superseded by ADR 0008. The current online graph is schema-v3 `workflow_graphs`; the V1 freeze, archive, evidence gate, and cleanup constraints remain in force.
 
 ## 背景
 

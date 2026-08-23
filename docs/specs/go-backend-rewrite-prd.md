@@ -3,7 +3,7 @@
 ## 1. 状态
 
 - 文档状态：Draft
-- 阅读入口：只从 `docs/ROADMAP.md`「schema-v3 之后的工程运行时」进入，不进入默认阅读。
+- 阅读入口：`docs/ROADMAP.md`「工作台证明之后的工程运行时」。不进入默认阅读。
 - 实现设计：`docs/specs/go-backend-rewrite-design.md`
 - 当前运行事实：FastAPI + Dramatiq + PostgreSQL async dispatcher + Alembic。本文不是已上线行为。
 - 主线：schema-v3 治理基线完成前不得开工，也不得把 Gin / GORM / asynq 写进 `CONTEXT.md`、`docs/PRD.md` 或 `docs/ARCHITECTURE.md` 的当前事实段落。

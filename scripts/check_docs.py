@@ -23,8 +23,6 @@ PRIMARY_DOCS = (
     ROOT / "docs/ROADMAP.en.md",
 )
 
-_SKIP_LINK_PARTS = ("/docs/archive/aegis/",)
-
 LINK_DOCS = tuple(
     sorted(
         path
@@ -36,10 +34,15 @@ LINK_DOCS = tuple(
             ROOT / "SECURITY.en.md",
             *(ROOT / "docs").rglob("*.md"),
         }
-        if not any(part in path.as_posix() for part in _SKIP_LINK_PARTS)
     )
 )
 SPEC_STATUS_RE = re.compile(r"文档状态：\s*(Draft|Approved)\b")
+INDEXED_DOC_DIRS = (
+    ROOT / "docs/adr",
+    ROOT / "docs/specs",
+    ROOT / "docs/rollout",
+    ROOT / "docs/operations",
+)
 
 CODE_OWNERS = (
     "backend/src/productflow_backend/application/agent/product_workspaces.py",
@@ -93,6 +96,7 @@ def main() -> int:
     _check_required_paths(errors)
     _check_routes(errors)
     _check_markdown_links(errors)
+    _check_document_index(errors)
     _check_stale_ownership(errors)
     _check_workbench_boundaries(errors)
     _check_spec_status(errors)
@@ -153,6 +157,15 @@ def _check_markdown_links(errors: list[str]) -> None:
             target_path = (doc.parent / path_text).resolve()
             if not target_path.exists():
                 errors.append(f"{doc.relative_to(ROOT)} links to missing path {target}")
+
+
+def _check_document_index(errors: list[str]) -> None:
+    index = (ROOT / "docs/README.md").read_text(encoding="utf-8")
+    for doc_dir in INDEXED_DOC_DIRS:
+        for doc in sorted(doc_dir.glob("*.md")):
+            relative = doc.relative_to(ROOT / "docs").as_posix()
+            if f"`{relative}`" not in index:
+                errors.append(f"docs/README.md does not index active document {doc.relative_to(ROOT)}")
 
 
 def _check_stale_ownership(errors: list[str]) -> None:

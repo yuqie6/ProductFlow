@@ -4,7 +4,7 @@
 
 - 文档状态：Draft
 - 产品合同：`docs/specs/go-backend-rewrite-prd.md`
-- 阅读入口：只从 `docs/ROADMAP.md`「schema-v3 之后的工程运行时」进入。
+- 阅读入口：`docs/ROADMAP.md`「工作台证明之后的工程运行时」。
 - 当前实现：`backend/` FastAPI 四层 + Dramatiq + Alembic。本文是 v3 之后的目标内部设计。
 - 不复用：`exp` 上的 Go Agent service / `agent-harness`。那条线是 Agent runtime 实验。
 

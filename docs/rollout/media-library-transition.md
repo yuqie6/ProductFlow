@@ -19,7 +19,7 @@ Last reviewed against the current working tree on 2026-08-19.
 
 不包括：
 
-- V1 source/archive 清理；其 owner 仍是 `docs/rollout/workflow-v2-cutover.md` 与 `docs/operations/legacy-v1-cutover.md`。
+- V1 source/archive 清理；其 owner 仍是 `docs/rollout/legacy-v1-retirement.md` 与 `docs/operations/legacy-v1-cutover.md`。
 - 普通用户 hard delete、媒体 retention、嵌套文件夹、多租户。
 - 把 `ProductImageAsset` 改成 nullable product scope，或让工作流直接引用全局素材。
 - 回退或覆盖当前工作树中的 Agent workbench/tool-step 用户改动。

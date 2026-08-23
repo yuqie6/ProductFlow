@@ -2,11 +2,11 @@
 
 ## 状态
 
-Accepted; amended 2026-08-17
+Accepted; amended 2026-08-17. References to schema-v2 as the online workflow describe the decision-time graph and are superseded by ADR 0008; the media identity, library authority, and lifecycle decisions remain in force.
 
 Decision owner：ProductFlow repository owner。2026-08-16 的基础媒体身份、归档和 Agent 整理决策继续有效；2026-08-17 用户确认全局图库是主图片 owner，并要求图片同步/关联到每个工作流子图库。
 
-在线入口和组织能力已交付。当前运行事实见 `docs/PRD.md` 与 `docs/ARCHITECTURE.md`。尚未完成的迁移证据见 `docs/rollout/media-library-transition.md`；剩余产品项见 `docs/specs/media-library-prd.md`。
+在线入口和组织能力已交付。当前运行事实见 `docs/PRD.md` 与 `docs/ARCHITECTURE.md`。尚未完成的迁移证据和剩余产品项见 `docs/rollout/media-library-transition.md` 与 `docs/ROADMAP.md`。
 
 ## 2026-08-17 Amendment: 全局图库与工作流子图库
 
@@ -94,7 +94,7 @@ ADR 0002 已确定：`MediaObject` 拥有不可变媒体字节，`ProductImageAs
 
 - ADR 0001 的业务 authority split 不变：main Pi adapter 的运行时 session/event state 与 PostgreSQL 业务状态分离；不可证明的后台效果继续保留 unknown。
 - ADR 0002 不变：`MediaObject` 与 `ProductImageAsset` 的职责继续成立；`ProductImageAsset`/工作流侧稳定引用现在作为全局图库到工作流子图库的关联层使用。全局图片身份由本 ADR 的 `MediaLibraryAsset` 拥有，工作流不得绕过子图库关联直接持有未治理的全局引用。
-- ADR 0003 不变：在线工作流仍只有 schema-v2。
+- ADR 0003 的 GenerationSpec / DeliverySpec / 一层分组仍然有效。在线图权威见 ADR 0008。
 - ADR 0004 不变：V1 archive/cutover 不作为素材库运行时 fallback。
 - ADR 0005 的有界 tool-step projection 可供未来素材库 Agent UI 复用，但不能携带完整素材或工具 payload。
 

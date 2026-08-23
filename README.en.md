@@ -55,7 +55,7 @@ The public instance is a personal live demo with one administrator and one merch
 - Single administrator and single merchant.
 - No multi-tenancy, team permissions, billing, hosted accounts, automatic publishing, ad delivery, or video generation.
 - Public demo data may be reset during upgrades.
-- Historical Alembic revisions remain so a fresh database can reach the current schema. Online runtime contracts are V2-only.
+- Historical Alembic revisions remain so a fresh database can reach the current schema. The only online workflow contract is schema-v3 `workflow_graphs`.
 
 ## Routes
 
@@ -63,7 +63,7 @@ The public instance is a personal live demo with one administrator and one merch
 |---|---|
 | `/products` | Product list |
 | `/products/new` | Agent product creation |
-| `/products/:productId` | Agent conversation, V2 workflow, and image library |
+| `/products/:productId` | Agent conversation, schema-v3 workflow, and image library |
 | `/image-chat` | Iterative text/image generation |
 | `/media-library` | Global media library |
 | `/gallery` | Compatibility redirect for the retired collected-image bookmark |
