@@ -42,7 +42,7 @@
 
 ### Agent 耐久
 
-真实 provider、真实库、SSE 断线恢复、后台 durable / reconciliation 的生产开关。见 [`rollout/pi-agent-durability.md`](rollout/pi-agent-durability.md)。
+真实 provider、真实库、SSE 断线恢复、后台 durable / reconciliation 的部署 gate 与能力声明。见 [`rollout/pi-agent-durability.md`](rollout/pi-agent-durability.md)。
 
 产品边界见 [`specs/global-agent-human-workflow-design.md`](specs/global-agent-human-workflow-design.md)。业务级 Task 调度器、跨进程 durable admission、统一 Fresh Observation 仍未做。
 

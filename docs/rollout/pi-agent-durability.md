@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-截至 2026-08-20，主线已经具备交互式 Agent Turn 的执行所有权、事件重放、问题 continuation、基础崩溃收敛、尚未开始模型的 queued Turn 安全 handoff、每次 provider request 的模型边界 checkpoint、Agent tool 和业务 provider effect 的显式对账能力，以及 ProductFlow `AsyncDispatch` 的常驻 recovery/dispatch 入口；真实 PostgreSQL、FastAPI、两个 Agent 进程、本机 Chrome 和单独的常驻 dispatcher 子进程已有 live gate。图片会话生成任务和 WorkflowRun 的 Prompt/Image provider 节点都已补上 provider 请求 ledger；结果不明时保持 `unknown`，不自动重放，并保留有限 provider 证据。生产开关仍保持 `background_durable_tasks: false`。
+截至 2026-08-20，主线已经具备交互式 Agent Turn 的执行所有权、事件重放、问题 continuation、基础崩溃收敛、尚未开始模型的 queued Turn 安全 handoff、每次 provider request 的模型边界 checkpoint、Agent tool 和业务 provider effect 的显式对账能力，以及 ProductFlow `AsyncDispatch` 的常驻 recovery/dispatch 入口；真实 PostgreSQL、FastAPI、两个 Agent 进程、本机 Chrome 和单独的常驻 dispatcher 子进程已有 live gate。图片会话生成任务和 WorkflowRun 的 Prompt/Image provider 节点都已补上 provider 请求 ledger；结果不明时保持 `unknown`，不自动重放，并保留有限 provider 证据。Agent health 的后台耐久能力声明仍为 `background_durable_tasks: false`。
 
 这份文档记录当前 checkout 的验收证据和停止条件。它不把测试替身、Pi session 文件或一次成功的模型调用当作后台执行可靠性证明。
 
@@ -40,7 +40,7 @@
 
 ## 保持的运行边界
 
-- `background_durable_tasks` 继续为 `false`，直到上述真实 gate 有部署证据。
+- `background_durable_tasks` 是 Agent health 的能力声明，不是运行时 feature flag。在上述真实 gate 形成部署证据前，该声明继续为 `false`，不能通过改值扩大后台执行承诺。
 - 只有尚未进入模型调用的 queued Turn 可以自动重新入队或在恢复 scanner 判定安全后由新 Agent 实例 handoff。
 - Agent service 只有在本地没有 execution attempt/fencing 证据时才会自动重新入队；已经 claim 但本地 snapshot 仍为 queued 的 Turn 交由 ProductFlow recovery scanner 判断。
 - 已进入模型、工具、外部任务或未知副作用阶段的 Turn 不自动重放；无法证明结果时保持 `unknown`。
@@ -74,4 +74,4 @@
 - `just backend-migrate`：真实开发数据库完成 `20260820_0068 -> 20260820_0069`；当前 head 为 `20260820_0069`，数据库同时包含 `workflow_provider_effects` 和 `image_session_provider_effects` provider effect ledger。
 - `just docs-check` 和 `git diff --check`：通过。
 
-这些结果证明当前实现、PostgreSQL lease 基础 gate、真实跨进程 queued handoff、PostgreSQL server restart 后的 question continuation、Chrome SSE cursor 重连和页面刷新、Redis 长任务投递及 publish failure 后的数据库收敛、consumer worker termination 后的 stale lease 重投、Redis server restart 后的 broker 连接恢复、常驻 Dramatiq worker 的 Redis consumer 重建、常驻 dispatcher 的 stale dispatch recovery/re-publish、Agent sync worker 和 delivery rendition worker 终止后的重复投递收口、每次模型请求的 checkpoint、本地 provider 响应头前连接重置、延迟超时和响应流中断后的保守收口、图片会话与 WorkflowRun provider 边界之后的未知结果不重放、两类 provider effect ledger 的 SQLite/真实 PostgreSQL 迁移和受保护 reconciliation 入口，以及当前 Agent effect 和 Agent tool mutation 在真实 FastAPI response-loss 下的稳定幂等键或账本对账可工作。它们没有覆盖真实 provider 响应丢失和 provider 侧查询对账、图片生成和素材处理等具体 effect worker termination 和重复 delivery、非 Responses provider 的 provider 查询能力、dispatcher/consumer 重连竞态、完整部署级多实例竞争或完整运维切换；跨进程 gate 中的 provider 仍是本地 fake/failure 响应。仅有单元测试、fake provider 或单进程 smoke check 通过时，不切换 `background_durable_tasks`。
+这些结果证明当前实现、PostgreSQL lease 基础 gate、真实跨进程 queued handoff、PostgreSQL server restart 后的 question continuation、Chrome SSE cursor 重连和页面刷新、Redis 长任务投递及 publish failure 后的数据库收敛、consumer worker termination 后的 stale lease 重投、Redis server restart 后的 broker 连接恢复、常驻 Dramatiq worker 的 Redis consumer 重建、常驻 dispatcher 的 stale dispatch recovery/re-publish、Agent sync worker 和 delivery rendition worker 终止后的重复投递收口、每次模型请求的 checkpoint、本地 provider 响应头前连接重置、延迟超时和响应流中断后的保守收口、图片会话与 WorkflowRun provider 边界之后的未知结果不重放、两类 provider effect ledger 的 SQLite/真实 PostgreSQL 迁移和受保护 reconciliation 入口，以及当前 Agent effect 和 Agent tool mutation 在真实 FastAPI response-loss 下的稳定幂等键或账本对账可工作。它们没有覆盖真实 provider 响应丢失和 provider 侧查询对账、图片生成和素材处理等具体 effect worker termination 和重复 delivery、非 Responses provider 的 provider 查询能力、dispatcher/consumer 重连竞态、完整部署级多实例竞争或完整运维切换；跨进程 gate 中的 provider 仍是本地 fake/failure 响应。仅有单元测试、fake provider 或单进程 smoke check 通过时，不能把 `background_durable_tasks` 的能力声明改为 `true`。
