@@ -90,7 +90,6 @@ import type {
   WorkflowDeliverySpec,
   WorkflowRecipe,
   WorkflowRecipeApplicationResult,
-  WorkflowRecipeOrigin,
   WorkflowRecipePreview,
   WorkflowRecipeSourceInput,
   WorkflowRecipeSummary,
@@ -1247,11 +1246,9 @@ export const api = {
   },
   listWorkflowRecipes(
     includeArchived = false,
-    origin: WorkflowRecipeOrigin | "all" = "all",
   ): Promise<WorkflowRecipeSummary[]> {
     const params = new URLSearchParams({
       include_archived: String(includeArchived),
-      origin,
     });
     return request(`/api/v3/workflow-recipes?${params}`);
   },

@@ -21,7 +21,7 @@ See [`adr/0007-pi-agent-runtime-boundary.md`](adr/0007-pi-agent-runtime-boundary
 
 ### Studio increment
 
-[`specs/productflow-studio-requirements.md`](specs/productflow-studio-requirements.md): shot list as the default surface, generate-set copy, recommended types on create, four official scene recipes, post-generation local edits, platform delivery presets, and a human fidelity checklist. Do not write these into CONTEXT / PRD / ARCHITECTURE until they land.
+[`specs/productflow-studio-requirements.md`](specs/productflow-studio-requirements.md): shot list as the default surface, generate-set copy, recommended types on create, post-generation local edits, platform delivery presets, and a human fidelity checklist. Do not write these into CONTEXT / PRD / ARCHITECTURE until they land. The recipe library does not ship official canvas templates; users save their own recipes.
 
 ### Image production quality
 

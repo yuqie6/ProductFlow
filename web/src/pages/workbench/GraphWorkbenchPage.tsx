@@ -94,8 +94,8 @@ export function GraphWorkbenchPage({
     staleTime: Infinity,
   });
   const recipesQuery = useQuery({
-    queryKey: ["workflow-recipes", false, "all"],
-    queryFn: () => api.listWorkflowRecipes(false, "all"),
+    queryKey: ["workflow-recipes", false],
+    queryFn: () => api.listWorkflowRecipes(false),
     enabled: tool === "recipes",
   });
   const recipeMutation = useMutation({

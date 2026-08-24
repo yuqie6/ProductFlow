@@ -1857,7 +1857,7 @@ class AgentWorkflowRunRequest(Base, TimestampMixin):
 
 
 class WorkflowRecipe(Base, TimestampMixin):
-    """用户或平台官方配方的稳定身份。"""
+    """用户保存的配方稳定身份。origin=official 仅保留历史 seed 行。"""
 
     __tablename__ = "workflow_recipes"
     __table_args__ = (

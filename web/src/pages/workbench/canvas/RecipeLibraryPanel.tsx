@@ -1,21 +1,18 @@
 import { useState } from "react";
 import {
   Archive,
-  BadgeCheck,
   FileStack,
   Image as ImageIcon,
   Link2,
   Loader2,
   PencilLine,
   Play,
-  UserRound,
 } from "lucide-react";
 
 import { ConfirmDialog } from "../../../components/ConfirmDialog";
 import { useI18n } from "../../../lib/preferences";
 import type {
   WorkflowRecipeApplicationResult,
-  WorkflowRecipeOrigin,
   WorkflowRecipePreview,
   WorkflowRecipeSummary,
 } from "../../../lib/types";
@@ -35,11 +32,8 @@ interface RecipeLibraryPanelProps {
   onArchive: (recipe: WorkflowRecipeSummary) => void;
 }
 
-export function filterRecipesByOrigin(
-  recipes: WorkflowRecipeSummary[],
-  origin: WorkflowRecipeOrigin,
-): WorkflowRecipeSummary[] {
-  return recipes.filter((recipe) => recipe.origin === origin);
+export function userSavedRecipes(recipes: WorkflowRecipeSummary[]): WorkflowRecipeSummary[] {
+  return recipes.filter((recipe) => recipe.origin !== "official");
 }
 
 export function RecipeLibraryPanel({
@@ -57,13 +51,12 @@ export function RecipeLibraryPanel({
   onArchive,
 }: RecipeLibraryPanelProps) {
   const { t } = useI18n();
-  const [origin, setOrigin] = useState<WorkflowRecipeOrigin>("official");
   const [previewRecipe, setPreviewRecipe] = useState<WorkflowRecipeSummary | null>(null);
   const [previewResult, setPreviewResult] = useState<WorkflowRecipePreview | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
 
-  const visibleRecipes = filterRecipesByOrigin(recipes, origin);
+  const visibleRecipes = userSavedRecipes(recipes);
   const previewBusy = Boolean(
     previewRecipe && (previewLoading || structureBusy || operationRecipeId === previewRecipe.id),
   );
@@ -84,29 +77,6 @@ export function RecipeLibraryPanel({
 
   return (
     <div className="space-y-3 p-3" data-graph-recipe-panel>
-      <div className="grid grid-cols-2 gap-1 rounded-md border border-border-l1 bg-surface-sunken p-1" role="tablist" aria-label={t("workbench.recipe.originTabs")}>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={origin === "official"}
-          onClick={() => setOrigin("official")}
-          className={`inline-flex h-8 items-center justify-center gap-1.5 rounded px-2 text-xs font-semibold transition ${origin === "official" ? "bg-surface-raised text-text-primary shadow-sm" : "text-text-secondary hover:text-text-primary"}`}
-        >
-          <BadgeCheck size={14} />
-          {t("workbench.recipe.officialTab")}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={origin === "user"}
-          onClick={() => setOrigin("user")}
-          className={`inline-flex h-8 items-center justify-center gap-1.5 rounded px-2 text-xs font-semibold transition ${origin === "user" ? "bg-surface-raised text-text-primary shadow-sm" : "text-text-secondary hover:text-text-primary"}`}
-        >
-          <UserRound size={14} />
-          {t("workbench.recipe.userTab")}
-        </button>
-      </div>
-
       {application ? (
         <section className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-400/30 dark:!bg-emerald-500/10" aria-live="polite">
           <div className="flex items-start gap-2">
@@ -126,37 +96,26 @@ export function RecipeLibraryPanel({
       ) : error ? (
         <PanelState text={error} action={t("workbench.retry")} onAction={onRetry} />
       ) : visibleRecipes.length === 0 ? (
-        <PanelState
-          icon={origin === "official" ? <BadgeCheck size={19} /> : <UserRound size={19} />}
-          text={origin === "official" ? t("workbench.recipe.emptyOfficial") : t("workbench.recipe.emptyUser")}
-        />
+        <PanelState icon={<FileStack size={19} />} text={t("workbench.recipe.empty")} />
       ) : (
         visibleRecipes.map((recipe) => {
           const version = recipe.current_version;
           const payload = version.payload;
           const busy = structureBusy || operationRecipeId === recipe.id;
           const appendable = canAppend(recipe);
-          const official = recipe.origin === "official";
           return (
             <article key={recipe.id} className="rounded-lg border border-border-l1 bg-surface-raised p-3 shadow-sm" data-recipe-origin={recipe.origin}>
               <div className="flex items-start gap-2.5">
-                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${official ? "bg-accent-soft text-accent" : "bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-200"}`}>
-                  {official ? <BadgeCheck size={16} /> : <UserRound size={16} />}
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-200">
+                  <FileStack size={16} />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <h3 className="min-w-0 flex-1 truncate text-sm font-semibold text-text-primary" title={version.title}>{version.title}</h3>
-                    <span className="shrink-0 text-[10px] font-semibold text-text-secondary">
-                      {official ? t("workbench.recipe.officialSource") : t("workbench.recipe.userSource")}
-                    </span>
-                  </div>
+                  <h3 className="min-w-0 truncate text-sm font-semibold text-text-primary" title={version.title}>{version.title}</h3>
                   <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-text-secondary">
                     {version.description || t("workbench.recipe.noDescription")}
                   </p>
                 </div>
               </div>
-
-              {official ? <GovernanceSummary governance={version.governance} /> : null}
 
               <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 border-y border-border-l1 py-2 text-[10px] font-medium text-text-secondary">
                 <span>{t("workbench.recipe.nodeCount", { count: payload.nodes.length })}</span>
@@ -165,7 +124,7 @@ export function RecipeLibraryPanel({
                 <span>{t("workbench.recipe.version", { version: version.version })}</span>
               </div>
 
-              <div className={`mt-3 grid gap-1.5 ${official ? "grid-cols-1" : "grid-cols-[minmax(0,1fr)_36px_36px]"}`}>
+              <div className="mt-3 grid grid-cols-[minmax(0,1fr)_36px_36px] gap-1.5">
                 <button
                   type="button"
                   onClick={() => void openPreview(recipe)}
@@ -176,30 +135,26 @@ export function RecipeLibraryPanel({
                   {busy ? <Loader2 size={13} className="mr-1.5 animate-spin" /> : <Play size={13} className="mr-1.5" fill="currentColor" />}
                   {t("workbench.recipe.apply")}
                 </button>
-                {official ? null : (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => onAppend(recipe)}
-                      disabled={busy || !appendable}
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-border-l1 text-text-secondary hover:border-accent hover:text-accent disabled:opacity-35"
-                      aria-label={t("workbench.recipe.append")}
-                      title={t("workbench.recipe.append")}
-                    >
-                      <PencilLine size={14} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onArchive(recipe)}
-                      disabled={busy}
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-border-l1 text-text-secondary hover:border-red-300 hover:text-red-600 disabled:opacity-35"
-                      aria-label={t("workbench.recipe.archive")}
-                      title={t("workbench.recipe.archive")}
-                    >
-                      <Archive size={14} />
-                    </button>
-                  </>
-                )}
+                <button
+                  type="button"
+                  onClick={() => onAppend(recipe)}
+                  disabled={busy || !appendable}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-border-l1 text-text-secondary hover:border-accent hover:text-accent disabled:opacity-35"
+                  aria-label={t("workbench.recipe.append")}
+                  title={t("workbench.recipe.append")}
+                >
+                  <PencilLine size={14} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onArchive(recipe)}
+                  disabled={busy}
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-border-l1 text-text-secondary hover:border-red-300 hover:text-red-600 disabled:opacity-35"
+                  aria-label={t("workbench.recipe.archive")}
+                  title={t("workbench.recipe.archive")}
+                >
+                  <Archive size={14} />
+                </button>
               </div>
             </article>
           );
@@ -248,32 +203,6 @@ export function confirmRecipeApply(
   onApply: (recipe: WorkflowRecipeSummary, preview: WorkflowRecipePreview) => void,
 ): void {
   onApply(recipe, preview);
-}
-
-function GovernanceSummary({
-  governance,
-}: {
-  governance: WorkflowRecipeSummary["current_version"]["governance"];
-}) {
-  const { t } = useI18n();
-  if (!governance) {
-    return <div className="mt-3 text-[10px] text-text-secondary">{t("workbench.recipe.governanceUnavailable")}</div>;
-  }
-  return (
-    <div className="mt-3 space-y-1 text-[10px] leading-4 text-text-secondary" data-recipe-governance>
-      <div className="flex flex-wrap gap-x-3 gap-y-1">
-        <span>{t("workbench.recipe.applicableImageTypes")}: {governance.applicable_image_types.join(", ")}</span>
-        <span>{t("workbench.recipe.requiredInputs")}: {governance.required_inputs.length ? governance.required_inputs.join(", ") : t("workbench.recipe.none")}</span>
-        <span>{t("workbench.recipe.defaultResult")}: {governance.default_result}</span>
-      </div>
-      {(governance.thumbnail || governance.provider_sample) ? (
-        <div className="flex items-center gap-2" data-recipe-governance-assets>
-          {governance.thumbnail ? <img src={governance.thumbnail} alt="" className="h-8 w-8 rounded object-cover" /> : null}
-          {governance.provider_sample ? <span className="truncate" title={governance.provider_sample}>{t("workbench.recipe.providerSampleAvailable")}</span> : null}
-        </div>
-      ) : null}
-    </div>
-  );
 }
 
 export function RecipeApplyPreviewBody({ preview }: { preview: WorkflowRecipePreview }) {

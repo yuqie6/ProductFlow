@@ -144,8 +144,8 @@ export function AgentProductWorkbenchPage({
   useRegisterAgentPageContext(pageContext);
 
   const recipesQuery = useQuery({
-    queryKey: ["workflow-recipes", false, "all"],
-    queryFn: () => api.listWorkflowRecipes(false, "all"),
+    queryKey: ["workflow-recipes", false],
+    queryFn: () => api.listWorkflowRecipes(false),
     enabled: activeSidebarTool === "recipes",
   });
   const reviewableRevision = selectReviewableWorkflowRevision(bootstrap.workflow_draft, liveGraph);

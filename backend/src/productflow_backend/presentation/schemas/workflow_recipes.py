@@ -31,9 +31,6 @@ class StrictRecipeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-WorkflowRecipeOriginFilter = Literal["all", "official", "user"]
-
-
 class RecipeSourceRequest(StrictRecipeRequest):
     source_type: Literal["workflow", "group", "selection"]
     group_id: str | None = Field(default=None, min_length=1, max_length=36)
@@ -303,7 +300,6 @@ __all__ = [
     "CreateWorkflowRecipeRequest",
     "PreviewWorkflowRecipeRequest",
     "RECIPE_SCHEMA_VERSION",
-    "WorkflowRecipeOriginFilter",
     "WorkflowRecipeArchiveResponse",
     "WorkflowRecipeApplicationResponse",
     "WorkflowRecipePreviewResponse",

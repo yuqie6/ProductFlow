@@ -6,13 +6,13 @@ import { ConfirmDialog } from "../../../components/ConfirmDialog";
 import type { WorkflowRecipePreview, WorkflowRecipeSummary } from "../../../lib/types";
 import {
   confirmRecipeApply,
-  filterRecipesByOrigin,
   RecipeApplyPreviewBody,
   RecipeLibraryPanel,
+  userSavedRecipes,
 } from "./RecipeLibraryPanel";
 
 function recipe(
-  origin: WorkflowRecipeSummary["origin"] = "official",
+  origin: WorkflowRecipeSummary["origin"] = "user",
 ): WorkflowRecipeSummary {
   return {
     id: "r1",
@@ -95,15 +95,15 @@ describe("RecipeLibraryPanel", () => {
     expect(markup).toContain("应用");
   });
 
-  it("filters user recipes for the second tab", () => {
-    const visible = filterRecipesByOrigin([recipe(), recipe("user")], "user");
+  it("lists only user-saved recipes", () => {
+    const visible = userSavedRecipes([recipe("official"), recipe("user")]);
     expect(visible).toHaveLength(1);
     expect(visible[0]?.origin).toBe("user");
   });
 
-  it("hides append and archive for official recipes and shows governance", () => {
+  it("shows append and archive for user-saved recipes", () => {
     const markup = renderToStaticMarkup(createElement(RecipeLibraryPanel, {
-      recipes: [recipe("official")],
+      recipes: [recipe("user")],
       loading: false,
       error: null,
       operationRecipeId: null,
@@ -126,10 +126,10 @@ describe("RecipeLibraryPanel", () => {
       onAppend: () => undefined,
       onArchive: () => undefined,
     }));
-    expect(markup).toContain("官方配方");
-    expect(markup).toContain("适用图种");
-    expect(markup).not.toContain("追加版本");
-    expect(markup).not.toContain("归档预设");
+    expect(markup).not.toContain("官方配方");
+    expect(markup).not.toContain("适用图种");
+    expect(markup).toContain("从当前画布追加版本");
+    expect(markup).toContain("归档预设");
   });
 
   it("lists preview mode plus node and edge titles", () => {
@@ -173,7 +173,7 @@ describe("RecipeLibraryPanel", () => {
 
   it("passes the exact confirmed preview object to apply", () => {
     const onApply = vi.fn();
-    const selectedRecipe = recipe("official");
+    const selectedRecipe = recipe("user");
     const preview: WorkflowRecipePreview = {
       mode: "merge",
       recipe_id: selectedRecipe.id,

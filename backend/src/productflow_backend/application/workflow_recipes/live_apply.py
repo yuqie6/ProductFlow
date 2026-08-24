@@ -27,7 +27,6 @@ from productflow_backend.application.product_workflow.graph_contracts import (
     CreateGroupOp,
     CreateNodeOp,
     GraphOperation,
-    UpdateNodeConfigOp,
     WorkflowChangeSet,
 )
 from productflow_backend.application.workflow_recipes.contracts import RecipePayload, recipe_payload_hash
@@ -35,7 +34,6 @@ from productflow_backend.domain.enums import (
     GraphActorType,
     GraphNodeType,
     WorkflowRecipeKind,
-    WorkflowRecipeOrigin,
 )
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError
 from productflow_backend.domain.graph_catalog import normalize_node_config, run_required_inputs
@@ -187,8 +185,6 @@ def preview_recipe_payload(
     recipe_version: int,
     summary: str,
     payload_hash: str | None = None,
-    recipe_origin: WorkflowRecipeOrigin = WorkflowRecipeOrigin.USER,
-    official_key: str | None = None,
     required_bindings: tuple[str, ...] = (),
 ) -> RecipeApplyPreview:
     return plan_recipe_payload(
@@ -200,8 +196,6 @@ def preview_recipe_payload(
         recipe_version=recipe_version,
         summary=summary,
         payload_hash=payload_hash,
-        recipe_origin=recipe_origin,
-        official_key=official_key,
         required_bindings=required_bindings,
     ).preview()
 
@@ -216,8 +210,6 @@ def plan_recipe_payload(
     recipe_version: int,
     summary: str,
     payload_hash: str | None = None,
-    recipe_origin: WorkflowRecipeOrigin = WorkflowRecipeOrigin.USER,
-    official_key: str | None = None,
     required_bindings: tuple[str, ...] = (),
     expected_graph_revision: int | None = None,
 ) -> RecipeApplyPlan:
@@ -225,51 +217,35 @@ def plan_recipe_payload(
         session,
         product_id=product_id,
         recipe_kind=recipe_kind,
-        recipe_origin=recipe_origin,
-        official_key=official_key,
     )
     if expected_graph_revision is not None and existing.revision != expected_graph_revision:
         raise ConflictError("工作流已变化，请重新预览后重试")
 
     semantic: dict[str, Any]
     try:
-        official_merge = (
-            _build_official_merge_change_set(
-                existing,
-                payload=payload,
-                official_key=official_key,
-                base_graph_revision=existing.revision,
-                summary=summary,
-            )
-            if recipe_origin is WorkflowRecipeOrigin.OFFICIAL and live is not None
-            else None
+        change_set = build_recipe_change_set(
+            payload,
+            base_graph_revision=existing.revision,
+            summary=summary,
+            target_product_id=product.id,
+            fact_set_version_id=product.current_fact_set_version_id,
+            position_offset=offset,
         )
-        if official_merge is not None:
-            change_set, updated_nodes, semantic = official_merge
-        else:
-            change_set = build_recipe_change_set(
+        updated_nodes = ()
+        connected_inputs: dict[str, list[str]] = {}
+        if live is not None:
+            change_set, connected_inputs = _attach_existing_shared_inputs(existing, change_set)
+        semantic = {
+            "operation": "add",
+            "offset": [offset[0], offset[1]],
+            "payload": _addition_semantic_payload(
                 payload,
-                base_graph_revision=existing.revision,
-                summary=summary,
                 target_product_id=product.id,
                 fact_set_version_id=product.current_fact_set_version_id,
                 position_offset=offset,
-            )
-            updated_nodes = ()
-            connected_inputs: dict[str, list[str]] = {}
-            if live is not None:
-                change_set, connected_inputs = _attach_existing_shared_inputs(existing, change_set)
-            semantic = {
-                "operation": "add",
-                "offset": [offset[0], offset[1]],
-                "payload": _addition_semantic_payload(
-                    payload,
-                    target_product_id=product.id,
-                    fact_set_version_id=product.current_fact_set_version_id,
-                    position_offset=offset,
-                ),
-                "connected_inputs": connected_inputs,
-            }
+            ),
+            "connected_inputs": connected_inputs,
+        }
     except BusinessValidationError as exc:
         raise ConflictError(f"配方无法合并进当前工作流: {exc}") from exc
     try:
@@ -300,8 +276,6 @@ def plan_recipe_payload(
         graph_id=live.id if live is not None else None,
         base_graph_revision=existing.revision,
         mode=mode,
-        recipe_origin=recipe_origin,
-        official_key=official_key,
         required_bindings=required_bindings,
         semantic=semantic,
     )
@@ -391,117 +365,19 @@ def _target_graph_state(
     *,
     product_id: str,
     recipe_kind: WorkflowRecipeKind,
-    recipe_origin: WorkflowRecipeOrigin,
-    official_key: str | None,
 ) -> tuple[Product, WorkflowGraph | None, AppliedGraph, RecipeApplyMode, tuple[int, int]]:
     product = session.get(Product, product_id)
     if product is None:
         raise ConflictError("商品不存在")
-    if recipe_origin is WorkflowRecipeOrigin.OFFICIAL and (
-        recipe_kind is not WorkflowRecipeKind.RECIPE_FRAGMENT or not official_key
-    ):
-        raise ConflictError("官方配方缺少合法 fragment 标识")
     live = get_active_workflow_graph(session, product_id=product_id)
     if live is None:
         if recipe_kind == WorkflowRecipeKind.RECIPE_FRAGMENT:
             raise ConflictError("片段配方需要已有 schema-v3 工作流")
         return product, None, EMPTY_GRAPH, "create", (0, 0)
-    if recipe_origin is not WorkflowRecipeOrigin.OFFICIAL and recipe_kind != WorkflowRecipeKind.RECIPE_FRAGMENT:
+    if recipe_kind != WorkflowRecipeKind.RECIPE_FRAGMENT:
         raise ConflictError("完整配方不能合并进已有工作流")
     existing = load_applied_graph(session, live)
     return product, live, existing, "merge", merge_position_offset(existing)
-
-
-def _build_official_merge_change_set(
-    existing: AppliedGraph,
-    *,
-    payload: RecipePayload,
-    official_key: str | None,
-    base_graph_revision: int,
-    summary: str,
-) -> tuple[WorkflowChangeSet, tuple[RecipePreviewUpdatedNode, ...], dict[str, Any]] | None:
-    if not official_key:
-        raise ConflictError("官方配方缺少 image_type_key")
-    recipe_prompt_nodes = [node for node in payload.nodes if node.node_type == GraphNodeType.PROMPT_GENERATION]
-    recipe_image_nodes = [node for node in payload.nodes if node.node_type == GraphNodeType.IMAGE_GENERATION]
-    if len(recipe_prompt_nodes) != 1 or len(recipe_image_nodes) != 1:
-        raise ConflictError("官方配方的 prompt/image 结构不明确")
-
-    matching_groups = []
-    for group in existing.groups:
-        members = [node for node in existing.nodes if node.group_id == group.id]
-        matching = [
-            node
-            for node in members
-            if node.node_type in {GraphNodeType.PROMPT_GENERATION, GraphNodeType.IMAGE_GENERATION}
-            and node.config.get("image_type_key") == official_key
-        ]
-        if matching:
-            matching_groups.append((group, members))
-    if len(matching_groups) > 1:
-        raise ConflictError("官方配方匹配到多个同图种镜头")
-    if not matching_groups:
-        return None
-
-    group, members = matching_groups[0]
-    prompt_nodes = [node for node in members if node.node_type == GraphNodeType.PROMPT_GENERATION]
-    image_nodes = [node for node in members if node.node_type == GraphNodeType.IMAGE_GENERATION]
-    if len(prompt_nodes) != 1 or not image_nodes:
-        raise ConflictError("官方配方目标镜头的节点结构不明确")
-    for node in (*prompt_nodes, *image_nodes):
-        if node.config.get("image_type_key") != official_key:
-            raise ConflictError("官方配方目标镜头缺少明确 image_type_key")
-
-    prompt_patch = dict(recipe_prompt_nodes[0].config)
-    image_patch = dict(recipe_image_nodes[0].config)
-    operations = []
-    updated_nodes: list[RecipePreviewUpdatedNode] = []
-    canonical_updates: list[dict[str, Any]] = []
-    for node, patch in [
-        (prompt_nodes[0], prompt_patch),
-        *[(node, image_patch) for node in image_nodes],
-    ]:
-        merged = dict(node.config)
-        merged.update(patch)
-        merged = normalize_node_config(node.node_type, merged)
-        changed_keys = tuple(
-            sorted(
-                key
-                for key, value in patch.items()
-                if key not in node.config or node.config[key] != value
-            )
-        )
-        operations.append(UpdateNodeConfigOp(node_ref=node.id, config=merged))
-        updated_nodes.append(
-            RecipePreviewUpdatedNode(
-                id=node.id,
-                node_type=node.node_type,
-                title=node.title,
-                changed_config_keys=changed_keys,
-            )
-        )
-        canonical_updates.append(
-            {
-                "node_id": node.id,
-                "node_type": node.node_type.value,
-                "final_config": merged,
-                "changed_config_keys": list(changed_keys),
-            }
-        )
-    return (
-        WorkflowChangeSet(
-            base_graph_revision=base_graph_revision,
-            summary=summary[:500],
-            actor_type=GraphActorType.RECIPE,
-            operations=operations,
-        ),
-        tuple(updated_nodes),
-        {
-            "operation": "update_official_group",
-            "group_id": group.id,
-            "updates": canonical_updates,
-        },
-    )
 
 
 def _attach_existing_shared_inputs(
@@ -730,8 +606,6 @@ def _recipe_preview_digest(
     graph_id: str | None,
     base_graph_revision: int,
     mode: RecipeApplyMode,
-    recipe_origin: WorkflowRecipeOrigin,
-    official_key: str | None,
     required_bindings: tuple[str, ...],
     semantic: dict[str, Any],
 ) -> str:
@@ -744,8 +618,6 @@ def _recipe_preview_digest(
             "graph_id": graph_id,
             "base_graph_revision": base_graph_revision,
             "mode": mode,
-            "origin": recipe_origin.value,
-            "official_key": official_key,
             "required_bindings": list(required_bindings),
             "semantic": semantic,
         },

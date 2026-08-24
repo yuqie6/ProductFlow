@@ -21,7 +21,7 @@
 
 ### 工作室增量
 
-[`specs/productflow-studio-requirements.md`](specs/productflow-studio-requirements.md)：镜头列表默认主区、生成套图文案、创建页推荐套图、四个官方场景配方、出图后局部修、平台交付预设、结果保真核对清单。落地前不写进 CONTEXT / PRD / ARCHITECTURE。
+[`specs/productflow-studio-requirements.md`](specs/productflow-studio-requirements.md)：镜头列表默认主区、生成套图文案、创建页推荐套图、出图后局部修、平台交付预设、结果保真核对清单。落地前不写进 CONTEXT / PRD / ARCHITECTURE。配方库不预置官方画布模板，只保留用户主动保存的配方。
 
 ### 图片生产质量
 

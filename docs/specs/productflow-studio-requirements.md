@@ -828,23 +828,9 @@ Agent 对全局库只发布整理 Draft，用户确认后应用。
 
 无图工作台可以预览和应用配方。
 
-### 16.2 官方场景配方（待交付）
+### 16.2 官方场景配方（不交付）
 
-配方库增加「官方」分区。第一版只预置 4 个片段配方，全部落在现有六类节点上：
-
-| 官方配方 | 作用 | 默认倾向 |
-|---|---|---|
-| 白底主图 | 补或更新 `hero` 镜头 | 浅底、商品居中、无文案、参考保真高 |
-| 使用场景 | 补或更新 `scene` 镜头 | 使用环境、商品是主角、无文案 |
-| 细节特写 | 补或更新 `detail` 镜头 | 1:1、材质工艺、无文案 |
-| 卖点信息图 | 补或更新 `selling_point` 镜头 | 文案必须、语种沿用商品设定 |
-
-规则：
-
-- 官方配方与用户配方同一套 preview/apply。
-- 镜头已存在则预览为配置合并；不存在则添加场景组。
-- 不得新开 `/tools` 技能首页。入口在创建快捷项、工作台配方库、空选侧栏。
-- 第一版不实现爆款链接复刻、不实现社区配方市场。
+配方库不预置官方画布模板。用户从 live graph 保存完整工作流、分组或选区后，配方才出现在库中。历史 0086 官方 seed 行保留为归档审计，不进入在线列表、预览或应用。
 
 ### 16.3 Recipe payload 合同
 
@@ -871,10 +857,7 @@ Recipe version 至少包含：schema version、kind（full/fragment）、nodes�
 
 ### 16.5 官方配方治理
 
-- 官方配方是版本化仓库/数据库种子，不在前端写死节点数组。
-- 更新官方配方不能静默改用户已经应用的 graph。
-- 下线配方只阻止新应用，历史 recipe version 和已落图 graph 可继续读取。
-- 每个官方配方必须有缩略图、适用图种、所需输入、默认结果和真实 provider 样本。
+官方画布模板不进入在线配方库。已落图的 graph 与 recipe application 审计记录继续可读。
 
 ---
 
@@ -1258,7 +1241,7 @@ Python 迁 Go、SaaS 租户计费不在第一版范围，见 ROADMAP。
 | 商品图片 | `product_images/`、`media_objects.py` |
 | 连续生图 | `image_sessions/` |
 | 局部修（待交付） | 复用 `image_sessions` + `product_images` lineage，不新开平行媒体模型 |
-| 官方配方（待交付） | 现有 `workflow_recipes` 预置数据，不新表 |
+| 官方配方（不交付） | 历史 seed 归档；在线配方库只列出用户保存的配方 |
 | 镜头列表（待交付） | `web/src/pages/workbench/` 对已有 group 的投影 |
 | 前端画布 | `pages/workbench/canvas/`、`chrome/` |
 | 前端 Agent | `pages/workbench/agent/` |
@@ -1288,7 +1271,7 @@ Python 迁 Go、SaaS 租户计费不在第一版范围，见 ROADMAP。
 | `WorkflowGraphRun` | 一次整图或有界子图执行 | queued、running、terminal；不可用前端动画推断终态 | 固定读取一个 graph revision；包含多个 `NodeRun` |
 | `NodeRun` | 节点在某次 run 中的执行事实 | 支持 attempt；成功、失败、取消和 unknown 可观察 | 重试创建新 attempt，不改写失败历史；effect 身份必须稳定 |
 | `Artifact` | 节点执行产生的结构化或媒体输出引用 | 随执行追加，不原地伪装成另一结果 | 成功 artifact 经明确 adoption 才能成为节点当前资产 |
-| `WorkflowRecipe` | 可复用结构的稳定身份 | 用户配方或官方配方；可归档 | 不包含商品 id、媒体 bytes、运行结果和 provider secret |
+| `WorkflowRecipe` | 可复用结构的稳定身份 | 用户从 live graph 保存；可归档 | 不包含商品 id、媒体 bytes、运行结果和 provider secret |
 | `WorkflowRecipeVersion` | 一版不可变 recipe payload | 发布后不可变；修改产生新版本 | apply 必须记录采用版本，以便复现和审计 |
 | `AgentSession` / `AgentConversation` | 商品范围内的交互上下文与对话导航 | 可恢复但不是业务权威 | 关联商品、task/turn；不能覆盖正式图或运行状态 |
 | `AgentTask` | 一个有边界的 Agent 工作目标 | pending、running、waiting、terminal/unknown | 多 task 可属同一 session；每个 task 独立执行和恢复 |
@@ -1476,7 +1459,7 @@ Agent 与正式图之间的确认边界。浏览器动画或 SSE 断开不得留
 |---|---|---|---|---|
 | 一：基线 | 当前 live truth | 文档所有权与路线图 | 提前声明未实现能力 | docs-check、索引和当前/目标用词审查 |
 | 二：套图与镜头 | schema-v3 graph/group/run | 默认生产视图与有界运行 | 新 Shot 表、新执行器 | API/test/build/真实浏览器镜头与画布一致性 |
-| 三：官方配方 | recipe version/apply | 四种可预览结构模板 | 媒体复制、技能平行系统 | payload 审计、冲突测试、第二商品复用脚本 |
+| 三：官方配方 | 不交付 | 配方库只保留用户保存内容 | 画布内预置模板 | 在线列表不含 official seed |
 | 四：局部修 | asset lineage/current adoption | 结果级修图闭环 | 原地覆盖媒体、隐式采用 | provider capability、失败、迟到结果和谱系测试 |
 | 五：交付预设 | delivery rendition | 确定性导出 | 重新生图、平台合规承诺 | 像素尺寸/格式/checksum/不调用模型证据 |
 | 六：质量与保真 | 前述生产闭环 | 固定样本与可比较基线 | 无口径分数、营销结论 | 样本记录、人工清单、耗时拆分和失败复盘 |
@@ -1544,22 +1527,7 @@ Agent 与正式图之间的确认边界。浏览器动画或 SSE 断开不得留
 
 ### 阶段三：官方场景配方
 
-进入条件：现有用户配方的 version、preview/apply 和 Graph Command 语义稳定；官方内容能用同一 payload 表达。
-
-完成：
-
-- 四个官方片段配方。
-- 配方库「官方 / 我的」。
-- 预览合并或添加镜头，确认走现有 apply。
-
-验收：
-
-- 空图商品应用「白底主图」后出现 hero 组。
-- 已有 hero 时预览显示将改的 config，不复制一套平行镜头。
-- 配方 payload 不含媒体字节和商品 id。
-- 删除/归档官方配方版本不会破坏已经采用该版本的 workflow 审计记录。
-- 同一预览在 graph revision 改变后不能直接确认，必须重新计算冲突。
-- 退出门禁：四个固定 fixture 的 snapshot/schema test、跨商品引用审计、空图/已有图/冲突图三类 apply 集成测试。
+不交付。配方库只列出用户主动保存的配方。
 
 ### 阶段四：出图后局部修
 

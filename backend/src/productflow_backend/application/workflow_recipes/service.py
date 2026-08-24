@@ -83,13 +83,12 @@ def list_workflow_recipes(
     session: Session,
     *,
     include_archived: bool = False,
-    origin: WorkflowRecipeOrigin | None = None,
 ) -> list[WorkflowRecipe]:
-    query = _workflow_recipe_summary_query()
+    query = _workflow_recipe_summary_query().where(
+        WorkflowRecipe.origin == WorkflowRecipeOrigin.USER
+    )
     if not include_archived:
         query = query.where(WorkflowRecipe.archived_at.is_(None))
-    if origin is not None:
-        query = query.where(WorkflowRecipe.origin == origin)
     return list(
         session.scalars(
             query.order_by(WorkflowRecipe.updated_at.desc(), WorkflowRecipe.id)
@@ -101,9 +100,15 @@ def get_workflow_recipe_or_raise(session: Session, *, recipe_id: str) -> Workflo
     recipe = session.scalar(workflow_recipe_query().where(WorkflowRecipe.id == recipe_id))
     if recipe is None:
         raise NotFoundError("工作流配方不存在")
+    _reject_official_recipe(recipe)
     if recipe.current_version is None:
         raise ConflictError("工作流配方缺少 current version")
     return recipe
+
+
+def _reject_official_recipe(recipe: WorkflowRecipe) -> None:
+    if recipe.origin is WorkflowRecipeOrigin.OFFICIAL:
+        raise NotFoundError("工作流配方不存在")
 
 
 def create_workflow_recipe(
@@ -187,8 +192,7 @@ def append_workflow_recipe_version(
         )
         if recipe is None:
             raise NotFoundError("工作流配方不存在")
-        if recipe.origin is WorkflowRecipeOrigin.OFFICIAL:
-            raise ConflictError("官方配方只能通过版本化 migration 更新")
+        _reject_official_recipe(recipe)
         if recipe.archived_at is not None:
             raise ConflictError("已归档工作流配方不能追加版本")
         current_version = recipe.current_version
@@ -322,8 +326,7 @@ def archive_workflow_recipe(
         )
         if recipe is None:
             raise NotFoundError("工作流配方不存在")
-        if recipe.origin is WorkflowRecipeOrigin.OFFICIAL:
-            raise ConflictError("官方配方只能通过版本化 migration 下线")
+        _reject_official_recipe(recipe)
         current_version = recipe.current_version
         if current_version is None or current_version.version != expected_recipe_version:
             raise ConflictError("工作流配方版本已变化，请刷新后重试")
@@ -369,8 +372,6 @@ def preview_workflow_recipe(
         recipe_version=recipe_version.version,
         summary=recipe_application_summary(recipe_version.title),
         payload_hash=recipe_version.payload_hash,
-        recipe_origin=recipe.origin,
-        official_key=recipe.official_key,
         required_bindings=required_bindings,
     ).preview()
 
@@ -417,6 +418,7 @@ def apply_workflow_recipe(
         )
         if recipe is None:
             raise NotFoundError("工作流配方不存在")
+        _reject_official_recipe(recipe)
         if recipe.archived_at is not None:
             raise ConflictError("已归档工作流配方不能应用")
         recipe_version = recipe.current_version
@@ -434,8 +436,6 @@ def apply_workflow_recipe(
             recipe_version=recipe_version.version,
             summary=recipe_application_summary(recipe_version.title),
             payload_hash=recipe_version.payload_hash,
-            recipe_origin=recipe.origin,
-            official_key=recipe.official_key,
             required_bindings=required_bindings,
             expected_graph_revision=expected_graph_revision,
         )

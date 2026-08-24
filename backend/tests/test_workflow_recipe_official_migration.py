@@ -22,7 +22,7 @@ def test_official_recipe_migration_seeds_canonical_v3_fragments(
         filename="official-recipes.db",
     )
     expected_head = ScriptDirectory.from_config(config).get_current_head()
-    command.upgrade(config, "head")
+    command.upgrade(config, "20260824_0086")
 
     engine = sa.create_engine(f"sqlite:///{database_path}", future=True)
     try:
@@ -30,6 +30,7 @@ def test_official_recipe_migration_seeds_canonical_v3_fragments(
             rows = connection.execute(
                 sa.text(
                     "SELECT recipes.id AS recipe_id, recipes.origin, recipes.official_key, "
+                    "recipes.archived_at, "
                     "versions.id AS version_id, versions.schema_version, versions.catalog_version, "
                     "versions.creation_source, versions.title, versions.payload_json, "
                     "versions.payload_hash, versions.governance_json "
@@ -40,7 +41,7 @@ def test_official_recipe_migration_seeds_canonical_v3_fragments(
                     "ORDER BY recipes.official_key"
                 )
             ).mappings().all()
-            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == expected_head
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == "20260824_0086"
 
         seeds = {seed.official_key: seed for seed in official_recipe_seeds()}
         assert [row["official_key"] for row in rows] == ["detail", "hero", "scene", "selling_point"]
@@ -71,6 +72,7 @@ def test_official_recipe_migration_seeds_canonical_v3_fragments(
             assert len(payload_json["edges"]) == 1
             assert payload_json["edges"][0]["data_type"] == "prompt"
             assert "product_source" not in str(payload_json)
+            assert row["archived_at"] is None
 
         inspector = sa.inspect(engine)
         recipe_columns = {column["name"] for column in inspector.get_columns("workflow_recipes")}
@@ -85,6 +87,22 @@ def test_official_recipe_migration_seeds_canonical_v3_fragments(
         }
         assert "ck_workflow_recipes_origin_key" in recipe_constraints
         assert "ck_workflow_recipe_versions_catalog_version" in version_constraints
+    finally:
+        engine.dispose()
+
+    command.upgrade(config, "head")
+    engine = sa.create_engine(f"sqlite:///{database_path}", future=True)
+    try:
+        with engine.connect() as connection:
+            archived = connection.execute(
+                sa.text(
+                    "SELECT official_key, archived_at FROM workflow_recipes "
+                    "WHERE origin = 'official' ORDER BY official_key"
+                )
+            ).mappings().all()
+            assert connection.scalar(sa.text("SELECT version_num FROM alembic_version")) == expected_head
+            assert [row["official_key"] for row in archived] == ["detail", "hero", "scene", "selling_point"]
+            assert all(row["archived_at"] is not None for row in archived)
     finally:
         engine.dispose()
 

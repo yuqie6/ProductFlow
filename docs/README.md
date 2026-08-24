@@ -33,7 +33,7 @@
 | 文档 | 状态 | 相对当前产品多出来的东西 |
 |---|---|---|
 | `specs/workbench.md` | Draft | 工作台作为生产面必须达到的完成度；浏览器证明之前不宣称完成 |
-| `specs/productflow-studio-requirements.md` | Draft | 镜头默认主区、官方配方、局部修、交付预设 |
+| `specs/productflow-studio-requirements.md` | Draft | 镜头默认主区、局部修、交付预设 |
 | `specs/shot-scene-assembly.md` | Approved | Shot/scene 的 group 与默认边 |
 | `specs/global-agent-human-workflow-design.md` | Approved | Session、Task、人工接管与 WorkflowRun 边界 |
 | `specs/pi-agent-runtime-integration.md` | Approved | Pi runtime、Skill、Context、Tool |

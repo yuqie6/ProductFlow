@@ -13,7 +13,6 @@ from productflow_backend.application.workflow_recipes.service import (
     list_workflow_recipes,
     preview_workflow_recipe,
 )
-from productflow_backend.domain.enums import WorkflowRecipeOrigin
 from productflow_backend.presentation.deps import get_session, require_admin
 from productflow_backend.presentation.schemas.graphs import serialize_graph_projection
 from productflow_backend.presentation.schemas.workflow_recipes import (
@@ -23,7 +22,6 @@ from productflow_backend.presentation.schemas.workflow_recipes import (
     PreviewWorkflowRecipeRequest,
     WorkflowRecipeApplicationResponse,
     WorkflowRecipeArchiveResponse,
-    WorkflowRecipeOriginFilter,
     WorkflowRecipePreviewResponse,
     WorkflowRecipeResponse,
     WorkflowRecipeSummaryResponse,
@@ -42,7 +40,6 @@ v3_router = APIRouter(prefix="/api/v3", tags=["workflow-recipes"], dependencies=
 @v3_router.get("/workflow-recipes", response_model=list[WorkflowRecipeSummaryResponse])
 def list_workflow_recipes_endpoint(
     include_archived: bool = Query(default=False),
-    origin: WorkflowRecipeOriginFilter = Query(default="all"),
     session: Session = Depends(get_session),
 ) -> list[WorkflowRecipeSummaryResponse]:
     return [
@@ -50,7 +47,6 @@ def list_workflow_recipes_endpoint(
         for recipe in list_workflow_recipes(
             session,
             include_archived=include_archived,
-            origin=None if origin == "all" else WorkflowRecipeOrigin(origin),
         )
     ]
 

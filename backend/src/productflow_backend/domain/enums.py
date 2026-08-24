@@ -208,7 +208,7 @@ class WorkflowRecipeKind(StrEnum):
 
 
 class WorkflowRecipeOrigin(StrEnum):
-    """配方来源：用户从 live graph 保存，或平台提供的官方 seed。"""
+    """配方来源。在线配方库只列出用户从 live graph 保存的配方；official 仅保留历史 seed 行。"""
 
     OFFICIAL = "official"
     USER = "user"

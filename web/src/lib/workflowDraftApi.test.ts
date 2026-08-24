@@ -35,7 +35,7 @@ describe("workflow draft API contract", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await api.listWorkflowRecipes(false, "official");
+    await api.listWorkflowRecipes(false);
     await api.getWorkflowRecipe("recipe/1");
     await api.archiveWorkflowRecipe("recipe/1", 3);
     await api.applyWorkflowRecipe("product/1", "recipe/1", {
@@ -46,7 +46,7 @@ describe("workflow draft API contract", () => {
     });
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
-      "/api/v3/workflow-recipes?include_archived=false&origin=official",
+      "/api/v3/workflow-recipes?include_archived=false",
       "/api/v3/workflow-recipes/recipe%2F1",
       "/api/v3/workflow-recipes/recipe%2F1?expected_recipe_version=3",
       "/api/v3/products/product%2F1/workflow-recipes/recipe%2F1/apply",

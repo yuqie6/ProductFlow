@@ -1,4 +1,8 @@
-"""Official recipe fragment definitions used by application code and drift tests."""
+"""Historical official recipe seeds for migration 0086 and its drift tests.
+
+These fragments are not an online catalog. Migration 0091 archives them, and
+online recipe routes only serve user-saved recipes.
+"""
 
 from __future__ import annotations
 
