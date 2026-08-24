@@ -11,6 +11,8 @@ from productflow_backend.application.agent.control import synchronize_agent_turn
 from productflow_backend.application.agent.conversations import bind_harness_turn, reserve_agent_turn
 from productflow_backend.application.agent.product_intake import AgentProductSelectionV1
 from productflow_backend.application.agent.product_workspaces import create_agent_product_workspace
+from productflow_backend.application.agent.sessions import create_agent_session
+from productflow_backend.application.product_workflow.graph_commands import get_active_workflow_graph
 from productflow_backend.application.agent.tasks import create_agent_task, get_agent_task_or_raise
 from productflow_backend.application.agent.workflow_run_requests import (
     cancel_agent_workflow_run_request,
@@ -25,12 +27,7 @@ from productflow_backend.application.agent.workflow_runs import (
     inspect_agent_global_workflow_runs,
     list_agent_workflow_runs,
 )
-from productflow_backend.application.product_workflow.graph_draft_persist import persist_confirmed_draft_graph
 from productflow_backend.application.product_workflow.graph_runs import submit_graph_run
-from productflow_backend.application.workflow_drafts.service import (
-    append_workflow_draft_revision,
-    confirm_workflow_draft_revision,
-)
 from productflow_backend.domain.enums import (
     AgentConversationScope,
     AgentTaskStatus,
@@ -56,6 +53,18 @@ def _silence_graph_run_enqueue(_monkeypatch) -> None:
     return
 
 
+def _new_global_conversation(db_session, *, title: str = "全局执行"):
+    agent_session = create_agent_session(db_session, title=title)
+    conversation = db_session.scalar(
+        select(AgentConversation).where(
+            AgentConversation.session_id == agent_session.id,
+            AgentConversation.scope_type == AgentConversationScope.GLOBAL,
+        )
+    )
+    assert conversation is not None
+    return conversation
+
+
 def test_global_agent_can_inspect_recent_runs_for_selected_workflows(db_session, monkeypatch) -> None:
     _silence_graph_run_enqueue(monkeypatch)
     first, first_graph = _create_v3_requestable_workspace(db_session)
@@ -64,9 +73,10 @@ def test_global_agent_can_inspect_recent_runs_for_selected_workflows(db_session,
         name="执行请求测试商品 2",
         idempotency_key="v3-workflow-run-request-workspace-2",
     )
+    global_session = create_agent_session(db_session, title="全局执行检查")
     global_conversation = db_session.scalar(
         select(AgentConversation).where(
-            AgentConversation.session_id == first.conversation.session_id,
+            AgentConversation.session_id == global_session.id,
             AgentConversation.scope_type == AgentConversationScope.GLOBAL,
         )
     )
@@ -184,13 +194,7 @@ def test_global_agent_workflow_run_request_targets_explicit_product_and_reuses_r
 ) -> None:
     _silence_graph_run_enqueue(monkeypatch)
     workspace, workflow = _create_v3_requestable_workspace(db_session)
-    global_conversation = db_session.scalar(
-        select(AgentConversation).where(
-            AgentConversation.session_id == workspace.conversation.session_id,
-            AgentConversation.scope_type == AgentConversationScope.GLOBAL,
-        )
-    )
-    assert global_conversation is not None
+    global_conversation = _new_global_conversation(db_session, title="从全局执行商品工作流")
     task = create_agent_task(
         db_session,
         session_id=global_conversation.session_id,
@@ -245,13 +249,7 @@ def test_global_agent_workflow_run_request_targets_explicit_product_and_reuses_r
 
 def test_global_agent_turn_projects_workflow_run_request_for_dock_confirmation(db_session) -> None:
     workspace, workflow = _create_v3_requestable_workspace(db_session)
-    global_conversation = db_session.scalar(
-        select(AgentConversation).where(
-            AgentConversation.session_id == workspace.conversation.session_id,
-            AgentConversation.scope_type == AgentConversationScope.GLOBAL,
-        )
-    )
-    assert global_conversation is not None
+    global_conversation = _new_global_conversation(db_session, title="等待全局执行确认")
     task = create_agent_task(
         db_session,
         session_id=global_conversation.session_id,
@@ -498,13 +496,7 @@ def test_global_agent_can_request_workflow_run_retry(db_session, monkeypatch) ->
         node_run.failure_reason = "generation_failed"
     db_session.commit()
 
-    global_conversation = db_session.scalar(
-        select(AgentConversation).where(
-            AgentConversation.session_id == workspace.conversation.session_id,
-            AgentConversation.scope_type == AgentConversationScope.GLOBAL,
-        )
-    )
-    assert global_conversation is not None
+    global_conversation = _new_global_conversation(db_session, title="全局重试")
 
     prepared = prepare_agent_global_workflow_run_request(
         db_session,
@@ -561,29 +553,9 @@ def _create_v3_requestable_workspace(
         image_uploads=[(_make_demo_image_bytes(), "reference.png", "image/png")],
         idempotency_key=idempotency_key,
     )
-    append_workflow_draft_revision(
-        db_session,
-        product_id=workspace.product.id,
-        draft_id=workspace.workflow_draft.id,
-        expected_draft_version=0,
-        payload=make_workflow_draft_payload(reference_asset_id=workspace.created_assets[0].id),
-        ready_for_confirmation=True,
-        source_turn_id="v3-request-test-turn",
-        source_artifact_step_id="v3-request-test-artifact",
-    )
-    confirm_workflow_draft_revision(
-        db_session,
-        product_id=workspace.product.id,
-        draft_id=workspace.workflow_draft.id,
-        expected_draft_version=1,
-    )
-    persisted = persist_confirmed_draft_graph(
-        db_session,
-        product_id=workspace.product.id,
-        draft_id=workspace.workflow_draft.id,
-        expected_draft_version=1,
-    )
-    return workspace, persisted.graph
+    graph = get_active_workflow_graph(db_session, product_id=workspace.product.id)
+    assert graph is not None
+    return workspace, graph
 
 
 def test_agent_workflow_run_request_confirms_v3_graph(db_session) -> None:

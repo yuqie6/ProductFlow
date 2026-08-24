@@ -29,13 +29,19 @@ router = APIRouter(
 @router.get("", response_model=AgentSessionListResponse)
 def list_agent_sessions_endpoint(
     include_archived: bool = Query(default=False),
+    product_id: str | None = Query(default=None),
     session: Session = Depends(get_session),
 ) -> AgentSessionListResponse:
-    ensure_global_agent_conversations(session)
+    if product_id is None:
+        ensure_global_agent_conversations(session)
     return AgentSessionListResponse(
         items=[
             serialize_agent_session(agent_session)
-            for agent_session in list_agent_sessions(session, include_archived=include_archived)
+            for agent_session in list_agent_sessions(
+                session,
+                include_archived=include_archived,
+                product_id=product_id,
+            )
         ][:AGENT_SESSION_LIST_MAX_ITEMS]
     )
 

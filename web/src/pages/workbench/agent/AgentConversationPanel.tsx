@@ -124,7 +124,7 @@ export function AgentConversationPanel({
 
   const events = useAgentTurnEvents({
     getEventsUrl: (turnId, after) => api.getAgentTurnEventsUrl(productId, conversation.id, turnId, after),
-    runId: conversation.harness_run_id,
+    runId: agent.activeTurn?.harness_run_id ?? null,
     turn: agent.activeTurn,
     onTerminal: () => void agent.refreshLatestTurn(),
   });
@@ -175,7 +175,7 @@ export function AgentConversationPanel({
       ]);
     },
   });
-  const canSubmitMessage = Boolean(!agent.activeTurn && agent.turns.length > 0);
+  const canSubmitMessage = canSubmitAgentConversationMessage({ activeTurn: agent.activeTurn });
   const submitMessage = async () => {
     const normalized = composerText.trim();
     if (!normalized || !canSubmitMessage || agent.submitTurnMutation.isPending) {
@@ -537,6 +537,12 @@ export function hasUnsyncedWorkflowDraftRevision(
   return Boolean(
     projectedRevisionId && workflowDraft.current_revision?.id !== projectedRevisionId,
   );
+}
+
+export function canSubmitAgentConversationMessage(input: {
+  activeTurn: AgentTurn | null | undefined;
+}): boolean {
+  return input.activeTurn == null;
 }
 
 function PanelError({

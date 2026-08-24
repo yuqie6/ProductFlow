@@ -27,6 +27,7 @@ class AgentSessionConversationResponse(BaseModel):
 
 class AgentSessionResponse(BaseModel):
     id: str
+    product_id: str | None
     title: str
     summary: str | None
     status: AgentSessionStatus
@@ -62,6 +63,7 @@ def serialize_agent_session(agent_session: AgentSession) -> AgentSessionResponse
     ]
     return AgentSessionResponse(
         id=agent_session.id,
+        product_id=agent_session.product_id,
         title=agent_session.title,
         summary=agent_session.summary,
         status=agent_session.status,

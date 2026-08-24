@@ -91,20 +91,18 @@ TanStack Query 管理服务端状态；局部表单、选择和画布交互使�
 ## 4. Agent 创建链路
 
 ```text
-image types + quantities + 1..6 uploads
-  -> Product + ProductImageAsset + WorkflowDraft + AgentSession + AgentConversation
+product name (+ optional types and 1..6 uploads)
+  -> Product + live schema-v3 graph + product-owned AgentSession + AgentConversation
+  -> user first message
   -> ProductFlow submits Agent Turn
   -> agent-service / Pi SDK ProductFlow adapter
-  -> ProductFlow internal read, proposal, and pending-request tools
-  -> versioned WorkflowDraft artifact
-  -> user confirmation
-  -> schema-v3 graph persist
+  -> apply / propose ChangeSet on the live graph
   -> product workbench
 ```
 
-ProductFlow 拥有商品、Draft、确认、WorkflowGraphRun 和 Web projection。Agent service 使用 Pi SDK 运行模型 loop，并在自己的数据根保存 session/event 文件；这些文件不是业务权威。PostgreSQL 保存 AgentSession、AgentTask、AgentConversation、Turn projection、PageContextSnapshot、问题状态、WorkflowDraft revision，以及跨实例浏览器事件源 `agent_turn_events`。
+ProductFlow 拥有商品、Draft、确认、WorkflowGraphRun 和 Web projection。Agent service 使用 Pi SDK 运行模型 loop，并在自己的数据根保存 session/event 文件；这些文件不是业务权威。PostgreSQL 保存 AgentSession、AgentTask、AgentConversation、Turn projection、PageContextSnapshot、问题状态、WorkflowDraft revision，以及跨实例浏览器事件源 `agent_turn_events`。Turn 事件 `run_id` 与 Turn 投影 `harness_run_id` 使用 `_expected_harness_run_id`：绑 Task 用 Task run，否则用 Conversation run。
 
-商品创建在一个业务事务中写入 Product、资产、WorkflowDraft、商品 Conversation、onboarding AgentTask 和 AgentSession。onboarding Task 初始为 `WAITING_USER`，Intake 成功后收口为 `SUCCEEDED`，不取得工作流执行权。Global Conversation 与商品 Conversation 共用 Session，不合并 transcript。独立新建 Session 不要求名称；临时名称来自首条全局 Turn，人工重命名优先。全局 Agent 创建商品工作区使用 `creation_idempotency_key` 和 `creation_request_hash` 做只读对账。
+商品创建在一个业务事务中写入 Product、live schema-v3 图、商品 Conversation 和归属该商品的 AgentSession。不创建 onboarding Task，不自动提交开场 Turn。名称-only 的图含 `product_source`；表单齐了则与直接创建同一套模板。直接创建不建 Session。画布 Session 的 `product_id` 非空；全局 Dock 列表只含 `product_id` 为空的 Session。独立新建全局 Session 不要求名称；临时名称来自首条全局 Turn，人工重命名优先。全局 Agent 创建商品工作区会新开画布 Session，使用 `creation_idempotency_key` 和 `creation_request_hash` 做只读对账。
 
 `GlobalAgentDock` 负责 Session/Task 列表、搜索、跳转和待确认整理 Draft，不拥有画布或 WorkflowGraphRun。全局素材整理只发布 `LibraryOrganizationDraft`；用户确认后由 ProductFlow 重新观察事实并应用。
 

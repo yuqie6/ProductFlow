@@ -77,6 +77,33 @@ def creative_brief_config_from_source_note(source_note: str | None) -> dict[str,
     }
 
 
+def build_product_source_create_graph(
+    *,
+    product_title: str,
+    source_product_id: str,
+    fact_set_version_id: str | None = None,
+) -> WorkflowChangeSet:
+    """名称-only 出生：一张只有商品资料节点的 live 图。"""
+    return WorkflowChangeSet(
+        base_graph_revision=0,
+        summary="商品资料",
+        actor_type=GraphActorType.USER,
+        operations=[
+            CreateNodeOp(
+                client_ref="product-source",
+                node_type=GraphNodeType.PRODUCT_SOURCE,
+                title=product_title,
+                position_x=80,
+                position_y=220,
+                config={
+                    "source_product_id": source_product_id,
+                    "fact_set_version_id": fact_set_version_id,
+                },
+            )
+        ],
+    )
+
+
 def build_direct_create_template(
     *,
     image_types: list[DirectCreateImageType],

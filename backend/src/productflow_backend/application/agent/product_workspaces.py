@@ -34,7 +34,15 @@ from productflow_backend.application.agent.tasks import (
 )
 from productflow_backend.application.product_facts import product_metadata_facts, stage_product_fact_set
 from productflow_backend.application.product_images.assets import get_product_image_assets_by_ids
-from productflow_backend.application.product_workflow.graph_commands import get_active_workflow_graph
+from productflow_backend.application.product_workflow.graph_commands import (
+    get_active_workflow_graph,
+    stage_new_workflow_graph,
+)
+from productflow_backend.application.product_workflow.graph_template import (
+    DirectCreateImageType,
+    build_direct_create_template,
+    build_product_source_create_graph,
+)
 from productflow_backend.application.products import (
     normalize_product_name,
     stage_canonical_product,
@@ -45,7 +53,6 @@ from productflow_backend.application.storage_compensation import compensate_stor
 from productflow_backend.application.time import now_utc
 from productflow_backend.application.workflow_drafts.service import workflow_draft_query
 from productflow_backend.domain.enums import (
-    AgentConversationScope,
     AgentConversationStatus,
     AgentSessionStatus,
     AgentTaskStatus,
@@ -125,7 +132,9 @@ def create_agent_product_draft_workspace(
             creation_request_hash=request_hash,
             intake=None,
             agent_session_id=normalized_session_id,
-            create_onboarding_task=True,
+            create_onboarding_task=False,
+            created_assets=[],
+            fork_global_session=True,
         )
         session.commit()
     except IntegrityError:
@@ -161,19 +170,17 @@ def create_agent_product_draft_workspace_from_global_conversation(
     name: str,
     idempotency_key: str,
 ) -> AgentProductWorkspaceCreation:
-    """Start product onboarding from a global conversation without merging run histories."""
-    global_conversation = get_agent_conversation_or_raise(
+    """Start a product-owned canvas session from a global conversation without merging run histories."""
+    get_agent_conversation_or_raise(
         session,
         product_id=None,
         conversation_id=global_conversation_id,
     )
-    if global_conversation.session_id is None:
-        raise ConflictError("全局 Agent conversation 没有关联 Session")
     return create_agent_product_draft_workspace(
         session,
         name=name,
         idempotency_key=idempotency_key,
-        agent_session_id=global_conversation.session_id,
+        agent_session_id=None,
     )
 
 
@@ -196,7 +203,7 @@ def reconcile_agent_product_draft_workspace_from_global_conversation(
     normalized_key = normalize_agent_product_idempotency_key(idempotency_key)
     request_hash = agent_product_draft_workspace_request_hash(
         normalized_product_name=normalized_name,
-        agent_session_id=global_conversation.session_id,
+        agent_session_id=None,
     )
     existing = _conversation_by_creation_key(session, normalized_key)
     if existing is None:
@@ -277,6 +284,8 @@ def create_agent_product_workspace(
                 intake=intake,
                 agent_session_id=normalized_session_id,
                 create_onboarding_task=False,
+                created_assets=canonical.created_assets,
+                fork_global_session=True,
             )
             session.commit()
     except IntegrityError:
@@ -308,6 +317,7 @@ def attach_agent_workspace_to_product(
     product_id: str,
     idempotency_key: str,
     agent_session_id: str | None = None,
+    force_new: bool = False,
 ) -> AgentProductWorkspaceCreation:
     """Create a product-scoped Agent conversation for an existing v3 graph product."""
     product = session.scalar(select(Product).where(Product.id == product_id).with_for_update())
@@ -319,8 +329,17 @@ def attach_agent_workspace_to_product(
         .order_by(AgentConversation.created_at.desc(), AgentConversation.id.desc())
         .limit(1)
     )
-    if existing_for_product is not None:
-        return _load_workspace(session, conversation_id=existing_for_product.id, created=False)
+    if existing_for_product is not None and not force_new:
+        if agent_session_id is None or existing_for_product.session_id == agent_session_id:
+            return _load_workspace(session, conversation_id=existing_for_product.id, created=False)
+        session_match = session.scalar(
+            agent_conversation_query().where(
+                AgentConversation.product_id == product_id,
+                AgentConversation.session_id == agent_session_id,
+            )
+        )
+        if session_match is not None:
+            return _load_workspace(session, conversation_id=session_match.id, created=False)
     if get_active_workflow_graph(session, product_id=product_id) is None:
         raise ConflictError("当前商品还没有可执行的工作流")
 
@@ -348,6 +367,8 @@ def attach_agent_workspace_to_product(
             intake=None,
             agent_session_id=normalized_session_id,
             create_onboarding_task=False,
+            created_assets=[],
+            fork_global_session=False,
         )
         session.commit()
     except IntegrityError:
@@ -460,9 +481,6 @@ def _lock_intake_finalization(
         raise ConflictError("已经开始生成的 WorkflowDraft 不能再确认商品输入")
     if draft.recipe_seed is not None:
         raise ConflictError("带重建种子的 WorkflowDraft 不能确认商品创建输入")
-    if get_active_workflow_graph(session, product_id=product.id) is not None:
-        # live graph 存在后不能再写创建 intake 去覆盖现图。
-        raise ConflictError("商品已有可运行的工作流，不能再提交创建输入")
     return _IntakeFinalizationLock(
         conversation=conversation,
         draft=draft,
@@ -653,6 +671,51 @@ def reconcile_agent_product_intake_from_assets(
     return AgentProductWorkspaceReconcileResult(state="applied", creation=creation)
 
 
+def _stage_live_graph_for_workspace(
+    session: Session,
+    *,
+    product: Product,
+    intake: WorkflowIntakeV1 | None,
+    created_assets: list[ProductImageAsset],
+) -> None:
+    del created_assets
+    if get_active_workflow_graph(session, product_id=product.id) is not None:
+        return
+    fact_set_version_id = product.current_fact_set_version_id
+    if intake is not None and intake.image_types and intake.reference_asset_ids:
+        change_set = build_direct_create_template(
+            image_types=[
+                DirectCreateImageType(key=item.key, quantity=item.quantity, order=item.order)
+                for item in intake.image_types
+            ],
+            reference_asset_ids=list(intake.reference_asset_ids),
+            product_title=product.name,
+            source_product_id=product.id,
+            fact_set_version_id=fact_set_version_id,
+        )
+    else:
+        change_set = build_product_source_create_graph(
+            product_title=product.name,
+            source_product_id=product.id,
+            fact_set_version_id=fact_set_version_id,
+        )
+    stage_new_workflow_graph(
+        session,
+        product_id=product.id,
+        change_set=change_set,
+        title=product.name,
+    )
+
+
+def _require_canvas_session(agent_session, *, product_id: str) -> None:
+    if agent_session.status != AgentSessionStatus.ACTIVE:
+        raise ConflictError("已归档的 Agent Session 不能创建商品工作区")
+    if agent_session.product_id is None:
+        raise ConflictError("全局 Agent Session 不能作为画布会话")
+    if agent_session.product_id != product_id:
+        raise ConflictError("Agent Session 不属于当前商品")
+
+
 def _stage_workspace_records(
     session: Session,
     *,
@@ -662,8 +725,10 @@ def _stage_workspace_records(
     intake: WorkflowIntakeV1 | None,
     agent_session_id: str | None,
     create_onboarding_task: bool,
+    created_assets: list[ProductImageAsset],
+    fork_global_session: bool = False,
 ) -> tuple[WorkflowDraft, AgentConversation]:
-    """只 flush 工作区行。调用方持有事务；Session 是容器，product conversation 才是 Turn 投影。"""
+    """只 flush 工作区行。调用方持有事务；Session 归属商品，product conversation 才是 Turn 投影。"""
     draft = WorkflowDraft(
         product_id=product.id,
         status=WorkflowDraftStatus.COLLECTING,
@@ -672,32 +737,29 @@ def _stage_workspace_records(
     )
     session.add(draft)
     session.flush()
+    _stage_live_graph_for_workspace(
+        session,
+        product=product,
+        intake=intake,
+        created_assets=created_assets,
+    )
 
     conversation_id = new_id()
     if agent_session_id is None:
-        agent_session = new_agent_session(title=product.name)
+        agent_session = new_agent_session(title=product.name, product_id=product.id)
         session.add(agent_session)
         session.flush()
     else:
         agent_session = get_agent_session_or_raise(session, agent_session_id)
-        if agent_session.status != AgentSessionStatus.ACTIVE:
-            raise ConflictError("已归档的 Agent Session 不能创建商品工作区")
+        if agent_session.product_id is None:
+            if not fork_global_session:
+                raise ConflictError("全局 Agent Session 不能作为画布会话")
+            agent_session = new_agent_session(title=product.name, product_id=product.id)
+            session.add(agent_session)
+            session.flush()
+        else:
+            _require_canvas_session(agent_session, product_id=product.id)
 
-    global_conversation = session.scalar(
-        select(AgentConversation).where(
-            AgentConversation.session_id == agent_session.id,
-            AgentConversation.scope_type == AgentConversationScope.GLOBAL,
-        )
-    )
-    if global_conversation is None:
-        session.add(
-            AgentConversation(
-                id=new_id(),
-                scope_type=AgentConversationScope.GLOBAL,
-                session_id=agent_session.id,
-                harness_run_id=new_id(),
-            )
-        )
     conversation = AgentConversation(
         id=conversation_id,
         session_id=agent_session.id,

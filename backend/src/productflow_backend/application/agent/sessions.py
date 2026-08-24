@@ -35,13 +35,13 @@ def normalize_agent_session_title(value: str) -> str:
     return normalized
 
 
-def new_agent_session(*, title: str | None = None) -> AgentSession:
+def new_agent_session(*, title: str | None = None, product_id: str | None = None) -> AgentSession:
     if title is None:
-        return AgentSession(title=AGENT_SESSION_DEFAULT_TITLE)
+        return AgentSession(title=AGENT_SESSION_DEFAULT_TITLE, product_id=product_id)
     normalized = title.strip()
     if not normalized:
         raise BusinessValidationError("Agent Session 名称不能为空")
-    return AgentSession(title=normalized[:AGENT_SESSION_TITLE_MAX_LENGTH])
+    return AgentSession(title=normalized[:AGENT_SESSION_TITLE_MAX_LENGTH], product_id=product_id)
 
 
 def derive_agent_session_title(input_text: str) -> str:
@@ -79,6 +79,7 @@ def list_agent_sessions(
     session: Session,
     *,
     include_archived: bool = False,
+    product_id: str | None = None,
 ) -> list[AgentSession]:
     latest_conversation_at = (
         select(func.max(AgentConversation.updated_at))
@@ -95,6 +96,10 @@ def list_agent_sessions(
         latest_activity_at.desc(),
         AgentSession.id.desc(),
     )
+    if product_id is None:
+        statement = statement.where(AgentSession.product_id.is_(None))
+    else:
+        statement = statement.where(AgentSession.product_id == product_id)
     if not include_archived:
         statement = statement.where(AgentSession.status == AgentSessionStatus.ACTIVE)
     return list(session.scalars(statement.limit(AGENT_SESSION_LIST_MAX_ITEMS)).unique().all())
@@ -104,9 +109,12 @@ def create_agent_session(
     session: Session,
     *,
     title: str | None = None,
+    product_id: str | None = None,
 ) -> AgentSession:
-    """创建长期 Session，并提交一个 GLOBAL conversation。Turn runtime 仍走 conversation 投影。本函数 commit。"""
-    agent_session = new_agent_session(title=title)
+    """创建长期 Session。全局 Session 带 GLOBAL conversation；画布 Session 必须带 product_id。本函数 commit。"""
+    if product_id is not None:
+        raise BusinessValidationError("画布 Session 请通过商品工作台创建")
+    agent_session = new_agent_session(title=title, product_id=None)
     session.add(agent_session)
     session.flush()
     session.add(
@@ -150,8 +158,8 @@ def ensure_global_agent_conversation(
 
 
 def ensure_global_agent_conversations(session: Session) -> None:
-    """Backfill the global conversation lazily for sessions created before global scope existed."""
-    sessions = list(session.scalars(select(AgentSession)).all())
+    """Backfill the global conversation lazily for global sessions created before global scope existed."""
+    sessions = list(session.scalars(select(AgentSession).where(AgentSession.product_id.is_(None))).all())
     changed = False
     for agent_session in sessions:
         existing = session.scalar(

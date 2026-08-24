@@ -5,7 +5,10 @@ import { describe, expect, it } from "vitest";
 import type { AgentQuestion, AgentSession, AgentTurn, GalleryAsset, WorkflowDraft } from "../../../lib/types";
 import { AgentAssistantMarkdown } from "./AgentAssistantMarkdown";
 import { AgentComposer, classifyImageFiles } from "./AgentComposer";
-import { hasUnsyncedWorkflowDraftRevision } from "./AgentConversationPanel";
+import {
+  canSubmitAgentConversationMessage,
+  hasUnsyncedWorkflowDraftRevision,
+} from "./AgentConversationPanel";
 import { AgentMessageList } from "./AgentMessageList";
 import { AgentQuestionPrompt } from "./AgentQuestionPrompt";
 import { selectAgentSessionConversation } from "./AgentSessionSwitcher";
@@ -17,6 +20,7 @@ function turn(overrides: Partial<AgentTurn> = {}): AgentTurn {
     id: "projection-1",
     conversation_id: "conversation-1",
     task_id: null,
+    harness_run_id: "run-1",
     harness_turn_id: "harness-turn-1",
     idempotency_key: "key-1",
     input_text: "请整理商品信息",
@@ -99,6 +103,13 @@ describe("Agent conversation components", () => {
     expect(hasUnsyncedWorkflowDraftRevision(staleDraft, projected)).toBe(true);
     expect(hasUnsyncedWorkflowDraftRevision(synchronizedDraft, projected)).toBe(false);
     expect(hasUnsyncedWorkflowDraftRevision(staleDraft, turn())).toBe(false);
+  });
+
+  it("lets an empty product conversation submit the first user message", () => {
+    expect(canSubmitAgentConversationMessage({ activeTurn: null })).toBe(true);
+    expect(canSubmitAgentConversationMessage({ activeTurn: undefined })).toBe(true);
+    expect(canSubmitAgentConversationMessage({ activeTurn: turn({ status: "running" }) })).toBe(false);
+    expect(canSubmitAgentConversationMessage({ activeTurn: turn({ status: "awaiting_input" }) })).toBe(false);
   });
 
   it("renders composer attachments as equal removable thumbnails and keeps the draft", () => {

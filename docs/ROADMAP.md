@@ -14,20 +14,11 @@
 
 ### Agent 画布沙箱
 
-目标合同：[`adr/0009-agent-canvas-sandbox.md`](adr/0009-agent-canvas-sandbox.md)。切片、代码锚点和验收：[`specs/agent-canvas-sandbox.md`](specs/agent-canvas-sandbox.md)。落地前不改 CONTEXT / PRD / ARCHITECTURE / USER_GUIDE。
+已落地：Turn run 身份、创建即现图、画布/全局会话归属、`sameRuntimeScope` 忽略 prompt / live-graph 刷新。当前合同见 CONTEXT / PRD / ARCHITECTURE。剩余见 [`adr/0009-agent-canvas-sandbox.md`](adr/0009-agent-canvas-sandbox.md) 与 [`specs/agent-canvas-sandbox.md`](specs/agent-canvas-sandbox.md) 的 Goal 托管环。
 
-当前「开始对话」仍写 collecting Draft、onboarding Task 并自动开场 Turn。绑 Task 的 Turn 事件入库用 Conversation `harness_run_id`，合同用 Task run，创建商品对话会在调模型前变成 `unknown`。
+Goal 托管环（跑图 → 看结果 → 改画布 → 再跑）未做。Agent 对话壳（侧栏收起、手机对话 sheet、chip）不在本项。画布连续动作仍按上一节工作台证明验收。
 
-顺序：
-
-1. Turn run 身份：事件入库、恢复写事件、Turn 投影、SSE 一律 `_expected_harness_run_id`。
-2. 创建即现图：名称-only 出生 `product_source`；去掉 onboarding Task 和自动 Turn；第一轮走 ChangeSet。
-3. 会话归属：画布会话只属于该商品；全局 Dock 不能切画布会话。
-4. 一轮只补一块，以及 `sameRuntimeScope` 不再把 `system_prompt` / `has_live_graph` 当 run 身份。
-
-Goal 托管环（跑图 → 看结果 → 改画布 → 再跑）在 1～4 之后另开。Agent 对话壳（侧栏收起、手机对话 sheet、chip）不在本项。画布连续动作仍按上一节工作台证明验收；Agent 切片不得把「打开对话」做成进画布的闸门。
-
-对话创建的追问质量和视觉样本，在创建路径改为现图出生之后再采。`just web-e2e-live-graph` 继续只覆盖跳过 Agent 的直接创建，直到对话路径有独立浏览器回归。
+对话创建的追问质量和视觉样本还没有。`just web-e2e-live-graph` 继续只覆盖跳过 Agent 的直接创建，直到对话路径有独立浏览器回归。
 
 Pi 边界见 [`adr/0007-pi-agent-runtime-boundary.md`](adr/0007-pi-agent-runtime-boundary.md) 与 [`specs/pi-agent-runtime-integration.md`](specs/pi-agent-runtime-integration.md)。后台 durable Task 与多实例对账只有单独 gate 通过后才扩大默认能力；旧 Go Agent 留在 `exp`，不是 main 的隐式 fallback。
 

@@ -17,6 +17,7 @@ from productflow_backend.application.agent.product_intake import (
     parse_agent_product_selection,
 )
 from productflow_backend.application.agent.product_workspaces import (
+    attach_agent_workspace_to_product,
     create_agent_product_draft_workspace,
     create_agent_product_draft_workspace_from_global_conversation,
     create_agent_product_workspace,
@@ -26,7 +27,10 @@ from productflow_backend.application.agent.product_workspaces import (
     reconcile_agent_product_draft_workspace_from_global_conversation,
     reconcile_agent_product_intake_from_assets,
 )
-from productflow_backend.application.agent.sessions import create_agent_session
+from productflow_backend.application.agent.sessions import create_agent_session, list_agent_sessions
+from productflow_backend.application.product_workflow.graph_commands import get_active_workflow_graph
+from productflow_backend.application.product_workflow.graph_direct_create import create_product_with_direct_graph
+from productflow_backend.application.product_workflow.graph_template import DirectCreateImageType
 from productflow_backend.application.agent.tools import (
     finalize_agent_product_intake,
     get_agent_contract,
@@ -34,12 +38,13 @@ from productflow_backend.application.agent.tools import (
 )
 from productflow_backend.application.delivery_renditions.presets import get_delivery_preset
 from productflow_backend.application.products import add_canonical_product_images
-from productflow_backend.domain.enums import AgentConversationScope, AgentTaskStatus
+from productflow_backend.domain.enums import AgentConversationScope, AgentTaskStatus, GraphNodeType
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError
 from productflow_backend.infrastructure.db.models import (
     AgentConversation,
     AgentSession,
     AgentTask,
+    AgentTurnProjection,
     MediaObject,
     Product,
     ProductImageAsset,
@@ -192,8 +197,8 @@ def test_agent_intake_persists_delivery_preset_snapshot_and_changes_idempotency_
     assert "每张 PlannedImage 都必须显式复制" in context["draft_guidance"]["cross_field_rules"][5]["rule"]
     assert any("逐张复制该 snapshot" in item for item in context["draft_guidance"]["pre_submit_checks"])
     system_prompt = get_agent_contract(db_session, creation.conversation.id)["system_prompt"]
-    assert "必须显式复制完全相同的" in system_prompt
-    assert "delivery_spec" in system_prompt
+    assert "不得调用 propose_workflow_draft" in system_prompt
+    assert get_agent_contract(db_session, creation.conversation.id)["has_live_graph"] is True
 
     with pytest.raises(ConflictError, match="已经确认"):
         finalize_agent_product_workspace_intake(
@@ -244,16 +249,17 @@ def test_create_agent_product_workspace_is_atomic_coverless_and_has_no_dag(
     ]
     assert intake.reference_asset_ids == [asset.id for asset in creation.created_assets]
     assert creation.conversation.harness_run_id == creation.conversation.id
+    assert creation.onboarding_task_id is None
+    agent_session = db_session.get(AgentSession, creation.conversation.session_id)
+    assert agent_session is not None
+    assert agent_session.product_id == creation.product.id
     global_conversation = db_session.scalar(
         select(AgentConversation).where(
             AgentConversation.session_id == creation.conversation.session_id,
             AgentConversation.scope_type == AgentConversationScope.GLOBAL,
         )
     )
-    assert global_conversation is not None
-    assert global_conversation.product_id is None
-    assert global_conversation.workflow_draft_id is None
-    assert global_conversation.harness_run_id != creation.conversation.harness_run_id
+    assert global_conversation is None
     assert creation.conversation.creation_idempotency_key == "workspace-create-1"
     assert len(creation.conversation.creation_request_hash or "") == 64
 
@@ -261,8 +267,7 @@ def test_create_agent_product_workspace_is_atomic_coverless_and_has_no_dag(
     assert db_session.scalar(select(func.count()).select_from(ProductImageAsset)) == 2
     assert db_session.scalar(select(func.count()).select_from(MediaObject)) == 2
     assert db_session.scalar(select(func.count()).select_from(WorkflowDraftRevision)) == 0
-    assert db_session.scalar(select(func.count()).select_from(WorkflowGraphNode)) == 0
-    assert db_session.scalar(select(func.count()).select_from(WorkflowGraphEdge)) == 0
+    assert db_session.scalar(select(func.count()).select_from(WorkflowGraphNode)) > 0
     assert len(_media_files(configured_env)) == 6  # two originals plus preview and thumbnail variants
 
 
@@ -287,8 +292,9 @@ def test_agent_product_draft_workspace_creates_only_durable_identity_and_replays
     assert first.conversation.intake_request_hash is None
     agent_session = db_session.get(AgentSession, first.conversation.session_id)
     assert agent_session is not None
-    assert "任务 1 个" in (agent_session.summary or "")
-    assert "未完成 1 个" in (agent_session.summary or "")
+    assert agent_session.product_id == first.product.id
+    assert first.onboarding_task_id is None
+    assert agent_session.summary == "暂无 Agent Task"
 
     replay = create_agent_product_draft_workspace(
         db_session,
@@ -314,6 +320,61 @@ def test_agent_product_draft_workspace_creates_only_durable_identity_and_replays
             db_session,
             name="不同商品",
             idempotency_key="draft-workspace-1",
+        )
+    graph = get_active_workflow_graph(db_session, product_id=first.product.id)
+    assert graph is not None
+    nodes = list(
+        db_session.scalars(select(WorkflowGraphNode).where(WorkflowGraphNode.graph_id == graph.id))
+    )
+    assert [node.node_type for node in nodes] == [GraphNodeType.PRODUCT_SOURCE]
+    assert db_session.scalar(
+        select(func.count()).select_from(AgentTurnProjection).where(
+            AgentTurnProjection.conversation_id == first.conversation.id
+        )
+    ) == 0
+    contract = get_agent_contract(db_session, first.conversation.id)
+    assert contract["has_live_graph"] is True
+    assert "不得调用 propose_workflow_draft" in contract["system_prompt"]
+
+
+def test_direct_create_has_live_graph_without_conversation(configured_env: Path, db_session) -> None:
+    created = create_product_with_direct_graph(
+        db_session,
+        name="直接创建无对话",
+        category=None,
+        price=None,
+        source_note=None,
+        image_uploads=_workspace_uploads()[:1],
+        image_types=[DirectCreateImageType(key="hero", quantity=1, order=0)],
+    )
+    assert created.graph is not None
+    assert db_session.scalar(
+        select(func.count()).select_from(AgentConversation).where(
+            AgentConversation.product_id == created.product.id
+        )
+    ) == 0
+    assert list_agent_sessions(db_session) == []
+    assert list_agent_sessions(db_session, product_id=created.product.id) == []
+
+
+def test_canvas_session_list_omits_global_sessions_and_rejects_global_attach(db_session) -> None:
+    global_session = create_agent_session(db_session, title="全局 Dock")
+    workspace = create_agent_product_draft_workspace(
+        db_session,
+        name="画布会话商品",
+        idempotency_key="canvas-own-1",
+    )
+    dock = list_agent_sessions(db_session)
+    canvas = list_agent_sessions(db_session, product_id=workspace.product.id)
+    assert [item.id for item in dock] == [global_session.id]
+    assert [item.id for item in canvas] == [workspace.conversation.session_id]
+    with pytest.raises(ConflictError, match="全局 Agent Session"):
+        attach_agent_workspace_to_product(
+            db_session,
+            product_id=workspace.product.id,
+            idempotency_key="attach-global",
+            agent_session_id=global_session.id,
+            force_new=True,
         )
 
 
@@ -392,10 +453,13 @@ def test_agent_product_workspace_can_join_existing_session_without_duplicate_glo
         for conversation in conversations
         if conversation.scope_type == AgentConversationScope.PRODUCT_WORKFLOW
     ]
-    assert first.conversation.session_id == agent_session.id
-    assert second.conversation.session_id == agent_session.id
+    assert first.conversation.session_id != agent_session.id
+    assert second.conversation.session_id != agent_session.id
+    assert first.conversation.session_id != second.conversation.session_id
+    assert db_session.get(AgentSession, first.conversation.session_id).product_id == first.product.id
+    assert db_session.get(AgentSession, second.conversation.session_id).product_id == second.product.id
     assert len(global_conversations) == 1
-    assert len(product_conversations) == 2
+    assert len(product_conversations) == 0
 
     other_session = create_agent_session(db_session, title="另一个会话")
     with pytest.raises(ConflictError, match="相同 Idempotency-Key"):
@@ -432,7 +496,8 @@ def test_global_conversation_launches_product_workspace_in_same_session(db_sessi
 
     assert first.created is True
     assert replay.created is False
-    assert first.conversation.session_id == agent_session.id
+    assert first.conversation.session_id != agent_session.id
+    assert db_session.get(AgentSession, first.conversation.session_id).product_id == first.product.id
     assert first.conversation.scope_type == AgentConversationScope.PRODUCT_WORKFLOW
     assert replay.conversation.id == first.conversation.id
     assert replay.conversation.harness_run_id != global_conversation.harness_run_id
@@ -471,21 +536,13 @@ def test_global_agent_product_workspace_launch_endpoint_is_scoped_and_idempotent
     assert first.status_code == 201, first.text
     payload = first.json()
     assert payload["created"] is True
-    assert payload["session_id"] == agent_session.id
+    assert payload["session_id"] != agent_session.id
     assert payload["global_conversation_id"] == global_conversation.id
     assert payload["product_name"] == "全局 API 商品"
-    assert payload["task_id"]
+    assert payload["task_id"] is None
     assert payload["navigation_path"].startswith(f"/products/{payload['product_id']}?")
-    assert f"agent_session_id={agent_session.id}" in payload["navigation_path"]
-    assert f"agent_task_id={payload['task_id']}" in payload["navigation_path"]
-    check_session = get_session_factory()()
-    try:
-        task = check_session.scalar(select(AgentTask).where(AgentTask.id == payload["task_id"]))
-        assert task is not None
-        assert task.status == AgentTaskStatus.WAITING_USER
-        assert task.conversation_id == payload["product_conversation_id"]
-    finally:
-        check_session.close()
+    assert f"agent_session_id={payload['session_id']}" in payload["navigation_path"]
+    assert "agent_task_id=" not in payload["navigation_path"]
 
     replay = client.post(path, headers=headers, json={"name": "全局 API 商品"})
     assert replay.status_code == 201, replay.text
@@ -539,9 +596,8 @@ def test_agent_product_workspace_intake_finalization_is_atomic_idempotent_and_co
     assert len(finalized.conversation.intake_request_hash or "") == 64
     agent_session = db_session.get(AgentSession, finalized.conversation.session_id)
     assert agent_session is not None
-    assert "未完成 0 个" in (agent_session.summary or "")
-    assert db_session.scalar(select(func.count()).select_from(WorkflowGraphNode)) == 0
-    assert db_session.scalar(select(func.count()).select_from(WorkflowGraphEdge)) == 0
+    assert agent_session.summary == "暂无 Agent Task"
+    assert db_session.scalar(select(func.count()).select_from(WorkflowGraphNode)) > 0
 
     first_files = sorted(path.relative_to(configured_env) for path in _media_files(configured_env))
     replay = finalize_agent_product_workspace_intake(
@@ -624,10 +680,8 @@ def test_empty_agent_product_draft_allows_turn_and_asks_for_intake(
     )
     assert reservation.created is True
     contract = get_agent_contract(db_session, workspace.conversation.id)
-    assert "finalize_product_intake_v1" in contract["system_prompt"]
-    assert "不要让用户去创建页" in contract["system_prompt"]
-    assert "请用户在创建页" not in contract["system_prompt"]
-    assert "继续对话" in contract["system_prompt"]
+    assert contract["has_live_graph"] is True
+    assert "不得调用 propose_workflow_draft" in contract["system_prompt"]
 
     finalized = finalize_agent_product_workspace_intake(
         db_session,
@@ -960,18 +1014,8 @@ def test_agent_product_workspace_api_supports_draft_resume_and_intake_finalizati
     assert draft["product"]["cover_image_asset_id"] is None
     assert draft["workflow_draft"]["current_version"] == 0
     assert draft["workflow_draft"]["intake"] is None
-    assert draft["conversation"]["session_id"] == agent_session.id
-    assert draft["task_id"]
-    session = session_factory()
-    try:
-        task = session.get(AgentTask, draft["task_id"])
-        assert task is not None
-        assert task.session_id == agent_session.id
-        assert task.conversation_id == draft["conversation"]["id"]
-        assert task.status == AgentTaskStatus.WAITING_USER
-        assert task.waiting_reason == "product_onboarding_intake"
-    finally:
-        session.close()
+    assert draft["conversation"]["session_id"] != agent_session.id
+    assert draft["task_id"] is None
 
     replay_response = client.post(
         "/api/v2/agent-product-workspaces/drafts",
@@ -1016,14 +1060,6 @@ def test_agent_product_workspace_api_supports_draft_resume_and_intake_finalizati
         asset["id"] for asset in finalized["created_assets"]
     ]
     assert finalized["task_id"] is None
-    session = session_factory()
-    try:
-        task = session.get(AgentTask, draft["task_id"])
-        assert task is not None
-        assert task.status == AgentTaskStatus.SUCCEEDED
-        assert task.waiting_reason is None
-    finally:
-        session.close()
 
     finalization_replay = client.post(
         f"/api/v2/agent-product-workspaces/{draft['conversation']['id']}/intake",

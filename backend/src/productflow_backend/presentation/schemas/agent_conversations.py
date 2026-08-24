@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_serial
 from productflow_backend.application.agent.conversations import (
     AGENT_MAX_INPUT_ASSETS,
     AGENT_MAX_INPUT_TEXT_CHARS,
+    expected_harness_run_id,
 )
 from productflow_backend.application.agent.tools import (
     AGENT_GLOBAL_PRODUCT_INSPECT_MAX,
@@ -280,7 +281,7 @@ class AgentProductWorkspaceLaunchResponse(BaseModel):
     product_id: str
     product_name: str
     workflow_draft_id: str
-    task_id: str
+    task_id: str | None
     intake_finalized: bool
     navigation_path: str
 
@@ -524,6 +525,7 @@ class AgentTurnResponse(BaseModel):
     id: str
     conversation_id: str
     task_id: str | None
+    harness_run_id: str
     harness_turn_id: str | None
     idempotency_key: str
     input_text: str
@@ -690,6 +692,7 @@ def serialize_agent_turn(projection: AgentTurnProjection) -> AgentTurnResponse:
         id=projection.id,
         conversation_id=projection.conversation_id,
         task_id=projection.task_id,
+        harness_run_id=expected_harness_run_id(projection.conversation, projection),
         harness_turn_id=projection.harness_turn_id,
         idempotency_key=projection.idempotency_key,
         input_text=projection.input_text,

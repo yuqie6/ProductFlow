@@ -14,20 +14,11 @@ After that proof, delete `specs/workbench.md` and keep user-facing sentences in 
 
 ### Agent canvas sandbox
 
-Target contract: [`adr/0009-agent-canvas-sandbox.md`](adr/0009-agent-canvas-sandbox.md). Slices, code anchors, and acceptance: [`specs/agent-canvas-sandbox.md`](specs/agent-canvas-sandbox.md). Do not rewrite CONTEXT / PRD / ARCHITECTURE / USER_GUIDE until this lands.
+Landed: Turn run identity, create as live graph, canvas vs global session ownership, and `sameRuntimeScope` ignoring prompt / live-graph refreshes. Current contract: CONTEXT / PRD / ARCHITECTURE. Remaining: the Goal loop in [`adr/0009-agent-canvas-sandbox.md`](adr/0009-agent-canvas-sandbox.md) and [`specs/agent-canvas-sandbox.md`](specs/agent-canvas-sandbox.md).
 
-Today “Start conversation” still writes a collecting Draft, an onboarding Task, and an automatic opening Turn. Task-bound Turns ingest events against the Conversation `harness_run_id` while the contract uses the Task run, so product-create chats become `unknown` before the model runs.
+The Goal loop (run graph → inspect → edit canvas → run again) is unbuilt. Agent conversation chrome (collapsed sidebar, mobile sheet, clipped chips) is out of this item. Canvas continuous actions still follow the workbench-proof bar above.
 
-Order:
-
-1. Turn run identity: event ingest, recovery-written events, Turn projection, and SSE all use `_expected_harness_run_id`.
-2. Create as live graph: name-only births a `product_source`; drop the onboarding Task and automatic Turn; first Turn uses ChangeSet.
-3. Session ownership: canvas sessions belong to that product; the global Dock cannot switch into them.
-4. One reversible patch per Turn, and `sameRuntimeScope` no longer treats `system_prompt` / `has_live_graph` as run identity.
-
-The Goal loop (run graph → inspect → edit canvas → run again) starts after 1–4. Agent conversation chrome (collapsed sidebar, mobile sheet, clipped chips) is out of this item. Canvas continuous actions still follow the workbench-proof bar above; Agent slices must not make “open conversation” a gate into the canvas.
-
-Question-count and visual-quality samples wait until create-via-chat births a live graph. `just web-e2e-live-graph` still covers skip-Agent direct create until the conversation path has its own browser regression.
+Question-count and visual-quality samples for conversation create are still missing. `just web-e2e-live-graph` still covers skip-Agent direct create until the conversation path has its own browser regression.
 
 Pi boundary: [`adr/0007-pi-agent-runtime-boundary.md`](adr/0007-pi-agent-runtime-boundary.md) and [`specs/pi-agent-runtime-integration.md`](specs/pi-agent-runtime-integration.md). Background durable Tasks and multi-instance reconciliation expand only after a dedicated gate. The old Go Agent on `exp` is not an implicit fallback on main.
 

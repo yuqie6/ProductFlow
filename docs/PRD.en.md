@@ -17,12 +17,11 @@ The current release serves a personal project and live demo, but upgrades for de
 ### 3.1 Create a Product
 
 1. The user opens `/products/new` and enters a product name.
-2. Agent path: the system creates the Product, an empty WorkflowDraft, AgentSession, and AgentConversation, then opens the workbench conversation. The user uploads one to six references in the composer and names the image types; the Agent persists that as immutable intake. Types and files on the create form remain an optional shortcut before entering chat.
-3. Direct create: select image types, upload one to six references, fill the brief and output settings on the form, and write a runnable canvas immediately.
+2. Agent path: the system creates the Product, a live schema-v3 graph (name-only: a product-source node), a product-owned AgentSession, and AgentConversation. It does not create an onboarding Task or auto-submit a Turn. The user uploads one to six references in the composer and names the image types; the Agent writes intake and applies ChangeSets to the live graph. Types and files on the create form remain an optional shortcut before entering chat.
+3. Direct create: select image types, upload one to six references, fill the brief and output settings on the form, and write a runnable canvas immediately with no conversation. Opening the workbench Agent sidebar later attaches a canvas session.
 4. The Agent checks known information and asks about missing price, style, text language, copy requirements, and visual-system decisions.
-5. The Agent produces product facts, a visual system, image plans, per-image prompts, reference bindings, and generation specifications.
-6. The user reviews and confirms the Draft.
-7. The system persists the confirmed Draft as a schema-v3 workflow graph; the same Agent conversation continues in the workbench sidebar.
+5. The Agent applies one reversible ChangeSet or proposes a multi-node ChangeSet; the user confirms multi-node proposals on the canvas.
+6. Closing the conversation leaves add, connect, inspect, run, undo, and recipes available.
 
 ### 3.2 Edit and Run a Workflow
 
@@ -97,7 +96,7 @@ The current release serves a personal project and live demo, but upgrades for de
 
 ## 6. Product Contracts
 
-- Agent conversation can start after a product name. One to six media-verified references and image types are submitted in that conversation, or optionally on the create form first. Direct create still requires them on the form. The Agent and user review whether product identity is sufficiently represented; the backend does not claim to prove image authenticity automatically.
+- Agent conversation can start after a product name and births a live graph. One to six media-verified references and image types are submitted in that conversation, or optionally on the create form first. Direct create still requires them on the form and writes no conversation. The Agent and user review whether product identity is sufficiently represented; the backend does not claim to prove image authenticity automatically.
 - Image types start unselected. Every selected type has a quantity from one to six, defaults to two, and the total plan is limited to 30 images.
 - Confirmed structured facts outrank unconfirmed user input, which outranks Agent image observations. Conflicting required facts cannot pass final Draft confirmation.
 - The Agent may organize, rename, and move product-library assets and inspect selected images. It does not load the entire library into model context.

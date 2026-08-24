@@ -16,14 +16,14 @@ import {
 } from "./productWorkbenchRoute";
 
 describe("loadProductWorkbenchAgent", () => {
-  it("bootstraps a graph product with ensure instead of GET 409", async () => {
+  it("reads the Agent workbench without creating a conversation on page load", async () => {
     const calls: string[] = [];
     const bootstrap = { mode: "agent" };
     const result = await loadProductWorkbenchAgent(
       {
-        getAgentWorkbench: async () => {
-          calls.push("get");
-          throw new ApiError(409, "商品还没有 Agent 工作区");
+        getAgentWorkbench: async (productId, sessionId) => {
+          calls.push(`get:${productId}:${sessionId ?? ""}`);
+          return bootstrap as never;
         },
         ensureAgentWorkbench: async (productId, sessionId) => {
           calls.push(`ensure:${productId}:${sessionId ?? ""}`);
@@ -33,7 +33,7 @@ describe("loadProductWorkbenchAgent", () => {
       "product-1",
       "session-1",
     );
-    expect(calls).toEqual(["ensure:product-1:session-1"]);
+    expect(calls).toEqual(["get:product-1:session-1"]);
     expect(result).toBe(bootstrap);
   });
 

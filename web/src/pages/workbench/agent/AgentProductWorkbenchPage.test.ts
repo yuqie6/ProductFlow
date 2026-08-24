@@ -40,6 +40,13 @@ describe("Agent workbench sidebar tool", () => {
     expect(resolveAgentWorkbenchSidebarTool("details", true)).toBe("details");
   });
 
+  it("keeps canvas tools when a live graph exists, independent of conversation or Turn status", () => {
+    expect(resolveAgentWorkbenchSidebarTool("add", true)).toBe("add");
+    expect(resolveAgentWorkbenchSidebarTool("runs", true)).toBe("runs");
+    expect(resolveAgentWorkbenchSidebarTool("library", true)).toBe("library");
+    expect(resolveAgentWorkbenchSidebarTool("details", true)).toBe("details");
+  });
+
   it("opens the Agent explicitly before asking the shell to focus its composer", () => {
     const events: string[] = [];
     const setSidebarTool = vi.fn(() => events.push("agent-tool"));

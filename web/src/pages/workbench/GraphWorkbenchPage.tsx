@@ -58,7 +58,7 @@ export function GraphWorkbenchPage({
   const queryClient = useQueryClient();
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [actions, setActions] = useState<GraphCanvasActions>(EMPTY_ACTIONS);
-  const [tool, setTool] = useState("agent");
+  const [tool, setTool] = useState("details");
   const [bindNodeId, setBindNodeId] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<DownloadableImage | null>(null);
   const [canvasBusy, setCanvasBusy] = useState(false);
@@ -442,16 +442,21 @@ export function clearWorkflowRecipeIdempotencyKey(
 export function GraphAgentPanel({
   error = null,
   onRetry,
+  onOpenConversation,
 }: {
   error?: unknown;
   onRetry?: () => void;
+  onOpenConversation?: () => void;
 }) {
   const { t } = useI18n();
-  const message = error instanceof ApiError
-    ? error.detail
-    : error instanceof Error
-      ? error.message
-      : t("graph.workbench.agentUnavailable");
+  const missingWorkspace = error instanceof ApiError && error.status === 409;
+  const message = missingWorkspace
+    ? t("graph.workbench.agentOptional")
+    : error instanceof ApiError
+      ? error.detail
+      : error instanceof Error
+        ? error.message
+        : t("graph.workbench.agentUnavailable");
   return (
     <section
       data-graph-agent-panel
@@ -468,7 +473,17 @@ export function GraphAgentPanel({
       </header>
       <div className="flex min-h-0 flex-1 flex-col items-start justify-center gap-3 p-4">
         <p role="status" className="text-sm leading-6 text-text-secondary">{message}</p>
-        {onRetry ? (
+        {missingWorkspace && onOpenConversation ? (
+          <button
+            type="button"
+            data-open-canvas-conversation
+            onClick={onOpenConversation}
+            className="inline-flex h-10 items-center gap-2 rounded-md bg-violet-600 px-3 text-sm font-semibold text-white hover:bg-violet-700"
+          >
+            <Bot size={15} />
+            {t("graph.workbench.openConversation")}
+          </button>
+        ) : onRetry ? (
           <button
             type="button"
             onClick={onRetry}

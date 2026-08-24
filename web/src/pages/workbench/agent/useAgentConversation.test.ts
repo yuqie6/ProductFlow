@@ -16,6 +16,7 @@ function turn(id: string, status: AgentTurn["status"] = "succeeded"): AgentTurn 
     id,
     conversation_id: "conversation-1",
     task_id: null,
+    harness_run_id: "run-1",
     harness_turn_id: `harness-${id}`,
     idempotency_key: `key-${id}`,
     input_text: id,
@@ -41,7 +42,7 @@ function turn(id: string, status: AgentTurn["status"] = "succeeded"): AgentTurn 
 }
 
 describe("Agent conversation model", () => {
-  it("uses one deterministic first-Turn request across refreshes and browser tabs", () => {
+  it("keeps a retry template for the first Turn without auto-submitting it", () => {
     const first = initialAgentTurnInput("conversation-1", ["asset-1", "asset-2"]);
     const second = initialAgentTurnInput("conversation-1", ["asset-1", "asset-2"]);
 

@@ -11,7 +11,10 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from productflow_backend.application.agent.conversations import project_agent_turn_state
+from productflow_backend.application.agent.conversations import (
+    expected_harness_run_id,
+    project_agent_turn_state,
+)
 from productflow_backend.application.time import now_utc
 from productflow_backend.domain.enums import AgentCheckpointKind, AgentExecutionPhase, AgentTurnStatus
 from productflow_backend.domain.errors import BusinessValidationError, ConflictError, NotFoundError
@@ -152,6 +155,10 @@ def append_agent_turn_event(
 
     projection = session.scalar(
         select(AgentTurnProjection)
+        .options(
+            selectinload(AgentTurnProjection.conversation),
+            selectinload(AgentTurnProjection.task),
+        )
         .join(
             AgentTurnExecution,
             AgentTurnExecution.turn_projection_id == AgentTurnProjection.id,
@@ -166,8 +173,8 @@ def append_agent_turn_event(
         raise NotFoundError("Agent Turn projection 不存在")
     if projection.harness_turn_id != normalized_turn_id:
         raise ConflictError("Agent event turn ID 与 projection 不匹配")
-    if projection.conversation.harness_run_id != normalized_run_id:
-        raise ConflictError("Agent event run ID 与 conversation 不匹配")
+    if expected_harness_run_id(projection.conversation, projection) != normalized_run_id:
+        raise ConflictError("Agent event run ID 与 Turn runtime 不匹配")
 
     existing = session.scalar(
         select(AgentTurnEvent)
@@ -545,13 +552,16 @@ def recover_expired_agent_turn_executions(
     *,
     now: datetime | None = None,
 ) -> AgentExecutionRecoverySummary:
-    """过期 lease 恢复：无 checkpoint 的 CLAIMED queued 可重入队；WAITING_INPUT 可还原问题；无法证明终态则标 unknown。"""
+    """过期 lease 恢复：无 checkpoint 的 CLAIMED queued 可重入队；WAITING_INPUT 可还原问题。无法证明终态则 unknown。"""
     resolved_now = now or now_utc()
     executions = list(
         session.scalars(
             select(AgentTurnExecution)
             .join(AgentTurnProjection)
-            .options(selectinload(AgentTurnExecution.turn_projection).selectinload(AgentTurnProjection.conversation))
+            .options(
+                selectinload(AgentTurnExecution.turn_projection).selectinload(AgentTurnProjection.conversation),
+                selectinload(AgentTurnExecution.turn_projection).selectinload(AgentTurnProjection.task),
+            )
             .where(
                 AgentTurnExecution.owner_id.is_not(None),
                 AgentTurnExecution.lease_expires_at.is_not(None),
@@ -829,7 +839,7 @@ def _record_recovery_question_events(
             AgentTurnEvent(
                 turn_projection_id=projection.id,
                 execution_id=execution.id,
-                run_id=projection.conversation.harness_run_id,
+                run_id=expected_harness_run_id(projection.conversation, projection),
                 turn_id=projection.harness_turn_id,
                 schema_version=1,
                 sequence=last_sequence,
@@ -893,7 +903,7 @@ def _record_recovery_terminal_event(
         AgentTurnEvent(
             turn_projection_id=projection.id,
             execution_id=execution.id,
-            run_id=projection.conversation.harness_run_id,
+            run_id=expected_harness_run_id(projection.conversation, projection),
             turn_id=projection.harness_turn_id,
             schema_version=1,
             sequence=sequence,

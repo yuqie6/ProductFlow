@@ -1082,6 +1082,7 @@ export interface AgentSessionConversation {
 
 export interface AgentSession {
   id: string;
+  product_id?: string | null;
   title: string;
   summary: string | null;
   status: AgentSessionStatus;
@@ -1236,6 +1237,7 @@ export interface AgentTurn {
   id: string;
   conversation_id: string;
   task_id: string | null;
+  harness_run_id: string;
   harness_turn_id: string | null;
   idempotency_key: string;
   input_text: string;

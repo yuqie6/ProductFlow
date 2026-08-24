@@ -365,19 +365,29 @@ export const api = {
   ensureAgentWorkbench(
     productId: string,
     agentSessionId?: string | null,
+    options?: { newSession?: boolean },
   ): Promise<AgentWorkbenchBootstrap> {
     const params = new URLSearchParams();
     if (agentSessionId) {
       params.set("agent_session_id", agentSessionId);
     }
+    if (options?.newSession) {
+      params.set("new_session", "true");
+    }
     const query = params.size ? `?${params}` : "";
+    const idempotencyKey = options?.newSession
+      ? `agent-workbench:${productId}:${globalThis.crypto.randomUUID()}`
+      : `agent-workbench:${productId}`;
     return request(`/api/v2/products/${encodeURIComponent(productId)}/agent-workbench${query}`, {
       method: "POST",
-      headers: { "Idempotency-Key": `agent-workbench:${productId}` },
+      headers: { "Idempotency-Key": idempotencyKey },
     });
   },
-  listAgentSessions(includeArchived = false): Promise<AgentSessionListResponse> {
+  listAgentSessions(includeArchived = false, productId?: string | null): Promise<AgentSessionListResponse> {
     const params = new URLSearchParams({ include_archived: String(includeArchived) });
+    if (productId) {
+      params.set("product_id", productId);
+    }
     return request(`/api/v2/agent-sessions?${params}`);
   },
   createAgentSession(): Promise<AgentSession> {

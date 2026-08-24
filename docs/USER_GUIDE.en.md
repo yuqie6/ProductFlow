@@ -39,9 +39,9 @@ References are product evidence and candidates for reference-node bindings. Prod
 
 ### 2.3 Talk with the Agent
 
-After entering a product name, open the workbench conversation. Upload one to six reference photos in the composer and say which images you need. The Agent writes that as product intake, then asks only for facts that change the result.
+After entering a product name, the workbench opens with a live canvas (name-only starts with a product-source node). The conversation stays empty until your first message; the system does not auto-send a read-the-product prompt. Upload one to six reference photos in the composer and say which images you need. The Agent writes that as product intake and edits the canvas.
 
-Image types and references on the create page still feed direct create, and remain an optional shortcut before you click Start conversation. After you are in chat, keep sending photos and text there.
+Image types and references on the create page still feed direct create, and remain an optional shortcut before you click Start conversation. Direct create does not open a conversation; open the sidebar when you want one. After you are in chat, keep sending photos and text there.
 
 Common follow-up questions cover:
 
@@ -51,9 +51,11 @@ Common follow-up questions cover:
 - Aspect ratio, quality, reference fidelity, and background.
 - Whether multiple images of one type are candidates or distinct angles/content.
 
-### 2.4 Confirm the Draft
+### 2.4 Confirm canvas proposals
 
-The confirmation view summarizes:
+Multi-node edits preview on the canvas and write into the live graph on confirm. Closing the conversation does not block add, connect, run, or undo.
+
+If a WorkflowDraft revision is still reviewable, the confirmation view summarizes:
 
 - Product facts and conflicts.
 - Image types and quantities.
@@ -63,7 +65,7 @@ The confirmation view summarizes:
 - Aspect ratio, resolution, quality, text policy, and delivery specifications.
 - Planned folders, nodes, and edges.
 
-Confirmation writes the draft into the workflow graph, then opens the product workbench with the same Agent conversation in the sidebar.
+Confirmation writes that revision into the workflow graph if the product has no live graph yet. When a live graph already exists, graph edits go through canvas proposals; a WorkflowDraft cannot replace it.
 
 ### 2.5 Create the Canvas Directly
 

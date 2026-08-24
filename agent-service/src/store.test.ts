@@ -55,6 +55,16 @@ describe("TurnStore", () => {
       await expect(store.ensureRun({ ...scope, current_draft_version: 2 })).resolves.toMatchObject({
         scope: { run_id: scope.run_id },
       });
+      await expect(
+        store.ensureRun({
+          ...scope,
+          current_draft_version: 3,
+          system_prompt: "live graph collaboration",
+          has_live_graph: true,
+        }),
+      ).resolves.toMatchObject({
+        scope: { run_id: scope.run_id },
+      });
     } finally {
       await rm(root, { recursive: true, force: true });
     }

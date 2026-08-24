@@ -13,6 +13,7 @@ from productflow_backend.application.agent.conversations import (
     attach_agent_workflow_draft_artifact,
     bind_harness_turn,
     cancel_unbound_agent_turn,
+    expected_harness_run_id,
     get_agent_conversation_or_raise,
     get_agent_turn_or_raise,
     is_confirmed_workflow_draft_turn,
@@ -124,7 +125,7 @@ def submit_agent_turn(
                     product_id=product_id,
                     conversation_id=conversation_id,
                 )
-                _validate_agent_state_scope(_expected_harness_run_id(conversation, projection), state)
+                _validate_agent_state_scope(expected_harness_run_id(conversation, projection), state)
                 projection = bind_harness_turn(
                     session,
                     product_id=product_id,
@@ -479,7 +480,7 @@ def synchronize_agent_turn_state(
         conversation_id=conversation_id,
         projection_id=projection_id,
     )
-    _validate_agent_state_scope(_expected_harness_run_id(conversation, projection), state)
+    _validate_agent_state_scope(expected_harness_run_id(conversation, projection), state)
     _validate_agent_execution_fence(session, projection=projection, state=state)
     if _is_stale_queued_execution_snapshot(session, projection=projection, state=state):
         return projection
@@ -702,7 +703,7 @@ def retry_unbound_agent_turn_start(
             safe_error=_safe_agent_sync_error(exc),
         )
         raise
-    _validate_agent_state_scope(_expected_harness_run_id(conversation, projection), state)
+    _validate_agent_state_scope(expected_harness_run_id(conversation, projection), state)
     projection = bind_harness_turn(
         session,
         product_id=conversation.product_id,
@@ -754,7 +755,7 @@ def adopt_queued_agent_turn_start(
             safe_error=_safe_agent_sync_error(exc),
         )
         raise
-    _validate_agent_state_scope(_expected_harness_run_id(conversation, projection), state)
+    _validate_agent_state_scope(expected_harness_run_id(conversation, projection), state)
     if state.turn_id != previous_turn_id:
         raise ConflictError("Agent handoff 返回了不同的 harness Turn")
     return synchronize_agent_turn_state(
@@ -821,10 +822,6 @@ def _is_stale_queued_execution_snapshot(
 def _validate_agent_state_scope(expected_run_id: str, state: AgentServiceTurnState) -> None:
     if state.run_id != expected_run_id or not state.turn_id:
         raise AgentServiceUnavailableError("Agent 服务返回了作用域不匹配的 Turn")
-
-
-def _expected_harness_run_id(conversation, projection: AgentTurnProjection) -> str:
-    return projection.task.harness_run_id if projection.task is not None else conversation.harness_run_id
 
 
 def _agent_page_context_payload(projection: AgentTurnProjection) -> dict[str, Any] | None:

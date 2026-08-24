@@ -45,6 +45,7 @@ def get_agent_workbench_bootstrap_endpoint(
 def ensure_agent_workbench_bootstrap_endpoint(
     product_id: str,
     agent_session_id: str | None = Query(default=None),
+    new_session: bool = Query(default=False),
     idempotency_key: str = Header(alias="Idempotency-Key", min_length=1, max_length=200),
     session: Session = Depends(get_session),
 ) -> AgentWorkbenchBootstrapResponse:
@@ -54,6 +55,7 @@ def ensure_agent_workbench_bootstrap_endpoint(
             product_id=product_id,
             idempotency_key=idempotency_key,
             agent_session_id=agent_session_id,
+            force_new=new_session,
         )
     )
 

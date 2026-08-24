@@ -96,6 +96,7 @@ def ensure_agent_workbench_bootstrap(
     idempotency_key: str,
     agent_session_id: str | None = None,
     agent_task_id: str | None = None,
+    force_new: bool = False,
 ) -> AgentWorkbenchBootstrap:
     """没有 product conversation 时幂等挂工作区；已有 Task 则只读取，不另建。"""
     if agent_task_id is not None:
@@ -111,12 +112,13 @@ def ensure_agent_workbench_bootstrap(
         .order_by(AgentConversation.created_at.desc(), AgentConversation.id.desc())
         .limit(1)
     )
-    if conversation is None:
+    if conversation is None or force_new:
         attach_agent_workspace_to_product(
             session,
             product_id=product_id,
             idempotency_key=idempotency_key,
             agent_session_id=agent_session_id,
+            force_new=force_new,
         )
     return get_agent_workbench_bootstrap(
         session,

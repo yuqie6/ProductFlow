@@ -11,6 +11,7 @@ function turn(id: string, taskId: string | null, status: AgentTurn["status"]): A
     id,
     conversation_id: "global-conversation",
     task_id: taskId,
+    harness_run_id: taskId ? `task-run-${taskId}` : "global-run",
     harness_turn_id: `harness-${id}`,
     idempotency_key: `key-${id}`,
     input_text: id,

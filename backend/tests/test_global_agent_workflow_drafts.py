@@ -59,9 +59,13 @@ def _workspace(db_session, *, key: str):
 
 
 def _global_conversation(db_session, workspace):
+    del workspace
+    from productflow_backend.application.agent.sessions import create_agent_session
+
+    agent_session = create_agent_session(db_session, title="全局 Draft 会话")
     conversation = db_session.scalar(
         select(AgentConversation).where(
-            AgentConversation.session_id == workspace.conversation.session_id,
+            AgentConversation.session_id == agent_session.id,
             AgentConversation.scope_type == "global",
         )
     )

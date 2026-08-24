@@ -46,8 +46,8 @@ export function AgentSessionSwitcher({ conversation, productName }: AgentSession
   const [archiveTarget, setArchiveTarget] = useState<AgentSession | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const sessionsQuery = useQuery({
-    queryKey: ["agent-sessions", true],
-    queryFn: () => api.listAgentSessions(true),
+    queryKey: ["agent-sessions", true, conversation.product_id],
+    queryFn: () => api.listAgentSessions(true, conversation.product_id),
     staleTime: 30_000,
   });
   const currentSession = sessionsQuery.data?.items.find(
@@ -105,15 +105,25 @@ export function AgentSessionSwitcher({ conversation, productName }: AgentSession
     onSuccess: () => {
       setEditor(null);
       setNotice(t("agentWorkbench.session.renamed"));
-      void queryClient.invalidateQueries({ queryKey: ["agent-sessions", true] });
+      void queryClient.invalidateQueries({ queryKey: ["agent-sessions", true, conversation.product_id] });
     },
   });
   const createSessionMutation = useMutation({
-    mutationFn: () => api.createAgentSession(),
-    onSuccess: () => {
+    mutationFn: () => {
+      if (!conversation.product_id) {
+        throw new Error(t("agentWorkbench.session.missingCurrent"));
+      }
+      return api.ensureAgentWorkbench(conversation.product_id, null, { newSession: true });
+    },
+    onSuccess: (bootstrap) => {
       setOpen(false);
       setNotice(t("agentWorkbench.session.created"));
-      void queryClient.invalidateQueries({ queryKey: ["agent-sessions", true] });
+      void queryClient.invalidateQueries({ queryKey: ["agent-sessions", true, conversation.product_id] });
+      if (bootstrap.conversation.session_id) {
+        navigate(
+          `/products/${encodeURIComponent(conversation.product_id ?? bootstrap.product.id)}?agent_session_id=${encodeURIComponent(bootstrap.conversation.session_id)}`,
+        );
+      }
     },
   });
   const archiveMutation = useMutation({
@@ -122,7 +132,7 @@ export function AgentSessionSwitcher({ conversation, productName }: AgentSession
       setArchiveTarget(null);
       setOpen(false);
       setNotice(t("agentWorkbench.session.archived"));
-      void queryClient.invalidateQueries({ queryKey: ["agent-sessions", true] });
+      void queryClient.invalidateQueries({ queryKey: ["agent-sessions", true, conversation.product_id] });
     },
   });
 

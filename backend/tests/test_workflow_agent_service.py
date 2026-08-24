@@ -701,8 +701,8 @@ def test_agent_first_version_zero_context_and_first_artifact_are_replayable(db_s
 
     contract = get_agent_contract(db_session, conversation.id)
     assert contract["current_draft_version"] == 0
-    assert "不能静默改写" in contract["system_prompt"]
-    assert "不能臆造" in contract["system_prompt"]
+    assert contract["has_live_graph"] is True
+    assert "不得调用 propose_workflow_draft" in contract["system_prompt"]
     assert "node_catalog" in contract["system_prompt"]
     assert "config_fields" in contract["system_prompt"]
     context = get_agent_product_context(db_session, conversation.id)
@@ -754,48 +754,16 @@ def test_agent_first_version_zero_context_and_first_artifact_are_replayable(db_s
         finished_at=datetime.now(UTC),
     )
     artifact = make_workflow_draft_payload(reference_asset_id=asset.id)
-    synced = attach_agent_workflow_draft_artifact(
-        db_session,
-        product_id=product.id,
-        conversation_id=conversation.id,
-        projection_id=projection.id,
-        harness_turn_id="harness-agent-first",
-        artifact_name="propose_workflow_draft",
-        artifact_step_id="agent-first-artifact",
-        artifact_value=artifact,
-    )
-    revision_id = synced.workflow_draft_revision_id
-    assert revision_id is not None
-    persisted_draft = db_session.get(WorkflowDraft, draft.id)
-    assert persisted_draft is not None
-    db_session.refresh(persisted_draft)
-    assert persisted_draft.current_revision is not None
-    assert persisted_draft.current_revision.version == 1
-
-    replay = attach_agent_workflow_draft_artifact(
-        db_session,
-        product_id=product.id,
-        conversation_id=conversation.id,
-        projection_id=projection.id,
-        harness_turn_id="harness-agent-first",
-        artifact_name="propose_workflow_draft",
-        artifact_step_id="agent-first-artifact",
-        artifact_value=artifact,
-    )
-    assert replay.workflow_draft_revision_id == revision_id
-    assert db_session.scalar(
-        select(func.count()).select_from(WorkflowDraftRevision).where(WorkflowDraftRevision.draft_id == draft.id)
-    ) == 1
-    with pytest.raises(ConflictError, match="version 已变化"):
-        append_workflow_draft_revision(
+    with pytest.raises(ConflictError, match="不能再提交一份 Draft 覆盖现图"):
+        attach_agent_workflow_draft_artifact(
             db_session,
             product_id=product.id,
-            draft_id=draft.id,
-            expected_draft_version=0,
-            payload={**artifact, "title": "并发旧版本草案"},
-            ready_for_confirmation=True,
-            source_turn_id="stale-turn",
-            source_artifact_step_id="stale-artifact",
+            conversation_id=conversation.id,
+            projection_id=projection.id,
+            harness_turn_id="harness-agent-first",
+            artifact_name="propose_workflow_draft",
+            artifact_step_id="agent-first-artifact",
+            artifact_value=artifact,
         )
 
 

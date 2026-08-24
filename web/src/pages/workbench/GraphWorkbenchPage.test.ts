@@ -29,12 +29,22 @@ describe("GraphAgentPanel", () => {
 
   it("surfaces a recoverable ensure failure", () => {
     const markup = renderToStaticMarkup(createElement(GraphAgentPanel, {
-      error: new ApiError(409, "当前商品还没有可执行的工作流"),
+      error: new ApiError(500, "当前商品还没有可执行的工作流"),
       onRetry: () => undefined,
     }));
 
     expect(markup).toContain("当前商品还没有可执行的工作流");
     expect(markup).toContain("重试连接 Agent");
+  });
+
+  it("offers opening a canvas conversation when the workbench is missing", () => {
+    const markup = renderToStaticMarkup(createElement(GraphAgentPanel, {
+      error: new ApiError(409, "商品还没有 Agent 工作区"),
+      onOpenConversation: () => undefined,
+    }));
+
+    expect(markup).toContain("data-open-canvas-conversation");
+    expect(markup).toContain("打开对话");
   });
 
   it("exposes recipe preview and apply on the graph-only workbench", () => {

@@ -5,7 +5,7 @@ import {
   useQueryClient,
   type InfiniteData,
 } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 
 import { api } from "../../../lib/api";
 import type {
@@ -177,8 +177,6 @@ export function useAgentConversation({
     () => agentTurnsQueryKey(productId, conversation.id, taskId),
     [conversation.id, productId, taskId],
   );
-  const autoStartKeyRef = useRef<string | null>(null);
-
   const turnsQuery = useInfiniteQuery({
     queryKey: turnsKey,
     queryFn: ({ pageParam }) =>
@@ -258,21 +256,6 @@ export function useAgentConversation({
       queryClient.invalidateQueries({ queryKey: ["agent-sessions"] }),
     ]),
   });
-
-  useEffect(() => {
-    const key = initialInput.idempotency_key;
-    if (
-      !enabled ||
-      !turnsQuery.isSuccess ||
-      pageTurns.length > 0 ||
-      initialTurnMutation.isPending ||
-      autoStartKeyRef.current === key
-    ) {
-      return;
-    }
-    autoStartKeyRef.current = key;
-    initialTurnMutation.mutate();
-  }, [enabled, initialInput.idempotency_key, initialTurnMutation, pageTurns.length, turnsQuery.isSuccess]);
 
   const submitTurnMutation = useMutation({
     mutationFn: (input: SubmitAgentTurnInput) =>

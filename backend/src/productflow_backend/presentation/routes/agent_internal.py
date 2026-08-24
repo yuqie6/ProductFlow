@@ -171,16 +171,16 @@ def _serialize_agent_product_workspace_launch(
     session_id = creation.conversation.session_id
     workflow_draft_id = creation.conversation.workflow_draft_id
     task_id = creation.onboarding_task_id
-    if session_id is None or workflow_draft_id is None or task_id is None:
+    if session_id is None or workflow_draft_id is None:
         raise ConflictError("Agent 商品工作区缺少 Session 或 WorkflowDraft")
     navigation_path = (
         "/products/"
         + quote(creation.product.id, safe="")
         + "?agent_session_id="
         + quote(session_id, safe="")
-        + "&agent_task_id="
-        + quote(task_id, safe="")
     )
+    if task_id is not None:
+        navigation_path += "&agent_task_id=" + quote(task_id, safe="")
     return AgentProductWorkspaceLaunchResponse(
         created=creation.created,
         session_id=session_id,

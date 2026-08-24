@@ -126,6 +126,9 @@ export function ProductWorkbenchPage() {
           <GraphAgentPanel
             error={agentQuery.error}
             onRetry={() => void agentQuery.refetch()}
+            onOpenConversation={() => {
+              void api.ensureAgentWorkbench(productId).then(() => agentQuery.refetch());
+            }}
           />
         )}
       />
@@ -141,9 +144,10 @@ export function ProductWorkbenchPage() {
   );
 }
 
-/** 直接创建的商品没有 Agent 工作台（409）；此时只读图查询。 */
-export function shouldReadCurrentWorkflowGraph(productId: string, agentError: unknown): boolean {
-  return Boolean(productId) && isAgentWorkbenchMissing(agentError);
+/** 图画布不依赖 Agent 工作台是否存在。 */
+export function shouldReadCurrentWorkflowGraph(productId: string, _agentError?: unknown): boolean {
+  void _agentError;
+  return Boolean(productId);
 }
 
 function WorkbenchRouteState({

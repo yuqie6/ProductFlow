@@ -1152,9 +1152,15 @@ class AgentSession(Base, TimestampMixin):
     __tablename__ = "agent_sessions"
     __table_args__ = (
         Index("ix_agent_sessions_status_updated", "status", "updated_at", "id"),
+        Index("ix_agent_sessions_product_status_updated", "product_id", "status", "updated_at", "id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    product_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("products.id", ondelete="SET NULL", name="fk_agent_sessions_product_id"),
+        nullable=True,
+    )
     title: Mapped[str] = mapped_column(String(160), nullable=False)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[AgentSessionStatus] = mapped_column(
@@ -1163,6 +1169,7 @@ class AgentSession(Base, TimestampMixin):
     )
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    product: Mapped[Product | None] = relationship(foreign_keys=[product_id])
     conversations: Mapped[list[AgentConversation]] = relationship(
         back_populates="session",
         order_by="AgentConversation.updated_at.desc(), AgentConversation.id.desc()",

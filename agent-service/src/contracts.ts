@@ -344,11 +344,16 @@ export function validateScope(scope: Scope): void {
   }
 }
 
-/** 当前 Draft 版本由 ProductFlow 刷新，不构成 runtime scope 身份。 */
+/** run 身份不含合同刷新字段：prompt、live graph、Draft schema 和当前 Draft 版本。 */
 export function sameRuntimeScope(left: Scope, right: Scope): boolean {
   return (
-    JSON.stringify({ ...left, current_draft_version: 0 }) ===
-    JSON.stringify({ ...right, current_draft_version: 0 })
+    left.schema_version === right.schema_version &&
+    left.scope_type === right.scope_type &&
+    left.conversation_id === right.conversation_id &&
+    left.task_id === right.task_id &&
+    left.product_id === right.product_id &&
+    left.workflow_draft_id === right.workflow_draft_id &&
+    left.run_id === right.run_id
   );
 }
 

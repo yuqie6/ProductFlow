@@ -31,6 +31,7 @@ function turn(overrides: Partial<AgentTurn> = {}): AgentTurn {
     id: "projection-1",
     conversation_id: "conversation-1",
     task_id: null,
+    harness_run_id: "run-1",
     harness_turn_id: "harness-turn-1",
     idempotency_key: "turn-key",
     input_text: "hello",

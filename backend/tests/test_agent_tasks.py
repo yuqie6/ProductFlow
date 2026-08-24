@@ -9,7 +9,11 @@ from sqlalchemy import select
 from test_agent_sessions import _create_workspace
 
 from productflow_backend.application.agent import control as agent_control
-from productflow_backend.application.agent.conversations import project_agent_turn_state, reserve_agent_turn
+from productflow_backend.application.agent.conversations import (
+    expected_harness_run_id,
+    project_agent_turn_state,
+    reserve_agent_turn,
+)
 from productflow_backend.application.agent.execution import (
     append_agent_turn_checkpoint,
     append_agent_turn_event,
@@ -19,6 +23,7 @@ from productflow_backend.application.agent.execution import (
     release_agent_turn_execution,
 )
 from productflow_backend.application.agent.sync import recover_unfinished_agent_turn_syncs
+from productflow_backend.application.agent.sessions import create_agent_session
 from productflow_backend.application.agent.tasks import (
     create_agent_task,
     list_agent_tasks,
@@ -50,6 +55,7 @@ from productflow_backend.infrastructure.db.models import (
     AgentTurnProjection,
 )
 from productflow_backend.presentation.api import create_app
+from productflow_backend.presentation.schemas.agent_conversations import serialize_agent_turn
 
 
 def test_tasks_have_independent_harness_runs_and_share_a_session(db_session) -> None:
@@ -639,6 +645,72 @@ def test_agent_turn_events_are_idempotent_and_fenced(db_session) -> None:
     assert db_session.query(AgentTurnEvent).count() == 2
 
 
+def test_agent_turn_events_accept_task_run_and_reject_conversation_run(db_session) -> None:
+    workspace = _create_workspace(db_session, key="agent-event-task-run")
+    task = create_agent_task(
+        db_session,
+        session_id=workspace.conversation.session_id,
+        conversation_id=workspace.conversation.id,
+        title="绑 Task 的 Turn",
+        goal="验证事件 run 用 Task harness_run_id",
+    )
+    reservation = reserve_agent_turn(
+        db_session,
+        product_id=workspace.product.id,
+        conversation_id=workspace.conversation.id,
+        input_text="事件走 Task run",
+        input_asset_ids=[],
+        idempotency_key="agent-event-task-run-turn",
+        task_id=task.id,
+    )
+    assert reservation.projection.task_id == task.id
+    assert expected_harness_run_id(workspace.conversation, reservation.projection) == task.harness_run_id
+    assert task.harness_run_id != workspace.conversation.harness_run_id
+    serialized = serialize_agent_turn(reservation.projection)
+    assert serialized.harness_run_id == task.harness_run_id
+
+    lease = claim_agent_turn_execution(
+        db_session,
+        conversation_id=workspace.conversation.id,
+        task_id=task.id,
+        idempotency_key=reservation.projection.idempotency_key,
+        harness_turn_id="agent-event-task-harness-turn",
+        owner_id="agent-instance-task-run",
+    )
+    accepted = append_agent_turn_event(
+        db_session,
+        conversation_id=workspace.conversation.id,
+        execution_id=lease.execution_id,
+        owner_id=lease.owner_id,
+        lease_token=lease.lease_token,
+        sequence=1,
+        schema_version=1,
+        run_id=task.harness_run_id,
+        turn_id=lease.harness_turn_id,
+        kind="turn.queued",
+        payload={"status": "queued"},
+        created_at=now_utc(),
+    )
+    stored = db_session.get(AgentTurnEvent, accepted.id)
+    assert stored is not None
+    assert stored.run_id == task.harness_run_id
+    with pytest.raises(ConflictError, match="Turn runtime"):
+        append_agent_turn_event(
+            db_session,
+            conversation_id=workspace.conversation.id,
+            execution_id=lease.execution_id,
+            owner_id=lease.owner_id,
+            lease_token=lease.lease_token,
+            sequence=2,
+            schema_version=1,
+            run_id=workspace.conversation.harness_run_id,
+            turn_id=lease.harness_turn_id,
+            kind="turn.started",
+            payload={"status": "running"},
+            created_at=now_utc(),
+        )
+
+
 def test_agent_recovery_creates_one_initial_turn_for_queued_task(db_session) -> None:
     workspace = _create_workspace(db_session, key="task-initial-recovery")
     task = create_agent_task(
@@ -677,9 +749,10 @@ def test_agent_recovery_creates_one_initial_turn_for_queued_task(db_session) -> 
 def test_global_agent_can_list_and_inspect_products_with_active_workflow_summary(db_session) -> None:
     first = _create_workspace(db_session, key="global-products-first")
     second = _create_workspace(db_session, key="global-products-second")
+    global_session = create_agent_session(db_session, title="全局商品列表")
     global_conversation = db_session.scalar(
         select(AgentConversation).where(
-            AgentConversation.session_id == first.conversation.session_id,
+            AgentConversation.session_id == global_session.id,
             AgentConversation.scope_type == AgentConversationScope.GLOBAL,
         )
     )
@@ -713,7 +786,7 @@ def test_global_agent_can_list_and_inspect_products_with_active_workflow_summary
         product_ids=[first.product.id, second.product.id],
     )
     assert [item["id"] for item in inspected] == [first.product.id, second.product.id]
-    assert all(item["active_workflow"] is None for item in inspected)
+    assert all(item["active_workflow"] is not None for item in inspected)
 
 
 def test_turn_reservation_persists_task_and_bounded_page_context(db_session) -> None:
@@ -958,11 +1031,10 @@ def test_internal_agent_task_contract_uses_task_run(configured_env, monkeypatch)
     runs_path = f"/api/internal/v1/agent-conversations/{task.conversation_id}/workflow-runs?limit=5"
     runs_response = client.get(runs_path, headers={"Authorization": f"Bearer {internal_token}"})
     assert runs_response.status_code == 200, runs_response.text
-    assert runs_response.json() == {
-        "workflow_id": None,
-        "workflow_revision": 0,
-        "items": [],
-    }
+    runs_payload = runs_response.json()
+    assert runs_payload["items"] == []
+    assert runs_payload["workflow_id"] is not None
+    assert runs_payload["workflow_revision"] >= 1
 
     runtime_context_path = f"/api/internal/v1/agent-conversations/{task.conversation_id}/runtime-context"
     runtime_context_response = client.get(

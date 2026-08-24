@@ -40,7 +40,7 @@ export function isAgentWorkbenchMissing(error: unknown): boolean {
   return isHttpErrorStatus(error, 409);
 }
 
-/** 带 task 时只读取；否则 ensure 会挂上或创建工作台。 */
+/** 页面加载只读取；没有对话时 409，由画布面打开侧栏再 ensure。 */
 export function loadProductWorkbenchAgent(
   loaders: {
     getAgentWorkbench: (
@@ -57,10 +57,8 @@ export function loadProductWorkbenchAgent(
   agentSessionId?: string | null,
   agentTaskId?: string | null,
 ): Promise<AgentWorkbenchBootstrap> {
-  if (agentTaskId) {
-    return loaders.getAgentWorkbench(productId, agentSessionId, agentTaskId);
-  }
-  return loaders.ensureAgentWorkbench(productId, agentSessionId);
+  void loaders.ensureAgentWorkbench;
+  return loaders.getAgentWorkbench(productId, agentSessionId, agentTaskId);
 }
 
 /** 缺少 live 图当作 null，让 Agent 优先创建仍能打开。 */

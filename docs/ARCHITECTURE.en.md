@@ -91,20 +91,18 @@ Current frontend ownership:
 ## 4. Agent Creation Flow
 
 ```text
-image types + quantities + 1..6 uploads
-  -> Product + ProductImageAsset + WorkflowDraft + AgentSession + AgentConversation
+product name (+ optional types and 1..6 uploads)
+  -> Product + live schema-v3 graph + product-owned AgentSession + AgentConversation
+  -> user first message
   -> ProductFlow submits Agent Turn
   -> agent-service / Pi SDK ProductFlow adapter
-  -> ProductFlow internal read, proposal, and pending-request tools
-  -> versioned WorkflowDraft artifact
-  -> user confirmation
-  -> schema-v3 graph persist
+  -> apply / propose ChangeSet on the live graph
   -> product workbench
 ```
 
-ProductFlow owns products, Drafts, confirmation, WorkflowGraphRun, and the Web projection. The Agent service runs the model loop with the Pi SDK and stores session/event files under its data root; those files are not business authority. PostgreSQL stores AgentSession, AgentTask, AgentConversation, Turn projections, PageContextSnapshot, question state, WorkflowDraft revisions, and the cross-instance browser event store `agent_turn_events`.
+ProductFlow owns products, Drafts, confirmation, WorkflowGraphRun, and the Web projection. The Agent service runs the model loop with the Pi SDK and stores session/event files under its data root; those files are not business authority. PostgreSQL stores AgentSession, AgentTask, AgentConversation, Turn projections, PageContextSnapshot, question state, WorkflowDraft revisions, and the cross-instance browser event store `agent_turn_events`. Event `run_id` and the Turn projection `harness_run_id` use `_expected_harness_run_id`: the Task run when a Turn is bound to a Task, otherwise the Conversation run.
 
-Product creation writes Product, assets, WorkflowDraft, the product Conversation, the onboarding AgentTask, and AgentSession in one business transaction. The onboarding Task starts as `WAITING_USER`, closes as `SUCCEEDED` after intake, and does not own workflow execution. The Global Conversation and product Conversation share a Session and do not merge transcripts. Standalone Session creation does not require a title; a temporary title comes from the first global Turn, and an explicit rename wins. Global Agent product-workspace creation reconciles with `creation_idempotency_key` and `creation_request_hash`.
+Product creation writes Product, a live schema-v3 graph, the product Conversation, and a product-owned AgentSession in one business transaction. It does not create an onboarding Task or auto-submit a Turn. Name-only graphs contain `product_source`; a complete form uses the same template as direct create. Direct create writes no Session. Canvas Sessions have a non-null `product_id`; the global Dock list contains only Sessions with `product_id` null. Standalone global Session creation does not require a title; a temporary title comes from the first global Turn, and an explicit rename wins. Global Agent product-workspace creation opens a new canvas Session and reconciles with `creation_idempotency_key` and `creation_request_hash`.
 
 `GlobalAgentDock` owns Session/Task lists, search, jumps, and pending organization Drafts. It does not own the canvas or WorkflowGraphRun. Global media organization only publishes a `LibraryOrganizationDraft`; ProductFlow re-reads facts and applies the Draft after user confirmation.
 

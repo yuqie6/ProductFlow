@@ -46,21 +46,17 @@ def test_product_workspace_creates_an_active_global_agent_session(db_session) ->
     workspace = _create_workspace(db_session, key="session-created")
 
     assert workspace.conversation.session_id is not None
-    sessions = list_agent_sessions(db_session)
+    dock = list_agent_sessions(db_session)
+    canvas = list_agent_sessions(db_session, product_id=workspace.product.id)
 
-    assert len(sessions) == 1
-    assert sessions[0].status.value == "active"
-    assert sessions[0].title == workspace.product.name
-    assert len(sessions[0].conversations) == 2
-    assert next(
-        conversation
-        for conversation in sessions[0].conversations
-        if conversation.id == workspace.conversation.id
-    ).scope_type == AgentConversationScope.PRODUCT_WORKFLOW
-    assert any(
-        conversation.scope_type == AgentConversationScope.GLOBAL
-        for conversation in sessions[0].conversations
-    )
+    assert dock == []
+    assert len(canvas) == 1
+    assert canvas[0].status.value == "active"
+    assert canvas[0].title == workspace.product.name
+    assert canvas[0].product_id == workspace.product.id
+    assert len(canvas[0].conversations) == 1
+    assert canvas[0].conversations[0].id == workspace.conversation.id
+    assert canvas[0].conversations[0].scope_type == AgentConversationScope.PRODUCT_WORKFLOW
 
 
 def test_agent_session_list_prioritizes_recent_conversation_activity(db_session) -> None:
@@ -70,9 +66,13 @@ def test_agent_session_list_prioritizes_recent_conversation_activity(db_session)
     newer.conversation.updated_at = datetime(2030, 1, 1, tzinfo=UTC)
     db_session.commit()
 
-    sessions = list_agent_sessions(db_session)
-
-    assert [item.id for item in sessions] == [newer.conversation.session_id, older.conversation.session_id]
+    assert list_agent_sessions(db_session) == []
+    assert [item.id for item in list_agent_sessions(db_session, product_id=newer.product.id)] == [
+        newer.conversation.session_id
+    ]
+    assert [item.id for item in list_agent_sessions(db_session, product_id=older.product.id)] == [
+        older.conversation.session_id
+    ]
 
 
 def test_agent_session_list_prioritizes_recent_task_activity(db_session) -> None:
@@ -90,9 +90,13 @@ def test_agent_session_list_prioritizes_recent_task_activity(db_session) -> None
         goal="检查最近任务活动是否影响 Session 排序",
     )
 
-    sessions = list_agent_sessions(db_session)
-
-    assert [item.id for item in sessions] == [older.conversation.session_id, newer.conversation.session_id]
+    assert list_agent_sessions(db_session) == []
+    assert [item.id for item in list_agent_sessions(db_session, product_id=older.product.id)] == [
+        older.conversation.session_id
+    ]
+    assert [item.id for item in list_agent_sessions(db_session, product_id=newer.product.id)] == [
+        newer.conversation.session_id
+    ]
 
 
 def test_agent_session_rename_and_archive_keep_conversations(db_session) -> None:
@@ -197,16 +201,22 @@ def test_agent_session_api_returns_bounded_session_projection_and_mutations(conf
     client = TestClient(create_app())
     _login(client)
 
-    response = client.get("/api/v2/agent-sessions?include_archived=true")
+    dock = client.get("/api/v2/agent-sessions?include_archived=true")
+    assert dock.status_code == 200, dock.text
+    assert dock.json()["items"] == []
+    response = client.get(
+        f"/api/v2/agent-sessions?include_archived=true&product_id={product_id}"
+    )
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["items"][0]["id"] == session_id
+    assert payload["items"][0]["product_id"] == product_id
     assert any(
         conversation["product_id"] == product_id
         for conversation in payload["items"][0]["conversations"]
     )
-    assert any(
-        conversation["scope_type"] == AgentConversationScope.GLOBAL.value
+    assert all(
+        conversation["scope_type"] == AgentConversationScope.PRODUCT_WORKFLOW.value
         for conversation in payload["items"][0]["conversations"]
     )
 

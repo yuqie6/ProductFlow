@@ -64,7 +64,7 @@ export function GlobalAgentConversationPanel({
   });
   const events = useAgentTurnEvents({
     getEventsUrl: (turnId, after) => api.getGlobalAgentTurnEventsUrl(conversationId ?? "", turnId, after),
-    runId: null,
+    runId: agent.activeTurn?.harness_run_id ?? null,
     turn: agent.activeTurn,
     enabled: Boolean(conversationId),
     onTerminal: () => void agent.refreshLatestTurn(),

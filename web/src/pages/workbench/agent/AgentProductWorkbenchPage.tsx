@@ -78,7 +78,9 @@ export function AgentProductWorkbenchPage({
   const [materialization, setMaterialization] = useState<GraphProjection | null>(null);
   const [dismissedRevisionId, setDismissedRevisionId] = useState<string | null>(null);
   const [conflictDetected, setConflictDetected] = useState(false);
-  const [sidebarTool, setSidebarTool] = useState<AgentSidebarToolId>("agent");
+  const [sidebarTool, setSidebarTool] = useState<AgentSidebarToolId>(
+    () => (bootstrap.graph ? "details" : "agent"),
+  );
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [actions, setActions] = useState<GraphCanvasActions>(EMPTY_ACTIONS);
   const [bindNodeId, setBindNodeId] = useState<string | null>(null);

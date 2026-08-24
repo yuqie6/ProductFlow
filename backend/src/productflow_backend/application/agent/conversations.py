@@ -93,6 +93,14 @@ class _AgentTurnCursor:
     projection_id: str
 
 
+def expected_harness_run_id(conversation: AgentConversation, projection: AgentTurnProjection) -> str:
+    """Turn 绑了 Task 用 Task run，否则用 Conversation run。"""
+    task = projection.task
+    if task is not None:
+        return task.harness_run_id
+    return conversation.harness_run_id
+
+
 def agent_conversation_query():
     return select(AgentConversation).options(
         selectinload(AgentConversation.session),
@@ -235,6 +243,10 @@ def list_agent_turn_page(
 
     statement = (
         select(AgentTurnProjection)
+        .options(
+            selectinload(AgentTurnProjection.conversation),
+            selectinload(AgentTurnProjection.task),
+        )
         .where(AgentTurnProjection.conversation_id == conversation_id)
         .order_by(AgentTurnProjection.created_at.desc(), AgentTurnProjection.id.desc())
     )
@@ -323,6 +335,10 @@ def get_agent_turn_or_raise(
 ) -> AgentTurnProjection:
     projection = session.scalar(
         select(AgentTurnProjection)
+        .options(
+            selectinload(AgentTurnProjection.conversation),
+            selectinload(AgentTurnProjection.task),
+        )
         .join(AgentConversation, AgentConversation.id == AgentTurnProjection.conversation_id)
         .where(
             AgentTurnProjection.id == projection_id,
@@ -1003,6 +1019,7 @@ __all__ = [
     "bind_harness_turn",
     "cancel_unbound_agent_turn",
     "create_agent_conversation",
+    "expected_harness_run_id",
     "get_agent_conversation_by_id_or_raise",
     "get_agent_conversation_or_raise",
     "get_agent_turn_or_raise",
