@@ -34,6 +34,7 @@ import type {
   CreateAgentProductWorkspaceInput,
   CreateAgentProductDraftWorkspaceInput,
   CreateWorkflowDraftInput,
+  DeliveryPresetCatalog,
   DeliveryRenditionJob,
   DeliveryRenditionJobListResponse,
   ImageSessionDetail,
@@ -46,6 +47,11 @@ import type {
   LegacyArchiveKind,
   LegacyArchivePage,
   LibraryOrganizationDraft,
+  LocalImageEditCapability,
+  LocalImageEditCreateInput,
+  LocalImageEditUpdateInput,
+  LocalImageEditTask,
+  LocalImageEditTaskListResponse,
   GlobalWorkflowDraftReview,
   ProductListSort,
   ProviderBinding,
@@ -68,6 +74,9 @@ import type {
   ProductListResponse,
   ProductImageAsset,
   ProductImageAssetListResponse,
+  CreateProductImageFidelityCheckInput,
+  ProductImageFidelityCheck,
+  ProductImageFidelityCheckListResponse,
   RuntimeConfig,
   SettingsLockState,
   SettingsExportPayload,
@@ -81,10 +90,21 @@ import type {
   WorkflowDeliverySpec,
   WorkflowRecipe,
   WorkflowRecipeApplicationResult,
+  WorkflowRecipeOrigin,
   WorkflowRecipePreview,
   WorkflowRecipeSourceInput,
   WorkflowRecipeSummary,
 } from "./types";
+import { parseDeliveryPresetCatalog } from "./deliveryPresets";
+import {
+  parseLocalImageEditCapability,
+  parseLocalImageEditTask,
+  parseLocalImageEditTaskList,
+} from "./localImageEdits";
+import {
+  parseProductImageFidelityCheck,
+  parseProductImageFidelityCheckList,
+} from "./imageFidelityChecks";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ?? "";
 
@@ -132,6 +152,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     return undefined as T;
   }
   return (await response.json()) as T;
+}
+
+async function requestBlob(path: string, init?: RequestInit): Promise<Blob> {
+  const response = await fetch(toApiUrl(path), {
+    ...init,
+    credentials: "include",
+    headers: {
+      ...(init?.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+      ...init?.headers,
+    },
+  });
+
+  if (!response.ok) {
+    throw await responseApiError(response);
+  }
+  return response.blob();
 }
 
 async function responseApiError(response: Response): Promise<ApiError> {
@@ -666,6 +702,35 @@ export const api = {
       `/api/v2/product-image-assets/${encodeURIComponent(assetId)}/download${query}`,
     );
   },
+  listProductImageFidelityChecks(
+    productId: string,
+    assetId: string,
+  ): Promise<ProductImageFidelityCheckListResponse> {
+    return request<unknown>(
+      `/api/v3/products/${encodeURIComponent(productId)}/image-assets/${encodeURIComponent(assetId)}/fidelity-checks`,
+    ).then((payload) => {
+      const parsed = parseProductImageFidelityCheckList(payload);
+      if (!parsed) throw new ApiError(502, "图片保真检查响应格式无效");
+      return parsed;
+    });
+  },
+  createProductImageFidelityCheck(
+    productId: string,
+    assetId: string,
+    input: CreateProductImageFidelityCheckInput,
+  ): Promise<ProductImageFidelityCheck> {
+    return request<unknown>(
+      `/api/v3/products/${encodeURIComponent(productId)}/image-assets/${encodeURIComponent(assetId)}/fidelity-checks`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    ).then((payload) => {
+      const parsed = parseProductImageFidelityCheck(payload);
+      if (!parsed) throw new ApiError(502, "图片保真检查响应格式无效");
+      return parsed;
+    });
+  },
   getMediaLibraryAssetMediaUrl(
     assetId: string,
     variant?: "thumbnail" | "preview",
@@ -820,6 +885,16 @@ export const api = {
       throw new ApiError(response.status, detail);
     }
     return response.blob();
+  },
+  downloadDeliveryExport(
+    productId: string,
+    renditionJobIds: string[],
+    allowPartial = false,
+  ): Promise<Blob> {
+    return requestBlob(`/api/v3/products/${encodeURIComponent(productId)}/delivery-exports`, {
+      method: "POST",
+      body: JSON.stringify({ rendition_job_ids: renditionJobIds, allow_partial: allowPartial }),
+    });
   },
   async addCanonicalProductImages(productId: string, images: File[]): Promise<ProductImageAssetListResponse> {
     const formData = new FormData();
@@ -1070,6 +1145,7 @@ export const api = {
     price?: string;
     sourceNote?: string;
     generationSpec?: WorkflowGenerationSpec;
+    deliveryPresetKey?: string;
   }): Promise<DirectCreateProductResponse> {
     const body = new FormData();
     body.append("name", input.name);
@@ -1078,6 +1154,7 @@ export const api = {
     if (input.price) body.append("price", input.price);
     if (input.sourceNote) body.append("source_note", input.sourceNote);
     if (input.generationSpec) body.append("generation_spec", JSON.stringify(input.generationSpec));
+    if (input.deliveryPresetKey) body.append("delivery_preset_key", input.deliveryPresetKey);
     for (const image of input.images) {
       body.append("images", image);
     }
@@ -1085,6 +1162,13 @@ export const api = {
   },
   getGraphNodeCatalog(): Promise<GraphNodeCatalog> {
     return request("/api/v3/node-catalog");
+  },
+  async getDeliveryPresets(): Promise<DeliveryPresetCatalog> {
+    const parsed = parseDeliveryPresetCatalog(await request<unknown>("/api/v3/delivery-presets"));
+    if (!parsed) {
+      throw new ApiError(502, "交付预设目录响应无效");
+    }
+    return parsed;
   },
   getCurrentWorkflowGraph(productId: string): Promise<GraphProjection> {
     return request(`/api/v3/products/${encodeURIComponent(productId)}/workflows/current`);
@@ -1161,12 +1245,18 @@ export const api = {
       { method: "POST" },
     );
   },
-  listWorkflowRecipes(includeArchived = false): Promise<WorkflowRecipeSummary[]> {
-    const params = new URLSearchParams({ include_archived: String(includeArchived) });
-    return request(`/api/v2/workflow-recipes?${params}`);
+  listWorkflowRecipes(
+    includeArchived = false,
+    origin: WorkflowRecipeOrigin | "all" = "all",
+  ): Promise<WorkflowRecipeSummary[]> {
+    const params = new URLSearchParams({
+      include_archived: String(includeArchived),
+      origin,
+    });
+    return request(`/api/v3/workflow-recipes?${params}`);
   },
   getWorkflowRecipe(recipeId: string): Promise<WorkflowRecipe> {
-    return request(`/api/v2/workflow-recipes/${recipeId}`);
+    return request(`/api/v3/workflow-recipes/${encodeURIComponent(recipeId)}`);
   },
   createWorkflowRecipe(
     productId: string,
@@ -1191,7 +1281,7 @@ export const api = {
   },
   archiveWorkflowRecipe(recipeId: string, expectedRecipeVersion: number): Promise<{ changed: boolean; recipe: WorkflowRecipe }> {
     const params = new URLSearchParams({ expected_recipe_version: String(expectedRecipeVersion) });
-    return request(`/api/v2/workflow-recipes/${recipeId}?${params}`, { method: "DELETE" });
+    return request(`/api/v3/workflow-recipes/${encodeURIComponent(recipeId)}?${params}`, { method: "DELETE" });
   },
   previewWorkflowRecipe(
     productId: string,
@@ -1206,7 +1296,12 @@ export const api = {
   applyWorkflowRecipe(
     productId: string,
     recipeId: string,
-    input: { expected_recipe_version: number; idempotency_key: string },
+    input: {
+      expected_recipe_version: number;
+      expected_graph_revision: number;
+      preview_digest: string;
+      idempotency_key: string;
+    },
   ): Promise<WorkflowRecipeApplicationResult> {
     return request(`/api/v3/products/${encodeURIComponent(productId)}/workflow-recipes/${encodeURIComponent(recipeId)}/apply`, {
       method: "POST",
@@ -1272,5 +1367,141 @@ export const api = {
     return request(`/api/v2/delivery-rendition-jobs/${encodeURIComponent(jobId)}/retry`, {
       method: "POST",
     });
+  },
+  async getLocalImageEditCapability(): Promise<LocalImageEditCapability> {
+    const parsed = parseLocalImageEditCapability(await request<unknown>("/api/v3/local-image-edits/capability"));
+    if (!parsed) throw new ApiError(502, "局部编辑 capability 响应无效");
+    return parsed;
+  },
+  async listLocalImageEdits(productId: string, limit = 50): Promise<LocalImageEditTaskListResponse> {
+    const params = new URLSearchParams({ limit: String(Math.min(100, Math.max(1, limit))) });
+    const parsed = parseLocalImageEditTaskList(
+      await request<unknown>(`/api/v3/products/${encodeURIComponent(productId)}/image-edits?${params}`),
+    );
+    if (!parsed) throw new ApiError(502, "局部编辑任务列表响应无效");
+    return parsed;
+  },
+  async getLocalImageEdit(productId: string, taskId: string): Promise<LocalImageEditTask> {
+    const parsed = parseLocalImageEditTask(
+      await request<unknown>(
+        `/api/v3/products/${encodeURIComponent(productId)}/image-edits/${encodeURIComponent(taskId)}`,
+      ),
+    );
+    if (!parsed) throw new ApiError(502, "局部编辑任务响应无效");
+    return parsed;
+  },
+  async createLocalImageEdit(productId: string, input: LocalImageEditCreateInput): Promise<LocalImageEditTask> {
+    const body = new FormData();
+    body.append("source_asset_id", input.source_asset_id);
+    body.append("operation", input.operation);
+    body.append("mask", input.mask, "local-edit-mask.png");
+    body.append("mask_geometry_json", JSON.stringify(input.mask_geometry));
+    body.append("reference_asset_ids_json", JSON.stringify(input.reference_asset_ids ?? []));
+    if (input.instruction != null) body.append("instruction", input.instruction);
+    if (input.source_text != null) body.append("source_text", input.source_text);
+    if (input.replacement_text != null) body.append("replacement_text", input.replacement_text);
+    if (input.target_node_id != null) body.append("target_node_id", input.target_node_id);
+    const parsed = parseLocalImageEditTask(
+      await request<unknown>(`/api/v3/products/${encodeURIComponent(productId)}/image-edits`, {
+        method: "POST",
+        body,
+      }),
+    );
+    if (!parsed) throw new ApiError(502, "局部编辑创建响应无效");
+    return parsed;
+  },
+  async updateLocalImageEdit(
+    productId: string,
+    taskId: string,
+    input: LocalImageEditUpdateInput,
+  ): Promise<LocalImageEditTask> {
+    const body = new FormData();
+    body.append("expected_revision", String(input.expected_revision));
+    body.append("operation", input.operation);
+    body.append("mask", input.mask, "local-edit-mask.png");
+    body.append("mask_geometry_json", JSON.stringify(input.mask_geometry));
+    body.append("reference_asset_ids_json", JSON.stringify(input.reference_asset_ids ?? []));
+    if (input.instruction != null) body.append("instruction", input.instruction);
+    if (input.source_text != null) body.append("source_text", input.source_text);
+    if (input.replacement_text != null) body.append("replacement_text", input.replacement_text);
+    const parsed = parseLocalImageEditTask(
+      await request<unknown>(
+        `/api/v3/products/${encodeURIComponent(productId)}/image-edits/${encodeURIComponent(taskId)}`,
+        { method: "PATCH", body },
+      ),
+    );
+    if (!parsed) throw new ApiError(502, "局部编辑更新响应无效");
+    return parsed;
+  },
+  async submitLocalImageEdit(productId: string, taskId: string, idempotencyKey: string): Promise<LocalImageEditTask> {
+    const parsed = parseLocalImageEditTask(
+      await request<unknown>(
+        `/api/v3/products/${encodeURIComponent(productId)}/image-edits/${encodeURIComponent(taskId)}/submit`,
+        { method: "POST", body: JSON.stringify({ idempotency_key: idempotencyKey }) },
+      ),
+    );
+    if (!parsed) throw new ApiError(502, "局部编辑提交响应无效");
+    return parsed;
+  },
+  async cancelLocalImageEdit(productId: string, taskId: string, expectedRevision?: number): Promise<LocalImageEditTask> {
+    const parsed = parseLocalImageEditTask(
+      await request<unknown>(
+        `/api/v3/products/${encodeURIComponent(productId)}/image-edits/${encodeURIComponent(taskId)}/cancel`,
+        {
+          method: "POST",
+          ...(expectedRevision == null ? {} : { body: JSON.stringify({ expected_revision: expectedRevision }) }),
+        },
+      ),
+    );
+    if (!parsed) throw new ApiError(502, "局部编辑取消响应无效");
+    return parsed;
+  },
+  async retryLocalImageEdit(productId: string, taskId: string, expectedRevision?: number): Promise<LocalImageEditTask> {
+    const parsed = parseLocalImageEditTask(
+      await request<unknown>(
+        `/api/v3/products/${encodeURIComponent(productId)}/image-edits/${encodeURIComponent(taskId)}/retry`,
+        {
+          method: "POST",
+          ...(expectedRevision == null ? {} : { body: JSON.stringify({ expected_revision: expectedRevision }) }),
+        },
+      ),
+    );
+    if (!parsed) throw new ApiError(502, "局部编辑重试响应无效");
+    return parsed;
+  },
+  async adoptLocalImageEdit(
+    productId: string,
+    taskId: string,
+    expectedCurrentArtifactId: string,
+  ): Promise<LocalImageEditTask> {
+    const parsed = parseLocalImageEditTask(
+      await request<unknown>(
+        `/api/v3/products/${encodeURIComponent(productId)}/image-edits/${encodeURIComponent(taskId)}/adopt`,
+        {
+          method: "POST",
+          body: JSON.stringify({ expected_current_artifact_id: expectedCurrentArtifactId }),
+        },
+      ),
+    );
+    if (!parsed) throw new ApiError(502, "局部编辑 adoption 响应无效");
+    return parsed;
+  },
+  async revertLocalImageEdit(
+    productId: string,
+    taskId: string,
+    adoptionEventId: string,
+    expectedCurrentArtifactId: string,
+  ): Promise<LocalImageEditTask> {
+    const parsed = parseLocalImageEditTask(
+      await request<unknown>(
+        `/api/v3/products/${encodeURIComponent(productId)}/image-edits/${encodeURIComponent(taskId)}/adoptions/${encodeURIComponent(adoptionEventId)}/revert`,
+        {
+          method: "POST",
+          body: JSON.stringify({ expected_current_artifact_id: expectedCurrentArtifactId }),
+        },
+      ),
+    );
+    if (!parsed) throw new ApiError(502, "局部编辑 revert 响应无效");
+    return parsed;
   },
 };

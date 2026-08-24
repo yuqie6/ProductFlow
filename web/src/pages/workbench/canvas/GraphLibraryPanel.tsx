@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { DownloadableImage } from "../../../lib/image-downloads";
 import { useI18n } from "../../../lib/preferences";
 import type { CanonicalProductDetail, GraphNode, GraphProjection } from "../../../lib/types";
+import type { LocalImageEditOpenRequest } from "../local-edit/LocalImageEditController";
 import { ProductImageExplorer } from "../chrome/image-explorer/ProductImageExplorer";
 import { WorkflowMediaLibraryPanel } from "./WorkflowMediaLibraryPanel";
 
@@ -14,6 +15,7 @@ export function GraphLibraryPanel({
   bindNode,
   bindLocked = false,
   onPreviewImage,
+  onOpenLocalEdit,
   onBindAsset,
   onBound,
 }: {
@@ -22,6 +24,7 @@ export function GraphLibraryPanel({
   bindNode: GraphNode | null;
   bindLocked?: boolean;
   onPreviewImage: (image: DownloadableImage) => void;
+  onOpenLocalEdit?: (request: LocalImageEditOpenRequest) => void;
   onBindAsset: (assetId: string) => Promise<unknown>;
   onBound: () => void;
 }) {
@@ -54,6 +57,7 @@ export function GraphLibraryPanel({
             productId={product.id}
             productName={product.name}
             onPreviewImage={onPreviewImage}
+            onOpenLocalEdit={onOpenLocalEdit}
             referenceTarget={referenceTarget}
           />
         </div>

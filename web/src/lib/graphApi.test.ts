@@ -118,6 +118,7 @@ describe("v3 graph API helpers", () => {
     const formData = init.body as FormData;
     expect(formData.get("name")).toBe("带字海报商品");
     expect(formData.get("source_note")).toBe("无线洗地机，面向都市白领");
+    expect(formData.get("delivery_preset_key")).toBeNull();
     expect(JSON.parse(String(formData.get("image_types")))).toEqual([
       { key: "hero", quantity: 1, aspect_ratio: "3:4" },
       { key: "detail", quantity: 1, aspect_ratio: "1:1" },
@@ -127,5 +128,24 @@ describe("v3 graph API helpers", () => {
       text_language: "zh-CN",
     });
     expect(formData.getAll("images")).toEqual([image]);
+  });
+
+  it("adds the direct-create delivery preset field only for an explicit selection", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: async () => ({ product: { id: "product-1" }, graph: { id: "graph-1" } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.createProductDirect({
+      name: "平台商品",
+      images: [],
+      imageTypes: [{ key: "hero", quantity: 1 }],
+      deliveryPresetKey: "jd_hero",
+    });
+
+    const formData = (fetchMock.mock.calls[0] as [string, RequestInit])[1].body as FormData;
+    expect(formData.get("delivery_preset_key")).toBe("jd_hero");
   });
 });

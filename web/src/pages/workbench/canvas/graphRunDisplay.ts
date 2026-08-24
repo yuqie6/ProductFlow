@@ -3,6 +3,7 @@ import type {
   GraphNodeRun,
   GraphProjection,
   GraphRun,
+  GraphRunInputTraceEntry,
   GraphRunScope,
   WorkflowNodeStatus,
 } from "../../../lib/types";
@@ -82,9 +83,14 @@ const CONTEXT_LABEL_KEYS = {
 
 export interface GraphIncomingSourceEntry {
   id: string;
+  sourceNodeId: string | null;
   title: string;
   role: string;
   order: number;
+  artifactId: string | null;
+  artifactType: GraphRunInputTraceEntry["artifact_type"];
+  assetId: string | null;
+  versionId: string | null;
 }
 
 export function graphIncomingSourceEntries(
@@ -99,23 +105,52 @@ export function graphIncomingSourceEntries(
       const title = source?.title?.trim() ?? "";
       return {
         id: edge.id,
+        sourceNodeId: edge.node_id,
         title: title || (source ? "—" : ""),
         role: edge.role,
         order: edge.order,
+        artifactId: source?.current_artifact_id ?? null,
+        artifactType: source?.current_artifact_type ?? null,
+        assetId: source?.bound_asset_id ?? null,
+        versionId: source ? currentSourceVersionId(source) : null,
       };
     });
 }
 
 export function graphRunInputTraceEntries(nodeRun: GraphNodeRun): GraphIncomingSourceEntry[] {
+  const context = nodeRun.compiled_context;
+  const promptEdgeId = contextString(context, "prompt_edge_id");
+  const promptArtifactId = contextString(context, "prompt_artifact_id");
   return (nodeRun.input_trace ?? [])
     .slice()
     .sort((left, right) => left.order - right.order || left.edge_id.localeCompare(right.edge_id))
-    .map((item) => ({
-      id: item.edge_id,
-      title: item.source_title?.trim() ?? "",
-      role: item.role,
-      order: item.order,
-    }));
+    .map((item) => {
+      const promptArtifact = item.edge_id === promptEdgeId ? promptArtifactId : null;
+      return {
+        id: item.edge_id,
+        sourceNodeId: item.source_node_id,
+        title: item.source_title?.trim() ?? "",
+        role: item.role,
+        order: item.order,
+        artifactId: item.artifact_id ?? promptArtifact,
+        artifactType: item.artifact_type ?? (promptArtifact ? "prompt" : null),
+        assetId: item.asset_id ?? null,
+        versionId: item.version_id ?? null,
+      };
+    });
+}
+
+function contextString(context: Record<string, unknown> | null, key: string): string | null {
+  const value = context?.[key];
+  return typeof value === "string" && value ? value : null;
+}
+
+function currentSourceVersionId(source: { config: Record<string, unknown> }): string | null {
+  for (const key of ["fact_set_version_id", "visual_system_version_id"]) {
+    const value = source.config[key];
+    if (typeof value === "string" && value) return value;
+  }
+  return null;
 }
 
 export function graphContextEntries(value: Record<string, unknown> | null): Array<{

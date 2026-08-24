@@ -46,6 +46,8 @@ function originLabelKey(origin: ProductImageOriginType): TranslationKey {
       return "detail.library.source.session";
     case "legacy_import":
       return "detail.library.source.legacy";
+    case "local_edit":
+      return "detail.library.source.localEdit";
   }
 }
 

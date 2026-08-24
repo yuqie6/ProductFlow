@@ -3,7 +3,14 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import type { AgentTask } from "../lib/types";
-import { isGlobalAgentDockModalTarget, openGlobalAgent, TaskBoard, TaskList } from "./GlobalAgentDock";
+import {
+  isGlobalAgentDockModalTarget,
+  isProductWorkbenchPath,
+  openGlobalAgent,
+  shouldRenderGlobalAgentLauncher,
+  TaskBoard,
+  TaskList,
+} from "./GlobalAgentDock";
 
 function sampleTask(id: string, title: string, status: AgentTask["status"]): AgentTask {
   return {
@@ -159,5 +166,18 @@ describe("GlobalAgentDock Task Views", () => {
     expect(isGlobalAgentDockModalTarget(modalTarget)).toBe(true);
     expect(isGlobalAgentDockModalTarget(pageTarget)).toBe(false);
     expect(isGlobalAgentDockModalTarget(null)).toBe(false);
+  });
+
+  it("recognizes the current product workbench route without hiding the Dock elsewhere", () => {
+    expect(isProductWorkbenchPath("/products/product-1")).toBe(true);
+    expect(isProductWorkbenchPath("/products/product-1/")).toBe(true);
+    expect(isProductWorkbenchPath("/products")).toBe(false);
+    expect(isProductWorkbenchPath("/products/new")).toBe(false);
+    expect(isProductWorkbenchPath("/products/new/agent")).toBe(false);
+    expect(isProductWorkbenchPath("/settings")).toBe(false);
+    expect(shouldRenderGlobalAgentLauncher("/products/product-1", false)).toBe(false);
+    expect(shouldRenderGlobalAgentLauncher("/products/product-1", true)).toBe(true);
+    expect(shouldRenderGlobalAgentLauncher("/products", false)).toBe(true);
+    expect(shouldRenderGlobalAgentLauncher("/settings", false)).toBe(true);
   });
 });

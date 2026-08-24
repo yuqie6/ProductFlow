@@ -7,7 +7,8 @@ export type ProductImageOriginType =
   | "upload"
   | "workflow_generation"
   | "image_session_attach"
-  | "legacy_import";
+  | "legacy_import"
+  | "local_edit";
 export type AgentProductImageTypeKey =
   | "hero"
   | "selling_point"
@@ -95,6 +96,41 @@ export interface ProductImageAsset {
 
 export interface ProductImageAssetListResponse {
   items: ProductImageAsset[];
+}
+
+export type ProductImageFidelityOutcome = "pass" | "fail" | "not_applicable";
+
+export interface ProductImageFidelityCheck {
+  id: string;
+  product_id: string;
+  asset_id: string;
+  version: number;
+  shape_fidelity: ProductImageFidelityOutcome;
+  color_material_fidelity: ProductImageFidelityOutcome;
+  logo_text_legibility: ProductImageFidelityOutcome;
+  text_policy_compliance: ProductImageFidelityOutcome;
+  notes: string | null;
+  checked_by: string;
+  idempotency_key: string;
+  request_hash: string;
+  created_at: string;
+}
+
+export interface ProductImageFidelityCheckListResponse {
+  product_id: string;
+  asset_id: string;
+  latest_version: number;
+  items: ProductImageFidelityCheck[];
+}
+
+export interface CreateProductImageFidelityCheckInput {
+  expected_latest_version: number;
+  idempotency_key: string;
+  shape_fidelity: ProductImageFidelityOutcome;
+  color_material_fidelity: ProductImageFidelityOutcome;
+  logo_text_legibility: ProductImageFidelityOutcome;
+  text_policy_compliance: ProductImageFidelityOutcome;
+  notes: string | null;
 }
 
 export type LegacyArchiveKind = "workflow" | "canvas_agent_thread" | "user_template";
@@ -382,6 +418,7 @@ export interface AgentProductImageTypeSelection {
 export interface AgentProductSelectionV1 {
   schema_version: 1;
   image_types: AgentProductImageTypeSelection[];
+  delivery_preset_key?: string;
 }
 
 export interface WorkflowIntakeV1 extends AgentProductSelectionV1 {
@@ -570,6 +607,151 @@ export interface WorkflowDeliverySpec {
   fit: "contain" | "cover";
   background_color?: string | null;
   crop_anchor?: "center" | "top" | "bottom" | "left" | "right" | null;
+}
+
+export type LocalImageEditOperation = "remove" | "replace_text" | "inpaint";
+export type LocalImageEditTaskStatus =
+  | "draft"
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "unknown";
+
+export interface LocalImageEditMaskGeometry {
+  source_width: number;
+  source_height: number;
+  viewport_width: number;
+  viewport_height: number;
+  viewport_to_source: [number, number, number, number, number, number];
+  transform_direction: "viewport_to_source";
+}
+
+export interface LocalImageEditCapability {
+  provider_name: string;
+  supported: boolean;
+  mode: string | null;
+  operations: LocalImageEditOperation[];
+  requires_mask: boolean;
+  max_reference_images: number;
+  reason: string | null;
+}
+
+export interface LocalImageEditProviderAttempt {
+  id: string;
+  attempt_id: string;
+  attempt_number: number;
+  operation_key: string;
+  phase: string;
+  effect_result: string;
+  provider_name: string;
+  provider_model: string | null;
+  provider_response_id: string | null;
+  provider_status: string | null;
+  late_result_asset: ProductImageAsset | null;
+  detail: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LocalImageEditAdoptionEvent {
+  id: string;
+  task_id: string;
+  graph_id: string;
+  node_id: string;
+  event_type: "adopt" | "revert";
+  from_artifact_id: string;
+  to_artifact_id: string;
+  related_event_id: string | null;
+  created_at: string;
+}
+
+export interface LocalImageEditTask {
+  id: string;
+  product_id: string;
+  status: LocalImageEditTaskStatus;
+  revision: number;
+  operation: LocalImageEditOperation;
+  instruction: string | null;
+  source_text: string | null;
+  replacement_text: string | null;
+  mask_geometry: LocalImageEditMaskGeometry;
+  source_media_sha256: string;
+  source_asset: ProductImageAsset;
+  result_asset: ProductImageAsset | null;
+  references: ProductImageAsset[];
+  reference_asset_ids: string[];
+  target_graph_id: string | null;
+  target_node_id: string | null;
+  target_graph_revision: number | null;
+  source_artifact_id: string | null;
+  source_artifact_asset_id: string | null;
+  source_artifact_input_digest: string | null;
+  idempotency_key: string | null;
+  request_hash: string | null;
+  requested_provider_name: string | null;
+  requested_local_edit_mode: string | null;
+  attempts: number;
+  active_attempt_id: string | null;
+  progress_phase: string | null;
+  failure_reason: string | null;
+  is_retryable: boolean;
+  is_cancelable: boolean;
+  provider_name: string | null;
+  provider_model: string | null;
+  provider_response_id: string | null;
+  provider_status: string | null;
+  provider_attempts: LocalImageEditProviderAttempt[];
+  adoption_events: LocalImageEditAdoptionEvent[];
+  created_at: string;
+  updated_at: string;
+  queued_at: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface LocalImageEditTaskListResponse {
+  items: LocalImageEditTask[];
+}
+
+export interface LocalImageEditCreateInput {
+  source_asset_id: string;
+  operation: LocalImageEditOperation;
+  mask: Blob;
+  mask_geometry: LocalImageEditMaskGeometry;
+  reference_asset_ids?: string[];
+  instruction?: string | null;
+  source_text?: string | null;
+  replacement_text?: string | null;
+  target_node_id?: string | null;
+}
+
+export interface LocalImageEditUpdateInput {
+  expected_revision: number;
+  operation: LocalImageEditOperation;
+  mask: Blob;
+  mask_geometry: LocalImageEditMaskGeometry;
+  reference_asset_ids?: string[];
+  instruction?: string | null;
+  source_text?: string | null;
+  replacement_text?: string | null;
+}
+
+export interface DeliveryPreset {
+  key: string;
+  title: string;
+  aspect_ratio: string;
+  applicable_image_type: string;
+  reviewed_at: string;
+  source: string;
+  disclaimer: string;
+  delivery_spec: WorkflowDeliverySpec;
+}
+
+export interface DeliveryPresetCatalog {
+  supports_custom: true;
+  items: DeliveryPreset[];
 }
 
 export interface DeliveryRenditionJob {
@@ -806,6 +988,8 @@ export interface AppendWorkflowDraftRevisionInput extends CreateWorkflowDraftInp
 
 export type WorkflowRecipeKind = "workflow_recipe" | "recipe_fragment";
 export type WorkflowRecipeSourceType = "workflow" | "group" | "selection";
+export type WorkflowRecipeOrigin = "official" | "user";
+export type WorkflowRecipeCreationSource = "official_seed" | "user_extract";
 
 export interface WorkflowRecipePayloadV3 {
   schema_version: 3;
@@ -838,10 +1022,19 @@ export interface WorkflowRecipeVersion {
   recipe_id: string;
   version: number;
   schema_version: 3;
+  catalog_version: number;
+  creation_source: WorkflowRecipeCreationSource;
   title: string;
   description: string | null;
   payload: WorkflowRecipePayloadV3;
   payload_hash: string;
+  governance: {
+    applicable_image_types: string[];
+    required_inputs: string[];
+    default_result: string;
+    thumbnail: string | null;
+    provider_sample: string | null;
+  } | null;
   preferred_visual_system_version_id: string | null;
   created_at: string;
 }
@@ -849,6 +1042,8 @@ export interface WorkflowRecipeVersion {
 export interface WorkflowRecipeSummary {
   id: string;
   kind: WorkflowRecipeKind;
+  origin: WorkflowRecipeOrigin;
+  official_key: string | null;
   current_version_id: string;
   current_version: WorkflowRecipeVersion;
   archived_at: string | null;
@@ -1256,6 +1451,8 @@ export interface WorkflowRecipePreview {
   mode: "create" | "merge";
   recipe_id: string;
   recipe_version: number;
+  base_graph_revision: number;
+  preview_digest: string;
   nodes: Array<{
     key: string;
     node_type: GraphNodeType;
@@ -1276,6 +1473,13 @@ export interface WorkflowRecipePreview {
     title: string;
     member_keys: string[];
   }>;
+  updated_nodes: Array<{
+    id: string;
+    node_type: GraphNodeType;
+    title: string;
+    changed_config_keys: string[];
+  }>;
+  required_bindings: string[];
 }
 
 export interface WorkflowRecipeApplicationResult {
@@ -1287,6 +1491,10 @@ export interface WorkflowRecipeApplicationResult {
   graph: GraphProjection;
   added_node_ids: string[];
   added_edge_ids: string[];
+  updated_node_ids: string[];
+  base_graph_revision: number | null;
+  preview_digest: string | null;
+  required_bindings: string[];
 }
 
 export interface WorkflowRecipeSourceInput {
@@ -1773,6 +1981,10 @@ export interface GraphRunInputTraceEntry {
   source_title: string | null;
   role: string;
   order: number;
+  artifact_id?: string | null;
+  artifact_type?: "creative_brief" | "visual_system" | "prompt" | "image" | null;
+  asset_id?: string | null;
+  version_id?: string | null;
 }
 
 export interface GraphNodeRun {

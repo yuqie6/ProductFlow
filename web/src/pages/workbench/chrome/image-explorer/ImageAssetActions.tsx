@@ -1,8 +1,9 @@
-import { ArrowUpLeft, Download, Eye, MoreHorizontal, MoveRight, Pencil, RefreshCw } from "lucide-react";
+import { ArrowUpLeft, Download, Eye, MoreHorizontal, MoveRight, Pencil, PencilLine, RefreshCw } from "lucide-react";
 
 import { api } from "../../../../lib/api";
 import { useI18n } from "../../../../lib/preferences";
 import type { GalleryAsset } from "../../../../lib/types";
+import type { LocalImageEditOpenRequest } from "../../local-edit/LocalImageEditController";
 import { assetCanReadMedia } from "./explorerState";
 
 interface ImageAssetActionsProps {
@@ -12,6 +13,7 @@ interface ImageAssetActionsProps {
   onMove: (asset: GalleryAsset) => void;
   onUseAsReference?: (asset: GalleryAsset) => void;
   onViewSource?: (asset: GalleryAsset) => void;
+  onOpenLocalEdit?: (request: LocalImageEditOpenRequest) => void;
   referenceBusy?: boolean;
   sourceBusy?: boolean;
 }
@@ -23,6 +25,7 @@ export function ImageAssetActions({
   onMove,
   onUseAsReference,
   onViewSource,
+  onOpenLocalEdit,
   referenceBusy = false,
   sourceBusy = false,
 }: ImageAssetActionsProps) {
@@ -51,6 +54,13 @@ export function ImageAssetActions({
           </a>
         ) : null}
         <ActionButton icon={<Pencil size={13} />} label={t("detail.library.renameAsset")} onClick={() => onRename(asset)} />
+        {onOpenLocalEdit && readable ? (
+          <ActionButton
+            icon={<PencilLine size={13} />}
+            label={t("localEdit.open")}
+            onClick={() => onOpenLocalEdit({ sourceAssetId: asset.id, targetNodeId: null })}
+          />
+        ) : null}
         <ActionButton icon={<MoveRight size={13} />} label={t("detail.library.move")} onClick={() => onMove(asset)} />
         {asset.rendition && onViewSource ? (
           <ActionButton

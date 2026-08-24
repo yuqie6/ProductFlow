@@ -27,6 +27,42 @@ describe("workflow draft API contract", () => {
     );
   });
 
+  it("uses recipe v3 routes and sends the confirmed preview fence unchanged", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.listWorkflowRecipes(false, "official");
+    await api.getWorkflowRecipe("recipe/1");
+    await api.archiveWorkflowRecipe("recipe/1", 3);
+    await api.applyWorkflowRecipe("product/1", "recipe/1", {
+      expected_recipe_version: 3,
+      expected_graph_revision: 9,
+      preview_digest: "a".repeat(64),
+      idempotency_key: "recipe-apply-1",
+    });
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/api/v3/workflow-recipes?include_archived=false&origin=official",
+      "/api/v3/workflow-recipes/recipe%2F1",
+      "/api/v3/workflow-recipes/recipe%2F1?expected_recipe_version=3",
+      "/api/v3/products/product%2F1/workflow-recipes/recipe%2F1/apply",
+    ]);
+    expect(fetchMock.mock.calls[3]?.[1]).toEqual(expect.objectContaining({
+      method: "POST",
+      credentials: "include",
+      body: JSON.stringify({
+        expected_recipe_version: 3,
+        expected_graph_revision: 9,
+        preview_digest: "a".repeat(64),
+        idempotency_key: "recipe-apply-1",
+      }),
+    }));
+  });
+
   it("creates, lists, reads, and retries delivery renditions through stable asset and job ids", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,

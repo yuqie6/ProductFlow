@@ -14,6 +14,7 @@ import type {
   GraphProjection,
   WorkflowRecipe,
   WorkflowRecipeApplicationResult,
+  WorkflowRecipePreview,
   WorkflowRecipeSummary,
 } from "../../lib/types";
 import { AgentWorkbenchShell } from "./agent/AgentWorkbenchShell";
@@ -24,6 +25,7 @@ import { GraphLibraryPanel } from "./canvas/GraphLibraryPanel";
 import { GraphNodeInspector } from "./canvas/GraphNodeInspector";
 import { GraphRunsPanel } from "./canvas/GraphRunsPanel";
 import { RecipeLibraryPanel } from "./canvas/RecipeLibraryPanel";
+import { useLocalImageEditController } from "./local-edit/LocalImageEditController";
 
 const EMPTY_ACTIONS: GraphCanvasActions = {
   createNode: () => undefined,
@@ -85,21 +87,30 @@ export function GraphWorkbenchPage({
     staleTime: Infinity,
   });
   const recipesQuery = useQuery({
-    queryKey: ["workflow-recipes", false],
-    queryFn: () => api.listWorkflowRecipes(false),
+    queryKey: ["workflow-recipes", false, "all"],
+    queryFn: () => api.listWorkflowRecipes(false, "all"),
     enabled: tool === "recipes",
   });
   const recipeMutation = useMutation({
     mutationFn: async (operation: {
       kind: "apply" | "archive";
       recipe: WorkflowRecipeSummary;
+      preview?: WorkflowRecipePreview;
       idempotencyKey?: string;
     }): Promise<WorkflowRecipe | WorkflowRecipeApplicationResult> => {
       if (operation.kind === "apply") {
-        return api.applyWorkflowRecipe(product.id, operation.recipe.id, {
-          expected_recipe_version: operation.recipe.current_version.version,
-          idempotency_key: operation.idempotencyKey ?? newRecipeIdempotencyKey(operation.recipe.id),
-        });
+        if (!operation.preview) {
+          throw new Error("缺少配方变更预览");
+        }
+        return api.applyWorkflowRecipe(
+          product.id,
+          operation.recipe.id,
+          buildWorkflowRecipeApplyInput(
+            operation.recipe,
+            operation.preview,
+            operation.idempotencyKey ?? newRecipeIdempotencyKey(operation.recipe.id),
+          ),
+        );
       }
       const result = await api.archiveWorkflowRecipe(
         operation.recipe.id,
@@ -120,11 +131,13 @@ export function GraphWorkbenchPage({
       }
       setArchiveRecipe(null);
     },
-    onError: (error) => {
+    onError: (error, operation) => {
+      clearWorkflowRecipeIdempotencyKey(recipeApplyKeysRef.current, operation.kind, operation.recipe.id);
       setRecipeError(error instanceof ApiError ? error.detail : t("workbench.error.recipe"));
     },
   });
   const liveGraph = graphQuery.data ?? initialGraph;
+  const localEdit = useLocalImageEditController({ productId: product.id, graphId: liveGraph.id });
   const catalog = catalogQuery.data ?? null;
   const catalogError = catalogQuery.error
     ? catalogQuery.error instanceof ApiError
@@ -186,6 +199,7 @@ export function GraphWorkbenchPage({
             onRegisterActions={registerActions}
             onBusyChange={setCanvasBusy}
             onBeforeRun={beforeRun}
+            onOpenLocalEdit={localEdit.openLocalImageEdit}
             chromeCollapsed={chromeCollapsed}
             onToggleChrome={() => setChromeCollapsed((current) => !current)}
             onBindNode={(nodeId) => {
@@ -246,6 +260,7 @@ export function GraphWorkbenchPage({
                 } : undefined}
                 onJump={inspectNode}
                 onPreviewImage={setPreviewImage}
+                onOpenLocalEdit={localEdit.openLocalImageEdit}
                 onOpenAdd={() => void requestSidebarTool("add")}
                 onOpenLibrary={() => void requestSidebarTool("library")}
               />
@@ -279,6 +294,7 @@ export function GraphWorkbenchPage({
                 bindNode={bindNode}
                 bindLocked={canvasBusy}
                 onPreviewImage={setPreviewImage}
+                onOpenLocalEdit={localEdit.openLocalImageEdit}
                 onBindAsset={async (assetId) => {
                   if (!bindNode) return;
                   return actions.commitNode({
@@ -320,11 +336,11 @@ export function GraphWorkbenchPage({
                     onPreview={(recipe) => api.previewWorkflowRecipe(product.id, recipe.id, {
                       expected_recipe_version: recipe.current_version.version,
                     })}
-                    onApply={(recipe) => {
+                    onApply={(recipe, preview) => {
                       const idempotencyKey = recipeApplyKeysRef.current.get(recipe.id)
                         ?? newRecipeIdempotencyKey(recipe.id);
                       recipeApplyKeysRef.current.set(recipe.id, idempotencyKey);
-                      recipeMutation.mutate({ kind: "apply", recipe, idempotencyKey });
+                      recipeMutation.mutate({ kind: "apply", recipe, preview, idempotencyKey });
                     }}
                     onAppend={(recipe) => {
                       actions.appendRecipe({
@@ -376,6 +392,7 @@ export function GraphWorkbenchPage({
           onClose={() => setPreviewImage(null)}
         />
       ) : null}
+      {localEdit.dialog}
     </div>
   );
 }
@@ -385,6 +402,34 @@ function newRecipeIdempotencyKey(recipeId: string): string {
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   return `recipe-${recipeId}-${suffix}`.slice(0, 120);
+}
+
+export function buildWorkflowRecipeApplyInput(
+  recipe: WorkflowRecipeSummary,
+  preview: WorkflowRecipePreview,
+  idempotencyKey: string,
+): {
+  expected_recipe_version: number;
+  expected_graph_revision: number;
+  preview_digest: string;
+  idempotency_key: string;
+} {
+  return {
+    expected_recipe_version: recipe.current_version.version,
+    expected_graph_revision: preview.base_graph_revision,
+    preview_digest: preview.preview_digest,
+    idempotency_key: idempotencyKey,
+  };
+}
+
+export function clearWorkflowRecipeIdempotencyKey(
+  keys: Map<string, string>,
+  kind: "apply" | "archive",
+  recipeId: string,
+): void {
+  if (kind === "apply") {
+    keys.delete(recipeId);
+  }
 }
 
 export function GraphAgentPanel({

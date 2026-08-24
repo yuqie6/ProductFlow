@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Download, FolderInput, Loader2, X } from "lucide-react";
+import { Download, FolderInput, Loader2, Package, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
@@ -13,9 +13,15 @@ import type {
   GalleryDirectorySelection,
   GalleryFolder,
 } from "../../../../lib/types";
+import type { LocalImageEditOpenRequest } from "../../local-edit/LocalImageEditController";
 import { ImageAssetGrid, ImageAssetList } from "./ImageAssetGrid";
 import { ImageDirectoryTree } from "./ImageDirectoryTree";
 import { ImageExplorerToolbar } from "./ImageExplorerToolbar";
+import {
+  evaluateDeliveryExportSelection,
+  type DeliveryExportEligibility,
+  type DeliveryExportEligibilityReason,
+} from "./deliveryExport";
 import { assetCanReadMedia, isWideImageExplorer } from "./explorerState";
 import { toggleImageExplorerTargetAsset } from "./selectionTarget";
 import { useProductImageExplorer } from "./useProductImageExplorer";
@@ -38,6 +44,7 @@ interface ProductImageExplorerProps {
   productId: string;
   productName: string;
   onPreviewImage: (image: DownloadableImage) => void;
+  onOpenLocalEdit?: (request: LocalImageEditOpenRequest) => void;
   referenceTarget?: ImageExplorerReferenceTarget;
   selectionTarget?: ImageExplorerSelectionTarget;
 }
@@ -50,10 +57,78 @@ type ExplorerDialog =
   | { kind: "move-assets"; assets: GalleryAsset[] }
   | null;
 
+interface DeliveryExportButtonProps {
+  eligibility: DeliveryExportEligibility;
+  busy: boolean;
+  exporting: boolean;
+  label: string;
+  exportingLabel: string;
+  reasonLabel: string | null;
+  onExport: (jobIds: readonly string[]) => void;
+}
+
+export function DeliveryExportButton({
+  eligibility,
+  busy,
+  exporting,
+  label,
+  exportingLabel,
+  reasonLabel,
+  onExport,
+}: DeliveryExportButtonProps) {
+  const reasonId = "delivery-export-selection-reason";
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => {
+          if (eligibility.eligible) {
+            onExport(eligibility.renditionJobIds);
+          }
+        }}
+        disabled={!eligibility.eligible || busy}
+        aria-describedby={reasonLabel ? reasonId : undefined}
+        title={reasonLabel ?? label}
+        data-testid="delivery-export-button"
+        className="inline-flex h-7 items-center gap-1 rounded bg-white px-2 font-medium shadow-sm disabled:opacity-40 dark:bg-slate-950/70"
+      >
+        {exporting ? <Loader2 size={13} className="animate-spin" /> : <Package size={13} />}
+        {exporting ? exportingLabel : label}
+      </button>
+      {reasonLabel ? (
+        <span id={reasonId} data-testid="delivery-export-reason" className="basis-full text-[10px] text-amber-700 dark:text-amber-200">
+          {reasonLabel}
+        </span>
+      ) : null}
+    </>
+  );
+}
+
+function deliveryExportReasonKey(reason: DeliveryExportEligibilityReason):
+  | "detail.library.deliveryExportReasonEmpty"
+  | "detail.library.deliveryExportReasonNotRendition"
+  | "detail.library.deliveryExportReasonNotSucceeded"
+  | "detail.library.deliveryExportReasonMissingJob"
+  | "detail.library.deliveryExportReasonDuplicateJob" {
+  switch (reason) {
+    case "empty":
+      return "detail.library.deliveryExportReasonEmpty";
+    case "not_rendition":
+      return "detail.library.deliveryExportReasonNotRendition";
+    case "not_succeeded":
+      return "detail.library.deliveryExportReasonNotSucceeded";
+    case "missing_job_id":
+      return "detail.library.deliveryExportReasonMissingJob";
+    case "duplicate_job_id":
+      return "detail.library.deliveryExportReasonDuplicateJob";
+  }
+}
+
 export function ProductImageExplorer({
   productId,
   productName,
   onPreviewImage,
+  onOpenLocalEdit,
   referenceTarget,
   selectionTarget,
 }: ProductImageExplorerProps) {
@@ -100,6 +175,9 @@ export function ProductImageExplorer({
       return api.getGalleryAsset(productId, asset.rendition.source_asset_id);
     },
     onSuccess: (asset) => onPreviewImage(toDownloadableImage(asset)),
+  });
+  const deliveryExportMutation = useMutation({
+    mutationFn: (renditionJobIds: string[]) => api.downloadDeliveryExport(productId, renditionJobIds, false),
   });
 
   const loadedAssetsById = useMemo(
@@ -152,8 +230,10 @@ export function ProductImageExplorer({
     explorer.archiveMutation,
     referenceMutation,
     sourceMutation,
+    deliveryExportMutation,
   ].some((mutation) => mutation.isPending);
-  const operationError = explorer.operationError
+  const operationError = (deliveryExportMutation.error instanceof Error ? deliveryExportMutation.error : null)
+    ?? explorer.operationError
     ?? (referenceMutation.error instanceof Error ? referenceMutation.error : null)
     ?? (sourceMutation.error instanceof Error ? sourceMutation.error : null)
     ?? (selectionError ? new Error(selectionError) : null);
@@ -191,6 +271,31 @@ export function ProductImageExplorer({
       window.URL.revokeObjectURL(url);
     } catch {
       // The mutation error is rendered beside the current directory.
+    }
+  };
+  const deliveryExportEligibility = useMemo(
+    () => evaluateDeliveryExportSelection(explorer.selectedAssets),
+    [explorer.selectedAssets],
+  );
+  const deliveryExportReason = deliveryExportEligibility.reason
+    ? t(deliveryExportReasonKey(deliveryExportEligibility.reason))
+    : null;
+  const exportDeliveryPackage = async (renditionJobIds: readonly string[]) => {
+    try {
+      const blob = await deliveryExportMutation.mutateAsync([...renditionJobIds]);
+      const url = window.URL.createObjectURL(blob);
+      try {
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = `${sanitizeFilenamePart(productName, "product")}-delivery-export.zip`;
+        document.body.append(anchor);
+        anchor.click();
+        anchor.remove();
+      } finally {
+        window.URL.revokeObjectURL(url);
+      }
+    } catch {
+      // The mutation error remains visible in the existing operation alert.
     }
   };
   const selectionCanDownload =
@@ -355,6 +460,15 @@ export function ProductImageExplorer({
                 {explorer.archiveMutation.isPending ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
                 {t("detail.library.downloadZip")}
               </button>
+              <DeliveryExportButton
+                eligibility={deliveryExportEligibility}
+                busy={operationBusy}
+                exporting={deliveryExportMutation.isPending}
+                label={t("detail.library.deliveryExport")}
+                exportingLabel={t("detail.library.deliveryExporting")}
+                reasonLabel={deliveryExportReason}
+                onExport={(jobIds) => void exportDeliveryPackage(jobIds)}
+              />
               <button type="button" onClick={explorer.clearSelection} className="inline-flex h-7 w-7 items-center justify-center rounded hover:bg-white dark:hover:bg-slate-950/70" aria-label={t("detail.library.clearSelection")} title={t("detail.library.clearSelection")}>
                 <X size={13} />
               </button>
@@ -381,6 +495,7 @@ export function ProductImageExplorer({
               selectedIds={visibleSelectedIds}
               onToggleSelected={toggleVisibleSelection}
               onPreview={preview}
+              onOpenLocalEdit={onOpenLocalEdit}
               onRename={(asset) => setDialog({ kind: "rename-asset", asset })}
               onMove={(asset) => setDialog({ kind: "move-assets", assets: [asset] })}
               onUseAsReference={referenceTarget ? (asset) => referenceMutation.mutate(asset) : undefined}
@@ -394,6 +509,7 @@ export function ProductImageExplorer({
               selectedIds={visibleSelectedIds}
               onToggleSelected={toggleVisibleSelection}
               onPreview={preview}
+              onOpenLocalEdit={onOpenLocalEdit}
               onRename={(asset) => setDialog({ kind: "rename-asset", asset })}
               onMove={(asset) => setDialog({ kind: "move-assets", assets: [asset] })}
               onUseAsReference={referenceTarget ? (asset) => referenceMutation.mutate(asset) : undefined}

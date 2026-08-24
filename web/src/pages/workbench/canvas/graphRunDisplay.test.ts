@@ -6,6 +6,7 @@ import {
   graphIncomingSourceEntries,
   graphNodeRunPresentations,
   graphNodeRunPreviewAssetId,
+  graphRunInputTraceEntries,
   graphRunScopeLabelKey,
   graphRunsAreLive,
 } from "./graphRunDisplay";
@@ -89,7 +90,17 @@ describe("graph run display", () => {
 
   it("projects incoming sources as node title and role", () => {
     expect(graphIncomingSourceEntries(graph.nodes[0], graph)).toEqual([
-      { id: "edge-1", title: "主图提示词", role: "prompt", order: 0 },
+      {
+        id: "edge-1",
+        sourceNodeId: "prompt",
+        title: "主图提示词",
+        role: "prompt",
+        order: 0,
+        artifactId: null,
+        artifactType: null,
+        assetId: null,
+        versionId: null,
+      },
     ]);
   });
 
@@ -99,14 +110,86 @@ describe("graph run display", () => {
       nodes: graph.nodes.map((node) => node.id === "prompt" ? { ...node, title: "  " } : node),
     };
     expect(graphIncomingSourceEntries(untitled.nodes[0], untitled)).toEqual([
-      { id: "edge-1", title: "—", role: "prompt", order: 0 },
+      {
+        id: "edge-1",
+        sourceNodeId: "prompt",
+        title: "—",
+        role: "prompt",
+        order: 0,
+        artifactId: null,
+        artifactType: null,
+        assetId: null,
+        versionId: null,
+      },
     ]);
     const missing = {
       ...graph,
       nodes: graph.nodes.filter((node) => node.id !== "prompt"),
     };
     expect(graphIncomingSourceEntries(missing.nodes[0], missing)).toEqual([
-      { id: "edge-1", title: "", role: "prompt", order: 0 },
+      {
+        id: "edge-1",
+        sourceNodeId: "prompt",
+        title: "",
+        role: "prompt",
+        order: 0,
+        artifactId: null,
+        artifactType: null,
+        assetId: null,
+        versionId: null,
+      },
+    ]);
+  });
+
+  it("keeps opaque source ids and per-edge artifact identities in run order", () => {
+    expect(graphRunInputTraceEntries(nodeRun({
+      compiled_context: {
+        prompt_edge_id: "edge-prompt",
+        prompt_artifact_id: "artifact-prompt",
+      },
+      input_trace: [
+        {
+          edge_id: "edge-reference",
+          source_node_id: "opaque-reference-node",
+          source_title: null,
+          role: "reference",
+          order: 2,
+          artifact_id: "artifact-reference",
+          artifact_type: "image",
+          asset_id: "asset-reference",
+          version_id: "version-reference",
+        },
+        {
+          edge_id: "edge-prompt",
+          source_node_id: "opaque-prompt-node",
+          source_title: "Prompt",
+          role: "prompt",
+          order: 0,
+        },
+      ],
+    }))).toEqual([
+      {
+        id: "edge-prompt",
+        sourceNodeId: "opaque-prompt-node",
+        title: "Prompt",
+        role: "prompt",
+        order: 0,
+        artifactId: "artifact-prompt",
+        artifactType: "prompt",
+        assetId: null,
+        versionId: null,
+      },
+      {
+        id: "edge-reference",
+        sourceNodeId: "opaque-reference-node",
+        title: "",
+        role: "reference",
+        order: 2,
+        artifactId: "artifact-reference",
+        artifactType: "image",
+        assetId: "asset-reference",
+        versionId: "version-reference",
+      },
     ]);
   });
 

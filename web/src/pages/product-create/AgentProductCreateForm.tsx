@@ -33,10 +33,12 @@ import type { ImageTypeFamily } from "../../lib/imageTypeFamilies";
 import { useI18n } from "../../lib/preferences";
 import type {
   AgentProductImageTypeKey,
+  DeliveryPresetCatalog,
   AgentProductWorkspaceOptions,
 } from "../../lib/types";
 import {
   AGENT_IMAGE_TYPE_TRANSLATIONS,
+  applyRecommendedImageSet,
   agentImageTotal,
   aspectRatioForSelection,
   type AgentImageTypeSelectionDraft,
@@ -59,6 +61,10 @@ interface AgentProductCreateFormProps {
   options: AgentProductWorkspaceOptions | null;
   selections: readonly AgentImageTypeSelectionDraft[];
   referenceFiles: readonly File[];
+  deliveryPresetCatalog: DeliveryPresetCatalog | null;
+  deliveryPresetKey: string | null;
+  isDeliveryPresetLoading: boolean;
+  isDeliveryPresetError: boolean;
   isOptionsLoading: boolean;
   isOptionsError: boolean;
   isSubmitting: boolean;
@@ -71,11 +77,14 @@ interface AgentProductCreateFormProps {
   onAspectRatioChange: (key: AgentProductImageTypeKey, aspectRatio: string) => void;
   onAddReferenceFiles: (files: File[]) => void;
   onRemoveReferenceFile: (index: number) => void;
+  onDeliveryPresetChange: (key: string | null) => void;
+  onRetryDeliveryPresets: () => void;
   brief: string;
   outputDraft: CreateOutputDraft;
   onBriefChange: (value: string) => void;
   onOutputChange: (value: CreateOutputDraft) => void;
   onRetryOptions: () => void;
+  onApplyRecommendedSet: () => void;
   onSubmit: () => void;
   onDirectCreate?: () => void;
   isDirectCreating?: boolean;
@@ -143,6 +152,10 @@ export function AgentProductCreateForm({
   options,
   selections,
   referenceFiles,
+  deliveryPresetCatalog,
+  deliveryPresetKey,
+  isDeliveryPresetLoading,
+  isDeliveryPresetError,
   isOptionsLoading,
   isOptionsError,
   isSubmitting,
@@ -155,11 +168,14 @@ export function AgentProductCreateForm({
   onAspectRatioChange,
   onAddReferenceFiles,
   onRemoveReferenceFile,
+  onDeliveryPresetChange,
+  onRetryDeliveryPresets,
   brief,
   outputDraft,
   onBriefChange,
   onOutputChange,
   onRetryOptions,
+  onApplyRecommendedSet,
   onSubmit,
   onDirectCreate,
   isDirectCreating = false,
@@ -174,6 +190,14 @@ export function AgentProductCreateForm({
     () => [...(options?.image_types ?? [])].sort((left, right) => left.order - right.order),
     [options],
   );
+  const recommendedSet = options
+    ? applyRecommendedImageSet({
+        current: selections,
+        catalogKeys: sortedOptions.map((option) => option.key),
+        limits: options.limits,
+      })
+    : null;
+  const recommendedSetDisabled = isSubmitting || editingLocked || !recommendedSet?.ok;
   const totalImages = agentImageTotal(selections);
   const previewUrls = useMemo(
     () =>
@@ -214,6 +238,7 @@ export function AgentProductCreateForm({
   const languageLabel =
     CREATE_TEXT_LANGUAGE_OPTIONS.find((option) => option.value === outputDraft.textLanguage)?.label
     ?? outputDraft.textLanguage;
+  const selectedDeliveryPreset = deliveryPresetCatalog?.items.find((item) => item.key === deliveryPresetKey) ?? null;
 
   const stageTitle = (stage: 1 | 2 | 3 | 4): string => {
     if (stage === 1) return t("agentCreate.productInfo");
@@ -350,11 +375,80 @@ export function AgentProductCreateForm({
               className="textarea-premium min-h-28 w-full resize-y px-4 py-3 text-[15px] leading-6 text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
             />
           </label>
+          <div data-delivery-preset-control className="border-t border-border-l2 pt-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
+              <label htmlFor="agent-create-delivery-preset" className="block min-w-0 flex-1">
+                <span className="mb-1.5 block text-xs font-medium text-text-secondary">
+                  {t("agentCreate.deliveryPreset.label")}
+                </span>
+                <select
+                  id="agent-create-delivery-preset"
+                  value={deliveryPresetKey ?? ""}
+                  disabled={isSubmitting || editingLocked || isDeliveryPresetLoading || isDeliveryPresetError}
+                  onChange={(event) => onDeliveryPresetChange(event.target.value || null)}
+                  className="input-premium h-11 w-full px-3 text-sm text-text-primary disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <option value="">{t("agentCreate.deliveryPreset.none")}</option>
+                  {(deliveryPresetCatalog?.items ?? []).map((preset) => (
+                    <option key={preset.key} value={preset.key}>
+                      {preset.title} · {preset.aspect_ratio}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {isDeliveryPresetLoading ? (
+                <span className="inline-flex h-8 shrink-0 items-center gap-1.5 text-xs text-text-muted">
+                  <Loader2 size={13} className="animate-spin" aria-hidden="true" />
+                  {t("agentCreate.deliveryPreset.loading")}
+                </span>
+              ) : null}
+            </div>
+            {isDeliveryPresetError ? (
+              <div
+                role="alert"
+                className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs leading-5 text-state-error"
+              >
+                <span>{t("agentCreate.deliveryPreset.loadFailed")}</span>
+                <button
+                  type="button"
+                  onClick={onRetryDeliveryPresets}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-state-error/30 px-2.5 font-medium text-state-error transition-colors hover:border-state-error/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                >
+                  <RotateCw size={13} aria-hidden="true" />
+                  {t("agentCreate.deliveryPreset.retry")}
+                </button>
+              </div>
+            ) : null}
+            {selectedDeliveryPreset ? (
+              <dl className="mt-3 grid gap-x-4 gap-y-1 text-xs leading-5 text-text-muted sm:grid-cols-[auto_1fr_auto_1fr]">
+                <dt className="font-medium text-text-secondary">{t("agentCreate.deliveryPreset.reviewedAt")}</dt>
+                <dd>{selectedDeliveryPreset.reviewed_at}</dd>
+                <dt className="font-medium text-text-secondary">{t("agentCreate.deliveryPreset.source")}</dt>
+                <dd className="min-w-0 truncate" title={selectedDeliveryPreset.source}>{selectedDeliveryPreset.source}</dd>
+                <dt className="font-medium text-text-secondary sm:col-span-1">{t("agentCreate.deliveryPreset.disclaimer")}</dt>
+                <dd className="sm:col-span-3">{selectedDeliveryPreset.disclaimer}</dd>
+              </dl>
+            ) : null}
+          </div>
         </div>
       ))}
 
       {stageCard(2, t("agentCreate.imageTypesMeta", { selected: selections.length, total: totalImages }), planReady, (
         <div className="space-y-3">
+          {options ? (
+            <div className="flex justify-end">
+              <button
+                type="button"
+                data-agent-apply-recommended-set
+                disabled={recommendedSetDisabled}
+                onClick={onApplyRecommendedSet}
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-accent/35 bg-accent-soft/60 px-2.5 text-xs font-semibold text-accent-strong transition-colors hover:border-accent/60 hover:bg-accent-soft disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                <Sparkles size={13} aria-hidden="true" />
+                {t("agentCreate.applyRecommendedSet")}
+              </button>
+            </div>
+          ) : null}
           {isOptionsLoading ? (
             <div className="flex min-h-28 items-center justify-center text-sm text-text-muted">
               <Loader2 size={17} className="mr-2 animate-spin text-accent" />

@@ -3,8 +3,15 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { GraphCatalogConfigField, GraphNode, GraphNodeCatalog, GraphProjection } from "../../../lib/types";
-import { GraphNodeInspector } from "./GraphNodeInspector";
+import type {
+  DeliveryPresetCatalog,
+  GraphCatalogConfigField,
+  GraphNode,
+  GraphNodeCatalog,
+  GraphProjection,
+  WorkflowDeliverySpec,
+} from "../../../lib/types";
+import { applyDeliveryPresetToCatalogDraft, GraphNodeInspector } from "./GraphNodeInspector";
 
 function node(partial: Partial<GraphNode> & Pick<GraphNode, "id" | "node_type">): GraphNode {
   return {
@@ -149,11 +156,22 @@ const graph: GraphProjection = {
   groups: [],
 };
 
+const deliveryPresetCatalog: DeliveryPresetCatalog = {
+  supports_custom: true,
+  items: [
+    preset("taobao_tmall_hero", "淘宝/天猫首屏", "3:4", "hero", 1200, 1600),
+    preset("jd_hero", "京东主图", "1:1", "hero", 1200, 1200),
+    preset("amazon_hero", "Amazon 主图", "1:1", "hero", 1200, 1200),
+    preset("detail_portrait", "详情竖图", "3:4", "detail", 1200, 1600),
+    preset("scene_landscape", "场景横图", "4:3", "scene", 1600, 1200),
+  ],
+};
+
 function renderInspector(
   selected: GraphNode | null,
   client?: QueryClient,
   nextCatalog: GraphNodeCatalog | null = catalog,
-  options: { busy?: boolean; catalogError?: string | null; preview?: boolean } = {},
+  options: { busy?: boolean; catalogError?: string | null; preview?: boolean; localEdit?: boolean } = {},
 ): string {
   const queryClient = client ?? new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return renderToStaticMarkup(createElement(
@@ -169,6 +187,7 @@ function renderInspector(
       onOpenAdd: () => undefined,
       onOpenLibrary: () => undefined,
       onPreviewImage: options.preview ? () => undefined : undefined,
+      onOpenLocalEdit: options.localEdit ? () => undefined : undefined,
     }),
   ));
 }
@@ -195,6 +214,104 @@ describe("GraphNodeInspector", () => {
     expect(markup).not.toContain("generation_spec");
     expect(markup).toContain("运行该节点");
     expect(markup).toContain("运行到这里");
+    expect(markup).not.toContain('data-image-fidelity-panel="true"');
+  });
+
+  it("exposes local edit for the current generation asset and keeps its node target", () => {
+    const selectedImage = node({
+      ...(graph.nodes.find((item) => item.id === "image") ?? {}),
+      id: "image",
+      node_type: "image_generation",
+      preview_asset_id: "asset-current",
+    });
+    const markup = renderInspector(selectedImage, undefined, catalog, { preview: true, localEdit: true });
+
+    expect(markup).toContain('data-graph-node-local-edit');
+    expect(markup).toContain("局部编辑");
+    expect(markup).toContain('data-image-fidelity-panel="true"');
+    expect(markup).toContain("人工保真检查");
+    expect(markup).toMatch(/data-fidelity-submit[^>]*disabled=""/);
+  });
+
+  it("renders server delivery presets with custom support and provenance metadata", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(["delivery-presets"], deliveryPresetCatalog);
+    const selectedImage = node({
+      ...(graph.nodes.find((item) => item.id === "image") ?? {}),
+      id: "image",
+      node_type: "image_generation",
+      config: {
+        ...(graph.nodes.find((item) => item.id === "image")?.config ?? {}),
+        delivery_spec: deliveryPresetCatalog.items[0]?.delivery_spec,
+      },
+    });
+
+    const markup = renderInspector(
+      selectedImage,
+      client,
+      catalog,
+      { preview: true },
+    );
+
+    expect(markup).toContain("平台预设");
+    expect(markup).toContain("支持自定义");
+    expect(markup).toContain("淘宝/天猫首屏");
+    expect(markup).toContain("京东主图");
+    expect(markup).toContain("来源 docs/specs/productflow-studio-requirements.md §18");
+    expect(markup).toContain("模板仅提供便捷默认值");
+    expect((markup.match(/data-delivery-preset-key=/g) ?? []).length).toBe(5);
+  });
+
+  it("shows recoverable loading and error states for the preset catalog", async () => {
+    const loadingMarkup = renderInspector(
+      graph.nodes.find((item) => item.id === "image") ?? null,
+      new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+      catalog,
+      { preview: true },
+    );
+    expect(loadingMarkup).toContain("正在加载平台预设");
+
+    const failedClient = new QueryClient({ defaultOptions: { queries: { retry: false, retryOnMount: false } } });
+    await failedClient.fetchQuery({
+      queryKey: ["delivery-presets"],
+      queryFn: async () => {
+        throw new Error("目录失效");
+      },
+      retry: false,
+    }).catch(() => undefined);
+    const errorMarkup = renderInspector(graph.nodes.find((item) => item.id === "image") ?? null, failedClient, catalog, { preview: true });
+    expect(errorMarkup).toContain("目录失效");
+    expect(errorMarkup).toContain("重试加载");
+  });
+
+  it("applies a preset to only the delivery draft field", () => {
+    const deliverySpec: WorkflowDeliverySpec = {
+      width: 1200,
+      height: 1600,
+      format: "png",
+      max_byte_size: null,
+      fit: "contain",
+      background_color: null,
+      crop_anchor: null,
+    };
+    const draft = {
+      title: "未保存标题",
+      config: {
+        generation_spec: { aspect_ratio: "4:5" },
+        provider: "keep-provider-out-of-this-action",
+        visual_overlay: { style: ["clean"] },
+      },
+    };
+
+    expect(applyDeliveryPresetToCatalogDraft(draft, deliverySpec)).toEqual({
+      title: "未保存标题",
+      config: {
+        ...draft.config,
+        delivery_spec: deliverySpec,
+      },
+    });
+    expect(applyDeliveryPresetToCatalogDraft(draft, deliverySpec).config.generation_spec).toBe(draft.config.generation_spec);
+    expect(applyDeliveryPresetToCatalogDraft(draft, deliverySpec).config.provider).toBe("keep-provider-out-of-this-action");
   });
 
   it("renders an image node inline visual overlay from catalog fields", () => {
@@ -293,6 +410,30 @@ describe("GraphNodeInspector", () => {
     expect(source).not.toContain("运行该节点");
   });
 
+  it("disables new inspector runs while another graph run is live", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(["graph-runs", "p1", "g1"], {
+      items: [{
+        id: "run-live",
+        graph_id: "g1",
+        status: "queued",
+        scope: "graph",
+        requested_node_id: null,
+        graph_revision: 4,
+        failure_reason: null,
+        is_retryable: false,
+        started_at: "2026-08-24T00:00:00Z",
+        finished_at: null,
+        node_runs: [],
+      }],
+    });
+
+    const markup = renderInspector(graph.nodes.find((item) => item.id === "brief") ?? null, client);
+
+    expect(markup).toMatch(/data-graph-inspector-run-node="true"[^>]*disabled=""/);
+    expect(markup).toMatch(/data-graph-inspector-run-to-node="true"[^>]*disabled=""/);
+  });
+
   it("lets a visual system be edited as overlay fields instead of a version UUID", () => {
     const markup = renderInspector(node({
       id: "visual",
@@ -332,6 +473,9 @@ describe("GraphNodeInspector", () => {
             source_title: "创作要求",
             role: "brief",
             order: 0,
+            artifact_id: "artifact-brief",
+            artifact_type: "creative_brief",
+            version_id: "version-brief",
           }],
           compiled_context: {
             incoming_edge_ids: ["edge-1"],
@@ -353,6 +497,10 @@ describe("GraphNodeInspector", () => {
     expect(firstScreen).toContain("data-graph-runtime-inputs");
     expect(firstScreen).toContain("data-graph-current-wiring");
     expect(firstScreen).toContain("创作要求");
+    expect(firstScreen).toContain("brief");
+    expect(firstScreen).toContain("顺序 0");
+    expect(firstScreen).toContain("artifact-brief");
+    expect(firstScreen).toContain("version-brief");
     expect(firstScreen).not.toContain("asset-a");
     expect(firstScreen).not.toContain("deadbeef");
     expect(markup).toContain("data-graph-runtime-inputs-technical");
@@ -483,3 +631,31 @@ describe("GraphNodeInspector", () => {
     expect(markup).toContain("data-preview-aspect=\"3:4\"");
   });
 });
+
+function preset(
+  key: string,
+  title: string,
+  aspectRatio: string,
+  applicableImageType: string,
+  width: number,
+  height: number,
+) {
+  return {
+    key,
+    title,
+    aspect_ratio: aspectRatio,
+    applicable_image_type: applicableImageType,
+    reviewed_at: "2026-08-24",
+    source: "docs/specs/productflow-studio-requirements.md §18",
+    disclaimer: "模板仅提供便捷默认值，不构成平台审核或合规保证。",
+    delivery_spec: {
+      width,
+      height,
+      format: "png" as const,
+      max_byte_size: null,
+      fit: "contain" as const,
+      background_color: null,
+      crop_anchor: null,
+    },
+  };
+}

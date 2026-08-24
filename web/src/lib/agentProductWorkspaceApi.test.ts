@@ -117,4 +117,31 @@ describe("Agent product workspace API", () => {
     expect(formData.getAll("images")).toEqual([front]);
     expect(formData.get("task_id")).toBe("task-1");
   });
+
+  it("sends a delivery preset only when the Agent selection explicitly includes one", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: async () => ({ product: { id: "product-1" } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.createAgentProductWorkspace({
+      name: "平台商品",
+      selection: {
+        schema_version: 1,
+        image_types: [{ key: "hero", quantity: 1, order: 0 }],
+        delivery_preset_key: "jd_hero",
+      },
+      images: [],
+      idempotency_key: "agent-create-preset",
+    });
+
+    const formData = (fetchMock.mock.calls[0] as [string, RequestInit])[1].body as FormData;
+    expect(JSON.parse(String(formData.get("selection")))).toEqual({
+      schema_version: 1,
+      image_types: [{ key: "hero", quantity: 1, order: 0 }],
+      delivery_preset_key: "jd_hero",
+    });
+  });
 });

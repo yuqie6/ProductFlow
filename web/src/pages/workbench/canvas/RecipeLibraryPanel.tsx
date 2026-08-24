@@ -1,17 +1,21 @@
 import { useState } from "react";
 import {
   Archive,
-  Boxes,
+  BadgeCheck,
   FileStack,
+  Image as ImageIcon,
+  Link2,
   Loader2,
+  PencilLine,
   Play,
-  RefreshCw,
+  UserRound,
 } from "lucide-react";
 
 import { ConfirmDialog } from "../../../components/ConfirmDialog";
 import { useI18n } from "../../../lib/preferences";
 import type {
   WorkflowRecipeApplicationResult,
+  WorkflowRecipeOrigin,
   WorkflowRecipePreview,
   WorkflowRecipeSummary,
 } from "../../../lib/types";
@@ -26,9 +30,16 @@ interface RecipeLibraryPanelProps {
   canAppend: (recipe: WorkflowRecipeSummary) => boolean;
   onRetry: () => void;
   onPreview: (recipe: WorkflowRecipeSummary) => Promise<WorkflowRecipePreview>;
-  onApply: (recipe: WorkflowRecipeSummary) => void;
+  onApply: (recipe: WorkflowRecipeSummary, preview: WorkflowRecipePreview) => void;
   onAppend: (recipe: WorkflowRecipeSummary) => void;
   onArchive: (recipe: WorkflowRecipeSummary) => void;
+}
+
+export function filterRecipesByOrigin(
+  recipes: WorkflowRecipeSummary[],
+  origin: WorkflowRecipeOrigin,
+): WorkflowRecipeSummary[] {
+  return recipes.filter((recipe) => recipe.origin === origin);
 }
 
 export function RecipeLibraryPanel({
@@ -46,30 +57,24 @@ export function RecipeLibraryPanel({
   onArchive,
 }: RecipeLibraryPanelProps) {
   const { t } = useI18n();
-  const [preview, setPreview] = useState<WorkflowRecipeSummary | null>(null);
+  const [origin, setOrigin] = useState<WorkflowRecipeOrigin>("official");
+  const [previewRecipe, setPreviewRecipe] = useState<WorkflowRecipeSummary | null>(null);
   const [previewResult, setPreviewResult] = useState<WorkflowRecipePreview | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
 
-  if (loading) {
-    return <PanelState icon={<Loader2 size={18} className="animate-spin" />} text={t("workbench.recipe.loading")} />;
-  }
-  if (error) {
-    return <PanelState text={error} action={t("workbench.retry")} onAction={onRetry} />;
-  }
-
-  const previewBusy = Boolean(preview && (previewLoading || structureBusy || operationRecipeId === preview.id));
-  const previewNodes = previewResult?.nodes ?? preview?.current_version.payload.nodes ?? [];
-  const previewEdges = previewResult?.edges ?? preview?.current_version.payload.edges ?? [];
+  const visibleRecipes = filterRecipesByOrigin(recipes, origin);
+  const previewBusy = Boolean(
+    previewRecipe && (previewLoading || structureBusy || operationRecipeId === previewRecipe.id),
+  );
 
   const openPreview = async (recipe: WorkflowRecipeSummary) => {
-    setPreview(recipe);
+    setPreviewRecipe(recipe);
     setPreviewResult(null);
     setPreviewError(null);
     setPreviewLoading(true);
     try {
-      const result = await onPreview(recipe);
-      setPreviewResult(result);
+      setPreviewResult(await onPreview(recipe));
     } catch (error) {
       setPreviewError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -79,6 +84,29 @@ export function RecipeLibraryPanel({
 
   return (
     <div className="space-y-3 p-3" data-graph-recipe-panel>
+      <div className="grid grid-cols-2 gap-1 rounded-md border border-border-l1 bg-surface-sunken p-1" role="tablist" aria-label={t("workbench.recipe.originTabs")}>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={origin === "official"}
+          onClick={() => setOrigin("official")}
+          className={`inline-flex h-8 items-center justify-center gap-1.5 rounded px-2 text-xs font-semibold transition ${origin === "official" ? "bg-surface-raised text-text-primary shadow-sm" : "text-text-secondary hover:text-text-primary"}`}
+        >
+          <BadgeCheck size={14} />
+          {t("workbench.recipe.officialTab")}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={origin === "user"}
+          onClick={() => setOrigin("user")}
+          className={`inline-flex h-8 items-center justify-center gap-1.5 rounded px-2 text-xs font-semibold transition ${origin === "user" ? "bg-surface-raised text-text-primary shadow-sm" : "text-text-secondary hover:text-text-primary"}`}
+        >
+          <UserRound size={14} />
+          {t("workbench.recipe.userTab")}
+        </button>
+      </div>
+
       {application ? (
         <section className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-400/30 dark:!bg-emerald-500/10" aria-live="polite">
           <div className="flex items-start gap-2">
@@ -93,66 +121,104 @@ export function RecipeLibraryPanel({
         </section>
       ) : null}
 
-      {recipes.length === 0 ? (
-        <PanelState icon={<Boxes size={19} />} text={t("workbench.recipe.empty")} />
-      ) : recipes.map((recipe) => {
-        const version = recipe.current_version;
-        const payload = version.payload;
-        const busy = structureBusy || operationRecipeId === recipe.id;
-        const appendable = canAppend(recipe);
-        return (
-          <article key={recipe.id} className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-700 dark:!bg-[#11151d]">
-            <div className="flex items-start gap-2.5">
-              <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${recipe.kind === "workflow_recipe" ? "bg-blue-50 text-blue-700 dark:bg-blue-500/15 dark:text-blue-200" : "bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-200"}`}>
-                {recipe.kind === "workflow_recipe" ? <Boxes size={16} /> : <FileStack size={16} />}
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="flex min-w-0 items-center gap-2">
-                  <h3 className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-950 dark:text-slate-100" title={version.title}>{version.title}</h3>
+      {loading ? (
+        <PanelState icon={<Loader2 size={18} className="animate-spin" />} text={t("workbench.recipe.loading")} />
+      ) : error ? (
+        <PanelState text={error} action={t("workbench.retry")} onAction={onRetry} />
+      ) : visibleRecipes.length === 0 ? (
+        <PanelState
+          icon={origin === "official" ? <BadgeCheck size={19} /> : <UserRound size={19} />}
+          text={origin === "official" ? t("workbench.recipe.emptyOfficial") : t("workbench.recipe.emptyUser")}
+        />
+      ) : (
+        visibleRecipes.map((recipe) => {
+          const version = recipe.current_version;
+          const payload = version.payload;
+          const busy = structureBusy || operationRecipeId === recipe.id;
+          const appendable = canAppend(recipe);
+          const official = recipe.origin === "official";
+          return (
+            <article key={recipe.id} className="rounded-lg border border-border-l1 bg-surface-raised p-3 shadow-sm" data-recipe-origin={recipe.origin}>
+              <div className="flex items-start gap-2.5">
+                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-md ${official ? "bg-accent-soft text-accent" : "bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-200"}`}>
+                  {official ? <BadgeCheck size={16} /> : <UserRound size={16} />}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <h3 className="min-w-0 flex-1 truncate text-sm font-semibold text-text-primary" title={version.title}>{version.title}</h3>
+                    <span className="shrink-0 text-[10px] font-semibold text-text-secondary">
+                      {official ? t("workbench.recipe.officialSource") : t("workbench.recipe.userSource")}
+                    </span>
+                  </div>
+                  <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-text-secondary">
+                    {version.description || t("workbench.recipe.noDescription")}
+                  </p>
                 </div>
-                <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-slate-500 dark:text-slate-400">
-                  {version.description || t("workbench.recipe.noDescription")}
-                </p>
               </div>
-            </div>
 
-            <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 border-y border-slate-100 py-2 text-[10px] font-medium text-slate-500 dark:border-slate-800 dark:text-slate-400">
-              <span>{t("workbench.recipe.nodeCount", { count: payload.nodes.length })}</span>
-              <span>{t("workbench.recipe.edgeCount", { count: payload.edges.length })}</span>
-              <span>{recipe.kind === "workflow_recipe" ? t("workbench.recipe.fullKind") : t("workbench.recipe.fragmentKind")}</span>
-            </div>
+              {official ? <GovernanceSummary governance={version.governance} /> : null}
 
-            <div className="mt-3 grid grid-cols-[minmax(0,1fr)_36px_36px] gap-1.5">
-              <button
-                type="button"
-                onClick={() => void openPreview(recipe)}
-                disabled={busy}
-                title={t("workbench.recipe.apply")}
-                className="inline-flex h-9 items-center justify-center rounded-md bg-slate-950 px-3 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50 dark:bg-violet-500 dark:hover:bg-violet-400"
-              >
-                {busy ? <Loader2 size={13} className="mr-1.5 animate-spin" /> : <Play size={13} className="mr-1.5" fill="currentColor" />}
-                {t("workbench.recipe.apply")}
-              </button>
-              <button type="button" onClick={() => onAppend(recipe)} disabled={busy || !appendable} className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 text-slate-600 hover:border-indigo-300 hover:text-indigo-700 disabled:opacity-35 dark:border-slate-700 dark:text-slate-300 dark:hover:border-violet-400 dark:hover:text-violet-200" aria-label={t("workbench.recipe.append")} title={t("workbench.recipe.append")}>
-                <RefreshCw size={14} />
-              </button>
-              <button type="button" onClick={() => onArchive(recipe)} disabled={busy} className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-200 text-slate-600 hover:border-red-300 hover:text-red-600 disabled:opacity-35 dark:border-slate-700 dark:text-slate-300 dark:hover:border-red-400 dark:hover:text-red-300" aria-label={t("workbench.recipe.archive")} title={t("workbench.recipe.archive")}>
-                <Archive size={14} />
-              </button>
-            </div>
-          </article>
-        );
-      })}
+              <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 border-y border-border-l1 py-2 text-[10px] font-medium text-text-secondary">
+                <span>{t("workbench.recipe.nodeCount", { count: payload.nodes.length })}</span>
+                <span>{t("workbench.recipe.edgeCount", { count: payload.edges.length })}</span>
+                <span>{t("workbench.recipe.groupCount", { count: payload.groups.length })}</span>
+                <span>{t("workbench.recipe.version", { version: version.version })}</span>
+              </div>
+
+              <div className={`mt-3 grid gap-1.5 ${official ? "grid-cols-1" : "grid-cols-[minmax(0,1fr)_36px_36px]"}`}>
+                <button
+                  type="button"
+                  onClick={() => void openPreview(recipe)}
+                  disabled={busy}
+                  title={t("workbench.recipe.apply")}
+                  className="inline-flex h-9 items-center justify-center rounded-md bg-slate-950 px-3 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50 dark:bg-violet-500 dark:hover:bg-violet-400"
+                >
+                  {busy ? <Loader2 size={13} className="mr-1.5 animate-spin" /> : <Play size={13} className="mr-1.5" fill="currentColor" />}
+                  {t("workbench.recipe.apply")}
+                </button>
+                {official ? null : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => onAppend(recipe)}
+                      disabled={busy || !appendable}
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-border-l1 text-text-secondary hover:border-accent hover:text-accent disabled:opacity-35"
+                      aria-label={t("workbench.recipe.append")}
+                      title={t("workbench.recipe.append")}
+                    >
+                      <PencilLine size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onArchive(recipe)}
+                      disabled={busy}
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-border-l1 text-text-secondary hover:border-red-300 hover:text-red-600 disabled:opacity-35"
+                      aria-label={t("workbench.recipe.archive")}
+                      title={t("workbench.recipe.archive")}
+                    >
+                      <Archive size={14} />
+                    </button>
+                  </>
+                )}
+              </div>
+            </article>
+          );
+        })
+      )}
 
       <ConfirmDialog
-        open={Boolean(preview)}
+        open={Boolean(previewRecipe)}
         title={t("workbench.recipe.previewTitle")}
         description={previewError
           ? previewError
-          : t("workbench.recipe.previewDetail", {
-            nodes: previewNodes.length,
-            edges: previewEdges.length,
-          })}
+          : previewLoading
+            ? t("workbench.recipe.previewLoading")
+            : previewResult
+              ? t("workbench.recipe.previewDetail", {
+                nodes: previewResult.nodes.length,
+                edges: previewResult.edges.length,
+              })
+              : t("workbench.recipe.previewLoading")}
         body={previewError || !previewResult ? null : <RecipeApplyPreviewBody preview={previewResult} />}
         confirmLabel={t("workbench.recipe.previewConfirm")}
         cancelLabel={t("common.cancel")}
@@ -160,14 +226,14 @@ export function RecipeLibraryPanel({
         confirmDisabled={Boolean(previewError) || !previewResult}
         destructive={false}
         onConfirm={() => {
-          if (!preview || previewBusy || previewError || !previewResult) return;
-          onApply(preview);
-          setPreview(null);
+          if (!previewRecipe || previewBusy || previewError || !previewResult) return;
+          confirmRecipeApply(previewRecipe, previewResult, onApply);
+          setPreviewRecipe(null);
           setPreviewResult(null);
         }}
         onClose={() => {
           if (previewBusy) return;
-          setPreview(null);
+          setPreviewRecipe(null);
           setPreviewResult(null);
           setPreviewError(null);
         }}
@@ -176,41 +242,137 @@ export function RecipeLibraryPanel({
   );
 }
 
-export function RecipeApplyPreviewBody({ preview }: { preview: WorkflowRecipePreview }) {
+export function confirmRecipeApply(
+  recipe: WorkflowRecipeSummary,
+  preview: WorkflowRecipePreview,
+  onApply: (recipe: WorkflowRecipeSummary, preview: WorkflowRecipePreview) => void,
+): void {
+  onApply(recipe, preview);
+}
+
+function GovernanceSummary({
+  governance,
+}: {
+  governance: WorkflowRecipeSummary["current_version"]["governance"];
+}) {
   const { t } = useI18n();
-  const nodeTitle = new Map(preview.nodes.map((node) => [node.key, node.title]));
+  if (!governance) {
+    return <div className="mt-3 text-[10px] text-text-secondary">{t("workbench.recipe.governanceUnavailable")}</div>;
+  }
   return (
-    <div data-recipe-preview data-recipe-preview-mode={preview.mode} className="space-y-2 text-left">
-      <div className="text-xs font-semibold text-slate-800 dark:text-slate-100">
-        {preview.mode === "merge" ? t("workbench.recipe.previewModeMerge") : t("workbench.recipe.previewModeCreate")}
+    <div className="mt-3 space-y-1 text-[10px] leading-4 text-text-secondary" data-recipe-governance>
+      <div className="flex flex-wrap gap-x-3 gap-y-1">
+        <span>{t("workbench.recipe.applicableImageTypes")}: {governance.applicable_image_types.join(", ")}</span>
+        <span>{t("workbench.recipe.requiredInputs")}: {governance.required_inputs.length ? governance.required_inputs.join(", ") : t("workbench.recipe.none")}</span>
+        <span>{t("workbench.recipe.defaultResult")}: {governance.default_result}</span>
       </div>
-      <p className="text-[11px] text-slate-500 dark:text-slate-400">{t("workbench.recipe.previewWillAdd")}</p>
-      <ul data-recipe-preview-nodes className="max-h-32 space-y-1 overflow-y-auto text-xs text-slate-700 dark:text-slate-200">
-        {preview.nodes.map((node) => (
-          <li key={node.key}>{node.title}</li>
-        ))}
-      </ul>
-      {preview.edges.length ? (
-        <ul data-recipe-preview-edges className="max-h-24 space-y-1 overflow-y-auto text-[11px] text-slate-500 dark:text-slate-400">
-          {preview.edges.map((edge) => (
-            <li key={edge.key}>
-              {nodeTitle.get(edge.source_node_key) ?? edge.source_node_key}
-              {" → "}
-              {nodeTitle.get(edge.target_node_key) ?? edge.target_node_key}
-            </li>
-          ))}
-        </ul>
+      {(governance.thumbnail || governance.provider_sample) ? (
+        <div className="flex items-center gap-2" data-recipe-governance-assets>
+          {governance.thumbnail ? <img src={governance.thumbnail} alt="" className="h-8 w-8 rounded object-cover" /> : null}
+          {governance.provider_sample ? <span className="truncate" title={governance.provider_sample}>{t("workbench.recipe.providerSampleAvailable")}</span> : null}
+        </div>
       ) : null}
     </div>
   );
 }
 
-function PanelState({ icon, text, action, onAction }: { icon?: React.ReactNode; text: string; action?: string; onAction?: () => void }) {
+export function RecipeApplyPreviewBody({ preview }: { preview: WorkflowRecipePreview }) {
+  const { t } = useI18n();
+  const nodeTitle = new Map(preview.nodes.map((node) => [node.key, node.title]));
+  const hasAdditions = Boolean(preview.nodes.length || preview.edges.length || preview.groups.length);
   return (
-    <div className="flex min-h-[220px] flex-col items-center justify-center gap-2 p-6 text-center text-xs text-slate-500 dark:text-slate-400">
-      {icon ? <span className="text-slate-400 dark:text-slate-500">{icon}</span> : null}
+    <div data-recipe-preview data-recipe-preview-mode={preview.mode} className="space-y-3 text-left">
+      <div className="text-xs font-semibold text-text-primary">
+        {preview.mode === "merge" ? t("workbench.recipe.previewModeMerge") : t("workbench.recipe.previewModeCreate")}
+      </div>
+
+      <PreviewSection title={t("workbench.recipe.addedSection")} empty={!hasAdditions}>
+        {preview.nodes.length ? (
+          <ul data-recipe-preview-nodes className="max-h-32 space-y-1 overflow-y-auto text-xs text-text-primary">
+            {preview.nodes.map((node) => <li key={node.key}>{node.title}</li>)}
+          </ul>
+        ) : null}
+        {preview.edges.length ? (
+          <ul data-recipe-preview-edges className="mt-1 max-h-24 space-y-1 overflow-y-auto text-[11px] text-text-secondary">
+            {preview.edges.map((edge) => (
+              <li key={edge.key}>
+                {nodeTitle.get(edge.source_node_key) ?? edge.source_node_key}
+                {" → "}
+                {nodeTitle.get(edge.target_node_key) ?? edge.target_node_key}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {preview.groups.length ? (
+          <ul data-recipe-preview-groups className="mt-1 space-y-1 text-[11px] text-text-secondary">
+            {preview.groups.map((group) => <li key={group.key}>{group.title}</li>)}
+          </ul>
+        ) : null}
+      </PreviewSection>
+
+      <PreviewSection title={t("workbench.recipe.updatedSection")} empty={!preview.updated_nodes.length}>
+        {preview.updated_nodes.length ? (
+          <ul data-recipe-preview-updated className="space-y-1 text-xs text-text-primary">
+            {preview.updated_nodes.map((node) => (
+              <li key={node.id}>
+                <span>{node.title}</span>
+                <span className="ml-1 text-[10px] text-text-secondary">({node.changed_config_keys.join(", ") || t("workbench.recipe.noChangedKeys")})</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </PreviewSection>
+
+      <PreviewSection title={t("workbench.recipe.requiredBindings")} empty={!preview.required_bindings.length}>
+        {preview.required_bindings.length ? (
+          <ul data-recipe-preview-bindings className="space-y-1 text-xs text-text-primary">
+            {preview.required_bindings.map((binding) => <li key={binding} className="inline-flex items-center gap-1"><Link2 size={12} />{binding}</li>)}
+          </ul>
+        ) : null}
+      </PreviewSection>
+
+      <div className="text-[10px] text-text-secondary">{t("workbench.recipe.previewRevision", { revision: preview.base_graph_revision })}</div>
+    </div>
+  );
+}
+
+function PreviewSection({
+  title,
+  empty,
+  children,
+}: {
+  title: string;
+  empty: boolean;
+  children: React.ReactNode;
+}) {
+  const { t } = useI18n();
+  return (
+    <section className="border-t border-border-l1 pt-2">
+      <div className="mb-1 flex items-center gap-1 text-[11px] font-semibold text-text-primary">
+        <ImageIcon size={12} />
+        {title}
+      </div>
+      {empty ? <p className="text-[11px] text-text-secondary">{t("workbench.recipe.noChanges")}</p> : children}
+    </section>
+  );
+}
+
+function PanelState({
+  icon,
+  text,
+  action,
+  onAction,
+}: {
+  icon?: React.ReactNode;
+  text: string;
+  action?: string;
+  onAction?: () => void;
+}) {
+  return (
+    <div className="flex min-h-[220px] flex-col items-center justify-center gap-2 p-6 text-center text-xs text-text-secondary">
+      {icon ? <span className="text-text-secondary">{icon}</span> : null}
       <span className="max-w-[250px] leading-5">{text}</span>
-      {action && onAction ? <button type="button" onClick={onAction} className="mt-1 font-semibold text-indigo-700 hover:underline dark:text-violet-300">{action}</button> : null}
+      {action && onAction ? <button type="button" onClick={onAction} className="mt-1 font-semibold text-accent hover:underline">{action}</button> : null}
     </div>
   );
 }

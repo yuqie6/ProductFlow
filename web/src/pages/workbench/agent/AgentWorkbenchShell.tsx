@@ -31,6 +31,8 @@ interface AgentWorkbenchShellProps {
   sidebarTools?: AgentWorkbenchSidebarTool[];
   activeSidebarTool?: string;
   onSidebarToolChange?: (toolId: string) => boolean | Promise<boolean>;
+  agentOpenRequest?: number;
+  onAgentOpened?: () => void;
   confirmationContent?: ReactNode;
 }
 
@@ -69,6 +71,8 @@ export function AgentWorkbenchShell({
   sidebarTools = [],
   activeSidebarTool = "agent",
   onSidebarToolChange,
+  agentOpenRequest = 0,
+  onAgentOpened,
   confirmationContent,
 }: AgentWorkbenchShellProps) {
   const { t } = useI18n();
@@ -76,11 +80,13 @@ export function AgentWorkbenchShell({
     workflowAvailable ? "canvas" : "agent",
   );
   const [compact, setCompact] = useState(initialCompactWorkbench);
-  const inspector = useProductWorkbenchInspectorState();
+  const inspector = useProductWorkbenchInspectorState(!workflowAvailable);
   const sidebarCollapsed = inspector.collapsed;
   const inspectorWidth = inspector.width;
   const previousWorkflowAvailableRef = useRef(workflowAvailable);
   const previousSidebarToolRef = useRef(activeSidebarTool);
+  const pendingAgentOpenRequestRef = useRef<number | null>(null);
+  const handledAgentOpenRequestRef = useRef(0);
   const confirmationOpen = Boolean(confirmationContent);
   const resolvedActiveToolId = sidebarTools.some((tool) => tool.id === activeSidebarTool) || activeSidebarTool === "agent"
     ? activeSidebarTool
@@ -101,22 +107,51 @@ export function AgentWorkbenchShell({
     previousWorkflowAvailableRef.current = workflowAvailable;
     if (workflowAvailable && !previouslyAvailable) {
       setMobileView("canvas");
-    } else if (!workflowAvailable) {
-      setMobileView("agent");
       inspector.setCollapsed(false);
+    } else if (!workflowAvailable) {
+      setMobileView("canvas");
+      inspector.setCollapsed(true);
     }
-  }, [inspector.setCollapsed, workflowAvailable]);
+  }, [compact, inspector.setCollapsed, workflowAvailable]);
 
   useEffect(() => {
     if (previousSidebarToolRef.current === resolvedActiveToolId) {
       return;
     }
     previousSidebarToolRef.current = resolvedActiveToolId;
-    if (workflowAvailable) {
-      inspector.setCollapsed(false);
-      setMobileView("agent");
-    }
+    inspector.setCollapsed(false);
+    setMobileView("agent");
   }, [inspector.setCollapsed, resolvedActiveToolId, workflowAvailable]);
+
+  useEffect(() => {
+    if (
+      agentOpenRequest <= handledAgentOpenRequestRef.current
+      || confirmationOpen
+    ) {
+      return;
+    }
+    pendingAgentOpenRequestRef.current = agentOpenRequest;
+    setMobileView("agent");
+    if (sidebarCollapsed) {
+      inspector.setCollapsed(false);
+    }
+  }, [agentOpenRequest, confirmationOpen, inspector.setCollapsed, sidebarCollapsed]);
+
+  useEffect(() => {
+    const request = pendingAgentOpenRequestRef.current;
+    if (
+      request === null
+      || request !== agentOpenRequest
+      || confirmationOpen
+      || sidebarCollapsed
+      || resolvedActiveToolId !== "agent"
+    ) {
+      return;
+    }
+    pendingAgentOpenRequestRef.current = null;
+    handledAgentOpenRequestRef.current = request;
+    onAgentOpened?.();
+  }, [agentOpenRequest, confirmationOpen, onAgentOpened, resolvedActiveToolId, sidebarCollapsed]);
 
   const selectSidebarTool = async (toolId: string) => {
     const accepted = await onSidebarToolChange?.(toolId);

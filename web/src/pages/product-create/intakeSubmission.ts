@@ -7,6 +7,7 @@ export interface PendingDraftState {
   conversationId?: string;
   agentSessionId?: string;
   agentTaskId?: string;
+  deliveryPresetKey?: string;
 }
 
 interface SubmitAgentProductIntakeInput {
@@ -36,6 +37,9 @@ export function parsePendingDraft(raw: string | null): PendingDraftState | null 
         : {}),
       ...(typeof parsed.agentTaskId === "string" && parsed.agentTaskId.trim()
         ? { agentTaskId: parsed.agentTaskId }
+        : {}),
+      ...(typeof parsed.deliveryPresetKey === "string" && parsed.deliveryPresetKey.trim()
+        ? { deliveryPresetKey: parsed.deliveryPresetKey.trim() }
         : {}),
     };
   } catch {

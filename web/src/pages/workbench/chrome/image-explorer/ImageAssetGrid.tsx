@@ -5,6 +5,7 @@ import { api } from "../../../../lib/api";
 import { formatDateTime } from "../../../../lib/format";
 import { useI18n } from "../../../../lib/preferences";
 import type { GalleryAsset } from "../../../../lib/types";
+import type { LocalImageEditOpenRequest } from "../../local-edit/LocalImageEditController";
 import { ImageAssetActions } from "./ImageAssetActions";
 import {
   assetCanReadMedia,
@@ -23,6 +24,7 @@ interface ImageAssetCollectionProps {
   onMove: (asset: GalleryAsset) => void;
   onUseAsReference?: (asset: GalleryAsset) => void;
   onViewSource?: (asset: GalleryAsset) => void;
+  onOpenLocalEdit?: (request: LocalImageEditOpenRequest) => void;
   referenceBusy?: boolean;
   sourceBusy?: boolean;
 }
@@ -89,6 +91,7 @@ export function ImageAssetList(props: ImageAssetCollectionProps) {
               onMove={props.onMove}
               onUseAsReference={props.onUseAsReference}
               onViewSource={props.onViewSource}
+              onOpenLocalEdit={props.onOpenLocalEdit}
               referenceBusy={props.referenceBusy}
               sourceBusy={props.sourceBusy}
             />
@@ -108,6 +111,7 @@ function ImageAssetCard({
   onMove,
   onUseAsReference,
   onViewSource,
+  onOpenLocalEdit,
   referenceBusy,
   sourceBusy,
 }: ImageAssetCollectionProps & { asset: GalleryAsset }) {
@@ -174,6 +178,7 @@ function ImageAssetCard({
           onMove={onMove}
           onUseAsReference={onUseAsReference}
           onViewSource={onViewSource}
+          onOpenLocalEdit={onOpenLocalEdit}
           referenceBusy={referenceBusy}
           sourceBusy={sourceBusy}
         />

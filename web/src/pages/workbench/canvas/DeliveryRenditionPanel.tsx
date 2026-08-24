@@ -8,6 +8,7 @@ import {
   RefreshCw,
   WandSparkles,
 } from "lucide-react";
+import { useState } from "react";
 
 import { api, ApiError } from "../../../lib/api";
 import { formatDateTime } from "../../../lib/format";
@@ -16,6 +17,7 @@ import { useI18n } from "../../../lib/preferences";
 import type {
   DeliveryRenditionJob,
   ProductImageAsset,
+  DeliveryPreset,
   WorkflowDeliverySpec,
 } from "../../../lib/types";
 import {
@@ -29,6 +31,8 @@ interface DeliveryRenditionPanelProps {
   sourceAssetId?: string | null;
   deliverySpec?: unknown;
   onPreviewImage: (image: DownloadableImage) => void;
+  onApplyDeliverySpec?: (deliverySpec: WorkflowDeliverySpec) => Promise<void>;
+  applyDisabled?: boolean;
 }
 
 export function DeliveryRenditionPanel({
@@ -36,11 +40,21 @@ export function DeliveryRenditionPanel({
   sourceAssetId = null,
   deliverySpec: rawDeliverySpec,
   onPreviewImage,
+  onApplyDeliverySpec,
+  applyDisabled = false,
 }: DeliveryRenditionPanelProps) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const deliverySpec = parseWorkflowDeliverySpec(rawDeliverySpec);
   const deliverySpecInvalid = rawDeliverySpec !== undefined && rawDeliverySpec !== null && !deliverySpec;
+  const configuredSpecKey = deliverySpec ? deliverySpecKey(deliverySpec) : null;
+  const presetSection = (
+    <DeliveryPresetSection
+      currentSpecKey={configuredSpecKey}
+      disabled={applyDisabled}
+      onApply={onApplyDeliverySpec}
+    />
+  );
   const queryKey = ["delivery-renditions", sourceAssetId] as const;
   const jobsQuery = useQuery({
     queryKey,
@@ -73,22 +87,37 @@ export function DeliveryRenditionPanel({
   });
 
   if (!sourceAssetId) {
-    return <PanelState icon={<FileImage size={20} />} text={t("workbench.rendition.runImageNode")} />;
+    return (
+      <div className="min-w-0 p-3" data-delivery-rendition-panel>
+        {presetSection}
+        <PanelState icon={<FileImage size={20} />} text={t("workbench.rendition.runImageNode")} />
+      </div>
+    );
   }
   if (deliverySpecInvalid) {
-    return <PanelState text={t("workbench.rendition.invalidSpec")} />;
+    return (
+      <div className="min-w-0 p-3" data-delivery-rendition-panel>
+        {presetSection}
+        <PanelState text={t("workbench.rendition.invalidSpec")} />
+      </div>
+    );
   }
   if (!deliverySpec) {
-    return <PanelState icon={<FileImage size={20} />} text={t("workbench.rendition.noSpec")} />;
+    return (
+      <div className="min-w-0 p-3" data-delivery-rendition-panel>
+        {presetSection}
+        <PanelState icon={<FileImage size={20} />} text={t("workbench.rendition.noSpec")} />
+      </div>
+    );
   }
 
   const jobs = jobsQuery.data?.items ?? [];
-  const configuredSpecKey = deliverySpecKey(deliverySpec);
   const hasCurrentJob = jobs.some((job) => deliverySpecKey(job.delivery_spec) === configuredSpecKey);
   const error = firstError(jobsQuery.error, createMutation.error, retryMutation.error, sourceMutation.error);
 
   return (
     <div className="min-w-0 p-3" data-delivery-rendition-panel>
+      {presetSection}
       <div className="flex min-w-0 items-start gap-2 border-b border-slate-200 pb-3 dark:border-slate-800">
         <div className="min-w-0 flex-1">
           <div className="text-xs font-semibold text-slate-950 dark:text-slate-100">
@@ -162,6 +191,115 @@ export function DeliveryRenditionPanel({
         </div>
       )}
     </div>
+  );
+}
+
+function DeliveryPresetSection({
+  currentSpecKey,
+  disabled,
+  onApply,
+}: {
+  currentSpecKey: string | null;
+  disabled: boolean;
+  onApply?: (deliverySpec: WorkflowDeliverySpec) => Promise<void>;
+}) {
+  const { t } = useI18n();
+  const [applyingKey, setApplyingKey] = useState<string | null>(null);
+  const [applyError, setApplyError] = useState<string | null>(null);
+  const presetsQuery = useQuery({
+    queryKey: ["delivery-presets"],
+    queryFn: () => api.getDeliveryPresets(),
+    staleTime: 60_000,
+  });
+  const selectedPreset = presetsQuery.data?.items.find((item) => (
+    currentSpecKey !== null && deliverySpecKey(item.delivery_spec) === currentSpecKey
+  )) ?? null;
+  const metadataPreset = selectedPreset ?? presetsQuery.data?.items[0] ?? null;
+
+  const applyPreset = async (preset: DeliveryPreset) => {
+    if (!onApply || disabled || applyingKey || currentSpecKey === deliverySpecKey(preset.delivery_spec)) return;
+    setApplyingKey(preset.key);
+    setApplyError(null);
+    try {
+      await onApply(preset.delivery_spec);
+    } catch (error) {
+      setApplyError(firstError(error));
+    } finally {
+      setApplyingKey(null);
+    }
+  };
+
+  return (
+    <section className="mb-3 border-b border-slate-200 pb-3 dark:border-slate-800" data-delivery-presets>
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-xs font-semibold text-slate-900 dark:text-slate-100">{t("workbench.rendition.presets")}</h3>
+        {presetsQuery.isFetching ? <Loader2 size={13} className="animate-spin text-slate-400" /> : null}
+      </div>
+      {presetsQuery.isPending ? (
+        <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">{t("workbench.rendition.presetsLoading")}</p>
+      ) : presetsQuery.error ? (
+        <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-red-600 dark:text-red-300" role="alert">
+          <span>{firstError(presetsQuery.error) ?? t("workbench.rendition.presetsLoadFailed")}</span>
+          <button
+            type="button"
+            onClick={() => void presetsQuery.refetch()}
+            disabled={presetsQuery.isFetching}
+            className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-red-200 px-2 font-semibold hover:bg-red-50 disabled:opacity-50 dark:border-red-400/30 dark:hover:bg-red-500/10"
+          >
+            <RefreshCw size={12} />
+            {t("workbench.rendition.presetsRetry")}
+          </button>
+        </div>
+      ) : presetsQuery.data ? (
+        <>
+          <div className="mt-2 grid grid-cols-2 gap-1.5" role="listbox" aria-label={t("workbench.rendition.presets")}>
+            {presetsQuery.data.items.map((preset) => {
+              const selected = selectedPreset?.key === preset.key;
+              const applying = applyingKey === preset.key;
+              return (
+                <button
+                  key={preset.key}
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  data-delivery-preset-key={preset.key}
+                  onClick={() => void applyPreset(preset)}
+                  disabled={disabled || Boolean(applyingKey) || selected || !onApply}
+                  className={`min-w-0 rounded-md border px-2 py-2 text-left text-[10px] transition-colors disabled:cursor-default disabled:opacity-60 ${selected
+                    ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-500/50 dark:bg-emerald-500/10 dark:text-emerald-200"
+                    : "border-slate-200 bg-white text-slate-700 hover:border-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-slate-500"
+                    }`}
+                >
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    {applying ? <Loader2 size={11} className="shrink-0 animate-spin" /> : null}
+                    <span className="min-w-0 truncate font-semibold">{preset.title}</span>
+                  </span>
+                  <span className="mt-1 block truncate text-[9px] text-slate-500 dark:text-slate-400">
+                    {preset.aspect_ratio} · {preset.applicable_image_type}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-2 space-y-1 text-[10px] leading-4 text-slate-500 dark:text-slate-400" data-delivery-preset-meta>
+            <div className="flex flex-wrap gap-x-2 gap-y-0.5">
+              <span className="font-semibold text-slate-700 dark:text-slate-200">{t("workbench.rendition.presetsCustom")}</span>
+              <span>{t("workbench.rendition.presetsCustomHint")}</span>
+            </div>
+            {metadataPreset ? (
+              <>
+                <div>{t("workbench.rendition.presetReviewedAt", { date: metadataPreset.reviewed_at })}</div>
+                <div className="truncate" title={metadataPreset.source}>{t("workbench.rendition.presetSource", { source: metadataPreset.source })}</div>
+                <p>{metadataPreset.disclaimer}</p>
+              </>
+            ) : (
+              <p>{t("workbench.rendition.presetDisclaimer")}</p>
+            )}
+            {applyError ? <p className="text-red-600 dark:text-red-300" role="alert">{t("workbench.rendition.presetApplyFailed")}: {applyError}</p> : null}
+          </div>
+        </>
+      ) : null}
+    </section>
   );
 }
 

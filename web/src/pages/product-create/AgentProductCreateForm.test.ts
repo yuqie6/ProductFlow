@@ -2,7 +2,11 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import type { AgentProductImageTypeKey, AgentProductWorkspaceOptions } from "../../lib/types";
+import type {
+  AgentProductImageTypeKey,
+  AgentProductWorkspaceOptions,
+  DeliveryPresetCatalog,
+} from "../../lib/types";
 import { AgentProductCreateForm } from "./AgentProductCreateForm";
 import { defaultCreateOutputDraft } from "./createIntake";
 
@@ -46,6 +50,28 @@ const options: AgentProductWorkspaceOptions = {
   },
 };
 
+const deliveryPresetCatalog: DeliveryPresetCatalog = {
+  supports_custom: true,
+  items: [{
+    key: "jd_hero",
+    title: "京东主图",
+    aspect_ratio: "1:1",
+    applicable_image_type: "hero",
+    reviewed_at: "2026-08-24",
+    source: "official catalog",
+    disclaimer: "Default only",
+    delivery_spec: {
+      width: 1200,
+      height: 1200,
+      format: "png",
+      max_byte_size: null,
+      fit: "contain",
+      background_color: null,
+      crop_anchor: null,
+    },
+  }],
+};
+
 function renderForm(
   selections: Array<{ key: AgentProductImageTypeKey; quantity: number }> = [],
   input: {
@@ -54,6 +80,10 @@ function renderForm(
     isSubmitting?: boolean;
     editingLocked?: boolean;
     primaryActionLabel?: string;
+    deliveryPresetKey?: string | null;
+    deliveryPresetCatalog?: DeliveryPresetCatalog | null;
+    isDeliveryPresetLoading?: boolean;
+    isDeliveryPresetError?: boolean;
   } = {},
 ): string {
   return renderToStaticMarkup(
@@ -63,6 +93,10 @@ function renderForm(
       options,
       selections,
       referenceFiles: [],
+      deliveryPresetCatalog: input.deliveryPresetCatalog ?? null,
+      deliveryPresetKey: input.deliveryPresetKey ?? null,
+      isDeliveryPresetLoading: input.isDeliveryPresetLoading ?? false,
+      isDeliveryPresetError: input.isDeliveryPresetError ?? false,
       isOptionsLoading: false,
       isOptionsError: false,
       isSubmitting: input.isSubmitting ?? false,
@@ -75,11 +109,14 @@ function renderForm(
       onAspectRatioChange: () => undefined,
       onAddReferenceFiles: () => undefined,
       onRemoveReferenceFile: () => undefined,
+      onDeliveryPresetChange: () => undefined,
+      onRetryDeliveryPresets: () => undefined,
       brief: "无线洗地机，面向都市白领",
       outputDraft: defaultCreateOutputDraft(),
       onBriefChange: () => undefined,
       onOutputChange: () => undefined,
       onRetryOptions: () => undefined,
+      onApplyRecommendedSet: () => undefined,
       onSubmit: () => undefined,
     }),
   );
@@ -119,6 +156,8 @@ describe("AgentProductCreateForm", () => {
     expect(markup).toContain("data-create-form-bottom-spacer");
     expect(markup).toContain("pb-56");
     expect(markup).toContain("h-28");
+    expect(markup).toContain('data-agent-apply-recommended-set="true"');
+    expect(markup).toContain("应用推荐套图");
   });
 
   it("makes the product name read-only after a workspace persists and disables it while submitting", () => {
@@ -172,5 +211,45 @@ describe("AgentProductCreateForm", () => {
     expect(markup).toContain("3:4");
     expect(markup).toContain("1:1");
     expect(markup).not.toContain("先选择图片类型");
+  });
+
+  it("disables the recommended set command when editing is locked or all recommendations are selected", () => {
+    const lockedMarkup = renderForm([{ key: "hero", quantity: 1 }], { editingLocked: true });
+    const submittingMarkup = renderForm([{ key: "hero", quantity: 1 }], { isSubmitting: true });
+    const completeMarkup = renderForm([
+      { key: "hero", quantity: 1 },
+      { key: "detail", quantity: 1 },
+      { key: "scene", quantity: 1 },
+      { key: "selling_point", quantity: 1 },
+    ]);
+
+    const lockedButton = lockedMarkup.match(/<button[^>]+data-agent-apply-recommended-set[^>]*>/)?.[0] ?? "";
+    const submittingButton = submittingMarkup.match(/<button[^>]+data-agent-apply-recommended-set[^>]*>/)?.[0] ?? "";
+    const completeButton = completeMarkup.match(/<button[^>]+data-agent-apply-recommended-set[^>]*>/)?.[0] ?? "";
+    expect(lockedButton).toContain('disabled=""');
+    expect(submittingButton).toContain('disabled=""');
+    expect(completeButton).toContain('disabled=""');
+  });
+
+  it("shows selected platform governance metadata", () => {
+    const markup = renderForm([], {
+      deliveryPresetCatalog,
+      deliveryPresetKey: "jd_hero",
+    });
+
+    expect(markup).toContain('data-delivery-preset-control="true"');
+    expect(markup).toContain('id="agent-create-delivery-preset"');
+    expect(markup).toContain("京东主图");
+    expect(markup).toContain("2026-08-24");
+    expect(markup).toContain("official catalog");
+    expect(markup).toContain("Default only");
+  });
+
+  it("keeps submit available when the optional platform catalog fails", () => {
+    const markup = renderForm([], { isDeliveryPresetError: true });
+    const submitTag = markup.match(/<button type="submit"[^>]*>/)?.[0] ?? "";
+
+    expect(markup).toContain("平台规格加载失败");
+    expect(submitTag).not.toMatch(/\sdisabled(?:=|\s|>)/);
   });
 });

@@ -193,4 +193,20 @@ describe("pending draft recovery", () => {
     expect(legacy).toEqual({ name: "Legacy product", idempotencyKey: "legacy-key" });
     expect(resolveWorkspaceRestorationId(null, legacy)).toBe("");
   });
+
+  it("restores an optional delivery preset while keeping legacy pending records unchanged", () => {
+    expect(parsePendingDraft(JSON.stringify({
+      name: "Preset product",
+      idempotencyKey: "preset-key",
+      deliveryPresetKey: "jd_hero",
+    }))).toEqual({
+      name: "Preset product",
+      idempotencyKey: "preset-key",
+      deliveryPresetKey: "jd_hero",
+    });
+    expect(parsePendingDraft(JSON.stringify({
+      name: "Legacy product",
+      idempotencyKey: "legacy-key",
+    }))).toEqual({ name: "Legacy product", idempotencyKey: "legacy-key" });
+  });
 });

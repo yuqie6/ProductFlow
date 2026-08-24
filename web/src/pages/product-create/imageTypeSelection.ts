@@ -8,6 +8,7 @@ import type {
   AgentProductImageTypeKey,
   AgentProductSelectionV1,
   AgentProductWorkspaceLimits,
+  DeliveryPresetCatalog,
 } from "../../lib/types";
 
 export interface AgentImageTypeSelectionDraft {
@@ -74,6 +75,21 @@ export const CREATE_TYPE_ASPECT_RATIOS = IMAGE_TYPE_ASPECT_RATIOS;
 
 export const CREATE_ASPECT_RATIO_PRESETS = ["1:1", "4:5", "3:4", "9:16", "4:3", "16:9"] as const;
 
+export const RECOMMENDED_AGENT_IMAGE_TYPE_KEYS = ["hero", "detail", "scene", "selling_point"] as const;
+
+export type RecommendedImageSetApplication =
+  | {
+      ok: true;
+      selections: AgentImageTypeSelectionDraft[];
+      addedKeys: AgentProductImageTypeKey[];
+    }
+  | {
+      ok: false;
+      reason: "complete" | "unavailable" | "capacity";
+      selections: readonly AgentImageTypeSelectionDraft[];
+      addedKeys: AgentProductImageTypeKey[];
+    };
+
 export function defaultAspectRatioForType(key: AgentProductImageTypeKey): string {
   return familyDefaultAspectRatio(key);
 }
@@ -119,13 +135,67 @@ export function agentImageTotal(current: readonly AgentImageTypeSelectionDraft[]
   return current.reduce((total, item) => total + (isEvidenceImageType(item.key) ? 0 : item.quantity), 0);
 }
 
+export function applyRecommendedImageSet(input: {
+  current: readonly AgentImageTypeSelectionDraft[];
+  catalogKeys: readonly AgentProductImageTypeKey[];
+  limits: Pick<AgentProductWorkspaceLimits, "min_images_per_type" | "max_total_images">;
+}): RecommendedImageSetApplication {
+  const catalogKeys = new Set(input.catalogKeys);
+  const selectedKeys = new Set(input.current.map((item) => item.key));
+  const availableKeys = RECOMMENDED_AGENT_IMAGE_TYPE_KEYS.filter((key) => catalogKeys.has(key));
+  const missingKeys = availableKeys.filter((key) => !selectedKeys.has(key));
+
+  if (missingKeys.length === 0) {
+    return {
+      ok: false,
+      reason: availableKeys.length === 0 ? "unavailable" : "complete",
+      selections: input.current,
+      addedKeys: [],
+    };
+  }
+
+  const addedImages = missingKeys.length * input.limits.min_images_per_type;
+  if (agentImageTotal(input.current) + addedImages > input.limits.max_total_images) {
+    return {
+      ok: false,
+      reason: "capacity",
+      selections: input.current,
+      addedKeys: [],
+    };
+  }
+
+  return {
+    ok: true,
+    selections: [
+      ...input.current,
+      ...missingKeys.map((key) => ({
+        key,
+        quantity: input.limits.min_images_per_type,
+        aspectRatio: defaultAspectRatioForType(key),
+      })),
+    ],
+    addedKeys: [...missingKeys],
+  };
+}
+
 export function buildAgentProductSelection(
   current: readonly AgentImageTypeSelectionDraft[],
+  deliveryPresetKey?: string | null,
 ): AgentProductSelectionV1 {
   return {
     schema_version: 1,
     image_types: current.map((item, order) => ({ key: item.key, quantity: item.quantity, order })),
+    ...(deliveryPresetKey?.trim() ? { delivery_preset_key: deliveryPresetKey.trim() } : {}),
   };
+}
+
+export function resolveDeliveryPresetKey(
+  catalog: DeliveryPresetCatalog | null | undefined,
+  deliveryPresetKey: string | null | undefined,
+): string | null {
+  const key = deliveryPresetKey?.trim();
+  if (!key || !catalog?.items.some((item) => item.key === key)) return null;
+  return key;
 }
 
 export function validateAgentProductWorkspaceInput(input: {

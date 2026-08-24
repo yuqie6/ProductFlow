@@ -5,8 +5,18 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 
 import { ApiError } from "../../lib/api";
-import type { CanonicalProductDetail, GraphProjection } from "../../lib/types";
-import { GraphAgentPanel, GraphWorkbenchPage } from "./GraphWorkbenchPage";
+import type {
+  CanonicalProductDetail,
+  GraphProjection,
+  WorkflowRecipePreview,
+  WorkflowRecipeSummary,
+} from "../../lib/types";
+import {
+  buildWorkflowRecipeApplyInput,
+  clearWorkflowRecipeIdempotencyKey,
+  GraphAgentPanel,
+  GraphWorkbenchPage,
+} from "./GraphWorkbenchPage";
 
 describe("GraphAgentPanel", () => {
   it("renders the Agent chrome instead of an empty sidebar slot", () => {
@@ -57,5 +67,30 @@ describe("GraphAgentPanel", () => {
     ));
     expect(markup).toContain('data-sidebar-tool="recipes"');
     expect(markup).toContain("工作流预设");
+  });
+});
+
+describe("Graph recipe apply contract", () => {
+  it("uses the confirmed preview revision and digest, then clears only failed apply keys", () => {
+    const recipe = {
+      current_version: { version: 4 },
+    } as WorkflowRecipeSummary;
+    const preview = {
+      base_graph_revision: 12,
+      preview_digest: "a".repeat(64),
+    } as WorkflowRecipePreview;
+    const keys = new Map([["r1", "key-1"]]);
+
+    expect(buildWorkflowRecipeApplyInput(recipe, preview, "key-1")).toEqual({
+      expected_recipe_version: 4,
+      expected_graph_revision: 12,
+      preview_digest: "a".repeat(64),
+      idempotency_key: "key-1",
+    });
+
+    clearWorkflowRecipeIdempotencyKey(keys, "archive", "r1");
+    expect(keys.get("r1")).toBe("key-1");
+    clearWorkflowRecipeIdempotencyKey(keys, "apply", "r1");
+    expect(keys.has("r1")).toBe(false);
   });
 });

@@ -264,6 +264,8 @@ export function WorkflowRecipeDialog({
       if (event.target === event.currentTarget && !busy) onClose();
     }}>
       <form
+        role="dialog"
+        aria-modal="true"
         aria-labelledby={headingId}
         className="w-full max-w-lg overflow-hidden rounded-lg border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:!bg-[#10151d]"
         onSubmit={(event) => {

@@ -20,8 +20,10 @@ import {
   type PendingDraftState,
 } from "./product-create/intakeSubmission";
 import {
+  applyRecommendedImageSet,
   aspectRatioForSelection,
   buildAgentProductSelection,
+  resolveDeliveryPresetKey,
   toggleAgentImageType,
   updateAgentImageTypeAspectRatio,
   updateAgentImageTypeQuantity,
@@ -86,6 +88,14 @@ function readPendingDraft(): PendingDraftState | null {
   return pendingDraft;
 }
 
+function clearPendingDeliveryPreset(): void {
+  const pendingDraft = parsePendingDraft(readSessionValue(PENDING_DRAFT_STORAGE_KEY));
+  if (!pendingDraft?.deliveryPresetKey) return;
+  const nextPendingDraft = { ...pendingDraft };
+  delete nextPendingDraft.deliveryPresetKey;
+  writeSessionValue(PENDING_DRAFT_STORAGE_KEY, JSON.stringify(nextPendingDraft));
+}
+
 function intakeStorageKey(conversationId: string): string {
   return `${INTAKE_STORAGE_KEY_PREFIX}${conversationId}`;
 }
@@ -144,6 +154,9 @@ export function AgentProductCreatePage() {
   const [localWorkspace, setLocalWorkspace] = useState<AgentProductWorkspaceSnapshot | null>(null);
   const [selections, setSelections] = useState<AgentImageTypeSelectionDraft[]>([]);
   const [referenceFiles, setReferenceFiles] = useState<File[]>([]);
+  const [deliveryPresetKey, setDeliveryPresetKey] = useState<string | null>(
+    pendingDraft?.deliveryPresetKey ?? null,
+  );
   const [error, setError] = useState("");
   const [reconciliationRequired, setReconciliationRequired] = useState(false);
   const [leaving, setLeaving] = useState(false);
@@ -173,6 +186,20 @@ export function AgentProductCreatePage() {
     queryFn: api.getAgentProductWorkspaceOptions,
   });
   const options = optionsQuery.data ?? null;
+  const deliveryPresetsQuery = useQuery({
+    queryKey: ["delivery-presets"],
+    queryFn: api.getDeliveryPresets,
+    retry: false,
+  });
+  const deliveryPresetCatalog = deliveryPresetsQuery.isError ? null : deliveryPresetsQuery.data ?? null;
+  const effectiveDeliveryPresetKey = resolveDeliveryPresetKey(deliveryPresetCatalog, deliveryPresetKey);
+
+  useEffect(() => {
+    if (!deliveryPresetKey || deliveryPresetsQuery.isLoading || effectiveDeliveryPresetKey) return;
+    clearPendingDeliveryPreset();
+    setDeliveryPresetKey(null);
+    setError(t("agentCreate.deliveryPreset.unavailable"));
+  }, [deliveryPresetKey, deliveryPresetsQuery.isLoading, effectiveDeliveryPresetKey, t]);
 
   useEffect(() => {
     void import("./workbench/ProductWorkbenchPage");
@@ -223,6 +250,7 @@ export function AgentProductCreatePage() {
         ? { agentSessionId: nextWorkspace.conversation.session_id }
         : {}),
       ...(nextWorkspace.task_id ? { agentTaskId: nextWorkspace.task_id } : {}),
+      ...(effectiveDeliveryPresetKey ? { deliveryPresetKey: effectiveDeliveryPresetKey } : {}),
     } satisfies PendingDraftState;
     writeSessionValue(PENDING_DRAFT_STORAGE_KEY, JSON.stringify(retainedPending));
     setLocalWorkspace(nextWorkspace);
@@ -250,7 +278,7 @@ export function AgentProductCreatePage() {
     intakeIdempotencyRef.current = idempotencyState;
     return api.finalizeAgentProductWorkspaceIntake({
       conversation_id: targetConversationId,
-      selection: buildAgentProductSelection(selections),
+      selection: buildAgentProductSelection(selections, effectiveDeliveryPresetKey),
       images: referenceFiles,
       idempotency_key: idempotencyState.idempotencyKey,
       task_id: agentTaskId,
@@ -285,6 +313,7 @@ export function AgentProductCreatePage() {
         ...(workspace ? { conversationId: workspace.conversation.id } : {}),
         ...(agentSessionId ? { agentSessionId } : {}),
         ...(agentTaskId ? { agentTaskId } : {}),
+        ...(effectiveDeliveryPresetKey ? { deliveryPresetKey: effectiveDeliveryPresetKey } : {}),
       } satisfies PendingDraftState;
       if (!workspace) writeSessionValue(PENDING_DRAFT_STORAGE_KEY, JSON.stringify(pending));
       return submitAgentProductIntake({
@@ -342,6 +371,7 @@ export function AgentProductCreatePage() {
         ...(workspace ? { conversationId: workspace.conversation.id } : {}),
         ...(agentSessionId ? { agentSessionId } : {}),
         ...(agentTaskId ? { agentTaskId } : {}),
+        ...(effectiveDeliveryPresetKey ? { deliveryPresetKey: effectiveDeliveryPresetKey } : {}),
       } satisfies PendingDraftState;
       if (workspace) {
         return workspace;
@@ -447,6 +477,7 @@ export function AgentProductCreatePage() {
         })),
         sourceNote: brief.trim(),
         generationSpec: buildCreateGenerationSpec(outputDraft) ?? undefined,
+        ...(effectiveDeliveryPresetKey ? { deliveryPresetKey: effectiveDeliveryPresetKey } : {}),
       });
     },
     onSuccess: (result) => {
@@ -480,6 +511,12 @@ export function AgentProductCreatePage() {
       setError(t("agentCreate.error.outputInvalid"));
       return;
     }
+    if (deliveryPresetKey && !effectiveDeliveryPresetKey) {
+      clearPendingDeliveryPreset();
+      setDeliveryPresetKey(null);
+      setError(t("agentCreate.deliveryPreset.unavailable"));
+      return;
+    }
     setError("");
     directCreateMutation.mutate();
   };
@@ -495,8 +532,13 @@ export function AgentProductCreatePage() {
       setError(t("agentCreate.error.nameRequired"));
       return;
     }
+    if (deliveryPresetKey && !effectiveDeliveryPresetKey) {
+      clearPendingDeliveryPreset();
+      setDeliveryPresetKey(null);
+      setError(t("agentCreate.deliveryPreset.unavailable"));
+      return;
+    }
     if (!options) {
-      if (optionsQuery.isLoading) return;
       setError("");
       startAgentMutation.mutate();
       return;
@@ -524,6 +566,19 @@ export function AgentProductCreatePage() {
     setError("");
   };
 
+  const handleApplyRecommendedSet = () => {
+    if (!options) return;
+    const result = applyRecommendedImageSet({
+      current: selections,
+      catalogKeys: options.image_types.map((option) => option.key),
+      limits: options.limits,
+    });
+    if (!result.ok) return;
+    setSelections(result.selections);
+    rotateIntakeIdempotencyKey();
+    setError("");
+  };
+
   const handleQuantityChange = (key: AgentProductImageTypeKey, quantity: number) => {
     setSelections((current) => updateAgentImageTypeQuantity(current, key, quantity));
     rotateIntakeIdempotencyKey();
@@ -532,6 +587,18 @@ export function AgentProductCreatePage() {
 
   const handleAspectRatioChange = (key: AgentProductImageTypeKey, aspectRatio: string) => {
     setSelections((current) => updateAgentImageTypeAspectRatio(current, key, aspectRatio));
+    setError("");
+  };
+
+  const handleDeliveryPresetChange = (nextKey: string | null) => {
+    const resolvedKey = resolveDeliveryPresetKey(deliveryPresetCatalog, nextKey);
+    if (nextKey && !resolvedKey) {
+      clearPendingDeliveryPreset();
+      setDeliveryPresetKey(null);
+      setError(t("agentCreate.deliveryPreset.unavailable"));
+      return;
+    }
+    setDeliveryPresetKey(resolvedKey);
     setError("");
   };
 
@@ -689,6 +756,10 @@ export function AgentProductCreatePage() {
               options={options}
               selections={selections}
               referenceFiles={referenceFiles}
+              deliveryPresetCatalog={deliveryPresetCatalog}
+              deliveryPresetKey={deliveryPresetKey}
+              isDeliveryPresetLoading={deliveryPresetsQuery.isLoading}
+              isDeliveryPresetError={deliveryPresetsQuery.isError}
               isOptionsLoading={optionsQuery.isLoading}
               isOptionsError={optionsQuery.isError}
               isSubmitting={isSubmitting}
@@ -703,6 +774,8 @@ export function AgentProductCreatePage() {
               onAspectRatioChange={handleAspectRatioChange}
               onAddReferenceFiles={handleAddReferenceFiles}
               onRemoveReferenceFile={handleRemoveReferenceFile}
+              onDeliveryPresetChange={handleDeliveryPresetChange}
+              onRetryDeliveryPresets={() => void deliveryPresetsQuery.refetch()}
               brief={brief}
               outputDraft={outputDraft}
               onBriefChange={(value) => {
@@ -714,6 +787,7 @@ export function AgentProductCreatePage() {
                 setError("");
               }}
               onRetryOptions={() => void optionsQuery.refetch()}
+              onApplyRecommendedSet={handleApplyRecommendedSet}
               onSubmit={handleSubmit}
               onDirectCreate={workspace ? undefined : handleDirectCreate}
               isDirectCreating={directCreateMutation.isPending}

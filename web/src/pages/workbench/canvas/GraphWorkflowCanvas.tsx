@@ -119,6 +119,7 @@ interface GraphNodeData extends Record<string, unknown> {
   lastRunAt: string | null;
   retryable: boolean;
   runBusy: boolean;
+  runDisabled: boolean;
   structureBusy: boolean;
   onRun: (node: GraphNode) => void;
   onRunToNode: (node: GraphNode) => void;
@@ -144,6 +145,7 @@ interface GraphGroupData extends Record<string, unknown> {
   kind: "group";
   group: GraphGroup;
   bounds: { x: number; y: number; width: number; height: number };
+  runDisabled: boolean;
   structureBusy: boolean;
   onEnter: (groupId: string) => void;
   onRename: (groupId: string, title: string) => void;
@@ -317,14 +319,14 @@ export const GraphNodeCard = memo(function GraphNodeCard({
           <>
             <WorkflowCanvasNodeToolbarButton
               label={t("graph.canvas.runNode")}
-              disabled={data.runBusy || running || data.structureBusy}
+              disabled={data.runBusy || data.runDisabled || running || data.structureBusy}
               onClick={() => data.onRun(node)}
             >
               {data.runBusy || running ? <Loader2 size={16} className="animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <Play size={16} aria-hidden="true" />}
             </WorkflowCanvasNodeToolbarButton>
             <WorkflowCanvasNodeToolbarButton
               label={t("graph.runs.scope.toNode")}
-              disabled={data.runBusy || running || data.structureBusy}
+              disabled={data.runBusy || data.runDisabled || running || data.structureBusy}
               onClick={() => data.onRunToNode(node)}
             >
               <ChevronsRight size={16} aria-hidden="true" />
@@ -420,7 +422,7 @@ export const GraphGroupCard = memo(function GraphGroupCard({
   selected,
 }: NodeProps<Node<GraphGroupData>>) {
   const { t } = useI18n();
-  const { group, bounds, structureBusy, onEnter, onRename, onDissolve, onRunShot } = data;
+  const { group, bounds, runDisabled, structureBusy, onEnter, onRename, onDissolve, onRunShot } = data;
   const [draft, setDraft] = useState(group.title);
   const [editing, setEditing] = useState(false);
   useEffect(() => {
@@ -487,7 +489,7 @@ export const GraphGroupCard = memo(function GraphGroupCard({
           <button
             type="button"
             className="nodrag nowheel nopan flex h-7 w-7 items-center justify-center rounded-md text-slate-500 hover:bg-white hover:text-slate-800 disabled:opacity-40 dark:hover:bg-slate-900 dark:hover:text-slate-100"
-            disabled={structureBusy}
+            disabled={structureBusy || runDisabled}
             title={t("graph.canvas.runShot")}
             aria-label={t("graph.canvas.runShot")}
             data-run-shot=""
@@ -633,6 +635,7 @@ export function GraphWorkflowCanvas({
   catalog,
   selectedNodeIds,
   busy,
+  runDisabled = false,
   nodeStatuses,
   nodePresentations = {},
   runningNodeId,
@@ -669,6 +672,7 @@ export function GraphWorkflowCanvas({
   catalog: GraphNodeCatalog | null;
   selectedNodeIds: string[];
   busy: boolean;
+  runDisabled?: boolean;
   nodeStatuses: Record<string, WorkflowNodeStatus>;
   nodePresentations?: Record<string, GraphNodeRunPresentation>;
   runningNodeId: string | null;
@@ -779,6 +783,7 @@ export function GraphWorkflowCanvas({
           kind: "group" as const,
           group,
           bounds,
+          runDisabled,
           structureBusy: busy,
           onEnter: onEnterGroup,
           onRename: onRenameGroup,
@@ -803,6 +808,7 @@ export function GraphWorkflowCanvas({
         lastRunAt: nodePresentations[node.id]?.lastRunAt ?? null,
         retryable: nodePresentations[node.id]?.retryable ?? false,
         runBusy: runningNodeId === node.id,
+        runDisabled,
         structureBusy: busy,
         onRun: (item: GraphNode) => onRunNode(item.id),
         onRunToNode: (item: GraphNode) => onRunToNode?.(item.id),
@@ -827,7 +833,7 @@ export function GraphWorkflowCanvas({
       },
     }));
     return [...groups, ...nodes];
-  }, [busy, catalog, displayGraph, nodePresentations, nodeStatuses, onBindNode, onDeleteNode, onDeleteSelected, onDissolveGroup, onDuplicateNode, onEnterGroup, onGroupSelected, onRenameGroup, onRunNode, onRunShot, onRunToNode, onSaveRecipeNode, onSaveSelection, proposalNodeStates, runningNodeId, selectNodeFromPointer, selectedNodeIds, t, viewGraph]);
+  }, [busy, catalog, displayGraph, nodePresentations, nodeStatuses, onBindNode, onDeleteNode, onDeleteSelected, onDissolveGroup, onDuplicateNode, onEnterGroup, onGroupSelected, onRenameGroup, onRunNode, onRunShot, onRunToNode, onSaveRecipeNode, onSaveSelection, proposalNodeStates, runDisabled, runningNodeId, selectNodeFromPointer, selectedNodeIds, t, viewGraph]);
   const selectedNodeIdSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
   const graphEdges = useMemo<GraphCanvasEdge[]>(
     () => viewGraph.edges.map((edge) => ({
@@ -1105,4 +1111,3 @@ export function GraphWorkflowCanvas({
     </div>
   );
 }
-

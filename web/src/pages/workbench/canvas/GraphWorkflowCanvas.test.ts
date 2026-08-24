@@ -67,7 +67,12 @@ function graphWith(node: GraphNode): GraphProjection {
   };
 }
 
-function renderNodeCard(node: GraphNode, connectable = true): string {
+function renderNodeCard(
+  node: GraphNode,
+  connectable = true,
+  runDisabled = false,
+  selected = false,
+): string {
   const graph = graphWith(node);
   const props: ComponentProps<typeof GraphNodeCard> = {
     id: node.id,
@@ -80,6 +85,7 @@ function renderNodeCard(node: GraphNode, connectable = true): string {
       lastRunAt: null,
       retryable: false,
       runBusy: false,
+      runDisabled,
       structureBusy: false,
       onRun: () => undefined,
       onRunToNode: () => undefined,
@@ -98,7 +104,7 @@ function renderNodeCard(node: GraphNode, connectable = true): string {
     zIndex: 0,
     selectable: true,
     deletable: false,
-    selected: false,
+    selected,
     draggable: true,
     isConnectable: connectable,
     positionAbsoluteX: 0,
@@ -176,6 +182,7 @@ describe("graph workflow node ports", () => {
         lastRunAt: "2026-08-21T00:00:00Z",
         retryable: true,
         runBusy: false,
+        runDisabled: false,
         structureBusy: false,
         onRun: () => undefined,
         onRunToNode: () => undefined,
@@ -224,6 +231,7 @@ describe("graph workflow node ports", () => {
         lastRunAt: null,
         retryable: false,
         runBusy: false,
+        runDisabled: false,
         structureBusy: false,
         onRun: () => undefined,
         onRunToNode: () => undefined,
@@ -272,6 +280,7 @@ describe("graph workflow node ports", () => {
         lastRunAt: null,
         retryable: false,
         runBusy: false,
+        runDisabled: false,
         structureBusy: false,
         onRun: () => undefined,
         onRunToNode: () => undefined,
@@ -381,6 +390,7 @@ describe("graph group chrome", () => {
         kind: "group",
         group: { id: "group-1", title: "主图组", member_ids: ["prompt"] },
         bounds: { x: 0, y: 0, width: 320, height: 280 },
+        runDisabled: false,
         structureBusy: false,
         onEnter: () => undefined,
         onRename: () => undefined,
@@ -406,5 +416,40 @@ describe("graph group chrome", () => {
     expect(handleMarkup(markup)).toEqual([]);
     expect(markup).not.toContain("运行该节点");
     expect(markup).not.toContain("graph.canvas.runNode");
+  });
+
+  it("can disable the group run without locking group navigation", () => {
+    const props: ComponentProps<typeof GraphGroupCard> = {
+      id: "group:group-1",
+      type: "graph-group",
+      data: {
+        kind: "group",
+        group: { id: "group-1", title: "主图组", member_ids: ["prompt"] },
+        bounds: { x: 0, y: 0, width: 320, height: 280 },
+        runDisabled: true,
+        structureBusy: false,
+        onEnter: () => undefined,
+        onRename: () => undefined,
+        onDissolve: () => undefined,
+        onRunShot: () => undefined,
+      },
+      dragging: false,
+      zIndex: 0,
+      selectable: true,
+      deletable: false,
+      selected: false,
+      draggable: true,
+      isConnectable: false,
+      positionAbsoluteX: 0,
+      positionAbsoluteY: 0,
+    };
+    const markup = renderToStaticMarkup(
+      createElement(ReactFlowProvider, null, createElement(GraphGroupCard, props)),
+    );
+    const runButton = markup.match(/<button[^>]*data-run-shot=""[^>]*>/)?.[0] ?? "";
+    const enterButton = markup.match(/<button[^>]*data-enter-group=""[^>]*>/)?.[0] ?? "";
+
+    expect(runButton).toContain('disabled=""');
+    expect(enterButton).not.toContain(' disabled=""');
   });
 });

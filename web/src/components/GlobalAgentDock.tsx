@@ -132,11 +132,24 @@ export function openGlobalAgent(options?: { tab?: GlobalAgentDockTab; sessionId?
   }
 }
 
+/**
+ * The product workbench owns an embedded Agent conversation. Keep this route
+ * check local to the Dock so its launcher does not depend on an obsolete URL
+ * segment that is no longer present in the router.
+ */
+export function isProductWorkbenchPath(pathname: string): boolean {
+  const segments = pathname.split("/").filter(Boolean);
+  return segments.length === 2 && segments[0] === "products" && segments[1] !== "new";
+}
+
+export function shouldRenderGlobalAgentLauncher(pathname: string, open: boolean): boolean {
+  return !isProductWorkbenchPath(pathname) || open;
+}
+
 export function GlobalAgentDock() {
   const { t } = useI18n();
   const navigate = useNavigate();
   const location = useLocation();
-  const isWorkbench = location.pathname.startsWith("/products/") && location.pathname.includes("/workbench");
   const queryClient = useQueryClient();
   const registeredPageContext = useAgentPageContext();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -1139,7 +1152,7 @@ export function GlobalAgentDock() {
         </section>
       ) : null}
 
-      {!isWorkbench || open ? (
+      {shouldRenderGlobalAgentLauncher(location.pathname, open) ? (
         <button
           type="button"
           data-global-agent-launcher

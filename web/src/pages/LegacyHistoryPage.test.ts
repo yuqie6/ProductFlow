@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { LegacyArchiveKind, LegacyArchiveListItem } from "../lib/types";
 import {
   getOrCreateLegacyArchiveRebuildKey,
+  legacyArchiveRebuildPath,
   resolveLegacyArchiveRebuildTarget,
 } from "./LegacyHistoryPage";
 
@@ -59,5 +60,12 @@ describe("legacy archive Agent rebuild decisions", () => {
       "legacy-rebuild:request-2",
     );
     expect(createId).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns the exact Agent session route created by a rebuild", () => {
+    expect(legacyArchiveRebuildPath("product/1", "session/1")).toBe(
+      "/products/product%2F1?agent_session_id=session%2F1",
+    );
+    expect(legacyArchiveRebuildPath("product/1", null)).toBe("/products/product%2F1");
   });
 });

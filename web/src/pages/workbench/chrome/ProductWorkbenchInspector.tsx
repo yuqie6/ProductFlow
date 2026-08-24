@@ -47,8 +47,8 @@ interface ProductWorkbenchInspectorProps {
   collapsedDataAttribute?: `data-${string}`;
 }
 
-export function useProductWorkbenchInspectorState() {
-  const [collapsed, setCollapsed] = useState(false);
+export function useProductWorkbenchInspectorState(initialCollapsed = false) {
+  const [collapsed, setCollapsed] = useState(initialCollapsed);
   const [width, setWidth] = useState(() =>
     clamp(
       readStoredNumber(INSPECTOR_WIDTH_STORAGE_KEY, 360),

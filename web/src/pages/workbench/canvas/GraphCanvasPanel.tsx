@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Play, Redo2, Undo2 } from "lucide-react";
+import { ChevronRight, Loader2, Play, Redo2, Undo2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ConfirmDialog } from "../../../components/ConfirmDialog";
@@ -49,6 +49,9 @@ import {
   shotRunRequests,
   waitUntilGraphRunNotRunning,
 } from "./shotChangeSet";
+import { GraphShotList } from "./GraphShotList";
+import type { LocalImageEditOpenRequest } from "../local-edit/LocalImageEditController";
+import { graphHasImageGenerationGroups, projectGraphShots } from "./shotProjection";
 
 export interface GraphCanvasActions {
   createNode: (nodeType: GraphNodeType) => void;
@@ -108,6 +111,7 @@ export function GraphCanvasPanel({
   onBindNode,
   onBusyChange,
   onBeforeRun,
+  onOpenLocalEdit,
   chromeCollapsed = false,
   onToggleChrome,
 }: {
@@ -121,6 +125,7 @@ export function GraphCanvasPanel({
   onBindNode?: (nodeId: string) => void;
   onBusyChange?: (busy: boolean) => void;
   onBeforeRun?: () => Promise<void>;
+  onOpenLocalEdit?: (request: LocalImageEditOpenRequest) => void;
   chromeCollapsed?: boolean;
   onToggleChrome?: () => void;
 }) {
@@ -155,6 +160,12 @@ export function GraphCanvasPanel({
   } | null>(null);
   const [recipeError, setRecipeError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [mainView, setMainView] = useState<"shots" | "canvas">(
+    () => graphHasImageGenerationGroups(graph) ? "shots" : "canvas",
+  );
+  const mainViewGraphIdRef = useRef(graph.id);
+  const [runningShotGroupId, setRunningShotGroupId] = useState<string | null>(null);
+  const runningShotGroupRef = useRef<string | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
   graphRef.current = graph;
   catalogRef.current = catalog;
@@ -315,6 +326,21 @@ export function GraphCanvasPanel({
   }, [nodePresentations]);
   const runningNodeId = runsQuery.data?.items.find((run) => run.status === "running")?.node_runs
     .find((nodeRun) => nodeRun.status === "running")?.node_id ?? null;
+  const shotProjections = useMemo(
+    () => projectGraphShots(graph, runsQuery.data?.items ?? []),
+    [graph, runsQuery.data?.items],
+  );
+  const hasShotGroups = shotProjections.length > 0;
+  const graphRunIsBusy = graphRunsAreLive(runsQuery.data?.items);
+
+  useEffect(() => {
+    if (mainViewGraphIdRef.current !== graph.id) {
+      mainViewGraphIdRef.current = graph.id;
+      setMainView(hasShotGroups ? "shots" : "canvas");
+      return;
+    }
+    if (!hasShotGroups) setMainView("canvas");
+  }, [graph.id, hasShotGroups]);
 
   const applyAsync = useCallback(async (summary: string, operations: GraphChangeSet["operations"]) => {
     if (!operations.length) return null;
@@ -603,6 +629,36 @@ export function GraphCanvasPanel({
     );
   }, [onBeforeRun, productId, runMutation]);
 
+  const runShotWithBusy = useCallback(async (groupId: string) => {
+    if (runningShotGroupRef.current !== null) return;
+    runningShotGroupRef.current = groupId;
+    setRunningShotGroupId(groupId);
+    try {
+      await runShot(groupId);
+    } finally {
+      if (runningShotGroupRef.current === groupId) {
+        runningShotGroupRef.current = null;
+        setRunningShotGroupId(null);
+      }
+    }
+  }, [runShot]);
+
+  const handleShotRun = useCallback((groupId: string) => {
+    void runShotWithBusy(groupId).catch((runError: unknown) => {
+      showNotice(runError instanceof ApiError && runError.detail ? runError.detail : t("workbench.error.run"));
+    });
+  }, [runShotWithBusy, showNotice, t]);
+
+  const openShotNode = useCallback((nodeId: string) => {
+    void (async () => {
+      try {
+        await onSelect([nodeId]);
+      } catch {
+        return;
+      }
+    })();
+  }, [onSelect]);
+
   const handleViewportChange = useCallback((next: WorkflowCanvasViewport, groupId: string | null) => {
     if (!isWorkflowCanvasViewportScopeActive(enteredGroupIdRef.current, groupId)) return;
     setViewport(next);
@@ -755,6 +811,7 @@ export function GraphCanvasPanel({
   const structureBusy = applyMutation.isPending || undoMutation.isPending || redoMutation.isPending || proposalMutation.isPending;
   const runBusy = runMutation.isPending;
   const busy = structureBusy || runBusy;
+  const runControlsBusy = busy || runningShotGroupId !== null || graphRunIsBusy;
 
   useEffect(() => {
     onBusyChange?.(structureBusy);
@@ -773,8 +830,47 @@ export function GraphCanvasPanel({
       data-graph-canvas-panel
       className="relative flex h-full min-h-0 flex-col overflow-hidden bg-zinc-50 text-zinc-950 dark:bg-[#080c12] dark:text-slate-100"
     >
-      <div
-        className={`absolute z-20 flex items-center gap-1 rounded-xl border border-border-l1 bg-surface-raised/95 p-1 shadow-sm backdrop-blur ${compact ? "right-3 top-[4.75rem]" : "right-4 top-4"
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border-l1 bg-surface-raised px-3 py-2 sm:px-4">
+        <div
+          role="tablist"
+          aria-label={t("graph.canvas.ariaLabel")}
+          data-graph-view-switcher
+          className="inline-flex min-h-9 max-w-full items-center rounded-lg border border-border-l1 bg-surface-subtle p-0.5"
+        >
+          <button
+            type="button"
+            role="tab"
+            data-graph-view="shots"
+            aria-selected={mainView === "shots"}
+            disabled={!hasShotGroups}
+            onClick={() => setMainView("shots")}
+            className="min-h-8 rounded-md px-3 text-xs font-semibold text-text-secondary hover:text-text-primary aria-selected:bg-surface-raised aria-selected:text-text-primary disabled:cursor-not-allowed disabled:opacity-45 sm:px-4"
+          >
+            {t("graph.canvas.shotsView")}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            data-graph-view="canvas"
+            aria-selected={mainView === "canvas"}
+            onClick={() => setMainView("canvas")}
+            className="min-h-8 rounded-md px-3 text-xs font-semibold text-text-secondary hover:text-text-primary aria-selected:bg-surface-raised aria-selected:text-text-primary sm:px-4"
+          >
+            {t("agentWorkbench.canvas")}
+          </button>
+        </div>
+        {onToggleChrome ? (
+          <ProductWorkbenchCanvasChromeToggle
+            embedded
+            collapsed={chromeCollapsed}
+            maximizeLabel={t("detail.maximizeCanvas")}
+            restoreLabel={t("detail.restoreCanvas")}
+            onToggle={onToggleChrome}
+          />
+        ) : null}
+      </div>
+      {mainView === "canvas" ? <div
+        className={`absolute z-20 flex items-center gap-1 rounded-xl border border-border-l1 bg-surface-raised/95 p-1 shadow-sm backdrop-blur ${compact ? "right-3 top-[4.75rem]" : "right-4 top-16"
           }`}
       >
         <button
@@ -800,25 +896,18 @@ export function GraphCanvasPanel({
         <button
           type="button"
           data-graph-run-all
-          disabled={busy}
-          onClick={() => void submitRun({ scope: "graph" })}
+          disabled={runControlsBusy}
+          onClick={() => {
+            void submitRun({ scope: "graph" }).catch(() => undefined);
+          }}
           className="inline-flex h-11 w-11 items-center justify-center rounded-lg bg-accent text-accent-fg hover:bg-accent-strong disabled:opacity-45 lg:h-9 lg:w-9"
           aria-label={t("graph.canvas.run")}
           title={t("graph.canvas.run")}
         >
-          <Play size={16} aria-hidden="true" />
+          {runControlsBusy ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Play size={16} aria-hidden="true" />}
         </button>
-        {onToggleChrome ? (
-          <ProductWorkbenchCanvasChromeToggle
-            embedded
-            collapsed={chromeCollapsed}
-            maximizeLabel={t("detail.maximizeCanvas")}
-            restoreLabel={t("detail.restoreCanvas")}
-            onToggle={onToggleChrome}
-          />
-        ) : null}
-      </div>
-      {graph.pending_proposal ? (
+      </div> : null}
+      {mainView === "canvas" && graph.pending_proposal ? (
         <div
           data-graph-proposal-banner
           className={`absolute z-20 ${compact ? "left-3 right-3 top-[8.25rem]" : "left-4 top-16 max-w-md"}`}
@@ -832,7 +921,9 @@ export function GraphCanvasPanel({
               <button
                 type="button"
                 disabled={busy || graph.pending_proposal.stale}
-                onClick={() => void proposalMutation.mutateAsync("confirm")}
+                onClick={() => {
+                  void proposalMutation.mutateAsync("confirm").catch(() => undefined);
+                }}
                 className="inline-flex h-8 items-center rounded-lg bg-slate-900 px-3 text-[11px] font-semibold text-white disabled:opacity-45 dark:bg-slate-100 dark:text-slate-900"
               >
                 {t("graph.proposal.confirm")}
@@ -840,7 +931,9 @@ export function GraphCanvasPanel({
               <button
                 type="button"
                 disabled={busy}
-                onClick={() => void proposalMutation.mutateAsync("discard")}
+                onClick={() => {
+                  void proposalMutation.mutateAsync("discard").catch(() => undefined);
+                }}
                 className="inline-flex h-8 items-center rounded-lg border border-slate-200 px-3 text-[11px] font-semibold text-slate-700 disabled:opacity-45 dark:border-slate-700 dark:text-slate-200"
               >
                 {t("graph.proposal.discard")}
@@ -849,10 +942,10 @@ export function GraphCanvasPanel({
           </div>
         </div>
       ) : null}
-      {enteredGroup || error || notice ? (
-        <div
-          className={`absolute z-20 flex flex-col gap-2 ${compact ? "left-3 right-[16.5rem] top-[4.75rem]" : "left-4 top-4 max-w-sm"
-            }`}
+      {mainView === "canvas" && (enteredGroup || error || notice) ? (
+          <div
+            className={`absolute z-20 flex flex-col gap-2 ${compact ? "left-3 right-[16.5rem] top-[4.75rem]" : "left-4 top-16 max-w-sm"
+              }`}
         >
           {enteredGroup ? (
             <nav
@@ -883,67 +976,99 @@ export function GraphCanvasPanel({
         </div>
       ) : null}
       <div className="relative min-h-0 flex-1 overflow-hidden">
-        <GraphWorkflowCanvas
-          graph={graph}
-          catalog={catalog}
-          selectedNodeIds={selectedNodeIds}
-          busy={structureBusy}
-          nodeStatuses={nodeStatuses}
-          nodePresentations={nodePresentations}
-          runningNodeId={runningNodeId}
-          canvasSyncVersion={canvasSyncVersion}
-          viewport={viewport}
-          onViewportChange={handleViewportChange}
-          compact={compact}
-          enteredGroupId={enteredGroupId}
-          mobileInteractionMode={mobileMode}
-          onMobileInteractionModeChange={setMobileMode}
-          onSelect={onSelect}
-          onConnect={(source, target) => apply("连接节点", [{
-            op: "connect_nodes",
-            client_ref: graphChangeSetClientRef("edge"),
-            source_ref: source,
-            target_ref: target,
-          }])}
-          onConnectionRejected={(reasonKey) => {
-            if (reasonKey) showNotice(t(reasonKey));
-          }}
-          onGroupSelected={groupSelected}
-          onDeleteSelected={() => requestDeleteNodes(selectedRef.current)}
-          onSaveSelection={() => openRecipeSave("selection")}
-          onMove={(nodes) => apply("移动节点", [{
-            op: "move_nodes",
-            nodes: nodes.map((item) => [item.node_id, item.position_x, item.position_y]),
-          }])}
-          onTranslateGroup={(groupId, deltaX, deltaY) => {
-            const members = graph.nodes.filter((node) => node.group_id === groupId);
-            if (!members.length) return;
-            apply("移动分组", [{
+        <div
+          className={`absolute inset-0 min-h-0 overflow-hidden ${mainView === "canvas" ? "" : "pointer-events-none invisible"}`}
+          aria-hidden={mainView !== "canvas"}
+        >
+          <GraphWorkflowCanvas
+            graph={graph}
+            catalog={catalog}
+            selectedNodeIds={selectedNodeIds}
+            busy={structureBusy}
+            runDisabled={runControlsBusy}
+            nodeStatuses={nodeStatuses}
+            nodePresentations={nodePresentations}
+            runningNodeId={runningNodeId}
+            canvasSyncVersion={canvasSyncVersion}
+            viewport={viewport}
+            onViewportChange={handleViewportChange}
+            compact={compact}
+            enteredGroupId={enteredGroupId}
+            mobileInteractionMode={mobileMode}
+            onMobileInteractionModeChange={setMobileMode}
+            onSelect={onSelect}
+            onConnect={(source, target) => apply("连接节点", [{
+              op: "connect_nodes",
+              client_ref: graphChangeSetClientRef("edge"),
+              source_ref: source,
+              target_ref: target,
+            }])}
+            onConnectionRejected={(reasonKey) => {
+              if (reasonKey) showNotice(t(reasonKey));
+            }}
+            onGroupSelected={groupSelected}
+            onDeleteSelected={() => requestDeleteNodes(selectedRef.current)}
+            onSaveSelection={() => openRecipeSave("selection")}
+            onMove={(nodes) => apply("移动节点", [{
               op: "move_nodes",
-              nodes: members.map((node) => [node.id, node.position_x + deltaX, node.position_y + deltaY]),
-            }]);
-          }}
-          onDeleteNode={(nodeId) => requestDeleteNodes([nodeId])}
-          onDeleteEdge={(edgeId) => apply("断开连线", [{ op: "disconnect_edge", edge_ref: edgeId }])}
-          onRunNode={(nodeId) => void submitRun({ scope: "node", node_id: nodeId })}
-          onRunToNode={(nodeId) => void submitRun({ scope: "to_node", node_id: nodeId })}
-          onRunShot={(groupId) => void runShot(groupId)}
-          onBindNode={(nodeId) => onBindNode?.(nodeId)}
-          onDuplicateNode={(nodeIds) => duplicateSelected(nodeIds, "duplicated")}
-          onSaveRecipeNode={(nodeId) => openRecipeSave("selection", [nodeId])}
-          onAssetDrop={handleAssetDrop}
-          onRenameGroup={renameGroup}
-          onDissolveGroup={dissolveGroup}
-          onEnterGroup={enterGroup}
-          onAutoLayout={() => {
-            const positions = buildGraphAutoLayoutPositions(graphCanvasView(graph, enteredGroupId));
-            if (!positions.length) return;
-            apply("自动布局", [{
-              op: "move_nodes",
-              nodes: positions.map((item) => [item.node_id, item.position_x, item.position_y]),
-            }]);
-          }}
-        />
+              nodes: nodes.map((item) => [item.node_id, item.position_x, item.position_y]),
+            }])}
+            onTranslateGroup={(groupId, deltaX, deltaY) => {
+              const members = graph.nodes.filter((node) => node.group_id === groupId);
+              if (!members.length) return;
+              apply("移动分组", [{
+                op: "move_nodes",
+                nodes: members.map((node) => [node.id, node.position_x + deltaX, node.position_y + deltaY]),
+              }]);
+            }}
+            onDeleteNode={(nodeId) => requestDeleteNodes([nodeId])}
+            onDeleteEdge={(edgeId) => apply("断开连线", [{ op: "disconnect_edge", edge_ref: edgeId }])}
+            onRunNode={(nodeId) => {
+              void submitRun({ scope: "node", node_id: nodeId }).catch(() => undefined);
+            }}
+            onRunToNode={(nodeId) => {
+              void submitRun({ scope: "to_node", node_id: nodeId }).catch(() => undefined);
+            }}
+            onRunShot={handleShotRun}
+            onBindNode={(nodeId) => onBindNode?.(nodeId)}
+            onDuplicateNode={(nodeIds) => duplicateSelected(nodeIds, "duplicated")}
+            onSaveRecipeNode={(nodeId) => openRecipeSave("selection", [nodeId])}
+            onAssetDrop={handleAssetDrop}
+            onRenameGroup={renameGroup}
+            onDissolveGroup={dissolveGroup}
+            onEnterGroup={enterGroup}
+            onAutoLayout={() => {
+              const positions = buildGraphAutoLayoutPositions(graphCanvasView(graph, enteredGroupId));
+              if (!positions.length) return;
+              apply("自动布局", [{
+                op: "move_nodes",
+                nodes: positions.map((item) => [item.node_id, item.position_x, item.position_y]),
+              }]);
+            }}
+          />
+        </div>
+        <div
+          className={`absolute inset-0 min-h-0 overflow-hidden ${mainView === "shots" ? "" : "pointer-events-none invisible"}`}
+          aria-hidden={mainView !== "shots"}
+        >
+          <GraphShotList
+            shots={shotProjections}
+            runsLoading={runsQuery.isLoading}
+            runsFetching={runsQuery.isFetching}
+            runsError={runsQuery.error}
+            operationError={error}
+            notice={notice}
+            onRetryRuns={() => void runsQuery.refetch()}
+            busy={runControlsBusy}
+            runningGroupId={runningShotGroupId}
+            onOpenNode={openShotNode}
+            onOpenLocalEdit={onOpenLocalEdit}
+            onRunShot={handleShotRun}
+            onRunAll={() => {
+              void submitRun({ scope: "graph" }).catch(() => undefined);
+            }}
+          />
+        </div>
       </div>
       {reusePrompt ? (
         <div className="absolute inset-0 z-30 flex items-center justify-center bg-slate-950/40 p-4">

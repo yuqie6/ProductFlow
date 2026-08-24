@@ -128,6 +128,16 @@ async function openDirectCreateWorkbench(page: Page, name: string): Promise<void
     submit.click(),
   ]);
   await expect(page.locator("[data-graph-canvas-panel]")).toBeVisible();
+  const shotsTab = page.locator('[data-graph-view="shots"]');
+  const canvasTab = page.locator('[data-graph-view="canvas"]');
+  await expect(shotsTab).toBeVisible();
+  await expect(canvasTab).toBeVisible();
+  await expect(shotsTab).toBeEnabled();
+  await expect(shotsTab).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("[data-graph-shot-list]")).toBeVisible();
+  await canvasTab.click({ force: true });
+  await expect(canvasTab).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator('[aria-hidden="false"] [aria-label="工作流画布"]')).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-theme", /light|dark/);
 }
 

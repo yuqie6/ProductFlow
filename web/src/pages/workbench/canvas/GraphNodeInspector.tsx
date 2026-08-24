@@ -5,6 +5,7 @@ import {
   Link2,
   Loader2,
   Plus,
+  PencilLine,
   Play,
   RotateCcw,
   Save,
@@ -31,6 +32,7 @@ import type {
   GraphNodeRun,
   GraphProjection,
   ProductFactsResponse,
+  WorkflowDeliverySpec,
   WorkflowNodeStatus,
 } from "../../../lib/types";
 import { parseAspectRatio } from "../../../components/ImageRatioFrame";
@@ -50,6 +52,7 @@ import {
   type CatalogNodeDraft,
 } from "./catalogConfig";
 import { DeliveryRenditionPanel } from "./DeliveryRenditionPanel";
+import { replaceDeliverySpec } from "./deliveryRenditions";
 import { graphEdgeRoleLabelKey, graphNodeConfigFields } from "./graphCatalog";
 import { graphNodeTitleKey } from "./graphLayout";
 import { graphContextEntries, graphIncomingSourceEntries, graphNodeRunPresentations, graphRunInputTraceEntries, graphRunsAreLive } from "./graphRunDisplay";
@@ -68,6 +71,8 @@ import {
   type GraphTitleDraft,
 } from "./graphNodeEditorDrafts";
 import { useNodeDraftAutosave, type NodeDraftAutosave } from "./useNodeDraftAutosave";
+import type { LocalImageEditOpenRequest } from "../local-edit/LocalImageEditController";
+import { ImageFidelityCheckController } from "../fidelity/ImageFidelityCheckController";
 
 const ACTIVE_RUN_STATUSES = new Set(["queued", "running"]);
 type InspectorFlush = () => Promise<unknown>;
@@ -85,6 +90,7 @@ export function GraphNodeInspector({
   onBind,
   onJump,
   onPreviewImage,
+  onOpenLocalEdit,
   onRegisterFlush,
   onOpenAdd,
   onOpenLibrary,
@@ -104,6 +110,7 @@ export function GraphNodeInspector({
   onBind?: () => void;
   onJump?: (nodeId: string) => void;
   onPreviewImage?: (image: DownloadableImage) => void;
+  onOpenLocalEdit?: (request: LocalImageEditOpenRequest) => void;
   onRegisterFlush?: (flush: () => Promise<void>) => void;
   onOpenAdd?: () => void;
   onOpenLibrary?: () => void;
@@ -135,13 +142,13 @@ export function GraphNodeInspector({
   const runsQuery = useQuery({
     queryKey: runsQueryKey,
     queryFn: () => api.listGraphRuns(graph.product_id, graph.id),
-    enabled: Boolean(node),
     refetchInterval: (query) => graphRunsAreLive(query.state.data?.items) ? 1200 : false,
   });
   const presentations = useMemo(
     () => graphNodeRunPresentations(runsQuery.data?.items ?? []),
     [runsQuery.data],
   );
+  const graphRunIsBusy = graphRunsAreLive(runsQuery.data?.items);
   const presentation = node ? presentations[node.id] : undefined;
   const activeRun = node
     ? runsQuery.data?.items.find((run) => run.status === "running" && run.node_runs.some((item) => (
@@ -213,7 +220,7 @@ export function GraphNodeInspector({
     return (
       <GraphInspectorDashboard
         graph={graph}
-        busy={busy || runMutation.isPending}
+        busy={busy || runMutation.isPending || graphRunIsBusy}
         onRunGraph={() => {
           void flushInspector()
             .then(() => runMutation.mutate({ scope: "graph" }))
@@ -323,12 +330,13 @@ export function GraphNodeInspector({
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
+                    data-graph-inspector-run-node
                     onClick={() => {
                       void flushInspector()
                         .then(() => runMutation.mutate({ scope: "node", node_id: node.id }))
                         .catch(() => undefined);
                     }}
-                    disabled={Boolean(activeRun) || runMutation.isPending || busy || runBlocked}
+                    disabled={Boolean(activeRun) || graphRunIsBusy || runMutation.isPending || busy || runBlocked}
                     className="inline-flex h-10 items-center justify-center rounded-xl bg-slate-900 px-3 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
                   >
                     {runMutation.isPending && runMutation.variables?.scope === "node" ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <Play size={14} className="mr-1.5" />}
@@ -336,12 +344,13 @@ export function GraphNodeInspector({
                   </button>
                   <button
                     type="button"
+                    data-graph-inspector-run-to-node
                     onClick={() => {
                       void flushInspector()
                         .then(() => runMutation.mutate({ scope: "to_node", node_id: node.id }))
                         .catch(() => undefined);
                     }}
-                    disabled={Boolean(activeRun) || runMutation.isPending || busy || runBlocked}
+                    disabled={Boolean(activeRun) || graphRunIsBusy || runMutation.isPending || busy || runBlocked}
                     className="inline-flex h-10 items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
                   >
                     {runMutation.isPending && runMutation.variables?.scope === "to_node" ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <Play size={14} className="mr-1.5" />}
@@ -364,7 +373,7 @@ export function GraphNodeInspector({
                 <button
                   type="button"
                   onClick={() => void retryRun()}
-                  disabled={retryMutation.isPending || busy}
+                  disabled={retryMutation.isPending || graphRunIsBusy || busy}
                   className="inline-flex h-10 w-full items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
                 >
                   {retryMutation.isPending ? <Loader2 size={14} className="mr-1.5 animate-spin" /> : <RotateCcw size={14} className="mr-1.5" />}
@@ -425,6 +434,9 @@ export function GraphNodeInspector({
             catalog={catalog}
             busy={busy}
             graphRevision={graph.revision}
+            productId={graph.product_id}
+            sourceAssetId={node.preview_asset_id}
+            onPreviewImage={onPreviewImage}
             header={image && onPreviewImage ? (
               <div className="space-y-3">
                 <NodeImagePreview
@@ -432,6 +444,18 @@ export function GraphNodeInspector({
                   onPreview={onPreviewImage}
                   aspectRatio={requestedAspectRatio(node)}
                 />
+                {node.node_type === "image_generation" && node.preview_asset_id && onOpenLocalEdit ? (
+                  <button
+                    type="button"
+                    data-graph-node-local-edit
+                    onClick={() => onOpenLocalEdit({ sourceAssetId: node.preview_asset_id!, targetNodeId: node.id })}
+                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-border-l1 px-3 text-xs font-semibold text-text-secondary hover:bg-surface-subtle hover:text-text-primary"
+                    title={t("localEdit.open")}
+                  >
+                    <PencilLine size={14} aria-hidden="true" />
+                    <span>{t("localEdit.open")}</span>
+                  </button>
+                ) : null}
                 {node.node_type === "image_generation" ? <MeasuredOutputStrip node={node} /> : null}
               </div>
             ) : node.node_type === "image_generation" ? (
@@ -442,12 +466,12 @@ export function GraphNodeInspector({
           />
         )}
 
-        {node.node_type === "image_generation" && onPreviewImage ? (
-          <DeliveryRenditionPanel
+        {node.node_type === "image_generation" && node.preview_asset_id ? (
+          <ImageFidelityCheckController
+            key={`${node.id}:${node.preview_asset_id}`}
             productId={graph.product_id}
-            sourceAssetId={node.preview_asset_id}
-            deliverySpec={node.config.delivery_spec}
-            onPreviewImage={onPreviewImage}
+            assetId={node.preview_asset_id}
+            locale={t.locale ?? "zh-CN"}
           />
         ) : null}
 
@@ -935,6 +959,9 @@ function CatalogNodeEditor({
   catalog,
   busy,
   graphRevision,
+  productId,
+  sourceAssetId,
+  onPreviewImage,
   header,
   onSave,
   onSaveStateChange,
@@ -943,6 +970,9 @@ function CatalogNodeEditor({
   catalog: GraphNodeCatalog;
   busy: boolean;
   graphRevision: number;
+  productId: string;
+  sourceAssetId: string | null;
+  onPreviewImage?: (image: DownloadableImage) => void;
   header?: ReactNode;
   onSave: (input: { title: string; config: Record<string, unknown>; boundAssetId: string | null }) => Promise<{ edit_version: number }>;
   onSaveStateChange: (status: SaveStatus, error: string | null) => void;
@@ -962,6 +992,10 @@ function CatalogNodeEditor({
     }),
     onStateChange: onSaveStateChange,
   });
+  const applyDeliverySpec = useCallback(async (deliverySpec: WorkflowDeliverySpec) => {
+    editor.update(applyDeliveryPresetToCatalogDraft(editor.draft, deliverySpec));
+    await editor.flush(true);
+  }, [editor]);
   return (
     <AutosaveForm editor={editor} busy={busy}>
       {header}
@@ -972,8 +1006,28 @@ function CatalogNodeEditor({
         onChange={(config) => editor.update({ ...editor.draft, config })}
         disabled={busy}
       />
+      {node.node_type === "image_generation" && onPreviewImage ? (
+        <DeliveryRenditionPanel
+          productId={productId}
+          sourceAssetId={sourceAssetId}
+          deliverySpec={editor.draft.config.delivery_spec}
+          onPreviewImage={onPreviewImage}
+          onApplyDeliverySpec={applyDeliverySpec}
+          applyDisabled={busy}
+        />
+      ) : null}
     </AutosaveForm>
   );
+}
+
+export function applyDeliveryPresetToCatalogDraft(
+  draft: CatalogNodeDraft,
+  deliverySpec: WorkflowDeliverySpec,
+): CatalogNodeDraft {
+  return {
+    ...draft,
+    config: replaceDeliverySpec(draft.config, deliverySpec),
+  };
 }
 
 function AutosaveForm<T>({
@@ -1034,19 +1088,7 @@ function RuntimeInputList({
         <p className="mt-2 text-xs text-zinc-500 dark:text-slate-400">{t("graph.inspector.currentWiringEmpty")}</p>
       ) : (
         <ul data-graph-current-wiring className="mt-2 space-y-1">
-          {currentSources.map((item) => {
-            const roleKey = graphEdgeRoleLabelKey(item.role);
-            return (
-              <li key={item.id} className="flex min-w-0 items-center justify-between gap-2 px-2.5 py-1.5">
-                <span className="min-w-0 truncate text-xs font-medium text-zinc-800 dark:text-slate-100">
-                  {item.title || t("graph.runs.deletedNode")}
-                </span>
-                <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-slate-800 dark:text-slate-300">
-                  {roleKey ? t(roleKey) : item.role}
-                </span>
-              </li>
-            );
-          })}
+          {currentSources.map((item) => <RuntimeInputRow key={item.id} item={item} />)}
         </ul>
       )}
       <h4 className="mt-4 text-xs font-semibold text-zinc-800 dark:text-slate-100">{t("graph.inspector.runtimeInputs")}</h4>
@@ -1054,19 +1096,7 @@ function RuntimeInputList({
         <p className="mt-2 text-xs text-zinc-500 dark:text-slate-400">{t("graph.inspector.runtimeInputsEmpty")}</p>
       ) : (
         <ul data-graph-run-inputs className="mt-2 space-y-1">
-          {historicalSources.map((item) => {
-            const roleKey = graphEdgeRoleLabelKey(item.role);
-            return (
-              <li key={item.id} className="flex min-w-0 items-center justify-between gap-2 px-2.5 py-1.5">
-                <span className="min-w-0 truncate text-xs font-medium text-zinc-800 dark:text-slate-100">
-                  {item.title || t("graph.runs.deletedNode")}
-                </span>
-                <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-slate-800 dark:text-slate-300">
-                  {roleKey ? t(roleKey) : item.role}
-                </span>
-              </li>
-            );
-          })}
+          {historicalSources.map((item) => <RuntimeInputRow key={item.id} item={item} />)}
         </ul>
       )}
       {technical.length ? (
@@ -1085,6 +1115,47 @@ function RuntimeInputList({
         </details>
       ) : null}
     </section>
+  );
+}
+
+function RuntimeInputRow({ item }: { item: ReturnType<typeof graphIncomingSourceEntries>[number] }) {
+  const { t } = useI18n();
+  const roleKey = graphEdgeRoleLabelKey(item.role);
+  const sourceLabel = item.title || (item.sourceNodeId
+    ? t("graph.inspector.sourceNode", { id: item.sourceNodeId })
+    : t("graph.runs.deletedNode"));
+  return (
+    <li data-graph-runtime-input-entry={item.id} className="min-w-0 px-2.5 py-1.5">
+      <div className="flex min-w-0 items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="truncate text-xs font-medium text-zinc-800 dark:text-slate-100">{sourceLabel}</div>
+          <div className="mt-0.5 flex min-w-0 flex-wrap gap-x-2 text-[10px] text-zinc-500 dark:text-slate-400">
+            {item.sourceNodeId ? (
+              <span data-graph-source-node-id={item.sourceNodeId} className="truncate">
+                {t("graph.inspector.sourceNode", { id: item.sourceNodeId })}
+              </span>
+            ) : null}
+            <span data-graph-input-order={item.order}>{t("graph.inspector.inputOrder", { order: item.order })}</span>
+          </div>
+        </div>
+        <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-slate-800 dark:text-slate-300">
+          {roleKey ? t(roleKey) : item.role}
+        </span>
+      </div>
+      <InputArtifactSummary item={item} />
+    </li>
+  );
+}
+
+function InputArtifactSummary({ item }: { item: ReturnType<typeof graphIncomingSourceEntries>[number] }) {
+  const { t } = useI18n();
+  return (
+    <div data-graph-input-artifact className="mt-1 truncate text-[10px] text-zinc-500 dark:text-slate-400">
+      <span>{t("graph.inspector.artifact")}: {item.artifactId ?? t("graph.inspector.artifactUnavailable")}</span>
+      {item.artifactType ? <span> · {item.artifactType}</span> : null}
+      {item.assetId ? <span> · {t("graph.inspector.asset")}: {item.assetId}</span> : null}
+      {item.versionId ? <span> · {t("graph.inspector.version")}: {item.versionId}</span> : null}
+    </div>
   );
 }
 

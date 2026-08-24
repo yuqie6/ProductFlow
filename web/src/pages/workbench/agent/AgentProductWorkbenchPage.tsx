@@ -19,6 +19,7 @@ import type {
   WorkflowDraftRevision,
   WorkflowRecipe,
   WorkflowRecipeApplicationResult,
+  WorkflowRecipePreview,
   WorkflowRecipeSummary,
 } from "../../../lib/types";
 import { inspectableGraphNodeId } from "../canvas/graphCatalog";
@@ -28,6 +29,7 @@ import { GraphLibraryPanel } from "../canvas/GraphLibraryPanel";
 import { GraphNodeInspector } from "../canvas/GraphNodeInspector";
 import { GraphRunsPanel } from "../canvas/GraphRunsPanel";
 import { RecipeLibraryPanel } from "../canvas/RecipeLibraryPanel";
+import { useLocalImageEditController } from "../local-edit/LocalImageEditController";
 import { AgentConversationPanel } from "./AgentConversationPanel";
 import {
   AgentWorkbenchShell,
@@ -81,6 +83,7 @@ export function AgentProductWorkbenchPage({
   const [canvasBusy, setCanvasBusy] = useState(false);
   const [chromeCollapsed, setChromeCollapsed] = useState(false);
   const [emptyGraphError, setEmptyGraphError] = useState<string | null>(null);
+  const [agentOpenRequest, setAgentOpenRequest] = useState(0);
   const recipeApplyKeysRef = useRef(new Map<string, string>());
   const emptyGraphInFlightRef = useRef(false);
   const sidebarToolRef = useRef<AgentSidebarToolId>(sidebarTool);
@@ -103,6 +106,10 @@ export function AgentProductWorkbenchPage({
     retry: (failureCount, error) => !isHttpErrorStatus(error, 404) && failureCount < 2,
   });
   const liveGraph = graphQuery.data ?? materialization ?? bootstrap.graph;
+  const localEdit = useLocalImageEditController({
+    productId: bootstrap.product.id,
+    graphId: liveGraph?.id ?? null,
+  });
   const catalog = catalogQuery.data ?? null;
   const catalogError = catalogQuery.error
     ? errorDetail(catalogQuery.error, t("graph.inspector.catalogLoadFailed"))
@@ -131,8 +138,8 @@ export function AgentProductWorkbenchPage({
   useRegisterAgentPageContext(pageContext);
 
   const recipesQuery = useQuery({
-    queryKey: ["workflow-recipes", false],
-    queryFn: () => api.listWorkflowRecipes(false),
+    queryKey: ["workflow-recipes", false, "all"],
+    queryFn: () => api.listWorkflowRecipes(false, "all"),
     enabled: activeSidebarTool === "recipes",
   });
   const reviewableRevision = selectReviewableWorkflowRevision(bootstrap.workflow_draft, liveGraph);
@@ -182,13 +189,22 @@ export function AgentProductWorkbenchPage({
     mutationFn: async (operation: {
       kind: "apply" | "archive";
       recipe: WorkflowRecipeSummary;
+      preview?: WorkflowRecipePreview;
       idempotencyKey?: string;
     }): Promise<WorkflowRecipe | WorkflowRecipeApplicationResult> => {
       if (operation.kind === "apply") {
-        return api.applyWorkflowRecipe(bootstrap.product.id, operation.recipe.id, {
-          expected_recipe_version: operation.recipe.current_version.version,
-          idempotency_key: operation.idempotencyKey ?? newRecipeIdempotencyKey(operation.recipe.id),
-        });
+        if (!operation.preview) {
+          throw new Error("缺少配方变更预览");
+        }
+        return api.applyWorkflowRecipe(
+          bootstrap.product.id,
+          operation.recipe.id,
+          buildAgentWorkflowRecipeApplyInput(
+            operation.recipe,
+            operation.preview,
+            operation.idempotencyKey ?? newRecipeIdempotencyKey(operation.recipe.id),
+          ),
+        );
       }
       const result = await api.archiveWorkflowRecipe(
         operation.recipe.id,
@@ -213,7 +229,8 @@ export function AgentProductWorkbenchPage({
       }
       setArchiveRecipe(null);
     },
-    onError: (error) => {
+    onError: (error, operation) => {
+      clearAgentWorkflowRecipeIdempotencyKey(recipeApplyKeysRef.current, operation.kind, operation.recipe.id);
       setRecipeError(errorDetail(error, t("workbench.error.recipe")));
     },
   });
@@ -227,6 +244,15 @@ export function AgentProductWorkbenchPage({
     sidebarToolRef.current = tool;
     setSidebarTool(tool);
     return true;
+  }, []);
+  const requestAgentOpen = useCallback(() => {
+    requestAgentWorkbenchOpen(
+      (tool) => {
+        sidebarToolRef.current = tool;
+        setSidebarTool(tool);
+      },
+      () => setAgentOpenRequest((request) => request + 1),
+    );
   }, []);
   const inspectNode = useCallback((nodeId: string) => {
     if (!liveGraph || !inspectableGraphNodeId(liveGraph, nodeId)) return;
@@ -317,6 +343,7 @@ export function AgentProductWorkbenchPage({
           } : undefined}
           onJump={inspectNode}
           onPreviewImage={setPreviewImage}
+          onOpenLocalEdit={localEdit.openLocalImageEdit}
           onOpenAdd={() => void requestSidebarTool("add")}
           onOpenLibrary={() => void requestSidebarTool("library")}
         />
@@ -350,6 +377,7 @@ export function AgentProductWorkbenchPage({
           bindNode={bindNode}
           bindLocked={canvasBusy}
           onPreviewImage={setPreviewImage}
+          onOpenLocalEdit={localEdit.openLocalImageEdit}
           onBindAsset={async (assetId) => {
             if (!bindNode) return;
             return actions.commitNode({
@@ -397,11 +425,11 @@ export function AgentProductWorkbenchPage({
               onPreview={(recipe) => api.previewWorkflowRecipe(bootstrap.product.id, recipe.id, {
                 expected_recipe_version: recipe.current_version.version,
               })}
-              onApply={(recipe) => {
+              onApply={(recipe, preview) => {
                 const idempotencyKey = recipeApplyKeysRef.current.get(recipe.id)
                   ?? newRecipeIdempotencyKey(recipe.id);
                 recipeApplyKeysRef.current.set(recipe.id, idempotencyKey);
-                recipeMutation.mutate({ kind: "apply", recipe, idempotencyKey });
+                recipeMutation.mutate({ kind: "apply", recipe, preview, idempotencyKey });
               }}
               onAppend={(recipe) => {
                 actions.appendRecipe({
@@ -431,6 +459,8 @@ export function AgentProductWorkbenchPage({
         workflowAvailable={workflowAvailable}
         activeSidebarTool={activeSidebarTool}
         onSidebarToolChange={(toolId) => requestSidebarTool(toolId as AgentSidebarToolId)}
+        agentOpenRequest={agentOpenRequest}
+        onAgentOpened={focusVisibleAgentComposer}
         sidebarTools={sidebarTools}
         canvasContent={liveGraph ? (
           <GraphCanvasPanel
@@ -443,6 +473,7 @@ export function AgentProductWorkbenchPage({
             onRegisterActions={setActions}
             onBusyChange={setCanvasBusy}
             onBeforeRun={beforeRun}
+            onOpenLocalEdit={localEdit.openLocalImageEdit}
             chromeCollapsed={chromeCollapsed}
             onToggleChrome={() => setChromeCollapsed((current) => !current)}
             onBindNode={(nodeId) => {
@@ -459,10 +490,7 @@ export function AgentProductWorkbenchPage({
             ) : null}
             <WorkflowOnboardingHero
               productName={bootstrap.product.name}
-              onOpenAgent={() => {
-                const composer = document.querySelector<HTMLTextAreaElement>("[data-agent-composer] textarea");
-                composer?.focus();
-              }}
+              onOpenAgent={requestAgentOpen}
               onOpenRecipes={() => {
                 void requestSidebarTool("recipes");
               }}
@@ -472,7 +500,11 @@ export function AgentProductWorkbenchPage({
                 void startEmptyCanvasAdd({
                   hasGraph: Boolean(liveGraph),
                   createGraph: () => createEmptyGraphMutation.mutateAsync(),
-                  openAdd: () => requestSidebarTool("add"),
+                  openAdd: async () => {
+                    sidebarToolRef.current = "add";
+                    setSidebarTool("add");
+                    return true;
+                  },
                 }).catch((error) => {
                   setEmptyGraphError(errorDetail(error, t("workbench.error.structure")));
                 }).finally(() => {
@@ -554,6 +586,7 @@ export function AgentProductWorkbenchPage({
           onClose={() => setPreviewImage(null)}
         />
       ) : null}
+      {localEdit.dialog}
     </div>
   );
 }
@@ -586,6 +619,24 @@ export function resolveAgentWorkbenchSidebarTool(
     return requested;
   }
   return workflowAvailable ? requested : "agent";
+}
+
+export function requestAgentWorkbenchOpen(
+  setSidebarTool: (tool: AgentSidebarToolId) => void,
+  requestOpen: () => void,
+): void {
+  setSidebarTool("agent");
+  requestOpen();
+}
+
+export function focusVisibleAgentComposer(root?: ParentNode): boolean {
+  const owner = root ?? (typeof document === "undefined" ? null : document);
+  const composer = owner?.querySelector<HTMLTextAreaElement>("[data-agent-composer] textarea");
+  if (!composer || composer.closest("[inert]")) {
+    return false;
+  }
+  composer.focus();
+  return true;
 }
 
 export async function startEmptyCanvasAdd(input: {
@@ -646,6 +697,34 @@ function newRecipeIdempotencyKey(recipeId: string): string {
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   return `recipe-${recipeId}-${suffix}`.slice(0, 120);
+}
+
+export function buildAgentWorkflowRecipeApplyInput(
+  recipe: WorkflowRecipeSummary,
+  preview: WorkflowRecipePreview,
+  idempotencyKey: string,
+): {
+  expected_recipe_version: number;
+  expected_graph_revision: number;
+  preview_digest: string;
+  idempotency_key: string;
+} {
+  return {
+    expected_recipe_version: recipe.current_version.version,
+    expected_graph_revision: preview.base_graph_revision,
+    preview_digest: preview.preview_digest,
+    idempotency_key: idempotencyKey,
+  };
+}
+
+export function clearAgentWorkflowRecipeIdempotencyKey(
+  keys: Map<string, string>,
+  kind: "apply" | "archive",
+  recipeId: string,
+): void {
+  if (kind === "apply") {
+    keys.delete(recipeId);
+  }
 }
 
 function errorDetail(error: unknown, fallback: string): string {

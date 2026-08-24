@@ -1,8 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import type { WorkflowDraft, WorkflowDraftRevision } from "../../../lib/types";
+import type {
+  WorkflowDraft,
+  WorkflowDraftRevision,
+  WorkflowRecipePreview,
+  WorkflowRecipeSummary,
+} from "../../../lib/types";
 import {
+  buildAgentWorkflowRecipeApplyInput,
+  clearAgentWorkflowRecipeIdempotencyKey,
   createOrLoadEmptyWorkflowGraph,
+  focusVisibleAgentComposer,
+  requestAgentWorkbenchOpen,
   resolveAgentWorkbenchSidebarTool,
   selectReviewableWorkflowRevision,
   startEmptyCanvasAdd,
@@ -29,6 +38,43 @@ describe("Agent workbench sidebar tool", () => {
     expect(resolveAgentWorkbenchSidebarTool("agent", false)).toBe("agent");
     expect(resolveAgentWorkbenchSidebarTool("recipes", false)).toBe("recipes");
     expect(resolveAgentWorkbenchSidebarTool("details", true)).toBe("details");
+  });
+
+  it("opens the Agent explicitly before asking the shell to focus its composer", () => {
+    const events: string[] = [];
+    const setSidebarTool = vi.fn(() => events.push("agent-tool"));
+    const requestOpen = vi.fn(() => events.push("expand-request"));
+
+    requestAgentWorkbenchOpen(setSidebarTool, requestOpen);
+
+    expect(setSidebarTool).toHaveBeenCalledWith("agent");
+    expect(requestOpen).toHaveBeenCalledOnce();
+    expect(events).toEqual(["agent-tool", "expand-request"]);
+  });
+
+  it("focuses only a composer that is outside an inert ancestor", () => {
+    const focus = vi.fn();
+    const visibleComposer = {
+      closest: vi.fn(() => null),
+      focus,
+    } as unknown as HTMLTextAreaElement;
+    const visibleRoot = {
+      querySelector: vi.fn(() => visibleComposer),
+    } as unknown as ParentNode;
+
+    expect(focusVisibleAgentComposer(visibleRoot)).toBe(true);
+    expect(focus).toHaveBeenCalledOnce();
+
+    const inertComposer = {
+      closest: vi.fn(() => ({})),
+      focus: vi.fn(),
+    } as unknown as HTMLTextAreaElement;
+    const inertRoot = {
+      querySelector: vi.fn(() => inertComposer),
+    } as unknown as ParentNode;
+
+    expect(focusVisibleAgentComposer(inertRoot)).toBe(false);
+    expect(inertComposer.focus).not.toHaveBeenCalled();
   });
 });
 
@@ -117,5 +163,30 @@ describe("Agent workbench draft review", () => {
       draft("ready", currentRevision),
       { source_draft_revision_id: currentRevision.id },
     )).toBeNull();
+  });
+});
+
+describe("Agent recipe apply contract", () => {
+  it("passes preview revision and digest through apply and clears failed apply keys", () => {
+    const recipe = {
+      current_version: { version: 6 },
+    } as WorkflowRecipeSummary;
+    const preview = {
+      base_graph_revision: 14,
+      preview_digest: "b".repeat(64),
+    } as WorkflowRecipePreview;
+    const keys = new Map([["r2", "key-2"]]);
+
+    expect(buildAgentWorkflowRecipeApplyInput(recipe, preview, "key-2")).toEqual({
+      expected_recipe_version: 6,
+      expected_graph_revision: 14,
+      preview_digest: "b".repeat(64),
+      idempotency_key: "key-2",
+    });
+
+    clearAgentWorkflowRecipeIdempotencyKey(keys, "archive", "r2");
+    expect(keys.get("r2")).toBe("key-2");
+    clearAgentWorkflowRecipeIdempotencyKey(keys, "apply", "r2");
+    expect(keys.has("r2")).toBe(false);
   });
 });

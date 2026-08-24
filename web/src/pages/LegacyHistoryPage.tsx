@@ -84,6 +84,15 @@ export function getOrCreateLegacyArchiveRebuildKey(
   return created;
 }
 
+export function legacyArchiveRebuildPath(targetProductId: string, agentSessionId: string | null): string {
+  const query = new URLSearchParams();
+  if (agentSessionId) {
+    query.set("agent_session_id", agentSessionId);
+  }
+  const suffix = query.size ? `?${query.toString()}` : "";
+  return `/products/${encodeURIComponent(targetProductId)}${suffix}`;
+}
+
 const KIND_OPTIONS: Array<{
   kind: LegacyArchiveKind | null;
   icon: LucideIcon;
@@ -220,7 +229,7 @@ export function LegacyHistoryPage() {
     onSuccess: async (result) => {
       setTemplateRebuildDetail(null);
       await queryClient.invalidateQueries({ queryKey: ["agent-workbench", result.target_product_id] });
-      navigate(`/products/${encodeURIComponent(result.target_product_id)}`);
+      navigate(legacyArchiveRebuildPath(result.target_product_id, result.conversation.session_id));
     },
   });
   const logoutMutation = useMutation({
